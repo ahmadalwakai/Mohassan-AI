@@ -11,6 +11,16 @@ workflows:
         XCODE_PROJECT: ios/Wasla.xcodeproj
         XCODE_SCHEME: Wasla
     scripts:
+      - name: Verify pairing codes and bundled computer identity
+        script: |
+          set -euo pipefail
+          mkdir -p "$CM_BUILD_DIR/build/checks"
+          xcrun --sdk macosx swiftc \
+            -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
+            "$CM_BUILD_DIR/ios/Wasla/Models.swift" \
+            "$CM_BUILD_DIR/ios/Tools/PairingChecks.swift" \
+            -o "$CM_BUILD_DIR/build/checks/pairing-checks"
+          "$CM_BUILD_DIR/build/checks/pairing-checks" "$CM_BUILD_DIR/ios/Wasla/ConnectionDefaults.json"
       - name: Inspect Xcode project and shared scheme
         script: |
           set -euo pipefail
@@ -64,6 +74,16 @@ workflows:
         XCODE_PROJECT: ios/Wasla.xcodeproj
         XCODE_SCHEME: Wasla
     scripts:
+      - name: Verify pairing codes and bundled computer identity
+        script: |
+          set -euo pipefail
+          mkdir -p "$CM_BUILD_DIR/build/checks"
+          xcrun --sdk macosx swiftc \
+            -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
+            "$CM_BUILD_DIR/ios/Wasla/Models.swift" \
+            "$CM_BUILD_DIR/ios/Tools/PairingChecks.swift" \
+            -o "$CM_BUILD_DIR/build/checks/pairing-checks"
+          "$CM_BUILD_DIR/build/checks/pairing-checks" "$CM_BUILD_DIR/ios/Wasla/ConnectionDefaults.json"
       - name: Prepare the matching Wasla App Store provisioning profile
         script: |
           set -euo pipefail

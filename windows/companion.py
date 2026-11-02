@@ -20,7 +20,7 @@ import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from wasla.security import AuthStore, ensure_certificate, local_addresses
+from wasla.security import AuthStore, PAIRING_LIFETIME, ensure_certificate, local_addresses
 
 
 WINDOWS_ROOT = Path(__file__).resolve().parent
@@ -127,8 +127,9 @@ class Companion:
         self.uri = tk.StringVar()
         self.fingerprint = tk.StringVar()
         self.pairing = tk.StringVar()
-        self.pairing_note = tk.StringVar(value="شغّل الخدمة، ثم أنشئ رمزًا لاقتران هاتفك.")
+        self.pairing_note = tk.StringVar(value="اضغط تشغيل، ثم أدخل الرمز الظاهر هنا في تطبيق iPhone.")
         self.network_note = tk.StringVar()
+        self.advanced_visible = False
         self._build()
         self.window.protocol("WM_DELETE_WINDOW", self.on_close)
         self._work(self._initialize, self._initialized)
@@ -136,8 +137,9 @@ class Companion:
 
     def _build(self):
         self.window.title("وصلة — لوحة الكمبيوتر")
-        self.window.geometry("820x900")
-        self.window.minsize(720, 850)
+        available_height = max(400, self.window.winfo_screenheight() - 100)
+        self.window.geometry(f"780x{min(820, available_height)}")
+        self.window.minsize(660, min(660, available_height))
         self.window.configure(background="#f3f4ef")
         style = ttk.Style(self.window)
         style.theme_use("clam")
@@ -150,14 +152,47 @@ class Companion:
         style.configure("TLabelframe", background="#f3f4ef")
         style.configure("TLabelframe.Label", background="#f3f4ef", font=("Segoe UI", 11, "bold"))
         style.configure("Treeview", rowheight=28, font=("Segoe UI", 10))
-        body = ttk.Frame(self.window, padding=22)
-        body.pack(fill="both", expand=True)
+        canvas = tk.Canvas(self.window, background="#f3f4ef", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.window, orient="vertical", command=canvas.yview)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        body = ttk.Frame(canvas, padding=22)
+        content = canvas.create_window((0, 0), window=body, anchor="nw")
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(content, width=event.width))
+        body.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
+        self.window.bind("<MouseWheel>", lambda event: canvas.yview_scroll(-1 if event.delta > 0 else 1, "units") if event.delta else None)
         ttk.Label(body, text="وصلة", font=("Segoe UI", 25, "bold"), anchor="e").pack(fill="x")
-        ttk.Label(body, text="التحكم المحلي في الاتصال بهاتفك", anchor="e").pack(fill="x", pady=(0, 8))
-        ttk.Label(body, textvariable=self.status, anchor="e", foreground="#28694d", wraplength=750).pack(fill="x", pady=(0, 15))
+        ttk.Label(body, text="اربط هاتفك برمز واحد", anchor="e").pack(fill="x", pady=(0, 8))
+        ttk.Label(body, textvariable=self.status, anchor="e", foreground="#28694d", wraplength=710).pack(fill="x", pady=(0, 12))
+        actions = ttk.Frame(body)
+        actions.pack(fill="x", pady=(0, 12))
+        self.start_button = ttk.Button(actions, text="تشغيل وإظهار رمز الربط", command=self.start, style="Accent.TButton", state="disabled")
+        self.start_button.pack(side="right", padx=(8, 0))
+        self.stop_button = ttk.Button(actions, text="إيقاف وصلة", command=self.stop, state="disabled")
+        self.stop_button.pack(side="right")
 
-        settings = ttk.LabelFrame(body, text="الاتصال", padding=14)
-        settings.pack(fill="x", pady=(0, 12))
+        enrollment = ttk.LabelFrame(body, text="رمز ربط iPhone", padding=14)
+        enrollment.pack(fill="x", pady=(0, 12))
+        ttk.Label(enrollment, text="أدخل هذه الأرقام الثمانية في تطبيق وصلة على هاتفك.", anchor="center").pack(fill="x")
+        ttk.Entry(enrollment, textvariable=self.pairing, state="readonly", justify="center", font=("Consolas", 32, "bold")).pack(fill="x", pady=(12, 8))
+        ttk.Label(enrollment, textvariable=self.pairing_note, anchor="center", justify="center", wraplength=670, foreground="#637268").pack(fill="x", pady=(0, 8))
+        pairing_actions = ttk.Frame(enrollment)
+        pairing_actions.pack(anchor="center")
+        self.pair_button = ttk.Button(pairing_actions, text="رمز ربط جديد", command=self.create_pairing, state="disabled")
+        self.pair_button.pack(side="right", padx=(8, 0))
+        self.copy_pair_button = ttk.Button(pairing_actions, text="نسخ الرمز", command=lambda: self.copy_value(self.pairing, True), state="disabled")
+        self.copy_pair_button.pack(side="right")
+        self.desktop_check = ttk.Checkbutton(body, text="السماح بعرض سطح المكتب والتحكم بالفأرة ولوحة المفاتيح", variable=self.desktop, state="disabled")
+        self.desktop_check.pack(anchor="e", pady=(0, 4))
+        ttk.Label(body, text="يُطبَّق هذا الخيار عند تشغيل وصلة، وللهاتف المقترن فقط.", anchor="e", foreground="#637268").pack(fill="x", pady=(0, 10))
+        ttk.Label(body, textvariable=self.network_note, anchor="e", justify="right", wraplength=710, foreground="#637268").pack(fill="x", pady=(0, 8))
+
+        self.advanced_button = ttk.Button(body, text="تفاصيل متقدمة ▾", command=self.toggle_advanced)
+        self.advanced_button.pack(anchor="e", pady=(0, 10))
+        self.advanced_frame = ttk.Frame(body)
+        settings = ttk.LabelFrame(self.advanced_frame, text="إعدادات الاتصال", padding=12)
+        settings.pack(fill="x", pady=(0, 8))
         settings.columnconfigure(1, weight=1)
         ttk.Label(settings, text="عنوان الكمبيوتر", anchor="e").grid(row=0, column=2, sticky="e", padx=(12, 0))
         self.host_box = ttk.Combobox(settings, textvariable=self.host, state="disabled", width=24)
@@ -167,37 +202,23 @@ class Companion:
         ttk.Label(settings, text="المنفذ", anchor="e").grid(row=1, column=2, sticky="e", padx=(12, 0), pady=9)
         self.port_entry = ttk.Entry(settings, textvariable=self.port, width=12, justify="left", state="disabled")
         self.port_entry.grid(row=1, column=1, sticky="w", pady=9)
-        self.desktop_check = ttk.Checkbutton(settings, text="السماح بعرض سطح المكتب والتحكم بالفأرة ولوحة المفاتيح", variable=self.desktop, state="disabled")
-        self.desktop_check.grid(row=2, column=0, columnspan=3, sticky="e", pady=(4, 7))
-        ttk.Label(settings, text="يُطبَّق هذا الخيار عند تشغيل الخدمة، وللأجهزة المقترنة فقط.", anchor="e", foreground="#637268").grid(row=3, column=0, columnspan=3, sticky="ew")
-        ttk.Label(settings, textvariable=self.network_note, anchor="e", justify="right", wraplength=710, foreground="#637268").grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 0))
-        actions = ttk.Frame(settings)
-        actions.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(13, 0))
-        self.start_button = ttk.Button(actions, text="تشغيل وصلة", command=self.start, style="Accent.TButton", state="disabled")
-        self.start_button.pack(side="right", padx=(8, 0))
-        self.stop_button = ttk.Button(actions, text="إيقاف وصلة", command=self.stop, state="disabled")
-        self.stop_button.pack(side="right")
-
-        enrollment = ttk.LabelFrame(body, text="اقتران الهاتف", padding=14)
-        enrollment.pack(fill="x", pady=(0, 12))
-        enrollment.columnconfigure(1, weight=1)
+        identity = ttk.LabelFrame(self.advanced_frame, text="بيانات الربط اليدوي", padding=12)
+        identity.pack(fill="x", pady=(0, 8))
+        identity.columnconfigure(1, weight=1)
         self.copy_buttons = []
-        for row, (label, variable, secret) in enumerate([
-            ("عنوان الاتصال", self.uri, False),
-            ("بصمة الشهادة SHA‑256", self.fingerprint, False),
-            ("رمز الاقتران لمرة واحدة", self.pairing, True),
+        for row, (label, variable) in enumerate([
+            ("عنوان الاتصال", self.uri),
+            ("بصمة الشهادة SHA‑256", self.fingerprint),
         ]):
-            ttk.Label(enrollment, text=label, anchor="e").grid(row=row, column=2, sticky="e", padx=(10, 0), pady=4)
-            entry = ttk.Entry(enrollment, textvariable=variable, state="readonly", justify="left", font=("Consolas", 10))
+            ttk.Label(identity, text=label, anchor="e").grid(row=row, column=2, sticky="e", padx=(10, 0), pady=4)
+            entry = ttk.Entry(identity, textvariable=variable, state="readonly", justify="left", font=("Consolas", 10))
             entry.grid(row=row, column=1, sticky="ew", pady=4)
-            button = ttk.Button(enrollment, text="نسخ", command=lambda value=variable, sensitive=secret: self.copy_value(value, sensitive), state="disabled")
+            button = ttk.Button(identity, text="نسخ", command=lambda value=variable: self.copy_value(value), state="disabled")
             button.grid(row=row, column=0, padx=(0, 8), pady=4)
             self.copy_buttons.append(button)
-        ttk.Label(enrollment, textvariable=self.pairing_note, anchor="e", wraplength=710, foreground="#637268").grid(row=3, column=0, columnspan=3, sticky="ew", pady=(8, 3))
-        self.pair_button = ttk.Button(enrollment, text="إنشاء رمز اقتران جديد", command=self.create_pairing, state="disabled")
-        self.pair_button.grid(row=4, column=0, columnspan=3, sticky="e", pady=(4, 0))
 
         devices = ttk.LabelFrame(body, text="الأجهزة المقترنة", padding=12)
+        self.devices_frame = devices
         devices.pack(fill="both", expand=True)
         self.device_list = ttk.Treeview(devices, columns=("expires", "name"), show="headings", height=3, selectmode="none")
         self.device_list.heading("name", text="اسم الجهاز", anchor="e")
@@ -207,7 +228,16 @@ class Companion:
         self.device_list.pack(fill="both", expand=True)
         self.revoke_button = ttk.Button(devices, text="إلغاء اقتران جميع الأجهزة", command=self.revoke_all, state="disabled")
         self.revoke_button.pack(anchor="e", pady=(8, 0))
-        ttk.Label(body, text="لا يُفتح منفذ عام، ولا تُضاف خدمة تشغيل تلقائي. إغلاق هذه النافذة يطلب إيقاف الخدمة بأمان.", anchor="e", wraplength=750, foreground="#637268").pack(fill="x", pady=(12, 0))
+        ttk.Label(body, text="اترك هذه النافذة مفتوحة أثناء استخدام الهاتف. إغلاقها يوقف الاتصال.", anchor="e", wraplength=710, foreground="#637268").pack(fill="x", pady=(10, 0))
+
+    def toggle_advanced(self):
+        self.advanced_visible = not self.advanced_visible
+        if self.advanced_visible:
+            self.advanced_frame.pack(fill="x", before=self.devices_frame)
+            self.advanced_button.configure(text="إخفاء التفاصيل المتقدمة ▴")
+        else:
+            self.advanced_frame.pack_forget()
+            self.advanced_button.configure(text="تفاصيل متقدمة ▾")
 
     def _work(self, function, callback):
         def run():
@@ -232,14 +262,14 @@ class Companion:
         self.host_box.configure(values=self.addresses)
         self.host.set(self.addresses[0] if self.addresses else "127.0.0.1")
         self._network_message()
-        self.status.set("الخدمة متوقفة. اختر عنوان الاتصال ثم شغّل وصلة.")
+        self.status.set("جاهز. اضغط تشغيل وإظهار رمز الربط.")
         self._controls()
         self.refresh_devices()
 
     def _network_message(self):
         tailnet = any(ipaddress.ip_address(value) in TAILNET for value in self.addresses)
         if tailnet:
-            self.network_note.set("للوصول من خارج المنزل، استخدم عنوان Tailscale بعد تسجيل الجهازين في الشبكة الخاصة نفسها.")
+            self.network_note.set("اتصال Tailscale متاح. أبقِ Tailscale متصلًا على الكمبيوتر وiPhone بالحساب نفسه.")
         else:
             self.network_note.set("لم يظهر عنوان Tailscale بعد. الوصول من خارج المنزل يحتاج Tailscale على الكمبيوتر وiPhone؛ العنوان المحلي يعمل داخل الشبكة فقط.")
 
@@ -274,7 +304,7 @@ class Companion:
         self.revoke_button.configure(state="normal" if self.store is not None else "disabled")
         self.copy_buttons[0].configure(state="normal" if self.ready and not self.stopping else "disabled")
         self.copy_buttons[1].configure(state="normal" if self.ready and not self.stopping else "disabled")
-        self.copy_buttons[2].configure(state="normal" if self.current_pairing and self.ready and not self.stopping else "disabled")
+        self.copy_pair_button.configure(state="normal" if self.current_pairing and self.ready and not self.stopping else "disabled")
 
     def start(self):
         if self.store is None or (self.process and self.process.poll() is None):
@@ -378,8 +408,9 @@ class Companion:
         self.fingerprint.set(fingerprint)
         self.ready = True
         self.status.set("وصلة يعمل باتصال مشفّر. " + ("التحكم بسطح المكتب مسموح للأجهزة المقترنة." if status.get("desktop_enabled") else "عرض سطح المكتب والتحكم به غير مفعّلين."))
-        self.pairing_note.set("انسخ العنوان والبصمة إلى تطبيق الهاتف، ثم أنشئ رمز اقتران.")
+        self.pairing_note.set("جارٍ إنشاء رمز الربط…")
         self._controls()
+        self.create_pairing()
 
     def stop(self):
         if not self.process or self.process.poll() is not None or self.stopping:
@@ -403,6 +434,7 @@ class Companion:
         if not self.ready or self.stopping or self.pairing_pending:
             return
         self.pairing_pending = True
+        self.pairing_note.set("جارٍ إنشاء رمز الربط…")
         self._controls()
         self._work(lambda: self.store.create_pairing_code(), self._pairing_created)
 
@@ -414,7 +446,7 @@ class Companion:
             self._clear_pairing()
             self.current_pairing = value
             self.pairing.set(value)
-            self.pairing_expires = time.time() + 300
+            self.pairing_expires = time.time() + PAIRING_LIFETIME
         self._controls()
 
     def copy_value(self, variable, sensitive=False):
@@ -507,7 +539,7 @@ class Companion:
                 self.command = []
                 self.ready = self.stopping = False
                 self._clear_identity()
-                self.pairing_note.set("شغّل الخدمة، ثم أنشئ رمزًا لاقتران هاتفك.")
+                self.pairing_note.set("اضغط تشغيل، ثم أدخل الرمز الظاهر هنا في تطبيق iPhone.")
                 if code == 0:
                     self.status.set("توقفت وصلة وأُغلق الوصول إلى الكمبيوتر.")
                 else:

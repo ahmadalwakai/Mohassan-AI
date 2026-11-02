@@ -71,32 +71,66 @@ struct AppScreen<Content: View>: View {
     }
 }
 struct PairingView: View {
+    private enum Field: Hashable { case code, address, fingerprint }
     @EnvironmentObject private var store: WaslaStore
     @State private var address = ""
     @State private var fingerprint = ""
     @State private var code = ""
-    @State private var deviceName = "iPhone"
+    @State private var advanced = false
+    @State private var loadedDefaults = false
+    @FocusState private var focusedField: Field?
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     Image(systemName: "link").font(.system(size: 34, weight: .medium)).foregroundStyle(Forest.accent).padding(18).background(Forest.soft, in: RoundedRectangle(cornerRadius: 22))
-                    ScreenTitle(title: "جهازك. بين يديك.", subtitle: "اربط iPhone بالكمبيوتر لبدء المحادثة والتحكم وإنشاء الصور.")
+                    ScreenTitle(title: "رمز واحد، وتبدأ.", subtitle: "افتح وصلة على الكمبيوتر وأدخل رمز الربط الظاهر هناك.")
                     Card {
-                        Text("افتح لوحة وصلة على الكمبيوتر وانسخ البيانات منها مباشرة.").font(.subheadline).foregroundStyle(.secondary)
-                        field("عنوان الكمبيوتر") { TextField("https://192.168.1.10:47621", text: $address).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled().environment(\.layoutDirection, .leftToRight) }
-                        field("بصمة الشهادة · SHA-256") { TextField("64 حرفًا كما تظهر على الكمبيوتر", text: $fingerprint, axis: .vertical).lineLimit(2...3).textInputAutocapitalization(.never).autocorrectionDisabled().font(.system(.caption, design: .monospaced)).environment(\.layoutDirection, .leftToRight) }
-                        field("رمز الاقتران لمرة واحدة") { SecureField("الرمز الكامل", text: $code).textInputAutocapitalization(.never).autocorrectionDisabled().environment(\.layoutDirection, .leftToRight) }
-                        field("اسم هذا الهاتف") { TextField("iPhone", text: $deviceName) }
+                        Label(store.bundledIdentity?.name ?? "الكمبيوتر", systemImage: "desktopcomputer").font(.headline)
+                        field("رمز الربط") {
+                            TextField("٨ أرقام", text: $code)
+                                .keyboardType(.numberPad).textContentType(.oneTimeCode)
+                                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                .font(.title2.monospacedDigit()).environment(\.layoutDirection, .leftToRight)
+                                .focused($focusedField, equals: .code)
+                        }
+                        Text("الرمز صالح لمرة واحدة. يُحفظ الربط للمرات القادمة.").font(.footnote).foregroundStyle(.secondary)
                     }
                     Button {
-                        Task { await store.pair(address: address, fingerprint: fingerprint, code: code, name: deviceName); if store.paired { code = "" } }
+                        focusedField = nil
+                        let submittedAddress = address
+                        let submittedFingerprint = fingerprint
+                        let submittedCode = code
+                        Task { await store.pair(address: submittedAddress, fingerprint: submittedFingerprint, code: submittedCode); if store.paired { code = "" } }
                     } label: {
-                        if store.isPairing { ProgressView().tint(Forest.onAccent) } else { Label("ربط الجهاز", systemImage: "link") }
-                    }.buttonStyle(ForestButton()).disabled(store.isPairing || address.isEmpty || fingerprint.isEmpty || code.isEmpty)
-                    Text("تحقق من البصمة على شاشة الكمبيوتر الموثوقة. لا تُنسخ من رسالة مجهولة. يلزم اتصال شبكي يصل إلى الكمبيوتر.").font(.footnote).foregroundStyle(.secondary)
+                        if store.isPairing { ProgressView().tint(Forest.onAccent) } else { Label("ربط الكمبيوتر", systemImage: "link") }
+                    }.buttonStyle(ForestButton()).disabled(store.isPairing || address.isEmpty || fingerprint.isEmpty || !PairingCode.isValid(code))
+                    Text("شغّل Tailscale على الهاتف والكمبيوتر، واترك وصلة مفتوحًا على الكمبيوتر.").font(.footnote).foregroundStyle(.secondary)
+                    if store.bundledIdentity == nil {
+                        Text("إعداد الكمبيوتر غير متوفر في هذه النسخة. أدخله من «تغيير الكمبيوتر».").font(.footnote).foregroundStyle(.secondary)
+                    }
+                    DisclosureGroup("تغيير الكمبيوتر", isExpanded: $advanced) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text(store.bundledIdentity == nil ? "انسخ عنوان الكمبيوتر وبصمته من لوحة وصلة." : "بيانات كمبيوترك مهيأة مسبقًا. غيّرها فقط للاتصال بكمبيوتر آخر أو بعد تغيير شهادته.").font(.footnote).foregroundStyle(.secondary)
+                            field("عنوان الكمبيوتر") { TextField("https://192.168.1.10:47621", text: $address).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled().environment(\.layoutDirection, .leftToRight).focused($focusedField, equals: .address) }
+                            field("بصمة الشهادة · SHA-256") { TextField("64 حرفًا كما تظهر على الكمبيوتر", text: $fingerprint, axis: .vertical).lineLimit(2...3).textInputAutocapitalization(.never).autocorrectionDisabled().font(.system(.caption, design: .monospaced)).environment(\.layoutDirection, .leftToRight).focused($focusedField, equals: .fingerprint) }
+                            Text("انسخ البصمة من شاشة الكمبيوتر الموثوقة. لن يُقبل اتصال بشهادة مختلفة.").font(.footnote).foregroundStyle(.secondary)
+                        }.padding(.top, 14)
+                    }.padding(18).background(Forest.surface, in: RoundedRectangle(cornerRadius: 18))
                 }.padding(24).frame(maxWidth: 620).frame(maxWidth: .infinity)
+                    .disabled(store.isPairing)
             }.background(Forest.background).navigationTitle("وصلة").navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("تم") { focusedField = nil } }
+                }
+                .onAppear {
+                    guard !loadedDefaults else { return }
+                    loadedDefaults = true
+                    if let preset = store.bundledIdentity {
+                        address = preset.baseURL.absoluteString
+                        fingerprint = preset.fingerprint
+                    } else { advanced = true }
+                }
         }
     }
     private func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {

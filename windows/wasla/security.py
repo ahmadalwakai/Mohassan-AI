@@ -21,6 +21,11 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 
+PAIRING_CODE_DIGITS = 8
+PAIRING_LIFETIME = 300
+PAIRING_ATTEMPT_LIMIT = 5
+
+
 class AuthError(ValueError):
     pass
 
@@ -155,8 +160,10 @@ class AuthStore:
         self.root = Path(root).resolve()
         protect_directory(self.root)
 
-    def create_pairing_code(self, lifetime=300):
-        code = secrets.token_urlsafe(32)
+    def create_pairing_code(self, lifetime=PAIRING_LIFETIME):
+        # Uniform decimal codes are easy to type; the global attempt budget and
+        # short expiry remain enforced under the same cross-process lock.
+        code = f"{secrets.randbelow(10 ** PAIRING_CODE_DIGITS):0{PAIRING_CODE_DIGITS}d}"
         with state_lock(self.root):
             atomic_json(self.root / "pairing.json", {"sha256": hashlib.sha256(code.encode()).hexdigest(),
                 "expires_at": time.time() + lifetime, "attempts": 0})
@@ -167,7 +174,7 @@ class AuthStore:
             raise AuthError("Invalid pairing data.")
         with state_lock(self.root):
             enrollment = read_json(self.root / "pairing.json", {})
-            if enrollment.get("expires_at", 0) <= time.time() or enrollment.get("attempts", 0) >= 5 or not enrollment.get("sha256"):
+            if enrollment.get("expires_at", 0) <= time.time() or enrollment.get("attempts", 0) >= PAIRING_ATTEMPT_LIMIT or not enrollment.get("sha256"):
                 raise AuthError("Pairing is closed or expired. Create a new code on Windows.")
             enrollment["attempts"] += 1
             atomic_json(self.root / "pairing.json", enrollment)

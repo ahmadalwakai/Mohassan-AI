@@ -42,6 +42,7 @@ final class WaslaStore: ObservableObject {
     private let identityKey = "wasla.server.identity"
     private let pendingKey = "wasla.pending.image"
     private let lastImageKey = "wasla.last.image"
+    let bundledIdentity = BundledConnection.load()
 
     var paired: Bool { identity != nil && client != nil }
     var computerBusy: Bool { chatBusy || imagePreparing || imageBusy || imageSubmitting || status?.busy.isBusy == true }
@@ -70,15 +71,15 @@ final class WaslaStore: ObservableObject {
     static func validToken(_ token: String) -> Bool {
         token.utf8.count >= 32 && token.utf8.count <= 4096 && !token.unicodeScalars.contains { CharacterSet.whitespacesAndNewlines.union(.controlCharacters).contains($0) }
     }
-    func pair(address: String, fingerprint: String, code: String, name: String) async {
+    func pair(address: String, fingerprint: String, code: String) async {
         guard !isPairing else { return }
         isPairing = true
         defer { isPairing = false }
         do {
             let checked = try ServerIdentity.validate(address: address, fingerprint: fingerprint)
-            let pairingCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard (16...512).contains(pairingCode.utf8.count), !pairingCode.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.union(.controlCharacters).contains($0) }) else { throw WaslaError.invalidPairingCode }
-            let deviceName = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+            let pairingCode = PairingCode.normalized(code)
+            guard PairingCode.isValid(pairingCode) else { throw WaslaError.invalidPairingCode }
+            let deviceName = String(UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
             let pairing = APIClient(identity: checked)
             let response: PairResponse = try await pairing.post("/v1/pair", body: PairRequest(code: pairingCode, device_name: deviceName.isEmpty ? "iPhone" : deviceName))
             guard Self.validToken(response.token) else { throw WaslaError.invalidResponse }
@@ -381,6 +382,8 @@ final class WaslaStore: ObservableObject {
         if let urlError = error as? URLError, urlError.code == .cancelled { return }
         if let urlError = error as? URLError, [.serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .secureConnectionFailed].contains(urlError.code) {
             errorMessage = WaslaError.certificate.localizedDescription
+        } else if let urlError = error as? URLError, [.notConnectedToInternet, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost, .timedOut, .dnsLookupFailed].contains(urlError.code) {
+            errorMessage = "تعذّر الوصول إلى الكمبيوتر. شغّل وصلة وTailscale على الكمبيوتر، وتأكد من اتصال Tailscale على الهاتف."
         } else { errorMessage = error.localizedDescription }
     }
 }

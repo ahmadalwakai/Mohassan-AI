@@ -8,7 +8,7 @@ enum WaslaError: LocalizedError {
         switch self {
         case .invalidAddress: return "أدخل عنوان HTTPS فقط، دون اسم مستخدم أو مسار أو معاملات إضافية."
         case .invalidFingerprint: return "بصمة الشهادة يجب أن تتكون من 64 حرفًا من الأرقام والحروف a–f. انسخها من شاشة الكمبيوتر الموثوقة."
-        case .invalidPairingCode: return "أدخل رمز الاقتران الكامل الظاهر على الكمبيوتر."
+        case .invalidPairingCode: return "أدخل رمز الربط من ٨ أرقام كما يظهر على الكمبيوتر."
         case .invalidResponse: return "وصل رد غير متوقع من الكمبيوتر."
         case .notPaired: return "اربط الكمبيوتر أولًا."
         case .certificate: return "تعذّر التحقق من هوية الكمبيوتر أو صلاحية شهادته. راجع العنوان والبصمة والوقت على الجهازين."
@@ -38,6 +38,37 @@ struct ServerIdentity: Codable, Sendable {
         normalized.scheme = "https"
         normalized.path = ""
         return ServerIdentity(baseURL: normalized.url ?? url, fingerprint: pin, deviceID: deviceID, name: name)
+    }
+}
+
+struct BundledConnection: Decodable {
+    let server_url: String
+    let certificate_sha256: String
+    let computer_name: String
+
+    static func load(from bundle: Bundle = .main) -> ServerIdentity? {
+        guard let url = bundle.url(forResource: "ConnectionDefaults", withExtension: "json"),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? decodeIdentity(from: data)
+    }
+
+    static func decodeIdentity(from data: Data) throws -> ServerIdentity {
+        let settings = try JSONDecoder().decode(Self.self, from: data)
+        return try ServerIdentity.validate(address: settings.server_url, fingerprint: settings.certificate_sha256, name: settings.computer_name)
+    }
+}
+
+enum PairingCode {
+    private static let localizedDigits = Dictionary(uniqueKeysWithValues: zip("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789"))
+
+    static func normalized(_ value: String) -> String {
+        String(value.trimmingCharacters(in: .whitespacesAndNewlines).map { localizedDigits[$0] ?? $0 })
+    }
+
+    static func isValid(_ value: String) -> Bool {
+        let code = normalized(value)
+        if code.utf8.count == 8, code.utf8.allSatisfy({ (48...57).contains($0) }) { return true }
+        return (16...512).contains(code.utf8.count) && code.utf8.allSatisfy { (33...126).contains($0) }
     }
 }
 
