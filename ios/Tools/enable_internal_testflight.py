@@ -13,6 +13,7 @@ https://developer.apple.com/documentation/appstoreconnectapi/post-v1-betagroups-
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 
@@ -25,10 +26,59 @@ BUILD_NUMBER = "5"
 GROUP_ID = "892d8e1f-c4bf-4033-bac2-0ee41833f9aa"
 GROUP_NAME = "Wasla Internal"
 API_ORIGIN = "https://api.appstoreconnect.apple.com"
+INTERNAL_STATES = {
+    "PROCESSING", "PROCESSING_EXCEPTION", "MISSING_EXPORT_COMPLIANCE",
+    "READY_FOR_BETA_TESTING", "IN_BETA_TESTING", "EXPIRED", "IN_EXPORT_COMPLIANCE_REVIEW",
+}
+DIAGNOSTIC_PARAMETERS = {
+    "include", "limit", "filter[app]", "filter[id]", "filter[version]",
+    "filter[processingState]", "filter[builds]",
+}
 
 
 class DistributionError(RuntimeError):
     """Only fixed, non-secret diagnostics are included in errors."""
+
+
+def request_stage(method, path):
+    stages = {
+        ("GET", f"/v1/apps/{APP_ID}"): "verify-wasla-app",
+        ("GET", f"/v1/betaGroups/{GROUP_ID}"): "verify-internal-group",
+        ("GET", "/v1/builds"): "find-processed-build-5",
+        ("GET", f"/v1/betaGroups/{GROUP_ID}/relationships/builds"): "read-group-build-membership",
+        ("POST", f"/v1/betaGroups/{GROUP_ID}/relationships/builds"): "associate-build-with-internal-group",
+    }
+    if method == "GET" and re.fullmatch(r"/v1/builds/[A-Za-z0-9-]{1,128}/buildBetaDetail", path):
+        return "verify-internal-testflight-state"
+    if (method, path) not in stages:
+        raise DistributionError("Unexpected Apple API request; no request sent.")
+    return stages[(method, path)]
+
+
+def safe_error_diagnostic(response):
+    # Only known parameter names and short enum-like codes can leave this helper.
+    # Apple error details, titles, URLs, headers, and response bodies never do.
+    if len(response.content) > 64_000:
+        return ""
+    try:
+        document = response.json()
+    except ValueError:
+        return ""
+    errors = document.get("errors") if isinstance(document, dict) else None
+    if not isinstance(errors, list):
+        return ""
+    diagnostics = []
+    for error in errors[:3]:
+        if not isinstance(error, dict):
+            continue
+        code = error.get("code")
+        if isinstance(code, str) and re.fullmatch(r"[A-Z0-9_.-]{1,80}", code):
+            diagnostics.append("code=" + code)
+        source = error.get("source")
+        parameter = source.get("parameter") if isinstance(source, dict) else None
+        if isinstance(parameter, str) and parameter in DIAGNOSTIC_PARAMETERS:
+            diagnostics.append("parameter=" + parameter)
+    return (" " + "; ".join(diagnostics)) if diagnostics else ""
 
 
 class AppleAPI:
@@ -59,6 +109,7 @@ class AppleAPI:
             raise DistributionError("Unexpected Apple API request.")
         if method == "POST" and path != f"/v1/betaGroups/{GROUP_ID}/relationships/builds":
             raise DistributionError("Only the existing Wasla group relationship may be changed.")
+        print("Distribution stage: " + request_stage(method, path) + ".", flush=True)
         # No redirects or automatic request retries; normal certificate validation.
         response = self.session.request(
             method, API_ORIGIN + path, params=params, json=body,
@@ -66,7 +117,11 @@ class AppleAPI:
         )
         expected = 200 if method == "GET" else 204
         if response.status_code != expected:
-            raise DistributionError(f"Apple API {method} failed (HTTP {response.status_code}).")
+            # Paths contain only fixed app/group IDs or the verified build ID.
+            # Never include headers, tokens, request data, or raw response bodies.
+            raise DistributionError(
+                f"Apple API {method} {path} failed (HTTP {response.status_code})."
+                + safe_error_diagnostic(response))
         if method == "POST":
             return None
         if len(response.content) > 2_000_000:
@@ -106,12 +161,27 @@ def related_id(item, relationship):
 
 
 def has_group(api, build_id):
-    document = api.request("GET", "/v1/betaGroups", params={
-        "filter[app]": APP_ID, "filter[id]": GROUP_ID,
-        "filter[builds]": build_id, "limit": 200,
-    })
-    return any(item.get("type") == "betaGroups" and item.get("id") == GROUP_ID
+    document = api.request("GET", f"/v1/betaGroups/{GROUP_ID}/relationships/builds",
+                           params={"limit": 200})
+    return any(item.get("type") == "builds" and item.get("id") == build_id
                for item in unpaginated_items(document))
+
+
+def report_internal_readiness(api, build_id):
+    document = api.request("GET", f"/v1/builds/{build_id}/buildBetaDetail")
+    detail = document.get("data")
+    if not isinstance(detail, dict) or detail.get("type") != "buildBetaDetails":
+        raise DistributionError("Apple returned invalid internal testing state data.")
+    state = detail.get("attributes", {}).get("internalBuildState")
+    if not isinstance(state, str) or state not in INTERNAL_STATES:
+        raise DistributionError("Apple has not returned a recognized internal testing state.")
+    print("Internal TestFlight state: " + state + ".", flush=True)
+    if state == "IN_BETA_TESTING":
+        print("Confirmed: Wasla 1.0 (5) is available to the existing Wasla Internal testers.", flush=True)
+        return True
+    print("The group association is confirmed, but Apple has not activated internal testing. "
+          "Availability is pending; rerunning this workflow is safe.", flush=True)
+    return False
 
 
 def enable_internal_testflight(api):
@@ -153,23 +223,25 @@ def enable_internal_testflight(api):
             character.isascii() and (character.isalnum() or character == "-") for character in build_id):
         raise DistributionError("Apple returned an invalid build identifier.")
     if has_group(api, build_id):
-        print("Wasla 1.0 (5) is already assigned to Wasla Internal. No change needed.")
-        return
+        print("Wasla 1.0 (5) is already assigned to Wasla Internal. No change needed.", flush=True)
+        return report_internal_readiness(api, build_id)
 
     api.request("POST", f"/v1/betaGroups/{GROUP_ID}/relationships/builds", body={
         "data": [{"type": "builds", "id": build_id}],
     })
     if not has_group(api, build_id):
         raise DistributionError("Apple accepted the association, but readback has not confirmed it. Rerun safely.")
-    print("Confirmed: Wasla 1.0 (5) is assigned to Wasla Internal.")
+    print("Confirmed: Wasla 1.0 (5) is assigned to Wasla Internal.", flush=True)
+    return report_internal_readiness(api, build_id)
 
 
 def main():
     api = None
     try:
         api = AppleAPI()
-        enable_internal_testflight(api)
-        return 0
+        ready = enable_internal_testflight(api)
+        # A pending state must not appear as a completed distribution workflow.
+        return 0 if ready else 2
     except (DistributionError, SigningError) as error:
         print(str(error), file=sys.stderr)
         return 1
