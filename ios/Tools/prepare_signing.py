@@ -12,9 +12,10 @@ Then: xcode-project use-profiles --project ios/Wasla.xcodeproj
 
 Uses documented app-store-connect CLI commands and JSON resource output:
 https://github.com/codemagic-ci-cd/cli-tools/tree/master/docs/app-store-connect
-Only public certificate DER and provisioning profiles are read by this helper.
-The CLI consumes the existing integration credentials via named environment
-variables. Output is captured; failures expose only bounded, redacted error
+Only public certificate DER and provisioning profiles are saved by this helper.
+The existing integration API key is normalized and checked only in memory, then
+consumed by the CLI via its named environment variable. Output is captured;
+failures expose only bounded, redacted error
 lines plus fixed stage names and exit codes, never raw command arguments.
 """
 from __future__ import annotations
@@ -39,10 +40,101 @@ PROFILE_TYPE = "IOS_APP_STORE"
 CERTIFICATE_TYPES = {"DISTRIBUTION", "IOS_DISTRIBUTION"}
 RESOURCE_ID = re.compile(r"[A-Za-z0-9-]{1,128}\Z")
 MAX_OUTPUT = 16 * 1024 * 1024
+MAX_KEY_TEXT = 64 * 1024
+PRIVATE_KEY_ENV = "APP_STORE_CONNECT_PRIVATE_KEY"
 
 
 class SigningError(RuntimeError):
     """Contains only safe stage information and a sanitized error excerpt."""
+
+
+def canonical_private_key(value: str) -> str | None:
+    """Accept one unencrypted EC/PKCS8 PEM block; never interpret a file path."""
+    match = re.fullmatch(
+        r"-----BEGIN (PRIVATE KEY|EC PRIVATE KEY)-----\s*"
+        r"([A-Za-z0-9+/=\s]+?)\s*-----END \1-----", value.strip())
+    if not match:
+        return None
+    body = re.sub(r"\s+", "", match.group(2))
+    try:
+        if not base64.b64decode(body, validate=True):
+            return None
+    except (ValueError, binascii.Error):
+        return None
+    wrapped = "\n".join(body[index:index + 64] for index in range(0, len(body), 64))
+    return f"-----BEGIN {match.group(1)}-----\n{wrapped}\n-----END {match.group(1)}-----\n"
+
+
+def normalize_private_key(value: str) -> tuple[str, str]:
+    """Return PEM plus a fixed shape code. No values or paths enter errors."""
+    if not isinstance(value, str) or not value.strip():
+        raise SigningError("Integration key format: missing.")
+    if len(value) > MAX_KEY_TEXT:
+        raise SigningError("Integration key format: oversized.")
+    candidate = value.strip().removeprefix("\ufeff").strip()
+    normalized = canonical_private_key(candidate)
+    if normalized:
+        return normalized, "pem"
+    # Replace only explicit newline escapes, never arbitrary backslash sequences.
+    if candidate.startswith("-----BEGIN ") and "\\n" in candidate:
+        normalized = canonical_private_key(candidate.replace("\\r\\n", "\n").replace("\\n", "\n"))
+        if normalized:
+            return normalized, "escaped-pem"
+    if candidate.startswith('"') and candidate.endswith('"'):
+        try:
+            decoded = json.loads(candidate)
+        except (ValueError, UnicodeError):
+            decoded = None
+        if isinstance(decoded, str):
+            normalized = canonical_private_key(decoded)
+            if normalized:
+                return normalized, "json-pem"
+    # A base64 value is accepted only if it decodes to the complete PEM envelope.
+    try:
+        decoded = base64.b64decode(re.sub(r"\s+", "", candidate), validate=True).decode("ascii")
+    except (ValueError, UnicodeError, binascii.Error):
+        decoded = ""
+    normalized = canonical_private_key(decoded)
+    if normalized:
+        return normalized, "base64-pem"
+    if candidate.startswith(("@file:", "file:", "/", "~/")) or re.match(r"^[A-Za-z]:[\\/]", candidate):
+        raise SigningError("Integration key format: file-reference-unsupported.")
+    if "-----BEGIN " in candidate:
+        raise SigningError("Integration key format: malformed-or-unsupported-pem.")
+    raise SigningError("Integration key format: unrecognized.")
+
+
+def validate_private_key(pem: str) -> None:
+    """Validate Apple's EC API key through stdin; discard every output byte."""
+    print("Signing stage: validate-integration-key.", flush=True)
+    # macOS /usr/bin/openssl is LibreSSL, whose pkey command has no -check.
+    # Its ec -check supports Apple's EC API key (including PKCS8 input).
+    # -noout prevents key serialization; empty -passin prevents prompting.
+    try:
+        result = subprocess.run(
+            ["/usr/bin/openssl", "ec", "-check", "-noout", "-passin", "pass:"],
+            input=pem.encode("ascii"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            check=False, timeout=15)
+    except subprocess.TimeoutExpired:
+        raise SigningError("Integration key validation: timeout.") from None
+    except OSError:
+        raise SigningError("Integration key validation: validator-unavailable.") from None
+    if result.returncode != 0:
+        raise SigningError(f"Integration key validation: invalid-ec-key (exit {result.returncode}).")
+
+
+def prepare_integration_key(environment=None, validator: Callable = validate_private_key) -> None:
+    environment = os.environ if environment is None else environment
+    # Official Codemagic integration uses PRIVATE_KEY, not API_KEY. Report only
+    # presence of the latter if supplied; never inspect or adopt unrelated keys.
+    print("Integration API_KEY variable present: " +
+          str(bool(environment.get("APP_STORE_CONNECT_API_KEY"))).lower() + ".", flush=True)
+    pem, shape = normalize_private_key(environment.get(PRIVATE_KEY_ENV, ""))
+    print("Integration key format: " + shape + ".", flush=True)
+    validator(pem)
+    # Process-local change only: no file, CM_ENV export, shell argument, or log.
+    environment[PRIVATE_KEY_ENV] = pem
+    print("Integration key validation: valid-ec-key.", flush=True)
 
 
 def command_stage(arguments: list[str]) -> tuple[str, str]:
@@ -455,6 +547,7 @@ def main() -> int:
     now = datetime.now(timezone.utc)
     api = AppleCLI()
     report_cli_version()
+    prepare_integration_key()
     installed = installed_identities()
     certificate, der = select_certificate(api.call("certificates", "certificates", "list",
                                                    "--profile-type", PROFILE_TYPE), installed, now)
