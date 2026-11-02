@@ -8,6 +8,7 @@ new certificate, device registration, capability change, or publishing occurs.
 
 Run: python3 ios/Tools/prepare_signing.py
 Then: xcode-project use-profiles --project ios/Wasla.xcodeproj
+      --profile "$CM_BUILD_DIR/build/signing/Wasla.mobileprovision"
 
 Uses documented app-store-connect CLI commands and JSON resource output:
 https://github.com/codemagic-ci-cd/cli-tools/tree/master/docs/app-store-connect
@@ -323,9 +324,22 @@ def save_profile(resource: dict, content: bytes, directory: Path) -> Path:
         raise SigningError("The signing API returned an invalid profile UUID.") from None
     directory.mkdir(parents=True, exist_ok=True)
     destination = directory / f"{profile_uuid}.mobileprovision"
+    return save_profile_file(destination, content)
+
+
+def save_build_profile(content: bytes, build_directory: Path) -> Path:
+    root = build_directory.resolve(strict=True)
+    destination = root / "build/signing/Wasla.mobileprovision"
+    if not destination.resolve().is_relative_to(root):
+        raise SigningError("The Wasla profile output must remain inside this build directory.")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    return save_profile_file(destination, content)
+
+
+def save_profile_file(destination: Path, content: bytes) -> Path:
     if destination.exists() and destination.read_bytes() == content:
         return destination
-    descriptor, temporary = tempfile.mkstemp(prefix=".wasla-", dir=directory)
+    descriptor, temporary = tempfile.mkstemp(prefix=".wasla-", dir=destination.parent)
     try:
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(content)
@@ -353,6 +367,9 @@ def main() -> int:
     bundle = ensure_bundle(api)
     profile, content, created = ensure_profile(api, bundle, certificate, der, team, now)
     save_profile(profile, content, Path.home() / "Library/MobileDevice/Provisioning Profiles")
+    # Both copies come exclusively from ensure_profile's validated Wasla result.
+    # This exact path lets use-profiles exclude the bootstrap profile entirely.
+    save_build_profile(content, Path(os.environ["CM_BUILD_DIR"]))
     print(f"Wasla App Store signing profile ready ({'created' if created else 'reused'}).")
     return 0
 

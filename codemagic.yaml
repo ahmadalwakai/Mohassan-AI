@@ -56,6 +56,10 @@ workflows:
       ios_signing:
         certificates:
           - vibeset_distribution
+        # Codemagic requires a stored profile alongside the existing certificate.
+        # The build applies only the freshly verified Wasla profile below.
+        provisioning_profiles:
+          - vibeset_app_store
       vars:
         XCODE_PROJECT: ios/Wasla.xcodeproj
         XCODE_SCHEME: Wasla
@@ -69,6 +73,7 @@ workflows:
           set -euo pipefail
           xcode-project use-profiles \
             --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
+            --profile "$CM_BUILD_DIR/build/signing/Wasla.mobileprovision" \
             --archive-method app-store
       - name: Build the signed IPA without publishing
         script: |
