@@ -1,5 +1,6 @@
 from wasla.intelligence import Intelligence, compare_evidence, research_queries, _near_copy
 from test_intelligence import FakeServices, OfflineAsyncCase, message
+from wasla.services import ServiceError
 
 
 class EvidenceTests(OfflineAsyncCase):
@@ -27,6 +28,37 @@ class EvidenceTests(OfflineAsyncCase):
         original = 'ابحث عن وثائق Tailscale لتوصيل iPhone بكمبيوتر Windows'
         self.assertEqual(research_queries(original), [original, 'Tailscale iPhone Windows documentation'])
         self.assertEqual(research_queries('ما معنى Windows؟'), ['ما معنى Windows؟'])
+
+    async def test_single_specific_subject_gets_only_intent_preserving_fallback(self):
+        for subject in ('Tailscale', 'tailscale'):
+            original = f'ابحث عن وثائق {subject} الرسمية'
+            self.assertEqual(research_queries(original), [original, f'{subject} documentation'])
+        for original in ('ما معنى Tailscale؟', 'ابحث عن وثائق Windows الرسمية',
+                         'ابحث عن وثائق documentation', 'أحدث أخبار software', 'سعر VPN'):
+            self.assertEqual(research_queries(original), [original])
+
+    async def test_single_brand_document_search_recovers_after_unusable_original(self):
+        original = 'ابحث عن وثائق Tailscale الرسمية'
+        row = {'title': 'Tailscale documentation', 'url': 'https://tailscale.com/kb',
+               'snippet': 'Tailscale documentation explains how to connect devices securely.'}
+        for failed_response in ('empty', 'irrelevant'):
+            services = FakeServices()
+            async def search(query):
+                services.searches.append(query)
+                if query == original:
+                    if failed_response == 'irrelevant':
+                        raise ServiceError('search_irrelevant', 'Unrelated provider results')
+                    return {'query': query, 'results': [], 'provider': 'Fake search'}
+                return {'query': query, 'results': [row], 'provider': 'Fake search'}
+            services.search = search
+            response = await Intelligence(services).answer(message(original), device_id='one')
+            self.assertEqual(services.searches, [original, 'Tailscale documentation'])
+            self.assertEqual(response['usage']['search_calls'], 2)
+            self.assertEqual(response['model'], 'web-retrieval')
+            self.assertEqual(response['sources'][0]['url'], row['url'])
+            self.assertIn('search_query_simplified', response['warnings'])
+            self.assertNotIn('search_unavailable', response['warnings'])
+            self.assertFalse(services.chats)
 
     async def test_document_search_returns_sources_without_unnecessary_model(self):
         services = FakeServices()

@@ -20,7 +20,7 @@ from difflib import SequenceMatcher
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
-from .services import MODEL, ServiceError, _messages, _safe_result_url
+from .services import MODEL, ServiceError, _messages, _safe_result_url, _SEARCH_STOPWORDS, _PLATFORM_TERMS
 
 
 _DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹٫×÷−", "01234567890123456789.*/-")
@@ -265,12 +265,21 @@ def research_queries(query):
     """Preserve the full question, then one bounded mixed-language fallback."""
     queries = [query[:400]]
     names = list(dict.fromkeys(re.findall(r"\b[A-Za-z][A-Za-z0-9._-]{2,}\b", query)))[:8]
-    if _arabic(query) and len(names) >= 2:
+    if _arabic(query) and names:
         hints = []
         for pattern, hint in ((r"وثائق|توثيق", "documentation"), (r"أخبار|اخبار|احدث|أحدث", "latest news"), (r"سعر|أسعار|اسعار", "price")):
             if re.search(pattern, query): hints.append(hint)
-        simplified = " ".join(names + hints)[:400]
-        if simplified != queries[0]: queries.append(simplified)
+        # One specific subject can be useful ("Tailscale documentation"). A
+        # generic word alone must not discard the Arabic question's meaning.
+        generic = _SEARCH_STOPWORDS | _PLATFORM_TERMS | {
+            "software", "hardware", "app", "apps", "application", "computer", "phone", "laptop",
+            "device", "internet", "network", "browser", "vpn", "api", "news", "price", "prices",
+            "latest", "current", "today", "download", "downloads", "online", "web", "technology",
+        }
+        specific_single = len(names) == 1 and bool(hints) and names[0].casefold() not in generic
+        if len(names) >= 2 or specific_single:
+            simplified = " ".join(names + hints)[:400]
+            if simplified != queries[0]: queries.append(simplified)
     return queries
 
 

@@ -19,6 +19,13 @@ export function MessageCard({ message, c, language }: { message: ChatMessage; c:
   const response = message.response;
   const evidence = response?.evidence;
   const formatter = new Intl.NumberFormat(language, { maximumFractionDigits: 2 });
+  const timing = response?.timing_ms;
+  const durationLabel = typeof timing === "number" && Number.isFinite(timing) && timing >= 0
+    ? timing < 1 ? (language === "ar" ? "أقل من ملّي ثانية" : "<1 ms")
+      : timing < 1000 ? `${formatter.format(timing)} ${language === "ar" ? "ملّي ثانية" : "ms"}`
+        : `${formatter.format(timing / 1000)} ${language === "ar" ? "ث" : "s"}`
+    : null;
+  const modelLabel = response?.model && !["deterministic", "local-retrieval", "web-retrieval"].includes(response.model) ? response.model : null;
   const cost = response?.usage?.estimated_cost_usd;
   const costLabel = typeof cost === "number" && Number.isFinite(cost) ? (cost > 0 && cost < 0.000001 ? "<0.000001" : new Intl.NumberFormat(language, { maximumFractionDigits: 6 }).format(cost)) + " USD" : c.unknown;
   async function copyAnswer() {
@@ -37,8 +44,8 @@ export function MessageCard({ message, c, language }: { message: ChatMessage; c:
     {response && <>
       <div className="answer-metadata">
         {evidence ? <span className={`evidence evidence-${evidence.level}`}><Icon name={evidence.level === "grounded" ? "check" : "shield"} size={14} />{evidence.level === "grounded" ? c.grounded : evidence.level === "limited" ? c.limited : c.unverified}</span> : <span>{c.noEvidence}</span>}
-        {typeof response.timing_ms === "number" && <span>{formatter.format(response.timing_ms / 1000)} {language === "ar" ? "ث" : "s"}</span>}
-        {response.model && <bdi>{response.model}</bdi>}
+        {durationLabel && <span>{durationLabel}</span>}
+        {modelLabel && <bdi>{modelLabel}</bdi>}
         {response.cache_hit === true && <span>{c.cached}</span>}
         {response.memory_saved === true && <span>{c.saved}</span>}
       </div>
