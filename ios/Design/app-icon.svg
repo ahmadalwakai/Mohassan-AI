@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Wasla — two connected links</title>
+  <rect width="1024" height="1024" fill="#173D2B"/>
+  <g transform="rotate(42 512 512)" fill="none" stroke-width="64" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M512 420 C594 420 660 486 660 568 V716 C660 798 594 864 512 864 C430 864 364 798 364 716 V568 C364 486 430 420 512 420 Z" stroke="#F0F6DE"/>
+    <path d="M512 160 C594 160 660 226 660 308 V456 C660 538 594 604 512 604 C430 604 364 538 364 456 V308 C364 226 430 160 512 160 Z" stroke="#A9DDB9"/>
+    <path d="M512 420 C594 420 660 486 660 568" stroke="#F0F6DE"/>
+  </g>
+</svg>

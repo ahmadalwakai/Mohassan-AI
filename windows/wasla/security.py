@@ -98,7 +98,10 @@ def read_json(path: Path, default):
 def local_addresses():
     addresses = {"127.0.0.1"}
     import psutil
-    candidates = {info[4][0] for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)}
+    try:
+        candidates = {info[4][0] for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)}
+    except socket.gaierror:
+        candidates = set()
     candidates.update(address.address for rows in psutil.net_if_addrs().values() for address in rows if address.family == socket.AF_INET)
     for candidate in candidates:
         ip = ipaddress.ip_address(candidate)

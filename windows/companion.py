@@ -7,12 +7,14 @@ Runtime credentials are kept outside outputs, in the private task state folder.
 from __future__ import annotations
 
 from datetime import datetime
+from dataclasses import dataclass
 import ipaddress
 import json
 import os
 from pathlib import Path
 import queue
 import subprocess
+import sys
 import threading
 import time
 import tkinter as tk
@@ -25,6 +27,58 @@ WINDOWS_ROOT = Path(__file__).resolve().parent
 STATE_ROOT = Path(__file__).resolve().parents[3] / "work" / "wasla-state"
 PYTHON = Path(r"C:\Users\Administrator\Documents\Codex\2026-11-01\local-browser-agent\work\local-image-engine\venv\Scripts\python.exe")
 TAILNET = ipaddress.ip_network("100.64.0.0/10")
+BASE_PYTHON = (Path(sys.base_prefix) / "python.exe").resolve()
+
+
+@dataclass(frozen=True)
+class BackendIdentity:
+    pid: int
+    created_at: float
+
+
+def verified_backend_identity(launcher_pid, launcher_created, reported_pid, command,
+                              base_python, process_factory=None):
+    """Recognize only the owned launcher or its exact interpreter child.
+
+    Windows venv redirectors create a direct base-python child, so the ready
+    PID is not always Popen.pid. Check lineage, executable identity, creation
+    time and the complete expected CLI (including private state/host/port).
+    No arbitrary descendant or PID from a status file is trusted.
+    """
+    if type(launcher_pid) is not int or type(reported_pid) is not int or reported_pid <= 0:
+        return None
+    if not command or not launcher_created:
+        return None
+    if process_factory is None:
+        import psutil
+        process_factory = psutil.Process
+    def canonical(value):
+        return os.path.normcase(os.path.realpath(value))
+    allowed_executables = {canonical(command[0]), canonical(str(base_python))}
+    expected_arguments = command[1:]
+    try:
+        launcher = process_factory(launcher_pid)
+        if not launcher.is_running() or launcher.create_time() != launcher_created:
+            return None
+        if canonical(launcher.exe()) not in allowed_executables:
+            return None
+        launcher_command = launcher.cmdline()
+        if not launcher_command or launcher_command[1:] != expected_arguments:
+            return None
+        backend = launcher if reported_pid == launcher_pid else process_factory(reported_pid)
+        if not backend.is_running() or backend.create_time() < launcher_created:
+            return None
+        if reported_pid != launcher_pid and backend.ppid() != launcher_pid:
+            return None
+        if canonical(backend.exe()) not in allowed_executables:
+            return None
+        actual = backend.cmdline()
+        if not actual or canonical(actual[0]) not in allowed_executables or actual[1:] != expected_arguments:
+            return None
+        return BackendIdentity(reported_pid, backend.create_time())
+    except Exception:
+        # Process disappearance or access denial is an unverified identity.
+        return None
 
 
 def read_status():
@@ -49,6 +103,9 @@ class Companion:
         self.window = window
         self.store = None
         self.process: subprocess.Popen | None = None
+        self.backend_identity: BackendIdentity | None = None
+        self.launcher_created = 0.0
+        self.command: list[str] = []
         self.ready = False
         self.stopping = False
         self.close_when_stopped = False
@@ -255,7 +312,18 @@ class Companion:
                 self.process = subprocess.Popen(command, cwd=str(WINDOWS_ROOT), env=environment,
                     stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT,
                     text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW)
+            import psutil
+            self.launcher_created = psutil.Process(self.process.pid).create_time()
+            self.command = command
+            self.backend_identity = None
         except Exception as exc:
+            # Closing only our owned pipe asks an already-launched interpreter
+            # to stop if identity discovery failed immediately after Popen.
+            if self.process and self.process.stdin:
+                try:
+                    self.process.stdin.close()
+                except OSError:
+                    pass
             messagebox.showerror("تعذر التشغيل", str(exc), parent=self.window)
             self.process = None
             return
@@ -283,6 +351,18 @@ class Companion:
         # The backend writes readiness only after the TLS listener is bound.
         return status, ensure_certificate(STATE_ROOT)
 
+    def _owned_status(self, status):
+        if not self.process or self.process.poll() is not None:
+            return None
+        identity = verified_backend_identity(self.process.pid, self.launcher_created,
+            status.get("pid"), self.command, BASE_PYTHON)
+        if identity is None:
+            return None
+        if self.backend_identity is not None and identity != self.backend_identity:
+            return None
+        self.backend_identity = identity
+        return identity
+
     def _identity_ready(self, value, error):
         self.identity_pending = False
         if not self.process or self.process.poll() is not None or self.stopping:
@@ -292,7 +372,7 @@ class Companion:
             self.stop()
             return
         status, fingerprint = value
-        if status.get("pid") != self.process.pid:
+        if self._owned_status(status) is None:
             return
         self.uri.set(f"https://{status['host']}:{status['port']}")
         self.fingerprint.set(fingerprint)
@@ -422,6 +502,9 @@ class Companion:
                 except OSError:
                     pass
                 self.process = None
+                self.backend_identity = None
+                self.launcher_created = 0.0
+                self.command = []
                 self.ready = self.stopping = False
                 self._clear_identity()
                 self.pairing_note.set("شغّل الخدمة، ثم أنشئ رمزًا لاقتران هاتفك.")
@@ -437,14 +520,15 @@ class Companion:
                     return
             else:
                 status = read_status()
-                if status.get("pid") == self.process.pid and not self.stopping:
+                owned = self._owned_status(status)
+                if owned is not None and not self.stopping:
                     try:
                         request = json.loads((STATE_ROOT / "stop-request.json").read_text(encoding="utf-8"))
-                        if request.get("pid") == self.process.pid and request.get("started_at") == status.get("started_at"):
+                        if request.get("pid") == owned.pid and request.get("started_at") == status.get("started_at"):
                             self.stop()
                     except (OSError, ValueError, AttributeError):
                         pass
-                if status.get("pid") == self.process.pid and not self.ready and not self.stopping and not self.identity_pending:
+                if owned is not None and not self.ready and not self.stopping and not self.identity_pending:
                     self.identity_pending = True
                     self._work(lambda snapshot=status: self._read_identity(snapshot), self._identity_ready)
                 elif not self.ready and not self.stopping and time.monotonic() - self.started_at > 20:

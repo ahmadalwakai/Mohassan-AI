@@ -326,7 +326,9 @@ struct DesktopPanel: View {
                 Card {
                     Text("لوحة المفاتيح").font(.headline)
                     TextField("اكتب نصًا لإرساله إلى الكمبيوتر…", text: $keyboard, axis: .vertical).lineLimit(2...5)
-                    Button("إرسال النص") { let text = String(keyboard.prefix(2000)); store.enqueue(DesktopCommand(action: "text", text: text)); keyboard = "" }.buttonStyle(ForestButton()).disabled(keyboard.isEmpty)
+                    Text("\(keyboard.unicodeScalars.count) / 2000 حرف").font(.caption).foregroundStyle(keyboard.unicodeScalars.count > 2_000 ? Color.red : Color.secondary)
+                    if keyboard.unicodeScalars.count > 2_000 { Text("اختصر النص إلى ٢٬٠٠٠ حرف قبل إرساله؛ لن يتم اقتطاعه تلقائيًا.").font(.caption).foregroundStyle(.red) }
+                    Button("إرسال النص") { store.enqueue(DesktopCommand(action: "text", text: keyboard)); keyboard = "" }.buttonStyle(ForestButton()).disabled(keyboard.isEmpty || keyboard.unicodeScalars.count > 2_000)
                     HStack {
                         keyButton("Enter", key: "enter")
                         keyButton("⌫", key: "backspace", accessible: "حذف الحرف السابق")

@@ -16,6 +16,7 @@ final class WaslaStore: ObservableObject {
     @Published var imagePreparing = false
     @Published var preparedImage: PreparedImage?
     @Published var imageBusy = false
+    @Published private(set) var imageSubmitting = false
     @Published var imageStatus = "صف الصورة، ثم راجع الوصف قبل بدء الإنشاء."
     @Published var pendingImageID: String?
     @Published var lastImage: UIImage?
@@ -43,7 +44,7 @@ final class WaslaStore: ObservableObject {
     private let lastImageKey = "wasla.last.image"
 
     var paired: Bool { identity != nil && client != nil }
-    var computerBusy: Bool { chatBusy || imagePreparing || imageBusy || status?.busy.isBusy == true }
+    var computerBusy: Bool { chatBusy || imagePreparing || imageBusy || imageSubmitting || status?.busy.isBusy == true }
     var connected: Bool { paired && status != nil }
 
     func start() async {
@@ -124,7 +125,7 @@ final class WaslaStore: ObservableObject {
         defaults.removeObject(forKey: lastImageKey)
         client = nil; identity = nil; status = nil
         messages = []; chatContextNote = ""; pendingImageID = nil; lastImage = nil; preparedImage = nil; searchResponse = nil
-        imageBusy = false; imagePreparing = false; chatBusy = false; selectedTab = 0
+        imageBusy = false; imageSubmitting = false; imagePreparing = false; chatBusy = false; selectedTab = 0
     }
     @discardableResult
     func sendChat(_ text: String) -> Bool {
@@ -149,7 +150,7 @@ final class WaslaStore: ObservableObject {
             guard let self else { return }
             defer { self.chatBusy = false }
             do {
-                let answer: ChatResponse = try await client.post("/v1/chat", body: ChatRequest(messages: requestHistory))
+                let answer: ChatResponse = try await client.post("/v1/chat", body: ChatRequest(messages: requestHistory), timeout: 210)
                 guard !Task.isCancelled, epoch == self.sessionEpoch else { return }
                 self.messages.append(ChatMessage(role: "assistant", content: answer.content))
                 await self.refreshStatus()
@@ -167,7 +168,7 @@ final class WaslaStore: ObservableObject {
         let epoch = sessionEpoch
         defer { imagePreparing = false }
         do {
-            let prepared: PreparedImage = try await client.post("/v1/images/prepare", body: ImagePreparation(description: clean, style: style))
+            let prepared: PreparedImage = try await client.post("/v1/images/prepare", body: ImagePreparation(description: clean, style: style), timeout: 210)
             guard epoch == sessionEpoch else { return }
             preparedImage = prepared
         } catch { if epoch == sessionEpoch { show(error) } }
@@ -180,14 +181,17 @@ final class WaslaStore: ObservableObject {
         pendingImageID = id
         defaults.set(id, forKey: pendingKey)
         imageBusy = true
+        imageSubmitting = true
         imageStatus = "جارٍ إرسال الطلب…"
         let epoch = sessionEpoch
         do {
             let _: ImageJob = try await client.post("/v1/images", body: request)
             guard epoch == sessionEpoch else { return }
+            imageSubmitting = false
             resumeImage()
         } catch {
             guard epoch == sessionEpoch else { return }
+            imageSubmitting = false
             imageBusy = false
             // A lost response is not proof that generation never started. Do not POST again.
             imageStatus = "لم يتأكد استلام الطلب. تحقّق من حالته؛ لن يُعاد إرساله تلقائيًا."
@@ -195,7 +199,7 @@ final class WaslaStore: ObservableObject {
         }
     }
     func resumeImage() {
-        guard let id = pendingImageID, UUID(uuidString: id) != nil, let client, foreground else { return }
+        guard !imageSubmitting, let id = pendingImageID, UUID(uuidString: id) != nil, let client, foreground else { return }
         imageTask?.cancel()
         imageBusy = true
         let epoch = sessionEpoch
@@ -268,16 +272,37 @@ final class WaslaStore: ObservableObject {
         let epoch = desktopEpoch
         defer { desktopStarting = false }
         do {
-            let opened: DesktopSession = try await client.post("/v1/desktop/session", body: EmptyBody())
+            let opened: DesktopSession = try await client.post("/v1/desktop/session", body: EmptyBody(), timeout: 10)
+            guard foreground, epoch == desktopEpoch else { try? await client.delete("/v1/desktop/session", desktopSession: opened.session_id); return }
+            // Synchronize the real pointer before controls can be displayed or clicked.
+            do {
+                let _: EmptyResponse = try await client.post("/v1/desktop/input", body: DesktopCommand(action: "move", x: Double(pointer.x), y: Double(pointer.y)), desktopSession: opened.session_id, timeout: 10)
+            } catch {
+                try? await client.delete("/v1/desktop/session", desktopSession: opened.session_id)
+                throw error
+            }
             guard foreground, epoch == desktopEpoch else { try? await client.delete("/v1/desktop/session", desktopSession: opened.session_id); return }
             desktopSession = opened
             desktopMessage = "جارٍ تحميل الشاشة…"
             frameTask = Task { [weak self] in
                 guard let self else { return }
+                var busyRetries = 0
                 do {
                     while !Task.isCancelled, self.foreground, epoch == self.desktopEpoch {
                         guard Date().timeIntervalSince1970 < opened.expires_at else { throw WaslaError.message("انتهت جلسة التحكم. ابدأ جلسة جديدة عند الحاجة.") }
-                        let data = try await client.data(path: "/v1/desktop/frame", desktopSession: opened.session_id, timeout: 10)
+                        let data: Data
+                        do {
+                            data = try await client.data(path: "/v1/desktop/frame", desktopSession: opened.session_id, timeout: 10)
+                            busyRetries = 0
+                        } catch let failure as WaslaError {
+                            if case .server(429, _) = failure, busyRetries < 12 {
+                                busyRetries += 1
+                                self.desktopMessage = "عرض الشاشة ينتظر اكتمال الإدخال…"
+                                try await Task.sleep(for: .milliseconds(min(2_000, busyRetries * 250)))
+                                continue
+                            }
+                            throw failure
+                        }
                         guard !Task.isCancelled, epoch == self.desktopEpoch else { return }
                         guard let image = UIImage(data: data) else { throw WaslaError.invalidResponse }
                         self.desktopFrame = image; self.frameTime = Date()
@@ -330,7 +355,9 @@ final class WaslaStore: ObservableObject {
             do {
                 while !Task.isCancelled, self.foreground, epoch == self.desktopEpoch, !self.inputQueue.isEmpty {
                     let item = self.inputQueue.removeFirst()
-                    let _: EmptyResponse = try await client.post("/v1/desktop/input", body: item, desktopSession: active.session_id)
+                    let _: EmptyResponse = try await client.post("/v1/desktop/input", body: item, desktopSession: active.session_id, timeout: 10)
+                    // Pace the entire command stream to at most ten requests/second.
+                    try await Task.sleep(for: .milliseconds(100))
                 }
             } catch {
                 guard !Task.isCancelled, epoch == self.desktopEpoch else { return }

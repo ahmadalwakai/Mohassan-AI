@@ -153,7 +153,7 @@ final class APIClient: @unchecked Sendable {
         configuration.urlCredentialStorage = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 90
-        configuration.timeoutIntervalForResource = 180
+        configuration.timeoutIntervalForResource = 240
         configuration.tlsMinimumSupportedProtocolVersion = .TLSv12
         session = URLSession(configuration: configuration, delegate: PinnedSessionDelegate(identity: identity), delegateQueue: nil)
     }
@@ -194,9 +194,9 @@ final class APIClient: @unchecked Sendable {
     func get<Response: Decodable>(_ path: String) async throws -> Response {
         try JSONDecoder().decode(Response.self, from: await data(path: path))
     }
-    func post<Body: Encodable, Response: Decodable>(_ path: String, body: Body, desktopSession: String? = nil) async throws -> Response {
+    func post<Body: Encodable, Response: Decodable>(_ path: String, body: Body, desktopSession: String? = nil, timeout: TimeInterval = 90) async throws -> Response {
         let encoded = try JSONEncoder().encode(body)
-        return try JSONDecoder().decode(Response.self, from: await data(path: path, method: "POST", body: encoded, desktopSession: desktopSession))
+        return try JSONDecoder().decode(Response.self, from: await data(path: path, method: "POST", body: encoded, desktopSession: desktopSession, timeout: timeout))
     }
     func delete(_ path: String, desktopSession: String? = nil) async throws {
         _ = try await data(path: path, method: "DELETE", desktopSession: desktopSession, timeout: 10)
