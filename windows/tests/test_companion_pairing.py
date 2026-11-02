@@ -15,6 +15,7 @@ class CompanionPairingTests(unittest.TestCase):
         self.panel.fingerprint = Mock()
         self.panel.status = Mock()
         self.panel.pairing_note = Mock()
+        self.panel.relay_note = Mock()
         self.panel._owned_status = Mock(return_value=object())
         self.panel._controls = Mock()
         self.panel.create_pairing = Mock()
@@ -26,6 +27,12 @@ class CompanionPairingTests(unittest.TestCase):
         self.panel.uri.set.assert_called_once_with('https://100.72.126.108:47621')
         self.assertTrue(self.panel.ready)
         self.panel.create_pairing.assert_called_once_with()
+        self.panel.relay_note.set.assert_called_once_with('')
+
+    def test_cloud_configuration_is_shown_without_revealing_secrets(self):
+        status, pin = self.identity
+        self.panel._identity_ready(({**status, 'relay_enabled': True}, pin), None)
+        self.assertIn('موقع وصلة', self.panel.relay_note.set.call_args.args[0])
 
     def test_unverified_process_never_generates_code(self):
         self.panel._owned_status.return_value = None

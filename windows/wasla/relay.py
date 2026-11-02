@@ -379,6 +379,7 @@ class RelayWorker:
         self._pending_upload = None
         self._pending_upload_expires = 0
         self._lock = threading.Lock()
+        self._stop_event = threading.Event()
         # A separate lock directory avoids holding AuthStore's state.lock while
         # an HTTP request to the local server needs that same authentication lock.
         self.journal_root = config.state_root / 'relay'
@@ -393,6 +394,8 @@ class RelayWorker:
                      'Accept-Encoding': 'identity'}, body=body, timeout=30, max_bytes=MAX_WIRE_BYTES)
 
     def _forward(self, request):
+        if self._stop_event.is_set():
+            raise RelayError('Relay is stopping')
         _check_expiry(request['expires_at'])
         context = pinned_context(self.config.local_url, self.config.local_pin, self._certificate_fetcher)
         headers = {'Accept-Encoding': 'identity', 'Accept': 'application/json'}
@@ -403,6 +406,8 @@ class RelayWorker:
             body = _json_bytes(request['body'])
             headers['Content-Type'] = 'application/json'
         remaining = _check_expiry(request['expires_at'])
+        if self._stop_event.is_set():
+            raise RelayError('Relay is stopping')
         status, raw = self.transport.request(request['method'], self.config.local_url + request['path'],
             headers=headers, body=body, context=context, pin=self.config.local_pin,
             timeout=min(REQUEST_TIMEOUT, remaining), max_bytes=MAX_BYTES - 1024)
@@ -492,6 +497,8 @@ class RelayWorker:
             return envelope
 
     def run_once(self):
+        if self._stop_event.is_set():
+            return False
         self.prune_receipts()
         if self._pending_upload is not None and self._pending_upload_expires <= time.time():
             self._pending_upload = None
@@ -504,6 +511,8 @@ class RelayWorker:
                 raise RelayError('Invalid relay poll response')
             if value['job'] is None:
                 return False
+            if self._stop_event.is_set():
+                return False
             job = value['job']
             response = self.handle_job(job)
             decrypted = self.cipher.open(job['request'], 'request', job['id'])
@@ -511,6 +520,8 @@ class RelayWorker:
             self._pending_upload_expires = expires if type(expires) in (int, float) and math.isfinite(expires) else time.time() + 30
             self._pending_upload = {'installation_id': self.config.installation_id, 'job_id': job['id'],
                                     'lease_token': job['lease_token'], 'response': response}
+        if self._stop_event.is_set():
+            return False
         status, _ = self._cloud('/api/relay/result', self._pending_upload)
         if status in (404, 409, 410):
             # Lease expired: keep the durable receipt, obtain a fresh lease on a
@@ -524,6 +535,7 @@ class RelayWorker:
 
     def run_forever(self, stop_event=None):
         stop_event = stop_event or threading.Event()
+        self._stop_event = stop_event
         delay = 1
         while not stop_event.is_set():
             try:

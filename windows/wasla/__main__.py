@@ -54,6 +54,7 @@ async def serve(args, store):
     from .desktop import WindowsDesktop
     from .services import LocalServices
     from .server import STATE, create_app
+    from .relay_lifecycle import OwnedRelay, load_relay_config
     address = ipaddress.ip_address(args.host)
     if address.version != 4 or address.is_unspecified or not (address.is_loopback or address.is_private or address in ipaddress.ip_network("100.64.0.0/10")):
         raise ValueError("Bind to one local LAN, Tailscale or loopback IPv4 address, never all interfaces or a public address.")
@@ -65,6 +66,8 @@ async def serve(args, store):
     san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
     if address not in san.get_values_for_type(x509.IPAddress):
         raise ValueError("The selected IP is not in the saved certificate. Revoke devices and explicitly replace the certificate before re-pairing.")
+    relay_config = load_relay_config(args.relay_config, store.root, f"https://{args.host}:{args.port}", fingerprint)
+    relay = OwnedRelay(relay_config) if relay_config is not None else None
     actions = ActionsController(allowed=args.allow_app_actions, state_root=store.root)
     app = create_app(store, LocalServices(), WindowsDesktop(), args.allow_desktop, actions=actions, cloud=CloudIntelligence(store.root))
     runner = web.AppRunner(app, access_log=None, shutdown_timeout=600)
@@ -74,12 +77,15 @@ async def serve(args, store):
     try:
         site = web.TCPSite(runner, args.host, args.port, ssl_context=tls_context(store.root))
         await site.start()
+        if relay is not None:
+            relay.start()
         status_path = store.root / "server-status.json"
         atomic_json(status_path, {"pid": os.getpid(), "host": args.host, "port": args.port,
             "started_at": time.time(), "desktop_enabled": args.allow_desktop,
-            "app_actions_enabled": args.allow_app_actions})
+            "app_actions_enabled": args.allow_app_actions, "relay_enabled": relay is not None})
         print(json.dumps({"ready": True, "url": f"https://{args.host}:{args.port}", "fingerprint": fingerprint,
-            "desktop_enabled": args.allow_desktop, "app_actions_enabled": args.allow_app_actions}), flush=True)
+            "desktop_enabled": args.allow_desktop, "app_actions_enabled": args.allow_app_actions,
+            "relay_enabled": relay is not None}), flush=True)
         if args.stdin_control:
             def watch_stdin():
                 for line in sys.stdin:
@@ -108,7 +114,13 @@ async def serve(args, store):
         actions.allowed = False
         app[STATE].stopping = True
         app[STATE].lease = None
-        await runner.cleanup()
+        if relay is not None:
+            relay.request_stop()
+        try:
+            await runner.cleanup()
+        finally:
+            if relay is not None:
+                await relay.close()
         status_path = store.root / "server-status.json"
         if read_json(status_path, {}).get("pid") == os.getpid():
             status_path.unlink(missing_ok=True)
@@ -124,6 +136,7 @@ def build_parser():
     parser.add_argument("--allow-desktop", action="store_true")
     parser.add_argument("--allow-app-actions", action="store_true")
     parser.add_argument("--stdin-control", action="store_true")
+    parser.add_argument("--relay-config", type=Path, help="Explicit private state/relay-config.json; disabled when omitted")
     parser.add_argument("--device-id")
     return parser
 

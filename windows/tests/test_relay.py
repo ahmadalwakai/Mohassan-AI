@@ -345,11 +345,46 @@ class RelayTests(unittest.TestCase):
     def test_poll_failure_backs_off_without_any_local_forwarding(self):
         self.transport.request.side_effect = OSError()
         stop = Mock()
-        stop.is_set.side_effect = [False, False, False, True]
+        stop.is_set.side_effect = lambda: stop.wait.call_count >= 3
         with patch('builtins.print'):
             self.worker.run_forever(stop)
         self.assertEqual([call.args[0] for call in stop.wait.call_args_list], [1, 2, 4])
         self.fetcher.assert_not_called()
+
+    def test_stop_before_poll_opens_no_connection(self):
+        self.worker._stop_event.set()
+        self.assertFalse(self.worker.run_once())
+        self.transport.request.assert_not_called()
+
+    def test_stop_during_poll_never_forwards_received_job(self):
+        def reply(*args, **kwargs):
+            self.worker._stop_event.set()
+            return 200, json.dumps({'job': self.job()}).encode()
+        self.transport.request.side_effect = reply
+        self.assertFalse(self.worker.run_once())
+        self.transport.request.assert_called_once()
+        self.fetcher.assert_not_called()
+
+    def test_stop_during_certificate_fetch_prevents_local_request(self):
+        def certificate_reply(*args, **kwargs):
+            self.worker._stop_event.set()
+            return self.pem
+        self.fetcher.side_effect = certificate_reply
+        response = self.response(self.worker.handle_job(self.job()))
+        self.assertEqual(response['status'], 502)
+        self.transport.request.assert_not_called()
+
+    def test_stop_after_local_response_does_not_start_result_upload(self):
+        replies = [(200, json.dumps({'job': self.job()}).encode()), (200, b'{"ok":true}')]
+        def reply(*args, **kwargs):
+            result = replies.pop(0)
+            if not replies:
+                self.worker._stop_event.set()
+            return result
+        self.transport.request.side_effect = reply
+        self.assertFalse(self.worker.run_once())
+        self.assertEqual(self.transport.request.call_count, 2)
+        self.assertIsNotNone(self.worker._pending_upload)
 
     def test_http_transport_never_retries_or_follows_redirects(self):
         connection = Mock()

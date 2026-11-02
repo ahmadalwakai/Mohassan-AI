@@ -130,6 +130,7 @@ class Companion:
         self.pairing = tk.StringVar()
         self.pairing_note = tk.StringVar(value="اضغط تشغيل، ثم أدخل الرمز الظاهر هنا في تطبيق iPhone.")
         self.network_note = tk.StringVar()
+        self.relay_note = tk.StringVar()
         self.advanced_visible = False
         self._build()
         self.window.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -188,8 +189,9 @@ class Companion:
         self.desktop_check.pack(anchor="e", pady=(0, 4))
         self.app_actions_check = ttk.Checkbutton(body, text="السماح بفتح التطبيقات من المحادثة", variable=self.app_actions, state="disabled")
         self.app_actions_check.pack(anchor="e", pady=(0, 4))
-        ttk.Label(body, text="يُطبَّق هذا الخيار عند تشغيل وصلة، وللهاتف المقترن فقط.", anchor="e", foreground="#637268").pack(fill="x", pady=(0, 10))
+        ttk.Label(body, text="تُطبَّق هذه الخيارات عند تشغيل وصلة، وللأجهزة المقترنة فقط.", anchor="e", foreground="#637268").pack(fill="x", pady=(0, 10))
         ttk.Label(body, textvariable=self.network_note, anchor="e", justify="right", wraplength=710, foreground="#637268").pack(fill="x", pady=(0, 8))
+        ttk.Label(body, textvariable=self.relay_note, anchor="e", justify="right", wraplength=710, foreground="#637268").pack(fill="x", pady=(0, 8))
 
         self.advanced_button = ttk.Button(body, text="تفاصيل متقدمة ▾", command=self.toggle_advanced)
         self.advanced_button.pack(anchor="e", pady=(0, 10))
@@ -341,7 +343,12 @@ class Companion:
             command.append("--allow-desktop")
         if self.app_actions.get():
             command.append("--allow-app-actions")
-        environment = dict(os.environ)
+        relay_config = STATE_ROOT / "relay-config.json"
+        if relay_config.is_file():
+            # Pass only a private file path. Secrets never enter command lines,
+            # clipboard, GUI values, or an inherited relay environment.
+            command.extend(["--relay-config", str(relay_config)])
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("WASLA_RELAY_")}
         environment["PYTHONUNBUFFERED"] = "1"
         try:
             with (STATE_ROOT / "server.log").open("ab", buffering=0) as log:
@@ -373,6 +380,7 @@ class Companion:
     def _clear_identity(self):
         self.uri.set("")
         self.fingerprint.set("")
+        self.relay_note.set("")
         self._clear_pairing()
 
     def _clear_pairing(self):
@@ -413,6 +421,7 @@ class Companion:
         self.uri.set(f"https://{status['host']}:{status['port']}")
         self.fingerprint.set(fingerprint)
         self.ready = True
+        self.relay_note.set("الاتصال عبر موقع وصلة مُعدّ. أبقِ الكمبيوتر وهذه اللوحة مفتوحين." if status.get("relay_enabled") else "")
         self.status.set("وصلة يعمل باتصال مشفّر. " + ("التحكم بسطح المكتب مسموح للأجهزة المقترنة." if status.get("desktop_enabled") else "عرض سطح المكتب والتحكم به غير مفعّلين."))
         if status.get("app_actions_enabled"):
             self.status.set(self.status.get() + " فتح التطبيقات من المحادثة مفعّل.")
