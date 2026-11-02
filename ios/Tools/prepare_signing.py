@@ -14,7 +14,8 @@ Uses documented app-store-connect CLI commands and JSON resource output:
 https://github.com/codemagic-ci-cd/cli-tools/tree/master/docs/app-store-connect
 Only public certificate DER and provisioning profiles are read by this helper.
 The CLI consumes the existing integration credentials via named environment
-variables; its stdout/stderr are captured and never echoed to build logs.
+variables. Output is captured; failures expose only bounded, redacted error
+lines plus fixed stage names and exit codes, never raw command arguments.
 """
 from __future__ import annotations
 
@@ -41,17 +42,83 @@ MAX_OUTPUT = 16 * 1024 * 1024
 
 
 class SigningError(RuntimeError):
-    """Contains only an operator-readable message, never command output."""
+    """Contains only safe stage information and a sanitized error excerpt."""
+
+
+def command_stage(arguments: list[str]) -> tuple[str, str]:
+    """Labels are constants: never copy resource IDs, paths, or option values."""
+    executable = Path(arguments[0]).name if arguments else ""
+    if executable == "app-store-connect":
+        if arguments[1:] == ["--version"]:
+            return "read-cli-version", "app-store-connect --version"
+        if arguments[1:] == ["--help"]:
+            return "read-cli-help", "app-store-connect --help"
+        action = tuple(arguments[1:3])
+        names = {
+            ("certificates", "list"): "list-distribution-certificates",
+            ("bundle-ids", "list"): "find-wasla-bundle",
+            ("bundle-ids", "create"): "create-wasla-bundle",
+            ("bundle-ids", "profiles"): "find-wasla-profiles",
+            ("profiles", "get"): "read-wasla-profile",
+            ("profiles", "create"): "create-wasla-profile",
+        }
+        if action in names:
+            return names[action], "app-store-connect " + " ".join(action)
+    if executable == "security" and len(arguments) > 1:
+        names = {"default-keychain": "select-build-keychain", "find-identity": "read-signing-identities",
+                 "find-certificate": "read-public-certificates", "cms": "decode-public-profile"}
+        if arguments[1] in names:
+            return names[arguments[1]], "security " + arguments[1]
+    if executable == "openssl" and arguments[1:2] == ["x509"]:
+        return "read-certificate-team", "openssl x509"
+    return "signing-tool", "signing tool"
+
+
+def safe_error_excerpt(raw: bytes, environment=None) -> str:
+    """Redact before selecting/truncating lines, including multiline key values."""
+    if len(raw) > MAX_OUTPUT:
+        return "Error output exceeded the diagnostic limit and was withheld."
+    text = raw.decode("utf-8", errors="replace")
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+    environment = os.environ if environment is None else environment
+    values = {value for key, value in environment.items()
+              if key.startswith("APP_STORE_CONNECT_") and isinstance(value, str) and value}
+    for value in sorted(values, key=len, reverse=True):
+        # CLI errors may JSON-escape a multiline value. Also redact individual
+        # PEM body lines, so even a partial parser echo cannot reveal key bytes.
+        variants = {value, json.dumps(value)[1:-1], *value.splitlines()}
+        for variant in sorted((item for item in variants if item), key=len, reverse=True):
+            text = text.replace(variant, "[REDACTED]")
+    text = re.sub(r"-----BEGIN [A-Z0-9 ]+-----.*?-----END [A-Z0-9 ]+-----", "[REDACTED PEM]", text, flags=re.S)
+    text = re.sub(r"-----BEGIN [A-Z0-9 ]+-----.*", "[REDACTED PEM]", text, flags=re.S)
+    text = re.sub(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?![A-Za-z0-9_-])",
+                  "[REDACTED JWT]", text)
+    text = re.sub(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", text)
+    text = re.sub(r"[A-Za-z0-9+/=_-]{80,}", "[REDACTED DATA]", text)
+    text = "".join(char for char in text if char in "\n\t" or ord(char) >= 32)
+    # Only parser/API error lines; never include successful resource JSON or
+    # arbitrary output. At most six short lines / 1,600 characters survive.
+    error_line = re.compile(r"(?i)(\berror\b|\bfailed\b|\bfailure\b|\bunauthorized\b|\bforbidden\b|"
+                            r"\bpermission\b|\binvalid\b|\bunrecognized\b|\bdenied\b|\bunable\b|"
+                            r"\bnot found\b|\bcould not\b|^usage:|^\s*[\"']?(code|title|detail|status)[\"']?\s*:)")
+    lines = [line.strip()[:400] for line in text.splitlines() if error_line.search(line)]
+    return "\n".join(lines[:6])[:1600]
 
 
 def run(arguments: list[str], *, input_data: bytes | None = None) -> bytes:
+    stage, action = command_stage(arguments)
+    print(f"Signing stage: {stage}.", flush=True)
     try:
         result = subprocess.run(arguments, input=input_data, capture_output=True,
                                 check=False, timeout=120)
-    except (OSError, subprocess.TimeoutExpired):
-        raise SigningError("A signing tool was unavailable or timed out.") from None
+    except subprocess.TimeoutExpired:
+        raise SigningError(f"Stage {stage} ({action}) timed out after 120 seconds.") from None
+    except OSError:
+        raise SigningError(f"Stage {stage} could not launch {action}.") from None
     if result.returncode != 0:
-        raise SigningError("A signing command failed. Check the integration's permissions and signing identity.")
+        detail = safe_error_excerpt(result.stderr)
+        suffix = f"\n{detail}" if detail else " No safe parser/API error text was available."
+        raise SigningError(f"Stage {stage} ({action}) exited with code {result.returncode}.{suffix}")
     if len(result.stdout) > MAX_OUTPUT or len(result.stderr) > MAX_OUTPUT:
         raise SigningError("The signing command returned an unexpected amount of data.")
     return result.stdout
@@ -64,6 +131,28 @@ def resource_id(resource: dict, kind: str) -> str:
     if not isinstance(resource.get("attributes"), dict):
         raise SigningError("The signing API omitted resource attributes.")
     return value
+
+
+def report_cli_version(runner: Callable = run) -> None:
+    """Version/help do not initialize API credentials or make API requests."""
+    try:
+        raw = runner(["app-store-connect", "--version"])
+        match = re.search(rb"^app-store-connect\s+([0-9][A-Za-z0-9.+-]{0,79})\s*$", raw, re.M)
+        if match:
+            print("Signing CLI version: " + match.group(1).decode("ascii"), flush=True)
+            return
+    except SigningError as error:
+        print(f"Signing CLI version unavailable: {error}", flush=True)
+    try:
+        raw = runner(["app-store-connect", "--help"])
+        header = next((line for line in safe_error_excerpt(raw).splitlines()
+                       if line.lower().startswith("usage:")), "")
+        if header:
+            print("Signing CLI help: " + header[:400], flush=True)
+        else:
+            print("Signing CLI version/help header unavailable.", flush=True)
+    except SigningError as error:
+        print(f"Signing CLI help unavailable: {error}", flush=True)
 
 
 def resources(raw: bytes, kind: str) -> list[dict]:
@@ -97,7 +186,12 @@ class AppleCLI:
                    "--issuer-id", "@env:APP_STORE_CONNECT_ISSUER_ID",
                    "--key-id", "@env:APP_STORE_CONNECT_KEY_IDENTIFIER",
                    "--private-key", "@env:APP_STORE_CONNECT_PRIVATE_KEY"]
-        return resources(self.runner(command), kind)
+        raw = self.runner(command)
+        try:
+            return resources(raw, kind)
+        except SigningError as error:
+            stage, action = command_stage(command)
+            raise SigningError(f"Stage {stage} ({action}): {error}") from None
 
 
 def binary_content(value, label: str) -> bytes:
@@ -215,12 +309,12 @@ def ensure_bundle(api: AppleCLI) -> dict:
         if created is None:
             raise SigningError("The signing API did not return the Wasla bundle after creation.")
         return created
-    except SigningError:
+    except SigningError as failure:
         # A timeout/concurrent build may have created it: read once, never repeat POST.
         recovered = lookup()
         if recovered:
             return recovered
-        raise SigningError("Wasla bundle creation was not confirmed. No creation retry was attempted.") from None
+        raise SigningError(f"Wasla bundle creation was not confirmed. No creation retry was attempted. {failure}") from None
 
 
 def decode_profile(content: bytes, runner: Callable = run) -> dict:
@@ -310,11 +404,11 @@ def ensure_profile(api: AppleCLI, bundle: dict, certificate: dict, der: bytes,
         if not matches_profile(decoder(content), resource, der, team, now):
             raise SigningError("The created profile did not match Wasla and its imported certificate.")
         return resource, content, True
-    except SigningError:
+    except SigningError as failure:
         recovered = matching()
         if recovered:
             return *recovered, False
-        raise SigningError("Wasla profile creation was not confirmed. No creation retry was attempted.") from None
+        raise SigningError(f"Wasla profile creation was not confirmed. No creation retry was attempted. {failure}") from None
 
 
 def save_profile(resource: dict, content: bytes, directory: Path) -> Path:
@@ -360,6 +454,7 @@ def main() -> int:
         raise SigningError("The Vibeset Codemagic App Store Connect integration is missing.")
     now = datetime.now(timezone.utc)
     api = AppleCLI()
+    report_cli_version()
     installed = installed_identities()
     certificate, der = select_certificate(api.call("certificates", "certificates", "list",
                                                    "--profile-type", PROFILE_TYPE), installed, now)
