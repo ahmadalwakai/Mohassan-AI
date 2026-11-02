@@ -29,6 +29,7 @@ import os
 from pathlib import Path
 import plistlib
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -123,13 +124,59 @@ def validate_private_key(pem: str) -> None:
         raise SigningError(f"Integration key validation: invalid-ec-key (exit {result.returncode}).")
 
 
+def read_integration_key_file(reference: str) -> str:
+    """Read only the integration's explicit local file, without following it."""
+    path = reference[6:] if reference.startswith("@file:") else reference
+    # No expansion, discovery, relative paths, URLs, network roots, or traversal.
+    if (len(path) > MAX_KEY_TEXT or not path.startswith("/") or path.startswith("//")
+            or "\\" in path or any(ord(char) < 32 for char in path)
+            or ".." in path.split("/")):
+        raise SigningError("Integration key file: invalid-local-path.")
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise SigningError("Integration key file: safe-open-unavailable.")
+    # O_NOFOLLOW applies to the leaf atomically. Normal macOS directory aliases
+    # such as /var -> /private/var remain usable; the key itself cannot be a link.
+    flags = os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    descriptor = None
+    try:
+        descriptor = os.open(path, flags)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise SigningError("Integration key file: not-regular.")
+        if metadata.st_size <= 0 or metadata.st_size > MAX_KEY_TEXT:
+            raise SigningError("Integration key file: invalid-size.")
+        # Read a bounded extra byte in case the file grew after fstat.
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = None
+            content = stream.read(MAX_KEY_TEXT + 1)
+        if not content or len(content) > MAX_KEY_TEXT:
+            raise SigningError("Integration key file: invalid-size.")
+        try:
+            return content.decode("utf-8-sig")
+        except UnicodeError:
+            raise SigningError("Integration key file: invalid-text.") from None
+    except OSError:
+        raise SigningError("Integration key file: unreadable-or-symlink.") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
 def prepare_integration_key(environment=None, validator: Callable = validate_private_key) -> None:
     environment = os.environ if environment is None else environment
     # Official Codemagic integration uses PRIVATE_KEY, not API_KEY. Report only
     # presence of the latter if supplied; never inspect or adopt unrelated keys.
     print("Integration API_KEY variable present: " +
           str(bool(environment.get("APP_STORE_CONNECT_API_KEY"))).lower() + ".", flush=True)
-    pem, shape = normalize_private_key(environment.get(PRIVATE_KEY_ENV, ""))
+    value = environment.get(PRIVATE_KEY_ENV, "").strip()
+    from_file = value.startswith(("/", "@file:"))
+    if from_file:
+        print("Signing stage: read-integration-key-file.", flush=True)
+        value = read_integration_key_file(value)
+    pem, shape = normalize_private_key(value)
+    if from_file:
+        shape = "file-pem"
     print("Integration key format: " + shape + ".", flush=True)
     validator(pem)
     # Process-local change only: no file, CM_ENV export, shell argument, or log.
