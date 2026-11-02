@@ -46,7 +46,7 @@ workflows:
       - build/Wasla.xcresult
 
   ios-release:
-    name: Wasla - signed iPhone build (artifact only)
+    name: Wasla - iPhone build and TestFlight upload
     instance_type: mac_mini_m2
     max_build_duration: 60
     integrations:
@@ -75,7 +75,7 @@ workflows:
             --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
             --profile "$CM_BUILD_DIR/build/signing/Wasla.mobileprovision" \
             --archive-method app-store
-      - name: Build the signed IPA without publishing
+      - name: Build the signed IPA for TestFlight
         script: |
           set -euo pipefail
           xcode-project build-ipa \
@@ -85,3 +85,9 @@ workflows:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
       - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+    publishing:
+      app_store_connect:
+        auth: integration
+        # Upload for internal testing; neither beta review nor store review.
+        submit_to_testflight: false
+        submit_to_app_store: false

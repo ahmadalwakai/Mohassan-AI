@@ -13,8 +13,8 @@ Then: xcode-project use-profiles --project ios/Wasla.xcodeproj
 Uses documented app-store-connect CLI commands and JSON resource output:
 https://github.com/codemagic-ci-cd/cli-tools/tree/master/docs/app-store-connect
 Only public certificate DER and provisioning profiles are saved by this helper.
-The existing integration API key is normalized and checked only in memory, then
-consumed by the CLI via its named environment variable. Output is captured;
+The existing integration API key is normalized only in memory, then validated
+and consumed by the CLI via its named environment variable. Output is captured;
 failures expose only bounded, redacted error
 lines plus fixed stage names and exit codes, never raw command arguments.
 """
@@ -105,25 +105,6 @@ def normalize_private_key(value: str) -> tuple[str, str]:
     raise SigningError("Integration key format: unrecognized.")
 
 
-def validate_private_key(pem: str) -> None:
-    """Validate Apple's EC API key through stdin; discard every output byte."""
-    print("Signing stage: validate-integration-key.", flush=True)
-    # macOS /usr/bin/openssl is LibreSSL, whose pkey command has no -check.
-    # Its ec -check supports Apple's EC API key (including PKCS8 input).
-    # -noout prevents key serialization; empty -passin prevents prompting.
-    try:
-        result = subprocess.run(
-            ["/usr/bin/openssl", "ec", "-check", "-noout", "-passin", "pass:"],
-            input=pem.encode("ascii"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            check=False, timeout=15)
-    except subprocess.TimeoutExpired:
-        raise SigningError("Integration key validation: timeout.") from None
-    except OSError:
-        raise SigningError("Integration key validation: validator-unavailable.") from None
-    if result.returncode != 0:
-        raise SigningError(f"Integration key validation: invalid-ec-key (exit {result.returncode}).")
-
-
 def read_integration_key_file(reference: str) -> str:
     """Read only the integration's explicit local file, without following it."""
     path = reference[6:] if reference.startswith("@file:") else reference
@@ -163,7 +144,7 @@ def read_integration_key_file(reference: str) -> str:
             os.close(descriptor)
 
 
-def prepare_integration_key(environment=None, validator: Callable = validate_private_key) -> None:
+def prepare_integration_key(environment=None) -> None:
     environment = os.environ if environment is None else environment
     # Official Codemagic integration uses PRIVATE_KEY, not API_KEY. Report only
     # presence of the latter if supplied; never inspect or adopt unrelated keys.
@@ -178,10 +159,11 @@ def prepare_integration_key(environment=None, validator: Callable = validate_pri
     if from_file:
         shape = "file-pem"
     print("Integration key format: " + shape + ".", flush=True)
-    validator(pem)
     # Process-local change only: no file, CM_ENV export, shell argument, or log.
+    # The CLI's PrivateKeyArgument parses PEM with cryptography before any API
+    # request; the subsequent authenticated Apple request verifies credentials.
     environment[PRIVATE_KEY_ENV] = pem
-    print("Integration key validation: valid-ec-key.", flush=True)
+    print("Integration key normalization: ready-for-cli-validation.", flush=True)
 
 
 def command_stage(arguments: list[str]) -> tuple[str, str]:
