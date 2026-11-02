@@ -1,0 +1,46 @@
+# Native iOS compile verification only. No Apple credentials or signing are used.
+# See https://docs.codemagic.io/yaml-code-signing/ios-simulator-builds/
+workflows:
+  ios-verify:
+    name: Wasla - unsigned iOS Simulator verification
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      xcode: latest
+      vars:
+        XCODE_PROJECT: ios/Wasla.xcodeproj
+        XCODE_SCHEME: Wasla
+    scripts:
+      - name: Inspect Xcode project and shared scheme
+        script: |
+          set -euo pipefail
+          xcodebuild -version
+          xcodebuild -list -project "$CM_BUILD_DIR/$XCODE_PROJECT"
+      - name: Compile the unsigned iOS Simulator application
+        script: |
+          set -euo pipefail
+          mkdir -p "$CM_BUILD_DIR/build/logs"
+          xcodebuild build \
+            -project "$CM_BUILD_DIR/$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            -derivedDataPath "$CM_BUILD_DIR/build/DerivedData" \
+            -resultBundlePath "$CM_BUILD_DIR/build/Wasla.xcresult" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "$CM_BUILD_DIR/build/logs/xcodebuild.log"
+      - name: Package the Simulator app
+        script: |
+          set -euo pipefail
+          test -d "$CM_BUILD_DIR/build/DerivedData/Build/Products/Debug-iphonesimulator/Wasla.app"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$CM_BUILD_DIR/build/DerivedData/Build/Products/Debug-iphonesimulator/Wasla.app" \
+            "$CM_BUILD_DIR/build/Wasla-simulator.zip"
+    artifacts:
+      - build/Wasla-simulator.zip
+      - build/DerivedData/Build/Products/Debug-iphonesimulator/Wasla.app
+      - build/logs/*.log
+      - build/Wasla.xcresult
