@@ -16,6 +16,7 @@ import re
 import secrets
 import ssl
 import sys
+import unicodedata
 from typing import Any, Callable
 from html.parser import HTMLParser
 import urllib.error
@@ -161,6 +162,7 @@ class _HTTP:
         request = urllib.request.Request(url, headers={
             "User-Agent": "Wasla/0.1 (personal desktop search)",
             "Accept": "text/html, application/rss+xml, application/xml;q=0.9",
+            "Cache-Control": "no-cache", "Pragma": "no-cache",
         })
         body, _ = self._read(self.web, request, 18, 1024 * 1024)
         return body.decode("utf-8", errors="replace")
@@ -255,7 +257,7 @@ def _plain_html(value: str) -> str:
     return " ".join(" ".join(parser.parts).split())
 
 
-def _deduplicate(results: list[dict[str, str]]) -> list[dict[str, str]]:
+def _deduplicate(results: list[dict[str, str]], limit=6) -> list[dict[str, str]]:
     seen = set()
     output = []
     for result in results:
@@ -264,23 +266,106 @@ def _deduplicate(results: list[dict[str, str]]) -> list[dict[str, str]]:
             continue
         seen.add(key)
         output.append(result)
-        if len(output) >= 6:
+        if len(output) >= limit:
             break
     return output
 
 
-def _duckduckgo(body: str) -> list[dict[str, str]]:
+def _query_text(value):
+    return ' '.join(unicodedata.normalize('NFKC', value).casefold().split())
+
+
+def _check_query_echo(query, echoed):
+    expected = _query_text(query)
+    if any(_query_text(value) != expected for value in echoed if value.strip()):
+        raise ServiceError('search_query_mismatch', 'The search provider returned a page for a different query.')
+
+
+class _SearchQueryParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.queries, self.title = [], []
+        self.in_title = False
+
+    def handle_starttag(self, tag, attrs):
+        values = dict(attrs)
+        if tag == 'input' and values.get('name') == 'q' and isinstance(values.get('value'), str):
+            self.queries.append(values['value'])
+        if tag == 'title':
+            self.in_title = True
+
+    def handle_endtag(self, tag):
+        if tag == 'title':
+            self.in_title = False
+
+    def handle_data(self, value):
+        if self.in_title:
+            self.title.append(value)
+
+
+# This is a conservative lexical verification gate, not a claim of semantic
+# understanding or source authority. Unverifiable results trigger a fallback.
+_SEARCH_STOPWORDS = frozenset(('a an the of to for and or in on with is are be how what where when why '
+    'can could would should please find search look show give tell me about using use connect connecting '
+    'official documentation docs sources results result information website websites '
+    'ابحث بحث عن في من الي علي مع ما ماذا كيف متي اين هل او و ثم اريد اعرض اظهر واظهر '
+    'وثائق الوثائق وثايق الرسمي الرسمية مصادر المصادر نتائج النتائج معلومات المعلومات '
+    'توصيل لتوصيل ربط لربط كمبيوتر بكمبيوتر الكمبيوتر هاتف الهاتف جهاز الجهاز').split())
+_PLATFORM_TERMS = frozenset({'windows', 'iphone', 'ios', 'android', 'linux', 'mac', 'macos', 'pc'})
+_TERM_ALIASES = {'ايفون': 'iphone', 'الايفون': 'iphone', 'ويندوز': 'windows',
+                 'تايلسكيل': 'tailscale', 'تايلسكايل': 'tailscale'}
+
+
+def _search_terms(value):
+    value = _query_text(value)
+    value = re.sub(r'[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed]', '', value)
+    value = value.translate(str.maketrans({'أ': 'ا', 'إ': 'ا', 'آ': 'ا', 'ى': 'ي', 'ـ': ''}))
+    words = re.findall(r'[^\W_]+', value, flags=re.UNICODE)
+    return {_TERM_ALIASES.get(word, word) for word in words
+            if len(word) >= 2 and word not in _SEARCH_STOPWORDS}
+
+
+def _related_results(query, results):
+    if not results:
+        return []
+    terms = _search_terms(query)
+    latin = {term for term in terms if term.isascii() and any(char.isalpha() for char in term)}
+    # A named subject such as Tailscale cannot be satisfied solely by generic
+    # iPhone/Windows matches in an otherwise unrelated result.
+    anchors = (latin - _PLATFORM_TERMS) or latin or terms
+    if not anchors:
+        raise ServiceError('search_irrelevant', 'Search needs a specific topic before results can be verified.')
+    required = min(2, len(anchors))
+    related = []
+    for result in results:
+        content = _search_terms(' '.join((result['title'], urllib.parse.unquote(result['url']), result['snippet'])))
+        if len(content & anchors) >= required:
+            related.append(result)
+    if not related:
+        raise ServiceError('search_irrelevant', 'لم أتمكن من التحقق من صلة نتائج البحث بالطلب. حاول صياغة بحث أقصر.')
+    return _deduplicate(related)
+
+
+def _duckduckgo(body: str, query: str | None = None) -> list[dict[str, str]]:
     if any(marker in body.lower() for marker in ("anomaly-modal", "challenge-form", "bots use duckduckgo")):
         raise ServiceError("search_challenge", "DuckDuckGo requires an interactive check.")
     parser = _ResultParser()
     parser.feed(body)
-    results = _deduplicate(parser.results)
+    results = _deduplicate(parser.results, 20 if query is not None else 6)
+    if query is not None:
+        metadata = _SearchQueryParser()
+        metadata.feed(body)
+        title = ''.join(metadata.title)
+        match = re.fullmatch(r'(.*?)\s+at\s+DuckDuckGo', title.strip(), re.I | re.S)
+        if match:
+            metadata.queries.append(match[1])
+        _check_query_echo(query, metadata.queries)
     if not results and not any(marker in body.lower() for marker in ("result--no-result", "no-results", "no results found")):
         raise ServiceError("search_format_changed", "DuckDuckGo returned no readable search results.")
-    return results
+    return _related_results(query, results) if query is not None else results
 
 
-def _bing(body: str) -> list[dict[str, str]]:
+def _bing(body: str, query: str | None = None) -> list[dict[str, str]]:
     if "<!DOCTYPE" in body.upper() or "<!ENTITY" in body.upper():
         raise ServiceError("invalid_search_response", "Search returned unsupported XML.")
     try:
@@ -289,13 +374,27 @@ def _bing(body: str) -> list[dict[str, str]]:
         raise ServiceError("invalid_search_response", "Bing returned no readable search feed.") from None
     if root.tag != "rss" or root.find("channel") is None:
         raise ServiceError("invalid_search_response", "Bing returned an unexpected search feed.")
+    if query is not None:
+        echoed = []
+        link = root.findtext('./channel/link', '')
+        try:
+            echoed.extend(urllib.parse.parse_qs(urllib.parse.urlsplit(link).query).get('q', []))
+        except ValueError:
+            raise ServiceError('invalid_search_response', 'Bing returned invalid query metadata.') from None
+        title = root.findtext('./channel/title', '').strip()
+        if title.lower().startswith('bing:'):
+            echoed.append(title[5:].strip())
+        _check_query_echo(query, echoed)
     results = []
-    for item in root.findall("./channel/item")[:20]:
+    items = root.findall("./channel/item")[:20]
+    for item in items:
         url = _safe_result_url(item.findtext("link", ""))
         title = _plain_html(item.findtext("title", ""))[:300]
         if url and title:
             results.append({"title": title, "url": url, "snippet": _plain_html(item.findtext("description", ""))[:600]})
-    return _deduplicate(results)
+    if items and not results:
+        raise ServiceError('invalid_search_response', 'Bing returned no usable result links.')
+    return _related_results(query, results) if query is not None else _deduplicate(results)
 
 
 def _load_bridge(engine_dir: Path):
@@ -449,13 +548,22 @@ class LocalServices:
             raise ServiceError("image_status_failed", "The saved image status could not be verified.") from None
 
     def _search_sync(self, query: str) -> dict:
-        failures = []
+        failures, empty_providers = [], []
         for provider, parser in (("DuckDuckGo HTML", _duckduckgo), ("Bing RSS", _bing)):
             try:
                 body = self._http.search(provider, query)
-                return {"query": query, "results": parser(body), "provider": provider}
+                results = parser(body, query=query)
+                if results:
+                    return {"query": query, "results": results, "provider": provider}
+                empty_providers.append(provider)
             except ServiceError as exc:
                 failures.append(exc.code)
+        if empty_providers:
+            # At least one provider explicitly returned a valid empty result;
+            # rejected unrelated pages are never converted into an empty search.
+            return {"query": query, "results": [], "provider": empty_providers[0]}
+        if any(code in ('search_irrelevant', 'search_query_mismatch') for code in failures):
+            raise ServiceError('search_irrelevant', 'لم أتمكن من التحقق من صلة نتائج البحث بالطلب. حاول صياغة بحث أقصر.')
         raise ServiceError("search_unavailable", "Public search is unavailable or requires an interactive check. Please try again later.")
 
     async def search(self, query: str) -> dict:

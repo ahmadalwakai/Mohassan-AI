@@ -180,24 +180,33 @@ struct ChatView: View {
     @State private var draft = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            ScreenTitle(title: "بمَ تفكّر اليوم؟", subtitle: "محادثتك مع المساعد المحلي على الكمبيوتر.")
+            ScreenTitle(title: "بمَ تفكّر اليوم؟", subtitle: "مساعدك المحلي، مع البحث والمصادر عند الحاجة.")
+            HStack {
+                Picker("مسار الإجابة", selection: $store.chatMode) {
+                    ForEach(ChatMode.allCases) { mode in Text(mode.title).tag(mode) }
+                }.pickerStyle(.segmented).disabled(store.chatBusy)
+                Button { store.newChat(); draft = "" } label: { Image(systemName: "plus.bubble").frame(width: 42, height: 42) }.accessibilityLabel("محادثة جديدة")
+            }
             if store.messages.isEmpty {
                 HStack { suggestion("نظّم مهامي"); suggestion("اكتب معي"); suggestion("اشرح لي فكرة") }
             }
             ForEach(store.messages) { message in
                 VStack(alignment: .leading, spacing: 7) {
-                    Text(message.role == "user" ? "أنت" : "المساعد المحلي").font(.caption).foregroundStyle(.secondary)
+                    Text(message.role == "user" ? "أنت" : "وصلة").font(.caption).foregroundStyle(.secondary)
                     Text(message.content).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    if let metadata = store.chatMetadata[message.id] { ChatMetadataView(metadata: metadata) }
                 }.padding(16).background(message.role == "user" ? Forest.soft : Forest.surface, in: RoundedRectangle(cornerRadius: 20))
             }
             if store.chatBusy { HStack { ProgressView(); Text("المساعد يكتب الرد…").font(.subheadline) }.accessibilityElement(children: .combine) }
             Card {
+                Toggle("احفظ هذه المحادثة", isOn: $store.rememberConversation).font(.subheadline).disabled(store.chatBusy)
+                Toggle("استخدم معرفتي المحفوظة", isOn: $store.useSavedKnowledge).font(.subheadline).disabled(store.chatBusy)
                 TextField("اكتب ما يدور في بالك…", text: $draft, axis: .vertical).lineLimit(3...8)
                 Text("\(draft.unicodeScalars.count) / 8000 حرف")
                     .font(.caption).foregroundStyle(draft.unicodeScalars.count > 8_000 ? Color.red : Color.secondary)
                 if draft.unicodeScalars.count > 8_000 { Text("اختصر الرسالة إلى ٨٬٠٠٠ حرف قبل الإرسال.").font(.caption).foregroundStyle(.red) }
                 HStack {
-                    Text(store.imageBusy ? "انتظر اكتمال الصورة" : "Qwen · محلي").font(.caption).foregroundStyle(.secondary)
+                    Text(store.imageBusy ? "انتظر اكتمال الصورة" : store.status?.model ?? "Qwen · محلي").font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button {
                         let text = draft
@@ -208,10 +217,45 @@ struct ChatView: View {
                 }
             }
             if !store.chatContextNote.isEmpty { Text(store.chatContextNote).font(.footnote).foregroundStyle(.secondary) }
-            Text("تبقى رسائل هذه الجلسة في ذاكرة التطبيق. لا تُحفَظ المحادثة بعد إغلاق التطبيق.").font(.footnote).foregroundStyle(.secondary)
+            Text(store.rememberConversation ? "سيُطلب حفظ المحادثة على الكمبيوتر عند الإرسال. تظهر علامة الحفظ فقط بعد تأكيده." : "الحفظ اختياري ومغلق افتراضيًا. تبقى رسائل هذه الجلسة في ذاكرة التطبيق.").font(.footnote).foregroundStyle(.secondary)
+            Text(store.status?.app_actions_enabled == true ? "يمكنك طلب فتح المتصفح أو المفكرة أو الحاسبة على الكمبيوتر." : "لفتح المتصفح أو المفكرة أو الحاسبة، فعّل خيار إجراءات التطبيقات من لوحة Windows. يكون هذا الخيار مغلقًا افتراضيًا.").font(.footnote).foregroundStyle(.secondary)
         }
     }
     private func suggestion(_ title: String) -> some View { Button(title) { draft = title }.font(.caption).padding(10).background(Forest.surface, in: Capsule()) }
+}
+struct ChatMetadataView: View {
+    let metadata: ChatResponse
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                if let route = metadata.routeTitle { Text(route).font(.caption.weight(.medium)) }
+                Spacer()
+                if let timing = metadata.timing_ms { Text(String(format: "%.1f ث", timing / 1000)).font(.caption).foregroundStyle(.secondary) }
+            }
+            if let evidence = metadata.evidence {
+                Label(evidence.title, systemImage: evidence.level == "grounded" ? "checkmark.seal" : "info.circle").font(.caption).foregroundStyle(.secondary)
+                if let note = evidence.note, !note.isEmpty { Text(note).font(.footnote).foregroundStyle(.secondary) }
+            }
+            if metadata.cache_hit == true { Text("إجابة محفوظة مؤقتًا").font(.caption).foregroundStyle(.secondary) }
+            if metadata.memory_saved == true { Label("حُفظت المحادثة", systemImage: "checkmark.circle").font(.caption).foregroundStyle(Forest.accent) }
+            ForEach(Array((metadata.warnings ?? []).enumerated()), id: \.offset) { _, warning in Text(ChatResponse.warningMessage(warning)).font(.footnote).foregroundStyle(.secondary) }
+            if let sources = metadata.sources, !sources.isEmpty {
+                Text("المصادر").font(.caption.weight(.semibold))
+                ForEach(sources) { source in
+                    if let url = source.safeURL {
+                        Link(destination: url) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Label(source.title, systemImage: "arrow.up.right.square").font(.footnote.weight(.medium))
+                                Text(url.host ?? "").font(.caption2).foregroundStyle(.secondary).environment(\.layoutDirection, .leftToRight)
+                            }.frame(maxWidth: .infinity, alignment: .leading).padding(12).background(Forest.soft, in: RoundedRectangle(cornerRadius: 12))
+                        }.buttonStyle(.plain)
+                    } else {
+                        Label(source.title, systemImage: "doc.text").font(.footnote).padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Forest.soft, in: RoundedRectangle(cornerRadius: 12))
+                    }
+                }
+            }
+        }.padding(.top, 8)
+    }
 }
 struct ImagesView: View {
     @EnvironmentObject private var store: WaslaStore

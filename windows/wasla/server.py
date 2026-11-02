@@ -13,6 +13,10 @@ import time
 from aiohttp import web
 
 from .security import AuthError, AuthStore, atomic_json, read_json, state_lock
+from .actions import ActionsController
+from .intelligence import Intelligence
+from .knowledge import KnowledgeStore, checked_id
+from .services import _messages
 
 REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{7,63}\Z")
 STATE = web.AppKey("wasla_state", object)
@@ -49,9 +53,17 @@ def text_value(value, name, maximum, minimum=1):
 
 
 class Runtime:
-    def __init__(self, store, services, desktop, desktop_enabled):
+    def __init__(self, store, services, desktop, desktop_enabled, actions=None, knowledge=None, intelligence=None, cloud=None):
         self.store, self.services, self.desktop = store, services, desktop
         self.desktop_enabled = desktop_enabled
+        self.actions = actions or ActionsController(allowed=False, state_root=store.root)
+        self.knowledge = knowledge or KnowledgeStore(store.root)
+        async def lookup(*args):
+            return await asyncio.to_thread(self.knowledge.knowledge_lookup, *args)
+        async def version(*args):
+            return await asyncio.to_thread(self.knowledge.knowledge_version, *args)
+        self.intelligence = intelligence or Intelligence(services, knowledge_lookup=lookup, knowledge_version=version)
+        self.cloud = cloud
         self.lease = None
         self.desktop_lock = asyncio.Lock()
         self.jobs = read_json(store.root / "jobs.json", {})
@@ -150,7 +162,10 @@ async def status(request):
         display = {"width": 0, "height": 0, "monitor": "primary", "error": "Desktop is locked or unavailable."}
     return web.json_response({"name": "Wasla Windows", "model": "qwen3.5:9b-coding-local",
         "busy": runtime.services.busy, "desktop_enabled": runtime.desktop_enabled,
-        "desktop": display, "capabilities": ["chat", "text_to_image_512", "web_search", "primary_desktop"],
+        "app_actions_enabled": runtime.actions.allowed is True,
+        "cloud_configured": bool(runtime.cloud and runtime.cloud.configured),
+        "storage": runtime.knowledge.storage,
+        "desktop": display, "capabilities": ["chat", "text_to_image_512", "web_search", "primary_desktop", "local", "live_web", "knowledge", "memory", "app_actions"],
         "chat_backend": "Ollama", "cline_task_control": False})
 
 
@@ -165,8 +180,87 @@ async def revoke(request):
 async def chat(request):
     runtime = request.app[STATE]
     runtime.limit(("chat", request["device_id"]), 12)
-    data = await body(request, ("messages",))
-    return web.json_response(await runtime.services.chat(data["messages"]))
+    data = await body(request, ("messages",), ("request_id", "mode", "remember", "use_memory", "conversation_id", "allow_cloud"))
+    messages = _messages(data["messages"])
+    mode = data.get("mode", "auto")
+    if mode not in ("auto", "live_web", "local"):
+        raise APIError("invalid_mode", "اختر تلقائي أو بحث مباشر أو محلي.")
+    for field in ("remember", "use_memory", "allow_cloud"):
+        if field in data and type(data[field]) is not bool:
+            raise APIError("invalid_request", "خيارات الطلب يجب أن تكون نعم أو لا.")
+    if data.get("conversation_id"):
+        checked_id(data["conversation_id"])
+    started = time.perf_counter()
+    # Only the latest direct user message can plan an action. Model output,
+    # history, retrieved documents and web extracts never reach this dispatcher.
+    plan = runtime.actions.plan(messages[-1]["content"])
+    if plan:
+        def execute():
+            runtime.store.authenticate(request.headers.get("Authorization", ""))
+            if runtime.stopping:
+                raise APIError("stopping", "وصلة يتوقف الآن.", 503)
+            return runtime.actions.execute(plan, device_id=request["device_id"], request_id=data.get("request_id"))
+        result = await asyncio.to_thread(execute)
+        answer = {"content": result["message"], "model": "Wasla actions", "route": "actions", "action": result,
+                  "sources": [], "evidence": {"level": "unverified", "note": "لم يُتحقق من ظهور النافذة."},
+                  "warnings": [], "cache_hit": False, "usage": {"provider": "local", "estimated_cost_usd": 0}}
+    elif data.get("allow_cloud"):
+        if not runtime.cloud or not runtime.cloud.configured:
+            raise APIError("cloud_unconfigured", "المعالجة السحابية غير مفعّلة. النموذج المحلي متاح.", 409)
+        answer = await runtime.cloud.answer(messages, mode=mode)
+    else:
+        answer = await runtime.intelligence.answer(messages, device_id=request["device_id"], mode=mode, use_memory=data.get("use_memory", False))
+    answer["timing_ms"] = round((time.perf_counter() - started) * 1000, 2)
+    # A per-send explicit choice is required, even if a saved preference is on.
+    conversation_id = None
+    try:
+        conversation_id = await asyncio.to_thread(runtime.knowledge.save_exchange, messages, answer,
+            remember=data.get("remember", False), conversation_id=data.get("conversation_id"))
+    except Exception:
+        answer.setdefault("warnings", []).append("memory_save_failed")
+    answer.update(memory_saved=bool(conversation_id), conversation_id=conversation_id)
+    try:
+        await asyncio.to_thread(runtime.knowledge.record_usage, answer)
+    except Exception:
+        answer.setdefault("warnings", []).append("usage_record_failed")
+    return web.json_response(answer)
+
+
+async def knowledge_handler(request):
+    runtime = request.app[STATE]
+    if request.method == "GET":
+        return web.json_response({"items": await asyncio.to_thread(runtime.knowledge.documents)})
+    runtime.limit(("knowledge", request["device_id"]), 30)
+    if request.method == "POST":
+        data = await body(request, ("title", "content"))
+        return web.json_response(await asyncio.to_thread(runtime.knowledge.add_document, **data), status=201)
+    return web.json_response(await asyncio.to_thread(runtime.knowledge.delete_document, request.match_info["id"]))
+
+
+async def conversations(request):
+    store = request.app[STATE].knowledge
+    item = request.match_info.get("id")
+    if request.method == "DELETE":
+        return web.json_response(await asyncio.to_thread(store.delete_conversation, item))
+    if item:
+        return web.json_response(await asyncio.to_thread(store.conversation, item))
+    return web.json_response({"items": await asyncio.to_thread(store.conversations)})
+
+
+async def settings(request):
+    runtime = request.app[STATE]
+    if request.method == "PATCH":
+        data = await body(request, ("memory_enabled",))
+        result = await asyncio.to_thread(runtime.knowledge.set_settings, data["memory_enabled"])
+    else:
+        result = await asyncio.to_thread(runtime.knowledge.settings)
+    result.update(runtime.cloud.settings() if runtime.cloud else {
+        "cloud_enabled": False, "cloud_daily_budget_usd": 0, "cloud_spent_usd": 0, "cloud_model": None})
+    return web.json_response(result)
+
+
+async def metrics(request):
+    return web.json_response(await asyncio.to_thread(request.app[STATE].knowledge.metrics))
 
 
 async def prepare_image(request):
@@ -328,18 +422,22 @@ async def startup(app):
 async def cleanup(app):
     runtime = app[STATE]
     runtime.stopping = True
+    runtime.actions.allowed = False
     runtime.lease = None
     if runtime.workers:
         await asyncio.gather(*runtime.workers, return_exceptions=True)
     await runtime.services.close()
 
 
-def create_app(store: AuthStore, services, desktop, desktop_enabled=False):
+def create_app(store: AuthStore, services, desktop, desktop_enabled=False, *, actions=None, knowledge=None, intelligence=None, cloud=None):
     app = web.Application(middlewares=[protections], client_max_size=64 * 1024)
-    app[STATE] = Runtime(store, services, desktop, desktop_enabled)
+    app[STATE] = Runtime(store, services, desktop, desktop_enabled, actions, knowledge, intelligence, cloud)
     app.add_routes([
         web.post('/v1/pair', pair), web.get('/v1/status', status), web.delete('/v1/session', revoke),
         web.post('/v1/chat', chat), web.post('/v1/images/prepare', prepare_image),
+        web.get('/v1/knowledge', knowledge_handler), web.post('/v1/knowledge', knowledge_handler), web.delete('/v1/knowledge/{id}', knowledge_handler),
+        web.get('/v1/conversations', conversations), web.get('/v1/conversations/{id}', conversations), web.delete('/v1/conversations/{id}', conversations),
+        web.get('/v1/settings', settings), web.patch('/v1/settings', settings), web.get('/v1/metrics', metrics),
         web.post('/v1/images', create_image), web.get('/v1/images/{request_id}/content', image_content),
         web.get('/v1/images/{request_id}', get_image), web.post('/v1/search', search),
         web.post('/v1/desktop/session', start_desktop), web.delete('/v1/desktop/session', end_desktop),

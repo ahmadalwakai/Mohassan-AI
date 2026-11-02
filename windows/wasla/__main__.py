@@ -49,6 +49,8 @@ def single_server(root):
 
 
 async def serve(args, store):
+    from .actions import ActionsController
+    from .cloud import CloudIntelligence
     from .desktop import WindowsDesktop
     from .services import LocalServices
     from .server import STATE, create_app
@@ -63,7 +65,8 @@ async def serve(args, store):
     san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
     if address not in san.get_values_for_type(x509.IPAddress):
         raise ValueError("The selected IP is not in the saved certificate. Revoke devices and explicitly replace the certificate before re-pairing.")
-    app = create_app(store, LocalServices(), WindowsDesktop(), args.allow_desktop)
+    actions = ActionsController(allowed=args.allow_app_actions, state_root=store.root)
+    app = create_app(store, LocalServices(), WindowsDesktop(), args.allow_desktop, actions=actions, cloud=CloudIntelligence(store.root))
     runner = web.AppRunner(app, access_log=None, shutdown_timeout=600)
     await runner.setup()
     stopped = asyncio.Event()
@@ -73,9 +76,10 @@ async def serve(args, store):
         await site.start()
         status_path = store.root / "server-status.json"
         atomic_json(status_path, {"pid": os.getpid(), "host": args.host, "port": args.port,
-            "started_at": time.time(), "desktop_enabled": args.allow_desktop})
+            "started_at": time.time(), "desktop_enabled": args.allow_desktop,
+            "app_actions_enabled": args.allow_app_actions})
         print(json.dumps({"ready": True, "url": f"https://{args.host}:{args.port}", "fingerprint": fingerprint,
-            "desktop_enabled": args.allow_desktop}), flush=True)
+            "desktop_enabled": args.allow_desktop, "app_actions_enabled": args.allow_app_actions}), flush=True)
         if args.stdin_control:
             def watch_stdin():
                 for line in sys.stdin:
@@ -101,6 +105,7 @@ async def serve(args, store):
             with contextlib.suppress(asyncio.CancelledError):
                 await stop_task
     finally:
+        actions.allowed = False
         app[STATE].stopping = True
         app[STATE].lease = None
         await runner.cleanup()
@@ -110,16 +115,21 @@ async def serve(args, store):
         print("Wasla stopped; owned image work cleaned up.", flush=True)
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description="Wasla Windows local companion")
     parser.add_argument("command", choices=["serve", "pair", "devices", "revoke", "identity"])
     parser.add_argument("--state", type=Path, default=DEFAULT_STATE)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--allow-desktop", action="store_true")
+    parser.add_argument("--allow-app-actions", action="store_true")
     parser.add_argument("--stdin-control", action="store_true")
     parser.add_argument("--device-id")
-    args = parser.parse_args()
+    return parser
+
+
+def main():
+    args = build_parser().parse_args()
     store = AuthStore(args.state)
     if args.command == "serve":
         with single_server(store.root):

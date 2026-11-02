@@ -4,8 +4,28 @@ from contextlib import contextmanager
 import json
 import threading
 import unittest
+from unittest.mock import patch
+from urllib.parse import parse_qs, urlencode, urlsplit
+from xml.sax.saxutils import escape
 
-from wasla.services import LocalServices, ServiceError, MODEL, _duckduckgo, _bing, _safe_result_url
+from wasla.services import LocalServices, ServiceError, MODEL, _HTTP, _duckduckgo, _bing, _safe_result_url
+
+
+ARABIC_SEARCH = "ابحث عن وثائق Tailscale الرسمية لتوصيل iPhone بكمبيوتر Windows، وأظهر المصادر."
+
+
+def rss(query, items=()):
+    """Provider fixture with an accurately echoed query, including Arabic."""
+    link = "https://www.bing.com/search?" + urlencode({"q": query, "format": "rss"})
+    rows = "".join(
+        f"<item><title>{escape(title)}</title><link>{escape(url)}</link>"
+        f"<description>{escape(snippet)}</description></item>"
+        for title, url, snippet in items
+    )
+    return f"<rss><channel><title>Bing: {escape(query)}</title><link>{escape(link)}</link>{rows}</channel></rss>"
+
+
+TAILSCALE_RESULT = ("Tailscale documentation", "https://tailscale.com/kb", "Connect iPhone and Windows")
 
 
 class FakeTransport:
@@ -174,11 +194,60 @@ class ServicesTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_search_fallback_returns_actual_parser_results(self):
         self.transport.search_bodies["DuckDuckGo HTML"] = '<form id="challenge-form"></form>'
-        self.transport.search_bodies["Bing RSS"] = '<rss><channel><item><title>Official result</title><link>https://example.org/page</link><description>Useful snippet</description></item></channel></rss>'
+        self.transport.search_bodies["Bing RSS"] = rss("local image generation", [
+            ("Local image generation", "https://example.org/page", "Generate an image locally")])
         result = await self.service.search("local image generation")
         self.assertEqual(result["provider"], "Bing RSS")
         self.assertEqual(result["results"][0]["url"], "https://example.org/page")
         self.assertEqual(len(self.transport.searches), 2)
+
+    async def test_empty_first_provider_tries_relevant_second_provider(self):
+        self.transport.search_bodies["DuckDuckGo HTML"] = '<div class="no-results">No results found</div>'
+        self.transport.search_bodies["Bing RSS"] = rss(ARABIC_SEARCH, [TAILSCALE_RESULT])
+        result = await self.service.search(ARABIC_SEARCH)
+        self.assertEqual(result["provider"], "Bing RSS")
+        self.assertEqual(result["results"][0]["url"], TAILSCALE_RESULT[1])
+        self.assertEqual(self.transport.searches, [(name, ARABIC_SEARCH) for name in ("DuckDuckGo HTML", "Bing RSS")])
+        self.assertEqual(self.transport.calls, [])  # Relevance checking never invokes the model.
+
+    async def test_irrelevant_first_provider_tries_second_provider(self):
+        self.transport.search_bodies["DuckDuckGo HTML"] = (
+            '<a class="result__a" href="https://example.org/stocks">Barclays share price</a>')
+        self.transport.search_bodies["Bing RSS"] = rss(ARABIC_SEARCH, [TAILSCALE_RESULT])
+        result = await self.service.search(ARABIC_SEARCH)
+        self.assertEqual(result["results"][0]["title"], TAILSCALE_RESULT[0])
+        self.assertEqual(len(self.transport.searches), 2)
+
+    async def test_mismatched_first_provider_tries_second_provider(self):
+        self.transport.search_bodies["DuckDuckGo HTML"] = (
+            '<input name="q" value="another query">'
+            '<a class="result__a" href="https://tailscale.com">Tailscale</a>')
+        self.transport.search_bodies["Bing RSS"] = rss(ARABIC_SEARCH, [TAILSCALE_RESULT])
+        self.assertEqual((await self.service.search(ARABIC_SEARCH))["provider"], "Bing RSS")
+
+    async def test_both_explicit_empty_results_remain_empty(self):
+        self.transport.search_bodies["DuckDuckGo HTML"] = '<div class="no-results">No results found</div>'
+        self.transport.search_bodies["Bing RSS"] = rss(ARABIC_SEARCH)
+        result = await self.service.search(ARABIC_SEARCH)
+        self.assertEqual(result["results"], [])
+        self.assertEqual(len(self.transport.searches), 2)
+
+    async def test_genuine_empty_is_preserved_when_other_provider_fails(self):
+        self.transport.search_bodies["DuckDuckGo HTML"] = ServiceError("upstream_unavailable", "offline")
+        self.transport.search_bodies["Bing RSS"] = rss(ARABIC_SEARCH)
+        result = await self.service.search(ARABIC_SEARCH)
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["provider"], "Bing RSS")
+
+    async def test_correct_query_echo_does_not_make_unrelated_feed_acceptable(self):
+        self.transport.search_bodies["DuckDuckGo HTML"] = ServiceError("upstream_unavailable", "offline")
+        for title in ("FLINTMANOR company information", "Barclays stock quotes"):
+            self.transport.search_bodies["Bing RSS"] = rss(ARABIC_SEARCH, [
+                (title, "https://example.org/company", "Shares and company registration")])
+            with self.subTest(title=title), self.assertRaises(ServiceError) as error:
+                await self.service.search(ARABIC_SEARCH)
+            self.assertEqual(error.exception.code, "search_irrelevant")
+        self.assertEqual(self.transport.calls, [])
 
     async def test_search_failure_is_honest(self):
         with self.assertRaises(ServiceError) as error:
@@ -187,6 +256,58 @@ class ServicesTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SearchParserTests(unittest.TestCase):
+    def test_bing_filters_unrelated_results_even_when_platforms_match(self):
+        items = [
+            ("Windows and iPhone accessories", "https://example.org/shop", "Buy cases"),
+            TAILSCALE_RESULT,
+            ("Barclays", "https://example.org/stocks", "Financial information"),
+        ]
+        results = _bing(rss(ARABIC_SEARCH, items), query=ARABIC_SEARCH)
+        self.assertEqual([result["url"] for result in results], [TAILSCALE_RESULT[1]])
+
+    def test_relevance_is_checked_before_six_result_display_limit(self):
+        items = [(f"Unrelated company {index}", f"https://example.org/{index}", "Stocks") for index in range(6)]
+        items.append(TAILSCALE_RESULT)
+        self.assertEqual(_bing(rss(ARABIC_SEARCH, items), query=ARABIC_SEARCH)[0]["url"], TAILSCALE_RESULT[1])
+
+    def test_bing_query_echo_mismatch_is_rejected_even_with_relevant_results(self):
+        with self.assertRaises(ServiceError) as error:
+            _bing(rss("different question", [TAILSCALE_RESULT]), query=ARABIC_SEARCH)
+        self.assertEqual(error.exception.code, "search_query_mismatch")
+
+    def test_bing_link_echo_must_also_match(self):
+        body = rss(ARABIC_SEARCH, [TAILSCALE_RESULT]).replace(
+            urlencode({"q": ARABIC_SEARCH, "format": "rss"}).replace("&", "&amp;"), "q=other&amp;format=rss")
+        with self.assertRaises(ServiceError) as error:
+            _bing(body, query=ARABIC_SEARCH)
+        self.assertEqual(error.exception.code, "search_query_mismatch")
+
+    def test_ddg_query_input_and_title_echo_mismatch_are_rejected(self):
+        result = '<a class="result__a" href="https://tailscale.com">Tailscale</a>'
+        for metadata in ('<input name="q" value="other">', '<title>other at DuckDuckGo</title>'):
+            with self.subTest(metadata=metadata), self.assertRaises(ServiceError) as error:
+                _duckduckgo(metadata + result, query="Tailscale")
+            self.assertEqual(error.exception.code, "search_query_mismatch")
+
+    def test_arabic_spelling_and_diacritics_are_normalized_for_relevance(self):
+        query = "ابحث عن وَثَائِق تايلسكيل آيفون ويندوز"
+        results = _bing(rss(query, [TAILSCALE_RESULT]), query=query)
+        self.assertEqual(results[0]["url"], TAILSCALE_RESULT[1])
+
+    def test_unusable_feed_items_are_not_reported_as_genuine_empty(self):
+        with self.assertRaises(ServiceError) as error:
+            _bing(rss("Tailscale", [("Tailscale", "file:///secret", "")]), query="Tailscale")
+        self.assertEqual(error.exception.code, "invalid_search_response")
+
+    def test_http_search_sends_exact_query_and_discourages_stale_responses(self):
+        transport = _HTTP()
+        with patch.object(transport, "_read", return_value=(b"<rss/>", "application/rss+xml")) as read:
+            transport.search("Bing RSS", ARABIC_SEARCH)
+        request = read.call_args.args[1]
+        self.assertEqual(parse_qs(urlsplit(request.full_url).query), {"q": [ARABIC_SEARCH], "format": ["rss"]})
+        self.assertEqual(request.get_header("Cache-control"), "no-cache")
+        self.assertEqual(read.call_args.args[2:], (18, 1024 * 1024))
+
     def test_ddg_nested_titles_snippets_and_redirect_urls(self):
         body = '''<div><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.org%2Farticle">A <b>result</b></a><a class="result__snippet">A useful <b>snippet</b>.</a></div>'''
         results = _duckduckgo(body)

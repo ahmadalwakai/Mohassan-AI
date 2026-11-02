@@ -124,6 +124,7 @@ class Companion:
         self.host = tk.StringVar()
         self.port = tk.StringVar(value="47621")
         self.desktop = tk.BooleanVar(value=False)
+        self.app_actions = tk.BooleanVar(value=False)
         self.uri = tk.StringVar()
         self.fingerprint = tk.StringVar()
         self.pairing = tk.StringVar()
@@ -185,6 +186,8 @@ class Companion:
         self.copy_pair_button.pack(side="right")
         self.desktop_check = ttk.Checkbutton(body, text="السماح بعرض سطح المكتب والتحكم بالفأرة ولوحة المفاتيح", variable=self.desktop, state="disabled")
         self.desktop_check.pack(anchor="e", pady=(0, 4))
+        self.app_actions_check = ttk.Checkbutton(body, text="السماح بفتح التطبيقات من المحادثة", variable=self.app_actions, state="disabled")
+        self.app_actions_check.pack(anchor="e", pady=(0, 4))
         ttk.Label(body, text="يُطبَّق هذا الخيار عند تشغيل وصلة، وللهاتف المقترن فقط.", anchor="e", foreground="#637268").pack(fill="x", pady=(0, 10))
         ttk.Label(body, textvariable=self.network_note, anchor="e", justify="right", wraplength=710, foreground="#637268").pack(fill="x", pady=(0, 8))
 
@@ -300,6 +303,7 @@ class Companion:
         self.port_entry.configure(state="normal" if editable else "disabled")
         self.refresh_button.configure(state="normal" if editable else "disabled")
         self.desktop_check.configure(state="normal" if editable else "disabled")
+        self.app_actions_check.configure(state="normal" if editable else "disabled")
         self.pair_button.configure(state="normal" if self.ready and not self.stopping and not self.pairing_pending else "disabled")
         self.revoke_button.configure(state="normal" if self.store is not None else "disabled")
         self.copy_buttons[0].configure(state="normal" if self.ready and not self.stopping else "disabled")
@@ -335,6 +339,8 @@ class Companion:
                    "--host", host, "--port", str(port), "--stdin-control"]
         if self.desktop.get():
             command.append("--allow-desktop")
+        if self.app_actions.get():
+            command.append("--allow-app-actions")
         environment = dict(os.environ)
         environment["PYTHONUNBUFFERED"] = "1"
         try:
@@ -408,6 +414,8 @@ class Companion:
         self.fingerprint.set(fingerprint)
         self.ready = True
         self.status.set("وصلة يعمل باتصال مشفّر. " + ("التحكم بسطح المكتب مسموح للأجهزة المقترنة." if status.get("desktop_enabled") else "عرض سطح المكتب والتحكم به غير مفعّلين."))
+        if status.get("app_actions_enabled"):
+            self.status.set(self.status.get() + " فتح التطبيقات من المحادثة مفعّل.")
         self.pairing_note.set("جارٍ إنشاء رمز الربط…")
         self._controls()
         self.create_pairing()

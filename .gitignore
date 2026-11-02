@@ -16,3 +16,9 @@ build/
 work/
 state/
 *.log
+node_modules/
+.next/
+coverage/
+*.tsbuildinfo
+*.sqlite*
+!.env.example

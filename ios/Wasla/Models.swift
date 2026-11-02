@@ -97,6 +97,7 @@ struct ServerStatus: Decodable {
     let busy: BusyState
     let desktop_enabled: Bool
     let desktop: DesktopInfo?
+    let app_actions_enabled: Bool?
 }
 struct ChatMessage: Codable, Identifiable {
     var id = UUID()
@@ -104,8 +105,88 @@ struct ChatMessage: Codable, Identifiable {
     let content: String
     enum CodingKeys: String, CodingKey { case role, content }
 }
-struct ChatRequest: Encodable { let messages: [ChatMessage] }
-struct ChatResponse: Decodable { let content: String; let model: String }
+enum ChatMode: String, CaseIterable, Identifiable {
+    case automatic = "auto", liveWeb = "live_web", local
+    var id: String { rawValue }
+    var title: String {
+        switch self { case .automatic: return "تلقائي"; case .liveWeb: return "بحث مباشر"; case .local: return "محلي" }
+    }
+}
+struct ChatRequest: Encodable {
+    let messages: [ChatMessage]
+    let request_id: String
+    let mode: String
+    let remember: Bool
+    let use_memory: Bool
+    let conversation_id: String?
+}
+struct ChatSource: Decodable, Identifiable {
+    let id: String
+    let title: String
+    let url: String?
+    let snippet: String?
+    var safeURL: URL? {
+        guard let url, let parts = URLComponents(string: url), parts.scheme?.lowercased() == "https",
+              let host = parts.host, !host.isEmpty, parts.user == nil, parts.password == nil,
+              !url.contains("\\"), !url.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
+        return parts.url
+    }
+}
+struct ChatEvidence: Decodable {
+    let level: String
+    let note: String?
+    var title: String {
+        switch level { case "grounded": return "مستندة إلى أدلة"; case "limited": return "أدلة محدودة"; case "unverified": return "تحتاج تحققًا"; default: return "حالة الأدلة غير محددة" }
+    }
+}
+struct ChatResponse: Decodable {
+    let content: String
+    let model: String
+    let route: String?
+    let sources: [ChatSource]?
+    let evidence: ChatEvidence?
+    let warnings: [String]?
+    let timing_ms: Double?
+    let cache_hit: Bool?
+    let memory_saved: Bool?
+    let conversation_id: String?
+    var routeTitle: String? {
+        guard let route else { return nil }
+        switch route {
+        case "calculator": return "حساب مباشر"
+        case "unit_conversion": return "تحويل وحدات"
+        case "knowledge": return "المعرفة المحفوظة"
+        case "research", "live_web": return "بحث بمصادر"
+        case "local": return "النموذج المحلي"
+        case "actions": return "إجراء في التطبيق"
+        case "cloud": return "محرك سحابي"
+        default: return route
+        }
+    }
+    static func warningMessage(_ code: String) -> String {
+        switch code {
+        case "source_instructions_ignored": return "استُبعدت تعليمات غير مرتبطة بسؤالك وردت داخل بعض المصادر."
+        case "duplicate_or_similar_sources_omitted": return "استُبعدت المصادر المكررة أو شديدة التشابه."
+        case "knowledge_version_unavailable": return "تعذّر التأكد من آخر تحديث للمعرفة المحفوظة."
+        case "invalid_conversion": return "تعذّر تحويل هذه الوحدات. راجع الوحدات والقيمة."
+        case "invalid_calculation": return "تعذّر حساب هذا التعبير. راجع الأرقام والعمليات المطلوبة."
+        case "knowledge_unavailable": return "تعذّر الوصول إلى معرفتك المحفوظة لهذه الإجابة."
+        case "knowledge_not_configured": return "استخدام المعرفة المحفوظة غير مهيأ في اتصالك الحالي."
+        case "search_query_truncated_to_400_characters": return "استخدم البحث الجزء الأول من سؤالك الطويل."
+        case "search_query_simplified": return "بُسّطت صياغة البحث للتركيز على موضوع سؤالك."
+        case "search_unavailable": return "تعذّر البحث في الإنترنت الآن. لم يتأكد الحصول على معلومات حديثة."
+        case "possible_source_conflict": return "قد توجد أرقام غير متفقة في المقتطفات؛ لم يتأكد سبب الاختلاف."
+        case "summary_unavailable": return "تعذّر إعداد ملخص. يمكنك مراجعة مقتطفات المصادر المعروضة."
+        case "draft_rejected_or_insufficient_evidence": return "تعذّر تقديم خلاصة مدعومة بما يكفي، لذا عُرضت مقتطفات المصادر."
+        case "search_total_cost_not_determined_from_usage": return "التكلفة الإجمالية للبحث السحابي غير متاحة في بيانات الاستخدام."
+        case "unsupported_links_rejected": return "لم تُعرض إجابة احتوت على روابط لم تُرجعها خدمة البحث."
+        case "insufficient_web_citations": return "لم تتوفر استشهادات ويب كافية لدعم الإجابة."
+        case "memory_save_failed": return "وصلت الإجابة، لكن لم يتأكد حفظ المحادثة."
+        case "usage_record_failed": return "لم يتأكد تحديث إحصاءات الاستخدام لهذه الإجابة."
+        default: return "تفاصيل الأدلة محدودة. راجع المصادر قبل الاعتماد على الإجابة."
+        }
+    }
+}
 struct ImagePreparation: Encodable { let description: String; let style: String }
 struct PreparedImage: Codable, Identifiable {
     var id = UUID()

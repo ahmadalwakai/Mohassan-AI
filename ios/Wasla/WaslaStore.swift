@@ -13,6 +13,10 @@ final class WaslaStore: ObservableObject {
     @Published var messages: [ChatMessage] = []
     @Published var chatBusy = false
     @Published var chatContextNote = ""
+    @Published var chatMode = ChatMode.automatic
+    @Published var rememberConversation = false
+    @Published var useSavedKnowledge = false
+    @Published private(set) var chatMetadata: [UUID: ChatResponse] = [:]
     @Published var imagePreparing = false
     @Published var preparedImage: PreparedImage?
     @Published var imageBusy = false
@@ -38,6 +42,8 @@ final class WaslaStore: ObservableObject {
     private var inputQueue: [DesktopCommand] = []
     private var desktopEpoch = 0
     private var sessionEpoch = 0
+    private var chatEpoch = 0
+    private var chatConversationID: String?
     private let defaults = UserDefaults.standard
     private let identityKey = "wasla.server.identity"
     private let pendingKey = "wasla.pending.image"
@@ -126,7 +132,15 @@ final class WaslaStore: ObservableObject {
         defaults.removeObject(forKey: lastImageKey)
         client = nil; identity = nil; status = nil
         messages = []; chatContextNote = ""; pendingImageID = nil; lastImage = nil; preparedImage = nil; searchResponse = nil
+        chatMetadata = [:]; chatConversationID = nil; chatEpoch += 1
+        rememberConversation = false; useSavedKnowledge = false; chatMode = .automatic
         imageBusy = false; imageSubmitting = false; imagePreparing = false; chatBusy = false; selectedTab = 0
+    }
+    func newChat() {
+        chatEpoch += 1
+        chatTask?.cancel(); chatTask = nil
+        messages = []; chatMetadata = [:]; chatConversationID = nil; chatContextNote = ""; chatBusy = false
+        rememberConversation = false; useSavedKnowledge = false; chatMode = .automatic
     }
     @discardableResult
     func sendChat(_ text: String) -> Bool {
@@ -145,18 +159,23 @@ final class WaslaStore: ObservableObject {
         }
         chatContextNote = history.count < messages.count ? "أُرسل أحدث جزء من المحادثة ضمن حدود النموذج: \(history.count) رسالة." : ""
         let requestHistory = history
+        let request = ChatRequest(messages: requestHistory, request_id: UUID().uuidString.lowercased(), mode: chatMode.rawValue, remember: rememberConversation, use_memory: useSavedKnowledge, conversation_id: rememberConversation ? chatConversationID : nil)
         let epoch = sessionEpoch
+        let conversationEpoch = chatEpoch
         chatBusy = true
         chatTask = Task { [weak self] in
             guard let self else { return }
-            defer { self.chatBusy = false }
+            defer { if epoch == self.sessionEpoch, conversationEpoch == self.chatEpoch { self.chatBusy = false; self.chatTask = nil } }
             do {
-                let answer: ChatResponse = try await client.post("/v1/chat", body: ChatRequest(messages: requestHistory), timeout: 210)
-                guard !Task.isCancelled, epoch == self.sessionEpoch else { return }
-                self.messages.append(ChatMessage(role: "assistant", content: answer.content))
+                let answer: ChatResponse = try await client.post("/v1/chat", body: request, timeout: 210)
+                guard !Task.isCancelled, epoch == self.sessionEpoch, conversationEpoch == self.chatEpoch else { return }
+                let reply = ChatMessage(role: "assistant", content: answer.content)
+                self.chatMetadata[reply.id] = answer
+                self.messages.append(reply)
+                self.chatConversationID = answer.memory_saved == true ? answer.conversation_id : nil
                 await self.refreshStatus()
             } catch {
-                if !Task.isCancelled, epoch == self.sessionEpoch { self.show(error) }
+                if !Task.isCancelled, epoch == self.sessionEpoch, conversationEpoch == self.chatEpoch { self.show(error) }
             }
         }
         return true
