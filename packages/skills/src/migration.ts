@@ -11,13 +11,22 @@ const REGISTRY = [
   `CREATE INDEX skill_audit_target_idx ON skill_audit(owner_id,target_id,created_at DESC)`,
 ] as const;
 
+const SECURITY = [
+  `CREATE TABLE skill_inspections(id text PRIMARY KEY,version_id text NOT NULL REFERENCES skill_versions(id) ON DELETE CASCADE,owner_id text NOT NULL,content_hash text NOT NULL,inspector_version text NOT NULL,verdict text NOT NULL CHECK(verdict IN('pass','review','fail','incompatible')),findings jsonb NOT NULL,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE INDEX skill_inspections_version_idx ON skill_inspections(version_id,created_at DESC)`,
+  `CREATE TABLE skill_grants(id text PRIMARY KEY,version_id text NOT NULL REFERENCES skill_versions(id) ON DELETE CASCADE,owner_id text NOT NULL,content_hash text NOT NULL,tools jsonb NOT NULL,scopes jsonb NOT NULL,roots jsonb NOT NULL,expires_at timestamptz NOT NULL,revoked_at timestamptz,revoke_reason text,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE INDEX skill_grants_version_idx ON skill_grants(owner_id,version_id,expires_at)`,
+] as const;
+
 /** Fixed SQL, additive only: dropping the skill_* tables fully reverses it without touching existing data. */
 export async function skillsMigration(db: Kysely<any>): Promise<void> {
   await sql`CREATE TABLE IF NOT EXISTS schema_migrations(version text PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`.execute(db);
   await db.transaction().execute(async (tx) => {
     await sql`SELECT pg_advisory_xact_lock(1846021108)`.execute(tx);
-    if (await tx.selectFrom('schema_migrations').select('version').where('version', '=', '015_skill_registry').executeTakeFirst()) return;
-    for (const statement of REGISTRY) await sql.raw(statement).execute(tx);
-    await tx.insertInto('schema_migrations').values({ version: '015_skill_registry' }).execute();
+    for (const [version, statements] of [['015_skill_registry', REGISTRY], ['016_skill_security', SECURITY]] as const) {
+      if (await tx.selectFrom('schema_migrations').select('version').where('version', '=', version).executeTakeFirst()) continue;
+      for (const statement of statements) await sql.raw(statement).execute(tx);
+      await tx.insertInto('schema_migrations').values({ version }).execute();
+    }
   });
 }

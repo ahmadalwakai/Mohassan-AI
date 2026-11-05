@@ -138,7 +138,7 @@ export async function createApplication(config: AppConfig) {
   browser=await registerBrowserRoutes(app,{db:database.db,owner,config:config.browser,managedLifecycle:false});
   app.get<{Params:{id:string}}>('/api/browser/tasks/:id/screenshot',async(request,reply)=>{const picture=await browserTask.screenshot((await owner(request)).id,z.uuid().parse(request.params.id));return reply.type(picture.mimeType).header('Content-Disposition','inline').send(picture.bytes);});
   memory=await registerMemoryRoutes(app,{db:database.db,owner});
-  await registerSkillRoutes(app,{db:database.db,owner});
+  await registerSkillRoutes(app,{db:database.db,owner,allowedRoots:config.codingAllowedRoots??[]});
   const chat=await createCommandChatControl(database.db,{apiKey:config.groqApiKey,models:{fast:[config.groqModel??'openai/gpt-oss-20b',config.groqVisionModel??'qwen/qwen3.8-27b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:new AgentBrowser({profileDir:config.browserProfileDir??join(tmpdir(),`mohassan-browser-${randomUUID()}`),testOrigins:config.browser?.testOrigins,channel:config.browserChannel}),networkPolicy:config.browser,memoryContext:(ownerId,goal)=>memory.context(ownerId,goal)});
   await registerCommandChatRoutes(app,{control:chat,owner});
   await registerWindowsRoutes(app,{db:database.db,owner,config:{webOrigin:config.webOrigin,production:config.production,windowsEnabled:config.windowsEnabled}});

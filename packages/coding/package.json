@@ -1,1 +1,1 @@
-{"name":"@mohassan/coding","version":"0.1.0","private":true,"type":"module","exports":"./src/index.ts"}
+{"name":"@mohassan/coding","version":"0.1.0","private":true,"type":"module","exports":{".":"./src/index.ts","./security":"./src/security.ts"}}

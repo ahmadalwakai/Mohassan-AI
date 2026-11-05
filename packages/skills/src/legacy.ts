@@ -33,6 +33,6 @@ export async function legacyDetail(db: Kysely<any>, ownerId: string, id: string)
   const skill = toVersion(row, row.active_skill_id);
   return {
     skill, contract: { slug: skill.slug, name: skill.name, description: description(skill.description), version: skill.version, category: skill.category, level: 'instruction', inputs: [], outputs: [], steps: [], requires: { tools: [], scopes: [], paths: [] }, sideEffects: 'none', retry: { maxAttempts: 1 }, idempotent: false, rollback: { mode: 'none' }, conflicts: [], dependsOn: [] },
-    source: { kind: 'memory', locator: `memory:${id}`, observedAt: skill.createdAt, fileCount: 0, totalBytes: 0 }, files: [], versions: [skill], audit: [],
+    source: { kind: 'memory', locator: `memory:${id}`, observedAt: skill.createdAt, fileCount: 0, totalBytes: 0 }, files: [], versions: [skill], audit: [], inspection: null, grants: [],
   };
 }

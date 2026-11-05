@@ -18,6 +18,13 @@ export type SkillSideEffect = z.infer<typeof SkillSideEffectSchema>;
 export const SkillToolIdSchema = z.enum(['browser.open', 'browser.interact', 'browser.submit', 'research.run', 'vision.inspect', 'coding.change', 'studio.change', 'computer.view', 'computer.act', 'memory.search', 'file.read', 'file.write']);
 export type SkillToolId = z.infer<typeof SkillToolIdSchema>;
 
+/** The least a tool does. A contract may declare more, never less. */
+export const TOOL_SIDE_EFFECTS: Readonly<Record<SkillToolId, SkillSideEffect>> = Object.freeze({
+  'browser.open': 'read', 'browser.interact': 'write_local', 'browser.submit': 'external', 'research.run': 'read', 'vision.inspect': 'read',
+  'coding.change': 'write_local', 'studio.change': 'write_local', 'computer.view': 'read', 'computer.act': 'external',
+  'memory.search': 'read', 'file.read': 'read', 'file.write': 'write_local',
+});
+
 const Slug = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+){0,7}$/).max(64);
 const Version = z.string().regex(/^(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,4})$/);
 const FieldName = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,47}$/);
@@ -117,10 +124,37 @@ export type SkillRegistryResult = z.infer<typeof SkillRegistryResultSchema>;
 export const SkillAuditEventSchema = z.object({ id: z.uuid(), targetId: z.string(), event: z.string().min(1).max(64), detail: z.record(z.string(), z.unknown()), createdAt: z.iso.datetime() }).strict();
 export type SkillAuditEvent = z.infer<typeof SkillAuditEventSchema>;
 export const SkillFileSummarySchema = z.object({ path: z.string(), kind: z.enum(['instructions', 'script', 'reference', 'data']), contentHash: Sha256, sizeBytes: z.number().int().nonnegative() }).strict();
+export const SkillFindingSchema = z.object({
+  code: z.string().min(1).max(64), severity: z.enum(['info', 'warn', 'block', 'incompatible']), path: z.string().max(200).nullable(), line: z.number().int().positive().nullable(), message: z.string().min(1).max(300),
+}).strict();
+export type SkillFinding = z.infer<typeof SkillFindingSchema>;
+export const SkillVerdictSchema = z.enum(['pass', 'review', 'fail', 'incompatible']);
+export type SkillVerdict = z.infer<typeof SkillVerdictSchema>;
+export const SkillInspectionSchema = z.object({ id: z.uuid(), contentHash: Sha256, inspectorVersion: z.string(), verdict: SkillVerdictSchema, findings: z.array(SkillFindingSchema).max(200), createdAt: z.iso.datetime() }).strict();
+export type SkillInspection = z.infer<typeof SkillInspectionSchema>;
+export const SkillGrantSchema = z.object({ id: z.uuid(), contentHash: Sha256, tools: z.array(SkillToolIdSchema), scopes: z.array(z.string()), roots: z.array(z.string()), expiresAt: z.iso.datetime(), revokedAt: z.iso.datetime().nullable(), createdAt: z.iso.datetime() }).strict();
+export type SkillGrant = z.infer<typeof SkillGrantSchema>;
+
 export const SkillDetailSchema = z.object({
   skill: SkillVersionSchema, contract: SkillContractSchema, source: SkillSourceSchema.nullable(), files: z.array(SkillFileSummarySchema), versions: z.array(SkillVersionSchema), audit: z.array(SkillAuditEventSchema),
+  inspection: SkillInspectionSchema.nullable(), grants: z.array(SkillGrantSchema),
 }).strict();
 export type SkillDetail = z.infer<typeof SkillDetailSchema>;
+
+export const SkillImportSchema = z.object({ path: z.string().min(3).max(1000) }).strict();
+export const SkillImportResultSchema = z.object({ skill: SkillVersionSchema, deduplicated: z.boolean() }).strict();
+export type SkillImportResult = z.infer<typeof SkillImportResultSchema>;
+const Expected = { expectedRevision: z.number().int().positive() };
+const Reason = z.string().trim().min(3).max(500);
+export const SkillInspectRequestSchema = z.object(Expected).strict();
+export const SkillActivateSchema = z.object({ ...Expected, approve: z.literal(true), acknowledgeFindings: z.boolean().default(false) }).strict();
+export const SkillRevokeSchema = z.object({ ...Expected, reason: Reason }).strict();
+export const SkillRollbackSchema = z.object({ ...Expected, approve: z.literal(true), reason: Reason }).strict();
+export const SkillGrantCreateSchema = z.object({
+  ...Expected, approve: z.literal(true), tools: z.array(SkillToolIdSchema).max(12).default([]), scopes: z.array(z.string().regex(/^[a-z]+:[a-z]+$/)).max(12).default([]),
+  roots: z.array(z.string().min(3).max(1000)).max(4).default([]), durationHours: z.number().int().min(1).max(720),
+}).strict();
+export const SkillGrantRevokeSchema = z.object({ reason: Reason }).strict();
 
 const ReceiptBase = { runId: z.uuid(), skillVersionId: z.uuid(), contentHash: Sha256, startedAt: z.iso.datetime(), finishedAt: z.iso.datetime(), outcome: z.enum(['succeeded', 'failed', 'cancelled', 'unknown']), evidenceIds: z.array(z.uuid()).max(64) };
 /** Each level carries different proof, so an instruction run cannot be shaped into an execution receipt. */

@@ -1,25 +1,18 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
 import {
   SkillContractSchema, SkillDetailSchema, SkillRegistryQuerySchema, SkillRegistryResultSchema,
-  type SkillContract, type SkillDetail, type SkillRegistryResult, type SkillVersion,
+  type SkillDetail, type SkillRegistryResult, type SkillVersion,
 } from '@mohassan/contracts';
 import { builtinSkills } from './builtin/index.ts';
+import { SkillError } from './errors.ts';
+import { grantDto } from './grants.ts';
+import { sha256, skillContentHash } from './hash.ts';
 import { legacyDetail, legacySkills } from './legacy.ts';
 
-export class SkillError extends Error {
-  constructor(public readonly code: string, message: string, public readonly statusCode = 400) { super(message); this.name = 'SkillError'; }
-}
-
-export const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 const iso = (value: unknown) => new Date(value as string | Date).toISOString();
 const json = (value: unknown) => (typeof value === 'string' ? JSON.parse(value) : value);
-
-/** The hash covers the contract and every file, so any change is a different version. */
-export function skillContentHash(contract: SkillContract, files: readonly { path: string; content: string }[]): string {
-  const ordered = [...files].sort((a, b) => a.path.localeCompare(b.path, 'en')).map(({ path, content }) => ({ path, hash: sha256(content) }));
-  return sha256(JSON.stringify({ contract, files: ordered }));
-}
+const VERSION_COLUMNS = ['v.id', 'v.family_id', 'f.slug', 'f.active_version_id', 'v.name', 'v.description', 'v.category', 'v.version', 'v.revision', 'v.level', 'v.origin', 'v.status', 'v.status_reason', 'v.content_hash', 'v.created_at', 'v.updated_at'] as const;
 
 function versionDto(row: any, activeVersionId: string | null): SkillVersion {
   return {
@@ -61,8 +54,7 @@ export function createSkillRegistry(db: Kysely<any>) {
     const query = SkillRegistryQuerySchema.parse(input ?? {});
     await seedBuiltins(ownerId);
     const rows = await db.selectFrom('skill_versions as v').innerJoin('skill_families as f', 'f.id', 'v.family_id')
-      .select(['v.id', 'v.family_id', 'f.slug', 'f.active_version_id', 'v.name', 'v.description', 'v.category', 'v.version', 'v.revision', 'v.level', 'v.origin', 'v.status', 'v.status_reason', 'v.content_hash', 'v.created_at', 'v.updated_at'])
-      .where('v.owner_id', '=', ownerId).orderBy('v.updated_at', 'desc').orderBy('v.id').limit(500).execute();
+      .select(VERSION_COLUMNS).where('v.owner_id', '=', ownerId).orderBy('v.updated_at', 'desc').orderBy('v.id').limit(500).execute();
     const merged: SkillVersion[] = [...rows.map((row) => versionDto(row, row.active_version_id)), ...await legacySkills(db, ownerId)];
     const needle = query.q.toLocaleLowerCase('ar');
     const matches = merged.filter((skill) =>
@@ -73,18 +65,26 @@ export function createSkillRegistry(db: Kysely<any>) {
     return SkillRegistryResultSchema.parse({ items: matches.slice(query.offset, query.offset + query.limit), total: matches.length, counts: { category: tally('category'), level: tally('level') } });
   }
 
+  async function view(ownerId: string, id: string, connection: Kysely<any> = db): Promise<SkillVersion> {
+    const row = await connection.selectFrom('skill_versions as v').innerJoin('skill_families as f', 'f.id', 'v.family_id').select(VERSION_COLUMNS).where('v.owner_id', '=', ownerId).where('v.id', '=', id).executeTakeFirst();
+    if (!row) throw new SkillError('SKILL_NOT_FOUND', 'لم يُعثر على المهارة.', 404);
+    return versionDto(row, row.active_version_id);
+  }
+
   async function detail(ownerId: string, id: string): Promise<SkillDetail> {
-    const row = await db.selectFrom('skill_versions as v').innerJoin('skill_families as f', 'f.id', 'v.family_id').select(['v.id', 'v.family_id', 'f.slug', 'f.active_version_id', 'v.name', 'v.description', 'v.category', 'v.version', 'v.revision', 'v.level', 'v.origin', 'v.status', 'v.status_reason', 'v.content_hash', 'v.created_at', 'v.updated_at', 'v.contract']).where('v.owner_id', '=', ownerId).where('v.id', '=', id).executeTakeFirst();
+    const row = await db.selectFrom('skill_versions as v').innerJoin('skill_families as f', 'f.id', 'v.family_id').select([...VERSION_COLUMNS, 'v.contract']).where('v.owner_id', '=', ownerId).where('v.id', '=', id).executeTakeFirst();
     if (!row) {
       const legacy = await legacyDetail(db, ownerId, id);
       if (legacy) return SkillDetailSchema.parse(legacy);
       throw new SkillError('SKILL_NOT_FOUND', 'لم يُعثر على المهارة.', 404);
     }
-    const [files, source, siblings, events] = await Promise.all([
+    const [files, source, siblings, events, inspection, grants] = await Promise.all([
       db.selectFrom('skill_files').select(['path', 'kind', 'content_hash', 'size_bytes']).where('version_id', '=', id).orderBy('path').execute(),
       db.selectFrom('skill_sources').selectAll().where('version_id', '=', id).executeTakeFirst(),
-      db.selectFrom('skill_versions as v').innerJoin('skill_families as f', 'f.id', 'v.family_id').select(['v.id', 'v.family_id', 'f.slug', 'f.active_version_id', 'v.name', 'v.description', 'v.category', 'v.version', 'v.revision', 'v.level', 'v.origin', 'v.status', 'v.status_reason', 'v.content_hash', 'v.created_at', 'v.updated_at']).where('v.owner_id', '=', ownerId).where('v.family_id', '=', row.family_id).orderBy('v.sequence', 'desc').limit(50).execute(),
+      db.selectFrom('skill_versions as v').innerJoin('skill_families as f', 'f.id', 'v.family_id').select(VERSION_COLUMNS).where('v.owner_id', '=', ownerId).where('v.family_id', '=', row.family_id).orderBy('v.sequence', 'desc').limit(50).execute(),
       db.selectFrom('skill_audit').selectAll().where('owner_id', '=', ownerId).where('target_id', '=', id).orderBy('created_at', 'desc').limit(50).execute(),
+      db.selectFrom('skill_inspections').selectAll().where('version_id', '=', id).where('content_hash', '=', row.content_hash).orderBy('created_at', 'desc').executeTakeFirst(),
+      db.selectFrom('skill_grants').selectAll().where('owner_id', '=', ownerId).where('version_id', '=', id).orderBy('created_at', 'desc').limit(50).execute(),
     ]);
     return SkillDetailSchema.parse({
       skill: versionDto(row, row.active_version_id), contract: SkillContractSchema.parse(json(row.contract)),
@@ -92,8 +92,10 @@ export function createSkillRegistry(db: Kysely<any>) {
       files: files.map((file) => ({ path: file.path, kind: file.kind, contentHash: file.content_hash, sizeBytes: file.size_bytes })),
       versions: siblings.map((sibling) => versionDto(sibling, sibling.active_version_id)),
       audit: events.map((event) => ({ id: event.id, targetId: event.target_id, event: event.event, detail: json(event.detail), createdAt: iso(event.created_at) })),
+      inspection: inspection ? { id: inspection.id, contentHash: inspection.content_hash, inspectorVersion: inspection.inspector_version, verdict: inspection.verdict, findings: json(inspection.findings), createdAt: iso(inspection.created_at) } : null,
+      grants: grants.map(grantDto),
     });
   }
 
-  return { list, detail, seedBuiltins, audit };
+  return { list, detail, view, seedBuiltins, audit };
 }
