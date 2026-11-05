@@ -156,6 +156,21 @@ export const SkillGrantCreateSchema = z.object({
 }).strict();
 export const SkillGrantRevokeSchema = z.object({ reason: Reason }).strict();
 
+export const SkillBindingSchema = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,47}\.[a-zA-Z][a-zA-Z0-9_]{0,47}$/);
+export const SkillCompositionNodeSchema = z.object({ id: StepId, skillId: z.uuid(), inputs: z.record(FieldName, SkillBindingSchema).default({}), dependsOn: z.array(StepId).max(12).default([]) }).strict();
+export const SkillCompositionRequestSchema = z.object({ nodes: z.array(SkillCompositionNodeSchema).min(1).max(12), inputs: z.array(SkillFieldSchema).max(16).default([]) }).strict();
+export type SkillCompositionRequest = z.infer<typeof SkillCompositionRequestSchema>;
+export type SkillCompositionNode = z.infer<typeof SkillCompositionNodeSchema>;
+/** The categories match the gap detector: a refusal says what is actually missing. */
+export const SkillPlanIssueCategorySchema = z.enum(['invalid_plan', 'missing_skill', 'missing_tool', 'missing_permission', 'environment_failure', 'conflict']);
+export const SkillPlanIssueSchema = z.object({ code: z.string().min(1).max(64), severity: z.enum(['error', 'warning']), category: SkillPlanIssueCategorySchema, nodeId: z.string().nullable(), message: z.string().min(1).max(300) }).strict();
+export type SkillPlanIssue = z.infer<typeof SkillPlanIssueSchema>;
+export const SkillCompositionResultSchema = z.object({
+  valid: z.boolean(), batches: z.array(z.array(z.string())).max(12), issues: z.array(SkillPlanIssueSchema).max(200),
+  nodes: z.array(z.object({ id: z.string(), skillId: z.string(), slug: z.string().nullable(), level: SkillLevelSchema.nullable(), role: z.enum(['context', 'execute']).nullable(), sideEffects: SkillSideEffectSchema.nullable(), requiresApproval: z.boolean() }).strict()).max(12),
+}).strict();
+export type SkillCompositionResult = z.infer<typeof SkillCompositionResultSchema>;
+
 const ReceiptBase = { runId: z.uuid(), skillVersionId: z.uuid(), contentHash: Sha256, startedAt: z.iso.datetime(), finishedAt: z.iso.datetime(), outcome: z.enum(['succeeded', 'failed', 'cancelled', 'unknown']), evidenceIds: z.array(z.uuid()).max(64) };
 /** Each level carries different proof, so an instruction run cannot be shaped into an execution receipt. */
 export const SkillExecutionReceiptSchema = z.discriminatedUnion('level', [
