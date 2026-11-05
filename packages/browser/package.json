@@ -1,0 +1,1 @@
+{"name":"@mohassan/browser","version":"0.1.0","private":true,"type":"module","exports":"./src/index.ts","dependencies":{"playwright":"1.64.1","parse5":"8.1.0","zod":"4.6.7","kysely":"0.29.8"}}

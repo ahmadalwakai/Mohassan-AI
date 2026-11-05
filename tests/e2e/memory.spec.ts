@@ -1,0 +1,37 @@
+import { test,expect } from '@playwright/test';
+import { signInAsFixtureOwner } from './helpers';
+
+test('memory provenance, correction, feedback and explicit measured skill activation',async({page})=>{
+  test.setTimeout(120000);page.setDefaultTimeout(10000);const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  await signInAsFixtureOwner(page);
+  const taskResponse=await page.request.post('/api/tasks',{headers:{origin:new URL(page.url()).origin,'idempotency-key':crypto.randomUUID()},data:{title:'تشخيص مصدر ذاكرة المتصفح',goal:'تحقق من جاهزية التخزين والقدرات ووثق النتيجة للمراجعة.',capabilityId:'system.diagnostic',autonomy:'scoped'}});expect(taskResponse.ok()).toBe(true);const task=await taskResponse.json();
+  await expect.poll(async()=>{const response=await page.request.get(`/api/tasks/${task.id}`);return (await response.json()).task.status;}).toBe('completed');
+  await page.getByRole('button',{name:'الذاكرة والتعلّم',exact:true}).click();
+  const memory=page.getByRole('region',{name:'الذاكرة والتعلّم',exact:true});await expect(memory).toBeVisible();
+  await expect(memory.getByRole('heading',{name:'نتيجة: تشخيص مصدر ذاكرة المتصفح',exact:true})).toBeVisible();
+  const create=memory.getByRole('form',{name:'إضافة ذاكرة'});
+  await create.getByLabel('عنوان الذاكرة',{exact:true}).fill('تفضيل موثق لاختبار المتصفح');
+  await create.getByLabel('محتوى الذاكرة',{exact:true}).fill('أفضّل توثيق النتائج العربية بإيجاز واضح.');
+  await create.getByLabel('طبقة الذاكرة',{exact:true}).selectOption('preference');
+  await create.getByLabel('المهمة المرتبطة',{exact:true}).selectOption(task.id);
+  const memorySaved=page.waitForResponse(response=>response.url().endsWith('/api/memory/items')&&response.request().method()==='POST');
+  await create.getByRole('button',{name:'حفظ الذاكرة',exact:true}).click();const savedResponse=await memorySaved;expect(savedResponse.ok()).toBe(true);const saved=await savedResponse.json();
+  const card=memory.getByTestId(`memory-${saved.id}`);await expect(card).toBeVisible();await card.getByText(/المصادر والأدلة/).click();await expect(card).toContainText(task.id);await expect(card).toContainText('مصدر يدوي');
+  await card.getByRole('button',{name:'تصحيح / تجديد',exact:true}).click();
+  const correction=page.locator('dialog').filter({hasText:'تصحيح الذاكرة وتجديدها'});
+  await correction.getByLabel('محتوى التصحيح',{exact:true}).fill('أفضّل نتائج عربية مختصرة مع مصدر لكل نتيجة.');
+  const corrected=page.waitForResponse(response=>response.url().endsWith(`/api/memory/items/${saved.id}/correct`)&&response.request().method()==='POST');await correction.getByRole('button',{name:'حفظ التصحيح',exact:true}).click();const updated=await (await corrected).json();await expect(memory.getByTestId(`memory-${updated.id}`)).toContainText('الإصدار 2');
+  await memory.getByRole('button',{name:'التغذية الراجعة',exact:true}).click();
+  const feedback=memory.getByRole('form',{name:'التغذية الراجعة على مهمة'});await feedback.getByLabel('المهمة',{exact:true}).selectOption(task.id);await feedback.getByLabel('الملاحظة',{exact:true}).fill('هذا تصحيح لهذه المهمة وحدها.');await feedback.getByRole('button',{name:'حفظ التغذية الراجعة',exact:true}).click();await expect(memory.getByText('حُفظت الملاحظة الخاصة بالمهمة دون تعميمها.',{exact:true})).toBeVisible();
+  await feedback.getByLabel('المهمة',{exact:true}).selectOption(task.id);await feedback.getByLabel('نوع الملاحظة',{exact:true}).selectOption('preference');await feedback.getByLabel('الملاحظة',{exact:true}).fill('أفضّل إظهار الأدلة قبل الملخص.');await feedback.getByRole('checkbox',{name:'أوافق على حفظه كتفضيل مستمر'}).check();await feedback.getByRole('button',{name:'حفظ التغذية الراجعة',exact:true}).click();await expect(memory.getByText('حُفظ التفضيل المستمر بإذنك.',{exact:true})).toBeVisible();
+  await memory.getByRole('button',{name:'المهارات المقاسة',exact:true}).click();
+  const skillForm=memory.getByRole('form',{name:'مرشح مهارة جديد'});await skillForm.getByLabel('اسم المهارة',{exact:true}).fill('مهارة متصفح مقاسة صراحة');
+  const skillCreated=page.waitForResponse(response=>response.url().endsWith('/api/memory/skills')&&response.request().method()==='POST');await skillForm.getByRole('button',{name:'حفظ مرشح المهارة',exact:true}).click();const skillResponse=await skillCreated;expect(skillResponse.ok()).toBe(true);const skill=await skillResponse.json(),skillCard=memory.getByTestId(`skill-${skill.id}`);
+  await expect(skillCard).toContainText('مرشح');await skillCard.getByRole('button',{name:'اختبار المرشح',exact:true}).click();await expect(skillCard).toContainText('اجتاز الاختبار');await skillCard.getByRole('button',{name:'قياس المهارة',exact:true}).click();await expect(skillCard).toContainText('بانتظار الموافقة');await expect(skillCard).toContainText('العينة المستقلة');await expect(skillCard.getByRole('button',{name:'موافقة وتفعيل',exact:true})).toBeVisible();
+  await skillCard.getByRole('button',{name:'موافقة وتفعيل',exact:true}).click();await expect(skillCard).toContainText('مفعّلة');
+  const run=memory.getByRole('form',{name:'تجربة مهارة مفعّلة'});await run.getByLabel('المهارة المفعّلة',{exact:true}).selectOption(skill.id);await run.getByLabel('وصف المهمة للتجربة',{exact:true}).fill('إصلاح كود معيب');await run.getByRole('button',{name:'اقتراح قائمة الفحص',exact:true}).click();await expect(memory.getByText('برمجة · الإصدار 1',{exact:true})).toBeVisible();
+  await skillCard.getByRole('button',{name:'إلغاء المهارة',exact:true}).click();await expect(skillCard).toContainText('ملغاة');
+  await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:'artifacts/memory-desktop.png',fullPage:true,animations:'disabled'});
+  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:'artifacts/memory-mobile.png',fullPage:true,animations:'disabled'});
+  expect(errors).toEqual([]);
+});

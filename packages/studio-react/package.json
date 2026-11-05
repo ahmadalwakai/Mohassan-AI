@@ -1,0 +1,1 @@
+{"name":"@mohassan/studio-react","version":"0.1.0","private":true,"type":"module","exports":"./src/index.ts","dependencies":{"@mohassan/contracts":"*","@mohassan/studio":"*","@mohassan/sandbox":"*","esbuild":"0.28.2","parse5":"8.1.0","react":"19.3.1","react-dom":"19.3.1","typescript":"5.9.3"}}

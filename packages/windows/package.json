@@ -1,0 +1,1 @@
+{"name":"@mohassan/windows","version":"0.1.0","private":true,"type":"module","exports":"./src/index.ts","dependencies":{"fastify":"5.12.8","kysely":"0.29.8","zod":"4.6.7"}}

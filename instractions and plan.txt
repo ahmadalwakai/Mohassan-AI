@@ -1,0 +1,540 @@
+# Mohassan AI
+
+MASTER IMPLEMENTATION BLUEPRINT · VERSION 4.0
+
+Adaptive Cognitive Runtime · Autonomous Coding · Visual Vibe Coding · Google Ads Intelligence · iPhone Remote Control
+
+سأجمع أفكار الإصدار 3.0 مع الإضافات الثماني الخاصة بـ Vibe Coding في خطة هندسية موحدة، وأرتبها حسب الاعتماديات وأولوية التنفيذ، بحيث لا نبني أجزاء متفرقة ثم نكتشف أنها تحتاج إلى إعادة تصميم.
+
+الهدف هو بناء Mohassan AI كمنصة ذكاء اصطناعي شخصية تستطيع المحادثة، البرمجة، البحث، التحكم بالكمبيوتر، إدارة Google Ads، وتنفيذ المهام الطويلة، مع التعلم من النتائج المثبتة وتحسين استراتيجيات التنفيذ.
+
+## 1. الرؤية النهائية للمنصة
+
+## Mohassan AI
+
+Personal AI Operating Workspace
+
+Architecture v4.0
+
+AI Chat
+
+Conversation & reasoning
+
+Vibe Coding
+
+Build, preview & debug
+
+Browser Agent
+
+Research & automation
+
+Remote PC
+
+Secure computer control
+
+Google Ads
+
+Campaign intelligence
+
+iPhone Control
+
+Tasks & remote toggle
+
+Memory & Skills
+
+Verified experience
+
+Autonomous Tasks
+
+Durable execution
+
+### المبادئ الهندسية
+
+1. عقل تنفيذي موحد بدلاً من عشرات الوكلاء المستقلين.
+2. جميع العمليات تمر عبر صلاحيات قابلة للإلغاء.
+3. التنفيذ والتحقق منفصلان عن استدلال النموذج.
+4. استمرار المهام مستقل عن اتصال المستخدم.
+5. الذاكرة تحتفظ بالأدلة، وليس باستنتاجات غير مؤكدة.
+6. لا تعديل للكود أو البيانات الحساسة دون نطاق مصرح به.
+7. جميع الواجهات تستخدم عقود API وأنواع بيانات متوافقة.
+8. لا يُعتبر أي عمل مكتملًا قبل تحقق معايير قبوله.
+
+## 2. المخطط المعماري الموحد
+
+CONTROL INTERFACES
+
+Web Workspace · iPhone · VS Code · API
+
+SECURE CONTROL PLANE
+
+Identity · Device Trust · Policy · Approvals · Audit
+
+ADAPTIVE COGNITIVE CORE
+
+Goal Compiler
+
+Metacognition
+
+Model Router
+
+Decision Engine
+
+Uncertainty Engine
+
+Planning Engine
+
+World State
+
+Environment facts
+
+Memory Engine
+
+Evidence & skills
+
+Durable Engine
+
+Tasks & recovery
+
+Verification
+
+Tests & outcomes
+
+EXECUTION PLANE
+
+Coding Lab
+
+Visual Studio
+
+Browser
+
+File System
+
+Google Ads
+
+Remote PC
+
+LEARNING & EVALUATION LOOP
+
+Observe → Verify → Learn → Benchmark → Promote
+
+هذا التقسيم يحدد مسؤوليات كل جزء، ويمنع أن تمتلك واجهة المحادثة أو النموذج صلاحيات مباشرة غير محدودة.
+
+## 3. التقنيات المعتمدة
+
+| الطبقة             | التقنية                                 |
+| ------------------ | --------------------------------------- |
+| Web                | Next.js App Router + TypeScript         |
+| UI                 | Chakra UI + Motion                      |
+| iPhone             | SwiftUI + Swift Concurrency             |
+| API                | Node.js + TypeScript                    |
+| Database           | Neon PostgreSQL                         |
+| AI                 | Groq + Provider Adapters                |
+| Hosting            | Vercel                                  |
+| Background Jobs    | Persistent Node.js Workers              |
+| Durable Tasks      | PostgreSQL Queue / Workflow Engine      |
+| Realtime           | Authenticated WebSocket                 |
+| Browser Automation | Playwright                              |
+| Coding Isolation   | Git Worktrees + Containers              |
+| Windows Companion  | Native Service + Session Helper         |
+| Google Ads         | Official Google Ads API                 |
+| Notifications      | APNs                                    |
+| Security           | Zod + KMS + Scoped Permissions          |
+| Monitoring         | OpenTelemetry                           |
+| Tests              | Vitest + Playwright + Integration Tests |
+
+تظل Vercel مسؤولة عن واجهة الويب وواجهات API المناسبة لها، بينما تعمل خدمات المهام الطويلة والاتصال بالكمبيوتر في بيئة مستقلة دائمة التشغيل.
+
+# 4. الوحدات الوظيفية الرئيسية
+
+## 4.1 Adaptive Cognitive Core
+
+هذا هو العقل المركزي للمنصة، ويضم ست وحدات:
+
+| الوحدة                   | المسؤولية                          |
+| ------------------------ | ---------------------------------- |
+| Goal Compiler            | تحويل الطلب إلى هدف ومعايير نجاح   |
+| Strategy Planner         | إنشاء خطة وتنظيم الاعتماديات       |
+| Metacognitive Supervisor | اكتشاف الفشل والتكرار والجمود      |
+| Dynamic Model Router     | اختيار النموذج حسب الأداء والتكلفة |
+| Decision Engine          | اختيار الخطوة والأداة والصلاحية    |
+| Outcome Evaluator        | تقييم النتائج الفعلية              |
+
+دورة اتخاذ القرار
+
+01
+
+Understand
+
+02
+
+Inspect
+
+03
+
+Strategize
+
+04
+
+Plan
+
+05
+
+Authorize
+
+06
+
+Execute
+
+07
+
+Verify
+
+08
+
+Adapt
+
+إضافة جديدة: Confidence & Evidence Gate. لا يسمح بترقية معلومة إلى حقيقة تشغيلية إلا عند وجود دليل مناسب، ويمنع الاستنتاجات غير الموثقة من التأثير على قرارات حساسة.
+
+## 4.2 Visual Vibe Coding Studio
+
+هذه أهم واجهة تفاعلية بعد المحادثة.
+
+Mohassan AI Studio
+
+Concept UI
+
+Explorer
+
+app/
+
+page.tsx
+
+layout.tsx
+
+components/
+
+api/
+
+Live Preview
+
+Your Website
+
+### Build something great.
+
+Visual preview of the running application
+
+Selected UI Element
+
+AI Coding Assistant
+
+Select an element, describe a change, and preview the verified result.
+
+Describe your changes...
+
+### قدرات الاستوديو
+
+- Visual Element Selection مع ربط العنصر بملف ومكوّن عند إمكانية تحديد المصدر.
+- Live Preview داخل بيئة معزولة.
+- Screenshot-to-Code لإنشاء واجهات قابلة للتعديل.
+- Project Intelligence لفهم العلاقات بين الملفات.
+- Autonomous Debugging لأخطاء المتصفح والخادم والبناء.
+- Checkpoint & Restore عبر نقاط استعادة موثقة.
+- Persistent Coding Sessions للمهام الطويلة.
+- Concurrent Edit Protection لمنع تضارب التعديلات.
+- Visual Diff لمقارنة التصميم قبل التعديل وبعده.
+- Regression Guardian لفحص المستهلكين المتأثرين.
+
+لا ننشئ محرك برمجة آخر للاستوديو؛ يستخدم الاستوديو نفس Autonomous Coding Lab ويضيف إليه طبقة التفاعل البصري.
+
+## 4.3 Autonomous Coding Lab
+
+يتعامل مع دورة التطوير كاملة:
+
+`Inspect → Plan → Worktree → Implement → Test → Review → Deliver`
+
+يتضمن تشغيل TypeScript وLint والاختبارات والبناء، وإعداد Pull Requests، ومعاينات Vercel، والتراجع عن التعديلات الفاشلة.
+
+أي تشغيل لكود غير موثوق يتم داخل Sandbox بحدود موارد وشبكة وملفات، ولا يمتلك صلاحيات Control Plane.
+
+## 4.4 Browser & Research Agent
+
+يستطيع قراءة المواقع، البحث، فتح الصفحات، تعبئة النماذج، التفاعل مع العناصر، جمع الأدلة، وتنفيذ إجراءات مصرح بها.
+
+أضيف إليه:
+
+- Browser Session Manager لعزل الجلسات.
+- Action Recorder لتوثيق الإجراءات.
+- Source Reliability Evaluator لتقييم المصادر.
+- Prompt Injection Defense لعزل تعليمات المواقع عن تعليمات المستخدم.
+- Human Approval Gate للإجراءات الحساسة.
+
+## 4.5 Google Ads Expert
+
+يكون محركاً متخصصاً متصلاً بالعقل المركزي، وليس نظاماً مستقلاً.
+
+| الوظيفة                 | المخرجات                 |
+| ----------------------- | ------------------------ |
+| Campaign Audit          | تشخيص الحملات الحالية    |
+| Market Intelligence     | تحليل السوق والكلمات     |
+| Campaign Builder        | إعداد حملات وإعلانات     |
+| Conversion Intelligence | ربط الإنفاق بالحجوزات    |
+| Budget Optimizer        | اقتراح توزيع الإنفاق     |
+| Search Term Analyzer    | اكتشاف الفرص والهدر      |
+| Experiment Engine       | تجارب قابلة للقياس       |
+| Performance Monitor     | مراقبة الأداء والتنبيهات |
+
+يجب التمييز بين إنشاء الحملة، تفعيلها، تعديل الميزانية، وإيقافها. كل إجراء يمتلك مستوى صلاحية مختلفاً.
+
+المعيار الرئيسي: تكلفة الحجز المؤهل المكتمل، وليس عدد النقرات أو ترتيب الإعلان وحده. ويجب التحقق من جودة تتبع التحويلات قبل السماح بتحسين الإنفاق تلقائياً.
+
+## 4.6 iPhone Mobile Command Center
+
+## Mohassan AI
+
+iPhone Control Center · UI Concept
+
+Remote Computer
+
+Toggle preview: Disabled
+
+هذا نموذج تفاعلي للواجهة فقط، ولا يفعّل اتصالاً حقيقياً بالكمبيوتر.
+
+Tasks
+
+Monitor execution
+
+Coding
+
+Review changes
+
+Browser
+
+View sessions
+
+Google Ads
+
+Campaign results
+
+الـ Remote Toggle في التطبيق الحقيقي يحتاج إلى صلاحية جهاز محدد، جلسة مصادق عليها، تاريخ انتهاء، وسجل تدقيق.
+
+إيقافه يجب أن يمنع إنشاء أوامر جديدة ويلغي الجلسات المصرح بها، مع إيقاف العمليات الجارية وفق سياسة أمان محددة. ويجب التمييز بين إيقاف التحكم بالكمبيوتر وبين استمرار مهام السحابة المستقلة.
+
+## 4.7 Memory & Skill Forge
+
+نعتمد ست طبقات ذاكرة: Working وEpisodic وSemantic وProcedural وFailure وPreference.
+
+تخضع المهارات لدورة:
+
+`Candidate → Sandbox Test → Benchmark → Approval → Active → Revoke`
+
+أضيف Skill Registry لتتبع إصدارات المهارات، وMemory Provenance لتسجيل مصدر كل معلومة، وMemory Expiration لمنع استخدام بيانات قديمة باعتبارها حقائق حالية.
+
+## 4.8 Durable Execution & Self-Healing
+
+كل مهمة طويلة تمتلك معرفاً، حالة محفوظة، خطوات قابلة للاستئناف، وسجل أحداث.
+
+الحالات الأساسية:
+
+`queued → running → waiting_approval → verifying → completed`
+
+مع حالات منفصلة للفشل والإلغاء والتوقف المؤقت.
+
+يجب أن يدعم النظام Idempotency Keys، واستئناف المهام، وحدود إعادة المحاولة، وDead Letter Handling، ومنع تنفيذ نفس الخطوة مرتين عند انقطاع
+أهم ما فاتني في خطة Mohassan AI هو أنني ركزت على مكونات النظام، ولم أفصل بما يكفي كيف تتكامل، وكيف تُنفَّذ فعلياً، وكيف نضمن أن المنصة تعمل كنظام واحد مستقر وقابل للتطوير.
+
+هناك 20 جانباً يجب إضافتها إلى المخطط الهندسي الكامل، وليس الاكتفاء بذكر أسمائها.
+
+## أولاً: المكونات التي لم أشرحها بالكامل
+
+| #  | المكون الناقص                   | ما يجب إضافته                                                    |
+| -- | ------------------------------- | ---------------------------------------------------------------- |
+| 1  | Complete Project Structure      | هيكل المجلدات والملفات، ومسؤولية كل تطبيق وخدمة وحزمة مشتركة     |
+| 2  | Database Architecture           | تصميم الجداول والعلاقات والفهارس والترحيلات وسياسات الاحتفاظ     |
+| 3  | API Contracts                   | جميع واجهات الاتصال بين Web وiPhone وWindows والـ Workers        |
+| 4  | Authentication & Device Pairing | تسجيل الدخول وربط الأجهزة وإلغاء الثقة وإدارة الجلسات            |
+| 5  | Remote Desktop Streaming        | مشاهدة شاشة الكمبيوتر والتحكم بالفأرة ولوحة المفاتيح من iPhone   |
+| 6  | Local File Synchronization      | مزامنة ملفات الكمبيوتر مع بيئات البرمجة ومنع تعارض الكتابة       |
+| 7  | Workspace Manager               | إدارة المشاريع والجلسات والبيئات والفروع والموارد                |
+| 8  | Visual Studio Architecture      | كيف تعمل المعاينة المباشرة واختيار العناصر وربطها بالكود         |
+| 9  | Agent Tool Protocol             | تعريف الأدوات والمدخلات والمخرجات والصلاحيات والأخطاء            |
+| 10 | Context Engineering             | إدارة سياق النماذج، تلخيص المحادثات، واسترجاع المعلومات المناسبة |
+| 11 | Long-Term Learning Evaluation   | قياس التحسن الحقيقي ومنع ترسيخ الحلول الخاطئة                    |
+| 12 | Autonomous Research Engine      | بحث متعدد المراحل مع مقارنة المصادر واكتشاف التعارضات            |
+| 13 | Google Ads Data Pipeline        | جمع بيانات الحملات والتحويلات وربطها بالحجوزات والإيرادات        |
+| 14 | Secrets & Credential Vault      | تخزين مفاتيح API والرموز والصلاحيات وتدويرها بأمان               |
+| 15 | Cost & Resource Management      | حدود التوكنات والموارد والحوسبة والتكاليف لكل مهمة               |
+| 16 | Observability Dashboard         | مراقبة الأداء والأخطاء والتكاليف وقرارات العقل                   |
+| 17 | Disaster Recovery               | النسخ الاحتياطية والاستعادة بعد تعطل الخوادم أو فقدان البيانات   |
+| 18 | Testing & Benchmark Framework   | اختبارات الوحدات والتكامل والأمان والاستقلالية وجودة القرارات    |
+| 19 | Deployment Architecture         | توزيع الخدمات بين Vercel والسحابة والكمبيوتر المحلي              |
+| 20 | Implementation Roadmap          | ترتيب البناء مرحلة بمرحلة مع معايير قبول واضحة                   |
+
+## ثانياً: خمس إضافات أكثر أهمية لم نحددها بدقة
+
+### 1. Unified Permission & Approval Engine
+
+بدلاً من وجود نظام موافقات منفصل للمتصفح وآخر للكمبيوتر وثالث لـ Google Ads، نحتاج محرك صلاحيات موحداً.
+
+مثلاً، عندما تطلب من Mohassan AI تعديل حملة إعلانية، يجب أن يعرف الفرق بين قراءة الحملة، واقتراح تغيير، وتطبيق تغيير، وزيادة الإنفاق.
+
+وينطبق الأمر نفسه على حذف الملفات، تشغيل الأوامر، نشر المشاريع، إرسال الرسائل، والتحكم بالكمبيوتر.
+
+كل صلاحية ترتبط بالمستخدم والجهاز والمهمة والأداة ونطاق العملية ومدة السماح، مع القدرة على إلغائها فوراً.
+
+### 2. Computer Vision & Screen Understanding
+
+ميزة Remote PC لا ينبغي أن تكون مجرد بث شاشة وتحريك مؤشر.
+
+نحتاج طبقة تفهم محتوى الشاشة باستخدام معلومات إمكانية الوصول والعناصر البنيوية عندما تكون متاحة، مع تحليل الصور عند الحاجة.
+
+بهذه الطريقة يستطيع النظام التعرف على النوافذ والأزرار ورسائل الخطأ، وربط ما يراه بما ينفذه.
+
+ويجب أن يعيد التحقق من حالة الشاشة بعد كل إجراء مهم، بدلاً من افتراض أن الضغط على زر يعني نجاح العملية.
+
+### 3. Task Dependency Graph & Parallel Execution
+
+المهام المعقدة ليست قائمة خطوات خطية دائماً.
+
+مثلاً، عند بناء مشروع يمكن تحليل قاعدة البيانات ومراجعة التصميم وفحص الاختبارات بالتوازي، لكن لا يمكن تشغيل اختبار التكامل النهائي قبل اكتمال التغييرات التي يعتمد عليها.
+
+نحتاج إلى DAG Scheduler ينظم الاعتماديات ويشغل المهام المستقلة بالتوازي، مع منع الكتابة المتزامنة على الملفات نفسها.
+
+### 4. Human Feedback Learning
+
+التعلم من نجاح الاختبارات وحده غير كافٍ.
+
+يجب أن يستطيع المستخدم تقييم النتائج وتصحيح قرارات النظام وتحديد تفضيلاته.
+
+لكن لا نحول كل ملاحظة إلى قاعدة دائمة تلقائياً؛ نميز بين تفضيل مستمر، وتصحيح خاص بمهمة، ونتيجة اختبار قابلة للتعميم.
+
+### 5. Capability Registry & Feature Discovery
+
+عندما نضيف أداة أو Skill جديدة، يجب ألا نعدل العقل المركزي يدوياً في كل مرة.
+
+نحتاج سجلاً للقدرات يصف وظيفة الأداة، ومخطط مدخلاتها ومخرجاتها، وصلاحياتها، وإصدارها، وحدودها، وحالتها الصحية.
+
+بهذا يستطيع العقل اكتشاف الأدوات المتاحة واختيار المناسب منها، دون منحها ثقة تلقائية لمجرد إضافتها.
+
+## ثالثاً: ما يجب تصحيحه في طريقة بناء المشروع
+
+هناك أربع قرارات هندسية يجب حسمها قبل كتابة الكود.
+
+الأول: اختيار Monorepo موحد. نضع تطبيق الويب، وخدمات الخلفية، والعقل، وحزم الأنواع، وWindows Companion في مستودع منظم، مع تطبيق iPhone ضمن بنية المشروع المناسبة له. هذا يقلل اختلاف العقود بين المكونات.
+
+الثاني: عدم بناء كل الوحدات في وقت واحد. نبدأ بنواة تشغيل قابلة للاختبار، ثم نضيف البرمجة، والمتصفح، والتحكم المحلي، والإعلانات. كل مرحلة يجب أن تنتج وظائف تعمل فعلياً.
+
+الثالث: فصل الاستقلالية عن الصلاحيات. يمكن للنظام أن يخطط ويبحث ويختبر بشكل مستقل، لكن ذلك لا يمنحه تلقائياً حق تعديل حسابات إعلانية أو حذف ملفات أو نشر كود.
+
+الرابع: تعريف معنى Self-Improving بدقة. التحسن يجب أن يظهر في نتائج Benchmarks، وانخفاض الأخطاء، وزيادة نسبة إكمال المهام، وليس في مجرد زيادة حجم الذاكرة أو عدد المهارات.
+
+## رابعاً: ترتيب التنفيذ الصحيح
+
+01
+
+Foundation
+
+Monorepo · Database · Authentication · API Contracts
+
+02
+
+Runtime Core
+
+Durable Tasks · Tool Registry · Permissions
+
+03
+
+Cognitive Intelligence
+
+Goal Compiler · Model Router · Planning · Verification
+
+04
+
+Coding Engine
+
+Worktrees · Sandboxes · Tests · Git
+
+05
+
+Visual Vibe Coding
+
+Live Preview · Visual Selection · Screenshot-to-Code
+
+06
+
+Browser & Research
+
+Playwright · Research · Browser Sessions
+
+07
+
+Memory & Learning
+
+World State · Memory · Skill Forge · Benchmarks
+
+08
+
+Windows Remote
+
+Companion · Secure Gateway · Screen Control
+
+09
+
+iPhone Application
+
+SwiftUI · Task Monitoring · Remote Toggle
+
+10
+
+Google Ads Expert
+
+Campaign Audit · Conversion Data · Optimisation
+
+11
+
+Reliability & Security
+
+Recovery · Observability · Security Testing
+
+12
+
+Production Release
+
+End-to-End Testing · Deployment · Operations
+
+هذه مراحل الاعتماد الأساسية، وليست بالضرورة 12 عملية نشر منفصلة. اختبارات الأمان والتكامل تبدأ من المرحلة الأولى وتستمر طوال التطوير.
+
+## خامساً: إضافات أوصي بها للإصدار 4.0
+
+أرى أن هناك أربع قدرات تستحق إدخالها في التصميم منذ البداية:
+
+- Unified Command Center: شاشة واحدة تعرض جميع المهام والأجهزة والمشاريع والحملات، مع القدرة على معرفة ما ينفذه النظام الآن ولماذا.
+- Execution Replay: إعادة عرض التسلسل الفعلي للأحداث والأدوات والنتائج لتشخيص الأخطاء، مع إخفاء الأسرار والبيانات الحساسة.
+- Shadow Mode: السماح للعقل باقتراح قرارات ومقارنتها بالنتائج دون تنفيذ تغييرات فعلية، خصوصاً قبل تفعيل التحسين التلقائي للحملات.
+- Autonomy Levels: مستويات استقلالية قابلة للضبط، من المساعدة والاقتراح إلى التنفيذ داخل نطاق محدد، مع إبقاء العمليات الحساسة خاضعة لسياسة الموافقات.
+
+## Copilot Prompt — VS Code
+
+Create a complete, implementation-ready architecture specification for **Mohassan AI — Master Implementation Blueprint v4.0**.
+
+Preserve every feature and architectural component from the existing v3.0 blueprint, including Adaptive Cognitive Runtime, Autonomous Coding Lab, Visual Vibe Coding Studio, Browser Automation, Research, Memory, Skill Forge, Google Ads Expert, Windows Remote Control, and the native SwiftUI iPhone application.
+
+Add the 20 missing architectural areas, Unified Permission Engine, Computer Vision, DAG Scheduling, Human Feedback Learning, Capability Registry, Unified Command Center, Execution Replay, Shadow Mode, and Autonomy Levels.
+
+Before implementing anything:
+
+1. Inspect the entire repository and identify existing applications, services, packages, routes, components, hooks, database structures, and dependencies.
+2. Produce the complete Monorepo directory tree and explain the responsibility of each directory.
+3. Define service boundaries, shared TypeScript contracts, API schemas, database entities, task states, permission scopes, and event flows.
+4. Define the runtime lifecycle, durable execution, concurrency controls, failure recovery, cancellation, and independent verification.
+5. Specify the complete Web, iPhone, Windows Companion, Visual Studio, and Google Ads user experiences.
+6. Produce a dependency-ordered implementation roadmap with milestones, tests, risks, and acceptance criteria.
+7. Identify missing infrastructure, credentials, integrations, and decisions without inventing any.
+8. Preserve compatibility between all consumers and prevent duplicated engines, conflicting writes, race conditions, and unverified completion claims.
+9. Include loading, empty, error, offline, recovery, and permission-denied states for every user-facing workflow.
+10. Do not modify existing code until the architecture and implementation plan have been reviewed.
+
+Use TypeScript, Next.js App Router, Chakra UI, Neon PostgreSQL, Groq provider adapters, persistent Node.js workers, Playwright, SwiftUI, and secure Windows companion services where appropriate.
+
+The result must be a detailed engineering specification suitable for implementing the entire platform incrementally, not a high-level summary.
+
+الخلاصة: ما كان ينقص الخطة ليس المزيد من أسماء الـ Agents، بل المواصفات التفصيلية التي تربط العقل بالتنفيذ والبيانات والأجهزة والواجهات والأمان. بإضافة هذه الأجزاء تصبح لدينا بنية أكثر اكتمالاً للتخطيط والتنفيذ، لكنها لا تصبح جاهزة للإنتاج إلا بعد تطبيقها واختبارها والتحقق من تكاملها.

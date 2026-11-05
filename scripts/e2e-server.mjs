@@ -1,0 +1,20 @@
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+// Only isolated test fixtures. The user's local workspace and owner are never seeded.
+process.env.DATA_DIR=await mkdtemp(path.join(tmpdir(),'mohassan-browser-test-'));
+process.env.CODING_DATA_DIR=await mkdtemp(path.join(tmpdir(),'mohassan-browser-coding-'));
+process.env.STUDIO_AI_DATA_DIR=path.join(process.env.CODING_DATA_DIR,'studio-ai');
+process.env.BROWSER_PROFILE_DIR=path.join(process.env.CODING_DATA_DIR,'browser-profile');
+process.env.STUDIO_GATEWAY_URL='';
+process.env.STUDIO_GATEWAY_SECRET='';
+process.env.WINDOWS_REMOTE_ENABLED='true';
+process.env.WEB_ORIGIN='http://127.0.0.1:3100';
+process.env.SERVER_PORT='4100';
+process.env.BETTER_AUTH_SECRET='browser-test-auth-secret-isolated-fixture-0001';
+process.env.INTERNAL_API_SECRET='browser-test-internal-secret-isolated-0001';
+process.env.SETUP_TOKEN='browser-test-setup-token-isolated-fixture-0001';
+process.env.DATABASE_URL='';
+process.env.GROQ_API_KEY='';
+process.env.MOHASSAN_ISOLATED_TEST='true';
+await import('./dev.mjs');
