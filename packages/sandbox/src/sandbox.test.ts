@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { snapshotHash, WindowsAppContainerSandbox, type SandboxFile } from './index.js';
 
@@ -70,5 +71,22 @@ describe.skipIf(process.platform !== 'win32')('real Windows AppContainer + Job b
       expect(pid).toBeGreaterThan(0);
       expect(() => process.kill(pid, 0)).toThrow();
     } finally { clearTimeout(timer); }
+  });
+  it('keeps non-ASCII test output intact across the host boundary', async () => {
+    const result = await sandbox.run({ files: [{ path: 'text.test.mjs', content: "import test from 'node:test';test('نص',()=>{console.log('نتيجة عربية');});" }], testFiles: ['text.test.mjs'], timeoutMs: 8000 });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('نتيجة عربية');
+  });
+  const pwshPath = spawnSync('pwsh.exe', ['-NoProfile', '-Command', '(Get-Process -Id $PID).Path'], { encoding: 'utf8', windowsHide: true }).stdout?.trim();
+  const packagedPwsh = pwshPath?.includes('\\WindowsApps\\') ? pwshPath : undefined;
+  it.skipIf(!packagedPwsh)('refuses a packaged PowerShell host instead of running in its child AppContainer', async () => {
+    const refused = new WindowsAppContainerSandbox({ powerShellPath: packagedPwsh });
+    // This message comes after the host started, so the refusal is the runner's own package check.
+    await expect((refused as unknown as { execute(input: unknown): Promise<unknown> }).execute({ files: [{ path: 'a.test.mjs', content: "import test from 'node:test';test('x',()=>{});" }], testFiles: ['a.test.mjs'], timeoutMs: 4000 })).rejects.toThrow('فشل إثبات عزل العملية');
+    expect((await refused.available()).available).toBe(false);
+  }, 30_000);
+  it('stays unavailable when the trusted host cannot start', async () => {
+    const missing = new WindowsAppContainerSandbox({ powerShellPath: 'C:\Windows\System32\WindowsPowerShell\v1.0\missing.exe' });
+    await expect(missing.run({ files: [{ path: 'a.test.mjs', content: "import test from 'node:test';test('x',()=>{});" }], testFiles: ['a.test.mjs'] })).rejects.toMatchObject({ code: 'SANDBOX_UNAVAILABLE' });
   });
 });

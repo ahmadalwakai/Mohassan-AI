@@ -1,8 +1,9 @@
 param([Parameter(Mandatory=$true)][string]$RequestPath)
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
 try {
-  Add-Type -TypeDefinition (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Runner.cs') -Raw)
-  $request = Get-Content -LiteralPath $RequestPath -Raw | ConvertFrom-Json
+  Add-Type -TypeDefinition (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Runner.cs') -Raw -Encoding UTF8)
+  $request = Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8 | ConvertFrom-Json
   $results = @()
   $deadline = [System.Diagnostics.Stopwatch]::StartNew()
   foreach ($command in $request.commands) {

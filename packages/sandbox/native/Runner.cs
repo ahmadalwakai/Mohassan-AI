@@ -11,7 +11,7 @@ using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
 public sealed class MohassanRunResult {
- public int? exitCode {get;set;} public string stdout {get;set;}=""; public string stderr {get;set;}="";
+ public int? exitCode {get;set;} public string stdout {get;set;} public string stderr {get;set;}
  public bool timedOut {get;set;} public long durationMs {get;set;} public bool isolationVerified {get;set;}
  public bool tokenIsAppContainer {get;set;} public int integrityRid {get;set;} public int capabilityCount {get;set;}
  public bool jobAssigned {get;set;}
@@ -54,6 +54,7 @@ public static class MohassanNativeSandbox {
  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string s,uint rev,out IntPtr sd,out uint size);
  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool SetFileSecurity(string name,uint info,IntPtr sd);
  [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr p);
+ [DllImport("kernel32.dll",CharSet=CharSet.Unicode)] static extern int GetCurrentPackageFullName(ref int length,StringBuilder name);
  static void Check(bool ok,string step){if(!ok)throw new Win32Exception(Marshal.GetLastWin32Error(),step);}
  static void Close(ref IntPtr p){if(p!=IntPtr.Zero&&p!=new IntPtr(-1)){CloseHandle(p);p=IntPtr.Zero;}}
  static string Quote(string s){var b=new StringBuilder("\"");int slashes=0;foreach(char c in s){if(c=='\\'){slashes++;continue;}if(c=='\"'){b.Append('\\',slashes*2+1);b.Append(c);}else{b.Append('\\',slashes);b.Append(c);}slashes=0;}b.Append('\\',slashes*2);return b.Append('"').ToString();}
@@ -67,6 +68,8 @@ public static class MohassanNativeSandbox {
   IntPtr outRead=IntPtr.Zero,outWrite=IntPtr.Zero,errRead=IntPtr.Zero,errWrite=IntPtr.Zero,input=IntPtr.Zero,token=IntPtr.Zero;PI process=new PI();bool createdProfile=false,attributesInitialized=false;
   var result=new MohassanRunResult();var watch=new Stopwatch();
   try{
+   // A packaged host creates a child AppContainer that inherits package capabilities.
+   int packageLength=0;if(GetCurrentPackageFullName(ref packageLength,null)!=15700)throw new InvalidOperationException("Sandbox host must be unpackaged.");
    int hr=CreateAppContainerProfile(profile,"Mohassan isolated test","Ephemeral zero-capability test execution",IntPtr.Zero,0,out sid);if(hr<0)Marshal.ThrowExceptionForHR(hr);createdProfile=true;
    var identity=new SecurityIdentifier(sid);Grant(work,identity,FileSystemRights.ReadAndExecute);Grant(Path.GetDirectoryName(node),identity,FileSystemRights.ReadAndExecute);Grant(temp,identity,FileSystemRights.Modify);LowLabel(temp);
    // Ancestors get traversal/read only, never DELETE_CHILD or inherited write access.
@@ -88,7 +91,7 @@ public static class MohassanNativeSandbox {
    info=TokenInfo(token,31);bool ownSid;try{ownSid=new SecurityIdentifier(Marshal.ReadIntPtr(info)).Value==identity.Value;}finally{Marshal.FreeHGlobal(info);}
    result.isolationVerified=result.tokenIsAppContainer&&result.integrityRid<=4096&&result.capabilityCount==0&&result.jobAssigned&&result.jobLimitsVerified&&ownSid;if(!result.isolationVerified)throw new InvalidOperationException("OS token isolation checks failed before execution.");
    Close(ref outWrite);Close(ref errWrite);Close(ref input);var stdout=Drain(outRead);outRead=IntPtr.Zero;var stderr=Drain(errRead);errRead=IntPtr.Zero;watch.Start();if(ResumeThread(process.thread)==0xFFFFFFFF)throw new Win32Exception(Marshal.GetLastWin32Error(),"Resume isolated process");
-   bool cancelled=false;while(WaitForSingleObject(process.process,50)==0x102){if(File.Exists(cancelPath)){cancelled=true;TerminateJobObject(job,130);break;}if(watch.ElapsedMilliseconds>=timeoutMs){result.timedOut=true;TerminateJobObject(job,124);break;}}WaitForSingleObject(process.process,2000);uint exit;GetExitCodeProcess(process.process,out exit);result.exitCode=result.timedOut?124:cancelled?130:(int)exit;TerminateJobObject(job,0);watch.Stop();result.durationMs=watch.ElapsedMilliseconds;Task.WaitAll(new Task[]{stdout,stderr},2000);result.stdout=stdout.IsCompletedSuccessfully?stdout.Result:"";result.stderr=stderr.IsCompletedSuccessfully?stderr.Result:"";return result;
+   bool cancelled=false;while(WaitForSingleObject(process.process,50)==0x102){if(File.Exists(cancelPath)){cancelled=true;TerminateJobObject(job,130);break;}if(watch.ElapsedMilliseconds>=timeoutMs){result.timedOut=true;TerminateJobObject(job,124);break;}}WaitForSingleObject(process.process,2000);uint exit;GetExitCodeProcess(process.process,out exit);result.exitCode=result.timedOut?124:cancelled?130:(int)exit;TerminateJobObject(job,0);watch.Stop();result.durationMs=watch.ElapsedMilliseconds;Task.WaitAll(new Task[]{stdout,stderr},2000);result.stdout=stdout.Status==TaskStatus.RanToCompletion?stdout.Result:"";result.stderr=stderr.Status==TaskStatus.RanToCompletion?stderr.Result:"";return result;
   }finally{
    if(process.process!=IntPtr.Zero){TerminateProcess(process.process,125);WaitForSingleObject(process.process,2000);}Close(ref token);Close(ref process.thread);Close(ref process.process);Close(ref job);Close(ref outRead);Close(ref outWrite);Close(ref errRead);Close(ref errWrite);Close(ref input);
    if(attributesInitialized)DeleteProcThreadAttributeList(attrs);if(attrs!=IntPtr.Zero)Marshal.FreeHGlobal(attrs);if(caps!=IntPtr.Zero)Marshal.FreeHGlobal(caps);if(handles!=IntPtr.Zero)Marshal.FreeHGlobal(handles);if(env!=IntPtr.Zero)Marshal.FreeHGlobal(env);if(sid!=IntPtr.Zero)FreeSid(sid);if(createdProfile)DeleteAppContainerProfile(profile);

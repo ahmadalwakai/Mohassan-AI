@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer, createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -47,13 +47,12 @@ export class WindowsAppContainerSandbox implements SandboxRunner {
   probeEvidence?: SandboxTestResult;
   private availability: Promise<SandboxAvailability> | undefined;
   constructor(private readonly options: { powerShellPath?: string } = {}) {}
-  private async powerShellPath(): Promise<string> {
-    if (this.options.powerShellPath) return this.options.powerShellPath;
-    // Resolve only the trusted host executable. No project code or shell is invoked.
-    const output = await new Promise<string>((accept, reject) => execFile('C:\\Windows\\System32\\where.exe', ['pwsh.exe'], { windowsHide: true, env: { PATH: process.env.PATH, SystemRoot: 'C:\\Windows' } }, (error, stdout) => error ? reject(error) : accept(stdout)));
-    const path = output.split(/\r?\n/).find((value) => isAbsolute(value.trim()) && basename(value.trim()).toLowerCase() === 'pwsh.exe');
-    if (!path) throw new SandboxUnavailableError('PowerShell 7 الموثوق غير متاح.');
-    return realpath(path.trim());
+  /**
+   * Windows PowerShell in System32 is unpackaged. A packaged host (Store pwsh) makes the profile a child
+   * AppContainer that inherits the package's capabilities, so it is never resolved from PATH here.
+   */
+  private powerShellPath(): string {
+    return this.options.powerShellPath ?? 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
   }
   available(): Promise<SandboxAvailability> {
     return this.availability ??= this.probe().catch(() => ({ available: false, provider, message: 'تعذر إثبات حدود AppContainer؛ التنفيذ متوقف.' }));
@@ -82,9 +81,9 @@ export class WindowsAppContainerSandbox implements SandboxRunner {
       ];
       const requestPath = join(root, 'request.json'), cancelPath = join(root, 'cancel');
       await writeFile(requestPath, JSON.stringify({ node, work, temp, commands, timeoutMs, cancelPath }), { flag: 'wx' });
-      const powerShellPath = await this.powerShellPath();
+      const powerShellPath = this.powerShellPath();
       const raw = await new Promise<string>((accept, reject) => {
-        const child = spawn(powerShellPath, ['-NoLogo', '-NoProfile', '-NonInteractive', '-File', join(nativeDirectory, 'run.ps1'), '-RequestPath', requestPath], {
+        const child = spawn(powerShellPath, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(nativeDirectory, 'run.ps1'), '-RequestPath', requestPath], {
           windowsHide: true, shell: false,
           env: { SystemRoot: 'C:\\Windows', WINDIR: 'C:\\Windows', TEMP: tempBase, TMP: tempBase, PATH: 'C:\\Windows\\System32', ...(probe ? { MOHASSAN_SANDBOX_PROBE_SECRET: 'synthetic-environment-sentinel' } : {}) },
           stdio: ['ignore', 'pipe', 'pipe'],
