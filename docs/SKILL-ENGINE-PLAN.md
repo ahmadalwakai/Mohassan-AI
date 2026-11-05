@@ -1,6 +1,6 @@
 # خطة Skill Execution Engine
 
-الحالة: الإصدار الثاني للمراجعة بتاريخ 2026-11-05، ويحل محل الخطة السابقة «تعليمات فقط». المرحلة M0 منفذة جزئياً: أول commit `9089a0e` وتدقيق العزل. كل مسار موصوف بأنه «قائم» جرى التحقق منه في الكود؛ وكل ما عداه مقترح جديد.
+الحالة: الإصدار الثاني بتاريخ 2026-11-05، ويحل محل الخطة السابقة «تعليمات فقط». المرحلتان M0 وM1 منفذتان. كل مسار موصوف بأنه «قائم» جرى التحقق منه في الكود؛ وكل ما عداه مقترح جديد.
 
 ## 1. القرارات
 
@@ -179,7 +179,7 @@ GET وPOST فقط، وتستخدم `owner(request)`، وتتطلب الكتاب�
 
 كل مرحلة تنتهي بـ`npm run typecheck` و`npm test` دون فشل جديد، ثم تحقق مستقل وcommit محلي، ولا تبدأ التالية قبل ذلك.
 
-### M0 — خط الأساس (منفذ جزئياً)
+### M0 — خط الأساس (منفذ)
 
 | الملف | التغيير |
 |---|---|
@@ -189,7 +189,7 @@ GET وPOST فقط، وتستخدم `owner(request)`، وتتطلب الكتاب�
 
 **القبول:** تعود اختبارات AppContainer الثلاثة وملفاتها الأربعة إلى النجاح دون تخفيف أي شرط، ويعود `coding.available`.
 
-### M1 — العقود والسجل
+### M1 — العقود والسجل (منفذ)
 
 | الملف | التغيير |
 |---|---|
@@ -201,7 +201,6 @@ GET وPOST فقط، وتستخدم `owner(request)`، وتتطلب الكتاب�
 | `packages/skills/src/builtin/*` | جديد: مهارات موسومة `custom` |
 | `apps/server/src/skills.ts` | جديد: `registerSkillRoutes` |
 | `apps/server/src/app.ts`, `apps/worker/src/index.ts` | التسجيل والترحيل |
-| `apps/server/src/config.ts`, `.env.example` | `SKILL_ENGINE_ENABLED` |
 
 **اختبارات:** `packages/skills/src/registry.test.ts`, `tests/skills-api.test.ts`.
 **القبول:** عزل المالك، ورفض العقود غير الصالحة، والبحث، وبقاء `/api/memory/skills/*` بلا تغيير.
@@ -239,6 +238,7 @@ GET وPOST فقط، وتستخدم `owner(request)`، وتتطلب الكتاب�
 | `apps/server/src/assistant/brain.ts` | `skills` في `PromptInput`، وأداة `load_skill`، وحجز الميزانية قبل القص |
 | `apps/server/src/command-chat.ts` | `skillContext` وتنفيذ `load_skill` في `perform` |
 | `apps/server/src/app.ts`, `apps/worker/src/index.ts` | تمرير السياق |
+| `apps/server/src/config.ts`, `.env.example` | `SKILL_ENGINE_ENABLED` عند أول استخدام فعلي له |
 
 **اختبارات:** `compiler.test.ts`, `router.test.ts`, وإضافات إلى `tests/assistant-brain.test.ts` و`tests/assistant-flow.test.ts`.
 **القبول:** لا تصل نصوص غير `active`. تبقى الصفحة وسطر الخطوة في الموجه. الموجه مطابق حرفياً عند عدم وجود مهارة. حقن داخل SKILL.md لا يوسع الأدوات ولا يتجاوز `sensitiveAction`.

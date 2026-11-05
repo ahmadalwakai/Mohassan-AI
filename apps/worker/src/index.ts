@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { createDatabase, migrate } from '@mohassan/database';
 import { createCapabilities, Runtime } from '@mohassan/runtime';
 import { createMemoryControl, memoryMigration } from '@mohassan/memory';
+import { skillsMigration } from '@mohassan/skills';
 import { createAIControl } from '../../server/src/ai.js';
 import { createCodingControl } from '../../server/src/coding.js';
 import { getConfig } from '../../server/src/config.js';
@@ -16,6 +17,7 @@ if (!config.databaseUrl) throw new Error('العامل المستقل يحتاج
 const database = await createDatabase({connectionString: config.databaseUrl});
 await migrate(database.db);
 await memoryMigration(database.db);
+await skillsMigration(database.db);
 const memory = createMemoryControl(database.db);
 const coding = await createCodingControl(database.db, {dataDir:config.codingDataDir,allowedRoots:config.codingAllowedRoots,apiKey:config.groqApiKey,model:config.groqReasoningModel,fetch:config.aiFetch,sandbox:config.sandboxRunner});
 // Construction migrates/configures the adapter only. The API owns registration
