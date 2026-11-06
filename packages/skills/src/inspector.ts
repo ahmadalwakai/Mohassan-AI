@@ -1,7 +1,7 @@
 import { builtinModules } from 'node:module';
 import { TOOL_SIDE_EFFECTS, type SkillContract, type SkillFinding, type SkillSideEffect, type SkillVerdict } from '@mohassan/contracts';
 
-export const INSPECTOR_VERSION = 'static-v1';
+export const INSPECTOR_VERSION = 'static-v2';
 export type SkillFileKind = 'instructions' | 'script' | 'reference' | 'data';
 export interface InspectableFile { path: string; kind: SkillFileKind; content: string }
 export interface InspectionResult { verdict: SkillVerdict; findings: SkillFinding[] }
@@ -47,7 +47,14 @@ function bareImports(content: string): { name: string; index: number }[] {
 /** Reads text only and never executes anything. It informs review; the OS boundary is what contains a script. */
 export function inspectSkill(contract: SkillContract, files: readonly InspectableFile[]): InspectionResult {
   const findings: SkillFinding[] = [];
-  const add = (code: string, severity: SkillFinding['severity'], path: string | null, line: number | null, message: string) => { if (findings.length < MAX_FINDINGS) findings.push({ code, severity, path, line, message }); };
+  const severities = new Set<SkillFinding['severity']>();
+  let findingCount = 0;
+  const add = (code: string, severity: SkillFinding['severity'], path: string | null, line: number | null, message: string) => {
+    // The display limit never limits the scan or its security decision.
+    severities.add(severity);
+    findingCount++;
+    if (findings.length < MAX_FINDINGS) findings.push({ code, severity, path, line, message });
+  };
 
   // These fields reach the model as metadata, so they get the same reading as the instructions.
   const metadata = [contract.name, contract.description, contract.verification, contract.rollback.note, ...contract.steps.map((step) => step.title)].filter(Boolean).join('\n');
@@ -101,8 +108,13 @@ export function inspectSkill(contract: SkillContract, files: readonly Inspectabl
     if (EFFECT_RANK.indexOf(TOOL_SIDE_EFFECTS[tool]) > declared) add('side_effect_understated', 'block', null, null, `الأداة ${tool} تتجاوز الأثر الجانبي المعلن ${contract.sideEffects}.`);
   }
 
-  const has = (severity: SkillFinding['severity']) => findings.some((finding) => finding.severity === severity);
-  const verdict: SkillVerdict = has('block') ? 'fail' : has('incompatible') ? 'incompatible' : has('warn') ? 'review' : 'pass';
+  if (findingCount > MAX_FINDINGS) {
+    // An owner cannot acknowledge a report that omits findings. Keep the response bounded,
+    // but make the incomplete review explicit and impossible to approve.
+    findings[MAX_FINDINGS - 1] = { code: 'finding_limit_exceeded', severity: 'block', path: null, line: null, message: 'تجاوزت ملاحظات الفحص حد العرض؛ يلزم تقليل المحتوى وإعادة استيراده لفحص كامل قابل للمراجعة.' };
+    severities.add('block');
+  }
+  const verdict: SkillVerdict = severities.has('block') ? 'fail' : severities.has('incompatible') ? 'incompatible' : severities.has('warn') ? 'review' : 'pass';
   return { verdict, findings };
 }
 

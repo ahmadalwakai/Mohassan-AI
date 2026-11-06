@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDatabase, migrate } from '@mohassan/database';
 import { memoryMigration } from '@mohassan/memory';
 import { migrateAuth } from '../../../apps/server/src/auth.ts';
-import { createSkillControl, parseSkillManifest, skillsMigration } from './index.ts';
+import { createSkillControl, parseSkillManifest, sha256, skillsMigration } from './index.ts';
 
 const manifest = (name: string, body = 'Do the task carefully.', extra = '') => `---\nname: ${name}\ndescription: يوضح هذا الوصف ما تفعله المهارة.\n${extra}---\n\n${body}\n`;
 
@@ -79,6 +79,32 @@ describe('local skill import', () => {
     expect((await skills.detail(owner, a.skill.id)).skill.contentHash).toBe(a.skill.contentHash);
     expect((await skills.detail(owner, b.skill.id)).versions.map((version) => version.version)).toEqual(['1.0.1', '1.0.0']);
   });
+  it('inspects and activates multi-input contracts after their real JSONB round trip', async () => {
+    const contract = { slug: 'jsonb-input-order', name: 'JSONB order fixture', description: 'Stable nested input records across persistence.', version: '1.0.0', category: 'research', level: 'tool', sideEffects: 'read', requires: { tools: ['research.run'] }, verification: 'Verify fixture evidence.', steps: [{ id: 'search', kind: 'tool', title: 'Read fixture', tool: 'research.run', inputs: { longerKey: 'input.query', a: 'input.path' } }] };
+    const path = await folder({ 'SKILL.md': manifest(contract.slug), 'skill.contract.json': JSON.stringify(contract) });
+    const imported = await skills.importLocal(owner, { path });
+    const inspected = await skills.inspect(owner, imported.skill.id, { expectedRevision: imported.skill.revision });
+    const active = await skills.activate(owner, imported.skill.id, { expectedRevision: inspected.skill.revision, approve: true, acknowledgeFindings: true });
+    expect(active.skill.active).toBe(true);
+    const reorderedPath = await folder({ 'SKILL.md': manifest(contract.slug), 'skill.contract.json': JSON.stringify({ ...contract, steps: [{ ...contract.steps[0], inputs: { a: 'input.path', longerKey: 'input.query' } }] }) });
+    expect(await skills.importLocal(owner, { path: reorderedPath })).toMatchObject({ deduplicated: true, skill: { id: imported.skill.id, contentHash: imported.skill.contentHash } });
+  });
+  it('deduplicates valid legacy content without rewriting active inspection or grants', async () => {
+    const contract = { slug: 'legacy-active-import', name: 'Legacy import fixture', description: 'Previously valid legacy hashes remain immutable.', version: '1.0.0', category: 'research', level: 'tool', sideEffects: 'read', requires: { tools: ['research.run'] }, verification: 'Verify fixture evidence.', steps: [{ id: 'search', kind: 'tool', title: 'Read fixture', tool: 'research.run' }] };
+    const path = await folder({ 'SKILL.md': manifest(contract.slug), 'skill.contract.json': JSON.stringify(contract) });
+    const imported = await skills.importLocal(owner, { path });
+    const detail = await skills.detail(owner, imported.skill.id);
+    const files = await store.db.selectFrom('skill_files').select(['path', 'content']).where('version_id', '=', imported.skill.id).execute();
+    const legacyHash = sha256(JSON.stringify({ contract: detail.contract, files: files.sort((a, b) => a.path.localeCompare(b.path, 'en')).map(file => ({ path: file.path, hash: sha256(file.content) })) }));
+    await store.db.updateTable('skill_versions').set({ content_hash: legacyHash }).where('id', '=', imported.skill.id).execute();
+    const inspected = await skills.inspect(owner, imported.skill.id, { expectedRevision: imported.skill.revision });
+    const active = await skills.activate(owner, imported.skill.id, { expectedRevision: inspected.skill.revision, approve: true, acknowledgeFindings: true });
+    await skills.createGrant(owner, imported.skill.id, { expectedRevision: active.skill.revision, approve: true, tools: ['research.run'], durationHours: 1 });
+    const before = await skills.detail(owner, imported.skill.id);
+    expect(await skills.importLocal(owner, { path })).toMatchObject({ deduplicated: true, skill: { id: imported.skill.id, contentHash: legacyHash, active: true } });
+    const after = await skills.detail(owner, imported.skill.id);
+    expect(after.skill).toEqual(before.skill); expect(after.inspection).toEqual(before.inspection); expect(after.grants).toEqual(before.grants);
+  });
   it('refuses a changed skill that reuses an explicit version', async () => {
     await skills.importLocal(owner, { path: await folder({ 'SKILL.md': manifest('pinned', 'one', 'version: 3.0.0\n') }) });
     await expect(skills.importLocal(owner, { path: await folder({ 'SKILL.md': manifest('pinned', 'two', 'version: 3.0.0\n') }) })).rejects.toMatchObject({ code: 'SKILL_VERSION_EXISTS', statusCode: 409 });
@@ -92,6 +118,31 @@ describe('local skill import', () => {
     const results = await Promise.all([1, 2, 3].map(() => skills.importLocal(owner, { path })));
     expect(new Set(results.map((result) => result.skill.id)).size).toBe(1);
     expect(results.filter((result) => !result.deduplicated)).toHaveLength(1);
+  });
+  it('serializes the owner quota across concurrent imports of different slugs', async () => {
+    const quotaOwner = 'quota-owner-fixture', familyId = randomUUID();
+    await store.db.insertInto('user').values({ id: quotaOwner, name: 'Quota fixture', email: 'quota@example.test' }).execute();
+    const builtins = await skills.list(quotaOwner, {});
+    await store.db.insertInto('skill_families').values({ id: familyId, owner_id: quotaOwner, slug: 'quota-seed' }).execute();
+    await store.db.insertInto('skill_versions').values(Array.from({ length: 199 }, (_, index) => ({
+      id: randomUUID(), family_id: familyId, owner_id: quotaOwner, version: `1.0.${index}`, sequence: index + 1,
+      name: 'Quota fixture', description: 'Synthetic storage quota fixture.', category: 'reasoning', level: 'instruction',
+      origin: 'local_import', status: 'quarantined', contract: '{}', content_hash: index.toString(16).padStart(64, '0'),
+    }))).execute();
+    const paths = await Promise.all(['quota-a', 'quota-b', 'quota-c'].map(name => folder({ 'SKILL.md': manifest(name) })));
+    const outcomes = await Promise.allSettled(paths.map(path => skills.importLocal(quotaOwner, { path })));
+    expect(outcomes.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    for (const result of outcomes) if (result.status === 'rejected') expect(result.reason).toMatchObject({ code: 'SKILL_QUOTA_EXCEEDED' });
+    const rows = await store.db.selectFrom('skill_versions').select('id').where('owner_id', '=', quotaOwner).where('origin', '=', 'local_import').execute();
+    expect(rows).toHaveLength(200);
+    expect(await store.db.selectFrom('skill_families').select('id').where('owner_id', '=', quotaOwner).execute()).toHaveLength(2 + builtins.total);
+  });
+  it('refuses an automatic version bump outside the contract bounds without storing invalid content', async () => {
+    const first = await skills.importLocal(owner, { path: await folder({ 'SKILL.md': manifest('max-patch', 'First version.', 'version: 1.0.99999\n') }) });
+    await expect(skills.importLocal(owner, { path: await folder({ 'SKILL.md': manifest('max-patch', 'Changed version.') }) })).rejects.toMatchObject({ code: 'SKILL_VERSION_LIMIT', statusCode: 409 });
+    const detail = await skills.detail(owner, first.skill.id);
+    expect(detail.versions.map(version => version.version)).toEqual(['1.0.99999']);
+    expect(detail.skill.contentHash).toBe(first.skill.contentHash);
   });
   it('keeps imports of different owners apart', async () => {
     const path = await folder({ 'SKILL.md': manifest('shared-folder') });

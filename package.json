@@ -22,7 +22,11 @@
     "test:e2e": "playwright test",
     "ai:check": "tsx scripts/check-ai.ts",
     "coding:check": "tsx scripts/check-coding.ts",
+    "assistant:check": "tsx scripts/check-assistant.ts",
+    "ads:check": "tsx scripts/check-google-ads-api.ts",
+    "ads:regress": "tsx scripts/google-ads-regress.ts",
     "db:check": "tsx scripts/check-postgres.ts",
+    "sandbox:check": "tsx scripts/probe-sandbox.ts",
     "server": "tsx apps/server/src/index.ts",
     "worker": "tsx apps/worker/src/index.ts",
     "owner:create": "tsx apps/server/src/create-owner.ts"

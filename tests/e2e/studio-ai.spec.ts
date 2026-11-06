@@ -23,10 +23,10 @@ test('image and text changes use task approval, actual visual review and explici
   const beforeApply=await page.request.get(`/api/studio/sessions/${session.id}`);expect(StudioSessionSchema.parse(await beforeApply.json()).revision).toBe(session.revision);
   for(const id of [result.baselineImageId,result.candidateImageId]){const response=await page.request.get(`/api/studio/reviews/artifacts/${id}`);expect(response.ok()).toBe(true);expect(response.headers()['content-type']).toContain('image/png');}
   await expect(review.getByAltText('المعاينة قبل التعديل')).toBeVisible();await expect(review.getByAltText('معاينة المقترح بعد الاختبار')).toBeVisible();
-  await review.getByRole('heading').scrollIntoViewIfNeeded();await detail.screenshot({path:'artifacts/studio-ai-review-desktop.png',animations:'disabled'});
+  await review.getByRole('heading').scrollIntoViewIfNeeded();await detail.screenshot({path:test.info().outputPath('studio-ai-review-desktop.png'),animations:'disabled'});
   const applied=page.waitForResponse(response=>response.url().endsWith(`/api/studio/proposals/${result.proposalId}/apply`)&&response.request().method()==='POST');await review.getByRole('button',{name:'تطبيق المقترح على نسخة المراجعة',exact:true}).click();expect((await applied).ok()).toBe(true);await expect(review.getByText('طُبق المقترح على نسخة المراجعة.',{exact:true})).toBeVisible();
   await detail.getByRole('button',{name:'إغلاق التفاصيل',exact:true}).click();await expect(frame.locator('h1').first()).toHaveText('مقترح الاستوديو الاختباري');
   await studio.getByRole('button',{name:'التراجع عن آخر تعديل',exact:true}).click();await expect(frame.locator('h1').first()).toHaveText(original);
-  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:'artifacts/studio-ai-mobile.png',fullPage:true,animations:'disabled'});
+  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:test.info().outputPath('studio-ai-mobile.png'),fullPage:true,animations:'disabled'});
   expect(errors).toEqual([]);
 });

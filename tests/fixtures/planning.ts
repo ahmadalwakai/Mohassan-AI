@@ -1,4 +1,5 @@
 import type { RawCognitivePlan } from '@mohassan/contracts';
+import { forgeCandidateFixture } from './forge';
 export const rawPlanFixture:RawCognitivePlan={
   summary:'خطة اختبار واضحة للمراجعة قبل التنفيذ.',
   goal:{objective:'تنظيم مراجعة المشروع بأدلة قابلة للتحقق.',successCriteria:[{id:'criterion_1',description:'اكتمال مراجعة واضحة موثقة.',evidence:'تقرير مراجعة ومعايير قبول مكتوبة.'}],constraints:['عدم تعديل ملفات أو تشغيل أدوات أثناء إعداد الخطة.'],assumptions:['تفاصيل المشروع تحتاج فحصًا لاحقًا.'],clarifyingQuestions:[]},
@@ -28,10 +29,12 @@ export function createMockGroq(){
     const coding=body.response_format?.json_schema?.name==='coding_edits';
     const studio=body.response_format?.json_schema?.name==='studio_edits';
     const decision=body.response_format?.json_schema?.name==='decision';
+    const forge=body.response_format?.json_schema?.name==='skill_forge_candidate';
     let result:unknown=verification?{status:'ok'}:rawPlanFixture;
     if(coding){const context=JSON.parse(body.messages.at(-1).content);const file=context.files.find((item:any)=>item.editable);result={summary:'إصلاح دالة الجمع دون تعديل الاختبارات أو إعدادات المشروع.',edits:[{path:file.path,content:'export function sum(a, b) { return a + b; }\n'}]};}
     if(studio){const content=body.messages.at(-1).content;const context=JSON.parse(typeof content==='string'?content:content.find((part:any)=>part.type==='text').text);const file=context.files.find((item:any)=>/<h1\b/.test(item.content));if(!file)throw new Error('Isolated studio fixture requires an h1 source file');result={summary:'تغيير عنوان المعاينة داخل نسخة مراجعة اختبارية.',edits:[{path:file.path,content:file.content.replace(/<h1([^>]*)>[\s\S]*?<\/h1>/,'<h1$1>مقترح الاستوديو الاختباري</h1>')}]};}
     if(decision)result={thought:null,plan:null,note:null,url:null,ref:null,text:null,submit:null,options:null,sensitive:null,outcome:null,...scriptedDecision(body.messages.at(-1).content)};
+    if(forge)result=forgeCandidateFixture(body.messages.at(-1).content);
     return Response.json({model:body.model??'openai/gpt-oss-20b',choices:[{message:{content:JSON.stringify(result)},finish_reason:'stop'}],usage:{prompt_tokens:verification?30:coding?900:700,completion_tokens:verification?8:coding?100:240}});
   };
   return {fetch,requests};

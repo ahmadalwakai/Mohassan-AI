@@ -8,6 +8,7 @@ import { StudioChangeEditsSchema,StudioChangeResultSchema,StudioTaskInputSchema,
 import { StudioAiEngine,StudioAiError,selectStudioPaths,type StudioAiContext,type StudioAiSnapshot,type StudioCandidateValidation,type StudioFileEdit,type StudioProposalManifest } from '@mohassan/studio-ai';
 import { GroqProvider,type ModelResult } from '@mohassan/providers';
 import { sha256 } from '../../../packages/coding/src/security.ts';
+import { verifyRecoveryAuthority,type VerificationRecoveryContext } from '@mohassan/runtime';
 
 const ImageInput=z.object({mimeType:z.enum(['image/png','image/jpeg']),data:z.string().min(16).max(1400000).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/)}).strict();
 export interface StudioAiConfig {
@@ -40,6 +41,7 @@ export async function createStudioAiControl(db:Kysely<any>,config:StudioAiConfig
   }
   async function image(ownerId:string,id:string){const row=await db.selectFrom('studio_images').selectAll().where('id','=',id).where('owner_id','=',ownerId).where('expires_at','>',new Date()).executeTakeFirst();if(!row)throw new StudioAiError('STUDIO_IMAGE_NOT_FOUND','لم يُعثر على الصورة.',404);const bytes=Buffer.from(row.data_base64,'base64');if(bytes.byteLength>1048576||sha256(bytes)!==row.content_hash)throw new StudioAiError('STUDIO_IMAGE_CHANGED','تغيرت الصورة المحددة.',409);return {mimeType:row.mime_type as 'image/png'|'image/jpeg',data:row.data_base64 as string,bytes,hash:row.content_hash as string};}
   async function execute(goal:string,context:StudioAiContext){
+    if((await db.selectFrom('tasks').select('verification_only').where('id','=',context.taskId).where('owner_id','=',context.ownerId).executeTakeFirst())?.verification_only)throw new StudioAiError('SKILL_VERIFY_READ_ONLY','استعادة التحقق لا تسمح بتنفيذ جديد.',409);
     if(!available||!engine)throw new StudioAiError('STUDIO_AI_UNAVAILABLE','تعديل الاستوديو بالذكاء غير مهيأ.',503);
     const input=StudioTaskInputSchema.parse(context.studioInput),session=await config.studio.detail(context.ownerId,input.sessionId);if(session.revision!==input.revision)throw new StudioAiError('STUDIO_REVISION_CONFLICT','تغير إصدار المشروع قبل التنفيذ.',409);
     let selectedFile:string|undefined;if(input.elementId){selectedFile=(await config.studio.preview(context.ownerId,input.sessionId)).elements.find(element=>element.id===input.elementId)?.file;if(!selectedFile)throw new StudioAiError('STUDIO_SELECTION_UNAVAILABLE','تعذر ربط العنصر المحدد بالمصدر.');}
@@ -61,10 +63,10 @@ export async function createStudioAiControl(db:Kysely<any>,config:StudioAiConfig
     }catch(error){await db.updateTable('studio_ai_proposals').set({status:'failed',updated_at:new Date()}).where('id','=',attemptId).where('owner_id','=',context.ownerId).execute();throw error;}
   }
   async function proposal(ownerId:string,id:string){const row=await db.selectFrom('studio_ai_proposals').selectAll().where('id','=',id).where('owner_id','=',ownerId).executeTakeFirst();if(!row||!row.payload||!engine)throw new StudioAiError('STUDIO_PROPOSAL_NOT_FOUND','لم يُعثر على مقترح جاهز.',404);const payload=row.payload as StudioProposalManifest;if(engine.manifestHash(payload)!==row.payload_hash)throw new StudioAiError('STUDIO_PROPOSAL_CHANGED','تغير إيصال المقترح.',409);return {row,payload};}
-  async function verify(raw:unknown,context:{taskId:string;ownerId:string;studioInput:z.infer<typeof StudioTaskInputSchema>;signal:AbortSignal}){
-    if(!engine)return null;const result=StudioChangeResultSchema.parse(raw),stored=await proposal(context.ownerId,result.proposalId);if(stored.row.task_id!==context.taskId||stored.row.base_revision!==context.studioInput.revision)return null;
+  async function verify(raw:unknown,context:{taskId:string;ownerId:string;studioInput:z.infer<typeof StudioTaskInputSchema>;signal:AbortSignal}&VerificationRecoveryContext){
+    if(!engine||!await verifyRecoveryAuthority(db,context))return null;const result=StudioChangeResultSchema.parse(raw),stored=await proposal(context.ownerId,result.proposalId);if(stored.row.task_id!==context.taskId||stored.row.base_revision!==context.studioInput.revision)return null;
     const verified=await engine.verify(context,result);if(engine.manifestHash(verified)!==stored.row.payload_hash)return null;
-    const session=await config.studio.detail(context.ownerId,context.studioInput.sessionId);if(session.revision!==context.studioInput.revision)return null;return verified.result;
+    const session=await config.studio.detail(context.ownerId,context.studioInput.sessionId);if(session.revision!==context.studioInput.revision||!await verifyRecoveryAuthority(db,context))return null;return verified.result;
   }
   async function apply(ownerId:string,id:string,input:unknown){
     const request=z.object({revision:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(input),stored=await proposal(ownerId,id);

@@ -51,7 +51,8 @@ for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>stop());
 launch(['--import','tsx',process.env.MOHASSAN_ISOLATED_TEST==='true'?'tests/e2e/server-entry.ts':'apps/server/src/index.ts'],root);
 // Do not expose a ready web page while SQL migrations/auth/API are still starting.
 let apiReady=false;
-const readyDeadline=Date.now()+60000;
+// The first AppContainer proof waits about 25 seconds for the OS network verdict on every interface.
+const readyDeadline=Date.now()+180000;
 while(!shuttingDown&&Date.now()<readyDeadline){
   try{const response=await fetch(`${env.MOHASSAN_SERVER_URL}/health`,{signal:AbortSignal.timeout(700)});await response.body?.cancel();if(response.ok){apiReady=true;break;}}catch{/* The API is still starting. */}
   await delay(250);

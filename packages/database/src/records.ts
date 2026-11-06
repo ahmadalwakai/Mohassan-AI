@@ -29,6 +29,15 @@ export interface TaskRecord {
   project_id: ColumnType<string|null,string|null|undefined,string|null>;
   studio_input:ColumnType<Record<string,unknown>|null,string|null|undefined,string|null>;
   browser_input:ColumnType<Record<string,unknown>|null,string|null|undefined,string|null>;
+  skill_input:ColumnType<Record<string,unknown>|null,string|null|undefined,string|null>;
+  skill_binding:ColumnType<Record<string,unknown>|null,string|null|undefined,string|null>;
+  skill_node_input:ColumnType<Record<string,unknown>|null,string|null|undefined,string|null>;
+  workflow_token:ColumnType<string|null,string|null|undefined,string|null>;
+  verification_only:ColumnType<boolean,boolean|undefined,boolean>;
+  verification_source_lease:ColumnType<string|null,string|null|undefined,string|null>;
+  recovery_result:ColumnType<Record<string,unknown>|null,string|null|undefined,string|null>;
+  skill_rollback_input:ColumnType<Record<string,unknown>|null,string|null|undefined,string|null>;
+  skill_rollback_review:ColumnType<Record<string,unknown>|null,string|null|undefined,string|null>;
 }
 
 export interface TaskEventRecord {

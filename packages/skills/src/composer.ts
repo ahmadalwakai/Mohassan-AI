@@ -2,7 +2,7 @@ import type { SkillCompositionRequest, SkillContract, SkillPlanIssue } from '@mo
 
 type FieldType = SkillContract['inputs'][number]['type'];
 
-export interface ComposedGraph { batches: string[][]; issues: SkillPlanIssue[]; ordered: (a: string, b: string) => boolean }
+export interface ComposedGraph { batches: string[][]; issues: SkillPlanIssue[]; precedes: (before: string, after: string) => boolean; ordered: (a: string, b: string) => boolean }
 
 const issue = (code: string, nodeId: string | null, message: string): SkillPlanIssue => ({ code, severity: 'error', category: 'invalid_plan', nodeId, message });
 
@@ -36,7 +36,7 @@ function reachability(ids: readonly string[], dependencies: ReadonlyMap<string, 
     return found;
   };
   for (const id of ids) visit(id, new Set());
-  return (a: string, b: string) => Boolean(ancestors.get(a)?.has(b) || ancestors.get(b)?.has(a));
+  return (before: string, after: string) => before !== after && Boolean(ancestors.get(after)?.has(before));
 }
 
 /** The steps inside one skill follow the same rules as the nodes between skills. */
@@ -111,15 +111,17 @@ export function composeSkillGraph(request: SkillCompositionRequest, contracts: R
 
   const { batches, cyclic } = layers([...nodes.keys()], dependencies);
   if (cyclic.length) issues.push(issue('cycle', null, `دورة بين العقد: ${cyclic.join('، ')}`));
-  const ordered = reachability([...nodes.keys()], dependencies);
+  const precedes = reachability([...nodes.keys()], dependencies);
+  // Resource conflicts only need serialization; required skills need a particular direction.
+  const ordered = (a: string, b: string) => precedes(a, b) || precedes(b, a);
 
   for (const node of nodes.values()) {
     const contract = contracts.get(node.id);
     for (const slug of contract?.dependsOn ?? []) {
-      const provider = [...nodes.values()].find((candidate) => contracts.get(candidate.id)?.slug === slug);
-      if (!provider) issues.push({ code: 'missing_skill_dependency', severity: 'error', category: 'missing_skill', nodeId: node.id, message: `تعتمد المهارة على ${slug}، وهي ليست في الخطة.` });
-      else if (!ordered(node.id, provider.id)) issues.push(issue('skill_dependency_unordered', node.id, `يجب أن تعمل ${slug} قبل هذه العقدة.`));
+      const providers = [...nodes.values()].filter((candidate) => contracts.get(candidate.id)?.slug === slug);
+      if (!providers.length) issues.push({ code: 'missing_skill_dependency', severity: 'error', category: 'missing_skill', nodeId: node.id, message: `تعتمد المهارة على ${slug}، وهي ليست في الخطة.` });
+      else if (!providers.some((provider) => precedes(provider.id, node.id))) issues.push(issue('skill_dependency_unordered', node.id, `يجب أن تعمل ${slug} قبل هذه العقدة.`));
     }
   }
-  return { batches, issues, ordered };
+  return { batches, issues, precedes, ordered };
 }

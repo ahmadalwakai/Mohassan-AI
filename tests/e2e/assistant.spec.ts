@@ -42,7 +42,7 @@ async function send(page: Page, text: string) {
 test('a task runs from one message through sign-in, a code and an approval', async ({ page }) => {
   test.setTimeout(150000);
   const site = startSite();
-  await new Promise<void>((resolve) => site.server.listen(4201, '127.0.0.1', resolve));
+  await new Promise<void>((resolve, reject) => { site.server.once('error', reject); site.server.listen({ port: 4201, host: '127.0.0.1', exclusive: true }, resolve); });
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   try {
@@ -63,7 +63,7 @@ test('a task runs from one message through sign-in, a code and an approval', asy
     await send(page, 'ادخل إلى حسابي التجريبي واحذفه');
     await expect(page.getByRole('button', { name: 'متابعة' })).toBeVisible({ timeout: 30000 });
     await expect(page.getByRole('complementary', { name: 'المتصفح' }).getByRole('img')).toBeVisible();
-    await page.screenshot({ path: 'artifacts/assistant-login.png' });
+    await page.screenshot({ path:test.info().outputPath('assistant-login.png') });
     await page.getByLabel('البريد أو اسم المستخدم').fill('owner@example.test');
     await page.getByLabel('كلمة المرور').fill('not-the-right-one');
     await page.getByRole('button', { name: 'متابعة' }).click();
@@ -78,7 +78,7 @@ test('a task runs from one message through sign-in, a code and an approval', asy
 
     await expect(page.getByRole('button', { name: 'موافق' })).toBeVisible({ timeout: 30000 });
     expect(site.state.deleted).toBe(false);
-    await page.screenshot({ path: 'artifacts/assistant-approval.png' });
+    await page.screenshot({ path:test.info().outputPath('assistant-approval.png') });
     await page.getByRole('button', { name: 'موافق' }).click();
     await expect(page.getByRole('log').getByText('تم حذف الحساب كما طلبت.')).toBeVisible({ timeout: 30000 });
     expect(site.state.deleted).toBe(true);
@@ -87,7 +87,7 @@ test('a task runs from one message through sign-in, a code and an approval', asy
     await expect(page.getByRole('log').getByText('تم حذف الحساب كما طلبت.')).toBeVisible();
     await expect(page.getByRole('log')).not.toContainText(PASSWORD);
     await expect(page.getByRole('log')).not.toContainText(CODE);
-    await page.screenshot({ path: 'artifacts/assistant-desktop.png' });
+    await page.screenshot({ path:test.info().outputPath('assistant-desktop.png') });
 
     await page.setViewportSize({ width: 390, height: 780 });
     await expect(page.getByRole('button', { name: 'فتح القائمة' })).toBeVisible();
@@ -95,7 +95,7 @@ test('a task runs from one message through sign-in, a code and an approval', asy
     await page.getByRole('log').getByText('تم حذف الحساب كما طلبت.').scrollIntoViewIfNeeded();
     await expect(page.getByRole('log').getByText('تم حذف الحساب كما طلبت.')).toBeInViewport();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.screenshot({ path: 'artifacts/assistant-mobile.png' });
+    await page.screenshot({ path:test.info().outputPath('assistant-mobile.png') });
     await page.setViewportSize({ width: 1280, height: 800 });
 
     await openAdvancedTools(page);

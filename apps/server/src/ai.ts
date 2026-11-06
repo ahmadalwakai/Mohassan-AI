@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { sql,type Kysely } from 'kysely';
 import { AIStatusSchema,type AIStatus,type PlanningResult,type Capability } from '@mohassan/contracts';
-import { PlanningEngine,PlanningError } from '@mohassan/cognitive';
-import { GroqProvider,ProviderError } from '@mohassan/providers';
+import { PlanningEngine,PlanningError,ModelRouter } from '@mohassan/cognitive';
+import { GroqProvider,ProviderError,type ModelRequest } from '@mohassan/providers';
 import { createCapabilities } from '@mohassan/runtime';
 
 export interface AIConfig {apiKey?:string;model?:string;reasoningModel?:string;fetch?:typeof fetch;capabilities?:Capability[]}
@@ -48,7 +48,7 @@ export async function createAIControl(db:Kysely<any>,config:AIConfig) {
     })().finally(()=>{verification=null;});
     return verification;
   }
-  async function plan(goal:string,context:{signal:AbortSignal;onProgress?:(stage:string,message:string)=>Promise<void>;memoryContext?:unknown}):Promise<PlanningResult> {
+  async function plan(goal:string,context:{signal:AbortSignal;onProgress?:(stage:string,message:string)=>Promise<void>;memoryContext?:unknown;skillContext?:string}):Promise<PlanningResult> {
     if(!engine)throw new ProviderError('NOT_CONFIGURED','التخطيط يحتاج مفتاح Groq.');
     try{const result=await engine.generate(goal,context);await rememberSuccess(result).catch(()=>console.error(JSON.stringify({level:'error',event:'ai_health_write_failed'})));return result;}
     catch(error){
@@ -57,7 +57,18 @@ export async function createAIControl(db:Kysely<any>,config:AIConfig) {
       throw error;
     }
   }
-  return {engine,status,verify,plan};
+  /** One provider call. Gateway records the started receipt before this method;
+   * unknown or paid responses are never retried by this adapter. */
+  async function generateSkill(request: ModelRequest) {
+    if (!engine) throw new ProviderError('NOT_CONFIGURED','خطوة النموذج تحتاج إعداد Groq.');
+    const route = new ModelRouter({fast:model,reasoning:reasoningModel}).route(request.goal);
+    let result;
+    try { result = await providerForModel(route.model).generate(request); }
+    catch (error) { if (error instanceof ProviderError) Object.assign(error, {model: route.model}); throw error; }
+    await rememberSuccess({...result,verifiedAt:new Date().toISOString()}).catch(()=>console.error(JSON.stringify({level:'error',event:'ai_health_write_failed'})));
+    return result;
+  }
+  return {engine,status,verify,plan,generateSkill};
 }
 function failureMessage(code:unknown):string {
   if(code==='AUTHENTICATION_FAILED')return 'رفض Groq مفتاح الاتصال؛ حدّث إعداد الخادم.';

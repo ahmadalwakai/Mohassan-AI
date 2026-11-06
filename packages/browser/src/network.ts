@@ -2,6 +2,7 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import https from 'node:https';
 import http from 'node:http';
+import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 
 export class BrowserError extends Error {
   constructor(public readonly code:string,message:string,public readonly statusCode=400){super(message);this.name='BrowserError';}
@@ -26,6 +27,17 @@ export function isPublicAddress(address:string):boolean {
   return false;
 }
 
+/** Set by Node for the connection, or framing that must not cross this proxy. */
+const CONNECTION_HEADERS = new Set(['host', 'connection', 'content-length', 'keep-alive', 'proxy-authorization', 'proxy-connection', 'te', 'trailer', 'transfer-encoding', 'upgrade']);
+const BROWSER_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
+
+function decoded(body: Buffer, encoding: string, maxOutputLength: number): Buffer {
+  if (encoding === 'gzip') return gunzipSync(body, { maxOutputLength });
+  if (encoding === 'br') return brotliDecompressSync(body, { maxOutputLength });
+  if (encoding === 'deflate') return inflateSync(body, { maxOutputLength });
+  return body;
+}
+
 export class SafeNetwork {
   private testOrigins:Set<string>;
   constructor(readonly policy:NetworkPolicy={}){this.testOrigins=new Set((policy.testOrigins??[]).map(value=>new URL(value).origin));}
@@ -46,27 +58,37 @@ export class SafeNetwork {
     if(!addresses.length||addresses.length>16||addresses.some(item=>![4,6].includes(item.family)||!isPublicAddress(item.address)))throw new BrowserError('BROWSER_NETWORK_DENIED','رفض فحص الشبكة عنوانًا داخليًا أو سجل DNS مختلطًا.');
     return {url,address:addresses[0]};
   }
-  async request(input:string,options:{allowedOrigins?:readonly string[];method?:string;headers?:Record<string,string>;body?:string;signal?:AbortSignal;maxBytes?:number}={}):Promise<SafeResponse>{
-    const {url,address}=await this.pin(input,options.allowedOrigins),maximum=options.maxBytes??2_000_000;
+  /** browser: carries a real page's traffic with its own identity. Address checks are the same. */
+  async request(input:string,options:{allowedOrigins?:readonly string[];method?:string;headers?:Record<string,string>;body?:string|Buffer;signal?:AbortSignal;maxBytes?:number;browser?:boolean}={}):Promise<SafeResponse>{
+    const browser=options.browser===true;
+    const {url,address}=await this.pin(input,options.allowedOrigins),maximum=options.maxBytes??(browser?64_000_000:2_000_000);
     const method=options.method??'GET';
-    if(!['GET','HEAD','POST'].includes(method)||options.body&&Buffer.byteLength(options.body)>16000)throw new BrowserError('BROWSER_METHOD_DENIED','نوع الطلب أو حجمه خارج نطاق القراءة والموافقة.');
-    const headers:Record<string,string>={'user-agent':'MohassanAI-Research/1.0','accept-encoding':'identity',accept:'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5'};
-    for(const [key,value] of Object.entries(options.headers??{}))if(['accept','accept-language','content-type','cookie'].includes(key.toLowerCase())&&value.length<16000)headers[key.toLowerCase()]=value;
+    if(!(browser?BROWSER_METHODS:['GET','HEAD','POST']).includes(method)||options.body&&Buffer.byteLength(options.body)>(browser?8_000_000:16000))throw new BrowserError('BROWSER_METHOD_DENIED','نوع الطلب أو حجمه خارج نطاق القراءة والموافقة.');
+    const headers:Record<string,string>=browser?{}:{'user-agent':'MohassanAI-Research/1.0','accept-encoding':'identity',accept:'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5'};
+    for(const [key,value] of Object.entries(options.headers??{})){
+      const name=key.toLowerCase();
+      if(browser?!name.startsWith(':')&&!CONNECTION_HEADERS.has(name):['accept','accept-language','content-type','cookie'].includes(name)&&value.length<16000)headers[name]=value;
+    }
+    if(browser)headers['accept-encoding']='gzip, br';
     if(options.body)headers['content-length']=String(Buffer.byteLength(options.body));
     return new Promise((resolve,reject)=>{
       const transport=url.protocol==='https:'?https:http;
-      const request=transport.request(url,{method,headers,agent:false,lookup:((_host:any,opts:any,callback:any)=>opts?.all?callback(null,[address]):callback(null,address.address,address.family)) as any,signal:options.signal,timeout:10000},response=>{
-        if(response.headers['content-encoding']&&!['identity',''].includes(String(response.headers['content-encoding']))){response.destroy();reject(new BrowserError('BROWSER_ENCODING_DENIED','أعاد الموقع ترميزًا غير مدعوم ضمن حدود القراءة.',502));return;}
+      const request=transport.request(url,{method,headers,agent:false,lookup:((_host:any,opts:any,callback:any)=>opts?.all?callback(null,[address]):callback(null,address.address,address.family)) as any,signal:options.signal,timeout:browser?30000:10000},response=>{
+        const encoding=String(response.headers['content-encoding']??'').toLowerCase();
+        if(!(browser?['','identity','gzip','br','deflate']:['','identity']).includes(encoding)){response.destroy();reject(new BrowserError('BROWSER_ENCODING_DENIED','أعاد الموقع ترميزًا غير مدعوم ضمن حدود القراءة.',502));return;}
         const resultHeaders:Record<string,string>={};
-        for(const key of ['content-type','location','set-cookie','content-language','access-control-allow-origin','access-control-allow-credentials','access-control-expose-headers']){const value=response.headers[key];if(value)resultHeaders[key]=Array.isArray(value)?value.join('\n'):value;}
+        for(const key of browser?Object.keys(response.headers).filter(name=>!CONNECTION_HEADERS.has(name)&&name!=='content-encoding'):['content-type','location','set-cookie','content-language','access-control-allow-origin','access-control-allow-credentials','access-control-expose-headers']){const value=response.headers[key];if(value)resultHeaders[key]=Array.isArray(value)?value.join('\n'):value;}
         if(response.headers['content-disposition']?.includes('attachment')){response.destroy();reject(new BrowserError('BROWSER_DOWNLOAD_DENIED','التنزيلات غير مفعلة في جلسة القراءة.'));return;}
         let total=0;const chunks:Buffer[]=[];
         response.on('data',(chunk:Buffer)=>{total+=chunk.length;if(total>maximum){response.destroy();reject(new BrowserError('BROWSER_RESPONSE_TOO_LARGE','تجاوزت الصفحة حد حجم القراءة.'));}else chunks.push(chunk);});
-        response.on('end',()=>resolve({status:response.statusCode??502,headers:resultHeaders,body:Buffer.concat(chunks),url:url.href}));
+        response.on('end',()=>{
+          try{resolve({status:response.statusCode??502,headers:resultHeaders,body:decoded(Buffer.concat(chunks),encoding,maximum),url:url.href});}
+          catch{reject(new BrowserError('BROWSER_FETCH_FAILED','تعذر فك ترميز الرد ضمن حدود الحجم.',502));}
+        });
         response.on('error',()=>reject(new BrowserError('BROWSER_FETCH_FAILED','انقطع نقل الصفحة؛ لم تُفترض نتيجة ناجحة.',502)));
       });
       request.on('timeout',()=>request.destroy(new Error('timeout')));
-      const deadline=setTimeout(()=>request.destroy(new Error('deadline')),12000);request.once('close',()=>clearTimeout(deadline));
+      const deadline=setTimeout(()=>request.destroy(new Error('deadline')),browser?45000:12000);request.once('close',()=>clearTimeout(deadline));
       request.on('error',()=>reject(new BrowserError('BROWSER_FETCH_FAILED','تعذر جلب الصفحة ضمن المهلة وحدود الشبكة.',502)));
       request.end(options.body);
     });

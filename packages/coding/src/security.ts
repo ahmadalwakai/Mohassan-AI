@@ -21,7 +21,7 @@ export function containsPath(root: string, target: string): boolean {
 export function safeRelative(path: string): string {
   if (typeof path !== "string" || path.length > 180 || !/^[\p{L}\p{N}._/-]+$/u.test(path)
     || path.startsWith("/") || path.split("/").some((part) => !part || part === "." || part === ".."
-      || part.endsWith(".") || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part))) {
+      || part.endsWith(".") || /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(part))) {
     throw new CodingError("UNSAFE_PATH", "مسار الملف غير صالح أو يتجاوز نطاق المشروع.");
   }
   return path;

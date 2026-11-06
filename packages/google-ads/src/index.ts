@@ -1,0 +1,14 @@
+export { GOOGLE_ADS_API_VERSION, GOOGLE_ADS_SCOPE, GoogleAdsClient, classifyFailure, type CallContext, type MutateOperation, type Row } from './client.ts';
+export { GoogleAdsConnectionManager, type ConnectionRow } from './connection.ts';
+export { createGoogleAdsControl, type GoogleAdsConfig, type GoogleAdsControl, type LandingFetch } from './control.ts';
+export { canonicalJson, parseTokenKey, seal, sha256, unseal } from './crypto.ts';
+export { budgetToMicros, buildOperations, campaignNameFor, operationsHash, type Bidding, type GeoTarget } from './draft.ts';
+export { GoogleAdsError } from './errors.ts';
+export { VerifiedExperienceMemory } from './experience.ts';
+export { REQUIRED_REGRESSION_RUNS, defaultGateFiles, evidenceGates, sourceFingerprint, type GateFiles } from './gates.ts';
+export { campaignStrategy, chooseBidding, marketIntelligence, optimize, readSearchTerms, searchTermsQuery } from './intelligence.ts';
+export { analyzeAccount, bookingsByService, dateRange, detectMismatches, readCampaigns, readConversionActions } from './performance.ts';
+export { CampaignPublishingController, launchHash, launchOperations } from './publisher.ts';
+export { ADS_LIMITS, adsLength, detectScript, languageFitsCountry, negativeBlocks, parseKeyword, readLandingPage, scriptMatchesLanguage, validateAdText, validateBrief, type TextInput } from './quality.ts';
+export { audit, googleAdsMigration } from './store.ts';
+export { summarizeOperations, verifyDraft } from './verifier.ts';

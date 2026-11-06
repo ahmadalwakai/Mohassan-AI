@@ -6,6 +6,7 @@ import { CodingEngine,CodingError,createDemoProject,inspectProject,type SandboxR
 import { WindowsAppContainerSandbox } from '@mohassan/sandbox';
 import { GroqProvider,ProviderError,redactSecrets } from '@mohassan/providers';
 import { ProjectSchema,CodingProposalSchema,RegisterProjectSchema,type Project,type CodingWorkspace,type CodingEdits } from '@mohassan/contracts';
+import { verifyRecoveryAuthority,type VerificationRecoveryContext } from '@mohassan/runtime';
 
 export interface CodingConfig {
   dataDir?:string;allowedRoots?:string[];apiKey?:string;model?:string;fetch?:typeof fetch;sandbox?:SandboxRunner;
@@ -54,6 +55,7 @@ export async function createCodingControl(db:Kysely<any>,config:CodingConfig){
     return register(ownerId,{name:'مشروع تجربة الجمع',path:created.path,allowedPaths:created.allowedPaths});
   }
   async function execute(goal:string,context:{signal:AbortSignal;taskId:string;ownerId:string;projectId:string;leaseToken:string;onProgress?:(stage:string,message:string)=>Promise<void>;onModelReceipt?:(receipt:{model:string;usage:{inputTokens:number;outputTokens:number}})=>Promise<void>}){
+    if((await db.selectFrom('tasks').select('verification_only').where('id','=',context.taskId).where('owner_id','=',context.ownerId).executeTakeFirst())?.verification_only)throw fault('SKILL_VERIFY_READ_ONLY','استعادة التحقق لا تسمح بتنفيذ جديد.',409);
     if(!engine)throw fault('SANDBOX_UNAVAILABLE','لم يثبت توفر بيئة عزل؛ لم يُشغّل كود.',503);
     const selected=await project(context.ownerId,context.projectId);
     const resource=createHash('sha256').update(process.platform==='win32'?selected.path.toLowerCase():selected.path).digest('hex');
@@ -63,8 +65,10 @@ export async function createCodingControl(db:Kysely<any>,config:CodingConfig){
     try{return await engine.execute({taskId:context.taskId,ownerId:context.ownerId,goal,project:selected,signal:context.signal,onProgress:context.onProgress,onModelReceipt:context.onModelReceipt});}
     finally{await db.deleteFrom('coding_project_locks').where('resource_key','=',resource).where('token','=',token).execute();}
   }
-  async function verify(raw:unknown,context:{taskId:string;ownerId:string;projectId:string;signal:AbortSignal}){
-    if(!engine)return null;return engine.verify(raw,{taskId:context.taskId,project:await project(context.ownerId,context.projectId),signal:context.signal});
+  async function verify(raw:unknown,context:{taskId:string;ownerId:string;projectId:string;signal:AbortSignal}&VerificationRecoveryContext){
+    if(!engine||!await verifyRecoveryAuthority(db,context))return null;
+    const result=await engine.verify(raw,{taskId:context.taskId,project:await project(context.ownerId,context.projectId),signal:context.signal});
+    return await verifyRecoveryAuthority(db,context)?result:null;
   }
   return {available:Boolean(engine),workspace,register,demo,execute,verify,sandbox};
 }

@@ -169,6 +169,8 @@ target يعتمد locator/observation موجودة داخل الجلسة؛ يع�
 
 ## 7. Google Ads والتكاملات والاستخدام — مقترحة
 
+مسارات Google Ads المنفذة فعليًا تحت `/api/google-ads/*` وتوثيقها في `docs/GOOGLE-ADS.md`، وعقودها في `packages/contracts/src/google-ads.ts`. الجدول التالي هو التصور الأقدم؛ ما لم يُنفذ منه يبقى مقترحًا.
+
 | الطريقة والمسار | Payload/query → Data | Scope | A/K |
 |---|---|---|---|
 | POST `/integrations/google-ads/authorize` | `{redirectUri,state,customerId?,managerId?}` → authorizationUrl | integration:connect | A/K |

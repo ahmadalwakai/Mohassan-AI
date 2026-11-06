@@ -1,0 +1,1 @@
+{"name":"@mohassan/google-ads","version":"0.1.0","private":true,"type":"module","exports":"./src/index.ts","dependencies":{"@mohassan/contracts":"*","kysely":"0.29.8","zod":"4.6.7"}}

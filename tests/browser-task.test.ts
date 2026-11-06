@@ -69,6 +69,18 @@ describe('task-bound browser execution and independent screenshot evidence',()=>
     await control.execute('Open the fixture.',context);await expect(control.execute('Open again.',context)).rejects.toMatchObject({code:'BROWSER_TASK_ATTEMPT_EXISTS'});expect(browser.create).toHaveBeenCalledTimes(1);
   });
 
+  it('verifies an original receipt under a fenced recovery lease without opening another page',async()=>{
+    const {control,browser,context}=await fixture(),result=await control.execute('Open the fixture.',context),lease=randomUUID();
+    const assertActive=vi.fn(async()=>{}),recovery={...context,leaseToken:lease,verificationOnly:true as const,receiptLeaseToken:context.leaseToken,assertActive};
+    expect(await control.verify(result,recovery)).toBeNull();
+    await store.db.updateTable('tasks').set({status:'verifying',verification_only:true,verification_source_lease:context.leaseToken,lease_token:lease,lease_expires_at:new Date(Date.now()+60000)}).where('id','=',context.taskId).execute();
+    expect(await control.verify(result,recovery)).toEqual(result);expect(assertActive).toHaveBeenCalledTimes(2);
+    expect(await control.verify(result,{...recovery,receiptLeaseToken:randomUUID()})).toBeNull();
+    expect(await control.verify(result,{...recovery,leaseToken:randomUUID()})).toBeNull();
+    await expect(control.execute('Never execute during recovery.',recovery)).rejects.toMatchObject({code:'BROWSER_TASK_LEASE_DENIED'});
+    expect(browser.create).toHaveBeenCalledTimes(1);expect(browser.action).toHaveBeenCalledTimes(1);
+  });
+
   it('closes only its browser session and records failure when cancellation arrives during navigation',async()=>{
     const abort=new AbortController(),{control,browser,context,session}=await fixture({afterAction:()=>abort.abort()});
     await expect(control.execute('Open the fixture.',{...context,signal:abort.signal})).rejects.toMatchObject({code:'BROWSER_TASK_CANCELLED'});

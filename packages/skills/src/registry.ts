@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
 import {
-  SkillContractSchema, SkillDetailSchema, SkillRegistryQuerySchema, SkillRegistryResultSchema,
+  SkillContractSchema, SkillDetailSchema, SkillRegistryQuerySchema, SkillRegistryResultSchema, SkillFileContentQuerySchema, SkillFileContentSchema,
   type SkillDetail, type SkillRegistryResult, type SkillVersion,
 } from '@mohassan/contracts';
 import { builtinSkills } from './builtin/index.ts';
 import { SkillError } from './errors.ts';
 import { grantDto } from './grants.ts';
-import { sha256, skillContentHash } from './hash.ts';
+import { sha256, skillContentHash, skillContentMatches } from './hash.ts';
+import { classifySkillFile } from './inspector.ts';
 import { legacyDetail, legacySkills } from './legacy.ts';
 
 const iso = (value: unknown) => new Date(value as string | Date).toISOString();
@@ -22,7 +23,7 @@ function versionDto(row: any, activeVersionId: string | null): SkillVersion {
   };
 }
 
-export function createSkillRegistry(db: Kysely<any>) {
+export function createSkillRegistry(db: Kysely<any>, options: { rebuildGraph?: (tx: Kysely<any>, ownerId: string) => Promise<void> } = {}) {
   async function audit(connection: Kysely<any>, ownerId: string, targetId: string, event: string, detail: Record<string, unknown> = {}) {
     await connection.insertInto('skill_audit').values({ id: randomUUID(), owner_id: ownerId, target_id: targetId, event, detail: JSON.stringify(detail) }).execute();
   }
@@ -46,6 +47,7 @@ export function createSkillRegistry(db: Kysely<any>) {
         await tx.insertInto('skill_files').values({ version_id: id, path: 'SKILL.md', kind: 'instructions', content: instructions, content_hash: sha256(instructions), size_bytes: Buffer.byteLength(instructions, 'utf8') }).execute();
         await tx.insertInto('skill_sources').values({ version_id: id, kind: 'builtin', locator: `builtin:${contract.slug}`, file_count: 1, total_bytes: Buffer.byteLength(instructions, 'utf8') }).execute();
         await audit(tx, ownerId, id, 'skill.seeded', { slug: contract.slug, contentHash });
+        await options.rebuildGraph?.(tx, ownerId);
       });
     }
   }
@@ -97,5 +99,23 @@ export function createSkillRegistry(db: Kysely<any>) {
     });
   }
 
-  return { list, detail, view, seedBuiltins, audit };
+  async function fileContent(ownerId: string, id: string, input: unknown) {
+    const query = SkillFileContentQuerySchema.parse(input);
+    return db.transaction().setIsolationLevel('repeatable read').execute(async tx => {
+      const row = await tx.selectFrom('skill_versions as v').innerJoin('skill_families as f', 'f.id', 'v.family_id')
+        .select(['v.id', 'v.contract', 'v.content_hash']).where('v.id', '=', id).where('v.owner_id', '=', ownerId).where('f.owner_id', '=', ownerId).executeTakeFirst();
+      if (!row) throw new SkillError('SKILL_NOT_FOUND', 'لم يُعثر على المهارة.', 404);
+      const contract = SkillContractSchema.parse(json(row.contract));
+      const files = await tx.selectFrom('skill_files').select(['path', 'kind', 'content', 'content_hash', 'size_bytes']).where('version_id', '=', id).orderBy('path').limit(201).execute();
+      if (files.length > 200 || files.reduce((sum, file) => sum + Buffer.byteLength(file.content, 'utf8'), 0) > 256000
+        || files.some(file => classifySkillFile(file.path) !== file.kind || sha256(file.content) !== file.content_hash || Buffer.byteLength(file.content, 'utf8') !== file.size_bytes)
+        || !skillContentMatches(contract, files, row.content_hash)) throw new SkillError('SKILL_INTEGRITY_FAILED', 'تغير محتوى المهارة عن بصمته المسجلة؛ لا يمكن وصفه كمصدر متحقق.', 409);
+      const file = files.find(file => file.path === query.path);
+      if (!file) throw new SkillError('SKILL_FILE_NOT_FOUND', 'لم يُعثر على ملف المصدر في هذه النسخة.', 404);
+      return SkillFileContentSchema.parse({ versionId: id, versionContentHash: row.content_hash,
+        file: { path: file.path, kind: file.kind, contentHash: file.content_hash, sizeBytes: file.size_bytes, content: file.content }, contentVerified: true, readOnly: true });
+    });
+  }
+
+  return { list, detail, view, fileContent, seedBuiltins, audit };
 }

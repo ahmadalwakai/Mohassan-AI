@@ -13,12 +13,15 @@ try {
       $results[-1].timedOut = $true
       break
     }
-    $result = [MohassanNativeSandbox]::Run([string]$request.node,[string]$request.work,[string]$request.temp,[string[]]$command.arguments,[Math]::Max(100,$remaining),[string]$request.cancelPath)
+    $result = [MohassanNativeSandbox]::Run([string]$request.node,[string]$request.work,[string]$request.temp,[string[]]$command.arguments,[Math]::Max(100,$remaining),[string]$request.cancelPath,[string]$request.output,[int]$request.memoryMb,[bool]$request.lowPrivilege,[bool]$request.publicResourceProbe,[long]$request.quotaBytes)
     $results += $result
     if ($result.exitCode -ne 0) { break }
   }
   @{ok=$true;results=$results} | ConvertTo-Json -Depth 8 -Compress
 } catch {
-  @{ok=$false;error='AppContainer trusted helper failed';detail=$_.Exception.Message} | ConvertTo-Json -Compress
+  $cause = $_.Exception.GetBaseException()
+  $detail = $cause.Message
+  if ($cause -is [System.ComponentModel.Win32Exception]) { $detail += ' (Win32 ' + $cause.NativeErrorCode + ')' }
+  @{ok=$false;error='AppContainer trusted helper failed';detail=$detail} | ConvertTo-Json -Compress
   exit 1
 }

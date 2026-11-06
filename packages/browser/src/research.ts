@@ -43,11 +43,33 @@ export class BingRssSearch implements SearchProvider {
   }
 }
 
+/** Generic words appear on unrelated pages, so they cannot show a result is about the query. */
+const QUERY_NOISE=new Set(['a','an','and','are','at','be','best','by','can','current','do','does','find','for','from','get','how','i','in','is','it','latest','me','my','new','newest','of','official','on','or','page','please','recent','release','released','show','site','stable','that','the','to','today','top','update','version','website','what','when','where','which','who','why','will','with','آخر','اخر','أحدث','احدث','ما','ماذا','هو','هي','هل','في','من','عن','على','إلى','الى','كيف','كم','لماذا','أين','اين','متى','مع','أو','او','يوم','رسمي','إصدار','اصدار','موقع','صفحة']);
+const searchWords=(value:string)=>value.normalize('NFKC').replace(/\p{M}/gu,'').toLowerCase().match(/[\p{L}\p{N}]+/gu)??[];
+function queryFocus(question:string){
+  const sites:string[]=[],plain=question.replace(/(?:^|\s)site:(\S+)/gi,(_,site:string)=>{sites.push(site.toLowerCase().replace(/^www\./,''));return ' ';});
+  return {sites,terms:[...new Set(searchWords(plain).map(word=>word.replace(/^ال(?=\p{L}{3})/u,'')).filter(word=>!QUERY_NOISE.has(word)))]};
+}
+function onSite(url:string,site:string){try{const host=new URL(url).hostname.toLowerCase();return host===site||host.endsWith(`.${site}`);}catch{return false;}}
+/** Keeps results that are about the query and honour any site: limit the engine ignored. */
+export function relevantHits(question:string,hits:SearchHit[]):SearchHit[]{
+  const {sites,terms}=queryFocus(question),needed=terms.length<=2?terms.length:Math.min(3,Math.ceil(terms.length/2));
+  return hits.filter(hit=>{
+    if(sites.length&&!sites.some(site=>onSite(hit.url,site)))return false;
+    const words=searchWords(`${hit.title} ${hit.url} ${hit.snippet}`),text=words.join(' '),exact=new Set(words);
+    return terms.filter(term=>term.length<3?exact.has(term):text.includes(term)).length>=needed;
+  });
+}
+
 export class PublicWebSearch implements SearchProvider {
   readonly name='Bing RSS / DuckDuckGo HTML';
   constructor(private network:SafeNetwork){}
+  /** An engine can answer with unrelated pages, so those count as a miss and the next engine is tried. */
   async search(question:string,limit:number,signal?:AbortSignal){
-    try{return await new BingRssSearch(this.network).search(question,limit,signal);}catch(error){if(signal?.aborted)throw error;return new DuckDuckGoSearch(this.network).search(question,limit,signal);}
+    for(const engine of [new BingRssSearch(this.network),new DuckDuckGoSearch(this.network)]){
+      try{const hits=relevantHits(question,await engine.search(question,limit*2,signal)).slice(0,limit);if(hits.length)return hits;}catch(error){if(signal?.aborted)throw error;}
+    }
+    throw new BrowserError('RESEARCH_SEARCH_UNAVAILABLE','لم يُرجع البحث نتائج متعلقة بهذا الطلب. افتح الموقع المعني مباشرة أو أضف روابط مصادر.',502);
   }
 }
 

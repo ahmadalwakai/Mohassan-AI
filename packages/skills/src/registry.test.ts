@@ -3,7 +3,7 @@ import { SkillContractSchema, SkillExecutionReceiptSchema } from '@mohassan/cont
 import { createDatabase, migrate } from '@mohassan/database';
 import { createMemoryControl, exampleSkill, memoryMigration } from '@mohassan/memory';
 import { migrateAuth } from '../../../apps/server/src/auth.ts';
-import { builtinSkills, createSkillControl, skillContentHash, skillsMigration } from './index.ts';
+import { builtinSkills, createSkillControl, skillContentHash, sha256, skillsMigration } from './index.ts';
 
 const tool = {
   slug: 'page-report', name: 'تقرير صفحة', description: 'يفتح صفحة ويكتب تقريراً عنها في ملف.', version: '1.0.0', category: 'research', level: 'tool',
@@ -41,6 +41,11 @@ describe('skill contract rules', () => {
     expect(SkillExecutionReceiptSchema.parse({ ...base, level: 'instruction', execution: 'model_guided' }).execution).toBe('model_guided');
     expect(SkillExecutionReceiptSchema.safeParse({ ...base, level: 'instruction', execution: 'isolated_script' }).success).toBe(false);
     expect(SkillExecutionReceiptSchema.safeParse({ ...base, level: 'executable', execution: 'isolated_script', isolation: { provider: 'x', verified: false, sharesHostKernel: true, network: 'denied' } }).success).toBe(false);
+  });
+  it.each(['inputs', 'outputs', 'step outputs'])('rejects ambiguous duplicate %s with conflicting types', (location) => {
+    const fields = [{ name: 'value', type: 'string', description: 'First declared field.' }, { name: 'value', type: 'number', description: 'Conflicting declared field.' }];
+    const contract = location === 'step outputs' ? { ...tool, steps: [{ ...tool.steps[0], outputs: fields }] } : { ...tool, [location]: fields };
+    expect(SkillContractSchema.safeParse(contract).success).toBe(false);
   });
   it('changes the content hash when a file or the contract changes', () => {
     const contract = SkillContractSchema.parse(tool), files = [{ path: 'SKILL.md', content: 'a' }];
@@ -84,8 +89,37 @@ describe('skill registry', () => {
     const page = await skills.list(owner, { limit: 1, offset: 1 });
     expect(page.items).toHaveLength(1); expect(page.total).toBe(builtinSkills.length);
   });
+  it('returns verified plain source for review while leaving quarantine and permissions unchanged', async () => {
+    const version = (await skills.list(owner, { q: 'النصوص العربية' })).items[0];
+    const before = await skills.detail(owner, version.id), source = await skills.fileContent(owner, version.id, { path: 'SKILL.md' });
+    expect(source).toMatchObject({ versionId: version.id, versionContentHash: version.contentHash, contentVerified: true, readOnly: true });
+    expect(source.file.content).toBe(builtinSkills.find(skill => skill.contract.slug === version.slug)!.instructions);
+    expect(sha256(source.file.content)).toBe(source.file.contentHash);
+    expect(await skills.detail(owner, version.id)).toEqual(before);
+    await expect(skills.fileContent(other, version.id, { path: 'SKILL.md' })).rejects.toMatchObject({ code: 'SKILL_NOT_FOUND' });
+    await expect(skills.fileContent(owner, version.id, { path: '../SKILL.md' })).rejects.toThrow();
+    await expect(skills.fileContent(owner, version.id, { path: 'SKILL.md', execute: true })).rejects.toThrow();
+  });
+  it('does not describe changed version contents as verified even if the selected file was untouched', async () => {
+    const version = (await skills.list(owner, { q: 'النصوص العربية' })).items[0], content = 'Unpinned extra reference.';
+    await store.db.insertInto('skill_files').values({ version_id: version.id, path: 'extra.md', kind: 'reference', content, content_hash: sha256(content), size_bytes: Buffer.byteLength(content) }).execute();
+    try { await expect(skills.fileContent(owner, version.id, { path: 'SKILL.md' })).rejects.toMatchObject({ code: 'SKILL_INTEGRITY_FAILED' }); }
+    finally { await store.db.deleteFrom('skill_files').where('version_id', '=', version.id).where('path', '=', 'extra.md').execute(); }
+  });
+  it('allows review of quarantined executable text without executing it', async () => {
+    const familyId = crypto.randomUUID(), id = crypto.randomUUID(), contract = SkillContractSchema.parse(script);
+    const files = [{ path: 'SKILL.md', kind: 'instructions', content: 'Review the quarantined source before any decision.' }, { path: 'main.mjs', kind: 'script', content: 'throw new Error("THIS_SOURCE_MUST_ONLY_BE_READ");' }];
+    await store.db.insertInto('skill_families').values({ id: familyId, owner_id: owner, slug: contract.slug }).execute();
+    await store.db.insertInto('skill_versions').values({ id, family_id: familyId, owner_id: owner, version: contract.version, sequence: 1,
+      name: contract.name, description: contract.description, category: contract.category, level: contract.level, origin: 'local_import', status: 'quarantined', contract: JSON.stringify(contract), content_hash: skillContentHash(contract, files) }).execute();
+    await store.db.insertInto('skill_files').values(files.map(file => ({ version_id: id, ...file, content_hash: sha256(file.content), size_bytes: Buffer.byteLength(file.content) }))).execute();
+    const source = await skills.fileContent(owner, id, { path: 'main.mjs' });
+    expect(source.file.content).toBe(files[1].content); expect(source.file.kind).toBe('script');
+    expect((await skills.detail(owner, id)).skill).toMatchObject({ status: 'quarantined', active: false });
+    expect(await store.db.selectFrom('tasks').select('id').where('owner_id', '=', owner).execute()).toEqual([]);
+  });
   it('returns detail with contract, source, files and audit', async () => {
-    const [first] = (await skills.list(owner, {})).items;
+    const [first] = (await skills.list(owner, { q: 'النصوص العربية' })).items;
     const detail = await skills.detail(owner, first.id);
     expect(detail.contract.slug).toBe(first.slug);
     expect(detail.source).toMatchObject({ kind: 'builtin', fileCount: 1 });

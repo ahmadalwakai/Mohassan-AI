@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { Kysely } from 'kysely';
 import { boundedText, canonicalDirectory, sourcePaths } from '@mohassan/coding/security';
@@ -6,21 +5,17 @@ import { SkillCategorySchema, SkillContractSchema, SkillImportResultSchema, Skil
 import { SkillError } from './errors.ts';
 import { parseSkillManifest } from './frontmatter.ts';
 import { classifySkillFile, type InspectableFile } from './inspector.ts';
-import { sha256, skillContentHash } from './hash.ts';
+import { sha256 } from './hash.ts';
+import { storeImmutableSkill, MAX_IMPORTED_TOTAL_BYTES } from './import-store.ts';
 
 const CONTRACT_FILE = 'skill.contract.json';
-const MAX_TOTAL_BYTES = 256_000;
-const MAX_VERSIONS_PER_OWNER = 200;
+const MAX_TOTAL_BYTES = MAX_IMPORTED_TOTAL_BYTES;
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+){0,7}$/;
 const VERSION = /^\d{1,4}\.\d{1,4}\.\d{1,5}$/;
 
 function slugFrom(value: string, fallback: string): string {
   const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').split('-').slice(0, 8).join('-').slice(0, 64).replace(/-+$/, '');
   return SLUG.test(slug) ? slug : `skill-${fallback.slice(0, 12)}`;
-}
-function bump(version: string): string {
-  const [major, minor, patch] = version.split('.').map(Number);
-  return `${major}.${minor}.${patch + 1}`;
 }
 
 interface LoadedSkill { contract: SkillContract; explicitVersion: boolean; files: InspectableFile[]; totalBytes: number; root: string }
@@ -59,37 +54,11 @@ async function loadFolder(path: string, allowedRoots: readonly string[]): Promis
   return { contract: parsed.data, explicitVersion: Boolean(version && VERSION.test(version)), files, totalBytes, root };
 }
 
-export function createSkillImporter(db: Kysely<any>, options: { allowedRoots: readonly string[]; audit: (connection: Kysely<any>, ownerId: string, targetId: string, event: string, detail?: Record<string, unknown>) => Promise<void>; view: (ownerId: string, id: string, connection: Kysely<any>) => Promise<SkillImportResult['skill']> }) {
+export function createSkillImporter(db: Kysely<any>, options: { allowedRoots: readonly string[]; audit: (connection: Kysely<any>, ownerId: string, targetId: string, event: string, detail?: Record<string, unknown>) => Promise<void>; view: (ownerId: string, id: string, connection: Kysely<any>) => Promise<SkillImportResult['skill']>; rebuildGraph?: (tx: Kysely<any>, ownerId: string) => Promise<void> }) {
   return async function importLocalSkill(ownerId: string, input: unknown): Promise<SkillImportResult> {
     const request = SkillImportSchema.parse(input);
     const loaded = await loadFolder(request.path, options.allowedRoots);
-    const result = await db.transaction().execute(async (tx) => {
-      const { slug } = loaded.contract;
-      await tx.insertInto('skill_families').values({ id: randomUUID(), owner_id: ownerId, slug }).onConflict((conflict) => conflict.columns(['owner_id', 'slug']).doNothing()).execute();
-      const family = await tx.selectFrom('skill_families').selectAll().where('owner_id', '=', ownerId).where('slug', '=', slug).forUpdate().executeTakeFirstOrThrow();
-      const latest = await tx.selectFrom('skill_versions').select(['id', 'version', 'sequence', 'origin', 'content_hash']).where('family_id', '=', family.id).orderBy('sequence', 'desc').executeTakeFirst();
-      if (latest && latest.origin !== 'local_import') throw new SkillError('SKILL_SLUG_TAKEN', 'هذا المعرف محجوز لمهارة أخرى.', 409);
-      let contract = loaded.contract;
-      if (latest && !loaded.explicitVersion) contract = { ...contract, version: latest.version };
-      let contentHash = skillContentHash(contract, loaded.files);
-      const same = await tx.selectFrom('skill_versions').select('id').where('owner_id', '=', ownerId).where('content_hash', '=', contentHash).executeTakeFirst();
-      if (same) return { id: same.id as string, deduplicated: true };
-      if (latest && !loaded.explicitVersion) { contract = { ...contract, version: bump(latest.version) }; contentHash = skillContentHash(contract, loaded.files); }
-      if (latest && await tx.selectFrom('skill_versions').select('id').where('family_id', '=', family.id).where('version', '=', contract.version).executeTakeFirst()) {
-        throw new SkillError('SKILL_VERSION_EXISTS', 'هذا الإصدار موجود بمحتوى مختلف؛ الإصدارات لا تُعدَّل.', 409);
-      }
-      const { n } = await tx.selectFrom('skill_versions').select((eb) => eb.fn.countAll().as('n')).where('owner_id', '=', ownerId).executeTakeFirstOrThrow();
-      if (Number(n) >= MAX_VERSIONS_PER_OWNER) throw new SkillError('SKILL_QUOTA_EXCEEDED', 'بلغت الحد الأقصى لعدد الإصدارات.', 409);
-      const id = randomUUID();
-      await tx.insertInto('skill_versions').values({
-        id, family_id: family.id, owner_id: ownerId, version: contract.version, sequence: (latest?.sequence ?? 0) + 1, name: contract.name, description: contract.description, category: contract.category,
-        level: contract.level, origin: 'local_import', status: 'quarantined', status_reason: 'بانتظار الفحص.', contract: JSON.stringify(contract), content_hash: contentHash,
-      }).execute();
-      await tx.insertInto('skill_files').values(loaded.files.map((file) => ({ version_id: id, path: file.path, kind: file.kind, content: file.content, content_hash: sha256(file.content), size_bytes: Buffer.byteLength(file.content, 'utf8') }))).execute();
-      await tx.insertInto('skill_sources').values({ version_id: id, kind: 'local_folder', locator: loaded.root, file_count: loaded.files.length, total_bytes: loaded.totalBytes }).execute();
-      await options.audit(tx, ownerId, id, 'skill.imported', { slug: contract.slug, level: contract.level, contentHash, fileCount: loaded.files.length });
-      return { id, deduplicated: false };
-    });
+    const result = await db.transaction().execute(tx => storeImmutableSkill(tx, ownerId, loaded, { ...options, origin: 'local_import' }));
     return SkillImportResultSchema.parse({ skill: await options.view(ownerId, result.id, db), deduplicated: result.deduplicated });
   };
 }

@@ -302,6 +302,17 @@ export async function migrate(db: Kysely<any>): Promise<void> {
     if(!studioTask){await sql`ALTER TABLE tasks ADD COLUMN studio_input jsonb`.execute(tx);await tx.insertInto('schema_migrations').values({version:'007_studio_ai_input'}).execute();}
     const browserTask=await tx.selectFrom('schema_migrations').select('version').where('version','=','011_browser_task_input').executeTakeFirst();
     if(!browserTask){await sql`ALTER TABLE tasks ADD COLUMN browser_input jsonb`.execute(tx);await tx.insertInto('schema_migrations').values({version:'011_browser_task_input'}).execute();}
+    const skillTask=await tx.selectFrom('schema_migrations').select('version').where('version','=','023_runtime_skills').executeTakeFirst();
+    if(!skillTask){
+      await sql`ALTER TABLE tasks ADD COLUMN skill_input jsonb, ADD COLUMN skill_binding jsonb, ADD COLUMN skill_node_input jsonb, ADD COLUMN workflow_token text`.execute(tx);
+      await sql`CREATE INDEX tasks_skill_parent_idx ON tasks((skill_binding->>'parentTaskId')) WHERE skill_binding IS NOT NULL`.execute(tx);
+      await tx.insertInto('schema_migrations').values({version:'023_runtime_skills'}).execute();
+    }
+    const skillRecovery=await tx.selectFrom('schema_migrations').select('version').where('version','=','025_runtime_recovery').executeTakeFirst();
+    if(!skillRecovery){
+      await sql`ALTER TABLE tasks ADD COLUMN verification_only boolean NOT NULL DEFAULT false, ADD COLUMN verification_source_lease text, ADD COLUMN recovery_result jsonb, ADD COLUMN skill_rollback_input jsonb, ADD COLUMN skill_rollback_review jsonb`.execute(tx);
+      await tx.insertInto('schema_migrations').values({version:'025_runtime_recovery'}).execute();
+    }
   });
 }
 

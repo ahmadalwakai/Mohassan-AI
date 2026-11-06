@@ -22,11 +22,13 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
       try{while(true){const item=await reader.read();if(item.done)break;size+=item.value.byteLength;if(size>limit){await reader.cancel();return tooLarge();}parts.push(item.value);}}finally{reader.releaseLock();}
       body=new Uint8Array(size);let offset=0;for(const part of parts){body.set(part,offset);offset+=part.byteLength;}
     }
-    const response=await fetch(target,{method:request.method,headers,body:body as BodyInit|undefined,cache:'no-store',redirect:'manual',signal:AbortSignal.timeout(path[0]==='studio'&&request.method==='POST'?360000:['research','browser'].includes(path[0]??'')&&request.method==='POST'?60000:15000)});
+    const response=await fetch(target,{method:request.method,headers,body:body as BodyInit|undefined,cache:'no-store',redirect:'manual',signal:AbortSignal.timeout(path[0]==='studio'&&request.method==='POST'?360000:['research','browser','google-ads'].includes(path[0]??'')?60000:15000)});
     const output=new Headers({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
     const contentType=response.headers.get('content-type');if(contentType)output.set('content-type',contentType);
     for(const key of ['retry-after','x-retry-after']){const value=response.headers.get(key);if(value&&/^\d{1,6}$/.test(value))output.set(key,value);}
     for(const cookie of response.headers.getSetCookie())output.append('set-cookie',cookie);
+    // Only a path on this site: the service must never send a visitor elsewhere through the proxy.
+    const location=response.headers.get('location');if(path[0]==='google-ads'&&location?.startsWith('/')&&!location.startsWith('//'))output.set('location',location);
     return new Response(response.body,{status:response.status,headers:output});
   } catch {
     return Response.json({error:{code:'SERVICE_UNAVAILABLE',message:'تعذر الاتصال بخدمة المهام. تحقق من تشغيلها وأعد المحاولة.'}},{status:503,headers:{'Cache-Control':'no-store'}});

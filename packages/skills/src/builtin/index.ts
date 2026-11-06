@@ -36,4 +36,20 @@ Use this when writing, editing or translating Arabic text.
 2. Prefer clear modern standard Arabic unless the user asks for a dialect.
 3. Keep English product names and code identifiers unchanged.
 4. Note any place where the source is ambiguous rather than inventing a meaning.`),
+  define({
+    slug: 'google-ads-campaign', name: 'حملات Google Ads', version: '1.1.0', category: 'marketing', level: 'instruction',
+    description: 'يوجه تخطيط حملة Google Ads (إعلانات جوجل، اعلانات قوقل) وكتابة الإعلانات والكلمات المفتاحية ومراجعتها، وقراءة أداء الحساب المربوط، وحفظ المسودات للمراجعة دون نشر أو إنفاق بلا موافقة المالك.',
+    requires: { tools: ['browser.open', 'browser.interact', 'browser.submit', 'research.run'], scopes: ['browser:read', 'browser:write', 'research:read'] }, sideEffects: 'financial',
+    rollback: { mode: 'manual', note: 'تُوقف الحملة أو تُزال من حساب Google Ads يدوياً؛ لا يمكن استرداد ما أُنفق.' },
+  }, `
+Use this for Google Ads work: planning a search campaign, writing ads or keywords, reviewing a draft, or building a campaign in the account. When ads_status shows a connected account, use the official API tools: ads_report for real figures and ads_draft to save a preview. Publishing and launch are only the owner's, in the Google Ads section. If no account is connected, say so and offer the Google Ads section; never invent figures.
+1. Facts first. Get the business, service, area, landing page, budget and what counts as a conversion. Open the landing page and use only claims it makes. Never invent prices, ratings, phone numbers or guarantees. Ask once for what is missing.
+2. Structure. One search campaign per goal and one ad group per service, with its keywords, ads and landing page all about that service. For a local business, recommend the location option "Presence: People in or regularly in your targeted locations".
+3. Keywords. Exact is [moving services], phrase is "moving services", broad is moving services. Never write +moving +services: new keywords cannot use broad match modifier. Propose negative keywords only for searches the business cannot serve, never for words ads_check refused.
+4. Ads. A responsive search ad has 3 to 15 headlines of up to 30 characters, 2 to 4 descriptions of up to 90, and up to 2 display paths of up to 15. Write ads and keywords in the language the customers search in, which is the landing page's language or the main language of the target area, not the language of this chat, unless told otherwise.
+5. Check. Before showing a draft or typing it into Google Ads, pass every headline, description, path and keyword to ads_check. Fix what fails and check again. After PASS, do not repeat the text in your answer: the program adds it.
+6. Money. The daily budget is an average: for most campaigns one day can reach 2 times it and a month 30.4 times it. Say so. Give click, cost or lead forecasts only from figures you read in Keyword Planner or the account, never from memory.
+7. Measurement. Confirm conversion tracking exists, or list what must be set up. Without it the campaign is not ready to launch, and the reply must say so.
+8. In the account. Never build, publish, enable or change a campaign or budget through the browser: that would skip the checks and the owner's approval. Campaigns go through ads_draft, then the owner approves them in the Google Ads section. Use the browser for public pages only, such as the landing page.
+9. Reporting. Explain in the owner's language, and keep ad text in the ad's language. Say a campaign is live only when the Google Ads section shows it as confirmed from the account.`),
 ]);

@@ -1,12 +1,42 @@
 import { describe,it,expect,vi } from 'vitest';
-import { GroqProvider,ProviderError } from './index.js';
+import { classifyProviderFallback, GroqProvider,ProviderError } from './index.js';
 const successful=(content='{}',reason='stop')=>Response.json({model:'openai/gpt-oss-20b',choices:[{message:{content},finish_reason:reason}],usage:{prompt_tokens:40,completion_tokens:20}});
 describe('Groq structured transport and data boundary',()=>{
+  it.each([
+    ['794ms',794], ['1m26.4s',86400], ['1h2m3.25s4ms',3723254],
+    ['0.5h',1800000], ['0.25ms',1], ['0s',0], ['25h',86400000], ['9'.repeat(120)+'h',86400000],
+  ])('parses the entire bounded token reset duration %s',async(reset,resetMs)=>{
+    const payload={model:'test',choices:[{message:{content:'{}'},finish_reason:'stop'}],usage:{prompt_tokens:12,completion_tokens:7}};
+    const provider=new GroqProvider({apiKey:'fixture-key',model:'test',fetch:async()=>Response.json(payload,{headers:{'x-ratelimit-remaining-tokens':'123','x-ratelimit-reset-tokens':reset}})});
+    const result=await provider.generate({goal:'اختبار نافذة التوكنات'});
+    expect(result.rate).toEqual({remainingTokens:123,resetMs});
+    expect(result.usage).toEqual({inputTokens:12,outputTokens:7});
+  });
+  it.each([null,'','invalid','1s trailing','1q','-1s','1e3s','1.2.3s','1m 2s','9'.repeat(129)+'h'])('does not accept a partial or invalid reset duration %s',async(reset)=>{
+    const headers=new Headers({'x-ratelimit-remaining-tokens':'0'});
+    if(reset!==null)headers.set('x-ratelimit-reset-tokens',reset);
+    const provider=new GroqProvider({apiKey:'fixture-key',model:'test',fetch:async()=>Response.json({model:'test',choices:[{message:{content:'{}'},finish_reason:'stop'}],usage:{prompt_tokens:12,completion_tokens:7}},{headers})});
+    expect((await provider.generate({goal:'اختبار نافذة غير صالحة'})).rate).toEqual({remainingTokens:0,resetMs:0});
+  });
   it('records a rejected rate limit with a bounded retry delay without retrying itself',async()=>{
     const transport=vi.fn(async()=>new Response('private provider details',{status:429,headers:{'retry-after':'2.5'}}));
     const provider=new GroqProvider({apiKey:'fixture-key',model:'test',fetch:transport});
     await expect(provider.generate({goal:'اختبار طلب محدود'})).rejects.toMatchObject({code:'RATE_LIMITED',httpStatus:429,retryAfterMs:2500,usage:{inputTokens:0,outputTokens:0}});
     expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it('preserves a long provider Retry-After instead of retrying earlier than requested',async()=>{
+    const transport=vi.fn(async()=>new Response('',{status:429,headers:{'retry-after':'600'}}));
+    const provider=new GroqProvider({apiKey:'fixture-key',model:'test',fetch:transport});
+    const error=await provider.generate({goal:'اختبار مهلة طويلة'}).catch(error=>error);
+    expect(error).toMatchObject({retryAfterMs:600000,usage:{inputTokens:0,outputTokens:0}});
+    expect(classifyProviderFallback(error)).toEqual({allowed:false,reason:'retry_budget_exceeded',retryAfterMs:600000});
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it.each(['-1','invalid','99999999999999999999'])('fails closed on invalid provider Retry-After %s',async header=>{
+    const provider=new GroqProvider({apiKey:'fixture-key',model:'test',fetch:async()=>new Response('',{status:429,headers:{'retry-after':header}})});
+    const error=await provider.generate({goal:'اختبار مهلة غير صالحة'}).catch(error=>error);
+    expect(error).toMatchObject({retryAfterInvalid:true});expect(error.retryAfterMs).toBeUndefined();
+    expect(classifyProviderFallback(error)).toEqual({allowed:false,reason:'retry_after_invalid'});
   });
   it('keeps database credentials out of model prompts and returned text',async()=>{
     const password='npg_'+'F'.repeat(20),uri=`postgresql://fixture:${password}@database.example/db`;

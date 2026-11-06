@@ -3,9 +3,9 @@ import type { Kysely } from 'kysely';
 import { z } from 'zod';
 import { createSkillControl, skillsMigration, type SkillEnvironment } from '@mohassan/skills';
 
-export async function registerSkillRoutes(app: FastifyInstance, { db, owner, allowedRoots, environment }: { db: Kysely<any>; owner: (request: any) => Promise<{ id: string }>; allowedRoots: readonly string[]; environment: () => SkillEnvironment }) {
+export async function registerSkillRoutes(app: FastifyInstance, { db, owner, allowedRoots, environment, enabled = false, executableReady }: { executableReady?: () => Promise<boolean>; db: Kysely<any>; owner: (request: any) => Promise<{ id: string }>; allowedRoots: readonly string[]; environment: () => SkillEnvironment; enabled?: boolean }) {
   await skillsMigration(db);
-  const skills = createSkillControl(db, { allowedRoots, environment });
+  const skills = createSkillControl(db, { allowedRoots, environment, enabled, ...(executableReady ? { executableReady } : {}) });
   const write = { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } };
   type Skill = { Params: { id: string } };
   const id = (value: string) => z.uuid().parse(value);
@@ -13,6 +13,10 @@ export async function registerSkillRoutes(app: FastifyInstance, { db, owner, all
   app.post('/api/skills/import', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request) => skills.importLocal((await owner(request)).id, request.body));
   app.post('/api/skills/compose/validate', write, async (request) => skills.validateComposition((await owner(request)).id, request.body));
   app.get<Skill>('/api/skills/:id', async (request) => skills.detail((await owner(request)).id, id(request.params.id)));
+  app.get<Skill>('/api/skills/:id/file', async (request, reply) => {
+    const user = await owner(request); reply.header('cache-control', 'private, no-store');
+    return skills.fileContent(user.id, id(request.params.id), request.query);
+  });
   app.post<Skill>('/api/skills/:id/inspect', write, async (request) => skills.inspect((await owner(request)).id, id(request.params.id), request.body));
   app.post<Skill>('/api/skills/:id/activate', write, async (request) => skills.activate((await owner(request)).id, id(request.params.id), request.body));
   app.post<Skill>('/api/skills/:id/revoke', write, async (request) => skills.revoke((await owner(request)).id, id(request.params.id), request.body));

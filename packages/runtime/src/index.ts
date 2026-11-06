@@ -11,12 +11,26 @@ import {
   type TaskEvent,
   type PlanningResult,
   CodingResultSchema,type CodingResult,StudioTaskInputSchema,StudioChangeResultSchema,type StudioTaskInput,type StudioChangeResult,
+  SkillRunInputSchema, SkillNodeBindingSchema, SkillNodeInputSchema, TOOL_SIDE_EFFECTS, type SkillRunInput, type SkillNodeBinding, type SkillToolId,
+  SkillRollbackInputSchema,SkillRollbackReviewSchema,type SkillRollbackInput,type SkillRollbackReview,
 } from "@mohassan/contracts";
 import { verifyPlanningResult } from "@mohassan/cognitive";
 import type { RuntimeDatabase, TaskRecord, TaskEventRecord } from "@mohassan/database";
 
 type TaskRow = Selectable<TaskRecord>;
 type Tx = Transaction<RuntimeDatabase>;
+
+export type SkillWorkflowAuthority = Pick<TaskRow,'id'|'owner_id'|'capability_id'|'capability_version'|'status'|'input_hash'|'workflow_token'|'cancellation_requested'>;
+/** Shared read-only workflow policy. The caller owns any required parent lock;
+ * this helper never locks a parent, child, run, node or approval row. */
+export async function hasActiveSkillWorkflowApproval(tx:Kysely<any>,parent:SkillWorkflowAuthority|null|undefined):Promise<boolean>{
+  if(!parent||parent.capability_id!=='skill.run'||!parent.workflow_token||parent.cancellation_requested||!['running','paused','queued','verifying'].includes(parent.status))return false;
+  const approval=await tx.selectFrom('approvals').select('id').where('task_id','=',parent.id).where('owner_id','=',parent.owner_id)
+    .where('capability_id','=','skill.run').where('capability_version','=',parent.capability_version).where('input_hash','=',parent.input_hash)
+    .where('scope','=',`skill.run:${parent.input_hash}`).where('consumed_lease_token','=',parent.workflow_token).where('consumed_at','is not',null)
+    .where('revoked_at','is',null).where('expires_at','>',sql<Date>`CURRENT_TIMESTAMP`).executeTakeFirst();
+  return Boolean(approval);
+}
 
 export class DomainError extends Error {
   constructor(public readonly statusCode: number, public readonly code: string, message: string) {
@@ -26,6 +40,11 @@ export class DomainError extends Error {
 }
 
 export const capabilities: readonly Capability[] = Object.freeze([
+  {id:'skill.rollback',name:'استعادة ملف موثقة',version:'1.0.0',risk:'high',status:'needs_configuration',description:'إعادة ملف إلى صورته السابقة بعد موافقة مستقلة وفحص البصمة والصلاحيات الحالية.',requiredScopes:['file:write']},
+  {
+    id: 'skill.run', name: 'تشغيل مخطط مهارات', version: '1.0.0', risk: 'high', status: 'needs_configuration',
+    description: 'تشغيل مخطط مثبت عبر مهام فرعية مستقلة، مع موافقاتها والتحقق من أدلتها دون منح صلاحيات تلقائية.', requiredScopes: ['skill:run'],
+  },
   {
     id: "system.diagnostic", name: "تشخيص مساحة العمل", version: "1.0.0", risk: "low", status: "active",
     description: "فحص الاتصال بالتخزين وسجل القدرات، ثم التحقق من الأدلة دون تغيير ملفاتك.",
@@ -62,16 +81,18 @@ export const capabilities: readonly Capability[] = Object.freeze([
     description: "واجهة جهاز Windows ومشغّل محلي؛ يلزم ربط جهاز موثوق ومنح مشاهدة أو تحكم محدود المدة.", requiredScopes: ["device:view", "device:control"],
   },
   {
-    id: "ads.audit", name: "خبير Google Ads", version: "0.1.0", risk: "high", status: "planned",
-    description: "جمع البيانات وتدقيق التحويلات قبل السماح بتحسين الإنفاق.", requiredScopes: ["ads:read"],
+    id: "ads.audit", name: "خبير Google Ads", version: "0.1.0", risk: "high", status: "needs_configuration",
+    description: "قراءة أداء الحساب وفحص المسودات عبر Google Ads API. يعمل من قسم Google Ads بعد ربط الحساب، والنشر بموافقة المالك.", requiredScopes: ["ads:read"],
   },
 ]);
 
 /** Module presence alone never grants Runtime dispatch; browser.open also requires execution and verification callbacks. */
 export interface CapabilityModules {studioVisual?:boolean;browser?:boolean;memory?:boolean;windows?:boolean}
-export function createCapabilities(planningConfigured = false,codingConfigured=false,studioConfigured=false,modules:CapabilityModules={},browserConfigured=false): Capability[] {
+export function createCapabilities(planningConfigured = false,codingConfigured=false,studioConfigured=false,modules:CapabilityModules={},browserConfigured=false,skillConfigured=false,rollbackConfigured=false): Capability[] {
   return capabilities.map((capability) => ({
     ...capability, requiredScopes: [...capability.requiredScopes],
+    ...(capability.id === 'skill.run' && skillConfigured ? { status: 'active' as const } : {}),
+    ...(capability.id === 'skill.rollback' && rollbackConfigured ? { status: 'active' as const } : {}),
     ...(capability.id === "plan.draft" && planningConfigured ? { status: "active" as const } : {}),
     ...(capability.id === "coding.change" && codingConfigured ? { status: "active" as const } : {}),
     ...(capability.id === "studio.change" && studioConfigured ? {status:"active" as const}:{}),
@@ -109,7 +130,60 @@ const PlanningShadowSchema = z.object({
   proposedStages: z.array(z.string()).min(1),
 }).strict();
 
+export interface SkillChildSpec {
+  binding: SkillNodeBinding;
+  input: Record<string, unknown>;
+  idempotencyKey: string;
+  title?: string;
+  attempt?: number;
+}
+export interface SkillExecutionContext {
+  ownerId: string; taskId: string; leaseToken: string; signal: AbortSignal;
+  assertActive: () => Promise<void>;
+}
+export interface VerificationRecoveryContext { verificationOnly?:true; receiptLeaseToken?:string; leaseToken?:string; assertActive?:()=>Promise<void> }
+/** The recovery flag is an internal request to read evidence, never authority by itself. */
+export async function verifyRecoveryAuthority(db:Kysely<any>,context:VerificationRecoveryContext&{taskId:string;ownerId:string}):Promise<boolean>{
+  if(!context.verificationOnly)return true;
+  if(!context.assertActive||!context.leaseToken||!context.receiptLeaseToken)return false;
+  const row=await db.selectFrom('tasks').select(['verification_only','verification_source_lease','lease_token','lease_expires_at','status','cancellation_requested']).where('id','=',context.taskId).where('owner_id','=',context.ownerId).where('lease_expires_at','>',sql<Date>`CURRENT_TIMESTAMP`).executeTakeFirst();
+  if(!row?.verification_only||row.verification_source_lease!==context.receiptLeaseToken||row.lease_token!==context.leaseToken||row.status!=='verifying'||row.cancellation_requested)return false;
+  await context.assertActive();return true;
+}
+export interface SkillNodeExecutionContext extends SkillExecutionContext { binding: SkillNodeBinding; verificationOnly?: true; receiptLeaseToken?: string }
+export type SkillRecovery = {kind:'confirmed';result:Record<string,unknown>;receiptLeaseToken:string}|{kind:'unknown';code?:string};
+export type SkillAdvanceResult = { kind: 'pending'; runId: string; childTaskIds: string[] } | { kind: 'complete'; runId: string; result: Record<string, unknown> };
+export interface SkillRuntimeOptions {
+  advance: (input: SkillRunInput, context: SkillExecutionContext & { workflowToken: string; dispatchChild: (tx: Kysely<any>, spec: SkillChildSpec) => Promise<{ id: string }> }) => Promise<SkillAdvanceResult>;
+  verify: (raw: unknown, context: SkillExecutionContext) => Promise<Record<string, unknown> | null>;
+  wakeCandidates: () => Promise<Array<{ ownerId: string; parentTaskId: string }>>;
+  cancelRun: (tx: Kysely<any>, ownerId: string, parentTaskId: string) => Promise<void>;
+  mapChild: (tool: SkillToolId, input: Record<string, unknown>) => CreateTaskInput | null;
+  /** Read-only: callers may already hold the child task lock. Never acquire parent/run locks here. */
+  validateBinding: (tx: Kysely<any>, context: { taskId: string; ownerId: string; binding: SkillNodeBinding }) => Promise<boolean>;
+  executeNode: (context: SkillNodeExecutionContext) => Promise<unknown>;
+  verifyNode: (raw: unknown, context: SkillNodeExecutionContext) => Promise<Record<string, unknown> | null>;
+  beforeMappedExecute?: (context: SkillNodeExecutionContext) => Promise<void>;
+  recordChildResult?: (raw: Record<string, unknown>, context: SkillNodeExecutionContext) => Promise<void>;
+  recordChildFailure?: (error: unknown, context: SkillNodeExecutionContext) => Promise<void>;
+  /** Read-only; caller holds the child lock. Never acquire parent/run/node locks here. */
+  recoverNode?: (tx:Kysely<any>,context:{ownerId:string;taskId:string;binding:SkillNodeBinding;leaseToken:string})=>Promise<SkillRecovery>;
+  verifyRecoveredNode?: (raw:unknown,context:SkillNodeExecutionContext)=>Promise<Record<string,unknown>|null>;
+}
+export interface SkillRollbackOptions {
+  /** Read-only, and must use tx when supplied to avoid nested transactions. */
+  prepare:(ownerId:string,input:SkillRollbackInput,tx?:Kysely<any>)=>Promise<{input:SkillRollbackInput;title:string;goal:string;review:SkillRollbackReview}>;
+  execute:(input:SkillRollbackInput,context:SkillExecutionContext)=>Promise<unknown>;
+  verify:(raw:unknown,input:SkillRollbackInput,context:SkillExecutionContext)=>Promise<Record<string,unknown>|null>;
+  recoverExpired?:()=>Promise<unknown>;
+}
 export interface RuntimeOptions {
+  skillRuntime?: SkillRuntimeOptions;
+  /** Cancellation remains available when skill execution is disabled. Grants no dispatch capability. */
+  cancelSkillRun?: SkillRuntimeOptions['cancelRun'];
+  /** Metadata maintenance only; exposing it never enables skill.rollback. */
+  recoverSkillRollbacks?:()=>Promise<unknown>;
+  rollback?: SkillRollbackOptions;
   moduleAvailability?:CapabilityModules;
   onTaskSettled?:(ownerId:string,taskId:string)=>Promise<void>;
   workerId?: string;
@@ -126,17 +200,17 @@ export interface RuntimeOptions {
     onProgress?: (stage: string, message: string) => Promise<void>;
   }) => Promise<PlanningResult>;
   code?: (goal:string,context:{signal:AbortSignal;taskId:string;ownerId:string;projectId:string;leaseToken:string;onProgress?:(stage:string,message:string)=>Promise<void>;onModelReceipt?:(receipt:{model:string;usage:{inputTokens:number;outputTokens:number}})=>Promise<void>})=>Promise<CodingResult>;
-  verifyCode?: (raw:unknown,context:{taskId:string;ownerId:string;projectId:string;signal:AbortSignal})=>Promise<CodingResult|null>;
+  verifyCode?: (raw:unknown,context:{taskId:string;ownerId:string;projectId:string;signal:AbortSignal}&VerificationRecoveryContext)=>Promise<CodingResult|null>;
   studioChange?:(goal:string,context:{signal:AbortSignal;taskId:string;ownerId:string;studioInput:StudioTaskInput;leaseToken:string;onProgress?:(stage:string,message:string)=>Promise<void>;onModelReceipt?:(receipt:{model:string;usage:{inputTokens:number;outputTokens:number}})=>Promise<void>})=>Promise<StudioChangeResult>;
-  verifyStudioChange?:(raw:unknown,context:{taskId:string;ownerId:string;studioInput:StudioTaskInput;signal:AbortSignal})=>Promise<StudioChangeResult|null>;
+  verifyStudioChange?:(raw:unknown,context:{taskId:string;ownerId:string;studioInput:StudioTaskInput;signal:AbortSignal}&VerificationRecoveryContext)=>Promise<StudioChangeResult|null>;
   openBrowser?:(goal:string,context:{signal:AbortSignal;taskId:string;ownerId:string;browserInput:BrowserTaskInput;leaseToken:string;onProgress?:(stage:string,message:string)=>Promise<void>})=>Promise<BrowserOpenResult>;
-  verifyBrowser?:(raw:unknown,context:{taskId:string;ownerId:string;browserInput:BrowserTaskInput;signal:AbortSignal})=>Promise<BrowserOpenResult|null>;
+  verifyBrowser?:(raw:unknown,context:{taskId:string;ownerId:string;browserInput:BrowserTaskInput;signal:AbortSignal}&VerificationRecoveryContext)=>Promise<BrowserOpenResult|null>;
   onError?: (error: unknown) => void;
 }
 
 function iso(value: Date | string): string { return new Date(value).toISOString(); }
 
-type TaskDtoRow=Pick<TaskRow,'id'|'owner_id'|'title'|'goal'|'capability_id'|'status'|'autonomy'|'created_at'|'updated_at'|'attempt'|'max_attempts'|'result'|'error'|'cancellation_requested'|'project_id'|'studio_input'|'browser_input'>;
+type TaskDtoRow=Pick<TaskRow,'id'|'owner_id'|'title'|'goal'|'capability_id'|'status'|'autonomy'|'created_at'|'updated_at'|'attempt'|'max_attempts'|'result'|'error'|'cancellation_requested'|'project_id'|'studio_input'|'browser_input'|'skill_input'|'skill_binding'|'skill_node_input'|'skill_rollback_input'|'skill_rollback_review'>;
 function taskDto(row: TaskDtoRow): Task {
   return {
     id: row.id, ownerId: row.owner_id, title: row.title, goal: row.goal,
@@ -146,6 +220,11 @@ function taskDto(row: TaskDtoRow): Task {
     result: row.result, error: row.error, cancellationRequested: row.cancellation_requested,
     projectId:row.project_id??null,studioInput:row.studio_input?StudioTaskInputSchema.parse(row.studio_input):null,
     browserInput:row.browser_input?BrowserTaskInputSchema.parse(row.browser_input):null,
+    skillInput:row.skill_input?SkillRunInputSchema.parse(row.skill_input):null,
+    skillBinding:row.skill_binding?SkillNodeBindingSchema.parse(row.skill_binding):null,
+    skillNodeInput:row.skill_node_input?SkillNodeInputSchema.parse(row.skill_node_input):null,
+    skillRollbackInput:row.skill_rollback_input?SkillRollbackInputSchema.parse(row.skill_rollback_input):null,
+    skillRollbackReview:row.skill_rollback_review?SkillRollbackReviewSchema.parse(row.skill_rollback_review):null,
   };
 }
 
@@ -156,11 +235,17 @@ function eventDto(row: Selectable<TaskEventRecord>): TaskEvent {
   };
 }
 
-function hashInput(input: CreateTaskInput): string {
+type TaskCreationInput = Omit<CreateTaskInput, 'capabilityId'> & { capabilityId: CreateTaskInput['capabilityId'] | 'skill.node'; skillNodeInput?: Record<string,unknown>; skillRollbackReview?:SkillRollbackReview };
+const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical((value as Record<string,unknown>)[key])])) : value;
+function hashInput(input: TaskCreationInput, binding?: SkillNodeBinding): string {
   return createHash("sha256").update(JSON.stringify({
     title: input.title, goal: input.goal, capabilityId: input.capabilityId, autonomy: input.autonomy,
     ...(input.projectId?{projectId:input.projectId}:{}),...(input.studioInput?{studioInput:input.studioInput}:{}),
     ...(input.browserInput?{browserInput:input.browserInput}:{}),
+    ...(input.skillInput?{skillInput:canonical(input.skillInput)}:{}),
+    ...(binding?{skillBinding:canonical(binding)}:{}),
+    ...(input.skillNodeInput?{skillNodeInput:canonical(input.skillNodeInput)}:{}),
+    ...(input.skillRollbackInput?{skillRollbackInput:canonical(input.skillRollbackInput),skillRollbackReview:canonical(input.skillRollbackReview)}:{}),
   })).digest("hex");
 }
 
@@ -207,20 +292,22 @@ export class Runtime {
     this.retryDelayMs = Math.max(0, options.retryDelayMs ?? 1_000);
     this.workerId = options.workerId ?? randomUUID();
     this.planningLeaseMs = Math.max(1_000, options.leaseMs ?? 90_000);
-    this.registry = createCapabilities(Boolean(options.plan),Boolean(options.code&&options.verifyCode),Boolean(options.studioChange&&options.verifyStudioChange),options.moduleAvailability,Boolean(options.openBrowser&&options.verifyBrowser));
+    this.registry = createCapabilities(Boolean(options.plan),Boolean(options.code&&options.verifyCode),Boolean(options.studioChange&&options.verifyStudioChange),options.moduleAvailability,Boolean(options.openBrowser&&options.verifyBrowser),Boolean(options.skillRuntime),Boolean(options.rollback));
+    if(options.skillRuntime)this.registry.push({id:'skill.node',name:'خطوة مهارة داخلية',version:'1.0.0',risk:'high',status:'active',description:'تنفيذ خطوة مثبتة في مخطط مصرح به.',requiredScopes:['skill:node']});
   }
 
   getCapabilities(): Capability[] {
-    return this.registry.map((capability) => ({ ...capability, requiredScopes: [...capability.requiredScopes] }));
+    return this.registry.filter(capability=>capability.id!=='skill.node').map((capability) => ({ ...capability, requiredScopes: [...capability.requiredScopes] }));
   }
 
-  private scope(task: Pick<TaskRow, "capability_id"> & Partial<Pick<TaskRow,'browser_input'>>): string {
+  private scope(task: Pick<TaskRow, "capability_id"> & Partial<Pick<TaskRow,'browser_input'|'input_hash'>>): string {
+    if(['skill.run','skill.node','skill.rollback'].includes(task.capability_id))return `${task.capability_id}:${task.input_hash}`;
     if(task.capability_id==='browser.open')return `browser:read:${createHash('sha256').update(JSON.stringify(BrowserTaskInputSchema.parse(task.browser_input))).digest('hex')}`;
     return task.capability_id==='studio.change'?'studio:change':task.capability_id==='coding.change'?'coding:change':task.capability_id === "plan.draft" ? "model:generate" : "diagnostic:read";
   }
 
   private executableCapability(task: Pick<TaskRow, "capability_id" | "capability_version">): Capability | undefined {
-    if (!["system.diagnostic", "plan.draft",'coding.change','studio.change','browser.open'].includes(task.capability_id)) return undefined;
+    if (!["system.diagnostic", "plan.draft",'coding.change','studio.change','browser.open','skill.run','skill.node','skill.rollback'].includes(task.capability_id)) return undefined;
     return this.registry.find((capability) => capability.id === task.capability_id
       && capability.version === task.capability_version && capability.status === "active");
   }
@@ -231,9 +318,9 @@ export class Runtime {
   }
 
   async snapshot(ownerId: string): Promise<{ tasks: Task[]; capabilities: Capability[] }> {
-    const rows = await this.db.selectFrom("tasks").select(['id','owner_id','title','goal','capability_id','status','autonomy','created_at','updated_at','attempt','max_attempts','error','cancellation_requested','project_id','studio_input','browser_input'])
+    const rows = await this.db.selectFrom("tasks").select(['id','owner_id','title','goal','capability_id','status','autonomy','created_at','updated_at','attempt','max_attempts','error','cancellation_requested','project_id','studio_input','browser_input','skill_input','skill_binding','skill_node_input','skill_rollback_input','skill_rollback_review'])
       .where("owner_id", "=", ownerId).orderBy("created_at", "desc").limit(200).execute();
-    return { tasks: rows.map(row=>taskDto({...row,result:null})), capabilities: this.registry.map((value) => ({ ...value, requiredScopes: [...value.requiredScopes] })) };
+    return { tasks: rows.map(row=>taskDto({...row,result:null})), capabilities: this.getCapabilities() };
   }
 
   async detail(ownerId: string, id: string): Promise<TaskDetail> {
@@ -272,28 +359,40 @@ export class Runtime {
     if (!ownerId || typeof idempotencyKey !== "string" || idempotencyKey.length < 8 || idempotencyKey.length > 128) {
       throw new DomainError(400, "IDEMPOTENCY_KEY_REQUIRED", "يلزم مفتاح طلب صالح لإنشاء المهمة.");
     }
-    const input = parsed.data;
+    let input:TaskCreationInput = parsed.data;
     if(input.capabilityId==='system.diagnostic'&&detectBrowserOpenIntent(input.goal))throw new DomainError(400,'CAPABILITY_GOAL_MISMATCH','هذا الطلب لفتح موقع؛ استخدم مهمة المتصفح بدل فحص الجاهزية.');
     const capability = this.registry.find((item) => item.id === input.capabilityId);
-    if (!capability || capability.status !== "active" || !["system.diagnostic", "plan.draft",'coding.change','studio.change','browser.open'].includes(capability.id)) {
+    if (!capability || capability.status !== "active" || !["system.diagnostic", "plan.draft",'coding.change','studio.change','browser.open','skill.run','skill.rollback'].includes(capability.id)) {
       throw new DomainError(403, "CAPABILITY_UNAVAILABLE", "هذه القدرة غير متاحة للتنفيذ.");
     }
-    const inputHash = hashInput(input);
-    return this.db.transaction().execute(async (tx) => {
+    if(input.capabilityId==='skill.rollback'){
+      const prepared=await this.options.rollback!.prepare(ownerId,input.skillRollbackInput!);
+      input={...input,title:prepared.title,goal:prepared.goal,autonomy:'assisted',skillRollbackInput:SkillRollbackInputSchema.parse(prepared.input),skillRollbackReview:SkillRollbackReviewSchema.parse(prepared.review)};
+      const {skillRollbackReview,...publicInput}=input;CreateTaskSchema.parse(publicInput);
+    }
+    return this.db.transaction().execute(tx=>this.createTaskRecord(tx,ownerId,input,idempotencyKey));
+  }
+
+  private async createTaskRecord(tx: Tx, ownerId: string, input: TaskCreationInput, idempotencyKey: string, binding?: SkillNodeBinding): Promise<Task> {
+      const capability=this.registry.find(item=>item.id===input.capabilityId&&item.status==='active');
+      if(!capability)throw new DomainError(403,'CAPABILITY_UNAVAILABLE','هذه القدرة غير متاحة للتنفيذ.');
+      const inputHash = hashInput(input,binding);
       if(input.capabilityId==='coding.change'){
         const project=await tx.selectFrom('coding_projects').select('id').where('id','=',input.projectId!).where('owner_id','=',ownerId).executeTakeFirst();
         if(!project)throw new DomainError(404,'PROJECT_NOT_FOUND','لم يُعثر على المشروع.');
       }
       if(input.capabilityId==='studio.change'){const studioInput=input.studioInput!;const session=await tx.selectFrom('studio_sessions').select(['id','revision']).where('id','=',studioInput.sessionId).where('owner_id','=',ownerId).executeTakeFirst();if(!session)throw new DomainError(404,'STUDIO_NOT_FOUND','لم يُعثر على مشروع الاستوديو.');if(session.revision!==studioInput.revision)throw new DomainError(409,'STUDIO_REVISION_CONFLICT','تغير إصدار المشروع؛ حدّثه قبل إنشاء المهمة.');if(studioInput.imageId){const image=await tx.selectFrom('studio_images').select('id').where('id','=',studioInput.imageId).where('owner_id','=',ownerId).where('expires_at','>',sql<Date>`CURRENT_TIMESTAMP`).executeTakeFirst();if(!image)throw new DomainError(404,'STUDIO_IMAGE_NOT_FOUND','الصورة غير متاحة لهذا الطلب.');}}
-      const approvalRequired=input.autonomy!=='shadow'&&(input.autonomy==='assisted'||['coding.change','studio.change'].includes(input.capabilityId));
+      const approvalRequired=input.autonomy!=='shadow'&&(input.autonomy==='assisted'||['coding.change','studio.change','skill.run','skill.node'].includes(input.capabilityId)||Boolean(binding));
       const id = randomUUID();
       const inserted = await tx.insertInto("tasks").values({
         id, owner_id: ownerId, title: input.title, goal: input.goal, capability_id: input.capabilityId,
         capability_version: capability.version, autonomy: input.autonomy,
         status: approvalRequired ? "waiting_approval" : "queued",
         input_hash: inputHash, idempotency_key: idempotencyKey,
-        attempt: 0, max_attempts: this.maxAttempts, lease_token: null, lease_expires_at: null,
+        attempt: 0, max_attempts: binding||input.capabilityId==='skill.rollback'?1:this.maxAttempts, lease_token: null, lease_expires_at: null,
         cancellation_requested: false, approval_required: approvalRequired, event_sequence: 0, result: null, error: null,project_id:input.projectId??null,studio_input:input.studioInput?JSON.stringify(input.studioInput):null,browser_input:input.browserInput?JSON.stringify(input.browserInput):null,
+        skill_input:input.skillInput?JSON.stringify(input.skillInput):null,skill_binding:binding?JSON.stringify(binding):null,skill_node_input:input.skillNodeInput?JSON.stringify(input.skillNodeInput):null,workflow_token:null,
+        skill_rollback_input:input.skillRollbackInput?JSON.stringify(input.skillRollbackInput):null,skill_rollback_review:input.skillRollbackReview?JSON.stringify(input.skillRollbackReview):null,
       }).onConflict((conflict) => conflict.columns(["owner_id", "idempotency_key"]).doNothing())
         .returningAll().executeTakeFirst();
       if (!inserted) {
@@ -305,13 +404,37 @@ export class Runtime {
         return taskDto(existing);
       }
       await event(tx, id, "task_created", "حُفظت المهمة ومعايير تنفيذها.", { capabilityId: capability.id, autonomy: input.autonomy });
-      if (approvalRequired) await event(tx, id, "approval_required", input.capabilityId==='browser.open'?`تنتظر المهمة موافقتك على فتح ${input.browserInput!.url} للقراءة فقط وحفظ لقطة الصفحة دون إرسال نماذج.`:input.capabilityId==='studio.change'?'تنتظر المهمة موافقتك على إرسال السياق والصورة المحددة إن وجدت إلى النموذج، وتعديل نسخة Git واختبارها؛ تطبيق النتيجة إجراء مستقل بعد المراجعة.':input.capabilityId==='coding.change'
+      if (approvalRequired) await event(tx, id, "approval_required", input.capabilityId==='skill.rollback'?`تحتاج استعادة الملف ${input.skillRollbackReview!.path} موافقة مستقلة. البصمة الحالية ${input.skillRollbackReview!.afterHash}؛ ${input.skillRollbackReview!.deletedOnRestore?'سيُحذف الملف الذي أنشأته المهارة':`سيعاد إلى البصمة ${input.skillRollbackReview!.beforeHash}`}. راجع المجلد والصورة السابقة قبل الموافقة.`:binding?this.skillApprovalMessage(binding,input.skillNodeInput??{}):input.capabilityId==='skill.run'?'تنتظر المهمة موافقتك على المخطط ومدخلاته المثبتة في تفاصيل المهمة. كل خطوة تنفيذ تحتاج موافقة مستقلة؛ لا تمنح هذه الموافقة صلاحيات أدوات.':input.capabilityId==='browser.open'?`تنتظر المهمة موافقتك على فتح ${input.browserInput!.url} للقراءة فقط وحفظ لقطة الصفحة دون إرسال نماذج.`:input.capabilityId==='studio.change'?'تنتظر المهمة موافقتك على إرسال السياق والصورة المحددة إن وجدت إلى النموذج، وتعديل نسخة Git واختبارها؛ تطبيق النتيجة إجراء مستقل بعد المراجعة.':input.capabilityId==='coding.change'
         ? 'تنتظر المهمة موافقتك على قراءة الملفات المحددة وإرسال سياقها للنموذج وتعديل نسخة معزولة وتشغيل اختباراتها؛ لا دمج أو نشر.'
         : input.capabilityId === "plan.draft"
         ? "تنتظر المهمة موافقتك على إرسال الهدف إلى النموذج وإنشاء خطة نصية بتكلفة توكنات محتملة."
         : "تنتظر المهمة موافقتك على فحص القراءة فقط.");
       return taskDto(inserted);
-    });
+  }
+
+  private skillApprovalMessage(binding:SkillNodeBinding,input:Record<string,unknown>):string {
+    const effect=binding.tool?TOOL_SIDE_EFFECTS[binding.tool]:'none';
+    const purpose=binding.kind==='model'?'إرسال المدخلات المحددة إلى نموذج؛ قد يستهلك الطلب توكنات مدفوعة':binding.kind==='script'?'تشغيل كود ضمن حدود العزل المعتمدة':effect==='external'||effect==='financial'?'إحداث تغيير أو إرسال إلى خدمة خارجية':effect==='write_local'?'تغيير بيانات أو ملفات محلية':'قراءة البيانات المحددة وحفظ دليل النتيجة';
+    const target=[input.path,input.url,input.sessionId].find(value=>typeof value==='string');
+    const content=typeof input.content==='string'?` محتوى الكتابة: ${Buffer.byteLength(input.content,'utf8')} بايت، SHA-256 ${createHash('sha256').update(input.content).digest('hex')}.`:'';
+    return `تحتاج الخطوة ${binding.tool??binding.kind} موافقتك على ${purpose}.${target?` الهدف: ${String(target).slice(0,500)}.`:''}${content} راجع المدخلات الكاملة المثبتة في تفاصيل المهمة؛ لا تشمل الموافقة أي مدخلات أخرى.`;
+  }
+
+  /** Only the scheduler receives this closure; no API accepts an internal node or binding. */
+  private async createSkillChild(tx: Kysely<any>, parent: TaskRow, spec: SkillChildSpec): Promise<{ id: string }> {
+    const binding=SkillNodeBindingSchema.parse(spec.binding);
+    if(!this.options.skillRuntime||binding.parentTaskId!==parent.id||!Number.isInteger(spec.attempt??1)||(spec.attempt??1)<1||(spec.attempt??1)>3||spec.idempotencyKey!==`skill:${binding.runId}:${binding.nodeId}${(spec.attempt??1)>1?`:attempt:${spec.attempt}`:''}`)throw new DomainError(403,'SKILL_BINDING_INVALID','ربط خطوة المهارة غير صالح.');
+    const current=await this.lockedLease(tx as Tx,parent);
+    if(!current||current.cancellation_requested||!(await this.validApproval(tx as Tx,current)))throw new DomainError(409,'SKILL_AUTHORIZATION_LOST','انتهى تفويض مخطط المهارات.');
+    const nodeInput=SkillNodeInputSchema.parse(spec.input);
+    if(createHash('sha256').update(JSON.stringify(canonical(nodeInput))).digest('hex')!==binding.inputsHash)throw new DomainError(409,'SKILL_INPUT_HASH_MISMATCH','لا تطابق المدخلات بصمة الخطوة المثبتة.');
+    const mapped=binding.kind==='tool'&&binding.tool?this.options.skillRuntime.mapChild(binding.tool,nodeInput):null;
+    if(mapped&&(!this.options.skillRuntime.beforeMappedExecute||!this.options.skillRuntime.recordChildResult))throw new DomainError(403,'SKILL_GATEWAY_UNAVAILABLE','بوابة توثيق الأداة غير متاحة.');
+    const input:TaskCreationInput=mapped?CreateTaskSchema.parse({...mapped,autonomy:'assisted'}):{title:(spec.title??`خطوة ${binding.tool??binding.kind}`).slice(0,120),goal:this.skillApprovalMessage(binding,nodeInput),capabilityId:'skill.node',autonomy:'assisted'};
+    input.skillNodeInput=nodeInput;
+    if(!['browser.open','coding.change','studio.change','skill.node'].includes(input.capabilityId))throw new DomainError(403,'SKILL_CHILD_CAPABILITY_INVALID','قدرة الخطوة غير معتمدة.');
+    const task=await this.createTaskRecord(tx as Tx,parent.owner_id,input,spec.idempotencyKey,binding);
+    return {id:task.id};
   }
 
   async approve(ownerId: string, id: string): Promise<Task> {
@@ -327,6 +450,9 @@ export class Runtime {
         throw new DomainError(403, "CAPABILITY_UNAVAILABLE", "هذه القدرة غير متاحة للموافقة.");
       }
       if(task.capability_id==='browser.open'&&!this.browserInput(task))throw new DomainError(409,'BROWSER_SCOPE_INVALID','تغير رابط مهمة المتصفح أو نطاقها؛ أنشئ مهمة جديدة.');
+      if((task.skill_binding||task.capability_id==='skill.run')&&!await this.validSkillTask(tx,task))throw new DomainError(409,'SKILL_BINDING_INVALID','تغير مخطط المهارة أو فقد تفويضه.');
+      if(task.capability_id==='skill.rollback'&&!await this.validRollback(tx,task))throw new DomainError(409,'SKILL_ROLLBACK_CHANGED','تغيرت بيانات الاستعادة أو صلاحياتها.');
+      if(task.capability_id==='skill.run'&&task.attempt>0)await this.invalidateChildApprovals(tx,task.id);
       // Revoke older approval records before issuing a grant for this exact input.
       await tx.updateTable("approvals").set({ revoked_at: new Date() })
         .where("task_id", "=", id).where("revoked_at", "is", null).execute();
@@ -336,7 +462,7 @@ export class Runtime {
         input_hash: task.input_hash, scope: this.scope(task),
         expires_at: sql`CURRENT_TIMESTAMP + interval '10 minutes'`, consumed_at: null, consumed_lease_token: null, revoked_at: null,
       }).execute();
-      const updated = await tx.updateTable("tasks").set({ status: "queued", approval_required: true, updated_at: new Date(), available_at: new Date(), error: null })
+      const updated = await tx.updateTable("tasks").set({ status: "queued", approval_required: true, updated_at: new Date(), available_at: new Date(), error: null,...(task.capability_id==='skill.run'?{workflow_token:null}:{}) })
         .where("id", "=", id).returningAll().executeTakeFirstOrThrow();
       await event(tx, id, "task_approved", "مُنحت موافقة محدودة لهذه المهمة، وتنتهي خلال عشر دقائق.");
       return taskDto(updated);
@@ -344,11 +470,22 @@ export class Runtime {
   }
 
   async cancel(ownerId: string, id: string): Promise<Task> {
+    const childIds:string[]=[];
     const result = await this.db.transaction().execute(async (tx) => {
       const task = await tx.selectFrom("tasks").selectAll().where("id", "=", id)
         .where("owner_id", "=", ownerId).forUpdate().executeTakeFirst();
       if (!task) throw notFound();
       if (isTerminal(task.status) || task.cancellation_requested) return taskDto(task);
+      if(task.capability_id==='skill.run'){
+        await (this.options.skillRuntime?.cancelRun??this.options.cancelSkillRun)?.(tx,ownerId,id);
+        const children=await tx.selectFrom('tasks').selectAll().where('owner_id','=',ownerId).where(sql<string>`skill_binding->>'parentTaskId'`,'=',id).where('status','not in',['completed','failed','cancelled']).orderBy('id').forUpdate().execute();
+        for(const child of children){
+          const immediateChild=['queued','waiting_approval','paused'].includes(child.status);
+          await tx.updateTable('tasks').set({cancellation_requested:true,status:immediateChild?'cancelled':child.status,updated_at:new Date(),...(immediateChild?{lease_token:null,lease_expires_at:null}:{})}).where('id','=',child.id).execute();
+          await tx.updateTable('approvals').set({revoked_at:new Date()}).where('task_id','=',child.id).where('revoked_at','is',null).execute();
+          await event(tx,child.id,'parent_cancelled','أوقف مخطط المهارات هذه الخطوة.');childIds.push(child.id);
+        }
+      }
       const immediate = ["queued", "waiting_approval", "paused"].includes(task.status);
       const updated = await tx.updateTable("tasks").set({
         cancellation_requested: true,
@@ -363,6 +500,7 @@ export class Runtime {
       return taskDto(updated);
     });
     this.controllers.get(id)?.abort(new Error("TASK_CANCELLED"));
+    for(const childId of childIds)this.controllers.get(childId)?.abort(new Error('SKILL_PARENT_CANCELLED'));
     return result;
   }
 
@@ -388,12 +526,27 @@ export class Runtime {
   }
 
   private async recoverExpired(): Promise<void> {
-    await this.db.transaction().execute(async (tx) => {
-      const expired = await tx.selectFrom("tasks").selectAll()
+    // One task lock per transaction: a batch can otherwise lock a child before
+    // its parent while the scheduler holds the parent and waits for that child.
+    const candidates=await this.db.selectFrom('tasks').select('id').where('status','in',['running','verifying']).where('lease_expires_at','<',sql<Date>`CURRENT_TIMESTAMP`).orderBy('lease_expires_at').limit(25).execute();
+    for(const candidate of candidates)await this.db.transaction().execute(async (tx) => {
+      const task = await tx.selectFrom("tasks").selectAll().where('id','=',candidate.id)
         .where("status", "in", ["running", "verifying"])
         .where("lease_expires_at", "<", sql<Date>`CURRENT_TIMESTAMP`)
-        .forUpdate().skipLocked().limit(25).execute();
-      for (const task of expired) {
+        .forUpdate().skipLocked().executeTakeFirst();
+      if(!task)return;
+        if(task.skill_binding&&this.options.skillRuntime?.recoverNode&&!task.cancellation_requested){
+          const recovery=await this.options.skillRuntime.recoverNode(tx,{ownerId:task.owner_id,taskId:task.id,binding:SkillNodeBindingSchema.parse(task.skill_binding),leaseToken:task.lease_token!});
+          if(recovery.kind==='confirmed'&&await this.validApproval(tx,task)){
+            await tx.updateTable('tasks').set({status:'queued',verification_only:true,verification_source_lease:recovery.receiptLeaseToken,recovery_result:JSON.stringify(recovery.result),lease_token:null,lease_expires_at:null,available_at:new Date(),updated_at:new Date(),error:null}).where('id','=',task.id).execute();
+            await event(tx,task.id,'verification_recovered','حُفظ إيصال ناجح قبل توقف العامل؛ ستعاد قراءة الأدلة فقط دون تكرار الأداة.');
+            return;
+          }
+        }
+        if(task.capability_id==='skill.run'&&!task.cancellation_requested&&await this.validApproval(tx,task)){
+          await tx.updateTable('tasks').set({status:'queued',lease_token:null,lease_expires_at:null,available_at:new Date(),updated_at:new Date(),error:null}).where('id','=',task.id).execute();
+          await event(tx,task.id,'skill_workflow_recovered','استؤنف منسق المخطط من سجلات الخطوات المحفوظة دون إعادة تنفيذ الأثر.');return;
+        }
         const safe = (task.capability_id === "system.diagnostic" && task.capability_version === "1.0.0")
           || (['plan.draft','coding.change','studio.change','browser.open'].includes(task.capability_id) && task.autonomy === "shadow");
         const planning = ['plan.draft','coding.change','studio.change'].includes(task.capability_id) && task.autonomy !== "shadow";
@@ -403,6 +556,7 @@ export class Runtime {
           : !safe || task.approval_required ? "waiting_approval" : "queued";
         await tx.updateTable("tasks").set({
           status, lease_token: null, lease_expires_at: null, available_at: new Date(), updated_at: new Date(),
+          ...(task.capability_id==='skill.run'?{workflow_token:null}:{}),
           approval_required: task.approval_required || planning || browser,
           error: status === "failed" ? "انتهت محاولات التعافي من توقف العامل."
             : browser ? 'انقطعت جلسة المتصفح؛ راجع أثرها قبل الموافقة على محاولة جديدة.' : planning ? "انقطع طلب النموذج؛ قد تكون له تكلفة غير محسومة. يلزم تفويض جديد قبل أي طلب آخر." : null,
@@ -415,12 +569,13 @@ export class Runtime {
         await event(tx, task.id, "lease_recovered", status === "queued"
           ? "انتهت مهلة العامل السابق؛ أُعيدت جدولة الفحص الآمن."
           : "عولج توقف العامل وفق حالة الإلغاء وسياسة إعادة التنفيذ.", { nextStatus: status });
-      }
     });
   }
 
   private async validApproval(tx: Tx, task: TaskRow, continuingAttempt = true): Promise<boolean> {
+    if(task.capability_id==='skill.rollback'&&!await this.validRollback(tx,task))return false;
     if(task.capability_id==='browser.open'&&!this.browserInput(task))return false;
+    if((task.skill_binding||task.capability_id==='skill.run'||task.capability_id==='skill.node')&&!await this.validSkillTask(tx,task))return false;
     if (!task.approval_required) return true;
     let query = tx.selectFrom("approvals").select("id")
       .where("task_id", "=", task.id).where("owner_id", "=", task.owner_id)
@@ -428,10 +583,44 @@ export class Runtime {
       .where("input_hash", "=", task.input_hash).where("scope", "=", this.scope(task))
       .where("revoked_at", "is", null).where("expires_at", ">", sql<Date>`CURRENT_TIMESTAMP`);
     query = continuingAttempt
-      ? query.where("consumed_at", "is not", null).where("consumed_lease_token", "=", task.lease_token)
+      ? query.where("consumed_at", "is not", null).where("consumed_lease_token", "=", task.capability_id==='skill.run'?task.workflow_token:task.verification_only?task.verification_source_lease:task.lease_token)
       : query.where("consumed_at", "is", null);
     const approval = await query.forShare().executeTakeFirst();
     return Boolean(approval);
+  }
+
+  private skillInputIntegrity(task:TaskRow):boolean {
+    const binding=task.skill_binding?SkillNodeBindingSchema.safeParse(task.skill_binding):null;
+    if(binding&&!binding.success)return false;
+    const input:TaskCreationInput={title:task.title,goal:task.goal,capabilityId:task.capability_id as TaskCreationInput['capabilityId'],autonomy:task.autonomy,
+      ...(task.project_id?{projectId:task.project_id}:{}),...(task.studio_input?{studioInput:StudioTaskInputSchema.parse(task.studio_input)}:{}),...(task.browser_input?{browserInput:BrowserTaskInputSchema.parse(task.browser_input)}:{}),
+      ...(task.skill_input?{skillInput:SkillRunInputSchema.parse(task.skill_input)}:{}),...(task.skill_node_input?{skillNodeInput:SkillNodeInputSchema.parse(task.skill_node_input)}:{}),
+      ...(task.skill_rollback_input?{skillRollbackInput:SkillRollbackInputSchema.parse(task.skill_rollback_input),skillRollbackReview:SkillRollbackReviewSchema.parse(task.skill_rollback_review)}:{})};
+    const {skillNodeInput,skillRollbackReview,...publicInput}=input;
+    if(task.capability_id!=='skill.node'&&!CreateTaskSchema.safeParse(publicInput).success)return false;
+    return hashInput(input,binding?.success?binding.data:undefined)===task.input_hash;
+  }
+
+  private async validRollback(tx:Tx,task:TaskRow):Promise<boolean>{
+    try{
+      if(!this.options.rollback||task.skill_binding||task.autonomy!=='assisted'||!this.skillInputIntegrity(task))return false;
+      const prepared=await this.options.rollback.prepare(task.owner_id,SkillRollbackInputSchema.parse(task.skill_rollback_input),tx);
+      return JSON.stringify(canonical(prepared.input))===JSON.stringify(canonical(task.skill_rollback_input))
+        &&JSON.stringify(canonical(prepared.review))===JSON.stringify(canonical(task.skill_rollback_review))
+        &&prepared.title===task.title&&prepared.goal===task.goal;
+    }catch{return false;}
+  }
+
+  /** This guard performs reads only, preserving parent -> run/node -> child lock order. */
+  private async validSkillTask(tx:Tx,task:TaskRow):Promise<boolean> {
+    try {
+      if(!this.options.skillRuntime||!this.skillInputIntegrity(task))return false;
+      if(task.capability_id==='skill.run')return !task.skill_binding&&Boolean(task.skill_input);
+      const parsed=SkillNodeBindingSchema.safeParse(task.skill_binding);if(!parsed.success)return false;
+      const parent=await tx.selectFrom('tasks').selectAll().where('id','=',parsed.data.parentTaskId).where('owner_id','=',task.owner_id).executeTakeFirst();
+      if(!parent||!this.skillInputIntegrity(parent)||!await hasActiveSkillWorkflowApproval(tx,parent))return false;
+      return await this.options.skillRuntime.validateBinding(tx,{taskId:task.id,ownerId:task.owner_id,binding:parsed.data});
+    } catch { return false; }
   }
 
   private async claim(): Promise<TaskRow | null> {
@@ -451,21 +640,25 @@ export class Runtime {
         await event(tx, task.id, "permission_denied", "منع سجل القدرات تشغيل أداة غير معتمدة.");
         return null;
       }
-      if (!(await this.validApproval(tx, task, false))) {
-        await tx.updateTable("tasks").set({ status: "waiting_approval", updated_at: new Date() }).where("id", "=", task.id).execute();
+      const continuingWorkflow=task.capability_id==='skill.run'&&Boolean(task.workflow_token);
+      const verificationOnly=task.verification_only&&Boolean(task.skill_binding&&task.verification_source_lease&&task.recovery_result);
+      if(task.verification_only&&!verificationOnly){await tx.updateTable('tasks').set({status:'failed',error:'بيانات استعادة التحقق غير صالحة.'}).where('id','=',task.id).execute();return null;}
+      if (!(await this.validApproval(tx, task, continuingWorkflow||verificationOnly))) {
+        await tx.updateTable("tasks").set({ status: verificationOnly?'failed':"waiting_approval", updated_at: new Date() }).where("id", "=", task.id).execute();
         await event(tx, task.id, "approval_expired", "يلزم تجديد الموافقة قبل بدء الفحص.");
         return null;
       }
-      if (task.attempt >= task.max_attempts) {
+      if (!continuingWorkflow&&!verificationOnly&&task.attempt >= task.max_attempts) {
         await tx.updateTable("tasks").set({ status: "failed", error: "بلغت المهمة الحد الأقصى للمحاولات.", updated_at: new Date() }).where("id", "=", task.id).execute();
         await event(tx, task.id, "attempts_exhausted", "توقفت إعادة المحاولة عند الحد المسموح.");
         return null;
       }
       const row = await tx.updateTable("tasks").set({
-        status: "running", attempt: task.attempt + 1, lease_token: randomUUID(),
+        status: verificationOnly?'verifying':"running", attempt: task.attempt + (continuingWorkflow||verificationOnly?0:1), lease_token: randomUUID(),
+        ...(task.capability_id==='skill.run'?{workflow_token:task.workflow_token??randomUUID()}:{}),
         lease_expires_at: sql`CURRENT_TIMESTAMP + ${this.taskLeaseMs(task)} * interval '1 millisecond'`, updated_at: new Date(), error: null,
       }).where("id", "=", task.id).returningAll().executeTakeFirstOrThrow();
-      await tx.updateTable("approvals").set({ consumed_at: new Date(), consumed_lease_token: row.lease_token })
+      await tx.updateTable("approvals").set({ consumed_at: new Date(), consumed_lease_token: row.capability_id==='skill.run'?row.workflow_token:row.lease_token })
         .where("task_id", "=", task.id).where("owner_id", "=", task.owner_id)
         .where("input_hash", "=", task.input_hash).where("capability_id", "=", task.capability_id)
         .where("capability_version", "=", task.capability_version).where("scope", "=", this.scope(task))
@@ -483,6 +676,73 @@ export class Runtime {
       .where("lease_token", "=", task.lease_token)
       .where("lease_expires_at", ">", sql<Date>`CURRENT_TIMESTAMP`)
       .where("status", "in", ["running", "verifying"]).forUpdate().executeTakeFirst() ?? null;
+  }
+
+  private skillExecutionContext(task:TaskRow,signal:AbortSignal):SkillExecutionContext {
+    return {ownerId:task.owner_id,taskId:task.id,leaseToken:task.lease_token!,signal,assertActive:async()=>{
+      signal.throwIfAborted();
+      const allowed=await this.db.transaction().execute(async tx=>{const current=await this.lockedLease(tx,task);return Boolean(current&&!current.cancellation_requested&&await this.validApproval(tx,current));});
+      if(!allowed)throw new DomainError(409,'SKILL_AUTHORIZATION_LOST','لم يعد تفويض خطوة المهارة صالحًا.');
+      signal.throwIfAborted();
+    }};
+  }
+
+  private skillNodeContext(task:TaskRow,signal:AbortSignal):SkillNodeExecutionContext{
+    return {...this.skillExecutionContext(task,signal),binding:SkillNodeBindingSchema.parse(task.skill_binding),...(task.verification_only?{verificationOnly:true as const,receiptLeaseToken:task.verification_source_lease!}:{})};
+  }
+
+  private recoveryVerificationContext(task:TaskRow,signal:AbortSignal):VerificationRecoveryContext{
+    return task.verification_only?{verificationOnly:true,receiptLeaseToken:task.verification_source_lease!,leaseToken:task.lease_token!,assertActive:this.skillExecutionContext(task,signal).assertActive}:{};
+  }
+
+  private async recoverVerifiedTask(task:TaskRow,signal:AbortSignal):Promise<void>{
+    const context=this.skillNodeContext(task,signal);await context.assertActive();
+    const raw=task.recovery_result;
+    let result=await this.verify(raw,false,task.capability_id,task,signal);
+    if(result&&task.capability_id!=='skill.node')result=await this.options.skillRuntime?.verifyRecoveredNode?.(result,context)??null;
+    signal.throwIfAborted();await context.assertActive();await this.finish(task,result);
+  }
+
+  private async invalidateChildApprovals(tx:Tx,parentId:string):Promise<void>{
+    const children=await tx.selectFrom('tasks').selectAll().where(sql<string>`skill_binding->>'parentTaskId'`,'=',parentId).where('status','not in',['completed','failed','cancelled']).orderBy('id').forUpdate().execute();
+    for(const child of children){
+      await tx.updateTable('approvals').set({revoked_at:new Date()}).where('task_id','=',child.id).where('revoked_at','is',null).execute();
+      if(['queued','paused'].includes(child.status))await tx.updateTable('tasks').set({status:'waiting_approval',lease_token:null,lease_expires_at:null,updated_at:new Date()}).where('id','=',child.id).execute();
+    }
+  }
+
+  private async wakeSkillParents():Promise<void> {
+    const skills=this.options.skillRuntime;if(!skills)return;
+    // Expired paused workflows must be approvable even while a child awaits its own approval.
+    await this.db.transaction().execute(async tx=>{
+      const expired=await tx.selectFrom('tasks').selectAll().where('capability_id','=','skill.run').where('status','=','paused')
+        .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM approvals a WHERE a.task_id=tasks.id AND a.owner_id=tasks.owner_id AND a.capability_id=tasks.capability_id AND a.capability_version=tasks.capability_version AND a.input_hash=tasks.input_hash AND a.scope=concat('skill.run:',tasks.input_hash) AND a.consumed_lease_token=tasks.workflow_token AND a.consumed_at IS NOT NULL AND a.revoked_at IS NULL AND a.expires_at>CURRENT_TIMESTAMP)`)
+        .forUpdate().skipLocked().limit(25).execute();
+      for(const task of expired){
+        await this.invalidateChildApprovals(tx,task.id);
+        await tx.updateTable('tasks').set({status:'waiting_approval',workflow_token:null,updated_at:new Date(),error:'انتهى تفويض المخطط؛ يلزم تجديد موافقته قبل متابعة الخطوات.'}).where('id','=',task.id).execute();
+        await event(tx,task.id,'approval_expired','انتهت موافقة مخطط المهارات أثناء انتظار خطوة فرعية.');
+      }
+    });
+    for(const candidate of (await skills.wakeCandidates()).slice(0,50))await this.db.transaction().execute(async tx=>{
+      const task=await tx.selectFrom('tasks').selectAll().where('id','=',candidate.parentTaskId).where('owner_id','=',candidate.ownerId).where('capability_id','=','skill.run').where('status','=','paused').forUpdate().skipLocked().executeTakeFirst();
+      if(!task||task.cancellation_requested)return;
+      const allowed=await this.validApproval(tx,task);
+      await tx.updateTable('tasks').set({status:allowed?'queued':'waiting_approval',available_at:new Date(),updated_at:new Date(),...(allowed?{}:{workflow_token:null})}).where('id','=',task.id).execute();
+      await event(tx,task.id,allowed?'skill_workflow_ready':'approval_expired',allowed?'وصلت نتيجة خطوة فرعية؛ استؤنفت متابعة المخطط.':'يلزم تجديد تفويض المخطط.');
+    });
+  }
+
+  private async pauseSkillParent(task:TaskRow,pending:Extract<SkillAdvanceResult,{kind:'pending'}>):Promise<void>{
+    await this.db.transaction().execute(async tx=>{
+      const current=await this.lockedLease(tx,task);if(!current)return;
+      if(current.cancellation_requested){await this.cancelClaim(tx,current);return;}
+      if(!await this.validApproval(tx,current)){
+        await tx.updateTable('tasks').set({status:'waiting_approval',workflow_token:null,lease_token:null,lease_expires_at:null,updated_at:new Date()}).where('id','=',task.id).execute();return;
+      }
+      await tx.updateTable('tasks').set({status:'paused',lease_token:null,lease_expires_at:null,result:JSON.stringify({kind:'skill_pending',runId:pending.runId,childTaskIds:pending.childTaskIds.slice(0,144)}),updated_at:new Date()}).where('id','=',task.id).execute();
+      await event(tx,task.id,'skill_workflow_waiting','ينتظر المخطط نتائج المهام الفرعية وموافقاتها المستقلة.',{runId:pending.runId,childTaskIds:pending.childTaskIds.slice(0,144)});
+    });
   }
 
   private async runDiagnostic(signal: AbortSignal): Promise<DiagnosticResult> {
@@ -615,8 +875,10 @@ export class Runtime {
   private browserInput(task:TaskRow):BrowserTaskInput|null{
     const parsed=BrowserTaskInputSchema.safeParse(task.browser_input);
     if(!parsed.success)return null;
-    const input:CreateTaskInput={title:task.title,goal:task.goal,capabilityId:'browser.open',autonomy:task.autonomy,browserInput:parsed.data};
-    return hashInput(input)===task.input_hash?parsed.data:null;
+    const input:TaskCreationInput={title:task.title,goal:task.goal,capabilityId:'browser.open',autonomy:task.autonomy,browserInput:parsed.data,...(task.skill_node_input?{skillNodeInput:SkillNodeInputSchema.parse(task.skill_node_input)}:{})};
+    const binding=task.skill_binding?SkillNodeBindingSchema.safeParse(task.skill_binding):null;
+    if(binding&&!binding.success)return null;
+    return hashInput(input,binding?.success?binding.data:undefined)===task.input_hash?parsed.data:null;
   }
 
   private async runBrowser(task:TaskRow,signal:AbortSignal):Promise<unknown>{
@@ -634,25 +896,49 @@ export class Runtime {
     }}),signal);
   }
 
+  private async runSkill(task:TaskRow,signal:AbortSignal):Promise<SkillAdvanceResult>{
+    if(!this.options.skillRuntime||!task.workflow_token)throw new DomainError(403,'SKILL_UNAVAILABLE','تشغيل المهارات غير متاح.');
+    const context=this.skillExecutionContext(task,signal);await context.assertActive();
+    return abortable(()=>this.options.skillRuntime!.advance(SkillRunInputSchema.parse(task.skill_input),{...context,workflowToken:task.workflow_token!,dispatchChild:(tx,spec)=>this.createSkillChild(tx,task,spec)}),signal);
+  }
+
+  private async runSkillNode(task:TaskRow,signal:AbortSignal):Promise<unknown>{
+    if(!this.options.skillRuntime)throw new DomainError(403,'SKILL_UNAVAILABLE','تشغيل المهارات غير متاح.');
+    if(task.verification_only)throw new DomainError(409,'SKILL_VERIFY_READ_ONLY','استعادة التحقق لا تسمح بتنفيذ جديد.');
+    const context={...this.skillExecutionContext(task,signal),binding:SkillNodeBindingSchema.parse(task.skill_binding)};
+    await context.assertActive();return abortable(()=>this.options.skillRuntime!.executeNode(context),signal);
+  }
+
   /** Independently checks output, required evidence, observation time, and database reachability. */
   private async verify(raw: unknown, shadow: boolean, capabilityId = "system.diagnostic",task?:TaskRow,signal?:AbortSignal): Promise<Record<string, unknown> | null> {
+    if(capabilityId==='skill.rollback'){
+      if(!task||!signal||shadow||!this.options.rollback)return null;
+      const context=this.skillExecutionContext(task,signal);await context.assertActive();
+      return this.options.rollback.verify(raw,SkillRollbackInputSchema.parse(task.skill_rollback_input),context);
+    }
+    if(capabilityId==='skill.run'||capabilityId==='skill.node'){
+      if(shadow){const parsed=z.object({kind:z.literal('shadow'),capabilityId:z.literal('skill.run'),summary:z.string(),executed:z.literal(false),proposedStages:z.array(z.string())}).strict().safeParse(raw);return parsed.success?{...parsed.data,verifiedAt:new Date().toISOString()}:null;}
+      if(!task||!signal||!this.options.skillRuntime)return null;
+      const context=this.skillExecutionContext(task,signal);await context.assertActive();
+      return capabilityId==='skill.run'?this.options.skillRuntime.verify(raw,context):this.options.skillRuntime.verifyNode(raw,this.skillNodeContext(task,signal));
+    }
     if(capabilityId==='browser.open'){
       if(shadow){const parsed=z.object({kind:z.literal('shadow'),capabilityId:z.literal('browser.open'),summary:z.string(),executed:z.literal(false),proposedStages:z.array(z.string()).min(1)}).strict().safeParse(raw);return parsed.success?{...parsed.data,verifiedAt:new Date().toISOString()}:null;}
       if(!task||!this.options.verifyBrowser||!signal)return null;
       const browserInput=this.browserInput(task);if(!browserInput)return null;
-      const verified=await this.options.verifyBrowser(raw,{taskId:task.id,ownerId:task.owner_id,browserInput,signal}),parsed=BrowserOpenResultSchema.safeParse(verified);
+      const verified=await this.options.verifyBrowser(raw,{taskId:task.id,ownerId:task.owner_id,browserInput,signal,...this.recoveryVerificationContext(task,signal)}),parsed=BrowserOpenResultSchema.safeParse(verified);
       if(!parsed.success)return null;
       const result=parsed.data,allowedOrigins=browserInput.allowedOrigins??[new URL(browserInput.url).origin];
       if(/لقطة|screenshot|screen\s*shot/i.test(task.goal)&&!result.screenshotAvailable)return null;
       if(!allowedOrigins.includes(new URL(result.url).origin)||result.screenshotUrl!==null&&result.screenshotUrl!==`/api/browser/tasks/${task.id}/screenshot`)return null;
       const age=Date.now()-new Date(result.observedAt).getTime();
-      if(age < -1000||age>this.taskLeaseMs(task))return null;
+      if(age < -1000||age>(task.verification_only?86400000:this.taskLeaseMs(task)))return null;
       return {...result};
     }
     if(capabilityId==='studio.change'){
       if(shadow){const parsed=z.object({kind:z.literal('shadow'),capabilityId:z.literal('studio.change'),summary:z.string(),executed:z.literal(false),proposedStages:z.array(z.string()).min(1)}).strict().safeParse(raw);return parsed.success?{...parsed.data,verifiedAt:new Date().toISOString()}:null;}
       if(!task?.studio_input||!this.options.verifyStudioChange||!signal)return null;
-      const input=StudioTaskInputSchema.parse(task.studio_input),verified=await this.options.verifyStudioChange(raw,{taskId:task.id,ownerId:task.owner_id,studioInput:input,signal}),parsed=StudioChangeResultSchema.safeParse(verified);
+      const input=StudioTaskInputSchema.parse(task.studio_input),verified=await this.options.verifyStudioChange(raw,{taskId:task.id,ownerId:task.owner_id,studioInput:input,signal,...this.recoveryVerificationContext(task,signal)}),parsed=StudioChangeResultSchema.safeParse(verified);
       if(!parsed.success||parsed.data.sessionId!==input.sessionId||parsed.data.baseRevision!==input.revision||createHash('sha256').update(parsed.data.diff).digest('hex')!==parsed.data.diffHash)return null;
       if(parsed.data.outcome==='ready_for_review'&&(!parsed.data.review.passed||parsed.data.review.checks.some(check=>!check.passed)||!parsed.data.verification.passed||!parsed.data.checkpoint))return null;
       return {...parsed.data};
@@ -660,7 +946,7 @@ export class Runtime {
     if(capabilityId==='coding.change'){
       if(shadow){const parsed=z.object({kind:z.literal('shadow'),capabilityId:z.literal('coding.change'),summary:z.string(),executed:z.literal(false),proposedStages:z.array(z.string()).min(1)}).strict().safeParse(raw);return parsed.success?{...parsed.data,verifiedAt:new Date().toISOString()}:null;}
       if(!task?.project_id||!this.options.verifyCode||!signal)return null;
-      const verified=await this.options.verifyCode(raw,{taskId:task.id,ownerId:task.owner_id,projectId:task.project_id,signal});
+      const verified=await this.options.verifyCode(raw,{taskId:task.id,ownerId:task.owner_id,projectId:task.project_id,signal,...this.recoveryVerificationContext(task,signal)});
       const parsed=CodingResultSchema.safeParse(verified);if(!parsed.success||parsed.data.projectId!==task.project_id||!parsed.data.sourceUnchanged||parsed.data.merged)return null;
       const result=parsed.data;
       if(result.outcome==='ready_for_review'&&(!result.review.passed||result.review.checks.some(check=>!check.passed)||result.tests.exitCode!==0||result.tests.timedOut||!result.tests.isolationVerified||!result.checkpoint))return null;
@@ -757,8 +1043,8 @@ export class Runtime {
       }
       const codingFailed=Boolean(result&&['coding.change','studio.change'].includes(task.capability_id)&&task.autonomy!=='shadow'&&result.outcome!=='ready_for_review');
       if(result&&['coding.change','studio.change'].includes(task.capability_id)&&task.autonomy!=='shadow'){
-        if(task.capability_id==='coding.change')await tx.updateTable('coding_runs').set({result_committed:true}).where('task_id','=',task.id).where('lease_token','=',task.lease_token!).execute();
-        await tx.updateTable('model_runs').set({result_committed:true}).where('task_id','=',task.id).where('lease_token','=',task.lease_token!).where('status','=','succeeded').execute();
+        if(task.capability_id==='coding.change')await tx.updateTable('coding_runs').set({result_committed:true}).where('task_id','=',task.id).where('lease_token','=',task.verification_source_lease??task.lease_token!).execute();
+        await tx.updateTable('model_runs').set({result_committed:true}).where('task_id','=',task.id).where('lease_token','=',task.verification_source_lease??task.lease_token!).where('status','=','succeeded').execute();
       }
       await tx.updateTable("tasks").set({
         status: result&&!codingFailed ? "completed" : "failed", result: result ? JSON.stringify(result) : null,
@@ -788,6 +1074,7 @@ export class Runtime {
       const needsApproval = retry && (current.approval_required || paidPlanning || browser);
       await tx.updateTable("tasks").set({
         status: retry ? needsApproval ? "waiting_approval" : "queued" : "failed", lease_token: null, lease_expires_at: null,
+        ...(current.capability_id==='skill.run'?{workflow_token:null}:{}),
         approval_required: current.approval_required || paidPlanning || browser,
         available_at: sql`CURRENT_TIMESTAMP + ${this.retryDelayMs * 2 ** (current.attempt - 1)} * interval '1 millisecond'`,
         error: browser?'تعذر حسم فتح الصفحة؛ لن تعاد جلسة المتصفح تلقائيًا. راجع السجل قبل محاولة جديدة.':terminalCoding?'حُفظت بيئة هذه المهمة أو تغير نطاقها؛ راجع الأثر وأنشئ مهمة جديدة دون الكتابة فوق النسخة السابقة.':paidPlanning ? retry
@@ -804,6 +1091,8 @@ export class Runtime {
 
   private async runTick(): Promise<Task | null> {
     await this.recoverExpired();
+    await (this.options.rollback?.recoverExpired??this.options.recoverSkillRollbacks)?.();
+    await this.wakeSkillParents();
     const task = await this.claim();
     if (!task) return null;
     const controller = new AbortController();
@@ -813,7 +1102,7 @@ export class Runtime {
     const timeout = setTimeout(() => controller.abort(new Error("TASK_TIMEOUT")), Math.max(500, this.taskLeaseMs(task) - 500));
     let authorizationWatch:Promise<void>|null=null;
     // A long navigation must stop when its exact task authority expires, is revoked, or is fenced by another worker.
-    const authorizationTimer=task.capability_id==='browser.open'&&task.autonomy!=='shadow'?setInterval(()=>{
+    const authorizationTimer=(task.capability_id==='browser.open'||task.capability_id==='skill.run'||task.capability_id==='skill.rollback'||Boolean(task.skill_binding))&&task.autonomy!=='shadow'?setInterval(()=>{
       if(authorizationWatch||controller.signal.aborted)return;
       authorizationWatch=this.db.transaction().execute(async tx=>{
         const current=await this.lockedLease(tx,task);
@@ -833,8 +1122,17 @@ export class Runtime {
         return true;
       });
       if (allowed) {
+        if(task.verification_only){await this.recoverVerifiedTask(task,controller.signal);}
+        else {
+        if(task.skill_binding&&task.capability_id!=='skill.node'&&task.autonomy!=='shadow'){
+          const context={...this.skillExecutionContext(task,controller.signal),binding:SkillNodeBindingSchema.parse(task.skill_binding)};
+          if(!this.options.skillRuntime?.beforeMappedExecute||!this.options.skillRuntime.recordChildResult)throw new DomainError(403,'SKILL_GATEWAY_UNAVAILABLE','بوابة توثيق الأداة غير متاحة.');
+          await context.assertActive();await this.options.skillRuntime.beforeMappedExecute(context);await context.assertActive();
+        }
         const raw = task.autonomy === "shadow"
-          ? task.capability_id==='browser.open'
+          ? task.capability_id==='skill.run'
+            ? {kind:'shadow',capabilityId:'skill.run',summary:'محاكاة المخطط فقط؛ لم تُنشأ مهام فرعية ولم تُنفذ أدوات.',executed:false,proposedStages:['validate_graph','dispatch_children','verify_evidence']}
+          : task.capability_id==='browser.open'
             ? {kind:'shadow',capabilityId:'browser.open',summary:'محاكاة فتح الرابط للقراءة فقط؛ لم تُنشأ جلسة متصفح ولم تُحمّل صفحة أو لقطة.',executed:false,proposedStages:['browser_session_created','browser_loading','browser_observed']}
           : task.capability_id==='studio.change'
             ? {kind:'shadow',capabilityId:'studio.change',summary:'اقتراح محلي لمسار التعديل؛ لم يُرسل سياق أو صورة إلى نموذج ولم تُنشأ نسخة أو معاينة.',executed:false,proposedStages:['project_inspected','edits_requested','tests_finished','review_finished']}
@@ -843,20 +1141,34 @@ export class Runtime {
           : task.capability_id === "plan.draft"
             ? { kind: "shadow", capabilityId: "plan.draft", summary: "محاكاة محلية لمسار التخطيط فقط؛ لم يُرسل الهدف إلى مزود نموذج ولم تُستهلك توكنات.", executed: false, proposedStages: ["goal_compiled", "model_selected", "plan_verified"] }
             : { kind: "shadow", summary: "خطة محاكاة لفحص التخزين والقدرات والصلاحية؛ لم تنفذ الأداة.", executed: false, proposedChecks: [...checkNames] }
+          : task.capability_id==='skill.rollback'?await abortable(()=>this.options.rollback!.execute(SkillRollbackInputSchema.parse(task.skill_rollback_input),this.skillExecutionContext(task,controller.signal)),controller.signal)
+          : task.capability_id==='skill.run'?await this.runSkill(task,controller.signal)
+          : task.capability_id==='skill.node'?await this.runSkillNode(task,controller.signal)
           : task.capability_id==='browser.open'?await this.runBrowser(task,controller.signal)
           : task.capability_id==='studio.change'?await this.runStudioChange(task,controller.signal)
           : task.capability_id==='coding.change'?await this.runCoding(task,controller.signal)
           : task.capability_id === "plan.draft" ? await this.runPlanning(task, controller.signal)
             : await abortable(() => this.options.executeDiagnostic?.(controller.signal) ?? this.runDiagnostic(controller.signal), controller.signal);
         controller.signal.throwIfAborted();
-        if (await this.transitionToVerification(task)) {
-          const verify=()=>this.verify(raw, task.autonomy === "shadow", task.capability_id,task,controller.signal);
+        const skillAdvance=task.capability_id==='skill.run'&&task.autonomy!=='shadow'?raw as SkillAdvanceResult:null;
+        if(skillAdvance?.kind==='pending')await this.pauseSkillParent(task,skillAdvance);
+        else if (await this.transitionToVerification(task)) {
+          const verify=()=>this.verify(skillAdvance?.kind==='complete'?skillAdvance.result:raw, task.autonomy === "shadow", task.capability_id,task,controller.signal);
           const result = task.capability_id==='browser.open'?await abortable(verify,controller.signal):await verify();
           controller.signal.throwIfAborted();
+          if(task.skill_binding&&task.capability_id!=='skill.node'&&task.autonomy!=='shadow'){
+            const context={...this.skillExecutionContext(task,controller.signal),binding:SkillNodeBindingSchema.parse(task.skill_binding)};
+            if(result)await this.options.skillRuntime!.recordChildResult!(result,context);
+            else await this.options.skillRuntime?.recordChildFailure?.(new Error('SKILL_CHILD_VERIFICATION_FAILED'),context);
+          }
           await this.finish(task, result);
+        }
         }
       }
     } catch (failure) {
+      if(task.skill_binding&&task.capability_id!=='skill.node'&&task.autonomy!=='shadow'&&!task.verification_only){
+        try{await this.options.skillRuntime?.recordChildFailure?.(failure,{...this.skillExecutionContext(task,controller.signal),binding:SkillNodeBindingSchema.parse(task.skill_binding)});}catch{this.options.onError?.(new Error('SKILL_EVIDENCE_FINALIZATION_FAILED'));}
+      }
       // Tool exceptions can contain provider credentials or SQL details. Persist only a safe error.
       if (['plan.draft','coding.change','studio.change'].includes(task.capability_id) && task.autonomy !== "shadow") {
         await this.db.updateTable("model_runs").set({ status: "unknown", finished_at: new Date(), error_code: "MODEL_OUTCOME_UNKNOWN" })

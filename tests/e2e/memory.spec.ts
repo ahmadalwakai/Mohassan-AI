@@ -31,7 +31,7 @@ test('memory provenance, correction, feedback and explicit measured skill activa
   await skillCard.getByRole('button',{name:'موافقة وتفعيل',exact:true}).click();await expect(skillCard).toContainText('مفعّلة');
   const run=memory.getByRole('form',{name:'تجربة مهارة مفعّلة'});await run.getByLabel('المهارة المفعّلة',{exact:true}).selectOption(skill.id);await run.getByLabel('وصف المهمة للتجربة',{exact:true}).fill('إصلاح كود معيب');await run.getByRole('button',{name:'اقتراح قائمة الفحص',exact:true}).click();await expect(memory.getByText('برمجة · الإصدار 1',{exact:true})).toBeVisible();
   await skillCard.getByRole('button',{name:'إلغاء المهارة',exact:true}).click();await expect(skillCard).toContainText('ملغاة');
-  await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:'artifacts/memory-desktop.png',fullPage:true,animations:'disabled'});
-  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:'artifacts/memory-mobile.png',fullPage:true,animations:'disabled'});
+  await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:test.info().outputPath('memory-desktop.png'),fullPage:true,animations:'disabled'});
+  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:test.info().outputPath('memory-mobile.png'),fullPage:true,animations:'disabled'});
   expect(errors).toEqual([]);
 });

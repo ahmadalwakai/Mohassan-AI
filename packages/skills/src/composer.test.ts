@@ -80,6 +80,29 @@ describe('typed bindings', () => {
     expect(codes(compose([{ id: 'n' }, { id: 'f' }], { n: needsWriter, f: fetcher }))).toContain('skill_dependency_unordered');
     expect(compose([{ id: 'n', dependsOn: ['f'] }, { id: 'f' }], { n: needsWriter, f: fetcher }).issues).toEqual([]);
   });
+  it('rejects the audited reverse dependency without changing symmetric resource ordering', () => {
+    const consumer = contract('consumer', { dependsOn: ['fetcher'] });
+    const graph = compose([{ id: 'a' }, { id: 'b', dependsOn: ['a'] }], { a: consumer, b: fetcher });
+    expect(graph.batches).toEqual([['a'], ['b']]);
+    expect(graph.issues).toEqual([expect.objectContaining({ code: 'skill_dependency_unordered', nodeId: 'a' })]);
+    expect(graph.precedes('a', 'b')).toBe(true);
+    expect(graph.precedes('b', 'a')).toBe(false);
+    expect(graph.ordered('a', 'b')).toBe(true);
+    expect(graph.ordered('b', 'a')).toBe(true);
+  });
+  it('checks transitive dependency direction and accepts any preceding instance of the required skill', () => {
+    const consumer = contract('consumer', { dependsOn: ['fetcher'] }), middle = contract('middle');
+    const map = { consumer, middle, provider: fetcher };
+    expect(compose([{ id: 'consumer', dependsOn: ['middle'] }, { id: 'middle', dependsOn: ['provider'] }, { id: 'provider' }], map).issues).toEqual([]);
+    expect(codes(compose([{ id: 'consumer' }, { id: 'middle', dependsOn: ['consumer'] }, { id: 'provider', dependsOn: ['middle'] }], map))).toContain('skill_dependency_unordered');
+    expect(compose([{ id: 'later', dependsOn: ['consumer'] }, { id: 'consumer', dependsOn: ['earlier'] }, { id: 'earlier' }], { later: fetcher, consumer, earlier: fetcher }).issues).toEqual([]);
+  });
+  it('still rejects incompatible data bindings when the skill dependency order is correct', () => {
+    const consumer = contract('consumer', { dependsOn: ['fetcher'], inputs: [{ name: 'text', type: 'string', description: 'Text' }] });
+    const graph = compose([{ id: 'provider' }, { id: 'consumer', dependsOn: ['provider'], inputs: { text: 'provider.count' } }], { provider: fetcher, consumer });
+    expect(codes(graph)).toEqual(['type_mismatch']);
+    expect(graph.precedes('provider', 'consumer')).toBe(true);
+  });
 });
 
 describe('steps inside a skill', () => {
@@ -112,11 +135,19 @@ describe('permission snapshot', () => {
     expect(tools['computer.act']).toMatchObject({ available: false });
     expect(tools['studio.change']).toMatchObject({ available: false });
   });
-  it('never reports a tool available that has no implementation or no model', () => {
+  it('never reports a file tool or vision model available without its configuration', () => {
     const { tools } = buildPermissionSnapshot({ ...environment, visionReady: true });
-    expect(tools['file.write']).toEqual({ available: false, reason: 'الأداة غير منفذة بعد.' });
-    expect(tools['file.read']).toEqual({ available: false, reason: 'الأداة غير منفذة بعد.' });
+    expect(tools['file.write']).toEqual({ available: false, reason: 'أداة الملفات غير مهيأة.' });
+    expect(tools['file.read']).toEqual({ available: false, reason: 'أداة الملفات غير مهيأة.' });
     expect(tools['vision.inspect']).toEqual({ available: true });
     expect(buildPermissionSnapshot(environment).tools['vision.inspect']).toMatchObject({ available: false });
+  });
+  it('requires an explicitly configured gateway adapter and still checks the underlying capability', () => {
+    const { tools } = buildPermissionSnapshot({ ...environment, gatewayTools: ['file.read', 'file.write', 'computer.act'] });
+    expect(tools['file.read']).toEqual({ available: true }); expect(tools['file.write']).toEqual({ available: true });
+    expect(tools['computer.act']).toMatchObject({ available: false });
+    expect(tools['computer.view']).toMatchObject({ available: false });
+    expect(tools['browser.open']).toMatchObject({ available: false });
+    expect(buildPermissionSnapshot({ ...environment, gatewayTools: [] }).tools['file.read']).toMatchObject({ available: false });
   });
 });

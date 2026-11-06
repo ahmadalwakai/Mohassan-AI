@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { parseRetryAfterHeader } from './retry.js';
+export { classifyProviderFallback, MAX_AUTOMATIC_RETRY_DELAY_MS, parseRetryAfterHeader, validatedRetryAfterMs, waitForRetryAfter, type ProviderFallbackDecision } from './retry.js';
 
 export interface ModelRequest {
   goal:string; maxTokens?:number; signal?:AbortSignal; system?:string;
@@ -11,8 +13,11 @@ export interface ModelResult {text:string;model:string;usage:ModelUsage;rate?:Mo
 export interface ModelProvider {readonly id:string;generate(request:ModelRequest):Promise<ModelResult>}
 export class ProviderError extends Error {
   usage?:ModelUsage;
-  /** Delay supplied by a rejected HTTP 429; unknown network outcomes remain non-retryable. */
+  /** Original valid provider delay; waiting policy must not shorten this value. */
   retryAfterMs?:number;
+  retryAfterInvalid?:boolean;
+  /** The model's text when Groq rejected it for failing the schema. */
+  failedGeneration?:string;
   constructor(public readonly code:string,message:string,public readonly retryable=false,public readonly httpStatus?:number){super(message);this.name='ProviderError';}
 }
 const UsageSchema=z.object({prompt_tokens:z.number().int().nonnegative(),completion_tokens:z.number().int().nonnegative()});
@@ -38,6 +43,7 @@ async function limitedJson(response:Response,signal:AbortSignal):Promise<unknown
   } catch(error) {if(signal.aborted)throw new ProviderError('ABORTED','انقطع طلب النموذج قبل اكتمال الرد؛ استخدامه غير محسوم.');if(error instanceof ProviderError)throw error;throw new ProviderError('INVALID_RESPONSE','رد مزود النموذج غير صالح أو لم يكتمل.');}
   finally{signal.removeEventListener('abort',abortListener);if(signal.aborted)await reader.cancel().catch(()=>{});reader.releaseLock();}
 }
+const SchemaRejectionSchema=z.object({error:z.object({code:z.literal('json_validate_failed'),failed_generation:z.string().max(131072)})});
 function upstreamError(status:number):ProviderError {
   if(status===401)return new ProviderError('AUTHENTICATION_FAILED','رفض Groq مفتاح الاتصال. راجع إعداد الخادم.',false,status);
   if(status===403)return new ProviderError('PERMISSION_DENIED','صلاحية Groq لا تسمح باستخدام هذا النموذج.',false,status);
@@ -47,10 +53,21 @@ function upstreamError(status:number):ProviderError {
 }
 /** Groq reports its token window in headers such as 794ms or 1m26.4s. */
 function durationMs(value:string|null):number {
-  if(!value)return 0;
-  let total=0;
-  for(const [,amount,unit]of value.matchAll(/(d+(?:.d+)?)(ms|h|m|s)/g))total+=Number(amount)*{ms:1,s:1000,m:60000,h:3600000}[unit as 'ms'|'s'|'m'|'h'];
-  return Math.ceil(total);
+  const text=value?.trim();
+  if(!text||text.length>128)return 0;
+  const part=/(\d+(?:\.\d+)?)(ms|h|m|s)/y;
+  const units={ms:1,s:1000,m:60000,h:3600000};
+  let total=0,offset=0;
+  while(offset<text.length){
+    part.lastIndex=offset;
+    const match=part.exec(text);
+    if(!match)return 0;
+    total+=Number(match[1])*units[match[2] as keyof typeof units];
+    if(!Number.isFinite(total))return 0;
+    offset=part.lastIndex;
+  }
+  // Metadata must not create an unbounded or overflowing quota window.
+  return Math.min(86400000,Math.ceil(total));
 }
 function rateState(response:Response):ModelRateState|undefined {
   const remaining=Number(response.headers.get('x-ratelimit-remaining-tokens'));
@@ -59,11 +76,9 @@ function rateState(response:Response):ModelRateState|undefined {
 }
 function responseError(response:Response):ProviderError {
   const error=upstreamError(response.status);
-  if(response.status===429){
-    error.usage={inputTokens:0,outputTokens:0};
-    const header=response.headers.get('retry-after');
-    const delay=header===null?NaN:/^\d+(?:\.\d+)?$/.test(header)?Number(header)*1000:Date.parse(header)-Date.now();
-    if(Number.isFinite(delay)&&delay>=0)error.retryAfterMs=Math.min(60000,Math.max(1000,Math.ceil(delay)));
+  if(response.status===429)error.usage={inputTokens:0,outputTokens:0};
+  if(response.status===429||response.status===503){
+    Object.assign(error,parseRetryAfterHeader(response.headers.get('retry-after')));
   }
   return error;
 }
@@ -112,7 +127,12 @@ export class GroqProvider implements ModelProvider {
         }),
       });
     } catch {throw new ProviderError(signal.aborted?'ABORTED':'NETWORK_ERROR',signal.aborted?'انتهت مهلة طلب النموذج أو أُلغي؛ لم تُحسم تكلفته.':'انقطع الاتصال بالنموذج؛ لا تعاد المحاولة تلقائيًا.',false);}
-    if(!response.ok){void response.body?.cancel();throw responseError(response);}
+    if(!response.ok){
+      const error=responseError(response);
+      if(response.status===400){const rejection=SchemaRejectionSchema.safeParse(await limitedJson(response,signal).catch(()=>null));if(rejection.success)error.failedGeneration=this.clean(rejection.data.error.failed_generation);}
+      else void response.body?.cancel();
+      throw error;
+    }
     const body=await limitedJson(response,signal);
     const parsed=ResponseSchema.safeParse(body);
     if(!parsed.success){const error=new ProviderError('INVALID_RESPONSE','رد مزود النموذج لا يحتوي نتيجة صالحة.');const known=UsageSchema.safeParse((body&&typeof body==='object'&&'usage'in body)?body.usage:undefined);if(known.success)error.usage={inputTokens:known.data.prompt_tokens,outputTokens:known.data.completion_tokens};throw error;}

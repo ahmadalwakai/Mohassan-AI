@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod";
-import { CodingEditsSchema, CodingResultSchema, SandboxTestResultSchema, type CodingEdits, type CodingResult, type Project, type SandboxTestResult } from "@mohassan/contracts";
+import { CodingEditsSchema, CodingResultSchema, SandboxTestResultSchema, type CodingEdits, type CodingResult, type Project, type SandboxTestResult, type SkillSandboxReadiness } from "@mohassan/contracts";
 import { git } from "./git.ts";
 import { inspectProject, type ProjectFile } from "./project.ts";
 import { CodingError, assertNoLinks, boundedText, containsPath, credentialLike, editablePath, limits, safeRelative, sha256, snapshotHash, sourcePaths, type SnapshotFile } from "./security.ts";
@@ -11,6 +11,8 @@ import { CodingError, assertNoLinks, boundedText, containsPath, credentialLike, 
 export interface SandboxRunner {
   available(): Promise<{ available: boolean; provider: string | null; message: string }>;
   run(request: { files: SnapshotFile[]; testFiles: string[]; syntaxFiles?: string[]; signal?: AbortSignal; timeoutMs?: number }): Promise<SandboxTestResult>;
+  /** Optional diagnostic snapshot; absence never implies executable readiness. */
+  executableReadiness?(): Promise<SkillSandboxReadiness>;
 }
 export interface CodingContext {
   taskId: string;

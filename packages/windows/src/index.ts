@@ -14,7 +14,13 @@ const Action = z.discriminatedUnion('type',[
   z.object({type:z.literal('key'),key:z.enum(['Enter','Tab','Escape','Backspace','Delete','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown','Space'])}).strict(),
   z.object({type:z.literal('scroll'),delta:z.number().int().min(-3).max(3).refine(value=>value!==0)}).strict(),
 ]);
+const ActionRequest = z.object({grantId:uuid,nonce:uuid,frameId:uuid,action:Action}).strict();
 const Poll = z.object({nonce:uuid,sentAt:z.iso.datetime(),state:State,frame:Frame.nullable(),ack:z.object({id:uuid,status:z.enum(['applied','rejected','unknown']),code:z.string().regex(/^[A-Z_]{2,80}$/)}).strict().nullable()}).strict();
+type Frame = z.infer<typeof Frame>;
+export interface WindowsView {scope:'view'|'control';target:{title:string;width:number;height:number};frame:Frame}
+export type WindowsControl = Awaited<ReturnType<typeof registerWindowsRoutes>>;
+/** Saved frames carry the server's receipt time beside the strict companion shape. */
+const stored = ({receivedAt:_,...frame}:Record<string,unknown>) => frame;
 const hash = (value:string) => createHash('sha256').update(value).digest('hex');
 const equal = (left:string,right:string) => {const a=Buffer.from(left),b=Buffer.from(right);return a.length===b.length&&timingSafeEqual(a,b);};
 function fault(code:string,message:string,statusCode=409){return Object.assign(new Error(message),{code,statusCode});}
@@ -63,6 +69,7 @@ export async function revokeWindowsSession(db:Kysely<any>,cookie:string) {
 }
 export async function registerWindowsRoutes(app:FastifyInstance,{db,owner,config}:WindowsRouteContext) {
   const enabled=config.windowsEnabled??!config.production;
+  const sessions=new Map<string,string>();
   const audit=async(connection:Kysely<any>,ownerId:string,deviceId:string|null,type:string,detail:Record<string,unknown>={})=>connection.insertInto('windows_audit').values({id:randomUUID(),owner_id:ownerId,device_id:deviceId,type,detail:JSON.stringify(detail)}).execute();
   const requireEnabled=()=>{if(!enabled)throw fault('WINDOWS_DISABLED','ربط Windows غير مفعّل في إعدادات الخدمة.',503);};
   async function deviceFor(ownerId:string,id:string,connection:Kysely<any>=db,lock=false) {
@@ -91,11 +98,31 @@ export async function registerWindowsRoutes(app:FastifyInstance,{db,owner,config
     return device;
   }
   function grantDto(grant:any){return {id:grant.id,scope:grant.scope,targetKey:grant.target_key,approvalNonce:grant.approval_nonce,expiresAt:new Date(grant.expires_at).toISOString()};}
-  async function sessionGrant(request:FastifyRequest,ownerId:string,device:any,connection:Kysely<any>=db) {
-    const grant=await connection.selectFrom('windows_grants').selectAll().where('device_id','=',device.id).where('owner_id','=',ownerId).where('session_binding','=',binding(request)).where('revoked_at','is',null).orderBy('created_at','desc').executeTakeFirst();
+  async function sessionGrant(sessionBinding:string,ownerId:string,device:any,connection:Kysely<any>=db) {
+    const grant=await connection.selectFrom('windows_grants').selectAll().where('device_id','=',device.id).where('owner_id','=',ownerId).where('session_binding','=',sessionBinding).where('revoked_at','is',null).orderBy('created_at','desc').executeTakeFirst();
     if(!grant)return null;
     const state=device.state?decode(device.state):null;
     return active(grant)&&!device.revoked_at&&state?.safeDesktop&&state.localView&&state.approvalNonce===grant.approval_nonce&&state.target?.key===grant.target_key&&(grant.scope!=='control'||state.localControl)?grant:null;
+  }
+  /** The single path for input: routes and the assistant meet the same grant, frame and pending checks. */
+  async function queueAction(ownerId:string,sessionBinding:string,deviceId:string,input:z.infer<typeof ActionRequest>,origin:'owner'|'assistant'='owner') {
+    return db.transaction().execute(async transaction=>{const device=await deviceFor(ownerId,deviceId,transaction,true);const grant=await sessionGrant(sessionBinding,ownerId,device,transaction);const state=device.state?State.parse(decode(device.state)):null;const frame=device.last_frame?decode(device.last_frame):null;
+      if(!grant||grant.id!==input.grantId||grant.scope!=='control')throw fault('WINDOWS_CONTROL_DENIED','هذا الإذن لا يسمح بالإدخال.',403);
+      const inputHash=hash(JSON.stringify([input.grantId,input.frameId,input.action]));
+      const previous=await transaction.selectFrom('windows_commands').select(['id','status','result_code','input_hash']).where('grant_id','=',grant.id).where('nonce','=',input.nonce).executeTakeFirst();if(previous){if(previous.input_hash!==inputHash)throw fault('WINDOWS_NONCE_CONFLICT','استُخدم معرف الطلب لإجراء مختلف.');return {id:previous.id,status:previous.status,code:previous.result_code};}
+      if(device.revoked_at||!state?.safeDesktop||!state.localControl||!state.localView||state.approvalNonce!==grant.approval_nonce||state.approvalNonce===device.stopped_nonce||state.target?.key!==grant.target_key||Date.now()-instant(device.last_seen_at)>3500||!frame||frame.id!==input.frameId||Date.now()-instant(frame.capturedAt)>3000)throw fault('WINDOWS_FRESH_SCREEN_REQUIRED','توقف الإدخال؛ حدّث الشاشة وتحقق من الاتصال والموافقة المحلية.');
+      const pending=await transaction.selectFrom('windows_commands').select('id').where('device_id','=',device.id).where('status','in',['queued','dispatched']).where('expires_at','>',new Date()).executeTakeFirst();if(pending)throw fault('WINDOWS_INPUT_PENDING','انتظر نتيجة الإجراء السابق ثم حدّث الشاشة.');
+      const id=randomUUID(),sequence=grant.next_sequence;
+      await transaction.updateTable('windows_grants').set({next_sequence:sequence+1}).where('id','=',grant.id).execute();await transaction.insertInto('windows_commands').values({id,grant_id:grant.id,device_id:device.id,owner_id:ownerId,nonce:input.nonce,sequence,frame_id:input.frameId,input_hash:inputHash,payload:JSON.stringify(input.action),status:'queued',expires_at:new Date(Date.now()+2000)}).execute();await audit(transaction,ownerId,device.id,'input_requested',{id,sequence,type:input.action.type,...(origin==='assistant'?{origin}:{}),...(input.action.type==='text'?{characters:input.action.text.length}:{})});return {id,status:'queued'};
+    });
+  }
+  /** Only the session the owner is using now can reach a device, and only through a grant it already holds. */
+  async function assistantTarget(ownerId:string) {
+    requireEnabled();
+    const sessionBinding=sessions.get(ownerId);
+    const devices=await db.selectFrom('windows_devices').selectAll().where('owner_id','=',ownerId).where('revoked_at','is',null).orderBy('created_at','desc').execute();
+    if(sessionBinding)for(const device of devices){const grant=await sessionGrant(sessionBinding,ownerId,device);if(grant)return {device,grant,sessionBinding};}
+    throw fault('WINDOWS_GRANT_REQUIRED','لا يوجد إذن مشاهدة حالي لجهاز مرتبط في هذه الجلسة.',409);
   }
   const timer=setInterval(()=>{void (async()=>{
     // Independent cleanup statements release command locks before touching devices.
@@ -109,7 +136,7 @@ export async function registerWindowsRoutes(app:FastifyInstance,{db,owner,config
   app.get('/api/windows',async request=>{
     const user=await owner(request);const devices=await db.selectFrom('windows_devices').select(['id','name','revoked_at','last_seen_at','state','created_at']).where('owner_id','=',user.id).orderBy('created_at','desc').execute();
     const list=[];
-    for(const device of devices){const grant=await sessionGrant(request,user.id,device);list.push({id:device.id,name:device.name,revoked:Boolean(device.revoked_at),online:!device.revoked_at&&Boolean(device.last_seen_at)&&Date.now()-instant(device.last_seen_at)<3500,lastSeenAt:device.last_seen_at?new Date(device.last_seen_at).toISOString():null,state:device.state?decode(device.state):null,grant:grant?grantDto(grant):null});}
+    for(const device of devices){const grant=await sessionGrant(binding(request),user.id,device);list.push({id:device.id,name:device.name,revoked:Boolean(device.revoked_at),online:!device.revoked_at&&Boolean(device.last_seen_at)&&Date.now()-instant(device.last_seen_at)<3500,lastSeenAt:device.last_seen_at?new Date(device.last_seen_at).toISOString():null,state:device.state?decode(device.state):null,grant:grant?grantDto(grant):null});}
     const events=await db.selectFrom('windows_audit').select(['id','device_id','type','detail','created_at']).where('owner_id','=',user.id).orderBy('created_at','desc').limit(50).execute();
     return {enabled,devices:list,events:events.map(row=>({id:row.id,deviceId:row.device_id,type:row.type,detail:decode(row.detail),createdAt:new Date(row.created_at).toISOString()}))};
   });
@@ -162,19 +189,27 @@ export async function registerWindowsRoutes(app:FastifyInstance,{db,owner,config
       return {id,scope:input.scope,targetKey:input.targetKey,approvalNonce:input.approvalNonce,expiresAt:expiresAt.toISOString()};
     });
   });
-  app.get<{Params:{id:string}}>('/api/windows/devices/:id/frame',async request=>{const user=await owner(request);const device=await deviceFor(user.id,uuid.parse(request.params.id));const grant=await sessionGrant(request,user.id,device);const frame=device.last_frame?decode(device.last_frame):null;if(!grant||!frame||Date.now()-instant(frame.capturedAt)>3500||frame.targetKey!==grant.target_key)throw fault('WINDOWS_FRAME_UNAVAILABLE','لا توجد صورة حديثة ضمن إذن مشاهدة صالح.');return {frame,grant:grantDto(grant)};});
+  app.get<{Params:{id:string}}>('/api/windows/devices/:id/frame',async request=>{const user=await owner(request);const device=await deviceFor(user.id,uuid.parse(request.params.id));const grant=await sessionGrant(binding(request),user.id,device);const frame=device.last_frame?decode(device.last_frame):null;if(!grant||!frame||Date.now()-instant(frame.capturedAt)>3500||frame.targetKey!==grant.target_key)throw fault('WINDOWS_FRAME_UNAVAILABLE','لا توجد صورة حديثة ضمن إذن مشاهدة صالح.');return {frame,grant:grantDto(grant)};});
   app.post<{Params:{id:string}}>('/api/windows/devices/:id/actions',async request=>{
-    requireEnabled();const user=await owner(request);const input=z.object({grantId:uuid,nonce:uuid,frameId:uuid,action:Action}).strict().parse(request.body);
-    return db.transaction().execute(async transaction=>{const device=await deviceFor(user.id,uuid.parse(request.params.id),transaction,true);const grant=await sessionGrant(request,user.id,device,transaction);const state=device.state?State.parse(decode(device.state)):null;const frame=device.last_frame?decode(device.last_frame):null;
-      if(!grant||grant.id!==input.grantId||grant.scope!=='control')throw fault('WINDOWS_CONTROL_DENIED','هذا الإذن لا يسمح بالإدخال.',403);
-      const inputHash=hash(JSON.stringify([input.grantId,input.frameId,input.action]));
-      const previous=await transaction.selectFrom('windows_commands').select(['id','status','result_code','input_hash']).where('grant_id','=',grant.id).where('nonce','=',input.nonce).executeTakeFirst();if(previous){if(previous.input_hash!==inputHash)throw fault('WINDOWS_NONCE_CONFLICT','استُخدم معرف الطلب لإجراء مختلف.');return {id:previous.id,status:previous.status,code:previous.result_code};}
-      if(device.revoked_at||!state?.safeDesktop||!state.localControl||!state.localView||state.approvalNonce!==grant.approval_nonce||state.approvalNonce===device.stopped_nonce||state.target?.key!==grant.target_key||Date.now()-instant(device.last_seen_at)>3500||!frame||frame.id!==input.frameId||Date.now()-instant(frame.capturedAt)>3000)throw fault('WINDOWS_FRESH_SCREEN_REQUIRED','توقف الإدخال؛ حدّث الشاشة وتحقق من الاتصال والموافقة المحلية.');
-      const pending=await transaction.selectFrom('windows_commands').select('id').where('device_id','=',device.id).where('status','in',['queued','dispatched']).where('expires_at','>',new Date()).executeTakeFirst();if(pending)throw fault('WINDOWS_INPUT_PENDING','انتظر نتيجة الإجراء السابق ثم حدّث الشاشة.');
-      const id=randomUUID(),sequence=grant.next_sequence;
-      await transaction.updateTable('windows_grants').set({next_sequence:sequence+1}).where('id','=',grant.id).execute();await transaction.insertInto('windows_commands').values({id,grant_id:grant.id,device_id:device.id,owner_id:user.id,nonce:input.nonce,sequence,frame_id:input.frameId,input_hash:inputHash,payload:JSON.stringify(input.action),status:'queued',expires_at:new Date(Date.now()+2000)}).execute();await audit(transaction,user.id,device.id,'input_requested',{id,sequence,type:input.action.type,...(input.action.type==='text'?{characters:input.action.text.length}:{})});return {id,status:'queued'};
-    });
+    requireEnabled();const user=await owner(request);const input=ActionRequest.parse(request.body);
+    return queueAction(user.id,binding(request),uuid.parse(request.params.id),input);
   });
   app.post<{Params:{id:string}}>('/api/windows/devices/:id/stop',async request=>{const user=await owner(request);z.object({}).strict().parse(request.body??{});return db.transaction().execute(async transaction=>{const device=await deviceFor(user.id,uuid.parse(request.params.id),transaction,true);await revokeGrants(transaction,device,'OWNER_STOP');await transaction.updateTable('windows_devices').set({last_frame:null,stopped_nonce:device.state?decode(device.state).approvalNonce:null}).where('id','=',device.id).execute();await audit(transaction,user.id,device.id,'owner_stop');return {ok:true};});});
   app.post<{Params:{id:string}}>('/api/windows/devices/:id/revoke',async request=>{const user=await owner(request);z.object({}).strict().parse(request.body??{});return db.transaction().execute(async transaction=>{const device=await deviceFor(user.id,uuid.parse(request.params.id),transaction,true);await revokeGrants(transaction,device,'DEVICE_REVOKED');await transaction.updateTable('windows_devices').set({revoked_at:sql`CURRENT_TIMESTAMP`,last_frame:null}).where('id','=',device.id).execute();await audit(transaction,user.id,device.id,'device_revoked');return {ok:true};});});
+  return {
+    enabled,
+    /** Keeps only the hash, so grants stay tied to the session the owner is actively using. */
+    noteSession(ownerId:string,request:FastifyRequest){if(request.headers.cookie)sessions.set(ownerId,binding(request));},
+    async view(ownerId:string):Promise<WindowsView>{
+      const {device,grant}=await assistantTarget(ownerId);const state=State.parse(decode(device.state));const frame=device.last_frame?Frame.parse(stored(decode(device.last_frame))):null;
+      if(!frame||Date.now()-instant(frame.capturedAt)>3500||frame.targetKey!==grant.target_key)throw fault('WINDOWS_FRAME_UNAVAILABLE','لا توجد صورة حديثة ضمن إذن مشاهدة صالح.');
+      await audit(db,ownerId,device.id,'assistant_view',{frameId:frame.id});
+      return {scope:grant.scope,target:{title:state.target!.title,width:state.target!.width,height:state.target!.height},frame};
+    },
+    async act(ownerId:string,frameId:string,action:unknown){
+      const {device,grant,sessionBinding}=await assistantTarget(ownerId);if(grant.scope!=='control')throw fault('WINDOWS_CONTROL_DENIED','هذا الإذن لا يسمح بالإدخال.',403);
+      return queueAction(ownerId,sessionBinding,device.id,{grantId:grant.id,nonce:randomUUID(),frameId,action:Action.parse(action)},'assistant');
+    },
+    async command(ownerId:string,id:string){const row=await db.selectFrom('windows_commands').select(['status','result_code']).where('id','=',id).where('owner_id','=',ownerId).executeTakeFirst();if(!row)throw fault('WINDOWS_COMMAND_NOT_FOUND','لم يُعثر على الإجراء.',404);return {status:row.status as string,code:row.result_code as string|null};},
+  };
 }

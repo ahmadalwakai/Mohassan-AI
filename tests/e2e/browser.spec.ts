@@ -9,8 +9,8 @@ test.beforeAll(async()=>{fixture=createServer((request,response)=>{
   if(request.url==='/a'||request.url==='/b'){const amount=request.url==='/a'?10:20;response.end(`<title>Project capacity source ${amount}</title><h1>Project capacity evidence</h1><p>The project capacity is ${amount} units. This is an explicit isolated test source with enough factual text for comparison.</p>`);return;}
   if(request.url==='/next'){response.end('<title>Next browser fixture</title><h1>Read another controlled page</h1>');return;}
   response.end('<title>Phase six browser fixture</title><h1>Owned browser observation</h1><a href="/next">Open next fixture</a><form method="post" action="/submit"><label>Your name<input name="name"></label></form>');
-});await new Promise<void>(resolve=>fixture.listen(4201,'127.0.0.1',resolve));});
-test.afterAll(async()=>{await new Promise<void>(resolve=>fixture.close(()=>resolve()));});
+});await new Promise<void>((resolve,reject)=>{fixture.once('error',reject);fixture.listen({port:4201,host:'127.0.0.1',exclusive:true},resolve);});});
+test.afterAll(async()=>{fixture.closeAllConnections();await new Promise<void>(resolve=>fixture.close(()=>resolve()));});
 
 test('browser sessions, consent, persistent cited research and mobile recovery',async({page,context})=>{
   test.setTimeout(120000);const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
@@ -34,8 +34,8 @@ test('browser sessions, consent, persistent cited research and mobile recovery',
   const report=browser.getByRole('region',{name:'تقرير البحث الموثق',exact:true});await expect(report).toBeVisible({timeout:30000});
   await expect(report.locator('article')).toHaveCount(2);await expect(report.locator('blockquote').first()).toContainText('10');await expect(report.locator('blockquote').nth(1)).toContainText('20');await expect(report).toContainText('اختلاف محتمل');
   await expect(report.locator('a[href="http://127.0.0.1:4201/a"]')).toBeVisible();
-  await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:'artifacts/browser-research-desktop.png',fullPage:true,animations:'disabled'});
+  await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:test.info().outputPath('browser-research-desktop.png'),fullPage:true,animations:'disabled'});
   await page.reload();await page.getByRole('button',{name:'المتصفح والبحث',exact:true}).click();await browser.getByRole('button',{name:'البحث بالمصادر',exact:true}).click();await expect(report.locator('article')).toHaveCount(2);
-  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:'artifacts/browser-research-mobile.png',fullPage:true,animations:'disabled'});
+  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:test.info().outputPath('browser-research-mobile.png'),fullPage:true,animations:'disabled'});
   await browser.getByRole('button',{name:'المتصفح',exact:true}).click();await browser.getByRole('button',{name:'إغلاق وإلغاء الصلاحية',exact:true}).click();await expect(browser.getByRole('button',{name:'إغلاق وإلغاء الصلاحية',exact:true})).toBeDisabled();expect(errors).toEqual([]);
 });

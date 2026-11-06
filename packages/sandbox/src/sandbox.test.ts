@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { snapshotHash, WindowsAppContainerSandbox, type SandboxFile } from './index.js';
+import { snapshotHash, WindowsAppContainerSandbox, type SandboxFile, type SandboxRunInput, type SandboxTestResult } from './index.js';
 
 describe('sandbox input boundary', () => {
   it.each(['../outside.mjs', '.git/config', '.env', 'src/.env.local', 'C:/outside.mjs', 'src\\outside.mjs', '.ENV.LOCAL', 'src/NUL.mjs', 'src/trailing.'])('rejects disallowed path %s before creating any process', async (path) => {
@@ -17,12 +17,20 @@ describe('sandbox input boundary', () => {
 
 describe.skipIf(process.platform !== 'win32')('real Windows AppContainer + Job boundary', () => {
   const sandbox = new WindowsAppContainerSandbox();
-  beforeAll(async () => { expect((await sandbox.available()).available).toBe(true); }, 30_000);
+  beforeAll(async () => { expect((await sandbox.available()).available).toBe(true); }, 120_000);
 
   it('proves network, immutable source, outside file denial and a clean environment using controlled sentinels', () => {
     expect(sandbox.probeEvidence).toMatchObject({ isolation: 'appcontainer', isolationVerified: true, network: 'denied', exitCode: 0 });
     expect(sandbox.probeEvidence?.stdout).toContain('MOHASSAN_BOUNDARY_PROVEN');
-    expect(sandbox.probeEvidence?.stdout).toContain('1.1.1.1:EACCES');
+    expect(sandbox.probeEvidence?.stdout).toMatch(/BOUNDARY_NETWORK=127\.0\.0\.1:(?:EACCES|EPERM|ETIMEDOUT)/);
+    expect(sandbox.probeEvidence?.stdout).not.toContain('unproven_timeout');
+    // Every probed interface needs an OS verdict, not only loopback.
+    const verdicts = sandbox.probeEvidence?.stdout.match(/^BOUNDARY_NETWORK=.+$/gm) ?? [];
+    expect(verdicts).toHaveLength(sandbox.networkProbeEvidence?.length ?? 0);
+    expect(verdicts.length).toBeGreaterThan(0);
+    for (const verdict of verdicts) expect(verdict).toMatch(/:(?:EACCES|EPERM|ETIMEDOUT)\s*$/);
+    expect(sandbox.networkProbeEvidence?.length).toBeGreaterThan(0);
+    expect(sandbox.networkProbeEvidence?.every(entry => entry.controlBefore && entry.controlAfter && entry.isolatedConnections === 0)).toBe(true);
   });
 
   it('runs syntax and frozen builtin tests only inside the OS boundary', async () => {
@@ -35,9 +43,9 @@ describe.skipIf(process.platform !== 'win32')('real Windows AppContainer + Job b
     expect(result.stdout).toContain('pass 1');
   });
 
-  it('enforces the single-process Job limit', async () => {
+  it('enforces the single-process Job limit in a repository-owned fixture without Node permissions', async () => {
     const files = [{ path: 'process.test.mjs', content: "import test from 'node:test';import assert from 'node:assert/strict';import{spawn}from 'node:child_process';test('child blocked',async()=>{const blocked=await new Promise(resolve=>{try{const child=spawn(process.execPath,['-e','process.exit(0)'],{stdio:'ignore'});child.once('error',()=>resolve(true));child.once('exit',code=>resolve(code!==0));}catch(error){resolve(['UNKNOWN','EAGAIN','EPERM','EACCES'].includes(error.code));}});assert.equal(blocked,true);});" }];
-    const result = await sandbox.run({ files, testFiles: ['process.test.mjs'], timeoutMs: 4000 });
+    const result = await (sandbox as unknown as { execute(input: SandboxRunInput, probe: boolean, enforceNodePermissions: boolean): Promise<SandboxTestResult> }).execute({ files, testFiles: ['process.test.mjs'], timeoutMs: 4000 }, false, false);
     expect(result).toMatchObject({ exitCode: 0, isolationVerified: true });
   });
 

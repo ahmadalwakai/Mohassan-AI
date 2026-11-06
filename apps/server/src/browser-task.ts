@@ -3,9 +3,10 @@ import { sql, type Kysely } from 'kysely';
 import sharp from 'sharp';
 import { BrowserOpenResultSchema, BrowserTaskInputSchema, type BrowserOpenResult, type BrowserTaskInput } from '@mohassan/contracts';
 import { BrowserError, SafeNetwork, migrateBrowser, type BrowserObservation, type NetworkPolicy, type createBrowserResearchControl } from '@mohassan/browser';
+import type { VerificationRecoveryContext } from '@mohassan/runtime';
 
 type BrowserControl = Pick<ReturnType<typeof createBrowserResearchControl>, 'create' | 'action' | 'detail' | 'close'>;
-export interface BrowserTaskContext {
+export interface BrowserTaskContext extends VerificationRecoveryContext {
   ownerId: string;
   taskId: string;
   browserInput: BrowserTaskInput;
@@ -67,7 +68,7 @@ export async function createBrowserTaskControl(db: Kysely<any>, config: BrowserT
     cancelled(context.signal);
     const task = await transaction.selectFrom('tasks').selectAll().where('id', '=', context.taskId).where('owner_id', '=', context.ownerId).executeTakeFirst();
     if (!task || task.capability_id !== 'browser.open' || task.cancellation_requested || !task.browser_input || scope(task.browser_input).hash !== scope(context.browserInput).hash) throw new BrowserError('BROWSER_TASK_SCOPE_DENIED', 'لم تتطابق مهمة المتصفح مع المالك والنطاق المعتمد.', 409);
-    if (running && (task.status !== 'running' || !task.lease_token || task.lease_token !== (context as BrowserTaskExecutionContext).leaseToken || !task.lease_expires_at || new Date(task.lease_expires_at).getTime() <= Date.now())) throw new BrowserError('BROWSER_TASK_LEASE_DENIED', 'انتهى إذن تنفيذ مهمة المتصفح.', 409);
+    if (running && (task.verification_only || context.verificationOnly || task.status !== 'running' || !task.lease_token || task.lease_token !== (context as BrowserTaskExecutionContext).leaseToken || !task.lease_expires_at || new Date(task.lease_expires_at).getTime() <= Date.now())) throw new BrowserError('BROWSER_TASK_LEASE_DENIED', 'انتهى إذن تنفيذ مهمة المتصفح.', 409);
     return task;
   }
 
@@ -139,14 +140,18 @@ export async function createBrowserTaskControl(db: Kysely<any>, config: BrowserT
   async function verify(raw: unknown, context: BrowserTaskContext): Promise<BrowserOpenResult | null> {
     try {
       const result = BrowserOpenResultSchema.parse(raw), task = await taskFor(context), approved = scope(context.browserInput);
+      const recovery=Boolean(context.verificationOnly&&task.verification_only&&context.assertActive&&context.receiptLeaseToken&&task.verification_source_lease===context.receiptLeaseToken&&task.lease_token===context.leaseToken&&task.status==='verifying'&&task.lease_expires_at&&new Date(task.lease_expires_at).getTime()>Date.now());
+      if(context.verificationOnly&&!recovery)return null;
+      if(recovery)await context.assertActive!();
       const receipt = await db.selectFrom('browser_task_receipts').selectAll().where('task_id', '=', context.taskId).where('owner_id', '=', context.ownerId).where('status', '=', 'ready').executeTakeFirst();
-      if (!receipt || !receipt.observation || receipt.session_id !== result.sessionId || receipt.input_hash !== approved.hash || receipt.result_hash !== digest(result) || digest(receipt.result) !== receipt.result_hash || !['running', 'verifying', 'completed'].includes(task.status) || task.status !== 'completed' && task.lease_token !== receipt.lease_token) return null;
+      if (!receipt || !receipt.observation || receipt.session_id !== result.sessionId || receipt.input_hash !== approved.hash || receipt.result_hash !== digest(result) || digest(receipt.result) !== receipt.result_hash || !['running', 'verifying', 'completed'].includes(task.status) || task.status !== 'completed' && (recovery?context.receiptLeaseToken:task.lease_token) !== receipt.lease_token) return null;
       const observation = receipt.observation as BrowserObservation;
       if (observation.id !== result.observationId || observation.url !== result.url || observation.title !== result.title || observation.observedAt !== result.observedAt || contentHash(observation) !== receipt.content_hash || receipt.content_hash !== result.contentHash) return null;
       await savedObservation(context.ownerId, result.sessionId, observation, approved.origins);
       const bytes = await screenshotBytes(observation.screenshot), hash = bytes ? bytesHash(bytes) : null;
       if (hash !== receipt.screenshot_hash || hash !== result.screenshotHash || Boolean(bytes) !== result.screenshotAvailable || result.screenshotUrl !== (bytes ? `/api/browser/tasks/${context.taskId}/screenshot` : null)) return null;
       cancelled(context.signal);
+      if(recovery)await context.assertActive!();
       return result;
     } catch { return null; }
   }

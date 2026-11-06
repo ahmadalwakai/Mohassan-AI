@@ -5,7 +5,8 @@ import {
 } from '@mohassan/contracts';
 import { composeSkillGraph } from './composer.ts';
 import { detectSkillConflicts, requiresApproval, type ConflictNode } from './conflicts.ts';
-import { skillContentHash } from './hash.ts';
+import { skillContentMatches } from './hash.ts';
+import { INSPECTOR_VERSION } from './inspector.ts';
 import { buildPermissionSnapshot, type SkillEnvironment } from './permissions.ts';
 
 const MAX_ISSUES = 200;
@@ -21,6 +22,7 @@ export function createSkillPlanner(db: Kysely<any>, options: { environment: () =
     const ids = [...new Set(request.nodes.map((node) => node.skillId))];
     const rows = await db.selectFrom('skill_versions as v').innerJoin('skill_families as f', 'f.id', 'v.family_id').select(['v.id', 'v.status', 'v.level', 'v.contract', 'v.content_hash', 'f.active_version_id']).where('v.owner_id', '=', ownerId).where('v.id', 'in', ids).execute();
     const files = await db.selectFrom('skill_files').select(['version_id', 'path', 'kind', 'content']).where('version_id', 'in', rows.length ? rows.map((row) => row.id) : ['']).execute();
+    const inspections = await db.selectFrom('skill_inspections').select(['version_id', 'content_hash', 'inspector_version', 'verdict']).where('owner_id', '=', ownerId).where('version_id', 'in', rows.length ? rows.map((row) => row.id) : ['']).orderBy('created_at', 'desc').execute();
     const byId = new Map(rows.map((row) => [row.id, row]));
     const contracts = new Map<string, SkillContract>();
 
@@ -29,8 +31,13 @@ export function createSkillPlanner(db: Kysely<any>, options: { environment: () =
       if (!row) { issues.push({ code: 'skill_not_found', severity: 'error', category: 'missing_skill', nodeId: node.id, message: 'المهارة غير موجودة.' }); continue; }
       const contract = SkillContractSchema.parse(json(row.contract));
       contracts.set(node.id, contract);
-      if (skillContentHash(contract, files.filter((file) => file.version_id === row.id)) !== row.content_hash) issues.push({ code: 'skill_integrity_failed', severity: 'error', category: 'environment_failure', nodeId: node.id, message: 'لا تطابق محتويات المهارة بصمتها.' });
+      if (!skillContentMatches(contract, files.filter((file) => file.version_id === row.id), row.content_hash)) issues.push({ code: 'skill_integrity_failed', severity: 'error', category: 'environment_failure', nodeId: node.id, message: 'لا تطابق محتويات المهارة بصمتها.' });
       if (row.status !== 'active' || row.active_version_id !== row.id) issues.push({ code: 'skill_not_active', severity: 'error', category: 'missing_skill', nodeId: node.id, message: `${contract.slug} ليست مفعّلة.` });
+      else {
+        const inspection = inspections.find((entry) => entry.version_id === row.id && entry.content_hash === row.content_hash);
+        if (!inspection || inspection.inspector_version !== INSPECTOR_VERSION) issues.push({ code: 'skill_inspection_stale', severity: 'error', category: 'environment_failure', nodeId: node.id, message: 'تحتاج المهارة إلى فحص أمان حديث ثم مراجعة وتفعيل جديدين.' });
+        else if (!['pass', 'review'].includes(inspection.verdict)) issues.push({ code: 'skill_inspection_failed', severity: 'error', category: 'environment_failure', nodeId: node.id, message: 'لم تجتز المهارة فحص الأمان الحالي.' });
+      }
     }
 
     const graph = composeSkillGraph(request, contracts);

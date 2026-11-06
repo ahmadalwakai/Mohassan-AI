@@ -44,6 +44,7 @@ export const SkillStepSchema = z.object({
   inputs: z.record(FieldName, z.string().min(1).max(120)).default({}),
   outputs: z.array(SkillFieldSchema).max(12).default([]),
 }).strict().superRefine((step, context) => {
+  if (new Set(step.outputs.map(field => field.name)).size !== step.outputs.length) context.addIssue({ code: 'custom', path: ['outputs'], message: 'أسماء نواتج الخطوة يجب أن تكون فريدة.' });
   if (step.kind === 'tool' && !step.tool) context.addIssue({ code: 'custom', path: ['tool'], message: 'خطوة الأداة تحتاج أداة محددة.' });
   if (step.kind === 'script' && !step.entry) context.addIssue({ code: 'custom', path: ['entry'], message: 'خطوة السكربت تحتاج ملف دخول.' });
   if (step.kind !== 'tool' && step.tool) context.addIssue({ code: 'custom', path: ['tool'], message: 'الأداة تخص خطوة الأداة فقط.' });
@@ -76,6 +77,7 @@ export const SkillContractSchema = z.object({
   conflicts: z.array(Slug).max(12).default([]), dependsOn: z.array(Slug).max(12).default([]),
 }).strict().superRefine((contract, context) => {
   const issue = (path: string, message: string) => context.addIssue({ code: 'custom', path: [path], message });
+  for (const field of ['inputs', 'outputs'] as const) if (new Set(contract[field].map(value => value.name)).size !== contract[field].length) issue(field, 'أسماء الحقول يجب أن تكون فريدة.');
   const ids = new Set(contract.steps.map((step) => step.id));
   if (ids.size !== contract.steps.length) issue('steps', 'معرفات الخطوات يجب أن تكون فريدة.');
   for (const step of contract.steps) for (const dependency of step.dependsOn) if (!ids.has(dependency) || dependency === step.id) issue('steps', `اعتماد غير صالح: ${dependency}`);
@@ -147,9 +149,9 @@ export type SkillImportResult = z.infer<typeof SkillImportResultSchema>;
 const Expected = { expectedRevision: z.number().int().positive() };
 const Reason = z.string().trim().min(3).max(500);
 export const SkillInspectRequestSchema = z.object(Expected).strict();
-export const SkillActivateSchema = z.object({ ...Expected, approve: z.literal(true), acknowledgeFindings: z.boolean().default(false) }).strict();
+export const SkillActivateSchema = z.object({ ...Expected, approve: z.literal(true), acknowledgeFindings: z.boolean().default(false), evaluationId: z.uuid().optional() }).strict();
 export const SkillRevokeSchema = z.object({ ...Expected, reason: Reason }).strict();
-export const SkillRollbackSchema = z.object({ ...Expected, approve: z.literal(true), reason: Reason }).strict();
+export const SkillRollbackSchema = z.object({ ...Expected, approve: z.literal(true), reason: Reason, evaluationId: z.uuid().optional() }).strict();
 export const SkillGrantCreateSchema = z.object({
   ...Expected, approve: z.literal(true), tools: z.array(SkillToolIdSchema).max(12).default([]), scopes: z.array(z.string().regex(/^[a-z]+:[a-z]+$/)).max(12).default([]),
   roots: z.array(z.string().min(3).max(1000)).max(4).default([]), durationHours: z.number().int().min(1).max(720),
@@ -179,3 +181,65 @@ export const SkillExecutionReceiptSchema = z.discriminatedUnion('level', [
   z.object({ ...ReceiptBase, level: z.literal('executable'), execution: z.literal('isolated_script'), isolation: z.object({ provider: z.string().min(1).max(64), verified: z.literal(true), sharesHostKernel: z.boolean(), network: z.literal('denied') }).strict() }).strict(),
 ]);
 export type SkillExecutionReceipt = z.infer<typeof SkillExecutionReceiptSchema>;
+
+/** JSON payloads stay bounded before persistence or tool-schema validation. */
+export function isBoundedSkillJson(value: unknown): boolean {
+  let nodes = 0;
+  const visit = (item: unknown, depth: number): boolean => {
+    if (++nodes > 4096 || depth > 8) return false;
+    if (item === null || typeof item === 'boolean') return true;
+    if (typeof item === 'number') return Number.isFinite(item);
+    if (typeof item === 'string') return item.length <= 65536;
+    if (Array.isArray(item)) return item.length <= 256 && item.every(child => visit(child, depth + 1));
+    if (!item || typeof item !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(item))) return false;
+    const keys = Object.keys(item);
+    return keys.length <= 128 && keys.every(key => key.length <= 100 && !['__proto__', 'constructor', 'prototype'].includes(key) && visit((item as Record<string, unknown>)[key], depth + 1));
+  };
+  if (!visit(value, 0)) return false;
+  try { return new TextEncoder().encode(JSON.stringify(value)).length <= 65536; } catch { return false; }
+}
+export const SkillRunInputSchema = z.object({ plan: SkillCompositionRequestSchema, values: z.record(FieldName, z.unknown()).refine(isBoundedSkillJson, 'مدخلات المهارة ليست JSON محدودة صالحة.') }).strict();
+export type SkillRunInput = z.infer<typeof SkillRunInputSchema>;
+export const SkillNodeBindingSchema = z.object({
+  parentTaskId: z.uuid(), runId: z.uuid(), nodeId: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,47}\.[a-zA-Z][a-zA-Z0-9_-]{0,47}$/),
+  versionId: z.uuid(), contentHash: Sha256, inputsHash: Sha256, kind: z.enum(['tool', 'model', 'script']), tool: SkillToolIdSchema.optional(),
+}).strict().superRefine((binding, context) => {
+  if ((binding.kind === 'tool') !== Boolean(binding.tool)) context.addIssue({ code: 'custom', path: ['tool'], message: 'الأداة مطلوبة لعقدة الأداة فقط.' });
+});
+export type SkillNodeBinding = z.infer<typeof SkillNodeBindingSchema>;
+
+export const SkillRunRequestSchema = z.object({
+  expectedRevision: Expected.expectedRevision, goal: z.string().trim().min(5).max(4000).optional(),
+  values: SkillRunInputSchema.shape.values, plan: SkillCompositionRequestSchema.optional(),
+}).strict();
+export const SkillRunStatusSchema = z.enum(['running', 'waiting_children', 'succeeded', 'failed', 'cancelled', 'unknown']);
+export const SkillNodeStatusSchema = z.enum(['pending', 'queued', 'running', 'succeeded', 'failed', 'cancelled', 'unknown']);
+export const SkillRunSummarySchema = z.object({
+  id: z.uuid(), parentTaskId: z.uuid(), status: SkillRunStatusSchema, inputHash: Sha256, errorCode: z.string().max(100).nullable(),
+  createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(), finishedAt: z.iso.datetime().nullable(),
+  nodes: z.array(z.object({
+    id: z.string().max(97), versionId: z.uuid(), contentHash: Sha256, kind: z.enum(['tool', 'model', 'script']), tool: SkillToolIdSchema.nullable(),
+    status: SkillNodeStatusSchema, childTaskId: z.uuid().nullable(), attempt: z.number().int().nonnegative(), executionAttempt: z.number().int().min(1).max(3), retryNotBefore: z.iso.datetime().nullable(), recoveryReason: z.string().max(100).nullable(), inputsHash: Sha256.nullable(), outputHash: Sha256.nullable(),
+    errorCode: z.string().max(100).nullable(), startedAt: z.iso.datetime().nullable(), finishedAt: z.iso.datetime().nullable(),
+  }).strict()).max(144),
+}).strict();
+export type SkillRunSummary = z.infer<typeof SkillRunSummarySchema>;
+export const SkillEvidenceQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(10).default(5), offset: z.coerce.number().int().min(0).max(100000).default(0) }).strict();
+export const SkillEvidencePageSchema = z.object({
+  runId: z.uuid(), total: z.number().int().nonnegative(), offset: z.number().int().nonnegative(), limit: z.number().int().min(1).max(10),
+  items: z.array(z.object({
+    id: z.uuid(), nodeId: z.string().max(97), taskId: z.uuid(), versionId: z.uuid(), contentHash: Sha256, inputsHash: Sha256, attempt: z.number().int().min(1).max(3),
+    status: z.enum(['started', 'succeeded', 'failed', 'unknown']), outputHash: Sha256.nullable(), errorCode: z.string().max(100).nullable(),
+    createdAt: z.iso.datetime(), finishedAt: z.iso.datetime().nullable(),
+    details: z.array(z.object({ kind: z.string().max(64), data: z.unknown() }).strict()).max(32),
+  }).strict()).max(10),
+}).strict();
+
+/** Plain-text source review is not an execution or security approval. */
+export const SkillFileContentQuerySchema = z.object({ path: RelativeFile }).strict();
+export const SkillFileContentSchema = z.object({
+  versionId: z.uuid(), versionContentHash: Sha256,
+  file: SkillFileSummarySchema.extend({ path: RelativeFile, content: z.string().max(256000), sizeBytes: z.number().int().min(0).max(256000) }).strict(),
+  contentVerified: z.literal(true), readOnly: z.literal(true),
+}).strict();
+export type SkillFileContent = z.infer<typeof SkillFileContentSchema>;

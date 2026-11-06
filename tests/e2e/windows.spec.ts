@@ -41,8 +41,8 @@ test('Windows owner UI pairs an explicit transport fixture, enforces view-only s
     await expect(windows.getByLabel('نص الإدخال إلى Windows',{exact:true})).toBeDisabled();
     await windows.getByText('العناصر المقروءة من نطاق الجهاز',{exact:false}).click();
     await expect(windows.getByText('عنصر نقل اختباري',{exact:true})).toBeVisible();
-    await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:'artifacts/windows-desktop.png',fullPage:true,animations:'disabled'});
-    await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:'artifacts/windows-mobile.png',fullPage:true,animations:'disabled'});
+    await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:test.info().outputPath('windows-desktop.png'),fullPage:true,animations:'disabled'});
+    await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:test.info().outputPath('windows-mobile.png'),fullPage:true,animations:'disabled'});
     await windows.getByRole('button',{name:'إيقاف الجلسة الآن',exact:true}).click();
     await expect(windows.getByAltText('صورة النطاق المصرح من جهاز Windows')).toHaveCount(0);
     await windows.getByRole('button',{name:'إلغاء ربط الجهاز',exact:true}).click();

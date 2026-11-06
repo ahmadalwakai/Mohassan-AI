@@ -72,6 +72,31 @@ describe('permission-aware plan validation', () => {
     await skills.revokeGrant(owner, skill.id, created.id, { reason: 'انتهت الحاجة' });
     expect(codes(await skills.validateComposition(owner, { nodes: [{ id: 'a', skillId: skill.id }] }))).toEqual(['tool_not_granted']);
   });
+  it('rejects reversed declared dependencies and still enforces grants in the corrected order', async () => {
+    const provider = await prepared(toolContract('dependency-provider'), 'dependency-provider');
+    const consumer = await prepared(toolContract('dependency-consumer', { dependsOn: ['dependency-provider'], requires: { tools: ['browser.open'], scopes: ['browser:read'] } }), 'dependency-consumer');
+    await grant(provider, ['browser.open']);
+    const consumerGrant = await grant(consumer, ['browser.open']);
+    const reversed = await skills.validateComposition(owner, { nodes: [{ id: 'a', skillId: consumer.id }, { id: 'b', skillId: provider.id, dependsOn: ['a'] }] });
+    expect(reversed.valid).toBe(false);
+    expect(codes(reversed)).toEqual(expect.arrayContaining(['skill_dependency_unordered', 'scope_not_granted']));
+    const correct = { nodes: [{ id: 'a', skillId: consumer.id, dependsOn: ['b'] }, { id: 'b', skillId: provider.id }] };
+    expect(codes(await skills.validateComposition(owner, correct))).toEqual(['scope_not_granted']);
+    await grant(consumer, [], ['browser:read']);
+    expect(await skills.validateComposition(owner, correct)).toMatchObject({ valid: true, batches: [['b'], ['a']] });
+    await skills.revokeGrant(owner, consumer.id, consumerGrant.id, { reason: 'Revoke the tool grant.' });
+    expect(codes(await skills.validateComposition(owner, correct))).toEqual(['tool_not_granted']);
+  });
+  it.each(['outdated', 'missing', 'failed'])('refuses an active skill with an %s inspection without mutating it', async (state) => {
+    const skill = await prepared(null, `inspection-${state}`);
+    if (state === 'missing') await store.db.deleteFrom('skill_inspections').where('version_id', '=', skill.id).execute();
+    else await store.db.updateTable('skill_inspections').set(state === 'outdated' ? { inspector_version: 'static-v1' } : { verdict: 'fail' }).where('version_id', '=', skill.id).execute();
+    const before = await store.db.selectFrom('skill_versions').selectAll().where('id', '=', skill.id).executeTakeFirstOrThrow();
+    const result = await skills.validateComposition(owner, { nodes: [{ id: 'a', skillId: skill.id }] });
+    expect(result.valid).toBe(false);
+    expect(codes(result)).toEqual([state === 'failed' ? 'skill_inspection_failed' : 'skill_inspection_stale']);
+    expect(await store.db.selectFrom('skill_versions').selectAll().where('id', '=', skill.id).executeTakeFirstOrThrow()).toEqual(before);
+  });
   it('lets instruction skills guide without grants but warns about missing tools', async () => {
     const guide = await prepared(null, 'plain-guide');
     expect(await skills.validateComposition(owner, { nodes: [{ id: 'a', skillId: guide.id }] })).toMatchObject({ valid: true, nodes: [{ role: 'context' }], issues: [] });

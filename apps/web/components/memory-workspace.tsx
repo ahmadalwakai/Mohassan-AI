@@ -14,7 +14,7 @@ async function api(path:string,options:RequestInit={}){const response=await fetc
 const post=(path:string,body:unknown)=>api(path,{method:'POST',body:JSON.stringify(body)});
 type TaskOption={id:string;title:string;status:string};
 
-export function MemoryWorkspace({offline}:{offline:boolean}){
+export function MemoryWorkspace({offline,onOpenLibrary}:{offline:boolean;onOpenLibrary?:()=>void}){
   const [data,setData]=useState<Workspace|null>(null),[tasks,setTasks]=useState<TaskOption[]>([]),[tab,setTab]=useState<'memory'|'skills'|'feedback'>('memory');
   const [busy,setBusy]=useState('load'),[error,setError]=useState(''),[notice,setNotice]=useState(''),[query,setQuery]=useState(''),[layer,setLayer]=useState(''),[found,setFound]=useState<MemoryItem[]|null>(null);
   const [editing,setEditing]=useState<MemoryItem|null>(null),[deleting,setDeleting]=useState<MemoryItem|null>(null),[parentSkill,setParentSkill]=useState<MemorySkill|null>(null),[manifest,setManifest]=useState(JSON.stringify(exampleSkill,null,2)),[feedbackKind,setFeedbackKind]=useState('task_correction');
@@ -38,7 +38,7 @@ export function MemoryWorkspace({offline}:{offline:boolean}){
   }
   async function sendFeedback(event:FormEvent<HTMLFormElement>){event.preventDefault();const form=event.currentTarget,values=new FormData(form);const input={taskId:values.get('taskId'),kind:feedbackKind,comment:values.get('comment'),...(values.get('rating')?{rating:Number(values.get('rating'))}:{}),persistPreference:feedbackKind==='preference'&&values.get('persistPreference')==='on'};const fingerprint=JSON.stringify(input);if(feedbackKey.current?.fingerprint!==fingerprint)feedbackKey.current={fingerprint,key:crypto.randomUUID()};await action('feedback',async()=>{await post('/api/memory/feedback',{...input,submissionKey:feedbackKey.current!.key});feedbackKey.current=null;form.reset();},input.persistPreference?'حُفظ التفضيل المستمر بإذنك.':'حُفظت الملاحظة الخاصة بالمهمة دون تعميمها.');}
   const items=(found??data?.items??[]).filter(item=>!layer||item.layer===layer),activeSkills=data?.skills.filter(skill=>skill.status==='active')??[];
-  return <section className={styles.root} aria-label="الذاكرة والتعلّم" aria-busy={Boolean(busy)}>
+  return <section className={styles.root} aria-label="الذاكرة والتعلّم" aria-busy={Boolean(busy)}>{onOpenLibrary?<div className={styles.explainer}><BookOpen size={19}/><div><strong>مكتبة المهارات الموحدة</strong><p>المهارات المستوردة والأدوات والأذونات والأدلة لها مكتبتها الخاصة. تبقى قوائم الفحص القديمة هنا.</p><button type="button" onClick={onOpenLibrary}>فتح مكتبة المهارات</button></div></div>:null}
     <div className={styles.intro}><div><span>خبرة لها مصدر</span><h2>ما نتذكره، ولماذا نثق به.</h2><p>ذكريات موثقة بوقت ومصدر، ومهارات تقاس قبل أن تفعّلها.</p></div><button disabled={disabled} onClick={()=>void load()}><RefreshCw size={16}/>تحديث الذاكرة</button></div>
     {error?<p className={styles.error} role="alert">{error}</p>:null}{notice?<p className={styles.notice} role="status">{notice}</p>:null}
     <div className={styles.metrics}>{[{label:'مهام موثقة',value:data?.metrics.terminalTasks??0},{label:'مهام مكتملة',value:data?.metrics.completed??0},{label:'تعثرات مسجلة',value:data?.metrics.failed??0},{label:'توكنات معروفة',value:(data?.metrics.knownInputTokens??0)+(data?.metrics.knownOutputTokens??0)},{label:'ذاكرة منتهية',value:data?.expiredCount??0}].map(item=><article key={item.label}><span>{item.label}</span><strong>{item.value.toLocaleString('ar')}</strong></article>)}</div>

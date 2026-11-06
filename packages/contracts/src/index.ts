@@ -1,6 +1,15 @@
 import { z } from 'zod';
+export * from './skill-sandbox';
+export * from './skill-gaps';
+export * from './skill-graph';
+export * from './skill-quality';
+export * from './skill-benchmarks';
+export * from './skill-forge';
+export * from './skill-run-gaps';
+import { SkillRunInputSchema, SkillNodeBindingSchema, isBoundedSkillJson } from './skills';
 export * from './command-chat';
 export * from './skills';
+export * from './google-ads';
 export { browserReadOrigins, detectBrowserOpenIntent, type BrowserOpenIntent } from './browser-intent';
 
 export const TaskStatusSchema = z.enum(['queued', 'running', 'waiting_approval', 'verifying', 'completed', 'failed', 'cancelled', 'paused']);
@@ -21,16 +30,31 @@ export const BrowserTaskInputSchema=z.object({url:BrowserPublicUrlSchema,allowed
 export type BrowserTaskInput=z.infer<typeof BrowserTaskInputSchema>;
 export const BrowserOpenResultSchema=z.object({kind:z.literal('browser_open'),outcome:z.literal('opened'),sessionId:z.uuid(),observationId:z.uuid(),url:BrowserPublicUrlSchema,title:z.string().max(1000),observedAt:z.iso.datetime(),summary:z.string().min(1).max(1600),screenshotAvailable:z.boolean(),screenshotUrl:z.string().regex(/^\/api\/browser\/tasks\/[a-f0-9-]{36}\/screenshot$/).nullable(),contentHash:z.string().regex(/^[a-f0-9]{64}$/),screenshotHash:z.string().regex(/^[a-f0-9]{64}$/).nullable()}).strict().superRefine((result,context)=>{if(result.screenshotAvailable!==(result.screenshotUrl!==null&&result.screenshotHash!==null)||!result.screenshotAvailable&&(result.screenshotUrl!==null||result.screenshotHash!==null))context.addIssue({code:'custom',path:['screenshotAvailable'],message:'دليل لقطة الصفحة غير مكتمل.'});});
 export type BrowserOpenResult=z.infer<typeof BrowserOpenResultSchema>;
-export const CreateTaskSchema = z.object({
+const SkillRollbackHash=z.string().regex(/^[a-f0-9]{64}$/);
+export const SkillRollbackInputSchema=z.object({runId:z.uuid(),preimageId:z.uuid(),sourceReceiptId:z.uuid(),preimageHash:SkillRollbackHash,expectedAfterHash:SkillRollbackHash}).strict();
+export type SkillRollbackInput=z.infer<typeof SkillRollbackInputSchema>;
+export const SkillRollbackReviewSchema=z.object({root:z.string().min(1).max(1000),path:z.string().min(1).max(1000),beforeHash:SkillRollbackHash.nullable(),afterHash:SkillRollbackHash,deletedOnRestore:z.boolean(),bytes:z.number().int().min(0).max(65536)}).strict();
+export type SkillRollbackReview=z.infer<typeof SkillRollbackReviewSchema>;
+const CreateTaskBaseSchema = z.object({
   title: z.string().trim().min(3).max(120),
   goal: z.string().trim().min(5).max(4000),
-  capabilityId: z.enum(['system.diagnostic', 'plan.draft', 'coding.change','studio.change','browser.open']),
+  capabilityId: z.enum(['system.diagnostic', 'plan.draft', 'coding.change','studio.change','browser.open','skill.run','skill.rollback']),
   autonomy: AutonomySchema.default('assisted'),
   projectId:z.uuid().optional(),
   studioInput:StudioTaskInputSchema.optional(),
   browserInput:BrowserTaskInputSchema.optional(),
+  skillInput:SkillRunInputSchema.optional(),
+  skillRollbackInput:SkillRollbackInputSchema.optional(),
 }).strict().superRefine((task,context)=>{if(task.capabilityId==='coding.change'&&!task.projectId)context.addIssue({code:'custom',path:['projectId'],message:'يلزم تحديد مشروع البرمجة.'});if(task.capabilityId!=='coding.change'&&task.projectId)context.addIssue({code:'custom',path:['projectId'],message:'المشروع خاص بمهمة البرمجة.'});if(task.capabilityId==='studio.change'&&!task.studioInput)context.addIssue({code:'custom',path:['studioInput'],message:'يلزم ربط الطلب بإصدار مشروع الاستوديو.'});if(task.capabilityId!=='studio.change'&&task.studioInput)context.addIssue({code:'custom',path:['studioInput'],message:'سياق الاستوديو خاص بتعديلاته.'});if(task.capabilityId==='browser.open'&&!task.browserInput)context.addIssue({code:'custom',path:['browserInput'],message:'يلزم تحديد رابط مهمة المتصفح.'});if(task.capabilityId!=='browser.open'&&task.browserInput)context.addIssue({code:'custom',path:['browserInput'],message:'نطاق المتصفح خاص بمهمة فتح الصفحة.'});});
+export const CreateTaskSchema = CreateTaskBaseSchema.superRefine((task, context) => {
+  if(task.capabilityId==='skill.rollback'&&(!task.skillRollbackInput||task.autonomy!=='assisted'))context.addIssue({code:'custom',path:['skillRollbackInput'],message:'استعادة الملف تحتاج مدخلات مثبتة وموافقة مستقلة.'});
+  if(task.capabilityId!=='skill.rollback'&&task.skillRollbackInput)context.addIssue({code:'custom',path:['skillRollbackInput'],message:'مدخلات الاستعادة تخص مهمة الاستعادة فقط.'});
+  if (task.capabilityId === 'skill.run' && !task.skillInput) context.addIssue({ code: 'custom', path: ['skillInput'], message: 'يلزم مخطط مهارات بمدخلات محددة.' });
+  if (task.capabilityId !== 'skill.run' && task.skillInput) context.addIssue({ code: 'custom', path: ['skillInput'], message: 'مدخلات المهارات تخص تشغيل المهارات فقط.' });
+});
 export type CreateTaskInput = z.infer<typeof CreateTaskSchema>;
+/** Reviewable persisted node input; never accepted by the public task creation schema. */
+export const SkillNodeInputSchema = z.record(z.string(),z.unknown()).refine(isBoundedSkillJson,'مدخلات الخطوة ليست JSON محدودة صالحة.');
 export const TaskSchema = z.object({
   id: z.string(), ownerId: z.string(), title: z.string(), goal: z.string(), capabilityId: z.string(),
   status: TaskStatusSchema, autonomy: AutonomySchema,
@@ -39,6 +63,11 @@ export const TaskSchema = z.object({
   projectId:z.string().nullable().optional(),
   studioInput:StudioTaskInputSchema.nullable().optional(),
   browserInput:BrowserTaskInputSchema.nullable().optional(),
+  skillInput:SkillRunInputSchema.nullable().optional(),
+  skillBinding:SkillNodeBindingSchema.nullable().optional(),
+  skillNodeInput:SkillNodeInputSchema.nullable().optional(),
+  skillRollbackInput:SkillRollbackInputSchema.nullable().optional(),
+  skillRollbackReview:SkillRollbackReviewSchema.nullable().optional(),
 });
 export type Task = z.infer<typeof TaskSchema>;
 export const TaskEventSchema = z.object({
