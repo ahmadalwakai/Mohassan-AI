@@ -13,6 +13,8 @@ const databases: Awaited<ReturnType<typeof createDatabase>>[] = [];
 const controls: Awaited<ReturnType<typeof createCommandChatControl>>[] = [];
 const runtimes: Runtime[] = [];
 const browser = (act?: (...args: unknown[]) => Promise<unknown>) => ({
+  setCheckpointStore() {},
+  bindAccount: async () => {},
   hasPage: async () => false,
   close: async () => {},
   act: act ?? (async () => { throw new Error('No browser action was expected'); }),

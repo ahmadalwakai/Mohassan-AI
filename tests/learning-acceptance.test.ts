@@ -125,8 +125,10 @@ it('records 20 isolated terminal tasks once with goal-bound evidence and redacti
   skipCapture = true;
   await runChat(`افتح ${origin}/missing واعرض لقطة من الصفحة`, 'browser', {outcome: 'verified_failure', status: 'partial'});
   skipCapture = false;
-  await runChat(`افتح ${origin}/redirect`, 'browser');
-  await runChat(`افتح ${origin}/missing-page`, 'browser', {outcome: 'verified_failure'});
+  // A redirect elsewhere cannot certify the requested page, so the run ends partial.
+  await runChat(`افتح ${origin}/redirect`, 'browser', {status: 'partial'});
+  // A 404 is a verified failure to open the page, so the run ends partial, never completed.
+  await runChat(`افتح ${origin}/missing-page`, 'browser', {outcome: 'verified_failure', status: 'partial'});
   for (const query of ['مكتبة', 'مدرسة']) {
     await runChat(`ابحث عن ${query}.`, 'research', {decisions: [{tool: 'search', text: query}, answer]});
   }
