@@ -37,8 +37,8 @@ export function verifyExecutableGates(evidence: Readonly<ExecutableGateEvidence>
   });
   const gates: ExecutableGate[] = [
     gate('G1', 'Fixed unpackaged native host', evidence.fixedUnpackagedHostVerified === true,
-      'The fixed System32 host produced verified zero-capability AppContainer and Job evidence.',
-      'The fixed unpackaged host has not produced verified native evidence.', ['GetCurrentPackageFullName', 'TokenIsAppContainer', 'TokenCapabilities=0', 'Job limits queried before ResumeThread']),
+      'The fixed System32 host produced verified AppContainer and Job evidence: zero capabilities, or only pinned registryRead under LPAC.',
+      'The fixed unpackaged host has not produced verified native evidence.', ['GetCurrentPackageFullName', 'TokenIsAppContainer', 'TokenCapabilities=0 (LPAC: registryRead only)', 'Job limits queried before ResumeThread']),
     gate('G2', 'Hard disk quota', evidence.hardDiskQuotaVerified === true,
       'A trusted fixture filled a separate fixed-size volume and Windows stopped it with ENOSPC at the volume capacity.',
       'No per-run hard disk quota is proved. A size monitor or Job I/O notification is not a hard quota.', ['Native volume capacity read before ResumeThread', 'ENOSPC at the bound', 'Profile storage denied by the OS']),
@@ -50,7 +50,7 @@ export function verifyExecutableGates(evidence: Readonly<ExecutableGateEvidence>
       'The Node permission and native-addon denial fixture has not passed.', ['--permission', '--no-addons', 'ERR_ACCESS_DENIED for source writes, outside reads, child processes and workers', 'ERR_DLOPEN_DISABLED']),
     gate('G5', 'LPAC and public-resource isolation', evidence.lowPrivilegeTokenVerified === true && evidence.publicResourceIsolationVerified === true,
       'The native LPAC token and controlled public-resource denial were independently verified.',
-      evidence.lowPrivilegeTokenVerified ? 'LPAC token and Node compatibility verified; public-resource isolation is not yet proved.' : evidence.lowPrivilegeMarkerVerified ? 'The LPAC token marker is verified, but Node has not started under LPAC with zero capabilities.' : 'LPAC is required; its native token and Node compatibility have not been proved.', ['Native WIN://NOALLAPPPKG token attribute', 'Controlled public-resource denial']),
+      evidence.lowPrivilegeTokenVerified ? 'LPAC token and Node compatibility verified; public-resource isolation is not yet proved.' : evidence.lowPrivilegeMarkerVerified ? 'The LPAC token marker is verified, but Node has not started under LPAC with only the pinned registryRead capability.' : 'LPAC is required; its native token and Node compatibility have not been proved.', ['Native WIN://NOALLAPPPKG token attribute', 'Exactly one enabled capability: pinned registryRead SID', 'Controlled public-resource denial']),
     gate('G6', 'Fixed script execution mode', evidence.fixedScriptVerified === true,
       'A repository-owned fixture ran through a fixed Node entry with bounded JSON inputs; public execution still requires every gate.',
       'The fixed script execution fixture has not passed.', ['Known snapshot entry', 'No caller shell, arguments or environment', 'Native requested memory cap matched']),

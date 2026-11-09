@@ -12,7 +12,7 @@ import { analyzeAccount, dateRange } from './performance.ts';
 import { CampaignPublishingController, launchHash } from './publisher.ts';
 import { detectScript, readLandingPage, validateBrief } from './quality.ts';
 import { audit, iso, json, parsed, type Db } from './store.ts';
-import { summarizeOperations, verifyDraft } from './verifier.ts';
+import { summarizeOperations, verifyConversionTracking, verifyDraft } from './verifier.ts';
 
 export interface LandingFetch { status: number; finalUrl: string; html: string; contentLanguage: string | null }
 
@@ -143,7 +143,11 @@ export function createGoogleAdsControl(db: Db, config: GoogleAdsConfig) {
     const prepared = await connection.runForAccount(ownerId, (context, row) => prepare(ownerId, id, brief, context, row).then(result => ({ ...result, customerId: context.customerId })));
     const inserted = await db.insertInto('google_ads_drafts').values({ id, owner_id: ownerId, customer_id: prepared.customerId, idempotency_key: idempotencyKey, state: 'preview', brief: json(brief), bidding: prepared.bidding, operations: json(prepared.operations), draft_hash: prepared.draftHash, geo_targets: json(prepared.geoTargets), summary: json(prepared.summary), strategy: json(prepared.strategy) })
       .onConflict(conflict => conflict.columns(['owner_id', 'idempotency_key']).doNothing()).returningAll().executeTakeFirst();
-    if (!inserted) return toDraft(await db.selectFrom('google_ads_drafts').selectAll().where('owner_id', '=', ownerId).where('idempotency_key', '=', idempotencyKey).executeTakeFirstOrThrow());
+    if (!inserted) {
+      const concurrent = await db.selectFrom('google_ads_drafts').selectAll().where('owner_id', '=', ownerId).where('idempotency_key', '=', idempotencyKey).executeTakeFirstOrThrow();
+      if (canonicalJson(parsed(concurrent.brief)) !== canonicalJson(brief)) throw new GoogleAdsError('GOOGLE_ADS_IDEMPOTENCY', 'أُعيد استخدام مفتاح الطلب بمحتوى مختلف.', 409);
+      return toDraft(concurrent);
+    }
     await audit(db, ownerId, id, 'draft_created', { draftHash: prepared.draftHash });
     return toDraft(inserted);
   }
@@ -202,14 +206,14 @@ export function createGoogleAdsControl(db: Db, config: GoogleAdsConfig) {
     return next;
   }
 
-  async function verify(ownerId: string, id: string, expectedRevision: number) {
+  async function verify(ownerId: string, id: string, expectedRevision: number, allowUnprovenConversionsForPaused = false) {
     const { connection, client } = ready();
     const { draft, operations, geoTargets } = await load(ownerId, id, expectedRevision);
     if (!['validated', 'verified'].includes(draft.state)) throw stateConflict('يلزم اجتياز فحص الجودة أولًا.');
     if (draft.validation?.draftHash !== draft.draftHash) throw stateConflict('تغيرت المسودة بعد فحص الجودة.');
     const verification = await connection.runForAccount(ownerId, context => {
       assertAccount(draft, context.customerId);
-      return verifyDraft(client, { draftId: id, customerId: draft.customerId, brief: draft.brief, operations, storedHash: draft.draftHash, geoResourceNames: geoTargets.map(item => item.resourceName), maxDailyBudgetMicros, context });
+      return verifyDraft(client, { draftId: id, customerId: draft.customerId, brief: draft.brief, operations, storedHash: draft.draftHash, geoResourceNames: geoTargets.map(item => item.resourceName), maxDailyBudgetMicros, context, allowUnprovenConversionsForPaused });
     });
     const next = await move(ownerId, draft, ['validated', 'verified'], verification.passed ? 'verified' : 'validated', { verification: json(verification) });
     await audit(db, ownerId, id, verification.passed ? 'verification_passed' : 'verification_failed', { failed: verification.checks.filter(check => !check.passed).map(check => check.id) });
@@ -223,19 +227,25 @@ export function createGoogleAdsControl(db: Db, config: GoogleAdsConfig) {
     return (await load(ownerId, id)).draft;
   }
 
-  async function publish(ownerId: string, id: string, expectedRevision: number) {
+  async function publish(ownerId: string, id: string, expectedRevision: number, beforeWrite?: () => Promise<void>) {
     const { connection, publisher } = ready();
     const { draft, operations } = await load(ownerId, id, expectedRevision);
     const gates = await publishing(await connection.row(ownerId));
-    await connection.runForAccount(ownerId, context => { assertAccount(draft, context.customerId); return publisher.publish(ownerId, draft, operations, gates, context); });
+    await connection.runForAccount(ownerId, context => { assertAccount(draft, context.customerId); return publisher.publish(ownerId, draft, operations, gates, context, beforeWrite); });
     return (await load(ownerId, id)).draft;
   }
 
   async function launch(ownerId: string, id: string, expectedRevision: number) {
-    const { connection, publisher } = ready();
+    const { connection, publisher, client } = ready();
     const { draft } = await load(ownerId, id, expectedRevision);
     const gates = await publishing(await connection.row(ownerId));
-    await connection.runForAccount(ownerId, context => { assertAccount(draft, context.customerId); return publisher.launch(ownerId, draft, gates, context); });
+    await connection.runForAccount(ownerId, async context => {
+      assertAccount(draft, context.customerId);
+      if (draft.state !== 'launch_approved') throw stateConflict('يلزم موافقة صريحة على الإطلاق.');
+      const tracking = await verifyConversionTracking(client, context);
+      if (!tracking.passed) throw new GoogleAdsError('GOOGLE_ADS_CONVERSIONS_REQUIRED', 'لا تُشغّل الحملة قبل إثبات عمل تتبع التحويلات. الحملة ما زالت متوقفة.', 409);
+      return publisher.launch(ownerId, draft, gates, context);
+    });
     return (await load(ownerId, id)).draft;
   }
 
@@ -254,8 +264,43 @@ export function createGoogleAdsControl(db: Db, config: GoogleAdsConfig) {
     return next;
   }
 
+  /** A trusted, task-scoped adapter may create one new PAUSED campaign. This method can never launch. */
+  async function createPausedCampaign(ownerId: string, input: unknown, idempotencyKey: string, authority: { assertActive(): Promise<void> }): Promise<GoogleAdsDraft> {
+    if (!/^[a-zA-Z0-9:_-]{8,160}$/.test(idempotencyKey)) throw new GoogleAdsError('GOOGLE_ADS_IDEMPOTENCY', 'يلزم مفتاح ثابت صالح للمهمة.', 400);
+    if (!authority || typeof authority.assertActive !== 'function') throw new GoogleAdsError('GOOGLE_ADS_AUTHORITY_REQUIRED', 'يلزم تفويض المهمة الجاري لإنشاء الحملة المتوقفة.', 403);
+    await authority.assertActive();
+    const { connection } = ready();
+    const gates = await publishing(await connection.row(ownerId));
+    if (!gates.available) throw new GoogleAdsError('GOOGLE_ADS_PUBLISHING_CLOSED', `إنشاء الحملة مغلق: ${gates.gates.filter(gate => !gate.passed).map(gate => gate.detail).join('؛ ')}`, 403);
+    let draft = await createDraft(ownerId, input, idempotencyKey);
+    const claimed = await db.insertInto('google_ads_automatic_requests').values({ owner_id: ownerId, idempotency_key: idempotencyKey, draft_id: draft.id, status: 'running' }).onConflict(conflict => conflict.columns(['owner_id', 'idempotency_key']).doNothing()).returning('draft_id').executeTakeFirst();
+    // An interrupted/unknown request is never retried automatically. The existing draft is reviewable.
+    if (!claimed) return (await load(ownerId, draft.id)).draft;
+    try {
+      if (draft.state !== 'preview') throw stateConflict('مسار الإنشاء الآلي يقبل معاينة جديدة فقط؛ راجع حالة الطلب السابق.');
+      draft = await save(ownerId, draft.id, draft.revision);
+      draft = await validate(ownerId, draft.id, draft.revision);
+      if (draft.state !== 'validated') throw new GoogleAdsError('GOOGLE_ADS_QUALITY_REJECTED', 'لم تجتز الحملة فحص الجودة؛ لم يُكتب شيء في الحساب.', 409);
+      draft = await verify(ownerId, draft.id, draft.revision, true);
+      if (draft.state !== 'verified') throw new GoogleAdsError('GOOGLE_ADS_VERIFICATION_REJECTED', 'لم تجتز الحملة التحقق المستقل؛ لم يُكتب شيء في الحساب.', 409);
+      await authority.assertActive();
+      await audit(db, ownerId, draft.id, 'paused_creation_authorized', { idempotencyKey, draftHash: draft.draftHash, customerId: draft.customerId, conversionTracking: draft.verification?.checks.find(check => check.id === 'conversion_tracking')?.passed === true, launchAuthorized: false });
+      draft = await approve(ownerId, draft.id, 'publish', draft.revision, draft.draftHash, draft.customerId);
+      // Recheck task fencing and all source-bound gates immediately before the existing single-use writer.
+      await authority.assertActive();
+      draft = await publish(ownerId, draft.id, draft.revision, () => authority.assertActive());
+      if (draft.state !== 'published' || !draft.campaignResourceName) throw new GoogleAdsError('GOOGLE_ADS_PAUSED_UNCONFIRMED', 'لم تؤكد قراءة الحساب إنشاء الحملة متوقفة؛ راجع النتيجة قبل المتابعة.', 409);
+      await db.updateTable('google_ads_automatic_requests').set({ status: 'completed', updated_at: new Date() }).where('owner_id', '=', ownerId).where('idempotency_key', '=', idempotencyKey).execute();
+      return draft;
+    } catch (error) {
+      const current = (await load(ownerId, draft.id)).draft;
+      await db.updateTable('google_ads_automatic_requests').set({ status: ['publishing', 'outcome_unknown'].includes(current.state) ? 'unknown' : 'blocked', updated_at: new Date() }).where('owner_id', '=', ownerId).where('idempotency_key', '=', idempotencyKey).execute();
+      throw error;
+    }
+  }
+
   return {
-    configured, status, report, market, recommendations, createDraft, revise, save, validate, verify, approve, publish, launch, reconcile, discard,
+    configured, status, report, market, recommendations, createDraft, createPausedCampaign, revise, save, validate, verify, approve, publish, launch, reconcile, discard,
     authorizationUrl: (ownerId: string) => ready().connection.authorizationUrl(ownerId),
     completeAuthorization: (ownerId: string, code: string, state: string) => ready().connection.completeAuthorization(ownerId, code, state),
     disconnect: (ownerId: string) => ready().connection.disconnect(ownerId),

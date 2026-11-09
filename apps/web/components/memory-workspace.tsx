@@ -4,6 +4,7 @@ import { useCallback,useEffect,useRef,useState,type FormEvent } from 'react';
 import { BookOpen,Check,CheckCheck,Clock3,FlaskConical,History,Plus,RefreshCw,Search,ShieldCheck,Trash2,X } from 'lucide-react';
 import { MemoryItemSchema,MemoryWorkspaceSchema,exampleSkill,type MemoryItem,type MemoryLayer,type MemorySkill,type MemoryWorkspace as Workspace } from '@mohassan/memory/contracts';
 import styles from './memory-workspace.module.css';
+import { LearningPanel } from './learning-panel';
 
 const layers:Record<MemoryLayer,string>={working:'ذاكرة العمل',episodic:'الخبرات',semantic:'المعرفة',procedural:'الإجراءات',failure:'التعثرات',preference:'التفضيلات'};
 const skillStates:Record<MemorySkill['status'],string>={candidate:'مرشح',sandbox_tested:'اجتاز الاختبار',benchmarked:'بانتظار الموافقة',active:'مفعّلة',revoked:'ملغاة'};
@@ -40,6 +41,7 @@ export function MemoryWorkspace({offline,onOpenLibrary}:{offline:boolean;onOpenL
   const items=(found??data?.items??[]).filter(item=>!layer||item.layer===layer),activeSkills=data?.skills.filter(skill=>skill.status==='active')??[];
   return <section className={styles.root} aria-label="الذاكرة والتعلّم" aria-busy={Boolean(busy)}>{onOpenLibrary?<div className={styles.explainer}><BookOpen size={19}/><div><strong>مكتبة المهارات الموحدة</strong><p>المهارات المستوردة والأدوات والأذونات والأدلة لها مكتبتها الخاصة. تبقى قوائم الفحص القديمة هنا.</p><button type="button" onClick={onOpenLibrary}>فتح مكتبة المهارات</button></div></div>:null}
     <div className={styles.intro}><div><span>خبرة لها مصدر</span><h2>ما نتذكره، ولماذا نثق به.</h2><p>ذكريات موثقة بوقت ومصدر، ومهارات تقاس قبل أن تفعّلها.</p></div><button disabled={disabled} onClick={()=>void load()}><RefreshCw size={16}/>تحديث الذاكرة</button></div>
+    <LearningPanel offline={offline}/>
     {error?<p className={styles.error} role="alert">{error}</p>:null}{notice?<p className={styles.notice} role="status">{notice}</p>:null}
     <div className={styles.metrics}>{[{label:'مهام موثقة',value:data?.metrics.terminalTasks??0},{label:'مهام مكتملة',value:data?.metrics.completed??0},{label:'تعثرات مسجلة',value:data?.metrics.failed??0},{label:'توكنات معروفة',value:(data?.metrics.knownInputTokens??0)+(data?.metrics.knownOutputTokens??0)},{label:'ذاكرة منتهية',value:data?.expiredCount??0}].map(item=><article key={item.label}><span>{item.label}</span><strong>{item.value.toLocaleString('ar')}</strong></article>)}</div>
     <nav className={styles.tabs} aria-label="أقسام الذاكرة"><button aria-pressed={tab==='memory'} onClick={()=>setTab('memory')}><BookOpen size={16}/>الذكريات</button><button aria-pressed={tab==='skills'} onClick={()=>setTab('skills')}><FlaskConical size={16}/>المهارات المقاسة</button><button aria-pressed={tab==='feedback'} onClick={()=>setTab('feedback')}><CheckCheck size={16}/>التغذية الراجعة</button></nav>

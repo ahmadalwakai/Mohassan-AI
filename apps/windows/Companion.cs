@@ -54,6 +54,11 @@ namespace MohassanWindows {
     [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr handle,ref Point point);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr handle);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr handle,int command);
+    [DllImport("user32.dll",SetLastError=true)] static extern IntPtr SendMessageTimeout(IntPtr handle,uint message,UIntPtr wParam,IntPtr lParam,uint flags,uint timeout,out UIntPtr result);
+    [DllImport("kernel32.dll",SetLastError=true)] static extern void SetLastError(uint error);
+    [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point point);
+    [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr handle,uint flags);
     [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr handle,IntPtr hdc,uint flags);
     [DllImport("user32.dll")] static extern IntPtr OpenInputDesktop(uint flags,bool inherit,uint access);
     [DllImport("user32.dll")] static extern bool CloseDesktop(IntPtr handle);
@@ -104,19 +109,57 @@ namespace MohassanWindows {
     static Input MouseInput(uint flags,uint data){return new Input{Type=0,Value=new InputUnion{Mouse=new Mouse{Flags=flags,Data=data}}};}
     static Input KeyInput(ushort key,ushort scan,uint flags){return new Input{Type=1,Value=new InputUnion{Key=new Keyboard{Vk=key,Scan=scan,Flags=flags}}};}
     static string Send(Input[] input){return SendInput((uint)input.Length,input,Marshal.SizeOf(typeof(Input)))==input.Length?"APPLIED":"INPUT_PARTIAL";}
+    static bool Foreground(Target target){return target.Mode=="desktop"||GetForegroundWindow()==target.Handle;}
+    static bool FocusResult(Dictionary<string,object> diagnostic,bool allowed,string outcome){if(diagnostic!=null)diagnostic["outcome"]=outcome;return allowed;}
+    static bool RequestForeground(Target target,Func<bool> permission,Dictionary<string,object> diagnostic=null){
+      if(Foreground(target))return FocusResult(diagnostic,true,"already_foreground");
+      if(!permission())return FocusResult(diagnostic,false,"permission_denied_before_request");
+      if(!SafeDesktop())return FocusResult(diagnostic,false,"unsafe_desktop_before_request");
+      if(!SameTarget(target))return FocusResult(diagnostic,false,"target_changed_before_request");
+      bool accepted=SetForegroundWindow(target.Handle);if(diagnostic!=null)diagnostic["setForegroundAccepted"]=accepted;
+      // Cross-thread activation is asynchronous. WM_NULL waits only for the target's queue;
+      // it grants no focus privilege and never attaches input queues or sends synthetic keys.
+      // Clear last error only for the local diagnostic. A zero error on failure is ambiguous,
+      // so it must not be represented as a confirmed timeout.
+      if(diagnostic!=null)SetLastError(0);
+      UIntPtr ignored;var wait=Stopwatch.StartNew();IntPtr response=SendMessageTimeout(target.Handle,0,UIntPtr.Zero,IntPtr.Zero,3,300,out ignored);int waitError=Marshal.GetLastWin32Error();wait.Stop();
+      if(diagnostic!=null){diagnostic["wmNullCompleted"]=response!=IntPtr.Zero;diagnostic["wmNullElapsedMs"]=wait.ElapsedMilliseconds;diagnostic["wmNullError"]=response==IntPtr.Zero?waitError:0;}
+      if(response==IntPtr.Zero)return FocusResult(diagnostic,false,waitError==1460?"wm_null_timeout":"wm_null_failed_or_unreported_timeout");
+      if(!permission())return FocusResult(diagnostic,false,"permission_denied_after_wait");
+      if(!SafeDesktop())return FocusResult(diagnostic,false,"unsafe_desktop_after_wait");
+      if(!SameTarget(target))return FocusResult(diagnostic,false,"target_changed_after_wait");
+      bool foreground=Foreground(target);return FocusResult(diagnostic,foreground,foreground?"foreground_acquired":accepted?"final_foreground_mismatch":"set_foreground_refused");
+    }
+    public static Dictionary<string,object> DiagnoseFixtureFocus(Target target){
+      var diagnostic=Json.D("inputAttempted",false,"wmNullTimeoutMs",300);
+      // This entry point is reachable only from the local fixture command, and cannot
+      // diagnose or request focus for another process, desktop, or stale target.
+      if(target.Mode!="window"||target.ProcessId!=Process.GetCurrentProcess().Id||!SameTarget(target)){diagnostic["outcome"]="fixture_scope_denied";diagnostic["focusGranted"]=false;return diagnostic;}
+      DateTime expires=DateTime.UtcNow.AddSeconds(2);diagnostic["foregroundInitially"]=Foreground(target);
+      diagnostic["focusGranted"]=RequestForeground(target,delegate{return DateTime.UtcNow<expires;},diagnostic);
+      diagnostic["permissionExpired"]=DateTime.UtcNow>=expires;diagnostic["foregroundFinally"]=Foreground(target);return diagnostic;
+    }
+    static string SendToTarget(Target target,Input[] input,Func<bool> permission){
+      if(!permission()||!SafeDesktop())return "CONTROL_DENIED";
+      if(!SameTarget(target))return "UNSAFE_DESKTOP";
+      if(!Foreground(target))return "FOCUS_DENIED";
+      foreach(int key in new[]{0x10,0x11,0x12,0x5b,0x5c})if((GetAsyncKeyState(key)&0x8000)!=0)return "LOCAL_MODIFIER_DOWN";
+      return Send(input);
+    }
+    static bool PointerOnTarget(Target target,Point point){return target.Mode=="desktop"||GetAncestor(WindowFromPoint(point),2)==target.Handle;}
     public static string Apply(Target target,ImageFrame expected,Dictionary<string,object> action,bool fixtureOnly,Func<bool> permission){
       if(!permission())return "CONTROL_DENIED";
       if(!SafeDesktop()||!SameTarget(target))return "UNSAFE_DESKTOP";
       if(fixtureOnly&&(target.Mode!="window"||target.ProcessId!=Process.GetCurrentProcess().Id))return "FIXTURE_SCOPE_DENIED";
-      if(target.Mode=="window"){if(GetForegroundWindow()!=target.Handle)SetForegroundWindow(target.Handle);if(GetForegroundWindow()!=target.Handle)return "FOCUS_DENIED";}
+      if(!RequestForeground(target,permission))return "FOCUS_DENIED";
       foreach(int key in new[]{0x10,0x11,0x12,0x5b,0x5c})if((GetAsyncKeyState(key)&0x8000)!=0)return "LOCAL_MODIFIER_DOWN";
       var fresh=Capture(target,false);if(fresh.Hash!=expected.Hash)return "SCREEN_CHANGED";
       if(!permission()||!SafeDesktop())return "CONTROL_DENIED";
       string type=Json.S(action,"type");
-      if(type=="click"){double x=Json.N(action,"x"),y=Json.N(action,"y");if(Double.IsNaN(x)||Double.IsNaN(y)||x<0||x>1||y<0||y>1)return "INPUT_INVALID";var area=Area(target);if(!SetCursorPos(area.Left+(int)((area.Right-area.Left-1)*x),area.Top+(int)((area.Bottom-area.Top-1)*y)))return "INPUT_BLOCKED";if(!permission())return "CONTROL_DENIED";bool right=Json.S(action,"button")=="right";return Send(new[]{MouseInput(right?8u:2u,0),MouseInput(right?16u:4u,0)});}
-      if(type=="text"){string text=Json.S(action,"text");if(text.Length<1||text.Length>120||text.Any(character=>character<32||character==127))return "INPUT_INVALID";var input=new List<Input>();foreach(char character in text){input.Add(KeyInput(0,character,4));input.Add(KeyInput(0,character,6));}return Send(input.ToArray());}
-      if(type=="key"){var keys=new Dictionary<string,ushort>{{"Enter",13},{"Tab",9},{"Escape",27},{"Backspace",8},{"Delete",46},{"ArrowLeft",37},{"ArrowRight",39},{"ArrowUp",38},{"ArrowDown",40},{"Home",36},{"End",35},{"PageUp",33},{"PageDown",34},{"Space",32}};ushort key;if(!keys.TryGetValue(Json.S(action,"key"),out key))return "INPUT_INVALID";return Send(new[]{KeyInput(key,0,0),KeyInput(key,0,2)});}
-      if(type=="scroll"){double delta=Json.N(action,"delta");if(Double.IsNaN(delta)||delta==0||Math.Abs(delta)>3||delta!=Math.Truncate(delta))return "INPUT_INVALID";return Send(new[]{MouseInput(0x0800,unchecked((uint)((int)delta*120)))});}
+      if(type=="click"){double x=Json.N(action,"x"),y=Json.N(action,"y");if(Double.IsNaN(x)||Double.IsNaN(y)||x<0||x>1||y<0||y>1)return "INPUT_INVALID";var area=Area(target);var point=new Point{X=area.Left+(int)((area.Right-area.Left-1)*x),Y=area.Top+(int)((area.Bottom-area.Top-1)*y)};if(!PointerOnTarget(target,point)||!SetCursorPos(point.X,point.Y))return "INPUT_BLOCKED";if(!PointerOnTarget(target,point))return "INPUT_BLOCKED";bool right=Json.S(action,"button")=="right";return SendToTarget(target,new[]{MouseInput(right?8u:2u,0),MouseInput(right?16u:4u,0)},permission);}
+      if(type=="text"){string text=Json.S(action,"text");if(text.Length<1||text.Length>120||text.Any(character=>character<32||character==127))return "INPUT_INVALID";var input=new List<Input>();foreach(char character in text){input.Add(KeyInput(0,character,4));input.Add(KeyInput(0,character,6));}return SendToTarget(target,input.ToArray(),permission);}
+      if(type=="key"){var keys=new Dictionary<string,ushort>{{"Enter",13},{"Tab",9},{"Escape",27},{"Backspace",8},{"Delete",46},{"ArrowLeft",37},{"ArrowRight",39},{"ArrowUp",38},{"ArrowDown",40},{"Home",36},{"End",35},{"PageUp",33},{"PageDown",34},{"Space",32}};ushort key;if(!keys.TryGetValue(Json.S(action,"key"),out key))return "INPUT_INVALID";return SendToTarget(target,new[]{KeyInput(key,0,0),KeyInput(key,0,2)},permission);}
+      if(type=="scroll"){double delta=Json.N(action,"delta");if(Double.IsNaN(delta)||delta==0||Math.Abs(delta)>3||delta!=Math.Truncate(delta))return "INPUT_INVALID";var area=Area(target);var point=new Point{X=(area.Left+area.Right)/2,Y=(area.Top+area.Bottom)/2};if(!PointerOnTarget(target,point)||!SetCursorPos(point.X,point.Y)||!PointerOnTarget(target,point))return "INPUT_BLOCKED";return SendToTarget(target,new[]{MouseInput(0x0800,unchecked((uint)((int)delta*120)))},permission);}
       return "INPUT_INVALID";
     }
   }
@@ -164,16 +207,35 @@ namespace MohassanWindows {
       if(!closing)BeginInvoke((Action)delegate{status.Text=Json.S(nextGrant,"scope")=="control"?"تحكم مصرح مؤقتًا — STOP يوقفه فورًا":"مشاهدة فقط — الإدخال معطل";});
     }
     bool GrantAllows(Dictionary<string,object> value,bool input){DateTime expiry;return consent.View&&(!input||consent.Control&&Json.S(value,"scope")=="control")&&consent.Target!=null&&Json.S(value,"approvalNonce")==consent.Epoch&&Json.S(value,"targetKey")==consent.Target.Key&&DateTime.TryParse(Json.S(value,"expiresAt"),CultureInfo.InvariantCulture,DateTimeStyles.AdjustToUniversal,out expiry)&&expiry.ToUniversalTime()>DateTime.UtcNow;}
-    public string Execute(Dictionary<string,object> command,Dictionary<string,object> approved,bool fixtureOnly){Target target;ImageFrame expected;string epoch;lock(gate){if(!GrantAllows(approved,true)||Json.S(command,"grantId")!=Json.S(approved,"id"))return "CONTROL_DENIED";double sequence=Json.N(command,"sequence");if(Double.IsNaN(sequence)||sequence<=lastSequence||sequence!=Math.Truncate(sequence))return "SEQUENCE_REPLAY";lastSequence=(long)sequence;DateTime expires;if(!DateTime.TryParse(Json.S(command,"expiresAt"),CultureInfo.InvariantCulture,DateTimeStyles.AdjustToUniversal,out expires)||expires.ToUniversalTime()<=DateTime.UtcNow)return "COMMAND_EXPIRED";if(!frames.TryGetValue(Json.S(command,"frameId"),out expected)||(DateTime.UtcNow-expected.CapturedAt).TotalSeconds>3||expected.TargetKey!=consent.Target.Key)return "FRESH_SCREEN_REQUIRED";target=consent.Target;epoch=consent.Epoch;}try{return Native.Apply(target,expected,Json.O(Json.V(command,"action")),fixtureOnly,delegate{lock(gate)return epoch==consent.Epoch&&GrantAllows(approved,true);});}catch{return "NATIVE_BOUNDARY_FAILED";}}
+    public string Execute(Dictionary<string,object> command,Dictionary<string,object> approved,bool fixtureOnly){Target target;ImageFrame expected;string epoch;DateTime expires;lock(gate){if(!GrantAllows(approved,true)||Json.S(command,"grantId")!=Json.S(approved,"id"))return "CONTROL_DENIED";double sequence=Json.N(command,"sequence");if(Double.IsNaN(sequence)||sequence<=lastSequence||sequence!=Math.Truncate(sequence))return "SEQUENCE_REPLAY";lastSequence=(long)sequence;if(!DateTime.TryParse(Json.S(command,"expiresAt"),CultureInfo.InvariantCulture,DateTimeStyles.AdjustToUniversal,out expires)||expires.ToUniversalTime()<=DateTime.UtcNow)return "COMMAND_EXPIRED";if(!frames.TryGetValue(Json.S(command,"frameId"),out expected)||(DateTime.UtcNow-expected.CapturedAt).TotalSeconds>3||expected.TargetKey!=consent.Target.Key)return "FRESH_SCREEN_REQUIRED";target=consent.Target;epoch=consent.Epoch;}try{return Native.Apply(target,expected,Json.O(Json.V(command,"action")),fixtureOnly,delegate{lock(gate)return epoch==consent.Epoch&&GrantAllows(approved,true)&&expires.ToUniversalTime()>DateTime.UtcNow&&(DateTime.UtcNow-expected.CapturedAt).TotalSeconds<=3;});}catch{return "NATIVE_BOUNDARY_FAILED";}}
     public void ConfigureFixture(Target target,bool allowControl,ImageFrame captured){lock(gate){consent.Target=target;consent.View=true;consent.Control=allowControl;grant=Json.D("id",Guid.NewGuid().ToString(),"scope",allowControl?"control":"view","targetKey",target.Key,"approvalNonce",consent.Epoch,"expiresAt",DateTime.UtcNow.AddSeconds(30).ToString("o"));currentGrant=Json.S(grant,"id");lastSequence=0;frames.Clear();frames[captured.Id]=captured;}}
     public Dictionary<string,object> FixtureGrant(){lock(gate)return grant==null?new Dictionary<string,object>():new Dictionary<string,object>(grant);}
     public void StopFixture(){LocalStop();}
   }
   static class Fixture {
+    public static void DiagnoseFocus(string resultPath){
+      var form=new Form{Text="Mohassan focus diagnostic — no input",Width=450,Height=150,StartPosition=FormStartPosition.CenterScreen};
+      form.Controls.Add(new Label{Text="Local fixture only. No mouse or keyboard input is sent.",Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleCenter});
+      form.Shown+=async delegate{var report=Json.D("diagnosticCompleted",false,"fixtureOnly",true,"inputAttempted",false,"nativeAcceptanceProven",false,"startedAt",DateTime.UtcNow.ToString("o"));try{
+        await Task.Delay(200);Native.ShowWindow(form.Handle,4);var target=Native.WindowTarget(form.Handle);
+        report["safeDesktop"]=Native.SafeDesktop();report["sessionId"]=Process.GetCurrentProcess().SessionId;
+        report["focus"]=await Task.Run(()=>Native.DiagnoseFixtureFocus(target));
+        report["desktopScopeDenied"]=Json.S(Native.DiagnoseFixtureFocus(Native.DesktopTarget()),"outcome")=="fixture_scope_denied";
+        report["diagnosticCompleted"]=true;
+      }catch(Exception error){report["error"]=error.GetType().Name+":"+error.Message;}finally{
+        report["finishedAt"]=DateTime.UtcNow.ToString("o");
+        try{using(var stream=new FileStream(resultPath,FileMode.CreateNew,FileAccess.Write,FileShare.None))using(var writer=new StreamWriter(stream,new UTF8Encoding(false)))writer.Write(Json.Codec().Serialize(report));}finally{form.Close();}
+      }};
+      Application.Run(form);
+    }
     public static void Run(string resultPath){
       var form=new Form{Text="Mohassan native fixture — this window only",Width=450,Height=250,StartPosition=FormStartPosition.CenterScreen,TopMost=true};var box=new TextBox{Left=25,Top=25,Width=350,Text=""};var button=new Button{Left=25,Top=80,Width=200,Height=45,Text="Fixture button"};var label=new Label{Left=25,Top=140,Width=350,Text="Clicks: 0"};int clicks=0;button.Click+=delegate{clicks++;label.Text="Clicks: "+clicks;};form.Controls.Add(box);form.Controls.Add(button);form.Controls.Add(label);
       var companion=new CompanionForm("http://127.0.0.1:4000",Path.Combine(Path.GetTempPath(),"mohassan-windows-fixture-unused-"+Guid.NewGuid().ToString("N")),true);companion.ShowInTaskbar=false;companion.Show();companion.Hide();
       form.Shown+=async delegate{await Task.Delay(200);var report=Json.D("ok",false,"fixtureOnly",true);try{
+        // An interactive harness may activate this fixture. A background process cannot
+        // override Windows foreground policy; timeout remains a real test failure.
+        Native.ShowWindow(form.Handle,4);form.Activate();var focusDeadline=DateTime.UtcNow.AddSeconds(20);while(Native.GetForegroundWindow()!=form.Handle&&DateTime.UtcNow<focusDeadline)await Task.Delay(100);
+        report["foregroundReady"]=Native.GetForegroundWindow()==form.Handle;
         form.Activate();box.Focus();await Task.Delay(150);var target=Native.WindowTarget(form.Handle);var first=await Task.Run(()=>Native.Capture(target,true));report["captureBytes"]=Convert.FromBase64String(first.Jpeg).Length;report["safeDesktop"]=Native.SafeDesktop();report["accessibleElements"]=first.Elements.Length;
         Func<int,ImageFrame,object,Dictionary<string,object>> command=(sequence,image,action)=>Json.D("id",Guid.NewGuid().ToString(),"grantId",Json.S(companion.FixtureGrant(),"id"),"sequence",sequence,"frameId",image.Id,"expiresAt",DateTime.UtcNow.AddSeconds(2).ToString("o"),"action",action);
         companion.ConfigureFixture(target,false,first);var denied=companion.Execute(command(1,first,Json.D("type","text","text","DENIED")),companion.FixtureGrant(),true);report["viewOnlyDenied"]=denied=="CONTROL_DENIED";
@@ -191,6 +253,6 @@ namespace MohassanWindows {
     }
   }
   static class Program {
-    [STAThread] static void Main(string[] args){System.Net.ServicePointManager.SecurityProtocol=System.Net.SecurityProtocolType.Tls12;Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);try{if(args.Length==2&&args[0]=="--fixture-self-test"){Fixture.Run(Path.GetFullPath(args[1]));return;}string server="http://127.0.0.1:4000",directory=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"MohassanAI","WindowsCompanion");for(int index=0;index<args.Length-1;index+=2){if(args[index]=="--server")server=args[index+1];else if(args[index]=="--state")directory=Path.GetFullPath(args[index+1]);else throw new InvalidOperationException("UNSUPPORTED_ARGUMENT");}if(!Native.SafeDesktop())throw new InvalidOperationException("INTERACTIVE_UNLOCKED_SESSION_REQUIRED");Application.Run(new CompanionForm(server,directory));}catch(Exception error){MessageBox.Show("تعذر بدء المرافق: "+error.Message,"Mohassan Windows",MessageBoxButtons.OK,MessageBoxIcon.Error);Environment.ExitCode=1;}}
+    [STAThread] static void Main(string[] args){System.Net.ServicePointManager.SecurityProtocol=System.Net.SecurityProtocolType.Tls12;Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);try{if(args.Length==2&&args[0]=="--fixture-self-test"){Fixture.Run(Path.GetFullPath(args[1]));return;}if(args.Length==2&&args[0]=="--fixture-focus-diagnostic"){Fixture.DiagnoseFocus(Path.GetFullPath(args[1]));return;}string server="http://127.0.0.1:4000",directory=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"MohassanAI","WindowsCompanion");for(int index=0;index<args.Length-1;index+=2){if(args[index]=="--server")server=args[index+1];else if(args[index]=="--state")directory=Path.GetFullPath(args[index+1]);else throw new InvalidOperationException("UNSUPPORTED_ARGUMENT");}if(!Native.SafeDesktop())throw new InvalidOperationException("INTERACTIVE_UNLOCKED_SESSION_REQUIRED");Application.Run(new CompanionForm(server,directory));}catch(Exception error){MessageBox.Show("تعذر بدء المرافق: "+error.Message,"Mohassan Windows",MessageBoxButtons.OK,MessageBoxIcon.Error);Environment.ExitCode=1;}}
   }
 }

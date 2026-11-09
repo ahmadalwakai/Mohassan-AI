@@ -1,0 +1,21 @@
+[Unit]
+Description=Daily Mohassan PostgreSQL backup
+Requires=postgresql@18-main.service
+After=postgresql@18-main.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=/
+ExecStart=/usr/local/sbin/mohassan-db-backup
+TimeoutStartSec=15min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/backups/mohassan/daily

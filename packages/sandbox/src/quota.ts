@@ -51,7 +51,14 @@ export class QuotaSlots {
       const base = join(this.root, slot);
       try {
         // The lock is exclusive, so anything left here belongs to a dead run.
-        for (const name of await readdir(base)) if (name.startsWith(runPrefix)) await rm(join(base, name), { recursive: true, force: true });
+        // Windows can return ERROR_FILE_NOT_FOUND when enumerating an empty mounted
+        // volume root. Confirm the directory still exists before treating it as empty;
+        // the native helper separately proves the bounded volume before any code runs.
+        const entries = await readdir(base).catch(async error => {
+          if (process.platform === 'win32' && (error as NodeJS.ErrnoException).code === 'ENOENT' && (await stat(base).catch(() => null))?.isDirectory()) return [];
+          throw error;
+        });
+        for (const name of entries) if (name.startsWith(runPrefix)) await rm(join(base, name), { recursive: true, force: true });
         const directory = await mkdtemp(join(base, runPrefix));
         return { directory, release: async () => {
           try {

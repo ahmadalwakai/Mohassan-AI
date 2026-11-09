@@ -9,8 +9,8 @@ export interface BrowserPageControl {id:string;index:number;kind:'input'|'button
 export interface BrowserSubmitter {controlId:string;label:string;fingerprint:string;formId:string}
 export interface BrowserPreparedSubmission {form:BrowserForm;values:Record<string,string>;payloadHash:string;submitter?:BrowserSubmitter}
 export interface BrowserSubmitDiagnostics {requestAttempted:boolean;responseStatus:number|null;failureCode:string;redirectOrigin:string|null;pageProtocol:string;warnings:string[]}
-export interface BrowserObservation {id:string;url:string;title:string;text:string;links:{id:string;url:string;text:string}[];forms:BrowserForm[];controls?:BrowserPageControl[];screenshot:string|null;observedAt:string;warnings:string[]}
-interface LiveSession {context:BrowserContext;page:Page;allowedOrigins:string[];requests:number;denials:string[];abort:AbortController;expiresAt:number;redirectTarget?:string;lastRedirectOrigin?:string;lastNavigationFailure?:string;navigationUrl?:string;formEvidence:Map<string,string>;controlEvidence:Map<string,string>;timer?:ReturnType<typeof setTimeout>;permit?:{url:string;method:string;bodyHash:string;used:boolean;responseStatus?:number}}
+export interface BrowserObservation {id:string;url:string;title:string;text:string;links:{id:string;url:string;text:string}[];forms:BrowserForm[];controls?:BrowserPageControl[];screenshot:string|null;observedAt:string;documentStatus?:number;warnings:string[]}
+interface LiveSession {context:BrowserContext;page:Page;allowedOrigins:string[];requests:number;denials:string[];abort:AbortController;expiresAt:number;redirectTarget?:string;lastRedirectOrigin?:string;lastNavigationFailure?:string;navigationUrl?:string;documentResponse?:{url:string;status:number};formEvidence:Map<string,string>;controlEvidence:Map<string,string>;timer?:ReturnType<typeof setTimeout>;permit?:{url:string;method:string;bodyHash:string;used:boolean;responseStatus?:number}}
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 const formBodyHash=(value:string)=>hash(JSON.stringify([...new URLSearchParams(value)].map(([key,item])=>[key,item.replace(/\r\n?/g,'\n')])));
 // Only fixed code is evaluated in the page. Model/user input is passed as JSON
@@ -54,13 +54,16 @@ export class BrowserEngine {
     await context.routeWebSocket('**/*',route=>route.close());
     await context.route('**/*',async route=>{
       const request=route.request();
+      let topDocument=false,documentResponse:LiveSession['documentResponse'];
       try{
+        topDocument=request.isNavigationRequest()&&request.frame()===live.page.mainFrame();
         if(live.abort.signal.aborted||Date.now()>=live.expiresAt)throw new BrowserError('BROWSER_SESSION_CLOSED','انتهى تفويض الجلسة.');
         if(++live.requests>200)throw new BrowserError('BROWSER_REQUEST_LIMIT','تجاوزت الصفحة عدد طلبات الجلسة المسموح.');
         const url=this.network.validate(request.url(),live.allowedOrigins).href,method=request.method(),body=request.postData()??'';
-        if(request.isNavigationRequest()&&request.frame()===live.page.mainFrame()){
+        if(topDocument){
           const authorized=live.navigationUrl===url||live.permit&&!live.permit.used&&live.permit.url===url&&live.permit.method===method;
           if(!authorized)throw new BrowserError('BROWSER_SUBMIT_DENIED','تنقل الصفحة أو الإرسال التلقائي يحتاج فعلًا محددًا من جلسة المتصفح.');
+          live.documentResponse=undefined;
           if(live.navigationUrl===url)live.navigationUrl=undefined;
         }
         if(!['GET','HEAD'].includes(method)){
@@ -74,10 +77,10 @@ export class BrowserEngine {
           const response=await this.network.request(target,{allowedOrigins:live.allowedOrigins,method,headers,signal:live.abort.signal,...(body?{body}:{})});
           if(live.permit?.used&&live.permit.url===url)live.permit.responseStatus=response.status;
           if([301,302,303,307,308].includes(response.status)&&response.headers.location){
-            if(request.isNavigationRequest()&&request.frame()===live.page.mainFrame())live.lastRedirectOrigin=new URL(response.headers.location,target).origin;
+            if(topDocument)live.lastRedirectOrigin=new URL(response.headers.location,target).origin;
             const next=this.network.validate(new URL(response.headers.location,target).href,live.allowedOrigins).href;
             if(!['GET','HEAD'].includes(method)&&[307,308].includes(response.status))throw new BrowserError('BROWSER_SUBMIT_DENIED','لم يُعد إرسال النموذج إلى وجهة تحويل جديدة؛ يلزم إذن مستقل.');
-            if(request.isNavigationRequest()&&request.frame()===live.page.mainFrame()){
+            if(topDocument){
               // Chromium does not re-enter a Playwright route for HTTP redirect
               // hops. Keep its direct-network denial proxy in place and initiate
               // each validated navigation ourselves, so the final URL is real.
@@ -95,10 +98,18 @@ export class BrowserEngine {
           // A redirected resource is fulfilled at its original browser URL;
           // avoid attaching cookies from the final response to that wrong URL.
           if(target!==url)delete response.headers['set-cookie'];
+          if(topDocument){
+            documentResponse={url:target,status:response.status};
+            live.documentResponse=documentResponse;
+          }
           await route.fulfill({status:response.status,headers:response.headers,body:response.body});
           return;
         }
-      }catch(error){if(request.isNavigationRequest()&&request.frame()===live.page.mainFrame())live.lastNavigationFailure=error instanceof BrowserError?error.code:'BROWSER_FETCH_FAILED';live.denials.push(error instanceof BrowserError?error.message:'تعذر تحميل مورد من الصفحة.');await route.abort('blockedbyclient').catch(()=>{});}
+      }catch(error){
+        if(documentResponse&&live.documentResponse===documentResponse)live.documentResponse=undefined;
+        if(topDocument)live.lastNavigationFailure=error instanceof BrowserError?error.code:'BROWSER_FETCH_FAILED';
+        live.denials.push(error instanceof BrowserError?error.message:'تعذر تحميل مورد من الصفحة.');await route.abort('blockedbyclient').catch(()=>{});
+      }
     });
     context.on('page',page=>{if(live.page&&page!==live.page)void page.close().catch(()=>{});});
     const page=await context.newPage();live.page=page;page.setDefaultTimeout(8000);page.setDefaultNavigationTimeout(12000);
@@ -128,6 +139,7 @@ export class BrowserEngine {
   async scroll(id:string,direction:'up'|'down'):Promise<BrowserObservation>{const live=this.live(id);await live.page.evaluate(delta=>window.scrollBy(0,delta),direction==='down'?600:-600);return this.observe(id);}
   async observe(id:string):Promise<BrowserObservation>{
     const live=this.live(id);this.network.validate(live.page.url(),live.allowedOrigins);
+    const documentResponse=live.documentResponse;
     // This is fixed, trusted code. A string avoids tsx/esbuild keepNames helpers
     // leaking into a serialized callback and depending on host lexical scope.
     const result=await this.bounded(id,live.page.evaluate<Pick<BrowserObservation,'url'|'title'|'text'|'links'>&{forms:(BrowserForm&{evidence:string})[];controls:(BrowserPageControl&{evidence:string})[]}>(`(()=>{
@@ -142,7 +154,10 @@ export class BrowserEngine {
     const forms=result.forms.filter(form=>{try{this.network.validate(form.action,live.allowedOrigins);return ['GET','POST'].includes(form.method);}catch{return false;}}).map(({evidence,...form})=>{live.formEvidence.set(form.id,evidence);return {...form,fingerprint:hash(JSON.stringify({url:result.url,...form,evidence}))};});
     const controls=result.controls.map(({evidence,...control})=>{live.controlEvidence.set(control.id,evidence);const {action,method,encoding,target,value,...safe}=control as BrowserPageControl&Record<string,unknown>;return {...safe,fingerprint:hash(JSON.stringify({url:result.url,evidence,formFingerprint:forms.find(form=>form.id===control.formId)?.fingerprint??null}))} as BrowserPageControl;});
     let screenshot:string|null=null;try{const bytes=await live.page.screenshot({type:'jpeg',quality:55,timeout:4000});if(bytes.length<500000)screenshot=`data:image/jpeg;base64,${bytes.toString('base64')}`;}catch{/* Text evidence remains available. */}
-    return {...result,forms,controls,id:randomUUID(),screenshot,observedAt:new Date().toISOString(),warnings:[...new Set(live.denials)].slice(0,12)};
+    const sameDocument=documentResponse&&live.documentResponse===documentResponse&&
+      documentResponse.url===result.url.split('#',1)[0]&&live.page.url()===result.url;
+    return {...result,forms,controls,id:randomUUID(),screenshot,observedAt:new Date().toISOString(),warnings:[...new Set(live.denials)].slice(0,12),
+      ...(sameDocument?{documentStatus:documentResponse.status}:{})};
   }
   async fill(id:string,observation:BrowserObservation,controlId:string,value:string):Promise<BrowserObservation>{
     const live=this.live(id),current=await this.observe(id),control=current.controls?.find(item=>item.id===controlId),expected=observation.controls?.find(item=>item.id===controlId);

@@ -1,0 +1,29 @@
+[Unit]
+Description=Private FreeLLMAPI gateway for Mohassan
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=freellmapi
+Group=freellmapi
+WorkingDirectory=/opt/freellmapi/app
+EnvironmentFile=/etc/freellmapi/server.env
+Environment=HOME=/var/lib/freellmapi
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/node /opt/freellmapi/app/server/dist/index.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+StateDirectory=freellmapi
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/freellmapi
+
+[Install]
+WantedBy=multi-user.target

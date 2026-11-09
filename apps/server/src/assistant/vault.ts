@@ -63,10 +63,13 @@ export class CredentialVault {
   forget(conversationId: string): void { this.clear(conversationId); this.redactions.delete(conversationId); }
   hasRedactions(conversationId: string): boolean { const value = this.redactions.get(conversationId); return Boolean(value && value.expiresAt > Date.now() && value.values.size); }
 
-  scrubValue<T>(conversationId:string,value:T):T {
-    if(typeof value==='string')return this.scrub(conversationId,value) as T;
-    if(Array.isArray(value))return value.map(item=>this.scrubValue(conversationId,item)) as T;
-    if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,this.scrubValue(conversationId,item)])) as T;
+  scrubValue<T>(conversationId:string,value:T,redact?:(text:string)=>string):T {
+    if(typeof value==='string'){
+      const text = this.scrub(conversationId,value);
+      return (redact ? redact(text) : text) as T;
+    }
+    if(Array.isArray(value))return value.map(item=>this.scrubValue(conversationId,item,redact)) as T;
+    if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,this.scrubValue(conversationId,item,redact)])) as T;
     return value;
   }
 

@@ -9,6 +9,22 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mohassan/contracts": "*"
+    "@chakra-ui/react": "3.38.0",
+    "@emotion/react": "11.14.0",
+    "@mohassan/browser": "*",
+    "@mohassan/contracts": "*",
+    "@mohassan/memory": "*",
+    "lucide-react": "0.548.0",
+    "motion": "14.9.1",
+    "next": "16.4.5",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "typescript": "5.9.3"
   }
 }

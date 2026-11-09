@@ -8,7 +8,7 @@ export class BrowserError extends Error {
   constructor(public readonly code:string,message:string,public readonly statusCode=400){super(message);this.name='BrowserError';}
 }
 export interface NetworkAddress {address:string;family:4|6}
-export interface NetworkPolicy {testOrigins?:string[];resolver?:(hostname:string)=>Promise<NetworkAddress[]>}
+export interface NetworkPolicy {testOrigins?:string[];resolver?:(hostname:string)=>Promise<NetworkAddress[]>;userAgent?:string}
 export interface SafeResponse {status:number;headers:Record<string,string>;body:Buffer;url:string}
 
 export function isPublicAddress(address:string):boolean {
@@ -59,26 +59,31 @@ export class SafeNetwork {
     return {url,address:addresses[0]};
   }
   /** browser: carries a real page's traffic with its own identity. Address checks are the same. */
-  async request(input:string,options:{allowedOrigins?:readonly string[];method?:string;headers?:Record<string,string>;body?:string|Buffer;signal?:AbortSignal;maxBytes?:number;browser?:boolean}={}):Promise<SafeResponse>{
+  async request(input:string,options:{allowedOrigins?:readonly string[];method?:string;headers?:Record<string,string>;body?:string|Buffer;signal?:AbortSignal;maxBytes?:number;browser?:boolean;allowAttachment?:boolean;beforeDispatch?:()=>Promise<void>}={}):Promise<SafeResponse>{
     const browser=options.browser===true;
     const {url,address}=await this.pin(input,options.allowedOrigins),maximum=options.maxBytes??(browser?64_000_000:2_000_000);
     const method=options.method??'GET';
     if(!(browser?BROWSER_METHODS:['GET','HEAD','POST']).includes(method)||options.body&&Buffer.byteLength(options.body)>(browser?8_000_000:16000))throw new BrowserError('BROWSER_METHOD_DENIED','نوع الطلب أو حجمه خارج نطاق القراءة والموافقة.');
-    const headers:Record<string,string>=browser?{}:{'user-agent':'MohassanAI-Research/1.0','accept-encoding':'identity',accept:'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5'};
+    const userAgent=this.policy.userAgent??'MohassanAI-Research/1.0 (+https://www.mohassansy.com)';
+    if(!browser&&(!userAgent.trim()||userAgent.length>250||/[\r\n\u0000-\u001f]/.test(userAgent)))throw new BrowserError('BROWSER_USER_AGENT_INVALID','هوية قارئ المصادر غير صالحة.');
+    const headers:Record<string,string>=browser?{}:{'user-agent':userAgent,'accept-encoding':'identity',accept:'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5'};
     for(const [key,value] of Object.entries(options.headers??{})){
       const name=key.toLowerCase();
       if(browser?!name.startsWith(':')&&!CONNECTION_HEADERS.has(name):['accept','accept-language','content-type','cookie'].includes(name)&&value.length<16000)headers[name]=value;
     }
     if(browser)headers['accept-encoding']='gzip, br';
     if(options.body)headers['content-length']=String(Buffer.byteLength(options.body));
+    options.signal?.throwIfAborted();
+    await options.beforeDispatch?.();
+    options.signal?.throwIfAborted();
     return new Promise((resolve,reject)=>{
       const transport=url.protocol==='https:'?https:http;
       const request=transport.request(url,{method,headers,agent:false,lookup:((_host:any,opts:any,callback:any)=>opts?.all?callback(null,[address]):callback(null,address.address,address.family)) as any,signal:options.signal,timeout:browser?30000:10000},response=>{
         const encoding=String(response.headers['content-encoding']??'').toLowerCase();
-        if(!(browser?['','identity','gzip','br','deflate']:['','identity']).includes(encoding)){response.destroy();reject(new BrowserError('BROWSER_ENCODING_DENIED','أعاد الموقع ترميزًا غير مدعوم ضمن حدود القراءة.',502));return;}
+        if(!['','identity','gzip','br','deflate'].includes(encoding)){response.destroy();reject(new BrowserError('BROWSER_ENCODING_DENIED','أعاد الموقع ترميزًا غير مدعوم ضمن حدود القراءة.',502));return;}
         const resultHeaders:Record<string,string>={};
-        for(const key of browser?Object.keys(response.headers).filter(name=>!CONNECTION_HEADERS.has(name)&&name!=='content-encoding'):['content-type','location','set-cookie','content-language','access-control-allow-origin','access-control-allow-credentials','access-control-expose-headers']){const value=response.headers[key];if(value)resultHeaders[key]=Array.isArray(value)?value.join('\n'):value;}
-        if(response.headers['content-disposition']?.includes('attachment')){response.destroy();reject(new BrowserError('BROWSER_DOWNLOAD_DENIED','التنزيلات غير مفعلة في جلسة القراءة.'));return;}
+        for(const key of browser?Object.keys(response.headers).filter(name=>!CONNECTION_HEADERS.has(name)&&name!=='content-encoding'):['content-type','location','set-cookie','content-language','retry-after','etag','last-modified','x-robots-tag','access-control-allow-origin','access-control-allow-credentials','access-control-expose-headers']){const value=response.headers[key];if(value)resultHeaders[key]=Array.isArray(value)?value.join('\n'):value;}
+        if(/attachment/i.test(response.headers['content-disposition']??'')&&!options.allowAttachment){response.destroy();reject(new BrowserError('BROWSER_DOWNLOAD_DENIED','التنزيلات غير مفعلة في جلسة القراءة.'));return;}
         let total=0;const chunks:Buffer[]=[];
         response.on('data',(chunk:Buffer)=>{total+=chunk.length;if(total>maximum){response.destroy();reject(new BrowserError('BROWSER_RESPONSE_TOO_LARGE','تجاوزت الصفحة حد حجم القراءة.'));}else chunks.push(chunk);});
         response.on('end',()=>{
@@ -93,15 +98,21 @@ export class SafeNetwork {
       request.end(options.body);
     });
   }
-  async text(input:string,options:{allowedOrigins?:readonly string[];signal?:AbortSignal}={}):Promise<{url:string;text:string;status:number}> {
+  async text(input:string,options:{allowedOrigins?:readonly string[];signal?:AbortSignal;beforeRequest?:(url:string)=>Promise<void>}={}):Promise<{url:string;text:string;status:number}> {
     let target=input;
     for(let redirects=0;redirects<=5;redirects++){
+      target=this.validate(target,options.allowedOrigins).href;
+      await options.beforeRequest?.(target);
       const response=await this.request(target,options);
       if([301,302,303,307,308].includes(response.status)&&response.headers.location){target=this.validate(new URL(response.headers.location,target).href,options.allowedOrigins).href;continue;}
       if(response.status<200||response.status>=400)throw new BrowserError('BROWSER_HTTP_ERROR',`لم يسمح المصدر بقراءة المحتوى (HTTP ${response.status}).`,502);
+      if(response.status===202)throw new BrowserError('RESEARCH_SOURCE_PENDING','لم يقدّم المصدر محتوى نهائيًا؛ قد يكون بانتظار تحقق أو معالجة.',502);
       const type=response.headers['content-type']??'';
       if(type&&!/^(?:text\/|application\/(?:xhtml\+xml|xml|json))/i.test(type))throw new BrowserError('BROWSER_CONTENT_DENIED','نوع المصدر ليس صفحة نصية قابلة للقراءة.');
-      return {url:target,text:response.body.toString('utf8'),status:response.status};
+      const charset=/charset\s*=\s*["']?([^\s;"']+)/i.exec(type)?.[1]??'utf-8';
+      let text:string;
+      try{text=new TextDecoder(charset,{fatal:true}).decode(response.body);}catch{throw new BrowserError('BROWSER_ENCODING_DENIED','تعذر فك ترميز المصدر حسب الترميز المعلن.',502);}
+      return {url:target,text,status:response.status};
     }
     throw new BrowserError('BROWSER_REDIRECT_LIMIT','تجاوز المصدر حد إعادة التوجيه.');
   }

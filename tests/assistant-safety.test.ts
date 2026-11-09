@@ -17,6 +17,7 @@ const owner='safety-owner';
 let server:Server, origin:string, tempBase:string, directory:string, browser:AgentBrowser;
 const requests:string[]=[];
 const ref=(page:AgentPage,label:string)=>page.elements.find(element=>element.label===label)!.ref;
+const conversationPage = async (id: string) => (await browser['conversation'](owner, id)).page;
 function authority():AgentAuthority {
   const consumed=new Set<string>();
   return {signal:new AbortController().signal,assertActive:async()=>{},dispatched:async permit=>{if(consumed.has(permit.id))throw new Error('Already consumed');consumed.add(permit.id);return permit.id;},completed:async()=>{}};
@@ -46,6 +47,15 @@ beforeAll(async()=>{
         :url.pathname==='/echo'?`<input aria-label="Password" type="password" oninput="document.title=this.value;document.getElementById('echo').textContent=this.value"><p id="echo"></p>`
         :url.pathname==='/iframe'?`${form}<iframe name="sink"></iframe><button onclick="document.forms[0].submit()">Programmatic</button>`
         :url.pathname==='/automatic'?`<script>fetch('/effect',{method:'POST',body:'automatic'});setTimeout(()=>{const f=document.createElement('form');f.method='GET';f.action='/effect-get';document.body.append(f);f.submit()},200)</script>`
+        :url.pathname==='/element-refs'?`<section id="actions"><button>Safe action</button><button>Other action</button></section>
+          <output id="clicks">[]</output><script>
+            const clicks = [];
+            document.getElementById('actions').addEventListener('click', event => {
+              if (!(event.target instanceof HTMLButtonElement)) return;
+              clicks.push(event.target.textContent);
+              document.getElementById('clicks').textContent = JSON.stringify(clicks);
+            });
+          </script>`
         :`${form}<button onclick="document.forms[0].action='/effect-changed';document.querySelector('[name=token]').value='two'">Change target</button>`;
       response.writeHead(200,{'content-type':'text/html'});response.end(`<!doctype html><title>Fixture</title><body>${script}</body>`);
     });
@@ -63,6 +73,50 @@ afterEach(async()=>{
 });
 
 describe('actual browser request authorization',()=>{
+  it('clicks the observed button when a different button is inserted before it', async () => {
+    const id = randomUUID(), auth = authority();
+    const { page } = await browser.act(owner, id, { kind: 'open', text: origin + '/element-refs' }, auth);
+    const action: AgentAction = { kind: 'click', ref: ref(page, 'Safe action') };
+    const handle = await conversationPage(id);
+    await handle.locator('#actions').evaluate(actions => {
+      const deleteButton = document.createElement('button');
+      deleteButton.textContent = 'Delete account';
+      actions.prepend(deleteButton);
+    });
+
+    await browser.observe(owner, id);
+    expect(await browser.prepareAction(owner, id, action)).toBeNull();
+    await browser.act(owner, id, action, auth);
+    expect(await handle.locator('#clicks').textContent()).toBe('["Safe action"]');
+  });
+
+  it.each(['renamed', 'replaced'] as const)('rejects the old ref when the observed button is %s', async change => {
+    const id = randomUUID(), auth = authority();
+    const { page } = await browser.act(owner, id, { kind: 'open', text: origin + '/element-refs' }, auth);
+    const action: AgentAction = { kind: 'click', ref: ref(page, 'Safe action') };
+    const handle = await conversationPage(id);
+    await handle.getByRole('button', { name: 'Safe action' }).evaluate((button, mutation) => {
+      const replacement = button.cloneNode(true);
+      if (mutation === 'renamed') {
+        button.textContent = 'Delete account';
+        button.after(replacement);
+      } else {
+        button.replaceWith(replacement);
+      }
+    }, change);
+
+    expect(await browser.prepareAction(owner, id, action)).toBeNull();
+    await expect(browser.act(owner, id, action, auth)).rejects.toMatchObject({ code: 'AGENT_REF_STALE' });
+    expect(await handle.locator('#clicks').textContent()).toBe('[]');
+
+    const refreshed = (await browser.observe(owner, id)).page;
+    const fresh: AgentAction = { kind: 'click', ref: ref(refreshed, 'Safe action') };
+    expect(fresh.ref).not.toBe(action.ref);
+    expect(await browser.prepareAction(owner, id, fresh)).toBeNull();
+    await browser.act(owner, id, fresh, auth);
+    expect(await handle.locator('#clicks').textContent()).toBe('["Safe action"]');
+  });
+
   it.each(['click','type','press'] as const)('blocks unapproved %s submission and permits an exact request once',async kind=>{
     const id=randomUUID(),auth=authority();
     const page=(await browser.act(owner,id,{kind:'open',text:origin+'/form'},auth)).page;
@@ -138,15 +192,25 @@ describe('actual browser request authorization',()=>{
     expect(requests).toHaveLength(0);
   });
   it('lets the person submit during takeover, but only just after their input',async()=>{
-    const id=randomUUID(),auth=authority(),page=(await browser.act(owner,id,{kind:'open',text:origin+'/script'},auth)).page;
-    const button=ref(page,'Do action'),handle=(await (browser as any).conversation(owner,id)).page;
-    const box=await handle.locator('[data-mh-ref="'+button+'"]').boundingBox();
+    const id = randomUUID(), auth = authority();
+    await browser.act(owner, id, { kind: 'open', text: origin + '/script' }, auth);
+    const handle = await conversationPage(id);
+    const box = (await handle.getByRole('button', { name: 'Do action' }).boundingBox())!;
     await browser.pointer(owner,id,(box.x+box.width/2)/1280,(box.y+box.height/2)/800);
     await new Promise(resolve=>setTimeout(resolve,500));
     expect(requests).toEqual(['POST /effect unapproved']);
     await browser.act(owner,id,{kind:'scroll',text:'down'},auth);
     await handle.evaluate(()=>fetch('/effect',{method:'POST',body:'after-agent-action'}).catch(()=>{}));
     expect(requests).toHaveLength(1);
+  });
+  it('types the takeover text before pressing Enter',async()=>{
+    const id = randomUUID(), auth = authority();
+    await browser.act(owner, id, { kind: 'open', text: origin + '/script' }, auth);
+    const handle = await conversationPage(id);
+    await handle.setContent('<input id="field" autofocus><script>field.onkeydown=event=>{if(event.key==="Enter")document.title=field.value;};</script>');
+    await handle.locator('#field').focus();
+    await browser.keyboard(owner,id,{text:'typed value',key:'Enter'});
+    expect(await handle.title()).toBe('typed value');
   });
   it('reserves the page before an asynchronous authority check and redacts escaped echoes',async()=>{
     const id=randomUUID(),auth=authority();let release!:()=>void,entered!:()=>void;
@@ -199,6 +263,53 @@ describe('actual browser request authorization',()=>{
 function response(model:string,decision:Record<string,unknown>){return Response.json({model,choices:[{finish_reason:'stop',message:{content:JSON.stringify({thought:null,plan:null,note:null,url:null,ref:null,text:null,submit:null,options:null,sensitive:null,outcome:null,...decision})}}],usage:{prompt_tokens:10,completion_tokens:10}});}
 async function store(){const result=await createDatabase();await migrate(result.db);return result;}
 function configuration(transport:typeof fetch){return {apiKey:'fixture',models:{fast:['fast'],deep:['deep'],vision:'vision'},fetch:transport,browser,networkPolicy:{testOrigins:[origin]},leaseMs:60000};}
+
+it('refreshes a stale click in command chat and clicks only the newly observed safe button', async () => {
+  const database = await store();
+  let conversationId: string;
+  const selectedRefs: string[] = [];
+  let refreshedPrompt: string | undefined;
+  const control = await createCommandChatControl(database.db, configuration(async (_url, init) => {
+    const request = JSON.parse(String(init?.body));
+    const prompt: string = request.messages.at(-1).content;
+    if (prompt.includes('["Safe action"]')) {
+      return response(request.model, { tool: 'answer', text: 'Clicked the safe button.', outcome: 'done' });
+    }
+    const selectedRef = /(e\d+) button "Safe action"/.exec(prompt)?.[1];
+    if (!selectedRef) return response(request.model, { tool: 'open', url: origin + '/element-refs' });
+    if (selectedRefs.length === 0) {
+      const handle = await conversationPage(conversationId);
+      await handle.getByRole('button', { name: 'Safe action', exact: true }).evaluate(button => {
+        const replacement = button.cloneNode(true);
+        button.textContent = 'Delete account';
+        button.after(replacement);
+      });
+    } else {
+      refreshedPrompt = prompt;
+    }
+    selectedRefs.push(selectedRef);
+    return response(request.model, { tool: 'click', ref: selectedRef });
+  }));
+
+  try {
+    conversationId = (await control.create(owner)).id;
+    await control.send(owner, conversationId, { text: 'Click the Safe action button in the fixture.' });
+    await control.settled(conversationId);
+
+    const chat = await control.detail(owner, conversationId);
+    expect(chat.status, chat.error ?? '').toBe('idle');
+    expect(chat.messages.at(-1)?.text).toBe('Clicked the safe button.');
+    expect(selectedRefs).toHaveLength(2);
+    expect(selectedRefs[1]).not.toBe(selectedRefs[0]);
+    expect(refreshedPrompt).toContain('button "Delete account"');
+    const handle = await conversationPage(conversationId);
+    expect(await handle.locator('#clicks').textContent()).toBe('["Safe action"]');
+    expect(await database.db.selectFrom('chat_runs').select('status').executeTakeFirstOrThrow()).toEqual({ status: 'completed' });
+  } finally {
+    await control.shutdown();
+    await database.close();
+  }
+});
 
 async function activeInstructions(database: Awaited<ReturnType<typeof createDatabase>>) {
   await migrateAuth(database.db); await memoryMigration(database.db); await skillsMigration(database.db);

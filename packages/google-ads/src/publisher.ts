@@ -59,16 +59,19 @@ export class CampaignPublishingController {
   }
 
   private async confirmCampaign(customerId: string, name: string, context: CallContext & { customerId: string }): Promise<Row | undefined> {
-    const [row] = await this.client.search(`SELECT campaign.resource_name, campaign.status, campaign.name, campaign_budget.amount_micros FROM campaign WHERE campaign.name = '${escapeGaql(name)}' AND campaign.status != 'REMOVED' LIMIT 1`, { ...context, customerId });
-    return row;
+    const rows = await this.client.search(`SELECT campaign.resource_name, campaign.status, campaign.name, campaign_budget.amount_micros FROM campaign WHERE campaign.name = '${escapeGaql(name)}' AND campaign.status != 'REMOVED' LIMIT 2`, { ...context, customerId });
+    if (rows.length > 1) throw new GoogleAdsError('GOOGLE_ADS_READBACK_AMBIGUOUS', 'ظهرت أكثر من حملة بالاسم المتوقع؛ يلزم فحص الحساب دون إعادة الكتابة.', 409);
+    return rows[0];
   }
 
-  async publish(ownerId: string, draft: GoogleAdsDraft, operations: MutateOperation[], publishing: GoogleAdsPublishing, context: CallContext & { customerId: string }) {
+  async publish(ownerId: string, draft: GoogleAdsDraft, operations: MutateOperation[], publishing: GoogleAdsPublishing, context: CallContext & { customerId: string }, beforeWrite?: () => Promise<void>) {
     if (!publishing.available) throw new GoogleAdsError('GOOGLE_ADS_PUBLISHING_CLOSED', 'النشر مغلق حتى تكتمل كل البوابات.', 403);
     if (draft.state !== 'approved') throw stateConflict('يلزم موافقة صريحة قبل النشر.');
     if (draft.verification?.draftHash !== draft.draftHash || sha256(canonicalJson({ customerId: draft.customerId, operations })) !== draft.draftHash) throw stateConflict('تغيرت العمليات بعد التحقق. أعد التحقق.');
     await this.claim(ownerId, draft, 'publish', 'approved', 'publishing', draft.draftHash);
     await audit(this.db, ownerId, draft.id, 'publish_started', { draftHash: draft.draftHash, operations: operations.length });
+    try { await beforeWrite?.(); }
+    catch (error) { await this.settle(ownerId, draft.id, 'failed', { error: 'انتهى تفويض المهمة قبل إرسال الكتابة؛ لم تُنشأ الحملة.' }); await audit(this.db, ownerId, draft.id, 'publish_authority_ended'); throw error; }
     try {
       const result = await this.client.mutate(operations, false, context);
       await audit(this.db, ownerId, draft.id, 'publish_applied', { requestId: result.requestId, created: result.resourceNames.length });
@@ -82,7 +85,12 @@ export class CampaignPublishingController {
       await audit(this.db, ownerId, draft.id, 'publish_unknown');
       throw new GoogleAdsError('GOOGLE_ADS_OUTCOME_UNKNOWN', 'لم تؤكد Google النتيجة. راجع الحالة من الحساب؛ لن تُكرر الكتابة تلقائيًا.', 409);
     }
-    await this.reconcile(ownerId, draft, context);
+    try { await this.reconcile(ownerId, draft, context); }
+    catch {
+      await this.settle(ownerId, draft.id, 'outcome_unknown', { error: 'أُرسلت الكتابة لكن تعذرت قراءة النتيجة؛ لن تُكرر تلقائيًا.' });
+      await audit(this.db, ownerId, draft.id, 'publish_readback_unknown');
+      throw new GoogleAdsError('GOOGLE_ADS_OUTCOME_UNKNOWN', 'تعذرت قراءة النتيجة من الحساب؛ لن تُكرر الكتابة تلقائيًا.', 409);
+    }
   }
 
   /** Reads the account to settle a publish. Only a read can move a draft out of an unknown result. */
@@ -96,14 +104,16 @@ export class CampaignPublishingController {
       return;
     }
     const budget = String(row.campaignBudget?.amountMicros ?? ''), status = String(row.campaign.status);
-    if (status !== 'PAUSED' && status !== 'ENABLED' || budget !== draft.summary.dailyBudgetMicros) {
+    const lastWrite = await this.db.selectFrom('google_ads_audit').select('type').where('owner_id', '=', ownerId).where('draft_id', '=', draft.id).where('type', 'in', ['publish_started', 'launch_started']).orderBy('created_at', 'desc').executeTakeFirst();
+    const launchAttempt = draft.state === 'launching' || lastWrite?.type === 'launch_started';
+    if ((status !== 'PAUSED' && !(launchAttempt && status === 'ENABLED')) || budget !== draft.summary.dailyBudgetMicros || row.campaign.name !== draft.summary.campaignName || !new RegExp(`^customers/${draft.customerId}/campaigns/\\d+$`).test(String(row.campaign.resourceName))) {
       await this.settle(ownerId, draft.id, 'failed', { error: 'الحملة في الحساب لا تطابق ما وُوفق عليه. راجعها في Google Ads.', campaign_resource_name: row.campaign.resourceName });
       await audit(this.db, ownerId, draft.id, 'publish_mismatch', { status, budget });
       return;
     }
     await this.settle(ownerId, draft.id, status === 'ENABLED' ? 'live' : 'published', { error: null, campaign_resource_name: row.campaign.resourceName, revision: draft.revision + 1 });
     await audit(this.db, ownerId, draft.id, 'publish_confirmed', { campaign: row.campaign.resourceName, status });
-    await this.experience.record(ownerId, { customerId: draft.customerId, kind: 'publish_confirmed', statement: `أُنشئت الحملة «${row.campaign.name}» متوقفة وتأكد ذلك من الحساب.`, evidence: { source: 'google_ads_api', resourceName: row.campaign.resourceName, fetchedAt: new Date().toISOString(), figures: { status, dailyBudgetMicros: budget } } });
+    await this.experience.record(ownerId, { customerId: draft.customerId, kind: status === 'ENABLED' ? 'launch_confirmed' : 'publish_confirmed', statement: status === 'ENABLED' ? `تأكد تفعيل الحملة «${row.campaign.name}» من الحساب.` : `أُنشئت الحملة «${row.campaign.name}» متوقفة وتأكد ذلك من الحساب.`, evidence: { source: 'google_ads_api', resourceName: row.campaign.resourceName, fetchedAt: new Date().toISOString(), figures: { status, dailyBudgetMicros: budget } } });
   }
 
   async launch(ownerId: string, draft: GoogleAdsDraft, publishing: GoogleAdsPublishing, context: CallContext & { customerId: string }) {

@@ -86,6 +86,18 @@ export async function createDatabase(options: DatabaseOptions = {}): Promise<Dat
       connectionTimeoutMillis: 10_000,
       idleTimeoutMillis: 30_000,
     });
+    const reportedErrors = new WeakSet<Error>();
+    const reportConnectionError = (error: Error) => {
+      if (reportedErrors.has(error)) return;
+      reportedErrors.add(error);
+      // Driver errors can include connection details; never log the error or client.
+      console.error('[database] PostgreSQL connection lost. Failed operations are not retried; subsequent requests can reconnect.');
+    };
+    // pg removes failed idle clients itself, but an unhandled pool error crashes Node.
+    pool.on('error', reportConnectionError);
+    // Kysely checks clients out directly. Socket errors also need a listener while
+    // checked out, including between queries; pg still rejects all pending queries.
+    pool.on('connect', (client) => client.on('error', reportConnectionError));
     const db = new Kysely<any>({ dialect: new PostgresDialect({ pool }) });
     return { db, mode: "postgres", close: () => db.destroy() };
   }
@@ -312,6 +324,49 @@ export async function migrate(db: Kysely<any>): Promise<void> {
     if(!skillRecovery){
       await sql`ALTER TABLE tasks ADD COLUMN verification_only boolean NOT NULL DEFAULT false, ADD COLUMN verification_source_lease text, ADD COLUMN recovery_result jsonb, ADD COLUMN skill_rollback_input jsonb, ADD COLUMN skill_rollback_review jsonb`.execute(tx);
       await tx.insertInto('schema_migrations').values({version:'025_runtime_recovery'}).execute();
+    }
+    const experiences = await tx.selectFrom('schema_migrations').select('version').where('version', '=', '026_experiences').executeTakeFirst();
+    if (!experiences) {
+      await sql`ALTER TABLE tasks ADD COLUMN experience_parent_run_id text`.execute(tx);
+      await sql`CREATE INDEX tasks_experience_parent_idx ON tasks(owner_id, experience_parent_run_id) WHERE experience_parent_run_id IS NOT NULL`.execute(tx);
+      await sql`CREATE TABLE experiences (
+        owner_id text NOT NULL,
+        source_kind text NOT NULL CHECK (source_kind IN ('chat_run', 'runtime_task')),
+        source_id text NOT NULL,
+        parent_run_id text CHECK (parent_run_id IS NULL OR source_kind = 'runtime_task'),
+        attempt integer NOT NULL CHECK (attempt >= 0),
+        goal text NOT NULL,
+        category text NOT NULL CHECK (category IN ('conversation', 'research', 'browser', 'coding', 'computer')),
+        terminal_status text NOT NULL CHECK (terminal_status IN ('completed', 'partial', 'blocked', 'failed', 'cancelled', 'interrupted')),
+        plan jsonb NOT NULL,
+        trail jsonb NOT NULL,
+        models jsonb NOT NULL,
+        artifact_hashes jsonb NOT NULL,
+        outcome text NOT NULL CHECK (outcome IN ('verified_success', 'verified_failure', 'unverified')),
+        evidence_kind text NOT NULL CHECK (evidence_kind IN ('test_result', 'page_observation', 'api_readback', 'owner_confirmed', 'none')),
+        evidence jsonb,
+        created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CHECK ((outcome = 'unverified') = (evidence_kind = 'none')),
+        CHECK ((evidence_kind = 'none') = (evidence IS NULL)),
+        PRIMARY KEY (owner_id, source_kind, source_id)
+      )`.execute(tx);
+      await sql`CREATE TABLE experience_feedback (
+        id text PRIMARY KEY,
+        owner_id text NOT NULL,
+        source_kind text NOT NULL,
+        source_id text NOT NULL,
+        attempt integer NOT NULL CHECK (attempt >= 0),
+        submission_hash text NOT NULL,
+        rating integer CHECK (rating BETWEEN 1 AND 5),
+        confirmed text CHECK (confirmed IN ('success', 'failure')),
+        memory_feedback_id text,
+        created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CHECK (rating IS NOT NULL OR confirmed IS NOT NULL),
+        UNIQUE (owner_id, submission_hash),
+        FOREIGN KEY (owner_id, source_kind, source_id) REFERENCES experiences ON DELETE CASCADE
+      )`.execute(tx);
+      await tx.insertInto('schema_migrations').values({ version: '026_experiences' }).execute();
     }
   });
 }

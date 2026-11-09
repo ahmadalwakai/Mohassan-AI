@@ -15,6 +15,7 @@ function clean(value:unknown,limit=1200):string {
 }
 function checked(value:string){if(clean(value,10000)!==value)throw new MemoryError('MEMORY_SECRET_REJECTED','احذف بيانات الاعتماد من النص قبل حفظه في الذاكرة.');return value;}
 const normalize=(value:string)=>value.normalize('NFKC').toLowerCase().replace(/[\u064b-\u065f\u0670]/g,'');
+type MemoryLookupOptions = {readOnly?: boolean};
 
 export function createMemoryControl(db:Kysely<any>,options:{now?:()=>Date}={}){
   const now=()=>options.now?.()??new Date();
@@ -84,8 +85,10 @@ export function createMemoryControl(db:Kysely<any>,options:{now?:()=>Date}={}){
       if(!source)continue;await insertItem(tx,ownerId,{title:`${task.status==='failed'?'تعثر':'نتيجة'}: ${clean(task.title,100)}`,content,layer:task.status==='failed'?'failure':'episodic',taskId:task.id,evidenceIds:[id]},{confidenceKind:'task_observed'});created++;
     }});return {created};
   }
-  async function search(ownerId:string,input:unknown){
-    const request=MemorySearchSchema.parse(input);if(request.taskId)await ownedTask(ownerId,request.taskId);await sync(ownerId);
+  async function search(ownerId:string,input:unknown,options:MemoryLookupOptions={}){
+    const request=MemorySearchSchema.parse(input);
+    if(request.taskId)await ownedTask(ownerId,request.taskId);
+    if(!options.readOnly)await sync(ownerId);
     let query=db.selectFrom('memory_items').selectAll().where('owner_id','=',ownerId).where('status','=','active').where('expires_at','>',now());
     if(request.layers?.length)query=query.where('layer','in',request.layers);
     query=query.where(eb=>eb.or([eb('layer','!=','working'),request.taskId?eb('task_id','=',request.taskId):eb('task_id','is',null)]));
@@ -96,7 +99,7 @@ export function createMemoryControl(db:Kysely<any>,options:{now?:()=>Date}={}){
     const expired=await db.selectFrom('memory_items').select(eb=>eb.fn.countAll().as('n')).where('owner_id','=',ownerId).where('status','=','active').where('expires_at','<=',now()).executeTakeFirstOrThrow();
     return {items:ranked,citations:ranked.flatMap(item=>item.provenance.map(ref=>({memoryId:item.id,evidenceId:ref.id,taskId:ref.taskId,kind:ref.kind}))),method:'lexical-v1' as const,expiredExcluded:Number(expired.n)};
   }
-  async function context(ownerId:string,query:string,taskId?:string){const result=await search(ownerId,{query:query.slice(0,500),limit:5,taskId});const active=await db.selectFrom('memory_skill_versions').select('id').where('owner_id','=',ownerId).where('status','=','active').orderBy('updated_at','desc').limit(3).execute();const skillProposals=[];if(query.trim().length>=3)for(const skill of active){try{skillProposals.push(await runSkill(ownerId,skill.id,{input:query.slice(0,1000)}));}catch(error){if(!(error instanceof MemoryError))throw error;}}const items=result.items.map(item=>({...item,content:item.content.slice(0,1200)}));let bounded={...result,items,citations:result.citations,skillProposals};while(JSON.stringify(bounded).length>9000&&items.length){items.pop();bounded={...result,items,citations:result.citations.filter(ref=>items.some(item=>item.id===ref.memoryId)),skillProposals};}return bounded;}
+  async function context(ownerId:string,query:string,taskId?:string,options?:MemoryLookupOptions){const result=await search(ownerId,{query:query.slice(0,500),limit:5,taskId},options);const active=await db.selectFrom('memory_skill_versions').select('id').where('owner_id','=',ownerId).where('status','=','active').orderBy('updated_at','desc').limit(3).execute();const skillProposals=[];if(query.trim().length>=3)for(const skill of active){try{skillProposals.push(await runSkill(ownerId,skill.id,{input:query.slice(0,1000)}));}catch(error){if(!(error instanceof MemoryError))throw error;}}const items=result.items.map(item=>({...item,content:item.content.slice(0,1200)}));let bounded={...result,items,citations:result.citations,skillProposals};while(JSON.stringify(bounded).length>9000&&items.length){items.pop();bounded={...result,items,citations:result.citations.filter(ref=>items.some(item=>item.id===ref.memoryId)),skillProposals};}return bounded;}
   async function feedback(ownerId:string,input:unknown){
     const request=MemoryFeedbackSchema.parse(input);checked(request.comment);await ownedTask(ownerId,request.taskId);
     return db.transaction().execute(async tx=>{await ownerLock(tx,ownerId);const existing=await tx.selectFrom('memory_feedback').selectAll().where('owner_id','=',ownerId).where('submission_key','=',request.submissionKey).executeTakeFirst();if(existing){if(existing.task_id!==request.taskId||existing.kind!==request.kind||existing.comment!==request.comment||existing.persisted_preference!==request.persistPreference)throw new MemoryError('FEEDBACK_CONFLICT','مفتاح التغذية الراجعة مرتبط بطلب مختلف.',409);return {id:existing.id,persistedPreference:existing.persisted_preference};}

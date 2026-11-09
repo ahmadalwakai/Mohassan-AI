@@ -48,6 +48,29 @@ describe('evidence-backed memory and measured declarative skill lifecycle',()=>{
     await store.db.insertInto('model_runs').values({id:randomUUID(),task_id:completed.id,attempt:1,lease_token:randomUUID(),provider:'fixture',model:'fixture',status:'succeeded',input_tokens:11,output_tokens:7,usage_known:true,result_committed:true}).execute();
     const metrics=await memory.metrics(owner);expect(metrics).toMatchObject({knownInputTokens:11,knownOutputTokens:7,failed:1});
   });
+  it('recalls existing notes without syncing new task outcomes when read-only',async()=>{
+    const note=await memory.create(owner,manual('فهرس استرجاع مستقل'));
+    const pending=await task(owner);
+    const query='فهرس استرجاع';
+    const readOnly={readOnly:true};
+
+    const searchResult=await memory.search(owner,{query},readOnly);
+    const context=await memory.context(owner,query,undefined,readOnly);
+    expect(searchResult.items).toEqual([note]);
+    expect(context.items).toEqual([note]);
+    expect(context.citations).toEqual(searchResult.citations);
+    expect(await store.db.selectFrom('memory_items').select('id').where('owner_id','=',owner).where('task_id','=',pending.id).execute()).toEqual([]);
+    expect(await store.db.selectFrom('memory_evidence').select('id').where('owner_id','=',owner).where('task_id','=',pending.id).execute()).toEqual([]);
+
+    expect((await memory.sync(owner)).created).toBeGreaterThan(0);
+    const synced=await memory.search(owner,{query:pending.title,limit:30},readOnly);
+    expect(synced.items).toContainEqual(expect.objectContaining({taskId:pending.id,layer:'episodic'}));
+
+    const later=await task(owner);
+    const defaultSearch=await memory.search(owner,{query:later.title,limit:30});
+    expect(defaultSearch.items).toContainEqual(expect.objectContaining({taskId:later.id,layer:'episodic'}));
+    expect((await memory.sync(owner)).created).toBe(0);
+  });
   it('requires explicit preference consent and bounds provenance-tagged retrieval context',async()=>{
     const completed=await task(owner);
     const correction={taskId:completed.id,kind:'task_correction',comment:'تصحيح خاص بهذه المهمة فقط',submissionKey:randomUUID()};

@@ -391,6 +391,29 @@ describe('the assistant finishing real work', () => {
     await start(() => ({ tool: 'answer', text: 'تم', outcome: 'done' }));
   }, 30000);
 
+  it('deletes a conversation for its owner only, closing its page and every row', async () => {
+    await start(() => { throw new Error('the model should not be needed'); });
+    const { id } = await control.create(OWNER, { goal: `افتح ${origin}/` });
+    const opened = await settle(id);
+    expect(opened.browser?.live).toBe(true);
+    await expect(control.remove('someone-else', id)).rejects.toMatchObject({ code: 'CHAT_NOT_FOUND' });
+    await expect(control.remove(OWNER, id)).resolves.toEqual({ ok: true });
+    await expect(control.detail(OWNER, id)).rejects.toMatchObject({ code: 'CHAT_NOT_FOUND' });
+    expect((await control.list(OWNER)).conversations.some((item) => item.id === id)).toBe(false);
+    for (const table of ['chat_messages', 'chat_runs', 'chat_events', 'chat_observations'] as const) {
+      expect(await store.db.selectFrom(table).select('id').where('conversation_id', '=', id).execute(), table).toHaveLength(0);
+    }
+    await expect(control.screen(OWNER, id)).rejects.toMatchObject({ code: 'CHAT_NOT_FOUND' });
+  }, 40000);
+
+  it('deletes a conversation while it is still waiting on the owner', async () => {
+    await start(() => ({ tool: 'open', url: `${origin}/account` }));
+    const { id } = await control.create(OWNER, { goal: 'افتح حسابي واعرض الرصيد' });
+    expect((await settle(id)).status).toBe('waiting_input');
+    await expect(control.remove(OWNER, id)).resolves.toEqual({ ok: true });
+    await expect(control.detail(OWNER, id)).rejects.toMatchObject({ code: 'CHAT_NOT_FOUND' });
+  }, 40000);
+
   it('stops on request and forgets the sign-in', async () => {
     await start(() => ({ tool: 'open', url: `${origin}/account` }));
     const { id } = await control.create(OWNER, { goal: 'افتح حسابي واعرض الرصيد' });

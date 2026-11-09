@@ -1,12 +1,21 @@
 import { spawnSync } from 'node:child_process';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { snapshotHash, WindowsAppContainerSandbox, type SandboxFile, type SandboxRunInput, type SandboxTestResult } from './index.js';
+import { readFileSync } from 'node:fs';
+import { lpacRegistryReadCapability, snapshotHash, WindowsAppContainerSandbox, type SandboxFile, type SandboxRunInput, type SandboxTestResult } from './index.js';
 
 describe('sandbox input boundary', () => {
   it.each(['../outside.mjs', '.git/config', '.env', 'src/.env.local', 'C:/outside.mjs', 'src\\outside.mjs', '.ENV.LOCAL', 'src/NUL.mjs', 'src/trailing.'])('rejects disallowed path %s before creating any process', async (path) => {
     const sandbox = new WindowsAppContainerSandbox();
     await expect(sandbox.run({ files: [{ path, content: 'test' }], testFiles: [path] })).rejects.toMatchObject({ code: 'SANDBOX_UNAVAILABLE' });
     expect(sandbox.probeEvidence).toBeUndefined();
+  });
+  it('pins one identical registryRead capability in the native runner and the result check', () => {
+    const runner = readFileSync(new URL('../native/Runner.cs', import.meta.url), 'utf8');
+    const pinned = [...runner.matchAll(/RegistryReadCapability="(S-1-15-3-[0-9-]+)"/g)].map(match => match[1]);
+    expect(pinned).toEqual([lpacRegistryReadCapability]);
+    // The well-known registryRead capability SID; any other capability is rejected.
+    expect(lpacRegistryReadCapability).toBe('S-1-15-3-1024-1065365936-1281604716-3511738428-1654721687-432734479-3232135806-4053264122-3456934681');
+    expect(runner).toContain('lowPrivilege?result.capabilityCount==1&&capabilityEnabled&&result.capabilitySid==RegistryReadCapability:result.capabilityCount==0');
   });
   it('hashes a canonical immutable snapshot independent of input ordering', () => {
     const files = [{ path: 'b.mjs', content: 'b' }, { path: 'a.mjs', content: 'a' }];

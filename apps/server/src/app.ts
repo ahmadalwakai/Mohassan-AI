@@ -18,8 +18,14 @@ import { createCapabilities } from '@mohassan/runtime';
 import { createStudioControl } from './studio.js';
 import { StudioError } from '@mohassan/studio';
 import { registerBrowserRoutes } from './browser.js';
-import { AgentBrowser, BrowserError, type BrowserConfig } from '@mohassan/browser';
+import { AgentBrowser, BrowserError, SafeNetwork, SearchEngine, SqlSearchStore, LocalPublicIndex, migrateSearch, type BrowserConfig } from '@mohassan/browser';
+import { registerSearchRoutes } from './search.js';
+import { registerBrowserFileRoutes } from './browser-files.js';
 import { registerMemoryRoutes } from './memory.js';
+import { registerLearningRoutes, type LearningConfig } from './learning.js';
+import { createIsolatedLearningEvaluator } from './learning-evaluator.js';
+import { OllamaProvider } from '@mohassan/providers';
+import { LearningContentError } from '@mohassan/learning';
 import { registerSkillRoutes } from './skills.js';
 import { registerWindowsRoutes, windowsMigration, revokeWindowsSession } from '@mohassan/windows';
 import { createAssistantTools } from './assistant/tools.js';
@@ -27,6 +33,7 @@ import { createStudioAiControl, registerStudioAiRoutes } from './studio-ai.js';
 import { createStudioLiveControl } from './studio-live.js';
 import { createBrowserTaskControl } from './browser-task.js';
 import { createCommandChatControl, registerCommandChatRoutes } from './command-chat.js';
+import { createInferenceControl, registerInferenceRoutes, type InferenceConfig } from './inference.js';
 import { createGoogleAdsControl, googleAdsMigration, GoogleAdsError, type GoogleAdsConfig } from '@mohassan/google-ads';
 import { landingPageReader, registerGoogleAdsRoutes } from './google-ads.js';
 import { createSkillRuntime, skillGatewayTools } from './skill-runtime.js';
@@ -52,8 +59,12 @@ export interface AppConfig {
   browser?:BrowserConfig;windowsEnabled?:boolean;browserProfileDir?:string;browserChannel?:'chrome'|null;
   studioAiDataDir?:string;groqVisionModel?:string;studioGatewayUrl?:string;studioGatewaySecret?:string;studioPreviewPort?:number;
   skillEngineEnabled?: boolean;
+  /** FreeLLMAPI gateway and failover policy. Absent: FreeLLMAPI stays off and Groq works as before. */
+  inference?: Omit<InferenceConfig,'groq'|'fetch'>;
   /** Absent values leave the integration in its not-configured state. */
   googleAds?: Partial<Omit<GoogleAdsConfig,'webOrigin'>>;
+  learning?: LearningConfig;
+  learningLocalModel?:{model:string;baseUrl?:string};
   /** Server-side fixture load only; never an API option or production setting. */
   testRequestLimit?:number;
 }
@@ -79,6 +90,9 @@ export async function createApplication(config: AppConfig) {
   studio=await createStudioControl(database.db,{allowedRoots:config.codingAllowedRoots??[],sandbox:coding.sandbox,buildNext:studioLive.available?((snapshot,signal)=>studioLive.build(snapshot,signal)):undefined});
   const studioAi=await createStudioAiControl(database.db,{dataDir:config.studioAiDataDir??(config.codingDataDir?resolve(config.codingDataDir,'studio-ai'):undefined),apiKey:config.groqApiKey,model:config.groqReasoningModel,visionModel:config.groqVisionModel,fetch:config.aiFetch,studio,validateCandidate:studio.validateCandidate,applyCandidate:studio.applyCandidate});
   let browser:Awaited<ReturnType<typeof registerBrowserRoutes>>;
+  await migrateSearch(database.db);
+  const searchNetwork=new SafeNetwork(config.browser),searchStore=new SqlSearchStore(database.db),searchIndex=new LocalPublicIndex(database.db,searchNetwork);
+  const searchProvider=config.browser?.searchProvider??new SearchEngine(searchNetwork,{store:searchStore,localIndex:searchIndex,admission:searchStore});
   const browserTask=await createBrowserTaskControl(database.db,{browser:{create:(ownerId,input)=>browser.create(ownerId,input),action:(ownerId,id,input)=>browser.action(ownerId,id,input),detail:(ownerId,id)=>browser.detail(ownerId,id),close:(ownerId,id)=>browser.close(ownerId,id)},networkPolicy:config.browser});
   const moduleAvailability={studioVisual:true,browser:true,memory:true,windows:true};
   const ai=await createAIControl(database.db,{apiKey:config.groqApiKey,model:config.groqModel,reasoningModel:config.groqReasoningModel,fetch:config.aiFetch,capabilities:createCapabilities(Boolean(config.groqApiKey),coding.available,studioAi.available,moduleAvailability,true,config.skillEngineEnabled)});
@@ -119,6 +133,7 @@ export async function createApplication(config: AppConfig) {
     if (error instanceof z.ZodError) return reply.code(400).send({error: {code: 'VALIDATION_ERROR', message: 'تحقق من الحقول المطلوبة وطول المدخلات.'}});
     if (error instanceof StudioError) return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}});
     if (error instanceof BrowserError) return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}});
+    if (error instanceof LearningContentError) return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}});
     if (error instanceof GoogleAdsError) { if (error.options.retryAfterSeconds) reply.header('Retry-After', String(error.options.retryAfterSeconds)); return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}}); }
     if(error instanceof CodingError)return reply.code(error.code==='PROJECT_BUSY'?409:error.code==='SANDBOX_UNAVAILABLE'?503:400).send({error:{code:error.code,message:error.message}});
     const code = typeof error.statusCode === 'number' && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500;
@@ -162,9 +177,13 @@ export async function createApplication(config: AppConfig) {
     if (!session) throw Object.assign(new Error('سجل الدخول للمتابعة.'), {statusCode: 401, code: 'UNAUTHORIZED'});
     return session.user;
   };
-  browser=await registerBrowserRoutes(app,{db:database.db,owner,config:config.browser,managedLifecycle:false});
+  await registerSearchRoutes(app,{owner,index:searchIndex,store:searchStore});
+  browser=await registerBrowserRoutes(app,{db:database.db,owner,config:{...config.browser,searchProvider},managedLifecycle:false});
   app.get<{Params:{id:string}}>('/api/browser/tasks/:id/screenshot',async(request,reply)=>{const picture=await browserTask.screenshot((await owner(request)).id,z.uuid().parse(request.params.id));return reply.type(picture.mimeType).header('Content-Disposition','inline').send(picture.bytes);});
   memory=await registerMemoryRoutes(app,{db:database.db,owner});
+  const learningAbort=new AbortController();
+  const localEvaluation=config.learningLocalModel?createIsolatedLearningEvaluator({model:config.learningLocalModel.model,createProvider:model=>new OllamaProvider({model,baseUrl:config.learningLocalModel?.baseUrl}),signal:learningAbort.signal}):undefined;
+  const learning=await registerLearningRoutes(app,{db:database.db,owner,config:{allowedRoots:config.codingAllowedRoots??[],...(localEvaluation?{evaluate:localEvaluation,stopEvaluation:()=>learningAbort.abort()}:{}),...config.learning}});
   // Reading readiness starts no process; available() already ran its fixed probes.
   const scriptsReady=(await coding.sandbox.executableReadiness?.())?.enabled===true;
   skills=await registerSkillRoutes(app,{db:database.db,owner,allowedRoots:config.codingAllowedRoots??[],enabled:config.skillEngineEnabled,executableReady:async()=>scriptsReady,environment:()=>({capabilities:createCapabilities(Boolean(config.groqApiKey),coding.available,studioAi.available,moduleAvailability,true,config.skillEngineEnabled),modelReady:Boolean(config.groqApiKey),visionReady:Boolean(config.groqApiKey&&config.groqVisionModel),executableReady:scriptsReady,gatewayTools:skillGatewayTools({enabled:config.skillEngineEnabled,coding:coding.available,studio:studioAi.available,vision:Boolean(config.groqApiKey&&config.groqVisionModel)})})});
@@ -197,13 +216,18 @@ export async function createApplication(config: AppConfig) {
   const googleAds=createGoogleAdsControl(database.db,{...config.googleAds,webOrigin:config.webOrigin,fetchPage:config.googleAds?.fetchPage??landingPageReader(config.browser)});
   await registerGoogleAdsRoutes(app,{control:googleAds,owner});
   const assistantTools=createAssistantTools({memory,coding,studio,studioChange:studioAi.available,runtime,windows,googleAds});
-  const chat=await createCommandChatControl(database.db,{apiKey:config.groqApiKey,tools:assistantTools,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:new AgentBrowser({profileDir:config.browserProfileDir??join(tmpdir(),`mohassan-browser-${randomUUID()}`),testOrigins:config.browser?.testOrigins,channel:config.browserChannel}),networkPolicy:config.browser,memoryContext:(ownerId,goal)=>memory.context(ownerId,goal),
+  const inference=await createInferenceControl(database.db,{...config.inference,groq:{apiKey:config.groqApiKey,fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b']},fetch:config.aiFetch});
+  await registerInferenceRoutes(app,{control:inference,owner});
+  const agentBrowser=new AgentBrowser({profileDir:config.browserProfileDir??join(tmpdir(),`mohassan-browser-${randomUUID()}`),testOrigins:config.browser?.testOrigins,channel:config.browserChannel});
+  const chat=await createCommandChatControl(database.db,{apiKey:config.groqApiKey,tools:assistantTools,inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
+    learningContext:learning.context,
     ...(config.skillEngineEnabled?{recordSkillGap,skillContext:skills.context,loadSkill:skills.loadInstruction,runSkill:async(ownerId,input,context)=>{
       context.signal.throwIfAborted();
-      return runtime.createTask(ownerId,{title:'تشغيل مهارة من المحادثة',goal:context.goal.slice(0,4000),capabilityId:'skill.run',autonomy:'assisted',skillInput:input},context.idempotencyKey);
+      return runtime.createTask(ownerId,{title:'تشغيل مهارة من المحادثة',goal:context.goal.slice(0,4000),capabilityId:'skill.run',autonomy:'assisted',skillInput:input},context.idempotencyKey,context.runId);
     }}:{}),
   });
   await registerCommandChatRoutes(app,{control:chat,owner:async request=>{const user=await owner(request);windows.noteSession(user.id,request);return user;}});
+  await registerBrowserFileRoutes(app,{db:database.db,browser:agentBrowser,owner});
   await registerStudioAiRoutes(app,{control:studioAi,owner});
   await studio.reviews.register(app,owner);
   await studioLive.register(app,owner);
@@ -217,6 +241,7 @@ export async function createApplication(config: AppConfig) {
     const integrations: Integration[] = [
       {id: 'database', name: database.mode === 'embedded' ? 'PostgreSQL محلي' : 'PostgreSQL / Neon', description: 'حفظ المهام والجلسات والأحداث', status: 'connected', detail: database.mode === 'embedded' ? 'مخزن تطوير دائم، تديره خدمة واحدة.' : 'تم التحقق من اتصال قاعدة البيانات.'},
       {id: 'groq', name: 'Groq', description: 'النماذج والتخطيط الذكي', status: aiStatus.status==='verified'?'connected':'needs_configuration', detail: aiStatus.message},
+      {id: 'freellmapi', name: 'FreeLLMAPI', description: 'نماذج مجانية عبر بوابة محلية مع تبديل تلقائي للمحادثة', status: inference.active()?'connected':'needs_configuration', detail: inference.active()?'مفعّل للمساعد. التخطيط والبرمجة والاستوديو تبقى على Groq.':inference.configured?'مهيأ على الخادم وغير مفعّل. فعّله من إعدادات المزودين.':'غير مهيأ. أضف FREELLMAPI_API_KEY إلى ملف .env على الخادم.'},
       {id: 'coding', name: 'Coding Engine', description: 'تعديل معزول واختبارات ومراجعة Git', status: coding.available?'connected':'needs_configuration', detail: codingWorkspace.sandbox.message},
       {id:'studio',name:'Visual Studio',description:'معاينة وتعديل المصدر ومراجعة الفروقات',status:'connected',detail:'اختيار عناصر وتعديلها، ومقترحات ذكية بموافقة وصور مقارنة قبل التطبيق؛ تشغيل Next الكامل يحتاج ربط مشغّل المعاينة.'},
       {id: 'browser', name: 'Browser & Research', description: 'بحث موثق وجلسات مستقلة', status: 'connected', detail: 'جلسات Chromium مستقلة، ومصادر محفوظة، وموافقة منفصلة لإرسال النماذج.'},
@@ -255,5 +280,5 @@ export async function createApplication(config: AppConfig) {
   app.addHook('onClose', async () => {clearInterval(benchmarkMaintenance);try{await benchmarkMaintenanceRun;await Promise.all([skillBenchmarks.shutdown(),skillForge.shutdown()]);}finally{try{await chat.shutdown();}finally{try{await runtime.stop();}finally{try{await browser.shutdown();}finally{try{await studioLive.close();}finally{await database.close();}}}}}});
   if (config.runWorker) runtime.start();
   await app.ready();
-  return {app, runtime, database, auth,ai,coding,studio,studioAi,studioLive,browser,browserTask,memory,skills,chat,skillExecution,skillBenchmarks,skillForge,googleAds};
+  return {app, runtime, database, auth,ai,coding,studio,studioAi,studioLive,browser,browserTask,memory,skills,chat,skillExecution,skillBenchmarks,skillForge,googleAds,inference};
 }

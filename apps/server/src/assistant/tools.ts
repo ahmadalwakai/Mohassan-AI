@@ -20,17 +20,19 @@ export interface ComputerElement { ref: string; name: string; type: string }
 export interface ComputerScreen { title: string; canAct: boolean; hasPasswordField: boolean; elements: ComputerElement[]; jpeg: string }
 export interface PendingWorkTask { id: string; label: string; prompt: string; detail: string }
 export interface TaskOutcome { settled: boolean; text: string }
+export type MemoryLookupResult = string | { text: string; evidence: readonly string[] };
 
 export interface AssistantTools {
   memory?: {
-    search(ownerId: string, query: string): Promise<string>;
+    search(ownerId: string, query: string): Promise<MemoryLookupResult>;
     /** The owner's own words are kept beside the fact, so a later search in their language finds it. */
     save(ownerId: string, text: string, request: string): Promise<string>;
   };
   work?: {
     list(ownerId: string): Promise<string>;
-    code?(ownerId: string, input: { id: string; goal: string }, idempotencyKey: string): Promise<PendingWorkTask>;
-    studio?(ownerId: string, input: { id: string; goal: string }, idempotencyKey: string): Promise<PendingWorkTask>;
+    inventory?(ownerId: string): Promise<{ id: string; name: string }[]>;
+    code?(ownerId: string, input: { id: string; goal: string }, idempotencyKey: string, runId?: string): Promise<PendingWorkTask>;
+    studio?(ownerId: string, input: { id: string; goal: string }, idempotencyKey: string, runId?: string): Promise<PendingWorkTask>;
     approve(ownerId: string, taskId: string): Promise<void>;
     cancel(ownerId: string, taskId: string): Promise<void>;
     outcome(ownerId: string, taskId: string): Promise<TaskOutcome>;
@@ -39,6 +41,7 @@ export interface AssistantTools {
     status(ownerId: string): Promise<string>;
     report(ownerId: string): Promise<string>;
     draft(ownerId: string, text: string, request: string, idempotencyKey: string): Promise<string>;
+    createPaused?(ownerId:string,text:string,request:string,idempotencyKey:string,assertActive:()=>Promise<void>):Promise<string>;
   };
   computer?: {
     view(ownerId: string): Promise<ComputerScreen>;
@@ -50,6 +53,13 @@ const MAX_LISTED_ELEMENTS = 24;
 const ACTIONABLE = /Button|Edit|MenuItem|ListItem|TabItem|CheckBox|ComboBox|Hyperlink|RadioButton/;
 /** A key that can activate whatever has focus has a sending effect we cannot see. */
 export const EFFECT_KEYS = new Set(['Enter', 'Space', 'Delete']);
+/** Only the current owner's request authorizes account creation, never retrieved content. */
+export function requestsPausedCampaign(request:string):boolean {
+  const text=request.normalize('NFKC').replace(/[أإآ]/g,'ا').toLowerCase();
+  if(/\b(?:do not|don't|never)\b|لا\s+(?:تنش|تعمل|تحفظ|تبن)|معاينة فقط|مسودة فقط|preview only|draft only/i.test(text))return false;
+  const direct=/^(?:(?:please|can you|could you|i want you to)\s+){0,2}(?:create|build|save)\b/i.test(text.trim())||/^(?:(?:من فضلك|لو سمحت)\s+)?(?:(?:اريد|احتاج)(?:\s+منك)?\s+(?:ان\s+)?(?:تنشئ|انشاء|تبني|بناء|تحفظ|حفظ)|انشئ|انشاء|ابنِ?|ابني|احفظ)(?:\s|$)/u.test(text.trim());
+  return direct&&/حمل[ةه]|\bcampaign\b/i.test(text)&&/حساب|google ads|جوجل ادز|غوغل ادز|\baccount\b/i.test(text);
+}
 
 const money = (micros: string, currency: string) => `${(Number(micros) / 1_000_000).toFixed(2)} ${currency}`;
 
@@ -107,7 +117,7 @@ export function elementCenter(element: { x: number; y: number; width: number; he
 
 interface ToolModules {
   memory: {
-    search(ownerId: string, input: unknown): Promise<{ items: { title: string; content: string; layer: string }[] }>;
+    search(ownerId: string, input: unknown, options: { readOnly: true }): Promise<{ items: { title: string; content: string; layer: string }[] }>;
     create(ownerId: string, input: unknown): Promise<unknown>;
   };
   coding: { available: boolean; workspace(ownerId: string): Promise<{ projects: { id: string; name: string; path: string }[] }> };
@@ -117,7 +127,7 @@ interface ToolModules {
   };
   studioChange: boolean;
   runtime: {
-    createTask(ownerId: string, input: CreateTaskInput, key: string): Promise<Task>;
+    createTask(ownerId: string, input: CreateTaskInput, key: string, runId?: string): Promise<Task>;
     approve(ownerId: string, id: string): Promise<unknown>;
     cancel(ownerId: string, id: string): Promise<unknown>;
     detail(ownerId: string, id: string): Promise<{ task: Task }>;
@@ -143,8 +153,10 @@ export function createAssistantTools({ memory, coding, studio, studioChange, run
   return {
     memory: {
       search: (ownerId, query) => guarded(async () => {
-        const { items } = await memory.search(ownerId, { query: query.slice(0, 500), limit: 5 });
-        return items.length ? items.map(item => `- [${item.layer}] ${item.title}: ${item.content.slice(0, 300)}`).join('\n') : 'no matching memory';
+        const { items } = await memory.search(ownerId, { query: query.slice(0, 500), limit: 5 }, { readOnly: true });
+        const evidence = items.map(item => item.content.slice(0, 300));
+        const text = items.length ? items.map((item, index) => `- [${item.layer}] ${item.title}: ${evidence[index]}`).join('\n') : 'no matching memory';
+        return { text, evidence };
       }),
       save: (ownerId, text, request) => guarded(async () => {
         const fact = text.trim(), words = request.trim();
@@ -155,6 +167,10 @@ export function createAssistantTools({ memory, coding, studio, studioChange, run
       }),
     },
     work: {
+      inventory: ownerId => guarded(async () => {
+        const { projects } = await coding.workspace(ownerId);
+        return projects.map(({ id, name }) => ({ id, name }));
+      }),
       list: ownerId => guarded(async () => {
         const [{ projects }, { sessions }] = await Promise.all([coding.workspace(ownerId), studio.workspace(ownerId)]);
         return [
@@ -162,17 +178,17 @@ export function createAssistantTools({ memory, coding, studio, studioChange, run
           'studio sessions:', ...(sessions.length ? sessions.map(session => `- ${session.id} | ${session.name} | ${session.framework}`) : ['none open; the owner opens them in the Visual Studio section']),
         ].join('\n');
       }),
-      ...(coding.available ? { code: (ownerId, raw, key) => guarded(async () => {
+      ...(coding.available ? { code: (ownerId, raw, key, runId) => guarded(async () => {
         const input = CodeInput.parse({ projectId: raw.id, goal: raw.goal });
         const project = (await coding.workspace(ownerId)).projects.find(item => item.id === input.projectId);
         if (!project) throw new BrowserError('ASSISTANT_PROJECT_UNKNOWN', 'هذا المشروع غير مسجل. استخدم workspace_list.', 404);
-        const task = await runtime.createTask(ownerId, { title: `تعديل ${project.name}`.slice(0, 120), goal: input.goal, capabilityId: 'coding.change', autonomy: 'assisted', projectId: project.id }, key);
+        const task = await runtime.createTask(ownerId, { title: `تعديل ${project.name}`.slice(0, 120), goal: input.goal, capabilityId: 'coding.change', autonomy: 'assisted', projectId: project.id }, key, runId);
         return pendingTask(task, `تعديل مشروع ${project.name}`.slice(0, 80), `أريد تعديل مشروع «${project.name.slice(0, 80)}»: ${input.goal.slice(0, 500)}`, 'يعمل التعديل على نسخة معزولة ويُختبر هناك. يبقى مشروعك الأصلي كما هو حتى تراجع الفرع بنفسك.');
       }) } satisfies Pick<NonNullable<AssistantTools['work']>, 'code'> : {}),
-      ...(studioChange ? { studio: (ownerId, raw, key) => guarded(async () => {
+      ...(studioChange ? { studio: (ownerId, raw, key, runId) => guarded(async () => {
         const input = StudioInput.parse({ sessionId: raw.id, goal: raw.goal });
         const session = await studio.detail(ownerId, input.sessionId);
-        const task = await runtime.createTask(ownerId, { title: `تعديل ${session.name}`.slice(0, 120), goal: input.goal, capabilityId: 'studio.change', autonomy: 'assisted', studioInput: { sessionId: input.sessionId, revision: session.revision } }, key);
+        const task = await runtime.createTask(ownerId, { title: `تعديل ${session.name}`.slice(0, 120), goal: input.goal, capabilityId: 'studio.change', autonomy: 'assisted', studioInput: { sessionId: input.sessionId, revision: session.revision } }, key, runId);
         return pendingTask(task, `تعديل صفحة ${session.name}`.slice(0, 80), `أريد تعديل «${session.name.slice(0, 80)}» في الاستوديو: ${input.goal.slice(0, 500)}`, 'يُجهَّز التعديل كمقترح تراجعه وتطبقه أنت من الاستوديو.');
       }) } satisfies Pick<NonNullable<AssistantTools['work']>, 'studio'> : {}),
       approve: (ownerId, taskId) => guarded(async () => { await runtime.approve(ownerId, taskId); }),
@@ -200,6 +216,11 @@ export function createAssistantTools({ memory, coding, studio, studioChange, run
       draft: (ownerId, text, request, key) => guarded(async () => {
         const draft = await googleAds.createDraft(ownerId, parseAdsDraft(text, request), key);
         return [`Saved preview ${draft.id}. Nothing was sent to the account. The owner reviews, validates and approves it in the Google Ads section; you cannot publish.`, ...(draft.strategy?.recommendations ?? []).map(item => `${item.basis}: ${item.title}. ${item.reason}`), ...(draft.strategy?.blockers ?? []).map(item => `blocker: ${item}`)].join('\n');
+      }),
+      createPaused:(ownerId,text,request,key,assertActive)=>guarded(async()=>{
+        if(!requestsPausedCampaign(request))throw new BrowserError('ADS_CREATION_NOT_REQUESTED','يلزم طلبك الصريح لإنشاء حملة في الحساب؛ المعاينة وحدها لا تجيز ذلك.',403);
+        const draft=await googleAds.createPausedCampaign(ownerId,parseAdsDraft(text,request),key,{assertActive});
+        return `Google Ads readback confirmed new campaign ${draft.campaignResourceName} in PAUSED state. Draft ${draft.id}. It is not running. Only the owner can approve launch separately. ${draft.verification?.checks.find(check=>check.id==='conversion_tracking')?.passed?'Conversion tracking verified.':'Conversion tracking must be verified before launch.'}`;
       }),
     } } : {}),
     ...(windows.enabled ? { computer: {

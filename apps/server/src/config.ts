@@ -2,6 +2,7 @@
 if (process.env.MOHASSAN_ISOLATED_TEST !== 'true') await import('dotenv/config');
 import type { AppConfig } from './app.js';
 import { resolve,delimiter } from 'node:path';
+import { inferenceConfigFromEnv } from './inference.js';
 export function getConfig(): AppConfig {
   return {
     dataDir: process.env.DATA_DIR ?? '.data/postgres', databaseUrl: process.env.DATABASE_URL || undefined,
@@ -14,6 +15,8 @@ export function getConfig(): AppConfig {
     windowsEnabled:process.env.NODE_ENV==='production'?process.env.WINDOWS_REMOTE_ENABLED==='true':process.env.WINDOWS_REMOTE_ENABLED!=='false',
     studioAiDataDir:process.env.STUDIO_AI_DATA_DIR||resolve('.data/studio-ai'),browserProfileDir:process.env.BROWSER_PROFILE_DIR||resolve('.data/browser-profile'),groqVisionModel:process.env.GROQ_VISION_MODEL||'qwen/qwen3.8-27b',
     googleAds:{clientId:process.env.GOOGLE_ADS_CLIENT_ID||undefined,clientSecret:process.env.GOOGLE_ADS_CLIENT_SECRET||undefined,tokenKey:process.env.GOOGLE_ADS_TOKEN_KEY||undefined,developerToken:process.env.GOOGLE_ADS_DEVELOPER_TOKEN||undefined,publishingEnabled:process.env.GOOGLE_ADS_PUBLISHING_ENABLED==='true',maxDailyBudgetMicros:/^\d{1,6}$/.test(process.env.GOOGLE_ADS_MAX_DAILY_BUDGET??'')?BigInt(process.env.GOOGLE_ADS_MAX_DAILY_BUDGET!)*1000000n:undefined},
+    inference:(({groq:_groq,...rest})=>rest)(inferenceConfigFromEnv(process.env,undefined)),
+    learningLocalModel:process.env.LEARNING_EVALUATION_MODEL?{model:process.env.LEARNING_EVALUATION_MODEL,baseUrl:process.env.LEARNING_EVALUATION_OLLAMA_URL||'http://127.0.0.1:11434'}:undefined,
     studioGatewayUrl:process.env.STUDIO_GATEWAY_URL||undefined,studioGatewaySecret:process.env.STUDIO_GATEWAY_SECRET||undefined,studioPreviewPort:Number(process.env.STUDIO_PREVIEW_PORT||5000),
   };
 }

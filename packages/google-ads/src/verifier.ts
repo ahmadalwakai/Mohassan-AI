@@ -61,6 +61,20 @@ const toMicros = (value: string) => { const [whole = '0', fraction = ''] = value
 export interface VerifyInput {
   draftId: string; customerId: string; brief: GoogleAdsBrief; operations: readonly MutateOperation[]; storedHash: string;
   geoResourceNames: readonly string[]; maxDailyBudgetMicros: bigint; context: CallContext & { customerId: string };
+  /** Only a creation-only PAUSED request may defer tracking; launch always checks it again. */
+  allowUnprovenConversionsForPaused?: boolean;
+}
+
+export async function verifyConversionTracking(client: Pick<GoogleAdsClient, 'search'>, context: CallContext & { customerId: string }): Promise<GoogleAdsVerificationCheck> {
+  try {
+    const actions = await client.search('SELECT conversion_action.resource_name, conversion_action.name, conversion_action.status, conversion_action.include_in_conversions_metric FROM conversion_action WHERE conversion_action.status = \'ENABLED\'', context);
+    const counted = actions.filter(row => row.conversionAction?.includeInConversionsMetric === true);
+    const recorded = await client.search('SELECT segments.conversion_action, metrics.all_conversions FROM customer WHERE segments.date DURING LAST_30_DAYS', context);
+    const names = new Set(counted.map(row => row.conversionAction.resourceName));
+    const proven = recorded.filter(row => names.has(row.segments?.conversionAction) && Number(row.metrics?.allConversions ?? 0) > 0);
+    const detail = !counted.length ? 'no enabled conversion action counts toward conversions' : !proven.length ? 'enabled conversion actions exist, but none recorded a conversion in 30 days, so tracking is unproven' : `${proven.length} of ${counted.length} counted actions recorded conversions in the last 30 days`;
+    return { id: 'conversion_tracking', passed: counted.length > 0 && proven.length > 0, detail };
+  } catch (error) { rethrowUnlessExpected(error); return { id: 'conversion_tracking', passed: false, detail: error instanceof GoogleAdsError ? error.message : 'conversion tracking could not be read' }; }
 }
 
 export async function verifyDraft(client: Pick<GoogleAdsClient, 'search' | 'mutate'>, input: VerifyInput): Promise<GoogleAdsVerification> {
@@ -114,16 +128,8 @@ export async function verifyDraft(client: Pick<GoogleAdsClient, 'search' | 'muta
     add('account_permissions', problems, 'the account is enabled and readable; write permission is proven by the validate-only request below');
   } catch (error) { rethrowUnlessExpected(error); add('account_permissions', [error instanceof GoogleAdsError ? error.message : 'the account could not be read'], ''); }
 
-  // 4. Conversions: an enabled action that counts, which recorded something real in 30 days.
-  try {
-    const actions = await client.search('SELECT conversion_action.resource_name, conversion_action.name, conversion_action.status, conversion_action.include_in_conversions_metric FROM conversion_action WHERE conversion_action.status = \'ENABLED\'', context);
-    const counted = actions.filter(row => row.conversionAction?.includeInConversionsMetric === true);
-    const recorded = await client.search('SELECT segments.conversion_action, metrics.all_conversions FROM customer WHERE segments.date DURING LAST_30_DAYS', context);
-    const names = new Set(counted.map(row => row.conversionAction.resourceName));
-    const proven = recorded.filter(row => names.has(row.segments?.conversionAction) && Number(row.metrics?.allConversions ?? 0) > 0);
-    const problems = !counted.length ? ['no enabled conversion action counts toward conversions'] : !proven.length ? ['enabled conversion actions exist, but none recorded a conversion in 30 days, so tracking is unproven'] : [];
-    add('conversion_tracking', problems, `${proven.length} of ${counted.length} counted actions recorded conversions in the last 30 days`);
-  } catch (error) { rethrowUnlessExpected(error); add('conversion_tracking', [error instanceof GoogleAdsError ? error.message : 'conversion tracking could not be read'], ''); }
+  // 4. Still recorded honestly when PAUSED creation is allowed with a warning.
+  checks.push(await verifyConversionTracking(client, context));
 
   // 5. Google checks the same request, executing nothing. Only if the plan itself is sound.
   if (checks.some(check => ['draft_correctness', 'existing_resources_preserved'].includes(check.id) && !check.passed)) add('google_validate_only', ['skipped: the draft has local problems'], '');
@@ -135,7 +141,7 @@ export async function verifyDraft(client: Pick<GoogleAdsClient, 'search' | 'muta
     const codes = error instanceof GoogleAdsError ? error.options.googleCodes ?? [] : [];
     add('google_validate_only', [`${error instanceof GoogleAdsError ? error.message : 'Google did not accept the request'}${codes.length ? ` [${codes.slice(0, 5).join(', ')}]` : ''}`], '');
   }
-  return { passed: checks.every(check => check.passed), checkedAt: new Date().toISOString(), draftHash: hash, checks };
+  return { passed: checks.every(check => check.passed || input.allowUnprovenConversionsForPaused === true && check.id === 'conversion_tracking'), checkedAt: new Date().toISOString(), draftHash: hash, checks };
 }
 
 /** Sign-in and rate-limit failures are the connection's state, not a finding about the draft. */

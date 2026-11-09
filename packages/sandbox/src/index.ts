@@ -27,7 +27,9 @@ export interface SandboxRunner { available(): Promise<SandboxAvailability>; run(
 export class SandboxUnavailableError extends Error { readonly code = 'SANDBOX_UNAVAILABLE'; }
 const provider = 'windows-appcontainer';
 const nativeDirectory = fileURLToPath(new URL('../native/', import.meta.url));
-const NativeResult = z.object({ exitCode: z.number().int().nullable(), stdout: z.string(), stderr: z.string(), timedOut: z.boolean(), durationMs: z.number(), isolationVerified: z.literal(true), tokenIsAppContainer: z.literal(true), integrityRid: z.number().nonnegative().max(4096), capabilityCount: z.literal(0), jobAssigned: z.literal(true), jobLimitsVerified:z.literal(true),activeProcessLimit:z.literal(1),memoryLimitBytes:z.number().int().min(16*1024*1024).max(512*1024*1024),uiRestrictionMask:z.literal(255),uiRestrictionsVerified:z.literal(true),lowPrivilegeRequested:z.boolean(),tokenIsLessPrivilegedAppContainer:z.boolean(),outputComplete:z.boolean(),quotaVolumeBytes:z.number().int().min(0).max(quotaVolumeMaxBytes) });
+const NativeResult = z.object({ exitCode: z.number().int().nullable(), stdout: z.string(), stderr: z.string(), timedOut: z.boolean(), durationMs: z.number(), isolationVerified: z.literal(true), tokenIsAppContainer: z.literal(true), integrityRid: z.number().nonnegative().max(4096), capabilityCount: z.union([z.literal(0), z.literal(1)]), capabilitySid: z.string().max(200), jobAssigned: z.literal(true), jobLimitsVerified:z.literal(true),activeProcessLimit:z.literal(1),memoryLimitBytes:z.number().int().min(16*1024*1024).max(512*1024*1024),uiRestrictionMask:z.literal(255),uiRestrictionsVerified:z.literal(true),lowPrivilegeRequested:z.boolean(),tokenIsLessPrivilegedAppContainer:z.boolean(),outputComplete:z.boolean(),quotaVolumeBytes:z.number().int().min(0).max(quotaVolumeMaxBytes) });
+/** The one capability an LPAC run may hold (owner decision 2026-11-09); ordinary runs hold none. */
+export const lpacRegistryReadCapability = 'S-1-15-3-1024-1065365936-1281604716-3511738428-1654721687-432734479-3232135806-4053264122-3456934681';
 const NativeResponse = z.object({ ok: z.literal(true), results: z.array(NativeResult).min(1) });
 
 export function snapshotHash(files: readonly SandboxFile[]): string {
@@ -167,7 +169,7 @@ export class WindowsAppContainerSandbox implements SandboxRunner {
       }
       const results = parsed.results;
       if (script && results.some(result => !result.outputComplete)) throw new SandboxUnavailableError('تجاوز stdout أو stderr الحد المسموح؛ رُفض نجاح مبتور.');
-      if (results.some(result => result.memoryLimitBytes !== memoryMb * 1024 * 1024 || result.lowPrivilegeRequested !== Boolean(script?.lowPrivilege) || result.tokenIsLessPrivilegedAppContainer !== Boolean(script?.lowPrivilege) || (lease ? result.quotaVolumeBytes === 0 : result.quotaVolumeBytes !== 0))) throw new SandboxUnavailableError('لا تطابق حدود العملية الطلب الثابت.');
+      if (results.some(result => result.memoryLimitBytes !== memoryMb * 1024 * 1024 || result.lowPrivilegeRequested !== Boolean(script?.lowPrivilege) || result.tokenIsLessPrivilegedAppContainer !== Boolean(script?.lowPrivilege) || (script?.lowPrivilege ? result.capabilityCount !== 1 || result.capabilitySid !== lpacRegistryReadCapability : result.capabilityCount !== 0 || result.capabilitySid !== '') || (lease ? result.quotaVolumeBytes === 0 : result.quotaVolumeBytes !== 0))) throw new SandboxUnavailableError('لا تطابق حدود العملية الطلب الثابت.');
       const last = results[results.length - 1];
       const after = [];
       for (const file of input.files) after.push({ path: file.path, content: await readFile(join(work, ...file.path.split('/')), 'utf8') });

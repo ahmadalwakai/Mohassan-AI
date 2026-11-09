@@ -3,6 +3,7 @@ import {useCallback,useEffect,useState,type FormEvent} from 'react';
 import {BookOpen,Globe2,Link2,RefreshCw,Search,ShieldCheck,Unplug,X} from 'lucide-react';
 import type {BrowserObservation,BrowserSessionDetail,ResearchReport} from '@mohassan/browser';
 import styles from './browser-workspace.module.css';
+import {PublicIndexPanel} from './public-index-panel';
 
 async function api(path:string,options:RequestInit={}){const response=await fetch(path,{...options,cache:'no-store',credentials:'same-origin',headers:{'Content-Type':'application/json',...options.headers}});const body=await response.json().catch(()=>null);if(!response.ok)throw new Error(body?.error?.message??'تعذر الاتصال بالمتصفح والبحث.');return body;}
 type Workspace={sessions:{id:string;title:string;status:string;sequence:number}[];research:{id:string;question:string;status:string;error:string|null}[]};
@@ -37,6 +38,7 @@ export function BrowserWorkspace({offline}:{offline:boolean}){
       {research?.status==='running'?<div className={styles.notice} role="status"><p>يجري البحث وقراءة المصادر. يمكنك مغادرة الصفحة والعودة إلى التقرير المحفوظ.</p><button className={styles.button} disabled={offline||busy} onClick={()=>void run(async()=>setResearch(await api(`/api/research/runs/${research.id}/cancel`,{method:'POST',body:'{}'})))}>إيقاف البحث</button></div>:research?.error?<p className={styles.error}>{research.error}</p>:null}
       {research?.report?<ResearchView report={research.report}/>:<div className={`${styles.panel} ${styles.empty}`}><BookOpen size={30}/><h3>كل استنتاج يحتاج مصدرًا</h3><p>سيظهر التقرير مع الروابط والمقتطفات ووقت الوصول والتعارضات المحتملة.</p></div>}
     </>}
+    <PublicIndexPanel offline={offline}/>
   </section>;
 }
 

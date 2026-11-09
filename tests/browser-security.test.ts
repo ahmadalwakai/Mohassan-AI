@@ -1,6 +1,9 @@
 import {describe,it,expect,beforeAll,afterAll} from 'vitest';
 import {createServer,type Server} from 'node:http';
-import {BrowserEngine,BrowserError,SafeNetwork,isPublicAddress,conductResearch} from '../packages/browser/src/index.js';
+import {mkdtemp,realpath,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {isAbsolute,join,relative} from 'node:path';
+import {AgentBrowser,BrowserEngine,BrowserError,SafeNetwork,isPublicAddress,conductResearch,type AgentAuthority} from '../packages/browser/src/index.js';
 
 describe('browser network boundary',()=>{
   it('rejects local, mapped, noncanonical and transition addresses',()=>{
@@ -18,11 +21,16 @@ describe('browser network boundary',()=>{
 
 describe('actual isolated browser, consent, redirects and research evidence',()=>{
   let server:Server,origin='',engine:BrowserEngine,unapprovedWrites=0,approvedWrites=0,redirectWrites=0,replayedWrites=0;const requests:{url:string;cookie:string}[]=[];
+  let excludedOrigin='';
   beforeAll(async()=>{
     server=createServer((request,response)=>{
       requests.push({url:request.url??'',cookie:request.headers.cookie??''});
+      if(request.url==='/scope-redirect'&&excludedOrigin){response.writeHead(302,{location:excludedOrigin+'/excluded'});response.end();return;}
+      if(request.url==='/scope-resource'&&excludedOrigin){response.setHeader('content-type','text/html');response.end(`<title>Scoped fixture</title><script src="${excludedOrigin}/excluded"></script>`);return;}
       if(request.url==='/bad-redirect'){response.writeHead(302,{location:'http://127.0.0.1:1/private'});response.end();return;}
       if(request.url==='/public-redirect'){response.writeHead(302,{location:'/redirect-final','set-cookie':'redirect_fixture=verified; Path=/; SameSite=Lax'});response.end();return;}
+      if(request.url==='/missing-redirect'){response.writeHead(302,{location:'/missing-document'});response.end();return;}
+      if(request.url==='/missing-document'){response.writeHead(404,{'content-type':'text/html'});response.end('<title>Missing document</title><body><script src="/resource-final.js"></script></body>');return;}
       if(request.url==='/redirect-loop'){response.writeHead(302,{location:'/redirect-loop'});response.end();return;}
       if(request.url==='/redirect-final'){response.setHeader('content-type','text/html');response.end('<title>Actual redirect destination</title><h1>Reached the validated destination</h1>');return;}
       if(request.url==='/redirect-resource-page'){response.setHeader('content-type','text/html');response.end('<title>Redirected resource fixture</title><body><script src="/resource-redirect"></script></body>');return;}
@@ -41,6 +49,30 @@ describe('actual isolated browser, consent, redirects and research evidence',()=
     });await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const address=server.address();if(!address||typeof address==='string')throw new Error('fixture');origin=`http://127.0.0.1:${address.port}`;engine=new BrowserEngine({testOrigins:[origin]});
   });
   afterAll(async()=>{await engine?.close();await new Promise<void>(resolve=>server?.close(()=>resolve()));});
+  it('confines AgentBrowser navigation, subresources and redirects to the selected fixture origin',async()=>{
+    const base=await realpath(tmpdir()), directory=await mkdtemp(join(base,'mohassan-scope-test-'));
+    let excludedRequests=0;
+    const excluded=createServer((_request,response)=>{excludedRequests++;response.setHeader('content-type','application/javascript');response.end('document.title="Outside scope"');});
+    let agent:AgentBrowser|undefined;
+    try{
+      await new Promise<void>(resolve=>excluded.listen(0,'127.0.0.1',resolve));
+      excludedOrigin=`http://127.0.0.1:${(excluded.address() as {port:number}).port}`;
+      agent=new AgentBrowser({profileDir:directory,channel:null,testOrigins:[origin,excludedOrigin],allowedOrigins:[origin]});
+      const authority:AgentAuthority={signal:new AbortController().signal,assertActive:async()=>{},dispatched:async permit=>permit.id,completed:async()=>{}};
+      expect(await agent.isAllowed(excludedOrigin+'/excluded')).toBe(false);
+      const scoped=await agent.act('owner','scoped',{kind:'open',text:origin+'/scope-resource'},authority);
+      expect(scoped.page.title).toBe('Scoped fixture');
+      await expect(agent.act('owner','redirect',{kind:'open',text:origin+'/scope-redirect'},authority)).rejects.toMatchObject({code:'BROWSER_SCOPE_DENIED'});
+      expect(excludedRequests).toBe(0);
+    }finally{
+      excludedOrigin='';
+      await agent?.close();
+      await new Promise<void>(resolve=>excluded.close(()=>resolve()));
+      const target=await realpath(directory), inside=relative(base,target);
+      if(isAbsolute(inside)||!/^mohassan-scope-test-[^/\\]+$/.test(inside))throw new Error('Unsafe cleanup');
+      await rm(target,{recursive:true,force:true,maxRetries:5,retryDelay:100});
+    }
+  });
   it('uses a separate browser context for each session and blocks page-initiated writes',async()=>{
     await engine.open('first',[origin]);const first=await engine.navigate('first',origin+'/cookie');expect(first.title).toBe('Browser fixture');expect(first.screenshot).toMatch(/^data:image\/jpeg;base64,/);expect(unapprovedWrites).toBe(0);
     await engine.open('second',[origin]);await engine.navigate('second',origin+'/');expect(requests.filter(request=>request.url==='/').at(-1)?.cookie).toBe('');
@@ -68,6 +100,17 @@ describe('actual isolated browser, consent, redirects and research evidence',()=
     expect(observation.text).toContain('Validated redirected script loaded');
     expect((await new SafeNetwork({testOrigins:[origin]}).request(origin+'/resource-final.js')).headers['access-control-allow-origin']).toBe('*');
     await engine.closeSession('resources');
+  });
+  it('observes the final top-level HTTP status after redirects and ignores subresource responses',async()=>{
+    await engine.open('document-status',[origin]);
+    try{
+      const missing=await engine.navigate('document-status',origin+'/missing-redirect');
+      expect(missing).toMatchObject({url:origin+'/missing-document',documentStatus:404});
+      expect(missing.text).toContain('Validated redirected script loaded');
+      expect((await engine.observe('document-status')).documentStatus).toBe(404);
+      const found=await engine.navigate('document-status',origin+'/public-redirect');
+      expect(found).toMatchObject({url:origin+'/redirect-final',documentStatus:200});
+    }finally{await engine.closeSession('document-status');}
   });
   it('follows a POST receipt with GET but never replays the approved POST across 307 redirects',async()=>{
     await engine.open('post-redirects',[origin]);

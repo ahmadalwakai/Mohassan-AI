@@ -8,7 +8,7 @@ import { REQUIRED_REGRESSION_RUNS, defaultGateFiles, sourceFingerprint } from '@
  * can only claim consecutive passes. It binds the count to a fingerprint of the
  * package: any later code change closes the regression gate until this runs again.
  */
-const SUITES = ['tests/google-ads.test.ts', 'tests/google-ads-api.test.ts', 'tests/google-ads-chat.test.ts', 'tests/google-ads-skill.test.ts'];
+const SUITES = ['tests/google-ads.test.ts', 'tests/google-ads-api.test.ts', 'tests/google-ads-chat.test.ts', 'tests/google-ads-skill.test.ts', 'tests/google-ads-paused.test.ts', 'tests/google-ads-paused-intent.test.ts'];
 const requested = Number(process.argv[2] ?? REQUIRED_REGRESSION_RUNS);
 const files = defaultGateFiles();
 const before = await sourceFingerprint(files.sourceDir);

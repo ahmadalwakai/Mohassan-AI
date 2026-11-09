@@ -1,0 +1,4 @@
+# Set this public DNS name before installing the configuration.
+api.mohassansy.com {
+    reverse_proxy 127.0.0.1:4000
+}

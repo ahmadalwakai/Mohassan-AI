@@ -1,0 +1,40 @@
+import { createServer } from 'node:http';
+import Fastify, { type FastifyRequest,type FastifyReply } from 'fastify';
+import { afterAll, beforeAll, expect, it } from 'vitest';
+import { createDatabase,migrate } from '@mohassan/database';
+import { BrowserError,LocalPublicIndex,SafeNetwork,SqlSearchStore,migrateSearch } from '@mohassan/browser';
+import { registerSearchRoutes } from '../apps/server/src/search.js';
+let database:Awaited<ReturnType<typeof createDatabase>>,app:ReturnType<typeof Fastify>,origin:string,apiOrigin:string,reads=0,slowBegan:(()=>void)|undefined,slowClosed=false;
+const server=createServer((request,response)=>{reads++;if(request.url==='/slow'){response.once('close',()=>{slowClosed=true;});slowBegan?.();return;}response.writeHead(200,{'content-type':'text/html; charset=utf-8'});response.end(request.url==='/robots.txt'?'User-agent: *\nAllow: /':'<title>Owner public handbook</title><p>Delivery reference AB42 is public.</p>');});
+beforeAll(async()=>{
+  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));origin=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
+  database=await createDatabase();await migrate(database.db);await migrateSearch(database.db);app=Fastify();
+  app.setErrorHandler((error:any,_req:FastifyRequest,reply:FastifyReply)=>reply.code(error.statusCode??400).send({error:{code:error.code??'VALIDATION',message:error.message}}));
+  await registerSearchRoutes(app,{store:new SqlSearchStore(database.db),index:new LocalPublicIndex(database.db,new SafeNetwork({testOrigins:[origin]})),owner:async request=>{const id=request.headers['x-test-owner'];if(typeof id!=='string')throw new BrowserError('UNAUTHORIZED','Sign in',401);return {id};}});apiOrigin=await app.listen({host:'127.0.0.1',port:0});
+});
+it('aborts the public fetch when the authenticated client disconnects after sending its body',async()=>{
+  const began=new Promise<void>(resolve=>{slowBegan=resolve;}),controller=new AbortController();
+  const pending=fetch(`${apiOrigin}/api/search/index`,{method:'POST',headers:{'content-type':'application/json','x-test-owner':'api-cancel'},body:JSON.stringify({url:`${origin}/slow`}),signal:controller.signal});
+  await began;controller.abort();await expect(pending).rejects.toMatchObject({name:'AbortError'});
+  await expect.poll(()=>slowClosed,{timeout:3000}).toBe(true);
+  expect((await app.inject({url:'/api/search/index',headers:{'x-test-owner':'api-cancel'}})).json().documents).toEqual([]);
+});
+afterAll(async()=>{await app?.close();await database?.close();await new Promise<void>(resolve=>server.close(()=>resolve()));});
+it('indexes only after an explicit authenticated URL request and limits search/delete to that owner',async()=>{
+  const headers={'x-test-owner':'api-owner'},beforeDenied=reads;
+  expect((await app.inject({method:'POST',url:'/api/search/index',payload:{url:`${origin}/public`}})).statusCode).toBe(401);expect(reads).toBe(beforeDenied);
+  expect((await app.inject({method:'POST',url:'/api/search/index',headers,payload:{url:`${origin}/public`,crawl:true}})).statusCode).toBe(400);expect(reads).toBe(beforeDenied);
+  const response=await app.inject({method:'POST',url:'/api/search/index',headers,payload:{url:`${origin}/public`}});expect(response.statusCode,response.body).toBe(200);
+  const id=response.json().document.id,prior=reads;
+  const query=await app.inject({url:'/api/search/index/query?question=Delivery%20AB42',headers});expect(query.json().hits[0]).toMatchObject({coverage:'local_only',freshness:'indexed_snapshot',trust:'untrusted'});expect(reads).toBe(prior);
+  expect((await app.inject({url:'/api/search/index',headers:{'x-test-owner':'other'}})).json().documents).toEqual([]);
+  expect((await app.inject({method:'DELETE',url:`/api/search/index/${id}`,headers:{'x-test-owner':'other'}})).statusCode).toBe(404);
+  const beforeRefresh=reads;
+  expect((await app.inject({method:'POST',url:`/api/search/index/${id}/refresh`,headers:{'x-test-owner':'other'},payload:{}})).statusCode).toBe(404);expect(reads).toBe(beforeRefresh);
+  expect((await app.inject({method:'POST',url:`/api/search/index/${id}/refresh`,headers,payload:{url:`${origin}/different`}})).statusCode).toBe(400);expect(reads).toBe(beforeRefresh);
+  const refreshed=await app.inject({method:'POST',url:`/api/search/index/${id}/refresh`,headers,payload:{}});
+  expect(refreshed.statusCode,refreshed.body).toBe(200);expect(refreshed.json().document.id).toBe(id);expect(reads).toBeGreaterThan(beforeRefresh);
+  expect((await app.inject({method:'DELETE',url:`/api/search/index/${id}`,headers})).statusCode).toBe(200);
+  expect((await app.inject({url:'/api/search/index/query?question=Delivery%20AB42',headers})).json().hits).toEqual([]);
+  expect((await app.inject({url:'/api/search/index/query?question=the',headers})).statusCode).toBe(400);
+});

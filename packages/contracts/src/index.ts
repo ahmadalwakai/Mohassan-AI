@@ -10,6 +10,7 @@ import { SkillRunInputSchema, SkillNodeBindingSchema, isBoundedSkillJson } from 
 export * from './command-chat';
 export * from './skills';
 export * from './google-ads';
+export * from './ai-providers';
 export { browserReadOrigins, detectBrowserOpenIntent, type BrowserOpenIntent } from './browser-intent';
 
 export const TaskStatusSchema = z.enum(['queued', 'running', 'waiting_approval', 'verifying', 'completed', 'failed', 'cancelled', 'paused']);
@@ -28,7 +29,7 @@ const BrowserPublicUrlSchema=z.string().trim().min(1).max(2500).transform((value
 });
 export const BrowserTaskInputSchema=z.object({url:BrowserPublicUrlSchema,allowedOrigins:z.array(BrowserPublicUrlSchema.transform((value,context)=>{const url=new URL(value);if(url.href!==`${url.origin}/`){context.addIssue({code:'custom',message:'حدد أصل الموقع دون مسار.'});return z.NEVER;}return url.origin;})).min(1).max(6).optional()}).strict().superRefine((input,context)=>{if(input.allowedOrigins&&(new Set(input.allowedOrigins).size!==input.allowedOrigins.length||!input.allowedOrigins.includes(new URL(input.url).origin)))context.addIssue({code:'custom',path:['allowedOrigins'],message:'يجب أن يتضمن النطاق أصل الرابط دون تكرار.'});});
 export type BrowserTaskInput=z.infer<typeof BrowserTaskInputSchema>;
-export const BrowserOpenResultSchema=z.object({kind:z.literal('browser_open'),outcome:z.literal('opened'),sessionId:z.uuid(),observationId:z.uuid(),url:BrowserPublicUrlSchema,title:z.string().max(1000),observedAt:z.iso.datetime(),summary:z.string().min(1).max(1600),screenshotAvailable:z.boolean(),screenshotUrl:z.string().regex(/^\/api\/browser\/tasks\/[a-f0-9-]{36}\/screenshot$/).nullable(),contentHash:z.string().regex(/^[a-f0-9]{64}$/),screenshotHash:z.string().regex(/^[a-f0-9]{64}$/).nullable()}).strict().superRefine((result,context)=>{if(result.screenshotAvailable!==(result.screenshotUrl!==null&&result.screenshotHash!==null)||!result.screenshotAvailable&&(result.screenshotUrl!==null||result.screenshotHash!==null))context.addIssue({code:'custom',path:['screenshotAvailable'],message:'دليل لقطة الصفحة غير مكتمل.'});});
+export const BrowserOpenResultSchema=z.object({kind:z.literal('browser_open'),outcome:z.literal('opened'),sessionId:z.uuid(),observationId:z.uuid(),url:BrowserPublicUrlSchema,title:z.string().max(1000),observedAt:z.iso.datetime(),documentStatus:z.number().int().min(100).max(599).optional(),summary:z.string().min(1).max(1600),screenshotAvailable:z.boolean(),screenshotUrl:z.string().regex(/^\/api\/browser\/tasks\/[a-f0-9-]{36}\/screenshot$/).nullable(),contentHash:z.string().regex(/^[a-f0-9]{64}$/),screenshotHash:z.string().regex(/^[a-f0-9]{64}$/).nullable()}).strict().superRefine((result,context)=>{if(result.screenshotAvailable!==(result.screenshotUrl!==null&&result.screenshotHash!==null)||!result.screenshotAvailable&&(result.screenshotUrl!==null||result.screenshotHash!==null))context.addIssue({code:'custom',path:['screenshotAvailable'],message:'دليل لقطة الصفحة غير مكتمل.'});});
 export type BrowserOpenResult=z.infer<typeof BrowserOpenResultSchema>;
 const SkillRollbackHash=z.string().regex(/^[a-f0-9]{64}$/);
 export const SkillRollbackInputSchema=z.object({runId:z.uuid(),preimageId:z.uuid(),sourceReceiptId:z.uuid(),preimageHash:SkillRollbackHash,expectedAfterHash:SkillRollbackHash}).strict();

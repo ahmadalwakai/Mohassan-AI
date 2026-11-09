@@ -1,0 +1,29 @@
+[Unit]
+Description=Mohassan API and browser
+Wants=network-online.target postgresql@18-main.service
+After=network-online.target postgresql@18-main.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=mohassan
+Group=mohassan
+WorkingDirectory=/opt/mohassan/app
+EnvironmentFile=/etc/mohassan/server.env
+Environment=HOME=/var/lib/mohassan
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=PLAYWRIGHT_BROWSERS_PATH=/var/lib/mohassan/ms-playwright
+ExecStart=/usr/local/bin/node /opt/mohassan/app/scripts/start-server.mjs
+Restart=always
+RestartSec=10
+# The launcher forwards SIGTERM; allow active tasks to finish before killing descendants.
+KillMode=mixed
+TimeoutStopSec=240
+UMask=0077
+StateDirectory=mohassan
+StateDirectoryMode=0700
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

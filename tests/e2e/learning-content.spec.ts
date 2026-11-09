@@ -1,0 +1,31 @@
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { test,expect } from '@playwright/test';
+import { signInAsFixtureOwner } from './helpers';
+import { pdfFixture } from '../../packages/learning/src/pdf-fixture';
+
+test('owner can import knowledge, review its gate and withdraw it on desktop and mobile',async({page})=>{
+  const root=process.env.MOHASSAN_E2E_ROOT;if(!root)throw new Error('Missing isolated E2E root');
+  const file=join(root,'approved-root','learning-guide.pdf');await writeFile(file,pdfFixture(['مورد الورق المعتمد هو الأرز','Support hours are 09:30']));
+  await signInAsFixtureOwner(page);
+  await page.getByRole('navigation',{name:'التنقل الرئيسي'}).getByRole('button',{name:'الذاكرة والتعلّم',exact:true}).click();
+  await page.getByText('الدروس الموثقة ومعرفة الملفات',{exact:true}).click();
+  await expect(page.getByText('التقييم المستقل غير مهيأ حاليًا؛ يمكنك إضافة مرشحين للمراجعة، وسيبقى تفعيلهم مغلقًا.')).toBeVisible();
+  await page.getByLabel('عنوان المستند',{exact:true}).fill('دليل الدعم للاختبار');
+  await page.getByLabel('مسار ملف النص أو Markdown أو PDF').fill(file);
+  await page.getByRole('button',{name:'إضافة المستند',exact:true}).click();
+  const card=page.locator('article').filter({hasText:'دليل الدعم للاختبار'});
+  await expect(card).toContainText('بانتظار التقييم');await expect(card.getByRole('button',{name:'تقييم',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'تنزيل بيانات التوجيه',exact:true})).toBeDisabled();
+  await expect(page.getByText('التصدير محجوب حتى اكتمال العدد المطلوب من التجارب الموثقة.')).toBeVisible();
+  await page.setViewportSize({width:390,height:844});
+  const navigation=page.getByRole('navigation',{name:'التنقل الرئيسي',includeHidden:true});
+  await expect(navigation).toBeHidden();
+  await page.getByRole('button',{name:'فتح القائمة',exact:true}).click();
+  await expect(navigation).toBeVisible();
+  await navigation.getByRole('button',{name:'الذاكرة والتعلّم',exact:true}).click();
+  await expect(navigation).toBeHidden();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+  await page.screenshot({path:'artifacts/learning-content-mobile.png',fullPage:true});
+  await card.getByRole('button',{name:'سحب',exact:true}).click();await expect(card).toContainText('مسحوب');
+});

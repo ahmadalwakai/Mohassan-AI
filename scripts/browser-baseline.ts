@@ -5,9 +5,9 @@
  * A DEFECT line records today's behaviour, so this script does not fail on one.
  */
 import { createServer } from 'node:http';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import { AgentBrowser, AgentEffectHeld, type AgentAuthority, type AgentRequestPermit } from '@mohassan/browser';
 
 const hits: { path: string; method: string; ua?: string; referer?: string; cookie?: string; body?: string }[] = [];
@@ -57,6 +57,11 @@ const browser = new AgentBrowser({ profileDir: profile, testOrigins: [origin], c
 const owner = 'br0-owner';
 const dispatched: AgentRequestPermit[] = [];
 const authority = (): AgentAuthority => ({ signal: new AbortController().signal, assertActive: async () => {}, dispatched: async permit => { dispatched.push(permit); return permit.id; }, completed: async () => {} });
+const bounded = async <T>(work: Promise<T>, milliseconds = 30000): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { return await Promise.race([work, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error('Fixture deadline exceeded')), milliseconds); })]); }
+  finally { if (timer) clearTimeout(timer); }
+};
 
 interface Finding { id: string; expected: string; actual: string; verdict: 'DEFECT' | 'OK' | 'INFO' }
 const findings: Finding[] = [];
@@ -65,7 +70,7 @@ async function probe(id: string, expected: string, run: (conversation: string) =
   const conversation = `c${++counter}`;
   let actual: string, verdict: Finding['verdict'];
   try {
-    const result = await run(conversation);
+    const result = await bounded(run(conversation));
     actual = result.actual; verdict = result.info ? 'INFO' : result.defect ? 'DEFECT' : 'OK';
   } catch (error: any) { actual = `THREW ${error?.code ?? error?.name}: ${String(error?.message).slice(0, 110)}`; verdict = 'DEFECT'; }
   await browser.closeConversation(owner, conversation).catch(() => {});
@@ -75,6 +80,7 @@ async function probe(id: string, expected: string, run: (conversation: string) =
 const open = (c: string, path: string) => browser.act(owner, c, { kind: 'open', text: origin + path }, authority());
 const textOf = (r: { page: { text: string } }) => r.page.text.slice(0, 80);
 
+try {
 await probe('spa-fetch-on-load', 'A page that calls fetch() while loading opens and shows its data', async c => {
   const r = await open(c, '/spa'); return { actual: textOf(r), defect: !r.page.text.includes('data:42') };
 });
@@ -96,9 +102,10 @@ await probe('user-value-overwritten', 'A field the person already filled is not 
   const field = first.page.elements.find(e => e.role === 'textbox')!;
   const handle = (await (browser as any).conversation(owner, c)).page;
   await handle.locator('#n').fill('owner typed this');
-  const r = await browser.act(owner, c, { kind: 'type', ref: field.ref, text: 'agent value' }, authority());
+  const denial = await browser.act(owner, c, { kind: 'type', ref: field.ref, text: 'agent value' }, authority()).then(() => '', (error: { code?: string }) => error.code ?? 'unknown');
+  const r = await browser.observe(owner, c);
   const after = r.page.elements.find(e => e.role === 'textbox')?.value;
-  return { actual: `field now "${after}"`, defect: after === 'agent value' };
+  return { actual: `field now "${after}"; denial=${denial}`, defect: after !== 'owner typed this' || denial !== 'AGENT_FIELD_VALUE_PROTECTED' };
 });
 await probe('get-search-needs-approval', 'A read-only GET search does not produce a send approval', async c => {
   const first = await open(c, '/getsearch');
@@ -164,13 +171,19 @@ await probe('hands-on-keyboard-submit', 'A person typing Enter in the takeover c
   const r = await browser.observe(owner, c);
   return { actual: `url path=${new URL(r.page.url).pathname}`, defect: !r.page.text.includes('submitted') };
 });
-await probe('conversation-cookie-isolation', 'Cookies set in one conversation stay out of a different task', async c => {
+await probe('account-cookie-isolation', 'Saved login persists within one owner account and stays out of another account', async c => {
+  await browser.bindAccount(owner, c, 'first-account');
   await open(c, '/setcookie');
-  const other = `${c}-b`;
+  const same = `${c}-same`, other = `${c}-b`;
+  await browser.bindAccount(owner, same, 'first-account');
+  await open(same, '/readcookie');
+  const shared = hits.filter(h => h.path === '/readcookie').at(-1)?.cookie ?? '';
+  await browser.closeConversation(owner, same);
+  await browser.bindAccount(owner, other, 'second-account');
   await open(other, '/readcookie');
   await browser.closeConversation(owner, other);
   const seen = hits.filter(h => h.path === '/readcookie').at(-1)?.cookie ?? '';
-  return { actual: `second conversation sent cookie: "${seen}"`, defect: seen.includes('sid=') };
+  return { actual: `same account cookie: "${shared}"; different account cookie: "${seen}"`, defect: !shared.includes('sid=') || seen.includes('sid=') };
 });
 await probe('eviction-during-action', 'A fifth conversation does not close a page with a running action', async c => {
   await open(c, '/wait');
@@ -189,7 +202,7 @@ await probe('eviction-during-action', 'A fifth conversation does not close a pag
 
 // Latency, measured only on pages that work today.
 const stats = (values: number[]) => { const s = [...values].sort((a, b) => a - b); return { n: s.length, p50: Math.round(s[Math.floor(s.length * 0.5)]), p95: Math.round(s[Math.min(s.length - 1, Math.floor(s.length * 0.95))]), max: Math.round(s.at(-1)!) }; };
-const timed = async (rounds: number, work: () => Promise<unknown>) => { const out: number[] = []; for (let i = 0; i < rounds; i++) { const start = performance.now(); await work(); out.push(performance.now() - start); } return stats(out); };
+const timed = async (rounds: number, work: () => Promise<unknown>) => { const out: number[] = []; for (let i = 0; i < (process.argv.includes('--quick') ? 2 : rounds); i++) { const start = performance.now(); await bounded(work()); out.push(performance.now() - start); } return stats(out); };
 const c = 'latency';
 await open(c, '/plain');
 const latency = {
@@ -208,8 +221,13 @@ const type = await timed(15, () => browser.act(owner, c, { kind: 'type', ref: bo
 const summary = { latency: { ...latency, click, type }, findings, origin, at: new Date().toISOString() };
 console.log(JSON.stringify(summary.latency));
 await mkdir('artifacts', { recursive: true });
-await writeFile('artifacts/browser-baseline.json', JSON.stringify(summary, null, 2));
+// Keep the original BR0/BR1 evidence intact for comparison.
+await writeFile('artifacts/browser-baseline-current.json', JSON.stringify(summary, null, 2));
+process.exitCode = findings.some(finding => finding.verdict === 'DEFECT') ? 1 : 0;
+} finally {
 await browser.close();
 await new Promise(resolve => server.close(resolve));
-await rm(profile, { recursive: true, force: true }).catch(() => {});
-process.exit(0);
+const tempRoot = await realpath(tmpdir()), target = await realpath(profile), within = relative(tempRoot, target);
+if (isAbsolute(within) || !/^mohassan-br0-[^/\\]+$/.test(within)) throw new Error('Unsafe fixture cleanup');
+await rm(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}

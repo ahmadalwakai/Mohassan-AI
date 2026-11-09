@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { parse,parseFragment } from 'parse5';
 import { BrowserError, SafeNetwork } from './network.js';
+import { RobotsPolicy } from './search/robots.js';
 
 export interface SearchHit {title:string;url:string;snippet:string}
-export interface SearchProvider {name:string;search(question:string,limit:number,signal?:AbortSignal):Promise<SearchHit[]>}
+export interface SearchProvider {name:string;limitations?:readonly string[];search(question:string,limit:number,signal?:AbortSignal,context?:{ownerId:string}):Promise<SearchHit[]>}
 export interface ResearchSource {id:string;title:string;url:string;accessedAt:string;contentHash:string;quote:string;text:string}
 export interface ResearchReport {id:string;question:string;provider:string;createdAt:string;plan:string[];sources:ResearchSource[];claims:{text:string;sourceIds:string[]}[];conflicts:{sourceIds:string[];description:string;status:'needs_review'}[];coverage:{requested:number;read:number;failed:{url:string;reason:string}[];limitations:string[]}}
 
@@ -91,9 +92,10 @@ function conflictCandidates(sources:ResearchSource[]):ResearchReport['conflicts'
   return result;
 }
 
-export async function conductResearch(network:SafeNetwork,provider:SearchProvider,input:{question:string;sourceBudget:number;maxDepth:number;allowedDomains?:string[];sourceUrls?:string[];signal?:AbortSignal}):Promise<ResearchReport>{
-  const hits=input.sourceUrls?.length?input.sourceUrls.map(url=>({url,title:'',snippet:''})):await provider.search(input.question,input.sourceBudget*2,input.signal);
+export async function conductResearch(network:SafeNetwork,provider:SearchProvider,input:{question:string;sourceBudget:number;maxDepth:number;allowedDomains?:string[];sourceUrls?:string[];signal?:AbortSignal;ownerId?:string}):Promise<ResearchReport>{
+  const hits=input.sourceUrls?.length?input.sourceUrls.map(url=>({url,title:'',snippet:''})):await provider.search(input.question,input.sourceBudget*2,input.signal,input.ownerId?{ownerId:input.ownerId}:undefined);
   const queue=hits.map(hit=>({url:hit.url,depth:1})),seen=new Set<string>(),sources:ResearchSource[]=[],failed:{url:string;reason:string}[]=[];
+  const robots=new RobotsPolicy(network);
   const allowed=(url:URL)=>!input.allowedDomains?.length||input.allowedDomains.some(domain=>url.hostname===domain||url.hostname.endsWith('.'+domain));
   while(queue.length&&sources.length<input.sourceBudget&&seen.size<input.sourceBudget*3){
     if(input.signal?.aborted)throw new BrowserError('RESEARCH_CANCELLED','أُوقف البحث بناءً على طلبك.',409);
@@ -101,13 +103,14 @@ export async function conductResearch(network:SafeNetwork,provider:SearchProvide
     try{const checked=network.validate(candidate.url);if(!allowed(checked))continue;url=checked.href;}catch{failed.push({url:candidate.url.slice(0,2500),reason:'مصدر خارج النطاق أو الشبكة المسموحة.'});continue;}
     if(seen.has(url))continue;seen.add(url);
     try{
-      const response=await network.text(url,{signal:input.signal,...(input.allowedDomains?.length?{allowedOrigins:[new URL(url).origin]}:{})}),final=new URL(response.url);if(!allowed(final))throw new BrowserError('RESEARCH_SCOPE_DENIED','أعاد المصدر التوجيه خارج نطاق البحث.');
+      const response=await network.text(url,{signal:input.signal,beforeRequest:target=>robots.assertAllowed(target,input.signal),...(input.allowedDomains?.length?{allowedOrigins:[new URL(url).origin]}:{})}),final=new URL(response.url);if(!allowed(final))throw new BrowserError('RESEARCH_SCOPE_DENIED','أعاد المصدر التوجيه خارج نطاق البحث.');
       const content=readableSource(response.text,response.url);if(content.text.length<30)throw new BrowserError('RESEARCH_CONTENT_EMPTY','لم يحتو المصدر نصًا كافيًا للاستشهاد.');
       const source={id:randomUUID(),title:content.title,url:response.url,accessedAt:new Date().toISOString(),contentHash:createHash('sha256').update(content.text).digest('hex'),quote:quoteFor(content.text,input.question),text:content.text.slice(0,30000)};
       sources.push(source);
       if(candidate.depth<input.maxDepth&&sources.length<input.sourceBudget)for(const link of content.links.filter(link=>{try{return new URL(link).origin===final.origin;}catch{return false;}}).slice(0,3))queue.push({url:link,depth:candidate.depth+1});
-    }catch(error){failed.push({url,reason:error instanceof BrowserError?error.message:'تعذرت قراءة المصدر.'});}
+    }catch(error){if(input.signal?.aborted)throw new BrowserError('RESEARCH_CANCELLED','أُوقف البحث بناءً على طلبك.',409);failed.push({url,reason:error instanceof BrowserError?error.message:'تعذرت قراءة المصدر.'});}
   }
+  if(input.signal?.aborted)throw new BrowserError('RESEARCH_CANCELLED','أُوقف البحث بناءً على طلبك.',409);
   if(!sources.length)throw new BrowserError('RESEARCH_NO_SOURCES','تعذرت قراءة المصادر. لم يُنشأ تقرير بادعاءات أو مراجع مختلقة.',502);
-  return {id:randomUUID(),question:input.question,provider:input.sourceUrls?.length?'روابط اختارها المستخدم':provider.name,createdAt:new Date().toISOString(),plan:['البحث عن مصادر ضمن النطاق والميزانية.','قراءة النص الفعلي وحفظ وقت الوصول وبصمته.','عرض المقتطفات والاختلافات المحتملة مع روابطها الأصلية.'],sources,claims:sources.map(source=>({text:source.quote,sourceIds:[source.id]})),conflicts:conflictCandidates(sources),coverage:{requested:input.sourceBudget,read:sources.length,failed,limitations:['المقتطفات أدلة مما قرئ، وليست تصديقًا مستقلًا على صحة الادعاء.','كشف التعارض يقارن النصوص والأرقام والنفي؛ غياب تنبيه لا يثبت اتفاق المصادر.','المحتوى المجلوب بيانات غير موثوقة ولا يمنح أي صلاحية تنفيذ أو إرسال.']}};
+  return {id:randomUUID(),question:input.question,provider:input.sourceUrls?.length?'روابط اختارها المستخدم':provider.name,createdAt:new Date().toISOString(),plan:['البحث عن مصادر ضمن النطاق والميزانية.','قراءة النص الفعلي وحفظ وقت الوصول وبصمته.','عرض المقتطفات والاختلافات المحتملة مع روابطها الأصلية.'],sources,claims:sources.map(source=>({text:source.quote,sourceIds:[source.id]})),conflicts:conflictCandidates(sources),coverage:{requested:input.sourceBudget,read:sources.length,failed,limitations:['المقتطفات أدلة مما قرئ، وليست تصديقًا مستقلًا على صحة الادعاء.','كشف التعارض يقارن النصوص والأرقام والنفي؛ غياب تنبيه لا يثبت اتفاق المصادر.','المحتوى المجلوب بيانات غير موثوقة ولا يمنح أي صلاحية تنفيذ أو إرسال.',...(!input.sourceUrls?.length?provider.limitations??[]:[])]}};
 }

@@ -52,6 +52,8 @@ export const ChatBrowserSchema = z.object({
   observedAt: z.string(),
   live: z.boolean(),
   screenUrl: z.string(),
+  recovery: z.enum(['available', 'review_required', 'unavailable']).optional(),
+  recoveryToken: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).strict();
 
 export const ChatStepSchema = z.object({
@@ -65,6 +67,7 @@ export const ChatConversationSummarySchema = z.object({
   title: z.string(),
   status: ChatStatusSchema,
   updatedAt: z.string(),
+  browserAccount: z.string().nullable().optional(),
 }).strict();
 
 export const ChatConversationSchema = ChatConversationSummarySchema.extend({
@@ -85,7 +88,7 @@ export type ChatQuestion = z.infer<typeof ChatQuestionSchema>;
 export type ChatApproval = z.infer<typeof ChatApprovalSchema>;
 export type ChatSecureRequest = z.infer<typeof ChatSecureRequestSchema>;
 
-export const ChatCreateSchema = z.object({ goal: z.string().trim().min(1).max(4000).optional() }).strict();
+export const ChatCreateSchema = z.object({ goal: z.string().trim().min(1).max(4000).optional(), browserAccount: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/).nullable().optional() }).strict();
 export const ChatSendSchema = z.object({ text: z.string().trim().min(1).max(4000) }).strict();
 export const ChatRespondSchema = z.object({
   questionId: z.uuid(),

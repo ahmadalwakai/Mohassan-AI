@@ -11,4 +11,4 @@ export { analyzeAccount, bookingsByService, dateRange, detectMismatches, readCam
 export { CampaignPublishingController, launchHash, launchOperations } from './publisher.ts';
 export { ADS_LIMITS, adsLength, detectScript, languageFitsCountry, negativeBlocks, parseKeyword, readLandingPage, scriptMatchesLanguage, validateAdText, validateBrief, type TextInput } from './quality.ts';
 export { audit, googleAdsMigration } from './store.ts';
-export { summarizeOperations, verifyDraft } from './verifier.ts';
+export { summarizeOperations, verifyConversionTracking, verifyDraft } from './verifier.ts';

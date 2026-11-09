@@ -1,0 +1,17 @@
+.panel { margin: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; flex-shrink: 0; max-height: 50dvh; overflow: auto; }
+.panel summary { cursor: pointer; font-weight: 600; }
+.panel p { margin: 8px 0; }
+.hint { color: var(--soft); font-size: 12px; }
+.group { display: grid; gap: 10px; margin: 12px 0; padding: 10px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.group label { display: grid; gap: 5px; }
+.panel select, .panel input { width: 100%; max-width: 100%; min-width: 0; padding: 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--raised); color: inherit; }
+.panel button, .panel a { font: inherit; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--raised); color: inherit; text-align: center; text-decoration: none; }
+.panel button:disabled { opacity: .5; cursor: not-allowed; }
+.error { color: var(--alert); }
+.list { display: grid; gap: 10px; }
+.transfer { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.url { font-size: 11px; word-break: break-all; white-space: normal; }
+.actions { display: flex; gap: 7px; flex-wrap: wrap; }
+.actions > * { flex: 1; }
+.transfer span { font-size: 12px; }
+@media (max-width: 760px) { .panel { max-height: 48dvh; margin: 8px; } }

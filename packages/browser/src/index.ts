@@ -3,11 +3,19 @@ import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import { BrowserEngine, type BrowserObservation, type BrowserPreparedSubmission } from './engine.js';
 import { BrowserError, SafeNetwork, type NetworkPolicy } from './network.js';
-import { conductResearch, PublicWebSearch, type SearchProvider, type ResearchReport } from './research.js';
+import { conductResearch, type SearchProvider, type ResearchReport } from './research.js';
+import { SearchEngine } from './search/engine.js';
 export * from './network.js';
 export * from './engine.js';
 export * from './research.js';
 export * from './agent-browser.js';
+export * from './session-state.js';
+export * from './files.js';
+export * from './search/engine.js';
+export * from './search/ranking.js';
+export * from './search/providers.js';
+export * from './search/store.js';
+export * from './search/local-index.js';
 
 export interface BrowserConfig extends NetworkPolicy {searchProvider?:SearchProvider}
 export const browserMigration=`
@@ -32,7 +40,7 @@ const canonical=(value:any):any=>Array.isArray(value)?value.map(canonical):value
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 
 export function createBrowserResearchControl(db:Kysely<any>,config:BrowserConfig={}){
-  const engine=new BrowserEngine(config),network=new SafeNetwork(config),provider=config.searchProvider??new PublicWebSearch(network);
+  const engine=new BrowserEngine(config),network=new SafeNetwork(config),provider=config.searchProvider??new SearchEngine(network);
   const researchControllers=new Map<string,AbortController>(),researchWorkers=new Set<Promise<void>>();
   async function recoverResearch(ownerId:string){await db.updateTable('research_runs').set({status:'failed',error:'انتهت مهلة متابعة البحث قبل اعتماد نتيجة. يمكنك إنشاء بحث جديد.',updated_at:sql`CURRENT_TIMESTAMP`}).where('owner_id','=',ownerId).where('status','=','running').where('lease_expires_at','<',sql`CURRENT_TIMESTAMP`).execute();}
   async function owned(ownerId:string,id:string,connection:Kysely<any>=db){const row=await connection.selectFrom('browser_sessions').selectAll().where('id','=',id).where('owner_id','=',ownerId).executeTakeFirst();if(!row)throw new BrowserError('BROWSER_NOT_FOUND','لم يُعثر على جلسة المتصفح.',404);return row;}
@@ -102,7 +110,7 @@ export function createBrowserResearchControl(db:Kysely<any>,config:BrowserConfig
     await db.transaction().execute(async transaction=>{const user=await transaction.selectFrom('user').select('id').where('id','=',ownerId).forUpdate().executeTakeFirst();if(!user)throw new BrowserError('UNAUTHORIZED','سجل الدخول للمتابعة.',401);const recent=await transaction.selectFrom('research_runs').select(eb=>eb.fn.countAll<number>().as('count')).where('owner_id','=',ownerId).where('status','=','running').executeTakeFirstOrThrow();if(Number(recent.count)>=2)throw new BrowserError('RESEARCH_BUSY','يوجد بحثان قيد القراءة؛ انتظر نتيجة أو أوقف أحدهما.',409);await transaction.insertInto('research_runs').values({id,owner_id:ownerId,question:request.question,status:'running',lease_expires_at:new Date(Date.now()+5*60000)}).execute();});
     const controller=new AbortController();researchControllers.set(id,controller);
     const deadline=setTimeout(()=>controller.abort(),4*60000);deadline.unref();
-    const worker=(async()=>{try{const report=await conductResearch(network,provider,{...request,signal:controller.signal});if(controller.signal.aborted)throw new BrowserError('RESEARCH_CANCELLED','أُوقف البحث قبل اعتماد النتيجة.',409);report.id=id;await db.updateTable('research_runs').set({status:'completed',report:JSON.stringify(report),updated_at:sql`CURRENT_TIMESTAMP`}).where('id','=',id).where('owner_id','=',ownerId).where('status','=','running').execute();}catch(error){await db.updateTable('research_runs').set({status:controller.signal.aborted?'cancelled':'failed',error:error instanceof BrowserError?error.message:'تعذر إتمام البحث.',updated_at:sql`CURRENT_TIMESTAMP`}).where('id','=',id).where('status','=','running').execute();}finally{clearTimeout(deadline);researchControllers.delete(id);}})();
+    const worker=(async()=>{try{const report=await conductResearch(network,provider,{...request,ownerId,signal:controller.signal});if(controller.signal.aborted)throw new BrowserError('RESEARCH_CANCELLED','أُوقف البحث قبل اعتماد النتيجة.',409);report.id=id;await db.updateTable('research_runs').set({status:'completed',report:JSON.stringify(report),updated_at:sql`CURRENT_TIMESTAMP`}).where('id','=',id).where('owner_id','=',ownerId).where('status','=','running').execute();}catch(error){await db.updateTable('research_runs').set({status:controller.signal.aborted?'cancelled':'failed',error:error instanceof BrowserError?error.message:'تعذر إتمام البحث.',updated_at:sql`CURRENT_TIMESTAMP`}).where('id','=',id).where('status','=','running').execute();}finally{clearTimeout(deadline);researchControllers.delete(id);}})();
     researchWorkers.add(worker);void worker.finally(()=>researchWorkers.delete(worker)).catch(()=>{});
     return researchDetail(ownerId,id);
   }

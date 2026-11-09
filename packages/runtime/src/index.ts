@@ -15,6 +15,7 @@ import {
   SkillRollbackInputSchema,SkillRollbackReviewSchema,type SkillRollbackInput,type SkillRollbackReview,
 } from "@mohassan/contracts";
 import { verifyPlanningResult } from "@mohassan/cognitive";
+import { recordExperience, type ExperienceInput } from "@mohassan/learning";
 import type { RuntimeDatabase, TaskRecord, TaskEventRecord } from "@mohassan/database";
 
 type TaskRow = Selectable<TaskRecord>;
@@ -353,7 +354,7 @@ export class Runtime {
     });
   }
 
-  async createTask(ownerId: string, rawInput: CreateTaskInput, idempotencyKey: string): Promise<Task> {
+  async createTask(ownerId: string, rawInput: CreateTaskInput, idempotencyKey: string, parentRunId?: string): Promise<Task> {
     const parsed = CreateTaskSchema.safeParse(rawInput);
     if (!parsed.success) throw new DomainError(400, "INVALID_INPUT", "بيانات المهمة غير صالحة.");
     if (!ownerId || typeof idempotencyKey !== "string" || idempotencyKey.length < 8 || idempotencyKey.length > 128) {
@@ -370,10 +371,10 @@ export class Runtime {
       input={...input,title:prepared.title,goal:prepared.goal,autonomy:'assisted',skillRollbackInput:SkillRollbackInputSchema.parse(prepared.input),skillRollbackReview:SkillRollbackReviewSchema.parse(prepared.review)};
       const {skillRollbackReview,...publicInput}=input;CreateTaskSchema.parse(publicInput);
     }
-    return this.db.transaction().execute(tx=>this.createTaskRecord(tx,ownerId,input,idempotencyKey));
+    return this.db.transaction().execute(tx=>this.createTaskRecord(tx,ownerId,input,idempotencyKey,undefined,parentRunId));
   }
 
-  private async createTaskRecord(tx: Tx, ownerId: string, input: TaskCreationInput, idempotencyKey: string, binding?: SkillNodeBinding): Promise<Task> {
+  private async createTaskRecord(tx: Tx, ownerId: string, input: TaskCreationInput, idempotencyKey: string, binding?: SkillNodeBinding, parentRunId?: string): Promise<Task> {
       const capability=this.registry.find(item=>item.id===input.capabilityId&&item.status==='active');
       if(!capability)throw new DomainError(403,'CAPABILITY_UNAVAILABLE','هذه القدرة غير متاحة للتنفيذ.');
       const inputHash = hashInput(input,binding);
@@ -393,12 +394,13 @@ export class Runtime {
         cancellation_requested: false, approval_required: approvalRequired, event_sequence: 0, result: null, error: null,project_id:input.projectId??null,studio_input:input.studioInput?JSON.stringify(input.studioInput):null,browser_input:input.browserInput?JSON.stringify(input.browserInput):null,
         skill_input:input.skillInput?JSON.stringify(input.skillInput):null,skill_binding:binding?JSON.stringify(binding):null,skill_node_input:input.skillNodeInput?JSON.stringify(input.skillNodeInput):null,workflow_token:null,
         skill_rollback_input:input.skillRollbackInput?JSON.stringify(input.skillRollbackInput):null,skill_rollback_review:input.skillRollbackReview?JSON.stringify(input.skillRollbackReview):null,
+        experience_parent_run_id: parentRunId ?? null,
       }).onConflict((conflict) => conflict.columns(["owner_id", "idempotency_key"]).doNothing())
         .returningAll().executeTakeFirst();
       if (!inserted) {
         const existing = await tx.selectFrom("tasks").selectAll()
           .where("owner_id", "=", ownerId).where("idempotency_key", "=", idempotencyKey).executeTakeFirstOrThrow();
-        if (existing.input_hash !== inputHash) {
+        if (existing.input_hash !== inputHash || existing.experience_parent_run_id && existing.experience_parent_run_id !== parentRunId) {
           throw new DomainError(409, "IDEMPOTENCY_CONFLICT", "استُخدم مفتاح الطلب نفسه مع بيانات مختلفة.");
         }
         return taskDto(existing);
@@ -497,6 +499,7 @@ export class Runtime {
         .where("task_id", "=", id).where("revoked_at", "is", null).execute();
       await event(tx, id, immediate ? "task_cancelled" : "cancellation_requested",
         immediate ? "أُلغيت المهمة قبل بدء خطوة جديدة." : "سُجل طلب الإلغاء، ويجري إيقاف الفحص الجاري.");
+      if (immediate) await this.recordTerminalTask(tx, updated, 'cancelled');
       return taskDto(updated);
     });
     this.controllers.get(id)?.abort(new Error("TASK_CANCELLED"));
@@ -569,6 +572,7 @@ export class Runtime {
         await event(tx, task.id, "lease_recovered", status === "queued"
           ? "انتهت مهلة العامل السابق؛ أُعيدت جدولة الفحص الآمن."
           : "عولج توقف العامل وفق حالة الإلغاء وسياسة إعادة التنفيذ.", { nextStatus: status });
+        if (status === 'cancelled' || status === 'failed') await this.recordTerminalTask(tx, task, status);
     });
   }
 
@@ -632,25 +636,29 @@ export class Runtime {
       if (task.cancellation_requested) {
         await tx.updateTable("tasks").set({ status: "cancelled", updated_at: new Date() }).where("id", "=", task.id).execute();
         await event(tx, task.id, "task_cancelled", "أُلغيت المهمة قبل التنفيذ.");
+        await this.recordTerminalTask(tx, task, 'cancelled');
         return null;
       }
       // The registry, rather than a user-supplied autonomy label, defines what can run.
       if (!this.executableCapability(task)) {
         await tx.updateTable("tasks").set({ status: "failed", error: "القدرة غير مصرح بتنفيذها.", updated_at: new Date() }).where("id", "=", task.id).execute();
         await event(tx, task.id, "permission_denied", "منع سجل القدرات تشغيل أداة غير معتمدة.");
+        await this.recordTerminalTask(tx, task, 'failed');
         return null;
       }
       const continuingWorkflow=task.capability_id==='skill.run'&&Boolean(task.workflow_token);
       const verificationOnly=task.verification_only&&Boolean(task.skill_binding&&task.verification_source_lease&&task.recovery_result);
-      if(task.verification_only&&!verificationOnly){await tx.updateTable('tasks').set({status:'failed',error:'بيانات استعادة التحقق غير صالحة.'}).where('id','=',task.id).execute();return null;}
+      if(task.verification_only&&!verificationOnly){await tx.updateTable('tasks').set({status:'failed',error:'بيانات استعادة التحقق غير صالحة.'}).where('id','=',task.id).execute();await this.recordTerminalTask(tx, task, 'failed');return null;}
       if (!(await this.validApproval(tx, task, continuingWorkflow||verificationOnly))) {
         await tx.updateTable("tasks").set({ status: verificationOnly?'failed':"waiting_approval", updated_at: new Date() }).where("id", "=", task.id).execute();
         await event(tx, task.id, "approval_expired", "يلزم تجديد الموافقة قبل بدء الفحص.");
+        if (verificationOnly) await this.recordTerminalTask(tx, task, 'failed');
         return null;
       }
       if (!continuingWorkflow&&!verificationOnly&&task.attempt >= task.max_attempts) {
         await tx.updateTable("tasks").set({ status: "failed", error: "بلغت المهمة الحد الأقصى للمحاولات.", updated_at: new Date() }).where("id", "=", task.id).execute();
         await event(tx, task.id, "attempts_exhausted", "توقفت إعادة المحاولة عند الحد المسموح.");
+        await this.recordTerminalTask(tx, task, 'failed');
         return null;
       }
       const row = await tx.updateTable("tasks").set({
@@ -1001,11 +1009,55 @@ export class Runtime {
     });
   }
 
+  private async recordTerminalTask(tx: Tx, task: TaskRow, status: 'completed' | 'failed' | 'cancelled', result?: Record<string, unknown> | null) {
+    // The workflow already owns its skill nodes. A chat child retains its own
+    // verified result and is linked to the parent so it cannot be counted twice.
+    if (task.skill_binding) return;
+    const browser = task.capability_id === 'browser.open';
+    const coding = ['coding.change', 'studio.change'].includes(task.capability_id);
+    const models = await tx.selectFrom('model_runs')
+      .select(['model', 'input_tokens as inputTokens', 'output_tokens as outputTokens', 'usage_known as usageKnown'])
+      .where('task_id', '=', task.id).orderBy('attempt').execute();
+    const plan = await tx.selectFrom('task_plan_steps').select('title').where('task_id', '=', task.id).orderBy('position').execute();
+    const input: ExperienceInput = {
+      ownerId: task.owner_id, sourceKind: 'runtime_task', sourceId: task.id, attempt: task.attempt,
+      parentRunId: task.experience_parent_run_id,
+      goal: task.goal, category: browser ? 'browser' : coding ? 'coding' : 'conversation', terminalStatus: status,
+      plan: plan.map(step => step.title), models: models.flatMap(({model, ...receipt}) => model === null ? [] : [{...receipt, model}]),
+      trail: task.attempt && task.autonomy !== 'shadow' ? [{step: task.attempt, action: task.capability_id}] : [],
+    };
+    // `result` reaches this method only through the independently verified finish path.
+    if (task.autonomy !== 'shadow' && result) {
+      if (browser) {
+        const observed = BrowserOpenResultSchema.safeParse(result);
+        const requested = this.browserInput(task);
+        const status = observed.success ? observed.data.documentStatus : undefined;
+        if (observed.success && requested && status !== undefined && status >= 200 && (status < 300 || status >= 400) && new URL(requested.url).href === observed.data.url) {
+          const captureRequired = /لقطة|screenshot|screen\s*shot/i.test(task.goal);
+          const target = captureRequired ? 'requested_page_captured' : 'requested_page_opened';
+          const pageLoaded = status < 300;
+          input.expected = {kind: 'page_observation', target, value: true};
+          input.observation = {kind: 'page_observation', target, value: pageLoaded && (!captureRequired || observed.data.screenshotAvailable), reference: observed.data.observationId};
+          input.artifactHashes = [observed.data.contentHash, ...(observed.data.screenshotHash ? [observed.data.screenshotHash] : [])];
+        }
+      } else if (coding && (result.kind === 'coding' || result.kind === 'studio_change') && typeof result.diffHash === 'string') {
+        input.expected = {kind: 'test_result', target: 'ready_for_review', value: true};
+        input.observation = {kind: 'test_result', target: 'ready_for_review', value: result.outcome === 'ready_for_review', reference: result.diffHash};
+        input.artifactHashes = [result.diffHash];
+      } else if (task.capability_id === 'system.diagnostic' && result.kind === 'diagnostic') {
+        input.expected = {kind: 'test_result', target: 'diagnostic_checks_passed', value: true};
+        input.observation = {kind: 'test_result', target: 'diagnostic_checks_passed', value: true, reference: task.id};
+      }
+    }
+    await recordExperience(tx, input);
+  }
+
   private async cancelClaim(tx: Tx, current: TaskRow): Promise<void> {
     await tx.updateTable("tasks").set({
       status: "cancelled", lease_token: null, lease_expires_at: null, result: null, error: null, updated_at: new Date(),
     }).where("id", "=", current.id).execute();
     await event(tx, current.id, "task_cancelled", "توقف الفحص استجابة لطلب الإلغاء.");
+    await this.recordTerminalTask(tx, current, 'cancelled');
   }
 
   private async finish(task: TaskRow, result: Record<string, unknown> | null): Promise<void> {
@@ -1057,6 +1109,7 @@ export class Runtime {
           : task.capability_id === "plan.draft" ? "اجتازت الخطة التحقق المستقل وحُفظت خطواتها واعتمادياتها؛ لم تُنفذ الخطوات."
           : "اجتازت النتيجة التحقق المستقل، واكتملت المهمة.")
           : "رُفضت النتيجة لأن الأدلة لا تحقق معايير القبول.");
+      await this.recordTerminalTask(tx, current, result && !codingFailed ? 'completed' : 'failed', result);
     });
   }
 
@@ -1086,6 +1139,7 @@ export class Runtime {
         browser?'لن يُكرر فتح المتصفح تلقائيًا؛ يلزم تفويض صريح لمحاولة جديدة.':retry ? paidPlanning ? "لن يُكرر طلب النموذج تلقائيًا؛ قد تكون له تكلفة. يلزم تفويض صريح لمحاولة جديدة."
           : needsApproval ? "تحتاج إعادة المحاولة موافقة جديدة؛ استُهلكت الموافقة السابقة." : "حُددت إعادة محاولة للفحص الآمن ضمن الحد المسموح."
           : "توقفت المهمة بعد استنفاد محاولات الفحص.", { attempt: current.attempt });
+      if (!retry) await this.recordTerminalTask(tx, current, 'failed');
     });
   }
 

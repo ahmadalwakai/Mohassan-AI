@@ -1,15 +1,27 @@
 import { z } from 'zod';
 import { parseRetryAfterHeader } from './retry.js';
 export { classifyProviderFallback, MAX_AUTOMATIC_RETRY_DELAY_MS, parseRetryAfterHeader, validatedRetryAfterMs, waitForRetryAfter, type ProviderFallbackDecision } from './retry.js';
+export * from './freellmapi.js';
+export * from './ollama.js';
+export * from './usage-monitor.js';
+export * from './inference-router.js';
 
 export interface ModelRequest {
   goal:string; maxTokens?:number; signal?:AbortSignal; system?:string;
   structured?:{name:string;schema:Record<string,unknown>};
   image?:{mimeType:'image/png'|'image/jpeg';data:string};
+  /** Concurrent router calls with the same key share one upstream request. */
+  idempotencyKey?:string;
 }
 export interface ModelUsage {inputTokens:number;outputTokens:number}
 export interface ModelRateState {remainingTokens:number;resetMs:number}
-export interface ModelResult {text:string;model:string;usage:ModelUsage;rate?:ModelRateState}
+/** Gateway routing metadata, present only when a gateway reported which upstream served the call. */
+export interface ProviderRouting {routedVia:string|null;platform:string|null;fallbackAttempts:number;fallbackTrail:string|null}
+export interface ModelResult {
+  text:string;model:string;usage:ModelUsage;rate?:ModelRateState;
+  /** True when the provider omitted usage and the counts are a local estimate. */
+  usageEstimated?:boolean;provider?:string;routing?:ProviderRouting;
+}
 export interface ModelProvider {readonly id:string;generate(request:ModelRequest):Promise<ModelResult>}
 export class ProviderError extends Error {
   usage?:ModelUsage;

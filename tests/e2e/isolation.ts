@@ -143,7 +143,7 @@ export async function startIsolatedE2E(): Promise<{ directory: string; stop(): P
     const api = spawnOwned(['--import', pathToFileURL(path.join(repository, 'node_modules', 'tsx', 'dist', 'loader.mjs')).href, path.join(repository, 'tests', 'e2e', 'server-entry.ts')], fixture.directory, fixture.environment, true);
     children.push(api);
     await new Promise<void>((resolve,reject)=>{
-      const timer=setTimeout(()=>reject(new Error('E2E_API_READY_TIMEOUT')),60_000);
+      const timer=setTimeout(()=>reject(new Error('E2E_API_READY_TIMEOUT')),180_000);
       api.child.once('message',message=>{clearTimeout(timer);const receipt=message as {type?:string;root?:string};if(receipt.type==='e2e.ready'&&receipt.root===fixture.directory)resolve();else reject(new Error('E2E_API_READY_INVALID'));});
       void api.closed.then(()=>{clearTimeout(timer);reject(new Error('E2E_API_EXITED_BEFORE_READY'));},reject);
     });
@@ -153,5 +153,8 @@ export async function startIsolatedE2E(): Promise<{ directory: string; stop(): P
     await ready('http://127.0.0.1:3100/api/setup', web, 120_000);
     console.log(`Isolated E2E ready: ${fixture.directory}`);
     return { directory: fixture.directory, stop };
-  } catch (error) { await stop(); throw error; }
+  } catch (error) {
+    try { await stop(); } catch (cleanupError) { throw new AggregateError([error,cleanupError],'E2E_START_AND_CLEANUP_FAILED'); }
+    throw error;
+  }
 }

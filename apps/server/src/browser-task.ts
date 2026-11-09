@@ -122,6 +122,7 @@ export async function createBrowserTaskControl(db: Kysely<any>, config: BrowserT
       await savedObservation(context.ownerId, openedSessionId, observation, approved.origins);
       const image = await screenshotBytes(observation.screenshot), imageHash = image ? bytesHash(image) : null;
       const result = BrowserOpenResultSchema.parse({kind: 'browser_open', outcome: 'opened', sessionId, observationId: observation.id, url: observation.url, title: observation.title, observedAt: observation.observedAt,
+        ...(observation.documentStatus === undefined ? {} : {documentStatus: observation.documentStatus}),
         contentHash: contentHash(observation), screenshotHash: imageHash, screenshotAvailable: Boolean(image), screenshotUrl: image ? `/api/browser/tasks/${context.taskId}/screenshot` : null,
         summary: image ? 'فُتحت الصفحة داخل المتصفح وحُفظت لقطة موثقة للعرض.' : 'فُتحت الصفحة وحُفظ النص المقروء، لكن لم تتوفر لقطة قابلة للعرض.'});
       await db.transaction().execute(async tx => {
@@ -146,7 +147,9 @@ export async function createBrowserTaskControl(db: Kysely<any>, config: BrowserT
       const receipt = await db.selectFrom('browser_task_receipts').selectAll().where('task_id', '=', context.taskId).where('owner_id', '=', context.ownerId).where('status', '=', 'ready').executeTakeFirst();
       if (!receipt || !receipt.observation || receipt.session_id !== result.sessionId || receipt.input_hash !== approved.hash || receipt.result_hash !== digest(result) || digest(receipt.result) !== receipt.result_hash || !['running', 'verifying', 'completed'].includes(task.status) || task.status !== 'completed' && (recovery?context.receiptLeaseToken:task.lease_token) !== receipt.lease_token) return null;
       const observation = receipt.observation as BrowserObservation;
-      if (observation.id !== result.observationId || observation.url !== result.url || observation.title !== result.title || observation.observedAt !== result.observedAt || contentHash(observation) !== receipt.content_hash || receipt.content_hash !== result.contentHash) return null;
+      if (observation.id !== result.observationId || observation.url !== result.url || observation.title !== result.title ||
+          observation.observedAt !== result.observedAt || observation.documentStatus !== result.documentStatus ||
+          contentHash(observation) !== receipt.content_hash || receipt.content_hash !== result.contentHash) return null;
       await savedObservation(context.ownerId, result.sessionId, observation, approved.origins);
       const bytes = await screenshotBytes(observation.screenshot), hash = bytes ? bytesHash(bytes) : null;
       if (hash !== receipt.screenshot_hash || hash !== result.screenshotHash || Boolean(bytes) !== result.screenshotAvailable || result.screenshotUrl !== (bytes ? `/api/browser/tasks/${context.taskId}/screenshot` : null)) return null;

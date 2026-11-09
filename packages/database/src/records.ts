@@ -38,6 +38,7 @@ export interface TaskRecord {
   recovery_result:ColumnType<Record<string,unknown>|null,string|null|undefined,string|null>;
   skill_rollback_input:ColumnType<Record<string,unknown>|null,string|null|undefined,string|null>;
   skill_rollback_review:ColumnType<Record<string,unknown>|null,string|null|undefined,string|null>;
+  experience_parent_run_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export interface TaskEventRecord {

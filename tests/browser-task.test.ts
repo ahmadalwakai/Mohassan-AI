@@ -16,14 +16,15 @@ describe('task-bound browser execution and independent screenshot evidence',()=>
   });
   afterEach(async()=>{await store?.close();});
 
-  async function fixture(options:{withoutScreenshot?:boolean;afterAction?:()=>void;forge?:boolean}={}){
+  async function fixture(options:{withoutScreenshot?:boolean;afterAction?:()=>void;forge?:boolean;documentStatus?:number}={}){
     let sessionId:string|undefined,sequence=0;
     const browser={
       create:vi.fn(async(ownerId:string,input:any)=>{
         sessionId=randomUUID();await store.db.insertInto('browser_sessions').values({id:sessionId,owner_id:ownerId,title:input.title,allowed_origins:JSON.stringify(input.allowedOrigins),expires_at:new Date(Date.now()+1800000)}).execute();return {id:sessionId};
       }),
       action:vi.fn(async(ownerId:string,id:string,_input:any)=>{
-        const observation:BrowserObservation={id:randomUUID(),url,title:'Public fixture page',text:'The public fixture page was read by the isolated browser service.',links:[],forms:[],observedAt:new Date().toISOString(),warnings:[],screenshot:options.withoutScreenshot?null:image};
+        const observation:BrowserObservation={id:randomUUID(),url,title:'Public fixture page',text:'The public fixture page was read by the isolated browser service.',links:[],forms:[],observedAt:new Date().toISOString(),warnings:[],screenshot:options.withoutScreenshot?null:image,
+          ...(options.documentStatus===undefined?{}:{documentStatus:options.documentStatus})};
         await store.db.updateTable('browser_sessions').set({observation:JSON.stringify(observation),sequence:++sequence}).where('id','=',id).where('owner_id','=',ownerId).execute();
         await store.db.insertInto('browser_observations').values({id:observation.id,session_id:id,sequence,data:JSON.stringify({...observation,screenshot:null})}).execute();
         options.afterAction?.();
@@ -60,6 +61,17 @@ describe('task-bound browser execution and independent screenshot evidence',()=>
     const history=await store.db.selectFrom('browser_observations').select('data').where('id','=',result.observationId).executeTakeFirstOrThrow();
     await store.db.updateTable('browser_observations').set({data:JSON.stringify({...history.data,text:'Changed after execution'})}).where('id','=',result.observationId).execute();
     expect(await control.verify(result,context)).toBeNull();await expect(control.screenshot(owner,context.taskId)).rejects.toMatchObject({statusCode:404});
+  });
+
+  it('binds the final document HTTP status to the saved observation and task receipt',async()=>{
+    const {control,context}=await fixture({documentStatus:404});
+    const result=await control.execute('Open the fixture.',context);
+    expect(result.documentStatus).toBe(404);
+    expect(await control.verify(result,context)).toEqual(result);
+    expect(await control.verify({...result,documentStatus:200},context)).toBeNull();
+    const history=await store.db.selectFrom('browser_observations').select('data').where('id','=',result.observationId).executeTakeFirstOrThrow();
+    await store.db.updateTable('browser_observations').set({data:JSON.stringify({...history.data,documentStatus:200})}).where('id','=',result.observationId).execute();
+    expect(await control.verify(result,context)).toBeNull();
   });
 
   it('never opens without a current task lease and refuses duplicate execution',async()=>{

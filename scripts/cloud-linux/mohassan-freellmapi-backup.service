@@ -1,0 +1,19 @@
+[Unit]
+Description=Back up FreeLLMAPI database and recovery credentials
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=/
+ExecStart=/usr/bin/flock --nonblock --conflict-exit-code 0 /var/backups/mohassan/freellmapi/.backup.lock /usr/local/bin/node /usr/local/sbin/mohassan-backup-freellmapi.cjs
+TimeoutStartSec=15min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/backups/mohassan/freellmapi

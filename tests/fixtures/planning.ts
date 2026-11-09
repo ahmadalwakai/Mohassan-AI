@@ -11,6 +11,8 @@ export const rawPlanFixture:RawCognitivePlan={
 };
 /** The assistant's browser journey against the local fixture site. */
 function scriptedDecision(prompt:string):Record<string,unknown>{
+  if(prompt.includes('File transfer fixture ready'))return {tool:'answer',text:'صفحة الملفات جاهزة للمراجعة.',outcome:'done'};
+  if(prompt.includes('صفحة نقل الملفات التجريبية'))return {tool:'open',url:'http://127.0.0.1:4201/files'};
   const ref=(label:string)=>new RegExp(`(e\\d+) \\w+ "${label}`).exec(prompt)?.[1]??null;
   if(prompt.includes('Account deleted'))return {tool:'answer',text:'تم حذف الحساب كما طلبت.',outcome:'done'};
   if(prompt.includes('Balance: 1250'))return {tool:'click',ref:ref('Delete account'),sensitive:true};

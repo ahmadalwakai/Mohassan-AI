@@ -13,7 +13,8 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
     const value=request.headers.get(key); if(value)headers.set(key,value);
   }
   try {
-    const limit=path.length===2&&path[0]==='studio'&&path[1]==='images'?1500000:16384;
+    const fileGrant=path.length===4&&path[0]==='browser'&&path[1]==='files'&&path[3]==='grants'&&request.method==='POST';
+    const limit=fileGrant?720000:path.length===2&&path[0]==='studio'&&path[1]==='images'?1500000:16384;
     const tooLarge=()=>Response.json({error:{code:'PAYLOAD_TOO_LARGE',message:'حجم الطلب أكبر من المسموح.'}},{status:413});
     if (Number(request.headers.get('content-length') || '0') > limit) return tooLarge();
     let body:Uint8Array|undefined;
@@ -22,9 +23,15 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
       try{while(true){const item=await reader.read();if(item.done)break;size+=item.value.byteLength;if(size>limit){await reader.cancel();return tooLarge();}parts.push(item.value);}}finally{reader.releaseLock();}
       body=new Uint8Array(size);let offset=0;for(const part of parts){body.set(part,offset);offset+=part.byteLength;}
     }
-    const response=await fetch(target,{method:request.method,headers,body:body as BodyInit|undefined,cache:'no-store',redirect:'manual',signal:AbortSignal.timeout(path[0]==='studio'&&request.method==='POST'?360000:['research','browser','google-ads'].includes(path[0]??'')?60000:15000)});
+    const learningImport=path.length===2&&path[0]==='learning'&&path[1]==='documents'&&request.method==='POST';
+    const response=await fetch(target,{method:request.method,headers,body:body as BodyInit|undefined,cache:'no-store',redirect:'manual',signal:AbortSignal.any([request.signal,AbortSignal.timeout(path[0]==='studio'&&request.method==='POST'?360000:learningImport?30000:['research','browser','google-ads','search'].includes(path[0]??'')?60000:15000)])});
     const output=new Headers({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
     const contentType=response.headers.get('content-type');if(contentType)output.set('content-type',contentType);
+    if(path.length===6&&path[0]==='browser'&&path[1]==='files'&&path[3]==='grants'&&path[5]==='content'){
+      const disposition=response.headers.get('content-disposition');
+      if(disposition&&/^attachment; filename="[a-zA-Z0-9][a-zA-Z0-9._ -]{0,99}"; filename\*=UTF-8''[a-zA-Z0-9._% -]{1,1200}$/.test(disposition))output.set('Content-Disposition',disposition);
+      output.set('Content-Security-Policy',"default-src 'none'; sandbox");
+    }
     for(const key of ['retry-after','x-retry-after']){const value=response.headers.get(key);if(value&&/^\d{1,6}$/.test(value))output.set(key,value);}
     for(const cookie of response.headers.getSetCookie())output.append('set-cookie',cookie);
     // Only a path on this site: the service must never send a visitor elsewhere through the proxy.
@@ -34,4 +41,4 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
     return Response.json({error:{code:'SERVICE_UNAVAILABLE',message:'تعذر الاتصال بخدمة المهام. تحقق من تشغيلها وأعد المحاولة.'}},{status:503,headers:{'Cache-Control':'no-store'}});
   }
 }
-export {forward as GET,forward as POST};
+export {forward as GET,forward as POST,forward as DELETE};
