@@ -24,6 +24,7 @@ import { decodeStructuredMemoryDecision, memoryRecallFormat, structuredMemoryDec
 import { CredentialVault } from './assistant/vault.js';
 import { trustedSkillGapSignal } from './assistant/skill-gaps.js';
 import { assessBrowserVerification } from './assistant/verification.js';
+import { newGoalState, observeFailure, observeOutcome, reviewOpen, reviewStop, stagnationWarning, type BrainVersion } from './assistant/goal-integrity.js';
 
 export interface CommandChatConfig {
   apiKey?: string;
@@ -60,6 +61,12 @@ export interface CommandChatConfig {
   beforeModelDecision?: (estimatedTokens: number, signal: AbortSignal) => Promise<void>;
   /** How often to read a Runtime task the chat is following. */
   taskPollMs?: number;
+  /**
+   * Brain version. 'A' (the default) is the original loop. 'B' adds the Goal
+   * Integrity checks in assistant/goal-integrity.ts; it is selected only by the
+   * cognitive lab until measurements and the owner accept it.
+   */
+  brainVersion?: BrainVersion;
 }
 
 export interface ChatSkillContext {
@@ -1031,6 +1038,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       const memory = !recallFormat && config.memoryContext ? await config.memoryContext(ownerId, request)
         .then(value => value == null ? undefined : clean(JSON.stringify(value))).catch(() => undefined) : undefined;
+      if (config.brainVersion === 'B' && !recallFormat && !state.goal) state.goal = newGoalState(request);
       for (;;) {
         await active();
         if (page && !recallFormat) {
@@ -1094,6 +1102,24 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         warning = undefined;
         if (decision.plan?.length) state.plan = decision.plan;
         if (decision.note) state.notes.push(decision.note);
+
+        if (state.goal && (decision.tool === 'answer' || decision.tool === 'ask_user')) {
+          const goalWarning = reviewStop(state.goal, { tool: decision.tool, outcome: decision.outcome }, page);
+          if (goalWarning) {
+            warning = goalWarning;
+            await saveState(runId, state);
+            continue;
+          }
+        }
+        if (state.goal && decision.tool === 'open' && decision.url) {
+          const goalWarning = reviewOpen(state.goal, decision.url, request, state.seenResults ?? []);
+          if (goalWarning) {
+            state.trail.push({ step: state.steps, action: `open ${decision.url}`, result: 'not opened: the address was a guess', changed: false });
+            warning = goalWarning;
+            await saveState(runId, state);
+            continue;
+          }
+        }
 
         if (decision.tool === 'answer') {
           if (!decision.text?.trim() && (state.emptyAnswers ?? 0) < 2) {
@@ -1197,6 +1223,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             return;
           }
           warning = noteAttempt(state, signature, outcome.changed, false, outcome.verified===true);
+          if (state.goal) {
+            observeOutcome(state.goal, decision.tool, outcome.page, outcome.changed);
+            warning = stagnationWarning(state.goal, page) ?? warning;
+          }
         } catch (error) {
           if (config.recordSkillGap) state.gapSignal = trustedSkillGapSignal(error);
           if (!(error instanceof BrowserError)) throw error;
@@ -1211,6 +1241,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           }
           state.trail.push({ step: state.steps, action, result: `failed: ${clean(error.message)}`, changed: false });
           const attemptWarning = noteAttempt(state, signature, false, true);
+          if (state.goal) observeFailure(state.goal);
           if (error.code === 'AGENT_REF_STALE' && decision.ref && page) {
             page = (await browser.observe(ownerId, id)).page;
             await keepPage(id, page);

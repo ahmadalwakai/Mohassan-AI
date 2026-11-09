@@ -285,6 +285,8 @@ export interface BrainState {
   computerElements?: import('./tools.js').ComputerElement[];
   /** Trusted metadata only. Absent when gap recording is disabled. */
   gapSignal?: import('@mohassan/contracts').SkillGapSignal | null;
+  /** Brain B only: the goal contract and progress record. Absent in brain A. */
+  goal?: import('./goal-integrity.js').GoalState;
 }
 
 export function newBrainState(): BrainState {
