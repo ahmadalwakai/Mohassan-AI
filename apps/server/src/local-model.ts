@@ -10,10 +10,10 @@ import { LocalModelQueue, OllamaProvider, ProviderError, type ModelProvider } fr
  */
 export type LocalModelRole = 'chat' | 'plan' | 'coding' | 'studio' | 'vision' | 'skill';
 
-/** Owner-approved limits (2026-11-10). A limit starts when the request reaches the model. */
+/** Owner-approved limits (2026-11-10; chat raised from 120 s to 240 s after the Ads draft timed out). A limit starts when the request reaches the model. */
 export const LOCAL_MODEL_LIMITS = {
   maxWaiting: 3,
-  timeoutMs: { chat: 120_000, plan: 300_000, coding: 180_000, studio: 180_000, vision: 90_000, skill: 120_000 } satisfies Record<LocalModelRole, number>,
+  timeoutMs: { chat: 240_000, plan: 300_000, coding: 180_000, studio: 180_000, vision: 90_000, skill: 120_000 } satisfies Record<LocalModelRole, number>,
 } as const;
 
 export interface LocalModelConfig {
