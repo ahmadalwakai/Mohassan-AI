@@ -24,7 +24,7 @@ from wasla.security import AuthStore, PAIRING_LIFETIME, ensure_certificate, loca
 
 
 WINDOWS_ROOT = Path(__file__).resolve().parent
-STATE_ROOT = Path(__file__).resolve().parents[3] / "work" / "wasla-state"
+from wasla.paths import STATE_DIR as STATE_ROOT
 PYTHON = Path(r"C:\Users\Administrator\Documents\Codex\2026-11-01\local-browser-agent\work\local-image-engine\venv\Scripts\python.exe")
 TAILNET = ipaddress.ip_network("100.64.0.0/10")
 BASE_PYTHON = (Path(sys.base_prefix) / "python.exe").resolve()

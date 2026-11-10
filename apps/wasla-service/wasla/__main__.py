@@ -17,7 +17,7 @@ from cryptography import x509
 
 from .security import AuthStore, atomic_json, ensure_certificate, local_addresses, read_json, tls_context
 
-DEFAULT_STATE = Path(__file__).resolve().parents[4] / "work" / "wasla-state"
+from .paths import STATE_DIR as DEFAULT_STATE
 DEFAULT_PORT = 47621
 
 

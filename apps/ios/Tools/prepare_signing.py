@@ -7,7 +7,7 @@ that stored identity before this script. No certificate/private-key export,
 new certificate, device registration, capability change, or publishing occurs.
 
 Run: python3 ios/Tools/prepare_signing.py
-Then: xcode-project use-profiles --project ios/Wasla.xcodeproj
+Then: xcode-project use-profiles --project apps/ios/Wasla.xcodeproj
       --profile "$CM_BUILD_DIR/build/signing/Wasla.mobileprovision"
 
 Uses documented app-store-connect CLI commands and JSON resource output:

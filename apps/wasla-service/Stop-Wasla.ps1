@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 # A private, identity-bound request is consumed by the backend. Never kill a PID.
-$waslaTaskRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
-$waslaStateRoot = Join-Path $waslaTaskRoot 'work\wasla-state'
+# Same folder as wasla/paths.py: WASLA_STATE_DIR, or the state folder used since build 3.
+$waslaStateRoot = if ($env:WASLA_STATE_DIR) { $env:WASLA_STATE_DIR } else { 'C:\Users\Administrator\Documents\Codex\2026-11-01\local-agent-handoff\work\wasla-state' }
 $waslaStatusPath = Join-Path $waslaStateRoot 'server-status.json'
 if (-not (Test-Path -LiteralPath $waslaStatusPath -PathType Leaf)) {
     Write-Output 'Wasla is not reporting an active server.'

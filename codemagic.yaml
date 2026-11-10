@@ -8,7 +8,7 @@ workflows:
     environment:
       xcode: latest
       vars:
-        XCODE_PROJECT: ios/Wasla.xcodeproj
+        XCODE_PROJECT: apps/ios/Wasla.xcodeproj
         XCODE_SCHEME: Wasla
     scripts:
       - name: Verify pairing codes and bundled computer identity
@@ -17,10 +17,10 @@ workflows:
           mkdir -p "$CM_BUILD_DIR/build/checks"
           xcrun --sdk macosx swiftc \
             -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
-            "$CM_BUILD_DIR/ios/Wasla/Models.swift" \
-            "$CM_BUILD_DIR/ios/Tools/PairingChecks.swift" \
+            "$CM_BUILD_DIR/apps/ios/Wasla/Models.swift" \
+            "$CM_BUILD_DIR/apps/ios/Tools/PairingChecks.swift" \
             -o "$CM_BUILD_DIR/build/checks/pairing-checks"
-          "$CM_BUILD_DIR/build/checks/pairing-checks" "$CM_BUILD_DIR/ios/Wasla/ConnectionDefaults.json"
+          "$CM_BUILD_DIR/build/checks/pairing-checks" "$CM_BUILD_DIR/apps/ios/Wasla/ConnectionDefaults.json"
       - name: Inspect Xcode project and shared scheme
         script: |
           set -euo pipefail
@@ -71,7 +71,7 @@ workflows:
         provisioning_profiles:
           - vibeset_app_store
       vars:
-        XCODE_PROJECT: ios/Wasla.xcodeproj
+        XCODE_PROJECT: apps/ios/Wasla.xcodeproj
         XCODE_SCHEME: Wasla
     scripts:
       - name: Verify pairing codes and bundled computer identity
@@ -80,14 +80,14 @@ workflows:
           mkdir -p "$CM_BUILD_DIR/build/checks"
           xcrun --sdk macosx swiftc \
             -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
-            "$CM_BUILD_DIR/ios/Wasla/Models.swift" \
-            "$CM_BUILD_DIR/ios/Tools/PairingChecks.swift" \
+            "$CM_BUILD_DIR/apps/ios/Wasla/Models.swift" \
+            "$CM_BUILD_DIR/apps/ios/Tools/PairingChecks.swift" \
             -o "$CM_BUILD_DIR/build/checks/pairing-checks"
-          "$CM_BUILD_DIR/build/checks/pairing-checks" "$CM_BUILD_DIR/ios/Wasla/ConnectionDefaults.json"
+          "$CM_BUILD_DIR/build/checks/pairing-checks" "$CM_BUILD_DIR/apps/ios/Wasla/ConnectionDefaults.json"
       - name: Prepare the matching Wasla App Store provisioning profile
         script: |
           set -euo pipefail
-          python3 "$CM_BUILD_DIR/ios/Tools/prepare_signing.py"
+          python3 "$CM_BUILD_DIR/apps/ios/Tools/prepare_signing.py"
       - name: Apply the verified signing profile
         script: |
           set -euo pipefail
@@ -127,4 +127,4 @@ workflows:
       - name: Verify and assign Wasla 1.0 (5) to the existing internal group
         script: |
           set -euo pipefail
-          python3 "$CM_BUILD_DIR/ios/Tools/enable_internal_testflight.py"
+          python3 "$CM_BUILD_DIR/apps/ios/Tools/enable_internal_testflight.py"

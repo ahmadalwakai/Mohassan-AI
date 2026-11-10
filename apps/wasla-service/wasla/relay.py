@@ -41,7 +41,7 @@ MAX_RECEIPTS = 4096
 MAX_JOURNAL_BYTES = 16 * MAX_BYTES
 REQUEST_TIMEOUT = 240
 MAX_REQUEST_LIFETIME = 360
-DEFAULT_STATE = Path(__file__).resolve().parents[4] / 'work' / 'wasla-state'
+from .paths import STATE_DIR as DEFAULT_STATE
 _ID = re.compile(r'[A-Za-z0-9_-]{8,128}')
 _TOKEN = re.compile(r'[A-Za-z0-9._~-]{32,512}')
 _ENVELOPE = re.compile(r'[A-Za-z0-9_-]+')
