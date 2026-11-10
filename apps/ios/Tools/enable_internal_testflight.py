@@ -47,7 +47,7 @@ def request_stage(method, path):
     stages = {
         ("GET", f"/v1/apps/{APP_ID}"): "verify-wasla-app",
         ("GET", f"/v1/betaGroups/{GROUP_ID}"): "verify-internal-group",
-        ("GET", "/v1/builds"): "find-processed-build-5",
+        ("GET", "/v1/builds"): "find-processed-build",
         ("GET", f"/v1/betaGroups/{GROUP_ID}/relationships/builds"): "read-group-build-membership",
         ("POST", f"/v1/betaGroups/{GROUP_ID}/relationships/builds"): "associate-build-with-internal-group",
     }
