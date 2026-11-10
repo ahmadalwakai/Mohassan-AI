@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>ar</string>
+    <key>CFBundleDisplayName</key><string>وصلة</string>
+    <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+    <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+    <key>CFBundleLocalizations</key><array><string>ar</string></array>
+    <key>ITSAppUsesNonExemptEncryption</key><false/>
+    <key>LSRequiresIPhoneOS</key><true/>
+    <key>UIApplicationSupportsIndirectInputEvents</key><true/>
+    <key>UILaunchScreen</key><dict/>
+    <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
+    <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
+    <key>NSLocalNetworkUsageDescription</key><string>يحتاج وصلة إلى الوصول إلى الكمبيوتر المقترن للمحادثة وإنشاء الصور والبحث والتحكم بسطح المكتب عبر اتصال مشفّر.</string>
+    <key>NSPhotoLibraryAddUsageDescription</key><string>حفظ الصورة التي اخترت إضافتها إلى مكتبة الصور.</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key><true/>
+        <key>NSExceptionDomains</key>
+        <dict>
+            <!-- iOS 17+ supports CIDR exceptions. APIClient still permits HTTPS only,
+                 exact certificate pin + SAN + dates, and TLS 1.2 or newer.
+                 For a distributed build, narrow these to the specific computer IPs. -->
+            <key>10.0.0.0/8</key><dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/><key>NSExceptionMinimumTLSVersion</key><string>TLSv1.2</string><key>NSExceptionRequiresForwardSecrecy</key><true/></dict>
+            <key>172.16.0.0/12</key><dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/><key>NSExceptionMinimumTLSVersion</key><string>TLSv1.2</string><key>NSExceptionRequiresForwardSecrecy</key><true/></dict>
+            <key>192.168.0.0/16</key><dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/><key>NSExceptionMinimumTLSVersion</key><string>TLSv1.2</string><key>NSExceptionRequiresForwardSecrecy</key><true/></dict>
+            <key>100.64.0.0/10</key><dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/><key>NSExceptionMinimumTLSVersion</key><string>TLSv1.2</string><key>NSExceptionRequiresForwardSecrecy</key><true/></dict>
+        </dict>
+    </dict>
+</dict>
+</plist>

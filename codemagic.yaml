@@ -1,0 +1,130 @@
+# ios-verify is unsigned. ios-release imports the existing verified signing identity.
+# See https://docs.codemagic.io/yaml-code-signing/ios-simulator-builds/
+workflows:
+  ios-verify:
+    name: Wasla - unsigned iOS Simulator verification
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      xcode: latest
+      vars:
+        XCODE_PROJECT: ios/Wasla.xcodeproj
+        XCODE_SCHEME: Wasla
+    scripts:
+      - name: Verify pairing codes and bundled computer identity
+        script: |
+          set -euo pipefail
+          mkdir -p "$CM_BUILD_DIR/build/checks"
+          xcrun --sdk macosx swiftc \
+            -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
+            "$CM_BUILD_DIR/ios/Wasla/Models.swift" \
+            "$CM_BUILD_DIR/ios/Tools/PairingChecks.swift" \
+            -o "$CM_BUILD_DIR/build/checks/pairing-checks"
+          "$CM_BUILD_DIR/build/checks/pairing-checks" "$CM_BUILD_DIR/ios/Wasla/ConnectionDefaults.json"
+      - name: Inspect Xcode project and shared scheme
+        script: |
+          set -euo pipefail
+          xcodebuild -version
+          xcodebuild -list -project "$CM_BUILD_DIR/$XCODE_PROJECT"
+      - name: Compile the unsigned iOS Simulator application
+        script: |
+          set -euo pipefail
+          mkdir -p "$CM_BUILD_DIR/build/logs"
+          xcodebuild build \
+            -project "$CM_BUILD_DIR/$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            -derivedDataPath "$CM_BUILD_DIR/build/DerivedData" \
+            -resultBundlePath "$CM_BUILD_DIR/build/Wasla.xcresult" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "$CM_BUILD_DIR/build/logs/xcodebuild.log"
+      - name: Package the Simulator app
+        script: |
+          set -euo pipefail
+          test -d "$CM_BUILD_DIR/build/DerivedData/Build/Products/Debug-iphonesimulator/Wasla.app"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$CM_BUILD_DIR/build/DerivedData/Build/Products/Debug-iphonesimulator/Wasla.app" \
+            "$CM_BUILD_DIR/build/Wasla-simulator.zip"
+    artifacts:
+      - build/Wasla-simulator.zip
+      - build/DerivedData/Build/Products/Debug-iphonesimulator/Wasla.app
+      - build/logs/*.log
+      - build/Wasla.xcresult
+
+  ios-release:
+    name: Wasla - iPhone build and TestFlight upload
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    integrations:
+      app_store_connect: Vibeset Codemagic
+    environment:
+      xcode: latest
+      ios_signing:
+        certificates:
+          - vibeset_distribution
+        # Codemagic requires a stored profile alongside the existing certificate.
+        # The build applies only the freshly verified Wasla profile below.
+        provisioning_profiles:
+          - vibeset_app_store
+      vars:
+        XCODE_PROJECT: ios/Wasla.xcodeproj
+        XCODE_SCHEME: Wasla
+    scripts:
+      - name: Verify pairing codes and bundled computer identity
+        script: |
+          set -euo pipefail
+          mkdir -p "$CM_BUILD_DIR/build/checks"
+          xcrun --sdk macosx swiftc \
+            -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
+            "$CM_BUILD_DIR/ios/Wasla/Models.swift" \
+            "$CM_BUILD_DIR/ios/Tools/PairingChecks.swift" \
+            -o "$CM_BUILD_DIR/build/checks/pairing-checks"
+          "$CM_BUILD_DIR/build/checks/pairing-checks" "$CM_BUILD_DIR/ios/Wasla/ConnectionDefaults.json"
+      - name: Prepare the matching Wasla App Store provisioning profile
+        script: |
+          set -euo pipefail
+          python3 "$CM_BUILD_DIR/ios/Tools/prepare_signing.py"
+      - name: Apply the verified signing profile
+        script: |
+          set -euo pipefail
+          xcode-project use-profiles \
+            --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
+            --profile "$CM_BUILD_DIR/build/signing/Wasla.mobileprovision" \
+            --archive-method app-store
+      - name: Build the signed IPA for TestFlight
+        script: |
+          set -euo pipefail
+          xcode-project build-ipa \
+            --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+    publishing:
+      app_store_connect:
+        auth: integration
+        # Upload for internal testing; neither beta review nor store review.
+        submit_to_testflight: false
+        submit_to_app_store: false
+
+  # Manual association of the existing 1.0 (5) upload. No build or publication.
+  # The named integration exposes the existing API credentials to this script:
+  # https://docs.codemagic.io/partials/code-signing-ios-configure-environment-vars/
+  ios-enable-testflight:
+    name: Wasla - enable existing build 5 for internal testing
+    instance_type: mac_mini_m2
+    max_build_duration: 10
+    integrations:
+      app_store_connect: Vibeset Codemagic
+    environment:
+      xcode: latest
+    scripts:
+      - name: Verify and assign Wasla 1.0 (5) to the existing internal group
+        script: |
+          set -euo pipefail
+          python3 "$CM_BUILD_DIR/ios/Tools/enable_internal_testflight.py"

@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*.log
+state/
+work/
+*.sqlite*
+.env*
+*.pem
+*.key
+*.p12

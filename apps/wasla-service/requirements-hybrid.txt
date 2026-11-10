@@ -1,0 +1,3 @@
+# Optional PostgreSQL/Neon persistence. SQLite needs no additional package.
+psycopg[binary]>=3.2,<4
+certifi>=2025.1.31
