@@ -6,6 +6,7 @@ import { expect, it } from 'vitest';
 import { createApplication } from '../apps/server/src/app.js';
 import { createMockGroq } from './fixtures/planning.js';
 import { SkillSandboxDiagnosticSchema } from '@mohassan/contracts';
+import { fixtureLocalModel } from './fixtures/local-model.js';
 
 it.each([true, false])('loads only activated guidance through actual API, Runtime and Chat wiring (enabled=%s)', async enabled => {
   const directory = await mkdtemp(join(tmpdir(), 'mohassan-skill-context-'));
@@ -21,7 +22,7 @@ it.each([true, false])('loads only activated guidance through actual API, Runtim
     application = await createApplication({
       authSecret: 'skill-context-fixture-auth-secret-00001', internalSecret: secret, setupToken: 'skill-context-fixture-setup-token-0001',
       webOrigin: origin, production: false, runWorker: false, skillEngineEnabled: enabled,
-      codingAllowedRoots: [directory], browserProfileDir: join(directory, 'profile'), groqApiKey: 'unit-fixture-key-only', aiFetch: mock.fetch,
+      codingAllowedRoots: [directory], browserProfileDir: join(directory, 'profile'), ...fixtureLocalModel(mock.fetch),
     });
     const app = application.app, account = { email: 'skill-context@example.test', password: 'Skill-context-fixture-password-42' };
     expect((await app.inject({url: '/api/skills/sandbox', headers: headers()})).statusCode).toBe(401);

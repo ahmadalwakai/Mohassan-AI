@@ -7,6 +7,7 @@ import { Runtime } from '@mohassan/runtime';
 import { SkillError, recordSkillGap, skillsMigration } from '@mohassan/skills';
 import { createCommandChatControl, type CommandChatConfig } from '../apps/server/src/command-chat.ts';
 import { trustedSkillGapSignal } from '../apps/server/src/assistant/skill-gaps.ts';
+import { fixtureProviders } from './fixtures/local-model.js';
 
 const owner = 'gap-chat-owner';
 const databases: Awaited<ReturnType<typeof createDatabase>>[] = [];
@@ -30,7 +31,7 @@ async function setup(transport: typeof fetch, overrides: Partial<CommandChatConf
   const database = await createDatabase(); databases.push(database);
   await migrate(database.db); await skillsMigration(database.db);
   const control = await createCommandChatControl(database.db, {
-    apiKey: 'synthetic-gap-provider-key', models: { fast: ['fast'], deep: ['deep'], vision: 'vision' }, fetch: transport,
+    models: { fast: ['fast'], deep: ['deep'], vision: 'vision' }, createProvider: fixtureProviders(transport),
     browser: browser(), recordSkillGap, leaseMs: 60000, ...overrides,
   });
   controls.push(control);

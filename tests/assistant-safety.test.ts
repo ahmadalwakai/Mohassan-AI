@@ -12,6 +12,7 @@ import { createSkillControl, skillsMigration } from '@mohassan/skills';
 import { Runtime } from '@mohassan/runtime';
 import { migrateAuth } from '../apps/server/src/auth.js';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
+import { fixtureProviders } from './fixtures/local-model.js';
 
 const owner='safety-owner';
 let server:Server, origin:string, tempBase:string, directory:string, browser:AgentBrowser;
@@ -262,7 +263,7 @@ describe('actual browser request authorization',()=>{
 
 function response(model:string,decision:Record<string,unknown>){return Response.json({model,choices:[{finish_reason:'stop',message:{content:JSON.stringify({thought:null,plan:null,note:null,url:null,ref:null,text:null,submit:null,options:null,sensitive:null,outcome:null,...decision})}}],usage:{prompt_tokens:10,completion_tokens:10}});}
 async function store(){const result=await createDatabase();await migrate(result.db);return result;}
-function configuration(transport:typeof fetch){return {apiKey:'fixture',models:{fast:['fast'],deep:['deep'],vision:'vision'},fetch:transport,browser,networkPolicy:{testOrigins:[origin]},leaseMs:60000};}
+function configuration(transport:typeof fetch){return {models:{fast:['fast'],deep:['deep'],vision:'vision'},createProvider:fixtureProviders(transport),browser,networkPolicy:{testOrigins:[origin]},leaseMs:60000};}
 
 it('refreshes a stale click in command chat and clicks only the newly observed safe button', async () => {
   const database = await store();
@@ -420,11 +421,11 @@ describe('instruction context in the assistant', () => {
 });
 
 describe('durable assistant claims',()=>{
-  it('keeps vision rejection metadata without automatically retrying the paid request', async () => {
+  it('keeps vision failure metadata without automatically retrying the local request', async () => {
     const database = await store(); let decisions = 0, visionCalls = 0;
     const control = await createCommandChatControl(database.db, configuration(async (_url, init) => {
       const request = JSON.parse(String(init?.body));
-      if (request.model === 'vision') { visionCalls++; return new Response('', { status: 429, headers: { 'retry-after': '600' } }); }
+      if (request.model === 'vision') { visionCalls++; return new Response('', { status: 503 }); }
       decisions++;
       return response(request.model, decisions === 1 ? { tool: 'open', url: origin + '/form' } : decisions === 2 ? { tool: 'look', text: 'Describe the form' } : { tool: 'answer', text: 'The visual request is blocked', outcome: 'partial' });
     }));
@@ -432,28 +433,28 @@ describe('durable assistant claims',()=>{
       const item = await control.create(owner, { goal: 'Inspect the fixture visually' }); await control.settled(item.id);
       expect(visionCalls).toBe(1);
       const rows = await database.db.selectFrom('chat_model_receipts').selectAll().where('purpose', '=', 'vision').execute();
-      expect(rows).toHaveLength(1); expect(rows[0]).toMatchObject({ status: 'failed', http_status: 429, retry_after_ms: 600000, retry_reason: 'retry_budget_exceeded' });
+      expect(rows).toHaveLength(1); expect(rows[0]).toMatchObject({ status: 'unknown', error_code: 'UPSTREAM_ERROR', http_status: 503, retry_after_ms: null, retry_reason: 'not_confirmed_rejection' });
     } finally { await control.shutdown(); await database.close(); }
   });
-  it.each(['network','paid-invalid','rate-limit','two-rejections','long-retry','invalid-retry'] as const)('records each model attempt and bounds replay for %s',async kind=>{
+  it.each(['network','paid-invalid','unavailable','missing-model'] as const)('records each model attempt and bounds replay for %s',async kind=>{
     const database=await store();let calls=0;
     const control=await createCommandChatControl(database.db,configuration(async(_url,init)=>{
       calls++;const request=JSON.parse(String(init?.body));
       if(kind==='network')throw new Error('ambiguous network outcome');
       if(kind==='paid-invalid')return Response.json({model:request.model,choices:[{finish_reason:'stop',message:{content:'not valid JSON'}}],usage:{prompt_tokens:23,completion_tokens:7}});
-      if(kind==='long-retry'||kind==='invalid-retry')return new Response('',{status:429,headers:{'retry-after':kind==='long-retry'?'600':'not-a-date'}});
-      if(calls===1||kind==='two-rejections')return new Response('',{status:429,headers:{'retry-after':'0'}});
+      // Ollama answers errors without retry metadata; a local failure is never replayed automatically.
+      if(kind==='unavailable')return new Response('',{status:503});
+      if(kind==='missing-model')return new Response('',{status:404});
       return response(request.model,{tool:'answer',text:'done',outcome:'done'});
     }));
     try{
       const item=await control.create(owner,{goal:'A bounded model request'});await control.settled(item.id);
       const rows=await database.db.selectFrom('chat_model_receipts').selectAll().orderBy('started_at','asc').execute();
-      expect(calls).toBe(['network','paid-invalid','long-retry','invalid-retry'].includes(kind)?1:2);expect(rows).toHaveLength(calls);
+      expect(calls).toBe(1);expect(rows).toHaveLength(calls);
       if(kind==='network'){expect(rows[0]).toMatchObject({status:'unknown',usage_known:false,error_code:'NETWORK_ERROR',http_status:null,retry_after_ms:null,retry_reason:'not_confirmed_rejection'});}
       if(kind==='paid-invalid'){expect(rows[0]).toMatchObject({status:'invalid',usage_known:true,input_tokens:23,output_tokens:7});}
-      if(kind==='rate-limit'){expect(new Set(rows.map(row=>row.model)).size).toBe(2);expect(rows[0]).toMatchObject({input_tokens:0,output_tokens:0,usage_known:true,http_status:429,retry_after_ms:0,retry_reason:'confirmed_zero_usage_rejection'});expect(rows[1].status).toBe('succeeded');}
-      if(kind==='long-retry')expect(rows[0]).toMatchObject({http_status:429,retry_after_ms:600000,retry_reason:'retry_budget_exceeded'});
-      if(kind==='invalid-retry')expect(rows[0]).toMatchObject({http_status:429,retry_after_ms:null,retry_reason:'retry_after_invalid'});
+      if(kind==='unavailable')expect(rows[0]).toMatchObject({status:'unknown',error_code:'UPSTREAM_ERROR',http_status:503,retry_after_ms:null,retry_reason:'not_confirmed_rejection'});
+      if(kind==='missing-model')expect(rows[0]).toMatchObject({status:'unknown',error_code:'MODEL_UNAVAILABLE',http_status:404,retry_reason:'not_confirmed_rejection'});
     }finally{await control.shutdown();await database.close();}
   });
   it('atomically consumes concurrent question answers and implements stop without redispatch',async()=>{

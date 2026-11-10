@@ -35,7 +35,7 @@ describe('studio candidate validation, real Chromium evidence and atomic applica
   }
   async function readyProposal(){
     const fixture=await setup();let modelCalls=0;
-    const ai=await createStudioAiControl(store.db,{dataDir:join(directory,fixture.ownerId),model:'candidate-test-model',studio:fixture.studio,validateCandidate:fixture.studio.validateCandidate,applyCandidate:fixture.studio.applyCandidate,generate:async()=>{modelCalls++;return {text:JSON.stringify({summary:'مقترح fixture؛ لا طلب شبكة أو نموذج مدفوع.',edits:fixture.edits.map(({path,content})=>({path,content}))}),model:'candidate-test-model',usage:{inputTokens:44,outputTokens:12}};}});
+    const ai=await createStudioAiControl(store.db,{dataDir:join(directory,fixture.ownerId),model:{name:'candidate-test-model',vision:false,provider:()=>{throw new Error('generate is injected');}},studio:fixture.studio,validateCandidate:fixture.studio.validateCandidate,applyCandidate:fixture.studio.applyCandidate,generate:async()=>{modelCalls++;return {text:JSON.stringify({summary:'مقترح fixture؛ لا طلب شبكة أو نموذج مدفوع.',edits:fixture.edits.map(({path,content})=>({path,content}))}),model:'candidate-test-model',usage:{inputTokens:44,outputTokens:12}};}});
     const runtime=new Runtime(store.db,{studioChange:ai.execute,verifyStudioChange:ai.verify});runtimes.push(runtime);
     const task=await runtime.createTask(fixture.ownerId,{title:'تعديل مرئي في نسخة Git',goal:'غيّر عنوان الصفحة داخل نسخة المراجعة مع دليل بصري.',capabilityId:'studio.change',autonomy:'scoped',studioInput:{sessionId:fixture.session.id,revision:fixture.session.revision}},randomUUID());
     expect(task.status).toBe('waiting_approval');expect(modelCalls).toBe(0);

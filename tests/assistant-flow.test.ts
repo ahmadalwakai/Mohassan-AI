@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { AgentBrowser, BrowserError, type SearchProvider } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
+import { fixtureProviders } from './fixtures/local-model.js';
 
 const OWNER = 'owner-1';
 const PASSWORD = 'fixture-pass-9931';
@@ -134,7 +135,7 @@ describe('the assistant finishing real work', () => {
   async function start(script: Script, searchProvider?: SearchProvider) {
     const groq = scriptedGroq(script);
     control = await createCommandChatControl(store.db, {
-      apiKey: 'fixture-key-not-real', models: { fast: ['fast-model'], deep: ['deep-model'], vision: 'vision-model' }, fetch: groq.transport,
+      models: { fast: ['fast-model'], deep: ['deep-model'], vision: 'vision-model' }, createProvider: fixtureProviders(groq.transport),
       browser: new AgentBrowser({ profileDir: profile, testOrigins: [origin], channel: null }),
       networkPolicy: { testOrigins: [origin] }, searchProvider,
     });

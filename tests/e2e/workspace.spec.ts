@@ -56,9 +56,9 @@ test('owner setup, approvals, verified results, offline recovery and mobile navi
   await page.screenshot({path:'artifacts/workspace-desktop.png',fullPage:true,animations:'disabled'});
 
   await page.getByRole('button',{name:'الاتصالات',exact:true}).click();
-  const aiConnection=page.getByRole('region',{name:'اتصال الذكاء الاصطناعي'});
+  const aiConnection=page.getByRole('region',{name:'النموذج المحلي'});
   await expect(aiConnection).toBeVisible();
-  await aiConnection.getByRole('button',{name:'اختبار اتصال Groq',exact:true}).click();
+  await aiConnection.getByRole('button',{name:'اختبار النموذج المحلي',exact:true}).click();
   await expect(aiConnection.getByText('اتصال متحقق',{exact:true})).toBeVisible();
 
   await page.getByRole('button',{name:'مهمة جديدة',exact:true}).click();
@@ -68,7 +68,7 @@ test('owner setup, approvals, verified results, offline recovery and mobile navi
   await create.getByLabel('ما الهدف الذي تريد التخطيط له؟').fill('أعد خطة واضحة لمراجعة المشروع مع ترتيب الخطوات ومعايير نجاح قابلة للتحقق.');
   await create.getByLabel('كيف ستقيس النجاح؟').fill('وجود خطوة فحص ثم مراجعة، مع دليل متوقع لكل معيار.');
   await create.getByRole('radio',{name:/بموافقتك/}).check();
-  await expect(create.locator('.ai-disclosure')).toContainText('سيُرسل وصف الهدف ومقاييسه إلى Groq');
+  await expect(create.locator('.ai-disclosure')).toContainText('سيقرأ نموذج موحسن المحلي وصف الهدف ومقاييسه على هذا الكمبيوتر');
   await create.getByRole('button',{name:'إنشاء المهمة',exact:true}).click();
   await expect(detail.getByText('هذه المهمة تنتظر قرارك',{exact:true})).toBeVisible();
   await expect(detail.getByRole('region',{name:'الخطة المقترحة'})).toHaveCount(0);
@@ -102,10 +102,10 @@ test('owner setup, approvals, verified results, offline recovery and mobile navi
   await create.getByLabel('عنوان المهمة',{exact:true}).fill('اقتراح تخطيط دون طلب نموذج');
   await create.getByLabel('ما الهدف الذي تريد التخطيط له؟').fill('اقترح مسار إعداد خطة مراجعة دون إرسال الطلب إلى أي نموذج.');
   await create.getByRole('radio',{name:/اقتراح فقط/}).check();
-  await expect(create.locator('.ai-disclosure')).toContainText('لا يرسل أي طلب إلى Groq');
+  await expect(create.locator('.ai-disclosure')).toContainText('لا يرسل أي طلب إلى النموذج');
   await create.getByRole('button',{name:'إنشاء المهمة',exact:true}).click();
   await expect(detail.getByRole('heading',{name:'اقتراح المهمة',exact:true})).toBeVisible();
-  await expect(detail.locator('.shadow-notice')).toHaveText('وضع الاقتراح: لم يُرسل طلب إلى Groq ولم تُشغّل أدوات الخطة.');
+  await expect(detail.locator('.shadow-notice')).toHaveText('وضع الاقتراح: لم يُرسل طلب إلى النموذج ولم تُشغّل أدوات الخطة.');
   await expect(detail.getByRole('region',{name:'الخطة المقترحة'})).toHaveCount(0);
   await detail.getByRole('button',{name:'إغلاق التفاصيل'}).click();
   await page.reload();

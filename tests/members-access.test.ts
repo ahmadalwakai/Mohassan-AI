@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApplication } from '../apps/server/src/app.ts';
 import { MEMBER_ROUTES, PUBLIC_ROUTES } from '../apps/server/src/members.ts';
+import { fixtureLocalModel } from './fixtures/local-model.js';
 
 /** Members are invited people with cloud services only. Every other route must refuse them. */
 describe('workspace members over disposable local state', () => {
@@ -47,7 +48,7 @@ describe('workspace members over disposable local state', () => {
   beforeAll(async () => {
     directory = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'mohassan-members-')));
     application = await createApplication({ authSecret: 'members-fixture-auth-secret-0000000001', internalSecret: secret, setupToken, webOrigin: origin, production: false, runWorker: false,
-      codingAllowedRoots: [directory], browserProfileDir: join(directory, 'browser'), groqApiKey: 'synthetic-fixture-key-only', aiFetch: modelFetch, memberDailyRuns: 3, testRequestLimit: 2000 });
+      codingAllowedRoots: [directory], browserProfileDir: join(directory, 'browser'), ...fixtureLocalModel(modelFetch), memberDailyRuns: 3, testRequestLimit: 2000 });
     expect((await app().inject({ method: 'POST', url: '/api/setup', headers: headers(''), payload: { ...owner, setupToken } })).statusCode).toBe(200);
     ownerCookie = (await login(owner)).cookie;
   }, 60000);
@@ -97,7 +98,7 @@ describe('workspace members over disposable local state', () => {
     }
     // The owner-only surface is large; a short list would mean routes were missed.
     expect(checked.length).toBeGreaterThan(100);
-    for (const key of ['GET /api/workspace', 'POST /api/tasks', 'GET /api/coding/projects', 'POST /api/windows/pairing', 'POST /api/ai/providers/freellmapi/settings', 'POST /api/skills/import', 'POST /api/memory/skills/:id/run', 'GET /api/members']) expect(checked, key).toContain(key);
+    for (const key of ['GET /api/workspace', 'POST /api/tasks', 'GET /api/coding/projects', 'POST /api/windows/pairing', 'POST /api/ai/verify', 'POST /api/skills/import', 'POST /api/memory/skills/:id/run', 'GET /api/members']) expect(checked, key).toContain(key);
   }, 120000);
 
   it('requires a session on every non-public route', async () => {
@@ -121,13 +122,15 @@ describe('workspace members over disposable local state', () => {
     }
   }, 120000);
 
-  it('never offers a member the owner tools in chat, while the owner keeps them', async () => {
+  it('never sends a member request to the owner model, while the owner keeps the model and its tools', async () => {
     modelBodies.length = 0;
     const created = await app().inject({ method: 'POST', url: '/api/chat/conversations', headers: headers(memberCookie), payload: { goal: 'مرحبا، كيف حالك اليوم؟' } });
     expect(created.statusCode, created.body).toBe(200);
     await settle(created.json().id, memberCookie);
-    expect(modelBodies.length).toBeGreaterThan(0);
-    for (const body of modelBodies) for (const tool of ['workspace_list', 'code_change', 'studio_change', 'computer_view', 'computer_click', 'run_skill']) expect(body, tool).not.toContain(`"${tool}"`);
+    // Model features are the owner's only, for now: nothing from a member reaches the model.
+    expect(modelBodies).toHaveLength(0);
+    const memberDetail = (await app().inject({ url: `/api/chat/conversations/${created.json().id}`, headers: headers(memberCookie) })).json();
+    expect(JSON.stringify(memberDetail)).toContain('ميزات النموذج متاحة لمالك موحسن فقط حاليًا');
     modelBodies.length = 0;
     const own = await app().inject({ method: 'POST', url: '/api/chat/conversations', headers: headers(), payload: { goal: 'مرحبا، كيف حالك اليوم؟' } });
     expect(own.statusCode, own.body).toBe(200);

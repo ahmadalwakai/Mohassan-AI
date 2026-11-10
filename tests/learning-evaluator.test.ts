@@ -32,7 +32,7 @@ describe('isolated learning replay', () => {
   }, 90_000);
 
   it('does not silently truncate a candidate or enable a cloud evaluator', async () => {
-    const factory = vi.fn(() => ({ id: 'groq', generate: async () => answer('أربعة') }));
+    const factory = vi.fn(() => ({ id: 'cloud-provider', generate: async () => answer('أربعة') }));
     const evaluate = createIsolatedLearningEvaluator({ model: 'local-test', cases, createProvider: factory });
     await expect(evaluate({ ...subject, text: 'x'.repeat(3600) })).rejects.toThrow('EVAL_CONTEXT_LIMIT');
     await expect(evaluate({ ...subject, text: '<'.repeat(1000) })).rejects.toThrow('EVAL_CONTEXT_LIMIT');

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDatabase, migrate } from '@mohassan/database';
 import { SkillContractSchema } from '@mohassan/contracts';
-import { GroqProvider, ProviderError, type ModelRequest, type ModelResult } from '@mohassan/providers';
+import { OllamaProvider, ProviderError, type ModelRequest, type ModelResult } from '@mohassan/providers';
 import { migrateAuth } from '../../../apps/server/src/auth.ts';
 import { createSkillControl } from './index.ts';
 import { createSkillForgeControl, type SkillForgeOptions } from './forge.ts';
@@ -63,11 +63,11 @@ describe('quarantined skill forge and durable model receipt', () => {
     const f = await fixture();
     const fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)), request = { goal: body.messages.find((message: any) => message.role === 'user').content };
-      expect(body.max_completion_tokens).toBeLessThanOrEqual(4096);
+      expect(body.options.num_predict).toBeLessThanOrEqual(4096);
       const generated = reply(request);
-      return new Response(JSON.stringify({ model: 'configured-fixture-model', choices: [{ message: { content: generated.text }, finish_reason: 'stop' }], usage: { prompt_tokens: 31, completion_tokens: 19 } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify({ model: 'configured-fixture-model', done: true, done_reason: 'stop', message: { role: 'assistant', content: generated.text }, prompt_eval_count: 31, eval_count: 19 }), { status: 200, headers: { 'content-type': 'application/json' } });
     });
-    const provider = new GroqProvider({ apiKey: 'test-key', model: 'configured-fixture-model', fetch });
+    const provider = new OllamaProvider({ model: 'configured-fixture-model', fetch });
     const value = await controlFor(request => provider.generate(request)).execute(f.owner, f.request, randomUUID());
     expect(value.status).toBe('succeeded'); expect(fetch).toHaveBeenCalledTimes(1);
   });
@@ -77,9 +77,9 @@ describe('quarantined skill forge and durable model receipt', () => {
       const body = JSON.parse(String(init?.body)), goal = body.messages.find((message: any) => message.role === 'user').content, prompt = JSON.parse(goal);
       expect(goal.length).toBeLessThanOrEqual(16000); expect(prompt.baseline.instructions.truncated).toBe(true); expect(prompt.baseline.instructions.text.length).toBeGreaterThan(0);
       const generated = reply({ goal });
-      return new Response(JSON.stringify({ model: 'configured-fixture-model', choices: [{ message: { content: generated.text }, finish_reason: 'stop' }], usage: { prompt_tokens: 31, completion_tokens: 19 } }), { status: 200 });
+      return new Response(JSON.stringify({ model: 'configured-fixture-model', done: true, done_reason: 'stop', message: { role: 'assistant', content: generated.text }, prompt_eval_count: 31, eval_count: 19 }), { status: 200 });
     });
-    const provider = new GroqProvider({ apiKey: 'test-key', model: 'configured-fixture-model', fetch });
+    const provider = new OllamaProvider({ model: 'configured-fixture-model', fetch });
     expect((await controlFor(request => provider.generate(request)).execute(f.owner, { ...f.request, goal: 'Improve bounded source provenance. '.repeat(100) }, randomUUID())).status).toBe('succeeded');
     expect(fetch).toHaveBeenCalledTimes(1);
   });

@@ -8,6 +8,7 @@ import { createApplication } from '../apps/server/src/app.js';
 import { asksToRemember, chooseTier, decisionJsonSchema, decisionSchema, newBrainState, systemPrompt, TOOLS } from '../apps/server/src/assistant/brain.js';
 import { elementCenter } from '../apps/server/src/assistant/tools.js';
 import { createMockGroq } from './fixtures/planning.js';
+import { fixtureLocalModel } from './fixtures/local-model.js';
 
 const blank = { thought: null, plan: null, note: null, url: null, ref: null, text: null, submit: null, options: null, sensitive: null, outcome: null };
 
@@ -95,7 +96,7 @@ describe('the assistant reaching the real modules', () => {
     directory = await mkdtemp(join(tmpdir(), 'mohassan-assistant-tools-'));
     application = await createApplication({
       authSecret: 'assistant-tools-fixture-auth-secret-0001', internalSecret: secret, setupToken: 'assistant-tools-fixture-setup-token-001', webOrigin: origin, production: false, runWorker: true, testRequestLimit: 2000,
-      groqApiKey: 'unit-only-fixture-key', aiFetch: scripted, codingDataDir: directory, codingAllowedRoots: [directory], browserChannel: null,
+      ...fixtureLocalModel(scripted), codingDataDir: directory, codingAllowedRoots: [directory], browserChannel: null,
       sandboxRunner: {
         available: async () => ({ available: true, provider: 'unit-fixture', message: 'injected unit test only' }),
         run: async request => {
@@ -332,7 +333,7 @@ describe('the assistant reaching the real modules', () => {
       const result = await ask('ماذا يظهر على كمبيوتري؟');
       expect(result.status).toBe('waiting_input');
       expect(result.secure.kind).toBe('hands_on');
-      expect(result.secure.prompt).toContain('Groq');
+      expect(result.secure.prompt).toContain('النموذج المحلي');
       await api('POST', `/api/chat/conversations/${result.id}/cancel`, {});
     });
     it('honours a grant only for the session that holds it', async () => {

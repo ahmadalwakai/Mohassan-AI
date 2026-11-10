@@ -11,6 +11,7 @@ import { Runtime } from '@mohassan/runtime';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
 import { migrateAuth } from '../apps/server/src/auth.js';
 import { registerMemoryRoutes } from '../apps/server/src/memory.js';
+import { fixtureProviders } from './fixtures/local-model.js';
 
 const ownerId = 'isolated-learning-owner';
 const secret = 'fixture-private-learning-password';
@@ -54,15 +55,15 @@ beforeAll(async () => {
   }
   chat = await createCommandChatControl(database.db, {
     browser: new FixtureBrowser({profileDir: directory, channel: null, testOrigins: [origin]}),
-    apiKey: 'isolated-scripted-key', models: {fast: ['fixture'], deep: ['fixture'], vision: 'fixture'},
-    async fetch(_url, init) {
+    models: {fast: ['fixture'], deep: ['fixture'], vision: 'fixture'},
+    createProvider: fixtureProviders(async (_url, init) => {
       const { model } = JSON.parse(String(init?.body));
       const decision: Record<string, unknown> = decisions.shift() ?? answer;
       return Response.json({model, choices: [{finish_reason: 'stop', message: {content: JSON.stringify({
         thought: null, plan: null, note: null, url: null, ref: null, text: null, submit: null,
         options: null, sensitive: null, outcome: null, ...decision,
       })}}], usage: {prompt_tokens: 10, completion_tokens: 5}});
-    },
+    }),
     searchProvider: {name: 'isolated-search', async search() {
       return [{url: `${origin}/search`, title: 'مصدر تجريبي', snippet: `password=${secret} ${rawPage}`}];
     }},
@@ -197,13 +198,13 @@ it('exposes owned feedback, including an early task rating and a separately conf
 it('keeps an evaluation conversation out of the experience store', async () => {
   const evaluation = await createCommandChatControl(database.db, {
     browser: new AgentBrowser({profileDir: join(directory, 'evaluation'), channel: null, allowedOrigins: [origin]}),
-    apiKey: 'isolated-scripted-key', models: {fast: ['fixture'], deep: ['fixture'], vision: 'fixture'},
+    models: {fast: ['fixture'], deep: ['fixture'], vision: 'fixture'},
     recordExperiences: false,
-    async fetch() {
+    createProvider: fixtureProviders(async () => {
       return Response.json({model: 'fixture', choices: [{finish_reason: 'stop', message: {content: JSON.stringify({
         thought: null, plan: null, note: null, url: null, ref: null, submit: null, options: null, sensitive: null, ...answer,
       })}}], usage: {prompt_tokens: 10, completion_tokens: 5}});
-    },
+    }),
   });
   try {
     const conversation = await evaluation.create(ownerId, {goal: 'حالة تقييم اصطناعية.'});

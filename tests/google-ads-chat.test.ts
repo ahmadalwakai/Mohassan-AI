@@ -7,6 +7,7 @@ import { ADS_SKILL_SLUG } from '../apps/server/src/assistant/ads-check.js';
 import { parseAdsDraft } from '../apps/server/src/assistant/tools.js';
 import { createMockGroq } from './fixtures/planning.js';
 import { createMockGoogle, CUSTOMER, landingHtml } from './fixtures/google-ads-mock.js';
+import { fixtureLocalModel } from './fixtures/local-model.js';
 
 const secret = 'google-ads-chat-internal-secret-0000001', origin = 'http://127.0.0.1:3000', setupToken = 'google-ads-chat-setup-token-00000001';
 const blank = { thought: null, plan: null, note: null, url: null, ref: null, text: null, submit: null, options: null, sensitive: null, outcome: null };
@@ -37,7 +38,7 @@ describe('the assistant with a connected account', () => {
       return Response.json({ model: body.model, choices: [{ message: { content: JSON.stringify({ ...blank, ...next }) }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5 } });
     };
     const application = await createApplication({
-      authSecret: 'google-ads-chat-auth-secret-0000000001', internalSecret: secret, setupToken, webOrigin: origin, production: false, runWorker: false, skillEngineEnabled: true, codingAllowedRoots: [directory], browserProfileDir: join(directory, 'profile'), browserChannel: null, groqApiKey: 'unit-fixture-key-only', aiFetch: scripted, testRequestLimit: 2000,
+      authSecret: 'google-ads-chat-auth-secret-0000000001', internalSecret: secret, setupToken, webOrigin: origin, production: false, runWorker: false, skillEngineEnabled: true, codingAllowedRoots: [directory], browserProfileDir: join(directory, 'profile'), browserChannel: null, ...fixtureLocalModel(scripted), testRequestLimit: 2000,
       googleAds: { clientId: 'client-id', clientSecret: 'client-secret', tokenKey: Buffer.alloc(32, 3).toString('base64'), publishingEnabled: true, fetch: google.fetch, sleep: async () => undefined, fetchPage: async url => ({ status: 200, finalUrl: url, html: landingHtml(), contentLanguage: null }) },
     });
     open.push(application);

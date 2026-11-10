@@ -8,6 +8,7 @@ import { SkillBenchmarkEvaluationSchema, SkillContractSchema, type SkillContract
 import { SkillForgeGenerationSchema, SkillForgePageSchema, type SkillForgeGeneration } from '../packages/contracts/src/skill-forge.ts';
 import { createApplication } from '../apps/server/src/app.ts';
 import { SKILL_BENCHMARK_SUITES } from '../packages/skills/src/benchmark-suites.ts';
+import { fixtureLocalModel } from './fixtures/local-model.js';
 
 describe('actual authenticated Forge with mocked model transport and real isolated benchmarks', () => {
   let application: Awaited<ReturnType<typeof createApplication>> | undefined, directory = '', base = '', cookie = '', otherCookie = '', ownerId = '', fixtureAddress = 10;
@@ -72,7 +73,7 @@ describe('actual authenticated Forge with mocked model transport and real isolat
   beforeAll(async () => {
     base = await realpath(tmpdir()); directory = await realpath(await mkdtemp(join(base, 'mohassan-forge-api-')));
     application = await createApplication({ authSecret: 'forge-api-fixture-auth-secret-000000001', internalSecret: secret, setupToken, webOrigin: origin, production: false, runWorker: false,
-      skillEngineEnabled: true, codingAllowedRoots: [directory], browserProfileDir: join(directory, 'browser'), testRequestLimit: 1000, groqApiKey: 'synthetic-fixture-key-only', aiFetch: modelFetch });
+      skillEngineEnabled: true, codingAllowedRoots: [directory], browserProfileDir: join(directory, 'browser'), testRequestLimit: 1000, ...fixtureLocalModel(modelFetch) });
     const account = { name: 'Forge fixture owner', email: 'forge-owner@example.test', password: 'Forge-Owner-Fixture-Password-42' }, other = { name: 'Other Forge owner', email: 'forge-other@example.test', password: 'Forge-Other-Fixture-Password-42' };
     const setup = await application.app.inject({ method: 'POST', url: '/api/setup', headers: headers(''), payload: { ...account, setupToken } }); expect(setup.statusCode, setup.body).toBe(200); await application.database.db.insertInto('workspace_members').values({ user_id: (await application.auth.api.signUpEmail({ body: other })).user.id, role: 'owner' }).execute();
     async function login(credentials: typeof account) { const response = await application!.app.inject({ method: 'POST', url: '/api/auth/sign-in/email', headers: headers(''), payload: { email: credentials.email, password: credentials.password } }); expect(response.statusCode, response.body).toBe(200); return [response.headers['set-cookie']].flat().filter(Boolean).map(value => String(value).split(';')[0]).join('; '); }

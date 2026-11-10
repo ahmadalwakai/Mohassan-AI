@@ -7,6 +7,7 @@ import { createApplication } from '../apps/server/src/app.js';
 import { ADS_DRAFT_NOTE, ADS_LIMITS, ADS_SKILL_SLUG, adsLength, checkAdsDraft } from '../apps/server/src/assistant/ads-check.js';
 import { systemPrompt } from '../apps/server/src/assistant/brain.js';
 import { createMockGroq } from './fixtures/planning.js';
+import { fixtureLocalModel } from './fixtures/local-model.js';
 
 const repeat = (kind: string, count: number) => Array.from({ length: count }, (_, index) => `${kind}: Text ${index + 1}`);
 const ad = [...repeat('H', 3), ...repeat('D', 2)];
@@ -130,7 +131,7 @@ describe('the assistant with the skill active', () => {
     };
     const headers = () => ({ 'x-mohassan-internal': secret, origin, ...(cookie ? { cookie } : {}) });
     try {
-      application = await createApplication({ authSecret: 'google-ads-fixture-auth-secret-00000001', internalSecret: secret, setupToken, webOrigin: origin, production: false, runWorker: false, skillEngineEnabled: true, codingAllowedRoots: [directory], browserProfileDir: join(directory, 'profile'), browserChannel: null, groqApiKey: 'unit-fixture-key-only', aiFetch: scripted });
+      application = await createApplication({ authSecret: 'google-ads-fixture-auth-secret-00000001', internalSecret: secret, setupToken, webOrigin: origin, production: false, runWorker: false, skillEngineEnabled: true, codingAllowedRoots: [directory], browserProfileDir: join(directory, 'profile'), browserChannel: null, ...fixtureLocalModel(scripted) });
       const app = application.app, account = { email: 'google-ads@example.test', password: 'Google-ads-fixture-password-42' };
       await app.inject({ method: 'POST', url: '/api/setup', headers: headers(), payload: { ...account, name: 'Ads fixture', setupToken } });
       const login = await app.inject({ method: 'POST', url: '/api/auth/sign-in/email', headers: headers(), payload: account });
@@ -182,14 +183,15 @@ describe('the assistant with the skill active', () => {
     expect(detail.messages.at(-1).text).toBe(`${passing}${ADS_DRAFT_NOTE}`);
   }, 60_000);
 
-  it('uses a decision Groq rejected only for leaving out null fields, with no second call', async () => {
+  // The local model's grammar keeps every field, so a rejected request is never mined for a
+  // decision: it fails closed, with no second call, even when its text looks complete.
+  it('never acts on text from a request the local model rejected, and does not call again', async () => {
     const { detail, seen } = await scenario([
       { rejectedAs: JSON.stringify({ tool: 'ads_check', text: passing }) },
       { tool: 'answer', text: 'شرح.', outcome: 'done' },
     ], 'اكتب حملة Google Ads');
-    expect(seen).toHaveLength(2);
-    expect(seen[1].prompt).toContain('PASS:');
-    expect(detail.status).toBe('idle');
+    expect(seen).toHaveLength(1);
+    expect(detail.status).toBe('failed');
   }, 60_000);
 
   it('still fails when the rejected text is cut off', async () => {

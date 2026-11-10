@@ -7,6 +7,7 @@ import { createApplication } from '../apps/server/src/app.ts';
 import { SkillGapPageSchema, type SkillGapSignal } from '../packages/contracts/src/skill-gaps.ts';
 import { SkillContractSchema, SkillRunGapReportSchema } from '@mohassan/contracts';
 import { recordSkillGap } from '../packages/skills/src/gaps.ts';
+import { fixtureLocalModel } from './fixtures/local-model.js';
 
 describe('actual authenticated capability gap API over disposable local state', () => {
   let application: Awaited<ReturnType<typeof createApplication>> | undefined, directory = '', base = '', cookie = '', otherCookie = '', ownerId = '', otherId = '', foreignRunId = '';
@@ -50,7 +51,7 @@ describe('actual authenticated capability gap API over disposable local state', 
   }
   beforeAll(async () => {
     base = await realpath(tmpdir()); directory = await realpath(await mkdtemp(join(base, 'mohassan-gap-api-')));
-    application = await createApplication({ authSecret: 'gap-api-fixture-auth-secret-000000001', internalSecret: secret, setupToken, webOrigin: origin, production: false, runWorker: false, skillEngineEnabled: true, codingAllowedRoots: [directory], browserProfileDir: join(directory, 'browser'), groqApiKey: 'synthetic-fixture-key-only', aiFetch: modelFetch });
+    application = await createApplication({ authSecret: 'gap-api-fixture-auth-secret-000000001', internalSecret: secret, setupToken, webOrigin: origin, production: false, runWorker: false, skillEngineEnabled: true, codingAllowedRoots: [directory], browserProfileDir: join(directory, 'browser'), ...fixtureLocalModel(modelFetch) });
     const account = { name: 'Gap owner fixture', email: 'gap-owner@example.test', password: 'Gap-Owner-Fixture-Password-42' };
     const setup = await application.app.inject({ method: 'POST', url: '/api/setup', headers: headers(''), payload: { ...account, setupToken } }); expect(setup.statusCode, setup.body).toBe(200);
     const other = { name: 'Other gap fixture', email: 'gap-other@example.test', password: 'Gap-Other-Fixture-Password-42' };

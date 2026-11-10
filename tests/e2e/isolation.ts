@@ -28,7 +28,7 @@ export function isolatedE2EEnvironment(directory: string, ambient: NodeJS.Proces
     DATA_DIR: path.join(directory, 'database'), DATABASE_URL: '',
     CODING_DATA_DIR: path.join(directory, 'coding'), CODING_ALLOWED_ROOTS: path.join(directory, 'approved-root'),
     STUDIO_AI_DATA_DIR: path.join(directory, 'studio-ai'), BROWSER_PROFILE_DIR: path.join(directory, 'browser-profile'),
-    STUDIO_GATEWAY_URL: '', STUDIO_GATEWAY_SECRET: '', GROQ_API_KEY: '', MOHASSAN_LIVE_GROQ_KEY: '',
+    STUDIO_GATEWAY_URL: '', STUDIO_GATEWAY_SECRET: '', LOCAL_MODEL_NAME: '', LOCAL_MODEL_URL: '',
     SKILL_ENGINE_ENABLED: 'true', RUN_WORKER: 'true', WINDOWS_REMOTE_ENABLED: 'true',
     WEB_ORIGIN: 'http://127.0.0.1:3100', SERVER_PORT: '4100', SERVER_HOST: '127.0.0.1', PORT: '3100',
     MOHASSAN_SERVER_URL: 'http://127.0.0.1:4100',

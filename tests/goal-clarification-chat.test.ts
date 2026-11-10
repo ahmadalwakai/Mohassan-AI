@@ -8,6 +8,7 @@ import { createApplication } from '../apps/server/src/app.js';
 import { ADS_SKILL_SLUG } from '../apps/server/src/assistant/ads-check.js';
 import { createMockGroq } from './fixtures/planning.js';
 import { createMockGoogle, CUSTOMER, landingHtml } from './fixtures/google-ads-mock.js';
+import { fixtureLocalModel } from './fixtures/local-model.js';
 
 /**
  * The clarification core through the real chat routes: embedded Postgres, the
@@ -48,7 +49,7 @@ describe('goal clarification in the chat', () => {
     const application = await createApplication({
       authSecret: 'goal-clarify-auth-secret-00000000000001', internalSecret: secret, setupToken, webOrigin: origin, production: false, runWorker: false, skillEngineEnabled: true,
       ...(options.persist ? { dataDir: join(directory, 'db') } : {}),
-      codingAllowedRoots: [directory], browserProfileDir: join(directory, 'profile'), browserChannel: null, groqApiKey: 'unit-fixture-key-only', aiFetch: scripted, testRequestLimit: 2000,
+      codingAllowedRoots: [directory], browserProfileDir: join(directory, 'profile'), browserChannel: null, ...fixtureLocalModel(scripted), testRequestLimit: 2000,
       googleAds: { clientId: 'client-id', clientSecret: 'client-secret', tokenKey: Buffer.alloc(32, 3).toString('base64'), publishingEnabled: true, fetch: google.fetch, sleep: async () => undefined, gateFiles: { sourceDir, regressionFile, liveCheckFile }, fetchPage: async url => ({ status: 200, finalUrl: url, html: landingHtml(), contentLanguage: null }) },
     });
     open.push(application);

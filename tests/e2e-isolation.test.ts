@@ -26,8 +26,8 @@ async function syntheticWeb() {
 describe('owned E2E infrastructure isolation', () => {
   it('drops inherited providers, database, proxies, NODE_OPTIONS and arbitrary flags', () => {
     const directory=path.join(tmpdir(),'synthetic-e2e-root');
-    const env=isolatedE2EEnvironment(directory,{SystemRoot:process.env.SystemRoot,DATABASE_URL:'synthetic-remote-db',GROQ_API_KEY:'synthetic-secret',OPENAI_API_KEY:'synthetic-secret',MOHASSAN_LIVE_GROQ_KEY:'synthetic-secret',CODING_ALLOWED_ROOTS:'C:\\',NODE_OPTIONS:'--import synthetic-hook',HTTPS_PROXY:'synthetic-proxy',SKILL_ENGINE_ENABLED:'false',RUN_WORKER:'false',DOTENV_CONFIG_PATH:'synthetic.env'});
-    expect(env.DATABASE_URL).toBe('');expect(env.GROQ_API_KEY).toBe('');expect(env.MOHASSAN_LIVE_GROQ_KEY).toBe('');
+    const env=isolatedE2EEnvironment(directory,{SystemRoot:process.env.SystemRoot,DATABASE_URL:'synthetic-remote-db',GROQ_API_KEY:'synthetic-secret',OPENAI_API_KEY:'synthetic-secret',MOHASSAN_LIVE_GROQ_KEY:'synthetic-secret',LOCAL_MODEL_NAME:'synthetic-model',LOCAL_MODEL_URL:'http://127.0.0.1:1',CODING_ALLOWED_ROOTS:'C:\\',NODE_OPTIONS:'--import synthetic-hook',HTTPS_PROXY:'synthetic-proxy',SKILL_ENGINE_ENABLED:'false',RUN_WORKER:'false',DOTENV_CONFIG_PATH:'synthetic.env'});
+    expect(env.DATABASE_URL).toBe('');expect(env.LOCAL_MODEL_NAME).toBe('');expect(env.LOCAL_MODEL_URL).toBe('');expect(env.GROQ_API_KEY).toBeUndefined();expect(env.MOHASSAN_LIVE_GROQ_KEY).toBeUndefined();
     expect(env.OPENAI_API_KEY).toBeUndefined();expect(env.HTTPS_PROXY).toBeUndefined();expect(env.DOTENV_CONFIG_PATH).toBeUndefined();expect(env.NODE_OPTIONS).toBe('');
     expect(env.CODING_ALLOWED_ROOTS).toBe(path.join(directory,'approved-root'));expect(env.SKILL_ENGINE_ENABLED).toBe('true');expect(env.RUN_WORKER).toBe('true');
   });
