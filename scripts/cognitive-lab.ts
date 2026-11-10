@@ -30,7 +30,11 @@ import {
 const BRAINS = ['A', 'B'] as const;
 type Brain = typeof BRAINS[number];
 const OLLAMA_ORIGIN = 'http://127.0.0.1:11434';
-const OLLAMA_MODEL = 'qwen3.5:9b-coding-local';
+/** The owner's one model (2026-11-10). The earlier runs pinned qwen3.5:9b-coding-local: the same weights blob with other default settings. */
+const LAB_MODELS = ['qwen3.5:9b-q4_K_M', 'qwen3.5:9b-coding-local'] as const;
+const modelArgument = (() => { const index = process.argv.indexOf('--model'); return index >= 0 ? process.argv[index + 1] : undefined; })();
+if (modelArgument !== undefined && !(LAB_MODELS as readonly string[]).includes(modelArgument)) throw new Error('LAB_UNKNOWN_MODEL');
+const OLLAMA_MODEL: string = modelArgument ?? LAB_MODELS[0];
 /** Same fixed generation settings as the learning evaluation, so results stay comparable. */
 const GENERATION = { temperature: 0, seed: 42, contextTokens: 16384, timeoutMs: 240_000 } as const;
 const MAX_DECISIONS = 16;
@@ -156,7 +160,7 @@ function setupChat(db: Awaited<ReturnType<typeof createBenchmarkDatabase>>['db']
       } };
     },
     models: { fast: [OLLAMA_MODEL], deep: [OLLAMA_MODEL], vision: OLLAMA_MODEL },
-    fetch: ollama.fetch, browser, recordExperiences: false, brainVersion: brain,
+    browser, recordExperiences: false, brainVersion: brain,
     async memoryContext() { return undefined; },
     async beforeModelDecision() {
       const active = current();

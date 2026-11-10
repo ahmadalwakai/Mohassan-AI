@@ -6,20 +6,20 @@ import { join, resolve } from 'node:path';
 import { createApplication } from '../apps/server/src/app.js';
 
 /**
- * Real Groq, real AppContainer, and a throwaway in-memory database and project.
+ * The owner's local model, real AppContainer, and a throwaway in-memory database and project.
  * It never opens the configured database, the owner's data or their devices.
  */
 dotenv.config({ quiet: true, override: true });
-if (!process.argv.includes('--live')) throw new Error('أضف --live لتشغيل فحص أدوات المساعد مع Groq وبيئة العزل.');
+if (!process.argv.includes('--live')) throw new Error('أضف --live لتشغيل فحص أدوات المساعد مع النموذج المحلي وبيئة العزل.');
 
 async function main() {
-  if (!process.env.GROQ_API_KEY) throw new Error('مفتاح Groq غير مجهز.');
+  if (!process.env.LOCAL_MODEL_NAME) throw new Error('اضبط LOCAL_MODEL_NAME على اسم نموذج Ollama المحلي.');
   const dataDir = await mkdtemp(join(tmpdir(), 'mohassan-assistant-live-'));
   const secret = () => randomBytes(32).toString('hex');
   const internal = secret(), setupToken = secret(), password = secret(), origin = 'http://127.0.0.1:3000', email = 'assistant-live@example.test';
   const application = await createApplication({
     authSecret: secret(), internalSecret: internal, setupToken, webOrigin: origin, production: false, runWorker: true,
-    groqApiKey: process.env.GROQ_API_KEY, groqModel: process.env.GROQ_MODEL, groqReasoningModel: process.env.GROQ_REASONING_MODEL,
+    localModel: { model: process.env.LOCAL_MODEL_NAME, baseUrl: process.env.LOCAL_MODEL_URL },
     codingDataDir: join(dataDir, 'coding'), codingAllowedRoots: [join(dataDir, 'coding')], browserChannel: null, windowsEnabled: false,
   });
   const headers = { 'x-mohassan-internal': internal, origin };
@@ -58,7 +58,7 @@ async function main() {
     const task = pending ? (await application.runtime.detail(ownerId, pending.id)).task : null;
     const result = task?.result as Record<string, any> | null;
     const report = {
-      checkedAt: new Date().toISOString(), source: 'groq-live-and-native-appcontainer',
+      checkedAt: new Date().toISOString(), source: 'local-ollama-live-and-native-appcontainer',
       memory: { saved: brief(saved), itemsFound: memory.items.length, recalled: brief(recalled), answerUsedMemory: /الأزرق السماوي/.test(recalled.messages.at(-1)?.text ?? '') },
       coding: { approvalShown: waiting.status === 'waiting_approval', taskBeforeApproval: beforeApproval, finished: brief(finished), taskStatus: task?.status ?? null, outcome: result?.outcome ?? null, merged: result?.merged ?? null, sourceUnchanged: result?.sourceUnchanged ?? null },
     };

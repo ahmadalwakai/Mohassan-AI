@@ -1,9 +1,9 @@
-import dotenv from 'dotenv';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import sharp from 'sharp';
+import { OllamaProvider } from '@mohassan/providers';
 import { chromium } from '@playwright/test';
 import { createDatabase, migrate } from '@mohassan/database';
 import { Runtime } from '@mohassan/runtime';
@@ -12,23 +12,22 @@ import { migrateAuth } from '../apps/server/src/auth.js';
 import { createStudioControl } from '../apps/server/src/studio.js';
 import { createStudioAiControl } from '../apps/server/src/studio-ai.js';
 
-if(!process.argv.includes('--live'))throw new Error('أضف --live لإجراء طلب رؤية حي واحد إلى Groq على نسخة اختبار مستقلة.');
-dotenv.config({path:resolve('.env'),override:process.env.NODE_ENV!=='production',quiet:true});
+if(!process.argv.includes('--live'))throw new Error('أضف --live لإجراء طلب رؤية حي واحد إلى النموذج المحلي على نسخة اختبار مستقلة.');
 
 const receiptPath=resolve('.data/verification/studio-vision-flow.json');
 const digest=(value:string|Uint8Array)=>createHash('sha256').update(value).digest('hex');
 const assert=(condition:unknown,code:string)=>{if(!condition)throw Object.assign(new Error(code),{code});};
-const report:Record<string,unknown>={checkedAt:new Date().toISOString(),fixtureOnly:true,database:'ephemeral-pglite',realOwnerChanges:false,paidRequestLimit:1,paidRequests:0,passed:false};
+const report:Record<string,unknown>={checkedAt:new Date().toISOString(),fixtureOnly:true,database:'ephemeral-pglite',realOwnerChanges:false,modelRequestLimit:1,paidRequests:0,passed:false};
 let directory='',database:Awaited<ReturnType<typeof createDatabase>>|undefined,runtime:Runtime|undefined,taskId:string|undefined,ownerId:string|undefined;
 
 async function main(){
-  const apiKey=process.env.GROQ_API_KEY;assert(apiKey,'GROQ_KEY_NOT_CONFIGURED');
+  const visionModel=process.env.LOCAL_MODEL_NAME;assert(visionModel,'LOCAL_MODEL_NOT_CONFIGURED');
   assert(process.env.NODE_ENV!=='production','LIVE_FIXTURE_REQUIRES_LOCAL_ENVIRONMENT');
-  const visionModel=process.env.GROQ_VISION_MODEL||'qwen/qwen3.8-27b';report.model=visionModel;
+  report.model=visionModel;
   let paidRequests=0;
   const countedFetch:typeof fetch=async(input,init)=>{
     const address=new URL(typeof input==='string'?input:input instanceof URL?input.href:input.url);
-    assert(address.href==='https://api.groq.com/openai/v1/chat/completions'&&init?.method==='POST','LIVE_PROVIDER_ENDPOINT_DENIED');
+    assert(address.href===`${(process.env.LOCAL_MODEL_URL||'http://127.0.0.1:11434').replace(/\/$/,'')}/api/chat`&&init?.method==='POST','LIVE_PROVIDER_ENDPOINT_DENIED');
     assert(paidRequests===0,'LIVE_PAID_REQUEST_LIMIT');paidRequests++;report.paidRequests=paidRequests;
     const response=await fetch(input,{...init,redirect:'error'});report.providerHttpStatus=response.status;
     const retryAfter=response.headers.get('retry-after');if(retryAfter&&/^\d{1,6}(?:\.\d{1,3})?$/.test(retryAfter))report.retryAfterSeconds=Number(retryAfter);
@@ -53,7 +52,7 @@ async function main(){
   const session=await studio.create(ownerId,{name:'تجربة رؤية مستقلة',path:source,entryPath:'index.html',framework:'static'});
   const imageColor={r:27,g:112,b:67};
   const png=await sharp({create:{width:64,height:64,channels:3,background:imageColor}}).png().toBuffer();
-  const ai=await createStudioAiControl(database.db,{dataDir:join(directory,'proposals'),apiKey,model:process.env.GROQ_REASONING_MODEL,visionModel,fetch:countedFetch,studio,validateCandidate:studio.validateCandidate,applyCandidate:studio.applyCandidate});
+  const ai=await createStudioAiControl(database.db,{dataDir:join(directory,'proposals'),model:{name:visionModel!,vision:true,provider:()=>new OllamaProvider({model:visionModel!,baseUrl:process.env.LOCAL_MODEL_URL,fetch:countedFetch,vision:true,timeoutMs:180000,imageTimeoutMs:180000})},studio,validateCandidate:studio.validateCandidate,applyCandidate:studio.applyCandidate});
   const image=await ai.uploadImage(ownerId,{mimeType:'image/png',data:png.toString('base64')});
   report.image={width:image.width,height:image.height,bytes:image.bytes,hash:image.hash};
   runtime=new Runtime(database.db,{studioChange:async(goal,context)=>{try{return await ai.execute(goal,context);}catch(error){const code=(error as {code?:unknown}).code,status=(error as {httpStatus?:unknown}).httpStatus;if(typeof code==='string'&&/^[A-Z_]{2,80}$/.test(code))report.providerFailureCode=code;if(typeof status==='number'&&status>=400&&status<=599)report.providerHttpStatus=status;throw error;}},verifyStudioChange:ai.verify});

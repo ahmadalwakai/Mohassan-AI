@@ -7,16 +7,16 @@ import { createApplication } from '../apps/server/src/app.js';
 import { ADS_SKILL_SLUG } from '../apps/server/src/assistant/ads-check.js';
 
 /**
- * Real Groq with a throwaway in-memory database and no browser. It proves the model
+ * The owner's local model with a throwaway in-memory database and no browser. It proves the model
  * uses the skill and ads_check. It never opens the configured database or a Google account.
  */
 dotenv.config({ quiet: true, override: true });
-if (!process.argv.includes('--live')) throw new Error('أضف --live لتشغيل فحص مهارة Google Ads مع Groq.');
+if (!process.argv.includes('--live')) throw new Error('أضف --live لتشغيل فحص مهارة Google Ads مع النموذج المحلي.');
 
 const GOAL = 'جهز مسودة حملة Google Ads بحثية لشركة نقل أثاث اسمها MA Removals في غلاسكو. الميزانية 20 جنيهًا يوميًا والهدف مكالمات الحجز. لا تفتح أي موقع. اكتب هنا في المحادثة عناوين الإعلان والأوصاف والكلمات المفتاحية.';
 
 async function main() {
-  if (!process.env.GROQ_API_KEY) throw new Error('مفتاح Groq غير مجهز.');
+  if (!process.env.LOCAL_MODEL_NAME) throw new Error('اضبط LOCAL_MODEL_NAME على اسم نموذج Ollama المحلي.');
   const dataDir = await mkdtemp(join(tmpdir(), 'mohassan-ads-live-'));
   const secret = () => randomBytes(32).toString('hex');
   const internal = secret(), setupToken = secret(), password = secret(), origin = 'http://127.0.0.1:3000', email = 'ads-live@example.test';
@@ -29,7 +29,7 @@ async function main() {
   };
   const application = await createApplication({
     authSecret: secret(), internalSecret: internal, setupToken, webOrigin: origin, production: false, runWorker: false, skillEngineEnabled: true,
-    groqApiKey: process.env.GROQ_API_KEY, groqModel: process.env.GROQ_MODEL, groqReasoningModel: process.env.GROQ_REASONING_MODEL,
+    localModel: { model: process.env.LOCAL_MODEL_NAME, baseUrl: process.env.LOCAL_MODEL_URL },
     codingDataDir: join(dataDir, 'coding'), codingAllowedRoots: [join(dataDir, 'coding')], browserChannel: null, windowsEnabled: false, aiFetch: recording,
   });
   const headers = { 'x-mohassan-internal': internal, origin };
@@ -49,7 +49,7 @@ async function main() {
     const checks = (state.trail ?? []).filter(entry => entry.action.startsWith('ads_check')).map(entry => entry.result);
     const receipts = await application.database.db.selectFrom('chat_model_receipts').select(['model', 'status', 'error_code']).execute();
     const report = {
-      checkedAt: new Date().toISOString(), source: 'groq-live-throwaway-database', status: detail.status, error: detail.error,
+      checkedAt: new Date().toISOString(), source: 'local-ollama-live-throwaway-database', status: detail.status, error: detail.error,
       steps: detail.steps.map((step: { text: string }) => step.text), adsChecked: Boolean(state.adsApproved), checks, reply: detail.messages.at(-1)?.text, models: receipts, rejected,
     };
     await mkdir(resolve('artifacts'), { recursive: true });

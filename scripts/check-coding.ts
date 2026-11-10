@@ -5,12 +5,12 @@ import { tmpdir } from 'node:os';
 import { join,resolve } from 'node:path';
 import { createApplication } from '../apps/server/src/app.js';
 dotenv.config({quiet:true,override:true});
-if(!process.argv.includes('--live'))throw new Error('أضف --live لتشغيل اختبار برمجة حقيقي مع Groq وبيئة العزل.');
+if(!process.argv.includes('--live'))throw new Error('أضف --live لتشغيل اختبار برمجة حقيقي مع النموذج المحلي وبيئة العزل.');
 async function main(){
-  if(!process.env.GROQ_API_KEY)throw new Error('مفتاح Groq غير مجهز.');
+  if (!process.env.LOCAL_MODEL_NAME) throw new Error('اضبط LOCAL_MODEL_NAME على اسم نموذج Ollama المحلي.');
   const dataDir=await mkdtemp(join(tmpdir(),'mohassan-coding-live-')),secret=()=>randomBytes(32).toString('hex');
   const internal=secret(),setupToken=secret(),password=secret();
-  const application=await createApplication({authSecret:secret(),internalSecret:internal,setupToken,webOrigin:'http://127.0.0.1:3000',production:false,runWorker:false,groqApiKey:process.env.GROQ_API_KEY,groqModel:process.env.GROQ_MODEL,groqReasoningModel:process.env.GROQ_REASONING_MODEL,codingDataDir:dataDir,codingAllowedRoots:[dataDir]});
+  const application=await createApplication({authSecret:secret(),internalSecret:internal,setupToken,webOrigin:'http://127.0.0.1:3000',production:false,runWorker:false,localModel: { model: process.env.LOCAL_MODEL_NAME, baseUrl: process.env.LOCAL_MODEL_URL },codingDataDir:dataDir,codingAllowedRoots:[dataDir]});
   try{
     const sandbox=await application.coding.sandbox.available();if(!sandbox.available)throw new Error(sandbox.message);
     const headers={'x-mohassan-internal':internal,origin:'http://127.0.0.1:3000'};
@@ -30,7 +30,7 @@ async function main(){
       console.error(JSON.stringify({failedStage:detail.events.at(-2)?.type,codingRuns,modelRuns:detail.modelRuns,retainedDataDir:dataDir}));
       throw new Error(`لم تجتز البرمجة الحية التحقق. الحالة ${detail.task.status}. ${detail.task.error??''}`);
     }
-    const report={checkedAt:new Date().toISOString(),source:'groq-live-and-native-appcontainer',taskStatus:detail.task.status,result,events:detail.events,modelRuns:detail.modelRuns};
+    const report={checkedAt:new Date().toISOString(),source:'local-ollama-live-and-native-appcontainer',taskStatus:detail.task.status,result,events:detail.events,modelRuns:detail.modelRuns};
     await mkdir(resolve('artifacts'),{recursive:true});await writeFile(resolve('artifacts/live-coding.json'),JSON.stringify(report,null,2));
     console.log(JSON.stringify({passed:true,provider:(result.tests as any)?.provider,baselineExitCode:(result.baselineTests as any)?.exitCode,finalExitCode:(result.tests as any)?.exitCode,checkpoint:result.checkpoint,sourceUnchanged:result.sourceUnchanged,merged:result.merged,usage:result.usage,retainedDataDir:dataDir,artifact:'artifacts/live-coding.json'}));
   }finally{await application.app.close();}
