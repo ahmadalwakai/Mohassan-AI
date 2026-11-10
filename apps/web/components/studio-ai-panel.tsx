@@ -7,7 +7,7 @@ import styles from './studio-ai-panel.module.css';
 
 async function request(path:string,options:RequestInit={}){const response=await fetch(path,{...options,credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json',...options.headers}});const body=await response.json().catch(()=>null);if(!response.ok)throw new Error(body?.error?.message??'تعذر إكمال طلب الاستوديو.');return body;}
 const post=(path:string,input:unknown)=>request(path,{method:'POST',body:JSON.stringify(input)});
-type Status={available:boolean;visionAvailable:boolean;model:string;visionModel:string|null;message:string};
+type Status={available:boolean;visionAvailable:boolean;model:string|null;visionModel:string|null;message:string};
 type ImageReference={id:string;url:string;width:number;height:number;bytes:number};
 
 export function StudioAiPanel({session,selectedElementId,offline,onTaskCreated}:{session:Pick<StudioSession,'id'|'revision'|'name'>;selectedElementId?:string;offline:boolean;onTaskCreated:(task:Task)=>void}){

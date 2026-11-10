@@ -424,7 +424,7 @@ export function AssistantApp({ name, onAdvanced, onSignOut }: { name: string; on
         <div className={styles.suggestions}>
           {SUGGESTIONS.map((text) => <button key={text} type="button" onClick={() => { setDraft(text); composer.current?.focus(); }}>{text}</button>)}
         </div>
-        {conversation && !conversation.configured ? <p className={styles.problem} role="alert">لم يُضبط مفتاح Groq في الخادم بعد.</p> : null}
+        {conversation && !conversation.configured ? <p className={styles.problem} role="alert">لم يُضبط نموذج موحسن المحلي على هذا الخادم. ميزات النموذج متاحة للمالك على كمبيوتره فقط.</p> : null}
         {error ? <p className={styles.problem} role="alert">{error}</p> : null}
       </div> : <>
         <div className={styles.thread} role="log" aria-label="المحادثة">
