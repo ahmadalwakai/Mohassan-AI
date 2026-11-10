@@ -112,19 +112,21 @@ workflows:
         submit_to_testflight: false
         submit_to_app_store: false
 
-  # Manual association of the existing 1.0 (5) upload. No build or publication.
+  # Manual association of an existing upload (WASLA_BUILD_NUMBER). No build or publication.
   # The named integration exposes the existing API credentials to this script:
   # https://docs.codemagic.io/partials/code-signing-ios-configure-environment-vars/
   ios-enable-testflight:
-    name: Wasla - enable existing build 5 for internal testing
+    name: Wasla - enable existing build 6 for internal testing
     instance_type: mac_mini_m2
     max_build_duration: 10
     integrations:
       app_store_connect: Vibeset Codemagic
     environment:
       xcode: latest
+      vars:
+        WASLA_BUILD_NUMBER: "6"
     scripts:
-      - name: Verify and assign Wasla 1.0 (5) to the existing internal group
+      - name: Verify and assign Wasla 1.0 (6) to the existing internal group
         script: |
           set -euo pipefail
           python3 "$CM_BUILD_DIR/apps/ios/Tools/enable_internal_testflight.py"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Associate only the already-uploaded Wasla 1.0 (5) with Wasla Internal.
+"""Associate only the already-uploaded Wasla 1.0 build (WASLA_BUILD_NUMBER, default 6) with Wasla Internal.
 
 Run manually in Codemagic with the existing Vibeset Codemagic integration.
 No uploads, review submissions, tester invitations, or signing operations.
@@ -22,7 +22,10 @@ from prepare_signing import SigningError, prepare_integration_key
 APP_ID = "6829577419"
 BUNDLE_ID = "com.ahmadalwakai.wasla"
 VERSION = "1.0"
-BUILD_NUMBER = "5"
+# The build to enable; the Codemagic workflow passes it explicitly.
+BUILD_NUMBER = os.environ.get("WASLA_BUILD_NUMBER", "6").strip()
+if not re.fullmatch(r"[1-9][0-9]{0,3}", BUILD_NUMBER):
+    raise SystemExit("WASLA_BUILD_NUMBER must be a positive build number.")
 GROUP_ID = "892d8e1f-c4bf-4033-bac2-0ee41833f9aa"
 GROUP_NAME = "Wasla Internal"
 API_ORIGIN = "https://api.appstoreconnect.apple.com"
@@ -177,7 +180,7 @@ def report_internal_readiness(api, build_id):
         raise DistributionError("Apple has not returned a recognized internal testing state.")
     print("Internal TestFlight state: " + state + ".", flush=True)
     if state == "IN_BETA_TESTING":
-        print("Confirmed: Wasla 1.0 (5) is available to the existing Wasla Internal testers.", flush=True)
+        print(f"Confirmed: Wasla {VERSION} ({BUILD_NUMBER}) is available to the existing Wasla Internal testers.", flush=True)
         return True
     print("The group association is confirmed, but Apple has not activated internal testing. "
           "Availability is pending; rerunning this workflow is safe.", flush=True)
@@ -217,13 +220,13 @@ def enable_internal_testflight(api):
                 and version_attributes.get("platform") == "IOS"):
             matches.append(build)
     if len(matches) != 1:
-        raise DistributionError("Exactly one processed, unexpired Wasla 1.0 (5) is required; nothing changed.")
+        raise DistributionError(f"Exactly one processed, unexpired Wasla {VERSION} ({BUILD_NUMBER}) is required; nothing changed.")
     build_id = matches[0].get("id", "")
     if not isinstance(build_id, str) or not build_id or not all(
             character.isascii() and (character.isalnum() or character == "-") for character in build_id):
         raise DistributionError("Apple returned an invalid build identifier.")
     if has_group(api, build_id):
-        print("Wasla 1.0 (5) is already assigned to Wasla Internal. No change needed.", flush=True)
+        print(f"Wasla {VERSION} ({BUILD_NUMBER}) is already assigned to Wasla Internal. No change needed.", flush=True)
         return report_internal_readiness(api, build_id)
 
     api.request("POST", f"/v1/betaGroups/{GROUP_ID}/relationships/builds", body={
@@ -231,7 +234,7 @@ def enable_internal_testflight(api):
     })
     if not has_group(api, build_id):
         raise DistributionError("Apple accepted the association, but readback has not confirmed it. Rerun safely.")
-    print("Confirmed: Wasla 1.0 (5) is assigned to Wasla Internal.", flush=True)
+    print(f"Confirmed: Wasla {VERSION} ({BUILD_NUMBER}) is assigned to Wasla Internal.", flush=True)
     return report_internal_readiness(api, build_id)
 
 
