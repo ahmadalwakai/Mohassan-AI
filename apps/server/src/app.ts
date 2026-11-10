@@ -9,6 +9,7 @@ import { createDatabase, migrate } from '@mohassan/database';
 import { Runtime } from '@mohassan/runtime';
 import { CreateTaskSchema, SetupSchema, WorkspaceSnapshotSchema, SkillBenchmarkSuiteSchema, type Integration } from '@mohassan/contracts';
 import { createAuth, createOwner, migrateAuth, recoverLocalSetupClaim } from './auth.js';
+import { WASLA_GATEWAY_ROUTES, registerWaslaRoutes, waslaMigration } from './wasla.js';
 import { MEMBER_QUOTA_ROUTES, MEMBER_ROUTES, PUBLIC_ROUTES, memberRunsToday, migrateMembers, registerMemberRoutes, roleOf, routeKey, type WorkspaceRole } from './members.js';
 import { createAIControl } from './ai.js';
 import { ProviderError } from '@mohassan/providers';
@@ -60,7 +61,9 @@ export interface AppConfig {
   /** Transport for the local model, injected by isolated tests and measurements only. */
   aiFetch?:typeof fetch;
   codingDataDir?:string;codingAllowedRoots?:string[];sandboxRunner?:SandboxRunner;
-  browser?:BrowserConfig;windowsEnabled?:boolean;browserProfileDir?:string;browserChannel?:'chrome'|null;
+  browser?:BrowserConfig;windowsEnabled?:boolean;
+  /** The Wasla bridge for the owner's iPhone, over loopback. Off unless set; refused in production. */
+  waslaBridgeEnabled?:boolean;browserProfileDir?:string;browserChannel?:'chrome'|null;
   studioAiDataDir?:string;studioGatewayUrl?:string;studioGatewaySecret?:string;studioPreviewPort?:number;
   skillEngineEnabled?: boolean;
   /** Absent values leave the integration in its not-configured state. */
@@ -84,6 +87,7 @@ export function secretEqual(a: string, b: string) {
 }
 export async function createApplication(config: AppConfig) {
   if (config.authSecret.length < 32 || config.internalSecret.length < 32) throw new Error('يلزم سر جلسة وسر خدمة بطول 32 حرفًا على الأقل.');
+  if (config.production && config.waslaBridgeEnabled) throw new Error('ربط وصلة يعمل على خادم موحسن المحلي فقط، وليس على خادم الإنتاج.');
   if (config.production && (!config.databaseUrl || !config.webOrigin.startsWith('https://'))) throw new Error('الإنتاج يحتاج PostgreSQL واتصال HTTPS.');
   if(config.production&&config.browser?.testOrigins?.length)throw new Error('Test browser origins cannot be enabled in production.');
   if(config.testRequestLimit!==undefined&&(config.production||!Number.isInteger(config.testRequestLimit)||config.testRequestLimit<120||config.testRequestLimit>2000))throw new Error('Test request limits are restricted to bounded local fixtures.');
@@ -93,6 +97,7 @@ export async function createApplication(config: AppConfig) {
   if (database.mode === 'embedded' && !config.production) await recoverLocalSetupClaim(database.db);
   await migrate(database.db);
   await windowsMigration(database.db);
+  await waslaMigration(database.db);
   await googleAdsMigration(database.db);
   const auth = createAuth(database.db, {secret: config.authSecret, webOrigin: config.webOrigin, production: config.production});
   const localModel=createLocalModel(config.localModel?{...config.localModel,...(config.aiFetch?{fetch:config.aiFetch}:{})}:undefined);
@@ -134,6 +139,8 @@ export async function createApplication(config: AppConfig) {
     if (request.url === '/health') return;
     const companionPath=request.url.split('?')[0];
     if(request.method==='POST'&&['/api/windows/companion/pair','/api/windows/companion/poll'].includes(companionPath!))return;
+    // The Wasla service authenticates with its own gateway key; each handler checks loopback and the key.
+    if(WASLA_GATEWAY_ROUTES.has(routeKey(request.method,request.routeOptions.url)??''))return;
     const serviceSecret = request.headers['x-mohassan-internal'];
     if (typeof serviceSecret !== 'string' || !secretEqual(serviceSecret, config.internalSecret)) {
       return reply.code(401).send({error: {code: 'SERVICE_UNAUTHORIZED', message: 'الاتصال غير مصرح به.'}});
@@ -277,6 +284,7 @@ export async function createApplication(config: AppConfig) {
     }}:{}),
   });
   await registerCommandChatRoutes(app,{control:chat,owner:async request=>{const user=await owner(request);windows.noteSession(user.id,request);return user;}});
+  await registerWaslaRoutes(app,{db:database.db,enabled:config.waslaBridgeEnabled===true,owner,roleOf:(userId,connection)=>roleOf(connection??database.db,userId),chat:()=>chat});
   await registerBrowserFileRoutes(app,{db:database.db,browser:agentBrowser,owner});
   await registerStudioAiRoutes(app,{control:studioAi,owner});
   await studio.reviews.register(app,owner);

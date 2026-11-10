@@ -14,6 +14,7 @@ export function getConfig(): AppConfig {
     // The owner's own model on Ollama is the only model. Unset LOCAL_MODEL_NAME: model features are off (no cloud fallback).
     localModel:localModelConfigFromEnv(process.env),
     codingDataDir:process.env.CODING_DATA_DIR||resolve('.data/coding'),codingAllowedRoots:process.env.CODING_ALLOWED_ROOTS?.split(delimiter).filter(Boolean)??[process.cwd()],
+    waslaBridgeEnabled:process.env.WASLA_BRIDGE_ENABLED==='true',
     windowsEnabled:process.env.NODE_ENV==='production'?process.env.WINDOWS_REMOTE_ENABLED==='true':process.env.WINDOWS_REMOTE_ENABLED!=='false',
     studioAiDataDir:process.env.STUDIO_AI_DATA_DIR||resolve('.data/studio-ai'),browserProfileDir:process.env.BROWSER_PROFILE_DIR||resolve('.data/browser-profile'),
     googleAds:{clientId:process.env.GOOGLE_ADS_CLIENT_ID||undefined,clientSecret:process.env.GOOGLE_ADS_CLIENT_SECRET||undefined,tokenKey:process.env.GOOGLE_ADS_TOKEN_KEY||undefined,developerToken:process.env.GOOGLE_ADS_DEVELOPER_TOKEN||undefined,publishingEnabled:process.env.GOOGLE_ADS_PUBLISHING_ENABLED==='true',maxDailyBudgetMicros:/^\d{1,6}$/.test(process.env.GOOGLE_ADS_MAX_DAILY_BUDGET??'')?BigInt(process.env.GOOGLE_ADS_MAX_DAILY_BUDGET!)*1000000n:undefined},
