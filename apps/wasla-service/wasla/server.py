@@ -16,6 +16,7 @@ from .security import AuthError, AuthStore, atomic_json, read_json, state_lock
 from .actions import ActionsController
 from .intelligence import Intelligence
 from .knowledge import KnowledgeStore, checked_id
+from .mohassan import MohassanBridge
 from .services import _messages
 
 REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{7,63}\Z")
@@ -53,8 +54,9 @@ def text_value(value, name, maximum, minimum=1):
 
 
 class Runtime:
-    def __init__(self, store, services, desktop, desktop_enabled, actions=None, knowledge=None, intelligence=None, cloud=None):
+    def __init__(self, store, services, desktop, desktop_enabled, actions=None, knowledge=None, intelligence=None, cloud=None, mohassan=None):
         self.store, self.services, self.desktop = store, services, desktop
+        self.mohassan = mohassan or MohassanBridge(store.root)
         self.desktop_enabled = desktop_enabled
         self.actions = actions or ActionsController(allowed=False, state_root=store.root)
         self.knowledge = knowledge or KnowledgeStore(store.root)
@@ -316,6 +318,8 @@ async def create_image(request):
         return web.json_response(public_job(previous))
     if runtime.services.busy or any(job["status"] in ("queued", "running") for job in runtime.jobs.values()):
         raise APIError("busy", "The local model is busy. Wait for the current operation.", 409)
+    if await runtime.mohassan.running():
+        raise APIError("busy", "موحسن يعمل الآن على الكمبيوتر. انتظر حتى ينتهي قبل إنشاء صورة.", 409)
     runtime.limit(("image", request["device_id"]), 6)
     job = {"owner": request["device_id"], "request_id": request_id, "digest": digest, "status": "queued", "created_at": time.time()}
     runtime.jobs[request_id] = job
@@ -404,6 +408,86 @@ async def end_desktop(request):
     return web.json_response({"ok": True})
 
 
+# The phone's way into Mohassan. Each call is the paired device's, checked by the
+# middleware; Mohassan checks the gateway key and runs the chat itself.
+MOHASSAN_FIELDS = {
+    "create": ({"goal"}, set()),
+    "messages": ({"text"}, {"text"}),
+    "respond": ({"questionId", "optionId", "text"}, {"questionId"}),
+    "approve": ({"approvalId", "approved"}, {"approvalId", "approved"}),
+    "cancel": (set(), set()),
+}
+
+
+async def mohassan_body(request, kind):
+    allowed, required = MOHASSAN_FIELDS[kind]
+    if not request.can_read_body:
+        data = {}
+    else:
+        if request.content_type != "application/json":
+            raise APIError("invalid_content_type", "Use application/json.", 415)
+        try:
+            data = await request.json()
+        except (ValueError, UnicodeError):
+            raise APIError("invalid_json", "The request is not valid JSON.")
+    if not isinstance(data, dict) or set(data) - allowed or required - set(data):
+        raise APIError("invalid_request", "The request has missing or unsupported fields.")
+    return data
+
+
+def mohassan_gpu_free(runtime):
+    # Mohassan's model and Wasla's images share one 4 GB GPU.
+    if runtime.services.busy or any(job["status"] in ("queued", "running") for job in runtime.jobs.values()):
+        raise APIError("gpu_busy", "الكمبيوتر ينشئ صورة الآن. انتظر حتى ينتهي ثم أعد المحاولة.", 409)
+
+
+async def mohassan_status(request):
+    return web.json_response(await request.app[STATE].mohassan.status())
+
+
+async def mohassan_conversations(request):
+    runtime = request.app[STATE]
+    runtime.limit(("mohassan", request["device_id"]), 240)
+    if request.method == "GET":
+        return web.json_response(await runtime.mohassan.conversations())
+    data = await mohassan_body(request, "create")
+    if "goal" in data:
+        mohassan_gpu_free(runtime)
+        runtime.limit(("mohassan-start", request["device_id"]), 20)
+    return web.json_response(await runtime.mohassan.create(data))
+
+
+async def mohassan_conversation(request):
+    runtime = request.app[STATE]
+    runtime.limit(("mohassan", request["device_id"]), 240)
+    cid = request.match_info["id"]
+    if request.method == "DELETE":
+        return web.json_response(await runtime.mohassan.remove(cid))
+    return web.json_response(await runtime.mohassan.detail(cid))
+
+
+async def mohassan_events(request):
+    runtime = request.app[STATE]
+    runtime.limit(("mohassan", request["device_id"]), 240)
+    after = request.match_info["after"]
+    if not after.isdigit() or len(after) > 6:
+        raise APIError("invalid_request", "رقم الحدث غير صالح.")
+    return web.json_response(await runtime.mohassan.events(request.match_info["id"], int(after)))
+
+
+async def mohassan_action(request):
+    runtime = request.app[STATE]
+    action = request.match_info["action"]
+    if action not in MOHASSAN_FIELDS or action == "create":
+        raise APIError("not_found", "هذا الإجراء غير متاح عبر وصلة.", 404)
+    runtime.limit(("mohassan", request["device_id"]), 240)
+    data = await mohassan_body(request, action)
+    if action != "cancel":
+        mohassan_gpu_free(runtime)
+        runtime.limit(("mohassan-start", request["device_id"]), 20)
+    return web.json_response(await runtime.mohassan.act(request.match_info["id"], action, data))
+
+
 async def startup(app):
     runtime = app[STATE]
     for job in runtime.jobs.values():
@@ -426,12 +510,13 @@ async def cleanup(app):
     runtime.lease = None
     if runtime.workers:
         await asyncio.gather(*runtime.workers, return_exceptions=True)
+    await runtime.mohassan.close()
     await runtime.services.close()
 
 
-def create_app(store: AuthStore, services, desktop, desktop_enabled=False, *, actions=None, knowledge=None, intelligence=None, cloud=None):
+def create_app(store: AuthStore, services, desktop, desktop_enabled=False, *, actions=None, knowledge=None, intelligence=None, cloud=None, mohassan=None):
     app = web.Application(middlewares=[protections], client_max_size=64 * 1024)
-    app[STATE] = Runtime(store, services, desktop, desktop_enabled, actions, knowledge, intelligence, cloud)
+    app[STATE] = Runtime(store, services, desktop, desktop_enabled, actions, knowledge, intelligence, cloud, mohassan)
     app.add_routes([
         web.post('/v1/pair', pair), web.get('/v1/status', status), web.delete('/v1/session', revoke),
         web.post('/v1/chat', chat), web.post('/v1/images/prepare', prepare_image),
@@ -442,6 +527,11 @@ def create_app(store: AuthStore, services, desktop, desktop_enabled=False, *, ac
         web.get('/v1/images/{request_id}', get_image), web.post('/v1/search', search),
         web.post('/v1/desktop/session', start_desktop), web.delete('/v1/desktop/session', end_desktop),
         web.get('/v1/desktop/frame', frame), web.post('/v1/desktop/input', desktop_input),
+        web.get('/v1/mohassan/status', mohassan_status),
+        web.get('/v1/mohassan/conversations', mohassan_conversations), web.post('/v1/mohassan/conversations', mohassan_conversations),
+        web.get('/v1/mohassan/conversations/{id}', mohassan_conversation), web.delete('/v1/mohassan/conversations/{id}', mohassan_conversation),
+        web.get('/v1/mohassan/conversations/{id}/events/{after}', mohassan_events),
+        web.post('/v1/mohassan/conversations/{id}/{action}', mohassan_action),
     ])
     app.on_startup.append(startup)
     app.on_cleanup.append(cleanup)
