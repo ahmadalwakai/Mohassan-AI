@@ -78,6 +78,34 @@ enum PairingChecks {
             let source = try JSONDecoder().decode(ChatSource.self, from: sourceData)
             try check(source.safeURL == nil, "Reject unsafe source links")
         }
+        // Mohassan conversation, as Mohassan's server returns it through the computer service.
+        let conversationID = "8f2c1a9e-4b7d-4c3e-9a1f-2d5e6b7c8a90", questionID = "1a2b3c4d-5e6f-4a1b-8c2d-3e4f5a6b7c8d"
+        // A literal JSON reply keeps the fixture free of heterogeneous Swift collection literals.
+        let conversationJSON = """
+        {"id":"\(conversationID)","title":"حملة","status":"waiting_user","updatedAt":"2026-11-10T20:00:00.000Z","browserAccount":null,
+         "messages":[{"id":"0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e","role":"user","text":"أنشئ حملة","createdAt":"2026-11-10T20:00:00.000Z"}],
+         "question":{"id":"\(questionID)","prompt":"ما الميزانية؟","action":"google_ads_connect",
+                     "options":[{"id":"connect","label":"اربط"},{"id":"later","label":"لاحقًا"}],
+                     "clarification":{"reason":"تحدد الحملة","recommendedOptionId":null,"allowText":true,"slots":["budget"],"goalVersion":1,"readiness":"needs_input"}},
+         "approval":null,"secure":null,"browser":null,"progress":null,"steps":[],"error":null,"configured":true,
+         "campaign":null,"decisions":{"lastSeq":3,"events":[]}}
+        """
+        let conversation = try JSONDecoder().decode(MohassanConversation.self, from: Data(conversationJSON.utf8))
+        try check(conversation.id == conversationID && conversation.messages.first?.text == "أنشئ حملة" && !conversation.working, "Read a Mohassan conversation and ignore fields the phone does not use")
+        try check(conversation.question?.phoneOptions.map(\.id) == ["later"], "Google's consent option stays on the web")
+        try check(conversation.question?.acceptsText == true && conversation.question?.clarification?.recommendedOptionId == nil, "Typed answers follow the clarification setting")
+        let plainQuestion = try JSONDecoder().decode(MohassanQuestion.self, from: Data("{\"id\":\"\(questionID)\",\"prompt\":\"ما اسم الموقع؟\",\"options\":[]}".utf8))
+        try check(plainQuestion.acceptsText && plainQuestion.phoneOptions.isEmpty, "A question without options takes a typed answer")
+        let choice = try JSONSerialization.jsonObject(with: JSONEncoder().encode(MohassanRespond(questionId: questionID, optionId: "later", text: nil))) as! [String: Any]
+        try check(Set(choice.keys) == Set(["questionId", "optionId"]), "An option answer leaves out the absent text")
+        let typed = try JSONSerialization.jsonObject(with: JSONEncoder().encode(MohassanRespond(questionId: questionID, optionId: nil, text: "١٠٠ جنيه"))) as! [String: Any]
+        try check(Set(typed.keys) == Set(["questionId", "text"]), "A typed answer leaves out the absent option")
+        let approval = try JSONSerialization.jsonObject(with: JSONEncoder().encode(MohassanApprove(approvalId: questionID, approved: false))) as! [String: Any]
+        try check(approval["approved"] as? Bool == false && Set(approval.keys) == Set(["approvalId", "approved"]), "A refusal is sent as approved false")
+        let summaries = try JSONDecoder().decode(MohassanList.self, from: Data("{\"conversations\":[{\"id\":\"\(conversationID)\",\"title\":\"\",\"status\":\"running\",\"updatedAt\":\"now\",\"browserAccount\":null}]}".utf8)).conversations
+        try check(summaries.first?.status == "running" && MohassanStatus.title("running") == "موحسن يعمل…", "Read the conversation list")
+        let link = try JSONDecoder().decode(MohassanLink.self, from: Data("{\"linked\":false,\"reachable\":false}".utf8))
+        try check(!link.linked && link.error == nil, "An unlinked computer service is readable")
         print("Pairing and hybrid contract checks passed: \(checks)")
     }
 }

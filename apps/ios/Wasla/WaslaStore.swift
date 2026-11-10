@@ -33,15 +33,24 @@ final class WaslaStore: ObservableObject {
     @Published var pointer = CGPoint(x: 0.5, y: 0.5)
     @Published var desktopMessage = "ابدأ جلسة لعرض الشاشة والتحكم بها."
     @Published var foreground = true
+    // Mohassan, through the computer service. Logic lives in Mohassan.swift.
+    @Published var mohassanLink: MohassanLink?
+    @Published var mohassanList: [MohassanSummary] = []
+    @Published var mohassanConversation: MohassanConversation?
+    @Published var mohassanSending = false
+    @Published var mohassanPendingText: String?
+    var mohassanPollTask: Task<Void, Never>?
+    var mohassanPollID = 0
+    var mohassanEpoch = 0
 
-    private var client: APIClient?
+    private(set) var client: APIClient?
     private var frameTask: Task<Void, Never>?
     private var inputTask: Task<Void, Never>?
     private var imageTask: Task<Void, Never>?
     private var chatTask: Task<Void, Never>?
     private var inputQueue: [DesktopCommand] = []
     private var desktopEpoch = 0
-    private var sessionEpoch = 0
+    private(set) var sessionEpoch = 0
     private var chatEpoch = 0
     private var chatConversationID: String?
     private let defaults = UserDefaults.standard
@@ -51,7 +60,7 @@ final class WaslaStore: ObservableObject {
     let bundledIdentity = BundledConnection.load()
 
     var paired: Bool { identity != nil && client != nil }
-    var computerBusy: Bool { chatBusy || imagePreparing || imageBusy || imageSubmitting || status?.busy.isBusy == true }
+    var computerBusy: Bool { chatBusy || imagePreparing || imageBusy || imageSubmitting || mohassanBusy || status?.busy.isBusy == true }
     var connected: Bool { paired && status != nil }
 
     func start() async {
@@ -107,6 +116,7 @@ final class WaslaStore: ObservableObject {
             let fresh: ServerStatus = try await client.get("/v1/status")
             guard epoch == sessionEpoch else { return }
             status = fresh
+            await refreshMohassanLink()
         } catch {
             guard epoch == sessionEpoch else { return }
             status = nil
@@ -135,6 +145,7 @@ final class WaslaStore: ObservableObject {
         chatMetadata = [:]; chatConversationID = nil; chatEpoch += 1
         rememberConversation = false; useSavedKnowledge = false; chatMode = .automatic
         imageBusy = false; imageSubmitting = false; imagePreparing = false; chatBusy = false; selectedTab = 0
+        resetMohassan()
     }
     func newChat() {
         chatEpoch += 1
@@ -387,6 +398,7 @@ final class WaslaStore: ObservableObject {
     }
     func sceneChanged(active: Bool) {
         foreground = active
+        mohassanSceneChanged(active: active)
         if !active {
             stopDesktop()
             imageTask?.cancel(); imageTask = nil
@@ -396,7 +408,7 @@ final class WaslaStore: ObservableObject {
             if pendingImageID != nil { resumeImage() }
         }
     }
-    private func show(_ error: Error) {
+    func show(_ error: Error) {
         if error is CancellationError { return }
         if let urlError = error as? URLError, urlError.code == .cancelled { return }
         if let urlError = error as? URLError, [.serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .secureConnectionFailed].contains(urlError.code) {

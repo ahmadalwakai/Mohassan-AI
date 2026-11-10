@@ -217,6 +217,70 @@ struct SearchResult: Decodable, Identifiable {
     }
 }
 struct SearchResponse: Decodable { let query: String; let results: [SearchResult]; let provider: String }
+// MARK: - Mohassan, through the Wasla service on the computer (/v1/mohassan/*)
+// Field names follow Mohassan's contract (packages/contracts/src/command-chat.ts).
+// Unknown fields are ignored, so newer servers stay readable.
+
+struct MohassanLink: Decodable { let linked: Bool; let reachable: Bool; let error: String? }
+
+enum MohassanStatus {
+    static let running = "running"
+    static let waitingUser = "waiting_user"
+    static let waitingInput = "waiting_input"
+    static let waitingApproval = "waiting_approval"
+    static let failed = "failed"
+    static let cancelled = "cancelled"
+    static func title(_ status: String) -> String {
+        switch status {
+        case running: return "موحسن يعمل…"
+        case waitingUser: return "ينتظر إجابتك"
+        case waitingInput: return "ينتظر خطوة منك"
+        case waitingApproval: return "ينتظر موافقتك"
+        case failed: return "تعذّر الإكمال"
+        case cancelled: return "أُوقف"
+        default: return "جاهز"
+        }
+    }
+}
+struct MohassanOption: Decodable, Identifiable, Hashable { let id: String; let label: String }
+struct MohassanClarification: Decodable { let reason: String; let recommendedOptionId: String?; let allowText: Bool }
+struct MohassanQuestion: Decodable {
+    let id: String
+    let prompt: String
+    let options: [MohassanOption]
+    let action: String?
+    let clarification: MohassanClarification?
+    /// Google's consent page cannot open from the phone; that option stays on the web.
+    var phoneOptions: [MohassanOption] { action == "google_ads_connect" ? options.filter { $0.id != "connect" } : options }
+    var acceptsText: Bool { clarification?.allowText ?? options.isEmpty }
+}
+struct MohassanApproval: Decodable { let id: String; let prompt: String; let detail: String }
+struct MohassanSecure: Decodable { let id: String; let kind: String; let site: String; let prompt: String }
+struct MohassanMessage: Decodable, Identifiable { let id: String; let role: String; let text: String }
+struct MohassanStep: Decodable, Identifiable { let id: String; let text: String }
+struct MohassanSummary: Decodable, Identifiable { let id: String; let title: String; let status: String; let updatedAt: String }
+/// Mohassan wraps the list: `{"conversations": [...]}`.
+struct MohassanList: Decodable { let conversations: [MohassanSummary] }
+struct MohassanConversation: Decodable, Identifiable {
+    let id: String
+    let title: String
+    let status: String
+    let messages: [MohassanMessage]
+    let question: MohassanQuestion?
+    let approval: MohassanApproval?
+    let secure: MohassanSecure?
+    let progress: String?
+    let steps: [MohassanStep]
+    let error: String?
+    var working: Bool { status == MohassanStatus.running }
+}
+struct MohassanCreated: Decodable { let id: String }
+struct MohassanCreate: Encodable { let goal: String }
+struct MohassanSend: Encodable { let text: String }
+/// Absent values are left out, as Mohassan expects either an option or a typed answer.
+struct MohassanRespond: Encodable { let questionId: String; let optionId: String?; let text: String? }
+struct MohassanApprove: Encodable { let approvalId: String; let approved: Bool }
+
 struct DesktopSession: Decodable { let session_id: String; let expires_at: Double }
 struct DesktopCommand: Encodable {
     let action: String

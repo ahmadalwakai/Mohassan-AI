@@ -44,7 +44,7 @@ struct RootView: View {
             else {
                 TabView(selection: $store.selectedTab) {
                     AppScreen { ControlView() }.tabItem { Label("التحكم", systemImage: "slider.horizontal.3") }.tag(0)
-                    AppScreen { ChatView() }.tabItem { Label("المحادثة", systemImage: "bubble.left.and.bubble.right") }.tag(1)
+                    AppScreen { if store.mohassanLinked { MohassanChatView() } else { ChatView() } }.tabItem { Label(store.mohassanLinked ? "موحسن" : "المحادثة", systemImage: "bubble.left.and.bubble.right") }.tag(1)
                     AppScreen { ImagesView() }.tabItem { Label("الصور", systemImage: "photo") }.tag(2)
                     AppScreen { SearchView() }.tabItem { Label("البحث", systemImage: "globe") }.tag(3)
                 }
@@ -162,7 +162,7 @@ struct ControlView: View {
                 .onChange(of: mode) { _, value in if value != 1 { store.stopDesktop() } }
             if mode == 0 {
                 Text("ماذا تريد أن تفعل؟").font(.headline)
-                shortcut("ابدأ محادثة", detail: "تحدث مع Qwen على الكمبيوتر", icon: "bubble.left.and.bubble.right", tab: 1)
+                shortcut("ابدأ محادثة", detail: store.mohassanLinked ? "اطلب من موحسن ما تريد إنجازه" : "تحدث مع Qwen على الكمبيوتر", icon: "bubble.left.and.bubble.right", tab: 1)
                 shortcut("أنشئ صورة", detail: "راجع الوصف، ثم ابدأ الإنشاء", icon: "sparkles", tab: 2)
                 shortcut("ابحث في الإنترنت", detail: "نتائج وروابط المصادر", icon: "globe", tab: 3)
                 Text("تعمل المحادثة والصور على المساعد المحلي. التحكم بسطح المكتب يتطلب تفعيله على الكمبيوتر.").font(.footnote).foregroundStyle(.secondary)
