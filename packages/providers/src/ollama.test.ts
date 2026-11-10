@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { OllamaProvider, ProviderError } from './index.js';
+import { LocalModelQueue, OllamaProvider, ProviderError } from './index.js';
 
 const MODEL = 'qwen3.5:9b-coding-local';
 const schema = { type: 'object', properties: { status: { type: 'string' } }, required: ['status'], additionalProperties: false };
@@ -65,5 +65,59 @@ describe('OllamaProvider', () => {
     const provider = new OllamaProvider({ model: MODEL, fetch: async () => { throw new TypeError('connect ECONNREFUSED 127.0.0.1:11434'); } });
     expect(await code(provider.generate({ goal: 'صف الصورة.', image: { mimeType: 'image/png', data: 'A'.repeat(16) } }))).toBe('IMAGE_UNSUPPORTED');
     expect(await code(provider.generate({ goal: 'أعد الحالة.' }))).toBe('NETWORK_ERROR');
+  });
+
+  it('names the schema with a title only, and redacts credentials before anything is sent', async () => {
+    const calls: { url: string; body: any }[] = [];
+    const key = 'sk-' + 'a'.repeat(24), uri = 'postgres://owner:secret-password@db.example/app';
+    await new OllamaProvider({ model: MODEL, fetch: reply({}, calls) }).generate({ goal: `خطط لربط ${uri} بالمفتاح ${key}`, structured: { name: 'mohassan_cognitive_plan', schema } });
+    expect(calls[0]!.body.format).toEqual({ title: 'mohassan_cognitive_plan', ...schema });
+    const sent = JSON.stringify(calls[0]!.body);
+    expect(sent).not.toContain(key);
+    expect(sent).not.toContain('secret-password');
+  });
+
+  it('sends an image only to a model marked as vision, with its own time limit', async () => {
+    const calls: { url: string; body: any }[] = [];
+    const image = { mimeType: 'image/jpeg' as const, data: Buffer.from('fixture-image-bytes-0000').toString('base64') };
+    await new OllamaProvider({ model: MODEL, vision: true, fetch: reply({}, calls) }).generate({ goal: 'صف لقطة الشاشة.', image });
+    expect(calls[0]!.body.messages[1]).toEqual({ role: 'user', content: 'صف لقطة الشاشة.', images: [image.data] });
+    const slow: typeof fetch = (_input, init) => new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))));
+    const started = Date.now();
+    expect(await code(new OllamaProvider({ model: MODEL, vision: true, timeoutMs: 60000, imageTimeoutMs: 1000, fetch: slow }).generate({ goal: 'صف لقطة الشاشة.', image }))).toBe('ABORTED');
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(await code(new OllamaProvider({ model: MODEL, vision: true, fetch: reply({}) }).generate({ goal: 'صف لقطة الشاشة.', image: { mimeType: 'image/jpeg', data: 'not base64!' } }))).toBe('OTHER');
+  });
+
+  it('serves one request at a time, refuses beyond the waiting line, and frees a cancelled place', async () => {
+    const queue = new LocalModelQueue(1);
+    let active = 0, peak = 0;
+    const releases: (() => void)[] = [];
+    const held: typeof fetch = async () => { active += 1; peak = Math.max(peak, active); await new Promise<void>(resolve => releases.push(resolve)); active -= 1; return Response.json({ model: MODEL, done: true, done_reason: 'stop', message: { role: 'assistant', content: 'ok-text' }, prompt_eval_count: 4, eval_count: 2 }); };
+    const provider = new OllamaProvider({ model: MODEL, queue, fetch: held });
+    const first = provider.generate({ goal: 'الطلب الأول.' });
+    const second = provider.generate({ goal: 'الطلب الثاني.' });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(queue.depth).toBe(2);
+    const third = await provider.generate({ goal: 'الطلب الثالث.' }).catch(error => error);
+    expect(third).toMatchObject({ code: 'MODEL_BUSY', retryable: true, usage: { inputTokens: 0, outputTokens: 0 } });
+    releases.shift()!();
+    await first;
+    await new Promise(resolve => setTimeout(resolve, 10));
+    releases.shift()!();
+    await second;
+    expect(peak).toBe(1);
+    expect(queue.depth).toBe(0);
+
+    const controller = new AbortController();
+    const blocking = provider.generate({ goal: 'طلب يشغل النموذج.' });
+    const waiting = provider.generate({ goal: 'طلب سيُلغى.', signal: controller.signal });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    controller.abort();
+    expect(await code(waiting)).toBe('ABORTED');
+    expect(queue.depth).toBe(1);
+    releases.shift()!();
+    await blocking;
+    expect(queue.depth).toBe(0);
   });
 });

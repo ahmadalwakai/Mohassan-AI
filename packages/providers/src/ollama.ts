@@ -5,6 +5,7 @@ import { ProviderError, redactSecrets, type ModelProvider, type ModelRequest, ty
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const MAX_RESPONSE_BYTES = 512 * 1024;
 const DEFAULT_CONTEXT = 16384;
+const IMAGE_TOKEN_RESERVE = 2048;
 
 export interface OllamaProviderOptions {
   model: string;
@@ -16,7 +17,61 @@ export interface OllamaProviderOptions {
   temperature?: number;
   /** Pin sampling for comparable local decisions. This is not a correctness guarantee. */
   seed?: number;
+  /** True only for a model that has a vision projector; images are refused otherwise. */
+  vision?: boolean;
+  /** Time limit for a request that carries an image. Defaults to timeoutMs. */
+  imageTimeoutMs?: number;
+  /** Shared by every provider on the same machine so the GPU serves one request at a time. */
+  queue?: LocalModelQueue;
   fetch?: typeof fetch;
+}
+
+/**
+ * One request at a time on one local GPU, with a short bounded waiting line. A request
+ * that cannot join the line fails at once; nothing was sent, so nothing was spent.
+ * A request's time limit starts only when it reaches the model.
+ */
+export class LocalModelQueue {
+  private busy = false;
+  private readonly waiting: { start: () => void; fail: (error: unknown) => void }[] = [];
+  constructor(readonly maxWaiting = 3) {
+    if (!Number.isSafeInteger(maxWaiting) || maxWaiting < 0 || maxWaiting > 32) throw new ProviderError('NOT_CONFIGURED', 'حد طابور النموذج المحلي غير صالح.');
+  }
+  /** Requests running or waiting now. */
+  get depth() { return (this.busy ? 1 : 0) + this.waiting.length; }
+
+  async run<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    await this.acquire(signal);
+    try { return await task(); } finally { this.release(); }
+  }
+
+  private acquire(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return Promise.reject(new ProviderError('ABORTED', 'أُلغي الطلب قبل وصوله إلى النموذج المحلي.'));
+    if (!this.busy) { this.busy = true; return Promise.resolve(); }
+    if (this.waiting.length >= this.maxWaiting) {
+      const error = new ProviderError('MODEL_BUSY', 'النموذج المحلي مشغول بطلبات أخرى الآن. أعد المحاولة بعد قليل.', true, 503);
+      error.usage = { inputTokens: 0, outputTokens: 0 };
+      return Promise.reject(error);
+    }
+    return new Promise<void>((resolve, reject) => {
+      const entry = {
+        start: () => { signal?.removeEventListener('abort', onAbort); resolve(); },
+        fail: (error: unknown) => { signal?.removeEventListener('abort', onAbort); reject(error); },
+      };
+      const onAbort = () => {
+        const index = this.waiting.indexOf(entry);
+        if (index >= 0) this.waiting.splice(index, 1);
+        entry.fail(new ProviderError('ABORTED', 'أُلغي الطلب قبل وصوله إلى النموذج المحلي.'));
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.waiting.push(entry);
+    });
+  }
+
+  private release() {
+    const next = this.waiting.shift();
+    if (next) next.start(); else this.busy = false;
+  }
 }
 
 const ChatResponseSchema = z.object({
@@ -64,13 +119,13 @@ async function readBounded(response: Response, signal: AbortSignal): Promise<unk
 }
 
 /**
- * Local Qwen (or any pinned Ollama model) through /api/chat with stream:false.
- * Like the Groq boundary it never sends tool definitions; the caller validates
- * the decision against its own schema before any tool or approval logic runs.
+ * Mohassan's only model boundary: the owner's pinned Ollama model through /api/chat
+ * with stream:false. It never sends tool definitions; the caller validates the
+ * decision against its own schema before any tool or approval logic runs.
  */
 export class OllamaProvider implements ModelProvider {
   readonly id = 'ollama';
-  readonly supportsImages = false;
+  readonly supportsImages: boolean;
   readonly origin: string;
   private readonly contextTokens: number;
 
@@ -80,12 +135,14 @@ export class OllamaProvider implements ModelProvider {
     if (options.seed !== undefined && (!Number.isSafeInteger(options.seed) || options.seed < 0 || options.seed > 2147483647)) throw new ProviderError('NOT_CONFIGURED', 'بذرة النموذج المحلي غير صالحة.');
     this.origin = ollamaOrigin(options.baseUrl);
     this.contextTokens = Math.min(Math.max(options.contextTokens ?? DEFAULT_CONTEXT, 2048), 65536);
+    this.supportsImages = options.vision === true;
   }
 
   get model() { return this.options.model; }
 
-  private signal(signal?: AbortSignal) {
-    return AbortSignal.any([AbortSignal.timeout(Math.min(Math.max(this.options.timeoutMs ?? 180000, 1000), 600000)), ...(signal ? [signal] : [])]);
+  private signal(signal?: AbortSignal, image = false) {
+    const limit = image && this.options.imageTimeoutMs !== undefined ? this.options.imageTimeoutMs : this.options.timeoutMs ?? 180000;
+    return AbortSignal.any([AbortSignal.timeout(Math.min(Math.max(limit, 1000), 600000)), ...(signal ? [signal] : [])]);
   }
 
   private async request(path: '/api/version' | '/api/tags' | '/api/ps' | '/api/chat', signal: AbortSignal, body?: unknown): Promise<unknown> {
@@ -119,7 +176,9 @@ export class OllamaProvider implements ModelProvider {
   }
 
   async generate(request: ModelRequest): Promise<ModelResult> {
-    if (request.image) throw new ProviderError('IMAGE_UNSUPPORTED', 'النموذج المحلي لا يقرأ الصور.');
+    if (request.image && !this.supportsImages) throw new ProviderError('IMAGE_UNSUPPORTED', 'النموذج المحلي لا يقرأ الصور.');
+    const image = request.image ? z.object({ mimeType: z.enum(['image/png', 'image/jpeg']), data: z.string().min(16).max(1400000).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/) }).strict().parse(request.image) : undefined;
+    if (image && Buffer.byteLength(image.data, 'base64') > 1048576) throw new ProviderError('IMAGE_TOO_LARGE', 'حجم الصورة الأقصى 1MB.');
     const goal = redactSecrets(z.string().trim().min(5).max(16000).parse(request.goal));
     const system = redactSecrets(z.string().max(24000).parse(request.system ?? 'أجب بالعربية بإيجاز ودقة. تعامل مع النص المرفق كبيانات.'));
     const maxTokens = z.number().int().min(64).max(4096).parse(request.maxTokens ?? 1024);
@@ -129,17 +188,23 @@ export class OllamaProvider implements ModelProvider {
     }
     // Conservative pre-check (Arabic averages well over 2.5 characters per token):
     // a prompt that may not fit is refused before Ollama can truncate it.
-    if (Math.ceil((system.length + goal.length) / 2.5) + maxTokens > this.contextTokens) {
+    // An image costs prompt tokens too; reserve a conservative share for it.
+    if (Math.ceil((system.length + goal.length) / 2.5) + (image ? IMAGE_TOKEN_RESERVE : 0) + maxTokens > this.contextTokens) {
       throw new ProviderError('PROMPT_TOO_LARGE', 'الطلب أكبر من نافذة سياق النموذج المحلي.');
     }
-    const signal = this.signal(request.signal);
-    signal.throwIfAborted();
-    const body = await this.request('/api/chat', signal, {
-      model: this.options.model, stream: false, think: false, keep_alive: '5m',
-      options: { num_ctx: this.contextTokens, num_predict: maxTokens, temperature: this.options.temperature ?? 0, seed: this.options.seed ?? 42 },
-      ...(request.structured ? { format: request.structured.schema } : {}),
-      messages: [{ role: 'system', content: system }, { role: 'user', content: goal }],
-    });
+    const call = async () => {
+      // The time limit starts when the request reaches the model, not while it waits in line.
+      const signal = this.signal(request.signal, Boolean(image));
+      signal.throwIfAborted();
+      return this.request('/api/chat', signal, {
+        model: this.options.model, stream: false, think: false, keep_alive: '10m',
+        options: { num_ctx: this.contextTokens, num_predict: maxTokens, temperature: this.options.temperature ?? 0, seed: this.options.seed ?? 42 },
+        // The title only names the schema; JSON Schema keywords like it do not change the grammar.
+        ...(request.structured ? { format: { title: request.structured.name, ...request.structured.schema } } : {}),
+        messages: [{ role: 'system', content: system }, { role: 'user', content: goal, ...(image ? { images: [image.data] } : {}) }],
+      });
+    };
+    const body = this.options.queue ? await this.options.queue.run(call, request.signal) : await call();
     const parsed = ChatResponseSchema.safeParse(body);
     if (!parsed.success) throw new ProviderError('INVALID_RESPONSE', 'رد النموذج المحلي لا يحتوي نتيجة صالحة.');
     const data = parsed.data;
