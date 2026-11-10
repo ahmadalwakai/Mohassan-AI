@@ -21,7 +21,8 @@ describe('authenticated isolated skill benchmark API and measured portfolio', ()
     const account = { name: 'Benchmark fixture owner', email: 'benchmark-owner@example.test', password: 'Benchmark-Fixture-Password-42' };
     const other = { name: 'Other benchmark fixture', email: 'benchmark-other@example.test', password: 'Benchmark-Other-Fixture-Password-42' };
     const setup = await application.app.inject({ method: 'POST', url: '/api/setup', headers: headers(''), payload: { ...account, setupToken } }); expect(setup.statusCode, setup.body).toBe(200);
-    await application.auth.api.signUpEmail({ body: other });
+    // Full access for a second independent account is granted only in the database.
+    await application.database.db.insertInto('workspace_members').values({ user_id: (await application.auth.api.signUpEmail({ body: other })).user.id, role: 'owner' }).execute();
     async function login(credentials: typeof account) {
       const response = await application!.app.inject({ method: 'POST', url: '/api/auth/sign-in/email', headers: headers(''), payload: { email: credentials.email, password: credentials.password } });
       expect(response.statusCode, response.body).toBe(200);
@@ -125,7 +126,7 @@ describe('authenticated isolated skill benchmark API and measured portfolio', ()
       production: false, runWorker: false, skillEngineEnabled: false, codingAllowedRoots: [directory], browserProfileDir: join(directory, 'disabled-browser') });
     try {
       const account = { name: 'Disabled benchmark fixture', email: 'disabled-benchmark@example.test', password: 'Disabled-Benchmark-Fixture-42' };
-      await disabled.auth.api.signUpEmail({ body: account });
+      await disabled.database.db.insertInto('workspace_members').values({ user_id: (await disabled.auth.api.signUpEmail({ body: account })).user.id, role: 'owner' }).execute();
       const login = await disabled.app.inject({ method: 'POST', url: '/api/auth/sign-in/email', headers: headers(''), payload: { email: account.email, password: account.password } });
       expect(login.statusCode, login.body).toBe(200);
       const session = [login.headers['set-cookie']].flat().filter(Boolean).map(value => String(value).split(';')[0]).join('; ');

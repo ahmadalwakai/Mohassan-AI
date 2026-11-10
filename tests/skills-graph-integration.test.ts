@@ -37,7 +37,7 @@ describe('authenticated skill graph over actual local lifecycle and receipts', (
     application = await createApplication({ authSecret: 'graph-api-fixture-auth-secret-00000001', internalSecret: secret, setupToken, webOrigin: origin, production: false, runWorker: false, skillEngineEnabled: true, codingAllowedRoots: [directory], browserProfileDir: join(directory, 'browser') });
     const account = { name: 'Graph owner fixture', email: 'graph-owner@example.test', password: 'Graph-Owner-Fixture-Password-42' }, other = { name: 'Other graph fixture', email: 'graph-other@example.test', password: 'Graph-Other-Fixture-Password-42' };
     const setup = await application.app.inject({ method: 'POST', url: '/api/setup', headers: headers(''), payload: { ...account, setupToken } }); expect(setup.statusCode, setup.body).toBe(200);
-    await application.auth.api.signUpEmail({ body: other });
+    await application.database.db.insertInto('workspace_members').values({ user_id: (await application.auth.api.signUpEmail({ body: other })).user.id, role: 'owner' }).execute();
     async function login(credentials: typeof account) {
       const response = await application!.app.inject({ method: 'POST', url: '/api/auth/sign-in/email', headers: headers(''), payload: { email: credentials.email, password: credentials.password } }); expect(response.statusCode, response.body).toBe(200);
       return [response.headers['set-cookie']].flat().filter(Boolean).map(value => String(value).split(';')[0]).join('; ');

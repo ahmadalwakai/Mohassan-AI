@@ -5,7 +5,7 @@ import { GoogleAdsConnectionManager, type ConnectionRow } from './connection.ts'
 import { canonicalJson, parseTokenKey } from './crypto.ts';
 import { buildOperations, operationsHash, type Bidding, type GeoTarget } from './draft.ts';
 import { GoogleAdsError, notConfigured, stateConflict } from './errors.ts';
-import { VerifiedExperienceMemory } from './experience.ts';
+import { RecoveryLessonMemory, VerifiedExperienceMemory } from './experience.ts';
 import { defaultGateFiles, evidenceGates, type GateFiles } from './gates.ts';
 import { campaignStrategy, chooseBidding, marketIntelligence, optimize, readSearchTerms, searchTermsQuery } from './intelligence.ts';
 import { analyzeAccount, dateRange } from './performance.ts';
@@ -24,6 +24,10 @@ export interface GoogleAdsConfig {
   /** Fixture hook for the mocked Google sign-in page; production uses Google's own URL. */
   authorizationUrl?: string;
 }
+
+/** Where a paused creation stands. Each stage is reported after the fact it names, never before. */
+export type PausedCreationStage = 'gates_passed' | 'draft_ready' | 'validation_started' | 'validated' | 'verification_started' | 'verified' | 'authorized' | 'mutation_started' | 'readback_confirmed';
+export interface PausedCreationObserver { stage(stage: PausedCreationStage, draft: GoogleAdsDraft | null): Promise<void> | void }
 
 const DEFAULT_MAX_DAILY_BUDGET = 100_000_000n;
 const REPORT_DAYS = new Set([7, 14, 30, 90]);
@@ -44,6 +48,7 @@ export function createGoogleAdsControl(db: Db, config: GoogleAdsConfig) {
   const redirectUri = `${config.webOrigin}/api/google-ads/oauth/callback`;
   const connection = client ? new GoogleAdsConnectionManager(db, client, { clientId: config.clientId!, tokenKey: tokenKey!, redirectUri, ...(config.authorizationUrl ? { authorizationUrl: config.authorizationUrl } : {}) }) : null;
   const experience = new VerifiedExperienceMemory(db);
+  const lessons = new RecoveryLessonMemory(db);
   const publisher = client ? new CampaignPublishingController(db, client, experience) : null;
 
   const ready = () => { if (!connection || !client || !publisher) throw notConfigured(); return { connection, client, publisher }; };
@@ -185,6 +190,17 @@ export function createGoogleAdsControl(db: Db, config: GoogleAdsConfig) {
     return next;
   }
 
+  /** Reads the landing page exactly as validation does. A read only; an unreachable page is a finding, not an error. */
+  async function inspectLanding(url: string, signal?: AbortSignal): Promise<{ landing: NonNullable<GoogleAdsValidation['landing']>; text: string }> {
+    try {
+      const page = await config.fetchPage(url, signal);
+      return readLandingPage(url, page.finalUrl, page.status, page.html, page.contentLanguage);
+    } catch {
+      signal?.throwIfAborted();
+      return { landing: { requestedUrl: url, finalUrl: null, status: null, language: null, title: null, reachable: false }, text: '' };
+    }
+  }
+
   async function validate(ownerId: string, id: string, expectedRevision: number) {
     const { draft, geoTargets } = await load(ownerId, id, expectedRevision);
     if (!['draft', 'rejected', 'validated'].includes(draft.state)) throw stateConflict('احفظ المعاينة كمسودة أولًا.');
@@ -265,30 +281,42 @@ export function createGoogleAdsControl(db: Db, config: GoogleAdsConfig) {
   }
 
   /** A trusted, task-scoped adapter may create one new PAUSED campaign. This method can never launch. */
-  async function createPausedCampaign(ownerId: string, input: unknown, idempotencyKey: string, authority: { assertActive(): Promise<void> }): Promise<GoogleAdsDraft> {
+  async function createPausedCampaign(ownerId: string, input: unknown, idempotencyKey: string, authority: { assertActive(): Promise<void> }, observer?: PausedCreationObserver): Promise<GoogleAdsDraft> {
+    // Watching never changes the write path: only the record made just before the write may stop it.
+    const notify = async (stage: PausedCreationStage, draft: GoogleAdsDraft | null) => { try { await observer?.stage(stage, draft); } catch { /* The next authority check decides whether the task still runs. */ } };
     if (!/^[a-zA-Z0-9:_-]{8,160}$/.test(idempotencyKey)) throw new GoogleAdsError('GOOGLE_ADS_IDEMPOTENCY', 'يلزم مفتاح ثابت صالح للمهمة.', 400);
     if (!authority || typeof authority.assertActive !== 'function') throw new GoogleAdsError('GOOGLE_ADS_AUTHORITY_REQUIRED', 'يلزم تفويض المهمة الجاري لإنشاء الحملة المتوقفة.', 403);
     await authority.assertActive();
     const { connection } = ready();
     const gates = await publishing(await connection.row(ownerId));
     if (!gates.available) throw new GoogleAdsError('GOOGLE_ADS_PUBLISHING_CLOSED', `إنشاء الحملة مغلق: ${gates.gates.filter(gate => !gate.passed).map(gate => gate.detail).join('؛ ')}`, 403);
+    await notify('gates_passed', null);
     let draft = await createDraft(ownerId, input, idempotencyKey);
     const claimed = await db.insertInto('google_ads_automatic_requests').values({ owner_id: ownerId, idempotency_key: idempotencyKey, draft_id: draft.id, status: 'running' }).onConflict(conflict => conflict.columns(['owner_id', 'idempotency_key']).doNothing()).returning('draft_id').executeTakeFirst();
     // An interrupted/unknown request is never retried automatically. The existing draft is reviewable.
     if (!claimed) return (await load(ownerId, draft.id)).draft;
     try {
       if (draft.state !== 'preview') throw stateConflict('مسار الإنشاء الآلي يقبل معاينة جديدة فقط؛ راجع حالة الطلب السابق.');
+      await notify('draft_ready', draft);
       draft = await save(ownerId, draft.id, draft.revision);
+      await notify('validation_started', draft);
       draft = await validate(ownerId, draft.id, draft.revision);
+      await notify('validated', draft);
       if (draft.state !== 'validated') throw new GoogleAdsError('GOOGLE_ADS_QUALITY_REJECTED', 'لم تجتز الحملة فحص الجودة؛ لم يُكتب شيء في الحساب.', 409);
+      await notify('verification_started', draft);
       draft = await verify(ownerId, draft.id, draft.revision, true);
+      await notify('verified', draft);
       if (draft.state !== 'verified') throw new GoogleAdsError('GOOGLE_ADS_VERIFICATION_REJECTED', 'لم تجتز الحملة التحقق المستقل؛ لم يُكتب شيء في الحساب.', 409);
       await authority.assertActive();
       await audit(db, ownerId, draft.id, 'paused_creation_authorized', { idempotencyKey, draftHash: draft.draftHash, customerId: draft.customerId, conversionTracking: draft.verification?.checks.find(check => check.id === 'conversion_tracking')?.passed === true, launchAuthorized: false });
       draft = await approve(ownerId, draft.id, 'publish', draft.revision, draft.draftHash, draft.customerId);
+      await notify('authorized', draft);
       // Recheck task fencing and all source-bound gates immediately before the existing single-use writer.
       await authority.assertActive();
-      draft = await publish(ownerId, draft.id, draft.revision, () => authority.assertActive());
+      const approved = draft;
+      // If the intent to write cannot be recorded, the write is not sent: an unrecorded write could be repeated.
+      draft = await publish(ownerId, draft.id, draft.revision, async () => { await authority.assertActive(); await observer?.stage('mutation_started', approved); });
+      if (draft.state === 'published' && draft.campaignResourceName) await notify('readback_confirmed', draft);
       if (draft.state !== 'published' || !draft.campaignResourceName) throw new GoogleAdsError('GOOGLE_ADS_PAUSED_UNCONFIRMED', 'لم تؤكد قراءة الحساب إنشاء الحملة متوقفة؛ راجع النتيجة قبل المتابعة.', 409);
       await db.updateTable('google_ads_automatic_requests').set({ status: 'completed', updated_at: new Date() }).where('owner_id', '=', ownerId).where('idempotency_key', '=', idempotencyKey).execute();
       return draft;
@@ -300,7 +328,7 @@ export function createGoogleAdsControl(db: Db, config: GoogleAdsConfig) {
   }
 
   return {
-    configured, status, report, market, recommendations, createDraft, createPausedCampaign, revise, save, validate, verify, approve, publish, launch, reconcile, discard,
+    configured, status, report, market, recommendations, createDraft, createPausedCampaign, inspectLanding, lessons, revise, save, validate, verify, approve, publish, launch, reconcile, discard,
     authorizationUrl: (ownerId: string) => ready().connection.authorizationUrl(ownerId),
     completeAuthorization: (ownerId: string, code: string, state: string) => ready().connection.completeAuthorization(ownerId, code, state),
     disconnect: (ownerId: string) => ready().connection.disconnect(ownerId),

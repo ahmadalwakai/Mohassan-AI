@@ -10,6 +10,7 @@ import { SkillRunInputSchema, SkillNodeBindingSchema, isBoundedSkillJson } from 
 export * from './command-chat';
 export * from './skills';
 export * from './google-ads';
+export * from './campaign-progress';
 export * from './ai-providers';
 export { browserReadOrigins, detectBrowserOpenIntent, type BrowserOpenIntent } from './browser-intent';
 

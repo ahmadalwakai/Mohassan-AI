@@ -17,8 +17,11 @@ import {
   boundedDecisionJsonSchema, decisionJsonSchema, decisionSchema, recoverDecision, ModelPool, buildPrompt, chooseTier, cookieRejectButton, directRoute, estimateTokens, newBrainState,
   SEARCH_REPEATED, SEARCH_UNUSABLE, asksToRemember, needsReview, noteAttempt, reviewRequest, searchKey, sensitiveAction, shouldAskForHelp, siteOf, situation, skillContextBudget, stepLabel, systemPrompt, type BrainState, type Decision, type ModelTier, type WorkTool,
 } from './assistant/brain.js';
-import { ADS_DRAFT_NOTE, ADS_SKILL_SLUG, checkAdsDraft } from './assistant/ads-check.js';
-import { EFFECT_KEYS, requestsPausedCampaign, type AssistantTools, type ComputerStep, type MemoryLookupResult } from './assistant/tools.js';
+import { ADS_DRAFT_NOTE, ADS_SKILL_SLUG } from './assistant/ads-check.js';
+import { ADS_REWRITE_JSON_SCHEMA, ADS_REWRITE_SCHEMA_NAME, ADS_REWRITE_SYSTEM, buildRewritePrompt, type RewriteRequest } from '@mohassan/google-ads';
+import { appendCampaignEvent, campaignEventsMigration, closeOpenCampaignTasks, readCampaignEvents } from './assistant/campaign-events.js';
+import { TEXT_ONLY_PORTS, campaignCancelEvent, campaignEndEvent, campaignFailureEvent, campaignTaskId, checkCampaignDraft, createPausedCampaign, newCampaignRunState, type CampaignContext } from './assistant/campaign-run.js';
+import { EFFECT_KEYS, guarded, requestsPausedCampaign, type AssistantTools, type ComputerStep, type MemoryLookupResult } from './assistant/tools.js';
 import { projectInventoryFormat, renderProjectInventory } from './assistant/inventory.js';
 import { decodeStructuredMemoryDecision, memoryRecallFormat, structuredMemoryDecisionSchema, verifyMemoryRecall } from './assistant/memory-recall.js';
 import { CredentialVault } from './assistant/vault.js';
@@ -27,6 +30,8 @@ import { assessBrowserVerification } from './assistant/verification.js';
 import { newGoalState, observeFailure, observeOutcome, reviewOpen, reviewStop, stagnationWarning, type BrainVersion } from './assistant/goal-integrity.js';
 
 export interface CommandChatConfig {
+  /** False for a member: no projects, studio, computer or skill runs. Absent means full access. */
+  fullAccess?: (ownerId: string) => Promise<boolean>;
   apiKey?: string;
   /**
    * Replaces the Groq boundary with an explicit provider per model (for example the
@@ -67,6 +72,8 @@ export interface CommandChatConfig {
    * cognitive lab until measurements and the owner accept it.
    */
   brainVersion?: BrainVersion;
+  /** Pacing of campaign recovery waits; injectable so isolated tests do not sleep. */
+  campaignSleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
 }
 
 export interface ChatSkillContext {
@@ -84,7 +91,7 @@ const MAX_OUTPUT_TOKENS = 1800;
 const HISTORY_MESSAGES = 6;
 const WAITING_STATUSES = ['waiting_user', 'waiting_input', 'waiting_approval'];
 const GOOGLE_SIGN_IN_ORIGIN = 'https://accounts.google.com';
-const GOOGLE_SIGN_IN_STOP = 'توقفت عند صفحة تسجيل الدخول إلى Google. متصفح محسّن الحالي لا يدعم إكمال تسجيل الدخول إلى Google داخل هذه الجلسة.';
+const GOOGLE_SIGN_IN_STOP = 'توقفت عند صفحة تسجيل الدخول إلى Google. متصفح موحسن الحالي لا يدعم إكمال تسجيل الدخول إلى Google داخل هذه الجلسة.';
 const GOOGLE_SIGN_IN_HANDS_ON = 'سجّل دخولك إلى Google بنفسك من لوحة المتصفح، ثم اضغط «أكملت». لا تكتب كلمة المرور في المحادثة.';
 const PERSONAL_SIGN_IN = /(?:تسجيل\s+(?:ال)?دخول|اسجل\s+(?:ال)?دخول|ادخل)[^.!؟\n]{0,60}بنفس[يى]|لا تطلب[^.!؟\n]{0,30}بيانات (?:تسجيل )?الدخول|(?:sign|log)[ -]?in[^.!?\n]{0,45}(?:myself|manually)/i;
 const PERSONAL_SIGN_IN_STOP = 'توقفت عند صفحة تسجيل الدخول كما طلبت. أكمل تسجيل الدخول بنفسك في متصفح الموقع.';
@@ -157,6 +164,7 @@ export async function commandChatMigration(db: Kysely<any>) {
       await sql`ALTER TABLE chat_effect_receipts ADD COLUMN owner_reviewed_at timestamptz`.execute(tx);
       await tx.insertInto('schema_migrations').values({version:'028_chat_recovery_review'}).execute();
     }
+    await campaignEventsMigration(tx);
   });
 }
 
@@ -187,7 +195,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     ...(tools?.work?.studio ? ['studio_change'] as const : []),
     ...(tools?.computer ? ['computer_view', 'computer_click', 'computer_type', 'computer_key'] as const : []),
   ];
-  type Execution = { ownerId: string; id: string; runId: string; token: string; controller: AbortController };
+  type Execution = { ownerId: string; id: string; runId: string; token: string; controller: AbortController; full: boolean };
+  /** Tools that reach the owner's machine, projects or task runtime. */
+  const OWNER_ONLY: ReadonlySet<string> = new Set(['workspace_list', 'code_change', 'studio_change', 'computer_view', 'computer_click', 'computer_type', 'computer_key', 'run_skill']);
+  const fullReach = () => execution.getStore()?.full !== false;
+  const reachable = (offered: WorkTool[]) => fullReach() ? offered : offered.filter(tool => !OWNER_ONLY.has(tool));
   const execution = new AsyncLocalStorage<Execution>();
   let closing = false;
   function forgetVault(id:string,token:string){if(vaultOwners.get(id)===token){vault.forget(id);vaultOwners.delete(id);}}
@@ -226,6 +238,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await tx.updateTable('chat_effect_receipts').set({status:'unknown',finished_at:new Date()}).where('run_id','=',row.run_id).where('status','=','started').execute();
         await tx.updateTable('chat_model_receipts').set({status:'unknown',error_code:'CHAT_LEASE_EXPIRED',finished_at:new Date()}).where('run_id','=',row.run_id).where('status','=','started').execute();
         await recordTerminalRun(tx, row.run_id, 'interrupted');
+        await closeOpenCampaignTasks(tx, row.id, row.run_id, unresolved => campaignCancelEvent('run_interrupted', unresolved));
         await tx.updateTable('chat_conversations').set({status:'failed',active_run_id:null,progress:null,question:null,approval:null,secure:null,error:'انتهت مهلة العامل أو انقطع. لم يُكرر أي إجراء؛ راجع الأثر قبل طلب جديد.',updated_at:new Date()}).where('id','=',row.id).execute();
         abandoned.push({ownerId:row.owner_id,state:row.state});
       }
@@ -345,7 +358,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       approval: row.approval ?? null,
       secure: row.secure ?? null,
       browser: page ? { url: page.url, title: page.title, observedAt: page.observedAt, live: await browser.hasPage(ownerId, id), screenUrl: `/api/chat/conversations/${id}/screen?v=${page.version}`, recovery: row.browser_checkpoint ? row.browser_checkpoint.status === 'ready' && row.browser_checkpoint.resumeUrl ? 'available' : 'review_required' : 'unavailable',...(checkpoint?{recoveryToken:checkpointToken(checkpoint)}:{}) } : null,
-      progress: row.progress, error: row.error,
+      progress: row.progress, error: row.error, campaign: await readCampaignEvents(db, id),
       steps: steps.reverse().map((item) => ({ id: item.id, text: item.message, createdAt: iso(item.created_at) })),
       updatedAt: iso(row.updated_at), configured: providers.size > 0 || config.inference?.active() === true,
     });
@@ -359,7 +372,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
 
   /** Asks the pool for a decision, moving between models when one is busy. */
   async function think(id: string, runId: string, state: BrainState, prompt: string, tier: ModelTier, signal: AbortSignal, skillsEnabled = false, offered: WorkTool[] = workTools, memoryJson = false): Promise<Decision> {
-    const runsEnabled=Boolean(config.runSkill);
+    const runsEnabled=Boolean(config.runSkill)&&fullReach();
+    offered=reachable(offered);
     const system = systemPrompt(new Date().toISOString().slice(0, 10), skillsEnabled, runsEnabled, offered);
     const schema = decisionSchema(skillsEnabled, runsEnabled, offered);
     const validator: DecisionValidator = memoryJson
@@ -449,7 +463,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     }
   }
 
-  async function beginModelReceipt(id:string,runId:string,step:number,model:string,purpose:'decision'|'vision'){
+  async function beginModelReceipt(id:string,runId:string,step:number,model:string,purpose:'decision'|'vision'|'correction'){
     return runTransaction(id,runId,async tx=>{const receiptId=randomUUID();await tx.insertInto('chat_model_receipts').values({id:receiptId,run_id:runId,step,model,purpose,lease_token:execution.getStore()!.token,status:'started',usage_known:false,action_valid:false}).execute();return receiptId;});
   }
 
@@ -497,10 +511,15 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   async function finish(id: string, runId: string, state: BrainState, text: string, status: 'completed' | 'partial' | 'blocked', proof?: ChatExperienceProof) {
+    // A campaign task the reply leaves open ends with it, stating only what was really checked or done.
+    const campaignEnd = campaignEndEvent(state.campaign, Boolean(state.adsApproved));
+    const campaignTask = state.campaign ? campaignTaskId(runId, state.campaign.serial) : null;
+    if (campaignEnd && state.campaign) state.campaign.open = false;
     await saveState(runId, state);
     await runTransaction(id,runId,async (tx) => {
       const current = await tx.selectFrom('chat_conversations').select(['status', 'active_run_id']).where('id', '=', id).forUpdate().executeTakeFirstOrThrow();
       if (current.active_run_id !== runId || current.status !== 'running') throw new RunEnded();
+      if (campaignEnd && campaignTask) await appendCampaignEvent(tx, { conversationId: id, runId, taskId: campaignTask }, campaignEnd);
       await addMessage(tx, id, 'assistant', text);
       await tx.updateTable('chat_conversations').set({ status: 'idle', active_run_id: null, progress: null, error: null, updated_at: new Date() }).where('id', '=', id).execute();
       await tx.updateTable('chat_runs').set({ status, updated_at: new Date() }).where('id', '=', runId).execute();
@@ -658,6 +677,64 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     return seen.text.slice(0, 700);
   }
 
+  /**
+   * One focused rewrite of the ad lines a validator rejected. The text it returns
+   * is untrusted until the correction engine validates it again. A second model is
+   * tried only when one is configured and the first provably did no work.
+   */
+  async function askCorrection(id: string, runId: string, state: BrainState, request: RewriteRequest, signal: AbortSignal): Promise<string> {
+    const prompt = buildRewritePrompt(request), needed = estimateTokens(ADS_REWRITE_SYSTEM + prompt) + 300;
+    const structured = { name: ADS_REWRITE_SCHEMA_NAME, schema: ADS_REWRITE_JSON_SCHEMA };
+    const succeeded = (receiptId: string, result: { text: string; usage: { inputTokens: number; outputTokens: number }; usageEstimated?: boolean }) => db.updateTable('chat_model_receipts').set({ status: 'succeeded', input_tokens: result.usage.inputTokens, output_tokens: result.usage.outputTokens, usage_known: result.usageEstimated !== true, action_valid: true, output_hash: createHash('sha256').update(result.text).digest('hex'), finished_at: new Date() }).where('id', '=', receiptId).execute();
+    const failed = (receiptId: string, error: unknown) => { const usage = error instanceof ProviderError ? error.usage : undefined; return db.updateTable('chat_model_receipts').set({ status: usage ? 'failed' : 'unknown', input_tokens: usage?.inputTokens ?? null, output_tokens: usage?.outputTokens ?? null, usage_known: Boolean(usage), error_code: error instanceof ProviderError ? error.code : 'MODEL_FAILED', ...modelErrorMetadata(error), finished_at: new Date() }).where('id', '=', receiptId).execute(); };
+    await config.beforeModelDecision?.(needed, signal);
+    const router = config.inference?.routerFor('fast') ?? null;
+    if (router) {
+      const response = await router.generate<string>({ goal: prompt, system: ADS_REWRITE_SYSTEM, maxTokens: 700, signal, idempotencyKey: `${runId}:${state.steps}:correction:${createHash('sha256').update(prompt).digest('hex').slice(0, 16)}`, structured }, {
+        requires: { estimatedTokens: needed },
+        onAttempt: candidate => beginModelReceipt(id, runId, state.steps, candidate.key, 'correction'),
+        onSettled: async (receiptId, _candidate, outcome) => { await (outcome.ok ? succeeded(receiptId, outcome.result) : failed(receiptId, outcome.error)); },
+      });
+      return response.text;
+    }
+    const attempted = new Set<string>();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const model = pool.pick('fast', needed, Date.now(), attempted);
+      if (!model) break;
+      attempted.add(model);
+      const receiptId = await beginModelReceipt(id, runId, state.steps, model, 'correction');
+      try {
+        const response = await providers.get(model)!.generate({ goal: prompt, system: ADS_REWRITE_SYSTEM, maxTokens: 700, signal, structured });
+        if (response.rate) pool.record(model, response.rate.remainingTokens, response.rate.resetMs);
+        await succeeded(receiptId, response);
+        return response.text;
+      } catch (error) {
+        await failed(receiptId, error);
+        signal.throwIfAborted();
+        if (!(error instanceof ProviderError)) throw error;
+        if (error.failedGeneration) return error.failedGeneration;
+        const fallback = classifyProviderFallback(error);
+        if (!fallback.allowed || attempt === 1) throw error;
+        pool.block(model, fallback.retryAfterMs);
+        await waitForRetryAfter(fallback.retryAfterMs, signal);
+      }
+    }
+    throw new ProviderError('NO_ELIGIBLE_PROVIDER', 'لا يوجد نموذج متاح لتصحيح النص الآن.', false);
+  }
+
+  /** Binds the campaign task to this run: its events are fenced by the run's lease and its state is saved with the run. */
+  function campaignContext(ownerId: string, id: string, runId: string, state: BrainState, signal: AbortSignal, request: string): CampaignContext {
+    state.campaign ??= newCampaignRunState();
+    const modelReady = providers.size > 0 || config.inference?.active() === true;
+    return {
+      ownerId, runId, state: state.campaign, ports: tools?.ads?.campaign ?? TEXT_ONLY_PORTS, createInAccount: requestsPausedCampaign(request), signal, assertActive,
+      emit: async (taskId, event, dedupKey) => { await runTransaction(id, runId, tx => appendCampaignEvent(tx, { conversationId: id, runId, taskId }, event, { ...(dedupKey ? { dedupKey } : {}), redact: value => vault.scrubValue(id, value, clean) })); },
+      persist: () => saveState(runId, state),
+      ...(modelReady ? { rewrite: (rewriteRequest: RewriteRequest, rewriteSignal?: AbortSignal) => askCorrection(id, runId, state, rewriteRequest, rewriteSignal ?? signal) } : {}),
+      ...(config.campaignSleep ? { sleep: config.campaignSleep } : {}),
+    };
+  }
+
   /** Runs what the owner just approved and waits for the verified result. */
   async function followTask(ownerId: string, id: string, runId: string, pending: NonNullable<BrainState['pendingTask']>, signal: AbortSignal): Promise<string> {
     const work = tools?.work;
@@ -680,15 +757,65 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   interface PendingApproval { prompt: string; detail: string; task?: NonNullable<BrainState['pendingTask']>; computer?: NonNullable<BrainState['pendingComputer']> }
+  const ADS_SIGN_IN_STATES = new Set(['disconnected', 'unauthorized', 'needs_account']);
+  /**
+   * Google Ads sign-in from the chat. The user signs in on Google's own page;
+   * this only pauses, then reads the stored connection again. True means paused.
+   */
+  async function adsSignIn(ownerId: string, id: string, runId: string, state: BrainState): Promise<boolean> {
+    const ads = tools?.ads;
+    if (!ads?.connection) return false;
+    const picked = state.adsAccounts?.find(item => item.option === state.lastChoice);
+    state.lastChoice = null;
+    state.adsAccounts = null;
+    if (picked && ads.selectAccount) {
+      await addStep(id, runId, `اختيار حساب ${picked.name}`.slice(0, 80));
+      await ads.selectAccount(ownerId, picked);
+    }
+    const { state: connection, account } = await ads.connection(ownerId);
+    const stop = { id: 'stop', label: 'توقف هنا' };
+    const ask = async (question: Omit<ChatQuestion, 'id'>) => {
+      state.adsAsked = (state.adsAsked ?? 0) + 1;
+      await pause(id, runId, state, 'waiting_user', { question: JSON.stringify({ id: randomUUID(), ...question } satisfies ChatQuestion) }, question.prompt);
+      return true;
+    };
+    if (connection === 'disconnected' || connection === 'unauthorized') return ask({
+      prompt: state.adsAsked ? 'لم يكتمل تسجيل الدخول إلى Google بعد. سجّل الدخول ثم أكمل.' : 'أحتاج إذنك للوصول إلى Google Ads. سجّل دخولك في صفحة Google الرسمية وسأكمل طلبك تلقائيًا. لا أرى كلمة مرورك.',
+      action: 'google_ads_connect',
+      options: [{ id: 'connect', label: 'تسجيل الدخول إلى Google' }, { id: 'connected', label: 'تم تسجيل الدخول، أكمل' }, stop],
+    });
+    if (connection === 'needs_account') {
+      const accounts = await ads.accounts?.(ownerId) ?? [];
+      if (accounts.length && accounts.length <= 4) {
+        state.adsAccounts = accounts.map((item, index) => ({ ...item, option: `a${index + 1}` }));
+        return ask({ prompt: 'اكتمل تسجيل الدخول. في أي حساب إعلانات أعمل؟', options: [...state.adsAccounts.map(item => ({ id: item.option, label: clean(`${item.name} (${item.customerId})`).slice(0, 160) })), stop] });
+      }
+      return ask({
+        prompt: accounts.length ? `اكتمل تسجيل الدخول، ولديك ${accounts.length} حسابات إعلانات. اختر الحساب من قسم Google Ads في الأدوات المتقدمة، ثم أكمل.` : 'اكتمل تسجيل الدخول، لكن لم أجد حساب إعلانات يحمل حملات تحت هذا الدخول. راجع الحساب ثم أكمل.',
+        options: [{ id: 'recheck', label: 'تم الاختيار، أكمل' }, stop],
+      });
+    }
+    if (connection === 'connected' && state.adsAsked) state.trail.push({ step: state.steps, action: 'google ads sign-in', result: clean(`the user signed in on Google; account ${account ?? ''} is connected. Continue the original request now.`), changed: true });
+    // Any other state is reported by the tool itself; asking again would not change it.
+    state.adsReady = true;
+    state.adsWanted = false;
+    return false;
+  }
+
   interface Performed { page?: AgentPage; result: string; changed: boolean | null; verified?: boolean; done?: boolean; skillTask?: { id: string; status: string }; approval?: PendingApproval }
 
   async function perform(ownerId: string, id: string, runId: string, state: BrainState, decision: Decision, page: AgentPage | null, signal: AbortSignal, skillsEnabled = false, request = ''): Promise<Performed> {
     const fromAction = (action: AgentActionResult, result: string): Performed => ({ page: action.page, result, changed: action.changed });
+    if (!fullReach() && OWNER_ONLY.has(decision.tool)) throw new BrowserError('CHAT_TOOL_FORBIDDEN', 'هذه الأداة غير متاحة لحسابك.', 403);
     const element = decision.ref ? page?.elements.find((entry) => entry.ref === decision.ref) : undefined;
     const needsElement = () => {
       if (!page) throw new BrowserError('ASSISTANT_NO_PAGE', 'No page is open. Use open first.', 409);
       if (!element) throw new BrowserError('ASSISTANT_REF_UNKNOWN', `Element ${decision.ref} is not on the current page.`, 409);
       return element;
+    };
+    const needsAdsAccount = async () => {
+      const current = await tools?.ads?.connection?.(ownerId);
+      if (current && ADS_SIGN_IN_STATES.has(current.state)) throw new BrowserError('ADS_CONNECT_REQUIRED', 'يلزم تسجيل الدخول إلى Google Ads أولًا.', 409);
     };
     switch (decision.tool) {
       case 'run_skill': {
@@ -705,7 +832,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return {skillTask:task,result:`Created Runtime task ${task.id}; waiting for explicit approval. No skill or child tool executed.`,changed:true};
       }
       case 'ads_check': {
-        const report = checkAdsDraft(decision.text ?? '', `${request}\n${page?.text ?? ''}`);
+        const report = await guarded(() => checkCampaignDraft(campaignContext(ownerId, id, runId, state, signal, request), decision.text ?? '', `${request}\n${page?.text ?? ''}`));
         state.adsApproved = report.passed ? report.approved : null;
         return { result: report.text, changed: true };
       }
@@ -714,9 +841,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return { result: await tools.ads.status(ownerId), changed: true };
       case 'ads_report':
         if (!tools?.ads) break;
+        await needsAdsAccount();
         return { result: await tools.ads.report(ownerId), changed: true };
       case 'ads_draft': {
         if (!tools?.ads) break;
+        await needsAdsAccount();
         await assertActive();
         const key = createHash('sha256').update(decision.text ?? '').digest('hex').slice(0, 32);
         return { result: await tools.ads.draft(ownerId, decision.text ?? '', vault.scrub(id, request), `chat-ads-${runId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 32)}-${key}`), changed: true };
@@ -724,9 +853,14 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       case 'ads_create_paused': {
         if(!tools?.ads?.createPaused)break;
         if(!requestsPausedCampaign(request))throw new BrowserError('ADS_CREATION_NOT_REQUESTED','لم تطلب إنشاء حملة داخل الحساب.',403);
+        await needsAdsAccount();
         if(!state.adsApproved)throw new BrowserError('ADS_QUALITY_REQUIRED','يلزم فحص نص الحملة أولًا.',409);
         await assertActive();
-        const result=await tools.ads.createPaused(ownerId,decision.text??'',vault.scrub(id,request),`chat-paused-${runId.replace(/[^a-zA-Z0-9]/g,'')}`,assertActive);
+        const key=`chat-paused-${runId.replace(/[^a-zA-Z0-9]/g,'')}`;
+        // The tracked path corrects, verifies, reports each stage and reconciles; the plain one remains for a control without it.
+        const result=tools.ads.campaign
+          ?await guarded(()=>createPausedCampaign(campaignContext(ownerId,id,runId,state,signal,request),decision.text??'',vault.scrub(id,request),key))
+          :await tools.ads.createPaused(ownerId,decision.text??'',vault.scrub(id,request),key,assertActive);
         return {result,changed:true};
       }
       case 'load_skill': {
@@ -1000,7 +1134,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         return;
       }
-      const inventoryFormat = tools?.work?.inventory ? projectInventoryFormat(request) : null;
+      const inventoryFormat = tools?.work?.inventory && fullReach() ? projectInventoryFormat(request) : null;
       if (inventoryFormat && tools?.work?.inventory) {
         await active();
         await addStep(id, runId, 'قراءة مشاريع البرمجة');
@@ -1041,6 +1175,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (config.brainVersion === 'B' && !recallFormat && !state.goal) state.goal = newGoalState(request);
       for (;;) {
         await active();
+        if (!recallFormat && !state.adsReady && (state.adsWanted || requestsPausedCampaign(request)) && await adsSignIn(ownerId, id, runId, state)) return;
         if (page && !recallFormat) {
           const settled: AgentPage | null = await instincts(ownerId, id, runId, state, page, signal, personalSignIn);
           if (!settled) return;
@@ -1239,6 +1374,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             await pauseSecure(id,runId,state,{kind:'hands_on',site:'',note:null,fields:[],prompt:GRANT_NEEDED_PROMPT});
             return;
           }
+          if(error.code==='ADS_CONNECT_REQUIRED'){
+            // Not a failure of the tool: the loop's sign-in check pauses for the user and the tool is tried again after.
+            state.adsWanted=true;
+            state.adsReady=false;
+            await saveState(runId,state);
+            continue;
+          }
           state.trail.push({ step: state.steps, action, result: `failed: ${clean(error.message)}`, changed: false });
           const attemptWarning = noteAttempt(state, signature, false, true);
           if (state.goal) observeFailure(state.goal);
@@ -1265,6 +1407,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await tx.updateTable('chat_conversations').set({ status: 'failed', active_run_id: null, progress: null, error: message, updated_at: new Date() }).where('id', '=', id).execute();
         await tx.updateTable('chat_runs').set({ status: 'failed', updated_at: new Date() }).where('id', '=', runId).execute();
         await recordTerminalRun(tx, runId, 'failed');
+        await closeOpenCampaignTasks(tx, id, runId, unresolved => campaignFailureEvent(error, message, unresolved));
         if (config.recordSkillGap) await config.recordSkillGap(tx, { ownerId, chatRunId: runId, outcome: 'failed', signal: trustedSkillGapSignal(error) });
       }).catch(()=>{});
       const current=execution.getStore();if(current)forgetVault(id,current.token);
@@ -1289,11 +1432,12 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       });
       throw new BrowserError('CHAT_SHUTTING_DOWN', 'الخدمة تتوقف الآن. حاول بعد قليل.', 503);
     }
+    const full = config.fullAccess ? await config.fullAccess(ownerId) : true;
     const controller = new AbortController();
     controllers.set(id, {runId,token,controller});
     if(!preserveVault){const prior=vaultOwners.get(id);if(prior)forgetVault(id,prior);}
     vaultOwners.set(id,token);
-    const worker = execution.run({ownerId,id,runId,token,controller},()=>work(ownerId, id, runId, controller)).catch(() => {});
+    const worker = execution.run({ownerId,id,runId,token,controller,full},()=>work(ownerId, id, runId, controller)).catch(() => {});
     workers.set(id, worker);
     void worker.finally(() => { if (workers.get(id) === worker) workers.delete(id); });
   }
@@ -1384,6 +1528,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if (row.status !== 'waiting_user' || !option || !row.active_run_id) throw new BrowserError('CHAT_QUESTION_CHANGED', 'هذا السؤال لم يعد معلقًا.', 409);
     return resume(ownerId, id, row.active_run_id, (state) => {
       state.trail.push({ step: state.steps, action: 'asked the user', result: `user chose: ${option.label}`, changed: true });
+      state.lastChoice = input.optionId;
       state.failures = 0;
       state.unchanged = 0;
     }, option.label,{status:'waiting_user',field:'question',requestId:input.questionId,stop:input.optionId==='stop'});
@@ -1450,6 +1595,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await tx.updateTable('chat_effect_receipts').set({status:'unknown',finished_at:new Date()}).where('run_id','=',row.active_run_id).where('status','=','started').execute();
         await tx.updateTable('chat_model_receipts').set({status:'unknown',error_code:'CHAT_CANCELLED',finished_at:new Date()}).where('run_id','=',row.active_run_id).where('status','=','started').execute();
         await recordTerminalRun(tx, row.active_run_id, 'cancelled');
+        await closeOpenCampaignTasks(tx, id, row.active_run_id, unresolved => campaignCancelEvent('owner_cancelled', unresolved));
       }
     });
     cancelledController?.abort(new Error('CHAT_CANCELLED'));
@@ -1507,6 +1653,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await tx.updateTable('chat_effect_receipts').set({status:'unknown',finished_at:new Date()}).where('run_id','=',row.run_id).where('status','=','started').execute();
         await tx.updateTable('chat_model_receipts').set({status:'unknown',error_code:'CHAT_SHUTDOWN',finished_at:new Date()}).where('run_id','=',row.run_id).where('status','=','started').execute();
         await recordTerminalRun(tx, row.run_id, 'interrupted');
+        await closeOpenCampaignTasks(tx, row.id, row.run_id, unresolved => campaignCancelEvent('run_interrupted', unresolved));
         await tx.updateTable('chat_conversations').set({status:'failed',active_run_id:null,question:null,approval:null,secure:null,progress:null,error:'توقفت جلسة التنفيذ. لم يُكرر أي إجراء؛ راجع الأثر قبل طلب جديد.',updated_at:new Date()}).where('id','=',row.id).execute();
         abandoned.push({ownerId:row.owner_id,state:row.state});
       }
@@ -1522,6 +1669,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     pointer: (ownerId: string, id: string, raw: unknown) => { const input = ChatPointerSchema.parse(raw); return handsOn(ownerId, id, () => browser.pointer(ownerId, id, input.x, input.y)); },
     keyboard: (ownerId: string, id: string, raw: unknown) => { const input = ChatKeyboardSchema.parse(raw); return handsOn(ownerId, id, () => browser.keyboard(ownerId, id, input)); },
     settled: async (id: string) => { await workers.get(id); },
+    /** Replay or resume of the campaign event log: every event after `after`, in order. */
+    campaignEvents: async (ownerId: string, id: string, after: number) => { await owned(ownerId, id); return await readCampaignEvents(db, id, after) ?? { taskId: null, lastSeq: 0, events: [] }; },
   };
 }
 
@@ -1533,6 +1682,7 @@ export async function registerCommandChatRoutes(app: FastifyInstance, { control,
   app.get('/api/chat/conversations', async (request) => control.list((await owner(request)).id));
   app.post('/api/chat/conversations', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request) => control.create((await owner(request)).id, request.body ?? {}));
   app.get<Conversation>('/api/chat/conversations/:id', live, async (request) => control.detail((await owner(request)).id, id(request.params.id)));
+  app.get<Conversation & { Querystring: { after?: string } }>('/api/chat/conversations/:id/campaign-events', live, async (request) => control.campaignEvents((await owner(request)).id, id(request.params.id), z.coerce.number().int().min(0).max(100000).default(0).parse(request.query.after)));
   app.post<Conversation>('/api/chat/conversations/:id/messages', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request) => control.send((await owner(request)).id, id(request.params.id), request.body));
   app.post<Conversation>('/api/chat/conversations/:id/respond', async (request) => control.respond((await owner(request)).id, id(request.params.id), request.body));
   app.post<Conversation>('/api/chat/conversations/:id/approve', async (request) => control.approve((await owner(request)).id, id(request.params.id), request.body));

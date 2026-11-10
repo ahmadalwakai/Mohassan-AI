@@ -164,7 +164,9 @@ describe('the assistant with the skill active', () => {
     ], 'جهز حملة Google Ads لنقل الأثاث في غلاسكو');
     expect(seen[0].tools).toContain('ads_check');
     expect(seen[0].prompt).toContain('google-ads-campaign');
-    expect(seen[1].prompt).toContain('headline 1 is 35 characters, limit 30');
+    // The program removes the forbidden "!" itself, then reports the length of what is left and the unsupported claim.
+    expect(seen[1].prompt).toContain('headline 1 is 34 characters, limit 30');
+    expect(seen[1].prompt).toContain('"Same Day" was not stated');
     expect(seen[2].prompt).toContain('PASS:');
     expect(seen[1].tools).toContain('ads_check');
     expect(seen[2].tools).not.toContain('ads_check');

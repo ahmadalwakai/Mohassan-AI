@@ -278,6 +278,15 @@ export interface BrainState {
   /** The draft from the latest passing ads_check, as shown to the owner; null after a failure. Only code sets this. */
   adsApproved?: string | null;
   adsReminded?: boolean;
+  /** Google Ads sign-in from the chat: set by code only, never by the model. */
+  adsWanted?: boolean;
+  adsReady?: boolean;
+  adsAsked?: number;
+  adsAccounts?: (import('./tools.js').AdsAccountChoice & { option: string })[] | null;
+  /** The campaign task's saved operation state: attempts, corrections and whether a write was sent. Only code sets this. */
+  campaign?: import('./campaign-run.js').CampaignRunState;
+  /** The option id of the owner's latest button answer; cleared once read. */
+  lastChoice?: string | null;
   /** A Runtime task that exists but has not been approved, so it never ran. */
   pendingTask?: { id: string; label: string; tool: WorkTool } | null;
   pendingComputer?: { step: import('./tools.js').ComputerStep; label: string } | null;

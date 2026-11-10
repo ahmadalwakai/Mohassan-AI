@@ -7,7 +7,7 @@ import "./globals.css";
 const chatFont = IBM_Plex_Sans_Arabic({ subsets: ["arabic", "latin"], weight: ["400", "500", "600", "700"], variable: "--font-chat", display: "swap" });
 
 export const metadata: Metadata = {
-  title: "محسّن",
+  title: "موحسن",
   description: "مساعدك الذكي",
   robots: { index: false, follow: false },
 };

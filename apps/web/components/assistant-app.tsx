@@ -6,6 +6,8 @@ import type { ChatConversation as Conversation, ChatConversationSummary as Summa
 import { Markdown } from "./markdown";
 import { takeoverInput } from "./takeover-input";
 import { BrowserFilesPanel } from './browser-files-panel';
+import { CampaignCard } from "./campaign-card";
+import { adsConnectProblems, pendingAdsConnect } from "./ads-connect";
 import styles from "./assistant-app.module.css";
 
 const POLL_MS = 900;
@@ -15,7 +17,7 @@ const SAVED_CONVERSATION = "mohassan-conversation";
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { ...options, credentials: "same-origin", cache: "no-store", headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...options.headers } });
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(response.status === 429 ? "طلبات كثيرة متتابعة. انتظر لحظة ثم حاول مجددًا." : body?.error?.message ?? "تعذر إتمام الطلب. حاول مجددًا.");
+  if (!response.ok) throw new Error(response.status === 429 && body?.error?.code !== "MEMBER_DAILY_LIMIT" ? "طلبات كثيرة متتابعة. انتظر لحظة ثم حاول مجددًا." : body?.error?.message ?? "تعذر إتمام الطلب. حاول مجددًا.");
   return body as T;
 }
 const messageOf = (error: unknown) => error instanceof Error ? error.message : "تعذر الاتصال. حاول مجددًا.";
@@ -168,6 +170,21 @@ export function AssistantApp({ name, onAdvanced, onSignOut }: { name: string; on
     return result.conversations;
   }, []);
 
+  // Back from Google's consent page: answer the waiting question so the task continues by itself.
+  useEffect(() => {
+    const result = new URLSearchParams(location.search).get("googleAds");
+    if (!result) return;
+    const pending = pendingAdsConnect.take();
+    if (!pending) return;
+    window.history.replaceState(null, "", location.pathname);
+    saved.set(pending.conversationId);
+    setSelectedId(pending.conversationId);
+    if (result !== "connected") { setError(adsConnectProblems[result] ?? adsConnectProblems.failed!); return; }
+    void api<Conversation>(`/api/chat/conversations/${pending.conversationId}/respond`, { method: "POST", body: JSON.stringify({ questionId: pending.questionId, optionId: "connected" }) })
+      .then((next) => { setConversation(next); void refreshHistory().catch(() => {}); })
+      .catch((caught) => setError(messageOf(caught)));
+  }, [refreshHistory]);
+
   useEffect(() => {
     let active = true;
     void refreshHistory().then((items) => {
@@ -231,6 +248,20 @@ export function AssistantApp({ name, onAdvanced, onSignOut }: { name: string; on
     }
   }
   const post = (path: string, body: unknown) => api<Conversation>(`/api/chat/conversations/${conversation!.id}/${path}`, { method: "POST", body: JSON.stringify(body) });
+
+  async function connectGoogleAds() {
+    if (busy || !conversation?.question) return;
+    setBusy(true);
+    setError("");
+    try {
+      const { authorizationUrl } = await api<{ authorizationUrl: string }>("/api/google-ads/connect", { method: "POST", body: "{}" });
+      pendingAdsConnect.set({ conversationId: conversation.id, questionId: conversation.question.id });
+      location.assign(authorizationUrl);
+    } catch (caught) {
+      setError(messageOf(caught));
+      setBusy(false);
+    }
+  }
 
   async function send(event?: FormEvent) {
     event?.preventDefault();
@@ -332,7 +363,7 @@ export function AssistantApp({ name, onAdvanced, onSignOut }: { name: string; on
     {sidebarOpen ? <button className={styles.scrim} aria-label="إغلاق القائمة" onClick={() => setSidebarOpen(false)} /> : null}
     <nav className={`${styles.sidebar} ${sidebarOpen ? styles.sidebarOpen : ""}`} aria-label="المحادثات">
       <div className={styles.brandRow}>
-        <span className={styles.brand}><span className={styles.brandMark} aria-hidden="true">م</span><strong>محسّن</strong></span>
+        <span className={styles.brand}><span className={styles.brandMark} aria-hidden="true">م</span><strong>موحسن</strong></span>
         <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="إغلاق القائمة" onClick={() => setSidebarOpen(false)}><X size={18} /></button>
       </div>
       <button className={styles.newChat} onClick={startNew}><SquarePen size={16} />محادثة جديدة</button>
@@ -386,7 +417,8 @@ export function AssistantApp({ name, onAdvanced, onSignOut }: { name: string; on
               {index === conversation!.messages.length - 1 && message.role === "user" ? <Steps conversation={conversation!} /> : null}
             </article>)}
             {conversation!.messages.at(-1)?.role === "assistant" && conversation!.steps.length && !answering && !blocked ? <Steps conversation={conversation!} /> : null}
-            {conversation!.question ? <div className={styles.choices}>{conversation!.question.options.map((option) => <button key={option.id} disabled={busy} onClick={() => void act(() => post("respond", { questionId: conversation!.question!.id, optionId: option.id }))}>{option.label}</button>)}</div> : null}
+            {conversation!.campaign?.events.length ? <CampaignCard stream={conversation!.campaign} running={running} /> : null}
+            {conversation!.question ? <div className={styles.choices}>{conversation!.question.options.map((option) => <button key={option.id} disabled={busy} onClick={() => conversation!.question!.action === "google_ads_connect" && option.id === "connect" ? void connectGoogleAds() : void act(() => post("respond", { questionId: conversation!.question!.id, optionId: option.id }))}>{option.label}</button>)}</div> : null}
             {conversation!.approval ? <div className={styles.card}>
               <div className={styles.cardTitle}><ShieldAlert size={16} />يحتاج موافقتك</div>
               <p className={styles.cardHint}>{conversation!.approval.detail}</p>

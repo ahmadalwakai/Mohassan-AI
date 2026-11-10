@@ -57,7 +57,18 @@ describe('the assistant with a connected account', () => {
     await post(`/api/skills/${skill.id}/activate`, { expectedRevision: skill.revision, approve: true });
     const created = await post('/api/chat/conversations', { goal });
     await application.chat.settled(created.json().id);
-    return { seen, google, headers, app, detail: (await app.inject({ url: `/api/chat/conversations/${created.json().id}`, headers })).json() };
+    const id: string = created.json().id;
+    const read = async () => (await app.inject({ url: `/api/chat/conversations/${id}`, headers })).json();
+    const choose = async (optionId: string) => {
+      const response = await post(`/api/chat/conversations/${id}/respond`, { questionId: (await read()).question.id, optionId });
+      await application.chat.settled(id);
+      return response;
+    };
+    const signIn = async () => {
+      const state = new URL((await post('/api/google-ads/connect', {})).json().authorizationUrl).searchParams.get('state');
+      await app.inject({ url: `/api/google-ads/oauth/callback?code=good-code&state=${state}`, headers });
+    };
+    return { seen, google, headers, app, detail: await read(), read, choose, signIn };
   }
 
   it('offers the account tools only with the skill, and reads real figures', async () => {
@@ -79,9 +90,38 @@ describe('the assistant with a connected account', () => {
     for (const tools of seen.map(item => item.tools)) expect(tools.some(tool => /publish|launch|approve/.test(tool))).toBe(false);
   }, 60000);
 
-  it('tells the model plainly when nothing is connected', async () => {
-    const { seen } = await scenario([{ tool: 'ads_status' }, { tool: 'ads_report' }, { tool: 'answer', text: 'لا يوجد حساب.', outcome: 'blocked' }], false, 'حلل حساب Google Ads');
+  it('asks for Google sign-in when a tool needs the account, then continues the same task', async () => {
+    const { seen, detail, read, choose, signIn } = await scenario([{ tool: 'ads_status' }, { tool: 'ads_report' }, { tool: 'ads_report' }, { tool: 'answer', text: 'تقرير الحساب.', outcome: 'done' }], false, 'حلل حساب Google Ads');
     expect(seen[1]!.prompt).toContain('connection: disconnected');
-    expect(seen[2]!.prompt).toContain('لم يُربط حساب Google Ads');
+    expect(seen).toHaveLength(2);
+    expect(detail.status).toBe('waiting_user');
+    expect(detail.question).toMatchObject({ action: 'google_ads_connect', options: [{ id: 'connect' }, { id: 'connected' }, { id: 'stop' }] });
+
+    await signIn();
+    await choose('connected');
+    const account = await read();
+    expect(account.status).toBe('waiting_user');
+    expect(account.question.action).toBeUndefined();
+    expect(account.question.options.map((option: { label: string }) => option.label)).toEqual([`MA Removals (${CUSTOMER})`, expect.stringContaining('Child Removals'), 'توقف هنا']);
+    expect(seen).toHaveLength(2);
+
+    await choose('a1');
+    expect(seen[2]!.prompt).toContain('the user signed in on Google; account MA Removals is connected');
+    expect(seen[3]!.prompt).toContain('Observed from Google Ads');
+    expect((await read()).status).toBe('idle');
+  }, 60000);
+
+  it('asks for sign-in before any model call when a campaign in the account is requested, and does not trust an unproven "done"', async () => {
+    const { seen, detail, read, choose } = await scenario([], false, 'أنشئ حملة بحث في حساب Google Ads لشركة نقل في غلاسكو');
+    expect(seen).toHaveLength(0);
+    expect(detail.question.action).toBe('google_ads_connect');
+    await choose('connected');
+    const again = await read();
+    expect(seen).toHaveLength(0);
+    expect(again.status).toBe('waiting_user');
+    expect(again.question.action).toBe('google_ads_connect');
+    expect(again.messages.at(-1).text).toContain('لم يكتمل تسجيل الدخول');
+    expect((await choose('stop')).statusCode).toBe(200);
+    expect((await read()).status).not.toBe('waiting_user');
   }, 60000);
 });

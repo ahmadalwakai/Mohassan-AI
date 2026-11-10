@@ -9,6 +9,7 @@ import { createDatabase, migrate } from '@mohassan/database';
 import { Runtime } from '@mohassan/runtime';
 import { CreateTaskSchema, SetupSchema, WorkspaceSnapshotSchema, SkillBenchmarkSuiteSchema, type Integration } from '@mohassan/contracts';
 import { createAuth, createOwner, migrateAuth, recoverLocalSetupClaim } from './auth.js';
+import { MEMBER_QUOTA_ROUTES, MEMBER_ROUTES, PUBLIC_ROUTES, memberRunsToday, migrateMembers, registerMemberRoutes, roleOf, routeKey, type WorkspaceRole } from './members.js';
 import { createAIControl } from './ai.js';
 import { ProviderError, GroqProvider } from '@mohassan/providers';
 import { createCodingControl } from './coding.js';
@@ -67,6 +68,8 @@ export interface AppConfig {
   learningLocalModel?:{model:string;baseUrl?:string};
   /** Server-side fixture load only; never an API option or production setting. */
   testRequestLimit?:number;
+  /** Chat requests a member may start in 24 hours. */
+  memberDailyRuns?:number;
 }
 export function secretEqual(a: string, b: string) {
   const left = Buffer.from(a), right = Buffer.from(b);
@@ -79,6 +82,7 @@ export async function createApplication(config: AppConfig) {
   if(config.testRequestLimit!==undefined&&(config.production||!Number.isInteger(config.testRequestLimit)||config.testRequestLimit<120||config.testRequestLimit>2000))throw new Error('Test request limits are restricted to bounded local fixtures.');
   const database = await createDatabase({connectionString: config.databaseUrl, dataDir: config.dataDir});
   await migrateAuth(database.db);
+  await migrateMembers(database.db);
   if (database.mode === 'embedded' && !config.production) await recoverLocalSetupClaim(database.db);
   await migrate(database.db);
   await windowsMigration(database.db);
@@ -104,6 +108,9 @@ export async function createApplication(config: AppConfig) {
     return ai.plan(goal,{...context,memoryContext,...(guidance.text?{skillContext:guidance.text}:{})});
   }):undefined,code:coding.available?coding.execute:undefined,verifyCode:coding.available?coding.verify:undefined,studioChange:studioAi.available?studioAi.execute:undefined,verifyStudioChange:studioAi.available?studioAi.verify:undefined,onTaskSettled:async(ownerId)=>{await memory.sync(ownerId);},onError: () => console.error(JSON.stringify({level:'error',event:'worker_tick_failed',message:'تعذر تقدم طابور المهام؛ ستعاد المحاولة.'}))};
   const app = Fastify({logger: false, bodyLimit: 16384, trustProxy: false});
+  // Every registered route, so tests can prove each one sits behind the member gate.
+  const routes = new Set<string>();
+  app.addHook('onRoute', route => { for (const method of [route.method].flat()) { const key = routeKey(method, route.url); if (key) routes.add(key); } });
   await app.register(rateLimit, {max: config.testRequestLimit??120, timeWindow: '1 minute'});
   const origins = new Set([new URL(config.webOrigin).origin]);
   if (!config.production) {
@@ -127,6 +134,38 @@ export async function createApplication(config: AppConfig) {
       if (typeof request.headers.origin !== 'string' || !origins.has(request.headers.origin)) {
         return reply.code(403).send({error: {code: 'ORIGIN_DENIED', message: 'مصدر الطلب غير مسموح به.'}});
       }
+    }
+  });
+  type SessionUser = {id: string; name: string; email: string};
+  const sessions = new WeakMap<object, Promise<SessionUser | null>>();
+  const roles = new WeakMap<object, Promise<WorkspaceRole | null>>();
+  const sessionUser = (request: {headers: Record<string, unknown>}) => {
+    let found = sessions.get(request);
+    if (!found) {
+      const headers = new Headers();
+      if (typeof request.headers.cookie === 'string') headers.set('cookie', request.headers.cookie);
+      found = auth.api.getSession({headers}).then(session => session ? {id: session.user.id, name: session.user.name, email: session.user.email} : null);
+      sessions.set(request, found);
+    }
+    return found;
+  };
+  const roleFor = (request: {headers: Record<string, unknown>}, userId: string) => {
+    let found = roles.get(request);
+    if (!found) { found = roleOf(database.db, userId); roles.set(request, found); }
+    return found;
+  };
+  const memberDailyRuns = config.memberDailyRuns ?? 40;
+  // Default-deny: every route needs a session, and a member reaches only MEMBER_ROUTES.
+  app.addHook('onRequest', async (request, reply) => {
+    const key = routeKey(request.method, request.routeOptions.url);
+    if (!key || PUBLIC_ROUTES.has(key)) return;
+    const user = await sessionUser(request);
+    if (!user) return reply.code(401).send({error: {code: 'UNAUTHORIZED', message: 'سجل الدخول للمتابعة.'}});
+    const role = await roleFor(request, user.id);
+    if (role === 'owner') return;
+    if (role !== 'member' || !MEMBER_ROUTES.has(key)) return reply.code(403).send({error: {code: 'MEMBER_FORBIDDEN', message: 'هذه الخدمة غير متاحة لحسابك.'}});
+    if (MEMBER_QUOTA_ROUTES.has(key) && await memberRunsToday(database.db, user.id) >= memberDailyRuns) {
+      return reply.code(429).send({error: {code: 'MEMBER_DAILY_LIMIT', message: `وصلت إلى حد ${memberDailyRuns} طلبًا خلال 24 ساعة. حاول لاحقًا.`}});
     }
   });
   app.setErrorHandler((error: any, _request, reply) => {
@@ -171,11 +210,14 @@ export async function createApplication(config: AppConfig) {
     return reply.code(response.status).send(await response.text());
   }});
   const owner = async (request: {headers: Record<string, unknown>}) => {
-    const headers = new Headers();
-    if (typeof request.headers.cookie === 'string') headers.set('cookie', request.headers.cookie);
-    const session = await auth.api.getSession({headers});
-    if (!session) throw Object.assign(new Error('سجل الدخول للمتابعة.'), {statusCode: 401, code: 'UNAUTHORIZED'});
-    return session.user;
+    const user = await sessionUser(request);
+    if (!user) throw Object.assign(new Error('سجل الدخول للمتابعة.'), {statusCode: 401, code: 'UNAUTHORIZED'});
+    return user;
+  };
+  const role = async (request: {headers: Record<string, unknown>}) => {
+    const found = await roleFor(request, (await owner(request)).id);
+    if (!found) throw Object.assign(new Error('هذه الخدمة غير متاحة لحسابك.'), {statusCode: 403, code: 'MEMBER_FORBIDDEN'});
+    return found;
   };
   await registerSearchRoutes(app,{owner,index:searchIndex,store:searchStore});
   browser=await registerBrowserRoutes(app,{db:database.db,owner,config:{...config.browser,searchProvider},managedLifecycle:false});
@@ -215,11 +257,13 @@ export async function createApplication(config: AppConfig) {
   const windows=await registerWindowsRoutes(app,{db:database.db,owner,config:{webOrigin:config.webOrigin,production:config.production,windowsEnabled:config.windowsEnabled}});
   const googleAds=createGoogleAdsControl(database.db,{...config.googleAds,webOrigin:config.webOrigin,fetchPage:config.googleAds?.fetchPage??landingPageReader(config.browser)});
   await registerGoogleAdsRoutes(app,{control:googleAds,owner});
+  await registerMemberRoutes(app,{db:database.db,auth,webOrigin:config.webOrigin,owner,role,dailyRuns:memberDailyRuns,adsAvailable:()=>googleAds.configured,imagesAvailable:()=>false});
   const assistantTools=createAssistantTools({memory,coding,studio,studioChange:studioAi.available,runtime,windows,googleAds});
   const inference=await createInferenceControl(database.db,{...config.inference,groq:{apiKey:config.groqApiKey,fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b']},fetch:config.aiFetch});
   await registerInferenceRoutes(app,{control:inference,owner});
   const agentBrowser=new AgentBrowser({profileDir:config.browserProfileDir??join(tmpdir(),`mohassan-browser-${randomUUID()}`),testOrigins:config.browser?.testOrigins,channel:config.browserChannel});
-  const chat=await createCommandChatControl(database.db,{apiKey:config.groqApiKey,tools:assistantTools,inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
+  const adsSleep=config.googleAds?.sleep;
+  const chat=await createCommandChatControl(database.db,{...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
     learningContext:learning.context,
     ...(config.skillEngineEnabled?{recordSkillGap,skillContext:skills.context,loadSkill:skills.loadInstruction,runSkill:async(ownerId,input,context)=>{
       context.signal.throwIfAborted();
@@ -280,5 +324,5 @@ export async function createApplication(config: AppConfig) {
   app.addHook('onClose', async () => {clearInterval(benchmarkMaintenance);try{await benchmarkMaintenanceRun;await Promise.all([skillBenchmarks.shutdown(),skillForge.shutdown()]);}finally{try{await chat.shutdown();}finally{try{await runtime.stop();}finally{try{await browser.shutdown();}finally{try{await studioLive.close();}finally{await database.close();}}}}}});
   if (config.runWorker) runtime.start();
   await app.ready();
-  return {app, runtime, database, auth,ai,coding,studio,studioAi,studioLive,browser,browserTask,memory,skills,chat,skillExecution,skillBenchmarks,skillForge,googleAds,inference};
+  return {app, routes, runtime, database, auth,ai,coding,studio,studioAi,studioLive,browser,browserTask,memory,skills,chat,skillExecution,skillBenchmarks,skillForge,googleAds,inference};
 }

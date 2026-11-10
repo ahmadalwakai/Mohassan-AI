@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CampaignEventStreamSchema } from './campaign-progress';
 
 export const ChatStatusSchema = z.enum(['idle', 'running', 'waiting_user', 'waiting_input', 'waiting_approval', 'failed', 'cancelled']);
 
@@ -12,6 +13,8 @@ export const ChatQuestionSchema = z.object({
   id: z.uuid(),
   prompt: z.string().min(1).max(1000),
   options: z.array(ChatOptionSchema).max(5),
+  /** The `connect` option opens Google's own consent page instead of answering. */
+  action: z.literal('google_ads_connect').optional(),
 }).strict();
 
 export const ChatApprovalSchema = z.object({
@@ -80,6 +83,8 @@ export const ChatConversationSchema = ChatConversationSummarySchema.extend({
   steps: z.array(ChatStepSchema),
   error: z.string().nullable(),
   configured: z.boolean(),
+  /** Structured events of the latest Google Ads campaign task in this conversation. Absent when there is none. */
+  campaign: CampaignEventStreamSchema.nullable().optional(),
 }).strict();
 
 export type ChatConversation = z.infer<typeof ChatConversationSchema>;

@@ -10,6 +10,7 @@ export function getConfig(): AppConfig {
     setupToken: process.env.SETUP_TOKEN ?? '', webOrigin: process.env.WEB_ORIGIN ?? 'http://127.0.0.1:3000',
     production: process.env.NODE_ENV === 'production', runWorker: process.env.RUN_WORKER !== 'false',
     skillEngineEnabled: process.env.SKILL_ENGINE_ENABLED === 'true',
+    memberDailyRuns: /^[1-9]\d{0,3}$/.test(process.env.MEMBER_DAILY_RUNS ?? '') ? Number(process.env.MEMBER_DAILY_RUNS) : undefined,
     groqApiKey:process.env.GROQ_API_KEY||undefined,groqModel:process.env.GROQ_MODEL||'openai/gpt-oss-20b',groqReasoningModel:process.env.GROQ_REASONING_MODEL||'openai/gpt-oss-120b',
     codingDataDir:process.env.CODING_DATA_DIR||resolve('.data/coding'),codingAllowedRoots:process.env.CODING_ALLOWED_ROOTS?.split(delimiter).filter(Boolean)??[process.cwd()],
     windowsEnabled:process.env.NODE_ENV==='production'?process.env.WINDOWS_REMOTE_ENABLED==='true':process.env.WINDOWS_REMOTE_ENABLED!=='false',

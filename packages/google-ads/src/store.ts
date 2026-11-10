@@ -14,6 +14,8 @@ export async function googleAdsMigration(db: Db) {
   await sql`CREATE TABLE IF NOT EXISTS google_ads_audit(id text PRIMARY KEY,owner_id text NOT NULL,draft_id text,type text NOT NULL,detail jsonb NOT NULL,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS google_ads_audit_owner_idx ON google_ads_audit(owner_id,created_at DESC)`.execute(db);
   await sql`CREATE TABLE IF NOT EXISTS google_ads_experiences(id text PRIMARY KEY,owner_id text NOT NULL,customer_id text NOT NULL,kind text NOT NULL,statement text NOT NULL,evidence jsonb NOT NULL,dedup_key text NOT NULL,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(owner_id,dedup_key))`.execute(db);
+  // Counters over fixed vocabularies only: no ad text, no account data and no model prose can be stored here.
+  await sql`CREATE TABLE IF NOT EXISTS google_ads_recovery_lessons(owner_id text NOT NULL,category text NOT NULL,code text NOT NULL,strategy text NOT NULL,verified_by text NOT NULL CHECK(verified_by IN ('local_validator','google_validate_only','google_readback')),successes integer NOT NULL DEFAULT 0,failures integer NOT NULL DEFAULT 0,updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(owner_id,category,code,strategy,verified_by))`.execute(db);
 }
 
 export const json = (value: unknown) => JSON.stringify(value);

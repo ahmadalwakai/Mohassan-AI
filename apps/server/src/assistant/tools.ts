@@ -4,6 +4,7 @@ import type { WindowsControl } from '@mohassan/windows';
 import { GoogleAdsBriefSchema } from '@mohassan/contracts';
 import type { GoogleAdsControl } from '@mohassan/google-ads';
 import { z } from 'zod';
+import type { CampaignPorts } from './campaign-run.js';
 
 /**
  * What the assistant may reach outside the browser. Each adapter calls the
@@ -20,6 +21,7 @@ export interface ComputerElement { ref: string; name: string; type: string }
 export interface ComputerScreen { title: string; canAct: boolean; hasPasswordField: boolean; elements: ComputerElement[]; jpeg: string }
 export interface PendingWorkTask { id: string; label: string; prompt: string; detail: string }
 export interface TaskOutcome { settled: boolean; text: string }
+export interface AdsAccountChoice { customerId: string; loginCustomerId: string | null; name: string }
 export type MemoryLookupResult = string | { text: string; evidence: readonly string[] };
 
 export interface AssistantTools {
@@ -42,6 +44,13 @@ export interface AssistantTools {
     report(ownerId: string): Promise<string>;
     draft(ownerId: string, text: string, request: string, idempotencyKey: string): Promise<string>;
     createPaused?(ownerId:string,text:string,request:string,idempotencyKey:string,assertActive:()=>Promise<void>):Promise<string>;
+    /** The stored connection state; no request goes to Google. */
+    connection?(ownerId: string): Promise<{ state: string; account: string | null }>;
+    /** Accounts that can hold campaigns, read from Google with the owner's grant. */
+    accounts?(ownerId: string): Promise<AdsAccountChoice[]>;
+    selectAccount?(ownerId: string, choice: AdsAccountChoice): Promise<void>;
+    /** The tracked campaign task. Errors keep their module type so recovery can classify them. */
+    campaign?: CampaignPorts;
   };
   computer?: {
     view(ownerId: string): Promise<ComputerScreen>;
@@ -83,7 +92,7 @@ export function parseAdsDraft(text: string, request: string) {
 const shortType = (type: string) => type.replace(/^ControlType\./, '');
 
 /** Module errors become tool results the assistant can report honestly. */
-async function guarded<T>(run: () => Promise<T>): Promise<T> {
+export async function guarded<T>(run: () => Promise<T>): Promise<T> {
   try { return await run(); } catch (error) {
     if (error instanceof BrowserError) throw error;
     if (error instanceof z.ZodError) throw new BrowserError('ASSISTANT_INPUT', 'مدخلات الأداة غير صالحة.', 400);
@@ -204,6 +213,12 @@ export function createAssistantTools({ memory, coding, studio, studioChange, run
     },
     // No tool here can publish: approval and publishing exist only in the owner's Google Ads section.
     ...(googleAds?.configured ? { ads: {
+      connection: ownerId => guarded(async () => {
+        const status = await googleAds.status(ownerId);
+        return { state: status.state, account: status.account?.name ?? null };
+      }),
+      accounts: ownerId => guarded(async () => (await googleAds.listAccounts(ownerId)).filter(item => !item.manager).map(({ customerId, loginCustomerId, name }) => ({ customerId, loginCustomerId, name }))),
+      selectAccount: (ownerId, choice) => guarded(() => googleAds.selectAccount(ownerId, choice.customerId, choice.loginCustomerId)),
       status: ownerId => guarded(async () => {
         const status = await googleAds.status(ownerId);
         return [`connection: ${status.state}`, status.message, status.account ? `account: ${status.account.name} (${status.account.customerId}, ${status.account.currency})` : 'no account selected', `publishing available: ${status.publishing.available}`, ...status.publishing.gates.filter(gate => !gate.passed).map(gate => `closed gate: ${gate.detail}`)].join('\n');
@@ -217,6 +232,16 @@ export function createAssistantTools({ memory, coding, studio, studioChange, run
         const draft = await googleAds.createDraft(ownerId, parseAdsDraft(text, request), key);
         return [`Saved preview ${draft.id}. Nothing was sent to the account. The owner reviews, validates and approves it in the Google Ads section; you cannot publish.`, ...(draft.strategy?.recommendations ?? []).map(item => `${item.basis}: ${item.title}. ${item.reason}`), ...(draft.strategy?.blockers ?? []).map(item => `blocker: ${item}`)].join('\n');
       }),
+      campaign: {
+        parse: parseAdsDraft,
+        landing: (url, signal) => googleAds.inspectLanding(url, signal),
+        gates: async ownerId => (await googleAds.status(ownerId)).publishing,
+        drafts: ownerId => googleAds.drafts(ownerId),
+        createPaused: (ownerId, brief, key, authority, observer) => googleAds.createPausedCampaign(ownerId, brief, key, authority, observer),
+        reconcile: (ownerId, draftId, revision) => googleAds.reconcile(ownerId, draftId, revision),
+        discard: async (ownerId, draftId, revision) => { await googleAds.discard(ownerId, draftId, revision); },
+        lessons: { list: ownerId => googleAds.lessons.list(ownerId), record: (ownerId, entry) => googleAds.lessons.record(ownerId, entry) },
+      },
       createPaused:(ownerId,text,request,key,assertActive)=>guarded(async()=>{
         if(!requestsPausedCampaign(request))throw new BrowserError('ADS_CREATION_NOT_REQUESTED','يلزم طلبك الصريح لإنشاء حملة في الحساب؛ المعاينة وحدها لا تجيز ذلك.',403);
         const draft=await googleAds.createPausedCampaign(ownerId,parseAdsDraft(text,request),key,{assertActive});

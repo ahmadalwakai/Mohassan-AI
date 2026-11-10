@@ -55,7 +55,7 @@ describe('actual authenticated capability gap API over disposable local state', 
     const setup = await application.app.inject({ method: 'POST', url: '/api/setup', headers: headers(''), payload: { ...account, setupToken } }); expect(setup.statusCode, setup.body).toBe(200);
     const other = { name: 'Other gap fixture', email: 'gap-other@example.test', password: 'Gap-Other-Fixture-Password-42' };
     // The second account exists only in this in-memory DB. Public registration stays disabled.
-    await application.auth.api.signUpEmail({ body: other });
+    await application.database.db.insertInto('workspace_members').values({ user_id: (await application.auth.api.signUpEmail({ body: other })).user.id, role: 'owner' }).execute();
     async function login(credentials: typeof account) {
       const response = await application!.app.inject({ method: 'POST', url: '/api/auth/sign-in/email', headers: headers(''), payload: { email: credentials.email, password: credentials.password } }); expect(response.statusCode, response.body).toBe(200);
       return [response.headers['set-cookie']].flat().filter(Boolean).map(value => String(value).split(';')[0]).join('; ');
