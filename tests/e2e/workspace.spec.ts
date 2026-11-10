@@ -82,7 +82,7 @@ test('owner setup, approvals, verified results, offline recovery and mobile navi
   await expect(plan.getByText('إعداد خطة فقط؛ لم يُنفّذ الهدف أو أدوات الخطوات.',{exact:true})).toBeVisible();
   await expect(plan.locator('.plan-step')).toHaveCount(2);
   await expect(plan.locator('.plan-batches>li')).toHaveCount(2);
-  await expect(plan.locator('.plan-model-info')).toContainText('openai/gpt-oss-20b');
+  await expect(plan.locator('.plan-model-info')).toContainText('Ollama محلي · fixture-model:local');
   await expect(page.locator('.integrations-grid').locator('..')).toHaveCSS('opacity','1');
   await plan.getByRole('heading',{name:'اكتمل إعداد الخطة',exact:true}).scrollIntoViewIfNeeded();
   await page.screenshot({path:'artifacts/planning-desktop.png',fullPage:true,animations:'disabled'});
