@@ -37,7 +37,7 @@ describe('OllamaProvider', () => {
   it('pins generation settings and rejects invalid sampling configuration', async () => {
     const calls: { url: string; body: any }[] = [];
     await new OllamaProvider({ model: MODEL, temperature: 0.3, seed: 123, fetch: reply({}, calls) }).generate({ goal: 'اكتب عبارة قصيرة.' });
-    expect(calls[0]!.body.options).toMatchObject({ temperature: 0.3, seed: 123 });
+    expect(calls[0]!.body.options).toMatchObject({ temperature: 0.3, seed: 123, presence_penalty: 0, frequency_penalty: 0, repeat_penalty: 1 });
     for (const temperature of [NaN, Infinity, -1, 3]) expect(() => new OllamaProvider({ model: MODEL, temperature })).toThrow(ProviderError);
     for (const seed of [NaN, Infinity, -1, 1.5, 2147483648]) expect(() => new OllamaProvider({ model: MODEL, seed })).toThrow(ProviderError);
   });
@@ -77,6 +77,15 @@ describe('OllamaProvider', () => {
     expect(sent).not.toContain('secret-password');
   });
 
+  it('reports its own time limit apart from a cancellation by the caller', async () => {
+    const slow: typeof fetch = (_input, init) => new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))));
+    expect(await code(new OllamaProvider({ model: MODEL, timeoutMs: 1000, fetch: slow }).generate({ goal: 'اكتب.' }))).toBe('MODEL_TIMEOUT');
+    const controller = new AbortController();
+    const pending = code(new OllamaProvider({ model: MODEL, timeoutMs: 60000, fetch: slow }).generate({ goal: 'اكتب.', signal: controller.signal }));
+    setTimeout(() => controller.abort(), 50);
+    expect(await pending).toBe('ABORTED');
+  });
+
   it('sends an image only to a model marked as vision, with its own time limit', async () => {
     const calls: { url: string; body: any }[] = [];
     const image = { mimeType: 'image/jpeg' as const, data: Buffer.from('fixture-image-bytes-0000').toString('base64') };
@@ -84,7 +93,7 @@ describe('OllamaProvider', () => {
     expect(calls[0]!.body.messages[1]).toEqual({ role: 'user', content: 'صف لقطة الشاشة.', images: [image.data] });
     const slow: typeof fetch = (_input, init) => new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))));
     const started = Date.now();
-    expect(await code(new OllamaProvider({ model: MODEL, vision: true, timeoutMs: 60000, imageTimeoutMs: 1000, fetch: slow }).generate({ goal: 'صف لقطة الشاشة.', image }))).toBe('ABORTED');
+    expect(await code(new OllamaProvider({ model: MODEL, vision: true, timeoutMs: 60000, imageTimeoutMs: 1000, fetch: slow }).generate({ goal: 'صف لقطة الشاشة.', image }))).toBe('MODEL_TIMEOUT');
     expect(Date.now() - started).toBeLessThan(5000);
     expect(await code(new OllamaProvider({ model: MODEL, vision: true, fetch: reply({}) }).generate({ goal: 'صف لقطة الشاشة.', image: { mimeType: 'image/jpeg', data: 'not base64!' } }))).toBe('OTHER');
   });

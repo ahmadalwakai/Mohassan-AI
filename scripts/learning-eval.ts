@@ -55,7 +55,7 @@ const MAX_DECISIONS_PER_CASE = 8;
 const REPORT_VERSION = 1;
 const FILE_CONTENTS = 'ملف اختبار مؤقت لم يُصرح بتعديله.\n';
 const PROVIDER_UNAVAILABLE = new Set(['AUTHENTICATION_FAILED', 'PERMISSION_DENIED', 'MODEL_UNAVAILABLE', 'MODEL_MISMATCH',
-  'RATE_LIMITED', 'UPSTREAM_ERROR', 'NETWORK_ERROR', 'TIMEOUT', 'ABORTED', 'PROMPT_TOO_LARGE', 'PROMPT_TRUNCATED']);
+  'RATE_LIMITED', 'UPSTREAM_ERROR', 'NETWORK_ERROR', 'TIMEOUT', 'MODEL_TIMEOUT', 'ABORTED', 'PROMPT_TOO_LARGE', 'PROMPT_TRUNCATED']);
 const hash = (text: string | Buffer) => createHash('sha256').update(text).digest('hex');
 const escape = (text: string) => text.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
 const markerText = (marker: string) => `marker-${hash(marker)}`;

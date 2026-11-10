@@ -6,6 +6,16 @@ const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const MAX_RESPONSE_BYTES = 512 * 1024;
 const DEFAULT_CONTEXT = 16384;
 const IMAGE_TOKEN_RESERVE = 2048;
+/** Neutral penalties, the settings the cognitive lab measured before 2026-11-10. */
+const SAMPLING = { presence_penalty: 0, frequency_penalty: 0, repeat_penalty: 1 } as const;
+
+/** A request stopped by its own time limit is reported apart from one the caller cancelled. */
+function abortError(signal: AbortSignal): ProviderError {
+  const reason = signal.reason as { name?: string } | undefined;
+  return reason?.name === 'TimeoutError'
+    ? new ProviderError('MODEL_TIMEOUT', 'استغرق النموذج المحلي أكثر من الحد المسموح لهذه الخطوة.', false, 504)
+    : new ProviderError('ABORTED', 'أُلغي طلب النموذج المحلي قبل اكتمال الرد.');
+}
 
 export interface OllamaProviderOptions {
   model: string;
@@ -102,7 +112,7 @@ async function readBounded(response: Response, signal: AbortSignal): Promise<unk
   try {
     for (;;) {
       const { value, done } = await reader.read();
-      if (signal.aborted) throw new ProviderError('ABORTED', 'انقطع طلب النموذج المحلي قبل اكتمال الرد.');
+      if (signal.aborted) throw abortError(signal);
       if (done) break;
       size += value.byteLength;
       if (size > MAX_RESPONSE_BYTES) { await reader.cancel().catch(() => {}); throw new ProviderError('RESPONSE_TOO_LARGE', 'تجاوز رد النموذج المحلي الحجم المسموح.'); }
@@ -111,7 +121,7 @@ async function readBounded(response: Response, signal: AbortSignal): Promise<unk
     return JSON.parse(new TextDecoder().decode(Buffer.concat(parts)));
   } catch (error) {
     if (error instanceof ProviderError) throw error;
-    throw new ProviderError(signal.aborted ? 'ABORTED' : 'INVALID_RESPONSE', signal.aborted ? 'انقطع طلب النموذج المحلي قبل اكتمال الرد.' : 'رد النموذج المحلي غير صالح أو لم يكتمل.');
+    throw signal.aborted ? abortError(signal) : new ProviderError('INVALID_RESPONSE', 'رد النموذج المحلي غير صالح أو لم يكتمل.');
   } finally {
     signal.removeEventListener('abort', onAbort);
     reader.releaseLock();
@@ -153,7 +163,7 @@ export class OllamaProvider implements ModelProvider {
         ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
       });
     } catch {
-      throw new ProviderError(signal.aborted ? 'ABORTED' : 'NETWORK_ERROR', signal.aborted ? 'انتهت مهلة النموذج المحلي أو أُلغي الطلب.' : 'تعذر الوصول إلى Ollama على هذا الكمبيوتر.', false);
+      throw signal.aborted ? abortError(signal) : new ProviderError('NETWORK_ERROR', 'تعذر الوصول إلى Ollama على هذا الكمبيوتر.', false);
     }
     if (!response.ok) {
       void response.body?.cancel();
@@ -198,7 +208,9 @@ export class OllamaProvider implements ModelProvider {
       signal.throwIfAborted();
       return this.request('/api/chat', signal, {
         model: this.options.model, stream: false, think: false, keep_alive: '10m',
-        options: { num_ctx: this.contextTokens, num_predict: maxTokens, temperature: this.options.temperature ?? 0, seed: this.options.seed ?? 42 },
+        // Sampling is pinned here so a model file's defaults (qwen3.5:9b-q4_K_M ships presence_penalty 1.5)
+        // cannot penalise copying exact URLs, numbers and names from the evidence.
+        options: { num_ctx: this.contextTokens, num_predict: maxTokens, temperature: this.options.temperature ?? 0, seed: this.options.seed ?? 42, ...SAMPLING },
         // The title only names the schema; JSON Schema keywords like it do not change the grammar.
         ...(request.structured ? { format: { title: request.structured.name, ...request.structured.schema } } : {}),
         messages: [{ role: 'system', content: system }, { role: 'user', content: goal, ...(image ? { images: [image.data] } : {}) }],

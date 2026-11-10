@@ -1488,7 +1488,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (stopped && !limit) {const current=execution.getStore();if(current)forgetVault(id,current.token);return;}
       const message = limit ? 'استغرقت هذه المهمة وقتًا طويلًا. أرسل «تابع» وسأكمل من حيث توقفت.'
         : error instanceof BrowserError ? error.message
-          : error instanceof ProviderError ? 'تعذر الوصول إلى النموذج الآن. أرسل «تابع» وسأحاول مجددًا.'
+          : error instanceof ProviderError ? providerFailureMessage(error.code)
             : 'حدث خطأ أثناء العمل. أرسل «تابع» وسأحاول مجددًا.';
       await runTransaction(id,runId,async tx=>{
         await tx.updateTable('chat_conversations').set({ status: 'failed', active_run_id: null, progress: null, error: message, updated_at: new Date() }).where('id', '=', id).execute();
@@ -1854,4 +1854,11 @@ export async function registerCommandChatRoutes(app: FastifyInstance, { control,
   app.post<Conversation>('/api/chat/conversations/:id/browser/keyboard', live, async (request) => control.keyboard((await owner(request)).id, id(request.params.id), request.body));
   app.post<Conversation>('/api/chat/conversations/:id/browser/restore', secure, async(request)=>{z.object({}).strict().parse(request.body??{});return control.restoreBrowser((await owner(request)).id,id(request.params.id));});
   app.post<Conversation>('/api/chat/conversations/:id/browser/review',secure,async request=>control.reviewBrowser((await owner(request)).id,id(request.params.id),request.body));
+}
+
+/** What the owner sees when a local model call fails; a timeout is not reported as an unreachable model. */
+function providerFailureMessage(code: string): string {
+  if (code === 'MODEL_TIMEOUT') return 'استغرق النموذج المحلي أكثر من الحد المسموح لهذه الخطوة. أرسل «تابع» وسأحاول مجددًا.';
+  if (code === 'MODEL_BUSY') return 'النموذج المحلي مشغول بطلبات أخرى الآن. أرسل «تابع» بعد قليل وسأكمل.';
+  return 'تعذر الوصول إلى النموذج الآن. أرسل «تابع» وسأحاول مجددًا.';
 }

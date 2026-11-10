@@ -87,6 +87,7 @@ const LOCAL_VERIFY_TIMEOUT_MS=90_000;
 function failureMessage(code:unknown):string {
   if(code==='NETWORK_ERROR'||code==='ABORTED')return 'تعذر الوصول إلى Ollama على هذا الكمبيوتر. شغّل Ollama ثم أعد الاختبار.';
   if(code==='MODEL_UNAVAILABLE')return 'النموذج المحدد غير مثبت في Ollama. راجع LOCAL_MODEL_NAME.';
+  if(code==='MODEL_TIMEOUT')return 'استغرق النموذج المحلي أكثر من الحد المسموح. أعد الاختبار بعد قليل.';
   if(code==='MODEL_BUSY')return 'النموذج المحلي كان مشغولًا بطلبات أخرى. أعد الاختبار بعد قليل.';
   return 'لم يكتمل آخر اختبار للنموذج المحلي. أعد الاختبار.';
 }
