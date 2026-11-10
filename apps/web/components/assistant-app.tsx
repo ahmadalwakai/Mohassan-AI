@@ -7,6 +7,7 @@ import { Markdown } from "./markdown";
 import { takeoverInput } from "./takeover-input";
 import { BrowserFilesPanel } from './browser-files-panel';
 import { CampaignCard } from "./campaign-card";
+import { ClarificationCard, GoalPanel } from "./clarification-card";
 import { adsConnectProblems, pendingAdsConnect } from "./ads-connect";
 import styles from "./assistant-app.module.css";
 
@@ -248,6 +249,22 @@ export function AssistantApp({ name, onAdvanced, onSignOut }: { name: string; on
     }
   }
   const post = (path: string, body: unknown) => api<Conversation>(`/api/chat/conversations/${conversation!.id}/${path}`, { method: "POST", body: JSON.stringify(body) });
+  /** A typed answer to a clarification question. Resolves false on failure so the card keeps the text. */
+  async function answerText(questionId: string, text: string): Promise<boolean> {
+    if (busy) return false;
+    setBusy(true);
+    setError("");
+    try {
+      setConversation(await post("respond", { questionId, text }));
+      await refreshHistory().catch(() => {});
+      return true;
+    } catch (caught) {
+      setError(messageOf(caught));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function connectGoogleAds() {
     if (busy || !conversation?.question) return;
@@ -418,7 +435,10 @@ export function AssistantApp({ name, onAdvanced, onSignOut }: { name: string; on
             </article>)}
             {conversation!.messages.at(-1)?.role === "assistant" && conversation!.steps.length && !answering && !blocked ? <Steps conversation={conversation!} /> : null}
             {conversation!.campaign?.events.length ? <CampaignCard stream={conversation!.campaign} running={running} /> : null}
-            {conversation!.question ? <div className={styles.choices}>{conversation!.question.options.map((option) => <button key={option.id} disabled={busy} onClick={() => conversation!.question!.action === "google_ads_connect" && option.id === "connect" ? void connectGoogleAds() : void act(() => post("respond", { questionId: conversation!.question!.id, optionId: option.id }))}>{option.label}</button>)}</div> : null}
+            {conversation!.goal && !conversation!.question?.clarification ? <GoalPanel goal={conversation!.goal} decisions={conversation!.decisions} /> : null}
+            {conversation!.question?.clarification ? <ClarificationCard key={conversation!.question.id} question={{ ...conversation!.question, clarification: conversation!.question.clarification }} goal={conversation!.goal} decisions={conversation!.decisions} busy={busy}
+              onChoose={(optionId) => void act(() => post("respond", { questionId: conversation!.question!.id, optionId }))} onAnswer={(text) => answerText(conversation!.question!.id, text)} />
+            : conversation!.question ? <div className={styles.choices}>{conversation!.question.options.map((option) => <button key={option.id} disabled={busy} onClick={() => conversation!.question!.action === "google_ads_connect" && option.id === "connect" ? void connectGoogleAds() : void act(() => post("respond", { questionId: conversation!.question!.id, optionId: option.id }))}>{option.label}</button>)}</div> : null}
             {conversation!.approval ? <div className={styles.card}>
               <div className={styles.cardTitle}><ShieldAlert size={16} />يحتاج موافقتك</div>
               <p className={styles.cardHint}>{conversation!.approval.detail}</p>
