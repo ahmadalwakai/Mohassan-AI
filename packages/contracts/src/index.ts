@@ -12,7 +12,6 @@ export * from './skills';
 export * from './google-ads';
 export * from './campaign-progress';
 export * from './goal-clarification';
-export * from './ai-providers';
 export { browserReadOrigins, detectBrowserOpenIntent, type BrowserOpenIntent } from './browser-intent';
 
 export const TaskStatusSchema = z.enum(['queued', 'running', 'waiting_approval', 'verifying', 'completed', 'failed', 'cancelled', 'paused']);
@@ -138,7 +137,9 @@ export type CognitivePlan=z.infer<typeof CognitivePlanSchema>;
 export const PlanningResultSchema=z.object({
   kind:z.literal('plan'),summary:Text,plan:CognitivePlanSchema,
   executionBatches:z.array(z.array(Id).min(1)).min(1).max(12),needsClarification:z.boolean(),
-  model:z.string().min(1).max(100),provider:z.literal('groq'),routeReason:Text,
+  model:z.string().min(1).max(200),
+  /** 'ollama' for every new plan; 'groq' only on plans saved before the switch to the local model. */
+  provider:z.enum(['ollama','groq']),routeReason:Text,
   usage:z.object({inputTokens:z.number().int().nonnegative(),outputTokens:z.number().int().nonnegative()}).strict(),
   generatedAt:z.iso.datetime(),verifiedAt:z.iso.datetime(),
   verification:z.object({passed:z.literal(true),scope:z.literal('structure_and_policy'),checks:z.array(Text).min(1).max(12)}).strict(),

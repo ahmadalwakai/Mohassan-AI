@@ -13,7 +13,7 @@ type FailureReceipt = { model?: string; usage?: Usage; providerCode?: string; ht
 
 /** Safe metadata preserves usage after a paid response fails validation. Never retains raw output. */
 export class PlanningError extends Error {
-  readonly provider = 'groq';
+  readonly provider = 'ollama';
   readonly retryable = false;
   readonly model?: string;
   readonly usage?: Usage;
@@ -38,7 +38,8 @@ const UsageSchema = z.object({
   inputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   outputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 }).strict();
-const ModelIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,99}$/);
+// Local model names carry an Ollama tag, for example qwen3.5:9b-q4_K_M.
+const ModelIdSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$/);
 
 /** Heuristic defense for recognizable credential formats; never reads secrets or process.env. */
 export function redactCredentialText(value: string): string {
@@ -85,7 +86,7 @@ export class GoalCompiler {
 
 export class ModelRouter {
   readonly models: { fast: string; reasoning: string };
-  constructor(models = { fast: 'openai/gpt-oss-20b', reasoning: 'openai/gpt-oss-120b' }) {
+  constructor(models: { fast: string; reasoning: string }) {
     this.models = { fast: ModelIdSchema.parse(models.fast), reasoning: ModelIdSchema.parse(models.reasoning) };
   }
   route(goal: string): { model: string; fallback: string; reason: string } {
@@ -168,7 +169,7 @@ const PROGRESS: Record<PlanningStage, string> = {
 
 export interface PlanningEngineOptions {
   providerForModel: (model: string) => ModelProvider;
-  models?: { fast: string; reasoning: string };
+  models: { fast: string; reasoning: string };
   maxTokens?: number;
   capabilities?: readonly Capability[];
 }
@@ -221,7 +222,8 @@ export class PlanningEngine {
         let response: ModelResult;
         try {
           const provider = this.options.providerForModel(model);
-          if (provider.id !== 'groq') throw new PlanningError('PROVIDER_UNSUPPORTED', 'مزود التخطيط غير معتمد.', receipt);
+          // Only the owner's local model may plan; any other provider is refused before a request.
+          if (provider.id !== 'ollama') throw new PlanningError('PROVIDER_UNSUPPORTED', 'مزود التخطيط غير معتمد.', receipt);
           response = await provider.generate({ goal: prompt, system, structured: { name: 'mohassan_cognitive_plan', schema }, maxTokens: this.maxTokens, signal: options.signal });
         } catch (error) {
           if (error instanceof ProviderError) {
@@ -258,7 +260,7 @@ export class PlanningEngine {
         const generatedAt = new Date().toISOString();
         const result = verifyPlanningResult({
           kind: 'plan', summary: plan.summary, plan, executionBatches,
-          ...new UncertaintyEngine().assess(plan), model, provider: 'groq',
+          ...new UncertaintyEngine().assess(plan), model, provider: 'ollama',
           routeReason: call === 0 ? route.reason : `${route.reason} استُخدم بديل بعد رفض مؤقت مؤكد.`,
           usage: usage.data, generatedAt, verifiedAt: new Date().toISOString(),
           verification: { passed: true, scope: 'structure_and_policy', checks: [...CHECKS] }, executionAllowed: false,

@@ -8,8 +8,6 @@ export interface IsolatedLearningEvaluatorOptions {
   model: string;
   /** Server-owned provider; never supplied by an activation HTTP request. */
   createProvider: (model: string) => ModelProvider;
-  /** Local by default. Only trusted configuration may explicitly allow a free cloud provider. */
-  allowFreeCloud?: boolean;
   cases?: readonly EvaluationCase[];
   maxCases?: number;
   maxModelCalls?: number;
@@ -51,7 +49,8 @@ export function createIsolatedLearningEvaluator(options: IsolatedLearningEvaluat
     const context = candidateContext(subject);
     options.signal?.throwIfAborted();
     const provider = options.createProvider(options.model);
-    if (provider.id !== 'ollama' && options.allowFreeCloud !== true) throw new Error('EVAL_LOCAL_PROVIDER_REQUIRED');
+    // Local only: no cloud evaluator exists (owner decision 2026-11-10).
+    if (provider.id !== 'ollama') throw new Error('EVAL_LOCAL_PROVIDER_REQUIRED');
     const signal = AbortSignal.any([AbortSignal.timeout(maxDurationMs), ...(options.signal ? [options.signal] : [])]);
     let calls = 0;
     const createProvider = (model: string): ModelProvider => {

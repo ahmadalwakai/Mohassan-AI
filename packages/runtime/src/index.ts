@@ -292,7 +292,8 @@ export class Runtime {
     this.maxAttempts = Math.max(1, Math.min(10, options.maxAttempts ?? 3));
     this.retryDelayMs = Math.max(0, options.retryDelayMs ?? 1_000);
     this.workerId = options.workerId ?? randomUUID();
-    this.planningLeaseMs = Math.max(1_000, options.leaseMs ?? 90_000);
+    // The local model needs up to 300 s per plan (measured 218 s on the owner's PC); keep a margin.
+    this.planningLeaseMs = Math.max(1_000, options.leaseMs ?? 360_000);
     this.registry = createCapabilities(Boolean(options.plan),Boolean(options.code&&options.verifyCode),Boolean(options.studioChange&&options.verifyStudioChange),options.moduleAvailability,Boolean(options.openBrowser&&options.verifyBrowser),Boolean(options.skillRuntime),Boolean(options.rollback));
     if(options.skillRuntime)this.registry.push({id:'skill.node',name:'خطوة مهارة داخلية',version:'1.0.0',risk:'high',status:'active',description:'تنفيذ خطوة مثبتة في مخطط مصرح به.',requiredScopes:['skill:node']});
   }
@@ -314,7 +315,8 @@ export class Runtime {
   }
 
   private taskLeaseMs(task: Pick<TaskRow, "capability_id">): number {
-    if(['coding.change','studio.change'].includes(task.capability_id))return this.options.leaseMs??180000;
+    // Up to 180 s of local generation plus isolated tests and review.
+    if(['coding.change','studio.change'].includes(task.capability_id))return this.options.leaseMs??420000;
     return task.capability_id === "plan.draft" ? this.planningLeaseMs : this.leaseMs;
   }
 
@@ -797,7 +799,7 @@ export class Runtime {
       if (!current || current.cancellation_requested || !(await this.validApproval(tx, current))) return false;
       await tx.insertInto("model_runs").values({
         id: randomUUID(), task_id: task.id, attempt: task.attempt, lease_token: task.lease_token!,
-        provider: "groq", model: null, status: "started", input_tokens: null, output_tokens: null,
+        provider: "ollama", model: null, status: "started", input_tokens: null, output_tokens: null,
         usage_known: false, result_committed: false, output_hash: null, error_code: null, finished_at: null,
       }).execute();
       await event(tx, task.id, "model_run_started", "سُجلت محاولة طلب النموذج قبل الاتصال؛ لا إعادة تلقائية إذا تعذر حسم نتيجتها.", { attempt: task.attempt });

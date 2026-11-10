@@ -239,7 +239,7 @@ export async function migrate(db: Kysely<any>): Promise<void> {
         task_id text NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
         attempt integer NOT NULL CHECK(attempt > 0),
         lease_token text NOT NULL UNIQUE,
-        provider text NOT NULL DEFAULT 'groq',
+        provider text NOT NULL DEFAULT 'ollama',
         model text,
         status text NOT NULL CHECK(status IN ('started','succeeded','failed','unknown')),
         input_tokens integer CHECK(input_tokens >= 0),

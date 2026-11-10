@@ -26,8 +26,9 @@ const rawPlan: RawCognitivePlan = {
 
 function engine() {
   return new PlanningEngine({
+    models: { fast: "qwen3.5:9b-q4_K_M", reasoning: "qwen3.5:9b-q4_K_M" },
     capabilities: createCapabilities(true),
-    providerForModel: (model) => ({ id: "groq", generate: async () => ({ text: JSON.stringify(rawPlan), model, usage: { inputTokens: 123, outputTokens: 87 } }) }),
+    providerForModel: (model) => ({ id: "ollama", generate: async () => ({ text: JSON.stringify(rawPlan), model, usage: { inputTokens: 123, outputTokens: 87 } }) }),
   });
 }
 

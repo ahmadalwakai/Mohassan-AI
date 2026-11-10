@@ -126,7 +126,7 @@ export const decisionSchema = (skillsEnabled = false, runsEnabled = false, work:
 const EMPTY_DECISION = { thought: null, plan: null, note: null, url: null, ref: null, text: null, submit: null, options: null, sensitive: null, outcome: null };
 
 /**
- * Groq rejects a decision that leaves out null fields but returns its text.
+ * A provider may reject a decision that leaves out null fields but return its text.
  * Filling them in saves a second paid call. A cut-off or invalid text stays a failure.
  */
 export function recoverDecision(generated: string, schema: { safeParse(value: unknown): { success: boolean; data?: unknown } }): Decision | null {

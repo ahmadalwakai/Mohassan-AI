@@ -12,7 +12,7 @@ import { createStudioLiveControl } from '../../server/src/studio-live.js';
 import { createBrowserResearchControl,SearchEngine,SafeNetwork,SqlSearchStore,LocalPublicIndex,migrateSearch } from '@mohassan/browser';
 import { createBrowserTaskControl } from '../../server/src/browser-task.js';
 import { createSkillRuntime, skillGatewayTools } from '../../server/src/skill-runtime.js';
-import { GroqProvider } from '@mohassan/providers';
+import { createLocalModel } from '../../server/src/local-model.js';
 import { createSkillRollbackControl } from '../../../packages/skills/src/rollback.js';
 
 const config = getConfig();
@@ -22,12 +22,14 @@ await migrate(database.db);
 await memoryMigration(database.db);
 await skillsMigration(database.db);
 const memory = createMemoryControl(database.db);
-const coding = await createCodingControl(database.db, {dataDir:config.codingDataDir,allowedRoots:config.codingAllowedRoots,apiKey:config.groqApiKey,model:config.groqReasoningModel,fetch:config.aiFetch,sandbox:config.sandboxRunner});
+// A standalone worker has its own queue; on one GPU run the model work in one process only.
+const localModel = createLocalModel(config.localModel);
+const coding = await createCodingControl(database.db, {dataDir:config.codingDataDir,allowedRoots:config.codingAllowedRoots,sandbox:config.sandboxRunner,...(localModel?{model:{name:localModel.model,provider:()=>localModel.provider('coding')}}:{})});
 // Construction migrates/configures the adapter only. The API owns registration
 // of the separate preview listener; a standalone worker never binds that port.
 const live = await createStudioLiveControl(database.db, {gatewayUrl:config.studioGatewayUrl,gatewaySecret:config.studioGatewaySecret,webOrigin:config.webOrigin,production:config.production});
 const studio = await createStudioControl(database.db, {allowedRoots:config.codingAllowedRoots??[],sandbox:coding.sandbox,buildNext:live.available?((snapshot,signal)=>live.build(snapshot,signal)):undefined});
-const studioAi = await createStudioAiControl(database.db, {dataDir:config.studioAiDataDir,apiKey:config.groqApiKey,model:config.groqReasoningModel,visionModel:config.groqVisionModel,fetch:config.aiFetch,studio,validateCandidate:studio.validateCandidate,applyCandidate:studio.applyCandidate});
+const studioAi = await createStudioAiControl(database.db, {dataDir:config.studioAiDataDir,...(localModel?{model:{name:localModel.model,vision:localModel.vision,provider:()=>localModel.provider('studio')}}:{}),studio,validateCandidate:studio.validateCandidate,applyCandidate:studio.applyCandidate});
 await migrateSearch(database.db);
 const searchNetwork=new SafeNetwork(config.browser);
 const searchStore=new SqlSearchStore(database.db);
@@ -37,12 +39,12 @@ const browserTask=await createBrowserTaskControl(database.db,{browser,networkPol
 const moduleAvailability={studioVisual:true,memory:true,browser:true};
 const scriptsReady=(await coding.sandbox.executableReadiness?.())?.enabled===true;
 const skills = createSkillControl(database.db,{allowedRoots:config.codingAllowedRoots??[],enabled:config.skillEngineEnabled,executableReady:async()=>scriptsReady,
-  environment:()=>({capabilities:createCapabilities(Boolean(config.groqApiKey),coding.available,studioAi.available,moduleAvailability,true,config.skillEngineEnabled),modelReady:Boolean(config.groqApiKey),visionReady:Boolean(config.groqApiKey&&config.groqVisionModel),executableReady:scriptsReady,
-    gatewayTools:skillGatewayTools({enabled:config.skillEngineEnabled,coding:coding.available,studio:studioAi.available,vision:Boolean(config.groqApiKey&&config.groqVisionModel)})})});
-const ai = await createAIControl(database.db, {apiKey:config.groqApiKey,model:config.groqModel,reasoningModel:config.groqReasoningModel,fetch:config.aiFetch,capabilities:createCapabilities(Boolean(config.groqApiKey),coding.available,studioAi.available,moduleAvailability,true,config.skillEngineEnabled)});
+  environment:()=>({capabilities:createCapabilities(Boolean(localModel),coding.available,studioAi.available,moduleAvailability,true,config.skillEngineEnabled),modelReady:Boolean(localModel),visionReady:Boolean(localModel?.vision),executableReady:scriptsReady,
+    gatewayTools:skillGatewayTools({enabled:config.skillEngineEnabled,coding:coding.available,studio:studioAi.available,vision:Boolean(localModel?.vision)})})});
+const ai = await createAIControl(database.db, {localModel,capabilities:createCapabilities(Boolean(localModel),coding.available,studioAi.available,moduleAvailability,true,config.skillEngineEnabled)});
 const skillExecutionSupport=createSkillRuntime(database.db,{skills,browser,memory,sandbox:coding.sandbox,testOrigins:config.browser?.testOrigins,
   ...(ai.engine?{modelGenerate:ai.generateSkill}:{}),
-  ...(config.groqApiKey&&config.groqVisionModel?{vision:{provider:new GroqProvider({apiKey:config.groqApiKey,model:config.groqVisionModel,fetch:config.aiFetch,timeoutMs:20000}),image:studioAi.image}}:{}),
+  ...(localModel?.vision?{vision:{provider:localModel.provider('vision'),image:studioAi.image}}:{}),
 });
 const skillExecution=config.skillEngineEnabled?skillExecutionSupport:undefined;
 const skillRollback=createSkillRollbackControl(database.db);

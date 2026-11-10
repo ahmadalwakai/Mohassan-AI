@@ -9,8 +9,8 @@ import {
   SkillRunInputSchema, type SkillRunInput, type SkillGapObservation,
 } from '@mohassan/contracts';
 import { AgentEffectHeld, AgentSessionCheckpointSchema, BrowserError, SearchEngine, SafeNetwork, type AgentPostcondition, type AgentAction, type AgentAuthority, type AgentActionResult, type AgentBrowser, type AgentPage, type NetworkPolicy, type SearchProvider } from '@mohassan/browser';
-import { GroqProvider, ProviderError, redactSecrets, classifyProviderFallback, waitForRetryAfter, validatedRetryAfterMs, type InferenceRouter, type ModelProvider } from '@mohassan/providers';
-import { unfenceJson } from './inference.js';
+import { ProviderError, redactSecrets, classifyProviderFallback, waitForRetryAfter, validatedRetryAfterMs, type ModelProvider } from '@mohassan/providers';
+import { NOT_CONFIGURED_MESSAGE } from './local-model.js';
 import {
   DEFAULT_CLARIFICATION_CONFIG, applyAnswer, assessReadiness, checkAdsCreation, classifyReply, detectDomains, interpretGoal, markAsked,
   redactCredentialText, reviewModelQuestion, reviseFromMessage, settledFacts, summarizeGoal, type GoalContext,
@@ -36,14 +36,13 @@ import { appendDecisionEvents, chatQuestionFor, clarificationLessonsMigration, d
 export interface CommandChatConfig {
   /** False for a member: no projects, studio, computer or skill runs. Absent means full access. */
   fullAccess?: (ownerId: string) => Promise<boolean>;
-  apiKey?: string;
   /**
-   * Replaces the Groq boundary with an explicit provider per model (for example the
-   * local Ollama evaluation). When set, apiKey is ignored and no cloud provider is built.
+   * The owner's local model, one provider per model name. Absent: the assistant keeps
+   * its deterministic parts and every model step fails closed with an Arabic message.
+   * There is no cloud provider and no fallback to one.
    */
   createProvider?: (model: string) => ModelProvider;
   models: { fast: string[]; deep: string[]; vision: string };
-  fetch?: typeof fetch;
   browser: AgentBrowser;
   networkPolicy?: NetworkPolicy;
   searchProvider?: SearchProvider;
@@ -59,11 +58,6 @@ export interface CommandChatConfig {
   recordExperiences?: false;
   /** Absent tools are never offered to the model. */
   tools?: AssistantTools;
-  /**
-   * Optional multi-provider routing (FreeLLMAPI first, then Groq). While it returns null
-   * the assistant keeps its original Groq-only path.
-   */
-  inference?: { routerFor(tier: ModelTier): InferenceRouter | null; active(): boolean };
   /** Bounded execution lease; injectable for isolated recovery tests. */
   leaseMs?: number;
   /** An isolated evaluator can pace requests without spending provider timeout on its queue. */
@@ -99,7 +93,7 @@ const GOOGLE_SIGN_IN_STOP = 'توقفت عند صفحة تسجيل الدخول 
 const GOOGLE_SIGN_IN_HANDS_ON = 'سجّل دخولك إلى Google بنفسك من لوحة المتصفح، ثم اضغط «أكملت». لا تكتب كلمة المرور في المحادثة.';
 const PERSONAL_SIGN_IN = /(?:تسجيل\s+(?:ال)?دخول|اسجل\s+(?:ال)?دخول|ادخل)[^.!؟\n]{0,60}بنفس[يى]|لا تطلب[^.!؟\n]{0,30}بيانات (?:تسجيل )?الدخول|(?:sign|log)[ -]?in[^.!?\n]{0,45}(?:myself|manually)/i;
 const PERSONAL_SIGN_IN_STOP = 'توقفت عند صفحة تسجيل الدخول كما طلبت. أكمل تسجيل الدخول بنفسك في متصفح الموقع.';
-const GRANT_NEEDED_PROMPT = 'أحتاج إلى رؤية نافذة على كمبيوترك. افتح «التحكم بالكمبيوتر» من الأدوات المتقدمة، واربط الجهاز، واختر النافذة، وامنح إذنًا مؤقتًا، ثم اضغط «أكملت». ستُقرأ عناصر النافذة، وقد تصل صورتها إلى Groq عند الحاجة.';
+const GRANT_NEEDED_PROMPT = 'أحتاج إلى رؤية نافذة على كمبيوترك. افتح «التحكم بالكمبيوتر» من الأدوات المتقدمة، واربط الجهاز، واختر النافذة، وامنح إذنًا مؤقتًا، ثم اضغط «أكملت». ستُقرأ عناصر النافذة، وقد يقرأ النموذج المحلي صورتها على هذا الكمبيوتر عند الحاجة.';
 
 const clean = (value: string) => redactCredentialText(redactSecrets(value));
 function memoryLookup(result: MemoryLookupResult) {
@@ -180,10 +174,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   const providers = new Map<string, ModelProvider>();
   if (config.createProvider) {
     for (const model of new Set([...config.models.fast, ...config.models.deep, config.models.vision])) providers.set(model, config.createProvider(model));
-  } else if (config.apiKey) {
-    for (const model of new Set([...config.models.fast, ...config.models.deep, config.models.vision])) {
-      providers.set(model, new GroqProvider({ apiKey: config.apiKey, model, fetch: config.fetch, timeoutMs: 45000 }));
-    }
   }
   const pool = new ModelPool(config.models);
   const vault = new CredentialVault();
@@ -368,7 +358,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       progress: row.progress, error: row.error, campaign: await readCampaignEvents(db, id),
       goal: clarified?.summary ?? null, decisions: await latestRunDecisions(db, id, lastRun?.id ?? null),
       steps: steps.reverse().map((item) => ({ id: item.id, text: item.message, createdAt: iso(item.created_at) })),
-      updatedAt: iso(row.updated_at), configured: providers.size > 0 || config.inference?.active() === true,
+      updatedAt: iso(row.updated_at), configured: providers.size > 0,
     });
   }
 
@@ -392,9 +382,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       return memoryJson ? structuredMemoryDecisionSchema(base) : base;
     };
     const needed = estimateTokens(system + prompt) + 500;
+    assertModelAllowed();
     await config.beforeModelDecision?.(needed, signal);
-    const router = config.inference?.routerFor(tier) ?? null;
-    if (router) return thinkRouted(router, id, runId, state, prompt, system, needed, signal, validator, providerSchema(false));
     const attemptedModels=new Set<string>();
     for (let attempt = 0; attempt < 2; attempt++) {
       const model = pool.pick(tier, needed,Date.now(),attemptedModels);
@@ -413,7 +402,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const decision = validator.safeParse((() => { try { return JSON.parse(response.text); } catch { return null; } })());
         await db.updateTable('chat_model_receipts').set({status:decision.success?'succeeded':'invalid',input_tokens:response.usage.inputTokens,output_tokens:response.usage.outputTokens,usage_known:true,action_valid:decision.success,output_hash:createHash('sha256').update(response.text).digest('hex'),finished_at:new Date()}).where('id','=',receiptId).execute();
         if (decision.success) return decision.data;
-        throw new BrowserError('CHAT_MODEL_INVALID','وصل رد مدفوع غير صالح. لم يُكرر الطلب؛ راجع الحالة قبل المحاولة مجددًا.',502);
+        throw new BrowserError('CHAT_MODEL_INVALID','أعاد النموذج المحلي ردًا غير صالح، ولم يُنفذ أي إجراء. أرسل «تابع» للمحاولة مجددًا.',502);
       } catch (error) {
         if(error instanceof ProviderError)await db.updateTable('chat_model_receipts').set({status:error.usage?'failed':'unknown',input_tokens:error.usage?.inputTokens??null,output_tokens:error.usage?.outputTokens??null,usage_known:Boolean(error.usage),error_code:error.code,...modelErrorMetadata(error),finished_at:new Date()}).where('id','=',receiptId).execute();
         signal.throwIfAborted();
@@ -429,46 +418,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     throw new BrowserError('ASSISTANT_MODEL_BUSY', 'النموذج مشغول الآن. أرسل «تابع» بعد قليل وسأكمل من حيث توقفت.', 503);
   }
 
-  /**
-   * The routed path: one receipt per upstream attempt, failover only on rejections the
-   * router can prove cost nothing (or on free models), and the decision is acted on once.
-   */
-  async function thinkRouted(router: InferenceRouter, id: string, runId: string, state: BrainState, prompt: string, system: string, needed: number, signal: AbortSignal, schema: DecisionValidator, jsonSchema: Record<string, unknown>): Promise<Decision> {
-    const parse = (text: string) => recoverDecision(unfenceJson(text), schema);
-    const step = state.steps + 1;
-    try {
-      const response = await router.generate<string>({
-        goal: prompt, system, maxTokens: MAX_OUTPUT_TOKENS, signal, idempotencyKey: `${runId}:${step}:decision`,
-        structured: { name: 'decision', schema: jsonSchema },
-      }, {
-        requires: { estimatedTokens: needed },
-        validate: text => parse(text) !== null,
-        onAttempt: async candidate => {
-          await setProgress(id, candidate.providerId === 'freellmapi' ? 'يفكر عبر نموذج مجاني…' : 'يفكر…');
-          return beginModelReceipt(id, runId, step, candidate.key, 'decision');
-        },
-        onSettled: async (receiptId, _candidate, outcome) => {
-          if (outcome.ok) {
-            const { result, valid } = outcome;
-            await db.updateTable('chat_model_receipts').set({ status: valid ? 'succeeded' : 'invalid', input_tokens: result.usage.inputTokens, output_tokens: result.usage.outputTokens, usage_known: result.usageEstimated !== true, action_valid: valid, output_hash: createHash('sha256').update(result.text).digest('hex'), finished_at: new Date() }).where('id', '=', receiptId).execute();
-          } else {
-            const error = outcome.error;
-            const usage = error instanceof ProviderError ? error.usage : undefined;
-            await db.updateTable('chat_model_receipts').set({ status: usage ? 'failed' : 'unknown', input_tokens: usage?.inputTokens ?? null, output_tokens: usage?.outputTokens ?? null, usage_known: Boolean(usage), error_code: error instanceof ProviderError ? error.code : 'MODEL_FAILED', ...modelErrorMetadata(error), finished_at: new Date() }).where('id', '=', receiptId).execute();
-          }
-        },
-      });
-      const decision = parse(response.text);
-      if (decision) return decision;
-      throw new BrowserError('CHAT_MODEL_INVALID', response.cost === 'free' ? 'أعادت النماذج المجانية ردًا غير صالح. لم يُنفذ أي إجراء؛ أرسل «تابع» للمحاولة مجددًا.' : 'وصل رد مدفوع غير صالح. لم يُكرر الطلب؛ راجع الحالة قبل المحاولة مجددًا.', 502);
-    } catch (error) {
-      signal.throwIfAborted();
-      if (!(error instanceof ProviderError)) throw error;
-      const recovered = error.failedGeneration ? parse(error.failedGeneration) : null;
-      if (recovered) return recovered;
-      if (error.code === 'NO_ELIGIBLE_PROVIDER' && error.retryable) throw new BrowserError('ASSISTANT_MODEL_BUSY', 'النماذج المتاحة مشغولة أو بلغت حدودها الآن. أرسل «تابع» بعد قليل وسأكمل من حيث توقفت.', 503);
-      throw error;
-    }
+  /** Model features are the owner's only, for now (owner decision 2026-11-10). Members keep the deterministic assistant. */
+  function assertModelAllowed() {
+    if (!fullReach()) throw new BrowserError('ASSISTANT_MODEL_OWNER_ONLY', 'ميزات النموذج متاحة لمالك موحسن فقط حاليًا. يعمل لك الجزء الثابت من المساعد دون نموذج.', 403);
+    if (!providers.size) throw new BrowserError('ASSISTANT_UNCONFIGURED', NOT_CONFIGURED_MESSAGE, 409);
   }
 
   async function beginModelReceipt(id:string,runId:string,step:number,model:string,purpose:'decision'|'vision'|'correction'){
@@ -696,8 +649,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
 
   /** One screenshot question, with the same receipt whether it shows a page or the owner's PC. */
   async function askVision(runId: string, state: BrainState, question: string, image: string, signal: AbortSignal) {
+    assertModelAllowed();
     const provider = providers.get(config.models.vision);
-    if (!provider) throw new BrowserError('ASSISTANT_NO_VISION', 'قراءة الصور غير مهيأة.', 409);
+    if (!provider || (provider as { supportsImages?: boolean }).supportsImages === false) throw new BrowserError('ASSISTANT_NO_VISION', 'النموذج المحلي لا يقرأ الصور.', 409);
     const current = execution.getStore(); if (!current) throw new RunEnded();
     const receiptId=await beginModelReceipt(current.id,runId,state.steps,config.models.vision,'vision');
     const seen = await provider.generate({
@@ -718,16 +672,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const structured = { name: ADS_REWRITE_SCHEMA_NAME, schema: ADS_REWRITE_JSON_SCHEMA };
     const succeeded = (receiptId: string, result: { text: string; usage: { inputTokens: number; outputTokens: number }; usageEstimated?: boolean }) => db.updateTable('chat_model_receipts').set({ status: 'succeeded', input_tokens: result.usage.inputTokens, output_tokens: result.usage.outputTokens, usage_known: result.usageEstimated !== true, action_valid: true, output_hash: createHash('sha256').update(result.text).digest('hex'), finished_at: new Date() }).where('id', '=', receiptId).execute();
     const failed = (receiptId: string, error: unknown) => { const usage = error instanceof ProviderError ? error.usage : undefined; return db.updateTable('chat_model_receipts').set({ status: usage ? 'failed' : 'unknown', input_tokens: usage?.inputTokens ?? null, output_tokens: usage?.outputTokens ?? null, usage_known: Boolean(usage), error_code: error instanceof ProviderError ? error.code : 'MODEL_FAILED', ...modelErrorMetadata(error), finished_at: new Date() }).where('id', '=', receiptId).execute(); };
+    assertModelAllowed();
     await config.beforeModelDecision?.(needed, signal);
-    const router = config.inference?.routerFor('fast') ?? null;
-    if (router) {
-      const response = await router.generate<string>({ goal: prompt, system: ADS_REWRITE_SYSTEM, maxTokens: 700, signal, idempotencyKey: `${runId}:${state.steps}:correction:${createHash('sha256').update(prompt).digest('hex').slice(0, 16)}`, structured }, {
-        requires: { estimatedTokens: needed },
-        onAttempt: candidate => beginModelReceipt(id, runId, state.steps, candidate.key, 'correction'),
-        onSettled: async (receiptId, _candidate, outcome) => { await (outcome.ok ? succeeded(receiptId, outcome.result) : failed(receiptId, outcome.error)); },
-      });
-      return response.text;
-    }
     const attempted = new Set<string>();
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const model = pool.pick('fast', needed, Date.now(), attempted);
@@ -756,7 +702,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   /** Binds the campaign task to this run: its events are fenced by the run's lease and its state is saved with the run. */
   function campaignContext(ownerId: string, id: string, runId: string, state: BrainState, signal: AbortSignal, request: string): CampaignContext {
     state.campaign ??= newCampaignRunState();
-    const modelReady = providers.size > 0 || config.inference?.active() === true;
+    const modelReady = providers.size > 0 && fullReach();
     return {
       ownerId, runId, state: state.campaign, ports: tools?.ads?.campaign ?? TEXT_ONLY_PORTS, createInAccount: requestsPausedCampaign(request), signal, assertActive,
       emit: async (taskId, event, dedupKey) => { await runTransaction(id, runId, tx => appendCampaignEvent(tx, { conversationId: id, runId, taskId }, event, { ...(dedupKey ? { dedupKey } : {}), redact: value => vault.scrubValue(id, value, clean) })); },
@@ -839,7 +785,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const context: GoalContext = {
       request, history, memory: memory ? [{ text: memory, savedAt: null }] : [], facts: [], choices: { ...(choices ?? {}) },
       capabilities: {
-        models: providers.size > 0 || config.inference?.active() === true, search: true, browser: true,
+        models: providers.size > 0 && full, search: true, browser: true,
         coding: full && Boolean(tools?.work?.code), files: full && Boolean(tools?.work?.code), computer: full && Boolean(tools?.computer),
         ads: Boolean(tools?.ads), adsCreate: Boolean(tools?.ads?.createPaused), skills: full && Boolean(config.runSkill),
       },
@@ -1270,7 +1216,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return;
       }
 
-      if (!providers.size && config.inference?.active() !== true) throw new BrowserError('ASSISTANT_UNCONFIGURED', 'لم يُضبط مفتاح Groq أو FreeLLMAPI في الخادم.', 409);
+      if (!providers.size) throw new BrowserError('ASSISTANT_UNCONFIGURED', NOT_CONFIGURED_MESSAGE, 409);
       const recallFormat = tools?.memory ? memoryRecallFormat(request) : null;
       let recallEvidence: readonly string[] = [];
       let recallCorrections = 0;

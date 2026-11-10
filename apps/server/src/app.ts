@@ -11,7 +11,8 @@ import { CreateTaskSchema, SetupSchema, WorkspaceSnapshotSchema, SkillBenchmarkS
 import { createAuth, createOwner, migrateAuth, recoverLocalSetupClaim } from './auth.js';
 import { MEMBER_QUOTA_ROUTES, MEMBER_ROUTES, PUBLIC_ROUTES, memberRunsToday, migrateMembers, registerMemberRoutes, roleOf, routeKey, type WorkspaceRole } from './members.js';
 import { createAIControl } from './ai.js';
-import { ProviderError, GroqProvider } from '@mohassan/providers';
+import { ProviderError } from '@mohassan/providers';
+import { createLocalModel, NOT_CONFIGURED_MESSAGE, type LocalModelConfig } from './local-model.js';
 import { createCodingControl } from './coding.js';
 import type { SandboxRunner } from '@mohassan/coding';
 import { CodingError } from '@mohassan/coding';
@@ -34,7 +35,6 @@ import { createStudioAiControl, registerStudioAiRoutes } from './studio-ai.js';
 import { createStudioLiveControl } from './studio-live.js';
 import { createBrowserTaskControl } from './browser-task.js';
 import { createCommandChatControl, registerCommandChatRoutes } from './command-chat.js';
-import { createInferenceControl, registerInferenceRoutes, type InferenceConfig } from './inference.js';
 import { createGoogleAdsControl, googleAdsMigration, GoogleAdsError, type GoogleAdsConfig } from '@mohassan/google-ads';
 import { landingPageReader, registerGoogleAdsRoutes } from './google-ads.js';
 import { createSkillRuntime, skillGatewayTools } from './skill-runtime.js';
@@ -55,13 +55,14 @@ import { recordSkillGap, createSkillBenchmarkControl, createSkillForgeControl } 
 export interface AppConfig {
   dataDir?: string; databaseUrl?: string; authSecret: string; internalSecret: string;
   setupToken: string; webOrigin: string; production: boolean; runWorker: boolean;
-  groqApiKey?:string;groqModel?:string;groqReasoningModel?:string;aiFetch?:typeof fetch;
+  /** The owner's own model on Ollama (owner decision 2026-11-10): the only model. Absent: model features are off. */
+  localModel?:LocalModelConfig;
+  /** Transport for the local model, injected by isolated tests and measurements only. */
+  aiFetch?:typeof fetch;
   codingDataDir?:string;codingAllowedRoots?:string[];sandboxRunner?:SandboxRunner;
   browser?:BrowserConfig;windowsEnabled?:boolean;browserProfileDir?:string;browserChannel?:'chrome'|null;
-  studioAiDataDir?:string;groqVisionModel?:string;studioGatewayUrl?:string;studioGatewaySecret?:string;studioPreviewPort?:number;
+  studioAiDataDir?:string;studioGatewayUrl?:string;studioGatewaySecret?:string;studioPreviewPort?:number;
   skillEngineEnabled?: boolean;
-  /** FreeLLMAPI gateway and failover policy. Absent: FreeLLMAPI stays off and Groq works as before. */
-  inference?: Omit<InferenceConfig,'groq'|'fetch'>;
   /** Absent values leave the integration in its not-configured state. */
   googleAds?: Partial<Omit<GoogleAdsConfig,'webOrigin'>>;
   learning?: LearningConfig;
@@ -70,6 +71,12 @@ export interface AppConfig {
   testRequestLimit?:number;
   /** Chat requests a member may start in 24 hours. */
   memberDailyRuns?:number;
+}
+/** The connections card: the local model's real state, never a cloud provider. */
+function modelDetail(health:Awaited<ReturnType<NonNullable<ReturnType<typeof createLocalModel>>['check']>>|null):string{
+  if(!health)return NOT_CONFIGURED_MESSAGE;
+  if(health.status!=='ready')return `${health.model}: ${health.message}`;
+  return `${health.model} عبر Ollama ${health.version}${health.digest?`، البصمة ${health.digest.slice(0,12)}`:''}${health.loaded?'، محمّل الآن':'، يُحمّل عند أول طلب'}${health.vision?'، يقرأ الصور':''}. طلب واحد في كل مرة؛ لا بديل سحابي.`;
 }
 export function secretEqual(a: string, b: string) {
   const left = Buffer.from(a), right = Buffer.from(b);
@@ -88,18 +95,19 @@ export async function createApplication(config: AppConfig) {
   await windowsMigration(database.db);
   await googleAdsMigration(database.db);
   const auth = createAuth(database.db, {secret: config.authSecret, webOrigin: config.webOrigin, production: config.production});
-  const coding=await createCodingControl(database.db,{dataDir:config.codingDataDir,allowedRoots:config.codingAllowedRoots,apiKey:config.groqApiKey,model:config.groqReasoningModel,fetch:config.aiFetch,sandbox:config.sandboxRunner});
+  const localModel=createLocalModel(config.localModel?{...config.localModel,...(config.aiFetch?{fetch:config.aiFetch}:{})}:undefined);
+  const coding=await createCodingControl(database.db,{dataDir:config.codingDataDir,allowedRoots:config.codingAllowedRoots,sandbox:config.sandboxRunner,...(localModel?{model:{name:localModel.model,provider:()=>localModel.provider('coding')}}:{})});
   let studio:Awaited<ReturnType<typeof createStudioControl>>;
   const studioLive=await createStudioLiveControl(database.db,{gatewayUrl:config.studioGatewayUrl,gatewaySecret:config.studioGatewaySecret,webOrigin:config.webOrigin,production:config.production,previewPort:config.studioPreviewPort,getSession:(ownerId,id)=>studio.detail(ownerId,id)});
   studio=await createStudioControl(database.db,{allowedRoots:config.codingAllowedRoots??[],sandbox:coding.sandbox,buildNext:studioLive.available?((snapshot,signal)=>studioLive.build(snapshot,signal)):undefined});
-  const studioAi=await createStudioAiControl(database.db,{dataDir:config.studioAiDataDir??(config.codingDataDir?resolve(config.codingDataDir,'studio-ai'):undefined),apiKey:config.groqApiKey,model:config.groqReasoningModel,visionModel:config.groqVisionModel,fetch:config.aiFetch,studio,validateCandidate:studio.validateCandidate,applyCandidate:studio.applyCandidate});
+  const studioAi=await createStudioAiControl(database.db,{dataDir:config.studioAiDataDir??(config.codingDataDir?resolve(config.codingDataDir,'studio-ai'):undefined),...(localModel?{model:{name:localModel.model,vision:localModel.vision,provider:()=>localModel.provider('studio')}}:{}),studio,validateCandidate:studio.validateCandidate,applyCandidate:studio.applyCandidate});
   let browser:Awaited<ReturnType<typeof registerBrowserRoutes>>;
   await migrateSearch(database.db);
   const searchNetwork=new SafeNetwork(config.browser),searchStore=new SqlSearchStore(database.db),searchIndex=new LocalPublicIndex(database.db,searchNetwork);
   const searchProvider=config.browser?.searchProvider??new SearchEngine(searchNetwork,{store:searchStore,localIndex:searchIndex,admission:searchStore});
   const browserTask=await createBrowserTaskControl(database.db,{browser:{create:(ownerId,input)=>browser.create(ownerId,input),action:(ownerId,id,input)=>browser.action(ownerId,id,input),detail:(ownerId,id)=>browser.detail(ownerId,id),close:(ownerId,id)=>browser.close(ownerId,id)},networkPolicy:config.browser});
   const moduleAvailability={studioVisual:true,browser:true,memory:true,windows:true};
-  const ai=await createAIControl(database.db,{apiKey:config.groqApiKey,model:config.groqModel,reasoningModel:config.groqReasoningModel,fetch:config.aiFetch,capabilities:createCapabilities(Boolean(config.groqApiKey),coding.available,studioAi.available,moduleAvailability,true,config.skillEngineEnabled)});
+  const ai=await createAIControl(database.db,{localModel,capabilities:createCapabilities(Boolean(localModel),coding.available,studioAi.available,moduleAvailability,true,config.skillEngineEnabled)});
   let memory:Awaited<ReturnType<typeof registerMemoryRoutes>>;
   let skills:Awaited<ReturnType<typeof registerSkillRoutes>>;
   const runtimeOptions: ConstructorParameters<typeof Runtime>[1] = {moduleAvailability,openBrowser:browserTask.execute,verifyBrowser:browserTask.verify,plan:ai.engine?(async(goal,context)=>{
@@ -224,14 +232,14 @@ export async function createApplication(config: AppConfig) {
   app.get<{Params:{id:string}}>('/api/browser/tasks/:id/screenshot',async(request,reply)=>{const picture=await browserTask.screenshot((await owner(request)).id,z.uuid().parse(request.params.id));return reply.type(picture.mimeType).header('Content-Disposition','inline').send(picture.bytes);});
   memory=await registerMemoryRoutes(app,{db:database.db,owner});
   const learningAbort=new AbortController();
-  const localEvaluation=config.learningLocalModel?createIsolatedLearningEvaluator({model:config.learningLocalModel.model,createProvider:model=>new OllamaProvider({model,baseUrl:config.learningLocalModel?.baseUrl}),signal:learningAbort.signal}):undefined;
+  const localEvaluation=config.learningLocalModel?createIsolatedLearningEvaluator({model:config.learningLocalModel.model,createProvider:model=>new OllamaProvider({model,baseUrl:config.learningLocalModel?.baseUrl,...(localModel?{queue:localModel.queue}:{})}),signal:learningAbort.signal}):undefined;
   const learning=await registerLearningRoutes(app,{db:database.db,owner,config:{allowedRoots:config.codingAllowedRoots??[],...(localEvaluation?{evaluate:localEvaluation,stopEvaluation:()=>learningAbort.abort()}:{}),...config.learning}});
   // Reading readiness starts no process; available() already ran its fixed probes.
   const scriptsReady=(await coding.sandbox.executableReadiness?.())?.enabled===true;
-  skills=await registerSkillRoutes(app,{db:database.db,owner,allowedRoots:config.codingAllowedRoots??[],enabled:config.skillEngineEnabled,executableReady:async()=>scriptsReady,environment:()=>({capabilities:createCapabilities(Boolean(config.groqApiKey),coding.available,studioAi.available,moduleAvailability,true,config.skillEngineEnabled),modelReady:Boolean(config.groqApiKey),visionReady:Boolean(config.groqApiKey&&config.groqVisionModel),executableReady:scriptsReady,gatewayTools:skillGatewayTools({enabled:config.skillEngineEnabled,coding:coding.available,studio:studioAi.available,vision:Boolean(config.groqApiKey&&config.groqVisionModel)})})});
+  skills=await registerSkillRoutes(app,{db:database.db,owner,allowedRoots:config.codingAllowedRoots??[],enabled:config.skillEngineEnabled,executableReady:async()=>scriptsReady,environment:()=>({capabilities:createCapabilities(Boolean(localModel),coding.available,studioAi.available,moduleAvailability,true,config.skillEngineEnabled),modelReady:Boolean(localModel),visionReady:Boolean(localModel?.vision),executableReady:scriptsReady,gatewayTools:skillGatewayTools({enabled:config.skillEngineEnabled,coding:coding.available,studio:studioAi.available,vision:Boolean(localModel?.vision)})})});
   const skillExecutionSupport = createSkillRuntime(database.db,{skills,browser,memory,sandbox:coding.sandbox,testOrigins:config.browser?.testOrigins,
     ...(ai.engine?{modelGenerate:ai.generateSkill}:{}),
-    ...(config.groqApiKey&&config.groqVisionModel?{vision:{provider:new GroqProvider({apiKey:config.groqApiKey,model:config.groqVisionModel,fetch:config.aiFetch,timeoutMs:20000}),image:studioAi.image}}:{}),
+    ...(localModel?.vision?{vision:{provider:localModel.provider('vision'),image:studioAi.image}}:{}),
   });
   const skillExecution = config.skillEngineEnabled ? skillExecutionSupport : undefined;
   const skillRollback = createSkillRollbackControl(database.db);
@@ -259,11 +267,9 @@ export async function createApplication(config: AppConfig) {
   await registerGoogleAdsRoutes(app,{control:googleAds,owner});
   await registerMemberRoutes(app,{db:database.db,auth,webOrigin:config.webOrigin,owner,role,dailyRuns:memberDailyRuns,adsAvailable:()=>googleAds.configured,imagesAvailable:()=>false});
   const assistantTools=createAssistantTools({memory,coding,studio,studioChange:studioAi.available,runtime,windows,googleAds});
-  const inference=await createInferenceControl(database.db,{...config.inference,groq:{apiKey:config.groqApiKey,fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b']},fetch:config.aiFetch});
-  await registerInferenceRoutes(app,{control:inference,owner});
   const agentBrowser=new AgentBrowser({profileDir:config.browserProfileDir??join(tmpdir(),`mohassan-browser-${randomUUID()}`),testOrigins:config.browser?.testOrigins,channel:config.browserChannel});
   const adsSleep=config.googleAds?.sleep;
-  const chat=await createCommandChatControl(database.db,{...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
+  const chat=await createCommandChatControl(database.db,{...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),tools:assistantTools,...(localModel?{createProvider:()=>localModel.provider('chat')}:{}),models:{fast:[localModel?.model??'local-model'],deep:[localModel?.model??'local-model'],vision:localModel?.model??'local-model'},browser:agentBrowser,networkPolicy:config.browser,searchProvider,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
     learningContext:learning.context,
     ...(config.skillEngineEnabled?{recordSkillGap,skillContext:skills.context,loadSkill:skills.loadInstruction,runSkill:async(ownerId,input,context)=>{
       context.signal.throwIfAborted();
@@ -280,12 +286,12 @@ export async function createApplication(config: AppConfig) {
     const snapshot = await runtime.snapshot(user.id);
     await sql`SELECT 1`.execute(database.db);
     const aiStatus=await ai.status();
+    const modelHealth=localModel?await localModel.check():null;
     const codingWorkspace=await coding.workspace(user.id);
     const adsStatus=await googleAds.status(user.id);
     const integrations: Integration[] = [
       {id: 'database', name: database.mode === 'embedded' ? 'PostgreSQL محلي' : 'PostgreSQL / Neon', description: 'حفظ المهام والجلسات والأحداث', status: 'connected', detail: database.mode === 'embedded' ? 'مخزن تطوير دائم، تديره خدمة واحدة.' : 'تم التحقق من اتصال قاعدة البيانات.'},
-      {id: 'groq', name: 'Groq', description: 'النماذج والتخطيط الذكي', status: aiStatus.status==='verified'?'connected':'needs_configuration', detail: aiStatus.message},
-      {id: 'freellmapi', name: 'FreeLLMAPI', description: 'نماذج مجانية عبر بوابة محلية مع تبديل تلقائي للمحادثة', status: inference.active()?'connected':'needs_configuration', detail: inference.active()?'مفعّل للمساعد. التخطيط والبرمجة والاستوديو تبقى على Groq.':inference.configured?'مهيأ على الخادم وغير مفعّل. فعّله من إعدادات المزودين.':'غير مهيأ. أضف FREELLMAPI_API_KEY إلى ملف .env على الخادم.'},
+      {id: 'local-model', name: 'نموذج موحسن المحلي', description: 'النموذج الوحيد: يعمل على كمبيوتر المالك عبر Ollama دون أي مزود سحابي', status: modelHealth?.status==='ready'?'connected':'needs_configuration', detail: modelDetail(modelHealth)},
       {id: 'coding', name: 'Coding Engine', description: 'تعديل معزول واختبارات ومراجعة Git', status: coding.available?'connected':'needs_configuration', detail: codingWorkspace.sandbox.message},
       {id:'studio',name:'Visual Studio',description:'معاينة وتعديل المصدر ومراجعة الفروقات',status:'connected',detail:'اختيار عناصر وتعديلها، ومقترحات ذكية بموافقة وصور مقارنة قبل التطبيق؛ تشغيل Next الكامل يحتاج ربط مشغّل المعاينة.'},
       {id: 'browser', name: 'Browser & Research', description: 'بحث موثق وجلسات مستقلة', status: 'connected', detail: 'جلسات Chromium مستقلة، ومصادر محفوظة، وموافقة منفصلة لإرسال النماذج.'},
@@ -310,7 +316,7 @@ export async function createApplication(config: AppConfig) {
   app.post('/api/ai/verify',{config:{rateLimit:{max:3,timeWindow:'1 minute'}}},async(request,reply)=>{
     await owner(request);z.object({}).strict().parse(request.body??{});
     try{return await ai.verify();}
-    catch(error){return reply.code(error instanceof ProviderError&&error.code==='NOT_CONFIGURED'?409:502).send({error:{code:error instanceof ProviderError?error.code:'AI_VERIFICATION_FAILED',message:error instanceof ProviderError?error.message:'تعذر التحقق من اتصال Groq.'}});}
+    catch(error){return reply.code(error instanceof ProviderError&&error.code==='NOT_CONFIGURED'?409:502).send({error:{code:error instanceof ProviderError?error.code:'AI_VERIFICATION_FAILED',message:error instanceof ProviderError?error.message:'تعذر التحقق من النموذج المحلي.'}});}
   });
   app.post('/api/tasks', async (request) => {
     const user = await owner(request);
@@ -324,5 +330,5 @@ export async function createApplication(config: AppConfig) {
   app.addHook('onClose', async () => {clearInterval(benchmarkMaintenance);try{await benchmarkMaintenanceRun;await Promise.all([skillBenchmarks.shutdown(),skillForge.shutdown()]);}finally{try{await chat.shutdown();}finally{try{await runtime.stop();}finally{try{await browser.shutdown();}finally{try{await studioLive.close();}finally{await database.close();}}}}}});
   if (config.runWorker) runtime.start();
   await app.ready();
-  return {app, routes, runtime, database, auth,ai,coding,studio,studioAi,studioLive,browser,browserTask,memory,skills,chat,skillExecution,skillBenchmarks,skillForge,googleAds,inference};
+  return {app, routes, runtime, database, auth,ai,coding,studio,studioAi,studioLive,browser,browserTask,memory,skills,chat,skillExecution,skillBenchmarks,skillForge,googleAds,localModel};
 }

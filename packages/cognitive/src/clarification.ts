@@ -509,7 +509,7 @@ const SLOT_PRIORITY: SlotId[] = ['ads_budget', 'ads_url', 'ads_location', 'ads_s
 function capabilityFor(step: StepKind, frame: GoalFrame, caps: GoalCapabilities | undefined): ReadinessReason | null {
   if (!caps) return null;
   const message = (ar: string, en: string) => frame.language === 'ar' ? ar : en;
-  if (caps.models === false && step !== 'read') return { code: 'MODEL_UNAVAILABLE', message: message('لا يوجد نموذج مهيأ على الخادم.', 'No model is configured on the server.'), slot: null };
+  if (caps.models === false && step !== 'read') return { code: 'MODEL_UNAVAILABLE', message: message('نموذج موحسن غير متاح لحسابك أو على هذا الخادم. ميزات النموذج متاحة لمالك موحسن فقط حاليًا، على كمبيوتره.', "Mohassan's model is not available to your account or on this server. Model features are the owner's only for now, on the owner's computer."), slot: null };
   if (step === 'spend') return { code: 'SPEND_NOT_IN_CHAT', message: message('تشغيل الحملة أو صرف الميزانية لا يتم من المحادثة؛ يحتاج موافقتك المنفصلة في قسم Google Ads.', 'Launching or spending is not done from the chat; it needs your separate approval in the Google Ads section.'), slot: null };
   if (step === 'external_write' && frame.domains.includes('google_ads') && !caps.adsCreate) return { code: 'ADS_CREATE_UNAVAILABLE', message: message('إنشاء الحملات في الحساب غير متاح هنا؛ يمكن إعداد المسودة فقط.', 'Creating campaigns in the account is not available here; only a draft can be prepared.'), slot: null };
   if ((step === 'external_write' || step === 'irreversible') && frame.domains.includes('coding') && !caps.coding) return { code: 'CODING_UNAVAILABLE', message: message('تعديل المشاريع غير متاح لحسابك.', 'Project changes are not available to your account.'), slot: null };
