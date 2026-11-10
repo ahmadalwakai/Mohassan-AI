@@ -160,6 +160,8 @@ describe('trusted gap metadata from chat', () => {
       expect(run.status).toBe('completed'); expect(run.state).not.toHaveProperty('gapSignal'); states.push(run.state);
       expect(await fixture.gaps()).toEqual([]);
     }
-    expect(prompts[0]).toBe(prompts[1]); expect(states[0]).toEqual(states[1]);
+    // The goal frame records when each value was observed; only those times may differ between the two runs.
+    const timeless = (state: unknown) => JSON.parse(JSON.stringify(state).replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, '<time>'));
+    expect(prompts[0]).toBe(prompts[1]); expect(timeless(states[0])).toEqual(timeless(states[1]));
   });
 });

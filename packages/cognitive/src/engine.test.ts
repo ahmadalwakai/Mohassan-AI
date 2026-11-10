@@ -156,9 +156,18 @@ describe('planning structure, routing and trusted policy', () => {
     expect(requests).toHaveLength(1);
   });
 
-  it.each(['confidence', 'critical_unknown', 'question', 'missing_capability'])('requires clarification for %s without claiming factual verification', async (condition) => {
+  it('does not decide clarification from the model confidence alone', async () => {
     const plan = rawPlan();
-    if (condition === 'confidence') plan.confidence = 0.4;
+    plan.confidence = 0.4;
+    const { engine } = harness(async (model) => responseFor(model, plan));
+    const result = await engine.generate(simpleGoal);
+    expect(result.needsClarification).toBe(false);
+    expect(result.plan.confidence).toBe(0.4);
+    expect(result.executionAllowed).toBe(false);
+  });
+
+  it.each(['critical_unknown', 'question', 'missing_capability'])('requires clarification for %s without claiming factual verification', async (condition) => {
+    const plan = rawPlan();
     if (condition === 'critical_unknown') plan.uncertainties = [{ description: 'لا توجد أدلة على جودة التحويل.', impact: 'high', resolution: 'افحص مصدر التتبع.' }];
     if (condition === 'question') plan.goal.clarifyingQuestions = ['ما نطاق الموارد المسموح؟'];
     if (condition === 'missing_capability') plan.steps[0].capabilityId = 'future.not_installed';

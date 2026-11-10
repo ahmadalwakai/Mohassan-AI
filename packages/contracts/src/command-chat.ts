@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { CampaignEventStreamSchema } from './campaign-progress';
+import { ChatDecisionStreamSchema, ChatGoalSummarySchema, ReadinessStatusSchema, SlotIdSchema } from './goal-clarification';
 
 export const ChatStatusSchema = z.enum(['idle', 'running', 'waiting_user', 'waiting_input', 'waiting_approval', 'failed', 'cancelled']);
 
@@ -15,6 +16,19 @@ export const ChatQuestionSchema = z.object({
   options: z.array(ChatOptionSchema).max(5),
   /** The `connect` option opens Google's own consent page instead of answering. */
   action: z.literal('google_ads_connect').optional(),
+  /**
+   * Present when the clarification engine asked: why the answer matters, the
+   * recommended option and whether a typed answer is accepted. Answering is data;
+   * it never approves an action.
+   */
+  clarification: z.object({
+    reason: z.string().max(300),
+    recommendedOptionId: z.string().regex(/^[a-zA-Z0-9_-]{1,40}$/).nullable(),
+    allowText: z.boolean(),
+    slots: z.array(SlotIdSchema).min(1).max(3),
+    goalVersion: z.number().int().min(1).max(1000),
+    readiness: ReadinessStatusSchema,
+  }).strict().optional(),
 }).strict();
 
 export const ChatApprovalSchema = z.object({
@@ -85,6 +99,10 @@ export const ChatConversationSchema = ChatConversationSummarySchema.extend({
   configured: z.boolean(),
   /** Structured events of the latest Google Ads campaign task in this conversation. Absent when there is none. */
   campaign: CampaignEventStreamSchema.nullable().optional(),
+  /** What the clarification engine understood about the latest task. Absent for older runs. */
+  goal: ChatGoalSummarySchema.nullable().optional(),
+  /** Decision events of the latest run; `lastSeq` is the conversation's newest, for resuming with `?after=`. */
+  decisions: ChatDecisionStreamSchema.optional(),
 }).strict();
 
 export type ChatConversation = z.infer<typeof ChatConversationSchema>;
@@ -95,10 +113,12 @@ export type ChatSecureRequest = z.infer<typeof ChatSecureRequestSchema>;
 
 export const ChatCreateSchema = z.object({ goal: z.string().trim().min(1).max(4000).optional(), browserAccount: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/).nullable().optional() }).strict();
 export const ChatSendSchema = z.object({ text: z.string().trim().min(1).max(4000) }).strict();
+/** An option, a typed answer, or both. The server checks it against the pending question. */
 export const ChatRespondSchema = z.object({
   questionId: z.uuid(),
-  optionId: z.string().regex(/^[a-zA-Z0-9_-]{1,40}$/),
-}).strict();
+  optionId: z.string().regex(/^[a-zA-Z0-9_-]{1,40}$/).optional(),
+  text: z.string().trim().min(1).max(2000).optional(),
+}).strict().refine(value => value.optionId !== undefined || value.text !== undefined, { message: 'optionId or text is required' });
 export const ChatApproveSchema = z.object({ approvalId: z.uuid(), approved: z.boolean() }).strict();
 export const ChatSecureSubmitSchema = z.object({
   requestId: z.uuid(),

@@ -11,6 +11,7 @@ export * from './command-chat';
 export * from './skills';
 export * from './google-ads';
 export * from './campaign-progress';
+export * from './goal-clarification';
 export * from './ai-providers';
 export { browserReadOrigins, detectBrowserOpenIntent, type BrowserOpenIntent } from './browser-intent';
 

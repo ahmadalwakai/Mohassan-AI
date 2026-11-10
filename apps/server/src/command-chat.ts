@@ -11,7 +11,10 @@ import {
 import { AgentEffectHeld, AgentSessionCheckpointSchema, BrowserError, SearchEngine, SafeNetwork, type AgentPostcondition, type AgentAction, type AgentAuthority, type AgentActionResult, type AgentBrowser, type AgentPage, type NetworkPolicy, type SearchProvider } from '@mohassan/browser';
 import { GroqProvider, ProviderError, redactSecrets, classifyProviderFallback, waitForRetryAfter, validatedRetryAfterMs, type InferenceRouter, type ModelProvider } from '@mohassan/providers';
 import { unfenceJson } from './inference.js';
-import { redactCredentialText } from '@mohassan/cognitive';
+import {
+  DEFAULT_CLARIFICATION_CONFIG, applyAnswer, assessReadiness, checkAdsCreation, classifyReply, detectDomains, interpretGoal, markAsked,
+  redactCredentialText, reviewModelQuestion, reviseFromMessage, settledFacts, summarizeGoal, type GoalContext,
+} from '@mohassan/cognitive';
 import { classifyExperience, escapedContextLength, recordExperience, type ExperienceInput } from '@mohassan/learning';
 import {
   boundedDecisionJsonSchema, decisionJsonSchema, decisionSchema, recoverDecision, ModelPool, buildPrompt, chooseTier, cookieRejectButton, directRoute, estimateTokens, newBrainState,
@@ -28,6 +31,7 @@ import { CredentialVault } from './assistant/vault.js';
 import { trustedSkillGapSignal } from './assistant/skill-gaps.js';
 import { assessBrowserVerification } from './assistant/verification.js';
 import { newGoalState, observeFailure, observeOutcome, reviewOpen, reviewStop, stagnationWarning, type BrainVersion } from './assistant/goal-integrity.js';
+import { appendDecisionEvents, chatQuestionFor, clarificationLessonsMigration, decisionEventsMigration, latestRunDecisions, parseClarifyState, readClarificationLessons, readDecisionEvents, recordClarificationLesson, type ClarifyState, type DecisionEventInput } from './assistant/clarify.js';
 
 export interface CommandChatConfig {
   /** False for a member: no projects, studio, computer or skill runs. Absent means full access. */
@@ -165,6 +169,8 @@ export async function commandChatMigration(db: Kysely<any>) {
       await tx.insertInto('schema_migrations').values({version:'028_chat_recovery_review'}).execute();
     }
     await campaignEventsMigration(tx);
+    await decisionEventsMigration(tx);
+    await clarificationLessonsMigration(tx);
   });
 }
 
@@ -341,7 +347,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
 
   async function detail(ownerId: string, id: string): Promise<ChatConversation> {
     const row = await owned(ownerId, id);
-    const lastRun = await db.selectFrom('chat_runs').select('id').where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(1).executeTakeFirst();
+    const lastRun = await db.selectFrom('chat_runs').select(['id', 'state']).where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(1).executeTakeFirst();
+    const clarified = parseClarifyState(lastRun?.state?.clarify);
     const [messages, steps] = await Promise.all([
       db.selectFrom('chat_messages').selectAll().where('conversation_id', '=', id).orderBy('created_at', 'asc').orderBy('id', 'asc').limit(300).execute(),
       lastRun
@@ -359,6 +366,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       secure: row.secure ?? null,
       browser: page ? { url: page.url, title: page.title, observedAt: page.observedAt, live: await browser.hasPage(ownerId, id), screenUrl: `/api/chat/conversations/${id}/screen?v=${page.version}`, recovery: row.browser_checkpoint ? row.browser_checkpoint.status === 'ready' && row.browser_checkpoint.resumeUrl ? 'available' : 'review_required' : 'unavailable',...(checkpoint?{recoveryToken:checkpointToken(checkpoint)}:{}) } : null,
       progress: row.progress, error: row.error, campaign: await readCampaignEvents(db, id),
+      goal: clarified?.summary ?? null, decisions: await latestRunDecisions(db, id, lastRun?.id ?? null),
       steps: steps.reverse().map((item) => ({ id: item.id, text: item.message, createdAt: iso(item.created_at) })),
       updatedAt: iso(row.updated_at), configured: providers.size > 0 || config.inference?.active() === true,
     });
@@ -475,16 +483,30 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     };
   }
 
-  async function pause(id: string, runId: string, state: BrainState, status: string, fields: Record<string, unknown>, say?: string) {
+  /** Decision events, redacted like every other chat text. The caller holds the conversation lock. */
+  const decide = (tx: Kysely<any>, id: string, runId: string, inputs: readonly DecisionEventInput[]) => inputs.length ? appendDecisionEvents(tx, { conversationId: id, runId }, inputs, text => vault.scrub(id, clean(text))) : Promise.resolve(0);
+
+  /**
+   * Persists the question or approval together with the run state before it is shown.
+   * A portable clarification pause holds nothing in memory, so it may wait longer.
+   */
+  async function pause(id: string, runId: string, state: BrainState, status: string, fields: Record<string, unknown>, say?: string, options: { events?: DecisionEventInput[]; leaseMinutes?: number } = {}) {
     await saveState(runId, state);
+    const minutes = Math.max(1, Math.min(options.leaseMinutes ?? 10, 24 * 60));
     await runTransaction(id,runId,async (tx) => {
       const current = await tx.selectFrom('chat_conversations').select(['status', 'active_run_id']).where('id', '=', id).forUpdate().executeTakeFirstOrThrow();
       if (current.active_run_id !== runId || current.status !== 'running') throw new RunEnded();
       await tx.updateTable('chat_conversations').set({ status, progress: null, updated_at: new Date(), ...fields }).where('id', '=', id).execute();
-      await tx.updateTable('chat_runs').set({ status, lease_expires_at:sql`CURRENT_TIMESTAMP + interval '10 minutes'`, updated_at: new Date() }).where('id', '=', runId).execute();
+      await tx.updateTable('chat_runs').set({ status, lease_expires_at:sql`CURRENT_TIMESTAMP + ${minutes} * interval '1 minute'`, updated_at: new Date() }).where('id', '=', runId).execute();
       if (say) await addMessage(tx, id, 'assistant', say);
+      await decide(tx, id, runId, options.events ?? []);
     });
   }
+  /** Binds the approval to the current goal version; a later change to the goal makes it stale. */
+  const approvalEvent = (state: BrainState, label: string): DecisionEventInput[] => {
+    state.approvalVersion = state.clarify?.frame.version ?? null;
+    return [{ type: 'approval_requested', summary: `طُلبت موافقتك على: ${label}`.slice(0, 300), data: { goalVersion: state.approvalVersion } }];
+  };
 
   async function pauseSecure(id: string, runId: string, state: BrainState, secure: Omit<ChatSecureRequest, 'id'>) {
     const current=execution.getStore();
@@ -498,7 +520,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const destination = new URL(pending.permit.url);
     const prompt = `أريد إرسال «${pending.label.slice(0, 80)}» إلى ${destination.host}. هل أتابع؟`;
     const detail = `${pending.permit.method} ${destination.pathname.slice(0, 250)}. الموافقة محددة بالصفحة والقيم وتنتهي خلال خمس دقائق.`;
-    await pause(id, runId, state, 'waiting_approval', { approval: JSON.stringify({ id: randomUUID(), prompt, detail }) }, prompt);
+    await pause(id, runId, state, 'waiting_approval', { approval: JSON.stringify({ id: randomUUID(), prompt, detail }) }, prompt, { events: approvalEvent(state, pending.label.slice(0, 80)) });
   }
 
   async function pauseHeld(id: string, runId: string, state: BrainState, held: AgentEffectHeld['held'], label: string) {
@@ -507,10 +529,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const prompt = `أريد إرسال «${label.slice(0, 80)}» إلى ${destination.host}. هل أتابع؟`;
     const preview = clean(JSON.stringify(vault.scrubValue(id, held.bodyPreview))).slice(0, 700);
     const detail = `${held.method} ${destination.pathname.slice(0, 250)}${preview ? `\nالقيم: ${preview}` : ''}\nلم يُرسل الطلب بعد. سيُرسل هذا الطلب نفسه مرة واحدة، وتنتهي الموافقة خلال خمس دقائق.`;
-    await pause(id, runId, state, 'waiting_approval', { approval: JSON.stringify({ id: randomUUID(), prompt, detail }) }, prompt);
+    await pause(id, runId, state, 'waiting_approval', { approval: JSON.stringify({ id: randomUUID(), prompt, detail }) }, prompt, { events: approvalEvent(state, label.slice(0, 80)) });
   }
 
-  async function finish(id: string, runId: string, state: BrainState, text: string, status: 'completed' | 'partial' | 'blocked', proof?: ChatExperienceProof) {
+  async function finish(id: string, runId: string, state: BrainState, text: string, status: 'completed' | 'partial' | 'blocked', proof?: ChatExperienceProof, events: DecisionEventInput[] = []) {
     // A campaign task the reply leaves open ends with it, stating only what was really checked or done.
     const campaignEnd = campaignEndEvent(state.campaign, Boolean(state.adsApproved));
     const campaignTask = state.campaign ? campaignTaskId(runId, state.campaign.serial) : null;
@@ -524,6 +546,15 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       await tx.updateTable('chat_conversations').set({ status: 'idle', active_run_id: null, progress: null, error: null, updated_at: new Date() }).where('id', '=', id).execute();
       await tx.updateTable('chat_runs').set({ status, updated_at: new Date() }).where('id', '=', runId).execute();
       await recordTerminalRun(tx, runId, status, proof);
+      const verified = proof ? classifyExperience(proof.expected, proof.observation) : null;
+      // Lessons are kept only for runs an independent check verified; the store is bounded per owner.
+      const lesson = parseClarifyState(state.clarify);
+      if (lesson && verified && config.recordExperiences !== false) await recordClarificationLesson(tx, { ownerId: execution.getStore()!.ownerId, runId, clarify: lesson, outcome: verified });
+      await decide(tx, id, runId, [
+        ...events,
+        ...(verified ? [{ type: 'verification_completed' as const, summary: verified === 'verified_success' ? 'تحقق مستقل: النتيجة مطابقة للمطلوب.' : verified === 'verified_failure' ? 'تحقق مستقل: النتيجة لا تطابق المطلوب.' : 'لم يكتمل تحقق مستقل.', data: { outcome: verified } }] : []),
+        { type: status === 'blocked' ? 'task_blocked' as const : 'task_completed' as const, summary: status === 'completed' ? 'اكتملت المهمة.' : status === 'partial' ? 'انتهت المهمة جزئيًا.' : 'توقفت المهمة.', data: { status } },
+      ]);
       if (config.recordSkillGap && status !== 'completed') {
         await config.recordSkillGap(tx, { ownerId: execution.getStore()!.ownerId, chatRunId: runId, outcome: status, signal: state.gapSignal ?? null });
       }
@@ -802,6 +833,92 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     return false;
   }
 
+  /** What the shared core may know before asking: trusted state, retrieved choices and what this account can do. */
+  async function goalContext(ownerId: string, request: string, history: { role: string; text: string }[], memory: string | undefined, choices?: ClarifyState['choices']): Promise<GoalContext> {
+    const full = fullReach();
+    const context: GoalContext = {
+      request, history, memory: memory ? [{ text: memory, savedAt: null }] : [], facts: [], choices: { ...(choices ?? {}) },
+      capabilities: {
+        models: providers.size > 0 || config.inference?.active() === true, search: true, browser: true,
+        coding: full && Boolean(tools?.work?.code), files: full && Boolean(tools?.work?.code), computer: full && Boolean(tools?.computer),
+        ads: Boolean(tools?.ads), adsCreate: Boolean(tools?.ads?.createPaused), skills: full && Boolean(config.runSkill),
+      },
+      signals: { adsCreateInAccount: requestsPausedCampaign(request) },
+    };
+    // Retrieval before asking: the user's own project list answers "which project" when it can.
+    if (!choices && full && tools?.work?.inventory && detectDomains(request).includes('coding')) {
+      const projects = await tools.work.inventory(ownerId).catch(() => null);
+      if (projects) {
+        context.choices = { ...context.choices, project: projects.map(project => clean(project.name).slice(0, 120)).slice(0, 20) };
+        if (projects.length === 1) context.facts = [{ slot: 'project', value: clean(projects[0]!.name).slice(0, 120), source: 'tool_result' }];
+      }
+    }
+    return context;
+  }
+
+  const DRAFT_ONLY_WARNING = 'This task is draft only: the account write cannot run now because required values are missing or the user chose a draft. Do not call ads_create_paused. Prepare the draft and say plainly which values are still needed.';
+
+  /**
+   * The readiness gate before the model loop. Deterministic: it never calls a model.
+   * Returns true when the run paused or finished here.
+   */
+  async function clarifyGate(ownerId: string, id: string, runId: string, state: BrainState, request: string, history: { role: string; text: string }[], memory: string | undefined, page: AgentPage | null): Promise<{ stopped: boolean; warning?: string }> {
+    const events: DecisionEventInput[] = [];
+    const saved = parseClarifyState(state.clarify);
+    const context = await goalContext(ownerId, request, history, memory, saved?.choices);
+    let clarify: ClarifyState;
+    if (saved) clarify = saved;
+    else {
+      const frame = interpretGoal(context);
+      clarify = { frame, choices: context.choices ?? {}, pending: null, evaluatedVersion: 0, outcome: 'PROCEED', summary: null, portable: false, modelQuestions: [], withheld: 0, noted: 0, draftOnly: false, invalidAssumptions: [] };
+      events.push({ type: 'goal_interpreted', summary: `فُهم الطلب: ${frame.domains.join('، ')} · الخطوة الرئيسية ${frame.primaryStep}.`, data: { domains: frame.domains, primaryStep: frame.primaryStep, language: frame.language, constraints: frame.constraints }, dedupKey: 'goal' });
+      events.push({ type: 'context_retrieved', summary: 'قُرئ السياق المتاح قبل أي سؤال.', data: { historyTurns: history.length, memory: Boolean(memory), facts: context.facts?.length ?? 0, projects: context.choices?.project?.length ?? 0, evidence: frame.evidence.length }, dedupKey: 'context' });
+    }
+    state.clarify = clarify;
+    if (clarify.frame.answers.length > clarify.noted) {
+      const facts = settledFacts(clarify.frame);
+      if (facts) state.trail.push({ step: state.steps, action: 'clarified', result: clean(facts).slice(0, 1100), changed: true });
+      clarify.noted = clarify.frame.answers.length;
+    }
+    if (clarify.evaluatedVersion === clarify.frame.version) {
+      if (events.length) await runTransaction(id, runId, tx => decide(tx, id, runId, events));
+      return { stopped: false, ...(clarify.draftOnly ? { warning: DRAFT_ONLY_WARNING } : {}) };
+    }
+    const frame = clarify.frame;
+    const assessment = assessReadiness(frame, context);
+    clarify.evaluatedVersion = frame.version;
+    clarify.outcome = assessment.outcome;
+    clarify.summary = summarizeGoal(frame, assessment);
+    clarify.draftOnly = frame.constraints.includes('draft_only') || assessment.outcome === 'PREPARE_DRAFT';
+    events.push({ type: 'readiness_evaluated', summary: `الجاهزية: ${assessment.status} · القرار: ${assessment.outcome}.`, data: { status: assessment.status, outcome: assessment.outcome, version: frame.version, steps: assessment.steps.map(step => `${step.step}:${step.status}`) }, dedupKey: `readiness:${frame.version}` });
+    for (const reason of assessment.reasons) {
+      if (reason.code === 'REQUIREMENT_MISSING' || reason.code === 'REQUIREMENT_DECLINED') events.push({ type: 'requirement_missing', summary: reason.message, data: { slot: reason.slot, code: reason.code }, dedupKey: `missing:${reason.slot}:${frame.version}` });
+      if (reason.code === 'REQUIREMENT_CONFLICT') events.push({ type: 'ambiguity_detected', summary: reason.message, data: { slot: reason.slot }, dedupKey: `conflict:${reason.slot}:${frame.version}` });
+    }
+    if (assessment.outcome === 'RESEARCH') events.push({ type: 'research_required', summary: 'المعلومة متاحة بأداة مسموحة؛ سأبحث بدل السؤال.', data: { version: frame.version }, dedupKey: `research:${frame.version}` });
+    if (assessment.outcome === 'ASK_USER' && assessment.question) {
+      const spec = assessment.question;
+      clarify.frame = markAsked(frame, spec);
+      const question = chatQuestionFor(spec, clarify.frame, assessment.status);
+      clarify.pending = { chatQuestionId: question.id, spec };
+      clarify.portable = state.steps === 0 && !page && !vault.hasRedactions(id);
+      clarify.summary = summarizeGoal(clarify.frame, assessment);
+      state.clarify = clarify;
+      events.push({ type: 'clarification_requested', summary: spec.prompt, data: { slots: spec.slots, score: spec.score.value, mandatory: spec.score.mandatory, portable: clarify.portable }, dedupKey: `asked:${spec.id}` });
+      await pause(id, runId, state, 'waiting_user', { question: JSON.stringify(question) }, `${spec.prompt}\n\n${spec.reason}`.trim(), { events, leaseMinutes: clarify.portable ? 24 * 60 : 10 });
+      return { stopped: true };
+    }
+    if (assessment.outcome === 'BLOCKED') {
+      const reasons = assessment.reasons.filter(reason => reason.code !== 'APPROVAL_AT_BOUNDARY').map(reason => reason.message);
+      await finish(id, runId, state, reasons.length ? reasons.join('\n') : 'لا يمكنني تنفيذ هذا الطلب هنا.', 'blocked', undefined, events);
+      return { stopped: true };
+    }
+    if (clarify.draftOnly) events.push({ type: 'plan_revised', summary: 'سأجهز مسودة فقط؛ لن يُكتب شيء في الحساب في هذه المهمة.', data: { to: 'draft', version: frame.version }, dedupKey: `draft:${frame.version}` });
+    await saveState(runId, state);
+    await runTransaction(id, runId, tx => decide(tx, id, runId, events));
+    return { stopped: false, ...(clarify.draftOnly ? { warning: DRAFT_ONLY_WARNING } : {}) };
+  }
+
   interface Performed { page?: AgentPage; result: string; changed: boolean | null; verified?: boolean; done?: boolean; skillTask?: { id: string; status: string }; approval?: PendingApproval }
 
   async function perform(ownerId: string, id: string, runId: string, state: BrainState, decision: Decision, page: AgentPage | null, signal: AbortSignal, skillsEnabled = false, request = ''): Promise<Performed> {
@@ -853,6 +970,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       case 'ads_create_paused': {
         if(!tools?.ads?.createPaused)break;
         if(!requestsPausedCampaign(request))throw new BrowserError('ADS_CREATION_NOT_REQUESTED','لم تطلب إنشاء حملة داخل الحساب.',403);
+        // The draft must carry the user's own budget, landing page and location; a model-filled value is refused.
+        if(state.clarify?.draftOnly)throw new BrowserError('ADS_DRAFT_ONLY','هذه المهمة مسودة فقط؛ لم يُكتب شيء في الحساب.',409);
+        const readiness=checkAdsCreation(state.clarify?.frame??interpretGoal({request,signals:{adsCreateInAccount:true}}),decision.text??'');
+        if(!readiness.ok)throw new BrowserError('ADS_CREATION_NOT_READY',readiness.reasons.map(reason=>reason.message).join(' '),409);
         await needsAdsAccount();
         if(!state.adsApproved)throw new BrowserError('ADS_QUALITY_REQUIRED','يلزم فحص نص الحملة أولًا.',409);
         await assertActive();
@@ -1172,10 +1293,15 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       const memory = !recallFormat && config.memoryContext ? await config.memoryContext(ownerId, request)
         .then(value => value == null ? undefined : clean(JSON.stringify(value))).catch(() => undefined) : undefined;
+      if (!recallFormat) {
+        const gate = await clarifyGate(ownerId, id, runId, state, request, history, memory, page);
+        if (gate.stopped) return;
+        warning ??= gate.warning;
+      }
       if (config.brainVersion === 'B' && !recallFormat && !state.goal) state.goal = newGoalState(request);
       for (;;) {
         await active();
-        if (!recallFormat && !state.adsReady && (state.adsWanted || requestsPausedCampaign(request)) && await adsSignIn(ownerId, id, runId, state)) return;
+        if (!recallFormat && !state.adsReady && (state.adsWanted || (requestsPausedCampaign(request) && !state.clarify?.draftOnly)) && await adsSignIn(ownerId, id, runId, state)) return;
         if (page && !recallFormat) {
           const settled: AgentPage | null = await instincts(ownerId, id, runId, state, page, signal, personalSignIn);
           if (!settled) return;
@@ -1210,7 +1336,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         // Only the Google Ads skill brings this tool, so every other prompt stays byte-identical.
         // After a pass it leaves the list: the fast model otherwise keeps calling it with empty text.
         const adsSkill = Boolean(skillContext && compiled?.skills.some(skill => skill.slug === ADS_SKILL_SLUG));
-        const adsReach: WorkTool[] = adsSkill && tools?.ads ? ['ads_status', 'ads_report', 'ads_draft',...(tools.ads.createPaused&&requestsPausedCampaign(request)?['ads_create_paused' as const]:[])] : [];
+        const adsReach: WorkTool[] = adsSkill && tools?.ads ? ['ads_status', 'ads_report', 'ads_draft',...(tools.ads.createPaused&&requestsPausedCampaign(request)&&!state.clarify?.draftOnly?['ads_create_paused' as const]:[])] : [];
         const offered: WorkTool[] = [...workTools, ...(adsSkill && !state.adsApproved ? ['ads_check' as const] : []), ...adsReach];
         const decision = await think(id, runId, state, prompt, tier, signal, skillsEnabled, offered, recallFormat?.kind === 'json');
         await active();
@@ -1289,6 +1415,21 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         if (decision.tool === 'ask_user') {
           const prompt = (decision.text ?? 'كيف تريد أن أتابع؟').slice(0, 1000);
+          const clarify = state.clarify;
+          if (clarify) {
+            // A question whose answer is already known, or that was already asked, costs the user a turn for nothing.
+            const review = clarify.withheld < DEFAULT_CLARIFICATION_CONFIG.maxQuestionNudges ? reviewModelQuestion(clarify.frame, prompt, clarify.modelQuestions) : { verdict: 'allow' as const };
+            if (review.verdict !== 'allow') {
+              clarify.withheld += 1;
+              state.trail.push({ step: state.steps, action: 'ask_user', result: 'not asked: the answer is already known or the question was already asked', changed: false });
+              warning = review.verdict === 'known'
+                ? `The user already gave ${review.slots.map((slot, index) => `${slot.replace(/^ads_/, '')}=${review.values[index]}`).join(', ')}. Do not ask for it again; continue with these values.`
+                : 'You already asked this question and the answer is in the tool results. Do not ask it again; continue.';
+              await saveState(runId, state);
+              continue;
+            }
+            clarify.modelQuestions = [...clarify.modelQuestions, prompt.slice(0, 300)].slice(-8);
+          }
           const question: ChatQuestion = { id: randomUUID(), prompt, options: (decision.options ?? []).slice(0, 5).map((label, index) => ({ id: `o${index + 1}`, label: label.slice(0, 160) })) };
           await pause(id, runId, state, 'waiting_user', { question: JSON.stringify(question) }, prompt);
           return;
@@ -1354,7 +1495,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             const{prompt,detail,task,computer}=outcome.approval;
             state.pendingTask=task??null;
             state.pendingComputer=computer??null;
-            await pause(id,runId,state,'waiting_approval',{approval:JSON.stringify({id:randomUUID(),prompt:clean(prompt).slice(0,1000),detail})},prompt);
+            await pause(id,runId,state,'waiting_approval',{approval:JSON.stringify({id:randomUUID(),prompt:clean(prompt).slice(0,1000),detail})},prompt,{events:approvalEvent(state,(task?.label??computer?.label??'إجراء').slice(0,80))});
             return;
           }
           warning = noteAttempt(state, signature, outcome.changed, false, outcome.verified===true);
@@ -1443,7 +1584,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   /** Continues the paused run after the owner has answered it. */
-  async function resume(ownerId: string, id: string, runId: string, change: (state: BrainState) => void, say: string, expected:{status:string;field?:'question'|'approval'|'secure';requestId?:string;stop?:boolean;afterClaim?:()=>void}) {
+  async function resume(ownerId: string, id: string, runId: string, change: (state: BrainState) => void, say: string, expected:{status:string;field?:'question'|'approval'|'secure';requestId?:string;stop?:boolean;afterClaim?:()=>void;events?:(state:BrainState)=>DecisionEventInput[]}) {
     if(closing)throw new BrowserError('CHAT_SHUTTING_DOWN','الخدمة تتوقف الآن.',503);
     const token=randomUUID();
     let previousToken:string|undefined;
@@ -1451,13 +1592,18 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const conversation=await tx.selectFrom('chat_conversations').selectAll().where('id','=',id).where('owner_id','=',ownerId).forUpdate().executeTakeFirst();
       if(!conversation||conversation.active_run_id!==runId||conversation.status!==expected.status||expected.field&&conversation[expected.field]?.id!==expected.requestId)throw new BrowserError('CHAT_RESUME_CONFLICT','تغير طلب المتابعة أو استُخدم بالفعل.',409);
       const run = await tx.selectFrom('chat_runs').selectAll().where('id', '=', runId).where('status','=',expected.status).where('lease_expires_at','>',sql<Date>`CURRENT_TIMESTAMP`).forUpdate().executeTakeFirst();
-      if(!run||run.worker_id!==instanceId)throw new BrowserError('CHAT_SESSION_UNAVAILABLE','جلسة المتصفح تخص عاملًا آخر أو انتهت. راجع الحالة قبل طلب جديد.',409);
+      // An engine question asked before any page, credential or effect holds nothing in memory, so any instance may resume it.
+      const waiting = parseClarifyState(run?.state?.clarify);
+      const portable = expected.status === 'waiting_user' && Boolean(waiting?.portable && waiting.pending && waiting.pending.chatQuestionId === conversation.question?.id);
+      if(!run||(run.worker_id!==instanceId&&!portable))throw new BrowserError('CHAT_SESSION_UNAVAILABLE','جلسة المتصفح تخص عاملًا آخر أو انتهت. راجع الحالة قبل طلب جديد.',409);
       previousToken=run.lease_token;
       const state: BrainState = { ...newBrainState(), ...(run.state ?? {}) };
       change(state);
-      await tx.updateTable('chat_runs').set({ status:expected.stop?'cancelled':'running', state: JSON.stringify(state),lease_token:token,attempt:run.attempt+1,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, updated_at: new Date() }).where('id', '=', runId).execute();
+      const events = expected.events?.(state) ?? [];
+      await tx.updateTable('chat_runs').set({ status:expected.stop?'cancelled':'running', state: JSON.stringify(state),lease_token:token,worker_id:instanceId,attempt:run.attempt+1,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, updated_at: new Date() }).where('id', '=', runId).execute();
       await tx.updateTable('chat_conversations').set({ status:expected.stop?'idle':'running',active_run_id:expected.stop?null:runId, question: null, approval: null, secure: null, error: null, progress:expected.stop?null:'يتابع العمل…', updated_at: new Date() }).where('id', '=', id).execute();
       await addMessage(tx, id, 'user', say);
+      await decide(tx, id, runId, [...events, ...(expected.stop ? [] : [{ type: 'execution_resumed' as const, summary: 'استُؤنف العمل بعد ردك.', data: { attempt: run.attempt + 1 } }])]);
       if (expected.stop) await recordTerminalRun(tx, runId, 'cancelled');
     });
     if(expected.stop){if(previousToken)forgetVault(id,previousToken);return detail(ownerId,id);}
@@ -1466,16 +1612,69 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     return detail(ownerId, id);
   }
 
-  async function send(ownerId: string, id: string, raw: unknown, intent:'task'|'restore_browser'|'review_browser'='task',expectedCheckpointToken?:string) {
+  /** Assumed slots the user then set to something else: the assumption proved wrong. */
+  const wrongAssumptions = (current: ClarifyState, changed: readonly string[]) => [...new Set([...current.invalidAssumptions, ...current.frame.requirements.filter(requirement => requirement.status === 'assumed' && changed.includes(requirement.slot)).map(requirement => requirement.slot)])].slice(0, 16);
+
+  /** A typed reply to a question the model asked. It may also revise a settled value, which makes dependent checks stale. */
+  async function answerModelQuestion(ownerId: string, id: string, runId: string, questionId: string, text: string): Promise<ChatConversation> {
+    let events: DecisionEventInput[] = [];
+    return resume(ownerId, id, runId, (state) => {
+      state.trail.push({ step: state.steps, action: 'asked the user', result: `user answered: ${clean(text).slice(0, 400)}`, changed: true });
+      state.failures = 0;
+      state.unchanged = 0;
+      const current = parseClarifyState(state.clarify);
+      const revised = current ? reviseFromMessage(current.frame, text, { request: current.frame.request, choices: current.choices }) : null;
+      if (current && revised) {
+        state.clarify = { ...current, frame: revised.frame, invalidAssumptions: wrongAssumptions(current, revised.changed) };
+        if (revised.changed.some(slot => slot.startsWith('ads_'))) state.adsApproved = null;
+        events = [{ type: 'assumption_updated', summary: `غيّرتَ: ${revised.changed.join('، ')}. أي فحص سابق يعتمد عليها لم يعد صالحًا.`, data: { changed: revised.changed, version: revised.frame.version } }];
+      }
+    }, text, { status: 'waiting_user', field: 'question', requestId: questionId, events: () => events });
+  }
+
+  /** A reply to an engine question: values are recorded as data; cancel stops; a new goal replaces the task. */
+  async function answerClarification(ownerId: string, id: string, runId: string, questionId: string, optionId: string | null, text: string | null, label: string | undefined): Promise<ChatConversation> {
+    const run = await db.selectFrom('chat_runs').select('state').where('id', '=', runId).executeTakeFirst();
+    const waiting = parseClarifyState(run?.state?.clarify);
+    const kind = optionId === 'stop' ? 'cancel' : text && waiting?.pending ? classifyReply(text, waiting.frame, waiting.pending.spec.slots, { choices: waiting.choices }) : 'answer';
+    const say = text ?? label ?? '';
+    if (kind === 'new_goal' && text) return supersede(ownerId, id, runId, text);
+    let events: DecisionEventInput[] = [];
+    return resume(ownerId, id, runId, (state) => {
+      const current = parseClarifyState(state.clarify);
+      if (!current?.pending || current.pending.chatQuestionId !== questionId) throw new BrowserError('CHAT_RESUME_CONFLICT', 'تغير طلب المتابعة أو استُخدم بالفعل.', 409);
+      if (kind === 'cancel') {
+        state.clarify = { ...current, pending: null, portable: false };
+        events = [{ type: 'task_blocked', summary: 'أوقفتَ المهمة عند السؤال.', data: { status: 'cancelled' } }];
+        return;
+      }
+      const applied = applyAnswer(current.frame, current.pending.spec, { optionId, text }, { request: current.frame.request, choices: current.choices });
+      // Re-evaluate even when the answer filled nothing; the question budget keeps follow-ups bounded.
+      state.clarify = { ...current, frame: applied.frame, pending: null, portable: false, evaluatedVersion: 0, invalidAssumptions: wrongAssumptions(current, applied.changed) };
+      if (applied.changed.some(slot => slot.startsWith('ads_'))) state.adsApproved = null;
+      state.trail.push({ step: state.steps, action: 'asked the user', result: `user answered: ${clean(say).slice(0, 400)}`, changed: true });
+      state.failures = 0;
+      state.unchanged = 0;
+      events = [
+        { type: 'clarification_answered', summary: applied.record.kind === 'decline' ? 'لم تُحدَّد القيمة؛ سأكمل بما هو آمن فقط.' : applied.record.filled.length ? `سُجلت إجابتك: ${applied.record.filled.join('، ')}.` : 'سُجلت إجابتك.', data: { kind: applied.record.kind, filled: applied.record.filled, version: applied.frame.version } },
+        ...(applied.frame.primaryStep !== current.frame.primaryStep ? [{ type: 'plan_revised' as const, summary: `تغيّرت الخطوة الرئيسية إلى ${applied.frame.primaryStep}.`, data: { from: current.frame.primaryStep, to: applied.frame.primaryStep } }] : []),
+      ];
+    }, say, { status: 'waiting_user', field: 'question', requestId: questionId, stop: kind === 'cancel', events: () => events });
+  }
+
+  /** A new request while an engine question waits: the old task ends without acting, the new one starts. */
+  async function supersede(ownerId: string, id: string, runId: string, text: string): Promise<ChatConversation> {
+    await cancel(ownerId, id);
+    return send(ownerId, id, { text }, 'task', undefined, runId);
+  }
+
+  async function send(ownerId: string, id: string, raw: unknown, intent:'task'|'restore_browser'|'review_browser'='task',expectedCheckpointToken?:string,supersededRunId?:string): Promise<ChatConversation> {
     if(closing)throw new BrowserError('CHAT_SHUTTING_DOWN','الخدمة تتوقف الآن. حاول بعد قليل.',503);
     const input = ChatSendSchema.parse(raw);
     const row = await owned(ownerId, id);
-    if (intent==='task' && row.status === 'waiting_user' && row.active_run_id) {
-      return resume(ownerId, id, row.active_run_id, (state) => {
-        state.trail.push({ step: state.steps, action: 'asked the user', result: `user answered: ${clean(input.text).slice(0, 400)}`, changed: true });
-        state.failures = 0;
-        state.unchanged = 0;
-      }, input.text,{status:'waiting_user',field:'question',requestId:row.question?.id});
+    if (intent==='task' && row.status === 'waiting_user' && row.active_run_id && row.question?.id) {
+      if (row.question.clarification) return answerClarification(ownerId, id, row.active_run_id, row.question.id, null, input.text, undefined);
+      return answerModelQuestion(ownerId, id, row.active_run_id, row.question.id, input.text);
     }
     if (row.status === 'running' || WAITING_STATUSES.includes(row.status)) throw new BrowserError('CHAT_BUSY', 'أكمل ما ينتظر ردك، أو أوقف العمل قبل إرسال طلب جديد.', 409);
     const runId = randomUUID();
@@ -1489,6 +1688,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       await addMessage(tx, id, 'user', input.text);
       await tx.insertInto('chat_runs').values({ id: runId, conversation_id: id, owner_id: ownerId, status: 'running', intent, goal: clean(input.text), steps: 0, lease_token:token,worker_id:instanceId,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, state: JSON.stringify(newBrainState()) }).execute();
       await tx.updateTable('chat_conversations').set({ status: 'running', active_run_id: runId, question: null, approval: null, secure: null, error: null, progress: 'يفهم طلبك…', updated_at: new Date() }).where('id', '=', id).execute();
+      if (supersededRunId) await decide(tx, id, runId, [{ type: 'plan_revised', summary: 'طلب جديد حلّ محل السؤال المعلق؛ لم يُنفذ شيء من المهمة السابقة.', data: { supersededRun: supersededRunId } }]);
     });
     await dispatch(ownerId, id, runId,token);
     return detail(ownerId, id);
@@ -1524,11 +1724,14 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   async function respond(ownerId: string, id: string, raw: unknown) {
     const input = ChatRespondSchema.parse(raw);
     const row = await owned(ownerId, id);
-    const option = row.question?.id === input.questionId ? row.question.options.find((entry: { id: string }) => entry.id === input.optionId) : undefined;
-    if (row.status !== 'waiting_user' || !option || !row.active_run_id) throw new BrowserError('CHAT_QUESTION_CHANGED', 'هذا السؤال لم يعد معلقًا.', 409);
+    const pending = row.status === 'waiting_user' && row.active_run_id && row.question?.id === input.questionId ? row.question as ChatQuestion : null;
+    const option = pending && input.optionId ? pending.options.find(entry => entry.id === input.optionId) : undefined;
+    if (!pending || (input.optionId && !option)) throw new BrowserError('CHAT_QUESTION_CHANGED', 'هذا السؤال لم يعد معلقًا.', 409);
+    if (pending.clarification) return answerClarification(ownerId, id, row.active_run_id, input.questionId, input.optionId ?? null, input.text ?? null, option?.label);
+    if (!option) return answerModelQuestion(ownerId, id, row.active_run_id, input.questionId, input.text!);
     return resume(ownerId, id, row.active_run_id, (state) => {
       state.trail.push({ step: state.steps, action: 'asked the user', result: `user chose: ${option.label}`, changed: true });
-      state.lastChoice = input.optionId;
+      state.lastChoice = input.optionId ?? null;
       state.failures = 0;
       state.unchanged = 0;
     }, option.label,{status:'waiting_user',field:'question',requestId:input.questionId,stop:input.optionId==='stop'});
@@ -1540,6 +1743,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if (row.status !== 'waiting_approval' || row.approval?.id !== input.approvalId || !row.active_run_id) throw new BrowserError('CHAT_APPROVAL_CHANGED', 'هذا الطلب لم يعد معلقًا.', 409);
     let refused:BrainState['pendingTask'];
     const result = await resume(ownerId, id, row.active_run_id, (state) => {
+      const goalVersion = parseClarifyState(state.clarify)?.frame.version ?? null;
+      if (input.approved && state.approvalVersion != null && goalVersion !== null && state.approvalVersion !== goalVersion) throw new BrowserError('CHAT_APPROVAL_STALE', 'تغيّر الطلب بعد طلب الموافقة؛ لم يُنفذ شيء. اطلب الإجراء من جديد.', 409);
       if (input.approved) return;
       refused = state.pendingTask;
       state.trail.push({ step: state.steps, action: state.pendingTask?.label??state.pendingComputer?.label??state.pendingAction?.label??state.pendingHeld?.label??`click "${state.pendingClick?.label}"`, result: 'the user refused this action; do not try it again', changed: false });
@@ -1617,6 +1822,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (config.recordExperiences !== false) await tx.deleteFrom('experiences').where('owner_id', '=', ownerId)
         .where('source_kind', '=', 'chat_run').where('source_id', 'in', runs).execute();
       await tx.deleteFrom('chat_effect_receipts').where('run_id', 'in', runs).execute();
+      await tx.deleteFrom('chat_clarification_lessons').where('owner_id', '=', ownerId).where('run_id', 'in', runs).execute();
       await tx.deleteFrom('chat_events').where('conversation_id', '=', id).execute();
       await tx.deleteFrom('chat_conversations').where('id', '=', id).execute();
     });
@@ -1647,8 +1853,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     await Promise.allSettled([...workers.values()]);
     const abandoned:{ownerId:string;state:unknown}[]=[];
     await db.transaction().execute(async tx=>{
-      const rows=await tx.selectFrom('chat_conversations as c').innerJoin('chat_runs as r','r.id','c.active_run_id').select(['c.id','r.id as run_id','r.owner_id','r.state']).where('r.worker_id','=',instanceId).where('c.status','in',['running',...WAITING_STATUSES]).forUpdate('c').execute();
+      const rows=await tx.selectFrom('chat_conversations as c').innerJoin('chat_runs as r','r.id','c.active_run_id').select(['c.id','c.status as conversation_status','r.id as run_id','r.owner_id','r.state']).where('r.worker_id','=',instanceId).where('c.status','in',['running',...WAITING_STATUSES]).forUpdate('c').execute();
       for(const row of rows){
+        // A portable clarification pause holds nothing in this process; another instance resumes it.
+        const waiting=parseClarifyState(row.state?.clarify);
+        if(row.conversation_status==='waiting_user'&&waiting?.portable&&waiting.pending)continue;
         await tx.updateTable('chat_runs').set({status:'interrupted',lease_token:randomUUID(),updated_at:new Date()}).where('id','=',row.run_id).execute();
         await tx.updateTable('chat_effect_receipts').set({status:'unknown',finished_at:new Date()}).where('run_id','=',row.run_id).where('status','=','started').execute();
         await tx.updateTable('chat_model_receipts').set({status:'unknown',error_code:'CHAT_SHUTDOWN',finished_at:new Date()}).where('run_id','=',row.run_id).where('status','=','started').execute();
@@ -1671,6 +1880,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     settled: async (id: string) => { await workers.get(id); },
     /** Replay or resume of the campaign event log: every event after `after`, in order. */
     campaignEvents: async (ownerId: string, id: string, after: number) => { await owned(ownerId, id); return await readCampaignEvents(db, id, after) ?? { taskId: null, lastSeq: 0, events: [] }; },
+    /** Verified clarification lessons of one owner, for evaluation only. */
+    clarificationLessons: (ownerId: string) => readClarificationLessons(db, ownerId),
+    /** Replay or resynchronisation of the decision log after `after`, owner-scoped. */
+    decisionEvents: async (ownerId: string, id: string, after: number) => { await owned(ownerId, id); return readDecisionEvents(db, id, after); },
   };
 }
 
@@ -1683,6 +1896,7 @@ export async function registerCommandChatRoutes(app: FastifyInstance, { control,
   app.post('/api/chat/conversations', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request) => control.create((await owner(request)).id, request.body ?? {}));
   app.get<Conversation>('/api/chat/conversations/:id', live, async (request) => control.detail((await owner(request)).id, id(request.params.id)));
   app.get<Conversation & { Querystring: { after?: string } }>('/api/chat/conversations/:id/campaign-events', live, async (request) => control.campaignEvents((await owner(request)).id, id(request.params.id), z.coerce.number().int().min(0).max(100000).default(0).parse(request.query.after)));
+  app.get<Conversation & { Querystring: { after?: string } }>('/api/chat/conversations/:id/decision-events', live, async (request) => control.decisionEvents((await owner(request)).id, id(request.params.id), z.coerce.number().int().min(0).max(1000000).default(0).parse(request.query.after)));
   app.post<Conversation>('/api/chat/conversations/:id/messages', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request) => control.send((await owner(request)).id, id(request.params.id), request.body));
   app.post<Conversation>('/api/chat/conversations/:id/respond', async (request) => control.respond((await owner(request)).id, id(request.params.id), request.body));
   app.post<Conversation>('/api/chat/conversations/:id/approve', async (request) => control.approve((await owner(request)).id, id(request.params.id), request.body));

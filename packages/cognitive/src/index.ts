@@ -4,6 +4,8 @@ import {
   type Capability, type CognitivePlan, type PlanningResult, type RawCognitivePlan,
 } from '@mohassan/contracts';
 import { classifyProviderFallback, ProviderError, validatedRetryAfterMs, waitForRetryAfter, type ModelProvider, type ModelResult } from '@mohassan/providers';
+export * from './clarification';
+import { planNeedsClarification } from './clarification';
 
 export type PlanningStage = 'goal_compiled' | 'model_selected' | 'model_requested' | 'fallback_selected' | 'response_received' | 'plan_verified';
 type Usage = ModelResult['usage'];
@@ -133,8 +135,9 @@ export class StrategyPlanner {
 
 export class UncertaintyEngine {
   assess(plan: CognitivePlan): { needsClarification: boolean } {
-    // Model confidence is a reported estimate, never evidence or permission.
-    return { needsClarification: plan.confidence < 0.65 || plan.goal.clarifyingQuestions.length > 0 || plan.uncertainties.some((entry) => entry.impact === 'high') || plan.steps.some((step) => step.availability === 'unavailable') };
+    // Model confidence is a reported estimate, never evidence or permission, so it
+    // no longer decides clarification. The shared rules in clarification.ts do.
+    return { needsClarification: planNeedsClarification(plan) };
   }
 }
 

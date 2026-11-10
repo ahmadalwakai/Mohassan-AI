@@ -15,7 +15,8 @@ const secret = 'campaign-progress-internal-secret-000001', origin = 'http://127.
 const blank = { thought: null, plan: null, note: null, url: null, ref: null, text: null, submit: null, options: null, sensitive: null, outcome: null };
 const lines = (headline: string) => ['BUSINESS: MA Removals', 'SERVICE: House removals', 'GOAL: bookings', 'URL: https://maremovals.example.com/house', 'LOCATION: Glasgow', 'COUNTRY: gb', 'LANGUAGE: EN', 'BUDGET: 20', `H: ${headline}`, 'H: Local Movers Glasgow', 'H: Book Your Move', 'D: Careful house removals across Glasgow.', 'D: Book your move online in minutes.', 'P: removals/glasgow', 'K: "house removals glasgow"', 'N: jobs'].join('\n');
 const checkText = (headline: string) => lines(headline).split(String.fromCharCode(10)).filter(line => /^[HDPKN]:/.test(line)).join(String.fromCharCode(10));
-const goal = 'أنشئ حملة بحث في حساب Google Ads لنقل الأثاث في غلاسكو';
+// A creation request names its own budget and landing page: the clarification core asks for them otherwise.
+const goal = 'أنشئ حملة بحث في حساب Google Ads لنقل الأثاث في غلاسكو على https://maremovals.example.com/house بميزانية 20 يوميًا';
 
 describe('live campaign events from the assistant', () => {
   const open: Awaited<ReturnType<typeof createApplication>>[] = [], dirs: string[] = [];

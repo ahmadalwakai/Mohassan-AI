@@ -29,7 +29,7 @@ const ads = '/api/google-ads';
 export const MEMBER_ROUTES: ReadonlySet<string> = new Set([
   'GET /api/access',
   // The chat, including its own cloud browser (a profile per account).
-  `GET ${chat}`, `POST ${chat}`, `GET ${chat}/:id`, `DELETE ${chat}/:id`, `GET ${chat}/:id/screen`,
+  `GET ${chat}`, `POST ${chat}`, `GET ${chat}/:id`, `DELETE ${chat}/:id`, `GET ${chat}/:id/screen`, `GET ${chat}/:id/decision-events`,
   `POST ${chat}/:id/messages`, `POST ${chat}/:id/respond`, `POST ${chat}/:id/approve`, `POST ${chat}/:id/secure`, `POST ${chat}/:id/cancel`,
   `POST ${chat}/:id/browser/keyboard`, `POST ${chat}/:id/browser/pointer`, `POST ${chat}/:id/browser/restore`, `POST ${chat}/:id/browser/review`,
   `GET ${files}`, `GET ${files}/targets`, `POST ${files}/grants`, `DELETE ${files}/grants/:id`, `POST ${files}/grants/:id/execute`, `POST ${files}/grants/:id/release`, `GET ${files}/grants/:id/content`,

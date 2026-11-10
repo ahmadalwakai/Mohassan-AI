@@ -112,7 +112,7 @@ describe('the assistant with a connected account', () => {
   }, 60000);
 
   it('asks for sign-in before any model call when a campaign in the account is requested, and does not trust an unproven "done"', async () => {
-    const { seen, detail, read, choose } = await scenario([], false, 'أنشئ حملة بحث في حساب Google Ads لشركة نقل في غلاسكو');
+    const { seen, detail, read, choose } = await scenario([], false, 'أنشئ حملة بحث في حساب Google Ads لشركة نقل في غلاسكو على https://maremovals.example.com بميزانية 20 يوميًا');
     expect(seen).toHaveLength(0);
     expect(detail.question.action).toBe('google_ads_connect');
     await choose('connected');

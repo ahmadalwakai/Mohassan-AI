@@ -296,6 +296,10 @@ export interface BrainState {
   gapSignal?: import('@mohassan/contracts').SkillGapSignal | null;
   /** Brain B only: the goal contract and progress record. Absent in brain A. */
   goal?: import('./goal-integrity.js').GoalState;
+  /** The shared clarification core's frame and pending question. Only code sets this; absent for older runs. */
+  clarify?: import('./clarify.js').ClarifyState;
+  /** Goal version an approval was requested for; an answer that changes the goal makes it stale. */
+  approvalVersion?: number | null;
 }
 
 export function newBrainState(): BrainState {
