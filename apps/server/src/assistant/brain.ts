@@ -274,6 +274,11 @@ export interface BrainState {
   skillContextHash?: string | null;
   skillTaskIds: string[];
   memorySaves?: number;
+  /** Searches and page opens in this run, for a research question; only code sets this. */
+  researchSteps?: number;
+  researchOverruns?: number;
+  /** Browser moves toward the Google Ads website that code refused. */
+  adsBrowserTries?: number;
   emptyAnswers?: number;
   /** The draft from the latest passing ads_check, as shown to the owner; null after a failure. Only code sets this. */
   adsApproved?: string | null;
@@ -414,6 +419,9 @@ export function searchKey(text: string): string {
   return [...new Set(text.toLowerCase().split(/\s+/).filter(Boolean))].sort().join(' ');
 }
 
+/** A research question gets this many searches and page opens before the model must answer. */
+export const RESEARCH_BUDGET = 6;
+export const RESEARCH_DONE = 'You have already searched and opened pages enough for this question; the results are shown above. Do not search or open anything more. Use answer now: give the answer the results and pages support, and name the sources (site names or addresses). If they do not settle a detail, say which detail is unconfirmed.';
 export const SEARCH_REPEATED = 'You already searched for this and the outcome is shown above. Do not search for it again. Open a result, open the likely official site with a direct URL, or answer.';
 export const SEARCH_UNUSABLE = 'Web search gave nothing usable. Do not reword it again: open the likely official site with a direct URL, or answer and say what you could not check.';
 

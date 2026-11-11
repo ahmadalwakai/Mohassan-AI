@@ -414,7 +414,7 @@ final class WaslaStore: ObservableObject {
         if let urlError = error as? URLError, [.serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .secureConnectionFailed].contains(urlError.code) {
             errorMessage = WaslaError.certificate.localizedDescription
         } else if let urlError = error as? URLError, [.notConnectedToInternet, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost, .timedOut, .dnsLookupFailed].contains(urlError.code) {
-            errorMessage = "تعذّر الوصول إلى الكمبيوتر. شغّل وصلة وTailscale على الكمبيوتر، وتأكد من اتصال Tailscale على الهاتف."
+            errorMessage = "تعذّر الوصول إلى الكمبيوتر. شغّل خدمة موحسن وTailscale على الكمبيوتر، وتأكد من اتصال Tailscale على الهاتف."
         } else { errorMessage = error.localizedDescription }
     }
 }

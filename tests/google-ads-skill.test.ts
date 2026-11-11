@@ -218,8 +218,14 @@ describe('the assistant with the skill active', () => {
     expect(detail.messages.at(-1).text).toBe(`تم الفحص.\n\n${checkAdsDraft(passing).approved}${ADS_DRAFT_NOTE}`);
   }, 60_000);
 
-  it('offers no ads tool while the skill is not activated', async () => {
-    const { seen } = await scenario([{ tool: 'answer', text: 'انتهيت.', outcome: 'done' }], 'جهز حملة Google Ads', false);
+  it('offers the official ads tools to a Google Ads request even while the skill is not activated', async () => {
+    // The browser route to Google Ads is closed, so an Ads request always gets the official tools.
+    const { seen } = await scenario([{ tool: 'answer', text: 'انتهيت.', outcome: 'done' }, { tool: 'answer', text: 'انتهيت.', outcome: 'done' }], 'جهز حملة Google Ads', false);
+    expect(seen[0].tools).toContain('ads_check');
+  }, 60_000);
+
+  it('offers no ads tool to other requests while the skill is not activated', async () => {
+    const { seen } = await scenario([{ tool: 'answer', text: 'باريس.', outcome: 'done' }], 'ما عاصمة فرنسا؟', false);
     expect(seen[0].tools).not.toContain('ads_check');
     expect(seen[0].system).not.toContain('ads_check');
   }, 60_000);

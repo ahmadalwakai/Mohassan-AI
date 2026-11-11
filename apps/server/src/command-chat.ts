@@ -18,7 +18,7 @@ import {
 import { classifyExperience, escapedContextLength, recordExperience, type ExperienceInput } from '@mohassan/learning';
 import {
   boundedDecisionJsonSchema, decisionJsonSchema, decisionSchema, recoverDecision, ModelPool, buildPrompt, chooseTier, cookieRejectButton, directRoute, estimateTokens, newBrainState,
-  SEARCH_REPEATED, SEARCH_UNUSABLE, asksToRemember, needsReview, noteAttempt, reviewRequest, searchKey, sensitiveAction, shouldAskForHelp, siteOf, situation, skillContextBudget, stepLabel, systemPrompt, type BrainState, type Decision, type ModelTier, type WorkTool,
+  RESEARCH_BUDGET, RESEARCH_DONE, SEARCH_REPEATED, SEARCH_UNUSABLE, asksToRemember, needsReview, noteAttempt, reviewRequest, searchKey, sensitiveAction, shouldAskForHelp, siteOf, situation, skillContextBudget, stepLabel, systemPrompt, type BrainState, type Decision, type ModelTier, type WorkTool,
 } from './assistant/brain.js';
 import { ADS_DRAFT_NOTE, ADS_SKILL_SLUG } from './assistant/ads-check.js';
 import { ADS_REWRITE_JSON_SCHEMA, ADS_REWRITE_SCHEMA_NAME, ADS_REWRITE_SYSTEM, buildRewritePrompt, type RewriteRequest } from '@mohassan/google-ads';
@@ -96,6 +96,18 @@ const PERSONAL_SIGN_IN_STOP = 'توقفت عند صفحة تسجيل الدخو�
 const GRANT_NEEDED_PROMPT = 'أحتاج إلى رؤية نافذة على كمبيوترك. افتح «التحكم بالكمبيوتر» من الأدوات المتقدمة، واربط الجهاز، واختر النافذة، وامنح إذنًا مؤقتًا، ثم اضغط «أكملت». ستُقرأ عناصر النافذة، وقد يقرأ النموذج المحلي صورتها على هذا الكمبيوتر عند الحاجة.';
 
 const clean = (value: string) => redactCredentialText(redactSecrets(value));
+const ADS_USE_TOOLS = 'Google Ads is not done in the browser: Google refuses automated sign-in there. Use the Google Ads tools you were given (ads_status, ads_draft, ads_check, ads_report). If the account is not connected, the tools ask the owner to connect it.';
+const ADS_NOT_CONNECTED = 'Google Ads is not done in the browser: Google refuses automated sign-in there, and the Google Ads connection is not set up on this server. Do not open Google Ads. Write the campaign as a text draft (headlines, descriptions, keywords, budget, location) and run ads_check on it, then answer with the checked draft and say the account connection must be set up before it can be published.';
+const ADS_WEB = /(^|\.)ads\.google\.com$|^adwords\.google\.com$/;
+/** The request was understood as Google Ads work. */
+const adsRequest = (state: BrainState) => state.clarify?.frame.domains.includes('google_ads') === true;
+/** The move would use the Google Ads website, or a search for how to use it. */
+function googleAdsWeb(decision: Decision, page: AgentPage | null) {
+  const host = (value?: string | null) => { try { return value ? new URL(/^https?:/.test(value) ? value : `https://${value}`).hostname : ''; } catch { return ''; } };
+  if (decision.tool === 'open') return ADS_WEB.test(host(decision.url));
+  if (decision.tool === 'click') return ADS_WEB.test(host(page?.url)) || /^consent\.google\.com$/.test(host(page?.url));
+  return /google\s*ads|جوجل\s*(?:ادز|أدز|إعلانات)|إعلانات\s*(?:جوجل|google)/i.test(decision.text ?? '');
+}
 function memoryLookup(result: MemoryLookupResult) {
   if (typeof result !== 'string') return result;
   return { text: result, evidence: result.trim() && result !== 'no matching memory' ? [result] : [] };
@@ -1281,7 +1293,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const tier = chooseTier(state, warning);
         // Only the Google Ads skill brings this tool, so every other prompt stays byte-identical.
         // After a pass it leaves the list: the fast model otherwise keeps calling it with empty text.
-        const adsSkill = Boolean(skillContext && compiled?.skills.some(skill => skill.slug === ADS_SKILL_SLUG));
+        // A Google Ads request gets the official tools too, with or without the skill: the browser route is closed (Google refuses automated sign-in).
+        const adsSkill = Boolean(skillContext && compiled?.skills.some(skill => skill.slug === ADS_SKILL_SLUG)) || adsRequest(state);
         const adsReach: WorkTool[] = adsSkill && tools?.ads ? ['ads_status', 'ads_report', 'ads_draft',...(tools.ads.createPaused&&requestsPausedCampaign(request)&&!state.clarify?.draftOnly?['ads_create_paused' as const]:[])] : [];
         const offered: WorkTool[] = [...workTools, ...(adsSkill && !state.adsApproved ? ['ads_check' as const] : []), ...adsReach];
         const decision = await think(id, runId, state, prompt, tier, signal, skillsEnabled, offered, recallFormat?.kind === 'json');
@@ -1419,6 +1432,37 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           await saveState(runId, state);
           continue;
         }
+        // Google Ads goes through its official tools only, never the Ads website in the browser.
+        if (adsRequest(state) && (decision.tool === 'open' || decision.tool === 'click' || decision.tool === 'search') && googleAdsWeb(decision, page)) {
+          state.trail.push({ step: state.steps, action, result: 'not run: Google Ads is reached through its tools, not the website', changed: false });
+          state.adsBrowserTries = (state.adsBrowserTries ?? 0) + 1;
+          if (state.adsBrowserTries >= 3) {
+            await finish(id, runId, state, tools?.ads ? 'أنجز طلبات Google Ads من خلال الربط الرسمي فقط، لا من موقع Google Ads في المتصفح. لم أتمكن من إكمال الطلب بهذه الأدوات الآن؛ أعد المحاولة أو اطلب مسودة الحملة نصًا.' : 'ربط Google Ads غير مُعدّ في هذا الخادم بعد، ولا أستخدم موقع Google Ads في المتصفح. أستطيع كتابة مسودة الحملة نصًا وفحصها؛ اطلب «اكتب مسودة الحملة».', 'blocked');
+            return;
+          }
+          // A refusal by code is not a page action, so the "no visible effect" check does not apply to it.
+          state.verifiedOnce = true;
+          warning = tools?.ads ? ADS_USE_TOOLS : ADS_NOT_CONNECTED;
+          await saveState(runId, state);
+          continue;
+        }
+        // A research question has a budget: past it the model must answer from what it already read.
+        if ((decision.tool === 'search' || decision.tool === 'open') && state.clarify?.outcome === 'RESEARCH') {
+          if ((state.researchSteps ?? 0) >= RESEARCH_BUDGET) {
+            state.researchOverruns = (state.researchOverruns ?? 0) + 1;
+            state.trail.push({ step: state.steps, action, result: 'not run: the research budget is spent; answer now', changed: false });
+            if (state.researchOverruns >= 2) {
+              const sites = [...new Set(state.trail.filter(entry => entry.action.startsWith('open ')).map(entry => { try { return new URL(entry.action.split(' ')[1]!).hostname; } catch { return ''; } }).filter(Boolean))];
+              await finish(id, runId, state, `بحثت ${state.researchSteps} مرات${sites.length ? ` وفتحت ${sites.join('، ')}` : ''}، ولم أصل إلى إجابة أستطيع تأكيدها من هذه المصادر. أعد صياغة السؤال أو حدّد مصدرًا تريد أن أقرأه.`, 'blocked');
+              return;
+            }
+            state.verifiedOnce = true;
+            warning = RESEARCH_DONE;
+            await saveState(runId, state);
+            continue;
+          }
+          state.researchSteps = (state.researchSteps ?? 0) + 1;
+        }
         const label = stepLabel(decision.tool, decision, element);
         await addStep(id, runId, label);
         await setProgress(id, `${label}…`);
@@ -1455,6 +1499,16 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           if(error instanceof AgentEffectHeld){
             await pauseHeld(id,runId,state,error.held,element?.label||'طلب من الصفحة');
             return;
+          }
+          // A plain link whose page-started navigation the browser refused: nothing was sent, so the task goes on from the page as it is now.
+          if(error.code==='AGENT_EFFECT_DENIED'&&decision.tool==='click'&&!decision.sensitive&&!(element&&sensitiveAction(element.label))&&!state.pendingAction){
+            state.trail.push({ step: state.steps, action, result: 'blocked by the browser: the link started a navigation that was not approved; nothing was sent', changed: false });
+            noteAttempt(state, signature, false, true);
+            page = (await browser.observe(ownerId, id)).page;
+            await keepPage(id, page);
+            warning = 'The browser blocked the navigation that link started; nothing was sent. Do not click it again. Open the address you need directly with open, or answer from what you already have.';
+            await saveState(runId, state);
+            continue;
           }
           if(['AGENT_EFFECT_UNKNOWN','AGENT_EFFECT_DENIED','AGENT_APPROVAL_STALE','AGENT_NETWORK_DENIED'].includes(error.code))throw error;
           if(error.code==='WINDOWS_GRANT_REQUIRED'){

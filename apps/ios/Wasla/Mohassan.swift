@@ -200,73 +200,64 @@ struct MohassanChatView: View {
     @State private var answer = ""
     @State private var listShown = false
     @State private var approveConfirm = false
+    private var clean: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var scrollKey: Int {
+        let conversation = store.mohassanConversation
+        return (conversation?.messages.count ?? 0) * 1_000 + (conversation?.steps.count ?? 0) * 2 + (store.mohassanWaiting ? 1 : 0) + (store.mohassanPendingText == nil ? 0 : 500_000)
+    }
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ScreenTitle(title: "موحسن", subtitle: "مساعدك نفسه في واجهة الويب، من هاتفك.")
-            HStack(spacing: 12) {
-                Button { listShown = true; Task { await store.loadMohassanList() } } label: { Label("المحادثات", systemImage: "list.bullet") }
-                    .buttonStyle(ForestButton(prominent: false))
-                Button { store.newMohassanChat(); draft = ""; answer = "" } label: { Label("محادثة جديدة", systemImage: "plus.bubble") }
-                    .buttonStyle(ForestButton(prominent: false)).disabled(store.mohassanSending)
-            }
+        ChatScaffold(
+            draft: $draft,
+            placeholder: store.mohassanConversation == nil ? "ماذا تريد أن ينجز موحسن؟" : "اكتب رسالتك…",
+            tooLong: !WaslaStore.mohassanTextFits(draft),
+            canSend: !store.mohassanBusy && !clean.isEmpty && WaslaStore.mohassanTextFits(draft),
+            working: store.mohassanBusy,
+            scrollKey: scrollKey,
+            showComposer: !store.mohassanWaiting,
+            onSend: {
+                guard store.sendMohassan(draft) else { return false }
+                draft = ""
+                return true
+            },
+            onStop: { store.cancelMohassan() }
+        ) {
             if let conversation = store.mohassanConversation {
                 conversationView(conversation)
             } else if let pending = store.mohassanPendingText {
-                bubble(role: "user", text: pending)
-                HStack { ProgressView(); Text("يُرسل الطلب إلى موحسن…").font(.subheadline) }.accessibilityElement(children: .combine)
+                ChatTurn(mine: true, text: pending)
+                WorkingSteps(progress: "يُرسل الطلب إلى موحسن…", steps: [])
             } else {
-                Text("اطلب ما تريد كما تطلبه من واجهة الويب. يسألك موحسن إن احتاج توضيحًا، ويطلب موافقتك قبل أي إجراء حساس.").font(.subheadline).foregroundStyle(.secondary)
+                ChatWelcome(title: "بمَ أساعدك اليوم؟", suggestions: ["خطّط لحملة إعلانية", "لخّص لي موضوعًا", "نظّم مهامي"]) { draft = $0 }
             }
-            if !store.mohassanWaiting { composer }
-            Text("إدخال كلمات المرور ورموز التحقق وربط الحسابات يتم من واجهة موحسن على الويب في هذه النسخة.").font(.footnote).foregroundStyle(.secondary)
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button { listShown = true; Task { await store.loadMohassanList() } } label: { Image(systemName: "sidebar.right") }.accessibilityLabel("المحادثات")
+            }
+            ToolbarItem(placement: .topBarLeading) {
+                Button { store.newMohassanChat(); draft = ""; answer = "" } label: { Image(systemName: "square.and.pencil") }
+                    .disabled(store.mohassanSending).accessibilityLabel("محادثة جديدة")
+            }
         }
         .sheet(isPresented: $listShown) { MohassanListView() }
     }
 
     @ViewBuilder private func conversationView(_ conversation: MohassanConversation) -> some View {
-        if !conversation.title.isEmpty { Text(conversation.title).font(.headline) }
-        Label(MohassanStatus.title(conversation.status), systemImage: conversation.working ? "hourglass" : "circle.fill").font(.caption).foregroundStyle(.secondary)
-        ForEach(conversation.messages) { message in bubble(role: message.role, text: message.text) }
+        ForEach(conversation.messages) { message in ChatTurn(mine: message.role == "user", text: message.text) }
         if conversation.working {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack { ProgressView(); Text(conversation.progress ?? "موحسن يعمل…").font(.subheadline) }
-                ForEach(conversation.steps.suffix(3)) { step in Text("• " + step.text).font(.footnote).foregroundStyle(.secondary) }
-            }.accessibilityElement(children: .combine)
+            WorkingSteps(progress: conversation.progress ?? "موحسن يعمل…", steps: conversation.steps.map(\.text))
         }
         if conversation.status == MohassanStatus.waitingUser, let question = conversation.question { questionCard(question) }
         if conversation.status == MohassanStatus.waitingApproval, let approval = conversation.approval { approvalCard(approval) }
         if conversation.status == MohassanStatus.waitingInput, let secure = conversation.secure { secureCard(secure) }
-        if !conversation.working, let error = conversation.error, !error.isEmpty { Text(error).font(.footnote).foregroundStyle(.secondary) }
-        if conversation.working || store.mohassanWaiting {
+        if !conversation.working, let error = conversation.error, !error.isEmpty {
+            Text(error).font(.subheadline).foregroundStyle(Forest.alert)
+                .padding(.vertical, 9).padding(.horizontal, 12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Forest.alert.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+        }
+        if store.mohassanWaiting {
             Button(role: .destructive) { store.cancelMohassan() } label: { Label("إيقاف", systemImage: "stop.fill") }
                 .buttonStyle(ForestButton(prominent: false))
-        }
-    }
-
-    private func bubble(role: String, text: String) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(role == "user" ? "أنت" : "موحسن").font(.caption).foregroundStyle(.secondary)
-            Text(text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-        }.padding(16).background(role == "user" ? Forest.soft : Forest.surface, in: RoundedRectangle(cornerRadius: 20))
-    }
-
-    private var composer: some View {
-        Card {
-            TextField(store.mohassanConversation == nil ? "ماذا تريد أن ينجز موحسن؟" : "اكتب رسالتك…", text: $draft, axis: .vertical).lineLimit(3...8)
-            Text("\(draft.utf16.count) / 4000 حرف")
-                .font(.caption).foregroundStyle(WaslaStore.mohassanTextFits(draft) ? Color.secondary : Color.red)
-            HStack {
-                Text(store.mohassanBusy ? "موحسن يعمل الآن" : "يعمل على كمبيوترك").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    if store.sendMohassan(draft) { draft = "" }
-                } label: {
-                    Image(systemName: "arrow.up").font(.headline).frame(width: 48, height: 48)
-                        .background(Forest.accent, in: RoundedRectangle(cornerRadius: 16)).foregroundStyle(Forest.onAccent)
-                }
-                .disabled(store.mohassanBusy || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !WaslaStore.mohassanTextFits(draft))
-                .accessibilityLabel("إرسال الرسالة")
-            }
         }
     }
 
@@ -287,7 +278,7 @@ struct MohassanChatView: View {
             }
             if question.acceptsText {
                 TextField("أو اكتب إجابتك…", text: $answer, axis: .vertical).lineLimit(1...4)
-                Button("إرسال الإجابة") { store.answerMohassan(option: nil, text: answer); answer = "" }
+                Button("إرسال الإجابة") { store.answerMohassan(option: nil, text: answer); answer = ""; dismissKeyboard() }
                     .buttonStyle(ForestButton())
                     .disabled(store.mohassanSending || answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || answer.utf16.count > 2_000)
             }

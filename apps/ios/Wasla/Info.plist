@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentRegion</key><string>ar</string>
-    <key>CFBundleDisplayName</key><string>وصلة</string>
+    <key>CFBundleDisplayName</key><string>Mohassan AI</string>
     <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
@@ -18,7 +18,7 @@
     <key>UILaunchScreen</key><dict/>
     <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
     <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
-    <key>NSLocalNetworkUsageDescription</key><string>يحتاج وصلة إلى الوصول إلى الكمبيوتر المقترن للمحادثة وإنشاء الصور والبحث والتحكم بسطح المكتب عبر اتصال مشفّر.</string>
+    <key>NSLocalNetworkUsageDescription</key><string>يحتاج Mohassan AI إلى الوصول إلى الكمبيوتر المقترن للمحادثة وإنشاء الصور والبحث والتحكم بسطح المكتب عبر اتصال مشفّر.</string>
     <key>NSPhotoLibraryAddUsageDescription</key><string>حفظ الصورة التي اخترت إضافتها إلى مكتبة الصور.</string>
     <key>NSAppTransportSecurity</key>
     <dict>

@@ -115,6 +115,9 @@ describe('Wasla bridge over disposable local state', { timeout: 120000 }, () => 
     const shape = (await app().inject({ url: `/api/wasla/gateway/conversations/${id}`, headers: service() })).json();
     for (const key of ['id', 'title', 'status', 'messages', 'question', 'approval', 'secure', 'progress', 'steps', 'error']) expect(shape, key).toHaveProperty(key);
     for (const message of shape.messages) expect(Object.keys(message)).toEqual(expect.arrayContaining(['id', 'role', 'text']));
+    // The browser block (recovery token, screen link) and the decision log stay on the web side.
+    for (const key of ['browser', 'browserAccount', 'decisions', 'goal']) expect(shape, key).not.toHaveProperty(key);
+    expect(JSON.stringify(shape)).not.toContain('recoveryToken');
     expect(created.json().id).toBe(id);
     const events = await app().inject({ url: `/api/wasla/gateway/conversations/${id}/campaign-events?after=0`, headers: service() });
     expect(events.statusCode, events.body).toBe(200);

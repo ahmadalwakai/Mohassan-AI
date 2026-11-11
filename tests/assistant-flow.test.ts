@@ -132,9 +132,10 @@ describe('the assistant finishing real work', () => {
     await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
-  async function start(script: Script, searchProvider?: SearchProvider) {
+  async function start(script: Script, searchProvider?: SearchProvider, tools?: Parameters<typeof createCommandChatControl>[1]['tools']) {
     const groq = scriptedGroq(script);
     control = await createCommandChatControl(store.db, {
+      tools,
       models: { fast: ['fast-model'], deep: ['deep-model'], vision: 'vision-model' }, createProvider: fixtureProviders(groq.transport),
       browser: new AgentBrowser({ profileDir: profile, testOrigins: [origin], channel: null }),
       networkPolicy: { testOrigins: [origin] }, searchProvider,
@@ -382,6 +383,62 @@ describe('the assistant finishing real work', () => {
     expect(queries).toHaveLength(1);
     expect(result.messages.at(-1)?.text).toBe('فتحت الموقع مباشرة.');
   }, 40000);
+
+  it('answers a research question after its search budget instead of searching on', async () => {
+    const queries: string[] = [];
+    const provider: SearchProvider = { name: 'fixture', search: async (question) => { queries.push(question); return [{ title: `Result ${queries.length}`, url: `https://example.test/r${queries.length}`, snippet: 'Rust was started by Graydon Hoare in 2006.' }]; } };
+    let told = false;
+    await start((prompt, call) => {
+      told ||= prompt.includes('searched and opened pages enough');
+      if (told) return { tool: 'answer', text: 'أنشأها Graydon Hoare عام 2006. المصدر: example.test', outcome: 'done' };
+      return { tool: 'search', text: `rust creator ${call}` };
+    }, provider);
+    const { id } = await control.create(OWNER, { goal: 'ابحث في الإنترنت: من أنشأ لغة البرمجة Rust ومتى؟' });
+    const result = await settle(id);
+    expect(queries.length).toBeLessThanOrEqual(6);
+    expect(result.messages.at(-1)?.text).toContain('Graydon Hoare');
+  }, 60000);
+
+  it('closes a research run that keeps searching past its budget', async () => {
+    const queries: string[] = [];
+    const provider: SearchProvider = { name: 'fixture', search: async (question) => { queries.push(question); return [{ title: `Result ${queries.length}`, url: `https://example.test/q${queries.length}`, snippet: 'nothing decisive' }]; } };
+    await start((_prompt, call) => ({ tool: 'search', text: `query number ${call}` }), provider);
+    const { id } = await control.create(OWNER, { goal: 'ابحث في الإنترنت: من أنشأ لغة البرمجة Rust ومتى؟' });
+    const result = await settle(id);
+    expect(queries.length).toBeLessThanOrEqual(6);
+    expect(result.status).not.toBe('running');
+    expect(result.messages.at(-1)?.text).toContain('لم أصل إلى إجابة أستطيع تأكيدها');
+  }, 60000);
+
+  it('keeps Google Ads off the browser when no Ads connection is set up', async () => {
+    let told = false;
+    await start((prompt) => {
+      told ||= prompt.includes('the Google Ads connection is not set up on this server');
+      if (told) return { tool: 'answer', text: 'هذه مسودة نصية للحملة.', outcome: 'done' };
+      return { tool: 'open', url: 'https://ads.google.com/' };
+    });
+    const { id } = await control.create(OWNER, { goal: 'أنشئ حملة Google Ads لمحل ورد في دمشق بميزانية 5 دولار يوميًا' });
+    const result = await settle(id);
+    expect(result.steps.map(step => step.text).join(' ')).not.toContain('ads.google.com');
+    expect(told).toBe(true);
+  }, 60000);
+
+  it('keeps Google Ads requests on the official tools, never the Ads website', async () => {
+    const opened: string[] = [];
+    const ads = { status: async () => 'Google Ads غير مربوط بعد.', report: async () => '', draft: async () => 'مسودة' };
+    let told = false;
+    await start((prompt) => {
+      told ||= prompt.includes('Google Ads is not done in the browser');
+      if (told) return { tool: 'answer', text: 'سأستخدم أدوات Google Ads الرسمية.', outcome: 'done' };
+      opened.push('ads.google.com');
+      return { tool: 'open', url: 'https://ads.google.com/' };
+    }, undefined, { ads } as never);
+    const { id } = await control.create(OWNER, { goal: 'أنشئ حملة Google Ads لمحل ورد في دمشق بميزانية 5 دولار يوميًا' });
+    const result = await settle(id);
+    expect(result.browser?.url ?? '').not.toContain('ads.google.com');
+    expect(result.steps.map(step => step.text).join(' ')).not.toContain('ads.google.com');
+    expect(result.messages.at(-1)?.text).toBe('سأستخدم أدوات Google Ads الرسمية.');
+  }, 60000);
 
   it('never reaches private addresses', async () => {
     const browser = new AgentBrowser({ profileDir: profile, channel: null });

@@ -124,7 +124,7 @@ workflows:
     environment:
       xcode: latest
       vars:
-        WASLA_BUILD_NUMBER: "6"
+        WASLA_BUILD_NUMBER: "7"
     scripts:
       - name: Verify and assign Wasla 1.0 (6) to the existing internal group
         script: |

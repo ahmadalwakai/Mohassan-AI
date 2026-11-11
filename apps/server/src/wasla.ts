@@ -110,6 +110,8 @@ export async function registerWaslaRoutes(app: FastifyInstance, options: WaslaRo
     const iso = (value: unknown) => value ? new Date(value as string).toISOString() : null;
     return {
       enabled: options.enabled,
+      // Where the Wasla service on this PC reaches this server (shown in the pairing command).
+      serverUrl: `http://127.0.0.1:${Number(process.env.SERVER_PORT ?? 4000)}`,
       gateways: gateways.map(row => ({ id: row.id, name: row.name, revoked: Boolean(row.revoked_at), lastSeenAt: iso(row.last_seen_at), createdAt: iso(row.created_at) })),
       events: events.map(row => ({ id: row.id, gatewayId: row.gateway_id, type: row.type, createdAt: iso(row.created_at) })),
     };
@@ -170,13 +172,20 @@ export async function registerWaslaRoutes(app: FastifyInstance, options: WaslaRo
   const id = (value: string) => uuid.parse(value);
   // The key is checked before the chat is touched.
   const as = async (request: FastifyRequest) => ({ ownerId: (await gateway(request)).ownerId, control: options.chat() });
+  // The phone gets the conversation only: no browser block (recovery token, screen link) and no internal decision log.
+  const PHONE_FIELDS = ['id', 'title', 'status', 'updatedAt', 'messages', 'question', 'approval', 'secure', 'progress', 'steps', 'error', 'configured'] as const;
+  const forPhone = async (value: unknown | Promise<unknown>) => {
+    const out = await value;
+    if (!out || typeof out !== 'object' || !Array.isArray((out as { messages?: unknown }).messages)) return out;
+    return Object.fromEntries(PHONE_FIELDS.filter(key => key in (out as object)).map(key => [key, (out as Record<string, unknown>)[key]]));
+  };
   app.get(chat, async (request) => { const { ownerId, control } = await as(request); return control.list(ownerId); });
-  app.post(chat, { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request) => { const { ownerId, control } = await as(request); return control.create(ownerId, request.body ?? {}); });
-  app.get<Conversation>(`${chat}/:id`, live, async (request) => { const { ownerId, control } = await as(request); return control.detail(ownerId, id(request.params.id)); });
+  app.post(chat, { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request) => { const { ownerId, control } = await as(request); return forPhone(control.create(ownerId, request.body ?? {})); });
+  app.get<Conversation>(`${chat}/:id`, live, async (request) => { const { ownerId, control } = await as(request); return forPhone(control.detail(ownerId, id(request.params.id))); });
   app.delete<Conversation>(`${chat}/:id`, { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request) => { const { ownerId, control } = await as(request); return control.remove(ownerId, id(request.params.id)); });
   app.get<Conversation & { Querystring: { after?: string } }>(`${chat}/:id/campaign-events`, live, async (request) => { const { ownerId, control } = await as(request); return control.campaignEvents(ownerId, id(request.params.id), z.coerce.number().int().min(0).max(100000).default(0).parse(request.query.after)); });
-  app.post<Conversation>(`${chat}/:id/messages`, { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request) => { const { ownerId, control } = await as(request); return control.send(ownerId, id(request.params.id), request.body); });
-  app.post<Conversation>(`${chat}/:id/respond`, async (request) => { const { ownerId, control } = await as(request); return control.respond(ownerId, id(request.params.id), request.body); });
-  app.post<Conversation>(`${chat}/:id/approve`, async (request) => { const { ownerId, control } = await as(request); return control.approve(ownerId, id(request.params.id), request.body); });
-  app.post<Conversation>(`${chat}/:id/cancel`, async (request) => { const { ownerId, control } = await as(request); Empty.parse(request.body ?? {}); return control.cancel(ownerId, id(request.params.id)); });
+  app.post<Conversation>(`${chat}/:id/messages`, { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request) => { const { ownerId, control } = await as(request); return forPhone(control.send(ownerId, id(request.params.id), request.body)); });
+  app.post<Conversation>(`${chat}/:id/respond`, async (request) => { const { ownerId, control } = await as(request); return forPhone(control.respond(ownerId, id(request.params.id), request.body)); });
+  app.post<Conversation>(`${chat}/:id/approve`, async (request) => { const { ownerId, control } = await as(request); return forPhone(control.approve(ownerId, id(request.params.id), request.body)); });
+  app.post<Conversation>(`${chat}/:id/cancel`, async (request) => { const { ownerId, control } = await as(request); Empty.parse(request.body ?? {}); return forPhone(control.cancel(ownerId, id(request.params.id))); });
 }

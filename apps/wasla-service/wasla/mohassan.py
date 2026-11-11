@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 
 import aiohttp
 
+from .paths import STATE_DIR
 from .security import atomic_json, read_json, state_lock
 
 CONFIG_FILE = "mohassan-gateway.json"
@@ -192,17 +193,21 @@ def main(argv=None):
     """Link this computer's Wasla service to the local Mohassan server.
 
     The owner creates a short code in the Mohassan web workspace, then runs:
-        python -m wasla.mohassan pair <code> --state <private state folder>
+        python -m wasla.mohassan pair <code> [--state <private state folder>]
     """
+    # Messages are Arabic; a Windows console defaults to a code page that cannot print them.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(prog="python -m wasla.mohassan")
     sub = parser.add_subparsers(dest="command", required=True)
     pair = sub.add_parser("pair")
     pair.add_argument("code")
-    pair.add_argument("--state", required=True, type=Path)
+    pair.add_argument("--state", default=STATE_DIR, type=Path)
     pair.add_argument("--url", default=DEFAULT_URL)
     pair.add_argument("--name", default="Wasla")
     forget = sub.add_parser("forget")
-    forget.add_argument("--state", required=True, type=Path)
+    forget.add_argument("--state", default=STATE_DIR, type=Path)
     args = parser.parse_args(argv)
     bridge = MohassanBridge(args.state)
     try:

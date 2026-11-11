@@ -2,49 +2,262 @@ import SwiftUI
 import UIKit
 import SafariServices
 
+// The web workspace's palette (apps/web/components/assistant-app.module.css), light and dark.
 enum Forest {
-    static let background = Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.07, green: 0.10, blue: 0.08, alpha: 1) : UIColor(red: 0.95, green: 0.96, blue: 0.93, alpha: 1) })
-    static let surface = Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.11, green: 0.15, blue: 0.13, alpha: 1) : .white })
-    static let accent = Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.71, green: 0.89, blue: 0.78, alpha: 1) : UIColor(red: 0.16, green: 0.41, blue: 0.30, alpha: 1) })
-    static let soft = Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.16, green: 0.23, blue: 0.18, alpha: 1) : UIColor(red: 0.90, green: 0.94, blue: 0.89, alpha: 1) })
-    static let onAccent = Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.08, green: 0.19, blue: 0.13, alpha: 1) : .white })
+    private static func pair(_ light: UInt32, _ dark: UInt32) -> Color {
+        Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light) })
+    }
+    static let background = pair(0xFAF9F6, 0x1E1D1B)   // --page
+    static let panel = pair(0xF4F2ED, 0x181715)        // --panel
+    static let surface = pair(0xFFFFFF, 0x292825)      // --raised
+    static let ink = pair(0x22201C, 0xEDEBE5)          // --ink
+    static let softText = pair(0x6B675F, 0xA6A298)     // --soft
+    static let faint = pair(0x9A968C, 0x77746C)        // --faint
+    static let line = pair(0xE7E4DC, 0x34322D)         // --line
+    static let soft = pair(0xEFECE4, 0x2E2C28)         // --user / --hover
+    static let accent = pair(0x1F6F5C, 0x4FB596)       // --accent
+    static let accentSoft = pair(0xE3EFE9, 0x1F3A31)   // --accent-soft
+    static let onAccent = pair(0xFFFFFF, 0x0F1F1A)     // --accent-ink
+    static let alert = pair(0xA33A2C, 0xEE9383)        // --alert
 }
-struct ForestButton: ButtonStyle {
-    var prominent = true
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.body.weight(.semibold))
-            .frame(maxWidth: .infinity, minHeight: 28)
-            .padding(12)
-            .background(prominent ? Forest.accent : Forest.soft, in: RoundedRectangle(cornerRadius: 16))
-            .foregroundStyle(prominent ? Forest.onAccent : Forest.accent)
-            .opacity(configuration.isPressed ? 0.72 : 1)
+extension UIColor {
+    convenience init(hex: UInt32) {
+        self.init(red: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
     }
 }
+func dismissKeyboard() { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
+
+/// The web's .primary / .secondary buttons.
+struct ForestButton: ButtonStyle {
+    var prominent = true
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.medium))
+            .frame(maxWidth: .infinity, minHeight: 24)
+            .padding(.vertical, 10).padding(.horizontal, 14)
+            .background(prominent ? (enabled ? Forest.accent : Forest.soft) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
+            .overlay { if !prominent { RoundedRectangle(cornerRadius: 10).stroke(Forest.line) } }
+            .foregroundStyle(prominent ? (enabled ? Forest.onAccent : Forest.faint) : (enabled ? Forest.ink : Forest.faint))
+            .opacity(configuration.isPressed ? 0.75 : 1)
+    }
+}
+/// The web's .card: raised, a hairline border, a soft shadow.
 struct Card<Content: View>: View {
     @ViewBuilder var content: Content
-    var body: some View { VStack(alignment: .leading, spacing: 14) { content }.padding(18).frame(maxWidth: .infinity, alignment: .leading).background(Forest.surface, in: RoundedRectangle(cornerRadius: 22)) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) { content }
+            .padding(.vertical, 16).padding(.horizontal, 18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Forest.surface, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16).stroke(Forest.line))
+            .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
+    }
 }
 struct ScreenTitle: View {
     let title: String
     let subtitle: String
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(title).font(.largeTitle.bold())
-            Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.system(size: 28, weight: .medium))
+            Text(subtitle).font(.subheadline).foregroundStyle(Forest.softText)
         }.frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 4)
+    }
+}
+/// Wraps chips onto new lines, centred, like the web's suggestions row.
+struct ChipFlow: Layout {
+    var spacing: CGFloat = 8
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews)
+        let height = rows.map(\.height).reduce(0, +) + spacing * CGFloat(max(rows.count - 1, 0))
+        return CGSize(width: proposal.width ?? rows.map(\.width).max() ?? 0, height: height)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in arrange(width: bounds.width, subviews: subviews) {
+            var x = bounds.minX + (bounds.width - row.width) / 2
+            for index in row.items {
+                let size = subviews[index].sizeThatFits(.unspecified)
+                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+    private func arrange(width: CGFloat, subviews: Subviews) -> [(items: [Int], width: CGFloat, height: CGFloat)] {
+        var rows: [(items: [Int], width: CGFloat, height: CGFloat)] = []
+        var current: (items: [Int], width: CGFloat, height: CGFloat) = ([], 0, 0)
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            let next = current.items.isEmpty ? size.width : current.width + spacing + size.width
+            if next > width, !current.items.isEmpty { rows.append(current); current = ([index], size.width, size.height) }
+            else { current = (current.items + [index], next, max(current.height, size.height)) }
+        }
+        if !current.items.isEmpty { rows.append(current) }
+        return rows
+    }
+}
+// MARK: - The web chat layout, shared by the Mohassan chat and the local fallback chat.
+
+/// A thread that scrolls under a composer pinned above the keyboard. Sending clears
+/// focus, so the keyboard closes; dragging the thread closes it too.
+struct ChatScaffold<Thread: View>: View {
+    @Binding var draft: String
+    let placeholder: String
+    let tooLong: Bool
+    let canSend: Bool
+    let working: Bool
+    let scrollKey: Int
+    var showComposer = true
+    let onSend: () -> Bool
+    var onStop: (() -> Void)? = nil
+    let thread: Thread
+    @FocusState private var focused: Bool
+
+    init(draft: Binding<String>, placeholder: String, tooLong: Bool, canSend: Bool, working: Bool, scrollKey: Int, showComposer: Bool = true,
+         onSend: @escaping () -> Bool, onStop: (() -> Void)? = nil, @ViewBuilder thread: () -> Thread) {
+        _draft = draft
+        self.placeholder = placeholder; self.tooLong = tooLong; self.canSend = canSend; self.working = working
+        self.scrollKey = scrollKey; self.showComposer = showComposer; self.onSend = onSend; self.onStop = onStop
+        self.thread = thread()
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    thread
+                    Color.clear.frame(height: 1).id("bottom")
+                }
+                .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 12)
+                .frame(maxWidth: 740).frame(maxWidth: .infinity)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .onChange(of: scrollKey) { _, _ in withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) } }
+            .onChange(of: focused) { _, on in
+                guard on else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) } }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) { if showComposer { composer } }
+        }
+    }
+
+    private var composer: some View {
+        VStack(spacing: 6) {
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField(placeholder, text: $draft, axis: .vertical)
+                    .lineLimit(1...6)
+                    .focused($focused)
+                    .submitLabel(.return)
+                    .padding(.vertical, 7).padding(.horizontal, 6)
+                if working, let onStop {
+                    Button(action: onStop) {
+                        Image(systemName: "stop.fill").font(.footnote).frame(width: 36, height: 36)
+                            .background(Forest.soft, in: RoundedRectangle(cornerRadius: 12)).foregroundStyle(Forest.ink)
+                    }.accessibilityLabel("إيقاف")
+                } else {
+                    Button {
+                        if onSend() { focused = false; dismissKeyboard() }
+                    } label: {
+                        Image(systemName: "arrow.up").font(.body.weight(.semibold)).frame(width: 36, height: 36)
+                            .background(canSend ? Forest.accent : Forest.soft, in: RoundedRectangle(cornerRadius: 12))
+                            .foregroundStyle(canSend ? Forest.onAccent : Forest.faint)
+                    }
+                    .disabled(!canSend)
+                    .accessibilityLabel("إرسال الرسالة")
+                }
+            }
+            .padding(.vertical, 8).padding(.leading, 10).padding(.trailing, 8)
+            .background(Forest.surface, in: RoundedRectangle(cornerRadius: 20))
+            .overlay(RoundedRectangle(cornerRadius: 20).stroke(focused ? Forest.faint : Forest.line))
+            .shadow(color: .black.opacity(0.05), radius: 6, y: 2)
+            if tooLong { Text("الرسالة أطول من المسموح. اختصرها قبل الإرسال.").font(.caption).foregroundStyle(Forest.alert) }
+        }
+        .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 8)
+        .frame(maxWidth: 740).frame(maxWidth: .infinity)
+        .background(Forest.background)
+    }
+}
+
+/// The web's welcome: the mark, one question, suggestion chips.
+struct ChatWelcome: View {
+    let title: String
+    let suggestions: [String]
+    let pick: (String) -> Void
+    var body: some View {
+        VStack(spacing: 22) {
+            Text("م").font(.system(size: 22, weight: .semibold)).frame(width: 46, height: 46)
+                .background(Forest.accent, in: RoundedRectangle(cornerRadius: 14)).foregroundStyle(Forest.onAccent)
+                .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
+            Text(title).font(.system(size: 26, weight: .medium)).multilineTextAlignment(.center)
+            ChipFlow {
+                ForEach(suggestions, id: \.self) { item in
+                    Button { pick(item) } label: {
+                        Text(item).font(.subheadline).padding(.vertical, 7).padding(.horizontal, 14)
+                            .overlay(Capsule().stroke(Forest.line)).foregroundStyle(Forest.softText)
+                    }.buttonStyle(.plain)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity).padding(.top, 72)
+    }
+}
+
+/// A user turn: a soft bubble on the reading side. An assistant turn: plain text, no bubble.
+struct ChatTurn: View {
+    let mine: Bool
+    let text: String
+    var body: some View {
+        if mine {
+            HStack {
+                Text(text).textSelection(.enabled).lineSpacing(4)
+                    .padding(.vertical, 10).padding(.horizontal, 16)
+                    .background(Forest.soft, in: UnevenRoundedRectangle(topLeadingRadius: 6, bottomLeadingRadius: 18, bottomTrailingRadius: 18, topTrailingRadius: 18))
+                Spacer(minLength: 48)
+            }
+        } else {
+            Text(text).textSelection(.enabled).lineSpacing(6).frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// The web's working pill and its step list.
+struct WorkingSteps: View {
+    let progress: String
+    let steps: [String]
+    @State private var open = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button { withAnimation(.easeOut(duration: 0.2)) { open.toggle() } } label: {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.mini)
+                    Text(progress).font(.subheadline).lineLimit(2)
+                    if !steps.isEmpty { Image(systemName: "chevron.down").font(.caption2).rotationEffect(.degrees(open ? 180 : 0)) }
+                }
+                .padding(.vertical, 5).padding(.horizontal, 11)
+                .background(Forest.surface, in: Capsule()).overlay(Capsule().stroke(Forest.line))
+                .foregroundStyle(Forest.softText)
+            }.buttonStyle(.plain).disabled(steps.isEmpty)
+            if open {
+                VStack(alignment: .leading, spacing: 6) { ForEach(Array(steps.enumerated()), id: \.offset) { _, step in Text(step).font(.subheadline) } }
+                    .foregroundStyle(Forest.softText)
+                    .padding(.leading, 14)
+                    .overlay(alignment: .leading) { Rectangle().fill(Forest.line).frame(width: 2) }
+                    .padding(.leading, 12)
+            }
+        }.accessibilityElement(children: .combine)
     }
 }
 struct RootView: View {
     @EnvironmentObject private var store: WaslaStore
     var body: some View {
         Group {
-            if store.isLoading { ProgressView("وصلة").frame(maxWidth: .infinity, maxHeight: .infinity).background(Forest.background) }
+            if store.isLoading { ProgressView("موحسن").frame(maxWidth: .infinity, maxHeight: .infinity).background(Forest.background) }
             else if !store.paired { PairingView() }
             else {
                 TabView(selection: $store.selectedTab) {
                     AppScreen { ControlView() }.tabItem { Label("التحكم", systemImage: "slider.horizontal.3") }.tag(0)
-                    AppScreen { if store.mohassanLinked { MohassanChatView() } else { ChatView() } }.tabItem { Label(store.mohassanLinked ? "موحسن" : "المحادثة", systemImage: "bubble.left.and.bubble.right") }.tag(1)
+                    AppScreen(scrolls: false) { if store.mohassanLinked { MohassanChatView() } else { ChatView() } }.tabItem { Label(store.mohassanLinked ? "موحسن" : "المحادثة", systemImage: "bubble.left.and.bubble.right") }.tag(1)
                     AppScreen { ImagesView() }.tabItem { Label("الصور", systemImage: "photo") }.tag(2)
                     AppScreen { SearchView() }.tabItem { Label("البحث", systemImage: "globe") }.tag(3)
                 }
@@ -57,16 +270,26 @@ struct RootView: View {
     }
 }
 struct AppScreen<Content: View>: View {
+    var scrolls = true
     @ViewBuilder var content: Content
     @State private var settings = false
     var body: some View {
         NavigationStack {
-            ScrollView { content.padding(20).frame(maxWidth: 700).frame(maxWidth: .infinity) }
-                .background(Forest.background)
-                .navigationTitle("وصلة")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .topBarTrailing) { Button { settings = true } label: { Image(systemName: "slider.horizontal.3") }.accessibilityLabel("الإعدادات") } }
-                .sheet(isPresented: $settings) { SettingsView() }
+            Group {
+                if scrolls {
+                    ScrollView { content.padding(20).frame(maxWidth: 700).frame(maxWidth: .infinity) }
+                        .scrollDismissesKeyboard(.interactively)
+                } else { content }
+            }
+            .background(Forest.background)
+            .navigationTitle("موحسن")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Forest.background, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("الإعدادات") }
+                ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("تم") { dismissKeyboard() } }
+            }
+            .sheet(isPresented: $settings) { SettingsView() }
         }
     }
 }
@@ -84,7 +307,7 @@ struct PairingView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     Image(systemName: "link").font(.system(size: 34, weight: .medium)).foregroundStyle(Forest.accent).padding(18).background(Forest.soft, in: RoundedRectangle(cornerRadius: 22))
-                    ScreenTitle(title: "رمز واحد، وتبدأ.", subtitle: "افتح وصلة على الكمبيوتر وأدخل رمز الربط الظاهر هناك.")
+                    ScreenTitle(title: "رمز واحد، وتبدأ.", subtitle: "افتح خدمة موحسن على الكمبيوتر وأدخل رمز الربط الظاهر هناك.")
                     Card {
                         Label(store.bundledIdentity?.name ?? "الكمبيوتر", systemImage: "desktopcomputer").font(.headline)
                         field("رمز الربط") {
@@ -105,13 +328,13 @@ struct PairingView: View {
                     } label: {
                         if store.isPairing { ProgressView().tint(Forest.onAccent) } else { Label("ربط الكمبيوتر", systemImage: "link") }
                     }.buttonStyle(ForestButton()).disabled(store.isPairing || address.isEmpty || fingerprint.isEmpty || !PairingCode.isValid(code))
-                    Text("شغّل Tailscale على الهاتف والكمبيوتر، واترك وصلة مفتوحًا على الكمبيوتر.").font(.footnote).foregroundStyle(.secondary)
+                    Text("شغّل Tailscale على الهاتف والكمبيوتر، واترك خدمة موحسن تعمل على الكمبيوتر.").font(.footnote).foregroundStyle(.secondary)
                     if store.bundledIdentity == nil {
                         Text("إعداد الكمبيوتر غير متوفر في هذه النسخة. أدخله من «تغيير الكمبيوتر».").font(.footnote).foregroundStyle(.secondary)
                     }
                     DisclosureGroup("تغيير الكمبيوتر", isExpanded: $advanced) {
                         VStack(alignment: .leading, spacing: 14) {
-                            Text(store.bundledIdentity == nil ? "انسخ عنوان الكمبيوتر وبصمته من لوحة وصلة." : "بيانات كمبيوترك مهيأة مسبقًا. غيّرها فقط للاتصال بكمبيوتر آخر أو بعد تغيير شهادته.").font(.footnote).foregroundStyle(.secondary)
+                            Text(store.bundledIdentity == nil ? "انسخ عنوان الكمبيوتر وبصمته من لوحة خدمة موحسن." : "بيانات كمبيوترك مهيأة مسبقًا. غيّرها فقط للاتصال بكمبيوتر آخر أو بعد تغيير شهادته.").font(.footnote).foregroundStyle(.secondary)
                             field("عنوان الكمبيوتر") { TextField("https://192.168.1.10:47621", text: $address).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled().environment(\.layoutDirection, .leftToRight).focused($focusedField, equals: .address) }
                             field("بصمة الشهادة · SHA-256") { TextField("64 حرفًا كما تظهر على الكمبيوتر", text: $fingerprint, axis: .vertical).lineLimit(2...3).textInputAutocapitalization(.never).autocorrectionDisabled().font(.system(.caption, design: .monospaced)).environment(\.layoutDirection, .leftToRight).focused($focusedField, equals: .fingerprint) }
                             Text("انسخ البصمة من شاشة الكمبيوتر الموثوقة. لن يُقبل اتصال بشهادة مختلفة.").font(.footnote).foregroundStyle(.secondary)
@@ -119,7 +342,7 @@ struct PairingView: View {
                     }.padding(18).background(Forest.surface, in: RoundedRectangle(cornerRadius: 18))
                 }.padding(24).frame(maxWidth: 620).frame(maxWidth: .infinity)
                     .disabled(store.isPairing)
-            }.background(Forest.background).navigationTitle("وصلة").navigationBarTitleDisplayMode(.inline)
+            }.background(Forest.background).navigationTitle("موحسن").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("تم") { focusedField = nil } }
                 }
@@ -175,53 +398,55 @@ struct ControlView: View {
         }.buttonStyle(.plain)
     }
 }
+/// The local fallback chat, shown only while Mohassan is not linked.
 struct ChatView: View {
     @EnvironmentObject private var store: WaslaStore
     @State private var draft = ""
+    private var clean: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ScreenTitle(title: "بمَ تفكّر اليوم؟", subtitle: "مساعدك المحلي، مع البحث والمصادر عند الحاجة.")
-            HStack {
-                Picker("مسار الإجابة", selection: $store.chatMode) {
-                    ForEach(ChatMode.allCases) { mode in Text(mode.title).tag(mode) }
-                }.pickerStyle(.segmented).disabled(store.chatBusy)
-                Button { store.newChat(); draft = "" } label: { Image(systemName: "plus.bubble").frame(width: 42, height: 42) }.accessibilityLabel("محادثة جديدة")
+        ChatScaffold(
+            draft: $draft,
+            placeholder: "اكتب رسالتك…",
+            tooLong: draft.unicodeScalars.count > 8_000,
+            canSend: !store.computerBusy && !clean.isEmpty && draft.unicodeScalars.count <= 8_000,
+            working: false,
+            scrollKey: store.messages.count * 2 + (store.chatBusy ? 1 : 0),
+            onSend: {
+                guard !clean.isEmpty, store.sendChat(draft) else { return false }
+                draft = ""
+                return true
             }
+        ) {
+            Label("موحسن غير متصل الآن، فهذه محادثة المساعد المحلي البسيط. شغّل موحسن على الكمبيوتر واربطه من «الاتصالات».", systemImage: "bolt.horizontal.circle")
+                .font(.footnote).foregroundStyle(Forest.softText)
+                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Forest.panel, in: RoundedRectangle(cornerRadius: 12))
             if store.messages.isEmpty {
-                HStack { suggestion("نظّم مهامي"); suggestion("اكتب معي"); suggestion("اشرح لي فكرة") }
+                ChatWelcome(title: "بمَ أساعدك اليوم؟", suggestions: ["نظّم مهامي", "اكتب معي", "اشرح لي فكرة"]) { draft = $0 }
             }
             ForEach(store.messages) { message in
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(message.role == "user" ? "أنت" : "وصلة").font(.caption).foregroundStyle(.secondary)
-                    Text(message.content).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 8) {
+                    ChatTurn(mine: message.role == "user", text: message.content)
                     if let metadata = store.chatMetadata[message.id] { ChatMetadataView(metadata: metadata) }
-                }.padding(16).background(message.role == "user" ? Forest.soft : Forest.surface, in: RoundedRectangle(cornerRadius: 20))
-            }
-            if store.chatBusy { HStack { ProgressView(); Text("المساعد يكتب الرد…").font(.subheadline) }.accessibilityElement(children: .combine) }
-            Card {
-                Toggle("احفظ هذه المحادثة", isOn: $store.rememberConversation).font(.subheadline).disabled(store.chatBusy)
-                Toggle("استخدم معرفتي المحفوظة", isOn: $store.useSavedKnowledge).font(.subheadline).disabled(store.chatBusy)
-                TextField("اكتب ما يدور في بالك…", text: $draft, axis: .vertical).lineLimit(3...8)
-                Text("\(draft.unicodeScalars.count) / 8000 حرف")
-                    .font(.caption).foregroundStyle(draft.unicodeScalars.count > 8_000 ? Color.red : Color.secondary)
-                if draft.unicodeScalars.count > 8_000 { Text("اختصر الرسالة إلى ٨٬٠٠٠ حرف قبل الإرسال.").font(.caption).foregroundStyle(.red) }
-                HStack {
-                    Text(store.imageBusy ? "انتظر اكتمال الصورة" : store.status?.model ?? "Qwen · محلي").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button {
-                        let text = draft
-                        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                        if store.sendChat(text) { draft = "" }
-                    } label: { Image(systemName: "arrow.up").font(.headline).frame(width: 48, height: 48).background(Forest.accent, in: RoundedRectangle(cornerRadius: 16)).foregroundStyle(Forest.onAccent) }
-                        .disabled(store.computerBusy || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || draft.unicodeScalars.count > 8_000).accessibilityLabel("إرسال الرسالة")
                 }
             }
-            if !store.chatContextNote.isEmpty { Text(store.chatContextNote).font(.footnote).foregroundStyle(.secondary) }
-            Text(store.rememberConversation ? "سيُطلب حفظ المحادثة على الكمبيوتر عند الإرسال. تظهر علامة الحفظ فقط بعد تأكيده." : "الحفظ اختياري ومغلق افتراضيًا. تبقى رسائل هذه الجلسة في ذاكرة التطبيق.").font(.footnote).foregroundStyle(.secondary)
-            Text(store.status?.app_actions_enabled == true ? "يمكنك طلب فتح المتصفح أو المفكرة أو الحاسبة على الكمبيوتر." : "لفتح المتصفح أو المفكرة أو الحاسبة، فعّل خيار إجراءات التطبيقات من لوحة Windows. يكون هذا الخيار مغلقًا افتراضيًا.").font(.footnote).foregroundStyle(.secondary)
+            if store.chatBusy { WorkingSteps(progress: "يكتب الرد…", steps: []) }
+            if !store.chatContextNote.isEmpty { Text(store.chatContextNote).font(.footnote).foregroundStyle(Forest.softText) }
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Menu {
+                    Picker("مسار الإجابة", selection: $store.chatMode) { ForEach(ChatMode.allCases) { mode in Text(mode.title).tag(mode) } }
+                    Toggle("احفظ هذه المحادثة", isOn: $store.rememberConversation)
+                    Toggle("استخدم معرفتي المحفوظة", isOn: $store.useSavedKnowledge)
+                } label: { Image(systemName: "ellipsis.circle") }
+                .disabled(store.chatBusy).accessibilityLabel("خيارات المحادثة")
+            }
+            ToolbarItem(placement: .topBarLeading) {
+                Button { store.newChat(); draft = "" } label: { Image(systemName: "square.and.pencil") }.accessibilityLabel("محادثة جديدة")
+            }
         }
     }
-    private func suggestion(_ title: String) -> some View { Button(title) { draft = title }.font(.caption).padding(10).background(Forest.surface, in: Capsule()) }
 }
 struct ChatMetadataView: View {
     let metadata: ChatResponse
@@ -271,7 +496,7 @@ struct ImagesView: View {
                 Picker("أسلوب الصورة", selection: $style) { Text("طبيعي").tag("natural"); Text("سينمائي").tag("cinematic"); Text("رسم فني").tag("art") }.pickerStyle(.segmented)
                 Label("صورة واحدة · مربعة · 512 × 512", systemImage: "square").font(.caption).foregroundStyle(.secondary)
             }
-            Button { Task { await store.prepareImage(description: description, style: style) } } label: {
+            Button { dismissKeyboard(); Task { await store.prepareImage(description: description, style: style) } } label: {
                 if store.imagePreparing { ProgressView().tint(Forest.onAccent) } else { Label("تحضير الوصف للمراجعة", systemImage: "sparkles") }
             }.buttonStyle(ForestButton()).disabled(store.computerBusy || store.pendingImageID != nil || description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Text(store.imageStatus).font(.footnote).foregroundStyle(.secondary).accessibilityLabel("حالة الصورة: \(store.imageStatus)")
@@ -345,7 +570,7 @@ struct SearchView: View {
             }
         }.sheet(item: $selectedURL) { SafariView(url: $0.url).ignoresSafeArea() }
     }
-    private func submit() { Task { await store.search(query) } }
+    private func submit() { dismissKeyboard(); Task { await store.search(query) } }
 }
 struct DesktopPanel: View {
     @EnvironmentObject private var store: WaslaStore
@@ -406,7 +631,7 @@ struct DesktopPanel: View {
                     TextField("اكتب نصًا لإرساله إلى الكمبيوتر…", text: $keyboard, axis: .vertical).lineLimit(2...5)
                     Text("\(keyboard.unicodeScalars.count) / 2000 حرف").font(.caption).foregroundStyle(keyboard.unicodeScalars.count > 2_000 ? Color.red : Color.secondary)
                     if keyboard.unicodeScalars.count > 2_000 { Text("اختصر النص إلى ٢٬٠٠٠ حرف قبل إرساله؛ لن يتم اقتطاعه تلقائيًا.").font(.caption).foregroundStyle(.red) }
-                    Button("إرسال النص") { store.enqueue(DesktopCommand(action: "text", text: keyboard)); keyboard = "" }.buttonStyle(ForestButton()).disabled(keyboard.isEmpty || keyboard.unicodeScalars.count > 2_000)
+                    Button("إرسال النص") { store.enqueue(DesktopCommand(action: "text", text: keyboard)); keyboard = ""; dismissKeyboard() }.buttonStyle(ForestButton()).disabled(keyboard.isEmpty || keyboard.unicodeScalars.count > 2_000)
                     HStack {
                         keyButton("Enter", key: "enter")
                         keyButton("⌫", key: "backspace", accessible: "حذف الحرف السابق")
@@ -447,7 +672,7 @@ struct SettingsView: View {
                     Button("إلغاء اقتران الهاتف على الكمبيوتر", role: .destructive) { revokeConfirm = true }
                     Button("حذف بيانات الاقتران من الهاتف فقط", role: .destructive) { forgetConfirm = true }
                 } footer: { Text("الحذف المحلي لا يلغي صلاحية الهاتف على الكمبيوتر. استخدمه فقط عند تعذّر الوصول، ثم ألغِ الجهاز من لوحة الكمبيوتر.") }
-                Section("حول وصلة") { Text("المحادثة وإنشاء الصور والبحث والتحكم بسطح المكتب عبر خدمة الكمبيوتر. لا يعمل التحكم في الخلفية.").font(.footnote) }
+                Section("حول Mohassan AI") { Text("المحادثة وإنشاء الصور والبحث والتحكم بسطح المكتب عبر خدمة الكمبيوتر. لا يعمل التحكم في الخلفية.").font(.footnote) }
             }.navigationTitle("الإعدادات").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("تم") { dismiss() } } }
                 .confirmationDialog("إلغاء صلاحية هذا الهاتف على الكمبيوتر؟", isPresented: $revokeConfirm, titleVisibility: .visible) { Button("إلغاء الاقتران", role: .destructive) { Task { await store.revokePairing(); if !store.paired { dismiss() } } } }
