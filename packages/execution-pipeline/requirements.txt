@@ -1,0 +1,7 @@
+# Verified on 2026-11-12: Windows 11, Python 3.11.9, RTX 3050 Ti Laptop (sm_86, 4 GB).
+# Install into an isolated environment, e.g. `python -m venv .venv-execution`.
+# CUDA wheel:  pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu126
+# CPU-only:    pip install torch==2.10.0
+torch==2.10.0        # BSD-3-Clause (the cu126 wheel bundles NVIDIA runtime libraries under NVIDIA's own terms)
+numpy==2.4.2         # BSD-3-Clause; optional, used only for RNG capture in training checkpoints
+pytest==7.4.3        # MIT; tests only

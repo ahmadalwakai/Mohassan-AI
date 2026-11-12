@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mohassan:execution-evaluation:candidate:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status"
+  ],
+  "properties": {
+    "status": {
+      "enum": [
+        "candidate",
+        "unsupported",
+        "missing_context",
+        "unavailable",
+        "error"
+      ]
+    },
+    "content": {
+      "type": [
+        "object",
+        "string",
+        "null"
+      ]
+    },
+    "output_language": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mutations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path"
+        ],
+        "allOf": [
+          {
+            "if": { "properties": { "operation": { "const": "write" } } },
+            "then": { "required": ["content"] }
+          }
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content": {
+            "type": "string"
+          },
+          "operation": {
+            "enum": [
+              "write",
+              "delete"
+            ]
+          },
+          "base_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        }
+      }
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tool",
+          "arguments",
+          "capability",
+          "state_changing"
+        ],
+        "properties": {
+          "tool": {
+            "type": "string",
+            "minLength": 1
+          },
+          "arguments": {
+            "type": "object"
+          },
+          "capability": {
+            "type": "string",
+            "minLength": 1
+          },
+          "state_changing": {
+            "type": "boolean"
+          },
+          "action_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "workspace_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "not": {
+              "const": "candidate"
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "content": {
+            "type": "null"
+          },
+          "mutations": {
+            "maxItems": 0
+          },
+          "operations": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ]
+}
+

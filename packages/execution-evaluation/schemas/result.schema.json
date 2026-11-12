@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mohassan:execution-evaluation:result:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "task_family",
+    "project_family",
+    "template_family",
+    "tier",
+    "dataset_version",
+    "arm_id",
+    "mode",
+    "outcome",
+    "attempts",
+    "expected_response",
+    "predicted_response",
+    "external_reasoning",
+    "attempt_records",
+    "limitations",
+    "missing_measurements",
+    "provenance",
+    "failure_categories",
+    "first_attempt_success",
+    "success_within_budget",
+    "end_to_end_completed",
+    "structural_valid",
+    "behavioral_correct",
+    "regression_failed",
+    "false_acceptance",
+    "unauthorized_output",
+    "unauthorized_accepted",
+    "output_language_compliant",
+    "external_escalated",
+    "independent_local_contribution",
+    "latency_ms",
+    "cost_usd",
+    "peak_memory_bytes"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_family": {
+      "enum": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F"
+      ]
+    },
+    "project_family": {
+      "type": "string",
+      "minLength": 1
+    },
+    "template_family": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tier": {
+      "enum": [
+        "atomic",
+        "repository_context",
+        "end_to_end"
+      ]
+    },
+    "dataset_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "arm_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mode": {
+      "enum": [
+        "executor_only",
+        "full_system"
+      ]
+    },
+    "outcome": {
+      "enum": [
+        "verified_success",
+        "candidate_rejected",
+        "execution_prevented",
+        "verification_failed",
+        "verification_unavailable",
+        "unsupported",
+        "missing_context",
+        "unavailable",
+        "error",
+        "timeout",
+        "cancelled"
+      ]
+    },
+    "attempts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "expected_response": {
+      "enum": [
+        "candidate",
+        "unsupported",
+        "missing_context"
+      ],
+      "default": "candidate",
+      "description": "Evaluator-only ground truth response label."
+    },
+    "predicted_response": {
+      "enum": [
+        "candidate",
+        "unsupported",
+        "missing_context",
+        "unavailable",
+        "error"
+      ]
+    },
+    "external_reasoning": {
+      "type": "object"
+    },
+    "attempt_records": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "missing_measurements": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "provenance": {
+      "type": "object"
+    },
+    "failure_categories": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "first_attempt_success": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "success_within_budget": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "end_to_end_completed": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "structural_valid": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "behavioral_correct": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "regression_failed": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "false_acceptance": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "unauthorized_output": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "unauthorized_accepted": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "output_language_compliant": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "external_escalated": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "independent_local_contribution": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "latency_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "cost_usd": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "peak_memory_bytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    }
+  }
+}
+

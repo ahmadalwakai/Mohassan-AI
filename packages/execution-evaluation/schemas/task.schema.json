@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mohassan:execution-evaluation:task:v1",
+  "title": "Independent evaluation task",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "task_family",
+    "project_family",
+    "template_family",
+    "input_specification",
+    "available_context",
+    "allowed_symbols",
+    "expected_behavior",
+    "acceptance_criteria",
+    "hidden_test_ref",
+    "required_capabilities",
+    "allowed_execution_budget",
+    "expected_output_language",
+    "safety_constraints",
+    "dataset_version",
+    "tier"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "execution-evaluation-task-v1"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_family": {
+      "enum": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F"
+      ]
+    },
+    "project_family": {
+      "type": "string",
+      "minLength": 1
+    },
+    "template_family": {
+      "type": "string",
+      "minLength": 1
+    },
+    "input_specification": {
+      "type": "object"
+    },
+    "available_context": {
+      "type": "object"
+    },
+    "allowed_symbols": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "expected_behavior": {
+      "type": "object",
+      "description": "Evaluator private; excluded from all model requests."
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "description": "Evaluator private independent criteria."
+    },
+    "hidden_test_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque independent registry reference; evaluator private."
+    },
+    "required_capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "allowed_execution_budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "time_ms",
+        "output_tokens",
+        "max_attempts"
+      ],
+      "properties": {
+        "time_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_memory_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "external_calls": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "external_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        }
+      }
+    },
+    "expected_output_language": {
+      "type": "string",
+      "minLength": 1
+    },
+    "safety_constraints": {
+      "type": "object",
+      "description": "Exact allowlists and trusted policy; see verification-and-safety.md."
+    },
+    "dataset_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tier": {
+      "enum": [
+        "atomic",
+        "repository_context",
+        "end_to_end"
+      ]
+    },
+    "expected_response": {
+      "enum": [
+        "candidate",
+        "unsupported",
+        "missing_context"
+      ],
+      "default": "candidate",
+      "description": "Evaluator-only ground truth response label."
+    }
+  }
+}
+

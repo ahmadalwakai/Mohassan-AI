@@ -1,0 +1,49 @@
+# Repository source inspection
+
+Inspection was read-only on 2026-11-12 while the other phases were changing concurrently. Paths and exports below were observed in source, not inferred from an intended architecture. No runner, isolation probe, model, application or production workflow was executed. The root worktree already contained unrelated changes, which were left untouched.
+
+## Cognitive planning and Runtime
+
+`packages/cognitive/src/index.ts` exports `GoalCompiler`, `ModelRouter`, `StrategyPlanner`, `UncertaintyEngine`, `verifyPlanningResult`, `PlanningEngine`, `PlanningEngineOptions`, `PlanningError`, `PlanningStage` and `redactCredentialText`. `verifyPlanningResult` recomputes plan DAG, registry policy and uncertainty and checks supplied timestamps and usage. Its scope is `structure_and_policy`; it is not behavioral verification of generated code. Planning stages are `goal_compiled`, `model_selected`, `model_requested`, `fallback_selected`, `response_received` and `plan_verified`.
+
+`packages/runtime/src/index.ts` exports `Runtime`, `RuntimeOptions`, `DomainError`, `capabilities`, `createCapabilities`, `CapabilityModules`, `hasActiveSkillWorkflowApproval`, `verifyRecoveryAuthority`, `VerificationRecoveryContext`, `SkillExecutionContext`, `SkillNodeExecutionContext`, `SkillRuntimeOptions`, `SkillRollbackOptions`, `SkillChildSpec`, `SkillRecovery`, `SkillAdvanceResult` and `DiagnosticResult`. `Runtime` exposes `getCapabilities`, `snapshot`, `detail`, `createTask`, `approve`, `cancel`, `start`, `stop` and `tick`. These are production-capable methods, not an isolated evaluation API.
+
+`RuntimeOptions` injects `plan`, `code`/`verifyCode`, `studioChange`/`verifyStudioChange`, `openBrowser`/`verifyBrowser`, `skillRuntime` and rollback callbacks. Coding context includes task, owner, project, lease, abort signal, progress and model-usage receipt callbacks. Capability dispatch requires configured execution **and** verification. Source contains separate `claim`, `lockedLease`, `validApproval`, `transitionToVerification`, `finish`, cancellation and expired-lease recovery paths. Verification-only recovery rereads authority without repeating a state-changing action.
+
+`packages/contracts/src/index.ts` exports `TaskStatusSchema` and `TaskStatus`: `queued`, `running`, `waiting_approval`, `verifying`, `completed`, `failed`, `cancelled`, `paused`. `AutonomySchema` supports `assisted`, `scoped`, `shadow`. Other relevant exports include `TaskSchema`, `TaskDetailSchema`, `ModelRunSchema`, `PlanningResultSchema`, `CodingResultSchema`, `SandboxTestResultSchema`, `WorkspaceSnapshotSchema`, `RawCodingEditsSchema`, `CodingEditsSchema` and `StudioVerificationSchema`. No Phase 4 shared contract was inserted into this file.
+
+## Coding, permissions and sandbox
+
+The exact coding, Tool Gateway, scheduler, grant, script and AppContainer interfaces are recorded in [verification-and-safety.md](verification-and-safety.md). Important integration points are `CodingEngine.execute`/`verify` in `packages/coding/src/engine.ts`, `createToolGateway` in `packages/skills/src/gateway.ts`, `readSkillExecutionAuthority` in `packages/skills/src/execution-authority.ts`, `buildPermissionSnapshot` in `packages/skills/src/permissions.ts`, and `WindowsAppContainerSandbox` in `packages/sandbox/src/index.ts`.
+
+The coding verifier rereads persisted run/worktree/diff evidence. The gateway pairs execution with adapter verification and current permission/lease/content checks. Sandbox readiness includes baseline probes and executable readiness gates in `packages/sandbox/src/gates.ts`; native implementation files are `packages/sandbox/native/Runner.cs` and `run.ps1`. Presence of these files does not establish current isolation or make Vitest safe for generated programs.
+
+## Providers and external usage
+
+`packages/providers/src/index.ts` exports `ModelRequest`, `ModelUsage`, `ModelRateState`, `ProviderRouting`, `ModelResult`, `ModelProvider`, `ProviderError`, `GroqProvider` and `redactSecrets`, and reexports local provider/router/retry/usage modules. `ModelProvider.generate(request)` returns text, model and usage, with optional provider/routing data and `usageEstimated`. `ModelRequest` includes goal, optional token bound, abort signal, system text, structured response schema, image and idempotency key. These APIs generate text; they do not independently certify execution.
+
+`packages/providers/src/ollama.ts` exports `OllamaProvider`, `OllamaProviderOptions` and `ollamaOrigin`. `packages/providers/src/inference-router.ts` exports `InferenceRouter`, `RouteCandidate`, `RouterPolicy`, `RouteRequirements`, `AttemptRecord`, `RoutedResult`, `RouteOptions` and `CandidateCost`. Routed results retain candidate/provider/cost classification and attempts. Phase 4 still requires external-call identity, purpose, latency, real cost when available, estimated-usage flags and executable-solution lineage. Router text and model self-reports cannot establish independence.
+
+`packages/contracts/src/ai-providers.ts` exports `InferenceModelIdSchema`, `AIProviderSettingsInputSchema`, `InferenceModelSchema`, `InferenceEventSchema`, `KnownQuotaSchema`, `ModelCountersSchema` and `AIProvidersStatusSchema` with associated public types. These observed account/provider records are not independent evaluation receipts.
+
+## Existing benchmarks, learning and memory
+
+Exact paths, exported suite names and dataset limitations are recorded in [data-and-baselines.md](data-and-baselines.md). The existing `packages/skills/src/benchmark-suites.ts` suites cover instruction delivery and individual file read/write tools; they are not a 280-task execution-model benchmark. `tests/fixtures/skills/benchmarks/oracles.json` is a checked-in public fixture, not a secret Phase 4 holdout.
+
+`packages/contracts/src/skill-benchmarks.ts` defines `SkillBenchmarkSuiteIdSchema`, `SkillBenchmarkScopeSchema`, `SkillBenchmarkPinSchema`, `SkillBenchmarkSuiteSchema`, `SkillBenchmarkSnapshotSchema`, `SkillBenchmarkCaseResultSchema`, `SkillBenchmarkRequestSchema`, `SkillBenchmarkQuerySchema`, `SkillBenchmarkEvaluationSchema`, `SkillBenchmarkPageSchema` and `SkillBenchmarkCatalogSchema`. Existing benchmarks use nullable success/verification/safety/recovery/cost observations and isolated-experiment scope. `packages/contracts/src/skill-quality.ts` provides `SkillQualityVerdictSchema`, `SkillQualityObservationSchema`, `SkillQualityInputSchema`, `SkillQualityRateSchema`, `SkillQualityTimingSchema`, `SkillQualityUsageSchema`, `SkillQualitySnapshotSchema`, `SkillQualityDriftSchema`, `SkillQualityDetailSchema` and portfolio schemas. Unmeasured fields remain nullable in Phase 4 too.
+
+`packages/learning/src/evaluation.ts` exports `EvaluationCase`, `EvaluationReference`, `EvaluationObservation`, `EvaluationResult`, `evaluateCase`, `evaluationCases`, `safetyHoldoutV2Cases`, `safetyHoldoutV3Cases` and version constants. `experience.ts` provides `classifyExperience`, `recordExperience`, `recordExperienceFeedback`; `training.ts` provides `auditTrainingReadiness`, `prepareRoutingTrainingDataset` and `ROUTING_TRAINING_DATASET_VERSION`. These routing/learning records do not prove project/template-held-out execution capability.
+
+`packages/memory/src/index.ts` exports `createMemoryControl` and reexports contracts/skills. `packages/memory/src/skills.ts` exports `manifestHash`, `executeChecklist`, `evaluateChecklist`. The checklist fixtures are proposal-only and explicitly deny execution; they are not behavioral correctness evidence for this model.
+
+## Existing test runners and test sources
+
+Root `package.json` maps `test` to `vitest run`, `test:e2e` to `playwright test`, and has existing learning/coding/assistant/Ads/sandbox checks. No script was invoked and no manifest was changed. `vitest.config.ts` includes `packages/**/*.test.ts` and `tests/**/*.test.ts`, uses one worker and disables file parallelism. `playwright.config.ts` uses `tests/e2e`, Chromium, one worker and `tests/e2e/global-setup.ts`.
+
+Relevant discovered tests include `tests/assistant-verification.test.ts`, `tests/assistant-safety.test.ts`, `tests/assistant-flow.test.ts`, `tests/coding-runtime.test.ts`, `tests/skills-benchmark-runner.test.ts`, `tests/skills-security.test.ts`, `tests/skills-concurrency.test.ts`, `tests/sandbox-escape.test.ts`, `tests/learning-evaluator.test.ts`, `tests/evaluation-artifacts.test.ts`, `tests/evidence-report.test.ts`, `tests/google-ads.test.ts`, `tests/google-ads-paused.test.ts`, plus `packages/runtime/src/runtime.test.ts` and `planning-runtime.test.ts`. They were read/discovered, not run or counted as passed evaluation cases. Conditional customer/driver/admin consumer mappings require further verified inventory; no customer or driver application is invented.
+
+## Concurrent phase discoveries
+
+Phase 1's `packages/cognitive/src/execution-model/` appeared during work. Its observed deterministic compiler and Phase 4 forwarding bridge are documented in [data-and-baselines.md](data-and-baselines.md). Phase 2's `packages/execution-model/execution_model/inference.py` exposes `InferenceEngine`, `InferenceResponse`, `InferenceEvent` and untrusted `CandidateOutput`; observed methods include `initialize_random`, `load_local_model`, `get_model_info`, `get_supported_capabilities`, `stream_candidate`, `generate_candidate`. `generation.py` defines `GenerationConfig`, `GenerationResult`, `GenerationEvent`. Its `completed` response means decoding ended, not that a task succeeded.
+
+Phase 3's evolving `packages/execution-training/execution_training/` provides example/split/provenance/registry schemas described in the integration documents. Nothing from these concurrently owned modules was imported, modified or executed. Their owners must stabilize and qualify their interfaces before end-to-end integration.

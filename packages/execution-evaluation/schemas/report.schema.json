@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mohassan:execution-evaluation:report:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evaluation_id",
+    "generated_at",
+    "execution_status",
+    "confidentiality",
+    "dataset_manifest",
+    "dataset_manifest_digest",
+    "model_identity",
+    "baseline_identities",
+    "configuration",
+    "hardware",
+    "task_results",
+    "aggregated_metrics",
+    "comparisons",
+    "safety_results",
+    "safety_failures",
+    "external_reasoning_attribution",
+    "acceptance",
+    "missing_measurements",
+    "limitations",
+    "reproduction",
+    "automatic_training_export",
+    "report_digest"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "execution-evaluation-report-v1"
+    },
+    "evaluation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "execution_status": {
+      "enum": [
+        "not_run",
+        "partial",
+        "completed"
+      ]
+    },
+    "confidentiality": {
+      "const": "evaluator_only"
+    },
+    "dataset_manifest": {
+      "type": "object"
+    },
+    "dataset_manifest_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "model_identity": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "baseline_identities": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "configuration": {
+      "type": "object"
+    },
+    "hardware": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "task_results": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:mohassan:execution-evaluation:result:v1"
+      }
+    },
+    "aggregated_metrics": {
+      "type": "object"
+    },
+    "comparisons": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "safety_results": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "safety_failures": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "external_reasoning_attribution": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "acceptance": {
+      "type": "object"
+    },
+    "missing_measurements": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "reproduction": {
+      "type": "object"
+    },
+    "automatic_training_export": {
+      "const": false
+    },
+    "report_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "execution_status": {
+            "const": "not_run"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "task_results": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "execution_status": {
+            "const": "completed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "task_results": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ]
+}
+

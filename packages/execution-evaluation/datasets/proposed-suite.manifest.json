@@ -1,0 +1,15 @@
+{
+  "schema_version": "execution-evaluation-manifest-v1",
+  "dataset_id": "mohassan-execution-heldout",
+  "dataset_version": "proposed-v1",
+  "status": "proposed",
+  "entries": [],
+  "targets": {
+    "atomic": 200,
+    "repository_context": 60,
+    "end_to_end": 20
+  },
+  "provenance_reference": "proposal-only:no-task-data-no-results",
+  "created_at": "2026-11-12T03:33:13Z"
+}
+
