@@ -15,6 +15,7 @@
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "dev:lab": "node scripts/dev.mjs --local-lab",
     "start": "node scripts/dev.mjs --production",
     "build": "npm run build --workspace @mohassan/web",
     "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspace @mohassan/web",

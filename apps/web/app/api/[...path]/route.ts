@@ -24,7 +24,7 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
       body=new Uint8Array(size);let offset=0;for(const part of parts){body.set(part,offset);offset+=part.byteLength;}
     }
     const learningImport=path.length===2&&path[0]==='learning'&&path[1]==='documents'&&request.method==='POST';
-    const response=await fetch(target,{method:request.method,headers,body:body as BodyInit|undefined,cache:'no-store',redirect:'manual',signal:AbortSignal.any([request.signal,AbortSignal.timeout(path[0]==='studio'&&request.method==='POST'?360000:learningImport?30000:['research','browser','google-ads','search'].includes(path[0]??'')?60000:15000)])});
+    const response=await fetch(target,{method:request.method,headers,body:body as BodyInit|undefined,cache:'no-store',redirect:'manual',signal:AbortSignal.any([request.signal,AbortSignal.timeout(path[0]==='studio'&&request.method==='POST'?360000:path[0]==='executor'&&request.method==='POST'?180000:learningImport?30000:['research','browser','google-ads','search'].includes(path[0]??'')?60000:15000)])});
     const output=new Headers({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
     const contentType=response.headers.get('content-type');if(contentType)output.set('content-type',contentType);
     if(path.length===6&&path[0]==='browser'&&path[1]==='files'&&path[3]==='grants'&&path[5]==='content'){

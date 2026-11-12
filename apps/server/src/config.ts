@@ -3,9 +3,11 @@ if (process.env.MOHASSAN_ISOLATED_TEST !== 'true') await import('dotenv/config')
 import type { AppConfig } from './app.js';
 import { resolve,delimiter } from 'node:path';
 import { inferenceConfigFromEnv } from './inference.js';
+import { executorConfigFromEnv } from './executor.js';
 export function getConfig(): AppConfig {
   return {
-    dataDir: process.env.DATA_DIR ?? '.data/postgres', databaseUrl: process.env.DATABASE_URL || undefined,
+    // MOHASSAN_LOCAL_LAB (npm run dev:lab) never reaches an external database, whatever .env says.
+    dataDir: process.env.DATA_DIR ?? '.data/postgres', databaseUrl: process.env.MOHASSAN_LOCAL_LAB === '1' ? undefined : process.env.DATABASE_URL || undefined,
     authSecret: process.env.BETTER_AUTH_SECRET ?? '', internalSecret: process.env.INTERNAL_API_SECRET ?? '',
     setupToken: process.env.SETUP_TOKEN ?? '', webOrigin: process.env.WEB_ORIGIN ?? 'http://127.0.0.1:3000',
     production: process.env.NODE_ENV === 'production', runWorker: process.env.RUN_WORKER !== 'false',
@@ -18,6 +20,7 @@ export function getConfig(): AppConfig {
     googleAds:{clientId:process.env.GOOGLE_ADS_CLIENT_ID||undefined,clientSecret:process.env.GOOGLE_ADS_CLIENT_SECRET||undefined,tokenKey:process.env.GOOGLE_ADS_TOKEN_KEY||undefined,developerToken:process.env.GOOGLE_ADS_DEVELOPER_TOKEN||undefined,publishingEnabled:process.env.GOOGLE_ADS_PUBLISHING_ENABLED==='true',maxDailyBudgetMicros:/^\d{1,6}$/.test(process.env.GOOGLE_ADS_MAX_DAILY_BUDGET??'')?BigInt(process.env.GOOGLE_ADS_MAX_DAILY_BUDGET!)*1000000n:undefined},
     inference:(({groq:_groq,...rest})=>rest)(inferenceConfigFromEnv(process.env,undefined)),
     learningLocalModel:process.env.LEARNING_EVALUATION_MODEL?{model:process.env.LEARNING_EVALUATION_MODEL,baseUrl:process.env.LEARNING_EVALUATION_OLLAMA_URL||'http://127.0.0.1:11434'}:undefined,
+    executor:executorConfigFromEnv(process.env,process.cwd(),process.env.NODE_ENV==='production'),
     studioGatewayUrl:process.env.STUDIO_GATEWAY_URL||undefined,studioGatewaySecret:process.env.STUDIO_GATEWAY_SECRET||undefined,studioPreviewPort:Number(process.env.STUDIO_PREVIEW_PORT||5000),
   };
 }

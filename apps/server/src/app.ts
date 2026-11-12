@@ -35,6 +35,7 @@ import { createStudioLiveControl } from './studio-live.js';
 import { createBrowserTaskControl } from './browser-task.js';
 import { createCommandChatControl, registerCommandChatRoutes } from './command-chat.js';
 import { createInferenceControl, registerInferenceRoutes, type InferenceConfig } from './inference.js';
+import { createExecutorControl, executorConfigFromEnv, registerExecutorRoutes, type ExecutorConfig } from './executor.js';
 import { createGoogleAdsControl, googleAdsMigration, GoogleAdsError, type GoogleAdsConfig } from '@mohassan/google-ads';
 import { landingPageReader, registerGoogleAdsRoutes } from './google-ads.js';
 import { createSkillRuntime, skillGatewayTools } from './skill-runtime.js';
@@ -66,6 +67,8 @@ export interface AppConfig {
   googleAds?: Partial<Omit<GoogleAdsConfig,'webOrigin'>>;
   learning?: LearningConfig;
   learningLocalModel?:{model:string;baseUrl?:string};
+  /** Owner-only local experiment with the scratch-trained execution model. Absent: off. */
+  executor?:ExecutorConfig;
   /** Server-side fixture load only; never an API option or production setting. */
   testRequestLimit?:number;
   /** Chat requests a member may start in 24 hours. */
@@ -261,6 +264,13 @@ export async function createApplication(config: AppConfig) {
   const assistantTools=createAssistantTools({memory,coding,studio,studioChange:studioAi.available,runtime,windows,googleAds});
   const inference=await createInferenceControl(database.db,{...config.inference,groq:{apiKey:config.groqApiKey,fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b']},fetch:config.aiFetch});
   await registerInferenceRoutes(app,{control:inference,owner});
+  // Reasoning (Groq, when configured) and the local executor stay separate: the executor never
+  // calls a cloud model, and the assisted mode records each reasoning call it makes.
+  const executor=createExecutorControl({config:config.executor??executorConfigFromEnv({},process.cwd(),true),sandbox:coding.sandbox,
+    reasoning:{status:async()=>{const current=await ai.status();return {provider:'groq',configured:current.configured,available:current.configured&&current.status!=='error',verified:current.status==='verified',model:current.model,message:current.message};},
+      ...(ai.engine?{extract:(request:Parameters<typeof ai.generateSkill>[0])=>ai.generateSkill(request)}:{})}});
+  await registerExecutorRoutes(app,{control:executor,owner});
+  app.addHook('onClose',async()=>{executor.shutdown();});
   const agentBrowser=new AgentBrowser({profileDir:config.browserProfileDir??join(tmpdir(),`mohassan-browser-${randomUUID()}`),testOrigins:config.browser?.testOrigins,channel:config.browserChannel});
   const adsSleep=config.googleAds?.sleep;
   const chat=await createCommandChatControl(database.db,{...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),

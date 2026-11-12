@@ -4,7 +4,20 @@
     {
       "name": "mohassan",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "port": 3000,
+      "url": "http://127.0.0.1:3000"
+    },
+    {
+      "name": "mohassan-local-lab",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:lab"
+      ],
       "port": 3000,
       "url": "http://127.0.0.1:3000"
     }

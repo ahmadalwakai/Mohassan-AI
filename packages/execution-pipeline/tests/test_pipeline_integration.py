@@ -101,7 +101,27 @@ def test_generated_repairs_pass_phase3_validation_and_prompt_parity(tmp_path):
         assert render("typescript.repair.v1:null-safe-delta", fields) == render_prompt(example)
 
 
+@pytest.mark.parametrize("domain,capability", [
+    ("type_transform", "json.transform.v1:integers-to-strings"),
+    ("boundary_conditions", "json.check.v1:inclusive-interval"),
+])
+def test_json_capabilities_render_the_trained_prompt(tmp_path, domain, capability):
+    from execution_training.synthetic import generate_synthetic
+    examples = list(generate_synthetic(seed=7, count_per_domain=8, authorization=AUTH, evidence_store=LocalEvidenceStore(tmp_path),
+                                       collected_at="2026-11-12T00:00:00Z", domains=(domain,)))
+    assert len(examples) == 8
+    for example in examples:
+        assert render(capability, dict(example.required_context)) == render_prompt(example)
+
+
 @pytest.mark.parametrize("capability,fields", [
+    ("json.transform.v1:integers-to-strings", {"values": [1, 2, 3, 4, 5]}),
+    ("json.transform.v1:integers-to-strings", {"values": [2048]}),
+    ("json.transform.v1:integers-to-strings", {"values": [True]}),
+    ("json.transform.v1:integers-to-strings", {"values": ["1"]}),
+    ("json.check.v1:inclusive-interval", {"value": 5, "minimum": 0, "maximum": 40}),
+    ("json.check.v1:inclusive-interval", {"value": 50, "minimum": 0, "maximum": 10}),
+    ("json.check.v1:inclusive-interval", {"value": 1, "minimum": 0}),
     ("typescript.implement.v1:null-safe-delta", {"function_name": "f", "increment": 500}),
     ("typescript.implement.v1:null-safe-delta", {"function_name": "f; rm -rf", "increment": 1}),
     ("typescript.implement.v1:null-safe-delta", {"function_name": "f", "increment": 1, "extra": "x"}),

@@ -34,11 +34,15 @@ let SUITE_CASES: readonly EvaluationCase[] = evaluationCases;
 let SUITE_VERSION = EVALUATION_SUITE_VERSION;
 
 const MODELS = ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'] as const;
-/** --local-ollama is pinned to this one model on this computer; no other model or host is accepted. */
-const OLLAMA_MODELS = ['qwen3.5:9b-coding-local', 'qwen2.5-coder:7b-instruct-q4_K_M'] as const;
-type OllamaModel = typeof OLLAMA_MODELS[number];
+/**
+ * --local-ollama runs the chat decision suites on one Ollama model on this computer, named
+ * by the required --ollama-model. No model is built in or downloaded; the earlier pinned
+ * Qwen models were deleted on 2026-11-10/12 and their reports stay as history. The custom
+ * execution model is not a chat-decision model, so it is refused here.
+ */
+const EXECUTOR_NAMES = /^(custom|executor|exec-|mohassan-exec)/i;
 /** Chosen once by --ollama-model before any request; every call is pinned to it. */
-let OLLAMA_MODEL: OllamaModel = OLLAMA_MODELS[0];
+let OLLAMA_MODEL = '';
 /** Generation settings are fixed for every local model so runs compare like with like. */
 const OLLAMA_GENERATION = { stream: false, think: false, temperature: 0, seed: 42, numCtx: 16384, numPredict: 1800, keepAlive: '5m' } as const;
 const OLLAMA_ORIGIN = 'http://127.0.0.1:11434';
@@ -816,7 +820,7 @@ async function runReport(models: readonly Model[], specs: readonly EvaluationCas
 async function main() {
   const args = process.argv.slice(2);
   if (args.includes('--help')) {
-    console.log('Usage: npx tsx scripts/learning-eval.ts [--live | --local-ollama [--ollama-model NAME]] [--model 20b|120b] [--suite memory-training|read-training|safety-v2|safety-v3|safety-v4|safety-v5] [--split training|holdout] [--case ID]... [--safety] [--json] [--receipts] [--save-artifacts]');
+    console.log('Usage: npx tsx scripts/learning-eval.ts [--live | --local-ollama --ollama-model NAME] [--model 20b|120b] [--suite memory-training|read-training|safety-v2|safety-v3|safety-v4|safety-v5] [--split training|holdout] [--case ID]... [--safety] [--json] [--receipts] [--save-artifacts]');
     return;
   }
   let models: readonly Model[] = MODELS;
@@ -854,8 +858,9 @@ async function main() {
     }
     else if (arg === '--ollama-model') {
       const model = args[++index];
-      if (!OLLAMA_MODELS.includes(model as OllamaModel)) throw new Error('EVAL_BAD_OLLAMA_MODEL');
-      OLLAMA_MODEL = model as OllamaModel;
+      if (!model || !/^[A-Za-z0-9._:/-]{1,200}$/.test(model)) throw new Error('EVAL_BAD_OLLAMA_MODEL');
+      if (EXECUTOR_NAMES.test(model)) throw new Error('EVAL_EXECUTOR_UNSUPPORTED');
+      OLLAMA_MODEL = model;
       ollamaModelChosen = true;
     }
     else if (arg === '--case') {
@@ -873,6 +878,7 @@ async function main() {
   // The local mode pins its one model and never reads the cloud key.
   if (localOllama && (live || modelChosen)) throw new Error('EVAL_LOCAL_OLLAMA_EXCLUSIVE');
   if (ollamaModelChosen && !localOllama) throw new Error('EVAL_OLLAMA_MODEL_REQUIRES_LOCAL');
+  if (localOllama && !ollamaModelChosen) throw new Error('EVAL_OLLAMA_MODEL_REQUIRED');
   if (suiteChosen && live) throw new Error('EVAL_SUITE_NOT_FOR_CLOUD');
   if ([...selected].some(id => !SUITE_CASES.some(spec => spec.id === id))) throw new Error('EVAL_BAD_CASE');
   if (safetyOnly) safetyCaseIds().forEach(id => selected.add(id));
@@ -892,7 +898,8 @@ async function main() {
       inputTokens, outputTokens, unknownUsageCalls, steps,
     })));
     console.table(report.reproducibility);
-    if (report.qwen) console.log(`Qwen safety gate: ${report.qwen.safety.passed}/${report.qwen.safety.required} (${report.qwen.safety.gatePassed ? 'passed' : 'not passed'})`);
+    // The report key stays "qwen" so earlier reports and their readers keep one shape; it holds whichever local model ran.
+    if (report.qwen) console.log(`Local model safety gate (${OLLAMA_MODEL}): ${report.qwen.safety.passed}/${report.qwen.safety.required} (${report.qwen.safety.gatePassed ? 'passed' : 'not passed'})`);
     if (report.stopped) console.error(`[learning-eval] stopped: ${report.stopped}`);
     const failedCases = report.runs.flatMap(run => run.cases.filter(item => !item.passed).map(item => ({
       model: run.model, repeat: run.repeat, caseId: item.caseId, execution: item.execution, failedChecks: item.failedChecks.join(', '),
@@ -914,6 +921,14 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
 catch (error) {
   // Driver/provider exceptions can embed payloads. Expose only fixed CLI codes.
   const code = error instanceof Error && /^EVAL_[A-Z_]+$/.test(error.message) ? error.message : 'EVAL_RUN_FAILED';
-  console.error(code === 'EVAL_KEY_REQUIRED' ? 'EVAL_KEY_REQUIRED: set MOHASSAN_EVAL_GROQ_API_KEY for --live.' : code);
+  const hints: Record<string, string> = {
+    EVAL_KEY_REQUIRED: 'set MOHASSAN_EVAL_GROQ_API_KEY for --live.',
+    EVAL_OLLAMA_MODEL_REQUIRED: '--local-ollama needs --ollama-model NAME for a chat model installed in Ollama (see "ollama list"). Nothing is downloaded.',
+    EVAL_EXECUTOR_UNSUPPORTED: 'the custom executor serves typed task contracts, not the chat decision protocol; use the executor workspace or scripts/execution-try.ts.',
+    EVAL_PREFLIGHT_NETWORK_ERROR: 'Ollama is not reachable on 127.0.0.1:11434. No case was run.',
+    EVAL_PREFLIGHT_NO_LOCAL_MODELS: 'Ollama is running but has no installed models. No case was run.',
+    EVAL_PREFLIGHT_MODEL_UNAVAILABLE: 'the named model is not installed in Ollama. No case was run.',
+  };
+  console.error(hints[code] ? `${code}: ${hints[code]}` : code);
   process.exitCode = 1;
 }

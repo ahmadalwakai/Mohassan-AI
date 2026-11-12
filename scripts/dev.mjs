@@ -7,7 +7,28 @@ import dotenv from 'dotenv';
 import { setTimeout as delay } from 'node:timers/promises';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const production = process.argv.includes('--production');
-if(process.env.MOHASSAN_ISOLATED_TEST!=='true')dotenv.config({path:path.join(root,'.env'),quiet:true,override:!production});
+// --local-lab: an owner-only local experiment on an empty embedded database. The root .env
+// points DATABASE_URL at the tunnel to production, so this mode pins it empty BEFORE .env is
+// read and reads .env without override; the server's own dotenv import never overrides either.
+const localLab = process.argv.includes('--local-lab');
+if (localLab && production) throw new Error('--local-lab is for local experiments only, never production.');
+if (localLab) {
+  const lab = path.join(root,'.data','local-lab');
+  Object.assign(process.env, {
+    MOHASSAN_LOCAL_LAB: '1', DATABASE_URL: '', DATA_DIR: path.join(lab,'postgres'), BROWSER_PROFILE_DIR: path.join(lab,'browser-profile'),
+    CODING_DATA_DIR: path.join(lab,'coding'), STUDIO_AI_DATA_DIR: path.join(lab,'studio-ai'),
+    GOOGLE_ADS_PUBLISHING_ENABLED: 'false', WINDOWS_REMOTE_ENABLED: 'false',
+    EXECUTOR_EXPERIMENT: 'uncontained-local',
+    // exec-c40m: the registry entry and the independent evaluation report both name this
+    // inference checkpoint's identity (bfd7f686…); it failed the promotion gate and is experimental.
+    EXECUTOR_CHECKPOINT: process.env.EXECUTOR_CHECKPOINT || 'artifacts/execution-model-runs/run-2026-11-12-c/inference-train-40m',
+    EXECUTOR_REGISTRY_ENTRY: process.env.EXECUTOR_REGISTRY_ENTRY || 'artifacts/execution-model-runs/registry/exec-c40m-2026-11-12.json',
+    EXECUTOR_EVALUATION_REPORT: process.env.EXECUTOR_EVALUATION_REPORT || 'artifacts/execution-model-runs/run-2026-11-12-c/evaluation/report.json',
+  });
+  await mkdir(lab,{recursive:true});
+}
+if(process.env.MOHASSAN_ISOLATED_TEST!=='true')dotenv.config({path:path.join(root,'.env'),quiet:true,override:!production&&!localLab});
+if (localLab && process.env.DATABASE_URL !== '') throw new Error('--local-lab refused: DATABASE_URL is not empty.');
 const dataDir = process.env.DATA_DIR ?? path.join(root,'.data','postgres');
 async function localSecret(name) {
   const target = path.join(root,'.data',name);

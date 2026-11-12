@@ -1,10 +1,13 @@
 /**
  * Cognitive Evaluation Laboratory runner.
  *
- *   npx tsx scripts/cognitive-lab.ts --brain A [--repeats 2] [--split all|training|holdout] [--case <id>]
+ *   npx tsx scripts/cognitive-lab.ts --model <installed Ollama model> --brain A [--repeats 2] [--split all|training|holdout] [--case <id>]
  *
- * Runs the real chat loop (createCommandChatControl) on the pinned local
- * Ollama model against loopback fixtures only. Cloud network is refused, no
+ * Runs the real chat loop (createCommandChatControl) on the one Ollama model
+ * named by --model, against loopback fixtures only. There is no default model:
+ * the lab measures the chat brain's reasoning, so it needs a general chat model
+ * that is installed in Ollama. The custom execution model is not one (it serves
+ * typed task contracts, not the chat decision protocol) and is refused here. Cloud network is refused, no
  * production configuration or .env is read, memory writes and code proposals
  * are refused and counted. Every brain version runs on the same model,
  * generation settings, fixtures and oracle, so differences come from the brain.
@@ -18,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { AgentBrowser, BrowserError, type SearchHit } from '@mohassan/browser';
 import { migrate } from '@mohassan/database';
-import { OllamaProvider } from '@mohassan/providers';
+import { OllamaProvider, ProviderError } from '@mohassan/providers';
 import { createBenchmarkDatabase } from '../apps/server/src/skill-benchmark-isolation.js';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
 import type { BrainState } from '../apps/server/src/assistant/brain.js';
@@ -30,7 +33,10 @@ import {
 const BRAINS = ['A', 'B'] as const;
 type Brain = typeof BRAINS[number];
 const OLLAMA_ORIGIN = 'http://127.0.0.1:11434';
-const OLLAMA_MODEL = 'qwen3.5:9b-coding-local';
+/** Set once from --model before any request; every chat call is pinned to it. */
+let OLLAMA_MODEL = '';
+/** Names that refer to the custom executor, which cannot run the chat decision protocol. */
+const EXECUTOR_NAMES = /^(custom|executor|exec-|mohassan-exec)/i;
 /** Same fixed generation settings as the learning evaluation, so results stay comparable. */
 const GENERATION = { temperature: 0, seed: 42, contextTokens: 16384, timeoutMs: 240_000 } as const;
 const MAX_DECISIONS = 16;
@@ -48,10 +54,14 @@ function args() {
   if (!Number.isSafeInteger(repeats) || repeats < 1 || repeats > 5) throw new Error('LAB_REPEATS_1_TO_5');
   const split = value('--split') ?? 'all';
   if (!['all', 'training', 'holdout'].includes(split)) throw new Error('LAB_SPLIT');
+  const model = value('--model')?.trim();
+  if (!model) throw new Error('LAB_MODEL_REQUIRED: pass --model <name> for a chat model installed in Ollama (run "ollama list"). No model is chosen or downloaded for you.');
+  if (EXECUTOR_NAMES.test(model)) throw new Error('LAB_UNSUPPORTED_EXECUTOR: the cognitive lab measures the chat decision loop; the custom executor only serves typed contracts. Use the executor workspace or scripts/execution-try.ts.');
+  if (!/^[A-Za-z0-9._:/-]{1,200}$/.test(model)) throw new Error('LAB_BAD_MODEL');
   const only = value('--case');
   const cases = cognitiveLabCases.filter(item => (split === 'all' || item.split === split) && (!only || item.id === only));
   if (!cases.length) throw new Error('LAB_NO_CASES');
-  return { brain, repeats, split, cases };
+  return { brain, repeats, split, cases, model };
 }
 
 /** Local mode: anything but loopback is refused and counted. */
@@ -285,10 +295,18 @@ async function sourceHashes() {
 }
 
 async function main() {
-  const { brain, repeats, split, cases } = args();
+  const { brain, repeats, split, cases, model } = args();
+  OLLAMA_MODEL = model;
   const blocked = denyCloudNetwork();
   const ollama = pinnedOllamaFetch();
-  const inspected = await new OllamaProvider({ model: OLLAMA_MODEL, baseUrl: OLLAMA_ORIGIN, fetch: ollama.fetch, timeoutMs: GENERATION.timeoutMs, contextTokens: GENERATION.contextTokens }).inspect();
+  // Preflight before any case: an unreachable service, an empty model list and a missing
+  // model each stop the run with their own code. Nothing is pulled and no case is scored.
+  const inspected = await new OllamaProvider({ model: OLLAMA_MODEL, baseUrl: OLLAMA_ORIGIN, fetch: ollama.fetch, timeoutMs: GENERATION.timeoutMs, contextTokens: GENERATION.contextTokens }).inspect()
+    .catch((error: unknown) => {
+      const code = error instanceof ProviderError ? error.code : 'UNKNOWN';
+      const reason = code === 'NETWORK_ERROR' ? 'Ollama is not reachable on 127.0.0.1:11434.' : code === 'NO_LOCAL_MODELS' ? 'Ollama has no installed models.' : code === 'MODEL_UNAVAILABLE' ? `"${OLLAMA_MODEL}" is not installed in Ollama.` : 'Ollama preflight failed.';
+      throw new Error(`LAB_PREFLIGHT_${code}: ${reason} No case was run or scored.`);
+    });
   const source = await sourceHashes();
   const startedAt = new Date().toISOString();
   const runs = [];
@@ -299,6 +317,7 @@ async function main() {
   const report = {
     version: 1, suite: COGNITIVE_LAB_SUITE_VERSION, oracle: COGNITIVE_LAB_ORACLE_VERSION, suiteHash: hash(JSON.stringify(cognitiveLabCases)),
     brain, split, repeats, startedAt, finishedAt: new Date().toISOString(),
+    mode: 'local-ollama-chat-brain', provider: 'ollama',
     model: { name: OLLAMA_MODEL, digest: inspected.digest, ollamaVersion: inspected.version, generation: GENERATION, maxDecisions: MAX_DECISIONS },
     network: { cloudBlocked: blocked(), chatCalls: ollama.chatCalls() },
     source, sourceStable: JSON.stringify(source) === JSON.stringify(finalSource),
@@ -317,4 +336,8 @@ async function main() {
   console.log(JSON.stringify({ brain, sourceStable: report.sourceStable, cloudBlocked: report.network.cloudBlocked, summary: { ...report.summary, byRepeat: undefined }, report: join(folder, 'report.json') }, null, 2));
 }
 
-await main();
+try { await main(); }
+catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 2;
+}

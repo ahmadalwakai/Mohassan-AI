@@ -63,8 +63,39 @@ async function readBounded(response: Response, signal: AbortSignal): Promise<unk
   }
 }
 
+export type OllamaInventory =
+  | { status: 'unreachable'; origin: string }
+  | { status: 'no_models'; origin: string; version: string | null }
+  | { status: 'ready'; origin: string; version: string | null; models: string[] };
+
 /**
- * Local Qwen (or any pinned Ollama model) through /api/chat with stream:false.
+ * Read-only status of the local Ollama service: GET /api/version and /api/tags only.
+ * Never pulls, creates or loads a model, and never falls back to another host.
+ */
+export async function ollamaInventory(options: { baseUrl?: string; fetch?: typeof fetch; signal?: AbortSignal; timeoutMs?: number } = {}): Promise<OllamaInventory> {
+  const origin = ollamaOrigin(options.baseUrl);
+  const signal = AbortSignal.any([AbortSignal.timeout(Math.min(Math.max(options.timeoutMs ?? 3000, 200), 30000)), ...(options.signal ? [options.signal] : [])]);
+  const get = async (path: '/api/version' | '/api/tags') => {
+    const response = await (options.fetch ?? fetch)(`${origin}${path}`, { method: 'GET', redirect: 'error', signal });
+    if (!response.ok) { void response.body?.cancel(); throw new Error(path); }
+    return readBounded(response, signal);
+  };
+  let tags: unknown;
+  let version: string | null = null;
+  try {
+    tags = await get('/api/tags');
+    const parsed = z.object({ version: z.string().max(64) }).safeParse(await get('/api/version').catch(() => null));
+    version = parsed.success ? parsed.data.version : null;
+  } catch { return { status: 'unreachable', origin }; }
+  const list = z.object({ models: z.array(z.object({ name: z.string().max(200) })).max(1000) }).safeParse(tags);
+  if (!list.success) return { status: 'unreachable', origin };
+  if (!list.data.models.length) return { status: 'no_models', origin, version };
+  return { status: 'ready', origin, version, models: list.data.models.map(model => model.name) };
+}
+
+/**
+ * Any pinned Ollama model, chosen by the caller, through /api/chat with stream:false.
+ * No model name is built in: an absent or uninstalled model fails closed.
  * Like the Groq boundary it never sends tool definitions; the caller validates
  * the decision against its own schema before any tool or approval logic runs.
  */
@@ -113,6 +144,8 @@ export class OllamaProvider implements ModelProvider {
     const tags = z.object({ models: z.array(z.object({ name: z.string(), digest: z.string().optional() })) }).safeParse(await this.request('/api/tags', bounded));
     const loaded = z.object({ models: z.array(z.object({ name: z.string() })) }).safeParse(await this.request('/api/ps', bounded));
     if (!version.success || !tags.success || !loaded.success) throw new ProviderError('INVALID_RESPONSE', 'بيانات Ollama غير صالحة.');
+    // Reachable with an empty list is its own state: nothing is pulled or substituted.
+    if (!tags.data.models.length) throw new ProviderError('NO_LOCAL_MODELS', 'Ollama يعمل لكن لا توجد فيه نماذج مثبتة.');
     const installed = tags.data.models.find(model => model.name === this.options.model);
     if (!installed) throw new ProviderError('MODEL_UNAVAILABLE', 'النموذج المحلي المحدد غير مثبت.');
     return { version: version.data.version, model: this.options.model, digest: installed.digest ?? null, loaded: loaded.data.models.map(model => model.name) };
