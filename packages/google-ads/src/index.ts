@@ -10,6 +10,6 @@ export { REQUIRED_REGRESSION_RUNS, defaultGateFiles, evidenceGates, sourceFinger
 export { campaignStrategy, chooseBidding, marketIntelligence, optimize, readSearchTerms, searchTermsQuery } from './intelligence.ts';
 export { analyzeAccount, bookingsByService, dateRange, detectMismatches, readCampaigns, readConversionActions } from './performance.ts';
 export { CampaignPublishingController, launchHash, launchOperations } from './publisher.ts';
-export { ADS_LIMITS, adsLength, detectScript, languageFitsCountry, negativeBlocks, parseKeyword, readLandingPage, scriptMatchesLanguage, validateAdText, validateBrief, type TextInput } from './quality.ts';
+export { ADS_LIMITS, CLAIM, adsLength, detectScript, languageFitsCountry, negativeBlocks, parseKeyword, readLandingPage, scriptMatchesLanguage, validateAdText, validateBrief, type TextInput } from './quality.ts';
 export { audit, googleAdsMigration } from './store.ts';
 export { summarizeOperations, verifyConversionTracking, verifyDraft } from './verifier.ts';
