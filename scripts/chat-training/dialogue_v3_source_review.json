@@ -1,0 +1,21 @@
+{
+  "scope": "Source-only bounded review of 16 deterministic newly admitted Arabic Aya rows with at least 50 target tokens under the expanded tokenizer; no model outputs or final holdout inspected.",
+  "sample_method": "Sort new Arabic Aya candidates absent from v2b train by SHA256('source-review-v3:' + id), take first 16 after existing v2b and original quality filters.",
+  "sample_path": "artifacts/chat-training/conversation-v3/qa/new-arabic-aya-sample.json",
+  "sample_size": 16,
+  "assessment": "Six rows had no obvious issue in this limited reading. Ten are quarantined for defects, missing support, scope, or unverified specialized constraints. This is purposive source QA, not a factual accuracy estimate; remaining annotations are not comprehensively verified.",
+  "exclusions": [
+    {"id": "aya-a8240dff7ff60dd166c359f78d2b4e9d3f81ec25e7da05b93d9bd48b8ef4f172", "reason": "Arabic book titles visibly do not translate the paired English titles (Blind Watchmaker and God Delusion); do not repair labels silently."},
+    {"id": "aya-e7e12aebb602f509fa05f0e886c07844c7732550b1a343be7268b0d90a00626c", "reason": "Specific Arabic poetic meter constraint was not independently scanned; quarantine rather than label the specialized constraint satisfied."},
+    {"id": "aya-712b01334c88a9c90d3d9ce2cf44e9785e862816e261eea81e81d9b8ad94f606", "reason": "Historical source continuation outside natural-answer scope; existing continuation regex missed 'complete this sentence'."},
+    {"id": "aya-156c346faec4a70370e8b5b100ddcb82ab0a64b5bd1677f22a2ac08d59e25183", "reason": "Question asks when Alaska became a state; answer lists purchase and territorial dates and never answers statehood."},
+    {"id": "aya-8d064f66218fb71294da1027e09dd2ced2f0a7e1dbd05f98ebf46e8e2655b228", "reason": "Basic answer is followed by precise section counts and revelation attribution not verified in this bounded review."},
+    {"id": "aya-ece530d93528ee8bbeb9b6bba423c7884623696485f62a1bf92bbcb52a2c5b68", "reason": "Adds an undated population rank and detailed facts without the requested verification evidence."},
+    {"id": "aya-5007846320a8b53d8547dc154cdf3c3b56ea38501f7ee5a5fe3bb7bf6f37341c", "reason": "Medical and radiation-emergency instruction outside this bounded natural-conversation curriculum."},
+    {"id": "aya-380f3d989fde7685cf99917a7cd518606149b6ada9409cab18dcf6855e417a47", "reason": "Implies sufficient heat would remove uranium radioactivity; melting and nuclear decay are conflated. Quarantine as a suspected substantive physics error without relabeling."},
+    {"id": "aya-8bf379c2abf76d1a9ff3f11d5ed837399ee6d4363c9f94e626b167b163284eb8", "reason": "Undated recently updated vaccine recommendation; medical and time-sensitive source scope exclusion."},
+    {"id": "aya-bf051f9a5e74eaf45b8834289ce5c4881f180106a5441f0f2df59150c0ac97d6", "reason": "Question embeds an unqualified ancient-origin premise and answer gives an undated present ruler count; not verified."}
+  ],
+  "general_filters_added": ["Arabic continuation formulations containing this/that", "Explicit current/recent wording", "Additional medical instruction terms"],
+  "no_obvious_issue_ids": ["aya-482f70341d63ad0fdd1f7027608b4d414e2878ec23e0afbdbd4ed6da43980983", "aya-79f44a0a2fec14a5fb46e5936220a2481eacb9555ffd0572a970cb397a3644f7", "aya-684d7cccd5a973ab7dab445e121a0294a8ec4acad01b1f359bf51dcfac7fe676", "aya-21eb6a8aca1106773ba42b6d91a112c0f2f3e96033e48fb5bc25cf1a320ad37a", "aya-20bbf12056103ca7ddf305045aee34389fabc6e7f10eb150530eb90d183a5212", "aya-83ffb12643d48d24d06076532dfb61cb505b37e71541667dbd57d38b4f550364"]
+}

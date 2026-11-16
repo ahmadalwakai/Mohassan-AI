@@ -1,0 +1,13 @@
+{
+  "message": "اكتب دالة TypeScript باسم addNumbers تعيد مجموع a و b.",
+  "language": "ar",
+  "mode": "implement",
+  "functionName": "addNumbers",
+  "signature": "addNumbers(a: number, b: number): number",
+  "probes": [
+    { "args": [2, 3], "expected": 5 },
+    { "args": [-2, 7], "expected": 5 },
+    { "args": [0, 0], "expected": 0 },
+    { "args": [-1, -1], "expected": -2 }
+  ]
+}

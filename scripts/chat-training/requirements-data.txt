@@ -1,0 +1,2 @@
+# Optional public-data extraction dependency; not required by the chat runtime.
+pyarrow==26.0.1
