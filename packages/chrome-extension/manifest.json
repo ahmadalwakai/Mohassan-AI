@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "موحسن — مساعد Google Ads",
+  "version": "0.1.0",
+  "description": "املأ مسودة حملة بحث في تبويب Google Ads الذي تختاره، وتوقف قبل النشر.",
+  "minimum_chrome_version": "120",
+  "permissions": ["activeTab", "scripting", "storage", "alarms"],
+  "host_permissions": ["https://ads.google.com/*"],
+  "optional_host_permissions": ["http://localhost/*", "http://127.0.0.1/*", "https://*/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "موحسن في Chrome" },
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'" }
+}

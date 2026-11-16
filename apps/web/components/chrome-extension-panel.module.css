@@ -1,0 +1,40 @@
+.panel { position: relative; flex: none; margin: 0 18px 5px; min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--raised); color: var(--ink); font-size: 13px; }
+.toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 8px 12px; border: 0; border-radius: 12px; background: transparent; color: inherit; text-align: start; cursor: pointer; }
+.toggle:hover { background: var(--hover); }
+.toggle > svg { flex: none; color: var(--soft); }
+.toggle strong { font-size: 13px; font-weight: 600; }
+.toggle .up { transform: rotate(180deg); }
+.connected { color: var(--accent); }
+.muted, .hint { color: var(--soft); }
+.jobSummary { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--soft); }
+.body { position: absolute; z-index: 12; top: calc(100% + 5px); inset-inline: 0; max-height: min(440px, 43dvh); overflow: auto; overscroll-behavior: contain; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--raised); box-shadow: var(--shadow-lg); line-height: 1.7; scrollbar-width: thin; }
+.body[hidden] { display: none; }
+.body p { margin: 6px 0; }
+.mode, .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.mode button, .actions button, .stop, .resume { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--raised); font: inherit; cursor: pointer; }
+.mode button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.mode button:hover, .actions button:hover { background: var(--hover); }
+.panel button:disabled { opacity: .55; cursor: default; }
+.panel button:focus-visible, .panel summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.account { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; color: var(--soft); }
+.job { margin: 10px 0; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.job .jobTitle { font-weight: 600; color: var(--ink); }
+.job ol { padding-inline-start: 22px; margin: 8px 0; }
+.job li { padding: 3px 0; overflow-wrap: anywhere; }
+.job small { display: block; color: var(--soft); }
+.stop { color: var(--alert); margin-top: 6px; }
+.resume { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); margin-top: 6px; }
+.resume:hover { background: var(--accent-hover); }
+.instructions { margin: 10px 0; }
+.instructions summary { display: flex; align-items: center; gap: 6px; cursor: pointer; width: fit-content; color: var(--soft); }
+.instructions ol { padding-inline-start: 22px; margin: 8px 0; }
+.instructions li { padding: 3px 0; }
+.instructions code { display: inline-block; max-width: 100%; overflow-wrap: anywhere; font-size: 12px; }
+.actions { margin-top: 10px; }
+.error { margin: 4px 12px 10px; color: var(--alert); line-height: 1.7; }
+@media (max-width: 600px) {
+  .panel { margin-inline: 10px; }
+  .toggle { flex-wrap: wrap; gap: 6px; padding: 7px 10px; }
+  .jobSummary { font-size: 12px; }
+  .body { max-height: 38dvh; padding-inline: 10px; }
+}
