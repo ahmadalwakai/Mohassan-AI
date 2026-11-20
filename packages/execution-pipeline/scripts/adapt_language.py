@@ -1,4 +1,4 @@
-"""CLI for resumable Arabic foundation training of the existing local model."""
+"""CLI for local language adaptation and pinned foundation experiments."""
 import argparse
 import json
 import sys
@@ -8,6 +8,37 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from execution_pipeline.language_adaptation import adapt
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["comparison"]:
+        from execution_pipeline.foundation_comparison import run_comparison
+
+        parser = argparse.ArgumentParser(description="Train one arm of the frozen comparison")
+        parser.add_argument("action", choices=["comparison"])
+        parser.add_argument("--config", required=True, type=Path)
+        parser.add_argument("--config-sha256", required=True)
+        parser.add_argument("--view", required=True, choices=("existing", "repaired"))
+        parser.add_argument("--mix", required=True, choices=("current_like", "simplewiki_enriched"))
+        parser.add_argument("--seed", required=True, type=int, choices=(719, 1729))
+        parser.add_argument("--resume", action="store_true")
+        args = parser.parse_args()
+        result = run_comparison(args.config, args.config_sha256, args.view, args.mix, args.seed, resume=args.resume)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        raise SystemExit(0 if result["status"] == "completed" else 1)
+
+    if sys.argv[1:2] == ["pilot"]:
+        from execution_pipeline.foundation_pilot import run_pilot
+
+        parser = argparse.ArgumentParser(description="Train one pinned Stage 2 model shape")
+        parser.add_argument("action", choices=["pilot"])
+        parser.add_argument("--config", required=True, type=Path)
+        parser.add_argument("--config-sha256", required=True)
+        parser.add_argument("--shape", required=True)
+        parser.add_argument("--resume", action="store_true")
+        parser.add_argument("--max-minutes", type=float)
+        args = parser.parse_args()
+        result = run_pilot(args.config, args.config_sha256, args.shape, resume=args.resume, max_minutes=args.max_minutes)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        raise SystemExit(0)
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--corpus", type=Path, required=True)

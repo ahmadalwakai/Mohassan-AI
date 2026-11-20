@@ -72,6 +72,7 @@ export class UsageMonitor {
   private readonly counters = new Map<string, ModelCounters>();
   private readonly quotas = new Map<string, KnownQuota>();
   private readonly blocks = new Map<string, number>();
+  private readonly blockCauses = new Map<string, string>();
   private active: UsageSnapshot['active'] = null;
 
   constructor(private readonly options: { prices?: PriceTable; freeProviders?: string[]; now?: () => number } = {}) {
@@ -150,20 +151,28 @@ export class UsageMonitor {
     return Number.isFinite(resetAt) && resetAt > this.now() ? { remaining: quota.remaining, resetAt } : null;
   }
 
-  /** Cool-down for a candidate after a rate limit, quota or health failure. */
-  block(key: string, milliseconds: number) {
+  /** Cool-down for a candidate after a rate limit, quota or health failure. `cause` is the provider code behind it. */
+  block(key: string, milliseconds: number, cause?: string) {
     const until = this.now() + Math.max(0, Math.min(milliseconds, 86_400_000));
-    this.blocks.set(key, Math.max(until, this.blocks.get(key) ?? 0));
-    if (this.blocks.size > MAX_COUNTER_KEYS) for (const [entry, value] of this.blocks) if (value <= this.now()) this.blocks.delete(entry);
+    const previous = this.blocks.get(key) ?? 0;
+    this.blocks.set(key, Math.max(until, previous));
+    // The cause of the longest cool-down is the one still in force.
+    if (cause && until >= previous) this.blockCauses.set(key, cause);
+    if (this.blocks.size > MAX_COUNTER_KEYS) for (const [entry, value] of this.blocks) if (value <= this.now()) { this.blocks.delete(entry); this.blockCauses.delete(entry); }
   }
 
   blockedUntil(key: string): number {
     const until = this.blocks.get(key) ?? 0;
-    if (until && until <= this.now()) { this.blocks.delete(key); return 0; }
+    if (until && until <= this.now()) { this.blocks.delete(key); this.blockCauses.delete(key); return 0; }
     return until;
   }
 
-  clearBlock(key: string) { this.blocks.delete(key); }
+  /** The provider code that started a cool-down still in force, if one was given. */
+  blockedBy(key: string): string | undefined {
+    return this.blockedUntil(key) > this.now() ? this.blockCauses.get(key) : undefined;
+  }
+
+  clearBlock(key: string) { this.blocks.delete(key); this.blockCauses.delete(key); }
 
   snapshot(): UsageSnapshot {
     const day = utcDay(this.now());

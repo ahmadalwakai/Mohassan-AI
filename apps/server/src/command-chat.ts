@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import {
-  ChatApproveSchema, ChatConversationSchema, ChatCreateSchema, ChatKeyboardSchema, ChatPointerSchema, ChatRespondSchema,
+  ChatApproveSchema, ChatConversationSchema, ChatCreateSchema, ChatKeyboardSchema, ChatPointerSchema, ChatQuestionSchema, ChatRespondSchema,
   ChatSecureSubmitSchema, ChatSendSchema, type ChatConversation, type ChatQuestion, type ChatSecureRequest,
   SkillRunInputSchema, type SkillRunInput, type SkillGapObservation,
 } from '@mohassan/contracts';
@@ -26,6 +26,11 @@ import { projectInventoryFormat, renderProjectInventory } from './assistant/inve
 import { decodeStructuredMemoryDecision, memoryRecallFormat, structuredMemoryDecisionSchema, verifyMemoryRecall } from './assistant/memory-recall.js';
 import { CredentialVault } from './assistant/vault.js';
 import { trustedSkillGapSignal } from './assistant/skill-gaps.js';
+import { chatModelFailure } from './assistant/model-failure.js';
+import type { AdsModelChat } from './assistant/ads-model-chat.js';
+import type { Frame, Mind, MindDeps } from './assistant/mind/contract.js';
+import { guardMemorySave } from './assistant/mind/index.js';
+import { stopChromeJobsForRun, type ChromeExtensionControl } from './chrome-extension.js';
 import { assessBrowserVerification } from './assistant/verification.js';
 import { newGoalState, observeFailure, observeOutcome, reviewOpen, reviewStop, stagnationWarning, type BrainVersion } from './assistant/goal-integrity.js';
 
@@ -74,6 +79,12 @@ export interface CommandChatConfig {
   brainVersion?: BrainVersion;
   /** Pacing of campaign recovery waits; injectable so isolated tests do not sleep. */
   campaignSleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
+  /** Mohassan's own Ads model (owner-only lab): an English campaign sentence is handled by brain + model, with no chat model. */
+  adsModel?: AdsModelChat;
+  mind?: Mind;
+  mindDeps?: (ownerId: string) => Omit<MindDeps, 'step'>;
+  /** Uses the owner's ordinary Chrome tab; no API fallback after selecting Chrome. */
+  chromeExtension?: Pick<ChromeExtensionControl, 'status' | 'queueCampaign'>;
 }
 
 export interface ChatSkillContext {
@@ -458,7 +469,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (!(error instanceof ProviderError)) throw error;
       const recovered = error.failedGeneration ? parse(error.failedGeneration) : null;
       if (recovered) return recovered;
-      if (error.code === 'NO_ELIGIBLE_PROVIDER' && error.retryable) throw new BrowserError('ASSISTANT_MODEL_BUSY', 'النماذج المتاحة مشغولة أو بلغت حدودها الآن. أرسل «تابع» بعد قليل وسأكمل من حيث توقفت.', 503);
+      // Name what removed every candidate (a closed gateway is not "busy"), not a generic outage.
+      if (error.code === 'NO_ELIGIBLE_PROVIDER') throw chatModelFailure(error);
       throw error;
     }
   }
@@ -484,6 +496,14 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       await tx.updateTable('chat_runs').set({ status, lease_expires_at:sql`CURRENT_TIMESTAMP + interval '10 minutes'`, updated_at: new Date() }).where('id', '=', runId).execute();
       if (say) await addMessage(tx, id, 'assistant', say);
     });
+  }
+
+  /** The owner sees the campaign draft before any request to connect or sign in: once, then never repeated. */
+  function withDraft(id: string, state: BrainState, text: string): string {
+    const campaign = state.adsCampaign;
+    if (!campaign || campaign.shown) return text;
+    campaign.shown = true;
+    return vault.scrub(id, `${campaign.draft}\n\n${text}`);
   }
 
   async function pauseSecure(id: string, runId: string, state: BrainState, secure: Omit<ChatSecureRequest, 'id'>) {
@@ -776,7 +796,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const stop = { id: 'stop', label: 'توقف هنا' };
     const ask = async (question: Omit<ChatQuestion, 'id'>) => {
       state.adsAsked = (state.adsAsked ?? 0) + 1;
-      await pause(id, runId, state, 'waiting_user', { question: JSON.stringify({ id: randomUUID(), ...question } satisfies ChatQuestion) }, question.prompt);
+      await pause(id, runId, state, 'waiting_user', { question: JSON.stringify({ id: randomUUID(), ...question } satisfies ChatQuestion) }, withDraft(id, state, question.prompt));
       return true;
     };
     if (connection === 'disconnected' || connection === 'unauthorized') return ask({
@@ -1149,7 +1169,121 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return;
       }
 
-      if (!providers.size && config.inference?.active() !== true) throw new BrowserError('ASSISTANT_UNCONFIGURED', 'لم يُضبط مفتاح Groq أو FreeLLMAPI في الخادم.', 409);
+      if (config.adsModel && fullReach() && !(tools?.memory && memoryRecallFormat(request))) {
+        const step = async (label: string) => { await active(); await addStep(id, runId, label); await setProgress(id, `${label}…`); };
+        // The brain asks everything it is missing in one message, then continues alone after the
+        // owner's answer: the run resumes here with the saved facts and the answer text.
+        const answer = state.adsBrief ? [...state.trail].reverse().find(entry => entry.action === 'asked the user')?.result.replace(/^user answered: /, '') : undefined;
+        const reply = state.adsCampaign ? null : await config.adsModel.handle(request, { signal, step }, state.adsBrief && answer ? { brief: state.adsBrief, answer } : undefined);
+        if (reply) {
+          await active();
+          state.trail.push({ step: ++state.steps, action: 'ads_model', result: `own Ads model: ${reply.status}`, changed: false });
+          state.adsBrief = null;
+          if (reply.status === 'waiting_user') {
+            state.adsBrief = reply.brief ?? null;
+            const prompt = vault.scrub(id, reply.text);
+            // The card shows the same questions with the brain's suggestions from the owner's site.
+            const fields = reply.fields?.length ? reply.fields.map(field => ({ ...field, prompt: field.prompt.slice(0, 300), placeholder: field.placeholder?.slice(0, 120), suggestions: field.suggestions.slice(0, 6).map(item => ({ label: clean(vault.scrub(id, item.label)).slice(0, 120), ...(item.reason ? { reason: item.reason.slice(0, 160) } : {}) })) })) : undefined;
+            await pause(id, runId, state, 'waiting_user', { question: JSON.stringify({ id: randomUUID(), prompt: prompt.slice(0, 1000), options: [{ id: 'stop', label: 'توقف هنا' }], ...(fields ? { fields } : {}) } satisfies ChatQuestion) }, prompt);
+            return;
+          }
+          if (reply.status !== 'completed' || !reply.campaign) { await finish(id, runId, state, vault.scrub(id, reply.text), reply.status); return; }
+          state.adsCampaign = { lines: reply.campaign, draft: reply.text };
+          await saveState(runId, state);
+          if (!config.chromeExtension && !tools?.ads?.createPaused) {
+            await finish(id, runId, state, vault.scrub(id, `${reply.text}\n\nالحملة جاهزة كاملة، لكن ربط Google Ads غير مهيأ على هذا الخادم بعد (لا توجد بيانات اعتماد Google Cloud)، فلم أنشئها في حسابك. لم يُنشر شيء.`), 'partial');
+            return;
+          }
+        }
+        if (state.adsCampaign && config.chromeExtension) {
+          const connection = await config.chromeExtension.status(ownerId);
+          await active();
+          if (connection.preferredTransport === 'chrome') {
+            if (!connection.connected) {
+              const prompt = 'الحملة جاهزة. اربط إضافة موحسن بتبويب Google Ads في Chrome العادي واختر حسابك، ثم اضغط «أكمل في Chrome». ستتوقف الإضافة قبل النشر أو الفوترة.';
+              await pause(id, runId, state, 'waiting_user', { question: JSON.stringify({ id: randomUUID(), prompt, options: [{ id: 'chrome_retry', label: 'أكمل في Chrome' }, { id: 'stop', label: 'توقف هنا' }] } satisfies ChatQuestion) }, withDraft(id, state, prompt));
+              return;
+            }
+            const campaign = state.adsCampaign;
+            await step('إرسال الحملة إلى إضافة Chrome');
+            let outcome: string, status: 'completed' | 'blocked' = 'completed';
+            try {
+              await active();
+              const source = execution.getStore();
+              if (!source) throw new RunEnded();
+              const job = await config.chromeExtension.queueCampaign(ownerId, campaign.lines, `chat-chrome-${runId}`, { runId, leaseToken: source.token });
+              outcome = `أُرسلت الحملة إلى إضافة Chrome للحساب ${job.customerId} بميزانية ${job.campaign.dailyBudget} ${job.currency} يوميًا. حالة المهمة: ${job.status === 'queued' ? 'بانتظار استلام الإضافة' : job.status === 'running' ? 'جارٍ التنفيذ' : 'راجع نتيجتها في بطاقة Chrome'}. لم أتحقق بعد من اكتمال التعبئة في Google Ads. لن تنشر الإضافة الحملة أو تتعامل مع الفوترة.`;
+            } catch (error) {
+              if (signal.aborted || error instanceof RunEnded) throw error;
+              status = 'blocked';
+              outcome = `تعذّر إرسال الحملة إلى Chrome: ${error instanceof Error ? error.message : 'خطأ غير معروف'}`;
+            }
+            await active();
+            state.adsCampaign = null;
+            state.trail.push({ step: ++state.steps, action: 'chrome_campaign_queued', result: clean(outcome).slice(0, 400), changed: status === 'completed' });
+            await finish(id, runId, state, vault.scrub(id, campaign.shown ? outcome : `${campaign.draft}\n\n${outcome}`), status);
+            return;
+          }
+        }
+        if (state.adsCampaign && !tools?.ads?.createPaused) {
+          const campaign = state.adsCampaign;
+          state.adsCampaign = null;
+          await finish(id, runId, state, vault.scrub(id, `${campaign.shown ? '' : `${campaign.draft}\n\n`}الحملة جاهزة، لكن ربط Google Ads غير مهيأ. اختر إضافة Chrome واربط التبويب، أو أكمل إعداد الربط الرسمي. لم تُنشأ حملة في الحساب.`), 'partial');
+          return;
+        }
+        if (state.adsCampaign && tools?.ads?.createPaused) {
+          // Sign-in is the one stop on the way: Google's own page, then the task continues by itself.
+          if (!state.adsReady && await adsSignIn(ownerId, id, runId, state)) return;
+          const campaign = state.adsCampaign;
+          await step('إنشاء الحملة متوقفة في Google Ads');
+          let outcome: string, status: 'completed' | 'blocked' = 'completed';
+          try {
+            const result = await tools.ads.createPaused(ownerId, campaign.lines, vault.scrub(id, request), `chat-own-${runId.replace(/[^a-zA-Z0-9]/g, '')}`.slice(0, 160), assertActive, true);
+            const resource = /campaign (\S+) in PAUSED/.exec(result)?.[1];
+            outcome = `**أُنشئت الحملة في حسابك وهي متوقفة**${resource ? ` (${resource})` : ''}. لن تصرف شيئاً حتى تفعّلها أنت من Google Ads. ${/Conversion tracking verified/.test(result) ? 'تتبّع التحويلات مؤكَّد.' : 'تتبّع التحويلات غير مؤكَّد بعد، فراجعه قبل التفعيل.'}`;
+          } catch (error) {
+            if (signal.aborted || error instanceof RunEnded) throw error;
+            status = 'blocked';
+            outcome = `توقفت قبل الكتابة في الحساب: ${error instanceof Error ? error.message : 'خطأ غير معروف'}`;
+          }
+          await active();
+          state.adsCampaign = null;
+          state.trail.push({ step: ++state.steps, action: 'ads_create_paused', result: clean(outcome).slice(0, 400), changed: status === 'completed' });
+          await finish(id, runId, state, vault.scrub(id, campaign.shown ? outcome : `${campaign.draft}\n\n${outcome}`), status);
+          return;
+        }
+      }
+      if (config.mind && config.mindDeps && fullReach()) {
+        const mindState: BrainState & { mindFrame?: Frame; mindTimings?: Record<string, number> } = state;
+        const step = async (label: string) => {
+          await active();
+          await addStep(id, runId, label);
+          await setProgress(id, `${vault.scrub(id, clean(label))}…`);
+        };
+        const answer = mindState.mindFrame ? state.trail.findLast(entry => entry.action === 'asked the user')?.result.replace(/^user answered: /, '') : undefined;
+        const resume = mindState.mindFrame && answer ? { frame: mindState.mindFrame, answer } : undefined;
+        const deps = { ...config.mindDeps(ownerId) };
+        const storeMemory = tools?.memory?.save;
+        if (storeMemory && asksToRemember(request)) deps.saveMemory = guardMemorySave(state, MAX_MEMORY_SAVES, active, async text => {
+          const fact = vault.scrub(id, clean(text));
+          await storeMemory(ownerId, fact, fact);
+        });
+        const reply = await config.mind.handle(request, { ...deps, step }, signal, resume);
+        await active();
+        mindState.mindTimings = reply.timings;
+        if (reply.status === 'waiting_user') {
+          const prompt = vault.scrub(id, clean(reply.question?.prompt || reply.text)).slice(0, ChatQuestionSchema.shape.prompt.maxLength!);
+          const fields = ChatQuestionSchema.shape.fields.safeParse(vault.scrubValue(id, reply.question?.fields, clean));
+          const question: ChatQuestion = { id: randomUUID(), prompt, options: [], ...(fields.success && fields.data ? { fields: fields.data } : {}) };
+          mindState.mindFrame = reply.frame;
+          await pause(id, runId, state, 'waiting_user', { question: JSON.stringify(question) }, prompt);
+        } else {
+          delete mindState.mindFrame;
+          await finish(id, runId, state, vault.scrub(id, clean(reply.text)), reply.status);
+        }
+        return;
+      }
+      if (!providers.size && config.inference?.active() !== true) throw new BrowserError('ASSISTANT_UNCONFIGURED', 'المحادثة بلا نموذج الآن: أُوقفت كل منصات الذكاء الاصطناعي الخارجية، ونموذج موحسن الخاص لم يتعلم المحادثة بعد إلا طلبات حملات الإعلانات بالإنجليزية. المنفّذ المحلي يعمل من «المنفّذ المحلي».', 409);
       const recallFormat = tools?.memory ? memoryRecallFormat(request) : null;
       let recallEvidence: readonly string[] = [];
       let recallCorrections = 0;
@@ -1401,7 +1535,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (stopped && !limit) {const current=execution.getStore();if(current)forgetVault(id,current.token);return;}
       const message = limit ? 'استغرقت هذه المهمة وقتًا طويلًا. أرسل «تابع» وسأكمل من حيث توقفت.'
         : error instanceof BrowserError ? error.message
-          : error instanceof ProviderError ? 'تعذر الوصول إلى النموذج الآن. أرسل «تابع» وسأحاول مجددًا.'
+          : error instanceof ProviderError ? chatModelFailure(error).message
             : 'حدث خطأ أثناء العمل. أرسل «تابع» وسأحاول مجددًا.';
       await runTransaction(id,runId,async tx=>{
         await tx.updateTable('chat_conversations').set({ status: 'failed', active_run_id: null, progress: null, error: message, updated_at: new Date() }).where('id', '=', id).execute();
@@ -1592,6 +1726,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const active=controllers.get(id);
         if(active&&active.runId===row.active_run_id&&active.token===cancelledToken)cancelledController=active.controller;
         await tx.updateTable('chat_runs').set({ status: 'cancelled',lease_token:randomUUID(),updated_at: new Date() }).where('id', '=', row.active_run_id).execute();
+        if (config.chromeExtension) await stopChromeJobsForRun(tx, ownerId, row.active_run_id);
         await tx.updateTable('chat_effect_receipts').set({status:'unknown',finished_at:new Date()}).where('run_id','=',row.active_run_id).where('status','=','started').execute();
         await tx.updateTable('chat_model_receipts').set({status:'unknown',error_code:'CHAT_CANCELLED',finished_at:new Date()}).where('run_id','=',row.active_run_id).where('status','=','started').execute();
         await recordTerminalRun(tx, row.active_run_id, 'cancelled');

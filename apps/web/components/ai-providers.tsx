@@ -123,7 +123,7 @@ export function AiProviders({ offline }: { offline: boolean }) {
     <div className={styles.grid}>
       <div className={styles.card}>
         <h3>الإعدادات</h3>
-        <Toggle label="تفعيل FreeLLMAPI للمساعد" hint={free.configured ? "يجرب المساعد النماذج المجانية أولًا. التخطيط والبرمجة والاستوديو تبقى على Groq." : "أضف FREELLMAPI_API_KEY إلى ملف .env على الخادم أولًا."} checked={draft.enabled} disabled={!free.configured || offline} onChange={value => edit({ enabled: value })} />
+        <Toggle label="تفعيل FreeLLMAPI للمساعد" hint={free.configured ? "يجرب المساعد النماذج المجانية أولًا. التخطيط والبرمجة والاستوديو تبقى على Groq." : free.health.code === "DISABLED_BY_OWNER" ? free.health.message : "أضف FREELLMAPI_API_KEY إلى ملف .env على الخادم أولًا."} checked={draft.enabled} disabled={!free.configured || offline} onChange={value => edit({ enabled: value })} />
         <Toggle label="التبديل التلقائي" hint="عند حد الطلبات أو تعطل نموذج ينتقل الطلب إلى المرشح التالي، مع عدد محاولات محدود." checked={draft.automaticFallback} disabled={offline} onChange={value => edit({ automaticFallback: value })} />
         <Toggle label="المجاني فقط" hint={free.allowPaidFallback ? "عند إيقافه قد يكمل الطلب على Groq المدفوع بعد فشل النماذج المجانية (مسموح من الخادم)." : "عند إيقافه يبقى الانتقال من نموذج مجاني إلى Groq المدفوع ممنوعًا ما لم يُفعَّل AI_ALLOW_PAID_FALLBACK على الخادم."} checked={draft.freeOnly} disabled={offline} onChange={value => edit({ freeOnly: value })} />
 

@@ -50,7 +50,7 @@ export interface RouteOptions<T = unknown> {
 
 type FailureClass = 'abort' | 'fatal' | 'rate' | 'quota' | 'transient' | 'candidate' | 'unknown';
 
-const CANDIDATE_CODES = new Set(['AUTHENTICATION_FAILED', 'PERMISSION_DENIED', 'MODEL_UNAVAILABLE', 'CAPABILITY_UNAVAILABLE', 'NOT_CONFIGURED', 'GATEWAY_UNREACHABLE']);
+const CANDIDATE_CODES = new Set(['AUTHENTICATION_FAILED', 'PERMISSION_DENIED', 'MODEL_UNAVAILABLE', 'CAPABILITY_UNAVAILABLE', 'NOT_CONFIGURED', 'GATEWAY_UNREACHABLE', 'GATEWAY_NO_PROVIDERS']);
 const UNKNOWN_CODES = new Set(['ABORTED', 'NETWORK_ERROR', 'INVALID_RESPONSE', 'INCOMPLETE_RESPONSE', 'MODEL_MISMATCH', 'RESPONSE_TOO_LARGE', 'STREAM_STALLED', 'STREAM_INTERRUPTED']);
 const zeroUsage = (error: ProviderError) => error.usage?.inputTokens === 0 && error.usage?.outputTokens === 0;
 
@@ -68,7 +68,8 @@ function classify(error: unknown, signal?: AbortSignal): FailureClass {
 }
 
 const CANDIDATE_COOLDOWN_MS: Record<string, number> = {
-  GATEWAY_UNREACHABLE: 30_000, CAPABILITY_UNAVAILABLE: 60_000, MODEL_UNAVAILABLE: 300_000,
+  // Short: the owner may add a gateway key or open the tunnel at any moment.
+  GATEWAY_UNREACHABLE: 30_000, GATEWAY_NO_PROVIDERS: 30_000, CAPABILITY_UNAVAILABLE: 60_000, MODEL_UNAVAILABLE: 300_000,
   NOT_CONFIGURED: 300_000, AUTHENTICATION_FAILED: 600_000, PERMISSION_DENIED: 600_000,
 };
 
@@ -135,10 +136,11 @@ export class InferenceRouter {
     return this.run(request, options);
   }
 
-  private noneLeft(reasons: string[], last?: unknown): ProviderError {
+  private noneLeft(reasons: string[], last?: unknown, causes: string[] = []): ProviderError {
     const unique = [...new Set(reasons)].slice(0, 8);
     const error = new ProviderError('NO_ELIGIBLE_PROVIDER', `لا يوجد مزود نموذج مؤهل متبقٍ لهذا الطلب${unique.length ? ` (${unique.join('، ')})` : ''}.`,
       last instanceof ProviderError && ['RATE_LIMITED', 'QUOTA_EXHAUSTED', 'GATEWAY_UNREACHABLE'].includes(last.code));
+    error.causes = causes.slice(0, 8);
     if (last instanceof ProviderError) {
       if (last.retryAfterMs !== undefined) error.retryAfterMs = last.retryAfterMs;
       error.cause = last;
@@ -160,7 +162,9 @@ export class InferenceRouter {
     const table = this.eligibility(request, options.requires);
     const queue = table.filter(row => row.eligible).map(row => row.candidate);
     const reasons = table.filter(row => !row.eligible).map(row => `${row.candidate.key}: ${row.reason}`);
-    if (!queue.length) throw this.noneLeft(reasons);
+    // A candidate still cooling down was removed by an earlier failure; name that failure.
+    const causes = table.filter(row => row.reason === 'cooling_down').map(row => this.monitor.blockedBy(row.candidate.key) ?? 'COOLING_DOWN');
+    if (!queue.length) throw this.noneLeft(reasons, undefined, causes);
     const attempts: AttemptRecord[] = [];
     let last: unknown;
     let attempt = 0;
@@ -197,7 +201,7 @@ export class InferenceRouter {
           const retryAfter = validatedRetryAfterMs(provider?.retryAfterMs);
           if (kind === 'rate' || kind === 'quota') {
             attempts.push({ candidate: candidate.key, outcome: kind === 'rate' ? 'rate_limited' : 'quota_exhausted', code: provider!.code });
-            this.monitor.block(candidate.key, retryAfter ?? (kind === 'quota' ? 3_600_000 : 30_000));
+            this.monitor.block(candidate.key, retryAfter ?? (kind === 'quota' ? 3_600_000 : 30_000), provider!.code);
             // Last candidate and a short, valid delay: wait once rather than fail.
             const alone = index === queue.length - 1 || !this.policy.automaticFallback;
             if (kind === 'rate' && alone && retry < this.maxTransientRetries && provider!.retryAfterInvalid !== true && (retryAfter ?? 0) <= this.maxBackoffMs) {
@@ -210,6 +214,7 @@ export class InferenceRouter {
               }
             }
             reasons.push(`${candidate.key}: ${provider!.code}`);
+            causes.push(provider!.code);
             break;
           }
           if (kind === 'transient' && retry < this.maxTransientRetries) {
@@ -222,10 +227,11 @@ export class InferenceRouter {
             }
           }
           attempts.push({ candidate: candidate.key, outcome: 'failure', code: provider?.code });
-          if (kind === 'candidate') this.monitor.block(candidate.key, CANDIDATE_COOLDOWN_MS[provider!.code] ?? 60_000);
+          if (kind === 'candidate') this.monitor.block(candidate.key, CANDIDATE_COOLDOWN_MS[provider!.code] ?? 60_000, provider!.code);
           // An unsettled paid call is never repeated elsewhere: its cost may already be incurred.
           if (kind === 'unknown' && candidate.cost === 'paid') throw error;
           reasons.push(`${candidate.key}: ${provider?.code ?? 'UNEXPECTED'}`);
+          causes.push(provider?.code ?? 'UNEXPECTED');
           break;
         }
 
@@ -242,6 +248,7 @@ export class InferenceRouter {
         if (!valid) {
           attempts.push({ candidate: candidate.key, outcome: 'invalid_output' });
           reasons.push(`${candidate.key}: invalid_output`);
+          causes.push('INVALID_RESPONSE');
           const invalid = new ProviderError('INVALID_RESPONSE', 'أعاد النموذج ردًا لا يطابق البنية المطلوبة.');
           if (!result.usageEstimated) invalid.usage = result.usage;
           last = invalid;
@@ -254,7 +261,7 @@ export class InferenceRouter {
         return { ...result, candidate: candidate.key, providerId: candidate.providerId, cost: candidate.cost, attempts };
       }
     }
-    throw this.noneLeft(reasons, last);
+    throw this.noneLeft(reasons, last, causes);
   }
 
   /**
@@ -266,6 +273,7 @@ export class InferenceRouter {
     const table = this.eligibility(request, options.requires);
     const queue = table.filter(row => row.eligible).map(row => row.candidate);
     const reasons = table.filter(row => !row.eligible).map(row => `${row.candidate.key}: ${row.reason}`);
+    const causes = table.filter(row => row.reason === 'cooling_down').map(row => this.monitor.blockedBy(row.candidate.key) ?? 'COOLING_DOWN');
     let last: unknown;
     let previous: RouteCandidate | null = null;
     let attempt = 0;
@@ -302,11 +310,12 @@ export class InferenceRouter {
         if (kind === 'abort') throw error;
         this.monitor.recordFailure(candidate.providerId, candidate.model, provider?.code ?? 'UNEXPECTED', provider?.usage);
         if (started || kind === 'fatal' || (kind === 'unknown' && candidate.cost === 'paid')) throw error;
-        if (kind === 'rate' || kind === 'quota') this.monitor.block(candidate.key, validatedRetryAfterMs(provider?.retryAfterMs) ?? (kind === 'quota' ? 3_600_000 : 30_000));
-        if (kind === 'candidate') this.monitor.block(candidate.key, CANDIDATE_COOLDOWN_MS[provider!.code] ?? 60_000);
+        if (kind === 'rate' || kind === 'quota') this.monitor.block(candidate.key, validatedRetryAfterMs(provider?.retryAfterMs) ?? (kind === 'quota' ? 3_600_000 : 30_000), provider!.code);
+        if (kind === 'candidate') this.monitor.block(candidate.key, CANDIDATE_COOLDOWN_MS[provider!.code] ?? 60_000, provider!.code);
         reasons.push(`${candidate.key}: ${provider?.code ?? 'UNEXPECTED'}`);
+        causes.push(provider?.code ?? 'UNEXPECTED');
       }
     }
-    throw this.noneLeft(reasons, last);
+    throw this.noneLeft(reasons, last, causes);
   }
 }

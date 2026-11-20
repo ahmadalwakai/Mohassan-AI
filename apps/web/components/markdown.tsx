@@ -42,7 +42,8 @@ export function Markdown({ text }: { text: string }) {
       const pattern = ordered.test(line) ? ordered : bullet;
       const items: string[] = [];
       while (index < lines.length && pattern.test(lines[index])) items.push(lines[index++].replace(pattern, ""));
-      const content = items.map((item, position) => <li key={position}>{inline(item)}</li>);
+      // <bdi>: each item finds its own direction, so "24 hour tyre fitting" is not read right to left in an Arabic reply.
+      const content = items.map((item, position) => <li key={position}><bdi>{inline(item)}</bdi></li>);
       blocks.push(pattern === ordered ? <ol key={blocks.length}>{content}</ol> : <ul key={blocks.length}>{content}</ul>);
       continue;
     }

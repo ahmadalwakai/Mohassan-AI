@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { GOLD_GOALS, checkGoal, generateGoals, reservedGoalWords, type Goal } from '../scripts/ads-training/goal.js';
+import { GOLD_GOALS, checkGoal, generateGoals, heldOutOnlyWords, reservedGoalWords, widePhrasingWords, type Goal } from '../scripts/ads-training/goal.js';
 import { checkSiteAds, siteAds, siteDigest } from '../scripts/ads-training/site.js';
 import {
   goalToPointer, goalWords, pointerToGoal, pointerToSite, renderGoalPointerPrompt, repairGoalPointer, renderSitePointerPrompt, samePointerAds, siteToPointer,
@@ -245,5 +245,24 @@ describe('Goal v3: training services from a large vocabulary', () => {
     expect(v3.some(item => item.output.service?.split(' ').every(word => vocabulary.includes(word)))).toBe(true);
     const reserved = reservedGoalWords();
     for (const word of ['for', 'in', 'business', 'website', 'wigan', 'chimney', 'conversions']) expect(reserved.has(word), word).toBe(true);
+  });
+});
+
+describe('v4 extra train-only phrasings', () => {
+  it('never use a word that only the held-out unseen phrasings use', () => {
+    const held = heldOutOnlyWords(), wide = widePhrasingWords();
+    expect(held.size).toBeGreaterThan(10);
+    expect([...wide].filter(word => held.has(word))).toEqual([]);
+  });
+
+  it('change only the train split, and every train example passes the checker', () => {
+    const vocabulary = ['knife', 'breed', 'nucleus', 'transition'];
+    const counts = { train: 400, validation: 20, test: 20, test_unseen_phrasing: 20 };
+    const v3 = generateGoals({ seed: 5, counts, composedServices: true, serviceVocabulary: vocabulary });
+    const v4 = generateGoals({ seed: 5, counts, composedServices: true, serviceVocabulary: vocabulary, widePhrasing: true });
+    expect(v4.filter(item => item.split !== 'train')).toEqual(v3.filter(item => item.split !== 'train'));
+    const train = v4.filter(item => item.split === 'train');
+    expect(train.filter(item => !v3.some(old => old.id === item.id)).length).toBeGreaterThan(0);
+    for (const item of train) expect(checkGoal(item.input.message, item.output), item.input.message).toEqual([]);
   });
 });

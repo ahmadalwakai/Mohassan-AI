@@ -30,6 +30,9 @@ export class ProviderError extends Error {
   retryAfterInvalid?:boolean;
   /** The model's text when Groq rejected it for failing the schema. */
   failedGeneration?:string;
+  /** NO_ELIGIBLE_PROVIDER only: the provider codes that removed each candidate, from this request's
+   * failures and from earlier cool-downs. Policy exclusions (free only, paid fallback) are not causes. */
+  causes?:string[];
   constructor(public readonly code:string,message:string,public readonly retryable=false,public readonly httpStatus?:number){super(message);this.name='ProviderError';}
 }
 const UsageSchema=z.object({prompt_tokens:z.number().int().nonnegative(),completion_tokens:z.number().int().nonnegative()});

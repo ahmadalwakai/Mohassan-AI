@@ -19,6 +19,8 @@ export const GOAL_DATASET_VERSION = 'ads-goal-v1';
 export const GOAL_DATASET_VERSION_V2 = 'ads-goal-v2';
 /** v3: half the training services are 1-3 words from a large vocabulary, so the end of a service comes from the sentence, not from known words. */
 export const GOAL_DATASET_VERSION_V3 = 'ads-goal-v3';
+/** v4: v3 plus extra train-only phrasings (WIDE); held-out splits identical to v3. */
+export const GOAL_DATASET_VERSION_V4 = 'ads-goal-v4';
 export type GoalSplit = 'train' | 'validation' | 'test' | 'test_unseen_phrasing' | 'gold';
 /** The currency as the user wrote it; the brain resolves $ to USD, CAD or AUD from the country. */
 export type Currency = '£' | '$' | '€' | 'SAR' | 'AED' | 'EGP';
@@ -125,6 +127,39 @@ const GOALS = {
     calls: ['make the phone ring'], bookings: ['fill my calendar with bookings'], leads: ['get people to fill in the contact form'],
   },
 } as const;
+/**
+ * v4 (2026-11-20): extra phrasings for the train split only. They are written without any word that
+ * appears only in the held-out unseen-phrasing templates (enforced by heldOutOnlyWords in tests), so a
+ * gain on test_unseen_phrasing cannot come from leaked wording. Not part of PHRASING_WORDS: the checker is unchanged.
+ */
+const WIDE = {
+  openings: [
+    'need a google ads campaign for {url}', 'is it possible to make a campaign for {url}', 'please start running google ads for {url}',
+    'i would like a search campaign for {url}', 'can we launch a campaign for {url}', 'time to advertise {url} on google',
+    'my site {url} needs google ads', 'please build me ads for {url}', 'would you create google ads for {url}', 'google ads campaign for {url}',
+    'campaign request: {url}', 'advertise {url} please', 'do a google ads campaign for {url}', "i'd like to run ads on google for {url}",
+    'create search ads for {url}', 'website {url} - i need a campaign',
+    '{service} business at {url} needs a google ads campaign', 'i offer {service} - website {url} - please create a campaign',
+    'run search ads for {service} on {url}', 'campaign for {service}, site {url}', 'my company does {service} and the site is {url}, make a campaign',
+    'we provide {service} ({url}). please set up google ads', 'need ads for {service} at {url}', 'build google ads around {service} for {url}',
+    'i want to advertise {service} on google', 'need a google ads campaign for {service}', 'please run search ads for {service}',
+    'campaign for my {service} company', 'i do {service}, can you make a campaign', 'start google ads for {service}',
+    'i need a google ads campaign', 'can you create a campaign for me', 'start a google ads campaign', "let's run some google ads", 'build me a search campaign',
+  ],
+  location: ['within {L}', 'across {L}', 'serving {L}', 'in and around {L}', 'targeting people near {L}', 'locations {L}', 'target {L}', 'cover {L}', 'just {L}'],
+  budget: [
+    ['{c}{a} daily', 'day'], ['up to {c}{a} a day', 'day'], ['{a} {w} daily', 'day'], ['budget is {c}{a} per day', 'day'],
+    ['{c}{a} for the week', 'week'], ['{a} {w} a week', 'week'], ['budget {c}{a} a week', 'week'], ['{c}{a}/week', 'week'],
+    ['{c}{a} monthly', 'month'], ['{a} {w} per month', 'month'], ['spend up to {c}{a} a month', 'month'], ['{c}{a} per month', 'month'],
+  ] as (readonly [string, Budget['period']])[],
+  goals: {
+    calls: ['we want more phone calls', 'get calls', 'calls please', 'goal is calls', 'aim: phone calls'],
+    bookings: ['more bookings please', 'we want people booking', 'goal: appointments', 'get online bookings', 'aim: appointments'],
+    leads: ['more leads please', 'we want quote requests', 'goal is enquiries', 'collect leads', 'aim: enquiries'],
+  },
+  other: ['what is a cpc', 'list my campaigns', 'what can you do', 'how is the weather today', 'compare {service} prices in {L}', 'who owns {url}',
+    'write a facebook post about {service}', 'what is the capital of france', 'good morning', 'turn off my ads', 'delete my old campaign'],
+};
 const OTHER = {
   train: [
     'what is the weather in {L}', 'write a poem about the sea', 'how much does {service} cost in {L}', 'find me a {service} in {L}',
@@ -191,14 +226,38 @@ function casing(random: Random, message: string, output: Goal): [string, Goal] {
   return [message, output];
 }
 
-function createExample(random: Random, split: GoalSplit, phrasing: Phrasing, composed = false, vocabulary?: readonly string[]): [string, Goal] {
+/** Template pools for one example; wide (v4, train split only) adds WIDE to the train pools. */
+function pools(phrasing: Phrasing, wide: boolean) {
+  const add = <T>(base: readonly T[], extra: readonly T[]) => wide ? [...base, ...extra] : base;
+  return {
+    openings: add(OPENINGS[phrasing], WIDE.openings), location: add(LOCATION[phrasing], WIDE.location), budget: add(BUDGET[phrasing], WIDE.budget),
+    goals: (goal: 'calls' | 'bookings' | 'leads') => add<string>(GOALS[phrasing][goal], WIDE.goals[goal]), other: add(OTHER[phrasing], WIDE.other),
+  };
+}
+
+/** Words used by the held-out unseen-phrasing templates and by none of the train templates. */
+export function heldOutOnlyWords(): Set<string> {
+  const words = (texts: readonly string[]) => new Set(texts.join(' ').replace(/\{\w+\}/g, ' ').toLowerCase().split(/[^a-z']+/).filter(Boolean));
+  const train = words([...OPENINGS.train, ...LOCATION.train, ...BUDGET.train.map(([text]) => text), ...Object.values(GOALS.train).flat(), ...OTHER.train]);
+  const held = words([...OPENINGS.test_unseen_phrasing, ...LOCATION.test_unseen_phrasing, ...BUDGET.test_unseen_phrasing.map(([text]) => text),
+    ...Object.values(GOALS.test_unseen_phrasing).flat(), ...OTHER.test_unseen_phrasing]);
+  return new Set([...held].filter(word => !train.has(word)));
+}
+/** Every word of the v4 extra phrasings. */
+export function widePhrasingWords(): Set<string> {
+  return new Set([...WIDE.openings, ...WIDE.location, ...WIDE.budget.map(([text]) => text), ...Object.values(WIDE.goals).flat(), ...WIDE.other]
+    .join(' ').replace(/\{\w+\}/g, ' ').toLowerCase().split(/[^a-z']+/).filter(Boolean));
+}
+
+function createExample(random: Random, split: GoalSplit, phrasing: Phrasing, composed = false, vocabulary?: readonly string[], wide = false): [string, Goal] {
   const held = split === 'test' || split === 'test_unseen_phrasing';
+  const pool = pools(phrasing, wide && split === 'train');
   const service = held ? random.pick(SERVICES.test) : trainService(random, composed && split === 'train', split === 'train' ? vocabulary : undefined);
   const url = domain(random, held);
   const withUrl = random.next() < 0.8, withService = random.next() < 0.45;
-  const templates = OPENINGS[phrasing === 'train' ? 'train' : 'test_unseen_phrasing'].filter(template =>
+  const templates = pool.openings.filter(template =>
     template.includes('{url}') === withUrl && template.includes('{service}') === withService);
-  const fallback = OPENINGS[phrasing].filter(template => template.includes('{url}') === withUrl);
+  const fallback = pool.openings.filter(template => template.includes('{url}') === withUrl);
   const opening = random.pick(templates.length ? templates : fallback);
   const output: Goal = { ...EMPTY, intent: 'create_campaign', url: opening.includes('{url}') ? url : null, service: opening.includes('{service}') ? service : null };
   const parts = [opening.replace('{url}', url).replace('{service}', service)];
@@ -206,10 +265,10 @@ function createExample(random: Random, split: GoalSplit, phrasing: Phrasing, com
   const clauses: string[] = [];
   if (random.next() < 0.75) {
     output.locations = places(random, split);
-    clauses.push(random.pick(LOCATION[phrasing]).replace('{L}', listPlaces(random, output.locations)));
+    clauses.push(random.pick(pool.location).replace('{L}', listPlaces(random, output.locations)));
   }
   if (random.next() < 0.6) {
-    const [template, period] = random.pick(BUDGET[phrasing]);
+    const [template, period] = random.pick(pool.budget);
     const currency = random.pick(CURRENCIES), value = amount(random, period);
     const named = template.includes('{c}') || template.includes('{w}');
     output.budget = { amount: value, currency: named ? currency.code : null, period };
@@ -218,7 +277,7 @@ function createExample(random: Random, split: GoalSplit, phrasing: Phrasing, com
   if (random.next() < 0.5) {
     const goal = random.pick(['calls', 'bookings', 'leads'] as const);
     output.goal = goal;
-    clauses.push(random.pick(GOALS[phrasing][goal]));
+    clauses.push(random.pick(pool.goals(goal)));
   }
   // The location usually follows the opening directly ("ads for x.com in Leeds"); the rest is shuffled.
   const ordered = clauses.length > 1 ? [clauses[0]!, ...random.sample(clauses.slice(1), clauses.length - 1)] : clauses;
@@ -226,9 +285,9 @@ function createExample(random: Random, split: GoalSplit, phrasing: Phrasing, com
   return casing(random, random.pick(PREFIXES) + parts.join('') + random.pick(SUFFIXES), output);
 }
 
-function otherExample(random: Random, split: GoalSplit, phrasing: Phrasing): [string, Goal] {
+function otherExample(random: Random, split: GoalSplit, phrasing: Phrasing, wide = false): [string, Goal] {
   const held = split === 'test' || split === 'test_unseen_phrasing';
-  const message = random.pick(OTHER[phrasing]).replace('{L}', places(random, split)[0]!)
+  const message = random.pick(pools(phrasing, wide && split === 'train').other).replace('{L}', places(random, split)[0]!)
     .replace('{service}', random.pick(held ? SERVICES.test : SERVICES.train)).replace('{url}', domain(random, held));
   return casing(random, random.pick(PREFIXES) + message + random.pick(SUFFIXES), { ...EMPTY });
 }
@@ -237,16 +296,21 @@ export const goalId = (message: string) => createHash('sha256').update(JSON.stri
 
 /** composedServices (v2) changes only the train split; held-out splits come first from the seed, so they stay identical to v1. */
 /** serviceVocabulary (v3) likewise changes only the train split. */
-export interface GoalGenerateOptions { seed: number; counts: Record<Exclude<GoalSplit, 'gold'>, number>; composedServices?: boolean; serviceVocabulary?: readonly string[] }
-export function generateGoals({ seed, counts, composedServices = false, serviceVocabulary }: GoalGenerateOptions): GoalExample[] {
+/** widePhrasing (v4) adds WIDE templates to the train split only; vocabulary services sharing a WIDE word are dropped. */
+export interface GoalGenerateOptions { seed: number; counts: Record<Exclude<GoalSplit, 'gold'>, number>; composedServices?: boolean; serviceVocabulary?: readonly string[]; widePhrasing?: boolean }
+export function generateGoals({ seed, counts, composedServices = false, serviceVocabulary, widePhrasing = false }: GoalGenerateOptions): GoalExample[] {
   const random = rng(seed);
+  if (widePhrasing && serviceVocabulary) {
+    const reserved = widePhrasingWords();
+    serviceVocabulary = serviceVocabulary.filter(service => !service.toLowerCase().split(/[^a-z']+/).some(word => reserved.has(word)));
+  }
   // Gold sentences are evaluation only, so the generator never produces them.
   const seen = new Set<string>(GOLD_GOALS.map(item => goalId(item.message))), examples: GoalExample[] = [];
   for (const split of ['test', 'test_unseen_phrasing', 'validation', 'train'] as const) {
     const phrasing: Phrasing = split === 'test_unseen_phrasing' ? 'test_unseen_phrasing' : 'train';
     let made = 0;
     for (let tries = 0; made < counts[split] && tries < counts[split] * 20; tries++) {
-      const [message, output] = random.next() < 0.15 ? otherExample(random, split, phrasing) : createExample(random, split, phrasing, composedServices, serviceVocabulary);
+      const [message, output] = random.next() < 0.15 ? otherExample(random, split, phrasing, widePhrasing) : createExample(random, split, phrasing, composedServices, serviceVocabulary, widePhrasing);
       const id = goalId(message);
       if (seen.has(id) || checkGoal(message, output).length) continue;
       seen.add(id);

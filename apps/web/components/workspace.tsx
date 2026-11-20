@@ -387,7 +387,7 @@ export function Workspace() {
   if (boot === "setup" || boot === "signin") return <AuthScreen needsSetup={boot === "setup"} onAuthenticated={(value) => { setSession(value); setBoot("ready"); }} onRetry={() => { void request<{ needsSetup: boolean; setupAvailable?: boolean }>("/api/setup").then((value) => { if (!value.needsSetup) setBoot("signin"); }).catch(() => {}); }} />;
 
   if (access?.role === "member" && advanced) return <MemberTools access={access} onChat={() => setAdvanced(false)} onSignOut={() => { void signOut(); }} />;
-  if (!advanced || !owner) return <AssistantApp name={session?.user.name ?? "بك"} onAdvanced={() => setAdvanced(true)} onSignOut={() => { void signOut(); }} />;
+  if (!advanced || !owner) return <AssistantApp name={session?.user.name ?? "بك"} onAdvanced={() => setAdvanced(true)} onOpenTool={owner ? (target) => { setView(target); setAdvanced(true); } : undefined} onSignOut={() => { void signOut(); }} />;
 
   const tasks = snapshot?.tasks ?? [];
   const capabilities = snapshot?.capabilities ?? [];

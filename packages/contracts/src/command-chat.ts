@@ -8,6 +8,25 @@ export const ChatOptionSchema = z.object({
   label: z.string().min(1).max(160),
 }).strict();
 
+/** One suggested answer, taken by the brain from the owner's own site or sentence. */
+export const ChatSuggestionSchema = z.object({
+  label: z.string().min(1).max(120),
+  /** Why the brain suggests it ("موقعك فيه رقم هاتف قابل للنقر"). */
+  reason: z.string().max(160).optional(),
+}).strict();
+
+/** One of several questions asked together; the owner picks suggestions or writes another answer. */
+export const ChatQuestionFieldSchema = z.object({
+  id: z.string().regex(/^[a-z]{2,20}$/),
+  prompt: z.string().min(1).max(300),
+  suggestions: z.array(ChatSuggestionSchema).max(6),
+  /** Several suggestions may be chosen together (places). */
+  multiple: z.boolean().optional(),
+  /** Suggestions the brain is confident in, chosen in advance; the owner can change them. */
+  selected: z.array(z.number().int().min(0).max(5)).max(6).optional(),
+  placeholder: z.string().max(120).optional(),
+}).strict();
+
 /** A question from the assistant. The owner can pick an option or type a reply. */
 export const ChatQuestionSchema = z.object({
   id: z.uuid(),
@@ -15,6 +34,8 @@ export const ChatQuestionSchema = z.object({
   options: z.array(ChatOptionSchema).max(5),
   /** The `connect` option opens Google's own consent page instead of answering. */
   action: z.literal('google_ads_connect').optional(),
+  /** Several questions in one card; the answers are sent together as one numbered reply. */
+  fields: z.array(ChatQuestionFieldSchema).max(6).optional(),
 }).strict();
 
 export const ChatApprovalSchema = z.object({
@@ -90,6 +111,7 @@ export const ChatConversationSchema = ChatConversationSummarySchema.extend({
 export type ChatConversation = z.infer<typeof ChatConversationSchema>;
 export type ChatConversationSummary = z.infer<typeof ChatConversationSummarySchema>;
 export type ChatQuestion = z.infer<typeof ChatQuestionSchema>;
+export type ChatQuestionField = z.infer<typeof ChatQuestionFieldSchema>;
 export type ChatApproval = z.infer<typeof ChatApprovalSchema>;
 export type ChatSecureRequest = z.infer<typeof ChatSecureRequestSchema>;
 

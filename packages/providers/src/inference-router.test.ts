@@ -279,4 +279,36 @@ describe('usage monitor', () => {
     priced.recordSuccess('groq', 'big', { inputTokens: 1_000_000, outputTokens: 500_000 });
     expect(priced.snapshot().totals.estimatedCostUsd).toBe(2);
   });
+  it('names the failure behind a cool-down instead of an anonymous outage', async () => {
+    // A closed gateway: both free candidates refuse the connection; free-only keeps Groq out.
+    const unreachable = () => rejected('GATEWAY_UNREACHABLE', undefined, false, { usage: { inputTokens: 0, outputTokens: 0 } });
+    const small = candidate('freellmapi:small', 'free', [unreachable()]);
+    const big = candidate('freellmapi:big', 'free', [unreachable()]);
+    const paid = candidate('groq:big', 'paid', [ok()]);
+    const monitor = new UsageMonitor({ freeProviders: ['freellmapi'] });
+    const route = () => new InferenceRouter([small.candidate, big.candidate, paid.candidate], policy({ freeOnly: true }), monitor).generate(request).catch(caught => caught);
+    const first = await route();
+    expect(first).toMatchObject({ code: 'NO_ELIGIBLE_PROVIDER', retryable: true, causes: ['GATEWAY_UNREACHABLE', 'GATEWAY_UNREACHABLE'] });
+    expect(monitor.blockedBy('freellmapi:small')).toBe('GATEWAY_UNREACHABLE');
+    // The next request, still inside the cool-down, makes no call but keeps the same cause.
+    const second = await route();
+    expect(second).toMatchObject({ code: 'NO_ELIGIBLE_PROVIDER', retryable: false, causes: ['GATEWAY_UNREACHABLE', 'GATEWAY_UNREACHABLE'] });
+    expect(second.cause).toBeUndefined();
+    expect(small.generate).toHaveBeenCalledTimes(1);
+    expect(paid.generate).not.toHaveBeenCalled();
+    // Policy exclusions are reasons, not causes.
+    const policyOnly = await new InferenceRouter([paid.candidate], policy({ freeOnly: true })).generate(request).catch(caught => caught);
+    expect(policyOnly.causes).toEqual([]);
+  });
+
+  it('forgets a cool-down cause once the cool-down ends', () => {
+    let now = 1_000;
+    const monitor = new UsageMonitor({ now: () => now });
+    monitor.block('freellmapi:small', 30_000, 'GATEWAY_UNREACHABLE');
+    expect(monitor.blockedBy('freellmapi:small')).toBe('GATEWAY_UNREACHABLE');
+    now += 30_001;
+    expect(monitor.blockedBy('freellmapi:small')).toBeUndefined();
+    monitor.block('freellmapi:small', 10_000);
+    expect(monitor.blockedBy('freellmapi:small')).toBeUndefined();
+  });
 });

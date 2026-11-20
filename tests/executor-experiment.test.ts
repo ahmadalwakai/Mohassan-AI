@@ -129,7 +129,7 @@ describe('direct executor runs', () => {
     await writeCheckpoint();
     const transport = fakeTransport(candidate('{"values":["7","-42"]}'));
     const extract = vi.fn();
-    const executor = control({ transport: transport.factory, reasoning: { status: async () => ({ provider: 'groq', configured: true, available: true, model: 'x', message: '' }), extract } });
+    const executor = control({ transport: transport.factory, reasoning: { status: async () => ({ provider: 'fixture-reasoning', configured: true, available: true, model: 'x', message: '' }), extract } });
     const status = await executor.status();
     expect(status.ollama.status).toBe('unreachable');
     const result = await executor.run({ runId: randomUUID(), mode: 'direct', capability: 'json.transform.v1:integers-to-strings', fields: { values: [7, -42] } });
@@ -221,11 +221,11 @@ describe('assisted runs keep reasoning separate', () => {
   it('records the reasoning call, then lets the local model produce the answer', async () => {
     await writeCheckpoint();
     const transport = fakeTransport(candidate('{"within":true}'));
-    const extract = vi.fn(async () => ({ text: '{"value":5,"minimum":1,"maximum":9}', model: 'openai/gpt-oss-20b', usage: { inputTokens: 80, outputTokens: 12 }, provider: 'groq' }));
-    const result = await control({ transport: transport.factory, reasoning: { status: async () => ({ provider: 'groq', configured: true, available: true, model: 'openai/gpt-oss-20b', message: '' }), extract } })
+    const extract = vi.fn(async () => ({ text: '{"value":5,"minimum":1,"maximum":9}', model: 'fixture-reasoning-model', usage: { inputTokens: 80, outputTokens: 12 }, provider: 'fixture-reasoning' }));
+    const result = await control({ transport: transport.factory, reasoning: { status: async () => ({ provider: 'fixture-reasoning', configured: true, available: true, model: 'fixture-reasoning-model', message: '' }), extract } })
       .run({ runId: randomUUID(), mode: 'assisted', capability: 'json.check.v1:inclusive-interval', request: 'هل 5 بين 1 و9؟' });
     expect(result).toMatchObject({ status: 'candidate', candidate: { text: '{"within":true}' }, verification: { status: 'passed' },
-      external: [{ provider: 'groq', model: 'openai/gpt-oss-20b', purpose: 'field_extraction', inputTokens: 80, outputTokens: 12 }] });
+      external: [{ provider: 'fixture-reasoning', model: 'fixture-reasoning-model', purpose: 'field_extraction', inputTokens: 80, outputTokens: 12 }] });
     expect(transport.submitted[0]!.contract).toEqual({ fields: { value: 5, minimum: 1, maximum: 9 } });
   });
 });

@@ -16,6 +16,7 @@ if (localLab) {
   const lab = path.join(root,'.data','local-lab');
   Object.assign(process.env, {
     MOHASSAN_LOCAL_LAB: '1', DATABASE_URL: '', DATA_DIR: path.join(lab,'postgres'), BROWSER_PROFILE_DIR: path.join(lab,'browser-profile'),
+    MOHASSAN_MIND: process.env.MOHASSAN_MIND ?? '0',
     CODING_DATA_DIR: path.join(lab,'coding'), STUDIO_AI_DATA_DIR: path.join(lab,'studio-ai'),
     GOOGLE_ADS_PUBLISHING_ENABLED: 'false', WINDOWS_REMOTE_ENABLED: 'false',
     EXECUTOR_EXPERIMENT: 'uncontained-local',
@@ -24,8 +25,17 @@ if (localLab) {
     EXECUTOR_CHECKPOINT: process.env.EXECUTOR_CHECKPOINT || 'artifacts/execution-model-runs/run-2026-11-12-c/inference-train-40m',
     EXECUTOR_REGISTRY_ENTRY: process.env.EXECUTOR_REGISTRY_ENTRY || 'artifacts/execution-model-runs/registry/exec-c40m-2026-11-12.json',
     EXECUTOR_EVALUATION_REPORT: process.env.EXECUTOR_EVALUATION_REPORT || 'artifacts/execution-model-runs/run-2026-11-12-c/evaluation/report.json',
+    // The Ads model (34M, words-v1 tokenizer, names-v1 hint): checker gate 186/300 on unseen cities.
+    ADS_MODEL_RUN: process.env.ADS_MODEL_RUN || 'artifacts/execution-model-runs/text-b2-2026-11-12',
   });
   await mkdir(lab,{recursive:true});
+  // Optional lab-only settings (git-ignored with .data/). Read before .env and without override, so
+  // its keys win over .env here and nowhere else. Used to point the lab's chat at the FreeLLMAPI
+  // desktop gateway on this computer instead of the maintenance tunnel to the cloud gateway:
+  //   FREELLMAPI_BASE_URL=http://127.0.0.1:31415/v1
+  //   FREELLMAPI_API_KEY=<the desktop app's unified key>
+  // DATABASE_URL is refused below whatever this file says.
+  dotenv.config({path:path.join(lab,'lab.env'),quiet:true,override:false});
 }
 if(process.env.MOHASSAN_ISOLATED_TEST!=='true')dotenv.config({path:path.join(root,'.env'),quiet:true,override:!production&&!localLab});
 if (localLab && process.env.DATABASE_URL !== '') throw new Error('--local-lab refused: DATABASE_URL is not empty.');

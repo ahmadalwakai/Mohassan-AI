@@ -20,6 +20,16 @@
       ],
       "port": 3000,
       "url": "http://127.0.0.1:3000"
+    },
+    {
+      "name": "mohassan-lab-ads-v4",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set ADS_MODEL_RUN=artifacts/execution-model-runs/text-b4-2026-11-18/stage-3-full&& set ADS_CHAT_FINETUNE=pointer-v4-f38m&& npm run dev:lab"
+      ],
+      "port": 3000,
+      "url": "http://127.0.0.1:3000"
     }
   ]
 }

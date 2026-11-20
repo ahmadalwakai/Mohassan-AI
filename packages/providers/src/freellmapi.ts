@@ -132,7 +132,8 @@ export function freeLLMAPIError(status: number, code: string | null | undefined,
   else if (code === 'no_tools_model' || code === 'no_vision_model') error = new ProviderError('CAPABILITY_UNAVAILABLE', 'لا يوجد نموذج متاح في FreeLLMAPI يدعم هذه القدرة الآن.', false, status);
   else if (status === 429 && code === 'quota_exceeded') error = new ProviderError('QUOTA_EXHAUSTED', 'نفدت الحصة الشهرية لمفاتيح FreeLLMAPI المتاحة.', false, status);
   else if (status === 429) error = new ProviderError('RATE_LIMITED', 'بلغ FreeLLMAPI حدود الطلبات لكل المزودين المتاحين حاليًا.', true, status);
-  else if (status === 503 && code === 'no_providers_configured') error = new ProviderError('NOT_CONFIGURED', 'لم تُضف مفاتيح مزودين في FreeLLMAPI بعد.', false, status);
+  // Its own code: the fix is a provider key in the gateway's dashboard, not the server's settings.
+  else if (status === 503 && code === 'no_providers_configured') error = new ProviderError('GATEWAY_NO_PROVIDERS', 'لم تُضف مفاتيح مزودين في FreeLLMAPI بعد.', false, status);
   else if (status === 413) error = new ProviderError('REQUEST_REJECTED', 'تجاوز الطلب حد التوكنات المسموح في FreeLLMAPI.', false, status);
   else error = new ProviderError(status === 400 ? 'REQUEST_REJECTED' : 'UPSTREAM_ERROR', 'لم يُكمل FreeLLMAPI الطلب.', status >= 500, status);
   // The gateway rejects 429/503 before any upstream produced output, so nothing was consumed.

@@ -1,12 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
-import { ArrowUp, Check, ChevronDown, ExternalLink, Globe, KeyRound, LoaderCircle, LogOut, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, Settings2, ShieldAlert, SquarePen, Square, Trash2, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, ExternalLink, Globe, KeyRound, LogOut, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, Settings2, ShieldAlert, SquarePen, Square, Trash2, X } from "lucide-react";
 import type { ChatConversation as Conversation, ChatConversationSummary as Summary, ChatSecureRequest } from "@mohassan/contracts";
 import { Markdown } from "./markdown";
 import { takeoverInput } from "./takeover-input";
 import { BrowserFilesPanel } from './browser-files-panel';
 import { CampaignCard } from "./campaign-card";
+import { AgentActivity } from "./agent-activity";
+import { QuestionPanel, withoutQuestionList } from "./question-card";
+import { ChromeExtensionPanel } from "./chrome-extension-panel";
 import { adsConnectProblems, pendingAdsConnect } from "./ads-connect";
 import styles from "./assistant-app.module.css";
 
@@ -62,11 +65,14 @@ function Steps({ conversation }: { conversation: Conversation }) {
   if (!running && !conversation.steps.length) return null;
   return <div className={styles.steps}>
     <button type="button" className={styles.stepsToggle} aria-expanded={open} disabled={!conversation.steps.length} onClick={() => setOpen((value) => !value)}>
-      {running ? <span className={styles.pulse} /> : <Check size={14} />}
+      {running ? <AgentActivity /> : <Check size={14} />}
       <span className={running ? styles.shimmer : ""} dir="auto">{running ? conversation.progress ?? "يعمل…" : stepCount(conversation.steps.length)}</span>
       {conversation.steps.length ? <ChevronDown size={14} className={open ? styles.flipped : ""} /> : null}
     </button>
-    {open ? <ol className={styles.stepList}>{conversation.steps.map((step) => <li key={step.id} dir="auto">{step.text}</li>)}</ol> : null}
+    {open ? <ol className={styles.stepList}>
+      {conversation.steps.map((step) => <li key={step.id} dir="auto">{step.text}</li>)}
+      {running ? <li className={styles.activeStep} aria-current="step"><AgentActivity variant="spinner" /><span dir="auto">{conversation.progress ?? "يعمل…"}</span></li> : null}
+    </ol> : null}
   </div>;
 }
 
@@ -109,7 +115,9 @@ function BrowserPanel({ conversation, onClose, onError, onRestore, onReview, bus
       {page.live && broken !== source ? <img src={source} alt={`الصفحة: ${page.title}`} onClick={point} onError={() => setBroken(source)} draggable={false} /> : <p className={styles.noView}>{page.live ? "تتحمّل الصفحة…" : "أُغلقت هذه الصفحة."}</p>}
     </div>
     {!page.live&&page.recovery==='available'?<div className={styles.card}><p>استعد قراءة الصفحة قبل متابعة العمل.</p><button type="button" className={styles.secondary} disabled={busy||WORKING.has(conversation.status)} onClick={onRestore}>استعادة الصفحة</button></div>:null}
-    {page.recovery==='review_required'?<div className={styles.card}><p>تحتاج الجلسة السابقة إلى مراجعة. تحقق من نتيجتها في الموقع قبل المتابعة.</p><label><input type="checkbox" checked={reviewed} onChange={event=>setReviewedToken(event.target.checked?page.recoveryToken??null:null)}/> راجعت بنفسي أثر الإجراء السابق.</label><button type="button" className={styles.secondary} disabled={!reviewed||busy||WORKING.has(conversation.status)} onClick={onReview}>تسجيل المراجعة دون تكرار الإجراء</button></div>:null}
+    {/* While the owner has the controls (signing in by hand) the review cannot be recorded (the chat
+        is busy), and on a narrow panel its card covered the page image: it waits until afterwards. */}
+    {page.recovery==='review_required'&&!handsOn?<div className={styles.card}><p>تحتاج الجلسة السابقة إلى مراجعة. تحقق من نتيجتها في الموقع قبل المتابعة.</p><label><input type="checkbox" checked={reviewed} onChange={event=>setReviewedToken(event.target.checked?page.recoveryToken??null:null)}/> راجعت بنفسي أثر الإجراء السابق.</label><button type="button" className={styles.secondary} disabled={!reviewed||busy||WORKING.has(conversation.status)} onClick={onReview}>تسجيل المراجعة دون تكرار الإجراء</button></div>:null}
     {handsOn ? <form className={styles.takeover} onSubmit={typeInPage}>
       <input dir="auto" autoComplete="off" value={typed} placeholder="انقر على الصورة، واكتب هنا لإدخال نص في الصفحة" onChange={(event) => setTyped(event.target.value)} />
       <button type="submit" className={styles.primary}>إدخال</button>
@@ -136,14 +144,17 @@ function DeleteDialog({ target, busy, error, onCancel, onConfirm }: { target: Su
       <p className={styles.dialogText}>ستُحذف «<bdi>{target.title}</bdi>» برسائلها وخطواتها نهائيًا، ولا يمكن استرجاعها.{WORKING.has(target.status) ? " وسيتوقف العمل الجاري فيها." : ""}</p>
       {error ? <p className={styles.problem} role="alert">{error}</p> : null}
       <div className={styles.dialogActions}>
-        <button type="button" className={styles.danger} disabled={busy} onClick={onConfirm}>{busy ? <LoaderCircle size={15} className={styles.spin} /> : <Trash2 size={15} />}حذف</button>
+        <button type="button" className={styles.danger} disabled={busy} onClick={onConfirm}>{busy ? <AgentActivity variant="spinner" /> : <Trash2 size={15} />}حذف</button>
         <button type="button" className={styles.secondary} disabled={busy} autoFocus onClick={onCancel}>إلغاء</button>
       </div>
     </div> : null}
   </dialog>;
 }
 
-export function AssistantApp({ name, onAdvanced, onSignOut }: { name: string; onAdvanced: () => void; onSignOut: () => void }) {
+/** Owner-only views a failed turn can point to. The executor is a separate local experiment, never a stand-in for the chat model. */
+export type AssistantToolView = "integrations" | "executor";
+
+export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name: string; onAdvanced: () => void; onOpenTool?: (view: AssistantToolView) => void; onSignOut: () => void }) {
   const [history, setHistory] = useState<Summary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -230,6 +241,8 @@ export function AssistantApp({ name, onAdvanced, onSignOut }: { name: string; on
   const answering = status === "waiting_user";
   const blocked = status === "waiting_input" || status === "waiting_approval";
   const canSend = !busy && !running && !blocked && draft.trim().length > 0;
+  // The brain's questions take the input's place, one at a time, as in Claude.
+  const asking = answering && !!conversation?.question?.fields?.length;
 
   async function act(operation: () => Promise<Conversation>) {
     if (busy) return;
@@ -356,7 +369,7 @@ export function AssistantApp({ name, onAdvanced, onSignOut }: { name: string; on
     {running || blocked || answering
       ? <button type="button" className={styles.stop} aria-label="إيقاف" disabled={busy} onClick={() => void act(() => post("cancel", {}))}><Square size={13} fill="currentColor" /></button>
       : null}
-    {!running ? <button type="submit" className={styles.send} aria-label="إرسال" disabled={!canSend}>{busy ? <LoaderCircle size={18} className={styles.spin} /> : <ArrowUp size={19} />}</button> : null}
+    {!running ? <button type="submit" className={styles.send} aria-label="إرسال" disabled={!canSend}>{busy ? <AgentActivity variant="spinner" /> : <ArrowUp size={19} />}</button> : null}
   </form>;
 
   return <div className={styles.app}>
@@ -400,6 +413,7 @@ export function AssistantApp({ name, onAdvanced, onSignOut }: { name: string; on
         {conversation?.browser && !browserOpen ? <button className={styles.showBrowser} onClick={() => setBrowserOpen(true)}><Globe size={15} />المتصفح</button> : null}
         {conversation ? <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="محادثة جديدة" onClick={startNew}><SquarePen size={18} /></button> : null}
       </header>
+      {onOpenTool ? <ChromeExtensionPanel /> : null}
       {empty ? <div className={styles.welcome}>
         <span className={styles.welcomeMark} aria-hidden="true">م</span>
         <h1>كيف أساعدك اليوم، {firstName}؟</h1>
@@ -407,18 +421,19 @@ export function AssistantApp({ name, onAdvanced, onSignOut }: { name: string; on
         <div className={styles.suggestions}>
           {SUGGESTIONS.map((text) => <button key={text} type="button" onClick={() => { setDraft(text); composer.current?.focus(); }}>{text}</button>)}
         </div>
-        {conversation && !conversation.configured ? <p className={styles.problem} role="alert">لم يُضبط مفتاح Groq في الخادم بعد.</p> : null}
+        {conversation && !conversation.configured ? <p className={styles.problem} role="alert">المحادثة بلا نموذج الآن: أُوقفت منصات الذكاء الاصطناعي الخارجية، ونموذج موحسن الخاص لم يتعلم المحادثة بعد.</p> : null}
         {error ? <p className={styles.problem} role="alert">{error}</p> : null}
       </div> : <>
         <div className={styles.thread} role="log" aria-label="المحادثة">
           <div className={styles.column}>
             {conversation!.messages.map((message, index) => <article key={message.id} className={message.role === "user" ? styles.userTurn : styles.assistantTurn}>
-              {message.role === "user" ? <p dir="auto">{message.text}</p> : <Markdown text={message.text} />}
+              {message.role === "user" ? <p dir="auto">{message.text}</p> : <Markdown text={asking && index === conversation!.messages.length - 1 ? withoutQuestionList(message.text) : message.text} />}
               {index === conversation!.messages.length - 1 && message.role === "user" ? <Steps conversation={conversation!} /> : null}
             </article>)}
-            {conversation!.messages.at(-1)?.role === "assistant" && conversation!.steps.length && !answering && !blocked ? <Steps conversation={conversation!} /> : null}
+            {conversation!.messages.at(-1)?.role === "assistant" && (running || conversation!.steps.length > 0) && !answering && !blocked ? <Steps conversation={conversation!} /> : null}
             {conversation!.campaign?.events.length ? <CampaignCard stream={conversation!.campaign} running={running} /> : null}
-            {conversation!.question ? <div className={styles.choices}>{conversation!.question.options.map((option) => <button key={option.id} disabled={busy} onClick={() => conversation!.question!.action === "google_ads_connect" && option.id === "connect" ? void connectGoogleAds() : void act(() => post("respond", { questionId: conversation!.question!.id, optionId: option.id }))}>{option.label}</button>)}</div> : null}
+            {conversation!.question?.fields?.length ? null
+            : conversation!.question ? <div className={styles.choices}>{conversation!.question.options.map((option) => <button key={option.id} disabled={busy} onClick={() => conversation!.question!.action === "google_ads_connect" && option.id === "connect" ? void connectGoogleAds() : void act(() => post("respond", { questionId: conversation!.question!.id, optionId: option.id }))}>{option.label}</button>)}</div> : null}
             {conversation!.approval ? <div className={styles.card}>
               <div className={styles.cardTitle}><ShieldAlert size={16} />يحتاج موافقتك</div>
               <p className={styles.cardHint}>{conversation!.approval.detail}</p>
@@ -429,10 +444,17 @@ export function AssistantApp({ name, onAdvanced, onSignOut }: { name: string; on
             </div> : null}
             {conversation!.secure ? <SecureCard request={conversation!.secure} busy={busy} onSubmit={(action, values) => void act(() => post("secure", { requestId: conversation!.secure!.id, action, ...(values ? { values } : {}) }))} /> : null}
             {conversation!.error || error ? <p className={styles.problem} role="alert">{conversation!.error || error}</p> : null}
+            {conversation!.status === "failed" && conversation!.error && onOpenTool ? <div className={styles.problemActions}>
+              <button type="button" className={styles.secondary} onClick={() => onOpenTool("integrations")}><Settings2 size={15} />حالة مزودي النماذج</button>
+              <button type="button" className={styles.secondary} onClick={() => onOpenTool("executor")}>المنفّذ المحلي (مهام محددة فقط)</button>
+            </div> : null}
             <div ref={end} />
           </div>
         </div>
-        <div className={styles.dock}>{form}<p className={styles.dockHint}><kbd>Enter</kbd> للإرسال، و<bdi dir="ltr"><kbd>Shift</kbd> + <kbd>Enter</kbd></bdi> لسطر جديد</p></div>
+        <div className={styles.dock}>{asking ? <QuestionPanel key={conversation!.question!.id} fields={conversation!.question!.fields!} busy={busy}
+            onSubmit={text => void act(() => post("messages", { text }))}
+            onStop={conversation!.question!.options.some(option => option.id === "stop") ? () => void act(() => post("respond", { questionId: conversation!.question!.id, optionId: "stop" })) : undefined} />
+          : <>{form}<p className={styles.dockHint}><kbd>Enter</kbd> للإرسال، و<bdi dir="ltr"><kbd>Shift</kbd> + <kbd>Enter</kbd></bdi> لسطر جديد</p></>}</div>
       </>}
     </main>
     {showBrowser ? <BrowserPanel conversation={conversation!} onClose={() => setBrowserOpen(false)} onError={setError} busy={busy} onRestore={()=>void act(()=>post("browser/restore",{}))} onReview={()=>void act(()=>post("browser/review",{reviewed:true,checkpointToken:conversation?.browser?.recoveryToken}))} /> : null}

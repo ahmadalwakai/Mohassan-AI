@@ -283,6 +283,11 @@ export interface BrainState {
   adsReady?: boolean;
   adsAsked?: number;
   adsAccounts?: (import('./tools.js').AdsAccountChoice & { option: string })[] | null;
+  /** The own Ads model's facts while the brain waits for the owner's answers. Only code sets this. */
+  adsBrief?: import('./ads-model-chat.js').AdsBrief | null;
+  /** A complete checked campaign waiting for sign-in, then created PAUSED. Only code sets this. */
+  /** shown: the draft is already in the chat, so later messages do not repeat it. */
+  adsCampaign?: { lines: string; draft: string; shown?: boolean } | null;
   /** The campaign task's saved operation state: attempts, corrections and whether a write was sent. Only code sets this. */
   campaign?: import('./campaign-run.js').CampaignRunState;
   /** The option id of the owner's latest button answer; cleared once read. */

@@ -2,6 +2,7 @@
  * Builds pointer-v1: the same goal and site examples as mix-v1, with pointer prompts and answers.
  *   npx tsx scripts/ads-training/generate-pointer.ts [--v2]
  * --v3 is --v2 with goal-dataset-v3 (vocabulary services), written to pointer-v3.
+ * --v4 is --v3 with goal-dataset-v4 (extra train-only phrasings), written to pointer-v4.
  * --v2 reads goal-dataset-v2 (longer training services), numbers only usable site lines, and writes pointer-v2.
  * Reads artifacts/ads-training/goal-dataset/ and site-dataset/ (so results compare with mix-v1 on the
  * same sentences and sites). Writes artifacts/ads-training/pointer-v1/ (git-ignored). Calls no model.
@@ -19,9 +20,9 @@ import {
   renderGoalPointerPrompt, renderSitePointerPrompt, samePointerAds, siteToPointer,
 } from './pointer.js';
 
-const v3 = process.argv.includes('--v3'), v2 = v3 || process.argv.includes('--v2');
-const tag = v3 ? 'v3' : v2 ? 'v2' : 'v1';
-const GOALS = v3 ? 'artifacts/ads-training/goal-dataset-v3' : v2 ? 'artifacts/ads-training/goal-dataset-v2' : 'artifacts/ads-training/goal-dataset';
+const v4 = process.argv.includes('--v4'), v3 = v4 || process.argv.includes('--v3'), v2 = v3 || process.argv.includes('--v2');
+const tag = v4 ? 'v4' : v3 ? 'v3' : v2 ? 'v2' : 'v1';
+const GOALS = v4 ? 'artifacts/ads-training/goal-dataset-v4' : v3 ? 'artifacts/ads-training/goal-dataset-v3' : v2 ? 'artifacts/ads-training/goal-dataset-v2' : 'artifacts/ads-training/goal-dataset';
 const SITES = 'artifacts/ads-training/site-dataset', OUT = `artifacts/ads-training/pointer-${tag}`;
 const readRows = (file: string) => readFileSync(file, 'utf8').trim().split('\n').map(line => JSON.parse(line));
 type Row = Record<string, unknown>;
@@ -47,7 +48,13 @@ function siteRow(row: Row): Row | null {
 }
 
 const goals = (name: string) => readRows(join(GOALS, `${name}.jsonl`)).map(goalRow).filter(Boolean) as Row[];
-const sites = (name: string) => readRows(join(SITES, `${name}.jsonl`)).map(siteRow).filter(Boolean) as Row[];
+// v4 reuses pointer-v3's frozen site rows unchanged (site code changed after 2026-11-14 and no longer
+// regenerates them), so only the goal rows differ from v3.
+const V3 = 'artifacts/ads-training/pointer-v3';
+const v3Sites = (file: string) => readRows(join(V3, `${file}.jsonl`)).filter(row => row.capability === SITE_POINTER_CAPABILITY) as Row[];
+const sites = (name: string) => v4
+  ? (name === 'train' ? v3Sites('train').slice(0, v3Sites('train').length / 2) : v3Sites(name === 'test' ? 'site_test' : name))
+  : readRows(join(SITES, `${name}.jsonl`)).map(siteRow).filter(Boolean) as Row[];
 
 const files: Record<string, { rows: number; sha256: string }> = {};
 mkdirSync(OUT, { recursive: true });
@@ -66,7 +73,7 @@ for (const name of ['test', 'test_unseen_phrasing', 'gold']) write(`goal_${name}
 const lengths = (rows: Row[]) => rows.map(row => (row.prompt as string).length + (row.target as string).length);
 const siteLengths = lengths(siteTrain), targetChars = siteTrain.map(row => (row.target as string).length);
 const summary = {
-  version: v3 ? 'ads-pointer-v3' : v2 ? POINTER_DATASET_VERSION_V2 : POINTER_DATASET_VERSION, files, leftOut: skipped,
+  version: v4 ? 'ads-pointer-v4' : v3 ? 'ads-pointer-v3' : v2 ? POINTER_DATASET_VERSION_V2 : POINTER_DATASET_VERSION, files, leftOut: skipped,
   siteChars: { maxPromptPlusTarget: Math.max(...siteLengths), meanTarget: Math.round(targetChars.reduce((a, b) => a + b, 0) / targetChars.length) },
 };
 writeFileSync(join(OUT, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');

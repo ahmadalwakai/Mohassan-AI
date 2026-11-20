@@ -19,7 +19,7 @@ import { createCapabilities } from '@mohassan/runtime';
 import { createStudioControl } from './studio.js';
 import { StudioError } from '@mohassan/studio';
 import { registerBrowserRoutes } from './browser.js';
-import { AgentBrowser, BrowserError, SafeNetwork, SearchEngine, SqlSearchStore, LocalPublicIndex, migrateSearch, type BrowserConfig } from '@mohassan/browser';
+import { AgentBrowser, BrowserError, SafeNetwork, SearchEngine, SqlSearchStore, LocalPublicIndex, RobotsPolicy, migrateSearch, readableSource, type BrowserConfig } from '@mohassan/browser';
 import { registerSearchRoutes } from './search.js';
 import { registerBrowserFileRoutes } from './browser-files.js';
 import { registerMemoryRoutes } from './memory.js';
@@ -36,6 +36,11 @@ import { createBrowserTaskControl } from './browser-task.js';
 import { createCommandChatControl, registerCommandChatRoutes } from './command-chat.js';
 import { createInferenceControl, registerInferenceRoutes, type InferenceConfig } from './inference.js';
 import { createExecutorControl, executorConfigFromEnv, registerExecutorRoutes, type ExecutorConfig } from './executor.js';
+import { createAdsLab, createAdsModelWorker, registerAdsLabRoutes, type AdsLabConfig } from './ads-lab.js';
+import { createAdsModelChat } from './assistant/ads-model-chat.js';
+import type { Mind, MindDeps } from './assistant/mind/contract.js';
+import { createMind } from './assistant/mind/index.js';
+import { createChromeExtensionControl, registerChromeExtensionRoutes } from './chrome-extension.js';
 import { createGoogleAdsControl, googleAdsMigration, GoogleAdsError, type GoogleAdsConfig } from '@mohassan/google-ads';
 import { landingPageReader, registerGoogleAdsRoutes } from './google-ads.js';
 import { createSkillRuntime, skillGatewayTools } from './skill-runtime.js';
@@ -69,6 +74,12 @@ export interface AppConfig {
   learningLocalModel?:{model:string;baseUrl?:string};
   /** Owner-only local experiment with the scratch-trained execution model. Absent: off. */
   executor?:ExecutorConfig;
+  adsLab?:AdsLabConfig;
+  /** Tests only: a stand-in for the own Ads model's worker, so the chat path runs without Python. */
+  adsModelWorker?:Parameters<typeof createAdsModelChat>[0]['worker'];
+  /** An assembled evidence mind, used only in the local lab behind its flag. */
+  mind?: Mind;
+  mindEnabled?: boolean;
   /** Server-side fixture load only; never an API option or production setting. */
   testRequestLimit?:number;
   /** Chat requests a member may start in 24 hours. */
@@ -77,6 +88,17 @@ export interface AppConfig {
 export function secretEqual(a: string, b: string) {
   const left = Buffer.from(a), right = Buffer.from(b);
   return left.length === right.length && timingSafeEqual(left, right);
+}
+
+class RobotsSearchNetwork extends SafeNetwork {
+  constructor(network: SafeNetwork, private readonly robots: RobotsPolicy) {
+    super(network.policy);
+  }
+
+  override async request(url: string, options: Parameters<SafeNetwork['request']>[1] = {}) {
+    await this.robots.assertAllowed(url, options.signal);
+    return super.request(url, options);
+  }
 }
 export async function createApplication(config: AppConfig) {
   if (config.authSecret.length < 32 || config.internalSecret.length < 32) throw new Error('يلزم سر جلسة وسر خدمة بطول 32 حرفًا على الأقل.');
@@ -264,17 +286,62 @@ export async function createApplication(config: AppConfig) {
   const assistantTools=createAssistantTools({memory,coding,studio,studioChange:studioAi.available,runtime,windows,googleAds});
   const inference=await createInferenceControl(database.db,{...config.inference,groq:{apiKey:config.groqApiKey,fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b']},fetch:config.aiFetch});
   await registerInferenceRoutes(app,{control:inference,owner});
-  // Reasoning (Groq, when configured) and the local executor stay separate: the executor never
-  // calls a cloud model, and the assisted mode records each reasoning call it makes.
-  const executor=createExecutorControl({config:config.executor??executorConfigFromEnv({},process.cwd(),true),sandbox:coding.sandbox,
-    reasoning:{status:async()=>{const current=await ai.status();return {provider:'groq',configured:current.configured,available:current.configured&&current.status!=='error',verified:current.status==='verified',model:current.model,message:current.message};},
-      ...(ai.engine?{extract:(request:Parameters<typeof ai.generateSkill>[0])=>ai.generateSkill(request)}:{})}});
+  // The local executor uses only Mohassan's own model. No external AI provider is wired in:
+  // assisted mode stays off until reasoning runs locally (owner decision, 2026-11-12).
+  const executor=createExecutorControl({config:config.executor??executorConfigFromEnv({},process.cwd(),true),sandbox:coding.sandbox});
   await registerExecutorRoutes(app,{control:executor,owner});
   app.addHook('onClose',async()=>{executor.shutdown();});
+  // Mohassan's own Ads model: local worker + checker gate, owner-only, on only with the executor experiment.
+  const executorConfig=config.executor??executorConfigFromEnv({},process.cwd(),true);
+  const adsLab=createAdsLab(config.adsLab??{enabled:false,python:executorConfig.python,packageDir:executorConfig.packageDir,device:'cpu',startupTimeoutMs:120_000,requestTimeoutMs:90_000});
+  await registerAdsLabRoutes(app,{lab:adsLab,owner});
+  app.addHook('onClose',async()=>{adsLab.shutdown();});
+  // The same model's pointer fine-tune answers campaign sentences in the main chat (owner-only, lab only).
+  const adsChatWorker=config.adsLab?.enabled?createAdsModelWorker({...config.adsLab,finetune:config.adsLab.chatFinetune??'pointer-v3'}):null;
+  if(adsChatWorker)app.addHook('onClose',async()=>{adsChatWorker.stop();});
+  const adsWorker=adsChatWorker??config.adsModelWorker;
+  const adsModel=adsWorker?createAdsModelChat({worker:adsWorker,fetchPage:config.googleAds?.fetchPage??landingPageReader(config.browser)}):undefined;
   const agentBrowser=new AgentBrowser({profileDir:config.browserProfileDir??join(tmpdir(),`mohassan-browser-${randomUUID()}`),testOrigins:config.browser?.testOrigins,channel:config.browserChannel});
+  const chromeExtension=await createChromeExtensionControl(database.db);
+  registerChromeExtensionRoutes(app,{control:chromeExtension,owner});
   const adsSleep=config.googleAds?.sleep;
-  const chat=await createCommandChatControl(database.db,{...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
-    learningContext:learning.context,
+  const mind = config.mindEnabled === true && !config.production ? config.mind ?? createMind() : undefined;
+  const mindRobots = new RobotsPolicy(searchNetwork);
+  const mindSearch = mind && !config.browser?.searchProvider
+    ? new SearchEngine(new RobotsSearchNetwork(searchNetwork, mindRobots), { localIndex: searchIndex, admission: searchStore })
+    : searchProvider;
+  const mindMemory = assistantTools.memory;
+  const mindDeps = (ownerId: string): Omit<MindDeps, 'step'> => ({
+    search: (query, limit, signal) => mindSearch.search(query, limit, signal, { ownerId }),
+    async read(url, signal) {
+      await mindRobots.assertAllowed(url, signal);
+      const response = await searchNetwork.request(url, { signal });
+      const headers = { ...response.headers };
+      delete headers['set-cookie'];
+      const type = headers['content-type'] ?? '';
+      const isHtml = /^(?:text\/html|application\/xhtml\+xml)(?:[;\s]|$)/i.test(type);
+      const isText = /^(?:text\/|application\/(?:[a-z0-9.-]+\+)?xml(?:[;\s]|$))/i.test(type);
+      if (!isHtml && !isText) return { url: response.url, status: response.status, headers, html: '', text: '' };
+      const charset = /charset\s*=\s*["']?([^\s;"']+)/i.exec(type)?.[1] ?? 'utf-8';
+      const body = new TextDecoder(charset, { fatal: true }).decode(response.body);
+      const text = isHtml ? readableSource(body, response.url).text : body;
+      return { url: response.url, status: response.status, headers, html: isHtml ? body : '', text };
+    },
+    ...(mindMemory ? { async memory(query: string) {
+      const result = await mindMemory.search(ownerId, query);
+      return typeof result === 'string' ? [] : result.evidence;
+    } } : {}),
+    knowledge: async query => (await learning.knowledge.retrieve(ownerId, query)).map(({ title, text, source }) => ({ title, text, source })),
+    async siteSnapshot(url) {
+      const prior = await database.db.selectFrom('search_index_documents')
+        .select(['source_hash', 'fetched_at']).where('owner_id', '=', ownerId).where('url', '=', url)
+        .where('expires_at', '>', new Date()).orderBy('fetched_at', 'desc').executeTakeFirst();
+      return prior ? { sourceHash: prior.source_hash, fetchedAt: new Date(prior.fetched_at).toISOString() } : null;
+    },
+    now: () => new Date(),
+  });
+  const chat=await createCommandChatControl(database.db,{...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
+    learningContext:learning.context,chromeExtension,
     ...(config.skillEngineEnabled?{recordSkillGap,skillContext:skills.context,loadSkill:skills.loadInstruction,runSkill:async(ownerId,input,context)=>{
       context.signal.throwIfAborted();
       return runtime.createTask(ownerId,{title:'تشغيل مهارة من المحادثة',goal:context.goal.slice(0,4000),capabilityId:'skill.run',autonomy:'assisted',skillInput:input},context.idempotencyKey,context.runId);
@@ -334,5 +401,5 @@ export async function createApplication(config: AppConfig) {
   app.addHook('onClose', async () => {clearInterval(benchmarkMaintenance);try{await benchmarkMaintenanceRun;await Promise.all([skillBenchmarks.shutdown(),skillForge.shutdown()]);}finally{try{await chat.shutdown();}finally{try{await runtime.stop();}finally{try{await browser.shutdown();}finally{try{await studioLive.close();}finally{await database.close();}}}}}});
   if (config.runWorker) runtime.start();
   await app.ready();
-  return {app, routes, runtime, database, auth,ai,coding,studio,studioAi,studioLive,browser,browserTask,memory,skills,chat,skillExecution,skillBenchmarks,skillForge,googleAds,inference};
+  return {app, routes, runtime, database, auth,ai,coding,studio,studioAi,studioLive,browser,browserTask,memory,skills,chat,skillExecution,skillBenchmarks,skillForge,googleAds,inference,chromeExtension};
 }

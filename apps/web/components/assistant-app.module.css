@@ -177,12 +177,10 @@
 .stepsToggle svg { transition: transform .2s var(--ease); }
 .flipped { transform: rotate(180deg); }
 .stepList { overflow-wrap: anywhere; margin: 2px 12px 0 0; border-inline-start: 2px solid var(--line); color: var(--soft); font-size: 13.5px; list-style: none; display: flex; flex-direction: column; gap: 6px; padding: 2px 0; padding-inline-start: 14px; animation: rise .2s var(--ease); }
-.pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.3s ease-in-out infinite; }
+.activeStep { display: flex; align-items: center; gap: 8px; color: var(--accent); }
 .shimmer { animation: fade 1.8s ease-in-out infinite; }
-.spin { animation: spin .9s linear infinite; }
 @keyframes pulse { 50% { transform: scale(.65); opacity: .5; } }
 @keyframes fade { 50% { opacity: .55; } }
-@keyframes spin { to { transform: rotate(360deg); } }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
 @keyframes pop { from { opacity: 0; transform: scale(.96) translateY(-3px); } }
 @keyframes fadeIn { from { opacity: 0; } }
@@ -209,6 +207,7 @@
 .danger { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border: 0; border-radius: 10px; background: #b4382a; color: #fff; font-size: 14px; font-weight: 500; }
 .danger:hover:not(:disabled) { background: #982d21; }
 .problem { padding: 9px 12px; border-radius: 10px; background: var(--alert-soft); color: var(--alert); font-size: 14px; line-height: 1.7; }
+.problemActions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* Delete confirmation */
 .dialog {
@@ -247,6 +246,67 @@
 }
 .composer textarea:focus-visible { outline: 0; }
 .composer textarea::placeholder { color: var(--faint); }
+
+/* The brain's questions: a small panel in the input's place, one question at a time */
+.ask {
+  width: min(740px, 100%); margin: 0 auto; display: flex; flex-direction: column;
+  border: 1px solid var(--line); border-radius: 18px; background: var(--raised); box-shadow: var(--shadow-lg);
+  animation: rise .22s var(--ease); overflow: hidden;
+}
+.askHead { display: flex; align-items: center; gap: 10px; padding: 9px 10px 0 12px; }
+.askTabs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+.askTab {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 24px; padding: 0 7px;
+  border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--soft); font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.askTab:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.askTab svg { color: var(--accent); }
+.askTabOn, .askTabOn:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
+.askTabSend { padding: 0 10px; }
+.askTab:disabled { opacity: .5; }
+.askCount { margin-inline-start: auto; color: var(--faint); font-size: 12px; white-space: nowrap; }
+.askClose { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--soft); }
+.askClose:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.askBody { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px 2px; max-height: min(42dvh, 330px); overflow-y: auto; animation: fadeIn .16s ease; }
+.askPrompt { padding-inline: 2px; font-size: 14.5px; font-weight: 600; line-height: 1.6; color: var(--ink); }
+.askNote { margin-top: -4px; color: var(--soft); font-size: 12.5px; }
+.askOptions { display: flex; flex-direction: column; gap: 1px; }
+.askOption {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 34px; padding: 4px 8px;
+  border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--ink); font-size: 14px; text-align: start; cursor: pointer;
+}
+.askOption:hover:not(:disabled), .askOption:focus-visible { background: var(--hover); outline: 0; }
+.askOption:focus-visible { border-color: var(--faint); }
+.askOption kbd {
+  display: inline-flex; align-items: center; justify-content: center; flex: none; width: 20px; height: 20px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--page); color: var(--soft); font-family: inherit; font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.askOptionOn, .askOptionOn:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-soft); }
+.askOptionOn kbd { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+.askLabel { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.askLabel small { color: var(--soft); font-size: 12px; line-height: 1.5; }
+.askCheck { flex: none; color: var(--accent); }
+.askOther { cursor: text; }
+.askOther input { flex: 1; min-width: 0; padding: 3px 0; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 14.5px; }
+.askOther input::placeholder { color: var(--faint); }
+.askOther:focus-within { border-color: var(--faint); background: var(--page); }
+.askReview { display: flex; flex-direction: column; gap: 4px; list-style: none; }
+.askReview button {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 11px;
+  background: transparent; color: var(--ink); text-align: start;
+}
+.askReview button:hover:not(:disabled) { background: var(--hover); }
+.askReviewQ { color: var(--soft); font-size: 12.5px; }
+.askReviewA { font-size: 14.5px; font-weight: 500; overflow-wrap: anywhere; }
+.askFoot { display: flex; align-items: center; gap: 10px; padding: 6px 12px 10px 14px; }
+.askKeys { color: var(--faint); font-size: 12px; min-width: 0; }
+.askKeys kbd { padding: 0 5px; border: 1px solid var(--line); border-radius: 5px; background: var(--page); font-family: inherit; font-size: 11px; }
+.askActions { display: flex; gap: 6px; margin-inline-start: auto; }
+.askActions button { padding: 6px 13px; font-size: 13.5px; }
+@media (max-width: 760px) {
+  .askKeys { display: none; }
+  .askBody { max-height: 40dvh; }
+}
 .browserAccount { flex-basis: 100%; min-width: 0; padding: 0 6px; color: var(--muted); font-size: 12px; }
 .browserAccount summary { cursor: pointer; padding: 3px 0; overflow-wrap: anywhere; }
 .browserAccount label, .browserAccount small { display: block; margin: 6px 0; }
@@ -302,5 +362,12 @@
   .app:has(.browser) { flex-direction: column; }
   .browser { order: -1; width: 100%; max-height: 40dvh; border-inline-start: 0; border-bottom: 1px solid var(--line); }
   .browser:has([data-browser-files][open]) { max-height: 70dvh; }
+  /* The page image must stay visible: the bar, the files panel and the takeover box used to
+     squeeze it to a few pixels in a narrow window. While the owner has the controls (signing in
+     by hand) the panel takes most of the height so the whole page can be seen and clicked. */
+  .browser { overflow-y: auto; }
+  .viewport { min-height: min(24dvh, 220px); }
+  .browser:has(.viewportActive) { max-height: 78dvh; }
+  .viewportActive { min-height: min(52dvh, 460px); }
   .main { min-height: 0; }
 }

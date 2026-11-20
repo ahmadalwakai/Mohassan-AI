@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Brain, Check, Cpu, Database, LoaderCircle, Play, RefreshCw, ShieldAlert, ShieldCheck, Square, X } from "lucide-react";
 import styles from "./executor-workspace.module.css";
+import { AdsLabPanel } from "./ads-lab-panel";
 
 type Capability = "json.transform.v1:integers-to-strings" | "json.check.v1:inclusive-interval" | "typescript.implement.v1:null-safe-delta";
 type Checkpoint = {
@@ -220,6 +221,7 @@ export function ExecutorWorkspace({ offline }: { offline: boolean }) {
 
       {result ? <ResultView result={result} /> : null}
     </>}
+    <AdsLabPanel offline={offline} />
   </section>;
 }
 

@@ -43,7 +43,8 @@ export interface AssistantTools {
     status(ownerId: string): Promise<string>;
     report(ownerId: string): Promise<string>;
     draft(ownerId: string, text: string, request: string, idempotencyKey: string): Promise<string>;
-    createPaused?(ownerId:string,text:string,request:string,idempotencyKey:string,assertActive:()=>Promise<void>):Promise<string>;
+    /** `ownCommand`: the brain's own campaign path, where the owner's command and answers are the request. */
+    createPaused?(ownerId:string,text:string,request:string,idempotencyKey:string,assertActive:()=>Promise<void>,ownCommand?:boolean):Promise<string>;
     /** The stored connection state; no request goes to Google. */
     connection?(ownerId: string): Promise<{ state: string; account: string | null }>;
     /** Accounts that can hold campaigns, read from Google with the owner's grant. */
@@ -242,8 +243,8 @@ export function createAssistantTools({ memory, coding, studio, studioChange, run
         discard: async (ownerId, draftId, revision) => { await googleAds.discard(ownerId, draftId, revision); },
         lessons: { list: ownerId => googleAds.lessons.list(ownerId), record: (ownerId, entry) => googleAds.lessons.record(ownerId, entry) },
       },
-      createPaused:(ownerId,text,request,key,assertActive)=>guarded(async()=>{
-        if(!requestsPausedCampaign(request))throw new BrowserError('ADS_CREATION_NOT_REQUESTED','يلزم طلبك الصريح لإنشاء حملة في الحساب؛ المعاينة وحدها لا تجيز ذلك.',403);
+      createPaused:(ownerId,text,request,key,assertActive,ownCommand)=>guarded(async()=>{
+        if(!ownCommand&&!requestsPausedCampaign(request))throw new BrowserError('ADS_CREATION_NOT_REQUESTED','يلزم طلبك الصريح لإنشاء حملة في الحساب؛ المعاينة وحدها لا تجيز ذلك.',403);
         const draft=await googleAds.createPausedCampaign(ownerId,parseAdsDraft(text,request),key,{assertActive});
         return `Google Ads readback confirmed new campaign ${draft.campaignResourceName} in PAUSED state. Draft ${draft.id}. It is not running. Only the owner can approve launch separately. ${draft.verification?.checks.find(check=>check.id==='conversion_tracking')?.passed?'Conversion tracking verified.':'Conversion tracking must be verified before launch.'}`;
       }),

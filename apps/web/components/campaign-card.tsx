@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Badge, Spinner } from "@chakra-ui/react";
+import { Badge } from "@chakra-ui/react";
 import { AlertTriangle, Ban, Check, ChevronDown, CircleDashed, CircleHelp, ShieldCheck, X } from "lucide-react";
 import { reduceCampaignEvents, type CampaignEventStream, type CampaignProgress, type CampaignStepId, type CampaignStepStatus } from "@mohassan/contracts";
+import { AgentActivity } from "./agent-activity";
 import styles from "./campaign-card.module.css";
 
 const STEP_LABEL: Record<CampaignStepId, string> = {
@@ -19,7 +20,7 @@ const AUTHORITY = { local: "فحص محلي", google_ads_api: "من Google Ads" 
 const SCOPE = { local_text: "نص الإعلان", landing_page: "صفحة الهبوط", draft_integrity: "سلامة العمليات", account: "الحساب", conversion_tracking: "تتبع التحويلات", google_validate_only: "فحص Google دون إنشاء", readback: "قراءة الحساب بعد الإنشاء" } as const;
 
 function StepIcon({ status }: { status: CampaignStepStatus }) {
-  if (status === "running") return <Spinner size="xs" aria-hidden="true" />;
+  if (status === "running") return <AgentActivity variant="spinner" />;
   if (status === "passed" || status === "corrected") return <Check size={14} aria-hidden="true" />;
   if (status === "failed") return <X size={14} aria-hidden="true" />;
   if (status === "unknown") return <CircleHelp size={14} aria-hidden="true" />;
@@ -35,7 +36,7 @@ function StepIcon({ status }: { status: CampaignStepStatus }) {
 export function CampaignCard({ stream, running }: { stream: CampaignEventStream | null | undefined; running: boolean }) {
   const progress = useMemo(() => (stream?.events.length ? reduceCampaignEvents(stream.events) : null), [stream]);
   const [open, setOpen] = useState<string | null>(null);
-  if (!progress) return running ? <section className={styles.card} aria-label="تقدم الحملة"><p className={styles.muted}><Spinner size="xs" aria-hidden="true" /> بانتظار أول خطوة من الحملة…</p></section> : null;
+  if (!progress) return running ? <section className={styles.card} aria-label="تقدم الحملة"><p className={styles.muted}><AgentActivity /> بانتظار أول خطوة من الحملة…</p></section> : null;
   const outcome = OUTCOME[progress.status];
   const toggle = (key: string) => setOpen(current => (current === key ? null : key));
   return <section className={styles.card} aria-label="تقدم الحملة" aria-busy={progress.status === "running"}>

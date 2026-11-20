@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { FreeLLMAPIProvider, ProviderError, normalizeFreeLLMAPIBaseUrl } from './index.js';
+import { FreeLLMAPIProvider, ProviderError, freeLLMAPIError, normalizeFreeLLMAPIBaseUrl } from './index.js';
 
 const KEY = 'freellmapi-fixture-unified-key-0001';
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
@@ -144,5 +144,13 @@ describe('usage ledger', () => {
   it('parses the documented GET /v1/usage shape', async () => {
     const fetch = async (url: unknown) => { expect(String(url)).toBe('http://127.0.0.1:3001/v1/usage'); return json({ month: '2026-11', resetsAt: '2026-12-01T00:00:00.000Z', requests: 3, tokens: 900, byPlatform: [{ platform: 'groq', requests: 3, tokens: 900 }], byKey: [] }); };
     await expect(provider(fetch as typeof globalThis.fetch).usage()).resolves.toMatchObject({ month: '2026-11', requests: 3, tokens: 900, byPlatform: [{ platform: 'groq' }] });
+  });
+});
+
+describe('gateway without provider keys', () => {
+  it('names an empty gateway apart from a missing server setting', async () => {
+    expect(freeLLMAPIError(503, 'no_providers_configured', null)).toMatchObject({ code: 'GATEWAY_NO_PROVIDERS', retryable: false, httpStatus: 503 });
+    const fetch = vi.fn(async () => json({ error: { code: 'no_providers_configured', message: 'No provider keys' } }, 503));
+    await expect(provider(fetch as typeof globalThis.fetch).generate({ goal: 'hello' })).rejects.toMatchObject({ code: 'GATEWAY_NO_PROVIDERS' });
   });
 });

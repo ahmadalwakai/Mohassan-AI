@@ -3,9 +3,10 @@
  *
  * Reasoning and execution stay separate:
  *   - direct:   typed fields -> the local worker. No external model is called.
- *   - assisted: the configured reasoning provider (Groq) only turns the owner's text into
- *               typed fields; the local worker still produces the candidate. The external
- *               call is recorded and returned with the result.
+ *   - assisted: a reasoning provider only turns the owner's text into typed fields; the
+ *               local worker still produces the candidate. The app wires no provider here:
+ *               the owner allows no external AI API, so this mode stays off until the
+ *               reasoning is local. Any reasoning call would be recorded with the result.
  * The worker runs through ExperimentalUncontainedWorkerTransport, which has no OS
  * containment, so this path is owner-only, off in production and off unless
  * EXECUTOR_EXPERIMENT=uncontained-local. Generated TypeScript runs only in the
@@ -303,7 +304,7 @@ export function createExecutorControl(dependencies: ExecutorDependencies) {
   }
 
   async function reasoningStatus(): Promise<ReasoningStatus> {
-    if (!dependencies.reasoning) return { provider: 'none', configured: false, available: false, model: null, message: 'لا يوجد مزود تفكير مهيأ.' };
+    if (!dependencies.reasoning) return { provider: 'none', configured: false, available: false, model: null, message: 'لا يُستخدم أي مزود ذكاء اصطناعي خارجي. وضع المساعدة معطّل حتى يصبح التفكير محليًا.' };
     try { return await dependencies.reasoning.status(); }
     catch { return { provider: 'unknown', configured: true, available: false, model: null, message: 'تعذرت قراءة حالة مزود التفكير.' }; }
   }

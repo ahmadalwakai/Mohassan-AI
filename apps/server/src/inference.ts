@@ -23,6 +23,16 @@ export interface InferenceConfig {
   allowPaidFallback?: boolean;
   prices?: PriceTable;
   fetch?: typeof fetch;
+  /** Set when the owner has turned every external AI platform off; shown instead of setup hints. */
+  externalDisabled?: string;
+}
+
+export const EXTERNAL_AI_DISABLED_MESSAGE = 'أُوقفت كل منصات الذكاء الاصطناعي الخارجية بقرار المالك. موحسن يستخدم نموذجه الخاص فقط.';
+
+/** Drops every external AI credential and fallback, whatever the environment holds. */
+export function withoutExternalAI(config: InferenceConfig): InferenceConfig {
+  const { groq: _groq, prices: _prices, freellmapi, ...rest } = config;
+  return { ...rest, freellmapi: { ...freellmapi, enabled: false, apiKey: undefined }, automaticFallback: false, allowPaidFallback: false, externalDisabled: EXTERNAL_AI_DISABLED_MESSAGE };
 }
 
 export type InferenceTier = 'fast' | 'deep';
@@ -112,6 +122,7 @@ export async function createInferenceControl(db: Kysely<any>, config: InferenceC
   let discovery: Promise<FreeLLMAPIModel[]> | null = null;
   let health: AIProvidersStatus['freellmapi']['health'] = configured
     ? { status: 'unknown', checkedAt: null, code: null, message: 'لم يُفحص اتصال FreeLLMAPI بعد.', readyModels: null }
+    : config.externalDisabled ? { status: 'error', checkedAt: null, code: 'DISABLED_BY_OWNER', message: config.externalDisabled, readyModels: null }
     : { status: 'error', checkedAt: null, code: 'NOT_CONFIGURED', message: configError ?? 'أضف FREELLMAPI_API_KEY وFREELLMAPI_BASE_URL إلى ملف .env على الخادم.', readyModels: null };
   let gatewayUsage: { value: FreeLLMAPIUsage | null; at: number } | null = null;
 
