@@ -27,7 +27,11 @@ async function request<T>(path: string, body?: unknown, signal?: AbortSignal): P
 }
 
 /** The queue reports execution separately from the chat's preparation of campaign text. */
-export function ChromeExtensionPanel() {
+/**
+ * `relevant`: the open conversation is about Google Ads. Elsewhere the bar stays hidden unless a Chrome job is
+ * running or needs the owner, so a general chat is not crowded by a campaign tool.
+ */
+export function ChromeExtensionPanel({ relevant = true }: { relevant?: boolean } = {}) {
   const [status, setStatus] = useState<ChromeExtensionStatus | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -83,6 +87,8 @@ export function ChromeExtensionPanel() {
     && status.binding.clientId === job.clientId && status.binding.tabId === job.tabId
     && status.binding.customerId === job.customerId && status.binding.currency === job.currency);
   const connectionLabel = status ? status.connected ? "متصل" : chromeChosen ? "بانتظار الربط" : "غير متصل" : error ? "تعذر الاتصال" : "جارٍ التحقق";
+
+  if (!relevant && !(active || job?.status === "needs_attention")) return null;
 
   return <section className={styles.panel} aria-label="إضافة Chrome" onKeyDown={event => { if (event.key === "Escape") setExpanded(false); }}>
     <button type="button" className={styles.toggle} aria-expanded={expanded} aria-controls={contentId} onClick={() => setExpanded(value => !value)}>

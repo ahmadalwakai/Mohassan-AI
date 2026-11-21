@@ -18,6 +18,9 @@ import {
   SEARCH_REPEATED, SEARCH_UNUSABLE, asksToRemember, needsReview, noteAttempt, reviewRequest, searchKey, sensitiveAction, shouldAskForHelp, siteOf, situation, skillContextBudget, stepLabel, systemPrompt, type BrainState, type Decision, type ModelTier, type WorkTool,
 } from './assistant/brain.js';
 import { ADS_DRAFT_NOTE, ADS_SKILL_SLUG } from './assistant/ads-check.js';
+import { isFollowUp, parseHands, runHands, tidy, webQuestion, type HandsPlan } from './assistant/hands.js';
+import type { ShadowRouter } from './assistant/router.js';
+import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
 import { ADS_REWRITE_JSON_SCHEMA, ADS_REWRITE_SCHEMA_NAME, ADS_REWRITE_SYSTEM, buildRewritePrompt, type RewriteRequest } from '@mohassan/google-ads';
 import { appendCampaignEvent, campaignEventsMigration, closeOpenCampaignTasks, readCampaignEvents } from './assistant/campaign-events.js';
 import { TEXT_ONLY_PORTS, campaignCancelEvent, campaignEndEvent, campaignFailureEvent, campaignTaskId, checkCampaignDraft, createPausedCampaign, newCampaignRunState, type CampaignContext } from './assistant/campaign-run.js';
@@ -85,6 +88,8 @@ export interface CommandChatConfig {
   mindDeps?: (ownerId: string) => Omit<MindDeps, 'step'>;
   /** Uses the owner's ordinary Chrome tab; no API fallback after selecting Chrome. */
   chromeExtension?: Pick<ChromeExtensionControl, 'status' | 'queueCampaign'>;
+  /** Mohassan's own router model in shadow: logs its route next to the rules' route and changes nothing. */
+  shadowRouter?: ShadowRouter;
 }
 
 export interface ChatSkillContext {
@@ -1112,6 +1117,73 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           state.trail.push({ step: state.steps, action: `computer_click ${pending.label}`, result: `failed: ${clean(error.message)}`, changed: false });
         }
       }
+      // The browser's hands without a model: plain commands run on the observed page.
+      let handsPlan = state.hands ?? null;
+      const mindReady = Boolean(config.mind && config.mindDeps && fullReach());
+      // Only where no chat model exists: a model, once there, reads the page itself.
+      // Shadow router: one log line per new request; never awaited, never changes the route.
+      if (config.shadowRouter && !state.steps && !state.trail.length) {
+        const previousAsk = history.filter(entry => entry.role === 'user').at(-1)?.text ?? null;
+        config.shadowRouter.observe({ conversationId: id, text: request, previous: previousAsk, pendingQuestion: Boolean(conversation.question) });
+      }
+      if (!handsPlan && !state.steps && !state.trail.length && !providers.size && config.inference?.active() !== true) {
+        const steps = parseHands(request);
+        // A question that needs the web goes to the browser without the owner naming it, unless memory or the project list answers it.
+        const earlierAsks = history.filter(entry => entry.role === 'user').map(entry => entry.text).slice(-4);
+        const asked = !steps && !(tools?.memory && memoryRecallFormat(request)) && !projectInventoryFormat(request) ? webQuestion(request, earlierAsks) : null;
+        // A follow-up reaches the mind with the previous question's topic, as the browser search does.
+        const resolved = asked?.[0]?.kind === 'search' ? asked[0].query : null;
+        if (resolved && isFollowUp(tidy(request))) state.resolvedRequest = resolved;
+        const lookup = steps?.length === 1 && steps[0].kind === 'search' && !steps[0].site && !page ? steps : asked;
+        // The mind answers first from what it knows and its own sources; the visible browser is the fallback.
+        // Search by default is the last resort: the Ads model and the mind see the request first.
+        const adsFirst = Boolean(config.adsModel && fullReach());
+        if (lookup && (mindReady || (adsFirst && !steps))) state.webFallback = lookup;
+        else if (steps ?? asked) handsPlan = { steps: (steps ?? asked)!, next: 0 };
+      }
+      if (handsPlan) {
+        await runHandsPlan(handsPlan);
+        return;
+      }
+      async function runHandsPlan(plan: HandsPlan): Promise<void> {
+        state.hands = plan;
+        const outcome = await runHands(plan, {
+          page: async () => page ?? (await browser.hasPage(ownerId, id) ? (await browser.observe(ownerId, id)).page : null),
+          act: async action => { await active(); const result = await browser.act(ownerId, id, action, authority()); page = result.page; await keepPage(id, page); state.trail.push({ step: ++state.steps, action: `${action.kind} ${action.text ?? action.ref ?? ''}`.trim().slice(0, 300), result: `now at ${page.url}`, changed: result.changed }); return page; },
+          prepare: action => browser.prepareAction(ownerId, id, action),
+          settle: async next => { const settled = await instincts(ownerId, id, runId, state, next, signal, personalSignIn); if (settled) { page = settled; await keepPage(id, settled); } return settled; },
+          step: async label => { await active(); await addStep(id, runId, label); await setProgress(id, `${label}…`); },
+          approve: async (action, permit, label) => { await pauseBrowserAction(id, runId, state, { action, permit, label }); },
+          hold: async (held, label) => { await pauseHeld(id, runId, state, held, label); },
+        });
+        // Every pause path saves the run state, plan included, before it stops.
+        if (outcome.kind === 'paused') return;
+        state.hands = null;
+        await finish(id, runId, state, vault.scrub(id, outcome.text), outcome.status);
+      }
+      // Letters and emails without a model: one card of questions, then a fixed frame around the owner's words.
+      if (!providers.size && config.inference?.active() !== true) {
+        const writing = state.writer ?? (!state.steps && !state.trail.length ? writingTask(request) : null);
+        if (writing && 'unsupported' in writing) {
+          await finish(id, runId, state, unsupportedWriting(writing), 'blocked');
+          return;
+        }
+        if (writing) {
+          const answer = state.writer ? state.trail.findLast(entry => entry.action === 'asked the user')?.result.replace(/^user answered: /, '') : undefined;
+          if (!answer) {
+            state.writer = writing;
+            const card = writingQuestion(writing);
+            const question: ChatQuestion = { id: randomUUID(), prompt: card.prompt, options: [{ id: 'stop', label: writing.lang === 'ar' ? 'توقف هنا' : 'Stop here' }], fields: card.fields };
+            await addStep(id, runId, writing.lang === 'ar' ? 'أسئلة الرسالة' : 'Letter questions');
+            await pause(id, runId, state, 'waiting_user', { question: JSON.stringify(question) }, card.prompt);
+            return;
+          }
+          state.writer = null;
+          const letter = composeLetter(writing, answer);
+          await finish(id, runId, state, vault.scrub(id, letter.text), letter.complete ? 'completed' : 'partial');
+          return;
+        }
+      }
       const route = !state.steps ? directRoute(request) : null;
       if (route && !state.trail.length) {
         await addStep(id, runId, `فتح ${route.name}`);
@@ -1268,7 +1340,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           const fact = vault.scrub(id, clean(text));
           await storeMemory(ownerId, fact, fact);
         });
-        const reply = await config.mind.handle(request, { ...deps, step }, signal, resume);
+        const reply = await config.mind.handle(state.resolvedRequest ?? request, { ...deps, step }, signal, resume);
         await active();
         mindState.mindTimings = reply.timings;
         if (reply.status === 'waiting_user') {
@@ -1277,10 +1349,25 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           const question: ChatQuestion = { id: randomUUID(), prompt, options: [], ...(fields.success && fields.data ? { fields: fields.data } : {}) };
           mindState.mindFrame = reply.frame;
           await pause(id, runId, state, 'waiting_user', { question: JSON.stringify(question) }, prompt);
+        } else if (reply.status !== 'completed' && state.webFallback?.length) {
+          // No proven answer from the mind: search the web in the visible browser instead of stopping.
+          delete mindState.mindFrame;
+          const steps = state.webFallback;
+          state.webFallback = null;
+          state.trail.push({ step: ++state.steps, action: 'mind', result: `no proven answer (${reply.status}); browser search next`, changed: false });
+          await runHandsPlan({ steps, next: 0 });
         } else {
           delete mindState.mindFrame;
+          state.webFallback = null;
           await finish(id, runId, state, vault.scrub(id, clean(reply.text)), reply.status);
         }
+        return;
+      }
+      if (!providers.size && config.inference?.active() !== true && state.webFallback?.length) {
+        // Nothing before this claimed the request (not Ads, no mind): search the web instead of stopping.
+        const steps = state.webFallback;
+        state.webFallback = null;
+        await runHandsPlan({ steps, next: 0 });
         return;
       }
       if (!providers.size && config.inference?.active() !== true) throw new BrowserError('ASSISTANT_UNCONFIGURED', 'المحادثة بلا نموذج الآن: أُوقفت كل منصات الذكاء الاصطناعي الخارجية، ونموذج موحسن الخاص لم يتعلم المحادثة بعد إلا طلبات حملات الإعلانات بالإنجليزية. المنفّذ المحلي يعمل من «المنفّذ المحلي».', 409);

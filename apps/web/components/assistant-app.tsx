@@ -7,6 +7,8 @@ import { Markdown } from "./markdown";
 import { takeoverInput } from "./takeover-input";
 import { BrowserFilesPanel } from './browser-files-panel';
 import { CampaignCard } from "./campaign-card";
+
+const ADS_WORDS = /حمل[ةت]|حملات|إعلان|اعلان|google ads|campaign|\bads?\b|advertis|ppc/i;
 import { AgentActivity } from "./agent-activity";
 import { QuestionPanel, withoutQuestionList } from "./question-card";
 import { ChromeExtensionPanel } from "./chrome-extension-panel";
@@ -355,6 +357,9 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
   }
 
   const empty = !conversation || !conversation.messages.length;
+  // The Chrome bar belongs to Google Ads work: campaign events, or a campaign asked for in this conversation.
+  const adsConversation = Boolean(conversation?.campaign?.events.length
+    || conversation?.messages.some(message => message.role === "user" && ADS_WORDS.test(message.text)));
   const showBrowser = Boolean(conversation?.browser && browserOpen);
   const firstName = name.trim().split(/\s+/)[0];
   const form = <form className={styles.composer} onSubmit={send}>
@@ -413,7 +418,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
         {conversation?.browser && !browserOpen ? <button className={styles.showBrowser} onClick={() => setBrowserOpen(true)}><Globe size={15} />المتصفح</button> : null}
         {conversation ? <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="محادثة جديدة" onClick={startNew}><SquarePen size={18} /></button> : null}
       </header>
-      {onOpenTool ? <ChromeExtensionPanel /> : null}
+      {onOpenTool ? <ChromeExtensionPanel relevant={adsConversation} /> : null}
       {empty ? <div className={styles.welcome}>
         <span className={styles.welcomeMark} aria-hidden="true">م</span>
         <h1>كيف أساعدك اليوم، {firstName}؟</h1>

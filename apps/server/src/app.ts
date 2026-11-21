@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import rateLimit from '@fastify/rate-limit';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { tmpdir } from 'node:os';
+import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -40,6 +41,7 @@ import { createAdsLab, createAdsModelWorker, registerAdsLabRoutes, type AdsLabCo
 import { createAdsModelChat } from './assistant/ads-model-chat.js';
 import type { Mind, MindDeps } from './assistant/mind/contract.js';
 import { createMind } from './assistant/mind/index.js';
+import { createShadowRouter } from './assistant/router.js';
 import { createChromeExtensionControl, registerChromeExtensionRoutes } from './chrome-extension.js';
 import { createGoogleAdsControl, googleAdsMigration, GoogleAdsError, type GoogleAdsConfig } from '@mohassan/google-ads';
 import { landingPageReader, registerGoogleAdsRoutes } from './google-ads.js';
@@ -305,6 +307,10 @@ export async function createApplication(config: AppConfig) {
   const chromeExtension=await createChromeExtensionControl(database.db);
   registerChromeExtensionRoutes(app,{control:chromeExtension,owner});
   const adsSleep=config.googleAds?.sleep;
+  // The own router model runs in shadow outside production, only when its exported weights exist.
+  const routerDir = join(process.cwd(), 'artifacts', 'router');
+  const shadowRouter = !config.production && process.env.MOHASSAN_ROUTER_SHADOW !== '0' && !process.env.VITEST && existsSync(join(routerDir, 'router-b0.bin'))
+    ? createShadowRouter({ modelDir: routerDir, logFile: join(process.cwd(), '.data', 'router', 'shadow.jsonl') }) : undefined;
   const mind = config.mindEnabled === true && !config.production ? config.mind ?? createMind() : undefined;
   const mindRobots = new RobotsPolicy(searchNetwork);
   const mindSearch = mind && !config.browser?.searchProvider
@@ -340,7 +346,7 @@ export async function createApplication(config: AppConfig) {
     },
     now: () => new Date(),
   });
-  const chat=await createCommandChatControl(database.db,{...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
+  const chat=await createCommandChatControl(database.db,{...(shadowRouter?{shadowRouter}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
     learningContext:learning.context,chromeExtension,
     ...(config.skillEngineEnabled?{recordSkillGap,skillContext:skills.context,loadSkill:skills.loadInstruction,runSkill:async(ownerId,input,context)=>{
       context.signal.throwIfAborted();

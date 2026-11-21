@@ -12,6 +12,8 @@ export type PageSituation = 'captcha' | 'browser_refused' | 'device_prompt' | 'o
 const AUTH_PLACE = /sign.?in|log.?in|signin|login|\/auth|accounts?\.|identifier|authenticate|دخول/i;
 const SIGN_UP = /sign.?up|register|create (?:an? )?account|إنشاء حساب|حساب جديد/i;
 const REFUSED = /this browser or app may not be secure|couldn.?t sign you in|لم نتمكن من تسجيل دخولك|قد لا يكون هذا المتصفح/i;
+/** A human check drawn as a plain page rather than a known captcha frame, such as a search engine's bot check. */
+const HUMAN_CHECK = /bots use duckduckgo too|confirm this search was made by a human|our systems have detected unusual traffic|verify you are (?:a )?human|are you a robot|تأكد من أنك إنسان|تحقق من أنك إنسان/i;
 const DEVICE = /check your phone|approve (?:this )?sign.?in|tap yes|open (?:the )?.{0,20}app to (?:approve|verify)|تحقق من هاتفك|افتح تطبيق.{0,20}للموافقة/i;
 const COOKIE_TEXT = /cookie|consent|ملفات تعريف الارتباط|خصوصيتك/i;
 const COOKIE_REJECT = /^(?:reject|decline|deny|refuse)(?: all)?(?: cookies)?$|only (?:necessary|essential)|necessary only|رفض الكل|رفض|الضرورية فقط/i;
@@ -25,7 +27,7 @@ export function situation(page: AgentPage): PageSituation {
   const start = page.text.slice(0, 2500);
   const authPlace = AUTH_PLACE.test(`${page.url} ${page.title}`);
   const short = page.text.length < 2500;
-  if (page.signals.captcha) return 'captcha';
+  if (page.signals.captcha || HUMAN_CHECK.test(start)) return 'captcha';
   if (REFUSED.test(start)) return 'browser_refused';
   if (DEVICE.test(start)) return 'device_prompt';
   const usable = (field: AgentElement['field']) => page.elements.some((element) => element.field === field && !element.disabled);
@@ -72,6 +74,7 @@ const KNOWN_SITES: [RegExp, string, string][] = [
   [/instagram|انستقرام|انستغرام|إنستغرام/i, 'https://www.instagram.com/', 'Instagram'],
   [/linkedin|لينكد\s*ان/i, 'https://www.linkedin.com/', 'LinkedIn'],
   [/github|جيت\s*هب/i, 'https://github.com/', 'GitHub'],
+  [/wikipedia|ويكيبيديا|ويكبيديا/i, 'https://www.wikipedia.org/', 'Wikipedia'],
   [/vercel|فيرسل|فيرسال/i, 'https://vercel.com/dashboard', 'Vercel'],
   [/\bgoogle\b|جوجل|قوقل/i, 'https://www.google.com/', 'Google'],
 ];
@@ -80,6 +83,15 @@ const URL_IN_TEXT = /https?:\/\/[^\s،,]+|(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s،,
 const SHOW_PAGE_SCREENSHOT = /^(?:في المتصفح\s*)?[,،]?\s*(?:و\s*)?(?:اعرض|أظهر|أرني)\s+(?:لي\s+)?(?:لقطة(?: شاشة)?|صورة)\s+(?:من\s+|لـ?\s*)?(?:الصفحة|الموقع)(?:\s+بعد\s+(?:تحميلها|تحميله|فتحها|فتحه))?[.!؟?]*$/i;
 
 export interface DirectRoute { url: string; name: string; finishes: boolean; screenshot?: boolean }
+
+/** A site named in plain words or by address, without any verb around it. */
+export function namedSite(text: string): { url: string; name: string } | null {
+  const trimmed = text.replace(/^(?:موقع|site)\s+|\s+(?:موقع|site)$/gi, '').trim();
+  const url = URL_IN_TEXT.exec(trimmed)?.[0];
+  if (url && url === trimmed) return { url, name: url.replace(/^https?:\/\//, '').split('/')[0] };
+  const known = KNOWN_SITES.find(([pattern]) => pattern.test(trimmed));
+  return known && trimmed.replace(known[0], '').trim() === '' ? { url: known[1], name: known[2] } : null;
+}
 
 /** Opening a page and showing its capture are deterministic. */
 export function directRoute(request: string): DirectRoute | null {
@@ -290,6 +302,14 @@ export interface BrainState {
   adsCampaign?: { lines: string; draft: string; shown?: boolean } | null;
   /** The campaign task's saved operation state: attempts, corrections and whether a write was sent. Only code sets this. */
   campaign?: import('./campaign-run.js').CampaignRunState;
+  /** The model-free browser plan from the owner's words, kept across approvals and sign-in pauses. Only code sets this. */
+  hands?: import('./hands.js').HandsPlan | null;
+  /** A web lookup held while the mind answers first; the browser runs it only when the mind has no proven answer. */
+  webFallback?: import('./hands.js').HandsStep[] | null;
+  /** A follow-up question with the previous question's topic added; the mind answers this instead of the bare words. */
+  resolvedRequest?: string | null;
+  /** A letter waiting for the owner's answers to its one card of questions. Only code sets this. */
+  writer?: import('./writer.js').WritingTask | null;
   /** The option id of the owner's latest button answer; cleared once read. */
   lastChoice?: string | null;
   /** A Runtime task that exists but has not been approved, so it never ran. */
