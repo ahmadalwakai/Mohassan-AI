@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
-import { ArrowUp, Check, ChevronDown, ExternalLink, Globe, KeyRound, LogOut, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, Settings2, ShieldAlert, SquarePen, Square, Trash2, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, Copy, ExternalLink, Globe, KeyRound, LogOut, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, Settings2, ShieldAlert, SquarePen, Square, Trash2, X } from "lucide-react";
 import type { ChatConversation as Conversation, ChatConversationSummary as Summary, ChatSecureRequest } from "@mohassan/contracts";
-import { Markdown } from "./markdown";
+import { Markdown, plainText } from "./markdown";
 import { takeoverInput } from "./takeover-input";
 import { BrowserFilesPanel } from './browser-files-panel';
 import { CampaignCard } from "./campaign-card";
@@ -433,6 +433,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
           <div className={styles.column}>
             {conversation!.messages.map((message, index) => <article key={message.id} className={message.role === "user" ? styles.userTurn : styles.assistantTurn}>
               {message.role === "user" ? <p dir="auto">{message.text}</p> : <Markdown text={asking && index === conversation!.messages.length - 1 ? withoutQuestionList(message.text) : message.text} />}
+              {message.role === "assistant" && message.text.trim() ? <CopyButton text={message.text} /> : null}
               {index === conversation!.messages.length - 1 && message.role === "user" ? <Steps conversation={conversation!} /> : null}
             </article>)}
             {conversation!.messages.at(-1)?.role === "assistant" && (running || conversation!.steps.length > 0) && !answering && !blocked ? <Steps conversation={conversation!} /> : null}
@@ -466,4 +467,34 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
     <DeleteDialog target={deleting} busy={deleteBusy} error={deleteError} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} />
     {notice ? <div className={styles.toast} role="status"><Check size={15} />{notice}</div> : null}
   </div>;
+}
+
+/** Copies one reply as plain text, so it can be pasted anywhere without ** or > marks. */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    const value = plainText(text);
+    let done = false;
+    try { await navigator.clipboard.writeText(value); done = true; } catch { done = copyBySelection(value); }
+    setCopied(done);
+    if (done) setTimeout(() => setCopied(false), 1800);
+  }
+  return <button type="button" className={styles.copyReply} onClick={() => void copy()} aria-label="نسخ الرد" title="نسخ الرد">
+    {copied ? <Check size={14} /> : <Copy size={14} />}<span>{copied ? "تم النسخ" : "نسخ"}</span>
+  </button>;
+}
+
+/** For pages without the Clipboard API (plain http from a phone) or where it is blocked. */
+function copyBySelection(value: string): boolean {
+  const area = document.createElement("textarea");
+  area.value = value;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  let done = false;
+  try { done = document.execCommand("copy"); } catch { done = false; }
+  area.remove();
+  return done;
 }

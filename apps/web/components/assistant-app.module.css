@@ -160,7 +160,10 @@
 .reply ul { list-style: disc; }
 .reply ol { list-style: decimal; }
 .reply li::marker { color: var(--faint); }
-.reply a { color: var(--accent); text-underline-offset: 3px; }
+.reply a { color: var(--accent); text-underline-offset: 3px; overflow-wrap: anywhere; }
+.replyQuote { margin: 0; padding: 4px 14px; border-inline-start: 3px solid var(--accent); background: var(--user); border-radius: 10px; color: inherit; padding-block: 10px; display: flex; flex-direction: column; gap: 8px; }
+.copyReply { margin-top: 8px; display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--faint); font: inherit; font-size: .8rem; cursor: pointer; }
+.copyReply:hover, .copyReply:focus-visible { border-color: var(--line); color: inherit; }
 .reply code { padding: 1px 6px; border-radius: 6px; background: var(--user); font-size: .88em; }
 .reply pre { margin: 0; padding: 13px 15px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow-x: auto; line-height: 1.6; }
 .reply pre code { padding: 0; background: none; }

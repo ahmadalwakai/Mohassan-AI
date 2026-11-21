@@ -11,9 +11,28 @@ function inline(text: string): ReactNode[] {
     if (part.startsWith("`") && part.endsWith("`") && part.length > 2) return <code key={index}>{part.slice(1, -1)}</code>;
     const link = /^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/.exec(part);
     if (link) return <a key={index} href={link[2]} target="_blank" rel="noopener noreferrer">{link[1]}</a>;
-    if (/^https?:\/\//.test(part)) return <a key={index} href={part} target="_blank" rel="noopener noreferrer" dir="ltr">{part}</a>;
+    if (/^https?:\/\//.test(part)) return <a key={index} href={part} target="_blank" rel="noopener noreferrer" title={part}>{shortLink(part)}</a>;
     return part;
   });
+}
+
+/** A bare address as people can read it: the site and the decoded page name, never %D8%A7… */
+export function shortLink(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, "");
+    const last = parsed.pathname.split("/").filter(Boolean).pop();
+    if (!last) return host;
+    const name = decodeURIComponent(last).replace(/[_+]/g, " ").replace(/\.(html?|php|aspx?)$/i, "");
+    return `${host} › ${name.length > 40 ? `${name.slice(0, 39)}…` : name}`;
+  } catch { return url.length > 50 ? `${url.slice(0, 49)}…` : url; }
+}
+
+/** The reply as plain text for the clipboard: no ** or >, links as «title (address)». */
+export function plainText(text: string): string {
+  return text.split("\n").map(line => line.replace(/^\s*>\s?/, "")).join("\n")
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, title: string, url: string) => `${title} (${url})`)
+    .replace(/\*\*([^*\n]+)\*\*/g, "$1").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 export function Markdown({ text }: { text: string }) {
@@ -36,6 +55,13 @@ export function Markdown({ text }: { text: string }) {
       index++;
       continue;
     }
+    if (/^\s*>/.test(line)) {
+      const quoted: string[] = [];
+      while (index < lines.length && /^\s*>/.test(lines[index])) quoted.push(lines[index++].replace(/^\s*>\s?/, ""));
+      const parts = quoted.join("\n").split(/\n\s*\n/).map(part => part.trim()).filter(Boolean);
+      blocks.push(<blockquote key={blocks.length} className={styles.replyQuote}>{parts.map((part, position) => <p key={position} dir="auto">{inline(part)}</p>)}</blockquote>);
+      continue;
+    }
     const ordered = /^\s*\d+[.)]\s+/;
     const bullet = /^\s*[-*•]\s+/;
     if (ordered.test(line) || bullet.test(line)) {
@@ -48,7 +74,7 @@ export function Markdown({ text }: { text: string }) {
       continue;
     }
     const paragraph: string[] = [];
-    while (index < lines.length && lines[index].trim() && !lines[index].trimStart().startsWith("```") && !/^#{1,3}\s/.test(lines[index]) && !ordered.test(lines[index]) && !bullet.test(lines[index])) paragraph.push(lines[index++]);
+    while (index < lines.length && lines[index].trim() && !lines[index].trimStart().startsWith("```") && !/^#{1,3}\s/.test(lines[index]) && !ordered.test(lines[index]) && !bullet.test(lines[index]) && !/^\s*>/.test(lines[index])) paragraph.push(lines[index++]);
     blocks.push(<p key={blocks.length} dir="auto">{inline(paragraph.join("\n"))}</p>);
   }
   return <div className={styles.reply}>{blocks}</div>;

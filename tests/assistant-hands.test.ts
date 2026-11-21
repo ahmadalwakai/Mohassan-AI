@@ -254,9 +254,11 @@ describe('question answers from the web', () => {
     expect(log.filter(line => line.startsWith('open:'))).toEqual([`open:${searchUrl}`, 'open:https://gold.example/sa']);
     expect(outcome).toMatchObject({ kind: 'done', status: 'completed' });
     const text = outcome.kind === 'done' ? outcome.text : '';
-    expect(text).toContain('> سعر غرام الذهب عيار 21 اليوم 312 ريال سعودي للبيع.');
-    expect(text).toContain('المصدر: https://gold.example/sa');
+    expect(text.startsWith('سعر غرام الذهب عيار 21 اليوم 312 ريال سعودي للبيع.')).toBe(true);
+    expect(text).toContain('**المصدر:** [gold.example — Title of https://gold.example/sa](https://gold.example/sa)');
     expect(text).toContain('[أسعار الذهب اليوم مباشر](https://prices.example/gold)');
+    expect(text).not.toContain('%D8');
+    expect(text).not.toContain('اقرأ الصفحة');
     expect(text).not.toContain('تابعنا');
   });
 
@@ -308,6 +310,65 @@ describe('question answers from the web', () => {
     expect(after.kind === 'done' && after.text).toContain('وعاصمتها طوكيو');
   });
 
+  it('opens only the result whose title names the topic, and adds a doctor note to a health question', async () => {
+    const question = 'كم تستغرق عملية المياه البيضاء؟';
+    const steps = webQuestion(question)!;
+    const query = (steps.find(step => step.kind === 'search') as { query: string }).query;
+    const duck = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+    const wiki = WIKI_SEARCH(query);
+    expect(wiki).toBe(`https://ar.wikipedia.org/w/index.php?search=${encodeURIComponent('المياه البيضاء')}&fulltext=1&ns0=1`);
+    const water = 'https://ar.wikipedia.org/wiki/water', cataract = 'https://ar.wikipedia.org/wiki/cataract';
+    const results = pageOf(wiki, [
+      el('r1', 'link', 'إمداد المياه', { href: water }),
+      el('r2', 'link', 'المياه البيضاء', { href: cataract }),
+    ]);
+    const waterPage = pageOf(water, [], 'تستغرق عملية تنقية المياه في المحطة 6 ساعات قبل وصولها إلى البيوت البيضاء.\n');
+    const cataractPage = pageOf(cataract, [], 'تستغرق عملية إزالة المياه البيضاء عادة بين 15 و30 دقيقة تحت تخدير موضعي.\n');
+    const { io, log } = fakeIO({ [duck]: pageOf(duck, [], 'If this persists, please email us.'), [wiki]: results, [water]: waterPage, [cataract]: cataractPage }, null);
+    const outcome = await runHands({ steps, next: 0 }, io);
+    expect(log.filter(line => line.startsWith('open:'))).not.toContain(`open:${water}`);
+    const text = outcome.kind === 'done' ? outcome.text : '';
+    expect(text.startsWith('تستغرق عملية إزالة المياه البيضاء عادة بين 15 و30 دقيقة')).toBe(true);
+    expect(text).toContain('راجع طبيبًا مختصًا');
+  });
+
+  it('says so plainly when no result names the topic', async () => {
+    const steps = webQuestion('ما أعراض المياه البيضاء في العين؟')!;
+    const query = (steps.find(step => step.kind === 'search') as { query: string }).query;
+    const duck = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+    const wiki = WIKI_SEARCH(query);
+    const results = pageOf(wiki, [el('r1', 'link', 'طب العيون', { href: 'https://ar.wikipedia.org/wiki/eyes' })]);
+    const { io, log } = fakeIO({ [duck]: pageOf(duck, [], 'If this persists, please email us.'), [wiki]: results }, null);
+    const outcome = await runHands({ steps, next: 0 }, io);
+    expect(log.filter(line => line.startsWith('open:'))).toEqual([`open:${duck}`, `open:${wiki}`]);
+    expect(outcome).toMatchObject({ kind: 'done', status: 'partial' });
+    expect(outcome.kind === 'done' && outcome.text).toContain('لم أجد صفحة تجيب');
+  });
+
+  it('gives no answer to a how-long question from a page with no number', () => {
+    const text = 'عملية المياه البيضاء تزيل العدسة المعتمة وتضع عدسة صناعية مكانها.\n';
+    expect(relevantLines(pageOf('https://ar.wikipedia.org/wiki/x', [], text), 'كم تستغرق عملية المياه البيضاء؟', 3, true)).toEqual([]);
+    expect(relevantLines(pageOf('https://ar.wikipedia.org/wiki/x', [], text), 'ما هي عملية المياه البيضاء؟', 3, true)).toHaveLength(1);
+  });
+
+  it('searches the topic without its place part and skips reference lines', () => {
+    expect(WIKI_SEARCH('ما أعراض المياه البيضاء في العين؟')).toBe(`https://ar.wikipedia.org/w/index.php?search=${encodeURIComponent('المياه البيضاء')}&fulltext=1&ns0=1`);
+    const text = 'المياه البيضاء في العين قديمة جدا نسخة محفوظة 8 أبريل 2009 على موقع واي باك مشين.\nمن أعراض المياه البيضاء في العين تشوش الرؤية وصعوبة القراءة.\n';
+    expect(relevantLines(pageOf('https://ar.wikipedia.org/wiki/x', [], text), 'ما أعراض المياه البيضاء في العين؟', 3, true)).toEqual(['من أعراض المياه البيضاء في العين تشوش الرؤية وصعوبة القراءة.']);
+  });
+
+  it('drops the Wikipedia toolbar, redirect note and review banner when the tagline is missing', () => {
+    const text = 'الساد 92 لغة مقالة نقاش اقرأ عدّل تاريخ حفظ أدوات المظهر أخف النص صغير قياسي كبير اللون تلقائي فاتح داكن (بالتحويل من المياه البيضاء) هذه المقالة بحاجة لمراجعة خبير مختص في مجالها. يؤدي الساد إلى تعتم عدسة العين.';
+    expect(readableText(text).trim()).toBe('يؤدي الساد إلى تعتم عدسة العين.');
+  });
+
+  it('does not lead with an infobox run or with dates for a question that wants no number', () => {
+    const text = 'تلقائي فاتح داكن ليزك عملية جراحة ليزك باستعمال ليزر إكسيمر في مركز طبي معلومات عامة الاختصاص طب العيون وتصحيح البصر من أنواع التخثير بالليزر وإجراء طبي تعديل مصدري تعديل المدة دقائق و 11 ثواني وكلمات أخرى كثيرة من الجدول الجانبي للصفحة حتى يطول السطر جدا ويتجاوز الحد\n'
+      + 'الليزك هو عملية جراحية لتصحيح النظر تعيد تشكيل قرنية العين بالليزر.\n';
+    const lines = relevantLines(pageOf('https://ar.wikipedia.org/wiki/lasik', [], text), 'ما هي عملية الليزك؟', 3, true);
+    expect(lines[0]).toBe('الليزك هو عملية جراحية لتصحيح النظر تعيد تشكيل قرنية العين بالليزر.');
+  });
+
   it('does not answer a live question from Wikipedia when the engine refuses: it says so instead', async () => {
     for (const question of ['كم سعر الذهب اليوم؟', 'what is the weather in London today']) {
       const steps = webQuestion(question)!;
@@ -335,5 +396,14 @@ describe('question answers from the web', () => {
   it('quotes only sentences sharing the question words', () => {
     const page = pageOf('https://x.example/', [], 'Home News Sport\nThe price of gold rose to 2,400 dollars an ounce today.\nSubscribe to our newsletter for more updates now.\n');
     expect(relevantLines(page, 'what is the gold price today?')).toEqual(['The price of gold rose to 2,400 dollars an ounce today.']);
+  });
+
+  it('puts first the sentence with the question phrase and the newest year', () => {
+    const text = 'كان عدد اليهود في المغرب يصل إلى 265,000 نسمة عام 1948، إلا أنه انخفض حاليا إلى حوالي 5,500 نسمة من مجموع السكان.\n'
+      + 'وحسب إحصاء سنة 2014، يبلغ عدد سكان المغرب 33848242.\n'
+      + 'وحسب إحصاء سنة 2024، يبلغ عدد سكان المغرب ما يقارب 37 مليون نسمة بزيادة 8 في المائة مقارنة بنتائج إحصاء عام 2014.\n';
+    const lines = relevantLines(pageOf('https://ar.wikipedia.org/wiki/x', [], text), 'كم عدد سكان المغرب؟', 3, true);
+    expect(lines[0]).toContain('إحصاء سنة 2024');
+    expect(lines[1]).toContain('إحصاء سنة 2014');
   });
 });

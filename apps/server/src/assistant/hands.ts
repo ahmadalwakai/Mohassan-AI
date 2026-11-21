@@ -264,6 +264,33 @@ const ASK_WORDS = new Set(['كم', 'متي', 'وين', 'اين', 'من', 'ما',
   'what', "what's", 'whats', 'when', 'where', 'who', "who's", 'how', 'which', 'is', 'are', 'does', 'do', 'did', 'why', 'the', 'in', 'of', 'for', 'a',
   'اليوم', 'الان', 'الآن', 'حاليا', 'now', 'today', 'current', 'currently', 'latest', 'اخر', 'احدث']);
 
+/** Words that ask about a topic without naming it: «أعراض المياه البيضاء» is about «المياه البيضاء». Folded forms. */
+const FRAME_WORDS = new Set(['اعراض', 'علامات', 'اسباب', 'سبب', 'علاج', 'عمليه', 'عمليات', 'جراحه', 'تستغرق', 'يستغرق', 'مده', 'مدة', 'تعريف', 'معني', 'معنى',
+  'فوائد', 'اضرار', 'مخاطر', 'عدد', 'نسبه', 'طريقه', 'انواع', 'نوع', 'مراحل', 'تكلفه', 'هل', 'يمكن', 'بعد', 'قبل', 'خلال', 'مع', 'او', 'و',
+  'symptoms', 'signs', 'causes', 'cause', 'treatment', 'surgery', 'operation', 'long', 'take', 'takes', 'many', 'much', 'risks', 'types', 'definition', 'meaning', 'and', 'or', 'to', 'after', 'before']);
+
+/** The question's topic words, folded and without «ال», for matching page titles. */
+export function topicWords(question: string): string[] {
+  return [...new Set(fold(question).replace(/[؟?،,.!]/gu, ' ').split(/\s+/)
+    .filter(word => word.length >= 2 && !ASK_WORDS.has(word) && !FRAME_WORDS.has(word))
+    .map(word => word.length > 4 && word.startsWith('ال') ? word.slice(2) : word))];
+}
+
+/** How many topic words a page title holds. */
+export function titleScore(title: string, topic: string[]): number {
+  // «البيضا» and «البيضاء» are one word: a final hamza is often dropped.
+  const folded = fold(title).replace(/ء/gu, '');
+  return topic.filter(word => folded.includes(word.replace(/ء/gu, ''))).length;
+}
+
+/** Questions whose answer is a number: a count, a length of time, a price, a date. */
+const WANTS_NUMBER = /(?:^|\s)(?:كم|قديش|اديش|متى|متي)(?=\s|$)|\bhow (?:many|much|long|old|far|tall|big)\b|\bwhen\b/iu;
+
+/** Health questions get a plain reminder that a page is not a diagnosis. */
+const MEDICAL = /عين|عيون|العين|بصر|نظر|ليزك|ليزر|المياه البيضاء|المياه الزرقاء|جلوكوما|شبكية|قرنية|عملي[ةه]|جراح|أعراض|اعراض|علاج|مرض|دواء|أدوية|ادوية|طبيب|مستشفى|حمل|سكري|ضغط الدم|سرطان|\b(?:eye|eyes|vision|lasik|cataract|glaucoma|retina|surgery|symptoms?|treatment|disease|medicine|doctor)\b/iu;
+export const MEDICAL_NOTE = 'ملاحظة: هذه معلومات عامة منقولة من المصدر، وليست تشخيصًا. للتشخيص والعلاج راجع طبيبًا مختصًا.';
+export const isMedical = (question: string) => MEDICAL.test(question);
+
 /**
  * Page text arrives on one line (the browser folds all whitespace), so a site's menus, infobox cells and
  * footer templates glue onto real sentences. Cut what is known to be chrome before splitting:
@@ -272,29 +299,45 @@ const ASK_WORDS = new Set(['كم', 'متي', 'وين', 'اين', 'من', 'ما',
  */
 const WIKI_HEAD = /From Wikipedia, the free encyclopedia|من ويكيبيديا، الموسوعة الحرة/u;
 const WIKI_FOOT = /(?:Authority control databases|Authority control|Retrieved from "|This page was last edited|Categories:|ضبط استنادي|تصنيفات:|استرجع من «|آخر تعديل لهذه الصفحة)/u;
-const EDIT_MARK = /(?:عدل)+(?: المصدر)?|\[edit\]|\[عدل\]/gu;
+/** Reference-list lines: archive notes and broken-link marks are sources, not answers. */
+const CITATION = /نسخة محفوظة|وصلة مكسورة|واي باك مشين|Archived from|Retrieved \d|Wayback Machine|ISBN|doi:/iu;
+const WIKI_INFOBOX = /معلومات عامة|تعديل مصدري|Edit this at Wikidata|edit on Wikidata/u;
+const WIKI_APPEARANCE = /(?:تلقائي فاتح داكن|Automatic Light Dark)/u;
+/** Redirect notes and maintenance banners: about the article, never part of an answer. */
+const WIKI_BANNERS = /\((?:بالتحويل من|Redirected from)[^)]*\)|هذه المقالة (?:بحاجة|تحتاج|يتيمة|لا تحتوي|قد تحتوي)[^.]*\.|This article (?:needs|may|has multiple|relies)[^.]*\./gu;
+const EDIT_MARK =/(?:عدل)+(?: المصدر)?|\[edit\]|\[عدل\]/gu;
 /** Footer navigation boxes repeat «show/إظهار» toggles and portal links: never an answer. */
 const NAVBOX = /(?:إظهار|بوابة|\bshow\b|\bv t e\b)/giu;
 export function readableText(text: string): string {
   let body = text;
   const head = body.match(WIKI_HEAD);
   if (head?.index !== undefined && head.index < 4000) body = body.slice(head.index + head[0].length);
+  else {
+    // Without the tagline, the toolbar ends at the appearance menu («تلقائي فاتح داكن» / «Automatic Light Dark»).
+    const menu = body.match(WIKI_APPEARANCE);
+    if (menu?.index !== undefined && menu.index < 4000) body = body.slice(menu.index + menu[0].length);
+  }
+  body = body.replace(WIKI_BANNERS, ' ');
   const foot = body.search(WIKI_FOOT);
   if (foot > 0) body = body.slice(0, foot);
   return body.replace(EDIT_MARK, '. ');
 }
 
 /** The page's own sentences that share the question's words, best first by page order; quoted, never rewritten. */
-export function relevantLines(page: AgentPage, question: string, limit = 3): string[] {
+export function relevantLines(page: AgentPage, question: string, limit = 3, bestFirst = false): string[] {
   const words = queryWords(fold(question).replace(/[؟?]/gu, ' ').split(/\s+/).filter(word => word && !ASK_WORDS.has(word)).join(' '));
   if (!words.length) return [];
   const need = Math.min(2, words.length);
+  // The question's own words in a row («عدد سكان المغرب»): a sentence that holds the phrase is about the question itself.
+  const phraseWords = fold(question).replace(/[؟?]/gu, ' ').split(/\s+/).filter(word => word && !ASK_WORDS.has(word));
+  const phrase = phraseWords.length >= 2 ? phraseWords.join(' ') : '';
   // A price, a time or a score is a number: for such questions a sentence without one does not answer.
   const wantsNumber = LIVE.test(question);
+  const numberAnswer = wantsNumber || WANTS_NUMBER.test(question);
   const labels = [...new Set(page.elements.filter(element => ['link', 'button'].includes(element.role)).map(element => tidy(element.label).toLowerCase()).filter(label => label.length >= 2))]
     .sort((a, b) => b.length - a.length);
   const labelSet = new Set(labels.map(fold));
-  const scored: { line: string; score: number; at: number }[] = [];
+  const scored: { line: string; score: number; at: number; year: number; glued: boolean }[] = [];
   const seen = new Set<string>();
   // A sentence ends at . ! ? ؟ unless the dot sits inside a number (2.5, 1.3), or at a line break.
   for (const match of readableText(page.text).matchAll(/(?:[^.!?؟\n]|(?<=\d)\.(?=\d))+(?:[.!?؟]+|\n|$)/gu)) {
@@ -306,6 +349,8 @@ export function relevantLines(page: AgentPage, question: string, limit = 3): str
     const hasNumber = /[\d٠-٩]/u.test(line);
     if (count < (hasNumber ? 3 : 5) || line.length > 400 || seen.has(line) || (wantsNumber && !hasNumber)) continue;
     if ((line.match(NAVBOX) ?? []).length >= 2) continue;
+    // Infobox cells («معلومات عامة … تعديل مصدري - تعديل») read like a sentence once the toolbar is gone.
+    if (WIKI_INFOBOX.test(line) || CITATION.test(line)) continue;
     const folded = fold(line);
     // A run of the page's own menu labels is navigation, not an answer.
     const menuWords = labels.length ? folded.split(' ').filter(word => labelSet.has(word)).length : 0;
@@ -315,10 +360,14 @@ export function relevantLines(page: AgentPage, question: string, limit = 3): str
     seen.add(line);
     // A number in the sentence is often the answer itself: a price, a time, a score. A run past 40 words
     // is usually table cells glued to a sentence (an infobox), so it ranks below a plain sentence.
-    scored.push({ line, score: hits + (/\d/u.test(line) ? 1 : 0) - (glued ? 1 : 0), at: match.index ?? 0 });
+    // Among equals, the newest year wins: «إحصاء 2024» answers «كم عدد السكان» better than «إحصاء 2014».
+    const year = Math.max(0, ...[...line.matchAll(/(?<!\d)(1[89]\d\d|20\d\d)(?!\d)/g)].map(found => Number(found[1])));
+    scored.push({ line, score: hits + (numberAnswer && /\d/u.test(line) ? 1 : 0) - (glued ? 1 : 0) + (phrase && folded.includes(phrase) ? 2 : 0), at: match.index ?? 0, year, glued });
   }
-  return scored.sort((a, b) => b.score - a.score || a.at - b.at).slice(0, limit)
-    .sort((a, b) => a.at - b.at).map(item => item.line.length > 300 ? `${item.line.slice(0, 299)}…` : item.line);
+  // «كم تستغرق …» is answered by a number: sentences without one only look related.
+  if (numberAnswer && !scored.some(item => /[\d٠-٩]/u.test(item.line))) return [];
+  const best = scored.sort((a, b) => b.score - a.score || (numberAnswer ? b.year - a.year : 0) || a.at - b.at).slice(0, limit);
+  return (bestFirst ? best : best.sort((a, b) => a.at - b.at)).map(item => item.line.length > 300 ? `${item.line.slice(0, 299)}…` : item.line);
 }
 
 const SEARCHY = /search|بحث|ابحث|query|find|look for|keywords?/i;
@@ -517,7 +566,13 @@ const DUCK = (query: string) => `https://html.duckduckgo.com/html/?q=${encodeURI
 const WIKI_ASK_LEAD = /^(?:(?:ما|ماذا|من|متى|أين|اين|كم|كيف|هل|لماذا|ما هي|ما هو|what|who|when|where|which|how|why|is|are|was|were|the|of)\s+)+/iu;
 /** Wikipedia's own full-text search in the question's language: keyless and with no human check. */
 export const WIKI_SEARCH = (query: string) => {
-  const words = query.trim().replace(/[؟?]+$/u, '').replace(WIKI_ASK_LEAD, '').trim() || query.trim();
+  const asked = query.trim().replace(/[؟?]+$/u, '').replace(WIKI_ASK_LEAD, '').trim() || query.trim();
+  // «كم تستغرق عملية المياه البيضاء» searches «المياه البيضاء»: frame words pull in unrelated articles.
+  const kept = asked.split(/\s+/).filter(word => !FRAME_WORDS.has(fold(word)));
+  let words = kept.length && kept.some(word => !ASK_WORDS.has(fold(word))) ? kept.join(' ').replace(/^(?:في|عن|of|the)\s+|\s+(?:في|عن|of)$/giu, '') : asked;
+  // «المياه البيضاء في العين» searches «المياه البيضاء»: the place part pulls in «العين السخنة».
+  const head = words.split(/\s+(?:في|عند|لدى|in)\s+/iu)[0];
+  if (head !== words && head.split(/\s+/).length >= 2) words = head;
   return `https://${/[؀-ۿ]/u.test(query) ? 'ar' : 'en'}.wikipedia.org/w/index.php?search=${encodeURIComponent(words)}&fulltext=1&ns0=1`;
 };
 const SEARCH_TEMPLATES: [RegExp, (query: string) => string][] = [
@@ -552,6 +607,21 @@ export const noLiveSource = (query: string) => /[؀-ۿ]/u.test(query)
   : `“${query}” asks for something that changes, like a price, the weather or a score. Search engines refuse my hidden browser right now, and Wikipedia does not hold today's figures, so I won't give you an old number as the answer.\n\nIf you have a site you trust, say for example “open that site and search for ${query}” and I'll read the figure from it.`;
 
 const hostOf = (url: string) => URL.parse(url)?.hostname.replace(/^www\./, '') ?? url;
+
+/** A site as people call it: «ويكيبيديا», not «ar.wikipedia.org». */
+const SITE_NAMES: [RegExp, string][] = [
+  [/(^|\.)wikipedia\.org$/, 'ويكيبيديا'], [/(^|\.)bbc\.(com|co\.uk)$/, 'بي بي سي'], [/(^|\.)aljazeera\.(net|com)$/, 'الجزيرة'],
+  [/(^|\.)skynewsarabia\.com$/, 'سكاي نيوز عربية'], [/(^|\.)theguardian\.com$/, 'الغارديان'], [/(^|\.)gov\.uk$/, 'GOV.UK'],
+];
+export function siteName(url: string): string {
+  const host = hostOf(url);
+  return SITE_NAMES.find(([pattern]) => pattern.test(host))?.[1] ?? host;
+}
+
+/** A page title without the site's own suffix («… - ويكيبيديا») and without link brackets. */
+export function plainTitle(title: string): string {
+  return tidy(title).replace(/\s+[-–—|]\s+(ويكيبيديا|Wikipedia|BBC News عربي|BBC News|الجزيرة نت)$/iu, '').replace(/[[\]]/g, '').slice(0, 90) || title;
+}
 const NO_PAGE = 'لا توجد صفحة مفتوحة في هذه المحادثة. قل لي أي موقع أفتح أولًا، مثل «افتح bbc.com».';
 
 /** Runs the plan from `plan.next`. The caller persists `plan` in the run state before any pause. */
@@ -645,12 +715,17 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           // A question wants its answer, not a list: open the top results until one page answers in its own words.
           const results = resultLinks(page, 6, step.query);
           plan.results = results.map(item => ({ title: tidy(item.element.label).slice(0, 90).replace(/[[\]]/g, ''), url: item.url }));
-          for (const item of results.slice(0, 3)) {
+          // Open only the results whose titles name the question's topic best: «إمداد المياه» is not «المياه البيضاء».
+          const topic = topicWords(step.query);
+          const ranked = results.map((item, at) => ({ item, at, score: topic.length ? titleScore(item.element.label, topic) : 1 }));
+          const top = Math.max(0, ...ranked.map(entry => entry.score));
+          const fitting = top > 0 ? ranked.filter(entry => entry.score === top).sort((a, b) => a.at - b.at).map(entry => entry.item) : [];
+          for (const item of fitting.slice(0, 3)) {
             await io.step(`قراءة ${hostOf(item.url)}`);
             const opened = await go({ kind: 'open', text: item.url }, `فتح ${hostOf(item.url)}`);
             if (!opened) return { kind: 'paused' };
             page = opened;
-            const lines = relevantLines(page, step.query);
+            const lines = relevantLines(page, step.query, 3, true);
             if (lines.length) { plan.found = { url: page.url, title: tidy(page.title) || hostOf(page.url), lines }; break; }
           }
         }
@@ -734,13 +809,19 @@ export function describe(plan: HandsPlan, page: AgentPage): { text: string; stat
   const where = `**${tidy(page.title) || hostOf(page.url)}** (${hostOf(page.url)})`;
   let lead = `وصلت إلى ${where}:`;
   if (last.kind === 'search' && last.ask && plan.results) {
-    const list = (items: { title: string; url: string }[]) => items.map((item, index) => `${index + 1}. [${item.title}](${item.url}) — ${hostOf(item.url)}`).join('\n');
+    const list = (items: { title: string; url: string }[]) => items.map((item, index) => `${index + 1}. [${plainTitle(item.title)}](${item.url}) — ${siteName(item.url)}`).join('\n');
+    const note = isMedical(last.query) ? `\n\n${plan.found ? MEDICAL_NOTE : 'للتشخيص والعلاج راجع طبيبًا مختصًا.'}` : '';
     if (plan.found) {
-      const others = plan.results.filter(item => withoutHash(item.url) !== withoutHash(plan.found!.url)).slice(0, 4);
-      const quote = plan.found.lines.map(line => `> ${line}`).join('\n>\n');
-      return { status: 'completed', text: `بحثت في الإنترنت عن «${last.query}». هذا ما تقوله **${plan.found.title}** (${hostOf(plan.found.url)}) بنصّه:\n\n${quote}\n\nالمصدر: ${plan.found.url}${others.length ? `\n\nمصادر أخرى:\n${list(others)}` : ''}\n\nالصفحة مفتوحة في لوحة المتصفح؛ قل «اقرأ الصفحة» لأقرأ أكثر.` };
+      // Plain layout for anyone: the answer first, then the rest, then a short named source. Sentences stay as the page wrote them.
+      const others = plan.results.filter(item => withoutHash(item.url) !== withoutHash(plan.found!.url)).slice(0, 3);
+      const [first, ...rest] = plan.found.lines;
+      const more = rest.length ? `\n\n**تفاصيل أخرى من نفس المصدر:**\n${rest.map(line => `- ${line}`).join('\n')}` : '';
+      const source = `**المصدر:** [${siteName(plan.found.url)} — ${plainTitle(plan.found.title)}](${plan.found.url})`;
+      const also = others.length ? `\n\n**للمزيد:** ${others.map(item => `[${plainTitle(item.title)}](${item.url})`).join(' · ')}` : '';
+      return { status: 'completed', text: `${first}${more}\n\n${source}${also}${note}` };
     }
-    if (plan.results.length) return { status: 'partial', text: `بحثت في الإنترنت عن «${last.query}» وفتحت أول النتائج، لكن لم أجد فيها جملة تجيب مباشرة. النتائج:\n\n${list(plan.results)}\n\nقل «افتح النتيجة 2» مثلًا لأفتح واحدة.` };
+    if (plan.results.length) return { status: 'partial', text: `لم أجد صفحة تجيب مباشرة عن «${last.query}»، ولن أنقل لك جوابًا من صفحة لا تخص سؤالك. هذه الصفحات التي ظهرت في البحث:\n\n${list(plan.results)}\n\nاكتب «افتح النتيجة 2» مثلًا وأقرأها لك.${note}` };
+    return { status: 'partial', text: `لم أجد صفحة تجيب عن «${last.query}». جرّب سؤالًا أقصر يذكر الموضوع نفسه.${note}` };
   }
   if (last.kind === 'search') {
     const results = resultLinks(page, 8, queryOf(page.url) ?? last.query);
