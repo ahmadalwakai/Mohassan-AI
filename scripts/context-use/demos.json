@@ -1,0 +1,15 @@
+{
+  "note": "Worked examples shown before each test question in the few-shot run. Invented facts, not used in any test item.",
+  "en": [
+    {"passage": "Two brothers run the market stalls in Ferris Square. Leo sells fresh fish, and his brother Max sells vegetables. Their cousin Ruth sells flowers on Fridays.",
+     "question": "What does Max sell in Ferris Square?", "answer": "vegetables"},
+    {"passage": "The Tarn hiking club walked three paths last summer. The river path took two hours, the forest path took four hours, and the hill path took six hours.",
+     "question": "How long did the forest path take?", "answer": "four hours"}
+  ],
+  "ar": [
+    {"passage": "يدير أخوان بسطات السوق في ساحة الفرات. يبيع سامر السمك الطازج، ويبيع أخوه ماهر الخضار، وتبيع ابنة عمهما رنا الورود يوم الجمعة.",
+     "question": "ماذا يبيع ماهر في ساحة الفرات؟", "answer": "الخضار"},
+    {"passage": "سار نادي المشي في بلدة الجبل في ثلاثة دروب الصيف الماضي. استغرق درب النهر ساعتين، ودرب الغابة أربع ساعات، ودرب التل ست ساعات.",
+     "question": "كم استغرق درب الغابة؟", "answer": "أربع ساعات"}
+  ]
+}
