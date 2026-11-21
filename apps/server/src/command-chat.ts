@@ -21,6 +21,8 @@ import { ADS_DRAFT_NOTE, ADS_SKILL_SLUG } from './assistant/ads-check.js';
 import { isFollowUp, parseHands, runHands, tidy, webQuestion, type HandsPlan } from './assistant/hands.js';
 import type { ShadowRouter } from './assistant/router.js';
 import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
+import { composePlan, planningQuestion, planningTask } from './assistant/planner.js';
+import { calculate, calculationReply } from './assistant/calculator.js';
 import { ADS_REWRITE_JSON_SCHEMA, ADS_REWRITE_SCHEMA_NAME, ADS_REWRITE_SYSTEM, buildRewritePrompt, type RewriteRequest } from '@mohassan/google-ads';
 import { appendCampaignEvent, campaignEventsMigration, closeOpenCampaignTasks, readCampaignEvents } from './assistant/campaign-events.js';
 import { TEXT_ONLY_PORTS, campaignCancelEvent, campaignEndEvent, campaignFailureEvent, campaignTaskId, checkCampaignDraft, createPausedCampaign, newCampaignRunState, type CampaignContext } from './assistant/campaign-run.js';
@@ -1163,6 +1165,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       // Letters and emails without a model: one card of questions, then a fixed frame around the owner's words.
       if (!providers.size && config.inference?.active() !== true) {
+        // A plain sum is computed, not searched or refused: the reply shows the expression it read.
+        const sum = !state.writer && !state.planner && !state.steps && !state.trail.length ? calculate(request) : null;
+        if (sum) {
+          await addStep(id, runId, sum.lang === 'ar' ? 'حساب' : 'Calculation');
+          await finish(id, runId, state, calculationReply(sum), 'completed');
+          return;
+        }
         const writing = state.writer ?? (!state.steps && !state.trail.length ? writingTask(request) : null);
         if (writing && 'unsupported' in writing) {
           await finish(id, runId, state, unsupportedWriting(writing), 'blocked');
@@ -1181,6 +1190,23 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           state.writer = null;
           const letter = composeLetter(writing, answer);
           await finish(id, runId, state, vault.scrub(id, letter.text), letter.complete ? 'completed' : 'partial');
+          return;
+        }
+        // A week plan without a model: one card of questions, then the owner's tasks spread over the days.
+        const planning = state.planner ?? (!state.writer && !state.steps && !state.trail.length ? planningTask(request) : null);
+        if (planning) {
+          const answer = state.planner ? state.trail.findLast(entry => entry.action === 'asked the user')?.result.replace(/^user answered: /, '') : undefined;
+          if (!answer) {
+            state.planner = planning;
+            const card = planningQuestion(planning);
+            const question: ChatQuestion = { id: randomUUID(), prompt: card.prompt, options: [{ id: 'stop', label: planning.lang === 'ar' ? 'توقف هنا' : 'Stop here' }], fields: card.fields };
+            await addStep(id, runId, planning.lang === 'ar' ? 'أسئلة الخطة' : 'Plan questions');
+            await pause(id, runId, state, 'waiting_user', { question: JSON.stringify(question) }, card.prompt);
+            return;
+          }
+          state.planner = null;
+          const plan = composePlan(planning, answer);
+          await finish(id, runId, state, vault.scrub(id, plan.text), plan.complete ? 'completed' : 'partial');
           return;
         }
       }

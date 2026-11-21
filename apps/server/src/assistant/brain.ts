@@ -310,6 +310,7 @@ export interface BrainState {
   resolvedRequest?: string | null;
   /** A letter waiting for the owner's answers to its one card of questions. Only code sets this. */
   writer?: import('./writer.js').WritingTask | null;
+  planner?: import('./planner.js').PlanningTask | null;
   /** The option id of the owner's latest button answer; cleared once read. */
   lastChoice?: string | null;
   /** A Runtime task that exists but has not been approved, so it never ran. */

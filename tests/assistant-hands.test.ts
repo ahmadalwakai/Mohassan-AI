@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentAction, AgentElement, AgentPage } from '@mohassan/browser';
-import { describe as describeReply, excerpt, headlines, findSearchBox, findTarget, ordinalOf, parseHands, realUrl, relevantLines, resultLinks, runHands, webQuestion, WIKI_SEARCH, type HandsIO, type HandsPlan } from '../apps/server/src/assistant/hands.js';
+import { describe as describeReply, excerpt, headlines, findSearchBox, findTarget, ordinalOf, parseHands, realUrl, relevantLines, resultLinks, runHands, readableText, webQuestion, WIKI_SEARCH, type HandsIO, type HandsPlan } from '../apps/server/src/assistant/hands.js';
 
 const el = (ref: string, role: string, label: string, extra: Partial<AgentElement> = {}): AgentElement => ({ ref, role, label, inViewport: true, ...extra });
 const pageOf = (url: string, elements: AgentElement[], text = ''): AgentPage => ({
@@ -306,6 +306,30 @@ describe('question answers from the web', () => {
     const after = await runHands({ steps: webQuestion('ما عاصمة اليابان؟')!, next: 0 }, second.io);
     expect(second.log.filter(line => line.startsWith('open:'))).toEqual([`open:${duck}`, `open:${wiki}`, `open:${article.url}`]);
     expect(after.kind === 'done' && after.text).toContain('وعاصمتها طوكيو');
+  });
+
+  it('does not answer a live question from Wikipedia when the engine refuses: it says so instead', async () => {
+    for (const question of ['كم سعر الذهب اليوم؟', 'what is the weather in London today']) {
+      const steps = webQuestion(question)!;
+      const query = (steps.find(step => step.kind === 'search') as { query: string }).query;
+      const duck = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+      const { io, log } = fakeIO({ [duck]: pageOf(duck, [], 'If this persists, please email us.') }, null);
+      const outcome = await runHands({ steps, next: 0 }, io);
+      expect(log.filter(line => line.startsWith('open:'))).toEqual([`open:${duck}`]);
+      expect(outcome).toMatchObject({ kind: 'done', status: 'blocked' });
+      expect(outcome.kind === 'done' && outcome.text).toMatch(/لن أعطيك رقمًا قديمًا|won't give you an old number/);
+    }
+  });
+
+  it('skips Wikipedia menus, footers, navigation boxes and infobox runs when quoting', () => {
+    const text = 'Speed of light 136 languages Article Talk Read View source View history Tools From Wikipedia, the free encyclopedia '
+      + 'Exact value metres per second 299792458 Approximate values kilometres per hour 1080000000 miles per second 186000 one light-year 1.0 year one parsec 3.26 years from the nearest star to Sun 4.2 years across the Milky Way 87400 years from the Andromeda Galaxy to Earth 2.5 million years The speed of light is the speed of electromagnetic waves. '
+      + 'The speed of light in vacuum is a universal physical constant exactly equal to 299792458 metres per second. '
+      + 'Physicsعدلعدل المصدر Light speed matters in physics. show v t e Speed of light portal show Light articles. Categories: Speed of light Fundamental constants';
+    const lines = relevantLines(pageOf('https://en.wikipedia.org/wiki/Speed_of_light', [], text), 'What is the speed of light?');
+    expect(lines).toContain('The speed of light in vacuum is a universal physical constant exactly equal to 299792458 metres per second.');
+    expect(lines.join(' ')).not.toMatch(/languages Article Talk|Categories:|portal|^5 million/);
+    expect(readableText('ب من ويكيبيديا، الموسوعة الحرة تعد العاصمة طوكيو. تصنيفات: دول')).toBe(' تعد العاصمة طوكيو. ');
   });
 
   it('quotes only sentences sharing the question words', () => {

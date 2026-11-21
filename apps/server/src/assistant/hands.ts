@@ -187,9 +187,13 @@ const WRITER = /^(?:ترجم|اكتب|أكتب|إكتب|صغ|صيغ|اعد صي�
 const CHAT = /^(?:هلا|مرحبا|السلام|اهلا|أهلا|صباح|مساء|كيف حالك|كيفك|شلونك|شكرا|hi|hello|hey|how are you|thanks|thank you)(?=\s|$|[؟?!.,،])|^(?:تمام|اوك[يه]?|ok(?:ay)?|نعم|لا|ايوه|إيوه|اي|طيب|حسنا|حسنًا|ممتاز|رائع|جميل|good|great|nice|yes|no|cool)$|(?:^|\s)(?:انت|أنت|اسمك|تستطيع|تقدر)(?=\s|$|[؟?])|\b(?:you|your)\b/iu;
 
 /** Why a request is not a web search, or null when it is one. */
-export function notWebReason(text: string): 'memory_ads_pc' | 'reminder' | 'arithmetic' | 'writing' | 'chat' | 'address' | 'empty' | null {
+/** Planning a week or a day: the owner's own tasks, laid out by planner.ts, never a web search. */
+export const PLANNING = /(?:^|\s)(?:خط[طّ]|نظ[مّ]|رت[بّ])(?:لي|\s+لي)?\s+(?:ل?[اأ]سبوع|ل?يوم|وقت|مهام|جدول)|(?:التخطيط|خط[ةه]|جدول|تنظيم|ترتيب)\s+(?:ل|لـ)?(?:[اأ]سبوع|يوم|وقت|مهام)|\bplan (?:out )?(?:my|the|a) (?:week|day|schedule|tasks)\b|\b(?:weekly|daily) (?:plan|schedule|planner)\b|\b(?:schedule|organi[sz]e) my (?:week|day|tasks)\b/iu;
+
+export function notWebReason(text: string): 'memory_ads_pc' | 'reminder' | 'arithmetic' | 'planning' | 'writing' | 'chat' | 'address' | 'empty' | null {
   if (!text || text.length > 200) return 'empty';
   if (REMIND.test(text)) return 'reminder';
+  if (PLANNING.test(text)) return 'planning';
   if (NOT_WEB.test(text)) return 'memory_ads_pc';
   if (ARITHMETIC.test(text)) return 'arithmetic';
   if (WRITER.test(text)) return 'writing';
@@ -260,6 +264,26 @@ const ASK_WORDS = new Set(['كم', 'متي', 'وين', 'اين', 'من', 'ما',
   'what', "what's", 'whats', 'when', 'where', 'who', "who's", 'how', 'which', 'is', 'are', 'does', 'do', 'did', 'why', 'the', 'in', 'of', 'for', 'a',
   'اليوم', 'الان', 'الآن', 'حاليا', 'now', 'today', 'current', 'currently', 'latest', 'اخر', 'احدث']);
 
+/**
+ * Page text arrives on one line (the browser folds all whitespace), so a site's menus, infobox cells and
+ * footer templates glue onto real sentences. Cut what is known to be chrome before splitting:
+ * Wikipedia's header (up to «From Wikipedia…»), its footer (navigation templates, authority control,
+ * categories), and «edit» links, which mark section headings and so become sentence breaks.
+ */
+const WIKI_HEAD = /From Wikipedia, the free encyclopedia|من ويكيبيديا، الموسوعة الحرة/u;
+const WIKI_FOOT = /(?:Authority control databases|Authority control|Retrieved from "|This page was last edited|Categories:|ضبط استنادي|تصنيفات:|استرجع من «|آخر تعديل لهذه الصفحة)/u;
+const EDIT_MARK = /(?:عدل)+(?: المصدر)?|\[edit\]|\[عدل\]/gu;
+/** Footer navigation boxes repeat «show/إظهار» toggles and portal links: never an answer. */
+const NAVBOX = /(?:إظهار|بوابة|\bshow\b|\bv t e\b)/giu;
+export function readableText(text: string): string {
+  let body = text;
+  const head = body.match(WIKI_HEAD);
+  if (head?.index !== undefined && head.index < 4000) body = body.slice(head.index + head[0].length);
+  const foot = body.search(WIKI_FOOT);
+  if (foot > 0) body = body.slice(0, foot);
+  return body.replace(EDIT_MARK, '. ');
+}
+
 /** The page's own sentences that share the question's words, best first by page order; quoted, never rewritten. */
 export function relevantLines(page: AgentPage, question: string, limit = 3): string[] {
   const words = queryWords(fold(question).replace(/[؟?]/gu, ' ').split(/\s+/).filter(word => word && !ASK_WORDS.has(word)).join(' '));
@@ -272,11 +296,16 @@ export function relevantLines(page: AgentPage, question: string, limit = 3): str
   const labelSet = new Set(labels.map(fold));
   const scored: { line: string; score: number; at: number }[] = [];
   const seen = new Set<string>();
-  for (const match of page.text.matchAll(/[^.!?؟\n]+(?:[.!?؟]+|\n|$)/gu)) {
-    const line = withoutChrome(match[0].replace(/\[\d+\]/g, '').replace(/\s+/g, ' ').trim(), labels);
-    const count = line.split(' ').length;
+  // A sentence ends at . ! ? ؟ unless the dot sits inside a number (2.5, 1.3), or at a line break.
+  for (const match of readableText(page.text).matchAll(/(?:[^.!?؟\n]|(?<=\d)\.(?=\d))+(?:[.!?؟]+|\n|$)/gu)) {
+    let line = withoutChrome(match[0].replace(/\[(?:\d+|Note \d+|ملحوظة \d+|ْ? ?\d+)\]/gu, '').replace(/\s+/g, ' ').trim(), labels);
+    // An infobox glued before an article's first sentence: the sentence is the tail of the run.
+    const glued = line.split(' ').length > 40 || line.length > 400;
+    if (glued) line = `… ${line.split(' ').slice(-40).join(' ')}`.slice(0, 400);
+    const count = glued ? 40 : line.split(' ').length;
     const hasNumber = /[\d٠-٩]/u.test(line);
     if (count < (hasNumber ? 3 : 5) || line.length > 400 || seen.has(line) || (wantsNumber && !hasNumber)) continue;
+    if ((line.match(NAVBOX) ?? []).length >= 2) continue;
     const folded = fold(line);
     // A run of the page's own menu labels is navigation, not an answer.
     const menuWords = labels.length ? folded.split(' ').filter(word => labelSet.has(word)).length : 0;
@@ -284,8 +313,9 @@ export function relevantLines(page: AgentPage, question: string, limit = 3): str
     const hits = words.filter(word => folded.includes(word)).length;
     if (hits < need) continue;
     seen.add(line);
-    // A number in the sentence is often the answer itself: a price, a time, a score.
-    scored.push({ line, score: hits + (/\d/u.test(line) ? 1 : 0), at: match.index ?? 0 });
+    // A number in the sentence is often the answer itself: a price, a time, a score. A run past 40 words
+    // is usually table cells glued to a sentence (an infobox), so it ranks below a plain sentence.
+    scored.push({ line, score: hits + (/\d/u.test(line) ? 1 : 0) - (glued ? 1 : 0), at: match.index ?? 0 });
   }
   return scored.sort((a, b) => b.score - a.score || a.at - b.at).slice(0, limit)
     .sort((a, b) => a.at - b.at).map(item => item.line.length > 300 ? `${item.line.slice(0, 299)}…` : item.line);
@@ -516,6 +546,11 @@ export interface HandsIO {
 
 export type HandsOutcome = { kind: 'paused' } | { kind: 'done'; text: string; status: 'completed' | 'partial' | 'blocked' };
 
+/** Said instead of an old figure: the question needs today's value and no live source answered. */
+export const noLiveSource = (query: string) => /[؀-ۿ]/u.test(query)
+  ? `«${query}» سؤال عن معلومة تتغير، مثل سعر أو طقس أو نتيجة. محركات البحث ترفض متصفحي الخفي الآن، وويكيبيديا لا تحمل أرقام اليوم، فلن أعطيك رقمًا قديمًا على أنه الجواب.\n\nإن كان عندك موقع تثق به فقل مثلًا «افتح الموقع وابحث عن ${query}» وسأقرأ الرقم منه.`
+  : `“${query}” asks for something that changes, like a price, the weather or a score. Search engines refuse my hidden browser right now, and Wikipedia does not hold today's figures, so I won't give you an old number as the answer.\n\nIf you have a site you trust, say for example “open that site and search for ${query}” and I'll read the figure from it.`;
+
 const hostOf = (url: string) => URL.parse(url)?.hostname.replace(/^www\./, '') ?? url;
 const NO_PAGE = 'لا توجد صفحة مفتوحة في هذه المحادثة. قل لي أي موقع أفتح أولًا، مثل «افتح bbc.com».';
 
@@ -546,7 +581,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
    * so either case sends the search to Wikipedia instead of pausing. A page with results goes through
    * `settle` as before.
    */
-  const engine = async (query: string): Promise<AgentPage | null> => {
+  const engine = async (query: string): Promise<AgentPage | null | 'no_live'> => {
     const label = `البحث عن ${query}`;
     let first: AgentPage;
     try { first = await io.act({ kind: 'open', text: DUCK(query) }); }
@@ -560,6 +595,8 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
       for (let look = 0; look < 2 && !resultLinks(first, 1, query).length; look++) first = await io.act({ kind: 'wait', text: '2000' });
       if (resultLinks(first, 1, query).length) return io.settle(first);
     }
+    // A price, the weather or a score changes: an encyclopedia holds old figures, so no fallback.
+    if (LIVE.test(query)) return 'no_live';
     await io.step(`${checked ? `طلب ${hostOf(first.url)} تحققًا بشريًا` : `لم يعرض ${hostOf(first.url)} نتائج`}؛ البحث في ويكيبيديا بدلًا منه`);
     return go({ kind: 'open', text: WIKI_SEARCH(query) }, label);
   };
@@ -588,7 +625,11 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         if (!template && !box && step.here) return { kind: 'done', status: 'partial', text: page ? `لم أجد خانة بحث في ${hostOf(page.url)}. الصفحة ظاهرة في لوحة المتصفح؛ قل «ابحث عن ${step.query} في الإنترنت» لأبحث خارجها.` : NO_PAGE };
         let reached: AgentPage | null | 'none';
         if (template) reached = await go({ kind: 'open', text: template }, `البحث عن ${step.query}`);
-        else if (!box) reached = await engine(step.query);
+        else if (!box) {
+          const found = await engine(step.query);
+          if (found === 'no_live') return { kind: 'done', status: 'blocked', text: noLiveSource(step.query) };
+          reached = found;
+        }
         else {
           reached = await submit({ kind: 'type', ref: box.ref, text: step.query, submit: true }, `البحث عن «${step.query}»`);
           if (reached === 'none') {
