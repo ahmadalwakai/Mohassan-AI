@@ -15,6 +15,8 @@ export interface CompoundRequestAnalysis {
   literalRanges: { start: number; end: number }[];
   /** Same UTF-16 offsets as input, with literal data blanked for classification. */
   outerText: string;
+  /** unsupported_tail only: what follows the sequence word that was not recognised, to the end of the request. */
+  tail?: RequestSpan;
   reason?: 'invalid_input' | 'unbalanced_literal' | 'too_many_actions' | 'unrecognised_sequence' | 'missing_primary';
 }
 
@@ -139,7 +141,7 @@ export function analyzeCompoundRequest(text: string): CompoundRequestAnalysis {
     if (!chunk) continue;
     const head = actionHead(chunk);
     if (head.kind || head.format) accepted.push({ boundary, ...head });
-    else if (boundary.strong || UNSUPPORTED_HEAD.test(fold(chunk).replace(CLAUSE_LEAD, ''))) return { ...base, kind: 'unsupported_tail', primary: span(original, 0, boundary.start), reason: 'unrecognised_sequence' };
+    else if (boundary.strong || UNSUPPORTED_HEAD.test(fold(chunk).replace(CLAUSE_LEAD, ''))) return { ...base, kind: 'unsupported_tail', primary: span(original, 0, boundary.start), tail: span(original, boundary.end, original.length), reason: 'unrecognised_sequence' };
   }
   if (!accepted.length) return base;
   if (accepted.length > MAX_COMPOUND_ACTIONS) return { ...base, kind: 'invalid', reason: 'too_many_actions' };

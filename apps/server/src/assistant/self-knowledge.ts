@@ -44,7 +44,8 @@ export interface SelfFacts {
 
 export type SelfTopic = 'creator' | 'model' | 'compare' | 'improve' | 'capabilities' | 'can_do';
 export type SelfAbility = 'image_generation' | 'media_generation' | 'free_writing' | 'translation' | 'website' | 'pdf' | 'image_reading' | 'web' | 'ads';
-export interface SelfQuestion { topic: SelfTopic; lang: 'ar' | 'en'; ability?: SelfAbility; asked?: 'ai' | 'human' | 'product' }
+/** `brief`: the answer was asked for in one or two sentences («اذكر في جملتين …», «tell me briefly …»). */
+export interface SelfQuestion { topic: SelfTopic; lang: 'ar' | 'en'; ability?: SelfAbility; asked?: 'ai' | 'human' | 'product'; brief?: 1 | 2 }
 
 const MAX_REQUEST = 600;
 const MAX_WORDS = 40;
@@ -116,6 +117,34 @@ const CAPABILITIES: RegExp[] = [
   /^(?:(?:so|and|ok|okay|well|hey|hi|hello) )?(?:what (?:can|could) (?:you|u) (?:do|offer)(?: for me| to help| exactly| now)?|what do (?:you|u) do|what are (?:you|u) (?:capable of|able to do|good at|for)|what (?:are|r|is) (?:your|ur) (?:capabilities|abilities|features|skills|functions|powers|limits|limitations|capability|ability|purpose|job)|(?:show me |list )?(?:your|ur) (?:capabilities|abilities|features|skills)|what you can do|how (?:can|could|do|will) (?:you|u) help(?: me| us)?|what (?:kind of |sort of )?(?:things|tasks|stuff|jobs) (?:can|do|could) (?:you|u) (?:do|handle|help with|help me with))$/u,
   /^(?:(?:طيب|اوك|يعني|سؤال) )?(?:(?:ما|ماهي|ما هي|وش|ايش|شو)(?: هي)? (?:قدراتك|مميزاتك|امكانياتك|امكاناتك|مهاراتك|وظائفك|مهامك|خدماتك|حدودك|ميزاتك|وظيفتك|مهمتك)(?: الحاليه| حاليا| الان)?|(?:ماذا|ما الذي|ما اللي|شو|ايش|وش|ويش|ما) (?:تستطيع|تقدر|يمكنك|بتقدر|بامكانك|تعرف|بتعرف|تقدري|تقدرين)(?: ان)?(?: (?:تفعل|تعمل|تسوي|تساعد|تقدم|تفعله|تعمله|تسويه|تقدمه|تساعدني فيه|تساعدني به|تفيدني به|تفعل لي|تعمل لي|تسوي لي))?(?: لي| من اجلي)?|(?:كيف|بماذا|بشو|بايش|في ماذا|في شو|فيم) (?:تستطيع|يمكنك|بتقدر|تقدر|ممكن)(?: ان)? (?:تساعدني|تفيدني|تخدمني|تساعدنا)|(?:عرفني|اخبرني|قل لي|قلي|احكي لي) (?:ب|عن) ?(?:قدراتك|امكانياتك|مميزاتك|مهاراتك)|ماذا تفعل|شو بتعمل|ايش تسوي|وش تسوي|ما عملك)$/u,
 ];
+
+/**
+ * «ما الأدوات التي تستطيع استخدامها الآن؟», "what tools can you use?": a question about the tools of this assistant. It
+ * must name the assistant (your tools, tools you can use, tools available to you), and nothing may follow but «now» and
+ * the like: «ما الأدوات التي أحتاجها لتركيب رف» or "what tools can you use to edit video" are other requests.
+ */
+const NOW_AR = '(?: (?:الان|حاليا|فعليا|فعلا|بالفعل|في هذه المحادثه|هنا))*';
+const NOW_EN = '(?: (?:now|right now|currently|today|actually|really|in this conversation|here))*';
+const TOOLS: RegExp[] = [
+  new RegExp(`^(?:(?:ما|ماهي|ما هي|وش|ايش|شو|ماذا)(?: هي)? )?(?:ادواتك(?: (?:الحاليه|المتاحه))?|(?:ال)?ادوات (?:(?:التي|اللي|الذي) )?(?:(?:تستطيع|تقدر|يمكنك|بامكانك|بتقدر)(?: ان)? (?:استخدامها|استعمالها|تستخدمها|تستعملها)|(?:المتاحه|المتوفره) لك|لديك|عندك))${NOW_AR}$`, 'u'),
+  new RegExp(`^(?:(?:what|which) |the )?tools? (?:(?:can|could|do) (?:you|u)(?: actually| really| currently)? (?:use|access|have(?: access to)?)|(?:are|r) available to (?:you|u)|(?:that )?(?:you|u) (?:can|could) (?:actually |really )?(?:use|access))${NOW_EN}$`, 'u'),
+  new RegExp(`^(?:what (?:are|r) )?(?:your|ur) (?:available )?tools${NOW_EN}$`, 'u'),
+];
+
+/**
+ * «اذكر …», «قل لي باختصار …», "tell me in two sentences …": a lead that asks for the answer and, at most, how short it
+ * should be. It comes off before the forms above are matched; the length it names shapes the answer (real request rq039,
+ * 2026-11-22: «… ثم اذكر في جملتين ما الأدوات التي تستطيع استخدامها الآن فعلياً»).
+ */
+const LENGTH_AR = '(?:باختصار|بايجاز|(?:في|ب) (?:جمله(?: واحده)?|جملتين|سطر(?: واحد)?|سطرين|كلمات قليله))';
+const LENGTH_EN = '(?:briefly|in short|in (?:one|a single|two|a couple of|a few) (?:sentences?|lines?))';
+const ANSWER_LEAD = new RegExp(`^(?:(?:اذكر|عدد|قل|قول|اخبرني|خبرني|وضح|بين)(?: لي| لنا)?|tell (?:me|us)|list|name)(?: ${LENGTH_AR}| ${LENGTH_EN})? `, 'u');
+const LENGTH_TAIL = new RegExp(` (?:${LENGTH_AR}|${LENGTH_EN})(?: فقط| only)?$`, 'u');
+function lengthAsked(words: string): 1 | 2 | undefined {
+  if (/(?:جمله|سطر)(?: واحده| واحد)?(?= |$)|\b(?:one|a single) (?:sentence|line)\b/u.test(words)) return 1;
+  if (/جملتين|سطرين|باختصار|بايجاز|كلمات قليله|\b(?:two|a couple of|a few) (?:sentences|lines)\b|\b(?:briefly|in short)\b/u.test(words)) return 2;
+  return undefined;
+}
 
 /** «Can you …» and «هل تستطيع …»: what follows must name one ability and nothing more. */
 const CAN_PREFIX: RegExp[] = [
@@ -196,10 +225,16 @@ function folded(request: string): string | null {
 }
 
 export function recognizeSelfQuestion(request: string): SelfQuestion | null {
-  const text = folded(request);
+  let text = folded(request);
   if (!text) return null;
   const lang: 'ar' | 'en' = /\p{Script=Arabic}/u.test(text) ? 'ar' : 'en';
-  const question = (topic: SelfTopic, extra: Partial<SelfQuestion> = {}): SelfQuestion => Object.freeze({ topic, lang, ...extra });
+  let brief: 1 | 2 | undefined;
+  const lead = ANSWER_LEAD.exec(text);
+  if (lead) { brief = lengthAsked(lead[0]); text = text.slice(lead[0].length); }
+  const length = LENGTH_TAIL.exec(text);
+  if (length) { brief ??= lengthAsked(length[0]); text = text.slice(0, length.index); }
+  if (!text) return null;
+  const question = (topic: SelfTopic, extra: Partial<SelfQuestion> = {}): SelfQuestion => Object.freeze({ topic, lang, ...(brief ? { brief } : {}), ...extra });
   if (COMPARE.some(pattern => pattern.test(text))) return question('compare');
   if (CREATOR.some(pattern => pattern.test(text))) return question('creator');
   if (MODEL.some(pattern => pattern.test(text))) {
@@ -208,7 +243,7 @@ export function recognizeSelfQuestion(request: string): SelfQuestion | null {
     return question('model', { asked });
   }
   if (IMPROVE.some(pattern => pattern.test(text))) return question('improve');
-  if (CAPABILITIES.some(pattern => pattern.test(text))) return question('capabilities');
+  if (CAPABILITIES.some(pattern => pattern.test(text)) || TOOLS.some(pattern => pattern.test(text))) return question('capabilities');
   for (const prefix of CAN_PREFIX) {
     const found = prefix.exec(text);
     if (!found) continue;
@@ -259,6 +294,21 @@ const UNCONFIGURED: Record<Lang, Record<Configurable, string>> = {
   en: { memory: 'memory', knowledge: 'local document search', documents: 'PDF files', sites: 'website building', skills: 'the skills library',
     ads: 'Google Ads campaigns', imageReading: 'reading text from images', pc: 'computer control' },
 };
+/** The same abilities as short names, for an answer asked in one or two sentences. */
+const ABLE_SHORT: Record<Lang, Record<Exclude<keyof SelfFacts, 'chatModel'>, string>> = {
+  ar: {
+    web: 'البحث في الويب وقراءة الصفحات مع ذكر المصدر', browser: 'فتح المواقع والبحث داخلها', computation: 'الحساب وتحويل الوحدات والتواريخ',
+    memory: 'الحفظ في ذاكرتك والاسترجاع منها', knowledge: 'البحث في مستنداتك المحلية', documents: 'إنشاء ملفات PDF وتعديلها', sites: 'بناء المواقع',
+    planner: 'ترتيب خطة الأسبوع', letters: 'ترتيب الرسائل الرسمية من قوالب', skills: 'أدلة العمل من مكتبة المهارات', ads: 'تجهيز حملات Google Ads',
+    imageReading: 'قراءة النص من الصور', pc: 'تنفيذ أوامر محددة على حاسوبك',
+  },
+  en: {
+    web: 'web search and page reading with sources', browser: 'opening websites and searching inside them', computation: 'calculations and unit and date conversions',
+    memory: 'saving to and recalling from your memory', knowledge: 'searching your local documents', documents: 'creating and editing PDF files', sites: 'building websites',
+    planner: 'week plans', letters: 'formal letters from templates', skills: 'how-to guides from the skills library', ads: 'preparing Google Ads campaigns',
+    imageReading: 'reading text from images', pc: 'specific commands on your computer',
+  },
+};
 const ORDER: (Exclude<keyof SelfFacts, 'chatModel'>)[] = ['web', 'browser', 'computation', 'memory', 'knowledge', 'documents', 'sites', 'planner', 'letters', 'skills', 'ads', 'imageReading', 'pc'];
 const CONFIGURABLE: Configurable[] = ['memory', 'knowledge', 'documents', 'sites', 'skills', 'ads', 'imageReading', 'pc'];
 
@@ -285,6 +335,24 @@ function missingLines(facts: SelfFacts, lang: Lang): string[] {
   const off = CONFIGURABLE.filter(key => !facts[key]).map(key => UNCONFIGURED[lang][key]);
   if (off.length) lines.push(lang === 'ar' ? `غير مهيأ في هذه المحادثة: ${off.join('، ')}.` : `Not configured in this conversation: ${off.join(', ')}.`);
   return lines;
+}
+
+const listed = (items: readonly string[], lang: Lang): string => lang === 'ar' ? items.join('، و')
+  : items.length < 3 ? items.join(' and ') : `${items.slice(0, -1).join(', ')}, and ${items.at(-1)}`;
+
+/** What can be used and what cannot, in the one or two sentences the question allowed. The same host facts as the full answer. */
+function briefCapabilities(facts: SelfFacts, lang: Lang, sentences: 1 | 2): string {
+  const ar = lang === 'ar';
+  const able = ORDER.filter(key => facts[key]).map(key => ABLE_SHORT[lang][key]);
+  const missing = [
+    ...(facts.chatModel ? [] : [ar ? 'نموذج لغوي يفهم الطلبات الحرة ويكتب' : 'a language model that understands free requests and writes']),
+    ar ? 'إنشاء الصور والفيديو والصوت' : 'media generation (images, video and audio)',
+    ...CONFIGURABLE.filter(key => !facts[key]).map(key => UNCONFIGURED[lang][key]),
+  ];
+  const can = ar ? `الأدوات التي أستطيع استخدامها الآن في هذه المحادثة: ${listed(able, lang)}` : `The tools I can use now in this conversation: ${listed(able, lang)}`;
+  const cannot = ar ? `ولا يتوفر لي الآن: ${listed(missing, lang)}` : `not available to me now: ${listed(missing, lang)}`;
+  if (sentences === 1) return `${can}${ar ? '؛ ' : '; '}${cannot}.`;
+  return `${can}. ${ar ? cannot : cannot.charAt(0).toUpperCase() + cannot.slice(1)}.`;
 }
 
 function canDo(ability: SelfAbility, facts: SelfFacts, lang: Lang): string | null {
@@ -355,6 +423,7 @@ export function answerSelfQuestion(question: SelfQuestion, facts: SelfFacts): Lo
     case 'improve':
       return fixedReply(`${ar ? 'بحسب ما يبلّغ به المضيف الآن، هذه أكبر النواقص عندي:' : 'From what the host reports now, these are my largest gaps:'}\n${missingLines(facts, lang).map(line => `- ${line}`).join('\n')}\n\n${ar ? 'ترتيب العمل عليها يقرره المالك.' : 'Which of them comes first is the owner’s decision.'}`);
     case 'capabilities': {
+      if (question.brief) return fixedReply(briefCapabilities(facts, lang, question.brief));
       const able = ORDER.filter(key => facts[key]).map(key => `- ${ABLE[lang][key]}`);
       const missing = missingLines(facts, lang).map(line => `- ${line}`);
       return fixedReply(`${ar ? 'هذا ما أستطيعه الآن في هذه المحادثة، بحسب ما يبلّغ به المضيف:' : 'This is what I can do now in this conversation, as the host reports it:'}\n${able.join('\n')}\n\n**${ar ? 'غير متاح الآن:' : 'Not available now:'}**\n${missing.join('\n')}`);

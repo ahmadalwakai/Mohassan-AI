@@ -41,7 +41,8 @@ import { evaluateLocalRecall } from './assistant/local-recall.js';
 import { evaluateLocalConversation } from './assistant/local-conversation.js';
 import { evaluateCapabilityReply } from './assistant/capability-reply.js';
 import { answerRuntimeStatus } from './assistant/runtime-status.js';
-import { evaluateSelfQuestion } from './assistant/self-knowledge.js';
+import { evaluateSelfQuestion, type SelfFacts } from './assistant/self-knowledge.js';
+import { evaluateLocalSequence } from './assistant/local-sequence.js';
 import { isCampaignRequest } from './assistant/campaign-request.js';
 import { armProgressPause, createProgressRecovery, restoreProgressRecovery, resumeBrowserProgressAutomatically, resumeProgressAfterRetry, reviewProgressRecovery, type ProgressRecoveryContext } from './assistant/progress-recovery.js';
 import { rebindBrowserAction, reserveBrowserRecovery, transientBrowserFailure, type BrowserRecoveryEntry } from './assistant/browser-recovery.js';
@@ -2163,11 +2164,16 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // Questions about Mohassan itself without a model (assistant/self-knowledge.ts): who made it, which model it runs on,
       // what it can do, whether it can do one named thing. Built from these host facts only, after the exact forms above;
       // the web never answers them («ما هي قدراتك» once quoted a book title).
-      const intrinsicSelf = intrinsicAllowed && !intrinsicRuntime && !intrinsicConversation ? evaluateSelfQuestion(actionRequest, {
+      const selfFacts: SelfFacts = {
         chatModel: hasChatModel(), web: true, browser: true, computation: true, memory: Boolean(tools?.memory), knowledge: Boolean(config.knowledgeSearch),
         documents: Boolean(config.documents), sites: Boolean(config.sites), skills: Boolean(config.skillAnswer), ads: Boolean(config.adsModel) && fullReach(),
         imageReading: Boolean(config.imageReader?.available), pc: Boolean(tools?.computer) && fullReach(), planner: true, letters: true,
-      }) : null;
+      };
+      const intrinsicSelf = intrinsicAllowed && !intrinsicRuntime && !intrinsicConversation ? evaluateSelfQuestion(actionRequest, selfFacts) : null;
+      // Several requests in one message, each answered by the host itself (assistant/local-sequence.ts): «كم حاصل 17 × 23؟ ثم
+      // اذكر ما الأدوات التي تستطيع استخدامها» once ended in «لم أنفّذ هذا الطلب» (rq039). Null unless every part is a local answer.
+      const intrinsicSequence = intrinsicAllowed && !intrinsicRuntime && !intrinsicConversation && !intrinsicComputation
+        ? evaluateLocalSequence(actionRequest, { now: new Date(effectiveSource.evaluatedAt), self: selfFacts }) : null;
       const mindReady = Boolean(config.mind && config.mindDeps && fullReach());
       // Without a chat model the owner's active instruction skills answer directly (assistant/skill-reader.ts): only a
       // skill that clearly fits, only after the specialised paths had their turn, and the skill is named as the source.
@@ -2231,7 +2237,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           }
         }
       }
-      if (freshRequest && !intrinsicRuntime && !intrinsicConversation && !intrinsicSelf && !intrinsicComputation && state.requestResolution?.kind === 'ambiguous' && state.requestResolution.ambiguities.some(reason =>
+      if (freshRequest && !intrinsicRuntime && !intrinsicConversation && !intrinsicSelf && !intrinsicComputation && !intrinsicSequence && state.requestResolution?.kind === 'ambiguous' && state.requestResolution.ambiguities.some(reason =>
         reason === 'missing_reference' || reason === 'missing_question' || reason === 'unclear_replacement')) {
         const attempts = (state.clarificationAttempts ?? 0) + 1;
         state.clarificationAttempts = attempts;
@@ -2256,6 +2262,14 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const conversationReply = intrinsicConversation;
         if (conversationReply) {
           await finish(id, runId, state, conversationReply.text, 'completed');
+          return;
+        }
+        // Before the single question about the assistant: «من صنعك؟ ثم ما قدراتك؟» is answered whole, not by its first part.
+        if (intrinsicSequence) {
+          await addStep(id, runId, intrinsicSequence.lang === 'ar' ? 'أجوبة محلية بالترتيب' : 'Local answers in order');
+          state.trail.push({ step: ++state.steps, action: 'local_sequence', changed: false,
+            result: clean(intrinsicSequence.parts.map(part => `${part.source} (${part.status}): ${part.evidence.map(item => item.quote).join(' | ') || 'fixed text'}`).join('\n')).slice(0, 1100) });
+          await finish(id, runId, state, vault.scrub(id, intrinsicSequence.text), intrinsicSequence.status);
           return;
         }
         if (intrinsicSelf) {

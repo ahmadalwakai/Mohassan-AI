@@ -48,7 +48,8 @@ function calculated(frame: Frame, value: string, line: string): LocalReply {
   };
 }
 
-const ARITHMETIC_INTRO = /^(?:(?:please|kindly|من فضلك|لو سمحت)[,،:\s]+)?(?:(?:calculate|compute|evaluate|solve|what is|what['’]s|how much is|كم(?: يساوي)?|ما ناتج|ما حاصل)|(?:(?:نبي|نبغي|ابغي|ابي|بدي|بدنا|عايز|عايزة|عايزين|اريد|نريد)\s+(?:ان\s+)?)?(?:احسب(?:وا|ي)?|نحسب))[\s:،]+/iu;
+// «كم حاصل 17 × 23؟» and «ما هو ناتج …» ask for the result as «ما ناتج …» does (real request rq039, 2026-11-22).
+const ARITHMETIC_INTRO = /^(?:(?:please|kindly|من فضلك|لو سمحت)[,،:\s]+)?(?:(?:calculate|compute|evaluate|solve|what is|what['’]s|how much is|(?:كم|ما)(?: (?:هو|هي))?(?: (?:يساوي|تساوي|ناتج|حاصل|نتيج[ةه]))?|ناتج|حاصل|نتيج[ةه])|(?:(?:نبي|نبغي|ابغي|ابي|بدي|بدنا|عايز|عايزة|عايزين|اريد|نريد)\s+(?:ان\s+)?)?(?:احسب(?:وا|ي)?|نحسب))[\s:،]+/iu;
 
 const OPERAND_COMMANDS = [
   { match: /^(?:subtract|اطرح)[\s:،]+(.+?)\s+(?:from|من)\s+(.+)$/iu, operator: '-', reverse: true },
@@ -74,9 +75,11 @@ function arithmeticExpression(input: string): string | null {
   const expression = directedExpression(math)
     .replace(/\b(?:percent|per cent)\b|(?:بال|في\s+ال)م(?:ا?ئ[ةه]|ي[ةه])(?!\p{L})/giu, '%')
     .replace(/%\s*(?:of\b|من(?!\p{L}))/giu, '% *')
-    .replace(/\b(?:divided by|over)\b|مقسوم(?:ا)? علي|قسمة/giu, '/')
-    .replace(/\b(?:times|multiplied by)\b|مضروب(?:ا)? في|ضرب|(?<=\d)\s*[xX]\s*(?=\d)|[×·]/giu, '*')
-    .replace(/\bplus\b|(?:زائد|جمع)(?!\p{L})/giu, '+')
+    // An Arabic operator word takes its preposition with it: «قسمة على» and «ضرب في» are one operator each. Leaving «على»
+    // behind made «(١٢ زائد ٨) قسمة على ٣» an unreadable expression (real requests rq014 and rq070, 2026-11-22).
+    .replace(/\b(?:divided by|over)\b|مقسوم(?:ا|ة|ه)?\s+علي|قسم[ةه](?:\s+علي(?!\p{L}))?/giu, '/')
+    .replace(/\b(?:times|multiplied by)\b|مضروب(?:ا|ة|ه)?\s+في|ضرب(?:\s+في(?!\p{L}))?|(?<=\d)\s*[xX]\s*(?=\d)|[×·]/giu, '*')
+    .replace(/\bplus\b|(?:زائد|زايد|جمع)(?!\p{L})/giu, '+')
     .replace(/\bminus\b|(?:ناقص|طرح)(?!\p{L})/giu, '-')
     .replace(/÷/gu, '/').trim();
   // Retain the unsupported-language boundary: a currency/source request or an
