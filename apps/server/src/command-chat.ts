@@ -31,6 +31,7 @@ import type { ConversationShadow } from './assistant/conversation-state-shadow.j
 import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
 import { composePlan, planningQuestion, planningTask } from './assistant/planner.js';
+import type { SkillReader, SkillReadMode } from './assistant/skill-reader.js';
 import { buildSiteReply, siteAnswers, siteCard, siteCommandTurn, siteTask, type SitesChatPort } from './assistant/site-builder.js';
 import { composeDocumentSpec, documentCreatedReply, documentEditedReply, documentInfoReply, documentQuestion, documentTask, noSourceReply, unsupportedDocumentReply, type DocumentEditTask, type DocumentOperation } from './assistant/documents.js';
 import { PdfError, parsePageSelection } from '@mohassan/pdf';
@@ -130,6 +131,8 @@ export interface CommandChatConfig {
   skillContext?: (ownerId: string, goal: string, options?: { loadedIds?: string[]; budgetChars?: number }) => Promise<ChatSkillContext>;
   loadSkill?: (ownerId: string, idOrSlug: string, budgetChars?: number) => Promise<ChatSkillContext>;
   runSkill?: (ownerId: string, input: SkillRunInput, context: { goal: string; idempotencyKey: string; signal: AbortSignal; runId: string }) => Promise<{ id: string; status: string }>;
+  /** Model-free answers from the owner's active instruction skills (assistant/skill-reader.ts). Absent while the skill engine is off. */
+  skillAnswer?: SkillReader;
   /** Metadata only, committed atomically with the fenced terminal chat outcome. */
   recordSkillGap?: (tx: Kysely<any>, observation: SkillGapObservation) => Promise<void>;
   /** Holdout and fixture runs are deliberately excluded from learning. */
@@ -2150,6 +2153,19 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         stages: { before: 'supported', during: 'supported', after: 'supported' },
       }) : null;
       const mindReady = Boolean(config.mind && config.mindDeps && fullReach());
+      // Without a chat model the owner's active instruction skills answer directly (assistant/skill-reader.ts): only a
+      // skill that clearly fits, only after the specialised paths had their turn, and the skill is named as the source.
+      // With a model, skills reach the prompt instead. Skill text is shown, never executed, and grants nothing.
+      const trySkill = async (mode: SkillReadMode): Promise<boolean> => {
+        if (!config.skillAnswer || hasChatModel() || !freshRequest || !requestCapabilityAllowed(constraints, 'knowledge_read')) return false;
+        const read = await config.skillAnswer(ownerId, actionRequest, { mode, signal });
+        await active();
+        if (!read) return false;
+        await addStep(id, runId, read.lang === 'ar' ? `قراءة مهارة: ${read.skill.name}` : `Read skill: ${read.skill.name}`);
+        state.trail.push({ step: ++state.steps, action: 'skill_read', result: clean(`${read.skill.slug} ${read.skill.version} (${mode}); matched: ${read.terms.join(', ')}`).slice(0, 400), changed: false });
+        await finish(id, runId, state, vault.scrub(id, read.text), 'completed');
+        return true;
+      };
       // Only where no chat model exists: a model, once there, reads the page itself.
       // Shadow router: one log line per new request; never awaited, never changes the route.
       if (config.shadowRouter && freshRequest) {
@@ -2304,6 +2320,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             },
           }, signal);
           if (!learned || !['completed', 'partial', 'blocked'].includes(learned.status)) return false;
+          // Nothing in the owner's documents: a how-to about their own project, store or team is still answered by an active skill that covers it.
+          if (learned.status === 'blocked' && !documentFirst && await trySkill('personal')) return true;
           await addStep(id, runId, 'knowledge_search');
           state.trail.push({ step: ++state.steps, action: 'knowledge_search', result: clean(learned.evidence.map(item => `${item.sourceRef ?? item.title ?? ''}: ${item.quote}`).join('\n') || learned.text).slice(0, 1100), changed: false });
           observeChatLocalAnswer(state.supervision!, { source: 'knowledge-verifier', ...learned, startedAt: localStartedAt, contextTopic: state.requestResolution?.topic ?? undefined });
@@ -2328,6 +2346,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           }, signal, recallContext);
           if (remembered && (remembered.status === 'completed' || remembered.status === 'blocked' || remembered.status === 'partial')) {
             if (remembered.status === 'blocked' && !documentFirst && await tryKnowledge()) return;
+            if (remembered.status === 'blocked' && !documentFirst && await trySkill('personal')) return;
             await addStep(id, runId, 'memory_search');
             state.trail.push({ step: ++state.steps, action: 'memory_search', result: clean(remembered.evidence.map(item => item.quote).join('\n') || remembered.text).slice(0, 1100), changed: false });
             observeChatLocalAnswer(state.supervision!, { source: 'memory-read', ...remembered, startedAt: memoryReadStartedAt,
@@ -2362,6 +2381,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             return;
           }
         }
+        // A how-to or planning request an active skill clearly covers is answered from that skill before any web search.
+        if (!steps && !privateRequest && !notWebReason(tidy(actionRequest)) && !isFollowUp(tidy(actionRequest)) && await trySkill('advice')) return;
         // The context parser's follow-up query is used only when it kept the earlier topic. For «وكم عدد سكانها؟» after
         // «ما عاصمة اليابان؟» it dropped «اليابان» (measured 2026-11-22, 0-baseline §9), so the hands add the topic themselves.
         const parsedQuery = understanding?.kind === 'follow_up' && understanding.scope === 'public' ? understanding.query : null;
@@ -2562,6 +2583,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (!hasChatModel()) {
         const writing = state.writer ?? (freshRequest ? writingTask(request) : null);
         if (writing && 'unsupported' in writing) {
+          // An article, a post or a CV needs a model to write in full; an active skill still gives its method and outline.
+          if (await trySkill('writing')) return;
           await finish(id, runId, state, unsupportedWriting(writing), 'blocked');
           return;
         }
@@ -2813,6 +2836,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return;
       }
       if (!hasChatModel()) {
+        // Every other path passed on this request: a skill that clearly fits is better than «not completed».
+        if (await trySkill('fallback')) return;
         const unavailable = evaluateCapabilityReply(actionRequest, state.routing, {
           handlersExhausted: true, purpose: 'capability_question',
           execution: !state.steps && !state.trail.length ? 'not_started' : 'unconfirmed',

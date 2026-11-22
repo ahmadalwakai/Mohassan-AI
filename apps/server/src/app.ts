@@ -71,8 +71,13 @@ import { registerSkillForgeRoutes } from './skill-forge.js';
 import { rebuildSkillGraph } from '../../../packages/skills/src/graph.js';
 import { createSkillBenchmarkRunner } from './skill-benchmark-runner.js';
 import { benchmarkSuites, getSkillBenchmarkSuite } from '../../../packages/skills/src/benchmark-suites.js';
-import { recordSkillGap, createSkillBenchmarkControl, createSkillForgeControl, createGitSkillTransport, type SkillRemoteTransport } from '@mohassan/skills';
+import { recordSkillGap, createSkillBenchmarkControl, createSkillForgeControl, createGitSkillTransport, preloadInstructionMetadata, MAX_SKILL_CONTEXT_CHARS, type SkillRemoteTransport } from '@mohassan/skills';
+import { MAX_GITHUB_SKILLS, MAX_IMPORTED_VERSIONS_PER_OWNER } from '../../../packages/skills/src/import-store.js';
+import { createSkillReader, skillInstructionText } from './assistant/skill-reader.js';
 import { createSkillRemoteScheduler, registerSkillRemoteRoutes, type SkillRemoteSettings } from './skill-remote.js';
+
+/** Every active instruction skill is a reader candidate, the same discovery reach as the model prompt (preload.ts). */
+const SKILL_READER_DISCOVERY = MAX_GITHUB_SKILLS + MAX_IMPORTED_VERSIONS_PER_OWNER + 50;
 
 export interface AppConfig {
   dataDir?: string; databaseUrl?: string; authSecret: string; internalSecret: string;
@@ -454,7 +459,10 @@ export async function createApplication(config: AppConfig) {
   const chat=await createCommandChatControl(database.db,{...(shadowRouter?{shadowRouter}:{}),...(conversationShadow?{conversationShadow}:{}),...(judgeShadow?{judgeShadow,judgeFixForOwner:process.env.MOHASSAN_JUDGE_FIX!=='0',judgeWithholdForOwner:process.env.MOHASSAN_JUDGE_WITHHOLD!=='0'}:{}),...(imageReader.available?{imageReader}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),sites:{createFromBrief:(ownerId,brief,options)=>sites.create(ownerId,{brief,conversationId:options.conversationId,role:options.role}),command:(ownerId,siteId,input)=>sites.command(ownerId,siteId,input),detail:(ownerId,siteId)=>sites.detail(ownerId,siteId),roleOf:ownerId=>roleOf(database.db,ownerId),link:siteId=>`${new URL(config.webOrigin).origin}/#sites=${siteId}`},...(desktop?{desktop:{parse:(text:string)=>desktop.parse(text),describe:(command,lang)=>desktop.describe(command,lang),execute:(command,options)=>desktop.execute(command,options)}}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,documents:{control:documents,link:documentLink},inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,readPage,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',accountFullAccess:(ownerId,tx)=>lockOwnerToolAccess(tx,ownerId),accountActive:async(ownerId,tx)=>{const role=await roleOf(tx,ownerId);if(role!=='member')return role!==null;return Boolean(await tx.selectFrom('workspace_members').select('user_id').where('user_id','=',ownerId).where('role','=','member').where('disabled_at','is',null).forShare().executeTakeFirst());},memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
     learningContext:learning.context,chromeExtension,
     knowledgeSearch:async(ownerId,query)=>(await learning.knowledge.retrieve(ownerId,query)).map(({title,text,source})=>({title,text,source})),
-    ...(config.skillEngineEnabled?{recordSkillGap,skillContext:skills.context,loadSkill:skills.loadInstruction,runSkill:async(ownerId,input,context)=>{
+    ...(config.skillEngineEnabled?{recordSkillGap,skillContext:skills.context,loadSkill:skills.loadInstruction,
+    // Model-free answers read active instruction skills through the same verified gate as the model prompt.
+    skillAnswer:createSkillReader({candidates:ownerId=>preloadInstructionMetadata(database.db,ownerId,SKILL_READER_DISCOVERY),instructions:async(ownerId,id)=>skillInstructionText((await skills.loadInstruction(ownerId,id,MAX_SKILL_CONTEXT_CHARS)).text)}),
+    runSkill:async(ownerId,input,context)=>{
       context.signal.throwIfAborted();
       return runtime.createTask(ownerId,{title:'تشغيل مهارة من المحادثة',goal:context.goal.slice(0,4000),capabilityId:'skill.run',autonomy:'assisted',skillInput:input},context.idempotencyKey,context.runId);
     }}:{}),
