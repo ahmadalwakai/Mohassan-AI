@@ -340,6 +340,44 @@ describe('follow-ups (regression: live 2026-11-22 08:30, the fix replaced a righ
   });
 });
 
+describe('population questions (regression: live 2026-11-22 14:02, a right answer withheld as off-topic)', () => {
+  // "How many people live in Japan?": hands led with the Japan article's population sentence, which calls Japan «it» and says
+  // "population" for «people live». The judge found none of the question's words in it and withheld the right answer.
+  const question = 'How many people live in Japan?';
+  const right = "With a population of almost 123 million as of 2026, it is the world's 11th most populous country.";
+  const tokyo = 'Greater Tokyo is the most populous metropolitan area in the world, with more than 37.4 million people.';
+  const japan = '**Source:** [ويكيبيديا — Japan](https://en.wikipedia.org/wiki/Japan)';
+
+  it('sends a count of people on the subject\'s own page, in English and in Arabic', () => {
+    const verdict = judge({ question, reply: [right, '', japan].join('\n'), status: 'completed' });
+    expect(verdict.codes).not.toContain('lead_off_topic');
+    expect(verdict.decision).toBe('send');
+    const arabic = judge({ question: 'كم عدد سكان اليابان؟', status: 'completed',
+      reply: ['يقطنها نحو 123 مليون نسمة حسب تقديرات 2024.', '', '**المصدر:** [ويكيبيديا — اليابان](https://ar.wikipedia.org/wiki/اليابان)'].join('\n') });
+    expect(arabic.codes).not.toContain('lead_off_topic');
+    expect(arabic.decision).toBe('send');
+  });
+
+  it('does not promote the Greater Tokyo count over the country\'s own', () => {
+    const verdict = judge({ question, reply: [right, '', '**More from the same source:**', `- ${tokyo}`, '', japan].join('\n'), status: 'completed' });
+    expect(verdict.codes).not.toContain('lead_not_best');
+    expect(verdict.lead?.text).toBe(right);
+    expect(verdict.decision).toBe('send');
+  });
+
+  it('credits the population words only: a count on another place\'s page still misses the subject', () => {
+    const verdict = judge({ question, status: 'completed',
+      reply: ['Osaka has a population of about 2.7 million people.', '', '**Source:** [ويكيبيديا — Osaka](https://en.wikipedia.org/wiki/Osaka)'].join('\n') });
+    expect(verdict.codes).toContain('subject_missing');
+    expect(verdict.decision).toBe('withhold');
+  });
+
+  it('gives no credit to a figure that is not a count of people, nor to a question that does not ask one', () => {
+    expect(judge({ question, reply: ['Mountains cover about 70% of the land.', '', japan].join('\n'), status: 'completed' }).codes).toContain('lead_off_topic');
+    expect(judge({ question: 'How big is Japan?', reply: [right, '', japan].join('\n'), status: 'completed' }).codes).toContain('lead_off_topic');
+  });
+});
+
 describe('only page text is changed (regression: live 2026-11-22 06:39–07:16, three desktop replies lost «كتبت»)', () => {
   it('leaves a desktop action report exactly as it is', () => {
     for (const reply of ['كتبت 14 حرفًا في نافذة المفكرة.', 'كتبت 14 حرفًا في «Untitled - Notepad».', 'كتبت 14 حرفًا في «ملاحظات.txt - Notepad» وتحققت أنها ظهرت كما هي.']) {

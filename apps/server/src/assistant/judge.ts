@@ -14,7 +14,7 @@
  * Every threshold here is a proposal for the owner, labelled as such. Nothing here is a model.
  */
 import { performance } from 'node:perf_hooks';
-import { checkAnswerLine, isMetaLine } from './answer-check.js';
+import { checkAnswerLine, figureKind, hasFigureOf, isMetaLine } from './answer-check.js';
 import { entityWords, fold, isFollowUp, refersBack, topicWords } from './hands.js';
 import { buildFrame } from './mind/frame.js';
 import { applyReplyFixes, checkReply, questionLanguage, type ReplyFindingCode } from './reply-check.js';
@@ -156,6 +156,12 @@ const QUESTION_WORDS = new Set(['ما', 'ماذا', 'من', 'هو', 'هي', 'ك�
 const ARABIC_SUFFIX = /(?:هما|ها|هم|كم|كن|نا|ني|ك|ه|ي)$/u;
 /** A folded word that ends in a possessive pronoun («سكانها», «عاصمتهم»). */
 const POSSESSIVE = /\p{L}{3,}(?:هما|ها|هم|هن)$/u;
+/**
+ * The words a population question asks with («people», «live», «inhabitants», «عدد سكان», «نسمة»), as topicWords folds them.
+ * A line stating a count of people answers them however it words them (live 2026-11-22 14:02: "With a population of almost
+ * 123 million as of 2026, it is the world's 11th most populous country." names neither «people» nor «live» nor Japan).
+ */
+const POPULATION_WORD = /^(?:people|persons?|inhabitants?|residents?|live[sd]?|living|population|populous|عدد|تعداد|(?:ال)?سكان\p{L}{0,3}|نسم\p{L}{0,2}|يعيش\p{L}{0,2}|يسكن\p{L}{0,2})$/u;
 /** «وكم», «فما», «ومن»: a conjunction glued to the question word, which topicWords would keep as a subject word. */
 const CONJUNCTION_ASK = /(^|[\s،,؛])[وف](?=(?:كم|ما|ماذا|من|متى|متي|أين|اين|هل|كيف|لماذا|ليش|شو|ايش)(?=[\s؟?]|$))/gu;
 /**
@@ -357,14 +363,19 @@ export interface Relevance { topicHits: number; implied: number; phrase: boolean
 export interface RelevanceContext { question: string; topic: readonly string[]; cues: readonly string[]; titleWords: readonly string[]; answerType: string | null; lang: 'ar' | 'en' }
 /**
  * How well one own sentence answers the question: its subject words (those of the page's title count only beside a word
- * of its own, as hands.ts does), the question's phrase in order, the asked relation, the asked type (a number, a
- * duration, a definition), the Arabic answer form on the subject's own page («عاصمتها كانبرا»: its capital is Canberra,
- * stronger than a passing «عاصمة أستراليا»), minus a fragment and minus a meta line. Explainable arithmetic, not a model.
+ * of its own, as hands.ts does; a count of people names a population question's own words), the question's phrase in
+ * order, the asked relation, the asked type (a number, a duration, a definition), the Arabic answer form on the subject's
+ * own page («عاصمتها كانبرا»: its capital is Canberra, stronger than a passing «عاصمة أستراليا»), minus a fragment and minus
+ * a meta line. Explainable arithmetic, not a model.
  * `raw` is the layout line itself, so a leading ellipsis the clean text lost still marks a fragment.
  */
 export function relevance(text: string, context: RelevanceContext, raw?: string): Relevance {
   const folded = fold(text);
-  const inLine = context.topic.filter(word => mentions(folded, word));
+  // A population question is answered by a count of people (answer-check's people figure: «123 مليون نسمة», "a population
+  // of 123 million"), whatever words the line uses for it. Its population words then count as named, and the page's title
+  // supplies the subject the line calls «it». Only those words: the subject must still be named, in the line or the title.
+  const counted = figureKind(context.question) === 'people' && hasFigureOf('people', text);
+  const inLine = context.topic.filter(word => mentions(folded, word) || counted && POPULATION_WORD.test(word));
   const implied = context.topic.filter(word => !inLine.includes(word) && context.titleWords.some(title => mentions(title, word) || mentions(stem(word), title))).length;
   const topicHits = inLine.length + (inLine.length ? implied : 0);
   // The question's words in a row, allowing one short particle between them («speed of light», «سكان في المغرب»).
