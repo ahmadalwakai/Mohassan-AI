@@ -226,12 +226,13 @@ struct WorkingSteps: View {
     let progress: String
     let steps: [String]
     @State private var open = false
+    /// When the pill appeared; the phone's messages carry no times, so the counter runs from here.
+    @State private var since = Date()
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button { withAnimation(.easeOut(duration: 0.2)) { open.toggle() } } label: {
                 HStack(spacing: 8) {
-                    ProgressView().controlSize(.mini)
-                    Text(progress).font(.subheadline).lineLimit(2)
+                    ActivityLine(text: progress, since: since)
                     if !steps.isEmpty { Image(systemName: "chevron.down").font(.caption2).rotationEffect(.degrees(open ? 180 : 0)) }
                 }
                 .padding(.vertical, 5).padding(.horizontal, 11)
@@ -246,6 +247,101 @@ struct WorkingSteps: View {
                     .padding(.leading, 12)
             }
         }.accessibilityElement(children: .combine)
+    }
+}
+
+/// The kind of work the live words name; the symbol beside them follows. The same rules as the web's
+/// activity-phase.ts, tried in order with the first match winning; anything else is thinking.
+enum ActivityKind {
+    case think, wait, memory, search, open, read, write, act
+
+    private static let rules: [(ActivityKind, String)] = [
+        (.think, "يفهم|يفكر|يختار الخطوة|يرتب خطوته|يحسب|^حساب "),
+        (.wait, "مشغول|سأستأنف|ينتظر|انتظار|\\bwait"),
+        (.memory, "الذاكرة|يتذكر|المستندات المحفوظة|\\bmemory"),
+        (.search, "يبحث|بحث|\\bsearch"),
+        (.read, "يقرأ|قراءة|يستخرج|يفحص|فحص|\\bread"),
+        (.open, "يفتح|فتح|\\bopen"),
+        (.write, "يكتب|كتابة|الكتابة|يصوغ|يراجع|يحفظ|حفظ|ينشئ|إنشاء|يعدّ|إعداد|\\b(?:writ|draft|sav)"),
+        (.act, "ينقر|النقر|يضغط|الضغط|يمرّر|التمرير|ينفذ|تنفيذ|يرسل|إرسال|يسجّل الدخول|تسجيل الدخول|يدخل|إدخال|يختار|اختيار|يرجع|الرجوع|يحمّل|تحميل|يغيّر|تغيير|يبدأ|بدء|\\b(?:click|press|type)"),
+    ]
+
+    static func from(_ text: String) -> ActivityKind {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        for (kind, pattern) in rules where value.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil { return kind }
+        return .think
+    }
+
+    var symbol: String {
+        switch self {
+        case .think: return "sparkles"
+        case .wait: return "clock"
+        case .memory: return "brain.head.profile"
+        case .search: return "magnifyingglass"
+        case .open: return "globe"
+        case .read: return "book"
+        case .write: return "pencil.line"
+        case .act: return "hand.tap"
+        }
+    }
+}
+
+/// Time since the request, shown only once it has lasted five seconds, so a quick answer never flashes a counter.
+func elapsedLabel(seconds: Int) -> String? {
+    guard seconds >= 5 else { return nil }
+    return seconds < 60 ? "\(seconds) ث" : "\(seconds / 60) د \(seconds % 60) ث"
+}
+
+/// The live line: a symbol for the kind of work, the server's own words for what is happening now, and how
+/// long it has taken. Only the server names the phase; the symbol and its motion follow the words.
+struct ActivityLine: View {
+    let text: String
+    let since: Date
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
+        let kind = ActivityKind.from(text)
+        HStack(spacing: 8) {
+            Image(systemName: kind.symbol)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Forest.accent)
+                .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
+                .frame(width: 16, height: 16)
+            ShimmerText(text: text, still: reduceMotion)
+                .id(text)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            TimelineView(.periodic(from: since, by: 1)) { context in
+                if let label = elapsedLabel(seconds: Int(context.date.timeIntervalSince(since))) {
+                    Text(label).font(.caption2.monospacedDigit()).foregroundStyle(Forest.faint)
+                }
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: text)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(text)
+    }
+}
+
+/// Words with a band of light sweeping across them while the work goes on.
+struct ShimmerText: View {
+    let text: String
+    let still: Bool
+    @State private var sweep = false
+    var body: some View {
+        Text(text).font(.subheadline).lineLimit(2)
+            .foregroundStyle(Forest.softText)
+            .overlay {
+                if !still {
+                    GeometryReader { geometry in
+                        let band = max(geometry.size.width / 2, 40)
+                        LinearGradient(colors: [.clear, Forest.ink, .clear], startPoint: .leading, endPoint: .trailing)
+                            .frame(width: band)
+                            .offset(x: sweep ? geometry.size.width : -band)
+                    }
+                    .mask { Text(text).font(.subheadline).lineLimit(2) }
+                    .allowsHitTesting(false)
+                }
+            }
+            .onAppear { withAnimation(.linear(duration: 2.4).repeatForever(autoreverses: false)) { sweep = true } }
     }
 }
 struct RootView: View {

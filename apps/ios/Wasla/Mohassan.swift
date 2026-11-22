@@ -17,7 +17,7 @@ extension WaslaStore {
         guard let client else { mohassanLink = nil; return }
         let epoch = sessionEpoch
         do {
-            let link: MohassanLink = try await client.get("/v1/mohassan/status")
+            let link: MohassanLink = try await client.get("/v1/mohassan/status", timeout: 15)
             guard epoch == sessionEpoch else { return }
             mohassanLink = link
         } catch {

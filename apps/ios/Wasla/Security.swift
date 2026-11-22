@@ -191,8 +191,8 @@ final class APIClient: @unchecked Sendable {
         }
         return data
     }
-    func get<Response: Decodable>(_ path: String) async throws -> Response {
-        try JSONDecoder().decode(Response.self, from: await data(path: path))
+    func get<Response: Decodable>(_ path: String, timeout: TimeInterval = 90) async throws -> Response {
+        try JSONDecoder().decode(Response.self, from: await data(path: path, timeout: timeout))
     }
     func post<Body: Encodable, Response: Decodable>(_ path: String, body: Body, desktopSession: String? = nil, timeout: TimeInterval = 90) async throws -> Response {
         let encoded = try JSONEncoder().encode(body)
