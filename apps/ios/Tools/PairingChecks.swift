@@ -117,12 +117,97 @@ enum PairingChecks {
         try check(conversation.question?.acceptsText == true && conversation.question?.clarification?.recommendedOptionId == nil, "Typed answers follow the clarification setting")
         let plainQuestion = try JSONDecoder().decode(MohassanQuestion.self, from: Data("{\"id\":\"\(questionID)\",\"prompt\":\"ما اسم الموقع؟\",\"options\":[]}".utf8))
         try check(plainQuestion.acceptsText && plainQuestion.phoneOptions.isEmpty, "A question without options takes a typed answer")
-        let choice = try JSONSerialization.jsonObject(with: JSONEncoder().encode(MohassanRespond(questionId: questionID, optionId: "later", text: nil))) as! [String: Any]
-        try check(Set(choice.keys) == Set(["questionId", "optionId"]), "An option answer leaves out the absent text")
-        let typed = try JSONSerialization.jsonObject(with: JSONEncoder().encode(MohassanRespond(questionId: questionID, optionId: nil, text: "١٠٠ جنيه"))) as! [String: Any]
-        try check(Set(typed.keys) == Set(["questionId", "text"]), "A typed answer leaves out the absent option")
-        let approval = try JSONSerialization.jsonObject(with: JSONEncoder().encode(MohassanApprove(approvalId: questionID, approved: false))) as! [String: Any]
-        try check(approval["approved"] as? Bool == false && Set(approval.keys) == Set(["approvalId", "approved"]), "A refusal is sent as approved false")
+        let stopOnly = try JSONDecoder().decode(MohassanQuestion.self, from: Data("{\"id\":\"\(questionID)\",\"prompt\":\"ما الذي ينقص؟\",\"options\":[{\"id\":\"stop\",\"label\":\"توقف هنا\"}]}".utf8))
+        try check(stopOnly.acceptsText && stopOnly.stopOption?.id == "stop" && stopOnly.phoneFields.isEmpty, "A question whose only option is «stop» takes a typed answer")
+        let choices = try JSONDecoder().decode(MohassanQuestion.self, from: Data("{\"id\":\"\(questionID)\",\"prompt\":\"كيف أتابع؟\",\"options\":[{\"id\":\"retry\",\"label\":\"حاول بطريقة أخرى\"},{\"id\":\"stop\",\"label\":\"توقف هنا\"}]}".utf8))
+        try check(!choices.acceptsText, "A question with real choices is answered by its options")
+
+        // Plan phase 3: every request that changes something carries its own key and the body Mohassan expects.
+        func sent(_ request: MohassanRequest) throws -> [String: Any] { try JSONSerialization.jsonObject(with: request.body) as! [String: Any] }
+        let created = try MohassanRequest.make(.create, conversationId: nil, text: "مرحبا") { MohassanCreate(goal: "مرحبا", clientRequestId: $0) }
+        let createdBody = try sent(created)
+        try check(Set(createdBody.keys) == Set(["goal", "clientRequestId"]) && createdBody["clientRequestId"] as? String == created.key, "A new conversation carries its key")
+        try check(UUID(uuidString: created.key) != nil && created.key == created.key.lowercased() && created.phase == .sending, "Keys are lowercase UUIDs, as the computer's lookup route reads them")
+        try check(created.path == "/v1/mohassan/conversations" && created.fromComposer && created.belongs(to: nil) && !created.belongs(to: conversationID), "A new conversation belongs to the new-chat screen")
+        let again = try MohassanRequest.make(.create, conversationId: nil, text: "مرحبا") { MohassanCreate(goal: "مرحبا", clientRequestId: $0) }
+        try check(again.key != created.key, "Each request gets a fresh key")
+        let message = try MohassanRequest.make(.message, conversationId: conversationID, text: "و 40 ضرب 3؟") { MohassanSend(text: "و 40 ضرب 3؟", clientRequestId: $0) }
+        let messageBody = try sent(message)
+        try check(Set(messageBody.keys) == Set(["text", "clientRequestId"]) && message.path == "/v1/mohassan/conversations/\(conversationID)/messages" && message.belongs(to: conversationID), "A message goes to its own conversation")
+        let typedReply = try MohassanRequest.make(.reply, conversationId: conversationID, text: "١٠٠ جنيه") { MohassanReply(text: "١٠٠ جنيه", questionId: questionID, clientRequestId: $0) }
+        let typedBody = try sent(typedReply)
+        try check(Set(typedBody.keys) == Set(["text", "questionId", "clientRequestId"]) && typedReply.path.hasSuffix("/messages") && !typedReply.fromComposer, "A typed answer is a message that names its question")
+        let option = try MohassanRequest.make(.option, conversationId: conversationID, text: "لاحقًا") { MohassanRespond(questionId: questionID, optionId: "later", clientRequestId: $0) }
+        let optionBody = try sent(option)
+        try check(Set(optionBody.keys) == Set(["questionId", "optionId", "clientRequestId"]) && option.path.hasSuffix("/respond"), "An option goes through respond, with no text")
+        let refusal = try MohassanRequest.make(.approve, conversationId: conversationID, text: "رفض") { MohassanApprove(approvalId: questionID, approved: false, clientRequestId: $0) }
+        let refusalBody = try sent(refusal)
+        try check(refusalBody["approved"] as? Bool == false && Set(refusalBody.keys) == Set(["approvalId", "approved", "clientRequestId"]) && refusal.path.hasSuffix("/approve"), "A refusal is sent as approved false")
+        try check(!refusal.fromComposer && !option.fromComposer, "An approval or a card's answer is never offered for resending")
+        let saved = try JSONDecoder().decode(MohassanRequest.self, from: JSONEncoder().encode(message))
+        try check(saved == message && saved.body == message.body, "A saved request comes back byte for byte, so «send again» repeats the same body and key")
+
+        // What a failure means: only a refusal or a call that never left the phone proves nothing happened.
+        func outcome(_ error: Error) -> String {
+            switch SendOutcome.of(error) {
+            case .notDone: return "notDone"
+            case .unknown: return "unknown"
+            case .inProgress: return "inProgress"
+            case .undetermined: return "undetermined"
+            }
+        }
+        try check(outcome(WaslaError.server(409, "x", code: "CHAT_BUSY")) == "notDone" && outcome(WaslaError.server(400, "x", code: "invalid_request")) == "notDone" && outcome(WaslaError.server(401, "x")) == "notDone", "A refusal changed nothing")
+        try check(outcome(WaslaError.server(409, "x", code: "CLIENT_REQUEST_REUSED")) == "notDone", "A key reused for another request is a refusal")
+        try check(outcome(WaslaError.server(409, "x", code: "CLIENT_REQUEST_IN_PROGRESS")) == "inProgress", "The same key still running is not a refusal")
+        try check(outcome(WaslaError.server(409, "x", code: "CLIENT_REQUEST_UNKNOWN")) == "undetermined", "A key that failed midway stays undetermined")
+        try check(outcome(WaslaError.server(502, "x", code: "mohassan_unavailable")) == "unknown" && outcome(WaslaError.server(500, "x")) == "unknown", "A failure after the request left may have happened")
+        try check(outcome(URLError(.timedOut)) == "unknown" && outcome(URLError(.networkConnectionLost)) == "unknown" && outcome(WaslaError.invalidResponse) == "unknown", "A lost reply is not proof that nothing happened")
+        try check(outcome(URLError(.cannotConnectToHost)) == "notDone" && outcome(URLError(.notConnectedToInternet)) == "notDone" && outcome(WaslaError.certificate) == "notDone", "No connection, or no trusted handshake, means it was never sent")
+        try check(outcome(DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "x"))) == "unknown", "A reply the phone cannot read leaves the outcome open")
+        func lookup(_ json: String) throws -> MohassanRequestStatus.Verdict { try JSONDecoder().decode(MohassanRequestStatus.self, from: Data(json.utf8)).verdict }
+        try check(try lookup("{\"known\":false}") == .notReceived, "An unknown key was never received")
+        try check(try lookup("{\"known\":true,\"kind\":\"messages\",\"state\":\"done\",\"conversationId\":\"\(conversationID)\"}") == .done(conversationID), "A done key names its conversation")
+        try check(try lookup("{\"known\":true,\"kind\":\"create\",\"state\":\"pending\",\"conversationId\":null}") == .inProgress, "A pending key is still being taken in")
+        try check(try lookup("{\"known\":true,\"kind\":\"approve\",\"state\":\"unknown\",\"conversationId\":\"\(conversationID)\"}") == .undetermined, "A key that failed midway is undetermined")
+
+        // A field card's answers, composed as the web's QuestionPanel composes them.
+        let fieldsJSON = """
+        [{"id":"to","prompt":"لمن الرسالة؟","suggestions":[],"placeholder":"مثلاً: الأستاذ خالد"},
+         {"id":"kind","prompt":"ما نوعها؟","suggestions":[{"label":"اعتذار"},{"label":"طلب"},{"label":"شكر","reason":"من موقعك"}],"selected":[0,9]},
+         {"id":"places","prompt":"أين؟","suggestions":[{"label":"دمشق"},{"label":"حلب"}],"multiple":true},
+         {"id":"details","prompt":"ماذا تريد أن تقول؟","suggestions":[],"multiline":true}]
+        """
+        let fields = try JSONDecoder().decode([MohassanField].self, from: Data(fieldsJSON.utf8))
+        try check(fields[1].preselected == Set([0]) && fields[1].suggestions[2].reason == "من موقعك" && fields[2].allowsSeveral && fields[3].keepsLines && fields[0].placeholder != nil, "Read a field card: suggestions, reasons, choices made in advance (in range), several answers, kept lines")
+        try check(FieldAnswers.answer(fields[0], chosen: [], typed: "  الأستاذ خالد ") == "الأستاذ خالد", "A one-line answer is trimmed")
+        try check(FieldAnswers.answer(fields[1], chosen: fields[1].preselected, typed: "") == "اعتذار", "The brain's confident choice stands until changed")
+        try check(FieldAnswers.answer(fields[1], chosen: [0], typed: "شكوى") == "شكوى", "In a single-answer question a typed answer replaces the choice")
+        try check(FieldAnswers.answer(fields[2], chosen: [1, 0], typed: " اللاذقية ") == "دمشق, حلب, اللاذقية", "Several choices keep their order, and a typed one is added")
+        try check(FieldAnswers.answer(fields[3], chosen: [], typed: "سطر أول\nسطر ثان") == "سطر أول\nسطر ثان", "A multi-line answer keeps its lines")
+        try check(FieldAnswers.answer(fields[3], chosen: [], typed: " \n ") == "", "Blank lines are no answer")
+        try check(FieldAnswers.length(["أ", "ب"]) == 9 && FieldAnswers.length(["أ"]) == 1, "Several answers count their «1. » numbers and line breaks")
+        try check(!FieldAnswers.ready(["أ", ""]) && FieldAnswers.ready(["أ", "ب"]), "Every question needs an answer")
+        try check(FieldAnswers.ready([String(repeating: "a", count: 3_992), "b"]) && !FieldAnswers.ready([String(repeating: "a", count: 3_994), "b"]), "The answers stay within Mohassan's 4,000 characters")
+
+        // Replies in the web's Markdown subset; only https links open.
+        if #available(macOS 12.0, *) {
+            let source = "المصدر: [موسوعة](https://ar.wikipedia.org/wiki/%D8%AF%D9%85%D8%B4%D9%82) و https://example.com/docs/page_name.html ثم http://10.0.0.9/x و [سيئ](javascript:alert(1))"
+            let reply = "## الخطة\nأولًا **مهم** و`code`.\n\n- بند أول\n- بند ثان\n\n1. واحد\n2) اثنان\n\n> اقتباس\n\n```\nlet x = 1\n```\n" + source
+            try check(ReplyMarkdown.blocks(reply) == [.heading("الخطة"), .paragraph("أولًا **مهم** و`code`."), .list(ordered: false, items: ["بند أول", "بند ثان"]),
+                                                    .list(ordered: true, items: ["واحد", "اثنان"]), .quote(["اقتباس"]), .code("let x = 1"), .paragraph(source)], "Read headings, lists, quotes, code and paragraphs as the web does")
+            let linked = ReplyMarkdown.inline(source)
+            try check(linked.runs.compactMap { $0.link?.absoluteString } == ["https://ar.wikipedia.org/wiki/%D8%AF%D9%85%D8%B4%D9%82", "https://example.com/docs/page_name.html"], "Only https links are tappable")
+            try check(String(linked.characters) == "المصدر: موسوعة و example.com › page name ثم http://10.0.0.9/x و [سيئ](javascript:alert(1))", "A link shows its title or a short address; others stay plain, in full")
+            let styled = ReplyMarkdown.inline("أولًا **مهم** و`code`.")
+            let bold = styled.runs.filter { $0.inlinePresentationIntent == .stronglyEmphasized }.map { String(styled[$0.range].characters) }
+            let code = styled.runs.filter { $0.inlinePresentationIntent == .code }.map { String(styled[$0.range].characters) }
+            try check(String(styled.characters) == "أولًا مهم وcode." && bold == ["مهم"] && code == ["code"], "Bold and code marks become styles, not stars")
+            try check(ReplyMarkdown.blocks("# \nنص") == [.paragraph("# \nنص")], "A lone # never stalls the reader")
+            try check(ReplyMarkdown.plainText("> **مهم**: [المصدر](https://example.com)\n\n\n\nتم") == "مهم: المصدر (https://example.com)\n\nتم", "Copying gives plain text with each link's address")
+            try check(ReplyMarkdown.shortLink("https://www.example.com/") == "example.com" && ReplyMarkdown.shortLink("https://ar.wikipedia.org/wiki/%D8%AF%D9%85%D8%B4%D9%82") == "ar.wikipedia.org › دمشق", "A bare address reads as the site and the page name")
+            try check(ReplyMarkdown.withoutQuestionList("أحتاج بعض التفاصيل:\nلمن الرسالة؟\nما نوعها؟\n\nسأكتبها بعدها.") == "سأكتبها بعدها.", "With a field card open, the reply drops the questions it lists")
+            try check(ReplyMarkdown.withoutQuestionList("الملخص:\n- بند\n- بند") == "الملخص:\n- بند\n- بند", "A summary list after a colon stays")
+        }
         let summaries = try JSONDecoder().decode(MohassanList.self, from: Data("{\"conversations\":[{\"id\":\"\(conversationID)\",\"title\":\"\",\"status\":\"running\",\"updatedAt\":\"now\",\"browserAccount\":null}]}".utf8)).conversations
         try check(summaries.first?.status == "running" && MohassanStatus.title("running") == "موحسن يعمل…", "Read the conversation list")
         let link = try JSONDecoder().decode(MohassanLink.self, from: Data("{\"linked\":false,\"reachable\":false}".utf8))
@@ -156,7 +241,33 @@ enum PairingChecks {
             try check(completed.status == "idle" && !completed.working, "A finished conversation is idle, not working")
             try check(completed.messages.last?.text.contains("345") == true, "The brain's own answer reaches the phone")
             let asking = try fixture("detail-question-fields.json", as: MohassanConversation.self).response.body
-            try check(asking.status == MohassanStatus.waitingUser && asking.question != nil && asking.question?.options.map(\.id) == ["stop"], "A question card with several fields is readable; the phone shows its stop option (fields arrive in plan phase 3)")
+            try check(asking.status == MohassanStatus.waitingUser && asking.question?.stopOption?.id == "stop", "A question card with several fields offers its stop option")
+            let card = asking.question?.phoneFields ?? []
+            try check(card.map(\.id) == ["to", "kind", "details", "from"] && card[1].suggestions.count >= 2 && !card[1].preselected.isEmpty && card[2].keepsLines && card.allSatisfy { $0.placeholder != nil || !$0.suggestions.isEmpty }, "The phone reads the card's fields: suggestions, the brain's choice, kept lines, placeholders")
+            // The very request Mohassan accepted for that card: the phone composes and encodes the same body.
+            let answeredURL = URL(fileURLWithPath: directory).appendingPathComponent("messages-field-answers.json")
+            let answered = try JSONSerialization.jsonObject(with: Data(contentsOf: answeredURL)) as! [String: Any]
+            let recordedBody = (answered["request"] as! [String: Any])["body"] as! [String: Any]
+            let recordedAnswers = (recordedBody["answers"] as! [[String: String]]).map { MohassanFieldAnswer(fieldId: $0["fieldId"]!, value: $0["value"]!) }
+            let composed = card.indices.map { index in
+                FieldAnswers.answer(card[index], chosen: card[index].suggestions.isEmpty ? [] : card[index].preselected, typed: card[index].suggestions.isEmpty ? recordedAnswers[index].value : "")
+            }
+            try check(composed == recordedAnswers.map(\.value) && recordedAnswers.map(\.fieldId) == card.map(\.id), "The card composes the recorded answers: typed ones as typed, the brain's choice as chosen")
+            let phoneBody = try JSONSerialization.jsonObject(with: JSONEncoder().encode(MohassanFieldsReply(questionId: asking.question!.id, answers: recordedAnswers, clientRequestId: recordedBody["clientRequestId"] as! String))) as! [String: Any]
+            try check(NSDictionary(dictionary: phoneBody).isEqual(to: recordedBody), "The phone's field answers are the very body Mohassan accepted")
+            let afterAnswers = try fixture("messages-field-answers.json", as: MohassanConversation.self).response
+            try check(afterAnswers.status == 200 && afterAnswers.body.status != MohassanStatus.waitingUser, "Mohassan took the answers and went on")
+            let done = try fixture("request-done.json", as: MohassanRequestStatus.self).response.body
+            try check(done.verdict == .done(asking.id), "A delivered request reads as done, with its conversation")
+            let neverSeen = try fixture("request-unknown.json", as: MohassanRequestStatus.self).response.body
+            try check(neverSeen.verdict == .notReceived, "A key Mohassan never saw reads as not received")
+            let first = try fixture("create.json", as: MohassanConversation.self).response.body
+            let replayed = try fixture("create-replayed.json", as: MohassanConversation.self).response
+            try check(replayed.status == 200 && replayed.body.id == first.id, "Sending a create again with its key returns the same conversation, not a second one")
+            for name in ["error-request-reused.json", "error-question-changed.json", "error-approval-changed.json"] {
+                let refused = try fixture(name, as: ServerFault.self).response
+                try check(outcome(WaslaError.server(refused.status, refused.body.error.message, code: refused.body.error.code)) == "notDone", "A recorded refusal (\(name)) hands the text back: nothing ran")
+            }
             let approval = try fixture("detail-approval.json", as: MohassanConversation.self).response.body
             try check(approval.status == MohassanStatus.waitingApproval && approval.approval?.detail.contains("POST /consent") == true, "An approval is readable with its detail")
             let failed = try fixture("detail-failed-blocked-address.json", as: MohassanConversation.self).response.body

@@ -1,26 +1,27 @@
 {
-  "capturedAt": "2026-11-22T07:31:23.750Z",
-  "sourceCommit": "b865d3d",
+  "capturedAt": "2026-11-22T08:01:17.274Z",
+  "sourceCommit": "501f707",
   "request": {
     "method": "POST",
     "url": "/api/wasla/gateway/conversations",
     "body": {
-      "goal": "كم يساوي 15 ضرب 23؟"
+      "goal": "كم يساوي 15 ضرب 23؟",
+      "clientRequestId": "c0ffee00-0001-4000-8000-000000000001"
     }
   },
   "response": {
     "status": 200,
     "body": {
-      "id": "c8134d86-2d29-4cb0-a569-2f8d1ba361fc",
+      "id": "8214548f-e766-47a2-a2ad-28ed2e17bf03",
       "title": "كم يساوي 15 ضرب 23؟",
       "status": "running",
-      "updatedAt": "2026-11-22T07:31:23.564Z",
+      "updatedAt": "2026-11-22T08:01:17.104Z",
       "messages": [
         {
-          "id": "40673c73-7360-444f-b05e-8a36ebc3807a",
+          "id": "51c0dda2-b5d9-4e03-b52c-431ed7fc37d4",
           "role": "user",
           "text": "كم يساوي 15 ضرب 23؟",
-          "createdAt": "2026-11-22T07:31:23.162Z"
+          "createdAt": "2026-11-22T08:01:16.803Z"
         }
       ],
       "question": null,

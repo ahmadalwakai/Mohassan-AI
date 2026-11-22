@@ -39,7 +39,7 @@ describe('phone fixtures', () => {
   });
 
   it('every conversation the phone reads matches the contract, with no browser block or decision log', async () => {
-    const details = (await fixtures()).filter(entry => entry.response.status === 200 && /^(detail-|create$|messages-|approve-|respond-|cancel$)/.test(entry.name));
+    const details = (await fixtures()).filter(entry => entry.response.status === 200 && /^(detail-|create$|create-replayed$|messages-|approve-|respond-|cancel$)/.test(entry.name));
     expect(details.length).toBeGreaterThanOrEqual(10);
     for (const entry of details) {
       const parsed = PhoneConversation.safeParse(entry.response.body);
@@ -57,7 +57,7 @@ describe('phone fixtures', () => {
     expect(byName['detail-greeting'].status).toBe('idle');
     expect(byName['detail-unconfirmed-sign-in'].status).toBe('idle');
     expect(byName['detail-question-fields'].status).toBe('waiting_user');
-    // Several questions in one card: the web answers them as one numbered reply. The phone does not read `fields` yet (plan phase 3).
+    // Several questions in one card: the web and the phone send the answers with the question's id (messages-field-answers).
     expect(byName['detail-question-fields'].question.fields.map((field: { id: string }) => field.id)).toEqual(['to', 'kind', 'details', 'from']);
     expect(byName['detail-question-fields'].question.options).toEqual([{ id: 'stop', label: 'توقف هنا' }]);
     expect(byName['detail-completed-letter'].status).toBe('idle');
@@ -84,10 +84,32 @@ describe('phone fixtures', () => {
     expect(byName['status']!.response.body).toEqual({ ok: true, bridge: 'mohassan' });
     expect(byName['delete']!.response.body).toEqual({ ok: true });
     expect(byName['campaign-events']!.response.body).toEqual({ taskId: null, lastSeq: 0, events: [] });
-    for (const [name, status, code] of [['error-not-found', 404, 'CHAT_NOT_FOUND'], ['error-deleted', 404, 'CHAT_NOT_FOUND'], ['error-invalid-id', 400, 'VALIDATION_ERROR'], ['error-question-changed', 409, 'CHAT_QUESTION_CHANGED'], ['error-approval-changed', 409, 'CHAT_APPROVAL_CHANGED']] as const) {
+    for (const [name, status, code] of [['error-not-found', 404, 'CHAT_NOT_FOUND'], ['error-deleted', 404, 'CHAT_NOT_FOUND'], ['error-invalid-id', 400, 'VALIDATION_ERROR'], ['error-question-changed', 409, 'CHAT_QUESTION_CHANGED'], ['error-approval-changed', 409, 'CHAT_APPROVAL_CHANGED'], ['error-request-reused', 409, 'CLIENT_REQUEST_REUSED']] as const) {
       const entry = byName[name]!;
       expect(entry.response.status, name).toBe(status);
       expect(Fault.parse(entry.response.body).error.code, name).toBe(code);
+    }
+  });
+
+  it('request keys: a resend returns the first result, a reused key is refused, a lookup says what happened', async () => {
+    const byName = Object.fromEntries((await fixtures()).map(entry => [entry.name, entry]));
+    const key = (name: string) => (byName[name]!.request.body as { clientRequestId?: string }).clientRequestId;
+    expect(key('create-replayed')).toBe(key('create'));
+    expect(byName['create-replayed']!.response.status).toBe(200);
+    expect((byName['create-replayed']!.response.body as { id: string }).id).toBe((byName['create']!.response.body as { id: string }).id);
+    expect(key('error-request-reused')).toBe(key('create'));
+    // The phone answers a field card as the web does: the answers in the card's order, with the question's id.
+    const card = byName['detail-question-fields']!.response.body as { id: string; question: { id: string; fields: { id: string }[] } };
+    const sent = byName['messages-field-answers']!.request.body as { questionId: string; answers: { fieldId: string; value: string }[] };
+    expect(sent.questionId).toBe(card.question.id);
+    expect(sent.answers.map(answer => answer.fieldId)).toEqual(card.question.fields.map(field => field.id));
+    expect(byName['messages-field-answers']!.response.status).toBe(200);
+    expect(byName['request-done']!.response.body).toEqual({ known: true, kind: 'messages', state: 'done', conversationId: card.id });
+    expect(byName['request-unknown']!.response.body).toEqual({ known: false });
+    // Every recorded phone request that changes something carries its key, as the app sends it; stopping needs none.
+    for (const entry of Object.values(byName)) {
+      if (entry.request.method !== 'POST' || entry.request.url.endsWith('/cancel')) continue;
+      expect(typeof key(entry.name), entry.name).toBe('string');
     }
   });
 });

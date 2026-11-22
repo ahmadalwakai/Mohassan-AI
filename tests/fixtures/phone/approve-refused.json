@@ -1,39 +1,40 @@
 {
-  "capturedAt": "2026-11-22T07:31:26.426Z",
-  "sourceCommit": "b865d3d",
+  "capturedAt": "2026-11-22T08:01:19.426Z",
+  "sourceCommit": "501f707",
   "request": {
     "method": "POST",
-    "url": "/api/wasla/gateway/conversations/1fb6db99-3b46-4ec3-adae-c08cb2ebc9ec/approve",
+    "url": "/api/wasla/gateway/conversations/537d85e3-1487-4ffc-8261-2de81319808e/approve",
     "body": {
-      "approvalId": "14b67281-d76a-4b3a-81c0-a1b873200f97",
-      "approved": false
+      "approvalId": "46d271a0-6971-42d6-b922-7fae697a475a",
+      "approved": false,
+      "clientRequestId": "c0ffee00-0006-4000-8000-000000000006"
     }
   },
   "response": {
     "status": 200,
     "body": {
-      "id": "1fb6db99-3b46-4ec3-adae-c08cb2ebc9ec",
+      "id": "537d85e3-1487-4ffc-8261-2de81319808e",
       "title": "افتح http://fixture-site.test/ads",
       "status": "running",
-      "updatedAt": "2026-11-22T07:31:26.391Z",
+      "updatedAt": "2026-11-22T08:01:19.392Z",
       "messages": [
         {
-          "id": "de796cee-5799-420e-9044-edecfdcade78",
+          "id": "6ebbeac3-cc31-479d-9265-93f9abe801a4",
           "role": "user",
           "text": "افتح http://fixture-site.test/ads",
-          "createdAt": "2026-11-22T07:31:24.419Z"
+          "createdAt": "2026-11-22T08:01:17.866Z"
         },
         {
-          "id": "16b9dec6-c12c-4689-b8b9-c84a827cd594",
+          "id": "be9c3530-8a40-4ff0-b274-910776a601f3",
           "role": "assistant",
           "text": "أريد إرسال «رفض ملفات الارتباط غير الضرورية» إلى fixture-site.test. هل أتابع؟",
-          "createdAt": "2026-11-22T07:31:26.339Z"
+          "createdAt": "2026-11-22T08:01:19.341Z"
         },
         {
-          "id": "564b445e-4060-4091-850f-d8a72d5ab99e",
+          "id": "5d535b5b-0907-4ed7-903d-26aa2e67fa4b",
           "role": "user",
           "text": "لا تفعل ذلك",
-          "createdAt": "2026-11-22T07:31:26.389Z"
+          "createdAt": "2026-11-22T08:01:19.390Z"
         }
       ],
       "question": null,
@@ -42,9 +43,9 @@
       "progress": "يتابع العمل…",
       "steps": [
         {
-          "id": "1d1e3a84-2b50-41fc-bfd1-45c47e50cee8",
+          "id": "79680a27-7e13-40df-8ef0-1396103bc111",
           "text": "فتح fixture-site.test",
-          "createdAt": "2026-11-22T07:31:24.484Z"
+          "createdAt": "2026-11-22T08:01:17.906Z"
         }
       ],
       "error": null,

@@ -1,33 +1,33 @@
 {
-  "capturedAt": "2026-11-22T07:31:24.116Z",
-  "sourceCommit": "b865d3d",
+  "capturedAt": "2026-11-22T08:01:17.636Z",
+  "sourceCommit": "501f707",
   "request": {
     "method": "GET",
-    "url": "/api/wasla/gateway/conversations/17d334f8-b9fc-4287-b24a-7cf4676f0f0c"
+    "url": "/api/wasla/gateway/conversations/2b447a56-465f-409d-8c4e-6a4e85db4035"
   },
   "response": {
     "status": 200,
     "body": {
-      "id": "17d334f8-b9fc-4287-b24a-7cf4676f0f0c",
+      "id": "2b447a56-465f-409d-8c4e-6a4e85db4035",
       "title": "اكتب لي رسالة اعتذار لعميل",
       "status": "waiting_user",
-      "updatedAt": "2026-11-22T07:31:24.084Z",
+      "updatedAt": "2026-11-22T08:01:17.614Z",
       "messages": [
         {
-          "id": "7c27c7f0-65de-4c32-a43b-f28a1b221f35",
+          "id": "84b79370-0d16-496e-b231-96602d31a457",
           "role": "user",
           "text": "اكتب لي رسالة اعتذار لعميل",
-          "createdAt": "2026-11-22T07:31:23.969Z"
+          "createdAt": "2026-11-22T08:01:17.525Z"
         },
         {
-          "id": "d3252527-7e5e-4dd9-815b-1c69359eae8a",
+          "id": "0ec17ee6-0eb1-459a-8b0b-3e2cf52772e1",
           "role": "assistant",
           "text": "أكتب لك الرسالة من قالب رسمي، والتفاصيل تبقى بكلماتك. أجب عن هذه الأسئلة:",
-          "createdAt": "2026-11-22T07:31:24.079Z"
+          "createdAt": "2026-11-22T08:01:17.611Z"
         }
       ],
       "question": {
-        "id": "53c622fa-80cd-4d4c-868b-e7e43844c44f",
+        "id": "f735074a-581c-4e97-82c5-1d1fcb0a6087",
         "prompt": "أكتب لك الرسالة من قالب رسمي، والتفاصيل تبقى بكلماتك. أجب عن هذه الأسئلة:",
         "options": [
           {
@@ -90,9 +90,9 @@
       "progress": null,
       "steps": [
         {
-          "id": "038ef908-1dc3-491f-8799-4a8bb149fc6b",
+          "id": "89e60505-99a3-4d68-a62e-89e91ab6f016",
           "text": "أسئلة الرسالة",
-          "createdAt": "2026-11-22T07:31:24.068Z"
+          "createdAt": "2026-11-22T08:01:17.603Z"
         }
       ],
       "error": null,

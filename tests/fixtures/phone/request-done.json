@@ -1,0 +1,17 @@
+{
+  "capturedAt": "2026-11-22T08:01:17.723Z",
+  "sourceCommit": "501f707",
+  "request": {
+    "method": "GET",
+    "url": "/api/wasla/gateway/requests/c0ffee00-0003-4000-8000-000000000003"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "known": true,
+      "kind": "messages",
+      "state": "done",
+      "conversationId": "2b447a56-465f-409d-8c4e-6a4e85db4035"
+    }
+  }
+}

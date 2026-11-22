@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-11-22T08:01:17.728Z",
+  "sourceCommit": "501f707",
+  "request": {
+    "method": "GET",
+    "url": "/api/wasla/gateway/requests/c0ffee00-0008-4000-8000-000000000008"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "known": false
+    }
+  }
+}

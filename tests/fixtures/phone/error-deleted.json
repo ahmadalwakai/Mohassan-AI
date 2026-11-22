@@ -1,9 +1,9 @@
 {
-  "capturedAt": "2026-11-22T07:31:29.608Z",
-  "sourceCommit": "b865d3d",
+  "capturedAt": "2026-11-22T08:01:22.087Z",
+  "sourceCommit": "501f707",
   "request": {
     "method": "GET",
-    "url": "/api/wasla/gateway/conversations/c8134d86-2d29-4cb0-a569-2f8d1ba361fc"
+    "url": "/api/wasla/gateway/conversations/8214548f-e766-47a2-a2ad-28ed2e17bf03"
   },
   "response": {
     "status": 404,

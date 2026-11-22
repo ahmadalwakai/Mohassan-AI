@@ -1,0 +1,21 @@
+{
+  "capturedAt": "2026-11-22T08:01:17.342Z",
+  "sourceCommit": "501f707",
+  "request": {
+    "method": "POST",
+    "url": "/api/wasla/gateway/conversations",
+    "body": {
+      "goal": "كم يساوي 2 ضرب 2؟",
+      "clientRequestId": "c0ffee00-0001-4000-8000-000000000001"
+    }
+  },
+  "response": {
+    "status": 409,
+    "body": {
+      "error": {
+        "code": "CLIENT_REQUEST_REUSED",
+        "message": "مفتاح هذا الطلب استُخدم لطلب آخر. أرسل من جديد."
+      }
+    }
+  }
+}

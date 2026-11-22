@@ -3,7 +3,8 @@ import Security
 
 enum WaslaError: LocalizedError {
     case invalidAddress, invalidFingerprint, invalidPairingCode, invalidResponse
-    case notPaired, certificate, storage(OSStatus), server(Int, String), message(String)
+    /// `code` is the computer's or Mohassan's error code (`CHAT_BUSY`, `CLIENT_REQUEST_UNKNOWN`…), when it sent one.
+    case notPaired, certificate, storage(OSStatus), server(Int, String, code: String? = nil), message(String)
     var errorDescription: String? {
         switch self {
         case .invalidAddress: return "أدخل عنوان HTTPS فقط، دون اسم مستخدم أو مسار أو معاملات إضافية."
@@ -13,8 +14,19 @@ enum WaslaError: LocalizedError {
         case .notPaired: return "اربط الكمبيوتر أولًا."
         case .certificate: return "تعذّر التحقق من هوية الكمبيوتر أو صلاحية شهادته. راجع العنوان والبصمة والوقت على الجهازين."
         case .storage(let code): return "تعذّر حفظ بيانات الاقتران في سلسلة المفاتيح (\(code))."
-        case .server(_, let message), .message(let message): return message
+        case .server(_, let message, _), .message(let message): return message
         }
+    }
+}
+
+/// An https address that is safe to open: no credentials, backslashes or control characters.
+/// Search results and the links in Mohassan's replies open only through this check.
+enum SafeLink {
+    static func https(_ value: String) -> URL? {
+        guard let components = URLComponents(string: value), components.scheme?.lowercased() == "https",
+              let host = components.host, !host.isEmpty, components.user == nil, components.password == nil,
+              !value.contains("\\"), !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) || CharacterSet.whitespacesAndNewlines.contains($0) }) else { return nil }
+        return components.url
     }
 }
 
@@ -173,7 +185,7 @@ enum ConnectionState: Equatable {
         if let statusError {
             switch statusError {
             case .certificate: return .certificateMismatch
-            case .server(401, _): return .trustRevoked
+            case .server(401, _, _): return .trustRevoked
             default: return .unreachable
             }
         }
@@ -207,12 +219,7 @@ struct SearchResult: Decodable, Identifiable {
     let url: String
     let snippet: String
     enum CodingKeys: String, CodingKey { case title, url, snippet }
-    var safeURL: URL? {
-        guard let components = URLComponents(string: url), components.scheme?.lowercased() == "https",
-              let host = components.host, !host.isEmpty, components.user == nil, components.password == nil,
-              !url.contains("\\"), !url.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
-        return components.url
-    }
+    var safeURL: URL? { SafeLink.https(url) }
 }
 /// Mohassan's search engine through the computer. `notice` explains an empty result; `limitations`
 /// says what these sources cannot prove. Both are absent on older computer services.
@@ -250,15 +257,39 @@ enum MohassanStatus {
 }
 struct MohassanOption: Decodable, Identifiable, Hashable { let id: String; let label: String }
 struct MohassanClarification: Decodable { let reason: String; let recommendedOptionId: String?; let allowText: Bool }
+/// One suggested answer, taken by the brain from the owner's own site or sentence.
+struct MohassanSuggestion: Decodable, Hashable { let label: String; let reason: String? }
+/// One of several questions asked together (ChatQuestionFieldSchema in packages/contracts).
+struct MohassanField: Decodable, Identifiable {
+    let id: String
+    let prompt: String
+    let suggestions: [MohassanSuggestion]
+    let multiple: Bool?
+    let multiline: Bool?
+    let initialValue: String?
+    let selected: [Int]?
+    let placeholder: String?
+    var allowsSeveral: Bool { multiple == true }
+    var keepsLines: Bool { multiline == true }
+    /// The suggestions the brain is confident in, chosen in advance; indexes out of range are ignored.
+    var preselected: Set<Int> { Set((selected ?? []).filter { suggestions.indices.contains($0) }) }
+}
 struct MohassanQuestion: Decodable {
     let id: String
     let prompt: String
     let options: [MohassanOption]
     let action: String?
     let clarification: MohassanClarification?
+    /// Several questions in one card; the answers go back together, with this question's id.
+    let fields: [MohassanField]?
     /// Google's consent page cannot open from the phone; that option stays on the web.
     var phoneOptions: [MohassanOption] { action == "google_ads_connect" ? options.filter { $0.id != "connect" } : options }
-    var acceptsText: Bool { clarification?.allowText ?? options.isEmpty }
+    var phoneFields: [MohassanField] { fields ?? [] }
+    /// The «stop» option a field card offers beside its questions.
+    var stopOption: MohassanOption? { options.first { $0.id == "stop" } }
+    /// A typed answer is taken when the question asks for words: no choices, or only «stop».
+    /// Older servers state it in `clarification`.
+    var acceptsText: Bool { clarification?.allowText ?? options.allSatisfy { $0.id == "stop" } }
 }
 struct MohassanApproval: Decodable { let id: String; let prompt: String; let detail: String }
 struct MohassanSecure: Decodable { let id: String; let kind: String; let site: String; let prompt: String }
@@ -281,11 +312,313 @@ struct MohassanConversation: Decodable, Identifiable {
     var working: Bool { status == MohassanStatus.running }
 }
 struct MohassanCreated: Decodable { let id: String }
-struct MohassanCreate: Encodable { let goal: String }
-struct MohassanSend: Encodable { let text: String }
-/// Absent values are left out, as Mohassan expects either an option or a typed answer.
-struct MohassanRespond: Encodable { let questionId: String; let optionId: String?; let text: String? }
-struct MohassanApprove: Encodable { let approvalId: String; let approved: Bool }
+
+// MARK: - Phone requests with keys (plan phase 3)
+// Every create, message, answer and approval carries a fresh `clientRequestId`. Mohassan's gateway
+// runs at most one effect per key: a double tap, or a resend after a lost reply, returns the first
+// result instead of starting the work twice. Nothing is ever sent again without the owner's tap.
+
+struct MohassanCreate: Encodable { let goal: String; let clientRequestId: String }
+/// A message from the composer.
+struct MohassanSend: Encodable { let text: String; let clientRequestId: String }
+/// A typed answer to the pending question: a message that names the question, so a stale answer is refused.
+struct MohassanReply: Encodable { let text: String; let questionId: String; let clientRequestId: String }
+struct MohassanFieldAnswer: Codable, Equatable { let fieldId: String; let value: String }
+/// The answers of a several-questions card, in the card's order.
+struct MohassanFieldsReply: Encodable { let questionId: String; let answers: [MohassanFieldAnswer]; let clientRequestId: String }
+/// One option of the pending question (Mohassan's `respond` takes an option only).
+struct MohassanRespond: Encodable { let questionId: String; let optionId: String; let clientRequestId: String }
+struct MohassanApprove: Encodable { let approvalId: String; let approved: Bool; let clientRequestId: String }
+
+/// One phone request as it was sent: its key, where it went and its exact body, so the screen can say
+/// what is still unconfirmed and the owner can send the very same request again.
+struct MohassanRequest: Codable, Equatable {
+    enum Kind: String, Codable { case create, message, reply, fields, option, approve }
+    enum Phase: String, Codable {
+        /// On its way; no reply yet.
+        case sending
+        /// The reply was lost, or the work failed midway: it may or may not have happened.
+        case unknown
+        /// A check found that Mohassan never received it.
+        case notReceived
+    }
+    let key: String
+    let kind: Kind
+    /// The conversation it goes to; nil for a new conversation.
+    let conversationId: String?
+    /// What the owner sent, as the screen shows it.
+    let text: String
+    /// The JSON body, key included, exactly as first sent.
+    let body: Data
+    var phase: Phase
+    var note: String?
+
+    static func make<Body: Encodable>(_ kind: Kind, conversationId: String?, text: String, body: (String) -> Body) throws -> MohassanRequest {
+        let key = UUID().uuidString.lowercased()
+        return MohassanRequest(key: key, kind: kind, conversationId: conversationId, text: text, body: try JSONEncoder().encode(body(key)), phase: .sending, note: nil)
+    }
+
+    var path: String {
+        let conversation = "/v1/mohassan/conversations/\(conversationId ?? "")"
+        switch kind {
+        case .create: return "/v1/mohassan/conversations"
+        case .message, .reply, .fields: return conversation + "/messages"
+        case .option: return conversation + "/respond"
+        case .approve: return conversation + "/approve"
+        }
+    }
+    /// The composer's own text. A card's answer or approval is never resent: the owner answers the fresh card.
+    var fromComposer: Bool { kind == .create || kind == .message }
+    /// Whether it belongs to what the screen shows: the new-chat screen, or that conversation.
+    func belongs(to current: String?) -> Bool { kind == .create ? current == nil : conversationId == current }
+}
+
+/// What Mohassan's gateway knows about one key (GET /v1/mohassan/requests/{key}).
+struct MohassanRequestStatus: Decodable {
+    let known: Bool
+    let kind: String?
+    let state: String?
+    let conversationId: String?
+
+    enum Verdict: Equatable {
+        /// It happened; the conversation it went to, when the gateway recorded one.
+        case done(String?)
+        /// Mohassan never received it (or refused it, which changed nothing).
+        case notReceived
+        /// Mohassan is still taking it in.
+        case inProgress
+        /// It failed midway on the computer; only the conversation can show what happened.
+        case undetermined
+    }
+    var verdict: Verdict {
+        guard known else { return .notReceived }
+        switch state {
+        case "done": return .done(conversationId)
+        case "pending": return .inProgress
+        default: return .undetermined
+        }
+    }
+}
+
+/// What a failed send means for the request. Only a refusal, or a call that never left the phone,
+/// proves that nothing happened; anything else may have reached Mohassan.
+enum SendOutcome: Equatable {
+    /// Refused, or never sent: nothing happened. The reason is the owner's to read.
+    case notDone(String)
+    /// It may have reached Mohassan; a check can tell.
+    case unknown(String)
+    /// The first request with this key is still running on the computer.
+    case inProgress(String)
+    /// The first request with this key failed midway on the computer.
+    case undetermined(String)
+
+    static func of(_ error: Error) -> SendOutcome {
+        if let failure = error as? WaslaError {
+            switch failure {
+            case .server(let status, let message, let code):
+                if status == 409, code == "CLIENT_REQUEST_IN_PROGRESS" { return .inProgress(message) }
+                if status == 409, code == "CLIENT_REQUEST_UNKNOWN" { return .undetermined(message) }
+                if (400...499).contains(status) { return .notDone(message) }
+                return .unknown(message)
+            case .certificate, .invalidAddress, .notPaired, .invalidFingerprint, .invalidPairingCode, .storage:
+                return .notDone(failure.localizedDescription)
+            case .invalidResponse, .message:
+                return .unknown(failure.localizedDescription)
+            }
+        }
+        if let failure = error as? URLError {
+            // No connection or no trusted handshake: the request itself was never sent.
+            let neverSent: [URLError.Code] = [.cannotConnectToHost, .cannotFindHost, .notConnectedToInternet, .dnsLookupFailed,
+                                              .internationalRoamingOff, .dataNotAllowed, .callIsActive, .secureConnectionFailed,
+                                              .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid,
+                                              .serverCertificateHasUnknownRoot, .clientCertificateRejected, .badURL, .unsupportedURL]
+            if neverSent.contains(failure.code) { return .notDone("تعذّر الوصول إلى الكمبيوتر، فلم يُرسل الطلب.") }
+            return .unknown("انقطع الاتصال قبل وصول الرد.")
+        }
+        return .unknown("وصل رد غير متوقع.")
+    }
+}
+
+/// Composes the answers of a field card exactly as the web's QuestionPanel does.
+enum FieldAnswers {
+    /// One field's answer: the chosen suggestions in their order, and the typed text. In a
+    /// single-answer field a typed answer replaces the choice; a multi-line answer keeps its lines.
+    static func answer(_ field: MohassanField, chosen: Set<Int>, typed supplied: String) -> String {
+        let picked = chosen.sorted().compactMap { field.suggestions.indices.contains($0) ? field.suggestions[$0].label : nil }
+        let typed = field.keepsLines ? supplied : supplied.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasTyped = !typed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let parts = field.allowsSeveral ? picked + (hasTyped ? [typed] : []) : (hasTyped ? [typed] : picked)
+        return parts.joined(separator: ", ")
+    }
+    /// The length Mohassan counts: the answers, and for several the «1. » numbers and line breaks.
+    static func length(_ answers: [String]) -> Int {
+        answers.reduce(0) { $0 + $1.utf16.count } + (answers.count > 1 ? answers.count * 4 - 1 : 0)
+    }
+    static let limit = 4_000
+    static func ready(_ answers: [String]) -> Bool {
+        !answers.isEmpty && answers.allSatisfy { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } && length(answers) <= limit
+    }
+}
+
+// MARK: - Reply text: the web's Markdown subset (apps/web/components/markdown.tsx)
+
+/// Headings, lists, quotes, code blocks, **bold**, `code` and links, read the way the web reads them.
+/// Only https links become tappable, and they open inside the app.
+@available(iOS 15.0, macOS 12.0, *)
+enum ReplyMarkdown {
+    enum Block: Equatable {
+        case paragraph(String)
+        case heading(String)
+        case quote([String])
+        case list(ordered: Bool, items: [String])
+        case code(String)
+    }
+
+    private static let orderedItem = #"^\s*\d+[.)]\s+"#
+    private static let bulletItem = #"^\s*[-*•]\s+"#
+    private static let quoteLine = #"^\s*>"#
+    private static let headingLine = #"^#{1,3}\s+\S"#
+
+    private static func matches(_ line: String, _ pattern: String) -> Bool { line.range(of: pattern, options: .regularExpression) != nil }
+    private static func blank(_ line: String) -> Bool { line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private static func fence(_ line: String) -> Bool { line.drop(while: { $0 == " " || $0 == "\t" }).hasPrefix("```") }
+
+    static func blocks(_ text: String) -> [Block] {
+        let lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+        var blocks: [Block] = []
+        var index = 0
+        while index < lines.count {
+            let line = lines[index]
+            if blank(line) { index += 1; continue }
+            if fence(line) {
+                var code: [String] = []
+                index += 1
+                while index < lines.count, !fence(lines[index]) { code.append(lines[index]); index += 1 }
+                index += 1
+                blocks.append(.code(code.joined(separator: "\n")))
+                continue
+            }
+            if matches(line, headingLine) {
+                blocks.append(.heading(line.replacingOccurrences(of: #"^#{1,3}\s+"#, with: "", options: .regularExpression)))
+                index += 1
+                continue
+            }
+            if matches(line, quoteLine) {
+                var quoted: [String] = []
+                while index < lines.count, matches(lines[index], quoteLine) {
+                    quoted.append(lines[index].replacingOccurrences(of: #"^\s*>\s?"#, with: "", options: .regularExpression)); index += 1
+                }
+                // Blank lines (spaces allowed) separate the quote's paragraphs.
+                let parts = quoted.joined(separator: "\n").replacingOccurrences(of: #"\n\s*\n"#, with: "\u{0}", options: .regularExpression)
+                    .components(separatedBy: "\u{0}").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                blocks.append(.quote(parts))
+                continue
+            }
+            if matches(line, orderedItem) || matches(line, bulletItem) {
+                let pattern = matches(line, orderedItem) ? orderedItem : bulletItem
+                var items: [String] = []
+                while index < lines.count, matches(lines[index], pattern) {
+                    items.append(lines[index].replacingOccurrences(of: pattern, with: "", options: .regularExpression)); index += 1
+                }
+                blocks.append(.list(ordered: pattern == orderedItem, items: items))
+                continue
+            }
+            // A paragraph runs to the next blank line or block; it always takes at least this line.
+            var paragraph = [line]
+            index += 1
+            while index < lines.count, !blank(lines[index]), !fence(lines[index]), !matches(lines[index], headingLine),
+                  !matches(lines[index], orderedItem), !matches(lines[index], bulletItem), !matches(lines[index], quoteLine) {
+                paragraph.append(lines[index]); index += 1
+            }
+            blocks.append(.paragraph(paragraph.joined(separator: "\n")))
+        }
+        return blocks
+    }
+
+    private static let inlinePattern = try! NSRegularExpression(pattern: #"(\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]\n]+\]\(https?://[^\s)]+\)|https?://[^\s<>()]+[^\s<>().,،])"#)
+    private static let titledLink = try! NSRegularExpression(pattern: #"^\[([^\]]+)\]\((https?://[^\s)]+)\)$"#)
+
+    /// One line or paragraph with bold, code and links.
+    static func inline(_ text: String) -> AttributedString {
+        let source = text as NSString
+        var out = AttributedString()
+        var cursor = 0
+        for match in inlinePattern.matches(in: text, range: NSRange(location: 0, length: source.length)) {
+            if match.range.location > cursor { out.append(AttributedString(source.substring(with: NSRange(location: cursor, length: match.range.location - cursor)))) }
+            out.append(token(source.substring(with: match.range)))
+            cursor = match.range.location + match.range.length
+        }
+        if cursor < source.length { out.append(AttributedString(source.substring(from: cursor))) }
+        return out
+    }
+
+    private static func token(_ part: String) -> AttributedString {
+        if part.hasPrefix("**"), part.hasSuffix("**"), part.count > 4 {
+            var run = AttributedString(String(part.dropFirst(2).dropLast(2)))
+            run.inlinePresentationIntent = .stronglyEmphasized
+            return run
+        }
+        if part.hasPrefix("`"), part.hasSuffix("`"), part.count > 2 {
+            var run = AttributedString(String(part.dropFirst().dropLast()))
+            run.inlinePresentationIntent = .code
+            return run
+        }
+        let source = part as NSString
+        if let link = titledLink.firstMatch(in: part, range: NSRange(location: 0, length: source.length)) {
+            return linked(title: source.substring(with: link.range(at: 1)), address: source.substring(with: link.range(at: 2)))
+        }
+        if part.hasPrefix("https://") || part.hasPrefix("http://") { return linked(title: nil, address: part) }
+        return AttributedString(part)
+    }
+
+    /// An https link shows its title (or a short readable address) and opens; any other address stays plain text, in full.
+    private static func linked(title: String?, address: String) -> AttributedString {
+        guard let url = SafeLink.https(address) else {
+            return AttributedString(title.map { "\($0) (\(address))" } ?? address)
+        }
+        var run = AttributedString(title ?? shortLink(address))
+        run.link = url
+        return run
+    }
+
+    /// A bare address as people read it: the site and the decoded page name, never %D8%A7…
+    static func shortLink(_ address: String) -> String {
+        guard let parts = URLComponents(string: address), let host = parts.host, !host.isEmpty else {
+            return address.count > 50 ? String(address.prefix(49)) + "…" : address
+        }
+        let site = host.lowercased().hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        guard let last = parts.percentEncodedPath.split(separator: "/").last.map(String.init), !last.isEmpty else { return site }
+        let name = (last.removingPercentEncoding ?? last)
+            .replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "+", with: " ")
+            .replacingOccurrences(of: #"\.(html?|php|aspx?)$"#, with: "", options: [.regularExpression, .caseInsensitive])
+        return "\(site) › \(name.count > 40 ? String(name.prefix(39)) + "…" : name)"
+    }
+
+    /// While a field card holds the questions, the message above it need not list them again: drops the
+    /// block a line ending in ":" opens, up to the next blank line. A "- " list after the colon is a
+    /// summary, not questions, and stays (withoutQuestionList in apps/web/components/question-card.tsx).
+    static func withoutQuestionList(_ text: String) -> String {
+        let lines = text.components(separatedBy: "\n")
+        func trimmed(_ index: Int) -> String { lines[index].trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard let start = lines.indices.first(where: { index in
+            index + 1 < lines.count && trimmed(index).hasSuffix(":") && !trimmed(index + 1).isEmpty && !trimmed(index + 1).hasPrefix("- ")
+        }) else { return text }
+        var end = start + 1
+        while end < lines.count, !trimmed(end).isEmpty { end += 1 }
+        let kept = Array(lines[..<start]) + Array(lines[min(end + 1, lines.count)...])
+        return kept.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The reply as plain text for the clipboard: no ** or >, links as «title (address)».
+    static func plainText(_ text: String) -> String {
+        let unquoted = text.components(separatedBy: "\n").map { $0.replacingOccurrences(of: #"^\s*>\s?"#, with: "", options: .regularExpression) }.joined(separator: "\n")
+        return unquoted
+            .replacingOccurrences(of: #"\[([^\]\n]+)\]\((https?://[^\s)]+)\)"#, with: "$1 ($2)", options: .regularExpression)
+            .replacingOccurrences(of: #"\*\*([^*\n]+)\*\*"#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
 
 struct DesktopSession: Decodable { let session_id: String; let expires_at: Double }
 struct DesktopCommand: Encodable {

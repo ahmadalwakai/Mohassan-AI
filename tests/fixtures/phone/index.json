@@ -1,6 +1,6 @@
 {
-  "capturedAt": "2026-11-22T07:31:29.610Z",
-  "sourceCommit": "b865d3d",
+  "capturedAt": "2026-11-22T08:01:22.088Z",
+  "sourceCommit": "501f707",
   "generator": "scripts/phone-fixtures.ts",
   "fixtures": [
     {
@@ -22,6 +22,15 @@
       "conversationStatus": "idle"
     },
     {
+      "file": "create-replayed",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "error-request-reused",
+      "status": 409
+    },
+    {
       "file": "campaign-events",
       "status": 200
     },
@@ -41,7 +50,7 @@
       "conversationStatus": "waiting_user"
     },
     {
-      "file": "messages-numbered-reply",
+      "file": "messages-field-answers",
       "status": 200,
       "conversationStatus": "running"
     },
@@ -49,6 +58,14 @@
       "file": "detail-completed-letter",
       "status": 200,
       "conversationStatus": "idle"
+    },
+    {
+      "file": "request-done",
+      "status": 200
+    },
+    {
+      "file": "request-unknown",
+      "status": 200
     },
     {
       "file": "error-question-changed",

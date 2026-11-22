@@ -35,7 +35,13 @@ final class WaslaStore: ObservableObject {
     @Published var mohassanList: [MohassanSummary] = []
     @Published var mohassanConversation: MohassanConversation?
     @Published var mohassanSending = false
-    @Published var mohassanPendingText: String?
+    /// The one request whose outcome is not settled yet (plan phase 3); nothing new is sent until it is.
+    @Published var mohassanRequest: MohassanRequest?
+    @Published var mohassanChecking = false
+    /// The composer's text and a question card's typed answer. They stay until Mohassan has the request,
+    /// and come back when a send is refused.
+    @Published var mohassanDraft = ""
+    @Published var mohassanAnswerDraft = ""
     var mohassanPollTask: Task<Void, Never>?
     var mohassanPollID = 0
     var mohassanEpoch = 0
@@ -69,11 +75,14 @@ final class WaslaStore: ObservableObject {
                 pendingImageID = id
                 imageStatus = "يوجد طلب سابق. استعد حالته دون إعادة إرساله."
             }
+            restoreMohassanRequest()
             // The app opens at once from what the phone already knows; the computer is
             // checked in the background. Before this, an unreachable computer kept the
             // launch screen spinning for the full network timeout.
             isLoading = false
             await refreshStatus()
+            // A request left unconfirmed by the last session is checked (a read), never sent again.
+            if mohassanRequest != nil { Task { await checkMohassanRequest(automatic: true) } }
             if pendingImageID != nil { resumeImage() }
             else if let id = defaults.string(forKey: lastImageKey), UUID(uuidString: id) != nil, let client {
                 do { lastImage = try await loadImage(id: id, client: client) }
@@ -237,7 +246,7 @@ final class WaslaStore: ObservableObject {
             } catch {
                 guard !Task.isCancelled, epoch == self.sessionEpoch else { return }
                 self.imageBusy = false
-                if let failure = error as? WaslaError, case .server(404, _) = failure {
+                if let failure = error as? WaslaError, case .server(404, _, _) = failure {
                     self.finishImage("الكمبيوتر لا يعرف هذا الطلب. لم نُعِد إرساله. يمكنك إنشاء طلب جديد.")
                 } else {
                     self.imageStatus = "توقفت متابعة الطلب. تحقّق من حالته عند عودة الاتصال."
@@ -300,7 +309,7 @@ final class WaslaStore: ObservableObject {
                             data = try await client.data(path: "/v1/desktop/frame", desktopSession: opened.session_id, timeout: 10)
                             busyRetries = 0
                         } catch let failure as WaslaError {
-                            if case .server(429, _) = failure, busyRetries < 12 {
+                            if case .server(429, _, _) = failure, busyRetries < 12 {
                                 busyRetries += 1
                                 self.desktopMessage = "عرض الشاشة ينتظر اكتمال الإدخال…"
                                 try await Task.sleep(for: .milliseconds(min(2_000, busyRetries * 250)))

@@ -1,41 +1,41 @@
 {
-  "capturedAt": "2026-11-22T07:31:27.066Z",
-  "sourceCommit": "b865d3d",
+  "capturedAt": "2026-11-22T08:01:20.024Z",
+  "sourceCommit": "501f707",
   "request": {
     "method": "GET",
-    "url": "/api/wasla/gateway/conversations/1fb6db99-3b46-4ec3-adae-c08cb2ebc9ec"
+    "url": "/api/wasla/gateway/conversations/537d85e3-1487-4ffc-8261-2de81319808e"
   },
   "response": {
     "status": 200,
     "body": {
-      "id": "1fb6db99-3b46-4ec3-adae-c08cb2ebc9ec",
+      "id": "537d85e3-1487-4ffc-8261-2de81319808e",
       "title": "افتح http://fixture-site.test/ads",
       "status": "idle",
-      "updatedAt": "2026-11-22T07:31:27.024Z",
+      "updatedAt": "2026-11-22T08:01:20.004Z",
       "messages": [
         {
-          "id": "de796cee-5799-420e-9044-edecfdcade78",
+          "id": "6ebbeac3-cc31-479d-9265-93f9abe801a4",
           "role": "user",
           "text": "افتح http://fixture-site.test/ads",
-          "createdAt": "2026-11-22T07:31:24.419Z"
+          "createdAt": "2026-11-22T08:01:17.866Z"
         },
         {
-          "id": "16b9dec6-c12c-4689-b8b9-c84a827cd594",
+          "id": "be9c3530-8a40-4ff0-b274-910776a601f3",
           "role": "assistant",
           "text": "أريد إرسال «رفض ملفات الارتباط غير الضرورية» إلى fixture-site.test. هل أتابع؟",
-          "createdAt": "2026-11-22T07:31:26.339Z"
+          "createdAt": "2026-11-22T08:01:19.341Z"
         },
         {
-          "id": "564b445e-4060-4091-850f-d8a72d5ab99e",
+          "id": "5d535b5b-0907-4ed7-903d-26aa2e67fa4b",
           "role": "user",
           "text": "لا تفعل ذلك",
-          "createdAt": "2026-11-22T07:31:26.389Z"
+          "createdAt": "2026-11-22T08:01:19.390Z"
         },
         {
-          "id": "a639730b-86c5-4715-9c18-0da5d952c546",
+          "id": "eebb0294-0db3-4add-b3ec-dab0beb307b3",
           "role": "assistant",
           "text": "وصلت إلى صفحة إعدادات ملفات الارتباط في fixture-site.test.",
-          "createdAt": "2026-11-22T07:31:27.016Z"
+          "createdAt": "2026-11-22T08:01:20.001Z"
         }
       ],
       "question": null,
@@ -44,9 +44,9 @@
       "progress": null,
       "steps": [
         {
-          "id": "1d1e3a84-2b50-41fc-bfd1-45c47e50cee8",
+          "id": "79680a27-7e13-40df-8ef0-1396103bc111",
           "text": "فتح fixture-site.test",
-          "createdAt": "2026-11-22T07:31:24.484Z"
+          "createdAt": "2026-11-22T08:01:17.906Z"
         }
       ],
       "error": null,

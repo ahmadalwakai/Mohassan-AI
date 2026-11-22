@@ -1,0 +1,72 @@
+{
+  "capturedAt": "2026-11-22T08:01:17.700Z",
+  "sourceCommit": "501f707",
+  "request": {
+    "method": "POST",
+    "url": "/api/wasla/gateway/conversations/2b447a56-465f-409d-8c4e-6a4e85db4035/messages",
+    "body": {
+      "questionId": "f735074a-581c-4e97-82c5-1d1fcb0a6087",
+      "answers": [
+        {
+          "fieldId": "to",
+          "value": "الأستاذ خالد"
+        },
+        {
+          "fieldId": "kind",
+          "value": "اعتذار"
+        },
+        {
+          "fieldId": "details",
+          "value": "تأخر التسليم يومين بسبب الشحن، وسيصل الطلب يوم الأحد"
+        },
+        {
+          "fieldId": "from",
+          "value": "موحسن"
+        }
+      ],
+      "clientRequestId": "c0ffee00-0003-4000-8000-000000000003"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "2b447a56-465f-409d-8c4e-6a4e85db4035",
+      "title": "اكتب لي رسالة اعتذار لعميل",
+      "status": "running",
+      "updatedAt": "2026-11-22T08:01:17.664Z",
+      "messages": [
+        {
+          "id": "84b79370-0d16-496e-b231-96602d31a457",
+          "role": "user",
+          "text": "اكتب لي رسالة اعتذار لعميل",
+          "createdAt": "2026-11-22T08:01:17.525Z"
+        },
+        {
+          "id": "0ec17ee6-0eb1-459a-8b0b-3e2cf52772e1",
+          "role": "assistant",
+          "text": "أكتب لك الرسالة من قالب رسمي، والتفاصيل تبقى بكلماتك. أجب عن هذه الأسئلة:",
+          "createdAt": "2026-11-22T08:01:17.611Z"
+        },
+        {
+          "id": "b60a2394-7c07-46b7-ba3f-abd0f1fafaf4",
+          "role": "user",
+          "text": "1. الأستاذ خالد\n2. اعتذار\n3. تأخر التسليم يومين بسبب الشحن، وسيصل الطلب يوم الأحد\n4. موحسن",
+          "createdAt": "2026-11-22T08:01:17.651Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "progress": "يتابع العمل…",
+      "steps": [
+        {
+          "id": "89e60505-99a3-4d68-a62e-89e91ab6f016",
+          "text": "أسئلة الرسالة",
+          "createdAt": "2026-11-22T08:01:17.603Z"
+        }
+      ],
+      "error": null,
+      "configured": false
+    }
+  }
+}

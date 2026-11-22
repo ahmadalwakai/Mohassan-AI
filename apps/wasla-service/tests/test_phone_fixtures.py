@@ -82,6 +82,11 @@ class PhoneFixtureTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await bridge.detail(path.rsplit("/", 1)[-1]), fixture["response"]["body"], name)
                 forwarded += 1
             self.assertGreaterEqual(forwarded, 10)
+            # What became of a phone request key reaches the phone unchanged too.
+            for name in ("request-done", "request-unknown"):
+                path = fixtures[name]["request"]["url"]
+                served[path] = fixtures[name]["response"]
+                self.assertEqual(await bridge.request_status(path.rsplit("/", 1)[-1]), fixtures[name]["response"]["body"], name)
         finally:
             await bridge.close()
             await server.close()
@@ -93,6 +98,11 @@ class PhoneFixtureTests(unittest.IsolatedAsyncioTestCase):
         question = body("detail-question-fields")["question"]
         # Mohassan asks several questions in one card (`fields`); the service passes them through.
         self.assertEqual([field["id"] for field in question["fields"]], ["to", "kind", "details", "from"])
+        # The phone answers the card with the question's id and the answers in its order, under its own key.
+        sent = fixtures["messages-field-answers"]["request"]["body"]
+        self.assertEqual(sent["questionId"], question["id"])
+        self.assertEqual([answer["fieldId"] for answer in sent["answers"]], ["to", "kind", "details", "from"])
+        self.assertTrue(sent["clientRequestId"])
         self.assertEqual(body("detail-approval")["status"], "waiting_approval")
         self.assertEqual(body("detail-cancelled")["status"], "idle")
         for name in ("detail-failed-blocked-address",):

@@ -1,6 +1,6 @@
 {
-  "capturedAt": "2026-11-22T07:31:29.572Z",
-  "sourceCommit": "b865d3d",
+  "capturedAt": "2026-11-22T08:01:22.062Z",
+  "sourceCommit": "501f707",
   "request": {
     "method": "GET",
     "url": "/api/wasla/gateway/conversations/not-a-uuid"

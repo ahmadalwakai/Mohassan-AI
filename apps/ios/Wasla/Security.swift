@@ -187,7 +187,7 @@ final class APIClient: @unchecked Sendable {
         guard (200...299).contains(http.statusCode) else {
             let fault = try? JSONDecoder().decode(ServerFault.self, from: data)
             let fallback = (300...399).contains(http.statusCode) ? "رفض التطبيق إعادة توجيه الاتصال لحماية بيانات الاقتران." : "تعذّر إكمال الطلب (\(http.statusCode))."
-            throw WaslaError.server(http.statusCode, fault?.error.message ?? fallback)
+            throw WaslaError.server(http.statusCode, fault?.error.message ?? fallback, code: fault?.error.code)
         }
         return data
     }

@@ -1,34 +1,34 @@
 {
-  "capturedAt": "2026-11-22T07:31:26.375Z",
-  "sourceCommit": "b865d3d",
+  "capturedAt": "2026-11-22T08:01:19.376Z",
+  "sourceCommit": "501f707",
   "request": {
     "method": "GET",
-    "url": "/api/wasla/gateway/conversations/1fb6db99-3b46-4ec3-adae-c08cb2ebc9ec"
+    "url": "/api/wasla/gateway/conversations/537d85e3-1487-4ffc-8261-2de81319808e"
   },
   "response": {
     "status": 200,
     "body": {
-      "id": "1fb6db99-3b46-4ec3-adae-c08cb2ebc9ec",
+      "id": "537d85e3-1487-4ffc-8261-2de81319808e",
       "title": "افتح http://fixture-site.test/ads",
       "status": "waiting_approval",
-      "updatedAt": "2026-11-22T07:31:26.344Z",
+      "updatedAt": "2026-11-22T08:01:19.345Z",
       "messages": [
         {
-          "id": "de796cee-5799-420e-9044-edecfdcade78",
+          "id": "6ebbeac3-cc31-479d-9265-93f9abe801a4",
           "role": "user",
           "text": "افتح http://fixture-site.test/ads",
-          "createdAt": "2026-11-22T07:31:24.419Z"
+          "createdAt": "2026-11-22T08:01:17.866Z"
         },
         {
-          "id": "16b9dec6-c12c-4689-b8b9-c84a827cd594",
+          "id": "be9c3530-8a40-4ff0-b274-910776a601f3",
           "role": "assistant",
           "text": "أريد إرسال «رفض ملفات الارتباط غير الضرورية» إلى fixture-site.test. هل أتابع؟",
-          "createdAt": "2026-11-22T07:31:26.339Z"
+          "createdAt": "2026-11-22T08:01:19.341Z"
         }
       ],
       "question": null,
       "approval": {
-        "id": "14b67281-d76a-4b3a-81c0-a1b873200f97",
+        "id": "46d271a0-6971-42d6-b922-7fae697a475a",
         "prompt": "أريد إرسال «رفض ملفات الارتباط غير الضرورية» إلى fixture-site.test. هل أتابع؟",
         "detail": "POST /consent. الموافقة محددة بالصفحة والقيم وتنتهي خلال خمس دقائق."
       },
@@ -36,9 +36,9 @@
       "progress": null,
       "steps": [
         {
-          "id": "1d1e3a84-2b50-41fc-bfd1-45c47e50cee8",
+          "id": "79680a27-7e13-40df-8ef0-1396103bc111",
           "text": "فتح fixture-site.test",
-          "createdAt": "2026-11-22T07:31:24.484Z"
+          "createdAt": "2026-11-22T08:01:17.906Z"
         }
       ],
       "error": null,

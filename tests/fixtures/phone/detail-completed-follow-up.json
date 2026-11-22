@@ -1,41 +1,41 @@
 {
-  "capturedAt": "2026-11-22T07:31:23.955Z",
-  "sourceCommit": "b865d3d",
+  "capturedAt": "2026-11-22T08:01:17.505Z",
+  "sourceCommit": "501f707",
   "request": {
     "method": "GET",
-    "url": "/api/wasla/gateway/conversations/c8134d86-2d29-4cb0-a569-2f8d1ba361fc"
+    "url": "/api/wasla/gateway/conversations/8214548f-e766-47a2-a2ad-28ed2e17bf03"
   },
   "response": {
     "status": 200,
     "body": {
-      "id": "c8134d86-2d29-4cb0-a569-2f8d1ba361fc",
+      "id": "8214548f-e766-47a2-a2ad-28ed2e17bf03",
       "title": "كم يساوي 15 ضرب 23؟",
       "status": "idle",
-      "updatedAt": "2026-11-22T07:31:23.907Z",
+      "updatedAt": "2026-11-22T08:01:17.466Z",
       "messages": [
         {
-          "id": "40673c73-7360-444f-b05e-8a36ebc3807a",
+          "id": "51c0dda2-b5d9-4e03-b52c-431ed7fc37d4",
           "role": "user",
           "text": "كم يساوي 15 ضرب 23؟",
-          "createdAt": "2026-11-22T07:31:23.162Z"
+          "createdAt": "2026-11-22T08:01:16.803Z"
         },
         {
-          "id": "cf1db72a-9176-430b-80e1-8aaf9046a8b1",
+          "id": "09299e0e-c1da-4292-b670-6066bb3c72b4",
           "role": "assistant",
           "text": "15 * 23 = 345",
-          "createdAt": "2026-11-22T07:31:23.718Z"
+          "createdAt": "2026-11-22T08:01:17.236Z"
         },
         {
-          "id": "2ff83cd6-b36d-4ab6-b4ac-c64a59eafc78",
+          "id": "129e42e4-e7b2-41ce-9f65-0462bac6b880",
           "role": "user",
           "text": "و 40 ضرب 3؟",
-          "createdAt": "2026-11-22T07:31:23.810Z"
+          "createdAt": "2026-11-22T08:01:17.365Z"
         },
         {
-          "id": "69d79b64-c8da-4da7-a934-81fd8427f6e5",
+          "id": "4f624d03-9248-4cb1-bd7f-237b4798f5fb",
           "role": "assistant",
           "text": "40 * 3 = 120",
-          "createdAt": "2026-11-22T07:31:23.899Z"
+          "createdAt": "2026-11-22T08:01:17.458Z"
         }
       ],
       "question": null,
@@ -44,9 +44,9 @@
       "progress": null,
       "steps": [
         {
-          "id": "71d21c5f-b9d7-4af7-8a05-b7736bbdbc53",
+          "id": "7799c98c-7fb9-4b24-b00d-ac6600b2c174",
           "text": "حساب محلي",
-          "createdAt": "2026-11-22T07:31:23.878Z"
+          "createdAt": "2026-11-22T08:01:17.434Z"
         }
       ],
       "error": null,

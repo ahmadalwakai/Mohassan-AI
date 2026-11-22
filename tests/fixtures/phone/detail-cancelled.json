@@ -1,29 +1,29 @@
 {
-  "capturedAt": "2026-11-22T07:31:28.235Z",
-  "sourceCommit": "b865d3d",
+  "capturedAt": "2026-11-22T08:01:21.041Z",
+  "sourceCommit": "501f707",
   "request": {
     "method": "GET",
-    "url": "/api/wasla/gateway/conversations/b8430ef9-9b2e-4f59-b9e6-e2a2b0822e4a"
+    "url": "/api/wasla/gateway/conversations/2a25c962-d325-406b-a822-dbe18123f3c6"
   },
   "response": {
     "status": 200,
     "body": {
-      "id": "b8430ef9-9b2e-4f59-b9e6-e2a2b0822e4a",
+      "id": "2a25c962-d325-406b-a822-dbe18123f3c6",
       "title": "افتح http://fixture-site.test/ads",
       "status": "idle",
-      "updatedAt": "2026-11-22T07:31:28.193Z",
+      "updatedAt": "2026-11-22T08:01:21.017Z",
       "messages": [
         {
-          "id": "953c1380-826f-4904-840a-71ead978a27e",
+          "id": "dd2ff607-ec85-46c3-aee5-059de13db34b",
           "role": "user",
           "text": "افتح http://fixture-site.test/ads",
-          "createdAt": "2026-11-22T07:31:27.119Z"
+          "createdAt": "2026-11-22T08:01:20.046Z"
         },
         {
-          "id": "88c5ffd6-800d-4467-a2db-d01201f3a599",
+          "id": "68008e02-1f5e-408f-ae2e-9e99c7aeb361",
           "role": "assistant",
           "text": "أريد إرسال «رفض ملفات الارتباط غير الضرورية» إلى fixture-site.test. هل أتابع؟",
-          "createdAt": "2026-11-22T07:31:28.137Z"
+          "createdAt": "2026-11-22T08:01:20.911Z"
         }
       ],
       "question": null,
@@ -32,9 +32,9 @@
       "progress": null,
       "steps": [
         {
-          "id": "51214d4a-d8d6-444f-bf54-f83b9a7a8d80",
+          "id": "4e61fa42-bd18-4959-9f23-ac6d2a68bc3a",
           "text": "فتح fixture-site.test",
-          "createdAt": "2026-11-22T07:31:27.170Z"
+          "createdAt": "2026-11-22T08:01:20.078Z"
         }
       ],
       "error": null,

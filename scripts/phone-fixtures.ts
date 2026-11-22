@@ -9,6 +9,7 @@
  * Nothing outside tests/fixtures/phone/ is written. No network beyond 127.0.0.1.
  */
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, rm, realpath, unlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -18,6 +19,18 @@ import { createApplication } from '../apps/server/src/app.ts';
 const OUT = join(process.cwd(), 'tests', 'fixtures', 'phone');
 const gateway = '/api/wasla/gateway';
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** The phone sends a fresh key with every create, message, answer and approval (plan phase 3); fixed here so the files stay stable. */
+const keys = {
+  create: 'c0ffee00-0001-4000-8000-000000000001',
+  followUp: 'c0ffee00-0002-4000-8000-000000000002',
+  fields: 'c0ffee00-0003-4000-8000-000000000003',
+  questionAgain: 'c0ffee00-0004-4000-8000-000000000004',
+  stop: 'c0ffee00-0005-4000-8000-000000000005',
+  approve: 'c0ffee00-0006-4000-8000-000000000006',
+  approveAgain: 'c0ffee00-0007-4000-8000-000000000007',
+  /** Never sent: its lookup reads «not received». */
+  never: 'c0ffee00-0008-4000-8000-000000000008',
+};
 
 /** A small real site: a cookie wall with a POST form (an approval), and a sign-in page. */
 function fixtureSite() {
@@ -85,7 +98,7 @@ async function main() {
   }
   /** Creates a conversation, waits, then records the settled detail under `file`. */
   async function scenario(file: string, goal: string) {
-    const created = (await app.inject({ method: 'POST', url: `${gateway}/conversations`, headers: service(), payload: { goal } })).json();
+    const created = (await app.inject({ method: 'POST', url: `${gateway}/conversations`, headers: service(), payload: { goal, clientRequestId: randomUUID() } })).json();
     if (!uuid.test(created.id ?? '')) throw new Error(`${file}: create failed ${JSON.stringify(created)}`);
     await settle(created.id);
     const detail = await record(file, 'GET', `${gateway}/conversations/${created.id}`);
@@ -111,30 +124,39 @@ async function main() {
     await record('list-empty', 'GET', `${gateway}/conversations`);
 
     // 1. A finished answer from the brain's calculator; the create response is the first thing the phone sees.
-    const created = await record('create', 'POST', `${gateway}/conversations`, { goal: 'كم يساوي 15 ضرب 23؟' });
+    const created = await record('create', 'POST', `${gateway}/conversations`, { goal: 'كم يساوي 15 ضرب 23؟', clientRequestId: keys.create });
     await settle(created.id);
     await record('detail-completed', 'GET', `${gateway}/conversations/${created.id}`);
+    // The same request again with its key, as after a lost reply: the same conversation comes back, nothing runs twice.
+    await record('create-replayed', 'POST', `${gateway}/conversations`, { goal: 'كم يساوي 15 ضرب 23؟', clientRequestId: keys.create });
+    // The same key for a different request is refused.
+    await record('error-request-reused', 'POST', `${gateway}/conversations`, { goal: 'كم يساوي 2 ضرب 2؟', clientRequestId: keys.create });
     await record('campaign-events', 'GET', `${gateway}/conversations/${created.id}/campaign-events?after=0`);
     // A second message in the finished conversation: the brain takes «و 40 ضرب 3؟» as a follow-up sum.
-    const followUp = await record('messages-text', 'POST', `${gateway}/conversations/${created.id}/messages`, { text: 'و 40 ضرب 3؟' });
+    const followUp = await record('messages-text', 'POST', `${gateway}/conversations/${created.id}/messages`, { text: 'و 40 ضرب 3؟', clientRequestId: keys.followUp });
     await settle(followUp.id);
     await record('detail-completed-follow-up', 'GET', `${gateway}/conversations/${created.id}`);
 
-    // 2. A question with several fields (the writer), answered as one numbered reply, the way the web does at this commit.
+    // 2. A question with several fields (the writer), answered the way the phone and the web answer it: the field
+    //    answers in the card's order, with the question's id. A field with suggestions keeps the brain's preselected choice.
     const letter = await scenario('detail-question-fields', 'اكتب لي رسالة اعتذار لعميل');
     if (letter.status === 'waiting_user' && letter.question?.fields?.length) {
-      const values = ['الأستاذ خالد', 'اعتذار', 'تأخر التسليم يومين بسبب الشحن، وسيصل الطلب يوم الأحد', 'موحسن'];
-      const text = letter.question.fields.map((_: unknown, index: number) => `${index + 1}. ${values[index] ?? 'نعم'}`).join('\n');
-      await record('messages-numbered-reply', 'POST', `${gateway}/conversations/${letter.id}/messages`, { text });
+      const typed: Record<string, string> = { to: 'الأستاذ خالد', details: 'تأخر التسليم يومين بسبب الشحن، وسيصل الطلب يوم الأحد', from: 'موحسن' };
+      const answers = letter.question.fields.map((field: { id: string; suggestions: { label: string }[]; selected?: number[] }) =>
+        ({ fieldId: field.id, value: typed[field.id] ?? field.suggestions[field.selected?.[0] ?? 0]?.label ?? 'نعم' }));
+      await record('messages-field-answers', 'POST', `${gateway}/conversations/${letter.id}/messages`, { questionId: letter.question.id, answers, clientRequestId: keys.fields });
       await settle(letter.id);
       await record('detail-completed-letter', 'GET', `${gateway}/conversations/${letter.id}`);
+      // What became of that key, and of a key Mohassan never received.
+      await record('request-done', 'GET', `${gateway}/requests/${keys.fields}`);
+      await record('request-unknown', 'GET', `${gateway}/requests/${keys.never}`);
       // The question is gone: answering it again is refused.
-      await record('error-question-changed', 'POST', `${gateway}/conversations/${letter.id}/respond`, { questionId: letter.question.id, optionId: 'stop' });
+      await record('error-question-changed', 'POST', `${gateway}/conversations/${letter.id}/respond`, { questionId: letter.question.id, optionId: 'stop', clientRequestId: keys.questionAgain });
     }
     // The same question, stopped with its one option.
     const stopped = await scenario('detail-question-before-stop', 'اكتب رسالة شكر لفريق العمل');
     if (stopped.status === 'waiting_user' && stopped.question?.options?.some((option: { id: string }) => option.id === 'stop')) {
-      await record('respond-stop', 'POST', `${gateway}/conversations/${stopped.id}/respond`, { questionId: stopped.question.id, optionId: 'stop' });
+      await record('respond-stop', 'POST', `${gateway}/conversations/${stopped.id}/respond`, { questionId: stopped.question.id, optionId: 'stop', clientRequestId: keys.stop });
       await settle(stopped.id);
       await record('detail-stopped', 'GET', `${gateway}/conversations/${stopped.id}`);
     }
@@ -142,10 +164,10 @@ async function main() {
     // 3. An approval: the cookie wall's POST form waits for the owner; here the owner refuses.
     const consent = await scenario('detail-approval', `افتح ${origin}/ads`);
     if (consent.status === 'waiting_approval') {
-      await record('approve-refused', 'POST', `${gateway}/conversations/${consent.id}/approve`, { approvalId: consent.approval.id, approved: false });
+      await record('approve-refused', 'POST', `${gateway}/conversations/${consent.id}/approve`, { approvalId: consent.approval.id, approved: false, clientRequestId: keys.approve });
       await settle(consent.id);
       await record('detail-approval-refused', 'GET', `${gateway}/conversations/${consent.id}`);
-      await record('error-approval-changed', 'POST', `${gateway}/conversations/${consent.id}/approve`, { approvalId: consent.approval.id, approved: true });
+      await record('error-approval-changed', 'POST', `${gateway}/conversations/${consent.id}/approve`, { approvalId: consent.approval.id, approved: true, clientRequestId: keys.approveAgain });
     }
 
     // 4. Stopping while an approval waits. The conversation returns to idle; the run alone is marked cancelled.

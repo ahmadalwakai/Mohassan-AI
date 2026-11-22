@@ -210,7 +210,8 @@ struct ChatWelcome: View {
     }
 }
 
-/// A user turn: a soft bubble on the reading side. An assistant turn: plain text, no bubble.
+/// A user turn: a soft bubble on the reading side. An assistant turn: the reply's Markdown, no bubble,
+/// with a copy button under it, as on the web.
 struct ChatTurn: View {
     let mine: Bool
     let text: String
@@ -223,8 +224,75 @@ struct ChatTurn: View {
                 Spacer(minLength: 48)
             }
         } else {
-            Text(text).textSelection(.enabled).lineSpacing(6).frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 8) {
+                ReplyText(text: text)
+                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { CopyReplyButton(text: text) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+/// A reply in the web's Markdown subset: headings, lists, quotes, code, **bold**, `code` and links.
+/// Links open through the screen's openURL action, which takes https only.
+struct ReplyText: View {
+    let text: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(Array(ReplyMarkdown.blocks(text).enumerated()), id: \.offset) { _, block in
+                switch block {
+                case .paragraph(let line):
+                    Text(ReplyMarkdown.inline(line)).lineSpacing(6)
+                case .heading(let line):
+                    Text(ReplyMarkdown.inline(line)).font(.headline)
+                case .quote(let parts):
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(parts.enumerated()), id: \.offset) { _, part in Text(ReplyMarkdown.inline(part)).lineSpacing(4) }
+                    }
+                    .foregroundStyle(Forest.softText)
+                    .padding(.leading, 12)
+                    .overlay(alignment: .leading) { Rectangle().fill(Forest.line).frame(width: 3) }
+                case .list(let ordered, let items):
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { position, item in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(ordered ? "\(position + 1)." : "•").monospacedDigit().foregroundStyle(Forest.softText)
+                                Text(ReplyMarkdown.inline(item)).lineSpacing(4)
+                            }
+                        }
+                    }
+                case .code(let code):
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        Text(code).font(.system(.footnote, design: .monospaced)).padding(12)
+                    }
+                    .background(Forest.soft, in: RoundedRectangle(cornerRadius: 10))
+                    .environment(\.layoutDirection, .leftToRight)
+                }
+            }
+        }
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Copies one reply as plain text, without ** or > marks, so it pastes cleanly anywhere.
+struct CopyReplyButton: View {
+    let text: String
+    @State private var copied = false
+    var body: some View {
+        Button {
+            UIPasteboard.general.string = ReplyMarkdown.plainText(text)
+            copied = true
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1.8))
+                copied = false
+            }
+        } label: {
+            Label(copied ? "تم النسخ" : "نسخ", systemImage: copied ? "checkmark" : "doc.on.doc").font(.caption)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Forest.softText)
+        .accessibilityLabel(copied ? "تم نسخ الرد" : "نسخ الرد")
     }
 }
 
