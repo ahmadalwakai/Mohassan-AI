@@ -19,12 +19,14 @@ describe('judge shadow through the real chat controller', () => {
   const PAGE_TEXT = 'Tokyo is the capital of Japan and its largest city by population. The capital of Japan moved from Kyoto to Tokyo in 1868 after the Meiji Restoration. Japan has forty-seven prefectures and a population of about 124 million people.';
   // Page order puts the minority sentence first and the population figure second, as the real Wikipedia page did on 2026-11-22 (rq016).
   const MOROCCO_TEXT = 'فيما انخفضت الأقلية اليهودية المغربية بين السكان بشكل كبير ويصل عددها إلى نحو 6,000 نسمة. وحسب إحصاء سنة 2024، يبلغ عدد سكان المغرب ما يقارب 37 مليون نسمة بزيادة 8 في المائة. يقع المغرب في أقصى غرب شمال أفريقيا وعاصمته الرباط.';
-  // The live miss of 2026-11-22 06:13: a film article answered a travel question because its lead shares «visit» and «time».
-  const FILM_TEXT = 'The trio visit Misumi again, this time showing him a magazine he may have come across that includes an article about a wife that paid a man to murder her husband for insurance. Critics praised the film for the clarity of its images.';
+  // A page the first brain accepts (its title and sentence carry «best», «time» and «visit») that never names Japan: what the
+  // judge is for. The live film page of 2026-11-22 06:13 no longer reaches the judge, since hands.ts refuses a page whose title
+  // names nothing of the question (tests/assistant-hands-page-choice.test.ts).
+  const MUSEUM_TEXT = 'The best time to visit the museum is early on a weekday morning, when the halls are quiet. Guided tours start at ten.';
   const FIXTURES: Record<string, { title: string; text: string }> = {
     'https://judge-fixtures.test/capital-of-japan': { title: 'Capital of Japan', text: PAGE_TEXT },
     'https://judge-fixtures.test/morocco-population': { title: 'سكان المغرب', text: MOROCCO_TEXT },
-    'https://judge-fixtures.test/the-third-murder': { title: 'The Third Murder', text: FILM_TEXT },
+    'https://judge-fixtures.test/museum-visits': { title: 'Best time to visit museums', text: MUSEUM_TEXT },
   };
   const member = 'isolated-judge-shadow-member';
 
@@ -54,7 +56,7 @@ describe('judge shadow through the real chat controller', () => {
     const searchProvider: SearchProvider = {
       name: 'isolated-judge-shadow-search',
       async search(query) {
-        const url = /المغرب/u.test(query) ? 'https://judge-fixtures.test/morocco-population' : /visit/iu.test(query) ? 'https://judge-fixtures.test/the-third-murder' : 'https://judge-fixtures.test/capital-of-japan';
+        const url = /المغرب/u.test(query) ? 'https://judge-fixtures.test/morocco-population' : /visit/iu.test(query) ? 'https://judge-fixtures.test/museum-visits' : 'https://judge-fixtures.test/capital-of-japan';
         return [{ title: `${FIXTURES[url]!.title} — ${query}`, url, snippet: FIXTURES[url]!.text }];
       },
     };
@@ -124,7 +126,7 @@ describe('judge shadow through the real chat controller', () => {
     expect(mine[1]!.runId).not.toBe(mine[0]!.runId);
   });
 
-  it('withholds a film page for a travel question on the owner\'s account: a fixed sentence with the page link, the run ends partial', async () => {
+  it('withholds a page that never names Japan for a travel question on the owner\'s account: a fixed sentence with the page link, the run ends partial', async () => {
     const { id } = await control.create(owner, { goal: 'What is the best time to visit Japan?' });
     await control.settled(id);
     const detail = await control.detail(owner, id);
@@ -133,11 +135,11 @@ describe('judge shadow through the real chat controller', () => {
     const line = (await lines()).filter(item => item.conversationId === id)[0]!;
     expect(line).toMatchObject({ kind: 'answer', decision: 'withhold', applied: true, status: 'completed' });
     expect(line.codes).toContain('subject_missing');
-    expect(line.reply).toMatch(/^The trio visit Misumi again/u);
+    expect(line.reply).toMatch(/^The best time to visit the museum/u);
     expect(stored).toBe(line.withholdText);
     expect(stored).toBe([
       'The page I found is not about the subject of your question, so I did not take an answer from it.', '',
-      'The page I read: [judge-fixtures.test — The Third Murder](https://judge-fixtures.test/the-third-murder)', '',
+      'The page I read: [judge-fixtures.test — Best time to visit museums](https://judge-fixtures.test/museum-visits)', '',
       'Send a suitable page link or rephrase the question.'].join('\n'));
     const run = await database.db.selectFrom('chat_runs').select(['status']).where('conversation_id', '=', id).executeTakeFirstOrThrow();
     expect(run.status).toBe('partial');
@@ -151,7 +153,7 @@ describe('judge shadow through the real chat controller', () => {
     const line = (await lines()).filter(item => item.conversationId === id)[0]!;
     expect(line).toMatchObject({ decision: 'withhold', applied: false });
     expect(stored).toBe(line.reply);
-    expect(stored).toMatch(/^The trio visit Misumi again/u);
+    expect(stored).toMatch(/^The best time to visit the museum/u);
   });
 
   it('logs a question card to the owner as a question, not a defect', async () => {

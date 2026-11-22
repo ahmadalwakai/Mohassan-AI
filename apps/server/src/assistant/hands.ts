@@ -311,6 +311,14 @@ export function titleScore(title: string, topic: string[]): number {
   const folded = fold(title).replace(/ء/gu, '');
   return topic.filter(word => folded.includes(word.replace(/ء/gu, ''))).length;
 }
+/** How many topic words a sentence holds, counting the feminine ending before a suffix: «وعاصمتها» holds «عاصمة». */
+export function topicCoverage(text: string, topic: readonly string[]): number {
+  const folded = fold(text).replace(/ء/gu, '');
+  return topic.filter(word => {
+    const bare = word.replace(/ء/gu, '');
+    return folded.includes(bare) || bare.length > 3 && bare.endsWith('ه') && folded.includes(`${bare.slice(0, -1)}ت`);
+  }).length;
+}
 
 /** Questions whose answer is a number: a count, a length of time, a price, a date. */
 const WANTS_NUMBER = /(?:^|\s)(?:كم|قديش|اديش|متى|متي)(?=\s|$)|\bhow (?:many|much|long|old|far|tall|big)\b|\bwhen\b/iu;
@@ -1064,6 +1072,14 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             const ranked = relevantLines(opened, step.query, 3, true);
             const answerAt = ranked.findIndex(line => checkAnswerLine(step.query, line).ok && namesEntity(line, entity, ownPage(opened, entity)));
             const lines = answerAt < 0 ? [] : [ranked[answerAt]!, ...ranked.filter((_, at) => at !== answerAt)];
+            // A page whose title names none of the question's words answers only with a sentence that carries nearly all of them:
+            // «The trio visit Misumi again, this time…» from the film «The Third Murder» shares only «visit» and «time» with «What is
+            // the best time to visit Japan?» (live 2026-11-22 06:13 and 07:44). Measured on the 208 sourced answers of the eight full
+            // runs of 2026-11-22 and the live judge log: it rejects 4, all wrong pages (that film three times, «CrossCountry» for a
+            // train ticket), and none of the right ones («طوكيو» for «ما عاصمة اليابان» carries both of its words). The title is
+            // the page's own or the search's for it: some sites give every page a generic title.
+            if (lines.length && topic.length >= 2 && titleScore(opened.title, topic) === 0 && titleScore(item.title, topic) === 0
+              && topicCoverage(lines[0]!, topic) < Math.max(2, topic.length - 1)) continue;
             if (lines.length) {
               plan.found = { url: opened.url, title: tidy(opened.title) || hostOf(opened.url), lines, readAt: opened.observedAt };
               // A figure is shown with a second page's figure when another fitting page was already read (plan §7.4): the

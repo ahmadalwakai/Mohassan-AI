@@ -126,6 +126,8 @@ describe('reply kinds', () => {
   it('names a question card, an abstention, a computed value, a memory read, a list, a quote and a letter frame', () => {
     expect(judge({ question: 'اكتب رسالة بريد احترافية', reply: 'أكتب لك الرسالة من قالب رسمي، والتفاصيل تبقى بكلماتك. أجب عن هذه الأسئلة:', status: 'waiting_user' }).kind).toBe('question');
     expect(judge({ question: 'كم سعر الذهب اليوم؟', reply: 'لم أتمكن من الوصول إلى مصدر حديث ومرتبط بسؤالك «كم سعر الذهب اليوم» بعد تجربة البحث في الويب. إن أرسلت رابط موقع مناسب أفتحه وأقرأ المعلومة منه.' }).kind).toBe('abstain');
+    // hands.ts in English since 2026-11-22, when no page passes its checks (live 08:12, the Japan travel question).
+    expect(judge({ question: 'What is the best time to visit Japan?', reply: 'I found no page that answers “What is the best time to visit Japan” directly, and I will not pass you an answer from a page that is not about your question. These pages came up in the search:\n\n1. [The Third Murder](https://en.wikipedia.org/wiki/The_Third_Murder) — ويكيبيديا', status: 'partial' }).kind).toBe('abstain');
     expect(judge({ question: 'كم يساوي 15 ضرب 23؟', reply: '15 * 23 = 345' })).toMatchObject({ kind: 'computed', decision: 'send' });
     expect(judge({ question: 'من ذاكرتي، ما مدينتي المفضلة؟', reply: 'من الذاكرة: «مدينتي المفضلة هي مسقط»' })).toMatchObject({ kind: 'memory', decision: 'send' });
     expect(judge({ question: 'من ذاكرتي، أعد لغتي المفضلة فقط.', reply: 'Arabic' })).toMatchObject({ kind: 'memory', decision: 'send' });
