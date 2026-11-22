@@ -91,6 +91,19 @@ enum BusyState: Decodable {
     var label: String { if case .working(let name) = self { return name }; return "جاهز" }
 }
 struct DesktopInfo: Decodable { let width: Int; let height: Int; let monitor: String?; let error: String? }
+/// One function the computer can or cannot offer right now, with the reason when it cannot.
+struct CapabilityState: Decodable {
+    let ready: Bool
+    let reason: String?
+    let code: String?
+}
+/// Absent on older computer services; each key is absent when the service does not know.
+struct ServerCapabilities: Decodable {
+    let chat: CapabilityState?
+    let search: CapabilityState?
+    let images: CapabilityState?
+    let desktop: CapabilityState?
+}
 struct ServerStatus: Decodable {
     let name: String
     let model: String
@@ -98,93 +111,78 @@ struct ServerStatus: Decodable {
     let desktop_enabled: Bool
     let desktop: DesktopInfo?
     let app_actions_enabled: Bool?
+    let capabilities: ServerCapabilities?
+    /// The reason a function is not ready, or nil when it is ready or unknown.
+    func unavailableReason(_ pick: (ServerCapabilities) -> CapabilityState?) -> String? {
+        guard let capabilities, let state = pick(capabilities), !state.ready else { return nil }
+        return state.reason ?? "غير متاح الآن."
+    }
 }
-struct ChatMessage: Codable, Identifiable {
-    var id = UUID()
-    let role: String
-    let content: String
-    enum CodingKeys: String, CodingKey { case role, content }
-}
-enum ChatMode: String, CaseIterable, Identifiable {
-    case automatic = "auto", liveWeb = "live_web", local
-    var id: String { rawValue }
+
+// MARK: - Where the phone stands with the computer and with Mohassan (plan phase 2, seven states).
+
+enum ConnectionState: Equatable {
+    /// The saved pairing is being checked; nothing is known yet.
+    case checking
+    /// 1. The computer does not answer: network, Tailscale, the service or sleep.
+    case unreachable
+    /// 2. The computer answered with a certificate that is not the pinned one.
+    case certificateMismatch
+    /// 3. The computer no longer trusts this phone: the pairing was revoked or expired.
+    case trustRevoked
+    /// 4. The service runs, but it is not linked to Mohassan.
+    case notLinked
+    /// 5. The service is linked, but Mohassan is not running on the computer.
+    case mohassanDown
+    /// 6. Mohassan refused the link: it was revoked there.
+    case linkRevoked(String)
+    /// 7. Everything answers.
+    case ready
+
+    var canSend: Bool { self == .ready }
+
     var title: String {
-        switch self { case .automatic: return "تلقائي"; case .liveWeb: return "بحث مباشر"; case .local: return "محلي" }
-    }
-}
-struct ChatRequest: Encodable {
-    let messages: [ChatMessage]
-    let request_id: String
-    let mode: String
-    let remember: Bool
-    let use_memory: Bool
-    let conversation_id: String?
-}
-struct ChatSource: Decodable, Identifiable {
-    let id: String
-    let title: String
-    let url: String?
-    let snippet: String?
-    var safeURL: URL? {
-        guard let url, let parts = URLComponents(string: url), parts.scheme?.lowercased() == "https",
-              let host = parts.host, !host.isEmpty, parts.user == nil, parts.password == nil,
-              !url.contains("\\"), !url.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
-        return parts.url
-    }
-}
-struct ChatEvidence: Decodable {
-    let level: String
-    let note: String?
-    var title: String {
-        switch level { case "grounded": return "مستندة إلى أدلة"; case "limited": return "أدلة محدودة"; case "unverified": return "تحتاج تحققًا"; default: return "حالة الأدلة غير محددة" }
-    }
-}
-struct ChatResponse: Decodable {
-    let content: String
-    let model: String
-    let route: String?
-    let sources: [ChatSource]?
-    let evidence: ChatEvidence?
-    let warnings: [String]?
-    let timing_ms: Double?
-    let cache_hit: Bool?
-    let memory_saved: Bool?
-    let conversation_id: String?
-    var routeTitle: String? {
-        guard let route else { return nil }
-        switch route {
-        case "calculator": return "حساب مباشر"
-        case "unit_conversion": return "تحويل وحدات"
-        case "knowledge": return "المعرفة المحفوظة"
-        case "research", "live_web": return "بحث بمصادر"
-        case "local": return "النموذج المحلي"
-        case "actions": return "إجراء في التطبيق"
-        case "cloud": return "محرك سحابي"
-        default: return route
+        switch self {
+        case .checking: return "جارٍ التحقق من الكمبيوتر…"
+        case .unreachable: return "تعذّر الوصول إلى الكمبيوتر"
+        case .certificateMismatch: return "هوية الكمبيوتر لا تطابق"
+        case .trustRevoked: return "أُلغيت ثقة هذا الهاتف"
+        case .notLinked: return "وصلة غير مربوط بموحسن"
+        case .mohassanDown: return "موحسن متوقف على الكمبيوتر"
+        case .linkRevoked: return "أُلغي ربط وصلة من موحسن"
+        case .ready: return "متصل بموحسن"
         }
     }
-    static func warningMessage(_ code: String) -> String {
-        switch code {
-        case "source_instructions_ignored": return "استُبعدت تعليمات غير مرتبطة بسؤالك وردت داخل بعض المصادر."
-        case "duplicate_or_similar_sources_omitted": return "استُبعدت المصادر المكررة أو شديدة التشابه."
-        case "knowledge_version_unavailable": return "تعذّر التأكد من آخر تحديث للمعرفة المحفوظة."
-        case "invalid_conversion": return "تعذّر تحويل هذه الوحدات. راجع الوحدات والقيمة."
-        case "invalid_calculation": return "تعذّر حساب هذا التعبير. راجع الأرقام والعمليات المطلوبة."
-        case "knowledge_unavailable": return "تعذّر الوصول إلى معرفتك المحفوظة لهذه الإجابة."
-        case "knowledge_not_configured": return "استخدام المعرفة المحفوظة غير مهيأ في اتصالك الحالي."
-        case "search_query_truncated_to_400_characters": return "استخدم البحث الجزء الأول من سؤالك الطويل."
-        case "search_query_simplified": return "بُسّطت صياغة البحث للتركيز على موضوع سؤالك."
-        case "search_unavailable": return "تعذّر البحث في الإنترنت الآن. لم يتأكد الحصول على معلومات حديثة."
-        case "possible_source_conflict": return "قد توجد أرقام غير متفقة في المقتطفات؛ لم يتأكد سبب الاختلاف."
-        case "summary_unavailable": return "تعذّر إعداد ملخص. يمكنك مراجعة مقتطفات المصادر المعروضة."
-        case "draft_rejected_or_insufficient_evidence": return "تعذّر تقديم خلاصة مدعومة بما يكفي، لذا عُرضت مقتطفات المصادر."
-        case "search_total_cost_not_determined_from_usage": return "التكلفة الإجمالية للبحث السحابي غير متاحة في بيانات الاستخدام."
-        case "unsupported_links_rejected": return "لم تُعرض إجابة احتوت على روابط لم تُرجعها خدمة البحث."
-        case "insufficient_web_citations": return "لم تتوفر استشهادات ويب كافية لدعم الإجابة."
-        case "memory_save_failed": return "وصلت الإجابة، لكن لم يتأكد حفظ المحادثة."
-        case "usage_record_failed": return "لم يتأكد تحديث إحصاءات الاستخدام لهذه الإجابة."
-        default: return "تفاصيل الأدلة محدودة. راجع المصادر قبل الاعتماد على الإجابة."
+
+    /// What to do about it, in the owner's words.
+    var advice: String {
+        switch self {
+        case .checking: return "لحظة من فضلك."
+        case .unreachable: return "شغّل Tailscale على الهاتف والكمبيوتر، وتأكد أن خدمة موحسن تعمل على الكمبيوتر وأنه غير نائم."
+        case .certificateMismatch: return "تغيّرت شهادة الكمبيوتر. أعد الاقتران بالبصمة الظاهرة على شاشة الكمبيوتر."
+        case .trustRevoked: return "أعد اقتران الهاتف برمز جديد من الكمبيوتر."
+        case .notLinked: return "من ويب موحسن على الكمبيوتر: «الاتصالات» ← «ربط الآيفون»، ثم نفّذ أمر الربط على الكمبيوتر."
+        case .mohassanDown: return "شغّل موحسن على الكمبيوتر، ثم اسحب للتحديث."
+        case .linkRevoked(let code): return "أنشئ ربطًا جديدًا من ويب موحسن (\(code))."
+        case .ready: return ""
         }
+    }
+
+    /// Derives the state from the last status read and the last Mohassan link read.
+    static func derive(status: ServerStatus?, statusError: WaslaError?, link: MohassanLink?) -> ConnectionState {
+        if let statusError {
+            switch statusError {
+            case .certificate: return .certificateMismatch
+            case .server(401, _): return .trustRevoked
+            default: return .unreachable
+            }
+        }
+        guard status != nil else { return .checking }
+        guard let link else { return .notLinked }
+        if !link.linked { return .notLinked }
+        if !link.reachable { return .mohassanDown }
+        if let error = link.error, !error.isEmpty { return error == "mohassan_unavailable" ? .mohassanDown : .linkRevoked(error) }
+        return .ready
     }
 }
 struct ImagePreparation: Encodable { let description: String; let style: String }

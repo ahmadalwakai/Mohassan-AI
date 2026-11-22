@@ -22,10 +22,11 @@ extension WaslaStore {
             mohassanLink = link
         } catch {
             guard epoch == sessionEpoch else { return }
-            // An older computer service has no Mohassan routes: keep the local chat.
-            // Other failures keep the last known state instead of switching screens.
+            // An older computer service has no Mohassan routes: that is «not linked».
+            // Other failures keep the last known link instead of flickering the state.
             if let failure = error as? WaslaError, case .server(404, _) = failure { mohassanLink = nil }
         }
+        updateConnection()
     }
 
     func loadMohassanList() async {
@@ -210,10 +211,12 @@ struct MohassanChatView: View {
             draft: $draft,
             placeholder: store.mohassanConversation == nil ? "ماذا تريد أن ينجز موحسن؟" : "اكتب رسالتك…",
             tooLong: !WaslaStore.mohassanTextFits(draft),
-            canSend: !store.mohassanBusy && !clean.isEmpty && WaslaStore.mohassanTextFits(draft),
+            // Sending needs the whole path: this phone trusted, the computer answering, Mohassan linked and up.
+            canSend: store.connection.canSend && !store.mohassanBusy && !clean.isEmpty && WaslaStore.mohassanTextFits(draft),
             working: store.mohassanBusy,
             scrollKey: scrollKey,
             showComposer: !store.mohassanWaiting,
+            notice: store.connection.canSend ? nil : store.connection.title + ". " + store.connection.advice,
             onSend: {
                 guard store.sendMohassan(draft) else { return false }
                 draft = ""

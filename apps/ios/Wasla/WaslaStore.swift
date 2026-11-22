@@ -10,13 +10,10 @@ final class WaslaStore: ObservableObject {
     @Published var isPairing = false
     @Published var isRefreshing = false
     @Published var selectedTab = 0
-    @Published var messages: [ChatMessage] = []
-    @Published var chatBusy = false
-    @Published var chatContextNote = ""
-    @Published var chatMode = ChatMode.automatic
-    @Published var rememberConversation = false
-    @Published var useSavedKnowledge = false
-    @Published private(set) var chatMetadata: [UUID: ChatResponse] = [:]
+    /// Where the phone stands with the computer and with Mohassan (seven states).
+    @Published private(set) var connection: ConnectionState = .checking
+    @Published private(set) var lastStatusAt: Date?
+    private var statusError: WaslaError?
     @Published var imagePreparing = false
     @Published var preparedImage: PreparedImage?
     @Published var imageBusy = false
@@ -47,12 +44,9 @@ final class WaslaStore: ObservableObject {
     private var frameTask: Task<Void, Never>?
     private var inputTask: Task<Void, Never>?
     private var imageTask: Task<Void, Never>?
-    private var chatTask: Task<Void, Never>?
     private var inputQueue: [DesktopCommand] = []
     private var desktopEpoch = 0
     private(set) var sessionEpoch = 0
-    private var chatEpoch = 0
-    private var chatConversationID: String?
     private let defaults = UserDefaults.standard
     private let identityKey = "wasla.server.identity"
     private let pendingKey = "wasla.pending.image"
@@ -60,7 +54,7 @@ final class WaslaStore: ObservableObject {
     let bundledIdentity = BundledConnection.load()
 
     var paired: Bool { identity != nil && client != nil }
-    var computerBusy: Bool { chatBusy || imagePreparing || imageBusy || imageSubmitting || mohassanBusy || status?.busy.isBusy == true }
+    var computerBusy: Bool { imagePreparing || imageBusy || imageSubmitting || mohassanBusy || status?.busy.isBusy == true }
     var connected: Bool { paired && status != nil }
 
     func start() async {
@@ -121,12 +115,33 @@ final class WaslaStore: ObservableObject {
             let fresh: ServerStatus = try await client.get("/v1/status", timeout: 15)
             guard epoch == sessionEpoch else { return }
             status = fresh
+            statusError = nil
+            lastStatusAt = Date()
             await refreshMohassanLink()
+            updateConnection()
         } catch {
             guard epoch == sessionEpoch else { return }
             status = nil
+            statusError = Self.classify(error)
+            updateConnection()
+            // The state banner already says what happened; an alert would only repeat it.
+            if case .trustRevoked = connection { return }
+            if case .unreachable = connection { return }
             show(error)
         }
+    }
+    /// The seven-state summary the screens show, from the last two reads.
+    func updateConnection() {
+        connection = ConnectionState.derive(status: status, statusError: statusError, link: mohassanLink)
+    }
+    /// Names the failure the way the state needs it: certificate, revoked trust, or the network.
+    nonisolated static func classify(_ error: Error) -> WaslaError {
+        if let failure = error as? WaslaError { return failure }
+        if let urlError = error as? URLError {
+            if [.serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .secureConnectionFailed].contains(urlError.code) { return .certificate }
+            return .message(urlError.localizedDescription)
+        }
+        return .message(error.localizedDescription)
     }
     func revokePairing() async {
         guard let client else { return }
@@ -139,62 +154,16 @@ final class WaslaStore: ObservableObject {
     }
     private func clearPairing() async throws {
         stopDesktop()
-        chatTask?.cancel(); imageTask?.cancel()
+        imageTask?.cancel()
         sessionEpoch += 1
         try await TokenVault.shared.delete()
         defaults.removeObject(forKey: identityKey)
         defaults.removeObject(forKey: pendingKey)
         defaults.removeObject(forKey: lastImageKey)
-        client = nil; identity = nil; status = nil
-        messages = []; chatContextNote = ""; pendingImageID = nil; lastImage = nil; preparedImage = nil; searchResponse = nil
-        chatMetadata = [:]; chatConversationID = nil; chatEpoch += 1
-        rememberConversation = false; useSavedKnowledge = false; chatMode = .automatic
-        imageBusy = false; imageSubmitting = false; imagePreparing = false; chatBusy = false; selectedTab = 0
+        client = nil; identity = nil; status = nil; statusError = nil; lastStatusAt = nil; connection = .checking
+        pendingImageID = nil; lastImage = nil; preparedImage = nil; searchResponse = nil
+        imageBusy = false; imageSubmitting = false; imagePreparing = false; selectedTab = 0
         resetMohassan()
-    }
-    func newChat() {
-        chatEpoch += 1
-        chatTask?.cancel(); chatTask = nil
-        messages = []; chatMetadata = [:]; chatConversationID = nil; chatContextNote = ""; chatBusy = false
-        rememberConversation = false; useSavedKnowledge = false; chatMode = .automatic
-    }
-    @discardableResult
-    func sendChat(_ text: String) -> Bool {
-        guard let client else { show(WaslaError.notPaired); return false }
-        guard !computerBusy else { errorMessage = "المساعد مشغول حاليًا. انتظر انتهاء المهمة قبل إرسال رسالة أخرى."; return false }
-        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else { return false }
-        guard clean.unicodeScalars.count <= 8_000 else { errorMessage = "الرسالة تتجاوز ٨٬٠٠٠ حرف. اختصرها قبل الإرسال."; return false }
-        let message = ChatMessage(role: "user", content: clean)
-        messages.append(message)
-        var history = messages
-        // Python counts Unicode code points; unicodeScalars uses the same bound, even
-        // for Arabic combining marks. Trim only old context; preserve the new message.
-        while history.count > 1 && (history.count > 16 || history.reduce(0, { $0 + $1.content.unicodeScalars.count }) > 24_000 || history.contains(where: { $0.content.unicodeScalars.count > 8_000 })) {
-            history.removeFirst()
-        }
-        chatContextNote = history.count < messages.count ? "أُرسل أحدث جزء من المحادثة ضمن حدود النموذج: \(history.count) رسالة." : ""
-        let requestHistory = history
-        let request = ChatRequest(messages: requestHistory, request_id: UUID().uuidString.lowercased(), mode: chatMode.rawValue, remember: rememberConversation, use_memory: useSavedKnowledge, conversation_id: rememberConversation ? chatConversationID : nil)
-        let epoch = sessionEpoch
-        let conversationEpoch = chatEpoch
-        chatBusy = true
-        chatTask = Task { [weak self] in
-            guard let self else { return }
-            defer { if epoch == self.sessionEpoch, conversationEpoch == self.chatEpoch { self.chatBusy = false; self.chatTask = nil } }
-            do {
-                let answer: ChatResponse = try await client.post("/v1/chat", body: request, timeout: 210)
-                guard !Task.isCancelled, epoch == self.sessionEpoch, conversationEpoch == self.chatEpoch else { return }
-                let reply = ChatMessage(role: "assistant", content: answer.content)
-                self.chatMetadata[reply.id] = answer
-                self.messages.append(reply)
-                self.chatConversationID = answer.memory_saved == true ? answer.conversation_id : nil
-                await self.refreshStatus()
-            } catch {
-                if !Task.isCancelled, epoch == self.sessionEpoch, conversationEpoch == self.chatEpoch { self.show(error) }
-            }
-        }
-        return true
     }
     func prepareImage(description: String, style: String) async {
         guard let client, !computerBusy, pendingImageID == nil else { return }
