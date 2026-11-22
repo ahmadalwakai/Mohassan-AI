@@ -303,7 +303,9 @@ describe('question answers from the web', () => {
 
   it("tries the subject's words alone when the question's own words find nothing", async () => {
     const steps = webQuestion('من هو ألبرت أينشتاين؟')!;
-    const main = new URL('https://ar.wikipedia.org/wiki/ألبرت_أينشتاين').href;
+    // Served under another spelling («آينشتاين»), so opening the article by the question's own name finds nothing and the
+    // search falls back to the subject's words alone, which is what this test is about.
+    const main = new URL('https://ar.wikipedia.org/wiki/ألبرت_آينشتاين').href;
     const article = pageOf(main, [], 'ألبرت أينشتاين عالم فيزياء نظرية ألماني المولد، اشتهر بوضع النظرية النسبية التي غيرت فهم الزمان والمكان والجاذبية في القرن العشرين كله.');
     const queries: string[] = [];
     const { io, log } = fakeIO({}, null, {}, { [main]: article });

@@ -1,7 +1,7 @@
 import { AgentEffectHeld, BrowserError, compileQuery, publicSearchScan, publicSearchText, safeResumeUrl, type AgentAction, type AgentElement, type AgentPage, type AgentRequestPermit, type SearchHit } from '@mohassan/browser';
 import { directRoute, namedSite, sensitiveAction } from './brain.js';
 import { hostOf, readingLabel, siteName } from './activity.js';
-import { checkAnswerLine, isDisambiguationPage, isDisambiguationTitle, isMetaLine } from './answer-check.js';
+import { checkAnswerLine, isDisambiguationPage, isDisambiguationTitle, isMetaLine, questionLanguage } from './answer-check.js';
 import { releaseLines, releaseQuestion } from './releases.js';
 import { isSiteRequest } from '@mohassan/sites';
 export { siteName };
@@ -746,6 +746,9 @@ export function wikiTerms(query: string): string {
   const subject = words.split(/\s+/).filter(word => !ASK_WORDS.has(fold(word)));
   return subject.length ? subject.join(' ') : words;
 }
+/** A subject's Wikipedia article by its name, in the question's language: «ألبرت أينشتاين» → ar.wikipedia.org/wiki/ألبرت_أينشتاين. */
+export const articleUrl = (name: string, lang: 'ar' | 'en'): string =>
+  `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(name.trim().replace(/[؟?!،,]+$/u, '').replace(/\s+/gu, '_'))}`;
 /** Wikipedia's own full-text search in the question's language, for an explicit «ابحث في ويكيبيديا»: keyless and with no human check. */
 export const WIKI_SEARCH = (query: string) => `https://${/[؀-ۿ]/u.test(query) ? 'ar' : 'en'}.wikipedia.org/w/index.php?search=${encodeURIComponent(wikiTerms(query))}&fulltext=1&ns0=1`;
 const SEARCH_TEMPLATES: [RegExp, (query: string) => string][] = [
@@ -842,6 +845,9 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
    * and html.duckduckgo.com answers with a human check (both measured 2026-11-22; they took ~7 s of every
    * 13 s web question). An encyclopedia never answers a changing fact: a price, the weather or a score.
    */
+  /** Articles opened by the subject's own name (Wikipedia resolves its redirects): the subject's article whatever its title. */
+  const ownUrls = new Set<string>();
+  const ownPage = (page: { url: string; title: string }, entity: readonly string[]) => ownUrls.has(withoutHash(page.url)) || isOwnArticle(page.title, entity);
   const engine = async (query: string): Promise<{ results: { title: string; url: string }[] } | 'unavailable'> => {
     const publicQuery = query.normalize('NFKC').replace(/\p{Cf}/gu, '');
     const decoded = publicSearchScan(publicQuery);
@@ -871,7 +877,38 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         .sort((a, b) => Number(a.wiki) - Number(b.wiki) || a.at - b.at)
         .map(({ title, url }) => ({ title, url }));
     };
+    // A question about a subject's attribute («كم عدد سكان مصر») is answered from the subject's own article first. The shared
+    // ranking keeps only pages whose title and snippet repeat every question word, which dropped «مصر» for «القصير (مصر)» and
+    // «عرب» (artifacts/plan-2026-11-22/two-sources-2026-11-22T06-00-31.json).
+    // Every attribute, not only figures: in the full run of 07:06 (real-answers-2026-11-22T07-06-58.jsonl) the subject's
+    // article turned «ما عاصمة فرنسا» from an embassy page into Paris and «ما عاصمة أستراليا» from a line about Washington
+    // into Canberra; «ما عاصمة اليابان» now quotes the Japan article, not Tokyo's.
+    // «من هو ألبرت أينشتاين», «ما هي الطاقة الشمسية»: the subject is the whole topic, and its own article is the source (plan
+    // §7.2). In the full runs since 04:48 the search returned only his sons' pages for «من هو ألبرت أينشتاين», so the reply
+    // quoted Eduard Einstein's article (rq025, rq079; the 02:17 baseline had quoted Albert's).
+    const entity = entityWords(query);
+    const searchable = entity.length ? entity : DEFINE_QUESTION.test(query.trim()) ? topicWords(query) : aspectSubject(query);
+    // A figure with no attribute word («كم تستغرق عملية المياه البيضاء») has its subject opened by name too, never searched for.
+    const subject = searchable.length ? searchable : WANTS_NUMBER.test(query) ? topicWords(wikiTerms(query)) : [];
+    const surface = !subject.length ? '' : entity.length
+      ? query.replace(/[؟?،,.!]/gu, ' ').split(/\s+/).filter(word => entity.includes(topicWords(word)[0] ?? '')).join(' ')
+      : wikiTerms(query);
+    // Wikipedia opens a subject's article by its name and follows its redirects («المياه البيضاء» → «الساد», «الشاي الأخضر»
+    // → «شاي أخضر», measured 2026-11-22), so the article is read while the search runs, not searched for after it: the search
+    // lookup cost 1.1 to 1.9 s a question (the engine's one-second spacing, then the search). The page reader caches it.
+    const direct = subject.length && !live && surface.trim() && io.read
+      ? io.read(articleUrl(surface, questionLanguage(query))).catch((): HandsRead => ({ kind: 'unreadable' })) : null;
     let results = await lookup(query);
+    const openedByName = direct ? await direct : null;
+    const named = openedByName?.kind === 'page' && readableOverHttp(openedByName.page.text) && !isDisambiguationPage(openedByName.page) ? openedByName.page : null;
+    if (named) {
+      const title = tidy(named.title) || hostOf(named.url);
+      ownUrls.add(withoutHash(named.url));
+      // Listed under the name it was opened by when Wikipedia's title differs («المياه البيضاء» for the article «الساد»): that
+      // name is the search's title for it, and the reply's source line keeps the page's own title.
+      const listed = plainTitle(title) === plainTitle(surface) ? title : surface.trim();
+      results = [{ title: listed, url: named.url }, ...results.filter(hit => withoutHash(hit.url) !== withoutHash(named.url) && plainTitle(hit.title) !== plainTitle(title))];
+    }
     // The shared engine keeps one second between two calls to the same provider (packages/browser/src/search/engine.ts,
     // `health.next`) and answers an earlier call with no hits. A second lookup waits that second out, or it is always empty:
     // measured on 2026-11-22 (artifacts/plan-2026-11-22/two-sources-2026-11-22T06-17-27.json), the subject lookup and the
@@ -886,25 +923,12 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
       results = await lookup(narrower);
       looked.add(fold(narrower));
     }
-    // A question about a subject's attribute («كم عدد سكان مصر») is answered from the subject's own article first. The shared
-    // ranking keeps only pages whose title and snippet repeat every question word, which dropped «مصر» for «القصير (مصر)» and
-    // «عرب» (artifacts/plan-2026-11-22/two-sources-2026-11-22T06-00-31.json); one more lookup by the subject's name finds it.
-    // Every attribute, not only figures: in the full run of 07:06 (real-answers-2026-11-22T07-06-58.jsonl) the lookup turned
-    // «ما عاصمة فرنسا» from an embassy page into Paris and «ما عاصمة أستراليا» from a line about Washington into Canberra.
-    // Its cost, measured there: about 1.5 to 3 s more, and «ما عاصمة اليابان» now quotes the Japan article, not Tokyo's.
-    // «من هو ألبرت أينشتاين», «ما هي الطاقة الشمسية»: the subject is the whole topic, and its own article is the source (plan
-    // §7.2). In the full runs since 04:48 the search returned only his sons' pages for «من هو ألبرت أينشتاين», so the reply
-    // quoted Eduard Einstein's article (rq025, rq079; the 02:17 baseline had quoted Albert's). Looked up only when missing.
-    const entity = entityWords(query);
-    const subject = entity.length ? entity : DEFINE_QUESTION.test(query.trim()) ? topicWords(query) : aspectSubject(query);
-    if (subject.length && !live && !results.some(hit => isOwnArticle(hit.title, subject))) {
-      const surface = entity.length
-        ? query.replace(/[؟?،,.!]/gu, ' ').split(/\s+/).filter(word => entity.includes(topicWords(word)[0] ?? '')).join(' ')
-        : wikiTerms(query);
+    // When the article could not be opened by name, one more search by the subject's name finds it (looked up only when missing).
+    if (!named && searchable.length && !live && !results.some(hit => isOwnArticle(hit.title, searchable))) {
       if (surface && !looked.has(fold(surface))) {
         await io.step(`البحث عن مقالة «${surface.slice(0, 60)}»`);
         await pause(PROVIDER_SPACING_MS);
-        const own = (await lookup(surface)).filter(hit => isOwnArticle(hit.title, subject));
+        const own = (await lookup(surface)).filter(hit => isOwnArticle(hit.title, searchable));
         if (own.length) results = [...own, ...results.filter(hit => !own.some(item => withoutHash(item.url) === withoutHash(hit.url)))];
       }
     }
@@ -1000,7 +1024,9 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           // Engine results keep the engine's order, except that the subject's own article comes first: the engine ranks
           // lexically and can list «سفارة أستراليا في واشنطن» before «أستراليا». A results page's links are ranked by title.
           // A disambiguation page lists subjects and answers none.
-          const fitting = [...new Set(searched ? [...subject, ...results] : [...subject, ...best])].filter(item => !isDisambiguationTitle(item.title)).slice(0, 3);
+          // The article opened by the subject's own name (engine) is read first, whatever its title («الساد» for «المياه البيضاء»).
+          const byName = results.filter(item => ownUrls.has(withoutHash(item.url)));
+          const fitting = [...new Set(searched ? [...byName, ...subject, ...results] : [...subject, ...best])].filter(item => !isDisambiguationTitle(item.title)).slice(0, 3);
           // Engine results are read over HTTP, all together, so no browser opens for a question. A page that
           // gives no readable text (built by JavaScript, not HTML, timed out) is opened in the hidden browser instead.
           const reads: (HandsRead | null)[] = searched && io.read && fitting.length
@@ -1027,15 +1053,16 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             // numbers beside the country's name. A capital or a definition may come from any page whose sentence names the
             // subject («Tokyo is the capital of Japan»), and a live price from any price page.
             const entity = entityWords(step.query);
-            if (WANTS_NUMBER.test(step.query) && !LIVE.test(step.query) && !aboutSubject(opened.title, topic, entity)) continue;
+            const byOwnName = ownUrls.has(withoutHash(opened.url));
+            if (WANTS_NUMBER.test(step.query) && !LIVE.test(step.query) && !byOwnName && !aboutSubject(opened.title, topic, entity)) continue;
             // An aspect («فوائد الشاي الأخضر») is read only from a page about its subject, not from one that mentions it.
             const aspect = entity.length ? [] : aspectSubject(step.query);
-            if (aspect.length && !isOwnArticle(opened.title, aspect) && titleScore(opened.title, aspect) < aspect.length) continue;
+            if (aspect.length && !byOwnName && !isOwnArticle(opened.title, aspect) && titleScore(opened.title, aspect) < aspect.length) continue;
             // The answer line is the best-scored sentence that passes the checks; the others stay as details. When none passes,
             // the next page is tried. (Earlier the details were kept even when the first line failed, so an unchecked sentence
             // became the answer: artifacts/plan-2026-11-22/two-sources-2026-11-22T06-11-30.json, rq015.)
             const ranked = relevantLines(opened, step.query, 3, true);
-            const answerAt = ranked.findIndex(line => checkAnswerLine(step.query, line).ok && namesEntity(line, entity, isOwnArticle(opened.title, entity)));
+            const answerAt = ranked.findIndex(line => checkAnswerLine(step.query, line).ok && namesEntity(line, entity, ownPage(opened, entity)));
             const lines = answerAt < 0 ? [] : [ranked[answerAt]!, ...ranked.filter((_, at) => at !== answerAt)];
             if (lines.length) {
               plan.found = { url: opened.url, title: tidy(opened.title) || hostOf(opened.url), lines, readAt: opened.observedAt };
@@ -1045,7 +1072,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
               if (WANTS_NUMBER.test(step.query) || LIVE.test(step.query)) {
                 for (const [other, otherRead] of reads.entries()) {
                   if (other === index || otherRead?.kind !== 'page' || !readableOverHttp(otherRead.page.text) || isDisambiguationPage(otherRead.page)) continue;
-                  const ownArticle = isOwnArticle(otherRead.page.title, entity);
+                  const ownArticle = ownPage(otherRead.page, entity);
                   if (!ownArticle && topic.length && titleScore(otherRead.page.title, topic) < topic.length) continue;
                   const [line] = relevantLines(otherRead.page, step.query, 1, true)
                     .filter(candidate => checkAnswerLine(step.query, candidate).ok && namesEntity(candidate, entity, ownArticle));

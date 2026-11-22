@@ -63,7 +63,7 @@ describe('two sources for a figure', () => {
     expect(namesEntity('يبلغ عدد سكانها نحو 105 ملايين نسمة', ['مصر'], true)).toBe(true);
   });
 
-  it('answers a subject-attribute question from the subject’s own article, found by a lookup of its name', async () => {
+  it('answers a subject-attribute question from the subject’s own article, opened by its name', async () => {
     // What the shared engine returned on 2026-11-22 for «كم عدد سكان مصر»: a town's page and a people's page, not «مصر».
     const town = pageOf('https://ar.wikipedia.org/wiki/القصير_(مصر)', 'القصير (مصر) - ويكيبيديا', 'القصير مدينة مصرية على البحر الأحمر. انخفض عدد سكان المدينة بصورة ملحوظة إلى نحو 1500 نسمة بعد مرحلة الازدهار.');
     const arabs = pageOf('https://ar.wikipedia.org/wiki/عرب', 'عرب - ويكيبيديا', 'العرب مجموعة عرقية. يصل عدد هذه الدول إلى 22 دولة، مصر أكثرها سكانًا، والبحرين أقلها.');
@@ -71,7 +71,8 @@ describe('two sources for a figure', () => {
     const searched: string[] = [];
     const engine = (query: string): Hit[] => query === 'مصر' ? [{ title: egypt.title, url: egypt.url }] : [{ title: town.title, url: town.url }, { title: arabs.title, url: arabs.url }];
     const outcome = await runHands({ steps: webQuestion('كم عدد سكان مصر؟')!, next: 0, lang: 'ar' }, io(by(town, arabs, egypt), engine, searched));
-    expect(searched).toEqual(['كم عدد سكان مصر', 'مصر']);
+    // The article is opened at ar.wikipedia.org/wiki/مصر while the search runs: no second search.
+    expect(searched).toEqual(['كم عدد سكان مصر']);
     expect(outcome).toMatchObject({ kind: 'done', status: 'completed' });
     expect(text(outcome).split('\n')[0]).toBe('يبلغ عدد سكانها نحو 105 ملايين نسمة بحسب تقديرات 2024.');
     // Citation marks with spaces inside the brackets are not part of the answer (measured on «المغرب»).
@@ -107,7 +108,7 @@ describe('two sources for a figure', () => {
       ? [{ title: albert.title, url: albert.url }, { title: son.title, url: son.url }]
       : [{ title: son.title, url: son.url, snippet: 'هو الابن الثاني لألبرت أينشتاين' }];
     const outcome = await runHands({ steps: webQuestion('من هو ألبرت أينشتاين؟')!, next: 0, lang: 'ar' }, io(by(son, albert), engine, searched));
-    expect(searched).toEqual(['من هو ألبرت أينشتاين', 'ألبرت أينشتاين']);
+    expect(searched).toEqual(['من هو ألبرت أينشتاين']);
     expect(text(outcome).split('\n')[0]).toContain('عالم فيزياء نظرية');
     expect(text(outcome)).toContain(`](${albert.url})`);
     // When the search already holds the person's own article, nothing more is looked up.
@@ -137,6 +138,18 @@ describe('two sources for a figure', () => {
     expect(text(alone)).not.toContain('دبس الرمان على تركيز');
   });
 
+  it('opens the subject by its name even when Wikipedia’s title differs, and takes no other page’s line before it', async () => {
+    // Measured 2026-11-22: ar.wikipedia.org/wiki/المياه_البيضاء serves the article «الساد» (cataract), not the film «مياه بيضاء».
+    const film = pageOf('https://ar.wikipedia.org/wiki/مياه_بيضاء', 'مياه بيضاء - ويكيبيديا', 'مياه بيضاء فيلم دراما نيجيري صدر سنة 2007 عن المياه البيضاء في الأنهار.');
+    const cataract = { ...pageOf('https://ar.wikipedia.org/wiki/المياه_البيضاء', 'الساد - ويكيبيديا', 'الساد أو المياه البيضاء عتامة في عدسة العين. من أعراض المياه البيضاء ضبابية الرؤية وصعوبة الرؤية الليلية.') };
+    const searched: string[] = [];
+    const outcome = await runHands({ steps: webQuestion('ما أعراض المياه البيضاء في العين؟')!, next: 0, lang: 'ar' },
+      io(by(film, cataract), [{ title: film.title, url: film.url, snippet: 'المياه البيضاء' }], searched));
+    expect(searched).toEqual(['ما أعراض المياه البيضاء في العين']);
+    expect(text(outcome).split('\n')[0]).toBe('من أعراض المياه البيضاء ضبابية الرؤية وصعوبة الرؤية الليلية.');
+    expect(text(outcome)).toContain('[ويكيبيديا — الساد]');
+  });
+
   it('looks the subject up for any attribute: a capital from an embassy page becomes the country’s own line', async () => {
     // Measured in the full run of 2026-11-22 07:06: «ما عاصمة فرنسا» had been answered from an embassy page.
     const embassy = pageOf('https://ar.wikipedia.org/wiki/سفارة_فرنسا_في_واشنطن', 'سفارة فرنسا في واشنطن العاصمة - ويكيبيديا', 'السفارة الفرنسية القديمة في واشنطن العاصمة سنة 1917.');
@@ -144,7 +157,7 @@ describe('two sources for a figure', () => {
     const searched: string[] = [];
     const engine = (query: string): Hit[] => query === 'فرنسا' ? [{ title: france.title, url: france.url }] : [{ title: embassy.title, url: embassy.url }];
     const outcome = await runHands({ steps: webQuestion('ما عاصمة فرنسا؟')!, next: 0, lang: 'ar' }, io(by(embassy, france), engine, searched));
-    expect(searched).toEqual(['ما عاصمة فرنسا', 'فرنسا']);
+    expect(searched).toEqual(['ما عاصمة فرنسا']);
     expect(text(outcome).split('\n')[0]).toBe('عاصمتها وأكبر مدنها هي باريس، ولغتها الرسمية هي الفرنسية.');
   });
 
