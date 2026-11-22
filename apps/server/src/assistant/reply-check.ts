@@ -51,9 +51,32 @@ const MISMATCH_ARABIC_IN_ENGLISH = 0.5;
 const MISMATCH_LATIN_IN_ARABIC = 0.8;
 const MIN_WORDS_FOR_LANGUAGE = 4;
 
-const BYLINE = /^(?:by|written by|reported by|author:|posted by|story by)\s+[A-Z][\w.'-]*(?:\s+[A-Z][\w.'-]*){0,3}\b/iu;
+/**
+ * An English byline: the mark, then a name in capitals, two to four words («By Vicky Stein»), or one word alone or before a
+ * separator («By Reuters», «By AFP | …»); a separator after the name goes with it. Case matters, so «By the end of 1900, …»,
+ * «By default, …» and «By January 2025, …» are sentences (until 2026-11-22 the first reached the reader as «, the city had…»).
+ */
+const BYLINE = /^(?:[Bb][Yy]|[Ww]ritten by|[Rr]eported by|[Aa]uthor:|[Pp]osted by|[Ss]tory by)\s+(?:[A-Z][\w.'-]*(?:\s+[A-Z][\w.'-]*){1,3}\b|[A-Z][\w.'-]*(?=\s*(?:$|[|•·—–-])))(?:\s*[|•·—–-])?/u;
 const DATELINE = /\b(?:last\s+)?updated:?\s+(?:on\s+)?[A-Z][a-z]{2,8}\.?\s+\d{1,2},?\s+\d{4}|\bpublished:?\s+(?:on\s+)?(?:[A-Z][a-z]{2,8}\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+[A-Z][a-z]{2,8}\s+\d{4})|^\d{1,2}\s+[A-Z][a-z]{2,8}\s+\d{4}\b/u;
-const ARABIC_BYLINE = /^(?:بقلم|كتبه|كتبت|كتب|تحرير|آخر تحديث|نُشر في|نشر في|تاريخ النشر|المصدر الأصلي)[:\s]/u;
+const ARABIC_DIGIT = '[0-9٠-٩]';
+const ARABIC_MONTH = '(?:يناير|فبراير|مارس|أبريل|إبريل|ابريل|مايو|يونيو|يونيه|يوليو|يوليه|أغسطس|اغسطس|سبتمبر|أكتوبر|اكتوبر|نوفمبر|ديسمبر'
+  + '|كانون الثاني|كانون الأول|كانون الاول|شباط|آذار|اذار|نيسان|أيار|ايار|حزيران|تموز|آب|أيلول|ايلول|تشرين الأول|تشرين الاول|تشرين الثاني)';
+const ARABIC_WEEKDAY = '(?:الأحد|الاحد|الإثنين|الاثنين|الثلاثاء|الأربعاء|الاربعاء|الخميس|الجمعة|السبت)';
+/** A date as Arabic pages print it, with an optional weekday and time: «22 نوفمبر 2026», «الأحد، 22 نوفمبر/تشرين الثاني 2026 - 07:00 ص», «22/11/2026». */
+const ARABIC_DATE = `(?:${ARABIC_WEEKDAY}\\s*[،,]?\\s*)?(?:${ARABIC_DIGIT}{1,2}\\s+${ARABIC_MONTH}(?:\\s*/\\s*${ARABIC_MONTH})?\\s*[،,]?\\s*${ARABIC_DIGIT}{4}`
+  + `|${ARABIC_DIGIT}{1,4}[/.-]${ARABIC_DIGIT}{1,2}[/.-]${ARABIC_DIGIT}{1,4})`
+  + `(?:\\s*[-–—|،,]?\\s*(?:الساعة\\s+)?${ARABIC_DIGIT}{1,2}:${ARABIC_DIGIT}{2}(?:\\s*(?:صباحًا|صباحا|مساءً|مساء|ص|م))?)?`;
+/**
+ * An Arabic byline or dateline mark at the start of the reply. Some marks also open sentences: the verbs «كتب», «كتبت», «كتبه»
+ * open the assistant's own replies («كتبت «مرحبا» في …» in hands.ts; «كتبت 14 حرفًا في …» from the desktop, cut to «14 حرفًا…»
+ * live on 2026-11-22) and page sentences («كتب نجيب محفوظ …»); «تحرير» opens «تحرير الكويت …»; «نُشر في» opens «نُشر في 24
+ * نوفمبر 1859 كتاب …». So these count only before a colon or a dash («كتب: محمد علي», «تحرير - سارة أحمد», «نُشر في: …»),
+ * and «نُشر في» also before a date that ends the line («نُشر في 22 نوفمبر 2026»). The match takes the mark with its colon or
+ * dash, and «نُشر في» with its date, so the fix leaves no stray «- », «: » or date behind.
+ */
+const ARABIC_BYLINE = new RegExp('^(?:(?:بقلم|آخر تحديث|تاريخ النشر|المصدر الأصلي)[:\\s]'
+  + '|(?:كتبه|كتبت|كتب|تحرير)\\s*[:–—-]\\s*'
+  + `|نُ?شر في(?:\\s*[:–—-]\\s*(?:${ARABIC_DATE}\\s*)?|\\s+${ARABIC_DATE}\\s*$))`, 'u');
 const CHROME_SENTENCE = new RegExp([
   'share this (?:article|story|page)', 'join the conversation', 'follow us', 'add us as a preferred source', 'subscribe to (?:our )?newsletter',
   'sign up (?:for|to) (?:our )?(?:newsletter|updates|emails?)', 'when you purchase through links on our site', 'affiliate commission', 'skip to (?:main )?content',
@@ -173,7 +196,9 @@ export function applyReplyFixes(input: ReplyCheckInput, check = checkReply(input
     if (duplicateLines.has(index)) return [];
     let value = line;
     if (bylineLines.has(index)) {
-      value = value.replace(/^(?:\s*[-*•]\s*)?(?:by|written by|reported by|author:|posted by|story by)\s+[^.]*?\b\d{4}\s*/iu, '').replace(BYLINE, '').replace(ARABIC_BYLINE, '').replace(DATELINE, '').trim();
+      // «By <name> … <year>» goes whole, only on a line that opens with a byline: on «By January 2025, …» a dateline elsewhere flags it.
+      if (BYLINE.test(value.replace(/^\s*[-*•]\s*/u, ''))) value = value.replace(/^(?:\s*[-*•]\s*)?(?:by|written by|reported by|author:|posted by|story by)\s+[^.]*?\b\d{4}\s*/iu, '');
+      value = value.replace(BYLINE, '').replace(ARABIC_BYLINE, '').replace(DATELINE, '').trim();
     }
     if (chromeLines.has(index)) {
       const prefix = /^(\s*(?:[-*•]|\d+[.)])\s*)/u.exec(value)?.[1] ?? '';
