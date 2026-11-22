@@ -16,8 +16,9 @@ $env:CODING_DATA_DIR = Join-Path $data 'coding'
 $env:STUDIO_AI_DATA_DIR = Join-Path $data 'studio-ai'
 $env:BROWSER_PROFILE_DIR = Join-Path $data 'browser-profile'
 $env:SERVER_HOST = '127.0.0.1'
-$env:SERVER_PORT = '4100'
-$env:WEB_ORIGIN = 'http://127.0.0.1:3100'
+# MOHASSAN_LOCAL_SERVER_PORT / MOHASSAN_LOCAL_WEB_PORT move the ports when 4100/3100 are taken.
+$env:SERVER_PORT = if ($env:MOHASSAN_LOCAL_SERVER_PORT) { $env:MOHASSAN_LOCAL_SERVER_PORT } else { '4100' }
+$env:WEB_ORIGIN = 'http://127.0.0.1:' + $(if ($env:MOHASSAN_LOCAL_WEB_PORT) { $env:MOHASSAN_LOCAL_WEB_PORT } else { '3100' })
 $env:WASLA_BRIDGE_ENABLED = 'true'
 
 Set-Location $root

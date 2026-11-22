@@ -425,8 +425,18 @@ class LocalServices:
     """
 
     def __init__(self, engine_dir: Path = ENGINE_DIR, *, bridge=None, transport=None, guard_factory: Callable | None = None):
-        self._module = _load_bridge(Path(engine_dir)) if bridge is None else None
-        self._bridge = self._module.ImageBridge() if bridge is None else bridge
+        # The image engine is optional: without it the service still pairs, reports
+        # status and forwards the phone to Mohassan; image calls say why they cannot run.
+        self.image_error: ServiceError | None = None
+        self._module = None
+        if bridge is None:
+            try:
+                self._module = _load_bridge(Path(engine_dir))
+                bridge = self._module.ImageBridge()
+            except ServiceError as exc:
+                self.image_error = exc
+                bridge = None
+        self._bridge = bridge
         self._guard = guard_factory or (
             (lambda: self._module.exclusive_run(self._bridge.config.state)) if self._module else nullcontext
         )
@@ -436,6 +446,14 @@ class LocalServices:
         self._search_active: asyncio.Task | None = None
         self.busy: str | None = None
         self._closed = False
+
+    @property
+    def images_available(self) -> bool:
+        return self._bridge is not None
+
+    def _require_images(self):
+        if self._bridge is None:
+            raise ServiceError("image_engine_missing", "إنشاء الصور غير متاح على هذا الكمبيوتر: محرك الصور المحلي غير موجود.", 503)
 
     def _check_models(self):
         response = self._http.json("/api/ps")
@@ -506,6 +524,7 @@ class LocalServices:
         description = _plain_text(description, "description", 2000)
         if not isinstance(style, str) or style not in STYLES:
             raise ServiceError("invalid_request", "Choose natural, cinematic, or art style.", 400)
+        self._require_images()
         message = json.dumps({"description": description, "style": STYLES[style]}, ensure_ascii=False)
         content = await self._gpu("prepare_image", self._chat_sync, [{"role": "user", "content": message}], image_prompt=True)
         try:
@@ -536,12 +555,14 @@ class LocalServices:
         self._image_id(request_id)
         if type(seed) is not int or not 0 <= seed <= 4294967295:
             raise ServiceError("invalid_request", "seed must be an integer from 0 to 4294967295.", 400)
+        self._require_images()
         # The bridge persists IDs, returns cached terminal failures, verifies PNGs,
         # and stops its owned process tree before reporting successful completion.
         return await self._gpu("image", self._generate_sync, prompt, negative_prompt, seed, request_id)
 
     async def image_status(self, request_id: str) -> dict:
         self._image_id(request_id)
+        self._require_images()
         try:
             return await asyncio.to_thread(self._bridge.status, request_id)
         except Exception:

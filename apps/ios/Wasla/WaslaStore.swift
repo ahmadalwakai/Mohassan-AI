@@ -75,6 +75,10 @@ final class WaslaStore: ObservableObject {
                 pendingImageID = id
                 imageStatus = "يوجد طلب سابق. استعد حالته دون إعادة إرساله."
             }
+            // The app opens at once from what the phone already knows; the computer is
+            // checked in the background. Before this, an unreachable computer kept the
+            // launch screen spinning for the full network timeout.
+            isLoading = false
             await refreshStatus()
             if pendingImageID != nil { resumeImage() }
             else if let id = defaults.string(forKey: lastImageKey), UUID(uuidString: id) != nil, let client {
@@ -113,7 +117,8 @@ final class WaslaStore: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
         do {
-            let fresh: ServerStatus = try await client.get("/v1/status")
+            // A status read is short; a computer that does not answer in 15 s is shown as unreachable.
+            let fresh: ServerStatus = try await client.get("/v1/status", timeout: 15)
             guard epoch == sessionEpoch else { return }
             status = fresh
             await refreshMohassanLink()

@@ -162,8 +162,11 @@ async def status(request):
         display = await asyncio.to_thread(runtime.desktop.info)
     except Exception:
         display = {"width": 0, "height": 0, "monitor": "primary", "error": "Desktop is locked or unavailable."}
+    images_available = getattr(runtime.services, "images_available", True)
     return web.json_response({"name": "Wasla Windows", "model": "qwen3.5:9b-coding-local",
         "busy": runtime.services.busy, "desktop_enabled": runtime.desktop_enabled,
+        "images_available": images_available,
+        "images_error": None if images_available else getattr(getattr(runtime.services, "image_error", None), "code", "image_engine_missing"),
         "app_actions_enabled": runtime.actions.allowed is True,
         "cloud_configured": bool(runtime.cloud and runtime.cloud.configured),
         "storage": runtime.knowledge.storage,
