@@ -41,10 +41,14 @@ export interface SkillRoutingRelations {
 /** The router reads at most this many candidates per request. */
 const ROUTER_WINDOW = 200;
 type Scored = { skill: SkillContextMetadata; score: number };
-/** Term overlap with the slug, the name, the description and the category words, weighted in that order. */
+/** Term overlap with the slug, the name and the description, weighted in that order. Category words only break ties between
+ * skills that already match: on their own, «شركة» would pull in every business skill. */
 function scorer(terms: readonly string[]): (skill: SkillContextMetadata) => number {
   const overlap = (text: string) => { const words = new Set(skillTerms(text)); return terms.filter(term => words.has(term)).length; };
-  return skill => overlap(skill.slug.replace(/-/g, ' ')) * 6 + overlap(skill.name) * 4 + overlap(skill.description) * 2 + overlap(CATEGORY_WORDS[skill.category]);
+  return skill => {
+    const content = overlap(skill.slug.replace(/-/g, ' ')) * 6 + overlap(skill.name) * 4 + overlap(skill.description) * 2;
+    return content === 0 ? 0 : content + overlap(CATEGORY_WORDS[skill.category]);
+  };
 }
 const byScore = (a: Scored, b: Scored) => b.score - a.score || a.skill.slug.localeCompare(b.skill.slug, 'en') || a.skill.id.localeCompare(b.skill.id, 'en');
 

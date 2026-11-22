@@ -3,15 +3,27 @@ import { rankInstructionCandidates, routeInstructionSkills, skillTerms, type Ski
 
 const skill = (slug: string, category: SkillContextMetadata['category'] = 'reasoning', description = 'Helpful guidance for a bounded task'): SkillContextMetadata => ({ id: slug, slug, name: slug, description, category, version: '1.0.0', contentHash: 'a'.repeat(64) });
 describe('instruction metadata routing', () => {
-  it('ranks explicit lexical matches before category matches', () => {
+  it('ranks explicit lexical matches and adds no skill that matches on its category alone', () => {
     const coding = skill('typescript-review', 'coding'), generic = skill('careful-work', 'coding');
-    expect(routeInstructionSkills('Review typescript code', [generic, coding]).map(item => item.id)).toEqual([coding.id, generic.id]);
+    expect(routeInstructionSkills('Review typescript code', [generic, coding]).map(item => item.id)).toEqual([coding.id]);
   });
-  it('matches Arabic category terms after normalization', () => {
-    expect(routeInstructionSkills('أريد تَصميم واجهة', [skill('interface-guide', 'design'), skill('data-guide', 'analytics')]).map(item => item.id)).toEqual(['interface-guide']);
+  it('matches Arabic terms after normalization', () => {
+    const design = skill('interface-guide', 'design', 'إرشادات تصميم الواجهات'), data = skill('data-guide', 'analytics');
+    expect(routeInstructionSkills('أريد تَصميم واجهة', [design, data]).map(item => item.id)).toEqual(['interface-guide']);
+  });
+  it('selects nothing for a category word alone', () => {
+    const business = [skill('company-guide', 'business'), skill('strategy-notes', 'business', 'Notes for planning ahead')];
+    expect(routeInstructionSkills('شركة', business)).toEqual([]);
+    expect(rankInstructionCandidates('شركة', business)).toEqual([]);
+  });
+  it('still lets a category word break a tie between skills that already match', () => {
+    const first = skill('alpha-guide', 'research', 'Checklist for quarterly planning'), second = skill('beta-guide', 'business', 'Checklist for quarterly planning');
+    expect(routeInstructionSkills('quarterly checklist', [first, second]).map(item => item.id)).toEqual([first.id, second.id]);
+    expect(routeInstructionSkills('quarterly checklist business', [first, second]).map(item => item.id)).toEqual([second.id, first.id]);
+    expect(rankInstructionCandidates('quarterly checklist business', [first, second]).map(item => item.id)).toEqual([second.id, first.id]);
   });
   it('orders tied candidates deterministically independent of database row order', () => {
-    const a = skill('alpha', 'research'), b = skill('beta', 'research');
+    const a = skill('alpha', 'research', 'Research guidance for a bounded task'), b = skill('beta', 'research', 'Research guidance for a bounded task');
     expect(routeInstructionSkills('research', [b, a])).toEqual(routeInstructionSkills('research', [a, b]));
     expect(routeInstructionSkills('research', [b, a])[0].id).toBe('alpha');
   });
@@ -20,13 +32,13 @@ describe('instruction metadata routing', () => {
     expect(routeInstructionSkills('the and من في', [skill('planning-guide')])).toEqual([]);
   });
   it('bounds the candidate scan and selected set', () => {
-    const candidates = Array.from({ length: 201 }, (_, index) => skill(`guide-${index}`, 'coding'));
+    const candidates = Array.from({ length: 201 }, (_, index) => skill(`guide-${index}`, 'coding', 'Coding guidance for a bounded task'));
     expect(routeInstructionSkills('coding', candidates, 500)).toHaveLength(6);
     expect(routeInstructionSkills('specialneedle', [...candidates.slice(0, 200), skill('specialneedle')])).toEqual([]);
     expect(routeInstructionSkills('coding', candidates, 0)).toEqual([]);
   });
   it('ranks every candidate first, so routing past the 200-candidate window finds a late match and keeps the same order', () => {
-    const fillers = Array.from({ length: 300 }, (_, index) => skill(`guide-${String(index).padStart(3, '0')}`, 'coding'));
+    const fillers = Array.from({ length: 300 }, (_, index) => skill(`guide-${String(index).padStart(3, '0')}`, 'coding', 'Coding guidance for a bounded task'));
     const late = skill('zz-lateneedle-guide', 'coding');
     const all = [...fillers, late];
     expect(routeInstructionSkills('lateneedle', all)).toEqual([]);
