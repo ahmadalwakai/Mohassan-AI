@@ -169,7 +169,10 @@ describe('request context through the real chat controller', () => {
     expect(queries[0]).toContain('آيفون 15');
     expect(queries[0]).toContain('مصر');
     expect(actions).toHaveLength(1);
-    expect((await lastState(id)).status).toBe('completed');
+    // The fixture page is one generic English sentence with no price in it. Since the answer checks (plan §7.4,
+    // answer-check.ts) the run reports honestly that the page does not answer («partial») instead of quoting it;
+    // what this test guards is the rewritten request and the single action above, not the answer.
+    expect(['completed', 'partial']).toContain((await lastState(id)).status);
   });
 
   it('does not inherit another conversation context even for the same owner', async () => {
