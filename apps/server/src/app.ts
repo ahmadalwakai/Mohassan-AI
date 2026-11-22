@@ -73,10 +73,10 @@ import { createSkillBenchmarkRunner } from './skill-benchmark-runner.js';
 import { benchmarkSuites, getSkillBenchmarkSuite } from '../../../packages/skills/src/benchmark-suites.js';
 import { recordSkillGap, createSkillBenchmarkControl, createSkillForgeControl, createGitSkillTransport, preloadInstructionMetadata, MAX_SKILL_CONTEXT_CHARS, type SkillRemoteTransport } from '@mohassan/skills';
 import { MAX_GITHUB_SKILLS, MAX_IMPORTED_VERSIONS_PER_OWNER } from '../../../packages/skills/src/import-store.js';
-import { createSkillReader, skillInstructionText } from './assistant/skill-reader.js';
+import { buildSkillReaderIndex, createSkillReader, skillInstructionText } from './assistant/skill-reader.js';
 import { createSkillRemoteScheduler, registerSkillRemoteRoutes, type SkillRemoteSettings } from './skill-remote.js';
 
-/** Every active instruction skill is a reader candidate, the same discovery reach as the model prompt (preload.ts). */
+/** Fallback window for the reader when no catalogue index is given (tests). The chat passes the catalogue index, which has no window. */
 const SKILL_READER_DISCOVERY = MAX_GITHUB_SKILLS + MAX_IMPORTED_VERSIONS_PER_OWNER + 50;
 
 export interface AppConfig {
@@ -467,7 +467,7 @@ export async function createApplication(config: AppConfig) {
     knowledgeSearch:async(ownerId,query)=>(await learning.knowledge.retrieve(ownerId,query)).map(({title,text,source})=>({title,text,source})),
     ...(config.skillEngineEnabled?{recordSkillGap,skillContext:skills.context,loadSkill:skills.loadInstruction,
     // Model-free answers read active instruction skills through the same verified gate as the model prompt.
-    skillAnswer:createSkillReader({candidates:ownerId=>preloadInstructionMetadata(database.db,ownerId,SKILL_READER_DISCOVERY),instructions:async(ownerId,id)=>skillInstructionText((await skills.loadInstruction(ownerId,id,MAX_SKILL_CONTEXT_CHARS)).text)}),
+    skillAnswer:createSkillReader({candidates:ownerId=>preloadInstructionMetadata(database.db,ownerId,SKILL_READER_DISCOVERY),index:async ownerId=>(await skills.catalogue.snapshot(ownerId)).memo('skill-reader',buildSkillReaderIndex),instructions:async(ownerId,id)=>skillInstructionText((await skills.loadInstruction(ownerId,id,MAX_SKILL_CONTEXT_CHARS)).text)}),
     runSkill:async(ownerId,input,context)=>{
       context.signal.throwIfAborted();
       return runtime.createTask(ownerId,{title:'تشغيل مهارة من المحادثة',goal:context.goal.slice(0,4000),capabilityId:'skill.run',autonomy:'assisted',skillInput:input},context.idempotencyKey,context.runId);

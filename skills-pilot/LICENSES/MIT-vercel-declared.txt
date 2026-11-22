@@ -1,0 +1,3 @@
+vercel-labs/agent-skills has no licence file at the revision read. The three adapted skills declare "license: MIT" in their own
+SKILL.md front matter (metadata author: vercel). That declaration is the licence evidence recorded here; no copyright line was
+published with it, so none is invented. Revision: 5a37a6329fbad3666c3207392a6a7c0110e92efb

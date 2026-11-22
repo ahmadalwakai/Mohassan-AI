@@ -1,28 +1,19 @@
 import type { Kysely } from 'kysely';
 import { z } from 'zod';
-import { SkillCategorySchema, SkillContractSchema } from '@mohassan/contracts';
+import { SkillContractSchema } from '@mohassan/contracts';
 import { compileInstructionContext, emptySkillContext, skillContextBudget, type CompiledSkillContext, type InstructionDocument } from './compiler.ts';
 import { SkillError } from './errors.ts';
 import { sha256, skillContentMatches } from './hash.ts';
 import { classifySkillFile, INSPECTOR_VERSION } from './inspector.ts';
-import { rankInstructionCandidates, routeInstructionSkills, type SkillContextMetadata } from './router.ts';
-import { MAX_GITHUB_SKILLS, MAX_IMPORTED_VERSIONS_PER_OWNER } from './import-store.ts';
+import { routeInstructionSkills, type SkillContextMetadata } from './router.ts';
 import { relatedSkills } from './graph.ts';
+import { createInstructionCatalogue, type InstructionCatalogue } from './catalogue.ts';
+import { instructionMetadataQuery, METADATA_COLUMNS, metadataOf as metadata, metadataRows } from './metadata.ts';
 
 const json = (value: unknown) => typeof value === 'string' ? JSON.parse(value) : value;
-const METADATA_COLUMNS = ['v.id', 'f.slug', 'v.name', 'v.description', 'v.category', 'v.version', 'v.content_hash'] as const;
-const metadata = (row: any): SkillContextMetadata => ({ id: row.id, slug: row.slug, name: row.name, description: row.description, category: row.category, version: row.version, contentHash: row.content_hash });
-const bounds = { id: 100, slug: 64, name: 100, description: 1000, version: 30, content_hash: 64 } as const;
-const metadataRows = (rows: any[]) => rows.filter(row => (Object.keys(bounds) as (keyof typeof bounds)[]).every(key => typeof row[key] === 'string' && row[key].length <= bounds[key]) && SkillCategorySchema.safeParse(row.category).success).map(metadata);
-function instructionMetadataQuery(db: Kysely<any>, ownerId: string) {
-  return db.selectFrom('skill_versions as v').innerJoin('skill_families as f', 'f.id', 'v.family_id')
-    .select(METADATA_COLUMNS).where('v.owner_id', '=', ownerId).where('f.owner_id', '=', ownerId)
-    .where('v.status', '=', 'active').where('v.level', '=', 'instruction').whereRef('f.active_version_id', '=', 'v.id');
-}
 
-/** Active instruction skills read per chat request: every GitHub skill, every local or Forge one, and the built-ins with room to spare. */
-const DISCOVERY_LIMIT = MAX_GITHUB_SKILLS + MAX_IMPORTED_VERSIONS_PER_OWNER + 50;
-/** Reads metadata only. It never invokes registry.list(), seeds rows, or touches the filesystem. */
+/** Reads metadata only, the first `limit` active instruction skills by slug. It never invokes registry.list(), seeds rows, or touches the
+ * filesystem. Chat selection no longer uses this window: it reads every active skill through the catalogue snapshot (catalogue.ts). */
 export async function preloadInstructionMetadata(db: Kysely<any>, ownerId: string, limit = 200): Promise<SkillContextMetadata[]> {
   const rows = await instructionMetadataQuery(db, ownerId).orderBy('f.slug').orderBy('v.id').limit(limit).execute();
   return metadataRows(rows);
@@ -56,13 +47,14 @@ async function loadVerifiedInstruction(db: Kysely<any>, ownerId: string, idOrSlu
   });
 }
 
-export function createInstructionContext(db: Kysely<any>, enabled = false) {
+export function createInstructionContext(db: Kysely<any>, enabled = false, catalogue: InstructionCatalogue = createInstructionCatalogue(db)) {
   async function context(ownerId: string, goal: string, options: { loadedIds?: string[]; budgetChars?: number } = {}): Promise<CompiledSkillContext> {
     if (!enabled) return emptySkillContext();
     const budget = skillContextBudget(options.budgetChars);
     if (typeof goal !== 'string' || goal.length > 16000 || (options.loadedIds?.length ?? 0) > 12 || options.loadedIds?.some(id => typeof id !== 'string' || id.length > 100)) throw new SkillError('SKILL_CONTEXT_INPUT_INVALID', 'طلب سياق المهارات غير صالح.');
-    // Every active instruction skill is a candidate; the router then reads the highest-scoring ones, so a skill late in the alphabet is not missed.
-    const candidates = rankInstructionCandidates(goal, await preloadInstructionMetadata(db, ownerId, DISCOVERY_LIMIT));
+    // Every active instruction skill is a candidate (the catalogue snapshot has no alphabetical window); the router then reads the
+    // highest-scoring ones. Skills that share no term with the goal score 0 and are never read.
+    const candidates = await catalogue.routerCandidates(ownerId, goal);
     const lexical = routeInstructionSkills(goal, candidates);
     const loadedIds = [...new Set(options.loadedIds ?? [])].filter(id => z.uuid().safeParse(id).success);
     const loadedMetadata = loadedIds.length ? metadataRows(await instructionMetadataQuery(db, ownerId)

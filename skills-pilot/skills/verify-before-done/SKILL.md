@@ -1,0 +1,36 @@
+---
+name: التحقق قبل إعلان الإنجاز
+description: يوجّه التحقق الفعلي قبل القول إن العمل اكتمل أو إن الخلل أُصلح أو إن الاختبارات تنجح: الأمر الذي يثبت الادعاء، وتشغيله كاملًا، وقراءة النتيجة، ثم الإعلان بالدليل. كلمات: التحقق قبل التسليم إثبات الإنجاز تشغيل الاختبارات قبل الدمج دليل قبل الادعاء هل انتهى العمل فعلا verify before done verification evidence before claims run tests before commit
+category: coding
+version: 1.0.0
+language: ar
+license: MIT
+source: openai/plugins@981b02c0c44058b595f3b4180002c3ae3c806d40:plugins/superpowers/skills/verification-before-completion/SKILL.md
+source-sha256: 2befe7fc55bcadaa3d97dd9e8efeb633d2561c0ebe74c5a8b17c4d9e7e4520b3
+attribution: Adapted from "verification-before-completion" from obra/superpowers by Jesse Vincent (MIT), as packaged in openai/plugins. Changed: rewritten as a short Arabic playbook; bundled scripts and examples not included.
+---
+الدليل قبل الادعاء، دائمًا.
+
+## متى تُستخدم
+- قبل قول «تم» أو «أُصلح» أو «الاختبارات تنجح»، وقبل الدمج أو التسليم.
+
+## ما أحتاجه منك
+- ما الذي تريد إعلانه بالضبط، وأين يُقاس.
+
+## الخطوات
+1. حدد الأمر الذي يثبت الادعاء: اختبار، أو بناء، أو تشغيل فعلي.
+2. شغّله كاملًا الآن؛ لا نتيجة قديمة ولا جزءًا منه.
+3. اقرأ المخرج كله: رمز الخروج، وعدد الإخفاقات، والتحذيرات.
+4. قارن: هل يثبت المخرج الادعاء نفسه؟
+5. إن لم يثبته: اذكر الحالة الفعلية بالدليل.
+6. إن أثبته: أعلن النتيجة مع الدليل.
+
+## شكل الجواب
+- الادعاء، والأمر الذي شُغّل، والنتيجة الفعلية، والقرار.
+
+## تحقق قبل التسليم
+- هل شُغّل الأمر بعد آخر تعديل؟
+
+## أخطاء شائعة
+- «يفترض أنه يعمل» و«على الأغلب» بدل التشغيل.
+- الاحتفال قبل قراءة النتيجة.

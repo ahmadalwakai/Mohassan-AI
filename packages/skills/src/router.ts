@@ -26,7 +26,11 @@ const CATEGORY_WORDS: Record<SkillCategory, string> = {
   analytics: 'analytics data analysis statistics بيانات إحصاء تحليلات',
   media: 'media image video audio صورة فيديو صوت',
 };
-const STOP_WORDS = new Set('the a an and or to of in for on with this that please use task من في على إلى الى عن هذا هذه مع أو او و طلب مهمة'.split(' '));
+// Function and question words name no topic. Without them, «ما عاصمة اليابان؟» matched a backup skill through «ما يُنسخ»,
+// and «what is …» matched any description containing «is» (scripts/skills-catalogue/validate-pilot.ts, 2026-11-22).
+const STOP_WORDS = new Set(('the a an and or to of in for on with this that please use task من في على إلى الى عن هذا هذه مع أو او و طلب مهمة '
+  + 'ما ماذا هل كم كيف لماذا متى اين أين لي لك هو هي انا أنا نحن انت أنت الآن الان اليوم كل اي أي لا نعم قد لقد كان ثم ان إن أن '
+  + 'is are was were be been am i me my we our you your it its what how why when where who which do does did can could would should will may might must not no yes there here than then also just very now today').split(' '));
 export function skillTerms(text: string): string[] {
   return [...new Set(text.normalize('NFKC').toLowerCase().replace(/[\u064B-\u065F\u0670]/g, '').match(/[\p{L}\p{N}]+/gu) ?? [])]
     .filter(term => term.length > 1 && !STOP_WORDS.has(term)).slice(0, 100);

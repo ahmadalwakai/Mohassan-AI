@@ -82,13 +82,26 @@ const RETENTION = [
   `CREATE TABLE skill_version_tombstones(family_id text NOT NULL REFERENCES skill_families(id) ON DELETE CASCADE,owner_id text NOT NULL,version text NOT NULL,content_hash text NOT NULL,sequence integer NOT NULL,status text NOT NULL,policy text NOT NULL,pruned_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(family_id,version))`,
 ] as const;
 
+/** The catalogue: facts per version, declared and review relations, behavioural evidence bound to content, and bulk-import runs. */
+const CATALOGUE = [
+  `CREATE TABLE skill_catalogue(version_id text PRIMARY KEY REFERENCES skill_versions(id) ON DELETE CASCADE,owner_id text NOT NULL,facts jsonb NOT NULL,facts_version text NOT NULL,language text NOT NULL,workflow text NOT NULL,package text NOT NULL,compatibility text NOT NULL CHECK(compatibility IN('compatible','partial','requires_resources','requires_tools','requires_execution')),licence text NOT NULL,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE INDEX skill_catalogue_owner_idx ON skill_catalogue(owner_id,workflow)`,
+  `CREATE TABLE skill_catalogue_relations(owner_id text NOT NULL,from_slug text NOT NULL,to_slug text NOT NULL,relation text NOT NULL CHECK(relation IN('variant_of','similar')),signal text NOT NULL CHECK(signal IN('declared','review')),score real,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(owner_id,from_slug,to_slug,relation))`,
+  `CREATE TABLE skill_catalogue_evidence(id text PRIMARY KEY,owner_id text NOT NULL,version_id text NOT NULL REFERENCES skill_versions(id) ON DELETE CASCADE,content_hash text NOT NULL,kind text NOT NULL CHECK(kind IN('behavioural')),suite text NOT NULL,suite_hash text NOT NULL,passed integer NOT NULL,total integer NOT NULL CHECK(total>0 AND passed>=0 AND passed<=total),detail jsonb NOT NULL,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE INDEX skill_catalogue_evidence_version_idx ON skill_catalogue_evidence(version_id,created_at DESC)`,
+  `CREATE TABLE skill_catalogue_imports(id text PRIMARY KEY,owner_id text NOT NULL,package text NOT NULL,root text NOT NULL,revision text NOT NULL,status text NOT NULL CHECK(status IN('running','succeeded','failed')),progress jsonb NOT NULL DEFAULT '{}',report jsonb NOT NULL DEFAULT '{}',error_code text,claim text,heartbeat_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,started_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,finished_at timestamptz)`,
+  // One open import per owner and package, enforced by the database across processes.
+  `CREATE UNIQUE INDEX skill_catalogue_imports_running_idx ON skill_catalogue_imports(owner_id,package) WHERE status='running'`,
+  `CREATE INDEX skill_catalogue_imports_owner_idx ON skill_catalogue_imports(owner_id,started_at DESC,id)`,
+] as const;
+
 /** Fixed, versioned SQL. Existing rows are retained. Reversal requires a reviewed
  * database restore/migration plan; dropping skill tables would destroy history. */
 export async function skillsMigration(db: Kysely<any>): Promise<void> {
   await sql`CREATE TABLE IF NOT EXISTS schema_migrations(version text PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`.execute(db);
   await db.transaction().execute(async (tx) => {
     await sql`SELECT pg_advisory_xact_lock(1846021108)`.execute(tx);
-    for (const [version, statements] of [['015_skill_registry', REGISTRY], ['016_skill_security', SECURITY], ['017_skill_execution', EXECUTION], ['024_skill_recovery', RECOVERY], ['018_skill_gaps', GAPS], ['019_skill_graph', GRAPH], ['020_skill_eval', EVALUATION], ['021_skill_forge', FORGE], ['032_skill_remote', REMOTE], ['033_skill_retention', RETENTION]] as const) {
+    for (const [version, statements] of [['015_skill_registry', REGISTRY], ['016_skill_security', SECURITY], ['017_skill_execution', EXECUTION], ['024_skill_recovery', RECOVERY], ['018_skill_gaps', GAPS], ['019_skill_graph', GRAPH], ['020_skill_eval', EVALUATION], ['021_skill_forge', FORGE], ['032_skill_remote', REMOTE], ['033_skill_retention', RETENTION], ['034_skill_catalogue', CATALOGUE]] as const) {
       if (await tx.selectFrom('schema_migrations').select('version').where('version', '=', version).executeTakeFirst()) continue;
       for (const statement of statements) await sql.raw(statement).execute(tx);
       await tx.insertInto('schema_migrations').values({ version }).execute();

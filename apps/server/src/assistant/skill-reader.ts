@@ -21,6 +21,8 @@ export interface SkillReaderDeps {
   candidates(ownerId: string): Promise<readonly SkillReaderCandidate[]>;
   /** The verified SKILL.md body of one active skill, or null when it no longer passes the gate. */
   instructions(ownerId: string, id: string): Promise<string | null>;
+  /** All active skills already indexed (the catalogue snapshot). When given, `candidates` is not read. */
+  index?(ownerId: string): Promise<SkillReaderIndex | null>;
 }
 /**
  * `advice`: a how-to or planning request that would otherwise become a web search.
@@ -127,18 +129,38 @@ function indexOf(skill: SkillReaderCandidate): { title: Set<string>; body: Set<s
   return entry;
 }
 
-export function matchSkills(request: string, candidates: readonly SkillReaderCandidate[]): SkillMatch[] {
-  const pool = candidates.slice(0, MAX_CANDIDATES);
-  if (!pool.length || typeof request !== 'string' || !request.trim()) return [];
-  const terms = requestTerms(request);
-  if (!terms.length) return [];
-  const indexed = pool.map(skill => ({ skill, ...indexOf(skill) }));
-  const frequency = new Map<string, number>();
-  for (const entry of indexed) for (const stem of new Set([...entry.title, ...entry.body])) frequency.set(stem, (frequency.get(stem) ?? 0) + 1);
-  const total = Math.log(1 + pool.length);
-  const rarity = (stem: string) => total > 0 ? Math.log(1 + pool.length / Math.max(1, frequency.get(stem) ?? 1)) / total : 1;
+/** The stems of every active skill, their document frequencies and postings, built once per catalogue snapshot. */
+export interface SkillReaderIndex {
+  readonly size: number;
+  readonly skills: readonly SkillReaderCandidate[];
+  readonly entries: readonly { readonly title: ReadonlySet<string>; readonly body: ReadonlySet<string> }[];
+  frequency(stem: string): number;
+  /** Positions of the skills that hold at least one of the stems, in their own order. */
+  shortlist(stems: Iterable<string>): number[];
+}
+
+/** Indexes all active skills: no candidate window, so a skill late in the alphabet is found like any other. */
+export function buildSkillReaderIndex(candidates: readonly SkillReaderCandidate[]): SkillReaderIndex {
+  const entries = candidates.map(skill => ({ title: new Set(skillStems(`${skill.name} ${skill.slug}`)), body: new Set(skillStems(skill.description)) }));
+  const postings = new Map<string, number[]>();
+  entries.forEach((entry, position) => {
+    for (const stem of new Set([...entry.title, ...entry.body])) { const list = postings.get(stem); if (list) list.push(position); else postings.set(stem, [position]); }
+  });
+  return {
+    size: candidates.length, skills: candidates, entries,
+    frequency: stem => postings.get(stem)?.length ?? 0,
+    shortlist(stems) {
+      const hit = new Set<number>();
+      for (const stem of stems) for (const position of postings.get(stem) ?? []) hit.add(position);
+      return [...hit].sort((a, b) => a - b);
+    },
+  };
+}
+
+/** The scoring shared by both paths; `rarity` is computed over all candidates, so a shortlist scores exactly as the full list. */
+function scoreSkills(terms: { word: string; variants: string[] }[], items: readonly { skill: SkillReaderCandidate; title: ReadonlySet<string>; body: ReadonlySet<string> }[], rarity: (stem: string) => number): SkillMatch[] {
   const matches: SkillMatch[] = [];
-  for (const entry of indexed) {
+  for (const entry of items) {
     let score = 0; const matched: string[] = [];
     for (const term of terms) {
       let best = 0;
@@ -152,6 +174,33 @@ export function matchSkills(request: string, candidates: readonly SkillReaderCan
     if (matched.length >= MIN_SKILL_TERMS && (score >= MIN_SKILL_SCORE || covered)) matches.push({ skill: entry.skill, score: Math.round(score * 1000) / 1000, terms: matched });
   }
   return matches.sort((a, b) => b.score - a.score || a.skill.slug.localeCompare(b.skill.slug, 'en') || a.skill.id.localeCompare(b.skill.id, 'en'));
+}
+
+/**
+ * With an index (the catalogue path), every active skill is a candidate and only those sharing a stem are scored.
+ * Without one, the first MAX_CANDIDATES are scored as before.
+ */
+export function matchSkills(request: string, candidates: readonly SkillReaderCandidate[], index?: SkillReaderIndex): SkillMatch[] {
+  if (typeof request !== 'string' || !request.trim()) return [];
+  if (index) {
+    if (!index.size) return [];
+    const terms = requestTerms(request);
+    if (!terms.length) return [];
+    const total = Math.log(1 + index.size);
+    const rarity = (stem: string) => total > 0 ? Math.log(1 + index.size / Math.max(1, index.frequency(stem) || 1)) / total : 1;
+    const positions = index.shortlist(terms.flatMap(term => term.variants));
+    return scoreSkills(terms, positions.map(position => ({ skill: index.skills[position], ...index.entries[position] })), rarity);
+  }
+  const pool = candidates.slice(0, MAX_CANDIDATES);
+  if (!pool.length) return [];
+  const terms = requestTerms(request);
+  if (!terms.length) return [];
+  const indexed = pool.map(skill => ({ skill, ...indexOf(skill) }));
+  const frequency = new Map<string, number>();
+  for (const entry of indexed) for (const stem of new Set([...entry.title, ...entry.body])) frequency.set(stem, (frequency.get(stem) ?? 0) + 1);
+  const total = Math.log(1 + pool.length);
+  const rarity = (stem: string) => total > 0 ? Math.log(1 + pool.length / Math.max(1, frequency.get(stem) ?? 1)) / total : 1;
+  return scoreSkills(terms, indexed, rarity);
 }
 
 // A request that only asks what something is, who, when, where or how much is better answered from sources; a skill is a method.
@@ -311,9 +360,16 @@ async function withinTime<T>(work: Promise<T>, signal?: AbortSignal): Promise<T 
 export function createSkillReader(deps: SkillReaderDeps): SkillReader {
   return async (ownerId, request, options) => {
     if (!skillReadable(request, options.mode) || options.signal?.aborted) return null;
-    const candidates = await withinTime(deps.candidates(ownerId).catch(() => null), options.signal);
-    if (!candidates?.length || options.signal?.aborted) return null;
-    const matches = matchSkills(request, candidates);
+    const index = deps.index ? await withinTime(deps.index(ownerId).catch(() => null), options.signal) : null;
+    let matches: SkillMatch[];
+    if (index) {
+      if (!index.size || options.signal?.aborted) return null;
+      matches = matchSkills(request, index.skills, index);
+    } else {
+      const candidates = await withinTime(deps.candidates(ownerId).catch(() => null), options.signal);
+      if (!candidates?.length || options.signal?.aborted) return null;
+      matches = matchSkills(request, candidates);
+    }
     const wanted: 'ar' | 'en' = ARABIC.test(request) ? 'ar' : 'en';
     // The best skill that still passes the gate, unless a close one (within 80% of its score) is written in the request's language.
     let chosen: { match: SkillMatch; body: string } | null = null;

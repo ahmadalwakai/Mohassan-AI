@@ -1,0 +1,560 @@
+{
+ "positive": [
+  {
+   "skill": "distinctive-ui-design",
+   "request": "كيف أصمم صفحة هبوط لمطعم تراثي لا تشبه القوالب المكررة؟",
+   "mustContain": [
+    "لوحة من 4 إلى 6 ألوان",
+    "خطين"
+   ]
+  },
+  {
+   "skill": "distinctive-ui-design",
+   "request": "أبغى اتجاه بصري وهوية لصفحة موقعي بدل الشكل المكرر",
+   "mustContain": [
+    "فكرة التخطيط"
+   ]
+  },
+  {
+   "skill": "internal-communications",
+   "request": "ساعدني أكتب تحديث أسبوعي للفريق عن التقدم والخطط والمشكلات",
+   "mustContain": [
+    "التقدم في الأسبوع الماضي",
+    "30 إلى 60 ثانية"
+   ]
+  },
+  {
+   "skill": "internal-communications",
+   "request": "كيف أكتب نشرة داخلية للموظفين هذا الشهر؟",
+   "mustContain": [
+    "للنشرة"
+   ]
+  },
+  {
+   "skill": "mcp-server-building",
+   "request": "كيف أبني خادم MCP يربط API متجري بمساعد ذكي؟",
+   "mustContain": [
+    "أداة لكل سير عمل",
+    "رسائل الخطأ"
+   ]
+  },
+  {
+   "skill": "mcp-server-building",
+   "request": "help me build an mcp server for my internal api",
+   "mustContain": [
+    "search_issues"
+   ]
+  },
+  {
+   "skill": "writing-mohassan-skills",
+   "request": "كيف أكتب مهارة جديدة لموحسن في ملف SKILL.md؟",
+   "mustContain": [
+    "الوصف بالكلمات التي يكتبها الناس",
+    "1,500"
+   ]
+  },
+  {
+   "skill": "writing-mohassan-skills",
+   "request": "أبغى أضيف مهارة لمكتبة موحسن، كيف أكتب وصف المهارة؟",
+   "mustContain": [
+    "طلبات اختبار"
+   ]
+  },
+  {
+   "skill": "local-webapp-testing",
+   "request": "كيف أختبر تطبيق ويب على localhost بمتصفح آلي مثل playwright؟",
+   "mustContain": [
+    "networkidle",
+    "المحددات"
+   ]
+  },
+  {
+   "skill": "local-webapp-testing",
+   "request": "أبغى اختبار e2e لواجهة تطبيقي المحلي مع لقطات شاشة وأخطاء الكونسول",
+   "mustContain": [
+    "الكونسول"
+   ]
+  },
+  {
+   "skill": "react-performance-rules",
+   "request": "صفحة next.js عندي بطيئة، كيف أحسن أداء react؟",
+   "mustContain": [
+    "Promise.all",
+    "حجم الحزمة"
+   ]
+  },
+  {
+   "skill": "react-performance-rules",
+   "request": "كيف أقلل حجم الحزمة وإعادة الرسم في تطبيق React؟",
+   "mustContain": [
+    "إعادة الرسم"
+   ]
+  },
+  {
+   "skill": "react-component-composition",
+   "request": "مكون react عندي فيه خصائص منطقية كثيرة، كيف أعيد تصميمه؟",
+   "mustContain": [
+    "Card.Header",
+    "مزود سياق"
+   ]
+  },
+  {
+   "skill": "react-component-composition",
+   "request": "how do I refactor a react component with too many boolean props into compound components",
+   "mustContain": [
+    "Card.Header"
+   ]
+  },
+  {
+   "skill": "react-native-performance",
+   "request": "تطبيق react native عندي التمرير فيه متقطع في القائمة الطويلة",
+   "mustContain": [
+    "FlashList",
+    "جهاز حقيقي"
+   ]
+  },
+  {
+   "skill": "react-native-performance",
+   "request": "كيف أحسن أداء تطبيق expo بطيء في الحركات والصور؟",
+   "mustContain": [
+    "Reanimated"
+   ]
+  },
+  {
+   "skill": "test-driven-development",
+   "request": "كيف أطبق التطوير بالاختبار أولا TDD في مشروعي؟",
+   "mustContain": [
+    "أحمر",
+    "أقل كود"
+   ]
+  },
+  {
+   "skill": "test-driven-development",
+   "request": "أبغى أكتب الاختبار قبل الكود لإصلاح خلل",
+   "mustContain": [
+    "يفشل"
+   ]
+  },
+  {
+   "skill": "verify-before-done",
+   "request": "كيف أتحقق قبل التسليم أن العمل انتهى فعلا والاختبارات تنجح؟",
+   "mustContain": [
+    "رمز الخروج",
+    "الدليل"
+   ]
+  },
+  {
+   "skill": "verify-before-done",
+   "request": "قبل الدمج أبغى إثبات الإنجاز بدليل، وش الخطوات؟",
+   "mustContain": [
+    "شغّله كاملًا"
+   ]
+  },
+  {
+   "skill": "responding-to-code-review",
+   "request": "وصلتني ملاحظات مراجعة الكود على طلب الدمج، كيف أتعامل معها؟",
+   "mustContain": [
+    "أعد صياغة كل ملاحظة",
+    "اعتراض"
+   ]
+  },
+  {
+   "skill": "responding-to-code-review",
+   "request": "كيف أرد على المراجع إذا كانت ملاحظته خاطئة في رأيي؟",
+   "mustContain": [
+    "السبب والدليل"
+   ]
+  },
+  {
+   "skill": "implementation-plan",
+   "request": "كيف أحول مواصفات ميزة إلى خطة تنفيذ بمهام صغيرة قبل كتابة الكود؟",
+   "mustContain": [
+    "أقل من ساعتين",
+    "الواجهات"
+   ]
+  },
+  {
+   "skill": "implementation-plan",
+   "request": "أبغى تقسيم المهام البرمجية لميزة جديدة في خطة تنفيذ",
+   "mustContain": [
+    "مساراتها الدقيقة"
+   ]
+  },
+  {
+   "skill": "feature-design-dialogue",
+   "request": "عندي فكرة ميزة لتطبيقي، كيف أحولها إلى تصميم قبل البرمجة؟",
+   "mustContain": [
+    "سؤالًا واحدًا في كل مرة",
+    "نهجين أو ثلاثة"
+   ]
+  },
+  {
+   "skill": "feature-design-dialogue",
+   "request": "ساعدني أناقش فكرة تطبيق جديد وأكتب وثيقة تصميم قبل البناء",
+   "mustContain": [
+    "الموافقة"
+   ]
+  },
+  {
+   "skill": "finish-development-branch",
+   "request": "خلصت الميزة على فرع git، كيف أنهي الفرع وأدمجه؟",
+   "mustContain": [
+    "شغّل الاختبارات كلها",
+    "طلب دمج"
+   ]
+  },
+  {
+   "skill": "finish-development-branch",
+   "request": "كيف أدمج الفرع وأحذفه بعد الدمج بشكل آمن؟",
+   "mustContain": [
+    "نظّف بعد الدمج"
+   ]
+  },
+  {
+   "skill": "request-code-review",
+   "request": "كيف أجهز طلب مراجعة الكود قبل الدمج؟",
+   "mustContain": [
+    "400 سطر",
+    "دليل الاختبار"
+   ]
+  },
+  {
+   "skill": "request-code-review",
+   "request": "وش أكتب في وصف طلب الدمج pull request عشان المراجعة تكون سهلة؟",
+   "mustContain": [
+    "نقاط التركيز"
+   ]
+  },
+  {
+   "skill": "expo-store-release",
+   "request": "كيف أنشر تطبيق expo على app store و google play؟",
+   "mustContain": [
+    "eas submit",
+    "TestFlight"
+   ]
+  },
+  {
+   "skill": "expo-store-release",
+   "request": "أبغى أرفع تطبيقي المبني بـ expo على المتجر لأول مرة",
+   "mustContain": [
+    "eas build"
+   ]
+  },
+  {
+   "skill": "expo-sdk-upgrade",
+   "request": "كيف أرقي مشروع expo إلى إصدار sdk أحدث؟",
+   "mustContain": [
+    "expo-doctor",
+    "التغييرات الكاسرة"
+   ]
+  },
+  {
+   "skill": "expo-sdk-upgrade",
+   "request": "عندي تعارض الحزم بعد تحديث expo، وش أسوي؟",
+   "mustContain": [
+    "npx expo install --fix"
+   ]
+  },
+  {
+   "skill": "postgres-performance",
+   "request": "عندي استعلام بطيء في postgres، كيف أحسن الأداء؟",
+   "mustContain": [
+    "EXPLAIN ANALYZE",
+    "فهرس"
+   ]
+  },
+  {
+   "skill": "postgres-performance",
+   "request": "كيف أختار الفهرس المناسب وأحسن أداء قاعدة بيانات postgresql؟",
+   "mustContain": [
+    "GIN"
+   ]
+  },
+  {
+   "skill": "android-emulator-testing",
+   "request": "كيف أختبر تطبيق أندرويد على المحاكي بأوامر adb؟",
+   "mustContain": [
+    "adb devices",
+    "logcat"
+   ]
+  },
+  {
+   "skill": "android-emulator-testing",
+   "request": "أبغى أعيد إنتاج خلل في واجهة تطبيق android على emulator",
+   "mustContain": [
+    "uiautomator"
+   ]
+  },
+  {
+   "skill": "job-interview-prep",
+   "request": "عندي مقابلة عمل الأسبوع الجاي، كيف أتحضر لها؟",
+   "mustContain": [
+    "STAR",
+    "حدثني عن نفسك"
+   ]
+  },
+  {
+   "skill": "job-interview-prep",
+   "request": "how do I prepare for a job interview and answer tell me about yourself",
+   "mustContain": [
+    "STAR"
+   ]
+  },
+  {
+   "skill": "feasibility-study",
+   "request": "أبغى دراسة جدوى لمشروع مقهى صغير",
+   "mustContain": [
+    "نقطة التعادل",
+    "فترة الاسترداد"
+   ]
+  },
+  {
+   "skill": "feasibility-study",
+   "request": "كيف أعرف إذا المشروع مربح قبل ما أبدأ؟ دراسة جدوى اقتصادية",
+   "mustContain": [
+    "السيناريو المتحفظ"
+   ]
+  },
+  {
+   "skill": "formal-letter",
+   "request": "كيف أكتب خطاب رسمي لجهة حكومية أطلب فيه تمديد مهلة؟",
+   "mustContain": [
+    "سطر الموضوع",
+    "المرفقات"
+   ]
+  },
+  {
+   "skill": "formal-letter",
+   "request": "أبغى صيغة خطاب رسمي موجه لسعادة المدير",
+   "mustContain": [
+    "الفقرة الأولى"
+   ]
+  },
+  {
+   "skill": "resignation-letter",
+   "request": "كيف أكتب خطاب استقالة من عملي بطريقة مهنية؟",
+   "mustContain": [
+    "فترة الإشعار",
+    "تسليم المهام"
+   ]
+  },
+  {
+   "skill": "resignation-letter",
+   "request": "أبغى رسالة استقالة وآخر يوم عمل بعد شهر",
+   "mustContain": [
+    "آخر يوم عمل"
+   ]
+  },
+  {
+   "skill": "performance-review",
+   "request": "كيف أكتب تقييم أداء موظف في فريقي بشكل عادل؟",
+   "mustContain": [
+    "نقطتي قوة",
+    "مجالين للتطوير"
+   ]
+  },
+  {
+   "skill": "performance-review",
+   "request": "help me write an employee performance review with goals for next year",
+   "mustContain": [
+    "ثلاثة أهداف"
+   ]
+  },
+  {
+   "skill": "employee-onboarding",
+   "request": "عندي موظف جديد يبدأ الأحد، كيف أجهز خطة تهيئة له؟",
+   "mustContain": [
+    "30 يومًا",
+    "مرشدًا"
+   ]
+  },
+  {
+   "skill": "employee-onboarding",
+   "request": "أبغى خطة الأسبوع الأول لاستقبال موظف جديد",
+   "mustContain": [
+    "اليوم الأول"
+   ]
+  },
+  {
+   "skill": "event-planning",
+   "request": "كيف أخطط لحفل تخرج وأوزع الميزانية؟",
+   "mustContain": [
+    "احتياطي 10%",
+    "جدولًا عكسيًا"
+   ]
+  },
+  {
+   "skill": "event-planning",
+   "request": "أبغى أنظم ورشة عمل لعملائي، وش الخطوات؟",
+   "mustContain": [
+    "مسؤول لكل محطة"
+   ]
+  },
+  {
+   "skill": "product-launch-plan",
+   "request": "كيف أعمل خطة إطلاق منتج جديد لمتجري؟",
+   "mustContain": [
+    "الجمهور الأول",
+    "يوم الإطلاق"
+   ]
+  },
+  {
+   "skill": "product-launch-plan",
+   "request": "ساعدني بخطة إطلاق خدمة جديدة وقياس النتائج بعدها",
+   "mustContain": [
+    "قائمة انتظار"
+   ]
+  },
+  {
+   "skill": "data-backup-plan",
+   "request": "كيف أعمل نسخ احتياطي لملفات شغلي وما تضيع؟",
+   "mustContain": [
+    "3-2-1",
+    "استعادة"
+   ]
+  },
+  {
+   "skill": "data-backup-plan",
+   "request": "أبغى خطة نسخة احتياطية لبيانات المحل",
+   "mustContain": [
+    "برامج الفدية"
+   ]
+  },
+  {
+   "skill": "security-incident-response",
+   "request": "موقعي تم اختراقه، ماذا أفعل بعد الاختراق؟",
+   "mustContain": [
+    "احتوِ",
+    "احفظ الأدلة"
+   ]
+  },
+  {
+   "skill": "security-incident-response",
+   "request": "عندنا تسريب بيانات عملاء، كيف نتصرف في الساعة الأولى؟",
+   "mustContain": [
+    "الساعة الأولى"
+   ]
+  },
+  {
+   "skill": "shift-scheduling",
+   "request": "كيف أسوي جدول مناوبات للموظفين في المطعم؟",
+   "mustContain": [
+    "الورديات الصعبة",
+    "قبل أسبوعين"
+   ]
+  },
+  {
+   "skill": "shift-scheduling",
+   "request": "أبغى أوزع الورديات الليلية بعدل على الفريق",
+   "mustContain": [
+    "بالتناوب"
+   ]
+  },
+  {
+   "skill": "grant-proposal",
+   "request": "كيف أكتب طلب منحة لجمعية غير ربحية؟",
+   "mustContain": [
+    "مؤشرات الأثر",
+    "الاستدامة"
+   ]
+  },
+  {
+   "skill": "grant-proposal",
+   "request": "أبغى أكتب مقترح تمويل لجهة داعمة لمشروعنا",
+   "mustContain": [
+    "شروط الجهة"
+   ]
+  },
+  {
+   "skill": "payment-reminder",
+   "request": "عميل ما دفع الفاتورة المتأخرة، كيف أكتب له تذكير بالسداد؟",
+   "mustContain": [
+    "تفترض السهو",
+    "إشعار نهائي"
+   ]
+  },
+  {
+   "skill": "payment-reminder",
+   "request": "أبغى رسائل تحصيل المستحقات بطريقة مهنية",
+   "mustContain": [
+    "أربع رسائل"
+   ]
+  },
+  {
+   "skill": "verify-before-done-en",
+   "request": "how do I verify my work is really done before I say the tests pass?",
+   "mustContain": [
+    "exit code",
+    "evidence"
+   ]
+  },
+  {
+   "skill": "test-driven-development-en",
+   "request": "how do I do test driven development with a failing test first?",
+   "mustContain": [
+    "Red",
+    "least code"
+   ]
+  },
+  {
+   "skill": "responding-to-code-review-en",
+   "request": "how should I respond to code review feedback I disagree with?",
+   "mustContain": [
+    "push back",
+    "Restate"
+   ]
+  }
+ ],
+ "unrelated": [
+  "ما عاصمة اليابان؟",
+  "كم الساعة الآن في الرياض؟",
+  "اشرح نظرية النسبية لابني",
+  "ما نتيجة مباراة الهلال اليوم؟",
+  "ترجم: صباح الخير يا أصدقاء",
+  "اكتب قصيدة عن البحر",
+  "what is the capital of Peru",
+  "كم سعر الذهب اليوم؟",
+  "وصفة كبسة دجاج",
+  "how tall is mount everest"
+ ],
+ "ambiguous": [
+  "ساعدني",
+  "أريد خطة",
+  "اكتب لي رسالة",
+  "help me with my project",
+  "عندي مشكلة",
+  "سوي لي شي"
+ ],
+ "unavailableTool": [
+  {
+   "request": "انشر ملاحظات الاجتماع في Notion الآن",
+   "allow": []
+  },
+  {
+   "request": "ارفع تطبيقي على متجر أبل الآن بدلًا مني",
+   "allow": [
+    "expo-store-release"
+   ]
+  },
+  {
+   "request": "شغّل المحاكي وثبّت تطبيقي عليه الآن",
+   "allow": [
+    "android-emulator-testing"
+   ]
+  },
+  {
+   "request": "deploy my website to vercel right now",
+   "allow": []
+  },
+  {
+   "request": "أرسل خطاب الاستقالة بالبريد إلى مديري الآن",
+   "allow": [
+    "resignation-letter"
+   ]
+  },
+  {
+   "request": "ادفع الفاتورة المتأخرة من حسابي البنكي",
+   "allow": []
+  }
+ ]
+}

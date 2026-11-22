@@ -1,0 +1,1495 @@
+{
+ "package": "mohassan/pilot-2026-11",
+ "createdAt": "2026-11-22",
+ "upstream": {
+  "anthropics/skills": "e4bb5d960d87126ff3b3a8af1a104b7db67560ba",
+  "vercel-labs/agent-skills": "5a37a6329fbad3666c3207392a6a7c0110e92efb",
+  "openai/plugins": "981b02c0c44058b595f3b4180002c3ae3c806d40"
+ },
+ "scope": "Pilot candidates for the skill catalogue. Nothing here is published or activated; the owner decides.",
+ "accepted": [
+  {
+   "slug": "distinctive-ui-design",
+   "kind": "adapted",
+   "bodyChars": 951
+  },
+  {
+   "slug": "internal-communications",
+   "kind": "adapted",
+   "bodyChars": 934
+  },
+  {
+   "slug": "mcp-server-building",
+   "kind": "adapted",
+   "bodyChars": 1020
+  },
+  {
+   "slug": "writing-mohassan-skills",
+   "kind": "adapted",
+   "bodyChars": 1060
+  },
+  {
+   "slug": "local-webapp-testing",
+   "kind": "adapted",
+   "bodyChars": 872
+  },
+  {
+   "slug": "react-performance-rules",
+   "kind": "adapted",
+   "bodyChars": 920
+  },
+  {
+   "slug": "react-component-composition",
+   "kind": "adapted",
+   "bodyChars": 845
+  },
+  {
+   "slug": "react-native-performance",
+   "kind": "adapted",
+   "bodyChars": 789
+  },
+  {
+   "slug": "test-driven-development",
+   "kind": "adapted",
+   "bodyChars": 827
+  },
+  {
+   "slug": "verify-before-done",
+   "kind": "adapted",
+   "bodyChars": 699
+  },
+  {
+   "slug": "responding-to-code-review",
+   "kind": "adapted",
+   "bodyChars": 722
+  },
+  {
+   "slug": "implementation-plan",
+   "kind": "adapted",
+   "bodyChars": 783
+  },
+  {
+   "slug": "feature-design-dialogue",
+   "kind": "adapted",
+   "bodyChars": 760
+  },
+  {
+   "slug": "finish-development-branch",
+   "kind": "adapted",
+   "bodyChars": 748
+  },
+  {
+   "slug": "request-code-review",
+   "kind": "adapted",
+   "bodyChars": 716
+  },
+  {
+   "slug": "expo-store-release",
+   "kind": "adapted",
+   "bodyChars": 857
+  },
+  {
+   "slug": "expo-sdk-upgrade",
+   "kind": "adapted",
+   "bodyChars": 754
+  },
+  {
+   "slug": "postgres-performance",
+   "kind": "adapted",
+   "bodyChars": 835
+  },
+  {
+   "slug": "android-emulator-testing",
+   "kind": "adapted",
+   "bodyChars": 808
+  },
+  {
+   "slug": "job-interview-prep",
+   "kind": "original",
+   "bodyChars": 859
+  },
+  {
+   "slug": "feasibility-study",
+   "kind": "original",
+   "bodyChars": 905
+  },
+  {
+   "slug": "formal-letter",
+   "kind": "original",
+   "bodyChars": 776
+  },
+  {
+   "slug": "resignation-letter",
+   "kind": "original",
+   "bodyChars": 762
+  },
+  {
+   "slug": "performance-review",
+   "kind": "original",
+   "bodyChars": 831
+  },
+  {
+   "slug": "employee-onboarding",
+   "kind": "original",
+   "bodyChars": 820
+  },
+  {
+   "slug": "event-planning",
+   "kind": "original",
+   "bodyChars": 819
+  },
+  {
+   "slug": "product-launch-plan",
+   "kind": "original",
+   "bodyChars": 875
+  },
+  {
+   "slug": "data-backup-plan",
+   "kind": "original",
+   "bodyChars": 831
+  },
+  {
+   "slug": "security-incident-response",
+   "kind": "original",
+   "bodyChars": 860
+  },
+  {
+   "slug": "shift-scheduling",
+   "kind": "original",
+   "bodyChars": 810
+  },
+  {
+   "slug": "grant-proposal",
+   "kind": "original",
+   "bodyChars": 763
+  },
+  {
+   "slug": "payment-reminder",
+   "kind": "original",
+   "bodyChars": 734
+  },
+  {
+   "slug": "verify-before-done-en",
+   "kind": "english-variant",
+   "bodyChars": 826
+  },
+  {
+   "slug": "test-driven-development-en",
+   "kind": "english-variant",
+   "bodyChars": 995
+  },
+  {
+   "slug": "responding-to-code-review-en",
+   "kind": "english-variant",
+   "bodyChars": 916
+  }
+ ],
+ "counts": {
+  "upstreamSkillsRead": 570,
+  "acceptedAdapted": 19,
+  "acceptedOriginal": 13,
+  "acceptedEnglishVariants": 3,
+  "rejectedReviewed": 141,
+  "rejectedUnlicensedNotRead": 410
+ },
+ "review": [
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/academy-guide",
+   "decision": "rejected",
+   "reason": "not_useful",
+   "note": "Recommends Claude Academy courses; not a workflow for Mohassan users.",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/algorithmic-art",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Generates p5.js code and interactive artifacts; instruction skills have no code runtime.",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/brand-guidelines",
+   "decision": "rejected",
+   "reason": "not_useful",
+   "note": "Anthropic's own brand colours and fonts.",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/canvas-design",
+   "decision": "rejected",
+   "reason": "requires_resources",
+   "note": "54 bundled binary font files (unsupported by the importer) and image output.",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/claude-api",
+   "decision": "rejected",
+   "reason": "out_of_direction",
+   "note": "Guidance for an external AI API (owner direction: own model only); 104k-character body.",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/discernment-nudge",
+   "decision": "rejected",
+   "reason": "not_applicable",
+   "note": "A behaviour rule for a model reply, not a user workflow.",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/doc-coauthoring",
+   "decision": "rejected",
+   "reason": "licence_unverified",
+   "note": "No licence file for this skill at the revision read.",
+   "licence": "none"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/docx",
+   "decision": "rejected",
+   "reason": "requires_resources",
+   "note": "15 scripts and schema files produce the Word files.",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/frontend-design",
+   "decision": "accepted",
+   "slug": "distinctive-ui-design",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/internal-comms",
+   "decision": "accepted",
+   "slug": "internal-communications",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/mcp-builder",
+   "decision": "accepted",
+   "slug": "mcp-server-building",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/pdf",
+   "decision": "rejected",
+   "reason": "requires_resources",
+   "note": "8 scripts; Mohassan already has its own PDF tools.",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/pptx",
+   "decision": "rejected",
+   "reason": "requires_resources",
+   "note": "17 scripts produce the slides.",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/skill-creator",
+   "decision": "accepted",
+   "slug": "writing-mohassan-skills",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/slack-gif-creator",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "GIF rendering scripts and Slack.",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/theme-factory",
+   "decision": "rejected",
+   "reason": "overlap",
+   "note": "Covered by color-palettes, presentation-design and typography; its showcase is a binary PDF.",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/web-artifacts-builder",
+   "decision": "rejected",
+   "reason": "requires_resources",
+   "note": "Bundling scripts for claude.ai artifacts.",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/webapp-testing",
+   "decision": "accepted",
+   "slug": "local-webapp-testing",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "skills/xlsx",
+   "decision": "rejected",
+   "reason": "requires_resources",
+   "note": "12 scripts produce the spreadsheets.",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "anthropics/skills",
+   "folder": "template",
+   "decision": "rejected",
+   "reason": "not_a_skill",
+   "note": "Template placeholder.",
+   "licence": "none"
+  },
+  {
+   "repo": "vercel-labs/agent-skills",
+   "folder": "skills/composition-patterns",
+   "decision": "accepted",
+   "slug": "react-component-composition",
+   "licence": "declared: MIT"
+  },
+  {
+   "repo": "vercel-labs/agent-skills",
+   "folder": "skills/deploy-to-vercel",
+   "decision": "rejected",
+   "reason": "licence_unverified",
+   "note": "No licence declared; needs the Vercel CLI and network.",
+   "licence": "none"
+  },
+  {
+   "repo": "vercel-labs/agent-skills",
+   "folder": "skills/react-best-practices",
+   "decision": "accepted",
+   "slug": "react-performance-rules",
+   "licence": "declared: MIT"
+  },
+  {
+   "repo": "vercel-labs/agent-skills",
+   "folder": "skills/react-native-skills",
+   "decision": "accepted",
+   "slug": "react-native-performance",
+   "licence": "declared: MIT"
+  },
+  {
+   "repo": "vercel-labs/agent-skills",
+   "folder": "skills/react-view-transitions",
+   "decision": "rejected",
+   "reason": "not_useful",
+   "note": "One browser API; 13.6k-character body exceeds the context budget.",
+   "licence": "declared: MIT"
+  },
+  {
+   "repo": "vercel-labs/agent-skills",
+   "folder": "skills/vercel-cli-with-tokens",
+   "decision": "rejected",
+   "reason": "licence_unverified",
+   "note": "No licence declared; needs tokens and the Vercel CLI.",
+   "licence": "none"
+  },
+  {
+   "repo": "vercel-labs/agent-skills",
+   "folder": "skills/vercel-optimize",
+   "decision": "rejected",
+   "reason": "licence_unverified",
+   "note": "No licence declared; 90 scripts.",
+   "licence": "none"
+  },
+  {
+   "repo": "vercel-labs/agent-skills",
+   "folder": "skills/web-design-guidelines",
+   "decision": "rejected",
+   "reason": "licence_unverified",
+   "note": "No licence declared; fetches its rules from a URL at run time.",
+   "licence": "none"
+  },
+  {
+   "repo": "vercel-labs/agent-skills",
+   "folder": "skills/writing-guidelines",
+   "decision": "rejected",
+   "reason": "licence_unverified",
+   "note": "No licence declared.",
+   "licence": "none"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/adobe/skills/adobe-batch-edit-photos",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Adobe services; bodies around 29k characters.",
+   "licence": "declared: Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/adobe/skills/adobe-create-mockups",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Adobe services; bodies around 29k characters.",
+   "licence": "declared: Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/adobe/skills/adobe-create-social-variations",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Adobe services; bodies around 29k characters.",
+   "licence": "declared: Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/adobe/skills/adobe-design-from-template",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Adobe services; bodies around 29k characters.",
+   "licence": "declared: Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/adobe/skills/adobe-edit-quick-cut",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Adobe services; bodies around 29k characters.",
+   "licence": "declared: Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/adobe/skills/adobe-retouch-portraits",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Adobe services; bodies around 29k characters.",
+   "licence": "declared: Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/airtable/skills/airtable-filters",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Airtable.",
+   "licence": "declared: MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/airtable/skills/airtable-overview",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Airtable.",
+   "licence": "declared: MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/boltz-api-cli/skills/boltz-check-status",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Protein-structure API; niche.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/boltz-api-cli/skills/boltz-cli-setup",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Protein-structure API; niche.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/boltz-api-cli/skills/boltz-protein-design",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Protein-structure API; niche.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/boltz-api-cli/skills/boltz-protein-screen",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Protein-structure API; niche.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/boltz-api-cli/skills/boltz-small-molecule-adme",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Protein-structure API; niche.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/boltz-api-cli/skills/boltz-small-molecule-design",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Protein-structure API; niche.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/boltz-api-cli/skills/boltz-small-molecule-screen",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Protein-structure API; niche.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/boltz-api-cli/skills/boltz-structure-and-binding",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Protein-structure API; niche.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/cloudflare/skills/agents-sdk",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs a Cloudflare account and the wrangler CLI.",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/cloudflare/skills/cloudflare",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs a Cloudflare account and the wrangler CLI.",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/cloudflare/skills/wrangler",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs a Cloudflare account and the wrangler CLI.",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/expo/skills/building-native-ui",
+   "decision": "rejected",
+   "reason": "not_useful",
+   "note": "Niche Expo API detail; the pilot takes the deployment and upgrade workflows.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/expo/skills/codex-expo-run-actions",
+   "decision": "rejected",
+   "reason": "not_applicable",
+   "note": "Wires Expo into the Codex app.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/expo/skills/expo-api-routes",
+   "decision": "rejected",
+   "reason": "not_useful",
+   "note": "Niche Expo API detail; the pilot takes the deployment and upgrade workflows.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/expo/skills/expo-cicd-workflows",
+   "decision": "rejected",
+   "reason": "requires_resources",
+   "note": "Two bundled scripts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/expo/skills/expo-deployment",
+   "decision": "accepted",
+   "slug": "expo-store-release",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/expo/skills/expo-dev-client",
+   "decision": "rejected",
+   "reason": "not_useful",
+   "note": "Niche Expo API detail; the pilot takes the deployment and upgrade workflows.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/expo/skills/expo-module",
+   "decision": "rejected",
+   "reason": "not_useful",
+   "note": "Niche Expo API detail; the pilot takes the deployment and upgrade workflows.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/expo/skills/expo-tailwind-setup",
+   "decision": "rejected",
+   "reason": "not_useful",
+   "note": "Niche Expo API detail; the pilot takes the deployment and upgrade workflows.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/expo/skills/expo-ui-jetpack-compose",
+   "decision": "rejected",
+   "reason": "not_useful",
+   "note": "Niche Expo API detail; the pilot takes the deployment and upgrade workflows.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/expo/skills/expo-ui-swift-ui",
+   "decision": "rejected",
+   "reason": "not_useful",
+   "note": "Niche Expo API detail; the pilot takes the deployment and upgrade workflows.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/expo/skills/native-data-fetching",
+   "decision": "rejected",
+   "reason": "overlap",
+   "note": "Data fetching is in react-performance-rules; 11k-character body.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/expo/skills/upgrading-expo",
+   "decision": "accepted",
+   "slug": "expo-sdk-upgrade",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/expo/skills/use-dom",
+   "decision": "rejected",
+   "reason": "not_useful",
+   "note": "Niche Expo API detail; the pilot takes the deployment and upgrade workflows.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/mixpanel-headless/skills/dashboard-expert",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs a Mixpanel account.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/mixpanel-headless/skills/mixpanel-auth",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs a Mixpanel account.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/mixpanel-headless/skills/mixpanelyst",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs a Mixpanel account.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/mixpanel-headless/skills/setup",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs a Mixpanel account.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/notion/skills/notion-knowledge-capture",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs the Notion connector.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/notion/skills/notion-meeting-intelligence",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs the Notion connector.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/notion/skills/notion-research-documentation",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs the Notion connector.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/notion/skills/notion-spec-to-implementation",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs the Notion connector.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/nvidia/skills/aiq-deploy",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs NVIDIA GPU services; niche.",
+   "licence": "declared: Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/nvidia/skills/aiq-research",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs NVIDIA GPU services; niche.",
+   "licence": "declared: Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/nvidia/skills/cuopt-user-rules",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs NVIDIA GPU services; niche.",
+   "licence": "declared: Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/nvidia/skills/dynamo-interconnect-check",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs NVIDIA GPU services; niche.",
+   "licence": "declared: Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/nvidia/skills/dynamo-router-starter",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs NVIDIA GPU services; niche.",
+   "licence": "declared: Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/nvidia/skills/nemoclaw-user-get-started",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs NVIDIA GPU services; niche.",
+   "licence": "declared: Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/nvidia/skills/nvidia-skill-finder",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs NVIDIA GPU services; niche.",
+   "licence": "declared: CC-BY-4.0 AND Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/nvidia/skills/omniverse-cad-to-simready",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs NVIDIA GPU services; niche.",
+   "licence": "declared: Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/nvidia/skills/omniverse-realtime-viewer",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs NVIDIA GPU services; niche.",
+   "licence": "declared: Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/nvidia/skills/omniverse-usd-performance-tuning",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs NVIDIA GPU services; niche.",
+   "licence": "declared: Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/nvidia/skills/physical-ai-infrastructure-setup-and-resilient-scaling",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs NVIDIA GPU services; niche.",
+   "licence": "declared: Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/nvidia/skills/physical-ai-neural-reconstruction",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs NVIDIA GPU services; niche.",
+   "licence": "declared: Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/openai-developers/skills/build-chatgpt-app",
+   "decision": "rejected",
+   "reason": "out_of_direction",
+   "note": "Guidance for an external AI API (owner direction: own model only).",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/openai-developers/skills/chatgpt-app-submission",
+   "decision": "rejected",
+   "reason": "out_of_direction",
+   "note": "Guidance for an external AI API (owner direction: own model only).",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/plugin-eval/fixtures/minimal-skill",
+   "decision": "rejected",
+   "reason": "not_a_skill",
+   "note": "Test fixture of the plugin evaluator.",
+   "licence": "declared: MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/posthog/skills/posthog",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs a PostHog account.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/sentry/skills/sentry",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs a Sentry account.",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/supabase/skills/supabase-postgres-best-practices",
+   "decision": "accepted",
+   "slug": "postgres-performance",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/supabase/skills/supabase",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs the Supabase CLI and project access.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/superpowers/skills/brainstorming",
+   "decision": "accepted",
+   "slug": "feature-design-dialogue",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/superpowers/skills/dispatching-parallel-agents",
+   "decision": "rejected",
+   "reason": "not_applicable",
+   "note": "Orchestrates parallel AI agents.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/superpowers/skills/executing-plans",
+   "decision": "rejected",
+   "reason": "not_applicable",
+   "note": "Agent session checkpoints; the plan itself is implementation-plan.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/superpowers/skills/finishing-a-development-branch",
+   "decision": "accepted",
+   "slug": "finish-development-branch",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/superpowers/skills/receiving-code-review",
+   "decision": "accepted",
+   "slug": "responding-to-code-review",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/superpowers/skills/requesting-code-review",
+   "decision": "accepted",
+   "slug": "request-code-review",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/superpowers/skills/subagent-driven-development",
+   "decision": "rejected",
+   "reason": "not_applicable",
+   "note": "Subagent orchestration; 32k-character body.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/superpowers/skills/systematic-debugging",
+   "decision": "rejected",
+   "reason": "overlap",
+   "note": "Covered by debugging, bug-debugging, root-cause-analysis and root-cause-analysis-ar.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/superpowers/skills/test-driven-development",
+   "decision": "accepted",
+   "slug": "test-driven-development",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/superpowers/skills/using-git-worktrees",
+   "decision": "rejected",
+   "reason": "not_useful",
+   "note": "Agent workspace isolation; git basics are in git-version-control.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/superpowers/skills/using-superpowers",
+   "decision": "rejected",
+   "reason": "not_applicable",
+   "note": "Rules for the agent itself.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/superpowers/skills/verification-before-completion",
+   "decision": "accepted",
+   "slug": "verify-before-done",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/superpowers/skills/writing-plans",
+   "decision": "accepted",
+   "slug": "implementation-plan",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/superpowers/skills/writing-skills",
+   "decision": "rejected",
+   "reason": "overlap",
+   "note": "Covered by writing-mohassan-skills; agent-specific test harness.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/temporal/skills/temporal-cloud-setup",
+   "decision": "rejected",
+   "reason": "not_useful",
+   "note": "Niche workflow engine; bodies up to 36k characters exceed the context budget.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/temporal/skills/temporal-developer",
+   "decision": "rejected",
+   "reason": "not_useful",
+   "note": "Niche workflow engine; bodies up to 36k characters exceed the context budget.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/temporal/skills/temporal-ops",
+   "decision": "rejected",
+   "reason": "not_useful",
+   "note": "Niche workflow engine; bodies up to 36k characters exceed the context budget.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/temporal/skills/temporal-serverless",
+   "decision": "rejected",
+   "reason": "not_useful",
+   "note": "Niche workflow engine; bodies up to 36k characters exceed the context budget.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/test-android-apps/skills/android-emulator-qa",
+   "decision": "accepted",
+   "slug": "android-emulator-testing",
+   "licence": "Apache-2.0"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/build-zoom-bot",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/build-zoom-meeting-app",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/choose-zoom-approach",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/cobrowse-sdk",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/contact-center",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/contact-center/android",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/contact-center/ios",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/contact-center/web",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/debug-zoom-integration",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/debug-zoom",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/general",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/meeting-sdk",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/meeting-sdk/android",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/meeting-sdk/electron",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/meeting-sdk/ios",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/meeting-sdk/linux",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/meeting-sdk/macos",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/meeting-sdk/react-native",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/meeting-sdk/unreal",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/meeting-sdk/web",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/meeting-sdk/web/client-view",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/meeting-sdk/web/component-view",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/meeting-sdk/windows",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/oauth",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/phone",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/plan-zoom-integration",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/plan-zoom-product",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/probe-sdk",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/rest-api",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/rivet-sdk",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/rtms",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/scribe",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/setup-zoom-oauth",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/start",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/team-chat",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/ui-toolkit",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/video-sdk",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/video-sdk/android",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/video-sdk/flutter",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/video-sdk/ios",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/video-sdk/linux",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/video-sdk/macos",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/video-sdk/react-native",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/video-sdk/unity",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/video-sdk/web",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/video-sdk/windows",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/virtual-agent",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/virtual-agent/android",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/virtual-agent/ios",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/virtual-agent/web",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/webhooks",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/websockets",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  },
+  {
+   "repo": "openai/plugins",
+   "folder": "plugins/zoom/skills/zoom-apps-sdk",
+   "decision": "rejected",
+   "reason": "requires_tools",
+   "note": "Needs Zoom APIs, SDKs and accounts.",
+   "licence": "MIT"
+  }
+ ],
+ "rejectedUnlicensedByPlugin": {
+  ".agents/skills/plugin-creator": 1,
+  "airtable": 1,
+  "build-ios-apps": 9,
+  "build-macos-apps": 11,
+  "build-web-apps": 6,
+  "build-web-data-visualization": 18,
+  "canva": 8,
+  "chatcut": 1,
+  "circleci": 4,
+  "cloudflare": 6,
+  "coderabbit": 1,
+  "codex-security": 20,
+  "creative-production": 2,
+  "data-analytics": 18,
+  "dropbox": 6,
+  "figma": 12,
+  "game-studio": 9,
+  "google-drive": 5,
+  "higgsfield": 3,
+  "hyperframes": 5,
+  "life-science-research": 50,
+  "magicpath": 1,
+  "ngs-analysis": 18,
+  "openai-ads-conversions": 1,
+  "openai-developers": 3,
+  "plugin-eval": 8,
+  "product-design": 10,
+  "public-equity-investing": 23,
+  "remotion": 12,
+  "shopify": 20,
+  "stripe": 7,
+  "test-android-apps": 1,
+  "twilio-developer-kit": 55,
+  "vercel": 54,
+  "zotero": 1
+ }
+}

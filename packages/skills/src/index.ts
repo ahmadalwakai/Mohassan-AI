@@ -10,6 +10,8 @@ import { createSkillRegistry } from './registry.ts';
 import { createInstructionContext } from './preload.ts';
 import { pruneGithubSkillVersions } from './prune.ts';
 import { rebuildSkillGraph } from './graph.ts';
+import { createInstructionCatalogue, recordCatalogueEvidence, searchCatalogue } from './catalogue.ts';
+import { createCatalogueImporter } from './catalogue-import.ts';
 
 export { skillsMigration } from './migration.ts';
 export { createSkillForgeControl } from './forge.ts';
@@ -28,6 +30,12 @@ export { buildPermissionSnapshot, type PermissionSnapshot, type SkillEnvironment
 export { routeInstructionSkills, type SkillContextMetadata } from './router.ts';
 export { compileInstructionContext, DEFAULT_SKILL_CONTEXT_CHARS, MAX_SKILL_CONTEXT_CHARS, type CompiledSkillContext, type SkillContextSource } from './compiler.ts';
 export { preloadInstructionMetadata } from './preload.ts';
+export { createTermIndex, routerIndex, createInstructionCatalogue, deriveCatalogueFacts, licenceKind, searchCatalogue, backfillCatalogue, recordCatalogueEvidence, recordSimilaritySignals,
+  storeCatalogueFacts, folderIdentity, CATALOGUE_FACTS_VERSION, SKILL_BODY_GUIDANCE_CHARS, MAX_CATALOGUE_ACTIVE, SIMILARITY_REVIEW_THRESHOLD,
+  type TermIndex, type InstructionSnapshot, type InstructionCatalogue, type CatalogueSource } from './catalogue.ts';
+export { createCatalogueImporter, MAX_PACKAGE_SKILLS, type CatalogueImporter } from './catalogue-import.ts';
+export { instructionMetadataQuery, metadataRows } from './metadata.ts';
+export { MAX_GITHUB_SKILLS, MAX_GITHUB_VERSIONS_PER_OWNER, MAX_IMPORTED_VERSIONS_PER_OWNER, MAX_IMPORTED_TOTAL_BYTES } from './import-store.ts';
 export { createSkillScheduler, type SkillChildSpec, type SkillAdvanceContext, type SkillAdvanceResult, type SkillRunResult } from './scheduler.ts';
 export { hashSkillData, canonicalSkillJson, canonicalSkillEvidenceJson, appendSkillEvidence, type SkillNodeClaim, type SkillNodeResult, type SkillNodeOutcome, type SkillNodePreimage } from './evidence.ts';
 export { createToolGateway, type SkillToolAdapter, type SkillToolContext } from './gateway.ts';
@@ -71,7 +79,10 @@ export function createSkillControl(db: Kysely<any>, options: SkillControlOptions
   const grants = createSkillGrants(db, { allowedRoots, audit: registry.audit, now: options.now });
   const environment = options.environment ?? (() => ({ capabilities: [], modelReady: false, visionReady: false, executableReady: false }));
   const validateComposition = createSkillPlanner(db, { environment, access: grants.effective });
-  const instructionContext = createInstructionContext(db, options.enabled === true);
+  // One catalogue per control: the chat router and the model-free reader share its snapshot of the active skills.
+  const catalogue = createInstructionCatalogue(db);
+  const instructionContext = createInstructionContext(db, options.enabled === true, catalogue);
+  const packages = createCatalogueImporter(db, { allowedRoots, lifecycle, audit: registry.audit, now: options.now });
   async function acted(ownerId: string, id: string, act: Promise<void>) { await act; return registry.detail(ownerId, id); }
   return {
     list: registry.list, detail: registry.detail, fileContent: registry.fileContent, importLocal, validateComposition, ...instructionContext,
@@ -81,6 +92,13 @@ export function createSkillControl(db: Kysely<any>, options: SkillControlOptions
     rollback: (ownerId: string, id: string, input: unknown) => acted(ownerId, id, lifecycle.rollback(ownerId, id, input)),
     createGrant: grants.create, revokeGrant: grants.revoke, effectiveAccess: grants.effective,
     remote,
+    catalogue: {
+      snapshot: catalogue.snapshot,
+      search: (ownerId: string, query: unknown) => searchCatalogue(db, ownerId, query),
+      recordEvidence: (ownerId: string, input: Parameters<typeof recordCatalogueEvidence>[2]) => recordCatalogueEvidence(db, ownerId, input),
+      importBatch: packages.batch,
+      imports: packages.latest,
+    },
   };
 }
 export type SkillControl = ReturnType<typeof createSkillControl>;

@@ -7,6 +7,7 @@ import { parseSkillManifest } from './frontmatter.ts';
 import { classifySkillFile, type InspectableFile } from './inspector.ts';
 import { sha256, skillContentHash, skillContentMatches } from './hash.ts';
 import { acquireSkillLifecycleLock } from './lifecycle-lock.ts';
+import { deriveCatalogueFacts, storeCatalogueFacts } from './catalogue.ts';
 
 /** Local imports and Forge versions together. GitHub versions are counted apart, against their own limit below. */
 export const MAX_IMPORTED_VERSIONS_PER_OWNER = 200;
@@ -24,6 +25,8 @@ export interface ImmutableSkillStoreOptions {
   parent?: { id: string; revision: number; contentHash: string; mode: 'mutate' | 'fork' };
   /** A remote origin for `local_import` versions only: recorded as the source, never as a different origin. */
   source?: { kind: 'github'; locator: string };
+  /** Catalogue context from a bulk import: the package the version belongs to when its front matter names none. */
+  catalogue?: { package: string };
 }
 const MAX_LOCATOR_CHARS = 500;
 export function nextSkillVersion(version: string): string {
@@ -120,6 +123,13 @@ export async function storeImmutableSkill(tx: Kysely<any>, ownerId: string, raw:
     level: contract.level, origin: options.origin, status: 'quarantined', status_reason: 'بانتظار الفحص.', contract: JSON.stringify(contract), content_hash: contentHash }).execute();
   await tx.insertInto('skill_files').values(loaded.files.map(file => ({ version_id: id, path: file.path, kind: file.kind, content: file.content, content_hash: sha256(file.content), size_bytes: Buffer.byteLength(file.content) }))).execute();
   await tx.insertInto('skill_sources').values({ version_id: id, kind: options.origin === 'forge' ? 'forge' : options.source ? 'github' : 'local_folder', locator: options.source?.locator ?? loaded.root, file_count: loaded.files.length, total_bytes: loaded.totalBytes }).execute();
+  // Catalogue facts (language, workflow, provenance, licence, compatibility) are read from the same verified files, in the same transaction.
+  // They are metadata: a derivation failure leaves the version without facts (the backfill reports it), never blocks the import.
+  // Only the pure derivation is guarded: a database error inside this transaction must still abort the import.
+  let facts: ReturnType<typeof deriveCatalogueFacts> | null = null;
+  try { facts = deriveCatalogueFacts(contract, loaded.files, { kind: options.origin === 'forge' ? 'forge' : options.source ? 'github' : 'local_folder', locator: options.source?.locator ?? loaded.root, package: options.catalogue?.package ?? null }); }
+  catch { console.error(JSON.stringify({ level: 'warn', event: 'skill_catalogue_facts_failed', slug: contract.slug })); }
+  if (facts) await storeCatalogueFacts(tx, ownerId, id, contract.slug, facts);
   await options.audit(tx, ownerId, id, options.origin === 'forge' ? 'skill.forge_candidate' : 'skill.imported', { slug: contract.slug, level: contract.level, contentHash, fileCount: loaded.files.length, ...(options.source ? { source: 'github' } : {}) });
   await options.rebuildGraph?.(tx, ownerId);
   return { id, familyId: family.id as string, contentHash, deduplicated: false };

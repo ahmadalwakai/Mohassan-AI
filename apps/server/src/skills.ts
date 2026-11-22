@@ -11,6 +11,13 @@ export async function registerSkillRoutes(app: FastifyInstance, { db, owner, all
   const id = (value: string) => z.uuid().parse(value);
   app.get('/api/skills', async (request) => skills.list((await owner(request)).id, request.query));
   app.post('/api/skills/import', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request) => skills.importLocal((await owner(request)).id, request.body));
+  // The catalogue (owner-only: not in MEMBER_ROUTES). Search reads metadata and facts only; no skill body leaves the store here.
+  app.get('/api/skills/catalogue', async (request, reply) => {
+    const user = await owner(request); reply.header('cache-control', 'private, no-store');
+    return skills.catalogue.search(user.id, request.query);
+  });
+  // One bounded batch of a local package import per request; the response says how far the run is, and the next request continues it.
+  app.post('/api/skills/catalogue/import', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request) => skills.catalogue.importBatch((await owner(request)).id, request.body));
   app.post('/api/skills/compose/validate', write, async (request) => skills.validateComposition((await owner(request)).id, request.body));
   app.get<Skill>('/api/skills/:id', async (request) => skills.detail((await owner(request)).id, id(request.params.id)));
   app.get<Skill>('/api/skills/:id/file', async (request, reply) => {
