@@ -1,0 +1,17 @@
+{
+  "capturedAt": "2026-11-22T03:40:36.820Z",
+  "sourceCommit": "55a5f7c",
+  "request": {
+    "method": "GET",
+    "url": "/api/wasla/gateway/conversations/00000000-0000-4000-8000-000000000000"
+  },
+  "response": {
+    "status": 404,
+    "body": {
+      "error": {
+        "code": "CHAT_NOT_FOUND",
+        "message": "لم يُعثر على المحادثة."
+      }
+    }
+  }
+}

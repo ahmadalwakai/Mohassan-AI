@@ -1,0 +1,38 @@
+{
+  "capturedAt": "2026-11-22T03:40:36.786Z",
+  "sourceCommit": "55a5f7c",
+  "request": {
+    "method": "GET",
+    "url": "/api/wasla/gateway/conversations/64fe461b-cf24-4ea4-a1f1-f19ca9d5cf6d"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "64fe461b-cf24-4ea4-a1f1-f19ca9d5cf6d",
+      "title": "مرحبا، كيف حالك اليوم؟",
+      "status": "failed",
+      "updatedAt": "2026-11-22T03:40:36.723Z",
+      "messages": [
+        {
+          "id": "7e28b3d5-ebad-4f47-9aa9-19904b12c3ff",
+          "role": "user",
+          "text": "مرحبا، كيف حالك اليوم؟",
+          "createdAt": "2026-11-22T03:40:14.730Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "progress": null,
+      "steps": [
+        {
+          "id": "23293f45-e28e-4cea-8c88-ad24b7378a16",
+          "text": "البحث عن «مرحبا، كيف حالك اليوم»",
+          "createdAt": "2026-11-22T03:40:14.860Z"
+        }
+      ],
+      "error": "تعذر جلب الصفحة ضمن المهلة وحدود الشبكة.",
+      "configured": false
+    }
+  }
+}

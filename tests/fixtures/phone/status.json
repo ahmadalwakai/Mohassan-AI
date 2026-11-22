@@ -1,0 +1,15 @@
+{
+  "capturedAt": "2026-11-22T03:40:04.903Z",
+  "sourceCommit": "55a5f7c",
+  "request": {
+    "method": "GET",
+    "url": "/api/wasla/gateway/status"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "bridge": "mohassan"
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "capturedAt": "2026-11-22T03:40:36.836Z",
+  "sourceCommit": "55a5f7c",
+  "request": {
+    "method": "GET",
+    "url": "/api/wasla/gateway/conversations/not-a-uuid"
+  },
+  "response": {
+    "status": 400,
+    "body": {
+      "error": {
+        "code": "VALIDATION_ERROR",
+        "message": "تحقق من الحقول المطلوبة وطول المدخلات."
+      }
+    }
+  }
+}

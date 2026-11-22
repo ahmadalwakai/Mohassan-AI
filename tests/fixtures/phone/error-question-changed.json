@@ -1,0 +1,21 @@
+{
+  "capturedAt": "2026-11-22T03:40:05.928Z",
+  "sourceCommit": "55a5f7c",
+  "request": {
+    "method": "POST",
+    "url": "/api/wasla/gateway/conversations/3c628165-362f-426c-8b00-23204a8f9003/respond",
+    "body": {
+      "questionId": "70098c10-d522-4be6-bd07-5ba85176708d",
+      "optionId": "stop"
+    }
+  },
+  "response": {
+    "status": 409,
+    "body": {
+      "error": {
+        "code": "CHAT_QUESTION_CHANGED",
+        "message": "هذا السؤال لم يعد معلقًا."
+      }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "capturedAt": "2026-11-22T03:40:10.379Z",
+  "sourceCommit": "55a5f7c",
+  "request": {
+    "method": "POST",
+    "url": "/api/wasla/gateway/conversations/38e8cf1a-f1f0-4eb2-a12a-1f3c27fca78d/approve",
+    "body": {
+      "approvalId": "b8d15d36-72fe-498e-9b5d-980a75e5f253",
+      "approved": true
+    }
+  },
+  "response": {
+    "status": 409,
+    "body": {
+      "error": {
+        "code": "CHAT_APPROVAL_CHANGED",
+        "message": "هذا الطلب لم يعد معلقًا."
+      }
+    }
+  }
+}

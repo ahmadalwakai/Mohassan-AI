@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import type { createAuth } from './auth.js';
+import { WASLA_GATEWAY_ROUTES } from './wasla.js';
 
 /**
  * Members are people the owner invites. They use cloud services only (chat,
@@ -21,6 +22,8 @@ export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
   'GET /api/auth/*', 'POST /api/auth/*',
   'POST /api/windows/companion/pair', 'POST /api/windows/companion/poll',
   'POST /api/invites/inspect', 'POST /api/invites/accept',
+  // The Wasla service on the owner's computer: loopback and its own gateway key.
+  ...WASLA_GATEWAY_ROUTES,
 ]);
 
 const chat = '/api/chat/conversations';

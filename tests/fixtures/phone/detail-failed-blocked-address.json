@@ -1,0 +1,38 @@
+{
+  "capturedAt": "2026-11-22T03:40:14.656Z",
+  "sourceCommit": "55a5f7c",
+  "request": {
+    "method": "GET",
+    "url": "/api/wasla/gateway/conversations/17c9384f-f88e-4311-aadd-155be900d91d"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "17c9384f-f88e-4311-aadd-155be900d91d",
+      "title": "افتح http://10.0.0.9/",
+      "status": "failed",
+      "updatedAt": "2026-11-22T03:40:14.610Z",
+      "messages": [
+        {
+          "id": "ae821373-4a95-4330-96db-f5eba28116d9",
+          "role": "user",
+          "text": "افتح http://10.0.0.9/",
+          "createdAt": "2026-11-22T03:40:14.344Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "progress": null,
+      "steps": [
+        {
+          "id": "905db1d1-f11f-4931-9335-6c4f9d47ae12",
+          "text": "فتح 10.0.0.9",
+          "createdAt": "2026-11-22T03:40:14.380Z"
+        }
+      ],
+      "error": "هذا العنوان داخلي أو غير موجود، ولا يمكن فتحه.",
+      "configured": false
+    }
+  }
+}
