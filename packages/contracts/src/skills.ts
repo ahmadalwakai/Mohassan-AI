@@ -25,7 +25,7 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<SkillToolId, SkillSideEffect>> =
   'memory.search': 'read', 'file.read': 'read', 'file.write': 'write_local',
 });
 
-const Slug = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+){0,7}$/).max(64);
+export const Slug = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+){0,7}$/).max(64);
 const Version = z.string().regex(/^(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,4})$/);
 const FieldName = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,47}$/);
 const StepId = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,47}$/);
@@ -103,7 +103,7 @@ export const SkillContractSchema = z.object({
 export type SkillContract = z.infer<typeof SkillContractSchema>;
 
 export const SkillSourceSchema = z.object({
-  kind: z.enum(['builtin', 'local_folder', 'forge', 'memory']), locator: z.string().max(500), observedAt: z.iso.datetime(), fileCount: z.number().int().nonnegative(), totalBytes: z.number().int().nonnegative(),
+  kind: z.enum(['builtin', 'local_folder', 'forge', 'memory', 'github']), locator: z.string().max(500), observedAt: z.iso.datetime(), fileCount: z.number().int().nonnegative(), totalBytes: z.number().int().nonnegative(),
 }).strict();
 export const SkillVersionSchema = z.object({
   id: z.uuid(), familyId: z.uuid(), slug: Slug, name: z.string(), description: z.string(), category: SkillCategorySchema,

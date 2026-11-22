@@ -7,6 +7,10 @@ import { createDatabase, migrate } from '@mohassan/database';
 import { memoryMigration } from '@mohassan/memory';
 import { migrateAuth } from '../../../apps/server/src/auth.ts';
 import { createSkillControl, parseSkillManifest, sha256, skillsMigration } from './index.ts';
+import { skillContentHash } from './hash.ts';
+import { buildSkillSource } from './importer.ts';
+import { storeImmutableSkill } from './import-store.ts';
+import { createSkillRegistry } from './registry.ts';
 
 const manifest = (name: string, body = 'Do the task carefully.', extra = '') => `---\nname: ${name}\ndescription: يوضح هذا الوصف ما تفعله المهارة.\n${extra}---\n\n${body}\n`;
 
@@ -181,5 +185,76 @@ describe('local skill import', () => {
     const { skill } = await skills.importLocal(owner, { path: await folder({ 'SKILL.md': manifest('مهارة عربية') }) });
     expect(skill.slug).toMatch(/^skill-[a-f0-9]{12}$/);
     expect(skill.name).toBe('مهارة عربية');
+  });
+});
+
+describe('remote skill sources through the shared builder', () => {
+  let store: Awaited<ReturnType<typeof createDatabase>>, skills: ReturnType<typeof createSkillControl>, root: string;
+  const owner = 'remote-source-owner-fixture';
+  const locator = (slug: string) => `github:owner/skills@${'c'.repeat(40)}:skills/${slug}`;
+  const entries = (files: Record<string, string>) => Object.entries(files).map(([path, content]) => ({ path, content }));
+  async function folder(files: Record<string, string>, name = randomUUID()) {
+    const directory = join(root, name);
+    for (const [path, content] of Object.entries(files)) { const target = join(directory, ...path.split('/')); await mkdir(join(target, '..'), { recursive: true }); await writeFile(target, content); }
+    return directory;
+  }
+  function remote(slug: string, files: Record<string, string>) {
+    const source = buildSkillSource(entries(files), { root: locator(slug), defaultSlug: slug }), registry = createSkillRegistry(store.db);
+    return store.db.transaction().execute(tx => storeImmutableSkill(tx, owner, source, { origin: 'local_import', source: { kind: 'github', locator: locator(slug) }, audit: registry.audit }));
+  }
+  beforeAll(async () => {
+    store = await createDatabase(); await migrateAuth(store.db); await migrate(store.db); await memoryMigration(store.db); await skillsMigration(store.db);
+    await store.db.insertInto('user').values({ id: owner, name: owner, email: `${owner}@example.test` }).execute();
+    root = await mkdtemp(join(tmpdir(), 'skill-remote-source-'));
+    skills = createSkillControl(store.db, { allowedRoots: [root] });
+  });
+  afterAll(async () => { await store?.close(); await rm(root, { recursive: true, force: true }); });
+
+  it('builds the same contract and content hash as the folder reader for the same files', async () => {
+    const files = { 'SKILL.md': manifest('same-bytes'), 'references/guide.md': 'المرجع نفسه بالعربية', 'data/table.csv': 'a,b' };
+    const imported = await skills.importLocal(owner, { path: await folder(files) });
+    const detail = await skills.detail(owner, imported.skill.id);
+    const built = buildSkillSource(entries(files), { root: 'github:owner/skills@c:skills/same-bytes' });
+    expect(built.contract).toEqual(detail.contract);
+    expect(skillContentHash(built.contract, built.files)).toBe(imported.skill.contentHash);
+    expect(built.files.map(file => [file.path, file.kind]).sort()).toEqual(detail.files.map(file => [file.path, file.kind]).sort());
+    expect(built.totalBytes).toBe(detail.source?.totalBytes);
+  });
+  it('stores a GitHub source as kind github with its locator, quarantined and audited', async () => {
+    const result = await remote('from-github', { 'SKILL.md': manifest('from-github') });
+    expect(result.deduplicated).toBe(false);
+    const detail = await skills.detail(owner, result.id);
+    expect(detail.skill).toMatchObject({ slug: 'from-github', status: 'quarantined', origin: 'local_import', level: 'instruction', active: false });
+    expect(detail.source).toMatchObject({ kind: 'github', locator: locator('from-github'), fileCount: 1 });
+    expect(detail.audit.find(event => event.event === 'skill.imported')?.detail).toMatchObject({ source: 'github', slug: 'from-github' });
+  });
+  it('uses the folder name as the slug and refuses a contract that names another slug', async () => {
+    const result = await remote('folder-named', { 'SKILL.md': manifest('مهارة بلا عقد') });
+    expect((await skills.detail(owner, result.id)).skill).toMatchObject({ slug: 'folder-named', name: 'مهارة بلا عقد' });
+    const contract = { slug: 'other-slug', name: 'مهارة بعقد', description: 'تعتمد على عقد صريح مع المهارة.', version: '1.0.0', category: 'research', level: 'instruction' };
+    expect(() => buildSkillSource([{ path: 'SKILL.md', content: manifest('x-y') }, { path: 'skill.contract.json', content: JSON.stringify(contract) }], { root: 'github:x', defaultSlug: 'folder-named' })).toThrow(expect.objectContaining({ code: 'SKILL_REMOTE_SLUG_MISMATCH' }));
+    expect(buildSkillSource([{ path: 'SKILL.md', content: manifest('x-y') }, { path: 'skill.contract.json', content: JSON.stringify({ ...contract, slug: 'folder-named' }) }], { root: 'github:x', defaultSlug: 'folder-named' }).contract.slug).toBe('folder-named');
+  });
+  it('keeps a local family local and a GitHub family remote, and still protects builtin slugs', async () => {
+    const local = await skills.importLocal(owner, { path: await folder({ 'SKILL.md': manifest('local-first', 'local body') }) });
+    await expect(remote('local-first', { 'SKILL.md': manifest('local-first', 'remote body') })).rejects.toMatchObject({ code: 'SKILL_SLUG_TAKEN', statusCode: 409, message: expect.stringContaining('GitHub') });
+    expect((await skills.detail(owner, local.skill.id)).versions).toHaveLength(1);
+    const github = await remote('remote-first', { 'SKILL.md': manifest('remote-first', 'remote body') });
+    await expect(skills.importLocal(owner, { path: await folder({ 'SKILL.md': manifest('remote-first', 'local body') }) })).rejects.toMatchObject({ code: 'SKILL_SLUG_TAKEN', statusCode: 409, message: expect.stringContaining('يديره مصدر GitHub') });
+    expect((await skills.detail(owner, github.id)).versions).toHaveLength(1);
+    await skills.list(owner, {});
+    await expect(remote('verified-web-research', { 'SKILL.md': manifest('verified-web-research', 'hijack') })).rejects.toMatchObject({ code: 'SKILL_SLUG_TAKEN', statusCode: 409 });
+  });
+  it('deduplicates identical content arriving from GitHub after a local import and keeps the local source', async () => {
+    const files = { 'SKILL.md': manifest('shared-text', 'identical body') };
+    const local = await skills.importLocal(owner, { path: await folder(files) });
+    expect(await remote('shared-text', files)).toMatchObject({ id: local.skill.id, deduplicated: true });
+    expect((await skills.detail(owner, local.skill.id)).source).toMatchObject({ kind: 'local_folder' });
+  });
+  it('refuses a remote source on anything but a local import with a bounded locator', async () => {
+    const source = buildSkillSource([{ path: 'SKILL.md', content: manifest('forge-remote') }], { root: 'github:x', defaultSlug: 'forge-remote' }), registry = createSkillRegistry(store.db);
+    await expect(store.db.transaction().execute(tx => storeImmutableSkill(tx, owner, source, { origin: 'forge', source: { kind: 'github', locator: 'github:x' }, audit: registry.audit }))).rejects.toMatchObject({ code: 'SKILL_REMOTE_SOURCE_INVALID' });
+    await expect(store.db.transaction().execute(tx => storeImmutableSkill(tx, owner, source, { origin: 'local_import', source: { kind: 'github', locator: 'x'.repeat(501) }, audit: registry.audit }))).rejects.toMatchObject({ code: 'SKILL_REMOTE_SOURCE_INVALID' });
+    expect(await store.db.selectFrom('skill_families').select('id').where('owner_id', '=', owner).where('slug', '=', 'forge-remote').execute()).toHaveLength(0);
   });
 });

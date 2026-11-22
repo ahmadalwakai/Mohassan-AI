@@ -5,8 +5,11 @@ import { resolve,delimiter } from 'node:path';
 import { inferenceConfigFromEnv, withoutExternalAI } from './inference.js';
 import { executorConfigFromEnv } from './executor.js';
 import { adsLabConfigFromEnv } from './ads-lab.js';
+import { skillRemoteConfigFromEnv } from './skill-remote.js';
 export function getConfig(): AppConfig {
   return {
+    // SKILL_REMOTE_*: invalid values leave the GitHub source off with a reported problem; they never stop the server.
+    skillRemote: skillRemoteConfigFromEnv(process.env),
     // MOHASSAN_LOCAL_LAB (npm run dev:lab) never reaches an external database, whatever .env says.
     dataDir: process.env.DATA_DIR ?? '.data/postgres', databaseUrl: process.env.MOHASSAN_LOCAL_LAB === '1' ? undefined : process.env.DATABASE_URL || undefined,
     authSecret: process.env.BETTER_AUTH_SECRET ?? '', internalSecret: process.env.INTERNAL_API_SECRET ?? '',

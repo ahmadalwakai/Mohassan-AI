@@ -16,7 +16,10 @@ export interface ImmutableSkillStoreOptions {
   audit(tx: Kysely<any>, ownerId: string, targetId: string, event: string, detail?: Record<string, unknown>): Promise<void>;
   rebuildGraph?(tx: Kysely<any>, ownerId: string): Promise<void>;
   parent?: { id: string; revision: number; contentHash: string; mode: 'mutate' | 'fork' };
+  /** A remote origin for `local_import` versions only: recorded as the source, never as a different origin. */
+  source?: { kind: 'github'; locator: string };
 }
+const MAX_LOCATOR_CHARS = 500;
 export function nextSkillVersion(version: string): string {
   const [major, minor, patch] = version.split('.').map(Number), next = `${major}.${minor}.${patch + 1}`;
   if (!/^(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,4})$/.test(next)) throw new SkillError('SKILL_VERSION_LIMIT', 'بلغ الإصدار التلقائي حده؛ حدد إصداراً جديداً صالحاً في العقد.', 409);
@@ -52,6 +55,7 @@ export function validateImmutableSkillSource(raw: ImmutableSkillSource): Immutab
 /** One immutable storage boundary for local files and generated text. Callers
  * must supply a transaction; this function never executes stored scripts. */
 export async function storeImmutableSkill(tx: Kysely<any>, ownerId: string, raw: ImmutableSkillSource, options: ImmutableSkillStoreOptions) {
+  if (options.source && (options.origin !== 'local_import' || typeof options.source.locator !== 'string' || !options.source.locator || options.source.locator.length > MAX_LOCATOR_CHARS)) throw new SkillError('SKILL_REMOTE_SOURCE_INVALID', 'مصدر GitHub يخص الاستيراد فقط ويحتاج موقعاً صالحاً.');
   const loaded = validateImmutableSkillSource(raw);
   await lockSkillStoreOwner(tx, ownerId);
   const parent = options.parent ? await tx.selectFrom('skill_versions as v').leftJoin('skill_sources as s', 's.version_id', 'v.id').selectAll('v').select('s.kind as source_kind').where('v.owner_id', '=', ownerId).where('v.id', '=', options.parent.id).executeTakeFirst() : undefined;
@@ -67,7 +71,8 @@ export async function storeImmutableSkill(tx: Kysely<any>, ownerId: string, raw:
   const family = await tx.selectFrom('skill_families').selectAll().where('owner_id', '=', ownerId).where('slug', '=', slug).forUpdate().executeTakeFirstOrThrow();
   const versions = tx.selectFrom('skill_versions').where('owner_id', '=', ownerId).where('family_id', '=', family.id);
   const latest = await versions.select(['id', 'version', 'sequence', 'origin', 'content_hash']).orderBy('sequence', 'desc').executeTakeFirst();
-  const first = latest && await versions.select('origin').orderBy('sequence').executeTakeFirst();
+  const first = latest && await tx.selectFrom('skill_versions as v').leftJoin('skill_sources as s', 's.version_id', 'v.id').select(['v.origin', 's.kind as source_kind'])
+    .where('v.owner_id', '=', ownerId).where('v.family_id', '=', family.id).orderBy('v.sequence').executeTakeFirst();
   // A forged child does not prevent later explicit local imports into their
   // original imported family; built-in/custom families remain protected.
   if (options.origin === 'local_import' && first && first.origin !== 'local_import') throw new SkillError('SKILL_SLUG_TAKEN', 'هذا المعرف محجوز لمهارة أخرى.', 409);
@@ -82,6 +87,12 @@ export async function storeImmutableSkill(tx: Kysely<any>, ownerId: string, raw:
     const files = await tx.selectFrom('skill_files').select(['path', 'content']).where('version_id', '=', candidate.id).limit(201).execute();
     if (files.length <= 200 && skillContentMatches(parsed.data, files, candidate.content_hash) && skillContentHash(parsed.data, files) === contentHash) return { id: candidate.id as string, familyId: family.id as string, contentHash: candidate.content_hash as string, deduplicated: true };
   }
+  // Identical content is deduplicated above whatever its source. New content keeps a family with the source that created it:
+  // a GitHub-managed family changes only from the repository, and a local family is never rewritten by the repository.
+  if (options.origin === 'local_import' && first?.origin === 'local_import') {
+    if (options.source && first.source_kind !== 'github') throw new SkillError('SKILL_SLUG_TAKEN', 'هذا المعرّف مستخدم لمهارة ليست من مصدر GitHub.', 409);
+    if (!options.source && first.source_kind === 'github') throw new SkillError('SKILL_SLUG_TAKEN', 'هذا المعرّف يديره مصدر GitHub؛ عدّله من المستودع.', 409);
+  }
   if (latest && !loaded.explicitVersion) { contract = SkillContractSchema.parse({ ...contract, version: nextSkillVersion(latest.version) }); contentHash = skillContentHash(contract, loaded.files); }
   if (options.origin === 'forge' && contract.version !== await nextSkillFamilyVersion(tx, family.id)) throw new SkillError('SKILL_FORGE_VERSION_CHANGED', 'تغير الإصدار التالي المتاح قبل حفظ المرشح.', 409);
   if (latest && await versions.select('id').where('version', '=', contract.version).executeTakeFirst()) throw new SkillError('SKILL_VERSION_EXISTS', 'هذا الإصدار موجود بمحتوى مختلف؛ الإصدارات لا تُعدَّل.', 409);
@@ -91,8 +102,8 @@ export async function storeImmutableSkill(tx: Kysely<any>, ownerId: string, raw:
   await tx.insertInto('skill_versions').values({ id, family_id: family.id, owner_id: ownerId, version: contract.version, sequence: (latest?.sequence ?? 0) + 1, name: contract.name, description: contract.description, category: contract.category,
     level: contract.level, origin: options.origin, status: 'quarantined', status_reason: 'بانتظار الفحص.', contract: JSON.stringify(contract), content_hash: contentHash }).execute();
   await tx.insertInto('skill_files').values(loaded.files.map(file => ({ version_id: id, path: file.path, kind: file.kind, content: file.content, content_hash: sha256(file.content), size_bytes: Buffer.byteLength(file.content) }))).execute();
-  await tx.insertInto('skill_sources').values({ version_id: id, kind: options.origin === 'forge' ? 'forge' : 'local_folder', locator: loaded.root, file_count: loaded.files.length, total_bytes: loaded.totalBytes }).execute();
-  await options.audit(tx, ownerId, id, options.origin === 'forge' ? 'skill.forge_candidate' : 'skill.imported', { slug: contract.slug, level: contract.level, contentHash, fileCount: loaded.files.length });
+  await tx.insertInto('skill_sources').values({ version_id: id, kind: options.origin === 'forge' ? 'forge' : options.source ? 'github' : 'local_folder', locator: options.source?.locator ?? loaded.root, file_count: loaded.files.length, total_bytes: loaded.totalBytes }).execute();
+  await options.audit(tx, ownerId, id, options.origin === 'forge' ? 'skill.forge_candidate' : 'skill.imported', { slug: contract.slug, level: contract.level, contentHash, fileCount: loaded.files.length, ...(options.source ? { source: 'github' } : {}) });
   await options.rebuildGraph?.(tx, ownerId);
   return { id, familyId: family.id as string, contentHash, deduplicated: false };
 }

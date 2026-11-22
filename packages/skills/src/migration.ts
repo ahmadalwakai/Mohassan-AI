@@ -67,13 +67,22 @@ const FORGE = [
   `CREATE INDEX skill_forge_owner_idx ON skill_forge_generations(owner_id,started_at DESC,id)`,
 ] as const;
 
+const REMOTE = [
+  `ALTER TABLE skill_sources DROP CONSTRAINT skill_sources_kind_check`,
+  `ALTER TABLE skill_sources ADD CONSTRAINT skill_sources_kind_check CHECK(kind IN('builtin','local_folder','forge','github'))`,
+  `CREATE TABLE skill_remote_syncs(id text PRIMARY KEY,owner_id text NOT NULL,repo text NOT NULL,ref text NOT NULL,path text NOT NULL,commit_sha text,cause text NOT NULL CHECK(cause IN('schedule','manual')),status text NOT NULL CHECK(status IN('running','succeeded','failed')),trees jsonb NOT NULL DEFAULT '{}',report jsonb NOT NULL DEFAULT '{}',error_code text,started_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,finished_at timestamptz)`,
+  `CREATE INDEX skill_remote_syncs_owner_idx ON skill_remote_syncs(owner_id,started_at DESC,id)`,
+  // One running sync per owner, enforced across processes by the database itself.
+  `CREATE UNIQUE INDEX skill_remote_syncs_running_idx ON skill_remote_syncs(owner_id) WHERE status='running'`,
+] as const;
+
 /** Fixed, versioned SQL. Existing rows are retained. Reversal requires a reviewed
  * database restore/migration plan; dropping skill tables would destroy history. */
 export async function skillsMigration(db: Kysely<any>): Promise<void> {
   await sql`CREATE TABLE IF NOT EXISTS schema_migrations(version text PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`.execute(db);
   await db.transaction().execute(async (tx) => {
     await sql`SELECT pg_advisory_xact_lock(1846021108)`.execute(tx);
-    for (const [version, statements] of [['015_skill_registry', REGISTRY], ['016_skill_security', SECURITY], ['017_skill_execution', EXECUTION], ['024_skill_recovery', RECOVERY], ['018_skill_gaps', GAPS], ['019_skill_graph', GRAPH], ['020_skill_eval', EVALUATION], ['021_skill_forge', FORGE]] as const) {
+    for (const [version, statements] of [['015_skill_registry', REGISTRY], ['016_skill_security', SECURITY], ['017_skill_execution', EXECUTION], ['024_skill_recovery', RECOVERY], ['018_skill_gaps', GAPS], ['019_skill_graph', GRAPH], ['020_skill_eval', EVALUATION], ['021_skill_forge', FORGE], ['032_skill_remote', REMOTE]] as const) {
       if (await tx.selectFrom('schema_migrations').select('version').where('version', '=', version).executeTakeFirst()) continue;
       for (const statement of statements) await sql.raw(statement).execute(tx);
       await tx.insertInto('schema_migrations').values({ version }).execute();

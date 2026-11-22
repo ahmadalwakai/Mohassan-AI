@@ -33,6 +33,7 @@
     "ads:regress": "tsx scripts/google-ads-regress.ts",
     "db:check": "tsx scripts/check-postgres.ts",
     "sandbox:check": "tsx scripts/probe-sandbox.ts",
+    "skills:remote:check": "tsx scripts/check-skills-remote.ts",
     "server": "tsx apps/server/src/index.ts",
     "worker": "tsx apps/worker/src/index.ts",
     "owner:create": "tsx apps/server/src/create-owner.ts"

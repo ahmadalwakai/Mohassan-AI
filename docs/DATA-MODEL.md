@@ -279,3 +279,11 @@ nonce المعاينة عشوائي لكل استجابة، لا يحفظ في S
 - Windows: `windows_pairings/devices/grants/commands/poll_nonces/audit`. تحفظ بصمات الرموز والمفاتيح، وإذنًا مرتبطًا بجلسة المتصفح وموافقة الجهاز المحلية، وآخر صورة فقط. ينقح payload الإدخال بعد النتيجة/الإلغاء؛ لا يحمل التدقيق النصوص المكتوبة أو مفتاح الجهاز. المرجع PHASE-8.
 
 تسجل الترحيلات بمعرفات مستقلة في schema_migrations. لا يعني اشتراك مقدمة رقمية بين وحدة الذاكرة والاستوديو مشاركة سجل ترحيل. سياسات الاحتفاظ والنسخ والاستعادة الإنتاجية الشاملة ضمن المرحلة11.
+
+## الترحيل 032 — مصدر مهارات GitHub (منفَّذ 2026-11-22)
+
+آخر مدخل في قائمة `skillsMigration` (`packages/skills/src/migration.ts`)، ويُطبَّق بعد `021_skill_forge` مهما كان ترتيب الأرقام. الرقم 032 مختار لتجنب التصادم مع `030_chat_decision_events` و`031_chat_clarification_lessons` على الفروع الأخرى.
+
+- **`skill_sources.kind`**: أُعيد بناء قيد `skill_sources_kind_check` ليقبل `github` إلى جانب `builtin` و`local_folder` و`forge`. الإصدار البعيد يبقى بـ `origin='local_import'`؛ ما يميزه هو المصدر فقط، و`locator` بالشكل `github:<owner/repo>@<commit>:<path>/<slug>`. العائلة التي أنشأها GitHub لا تقبل استيرادًا محليًا جديدًا، والعائلة المحلية لا يكتبها المستودع (`SKILL_SLUG_TAKEN` في الحالتين)، أما المحتوى المتطابق فيُكرَّر دون صف جديد.
+- **`skill_remote_syncs`**: `id text PK`، `owner_id`، `repo`، `ref`، `path`، `commit_sha` (قابل للفراغ حتى النجاح)، `cause IN('schedule','manual')`، `status IN('running','succeeded','failed')`، `trees jsonb` (معرّف شجرة Git لكل معرّف مهارة، لتجاوز ما لم يتغير)، `report jsonb` (`unchanged` والعدّادات والعناصر و`orphans`)، `error_code`، `started_at`، `finished_at`. الفهارس: `skill_remote_syncs_owner_idx(owner_id, started_at DESC, id)` للقراءة، و`skill_remote_syncs_running_idx(owner_id) WHERE status='running'` فريد جزئي يمنع تشغيلين متزامنين لمالك واحد عبر العمليات. يُحتفظ بأحدث 50 صفًا لكل مالك؛ الصفوف `running` الأقدم من 10 دقائق تُعلَّم `failed/SKILL_REMOTE_SYNC_INTERRUPTED` عند الإقلاع.
+- **التدقيق**: `skill.imported` يحمل `source:'github'` للإصدارات البعيدة، و`skill.auto_activated` يحمل `{policy:'remote-instruction-v1', repo, ref, commit, contentHash}`. لا يُنشئ التفعيل التلقائي أي صف في `skill_grants`.
