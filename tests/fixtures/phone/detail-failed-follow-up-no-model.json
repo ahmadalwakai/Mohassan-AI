@@ -1,0 +1,44 @@
+{
+  "capturedAt": "2026-11-22T03:40:05.544Z",
+  "sourceCommit": "55a5f7c",
+  "request": {
+    "method": "GET",
+    "url": "/api/wasla/gateway/conversations/a714c73a-439a-4b0e-8f54-534eab599af5"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "a714c73a-439a-4b0e-8f54-534eab599af5",
+      "title": "كم يساوي 15 ضرب 23؟",
+      "status": "failed",
+      "updatedAt": "2026-11-22T03:40:05.464Z",
+      "messages": [
+        {
+          "id": "401c7f4a-7b96-45a6-b112-51aaf1398fac",
+          "role": "user",
+          "text": "كم يساوي 15 ضرب 23؟",
+          "createdAt": "2026-11-22T03:40:04.965Z"
+        },
+        {
+          "id": "21b4afe8-4d80-44a5-89a2-6fa974390961",
+          "role": "assistant",
+          "text": "15 × 23 = **345**",
+          "createdAt": "2026-11-22T03:40:05.121Z"
+        },
+        {
+          "id": "a1de62cf-ce66-466b-b597-f2269b66fa14",
+          "role": "user",
+          "text": "و 40 ضرب 3؟",
+          "createdAt": "2026-11-22T03:40:05.400Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "progress": null,
+      "steps": [],
+      "error": "المحادثة بلا نموذج الآن: أُوقفت كل منصات الذكاء الاصطناعي الخارجية، ونموذج موحسن الخاص لم يتعلم المحادثة بعد إلا طلبات حملات الإعلانات بالإنجليزية. المنفّذ المحلي يعمل من «المنفّذ المحلي».",
+      "configured": false
+    }
+  }
+}

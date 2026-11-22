@@ -1,0 +1,45 @@
+{
+  "capturedAt": "2026-11-22T03:40:12.372Z",
+  "sourceCommit": "55a5f7c",
+  "request": {
+    "method": "POST",
+    "url": "/api/wasla/gateway/conversations/2b558f96-e7b5-47cd-9c0e-bf708375811c/cancel",
+    "body": {}
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "2b558f96-e7b5-47cd-9c0e-bf708375811c",
+      "title": "افتح http://fixture-site.test/ads",
+      "status": "idle",
+      "updatedAt": "2026-11-22T03:40:12.325Z",
+      "messages": [
+        {
+          "id": "e23cd05c-661b-4443-b100-24a36bbbcf52",
+          "role": "user",
+          "text": "افتح http://fixture-site.test/ads",
+          "createdAt": "2026-11-22T03:40:10.449Z"
+        },
+        {
+          "id": "0972e43b-19c8-4c65-ae65-87dc7dc76d24",
+          "role": "assistant",
+          "text": "أريد إرسال «رفض ملفات الارتباط غير الضرورية» إلى fixture-site.test. هل أتابع؟",
+          "createdAt": "2026-11-22T03:40:12.240Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "progress": null,
+      "steps": [
+        {
+          "id": "df5b2672-9904-4436-9ac4-c01c3cc0c92f",
+          "text": "فتح fixture-site.test",
+          "createdAt": "2026-11-22T03:40:10.489Z"
+        }
+      ],
+      "error": null,
+      "configured": false
+    }
+  }
+}

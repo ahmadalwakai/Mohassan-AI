@@ -1,0 +1,142 @@
+{
+  "capturedAt": "2026-11-22T03:40:36.990Z",
+  "sourceCommit": "55a5f7c",
+  "generator": "scripts/phone-fixtures.ts",
+  "fixtures": [
+    {
+      "file": "status",
+      "status": 200
+    },
+    {
+      "file": "list-empty",
+      "status": 200
+    },
+    {
+      "file": "create",
+      "status": 200,
+      "conversationStatus": "running"
+    },
+    {
+      "file": "detail-completed",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "campaign-events",
+      "status": 200
+    },
+    {
+      "file": "messages-text",
+      "status": 200,
+      "conversationStatus": "running"
+    },
+    {
+      "file": "detail-failed-follow-up-no-model",
+      "status": 200,
+      "conversationStatus": "failed"
+    },
+    {
+      "file": "detail-question-fields",
+      "status": 200,
+      "conversationStatus": "waiting_user"
+    },
+    {
+      "file": "messages-numbered-reply",
+      "status": 200,
+      "conversationStatus": "running"
+    },
+    {
+      "file": "detail-completed-letter",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "error-question-changed",
+      "status": 409
+    },
+    {
+      "file": "detail-question-before-stop",
+      "status": 200,
+      "conversationStatus": "waiting_user"
+    },
+    {
+      "file": "respond-stop",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "detail-stopped",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "detail-approval",
+      "status": 200,
+      "conversationStatus": "waiting_approval"
+    },
+    {
+      "file": "approve-refused",
+      "status": 200,
+      "conversationStatus": "running"
+    },
+    {
+      "file": "detail-approval-refused",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "error-approval-changed",
+      "status": 409
+    },
+    {
+      "file": "detail-approval-before-cancel",
+      "status": 200,
+      "conversationStatus": "waiting_approval"
+    },
+    {
+      "file": "cancel",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "detail-cancelled",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "detail-failed-no-model",
+      "status": 200,
+      "conversationStatus": "failed"
+    },
+    {
+      "file": "detail-failed-blocked-address",
+      "status": 200,
+      "conversationStatus": "failed"
+    },
+    {
+      "file": "detail-failed-search-blocked",
+      "status": 200,
+      "conversationStatus": "failed"
+    },
+    {
+      "file": "list",
+      "status": 200
+    },
+    {
+      "file": "error-not-found",
+      "status": 404
+    },
+    {
+      "file": "error-invalid-id",
+      "status": 400
+    },
+    {
+      "file": "delete",
+      "status": 200
+    },
+    {
+      "file": "error-deleted",
+      "status": 404
+    }
+  ]
+}

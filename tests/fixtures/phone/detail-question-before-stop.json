@@ -1,0 +1,100 @@
+{
+  "capturedAt": "2026-11-22T03:40:06.046Z",
+  "sourceCommit": "55a5f7c",
+  "request": {
+    "method": "GET",
+    "url": "/api/wasla/gateway/conversations/de855672-4df0-4112-8874-46e5b920ff78"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "de855672-4df0-4112-8874-46e5b920ff78",
+      "title": "اكتب رسالة شكر لفريق العمل",
+      "status": "waiting_user",
+      "updatedAt": "2026-11-22T03:40:06.000Z",
+      "messages": [
+        {
+          "id": "76dca672-94d6-41f3-a58d-a2603fb76fed",
+          "role": "user",
+          "text": "اكتب رسالة شكر لفريق العمل",
+          "createdAt": "2026-11-22T03:40:05.948Z"
+        },
+        {
+          "id": "b53d7e60-121e-49de-b45f-a619984798be",
+          "role": "assistant",
+          "text": "أكتب لك الرسالة من قالب رسمي، والتفاصيل تبقى بكلماتك. أجب عن هذه الأسئلة:",
+          "createdAt": "2026-11-22T03:40:05.995Z"
+        }
+      ],
+      "question": {
+        "id": "1099d87e-db71-4875-9962-6156716e93ff",
+        "prompt": "أكتب لك الرسالة من قالب رسمي، والتفاصيل تبقى بكلماتك. أجب عن هذه الأسئلة:",
+        "options": [
+          {
+            "id": "stop",
+            "label": "توقف هنا"
+          }
+        ],
+        "fields": [
+          {
+            "id": "to",
+            "prompt": "لمن الرسالة؟ (الاسم والصفة)",
+            "suggestions": [],
+            "placeholder": "مثلاً: الأستاذ خالد، مدير المشتريات"
+          },
+          {
+            "id": "kind",
+            "prompt": "ما نوعها؟",
+            "suggestions": [
+              {
+                "label": "شكر"
+              },
+              {
+                "label": "طلب"
+              },
+              {
+                "label": "اعتذار"
+              },
+              {
+                "label": "متابعة"
+              },
+              {
+                "label": "تهنئة"
+              },
+              {
+                "label": "شكوى"
+              }
+            ],
+            "selected": [
+              0
+            ]
+          },
+          {
+            "id": "details",
+            "prompt": "ماذا تريد أن تقول؟ اكتب الأهم في سطر أو سطرين.",
+            "suggestions": [],
+            "placeholder": "مثلاً: تأخر التسليم يومين بسبب الشحن"
+          },
+          {
+            "id": "from",
+            "prompt": "من يوقّعها؟",
+            "suggestions": [],
+            "placeholder": "اسمك وصفتك"
+          }
+        ]
+      },
+      "approval": null,
+      "secure": null,
+      "progress": null,
+      "steps": [
+        {
+          "id": "4ec170dc-53e1-4c29-a167-b5bf0f1fff32",
+          "text": "أسئلة الرسالة",
+          "createdAt": "2026-11-22T03:40:05.984Z"
+        }
+      ],
+      "error": null,
+      "configured": false
+    }
+  }
+}
