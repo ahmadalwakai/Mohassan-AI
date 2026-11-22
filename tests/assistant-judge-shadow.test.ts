@@ -19,12 +19,24 @@ describe('judge shadow', () => {
     await shadow.flush();
     const lines = (await readFile(shadow.logFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as JudgeShadowLine);
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toMatchObject({ at: '2026-11-22T05:00:00.000Z', conversationId: 'c1', runId: 'r1', decision: 'fix', kind: 'answer', sourced: true, evidence: 0, support: null });
+    expect(lines[0]).toMatchObject({ at: '2026-11-22T05:00:00.000Z', conversationId: 'c1', runId: 'r1', decision: 'fix', applied: false, kind: 'answer', sourced: true, evidence: 0, support: null });
     expect(lines[0]!.codes).toContain('lead_not_best');
     expect(lines[0]!.fixedReply?.split('\n')[0]).toMatch(/^حسب إحصاء سنة 2024/u);
     expect(lines[0]!.reply).toBe(reply);
     expect(lines[1]).toMatchObject({ runId: 'r2', decision: 'send', kind: 'computed' });
     expect(typeof lines[1]!.ms).toBe('number');
+  });
+
+  it('marks a line as applied only when the host said it would send the fix and a fix exists', async () => {
+    const shadow = createJudgeShadow({ logFile: join(directory, 'applied.jsonl') });
+    const reply = ['فيما انخفضت الأقلية اليهودية المغربية ويصل عددها إلى نحو 6,000.', '', '**تفاصيل أخرى من نفس المصدر:**', '- حسب إحصاء سنة 2024، يبلغ عدد سكان المغرب 37 مليون نسمة.', '', '**المصدر:** [ويكيبيديا — المغرب](https://ar.wikipedia.org/wiki/m)'].join('\n');
+    shadow.observe({ conversationId: 'c4', runId: 'r1', question: 'كم عدد سكان المغرب؟', reply, applyFix: true });
+    shadow.observe({ conversationId: 'c4', runId: 'r2', question: 'كم يساوي 15 ضرب 23؟', reply: '15 * 23 = 345', applyFix: true });
+    await shadow.flush();
+    const lines = (await readFile(shadow.logFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as JudgeShadowLine);
+    expect(lines[0]).toMatchObject({ runId: 'r1', decision: 'fix', applied: true });
+    expect(lines[0]!.reply).toBe(reply);
+    expect(lines[1]).toMatchObject({ runId: 'r2', decision: 'send', applied: false });
   });
 
   it('returns null instead of throwing when the input is broken', async () => {

@@ -17,9 +17,19 @@ describe('judge shadow through the real chat controller', () => {
   let shadow: ReturnType<typeof createJudgeShadow>;
   const current = new Map<string, AgentPage>();
   const PAGE_TEXT = 'Tokyo is the capital of Japan and its largest city by population. The capital of Japan moved from Kyoto to Tokyo in 1868 after the Meiji Restoration. Japan has forty-seven prefectures and a population of about 124 million people.';
+  // Page order puts the minority sentence first and the population figure second, as the real Wikipedia page did on 2026-11-22 (rq016).
+  const MOROCCO_TEXT = 'فيما انخفضت الأقلية اليهودية المغربية بين السكان بشكل كبير ويصل عددها إلى نحو 6,000 نسمة. وحسب إحصاء سنة 2024، يبلغ عدد سكان المغرب ما يقارب 37 مليون نسمة بزيادة 8 في المائة. يقع المغرب في أقصى غرب شمال أفريقيا وعاصمته الرباط.';
+  // The live miss of 2026-11-22 06:13: a film article answered a travel question because its lead shares «visit» and «time».
+  const FILM_TEXT = 'The trio visit Misumi again, this time showing him a magazine he may have come across that includes an article about a wife that paid a man to murder her husband for insurance. Critics praised the film for the clarity of its images.';
+  const FIXTURES: Record<string, { title: string; text: string }> = {
+    'https://judge-fixtures.test/capital-of-japan': { title: 'Capital of Japan', text: PAGE_TEXT },
+    'https://judge-fixtures.test/morocco-population': { title: 'سكان المغرب', text: MOROCCO_TEXT },
+    'https://judge-fixtures.test/the-third-murder': { title: 'The Third Murder', text: FILM_TEXT },
+  };
+  const member = 'isolated-judge-shadow-member';
 
-  const page = (url: string, title: string): AgentPage => ({
-    id: url, hash: url, url, title, text: PAGE_TEXT,
+  const page = (url: string): AgentPage => ({
+    id: url, hash: url, url, title: FIXTURES[url]?.title ?? url, text: FIXTURES[url]?.text ?? PAGE_TEXT,
     documentStatus: 200, elements: [], signals: { captcha: false, password: false, otp: false, card: false },
     scroll: { top: 0, height: 1000, viewport: 800 }, observedAt: new Date().toISOString(),
   });
@@ -35,7 +45,7 @@ describe('judge shadow through the real chat controller', () => {
       async observe(_owner: string, id: string) { return { page: current.get(id)!, changed: false }; },
       async act(_owner: string, id: string, action: AgentAction) {
         if (action.kind !== 'open') throw new Error(`Unexpected fixture action: ${action.kind}`);
-        const observed = page(action.text!, 'Capital of Japan');
+        const observed = page(action.text!);
         current.set(id, observed);
         return { page: observed, changed: true };
       },
@@ -44,11 +54,13 @@ describe('judge shadow through the real chat controller', () => {
     const searchProvider: SearchProvider = {
       name: 'isolated-judge-shadow-search',
       async search(query) {
-        const url = 'https://judge-fixtures.test/capital-of-japan';
-        return [{ title: `Capital of Japan — ${query}`, url, snippet: PAGE_TEXT }];
+        const url = /المغرب/u.test(query) ? 'https://judge-fixtures.test/morocco-population' : /visit/iu.test(query) ? 'https://judge-fixtures.test/the-third-murder' : 'https://judge-fixtures.test/capital-of-japan';
+        return [{ title: `${FIXTURES[url]!.title} — ${query}`, url, snippet: FIXTURES[url]!.text }];
       },
     };
-    control = await createCommandChatControl(database.db, { browser, models: { fast: [], deep: [], vision: '' }, searchProvider, judgeShadow: shadow });
+    // `owner` has full access; `member` does not, so the judge's fix and withhold never reach the member's replies.
+    control = await createCommandChatControl(database.db, { browser, models: { fast: [], deep: [], vision: '' }, searchProvider,
+      fullAccess: async ownerId => ownerId !== member, judgeShadow: shadow, judgeFixForOwner: true, judgeWithholdForOwner: true });
   });
   afterAll(async () => { await control?.shutdown(); await database?.close(); await rm(directory, { recursive: true, force: true }); });
 
@@ -66,15 +78,38 @@ describe('judge shadow through the real chat controller', () => {
     const mine = (await lines()).filter(line => line.conversationId === id);
     expect(mine).toHaveLength(1);
     const line = mine[0]!;
-    expect(line).toMatchObject({ question: 'What is the capital of Japan?', previous: null, lang: 'en', evidence: 0, support: null, status: 'completed' });
+    expect(line).toMatchObject({ question: 'What is the capital of Japan?', previous: null, lang: 'en', status: 'completed' });
     expect(line.reply).toBe(stored);
     // The answer came from the fixture page in the chat's own layout (English headings for an English question since 2026-11-22):
-    // a sourced answer whose lead names the capital, so the judge lets it through and notes only that no evidence text was passed.
+    // a sourced answer whose lead names the capital, so the judge lets it through. The page the run read is its evidence:
+    // both own sentences are found in it, so nothing is unsupported and nothing is left unmeasured.
     expect(stored).toMatch(/^Tokyo is the capital of Japan/u);
     expect(stored).toContain('**Source:**');
-    expect(line).toMatchObject({ kind: 'answer', sourced: true, decision: 'send', codes: ['evidence_unavailable'], fixedReply: null });
+    expect(line).toMatchObject({ kind: 'answer', sourced: true, decision: 'send', applied: false, codes: [], fixedReply: null, evidence: 1, support: { sentences: 2, supported: 2 } });
     expect(line.lead?.line).toBe(1);
     expect(typeof line.ms).toBe('number');
+  });
+
+  it('sends the judge\'s fix on the owner\'s account: the population sentence leads, and the log keeps the reply as the chat first wrote it', async () => {
+    const { id } = await control.create(owner, { goal: 'كم عدد سكان المغرب؟' });
+    await control.settled(id);
+    const detail = await control.detail(owner, id);
+    expect(detail.error).toBeNull();
+    const stored = detail.messages.filter(message => message.role === 'assistant').at(-1)!.text;
+    const mine = (await lines()).filter(line => line.conversationId === id);
+    expect(mine).toHaveLength(1);
+    const line = mine[0]!;
+    expect(line).toMatchObject({ kind: 'answer', sourced: true, decision: 'fix', applied: true, evidence: 1 });
+    expect(line.codes).toContain('lead_not_best');
+    expect(line.reply.split('\n')[0]).toMatch(/^فيما انخفضت الأقلية اليهودية/u);
+    expect(stored).toBe(line.fixedReply);
+    expect(stored.split('\n')[0]).toMatch(/^وحسب إحصاء سنة 2024، يبلغ عدد سكان المغرب/u);
+    expect(stored).toContain('- فيما انخفضت الأقلية اليهودية');
+    expect(stored).toContain('**المصدر:**');
+    // Every sentence the owner sees was already in the reply the chat wrote: nothing was written, only reordered.
+    for (const text of stored.split('\n').filter(Boolean)) expect(line.reply).toContain(text.replace(/^- /u, ''));
+    // The host's own closing note («لم أتحقق من هذا الرقم في مصدر ثانٍ») follows the source line and is not looked up in the page.
+    expect(line.support).toEqual({ sentences: 2, supported: 2 });
   });
 
   it('logs a computed reply as send and a follow-up with its previous turn', async () => {
@@ -87,6 +122,36 @@ describe('judge shadow through the real chat controller', () => {
     expect(mine[0]).toMatchObject({ question: 'كم يساوي 15 ضرب 23؟', previous: null, reply: '15 * 23 = 345', kind: 'computed', decision: 'send', status: 'completed' });
     expect(mine[1]).toMatchObject({ question: 'كم يساوي 100 ناقص 58؟', previous: 'كم يساوي 15 ضرب 23؟', kind: 'computed', decision: 'send' });
     expect(mine[1]!.runId).not.toBe(mine[0]!.runId);
+  });
+
+  it('withholds a film page for a travel question on the owner\'s account: a fixed sentence with the page link, the run ends partial', async () => {
+    const { id } = await control.create(owner, { goal: 'What is the best time to visit Japan?' });
+    await control.settled(id);
+    const detail = await control.detail(owner, id);
+    expect(detail.error).toBeNull();
+    const stored = detail.messages.filter(message => message.role === 'assistant').at(-1)!.text;
+    const line = (await lines()).filter(item => item.conversationId === id)[0]!;
+    expect(line).toMatchObject({ kind: 'answer', decision: 'withhold', applied: true, status: 'completed' });
+    expect(line.codes).toContain('subject_missing');
+    expect(line.reply).toMatch(/^The trio visit Misumi again/u);
+    expect(stored).toBe(line.withholdText);
+    expect(stored).toBe([
+      'The page I found is not about the subject of your question, so I did not take an answer from it.', '',
+      'The page I read: [judge-fixtures.test — The Third Murder](https://judge-fixtures.test/the-third-murder)', '',
+      'Send a suitable page link or rephrase the question.'].join('\n'));
+    const run = await database.db.selectFrom('chat_runs').select(['status']).where('conversation_id', '=', id).executeTakeFirstOrThrow();
+    expect(run.status).toBe('partial');
+  });
+
+  it('leaves a member\'s reply exactly as the chat wrote it, while still logging the verdict', async () => {
+    const { id } = await control.create(member, { goal: 'What is the best time to visit Japan?' });
+    await control.settled(id);
+    const detail = await control.detail(member, id);
+    const stored = detail.messages.filter(message => message.role === 'assistant').at(-1)!.text;
+    const line = (await lines()).filter(item => item.conversationId === id)[0]!;
+    expect(line).toMatchObject({ decision: 'withhold', applied: false });
+    expect(stored).toBe(line.reply);
+    expect(stored).toMatch(/^The trio visit Misumi again/u);
   });
 
   it('logs a question card to the owner as a question, not a defect', async () => {

@@ -36,7 +36,9 @@ const count = <T extends string>(keys: readonly T[], pick: (item: Judged) => T) 
 const decisions = count(DECISIONS, item => item.verdict.decision);
 const kinds = count(KINDS, item => item.verdict.kind);
 const decisionsByKind = Object.fromEntries(KINDS.map(kind => [kind, count(DECISIONS, item => item.verdict.kind === kind ? item.verdict.decision : ('-' as JudgeDecision))])) as Record<ReplyKind, Record<JudgeDecision, number>>;
-const perCode = Object.fromEntries(CODES.map(code => [code, { severity: SEVERITY[code], replies: judged.filter(item => item.verdict.codes.includes(code)).length,
+// The severity each code actually carried in this run (a code can be downgraded, e.g. an Arabic subject word is review only).
+const seenSeverity = (code: JudgeCode) => [...new Set(judged.flatMap(item => item.verdict.findings.filter(finding => finding.code === code).map(finding => finding.severity)))].join('/') || SEVERITY[code];
+const perCode = Object.fromEntries(CODES.map(code => [code, { severity: seenSeverity(code), replies: judged.filter(item => item.verdict.codes.includes(code)).length,
   findings: judged.reduce((sum, item) => sum + item.verdict.findings.filter(finding => finding.code === code).length, 0),
   ids: judged.filter(item => item.verdict.codes.includes(code)).map(item => item.id) }])) as Record<JudgeCode, { severity: string; replies: number; findings: number; ids: string[] }>;
 
@@ -73,13 +75,33 @@ const known = Object.entries(KNOWN).map(([id, expected]) => {
 });
 const clean = CLEAN.map(id => { const item = byId.get(id); const got = (item?.verdict.codes ?? []).filter(code => code !== 'evidence_unavailable'); return { id, got, decision: item?.verdict.decision ?? null, ok: got.length === 0 && item?.verdict.decision === 'send' }; });
 
+// The owner's verdicts live in their own file, which this script only reads (owner-verdicts.jsonl, one line per judged alert).
+// A verdict carries over to this run when the alert's decision is the same and every code the owner saw is still there;
+// otherwise the alert is marked as changed since the verdict and waits for a new one.
+interface OwnerVerdict { id: string; decision: JudgeDecision; codes: string[]; verdict: 'correct' | 'wrong'; verdictBy: string; verdictAt: string; note?: string }
+const ownerVerdicts = new Map<string, OwnerVerdict>();
+try {
+  for (const line of (await readFile(path.join(out, 'owner-verdicts.jsonl'), 'utf8')).split('\n').filter(Boolean)) { const verdict = JSON.parse(line) as OwnerVerdict; ownerVerdicts.set(verdict.id, verdict); }
+} catch { /* no verdicts yet */ }
+const carried = (id: string, decision: JudgeDecision, codes: readonly string[]) => {
+  const owner = ownerVerdicts.get(id);
+  if (!owner) return { verdict: null, verdictBy: null, verdictAt: null, changedSinceVerdict: false };
+  const same = owner.decision === decision && owner.codes.every(code => codes.includes(code));
+  return same ? { verdict: owner.verdict, verdictBy: owner.verdictBy, verdictAt: owner.verdictAt, changedSinceVerdict: false }
+    : { verdict: null, verdictBy: null, verdictAt: null, changedSinceVerdict: true, previousVerdict: owner };
+};
 const alerts = judged.filter(item => item.verdict.decision !== 'send' || item.verdict.codes.some(code => code !== 'evidence_unavailable')).map(item => ({
   id: item.id, question: item.question, previous: item.previous, status: item.status, kind: item.verdict.kind, decision: item.verdict.decision, codes: item.verdict.codes,
-  findings: item.verdict.findings, lead: item.verdict.lead, best: item.verdict.best, fixedReply: item.verdict.fixedReply, withholdText: item.verdict.withholdText, verdict: null, note: null }));
+  findings: item.verdict.findings, lead: item.verdict.lead, best: item.verdict.best, fixedReply: item.verdict.fixedReply, withholdText: item.verdict.withholdText,
+  ...carried(item.id, item.verdict.decision, item.verdict.codes), note: null }));
+const judgedNow = alerts.filter(alert => alert.verdict);
+const verdictSummary = { alerts: alerts.length, judged: judgedNow.length, correct: judgedNow.filter(alert => alert.verdict === 'correct').length,
+  changedSinceVerdict: alerts.filter(alert => alert.changedSinceVerdict).map(alert => alert.id), unjudged: alerts.filter(alert => !alert.verdict && !alert.changedSinceVerdict).map(alert => alert.id),
+  verdictsNoLongerAlerts: [...ownerVerdicts.keys()].filter(id => !alerts.some(alert => alert.id === id)) };
 
 const summary = {
   at: new Date().toISOString(), answers: path.relative(process.cwd(), answersPath).replaceAll('\\', '/'), rows: rows.length, repliesJudged: judged.length,
-  decisions, kinds, decisionsByKind, perCode, sourcedAnswers: sourcedAnswers.length, marginHistogram, margins, timing, comparisonWithReplyCheck: comparison, knownCases: known, cleanCases: clean,
+  decisions, kinds, decisionsByKind, perCode, sourcedAnswers: sourcedAnswers.length, marginHistogram, margins, timing, comparisonWithReplyCheck: comparison, knownCases: known, cleanCases: clean, ownerVerdicts: verdictSummary,
   notMeasured: ['support (unsupported_sentence): the frozen file holds no page texts; measured only in the live shadow once evidence is passed'],
   thresholds: { note: 'proposed, not fixed by the owner', ...JUDGE_THRESHOLDS },
 };
@@ -130,7 +152,12 @@ ${table(['المعرّف', 'المتوقع', 'الموجود', 'القرار', '
 ## ما لم يُقَس
 
 - السند (unsupported_sentence): الملف المجمّد لا يحمل نصوص الصفحات، فلم يُقَس هنا. يُقاس في الظل الحي حين يمرّر المضيف الأدلة.
-- صحة القرارات نفسها: تحتاج حكم المالك على \`alerts-for-review.jsonl\` (الحقل \`verdict\`: correct أو wrong).
+- ما فات الحَكَم (recall): يحتاج وسوم المالك على الردود كلها، لا على التنبيهات وحدها.
+
+## أحكام المالك
+
+تُقرأ من \`owner-verdicts.jsonl\` (لا يكتب هذا السكربت فوقه). على هذا التشغيل: ${verdictSummary.judged} من ${verdictSummary.alerts} تنبيهًا عليها حكم، صحيح منها ${verdictSummary.correct}.
+تغيّر منذ الحكم (ينتظر حكمًا جديدًا): ${verdictSummary.changedSinceVerdict.join(', ') || '—'}. بلا حكم بعد: ${verdictSummary.unjudged.join(', ') || '—'}. أحكام لم تعد تنبيهًا: ${verdictSummary.verdictsNoLongerAlerts.join(', ') || '—'}.
 
 ## للمالك
 

@@ -176,6 +176,19 @@ export interface CommandChatConfig {
   conversationShadow?: ConversationShadow;
   /** The judge («الحَكَم») in shadow (docs/HANDOVER-2026-11-22-JUDGE-SHADOW.md): records a verdict on each reply the owner sees and changes nothing. */
   judgeShadow?: JudgeShadow;
+  /**
+   * The judge's `fix` decision is applied for the owner's own account (the owner's word, 2026-11-22): the page's own
+   * sentences reordered, the site's chrome and a byline removed, English headings for an English question. Never a
+   * withhold, never a written word. MOHASSAN_JUDGE_FIX=0 turns it off. Members' replies stay as the chat wrote them.
+   */
+  judgeFixForOwner?: boolean;
+  /**
+   * The judge's `withhold` decision is applied for the owner's own account (the owner's word, 2026-11-22): instead of
+   * an answer the judge refused (wrong page, no figure, a sentence not found in the pages read, a question about the
+   * assistant answered from the web), a fixed sentence with the link to the page that was read. The run ends partial.
+   * MOHASSAN_JUDGE_WITHHOLD=0 turns it off. Members' replies stay as the chat wrote them.
+   */
+  judgeWithholdForOwner?: boolean;
 }
 
 export interface ChatSkillContext {
@@ -381,7 +394,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     ...(tools?.computer ? ['computer_view', 'computer_click', 'computer_type', 'computer_key'] as const : []),
   ];
   type Execution = { ownerId: string; id: string; runId: string; token: string; controller: AbortController; full: boolean;
-    request?: string; previousRequest?: string | null; constraints?: UserRequestConstraints | null; state?: BrainState; page?: AgentPage };
+    request?: string; previousRequest?: string | null; constraints?: UserRequestConstraints | null; state?: BrainState; page?: AgentPage;
+    /** Pages this run read over HTTP (the last five, in memory only): the judge in shadow compares the reply's sentences with them. */
+    readPages?: AgentPage[] };
   /** Tools that reach the owner's machine, projects or task runtime. */
   const OWNER_ONLY: ReadonlySet<string> = new Set(['workspace_list', 'code_change', 'studio_change', 'computer_view', 'computer_click', 'computer_type', 'computer_key', 'run_skill']);
   const fullReach = () => execution.getStore()?.full !== false;
@@ -1026,7 +1041,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       await tx.updateTable('chat_runs').set({ status, lease_expires_at:sql`CURRENT_TIMESTAMP + interval '10 minutes'`, updated_at: new Date() }).where('id', '=', runId).execute();
       if (say) await addMessage(tx, id, 'assistant', say);
     });
-    if (say) judgeInShadow(id, runId, say, status);
+    if (say) judgeReply(id, runId, say, status);
   }
 
   /** The owner sees the campaign draft before any request to connect or sign in: once, then never repeated. */
@@ -1062,22 +1077,42 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   /**
-   * The judge («الحَكَم») in shadow: one verdict per reply the owner sees, after the reply is stored. Never awaited,
-   * never read by any reply path, never a reason to fail a run (docs/HANDOVER-2026-11-22-JUDGE-SHADOW.md).
+   * The judge («الحَكَم»): one verdict per reply the owner sees, logged in shadow (docs/HANDOVER-2026-11-22-JUDGE-SHADOW.md).
+   * On the owner's own account, and only where the caller allows it: with `judgeFixForOwner` its `fix` decision is sent
+   * instead of the reply (the page's own sentences reordered or the site's chrome removed, never a word written); with
+   * `judgeWithholdForOwner` its `withhold` decision replaces the reply with a fixed sentence and the link to the page read.
+   * Returns the text to send and whether it was withheld. Never a reason to fail a run.
    */
-  function judgeInShadow(id: string, runId: string, reply: string, status: string) {
-    if (!config.judgeShadow) return;
+  function judgeReply(id: string, runId: string, reply: string, status: string, allowChange = false): { text: string; withheld: boolean } {
+    const unchanged = { text: reply, withheld: false };
+    if (!config.judgeShadow) return unchanged;
     const current = execution.getStore();
-    if (!current?.request) return;
+    if (!current?.request) return unchanged;
     try {
-      config.judgeShadow.observe({ conversationId: id, runId, question: current.request, previous: current.previousRequest ?? null, reply, status });
-    } catch { /* The shadow never stops a run. */ }
+      // What this run read: pages fetched over HTTP, and the browser page it ended on. Texts stay in memory; the log keeps only their count.
+      const seen = new Set<string>();
+      const evidence = [...(current.readPages ?? []), ...(current.page ? [current.page] : [])]
+        .filter(page => page.text?.trim() && !seen.has(page.url) && seen.add(page.url))
+        .map(page => ({ kind: 'page' as const, url: page.url, title: page.title, text: page.text.slice(0, 200_000) }));
+      const applyFix = Boolean(allowChange && config.judgeFixForOwner && current.full);
+      const applyWithhold = Boolean(allowChange && config.judgeWithholdForOwner && current.full);
+      const verdict = config.judgeShadow.observe({ conversationId: id, runId, question: current.request, previous: current.previousRequest ?? null, reply, status,
+        applyFix, applyWithhold, ...(evidence.length ? { evidence } : {}) });
+      if (applyWithhold && verdict?.decision === 'withhold' && verdict.withholdText?.trim()) return { text: verdict.withholdText, withheld: true };
+      if (applyFix && verdict?.decision === 'fix' && verdict.fixedReply?.trim()) return { text: verdict.fixedReply, withheld: false };
+    } catch { /* The judge never stops a run. */ }
+    return unchanged;
   }
 
   async function finish(id: string, runId: string, state: BrainState, text: string, status: 'completed' | 'partial' | 'blocked',
       proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall') {
+    // The judge sees the reply first: logged in shadow for everyone; for the owner's account its fix, or its fixed withhold
+    // sentence, is what goes on. Memory publications keep their own stricter checks and are never changed here.
+    const judged = judgeReply(id, runId, text, status, !memoryPublication);
+    text = judged.text;
+    // A withheld answer is not a completed task.
+    if (judged.withheld && status === 'completed') status = 'partial';
     if (state.supervision) state.completionReview = reviewChatAnswer(state.supervision, text);
-    let sentText = text, sentStatus: 'completed' | 'partial' | 'blocked' = status;
     // A campaign task the reply leaves open ends with it, stating only what was really checked or done.
     const campaignEnd = campaignEndEvent(state.campaign, Boolean(state.adsApproved));
     const campaignTask = state.campaign ? campaignTaskId(runId, state.campaign.serial) : null;
@@ -1118,7 +1153,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
       }
       await addMessage(tx, id, 'assistant', finalText);
-      sentText = finalText; sentStatus = finalStatus;
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',
         data: JSON.stringify({ contractHash: state.supervision?.contract.hash, review: state.completionReview }) }).execute();
@@ -1129,7 +1163,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await config.recordSkillGap(tx, { ownerId: execution.getStore()!.ownerId, chatRunId: runId, outcome: finalStatus, signal: state.gapSignal ?? null });
       }
     });
-    judgeInShadow(id, runId, sentText, sentStatus);
     const current=execution.getStore();if(current)forgetVault(id,current.token);
   }
 
@@ -2381,9 +2414,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           if (result === 'disallowed') { state.trail.push({ step: ++state.steps, action, result: 'robots.txt disallows this page', changed: false }); return { kind: 'disallowed' }; }
           if (!result || !result.text.trim()) { state.trail.push({ step: ++state.steps, action, result: 'no readable text over HTTP', changed: false }); return { kind: 'unreadable' }; }
           state.trail.push({ step: ++state.steps, action, result: `HTTP ${result.status} ${result.url} · ${result.text.length} chars`.slice(0, 1100), changed: true });
-          return { kind: 'page', page: { id: result.url, url: result.url, title: result.title, text: result.text, elements: [],
+          const readPageObject: AgentPage = { id: result.url, url: result.url, title: result.title, text: result.text, elements: [],
             signals: { captcha: false, password: false, otp: false, card: false }, scroll: { top: 0, height: 0, viewport: 0 },
-            hash: createHash('sha256').update(result.text).digest('hex'), observedAt: result.fetchedAt ?? new Date().toISOString(), documentStatus: result.status } };
+            hash: createHash('sha256').update(result.text).digest('hex'), observedAt: result.fetchedAt ?? new Date().toISOString(), documentStatus: result.status };
+          currentExecution.readPages = [...(currentExecution.readPages ?? []).filter(item => item.url !== readPageObject.url).slice(-4), readPageObject];
+          return { kind: 'page', page: readPageObject };
         } : undefined;
         let outcome: HandsOutcome;
         try {

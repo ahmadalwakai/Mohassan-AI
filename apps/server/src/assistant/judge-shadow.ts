@@ -9,7 +9,14 @@ import { judge, type JudgeCode, type JudgeDecision, type JudgeInput, type JudgeV
  * dropped, and the reply text is truncated. Wiring it is two lines in command-chat.ts finish(); see
  * docs/HANDOVER-2026-11-22-JUDGE-SHADOW.md.
  */
-export interface JudgeShadowInput extends JudgeInput { conversationId: string; runId: string }
+export interface JudgeShadowInput extends JudgeInput {
+  conversationId: string;
+  runId: string;
+  /** The host will send the judge's fixed reply when the decision is fix (owner's own account only, by the owner's word of 2026-11-22). */
+  applyFix?: boolean;
+  /** The host will send the judge's withhold text when the decision is withhold (owner's own account only, by the owner's word of 2026-11-22). */
+  applyWithhold?: boolean;
+}
 export interface JudgeShadowLine {
   at: string;
   conversationId: string;
@@ -20,6 +27,10 @@ export interface JudgeShadowLine {
   reply: string;
   status: string | null;
   decision: JudgeDecision;
+  /** True when the host sent `fixedReply` (decision fix) or `withholdText` (decision withhold) instead of `reply`; `reply` stays the text as the chat first wrote it. */
+  applied: boolean;
+  /** The fixed text the host sends instead of a withheld reply. */
+  withholdText: string | null;
   kind: ReplyKind;
   lang: 'ar' | 'en';
   intent: string;
@@ -61,10 +72,12 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
     observe(input) {
       try {
         const verdict = judge(input);
+        const applied = Boolean(input.applyFix && verdict.decision === 'fix' && verdict.fixedReply?.trim())
+          || Boolean(input.applyWithhold && verdict.decision === 'withhold' && verdict.withholdText?.trim());
         write({
           at: now().toISOString(), conversationId: input.conversationId, runId: input.runId,
           question: input.question.slice(0, MAX_TEXT), previous: input.previous ? input.previous.slice(0, MAX_TEXT) : null, reply: input.reply.slice(0, MAX_REPLY), status: input.status ?? null,
-          decision: verdict.decision, kind: verdict.kind, lang: verdict.lang, intent: verdict.frame.intent, answerType: verdict.frame.answerType, sourced: verdict.sourced,
+          decision: verdict.decision, applied, withholdText: verdict.withholdText, kind: verdict.kind, lang: verdict.lang, intent: verdict.frame.intent, answerType: verdict.frame.answerType, sourced: verdict.sourced,
           codes: verdict.codes, findings: verdict.findings, lead: verdict.lead, best: verdict.best,
           fixedReply: verdict.fixedReply ? verdict.fixedReply.slice(0, MAX_REPLY) : null, support: verdict.support, evidence: input.evidence?.length ?? 0, ms: verdict.ms,
         });

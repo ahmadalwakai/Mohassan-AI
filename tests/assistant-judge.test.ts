@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { cueWords, definitionForm, isFragment, judge, mentions, ownLines, relevance, sourceTitleWords, stem } from '../apps/server/src/assistant/judge.js';
+import { comparable, cueWords, definitionForm, isFragment, judge, mentions, ownLines, pageKey, pageSubjectMismatch, questionSubject, relevance, sourceTitleWords, sourceUrls, stem, supportedBy } from '../apps/server/src/assistant/judge.js';
+import { topicWords } from '../apps/server/src/assistant/hands.js';
 
 // Real replies of the 2026-11-22 run (artifacts/plan-2026-11-22/real-answers-2026-11-22T02-17-34.jsonl), shortened where noted.
 const SOURCE = (title: string, url: string) => `**المصدر:** [ويكيبيديا — ${title}](${url})`;
@@ -153,13 +154,18 @@ describe('the lead against the question', () => {
     const verdict = judge(RQ018);
     expect(verdict.codes).toContain('duration_unit_missing');
     expect(verdict.decision).toBe('withhold');
-    expect(verdict.withholdText).toMatch(/لم أجد في الصفحات/u);
+    // The reason, the link to the page that was read, and the next step: fixed sentences and the host's own link.
+    expect(verdict.withholdText).toBe([
+      'لم أجد في الصفحة التي قرأتها الرقم الذي يسأل عنه سؤالك، فلم أنقل لك جوابًا غير مؤكد.', '',
+      'الصفحة التي قرأتها: [ويكيبيديا — معركة المياه البيضاء](https://ar.wikipedia.org/wiki/y)', '',
+      'أرسل رابط صفحة مناسبة أو أعد صياغة السؤال.'].join('\n'));
   });
 
-  it('withholds a web page about a book for a question about the assistant itself (rq037)', () => {
+  it('withholds a web page about a book for a question about the assistant itself (rq037), with the reason alone', () => {
     const verdict = judge(RQ037);
     expect(verdict.codes).toContain('self_question_from_web');
     expect(verdict.decision).toBe('withhold');
+    expect(verdict.withholdText).toBe('هذا سؤال عنّي، ولا أجيب عنه من صفحات الويب، فلم أنقل ما وجدته في صفحة لا تخصني.');
   });
 
   it('marks a timestamped fragment and a missing definition form for review, and still sends (rq019)', () => {
@@ -220,6 +226,114 @@ describe('the lead against the question', () => {
   });
 });
 
+describe('the question\'s subject word (probed on the 83 real questions on record, 2026-11-22)', () => {
+  const subjectOf = (question: string) => questionSubject(question, topicWords(question), /\p{Script=Arabic}/u.test(question) ? 'ar' : 'en');
+  it('takes the last Arabic subject word before a trailing «في …» qualifier, and Latin capitalised names in either language', () => {
+    expect(subjectOf('ما أعراض المياه البيضاء في العين؟')).toEqual({ words: ['بيضاء'], from: 'word' });
+    expect(subjectOf('ما هو أطول نهر في العالم؟')).toEqual({ words: ['نهر'], from: 'word' });
+    expect(subjectOf('كم عدد سكان المغرب؟')).toEqual({ words: ['مغرب'], from: 'word' });
+    expect(subjectOf('ما عاصمة اليابان؟')).toEqual({ words: ['يابان'], from: 'word' });
+    expect(subjectOf('ما هو آخر إصدار مستقر من Node.js؟')).toEqual({ words: ['node'], from: 'name' });
+    expect(subjectOf('ابحث عن Python pathlib documentation')).toEqual({ words: ['python'], from: 'name' });
+    expect(subjectOf('What is the best time to visit Japan?')).toEqual({ words: ['japan'], from: 'name' });
+    expect(subjectOf('Is Python faster than Java?')).toEqual({ words: ['python', 'java'], from: 'name' });
+  });
+  it('only reviews a missing Arabic subject word: the cataract page «الساد» answers «المياه البيضاء» under another name (rq017)', () => {
+    const verdict = judge({ question: 'ما أعراض المياه البيضاء في العين؟', reply: [
+      'وهذا يؤدي إلى تجمّع المياه من مختلف أجزاء العين ودخولها إلى العدسة مسببة التورم والابيضاض وإعاقة الضوء من الوصول إلى شبكية العين.', '',
+      SOURCE('الساد', 'https://ar.wikipedia.org/wiki/s')].join('\n') });
+    expect(verdict.findings.find(finding => finding.code === 'subject_missing')?.severity).toBe('review');
+    expect(verdict.decision).toBe('send');
+  });
+  it('names no subject for English without a capitalised name, so nothing is withheld on a guess', () => {
+    expect(subjectOf('What is the speed of light?')).toBeNull();
+    expect(subjectOf('What should I cook for dinner tonight?')).toBeNull();
+    expect(subjectOf('find train teckit from glasgow to london tomorow')).toBeNull();
+  });
+  it('passes a comparison whose page names either subject', () => {
+    const verdict = judge({ question: 'Is Python faster than Java?', reply: ['Python is an interpreted language and is often slower than compiled code.', '', '**Source:** [Wikipedia — Python (programming language)](https://en.wikipedia.org/wiki/Python_(programming_language))'].join('\n') });
+    expect(verdict.codes).not.toContain('subject_missing');
+  });
+});
+
+describe('the source page and the evidence', () => {
+  it('compares addresses by host and decoded path', () => {
+    expect(pageKey('https://ar.wikipedia.org/wiki/%D8%B7%D9%88%D9%83%D9%8A%D9%88')).toBe('ar.wikipedia.org/wiki/طوكيو');
+    expect(pageKey('https://www.Example.com/a/b/?x=1#top')).toBe('example.com/a/b');
+    expect(sourceUrls(['جواب.', '', '**المصدر:** [ويكيبيديا — طوكيو](https://ar.wikipedia.org/wiki/%D8%B7%D9%88%D9%83%D9%8A%D9%88) · قُرئت 2026-11-22 05:38 UTC'].join('\n'))).toEqual(['ar.wikipedia.org/wiki/طوكيو']);
+  });
+  it('reports support as not measured, never unsupported, when the page the reply names is not among the evidence', () => {
+    const reply = ['يبلغ عدد سكان المغرب ما يقارب 37 مليون نسمة.', '', SOURCE('المغرب', 'https://ar.wikipedia.org/wiki/m')].join('\n');
+    const other = judge({ question: 'كم عدد سكان المغرب؟', reply, evidence: [{ kind: 'page', url: 'https://ar.wikipedia.org/wiki/other', text: 'نص صفحة أخرى لا علاقة له.' }] });
+    expect(other.support).toBeNull();
+    expect(other.codes).toContain('evidence_unavailable');
+    expect(other.codes).not.toContain('unsupported_sentence');
+    expect(other.decision).toBe('send');
+    const same = judge({ question: 'كم عدد سكان المغرب؟', reply, evidence: [{ kind: 'page', url: 'https://ar.wikipedia.org/wiki/m', text: 'يبلغ عدد سكان المغرب ما يقارب 37 مليون نسمة حسب إحصاء 2024.' }] });
+    expect(same.support).toEqual({ sentences: 1, supported: 1 });
+  });
+  it('withholds an invented sentence with the «unsupported» reason and the page link', () => {
+    const verdict = judge({ question: 'كم عدد سكان المغرب؟', evidence: [{ kind: 'page', url: 'https://ar.wikipedia.org/wiki/m', text: 'يبلغ عدد سكان المغرب ما يقارب 37 مليون نسمة.' }],
+      reply: ['يبلغ عدد سكان المغرب ما يقارب 37 مليون نسمة.', '', '**تفاصيل أخرى من نفس المصدر:**', '- ويتوقع أن يصل عدد السكان إلى خمسين مليونًا بعد عشر سنوات حسب تقديري.', '', SOURCE('المغرب', 'https://ar.wikipedia.org/wiki/m')].join('\n') });
+    expect(verdict.decision).toBe('withhold');
+    expect(verdict.withholdText).toMatch(/^في الجواب جملة لم أجدها في الصفحات التي قرأتها، فلم أرسله\.\n\nالصفحة التي قرأتها: \[ويكيبيديا — المغرب\]\(https:\/\/ar\.wikipedia\.org\/wiki\/m\)/u);
+  });
+});
+
+describe('the question\'s subject', () => {
+  it('withholds a film article for a travel question about Japan (live 2026-11-22) and keeps answers whose page is the subject', () => {
+    const film = judge({ question: 'What is the best time to visit Japan?', reply: [
+      'The trio visit Misumi again, this time showing him a magazine he may have come across that includes an article about a wife that paid a man to murder her husband for insurance.',
+      '', '**More from the same source:**', '- … a positive review of the film, stating that "though different in feeling from the Japanese writer-director\'s perceptive family tales.',
+      '', '**Source:** [ويكيبيديا — The Third Murder](https://en.wikipedia.org/wiki/The_Third_Murder) · read 2026-11-22 06:13 UTC'].join('\n') });
+    expect(film.codes).toContain('subject_missing');
+    expect(film.decision).toBe('withhold');
+    // The page's title carries the subject the lead leaves implicit («عاصمتها كانبرا» on the Australia page).
+    expect(judge(RQ026).codes).not.toContain('subject_missing');
+    expect(judge(RQ013).codes).not.toContain('subject_missing');
+    const japan = judge({ question: 'What is the capital of Japan?', reply: ['Tokyo is the capital and the largest city of Japan.', '', '**Source:** [Wikipedia — Tokyo](https://en.wikipedia.org/wiki/Tokyo)'].join('\n') });
+    expect(japan.codes).not.toContain('subject_missing');
+  });
+});
+
+describe('the page\'s own subject', () => {
+  it('marks a village page for a country question (live 2026-11-22: «صباح (المغرب)» for «كم عدد سكان المغرب؟») and not a book or a disambiguation page', () => {
+    const village = judge({ question: 'كم عدد سكان المغرب؟', reply: ['بلغ مجموع عدد سكان صباح (المغرب) حسب إحصاءات 2004 حوالي 12912 نسمة يعيشون في 2229 أسرة.', '', SOURCE('صباح (المغرب)', 'https://ar.wikipedia.org/wiki/s')].join('\n') });
+    expect(village.codes).toContain('page_subject_mismatch');
+    expect(village.decision).toBe('send');
+    expect(pageSubjectMismatch(RQ037.reply, ['قدراتك'])).toBeNull();
+    expect(pageSubjectMismatch('**المصدر:** [ويكيبيديا — وكالة الفضاء (توضيح)](https://x)', ['وكاله', 'فضاء', 'سعوديه'])).toBeNull();
+    expect(pageSubjectMismatch('**Source:** [Wikipedia — Sabah (Morocco)](https://x)', ['population', 'morocco'])).toEqual({ page: 'Sabah', qualifier: 'Morocco' });
+    expect(pageSubjectMismatch(RQ026.reply, ['عاصمه', 'استراليا'])).toBeNull();
+  });
+});
+
+describe('only page text is changed (regression: live 2026-11-22 06:39–07:16, three desktop replies lost «كتبت»)', () => {
+  it('leaves a desktop action report exactly as it is', () => {
+    for (const reply of ['كتبت 14 حرفًا في نافذة المفكرة.', 'كتبت 14 حرفًا في «Untitled - Notepad».', 'كتبت 14 حرفًا في «ملاحظات.txt - Notepad» وتحققت أنها ظهرت كما هي.']) {
+      const verdict = judge({ question: 'اكتب مرحبا من موحسن في المفكرة', reply, status: 'completed' });
+      expect(verdict.codes, reply).not.toContain('byline_lead');
+      expect(verdict.decision, reply).toBe('send');
+      expect(verdict.fixedReply, reply).toBeNull();
+    }
+    expect(judge({ question: 'اكتب مرحبا من موحسن في المفكرة', reply: 'كتبت 14 حرفًا في نافذة المفكرة.' }).kind).toBe('action');
+  });
+  it('does not treat evidence alone as a quoted page: a template reply in a run that opened a page is not judged as an answer', () => {
+    const verdict = judge({ question: 'ما النوافذ المفتوحة؟', reply: 'النوافذ المفتوحة الآن: المفكرة، والمتصفح.', evidence: [{ kind: 'page', url: 'https://example.test/', text: 'نص صفحة فتحها التشغيل سابقًا.' }] });
+    expect(verdict.sourced).toBe(false);
+    expect(verdict.lead).toBeNull();
+    expect(verdict.decision).toBe('send');
+  });
+  it('keeps «كتب …» in a quoted page sentence, and still cuts a real byline', () => {
+    const novel = judge({ question: 'من كتب رواية الأيام؟', reply: ['كتب طه حسين رواية الأيام في ثلاثة أجزاء.', '', SOURCE('الأيام (رواية)', 'https://ar.wikipedia.org/wiki/a')].join('\n') });
+    expect(novel.codes).not.toContain('byline_lead');
+    expect(novel.fixedReply).toBeNull();
+    const byline = judge({ question: 'ما فوائد الشاي الأخضر؟', reply: ['بقلم سارة أحمد آخر تحديث 3 نوفمبر 2026 الشاي الأخضر غني بمضادات الأكسدة.', '', SOURCE('شاي أخضر', 'https://ar.wikipedia.org/wiki/g')].join('\n') });
+    expect(byline.codes).toContain('byline_lead');
+    expect(judge(RQ010).fixedReply).not.toMatch(/Vicky Stein/u);
+  });
+});
+
 describe('routes', () => {
   it('marks an identity question met with a browsing abstention for review (rq084) and an English template to an Arabic request (rq022)', () => {
     const identity = judge({ question: 'whos create you', reply: 'I haven’t performed this request. The search or browsing route did not verify the requested result. I have not confirmed anything.' });
@@ -252,6 +366,18 @@ describe('support against the evidence', () => {
     expect(joined.support).toEqual({ sentences: 1, supported: 1 });
     expect(judge(RQ005).support).toBeNull();
     expect(judge(RQ005).codes).toContain('evidence_unavailable');
+  });
+
+  it('finds a sentence the page carries with footnote marks, or with an edit mark hands.ts cleaned out, and not an invented one', () => {
+    const page = comparable('ألكسندر غراهام بيل[12] اخترع الهاتف عام 1876[13] في بوسطن. الطاقة الشمسية هي أشعة الضوء [تحرير] والحرارة الصادرة من الشمس واستغلها الإنسان منذ القدم.');
+    expect(supportedBy(comparable('ألكسندر غراهام بيل اخترع الهاتف عام 1876 في بوسطن.'), page)).toBe(true);
+    expect(supportedBy(comparable('الطاقة الشمسية هي أشعة الضوء والحرارة الصادرة من الشمس واستغلها الإنسان منذ القدم.'), page)).toBe(true);
+    expect(supportedBy(comparable('الطاقة الشمسية هي أرخص مصدر للكهرباء في العالم اليوم.'), page)).toBe(false);
+    expect(supportedBy(comparable('بيل في بوسطن'), page)).toBe(false);
+    const verdict = judge({ question: 'من اخترع الهاتف؟', reply: ['ألكسندر غراهام بيل اخترع الهاتف عام 1876 في بوسطن.', '', SOURCE('هاتف', 'https://ar.wikipedia.org/wiki/t')].join('\n'),
+      evidence: [{ kind: 'page', text: 'ألكسندر غراهام بيل[12] اخترع الهاتف عام 1876[13] في بوسطن.' }] });
+    expect(verdict.support).toEqual({ sentences: 1, supported: 1 });
+    expect(verdict.decision).toBe('send');
   });
 });
 
@@ -290,5 +416,15 @@ describe('helpers', () => {
     expect(minority).toMatchObject({ topicHits: 2, implied: 1, phrase: false, fragment: true });
     expect(answer.score - minority.score).toBeGreaterThanOrEqual(2);
     expect(ownLines(RQ016.reply).map(line => line.line)).toEqual([1, 4, 5]);
+    const english = { question: 'What is the speed of light?', topic: ['speed', 'light'], cues: [], titleWords: ['speed', 'light'], answerType: 'number', lang: 'en' as const };
+    expect(relevance('The speed of light in vacuum is exactly 299,792,458 metres per second.', english)).toMatchObject({ topicHits: 2, phrase: true, typed: true });
+    expect(relevance('Light travels at slower speed inside materials like glass or water.', english)).toMatchObject({ topicHits: 2, phrase: false, typed: false });
+  });
+  it('stops the own sentences at the source line: the host\'s single-source note after it is neither scored nor looked up', () => {
+    const reply = ['يبلغ عدد سكان المغرب ما يقارب 37 مليون نسمة.', '', SOURCE('المغرب', 'https://ar.wikipedia.org/wiki/m'), '', 'لم أتحقق من هذا الرقم في مصدر ثانٍ.'].join('\n');
+    expect(ownLines(reply).map(line => line.line)).toEqual([1]);
+    const verdict = judge({ question: 'كم عدد سكان المغرب؟', reply, evidence: [{ kind: 'page', text: 'حسب إحصاء 2024 يبلغ عدد سكان المغرب ما يقارب 37 مليون نسمة.' }] });
+    expect(verdict.support).toEqual({ sentences: 1, supported: 1 });
+    expect(verdict.decision).toBe('send');
   });
 });
