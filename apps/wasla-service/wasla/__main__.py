@@ -49,8 +49,6 @@ def single_server(root):
 
 
 async def serve(args, store):
-    from .actions import ActionsController
-    from .cloud import CloudIntelligence
     from .desktop import WindowsDesktop
     from .services import LocalServices
     from .server import STATE, create_app
@@ -68,8 +66,9 @@ async def serve(args, store):
         raise ValueError("The selected IP is not in the saved certificate. Revoke devices and explicitly replace the certificate before re-pairing.")
     relay_config = load_relay_config(args.relay_config, store.root, f"https://{args.host}:{args.port}", fingerprint)
     relay = OwnedRelay(relay_config) if relay_config is not None else None
-    actions = ActionsController(allowed=args.allow_app_actions, state_root=store.root)
-    app = create_app(store, LocalServices(), WindowsDesktop(), args.allow_desktop, actions=actions, cloud=CloudIntelligence(store.root))
+    # One brain: chat goes to Mohassan through the bridge. --allow-app-actions is accepted
+    # for older launchers and ignored; the phone's own chat and its app actions are gone.
+    app = create_app(store, LocalServices(), WindowsDesktop(), args.allow_desktop)
     runner = web.AppRunner(app, access_log=None, shutdown_timeout=600)
     await runner.setup()
     stopped = asyncio.Event()
@@ -82,9 +81,9 @@ async def serve(args, store):
         status_path = store.root / "server-status.json"
         atomic_json(status_path, {"pid": os.getpid(), "host": args.host, "port": args.port,
             "started_at": time.time(), "desktop_enabled": args.allow_desktop,
-            "app_actions_enabled": args.allow_app_actions, "relay_enabled": relay is not None})
+            "app_actions_enabled": False, "relay_enabled": relay is not None})
         print(json.dumps({"ready": True, "url": f"https://{args.host}:{args.port}", "fingerprint": fingerprint,
-            "desktop_enabled": args.allow_desktop, "app_actions_enabled": args.allow_app_actions,
+            "desktop_enabled": args.allow_desktop, "app_actions_enabled": False,
             "relay_enabled": relay is not None}), flush=True)
         if args.stdin_control:
             def watch_stdin():
@@ -111,7 +110,6 @@ async def serve(args, store):
             with contextlib.suppress(asyncio.CancelledError):
                 await stop_task
     finally:
-        actions.allowed = False
         app[STATE].stopping = True
         app[STATE].lease = None
         if relay is not None:

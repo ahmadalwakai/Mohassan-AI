@@ -21,11 +21,8 @@ $waslaRequestPath = Join-Path $waslaStateRoot 'stop-request.json'
 $waslaTemporaryPath = Join-Path $waslaStateRoot ('stop-request.' + [guid]::NewGuid().ToString('N') + '.tmp')
 $waslaEncoding = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($waslaTemporaryPath, $waslaStopBody, $waslaEncoding)
-if (Test-Path -LiteralPath $waslaRequestPath -PathType Leaf) {
-    [System.IO.File]::Replace($waslaTemporaryPath, $waslaRequestPath, $null)
-} else {
-    [System.IO.File]::Move($waslaTemporaryPath, $waslaRequestPath)
-}
+# Move-Item -Force replaces an older request; File.Replace with a null backup path fails under PowerShell 7.
+Move-Item -LiteralPath $waslaTemporaryPath -Destination $waslaRequestPath -Force
 Write-Output 'Graceful stop requested. Remote access will close while owned work finishes cleanup.'
 for ($waslaAttempt = 0; $waslaAttempt -lt 10; $waslaAttempt++) {
     Start-Sleep -Seconds 1

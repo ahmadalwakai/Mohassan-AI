@@ -16,6 +16,7 @@ import re
 import secrets
 import ssl
 import sys
+import time
 import unicodedata
 from typing import Any, Callable
 from html.parser import HTMLParser
@@ -445,6 +446,7 @@ class LocalServices:
         self._active: asyncio.Task | None = None
         self._search_active: asyncio.Task | None = None
         self.busy: str | None = None
+        self.last_search: dict | None = None
         self._closed = False
 
     @property
@@ -569,23 +571,31 @@ class LocalServices:
             raise ServiceError("image_status_failed", "The saved image status could not be verified.") from None
 
     def _search_sync(self, query: str) -> dict:
+        # Bing RSS is gone: its robots.txt forbids it (phase-0 measurement, 2026-11-22).
+        # The search source for the phone is the owner's decision; until then only
+        # DuckDuckGo HTML is tried, and /v1/status reports the last outcome honestly.
         failures, empty_providers = [], []
-        for provider, parser in (("DuckDuckGo HTML", _duckduckgo), ("Bing RSS", _bing)):
+        for provider, parser in (("DuckDuckGo HTML", _duckduckgo),):
             try:
                 body = self._http.search(provider, query)
                 results = parser(body, query=query)
                 if results:
+                    self.last_search = {"ok": True, "at": time.time(), "provider": provider}
                     return {"query": query, "results": results, "provider": provider}
                 empty_providers.append(provider)
             except ServiceError as exc:
                 failures.append(exc.code)
         if empty_providers:
-            # At least one provider explicitly returned a valid empty result;
+            # The provider explicitly returned a valid empty result;
             # rejected unrelated pages are never converted into an empty search.
+            self.last_search = {"ok": True, "at": time.time(), "provider": empty_providers[0]}
             return {"query": query, "results": [], "provider": empty_providers[0]}
         if any(code in ('search_irrelevant', 'search_query_mismatch') for code in failures):
-            raise ServiceError('search_irrelevant', 'لم أتمكن من التحقق من صلة نتائج البحث بالطلب. حاول صياغة بحث أقصر.')
-        raise ServiceError("search_unavailable", "Public search is unavailable or requires an interactive check. Please try again later.")
+            error = ServiceError('search_irrelevant', 'لم أتمكن من التحقق من صلة نتائج البحث بالطلب. حاول صياغة بحث أقصر.')
+        else:
+            error = ServiceError("search_unavailable", "البحث العام غير متاح من هذا الكمبيوتر الآن أو يطلب تحققًا بشريًا.")
+        self.last_search = {"ok": False, "at": time.time(), "code": error.code, "message": str(error)}
+        raise error
 
     async def search(self, query: str) -> dict:
         query = _plain_text(query, "query", 400)

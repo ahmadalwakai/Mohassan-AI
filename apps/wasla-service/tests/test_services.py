@@ -192,58 +192,61 @@ class ServicesTests(unittest.IsolatedAsyncioTestCase):
         await self.service.chat([{"role": "user", "content": "hi"}])
         self.assertEqual(guarded, ["acquired", "released"])
 
-    async def test_search_fallback_returns_actual_parser_results(self):
+    # Bing RSS is no longer tried (its robots.txt forbids it): one provider, and an honest
+    # record of the last outcome for /v1/status.
+    async def test_challenge_page_is_search_unavailable_and_recorded(self):
         self.transport.search_bodies["DuckDuckGo HTML"] = '<form id="challenge-form"></form>'
-        self.transport.search_bodies["Bing RSS"] = rss("local image generation", [
-            ("Local image generation", "https://example.org/page", "Generate an image locally")])
-        result = await self.service.search("local image generation")
-        self.assertEqual(result["provider"], "Bing RSS")
-        self.assertEqual(result["results"][0]["url"], "https://example.org/page")
-        self.assertEqual(len(self.transport.searches), 2)
+        with self.assertRaises(ServiceError) as caught:
+            await self.service.search("local image generation")
+        self.assertEqual(caught.exception.code, "search_unavailable")
+        self.assertEqual([name for name, _ in self.transport.searches], ["DuckDuckGo HTML"])
+        self.assertFalse(self.service.last_search["ok"])
+        self.assertEqual(self.service.last_search["code"], "search_unavailable")
 
-    async def test_empty_first_provider_tries_relevant_second_provider(self):
-        self.transport.search_bodies["DuckDuckGo HTML"] = '<div class="no-results">No results found</div>'
-        self.transport.search_bodies["Bing RSS"] = rss(ARABIC_SEARCH, [TAILSCALE_RESULT])
+    async def test_relevant_results_are_returned_and_recorded(self):
+        self.transport.search_bodies["DuckDuckGo HTML"] = (
+            f'<a class="result__a" href="{TAILSCALE_RESULT[1]}">{TAILSCALE_RESULT[0]}</a>'
+            f'<a class="result__snippet">{TAILSCALE_RESULT[2]}</a>')
         result = await self.service.search(ARABIC_SEARCH)
-        self.assertEqual(result["provider"], "Bing RSS")
+        self.assertEqual(result["provider"], "DuckDuckGo HTML")
         self.assertEqual(result["results"][0]["url"], TAILSCALE_RESULT[1])
-        self.assertEqual(self.transport.searches, [(name, ARABIC_SEARCH) for name in ("DuckDuckGo HTML", "Bing RSS")])
+        self.assertTrue(self.service.last_search["ok"])
         self.assertEqual(self.transport.calls, [])  # Relevance checking never invokes the model.
 
-    async def test_irrelevant_first_provider_tries_second_provider(self):
+    async def test_irrelevant_results_never_become_an_answer(self):
         self.transport.search_bodies["DuckDuckGo HTML"] = (
             '<a class="result__a" href="https://example.org/stocks">Barclays share price</a>')
-        self.transport.search_bodies["Bing RSS"] = rss(ARABIC_SEARCH, [TAILSCALE_RESULT])
-        result = await self.service.search(ARABIC_SEARCH)
-        self.assertEqual(result["results"][0]["title"], TAILSCALE_RESULT[0])
-        self.assertEqual(len(self.transport.searches), 2)
+        with self.assertRaises(ServiceError) as caught:
+            await self.service.search(ARABIC_SEARCH)
+        self.assertEqual(caught.exception.code, "search_irrelevant")
 
-    async def test_mismatched_first_provider_tries_second_provider(self):
+    async def test_mismatched_query_echo_never_becomes_an_answer(self):
         self.transport.search_bodies["DuckDuckGo HTML"] = (
             '<input name="q" value="another query">'
             '<a class="result__a" href="https://tailscale.com">Tailscale</a>')
-        self.transport.search_bodies["Bing RSS"] = rss(ARABIC_SEARCH, [TAILSCALE_RESULT])
-        self.assertEqual((await self.service.search(ARABIC_SEARCH))["provider"], "Bing RSS")
+        with self.assertRaises(ServiceError) as caught:
+            await self.service.search(ARABIC_SEARCH)
+        self.assertEqual(caught.exception.code, "search_irrelevant")
 
-    async def test_both_explicit_empty_results_remain_empty(self):
+    async def test_explicit_empty_result_remains_empty(self):
         self.transport.search_bodies["DuckDuckGo HTML"] = '<div class="no-results">No results found</div>'
-        self.transport.search_bodies["Bing RSS"] = rss(ARABIC_SEARCH)
         result = await self.service.search(ARABIC_SEARCH)
         self.assertEqual(result["results"], [])
-        self.assertEqual(len(self.transport.searches), 2)
+        self.assertEqual(len(self.transport.searches), 1)
+        self.assertTrue(self.service.last_search["ok"])
 
-    async def test_genuine_empty_is_preserved_when_other_provider_fails(self):
+    async def test_upstream_failure_is_search_unavailable(self):
         self.transport.search_bodies["DuckDuckGo HTML"] = ServiceError("upstream_unavailable", "offline")
-        self.transport.search_bodies["Bing RSS"] = rss(ARABIC_SEARCH)
-        result = await self.service.search(ARABIC_SEARCH)
-        self.assertEqual(result["results"], [])
-        self.assertEqual(result["provider"], "Bing RSS")
+        with self.assertRaises(ServiceError) as caught:
+            await self.service.search(ARABIC_SEARCH)
+        self.assertEqual(caught.exception.code, "search_unavailable")
 
-    async def test_correct_query_echo_does_not_make_unrelated_feed_acceptable(self):
-        self.transport.search_bodies["DuckDuckGo HTML"] = ServiceError("upstream_unavailable", "offline")
+    async def test_correct_query_echo_does_not_make_unrelated_page_acceptable(self):
         for title in ("FLINTMANOR company information", "Barclays stock quotes"):
-            self.transport.search_bodies["Bing RSS"] = rss(ARABIC_SEARCH, [
-                (title, "https://example.org/company", "Shares and company registration")])
+            self.transport.search_bodies["DuckDuckGo HTML"] = (
+                f'<input name="q" value="{ARABIC_SEARCH}">'
+                f'<a class="result__a" href="https://example.org/company">{title}</a>'
+                '<a class="result__snippet">Shares and company registration</a>')
             with self.subTest(title=title), self.assertRaises(ServiceError) as error:
                 await self.service.search(ARABIC_SEARCH)
             self.assertEqual(error.exception.code, "search_irrelevant")
