@@ -1,5 +1,5 @@
 import { appendFile, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { judge, type JudgeCode, type JudgeDecision, type JudgeInput, type JudgeVerdict, type ReplyKind } from './judge.js';
 
 /**
@@ -16,6 +16,12 @@ export interface JudgeShadowInput extends JudgeInput {
   applyFix?: boolean;
   /** The host will send the judge's withhold text when the decision is withhold (owner's own account only, by the owner's word of 2026-11-22). */
   applyWithhold?: boolean;
+  /**
+   * False: the line keeps the verdict (decision, codes, counts, timing) and drops every piece of the conversation: the
+   * question, the reply, the lines the judge quotes and its replacement texts. Used in production for accounts other than
+   * the owner's, whose text already lives in the database under its own access rules. Default true.
+   */
+  keepText?: boolean;
 }
 export interface JudgeShadowLine {
   at: string;
@@ -45,6 +51,8 @@ export interface JudgeShadowLine {
   /** How many evidence texts the host passed; 0 when none (support not measured). */
   evidence: number;
   ms: number;
+  /** False when the line was written without the conversation's text (JudgeShadowInput.keepText). Absent in lines from before this field existed, which all kept it. */
+  textKept?: boolean;
 }
 export interface JudgeShadow {
   readonly logFile: string;
@@ -57,15 +65,34 @@ export interface JudgeShadow {
 const MAX_TEXT = 2000;
 const MAX_REPLY = 4000;
 
+export interface JudgeSettings { enabled: boolean; logFile: string; fixForOwner: boolean; withholdForOwner: boolean; logText: 'all' | 'owner' }
+/**
+ * Where and how the judge runs on this server. It is on unless MOHASSAN_JUDGE_SHADOW=0; MOHASSAN_JUDGE_FIX=0 and
+ * MOHASSAN_JUDGE_WITHHOLD=0 stop it changing the owner's replies. Since the owner's word of 2026-11-22 («نعم شغله») that
+ * holds in production too. There the log keeps the conversation's text for the owner's own replies only, and
+ * MOHASSAN_JUDGE_LOG_DIR names a folder the service may write: the application folder is read-only on the server.
+ */
+export function judgeSettings(production: boolean, env: NodeJS.ProcessEnv, cwd: string): JudgeSettings {
+  const directory = env.MOHASSAN_JUDGE_LOG_DIR?.trim() || join(cwd, '.data', 'judge');
+  return {
+    enabled: env.MOHASSAN_JUDGE_SHADOW !== '0' && !env.VITEST, logFile: join(directory, 'shadow.jsonl'),
+    fixForOwner: env.MOHASSAN_JUDGE_FIX !== '0', withholdForOwner: env.MOHASSAN_JUDGE_WITHHOLD !== '0', logText: production ? 'owner' : 'all',
+  };
+}
+
 export function createJudgeShadow(options: { logFile: string; now?: () => Date }): JudgeShadow {
   const now = options.now ?? (() => new Date());
   let queue: Promise<void> = Promise.resolve();
-  let directoryReady = false;
+  let directoryReady = false, warned = false;
   const write = (line: JudgeShadowLine) => {
     queue = queue.then(async () => {
       if (!directoryReady) { await mkdir(dirname(options.logFile), { recursive: true }); directoryReady = true; }
       await appendFile(options.logFile, `${JSON.stringify(line)}\n`, 'utf8');
-    }).catch(() => { /* a shadow log must never reach the chat */ });
+    }).catch(() => {
+      // A shadow log must never reach the chat. The first failed write is named once in the server log: the judge still
+      // decides without its log, and a folder the service cannot write should not stay unnoticed.
+      if (!warned) { warned = true; console.error(JSON.stringify({ level: 'warn', event: 'judge_log_unavailable', logFile: options.logFile })); }
+    });
   };
   return {
     logFile: options.logFile,
@@ -74,12 +101,14 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
         const verdict = judge(input);
         const applied = Boolean(input.applyFix && verdict.decision === 'fix' && verdict.fixedReply?.trim())
           || Boolean(input.applyWithhold && verdict.decision === 'withhold' && verdict.withholdText?.trim());
+        const keep = input.keepText !== false;
+        const quoted = (line: JudgeVerdict['lead']) => keep || !line ? line : { ...line, text: '' };
         write({
           at: now().toISOString(), conversationId: input.conversationId, runId: input.runId,
-          question: input.question.slice(0, MAX_TEXT), previous: input.previous ? input.previous.slice(0, MAX_TEXT) : null, reply: input.reply.slice(0, MAX_REPLY), status: input.status ?? null,
-          decision: verdict.decision, applied, withholdText: verdict.withholdText, kind: verdict.kind, lang: verdict.lang, intent: verdict.frame.intent, answerType: verdict.frame.answerType, sourced: verdict.sourced,
-          codes: verdict.codes, findings: verdict.findings, lead: verdict.lead, best: verdict.best,
-          fixedReply: verdict.fixedReply ? verdict.fixedReply.slice(0, MAX_REPLY) : null, support: verdict.support, evidence: input.evidence?.length ?? 0, ms: verdict.ms,
+          question: keep ? input.question.slice(0, MAX_TEXT) : '', previous: keep && input.previous ? input.previous.slice(0, MAX_TEXT) : null, reply: keep ? input.reply.slice(0, MAX_REPLY) : '', status: input.status ?? null,
+          decision: verdict.decision, applied, withholdText: keep ? verdict.withholdText : null, kind: verdict.kind, lang: verdict.lang, intent: verdict.frame.intent, answerType: verdict.frame.answerType, sourced: verdict.sourced,
+          codes: verdict.codes, findings: keep ? verdict.findings : verdict.findings.map(finding => ({ ...finding, excerpt: '', detail: '' })), lead: quoted(verdict.lead), best: quoted(verdict.best),
+          fixedReply: keep && verdict.fixedReply ? verdict.fixedReply.slice(0, MAX_REPLY) : null, support: verdict.support, evidence: input.evidence?.length ?? 0, ms: verdict.ms, textKept: keep,
         });
         return verdict;
       } catch {

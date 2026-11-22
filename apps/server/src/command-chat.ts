@@ -192,6 +192,12 @@ export interface CommandChatConfig {
    * MOHASSAN_JUDGE_WITHHOLD=0 turns it off. Members' replies stay as the chat wrote them.
    */
   judgeWithholdForOwner?: boolean;
+  /**
+   * Whose question and reply text the judge's log keeps. `owner` (production): the owner's own replies only; for every
+   * other account the line holds the verdict without a word of the conversation, which already lives in the database
+   * under its own access rules. `all` (the default, labs): every line keeps its text, as before.
+   */
+  judgeLogText?: 'all' | 'owner';
 }
 
 export interface ChatSkillContext {
@@ -1100,7 +1106,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const applyFix = Boolean(allowChange && config.judgeFixForOwner && current.full);
       const applyWithhold = Boolean(allowChange && config.judgeWithholdForOwner && current.full);
       const verdict = config.judgeShadow.observe({ conversationId: id, runId, question: current.request, previous: current.previousRequest ?? null, reply, status,
-        applyFix, applyWithhold, ...(evidence.length ? { evidence } : {}) });
+        applyFix, applyWithhold, keepText: config.judgeLogText !== 'owner' || Boolean(current.full), ...(evidence.length ? { evidence } : {}) });
       if (applyWithhold && verdict?.decision === 'withhold' && verdict.withholdText?.trim()) return { text: verdict.withholdText, withheld: true };
       if (applyFix && verdict?.decision === 'fix' && verdict.fixedReply?.trim()) return { text: verdict.fixedReply, withheld: false };
     } catch { /* The judge never stops a run. */ }
