@@ -2,14 +2,33 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PDFDict, PDFDocument, PDFName } from 'pdf-lib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { pdfInfo } from './edit.ts';
 import { renderDocumentHtml, watermarkHtml, WATERMARK_PRINT } from './html.ts';
-import { createPdfRenderer, loadFontFaces, type PdfRenderer } from './render.ts';
+import { DEFAULT_FONTS_DIR, createPdfRenderer, loadFontFaces, type PdfRenderer } from './render.ts';
 import { extractPdfText } from '../../learning/src/pdf.ts';
 
-/** Shaped Arabic comes back from pdf.js as presentation forms; NFKC folds them to letters. */
+/** The PostScript names of the fonts each page's resources reference, subset prefixes (AAAAAA+) removed. */
+async function fontNames(bytes: Uint8Array): Promise<string[]> {
+  const document = await PDFDocument.load(bytes);
+  const names = new Set<string>();
+  for (const page of document.getPages()) {
+    const fonts = page.node.Resources()?.lookup(PDFName.of('Font'));
+    if (!(fonts instanceof PDFDict)) continue;
+    for (const [, ref] of fonts.entries()) {
+      const font = document.context.lookup(ref);
+      if (!(font instanceof PDFDict)) continue;
+      const base = font.get(PDFName.of('BaseFont'))?.toString();
+      if (base) names.add(base.replace(/^\/(?:[A-Z]{6}\+)?/u, ''));
+    }
+  }
+  return [...names].sort();
+}
+
+/** Shaped Arabic comes back from pdf.js as presentation forms, sometimes in visual (reversed) order; NFKC folds them to letters. */
 const letters = (text: string) => text.normalize('NFKC').replace(/[^\p{L}\p{N}]/gu, '');
+const hasWord = (text: string, word: string) => letters(text).includes(letters(word)) || letters(text).includes([...letters(word)].reverse().join(''));
 
 describe('Chromium PDF renderer', () => {
   let renderer: PdfRenderer;
@@ -48,8 +67,8 @@ describe('Chromium PDF renderer', () => {
     // Digits inside the right-to-left run come back split by the extractor; the characters are all there.
     expect(text.replace(/\s+/gu, '')).toMatch(/12|21/u);
     expect(text).toContain('%');
-    expect(letters(text)).toContain(letters('الملخص'));
-    expect(letters(text)).toContain(letters('من'));
+    expect(hasWord(text, 'الملخص')).toBe(true);
+    expect(text.replace(/\s+/gu, '')).toContain('1/1');
     expect(elapsed).toBeLessThan(25_000);
   });
 
@@ -70,10 +89,26 @@ describe('Chromium PDF renderer', () => {
     expect(await extractPdfText(bytes)).toContain('Visible');
   });
 
+  it('embeds the bundled Noto Naskh Arabic for Arabic, Latin and bold text, so the body needs no system font', async () => {
+    const faces = await renderer.fontFaces();
+    expect(faces).toContain('font-family: "Mohassan Document"');
+    expect(faces).toContain('font-weight: 100 900');
+    const document = renderDocumentHtml({ title: 'عقد توريد', theme: 'letter', blocks: [{ kind: 'paragraph', text: 'الطرف الأول يورّد 120 طنًا. Delivery in **March**.' }, { kind: 'heading', level: 2, text: 'الشروط' }] }, faces);
+    const body = await fontNames(await renderer.render(document.html, { print: { ...document.print, displayHeaderFooter: false } }));
+    expect(body.length).toBeGreaterThan(0);
+    expect(body.every(name => /NotoNaskhArabic/u.test(name)), body.join(', ')).toBe(true);
+    // The footer is Chromium's own document, drawn with the system font: digits only, so it reads anywhere.
+    expect(document.print.footerTemplate).toContain('<span class="pageNumber"></span> / <span class="totalPages"></span>');
+    const withFooter = await fontNames(await renderer.render(document.html, { print: document.print }));
+    expect(withFooter.some(name => /NotoNaskhArabic/u.test(name))).toBe(true);
+    const mark = await renderer.render(watermarkHtml('سري', {}, faces), { print: WATERMARK_PRINT });
+    expect((await fontNames(mark)).every(name => /NotoNaskhArabic/u.test(name))).toBe(true);
+  });
+
   it('renders a watermark page without margins', async () => {
     const bytes = await renderer.render(watermarkHtml('سري'), { print: WATERMARK_PRINT });
     expect((await pdfInfo(bytes)).pages).toBe(1);
-    expect(letters(await extractPdfText(bytes))).toContain(letters('سري'));
+    expect(hasWord(await extractPdfText(bytes), 'سري')).toBe(true);
   });
 
   it('rejects empty content, a cancelled request and renders after close', async () => {
@@ -107,6 +142,9 @@ describe('loadFontFaces', () => {
       expect(css).not.toContain('notes');
       expect(await loadFontFaces(join(dir, 'missing'))).toBe('');
       expect(await loadFontFaces(undefined)).toBe('');
+      const bundled = await loadFontFaces(DEFAULT_FONTS_DIR);
+      expect(bundled).toContain('font-weight: 100 900');
+      expect(bundled.length).toBeGreaterThan(300_000);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });

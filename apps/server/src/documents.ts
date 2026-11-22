@@ -105,7 +105,7 @@ export function createDocumentControl(db: Kysely<any>, options: DocumentControlO
         case 'delete': bytes = await deletePages(first!.bytes, edit.pages, options); name = suffixed(first!.name, 'edited'); break;
         case 'rotate': bytes = await rotatePages(first!.bytes, edit.angle, edit.pages, options); name = suffixed(first!.name, 'rotated'); break;
         case 'watermark': {
-          const overlay = await renderer.render(watermarkHtml(edit.text, { opacity: edit.opacity }), { print: WATERMARK_PRINT, signal });
+          const overlay = await renderer.render(watermarkHtml(edit.text, { opacity: edit.opacity }, await renderer.fontFaces()), { print: WATERMARK_PRINT, signal });
           bytes = await stampPdf(first!.bytes, overlay, options); name = suffixed(first!.name, 'watermark'); break;
         }
         case 'number': bytes = await numberPages(first!.bytes, options); name = suffixed(first!.name, 'numbered'); break;

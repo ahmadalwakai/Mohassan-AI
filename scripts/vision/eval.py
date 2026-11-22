@@ -66,7 +66,8 @@ def main() -> None:
     parser.add_argument("--json", type=Path)
     args = parser.parse_args()
     state = torch.load(args.run / args.checkpoint, map_location=args.device)
-    model = OCRModel(len(CLASSES), tuple(state["channels"]), state["hidden"]).to(args.device)
+    pools = tuple(tuple(p) if p else None for p in state.get("pools", ((2, 2), (2, 2), None, (2, 1), (2, 1))))
+    model = OCRModel(len(CLASSES), tuple(state["channels"]), state["hidden"], pools).to(args.device)
     model.load_state_dict(state["model"])
     model.eval()
     report = {"step": state.get("step"), "parameters": state.get("parameters")}

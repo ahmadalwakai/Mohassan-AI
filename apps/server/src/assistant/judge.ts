@@ -111,7 +111,6 @@ const ARABIC_CONNECTIVE = /^(?:و|ف)?(?:هذا|هذه|ذلك|تلك|لذلك|ل
 const ENGLISH_CONNECTIVE = /^(?:but|and|so|however|this (?:process|method|technique|is|was)|it (?:is|was|also)|they|which|also|then|these|those|he|she|while|whereas|therefore|thus|moreover|furthermore)\b/iu;
 const TIMESTAMP = /^\d{1,2}:\d{2}\b/u;
 const ELLIPSIS_START = /^(?:…|\.\.\.)/u;
-const ELLIPSIS_END = /(?:…|\.\.\.)$/u;
 const QUESTION_WORDS = new Set(['ما', 'ماذا', 'من', 'هو', 'هي', 'كم', 'متى', 'متي', 'أين', 'اين', 'كيف', 'هل', 'لماذا', 'ليش', 'في', 'عن', 'على', 'علي', 'إلى', 'الى', 'مع', 'لي', 'و', 'أو', 'او', 'ثم', 'هذا', 'هذه', 'ذلك',
   'what', 'is', 'are', 'the', 'of', 'in', 'who', 'how', 'when', 'where', 'which', 'does', 'do', 'did', 'a', 'an', 'to', 'for', 'i', 'my', 'me', 'you', 'and', 'or', 'was', 'were', 'it', 'that', 'this', 'please', 'tell', 'with', 'about']);
 const ARABIC_SUFFIX = /(?:هما|ها|هم|كم|كن|نا|ني|ك|ه|ي)$/u;
@@ -119,12 +118,14 @@ const ARABIC_SUFFIX = /(?:هما|ها|هم|كم|كن|نا|ني|ك|ه|ي)$/u;
 const excerptOf = (text: string) => text.replace(/\s+/gu, ' ').trim().slice(0, 140);
 const words = (text: string) => text.split(/\s+/u).filter(Boolean);
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+/** Zero-width joiners and marks pages leave inside words («و‌عاصمتها»): invisible, and they break every word match. */
+const ZERO_WIDTH = /[​-‍⁠﻿]/gu;
 /** The own words of a layout line: no bullet, no leading ellipsis, no bold marks or markdown links, no footnote marks. */
-const bare = (line: string) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s+/u, '').replace(ELLIPSIS_START, '').replace(/!?\[([^\]\n]*)\]\([^)\n]*\)/gu, '$1')
+const bare = (line: string) => line.replace(ZERO_WIDTH, '').replace(/^\s*(?:[-*•]|\d+[.)])\s+/u, '').replace(ELLIPSIS_START, '').replace(/!?\[([^\]\n]*)\]\([^)\n]*\)/gu, '$1')
   .replace(/\*\*/gu, '').replace(/\[(?:\d+|[ا-ي]|[a-z])\]/gu, '').replace(/\s+/gu, ' ').trim();
 /** Text as the evidence is compared: folded letters, no marks, no punctuation, one space. */
 export function comparable(text: string): string {
-  return fold(text).replace(/[ً-ْٰـ]/gu, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/gu, ' ').trim();
+  return fold(text.replace(ZERO_WIDTH, '')).replace(/[ً-ْٰـ]/gu, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/gu, ' ').trim();
 }
 /** A subject word as it may appear in a sentence: without an attached pronoun («سكانها» → «سكان»), without a plural s. */
 export function stem(word: string): string {
@@ -176,14 +177,16 @@ export function sourceTitleWords(reply: string): string[] {
   return words(fold(own).replace(/[()،,.:|-]/gu, ' ')).filter(word => word.length >= 2);
 }
 
-export interface Relevance { topicHits: number; implied: number; phrase: boolean; cue: boolean; typed: boolean; fragment: boolean; meta: boolean; score: number }
+export interface Relevance { topicHits: number; implied: number; phrase: boolean; cue: boolean; typed: boolean; answerForm: boolean; fragment: boolean; meta: boolean; score: number }
 export interface RelevanceContext { question: string; topic: readonly string[]; cues: readonly string[]; titleWords: readonly string[]; answerType: string | null; lang: 'ar' | 'en' }
 /**
  * How well one own sentence answers the question: its subject words (those of the page's title count only beside a word
  * of its own, as hands.ts does), the question's phrase in order, the asked relation, the asked type (a number, a
- * duration, a definition), minus a fragment and minus a meta line. Explainable arithmetic, not a model.
+ * duration, a definition), the Arabic answer form on the subject's own page («عاصمتها كانبرا»: its capital is Canberra,
+ * stronger than a passing «عاصمة أستراليا»), minus a fragment and minus a meta line. Explainable arithmetic, not a model.
+ * `raw` is the layout line itself, so a leading ellipsis the clean text lost still marks a fragment.
  */
-export function relevance(text: string, context: RelevanceContext): Relevance {
+export function relevance(text: string, context: RelevanceContext, raw?: string): Relevance {
   const folded = fold(text);
   const inLine = context.topic.filter(word => mentions(folded, word));
   const implied = context.topic.filter(word => !inLine.includes(word) && context.titleWords.some(title => mentions(title, word) || mentions(stem(word), title))).length;
@@ -196,10 +199,13 @@ export function relevance(text: string, context: RelevanceContext): Relevance {
     : context.answerType === 'number' || context.answerType === 'money' || context.answerType === 'date' ? hasNumber
     : context.answerType === 'definition' ? definitionForm(text, context.topic)
     : false;
-  const fragment = isFragment(text, context.lang);
+  // Only the possessive «ها» and «هم» count: a bare «ه» is also the folded feminine ending («عاصمة», «المغربية»).
+  const answerForm = context.titleWords.length > 0 && inLine.length > 0
+    && context.topic.some(word => new RegExp(`(?:^|\\s)[وف]?(?:ال)?${escape(stem(word))}\\p{L}{0,2}(?:ها|هم)(?=[\\s،,:.؛]|$)`, 'u').test(folded));
+  const fragment = isFragment(text, context.lang) || Boolean(raw && ELLIPSIS_START.test(raw.replace(/^\s*(?:[-*•]|\d+[.)])\s+/u, '').trim()));
   const meta = isMetaLine(text);
-  const score = topicHits + (phrase ? 2 : 0) + (cue ? 1 : 0) + (typed ? context.answerType === 'definition' ? 2 : 1 : 0) - (fragment ? 1 : 0) - (meta ? JUDGE_THRESHOLDS.metaPenalty : 0);
-  return { topicHits, implied, phrase, cue, typed, fragment, meta, score };
+  const score = topicHits + (phrase ? 2 : 0) + (cue ? 1 : 0) + (typed ? context.answerType === 'definition' ? 2 : 1 : 0) + (answerForm ? 3 : 0) - (fragment ? 1 : 0) - (meta ? JUDGE_THRESHOLDS.metaPenalty : 0);
+  return { topicHits, implied, phrase, cue, typed, answerForm, fragment, meta, score };
 }
 
 /** «الذكاء الاصطناعي (AI) هو …», «Photosynthesis is …»: the subject within the first three words, then a copula soon after. */
@@ -211,15 +217,20 @@ export function definitionForm(text: string, topic: readonly string[]): boolean 
   return COPULA.test(opening);
 }
 
-/** A sentence cut from its context: an ellipsis, a connective or pronoun opening, a timestamp, a lowercase start, a glued run. */
+/**
+ * A sentence cut from its context: a leading ellipsis, a connective or pronoun opening, a timestamp, a lowercase Latin
+ * start (code, a list cell), a glued run. A trailing ellipsis is not one: hands.ts cuts an encyclopedia's long first
+ * sentence at 300 characters, and that sentence is still the article's own lead.
+ */
 export function isFragment(text: string, lang: 'ar' | 'en'): boolean {
   const trimmed = text.trim();
-  if (ELLIPSIS_START.test(trimmed) || ELLIPSIS_END.test(trimmed)) return true;
+  if (ELLIPSIS_START.test(trimmed)) return true;
   if (TIMESTAMP.test(trimmed)) return true;
   if (words(trimmed).length > JUDGE_THRESHOLDS.fragmentMaxWords) return true;
   if (ARABIC_CONNECTIVE.test(trimmed)) return true;
   if (ENGLISH_CONNECTIVE.test(trimmed)) return true;
-  if (lang === 'en' && /^[a-z]/u.test(trimmed) && !/^(?:e\.g\.|i\.e\.)/u.test(trimmed)) return true;
+  if (/^[a-z]/u.test(trimmed) && !/^(?:e\.g\.|i\.e\.)/u.test(trimmed)) return true;
+  void lang;
   return false;
 }
 
@@ -247,7 +258,7 @@ export function judge(input: JudgeInput): JudgeVerdict {
 
   if (kind === 'answer' && sourced && own.length) {
     const context: RelevanceContext = { question, topic, cues, titleWords, answerType: frame.answerType, lang };
-    const scored = own.map(item => ({ ...item, relevance: relevance(item.text, context) }));
+    const scored = own.map(item => ({ ...item, relevance: relevance(item.text, context, item.raw) }));
     const first = scored[0]!;
     lead = { line: first.line, text: first.text, score: first.relevance.score };
     const top = [...scored].sort((a, b) => b.relevance.score - a.relevance.score || a.line - b.line)[0]!;

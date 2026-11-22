@@ -27,6 +27,7 @@ import json  # noqa: E402
 import statistics  # noqa: E402
 import subprocess  # noqa: E402
 import sys  # noqa: E402
+import threading  # noqa: E402
 from ctypes import wintypes  # noqa: E402
 from datetime import datetime, timezone  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -82,6 +83,33 @@ def sync(device: str) -> None:
         torch.cuda.synchronize()
 
 
+class Load(threading.Thread):
+    """The machine's total CPU use and other jobs on the card every 15 s, so timings can be read against
+    the load they ran under (other sessions share this laptop)."""
+
+    def __init__(self) -> None:
+        super().__init__(daemon=True)
+        self.stop_event = threading.Event()
+        self.cpu: list[float] = []
+        self.foreign: set[str] = set()
+
+    def run(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                _, cpu = t1.adapters_memory(with_cpu=True)
+                if cpu is not None:
+                    self.cpu.append(cpu)
+                self.foreign.update(entry.split(":", 1)[0] for entry in t1.foreign_gpu_users())
+            except Exception:  # noqa: BLE001  (a failed sample must not stop the measurement)
+                pass
+            self.stop_event.wait(15)
+
+    def summary(self) -> dict:
+        values = sorted(self.cpu)
+        return {"samples": len(values), "cpu_mean_pct": round(statistics.fmean(values), 1) if values else None,
+                "cpu_max_pct": values[-1] if values else None, "other_gpu_processes": sorted(self.foreign)}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", choices=["cpu", "cuda"], required=True)
@@ -93,11 +121,13 @@ def main() -> int:
     target = out / f"{device}.json"
     if target.exists():
         raise SystemExit(f"{target} exists; results are never overwritten")
+    foreign = t1.foreign_gpu_users()
     if device == "cuda":
-        users = t1.gpu_users()
-        if users:
-            raise SystemExit(f"The GPU has compute processes: {users}")
+        if foreign:
+            raise SystemExit(f"Another job holds GPU memory: {foreign}")
         t1.acquire_lock("T2 worker (cuda)")
+    load = Load()
+    load.start()
     try:
         autocast = (lambda: torch.autocast("cuda", dtype=torch.bfloat16)) if device == "cuda" else None
         loaded = time.perf_counter()
@@ -211,17 +241,20 @@ def main() -> int:
             finally:
                 model = original
         report["results"] = results
+        load.stop_event.set()
+        report["machine_load"] = {"gpu_jobs_at_start": foreign, **load.summary()}
         report["memory_end"] = memory()
         if device == "cuda":
             report["gpu_end"] = {"max_allocated_mib": round(torch.cuda.max_memory_allocated() / 2**20),
                                  "nvidia_dedicated_mib": t1.nvidia()["dedicated_mib"]}
         report["criterion_proposed"] = "p95 per head on the CPU <= 50 ms for select requests; the owner fixes it"
         target.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        print(json.dumps({key: report[key] for key in ("device", "startup_seconds", "memory_ready")}, ensure_ascii=False))
+        print(json.dumps({key: report[key] for key in ("device", "startup_seconds", "memory_ready", "machine_load")}, ensure_ascii=False))
         print(json.dumps({arm: {k: v for k, v in values.items() if k in ("select", "select8", "pointer", "argmax_agreement_with_fp32")}
                           for arm, values in results.items() if isinstance(values, dict) and "select" in values}, ensure_ascii=False))
         return 0
     finally:
+        load.stop_event.set()
         if device == "cuda":
             t1.release_lock()
 

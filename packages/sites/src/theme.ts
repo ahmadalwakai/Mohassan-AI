@@ -107,18 +107,20 @@ export function deriveTheme(primaryHex: string, mood: SiteMood): Theme {
   const surfaceAlt = hsl(base.h, Math.min(40, Math.max(12, base.s * 0.4)), mood === 'warm' ? 94 : 96);
   const line = hsl(base.h, Math.min(25, base.s * 0.3), 87);
   const ink = ensureContrast(hsl(base.h, Math.min(25, base.s * 0.4), 13), surfaceAlt, 7, 'darker');
-  const muted = ensureContrast(hsl(base.h, Math.min(15, base.s * 0.25), 42), surfaceAlt, 4.5, 'darker');
+  const muted = ensureContrast(hsl(base.h, Math.min(15, base.s * 0.25), 42), surfaceAlt, 4.6, 'darker');
   let primaryDeep = hsl(base.h, Math.min(90, Math.max(35, base.s)), Math.min(base.l, 36));
-  primaryDeep = ensureContrast(primaryDeep, '#ffffff', 4.5, 'darker');
+  primaryDeep = ensureContrast(primaryDeep, '#ffffff', 4.6, 'darker');
+  primaryDeep = ensureContrast(primaryDeep, surface, 4.6, 'darker');
   const primaryInk = textOn(primary, ink);
   const primarySoft = hsl(base.h, Math.min(70, Math.max(20, base.s * 0.6)), 93);
-  const primarySoftInk = ensureContrast(primaryDeep, primarySoft, 4.5, 'darker');
+  const primarySoftInk = ensureContrast(primaryDeep, primarySoft, 4.6, 'darker');
   const accentHue = (base.h + settings.accentShift + 360) % 360;
   const accent = hsl(accentHue, Math.min(80, Math.max(45, base.s)), mood === 'bold' ? 52 : 58);
   const accentInk = textOn(accent, ink);
   const heroBg = mood === 'bold' ? primaryDeep : mood === 'warm' ? primarySoft : surface;
-  const heroInk = mood === 'bold' ? '#ffffff' : ink;
-  const heroMuted = mood === 'bold' ? ensureContrast(hsl(base.h, 20, 86), heroBg, 4.5, 'lighter') : muted;
+  const heroInk = mood === 'bold' ? '#ffffff' : ensureContrast(ink, heroBg, 7, 'darker');
+  // 4.6 rather than 4.5 leaves a margin above the AA line after hex rounding.
+  const heroMuted = mood === 'bold' ? ensureContrast(hsl(base.h, 20, 86), heroBg, 4.6, 'lighter') : ensureContrast(muted, heroBg, 4.6, 'darker');
   return { primary, primaryInk, primaryDeep, primarySoft, primarySoftInk, accent, accentInk, ink, muted, surface, surfaceAlt, line, heroBg, heroInk, heroMuted, radius: settings.radius, radiusSmall: settings.radiusSmall, scale: settings.scale, headingWeight: settings.headingWeight, mood };
 }
 

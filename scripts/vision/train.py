@@ -22,7 +22,7 @@ from torch.utils.data import DataLoader, Dataset
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from charset import CLASSES, decode, encode  # noqa: E402
-from model import DOWNSAMPLE, HEIGHT, OCRModel, greedy_decode  # noqa: E402
+from model import CHANNELS_V2, DOWNSAMPLE, HEIGHT, OCRModel, POOLS_V2, greedy_decode  # noqa: E402
 
 
 class LineShards(Dataset):
@@ -162,6 +162,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--shards", default="")
     parser.add_argument("--max-width", type=int, default=800, help="skip wider training lines; caps the memory of the widest batches")
+    parser.add_argument("--arch", choices=["v1", "v2"], default="v1", help="v1: channels 24-128, hidden 128; v2: channels 16-96, hidden 96, pooled earlier")
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(args.seed)
@@ -175,8 +176,9 @@ def main() -> None:
     holdouts = {name: LineShards(args.data, [name]) for name in ("holdout-seen", "holdout-unseen") if (args.data / f"{name}.json").exists()}
     print(f"train lines {len(train)} from {len(names)} shards; holdouts {[(k, len(v)) for k, v in holdouts.items()]}", flush=True)
 
-    model = OCRModel(len(CLASSES)).to(device)
+    model = (OCRModel(len(CLASSES), CHANNELS_V2, 96, POOLS_V2) if args.arch == "v2" else OCRModel(len(CLASSES))).to(device)
     parameters = sum(p.numel() for p in model.parameters())
+    print(f"architecture {args.arch}: channels {model.channels} hidden {model.hidden} pools {model.pools} parameters {parameters}", flush=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr, total_steps=args.steps, pct_start=0.06, anneal_strategy="cos", div_factor=20, final_div_factor=200)
     ctc = nn.CTCLoss(blank=0, zero_infinity=True)
@@ -195,7 +197,7 @@ def main() -> None:
 
     def save(path: Path, metrics: dict | None = None) -> None:
         torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(), "step": step, "best": best,
-                    "classes": CLASSES, "channels": model.channels, "hidden": model.hidden, "metrics": metrics, "parameters": parameters}, path)
+                    "classes": CLASSES, "channels": model.channels, "hidden": model.hidden, "pools": model.pools, "metrics": metrics, "parameters": parameters}, path)
 
     def status(extra: dict) -> None:
         (args.out / "status.json").write_text(json.dumps({"step": step, "steps": args.steps, "best_unseen_cer": best, "parameters": parameters, "device": device,

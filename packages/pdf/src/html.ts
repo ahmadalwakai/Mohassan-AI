@@ -57,7 +57,7 @@ export const DocumentSpecSchema = z.object({
   pageSize: z.enum(PAGE_SIZES).default('A4'),
   orientation: z.enum(['portrait', 'landscape']).default('portrait'),
   pageNumbers: z.boolean().default(true),
-  /** Footer text beside the page number; the title when absent. */
+  /** Footer text beside the page number; none when absent (the footer is drawn with the system font, see renderDocumentHtml). */
   footer: z.string().trim().max(200).optional(),
   blocks: z.array(DocumentBlockSchema).max(PDF_LIMITS.blocks),
 }).strict().superRefine((spec, context) => {
@@ -286,9 +286,12 @@ export function renderDocumentHtml(input: DocumentSpecInput, fontFaces = ''): Re
   const meta = [spec.author, spec.date].filter((value): value is string => Boolean(value)).map(escapeHtml).join(' · ');
   const head = `<header class="doc-head"><div><h1 dir="auto">${inline(spec.title)}</h1>${spec.subtitle ? `<p class="subtitle" dir="auto">${inline(spec.subtitle)}</p>` : ''}</div>${meta ? `<p class="meta" dir="auto">${meta}</p>` : ''}</header>`;
   const html = `<!doctype html><html lang="${lang}" dir="${rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${CSP}"><title>${escapeHtml(spec.title)}</title><style>${fontFaces}${themeCss(spec.theme, accent, rtl)}</style></head><body class="theme-${spec.theme}">${head}<main>${spec.blocks.map(renderBlock).join('\n')}</main></body></html>`;
-  const footerText = escapeHtml(spec.footer ?? spec.title).slice(0, 160);
-  const pageLabel = rtl ? 'صفحة <span class="pageNumber"></span> من <span class="totalPages"></span>' : 'Page <span class="pageNumber"></span> of <span class="totalPages"></span>';
-  const footerTemplate = `<div style="font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 8.5px; color: #777; width: 100%; padding: 0 14mm; display: flex; justify-content: space-between; direction: ${rtl ? 'rtl' : 'ltr'};"><span>${footerText}</span><span>${spec.pageNumbers ? pageLabel : ''}</span></div>`;
+  // Chromium draws header and footer templates with the system font only: bundled or page fonts never reach them
+  // (measured 2026-11-22: the footer came out in Arial whatever the font-family said). So the footer carries digits
+  // alone by default, which every machine has, and Arabic words only when the owner sets a footer text.
+  const footerText = spec.footer ? escapeHtml(spec.footer).slice(0, 160) : '';
+  const pageLabel = '<span class="pageNumber"></span> / <span class="totalPages"></span>';
+  const footerTemplate = `<div style="font-family: ${FONT_STACK}; font-size: 8.5px; color: #777; width: 100%; padding: 0 14mm; display: flex; justify-content: ${footerText ? 'space-between' : 'center'}; direction: ${rtl ? 'rtl' : 'ltr'};">${footerText ? `<span>${footerText}</span>` : ''}<span>${spec.pageNumbers ? pageLabel : ''}</span></div>`;
   const side = spec.theme === 'letter' ? '24mm' : '17mm';
   return {
     html, title: spec.title, lang, theme: spec.theme,
@@ -298,12 +301,12 @@ export function renderDocumentHtml(input: DocumentSpecInput, fontFaces = ''): Re
 }
 
 /** One A4 page with the watermark text alone; the editor scales it onto every page of an existing PDF. */
-export function watermarkHtml(text: string, options: { color?: string; opacity?: number; angle?: number } = {}): string {
+export function watermarkHtml(text: string, options: { color?: string; opacity?: number; angle?: number } = {}, fontFaces = ''): string {
   const color = /^#[0-9a-fA-F]{6}$/u.test(options.color ?? '') ? options.color! : '#7a8699';
   const opacity = Math.min(1, Math.max(0.05, options.opacity ?? 0.22));
   const angle = Math.max(-90, Math.min(90, options.angle ?? -32));
   const size = text.length > 24 ? 44 : text.length > 12 ? 64 : 92;
-  return `<!doctype html><html dir="${detectLang(text) === 'ar' ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${CSP}"><style>
+  return `<!doctype html><html dir="${detectLang(text) === 'ar' ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${CSP}"><style>${fontFaces}
     html, body { margin: 0; padding: 0; width: 210mm; height: 297mm; overflow: hidden; }
     body { display: flex; align-items: center; justify-content: center; font-family: ${FONT_STACK}; }
     .mark { transform: rotate(${angle}deg); font-size: ${size}pt; font-weight: 700; color: ${color}; opacity: ${opacity}; text-align: center; max-width: 180mm; overflow-wrap: anywhere; line-height: 1.2; }

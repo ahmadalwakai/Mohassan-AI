@@ -8,6 +8,8 @@ const node_path_1 = require("node:path");
 const APP_ID = 'ai.mohassan.desktop';
 electron_1.app.setName('Mohassan');
 electron_1.app.setAppUserModelId(APP_ID);
+// Expose the page to UI Automation (screen readers, and Mohassan's own desktop engine when it drives this window).
+electron_1.app.setAccessibilitySupportEnabled(true);
 const userDir = electron_1.app.getPath('userData');
 const logDir = (0, node_path_1.join)(userDir, 'logs');
 const configPath = (0, node_path_1.join)(userDir, 'config.json');

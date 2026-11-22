@@ -50,6 +50,11 @@ const ENGLISH_NAME = /(?:^|[\s(,:;])[A-Z][a-z]+(?:[\s-][A-Z][a-z]+)+/u;
 /** The question's language: Arabic script anywhere makes it Arabic. */
 export const questionLanguage = (question: string): 'ar' | 'en' => /\p{Script=Arabic}/u.test(question) ? 'ar' : 'en';
 
+/** A quoted title, a bold name, a link or a host is not the line's own language: «من **Search — Python docs** (docs.python.org):» is Arabic. */
+export function ownWords(line: string): string {
+  return line.replace(/\*\*[^*]*\*\*/gu, ' ').replace(/«[^»]*»|“[^”]*”|"[^"]*"/gu, ' ').replace(/\[[^\]]*\]\([^)]*\)/gu, ' ').replace(/\([^)]*\)/gu, ' ').replace(/https?:\/\/\S+/gu, ' ');
+}
+
 /**
  * One line against one question. `topic` are the question's subject words (hands.topicWords), folded; when given,
  * a line sharing none of them is off topic.
@@ -59,7 +64,11 @@ export function checkAnswerLine(question: string, line: string, options: { topic
   const text = line.trim();
   if (isMetaLine(text)) reasons.push('meta_line');
   if (isUiText(text)) reasons.push('ui_text');
-  const asked = questionLanguage(question), answered = textLanguage(text);
+  // Judge the line's own words; a quoted English title inside an Arabic frame stays Arabic. A quote alone (no frame) is judged as it is.
+  const own = ownWords(text).trim(), asked = questionLanguage(question);
+  let answered: AnswerLanguage = textLanguage(own || text);
+  // A short frame («وصلت إلى …:») has too few letters to count; the script it is written in still names its language.
+  if (answered === 'none' && own) { const arabic = /\p{Script=Arabic}/u.test(own), latin = /[A-Za-z]/u.test(own); answered = arabic && !latin ? 'ar' : latin && !arabic ? 'en' : 'none'; }
   if ((answered === 'ar' || answered === 'en') && answered !== asked) reasons.push('language');
   if (NUMBER_QUESTION.test(question) && !/[\d٠-٩]/u.test(text)) reasons.push('needs_number');
   // Arabic has no capitals to spot a name by; the check applies to English answers only.

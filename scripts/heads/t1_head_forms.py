@@ -85,6 +85,11 @@ STOP_SHARED_RISE_MIB = 256
 SPEED_DROP = 0.30
 HOT_C, COOL_C = 87, 80
 SAMPLE_SECONDS = 30
+# The full run of 2026-11-22 03:21-04:47 lost two arms to another session's GPU job (vision OCR training,
+# started about 04:05 without .data/gpu.lock): LoRA was stopped by the spill guard at 13 of 30 minutes and
+# last2 ran one update in 10.9 minutes. Another compute process on the card now pauses the arm (paused time
+# does not count against the budget, cached blocks are handed back) and stops it after this long.
+FOREIGN_PAUSE_LIMIT_SECONDS = 45 * 60
 CRITERIA = {
     "primary_metric": "goal_test_unseen_phrasing exact (n=1000); goal_test exact and gold (n=26) reported beside it",
     "success_proposed": "an arm within 2 points of the reference on the primary metric, at half or less of the "
@@ -119,20 +124,27 @@ def nvidia() -> dict:
             "power_w": float(power) if power.replace(".", "", 1).isdigit() else None}
 
 
-def adapters_memory() -> dict[str, dict[str, float]]:
-    """Windows counters per GPU adapter. Shared usage shows a spill out of the 4 GB card."""
-    command = ("(Get-Counter '\\GPU Adapter Memory(*)\\Shared Usage','\\GPU Adapter Memory(*)\\Dedicated Usage')"
-               ".CounterSamples | ForEach-Object { $_.Path + '|' + $_.CookedValue }")
+def adapters_memory(with_cpu: bool = False):
+    """Windows counters per GPU adapter. Shared usage shows a spill out of the 4 GB card.
+    With `with_cpu`, also the machine's total CPU use, so a slow interval can be told apart from a busy CPU."""
+    paths = "'\\GPU Adapter Memory(*)\\Shared Usage','\\GPU Adapter Memory(*)\\Dedicated Usage'"
+    if with_cpu:
+        paths += ",'\\Processor(_Total)\\% Processor Time'"
+    command = f"(Get-Counter {paths}).CounterSamples | ForEach-Object {{ $_.Path + '|' + $_.CookedValue }}"
     result = subprocess.run(["powershell", "-NoProfile", "-Command", command], capture_output=True, text=True, timeout=60)
     adapters: dict[str, dict[str, float]] = {}
+    cpu = None
     for line in result.stdout.splitlines():
         if "|" not in line:
             continue
         path, value = line.rsplit("|", 1)
+        if "processor time" in path.lower():
+            cpu = round(float(value), 1)
+            continue
         name = path.split("(", 1)[1].split(")", 1)[0] if "(" in path else path
         kind = "shared_mib" if path.lower().endswith("shared usage") else "dedicated_mib"
         adapters.setdefault(name, {})[kind] = round(float(value) / 2**20, 1)
-    return adapters
+    return (adapters, cpu) if with_cpu else adapters
 
 
 def shared_rise(before: dict, after: dict) -> float:
@@ -151,6 +163,8 @@ class Sampler(threading.Thread):
         self.stop_event = threading.Event()
         self.hot = threading.Event()
         self.spill = threading.Event()
+        self.foreign = threading.Event()
+        self.foreign_processes: list[str] = []
         self.baseline: dict | None = None
 
     def reset(self) -> None:
@@ -166,7 +180,17 @@ class Sampler(threading.Thread):
             except Exception as error:  # noqa: BLE001  (a failed sample must not stop training)
                 row["nvidia_error"] = str(error)[:200]
             try:
-                adapters = adapters_memory()
+                others = foreign_gpu_users()
+                row["foreign_gpu_processes"] = others
+                self.foreign_processes = others
+                if others:
+                    self.foreign.set()
+                else:
+                    self.foreign.clear()
+            except Exception as error:  # noqa: BLE001
+                row["foreign_error"] = str(error)[:200]
+            try:
+                adapters, row["cpu_pct"] = adapters_memory(with_cpu=True)
                 self.baseline = self.baseline or adapters
                 row["adapters"] = adapters
                 row["shared_rise_mib"] = shared_rise(self.baseline, adapters)
@@ -177,7 +201,9 @@ class Sampler(threading.Thread):
                 self.hot.set()
             elif temperature is not None and temperature <= COOL_C:
                 self.hot.clear()
-            if row.get("dedicated_mib", 0) >= STOP_DEDICATED_MIB and row.get("shared_rise_mib", 0.0) > STOP_SHARED_RISE_MIB:
+            # A spill while another job holds the card is that job's doing: the loop pauses for it instead.
+            if (not self.foreign.is_set() and row.get("dedicated_mib", 0) >= STOP_DEDICATED_MIB
+                    and row.get("shared_rise_mib", 0.0) > STOP_SHARED_RISE_MIB):
                 self.spill.set()
             with self.path.open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps(row) + "\n")
@@ -189,6 +215,31 @@ def gpu_users() -> list[str]:
     lines = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,process_name,used_memory", "--format=csv,noheader"],
                            capture_output=True, text=True, timeout=20).stdout.splitlines()
     return [line.strip() for line in lines if line.strip()]
+
+
+def foreign_gpu_users(min_mib: float = 100.0) -> list[str]:
+    """Other processes holding at least `min_mib` of dedicated memory on the card (the adapter whose processes
+    hold the most). nvidia-smi is not enough on Windows: it shows no per-process memory there, and at 04:55 it
+    listed Chrome as a compute process while Chrome held no memory on the card. A venv launcher runs the code
+    in a child interpreter, whose pid is os.getpid()."""
+    command = ("$names = @{}; Get-Process | ForEach-Object { $names[$_.Id] = $_.ProcessName }; "
+               "(Get-Counter '\\GPU Process Memory(*)\\Dedicated Usage').CounterSamples | ForEach-Object { "
+               "$id = [int](($_.InstanceName -split '_')[1]); $_.InstanceName + '|' + $_.CookedValue + '|' + $names[$id] }")
+    result = subprocess.run(["powershell", "-NoProfile", "-Command", command], capture_output=True, text=True, timeout=60)
+    per_card: dict[str, dict[int, list]] = {}
+    for line in result.stdout.splitlines():
+        parts = line.strip().split("|")
+        if len(parts) != 3 or not parts[0].startswith("pid_"):
+            continue
+        fields = parts[0].split("_")  # pid_1234_luid_0x00000000_0x000186ef_phys_0
+        pid, card = int(fields[1]), "_".join(fields[2:])
+        entry = per_card.setdefault(card, {}).setdefault(pid, [0.0, parts[2]])
+        entry[0] += float(parts[1]) / 2**20
+    if not per_card:
+        return []
+    card = max(per_card, key=lambda name: sum(entry[0] for entry in per_card[name].values()))
+    return [f"pid {pid} {name or '?'}: {round(mib)} MiB" for pid, (mib, name) in sorted(per_card[card].items())
+            if pid != os.getpid() and mib >= min_mib]
 
 
 def acquire_lock(purpose: str) -> None:
@@ -386,8 +437,14 @@ def train_arm(arm: str, microbatch: int, train_rows: list, validation_rows: list
         log.write(json.dumps(record) + "\n")
         log.flush()
         interval.update(tokens=0, seconds=0.0, loss=0.0, updates=0)
-        if any(event["step"] > last_eval_step for event in events):
+        # An event at step k happened after the evaluation at step k, hence >=.
+        since = [event for event in events if event["step"] >= last_eval_step]
+        if any(event["event"] == "out_of_memory_halved_microbatch" for event in since):
             rates = []  # a halved micro-batch is slower by design; measure the new speed afresh
+        if any(event["event"] == "paused_other_gpu_job" for event in since):
+            rate = None  # the steps before the pause may have shared the card; this interval is not a speed sample
+            record["speed_check"] = "skipped: another GPU job in this interval"
+            log.write(json.dumps({"step": step, "note": record["speed_check"]}) + "\n")
         last_eval_step = step
         if rate:
             if rates and rate < (1 - SPEED_DROP) * statistics.median(rates):
@@ -408,6 +465,19 @@ def train_arm(arm: str, microbatch: int, train_rows: list, validation_rows: list
             if sampler.spill.is_set():
                 status = "stopped_memory_spill"
                 break
+            if sampler.foreign.is_set():
+                waited = time.perf_counter()
+                events.append({"step": step, "event": "paused_other_gpu_job", "processes": sampler.foreign_processes, "at": now()})
+                torch.cuda.empty_cache()  # hand cached blocks back while the other job runs
+                while sampler.foreign.is_set() and time.perf_counter() - waited < FOREIGN_PAUSE_LIMIT_SECONDS:
+                    time.sleep(10)
+                paused += time.perf_counter() - waited
+                events.append({"step": step, "event": "resumed_after_other_gpu_job" if not sampler.foreign.is_set()
+                               else "other_gpu_job_outlasted_pause", "paused_seconds": round(time.perf_counter() - waited, 1), "at": now()})
+                if sampler.foreign.is_set():
+                    status = "stopped_other_gpu_job"
+                    break
+                sampler.reset()  # new shared-memory baseline once the other job has gone
             while sampler.hot.is_set():
                 waited = time.perf_counter()
                 time.sleep(10)
@@ -567,9 +637,9 @@ def main() -> int:
     out_root = (ROOT / args.out).resolve() if not args.out.is_absolute() else args.out.resolve()
     if not out_root.is_relative_to((ROOT / "artifacts").resolve()):
         raise SystemExit("--out must be inside artifacts/")
-    users = gpu_users()
+    users = foreign_gpu_users()
     if users:
-        raise SystemExit(f"The GPU has compute processes: {users}")
+        raise SystemExit(f"Another job holds GPU memory: {users}")
     out_root.mkdir(parents=True, exist_ok=False)
     acquire_lock("T1 head forms" + (" (smoke)" if args.smoke else ""))
     sampler = Sampler(out_root / "resources.jsonl")

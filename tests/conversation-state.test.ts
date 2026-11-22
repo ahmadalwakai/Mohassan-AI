@@ -450,3 +450,188 @@ describe('conversation state v2: more properties, reformulations and go-aheads',
     expect(turn.query).toBeNull();
   });
 });
+
+// Added 2026-11-22 (third batch): correction forms, dialect leads, Arabic digits and more time words.
+describe('conversation state v2: correction forms', () => {
+  const match = () => ask(emptyConversationState(), 'متى مباراة الهلال؟', 'u1');
+
+  it('reads «لا، النصر», «مش الهلال، النصر», «النصر مش الهلال» and «بدل الهلال النصر» as corrections', () => {
+    for (const text of ['لا، النصر', 'غلط، النصر', 'مش الهلال، النصر', 'النصر مش الهلال', 'بدل الهلال النصر', 'النصر بدل الهلال', 'ليس الهلال بل النصر']) {
+      const turn = ask(match().next, text, 'u2');
+      expect(turn.type, text).toBe('correction');
+      expect(turn.entity, text).toBe('النصر');
+      expect(turn.query, text).toBe('مباراة النصر');
+    }
+  });
+
+  it('reads "Chelsea instead" and "Chelsea instead of Arsenal" as corrections', () => {
+    const first = ask(emptyConversationState(), "When is Arsenal's next match?", 'u1');
+    for (const text of ['Chelsea instead', 'Chelsea instead of Arsenal', 'no, Chelsea']) {
+      const turn = ask(first.next, text, 'u2');
+      expect(turn.type, text).toBe('correction');
+      expect(turn.query, text).toBe('next match of Chelsea');
+    }
+  });
+
+  it('does not read «لا، شكرا», «لا، تابع» or an unrelated «ليس» sentence as a correction', () => {
+    expect(ask(match().next, 'لا، شكرا', 'u2').type).not.toBe('correction');
+    expect(ask(match().next, 'لا، تابع', 'u2').type).toBe('ambiguous');
+    const unrelated = ask(match().next, 'ليس عندي وقت، ما عاصمة اليابان؟', 'u2');
+    expect(unrelated.type).toBe('topic_change');
+    expect(unrelated.query).toContain('اليابان');
+  });
+
+  it('corrects one operand and keeps the entity: «خليها بكرا», «لا، في مصر», "set it to tomorrow"', () => {
+    const weather = ask(emptyConversationState(), 'شو الطقس في بيروت اليوم؟', 'u1');
+    const tomorrow = ask(weather.next, 'خليها بكرا', 'u2');
+    expect(tomorrow.type).toBe('correction');
+    expect(tomorrow.edit).toEqual({ field: 'date', value: 'بكرا' });
+    expect(tomorrow.query).toBe('طقس بيروت بكرا');
+    const price = ask(emptyConversationState(), 'كم سعر ايفون 15 في السعودية؟', 'u1');
+    const egypt = ask(price.next, 'لا، في مصر', 'u2');
+    expect(egypt.type).toBe('correction');
+    expect(egypt.edit).toEqual({ field: 'place', value: 'مصر' });
+    expect(egypt.query).toBe('سعر ايفون 15 مصر');
+    const london = ask(emptyConversationState(), "What's the weather in London today?", 'u1');
+    const set = ask(london.next, 'set it to tomorrow', 'u2');
+    expect(set.edit).toEqual({ field: 'date', value: 'tomorrow' });
+    expect(set.query).toBe('weather in London tomorrow');
+    const paris = ask(london.next, 'make it Paris', 'u2');
+    expect(paris.type).toBe('correction');
+    expect(paris.query).toBe('weather in Paris today');
+  });
+
+  it('asks for the reference when a correction arrives with no earlier topic', () => {
+    const turn = ask(emptyConversationState(), 'لا، أقصد النصر', 'u1');
+    expect(turn.type).toBe('correction');
+    expect(turn.needs).toBe('missing_reference');
+  });
+});
+
+describe('conversation state v2: dialect leads, digits and time words', () => {
+  it('follows «كمان مصر؟», «برضو», «نفس الشي لليابان» and "same for Egypt"', () => {
+    const first = ask(emptyConversationState(), 'كم عدد سكان المغرب؟', 'u1');
+    for (const [text, entity] of [['كمان مصر؟', 'مصر'], ['وبرضو تونس؟', 'تونس'], ['نفس الشي لليابان', 'اليابان'], ['same for Egypt', 'Egypt'], ['Egypt too', 'Egypt']] as const) {
+      const turn = ask(first.next, text, 'u2');
+      expect(turn.type, text).toBe('follow_up_entity');
+      expect(turn.entity, text).toBe(entity);
+    }
+  });
+
+  it('reads Arabic digits and number words in references («اقرأ الخبر ٢», "option two")', () => {
+    const first = ask(emptyConversationState(), 'ما آخر أخبار التقنية؟', 'u1');
+    const shown = withHostResults(first.next, [{ label: 'خبر أول', kind: 'news' }, { label: 'خبر ثاني', kind: 'news' }], 'a1');
+    expect(ask(shown, 'اقرأ الخبر ٢', 'u2').reference).toEqual({ index: 2, label: 'خبر ثاني' });
+    expect(ask(shown, 'open option two', 'u2').reference).toEqual({ index: 2, label: 'خبر ثاني' });
+  });
+
+  it('keeps weekdays and relative periods apart from the entity', () => {
+    const friday = ask(emptyConversationState(), 'كيف الطقس في جدة يوم الجمعة؟', 'u1');
+    expect(friday.entity).toBe('جدة');
+    expect(friday.time).toBe('يوم الجمعة');
+    const prayer = ask(emptyConversationState(), 'ما حكم صلاة الجمعة؟', 'u1');
+    expect(prayer.time).toBeNull();
+    const week = ask(emptyConversationState(), 'What was the gold price last week?', 'u1');
+    expect(week.property).toBe('price');
+    expect(week.time).toBe('last week');
+    expect(week.entity).toBe('gold');
+  });
+
+  it('keeps the first property in «ما عاصمة اليابان وعدد سكانها؟» and binds the pronoun inside the sentence', () => {
+    const turn = ask(emptyConversationState(), 'ما عاصمة اليابان وعدد سكانها؟', 'u1');
+    expect(turn.type).toBe('new_request');
+    expect(turn.property).toBe('capital');
+    expect(turn.entity).toBe('اليابان');
+    expect(turn.query).toBe('ما عاصمة اليابان وعدد سكانها؟');
+  });
+});
+
+// Added 2026-11-22 (fourth batch): open properties, question templates, comparisons, units and control words.
+describe('conversation state v2: follow-ups with a property outside the closed list', () => {
+  it('replaces a standalone pronoun by the entity («هل هي كبيرة؟», "which continent is it in?")', () => {
+    const japan = ask(emptyConversationState(), 'ما عاصمة اليابان؟', 'u1');
+    const big = ask(japan.next, 'هل هي كبيرة؟', 'u2');
+    expect(big.type).toBe('follow_up_property');
+    expect(big.property).toBeNull();
+    expect(big.entity).toBe('اليابان');
+    expect(big.query).toBe('هل اليابان كبيرة');
+    const continent = ask(japan.next, 'وهي في أي قارة؟', 'u2');
+    expect(continent.type).toBe('follow_up_property');
+    expect(continent.query).toBe('اليابان في أي قارة');
+    const english = ask(ask(emptyConversationState(), 'What is the capital of Japan?', 'u1').next, 'which continent is it in?', 'u2');
+    expect(english.type).toBe('follow_up_property');
+    expect(english.query).toBe('which continent is Japan in');
+  });
+
+  it('appends the entity when the pointer is a suffix or an implicit verb («وما أشهر معالمها؟», «وأين تقع؟»)', () => {
+    const japan = ask(emptyConversationState(), 'ما عاصمة اليابان؟', 'u1');
+    expect(ask(japan.next, 'وما أشهر معالمها؟', 'u2').query).toBe('ما أشهر معالمها اليابان');
+    expect(ask(japan.next, 'وأين تقع؟', 'u2').query).toBe('أين تقع اليابان');
+    const einstein = ask(emptyConversationState(), 'من هو ألبرت أينشتاين؟', 'u1');
+    expect(ask(einstein.next, 'ومتى ولد؟', 'u2').query).toBe('متى ولد ألبرت أينشتاين');
+  });
+
+  it('asks for the question when only a pointer arrives («وهو؟»)', () => {
+    const japan = ask(emptyConversationState(), 'ما عاصمة اليابان؟', 'u1');
+    const turn = ask(japan.next, 'وهو؟', 'u2');
+    expect(turn.type).toBe('ambiguous');
+    expect(turn.needs).toBe('missing_value');
+    expect(turn.query).toBeNull();
+  });
+
+  it('keeps a private topic private for an open follow-up', () => {
+    const memory = ask(emptyConversationState(), 'من ذاكرتي، ما مدينتي المفضلة؟', 'u1');
+    const turn = ask(memory.next, 'وأين تقع؟', 'u2');
+    expect(turn.query).toBeNull();
+  });
+});
+
+describe('conversation state v2: question templates, comparisons, units and control words', () => {
+  it('reuses the question shape for a new entity («من هو أينشتاين؟» → «ونيوتن؟» → «من هو نيوتن؟»)', () => {
+    const first = ask(emptyConversationState(), 'من هو ألبرت أينشتاين؟', 'u1');
+    expect(first.next.topics.at(-1)?.template).toBe('من هو {}؟');
+    const second = ask(first.next, 'ونيوتن؟', 'u2');
+    expect(second.type).toBe('follow_up_entity');
+    expect(second.entity).toBe('نيوتن');
+    expect(second.query).toBe('من هو نيوتن؟');
+    const third = ask(second.next, 'لا، أقصد غاليليو', 'u3');
+    expect(third.type).toBe('correction');
+    expect(third.query).toBe('من هو غاليليو؟');
+    const english = ask(ask(emptyConversationState(), 'Who is Albert Einstein?', 'u1').next, 'and Newton?', 'u2');
+    expect(english.query).toBe('Who is Newton?');
+  });
+
+  it('reads a comparison as the same property for the new entity, keeping the old one as `against`', () => {
+    const first = ask(emptyConversationState(), 'كم عدد سكان جدة؟', 'u1');
+    const compare = ask(first.next, 'وقارنها بالرياض', 'u2');
+    expect(compare.type).toBe('follow_up_entity');
+    expect(compare.entity).toBe('الرياض');
+    expect(compare.against).toBe('جدة');
+    expect(compare.query).toBe('عدد سكان الرياض');
+    const english = ask(ask(emptyConversationState(), 'What is the population of Jeddah?', 'u1').next, 'compare it with Riyadh', 'u2');
+    expect(english.against).toBe('Jeddah');
+    expect(english.query).toBe('population of Riyadh');
+    expect(ask(first.next, 'قارنها', 'u2').needs).toBe('missing_value');
+  });
+
+  it('reads «بالدولار», "in euros" and «بالكيلومتر» as unit reformulations', () => {
+    const first = ask(emptyConversationState(), 'كم سعر الذهب اليوم؟', 'u1');
+    expect(ask(first.next, 'بالدولار', 'u2').edit).toEqual({ field: 'unit', value: 'USD' });
+    expect(ask(first.next, 'in euros', 'u2').edit).toEqual({ field: 'unit', value: 'EUR' });
+    expect(ask(first.next, 'بالريال السعودي', 'u2').edit).toEqual({ field: 'unit', value: 'SAR' });
+    const distance = ask(emptyConversationState(), 'كم تبعد جدة عن مكة؟', 'u1');
+    const km = ask(distance.next, 'بالكيلومتر', 'u2');
+    expect(km.type).toBe('field_edit');
+    expect(km.edit).toEqual({ field: 'unit', value: 'km' });
+    expect(km.query).toBeNull();
+  });
+
+  it('treats stop words as control talk that keeps the topic', () => {
+    const first = ask(emptyConversationState(), 'ما عاصمة اليابان؟', 'u1');
+    for (const text of ['توقف', 'خلاص', 'stop', 'never mind']) {
+      const turn = ask(first.next, text, 'u2');
+      expect(turn.type, text).toBe('small_talk');
+      expect(turn.next.topics, text).toEqual(first.next.topics);
+    }
+  });
+});

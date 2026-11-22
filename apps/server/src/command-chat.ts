@@ -28,6 +28,7 @@ import { searchRefusedReply, unsupportedReply, unsupportedRequest } from './assi
 import { decideBrowserVisibility, deriveBrowserVisibility } from './assistant/browser-visibility.js';
 import type { ShadowRouter } from './assistant/router.js';
 import type { ConversationShadow } from './assistant/conversation-state-shadow.js';
+import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
 import { composePlan, planningQuestion, planningTask } from './assistant/planner.js';
 import { composeDocumentSpec, documentCreatedReply, documentEditedReply, documentInfoReply, documentQuestion, documentTask, noSourceReply, unsupportedDocumentReply, type DocumentEditTask, type DocumentOperation } from './assistant/documents.js';
@@ -170,6 +171,8 @@ export interface CommandChatConfig {
   shadowRouter?: ShadowRouter;
   /** Conversation state v2 in shadow (docs/HANDOVER-2026-11-22-CONVERSATION-STATE-V2.md): logs its understanding of each turn and changes nothing. */
   conversationShadow?: ConversationShadow;
+  /** The judge («الحَكَم») in shadow (docs/HANDOVER-2026-11-22-JUDGE-SHADOW.md): records a verdict on each reply the owner sees and changes nothing. */
+  judgeShadow?: JudgeShadow;
 }
 
 export interface ChatSkillContext {
@@ -375,7 +378,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     ...(tools?.computer ? ['computer_view', 'computer_click', 'computer_type', 'computer_key'] as const : []),
   ];
   type Execution = { ownerId: string; id: string; runId: string; token: string; controller: AbortController; full: boolean;
-    request?: string; constraints?: UserRequestConstraints | null; state?: BrainState; page?: AgentPage };
+    request?: string; previousRequest?: string | null; constraints?: UserRequestConstraints | null; state?: BrainState; page?: AgentPage };
   /** Tools that reach the owner's machine, projects or task runtime. */
   const OWNER_ONLY: ReadonlySet<string> = new Set(['workspace_list', 'code_change', 'studio_change', 'computer_view', 'computer_click', 'computer_type', 'computer_key', 'run_skill']);
   const fullReach = () => execution.getStore()?.full !== false;
@@ -1020,6 +1023,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       await tx.updateTable('chat_runs').set({ status, lease_expires_at:sql`CURRENT_TIMESTAMP + interval '10 minutes'`, updated_at: new Date() }).where('id', '=', runId).execute();
       if (say) await addMessage(tx, id, 'assistant', say);
     });
+    if (say) judgeInShadow(id, runId, say, status);
   }
 
   /** The owner sees the campaign draft before any request to connect or sign in: once, then never repeated. */
@@ -1054,9 +1058,23 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     await pause(id, runId, state, 'waiting_approval', { approval: JSON.stringify({ id: randomUUID(), prompt, detail }) }, prompt);
   }
 
+  /**
+   * The judge («الحَكَم») in shadow: one verdict per reply the owner sees, after the reply is stored. Never awaited,
+   * never read by any reply path, never a reason to fail a run (docs/HANDOVER-2026-11-22-JUDGE-SHADOW.md).
+   */
+  function judgeInShadow(id: string, runId: string, reply: string, status: string) {
+    if (!config.judgeShadow) return;
+    const current = execution.getStore();
+    if (!current?.request) return;
+    try {
+      config.judgeShadow.observe({ conversationId: id, runId, question: current.request, previous: current.previousRequest ?? null, reply, status });
+    } catch { /* The shadow never stops a run. */ }
+  }
+
   async function finish(id: string, runId: string, state: BrainState, text: string, status: 'completed' | 'partial' | 'blocked',
       proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall') {
     if (state.supervision) state.completionReview = reviewChatAnswer(state.supervision, text);
+    let sentText = text, sentStatus: 'completed' | 'partial' | 'blocked' = status;
     // A campaign task the reply leaves open ends with it, stating only what was really checked or done.
     const campaignEnd = campaignEndEvent(state.campaign, Boolean(state.adsApproved));
     const campaignTask = state.campaign ? campaignTaskId(runId, state.campaign.serial) : null;
@@ -1097,6 +1115,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
       }
       await addMessage(tx, id, 'assistant', finalText);
+      sentText = finalText; sentStatus = finalStatus;
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',
         data: JSON.stringify({ contractHash: state.supervision?.contract.hash, review: state.completionReview }) }).execute();
@@ -1107,6 +1126,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await config.recordSkillGap(tx, { ownerId: execution.getStore()!.ownerId, chatRunId: runId, outcome: finalStatus, signal: state.gapSignal ?? null });
       }
     });
+    judgeInShadow(id, runId, sentText, sentStatus);
     const current=execution.getStore();if(current)forgetVault(id,current.token);
   }
 
@@ -1967,6 +1987,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const personalSignIn = PERSONAL_SIGN_IN.test(request.replace(/[\u064b-\u065f\u0670]/g, '').replace(/[أإآ]/g, 'ا'));
       const earlier = await db.selectFrom('chat_messages').select(['role', 'text']).where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(HISTORY_MESSAGES + 1).execute();
       const history = earlier.reverse().slice(0, -1).map((entry) => ({ role: entry.role, text: clean(entry.text) }));
+      currentExecution.previousRequest = history.filter(entry => entry.role === 'user').at(-1)?.text ?? null;
       let page: AgentPage | null = null;
       // Preflight recovery reads spend budget, but do not execute the requested
       // hands plan or turn a new command into an already-handled continuation.
@@ -3341,7 +3362,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if (rows.length !== unique.length) throw new BrowserError('CHAT_IMAGE_MISSING', 'إحدى الصور لم تعد موجودة؛ أعد إرفاقها.', 409);
     const ordered = unique.map(imageId => rows.find(item => item.id === imageId)!);
     const controller = new AbortController();
-    const deadline = setTimeout(() => controller.abort(new Error('IMAGE_READ_TIMEOUT')), 90_000);
+    const deadline = setTimeout(() => controller.abort(new Error('IMAGE_READ_TIMEOUT')), 140_000);
     const readings: ImageReading[] = [];
     try {
       for (const image of ordered) {

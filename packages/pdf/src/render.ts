@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { extname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium, type Browser, type BrowserContext } from 'playwright';
 import { PdfError } from './errors.ts';
 import type { PrintOptions } from './html.ts';
@@ -22,7 +23,7 @@ export interface PdfRenderer {
   close(): Promise<void>;
 }
 export interface PdfRendererOptions {
-  /** Directory of .ttf/.otf/.woff2 files embedded into every document as "Mohassan Document". */
+  /** Directory of .ttf/.otf/.woff2 files embedded into every document as "Mohassan Document"; the package's own fonts/ folder by default. */
   fontsDir?: string;
   /** Milliseconds without a render before Chromium is closed to free its memory. */
   idleMs?: number;
@@ -34,6 +35,8 @@ const FONT_FORMATS: Record<string, [mime: string, format: string]> = {
 };
 const MAX_FONT_BYTES = 6_000_000;
 const MAX_HTML_CHARS = 4_000_000;
+/** packages/pdf/fonts: Noto Naskh Arabic (OFL) ships there, so Arabic never depends on the machine's fonts. */
+export const DEFAULT_FONTS_DIR = fileURLToPath(new URL('../fonts/', import.meta.url));
 const DEFAULT_PRINT: PrintOptions = { format: 'A4', landscape: false, margin: { top: '18mm', right: '17mm', bottom: '20mm', left: '17mm' }, displayHeaderFooter: false, headerTemplate: '', footerTemplate: '' };
 
 /** Bundled fonts become data URIs, so a document never depends on the machine's installed fonts. */
@@ -49,8 +52,9 @@ export async function loadFontFaces(dir: string | undefined): Promise<string> {
     const info = await stat(path).catch(() => null);
     if (!info?.isFile() || info.size > MAX_FONT_BYTES) continue;
     const bytes = await readFile(path);
-    const weight = /bold|black|heavy|700|800|900/iu.test(name) ? 700 : 400;
-    faces.push(`@font-face { font-family: "Mohassan Document"; font-weight: ${weight}; src: url(data:${entry[0]};base64,${bytes.toString('base64')}) format("${entry[1]}"); }`);
+    // A variable font ([wght] axis) serves every weight; a static file is bold or regular by its name.
+    const weight = /\[wght\]|variable/iu.test(name) ? '100 900' : /bold|black|heavy|700|800|900/iu.test(name) ? '700' : '400';
+    faces.push(`@font-face { font-family: "Mohassan Document"; font-weight: ${weight}; font-display: block; src: url(data:${entry[0]};base64,${bytes.toString('base64')}) format("${entry[1]}"); }`);
   }
   return faces.join('\n');
 }
@@ -92,7 +96,7 @@ export function createPdfRenderer(options: PdfRendererOptions = {}): PdfRenderer
   }
 
   return {
-    fontFaces: () => (fonts ??= loadFontFaces(options.fontsDir)),
+    fontFaces: () => (fonts ??= loadFontFaces(options.fontsDir ?? DEFAULT_FONTS_DIR)),
     async render(html, renderOptions = {}) {
       if (typeof html !== 'string' || !html.trim()) throw new PdfError('PDF_RENDER_INPUT', 'لا يوجد محتوى لتحويله إلى PDF.');
       if (html.length > MAX_HTML_CHARS) throw new PdfError('PDF_RENDER_INPUT', 'محتوى المستند أكبر من المسموح.');

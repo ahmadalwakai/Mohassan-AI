@@ -24,6 +24,8 @@ interface Config {
 const APP_ID = 'ai.mohassan.desktop';
 app.setName('Mohassan');
 app.setAppUserModelId(APP_ID);
+// Expose the page to UI Automation (screen readers, and Mohassan's own desktop engine when it drives this window).
+app.setAccessibilitySupportEnabled(true);
 
 const userDir = app.getPath('userData');
 const logDir = join(userDir, 'logs');

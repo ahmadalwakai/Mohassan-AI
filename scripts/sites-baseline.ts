@@ -46,11 +46,14 @@ async function measureInBrowser(run: ScenarioRun, files: SiteFile[], dir: string
     try {
       for (const width of WIDTHS) {
         const page = await browser.newPage({ viewport: { width, height: 900 } });
-        await page.goto(`${origin}/index.html`, { waitUntil: 'load' });
-        const file = join(dir, `home-${width}.png`);
-        await page.screenshot({ path: file, fullPage: true });
-        screenshots.push(file);
-        await page.close();
+        try {
+          await page.goto(`${origin}/index.html`, { waitUntil: 'load' });
+          const file = join(dir, `home-${width}.png`);
+          try { await page.screenshot({ path: file, fullPage: true }); }
+          catch { await page.screenshot({ path: file, fullPage: false }); }
+          screenshots.push(file);
+        } catch (error) { screenshots.push(`error at ${width}: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`); }
+        finally { await page.close(); }
       }
       let lighthouseModule: typeof import('lighthouse') | null = null;
       try { lighthouseModule = await import('lighthouse'); } catch { lighthouseModule = null; }

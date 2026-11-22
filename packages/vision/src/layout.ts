@@ -53,7 +53,7 @@ function components(mask: Uint8Array, width: number, height: number, limit: numb
       }
     }
     next++;
-    out.push({ x0, y0, x1, y1, area });
+    if (area >= 2 && y1 > y0) out.push({ x0, y0, x1, y1, area });
   }
   return out;
 }
@@ -75,42 +75,104 @@ class UnionFind {
   union(a: number, b: number): void { a = this.find(a); b = this.find(b); if (a !== b) this.parent[b] = a; }
 }
 
+const heightOf = (c: Component) => c.y1 - c.y0 + 1;
+
+/** Members of one group split into rows, so an accidental merge of several lines still reads line by line. */
+function rows(members: Component[]): Component[][] {
+  const sorted = members.slice().sort((a, b) => (a.y0 + a.y1) - (b.y0 + b.y1));
+  const out: { y0: number; y1: number; items: Component[] }[] = [];
+  for (const c of sorted) {
+    const current = out[out.length - 1];
+    if (current) {
+      const overlap = Math.min(current.y1, c.y1) - Math.max(current.y0, c.y0) + 1;
+      if (overlap >= 0.4 * Math.min(current.y1 - current.y0 + 1, heightOf(c))) { current.items.push(c); current.y0 = Math.min(current.y0, c.y0); current.y1 = Math.max(current.y1, c.y1); continue; }
+    }
+    out.push({ y0: c.y0, y1: c.y1, items: [c] });
+  }
+  return out.map(row => row.items);
+}
+
+function lineOf(members: Component[], attached: Component[], polarity: 'dark' | 'light'): LineBox | null {
+  const glyphHeights = members.map(heightOf).sort((a, b) => a - b);
+  const glyphHeight = glyphHeights[Math.floor(glyphHeights.length * 0.75)];
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, ink = 0;
+  for (const c of [...members, ...attached]) { x0 = Math.min(x0, c.x0); y0 = Math.min(y0, c.y0); x1 = Math.max(x1, c.x1); y1 = Math.max(y1, c.y1); ink += c.area; }
+  const w = x1 - x0 + 1, h = y1 - y0 + 1;
+  if (h < 5 || w < 4 || w * h < 40) return null;
+  if (members.length === 1 && (w < 6 || glyphHeight < 6)) return null;
+  return { x: x0, y: y0, w, h, ink, components: members.length + attached.length, polarity, glyphHeight };
+}
+
+/**
+ * Glyphs of similar height on one baseline and close together form a line. Small
+ * marks (dots, diacritics, punctuation, specks of a photo) never merge lines: each
+ * attaches to at most one neighbouring taller glyph, so chains of specks cannot
+ * bridge two lines, and a group that still spans several rows is split by row.
+ */
 function groupLines(glyphs: Component[], polarity: 'dark' | 'light'): LineBox[] {
   const order = glyphs.map((_, i) => i).sort((a, b) => glyphs[a].x0 - glyphs[b].x0);
-  const heights = glyphs.map(c => c.y1 - c.y0 + 1).filter(h => h >= 4).sort((a, b) => a - b);
+  const heights = glyphs.map(heightOf).filter(h => h >= 4).sort((a, b) => a - b);
   const median = heights.length ? heights[Math.floor(heights.length / 2)] : 10;
   const union = new UnionFind(glyphs.length);
+  const scanFor = (h: number) => Math.max(60, 3 * median, 1.5 * h + 10);
   for (let a = 0; a < order.length; a++) {
-    const A = glyphs[order[a]], hA = A.y1 - A.y0 + 1;
-    const scan = Math.max(60, 3 * median, 1.5 * hA + 10);
+    const A = glyphs[order[a]], hA = heightOf(A), scan = scanFor(hA);
     for (let b = a + 1; b < order.length; b++) {
       const B = glyphs[order[b]];
       if (B.x0 > A.x1 + scan) break;
-      const hB = B.y1 - B.y0 + 1, gap = B.x0 - A.x1 - 1;
-      const overlap = Math.min(A.y1, B.y1) - Math.max(A.y0, B.y0) + 1;
-      const small = Math.min(hA, hB), large = Math.max(hA, hB);
-      if (small >= 0.45 * large) {
-        if (overlap >= 0.4 * small && gap <= 1.2 * large + 3) union.union(order[a], order[b]);
-      } else {
-        // Dots, marks and punctuation attach to a neighbouring taller glyph.
-        const tall = hA >= hB ? A : B, short = hA >= hB ? B : A, center = (short.y0 + short.y1) / 2;
-        if (center >= tall.y0 - 0.45 * large && center <= tall.y1 + 0.45 * large && gap <= 1.0 * large + 3) union.union(order[a], order[b]);
-      }
+      const hB = heightOf(B), small = Math.min(hA, hB), large = Math.max(hA, hB);
+      if (small < 0.45 * large) continue;
+      // Word spaces are well under one glyph height; narrow column gutters between cards are usually more.
+      const overlap = Math.min(A.y1, B.y1) - Math.max(A.y0, B.y0) + 1, gap = B.x0 - A.x1 - 1;
+      if (overlap >= 0.4 * small && gap <= 0.9 * large + 2) union.union(order[a], order[b]);
     }
   }
-  const groups = new Map<number, Component[]>();
-  for (let i = 0; i < glyphs.length; i++) { const root = union.find(i); const list = groups.get(root); if (list) list.push(glyphs[i]); else groups.set(root, [glyphs[i]]); }
-  const lines: LineBox[] = [];
+  const groups = new Map<number, number[]>();
+  for (let i = 0; i < glyphs.length; i++) { const root = union.find(i); const list = groups.get(root); if (list) list.push(i); else groups.set(root, [i]); }
+  // Groups whose glyphs are tiny are marks or specks: candidates for attachment, never lines of their own.
+  const speck = new Uint8Array(glyphs.length);
   for (const members of groups.values()) {
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, ink = 0;
-    const glyphHeights: number[] = [];
-    for (const c of members) { x0 = Math.min(x0, c.x0); y0 = Math.min(y0, c.y0); x1 = Math.max(x1, c.x1); y1 = Math.max(y1, c.y1); ink += c.area; glyphHeights.push(c.y1 - c.y0 + 1); }
-    glyphHeights.sort((a, b) => a - b);
-    const glyphHeight = glyphHeights[Math.floor(glyphHeights.length * 0.75)];
-    const w = x1 - x0 + 1, h = y1 - y0 + 1;
-    if (h < 5 || w < 4 || w * h < 40) continue;
-    if (members.length === 1 && (w < 6 || glyphHeight < 6)) continue;
-    lines.push({ x: x0, y: y0, w, h, ink, components: members.length, polarity, glyphHeight });
+    const sizes = members.map(i => heightOf(glyphs[i])).sort((a, b) => a - b);
+    if (sizes[Math.floor(sizes.length * 0.75)] < 6) for (const i of members) speck[i] = 1;
+  }
+  const attachedTo = new Map<number, Component[]>();
+  const position = new Map<number, number>();
+  order.forEach((index, rank) => position.set(index, rank));
+  for (let i = 0; i < glyphs.length; i++) {
+    if (!speck[i]) continue;
+    const S = glyphs[i], hS = heightOf(S), center = (S.y0 + S.y1) / 2;
+    let best: { root: number; score: number } | null = null;
+    const rank = position.get(i)!;
+    for (let step = -1; step <= 1; step += 2) {
+      for (let r = rank + step; r >= 0 && r < order.length; r += step) {
+        const j = order[r], T = glyphs[j];
+        if (step < 0 ? T.x1 < S.x0 - scanFor(median) : T.x0 > S.x1 + scanFor(median)) break;
+        if (speck[j]) continue;
+        const hT = heightOf(T);
+        if (hS >= 0.45 * hT) continue;
+        if (center < T.y0 - 0.45 * hT || center > T.y1 + 0.45 * hT) continue;
+        const gap = Math.max(0, Math.max(S.x0, T.x0) - Math.min(S.x1, T.x1) - 1);
+        if (gap > 1.0 * hT + 3) continue;
+        const score = gap + Math.abs(center - (T.y0 + T.y1) / 2);
+        if (!best || score < best.score) best = { root: union.find(j), score };
+      }
+    }
+    if (best) { const list = attachedTo.get(best.root); if (list) list.push(S); else attachedTo.set(best.root, [S]); }
+  }
+  const lines: LineBox[] = [];
+  for (const [root, members] of groups) {
+    if (speck[members[0]]) continue;
+    const attached = attachedTo.get(root) ?? [];
+    const core = members.map(i => glyphs[i]);
+    const glyphHeight = core.map(heightOf).sort((a, b) => a - b)[Math.floor(core.length * 0.75)];
+    const span = Math.max(...core.map(c => c.y1)) - Math.min(...core.map(c => c.y0)) + 1;
+    const parts = span > 2.2 * glyphHeight && core.length > 2 ? rows(core) : [core];
+    for (const part of parts) {
+      const y0 = Math.min(...part.map(c => c.y0)), y1 = Math.max(...part.map(c => c.y1));
+      const marks = parts.length === 1 ? attached : attached.filter(m => (m.y0 + m.y1) / 2 >= y0 - 0.45 * glyphHeight && (m.y0 + m.y1) / 2 <= y1 + 0.45 * glyphHeight);
+      const line = lineOf(part, marks, polarity);
+      if (line) lines.push(line);
+    }
   }
   return lines;
 }
@@ -154,7 +216,9 @@ export function findTextLines(gray: Uint8Array, width: number, height: number, o
   const mean = localMean(gray, width, height, radius), threshold = 14;
   const dark = new Uint8Array(width * height), light = new Uint8Array(width * height);
   for (let i = 0; i < gray.length; i++) { const diff = gray[i] - mean[i]; if (diff < -threshold) dark[i] = 1; else if (diff > threshold) light[i] = 1; }
-  const limit = 60_000;
+  // Photos and textures break into very many specks; the limit only guards against pathological images,
+  // and must stay far above what a busy page produces, or text below a photo is never reached.
+  const limit = 600_000;
   const darkGlyphs = components(dark, width, height, limit).filter(c => plausibleGlyph(c, width, height));
   const lightGlyphs = components(light, width, height, limit).filter(c => plausibleGlyph(c, width, height));
   const darkLines = groupLines(darkGlyphs, 'dark'), lightLines = groupLines(lightGlyphs, 'light');

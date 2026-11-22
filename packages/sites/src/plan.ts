@@ -175,8 +175,10 @@ export const kindByLabel = (lang: SiteLang, label: string): SiteKind | null => {
 /* ---------- parsers for block content ---------- */
 
 const dashSplit = (line: string) => line.split(/\s+[-–—]\s+|\s*[|｜]\s*/u).map(part => part.trim()).filter(Boolean);
+/** One entry per line: commas stay inside a line because bios, features and quotes contain them. */
+const lines = (answer: string) => answer.split(/\r?\n/).map(line => line.replace(/^[-–—•*]\s*|^\d+[.)]\s*/u, '').trim()).filter(Boolean);
 export function parseTeam(answer: string) {
-  return splitList(answer).map(line => { const [name, role, bio] = dashSplit(line); return name ? { name: name.slice(0, 60), ...(role ? { role: role.slice(0, 80) } : {}), ...(bio ? { bio: bio.slice(0, 300) } : {}) } : null; }).filter((member): member is NonNullable<typeof member> => Boolean(member)).slice(0, 24);
+  return lines(answer).map(line => { const [name, role, bio] = dashSplit(line); return name ? { name: name.slice(0, 60), ...(role ? { role: role.slice(0, 80) } : {}), ...(bio ? { bio: bio.slice(0, 300) } : {}) } : null; }).filter((member): member is NonNullable<typeof member> => Boolean(member)).slice(0, 24);
 }
 export function parseFaq(answer: string) {
   const lines = answer.split(/\r?\n/).map(line => line.replace(/^(?:س|ج|q|a)\s*[:：.)-]\s*/iu, '').trim()).filter(Boolean);
@@ -191,7 +193,7 @@ export function parseFaq(answer: string) {
   return entries.slice(0, 30);
 }
 export function parsePricing(answer: string) {
-  return splitList(answer.replace(/\n/g, '\n')).map(line => {
+  return lines(answer).map(line => {
     const [name, price, rest, ...more] = line.split(/\s+[-–—]\s+|\s*[|｜]\s*/u).map(part => part.trim());
     if (!name) return null;
     const features = [rest, ...more].filter(Boolean).join(' ').split(/\s*[,،;؛]\s*|\s+و\s+|\s+and\s+/u).map(part => part.trim()).filter(Boolean).slice(0, 12);
@@ -199,10 +201,10 @@ export function parsePricing(answer: string) {
   }).filter((plan): plan is NonNullable<typeof plan> => Boolean(plan)).slice(0, 6);
 }
 export function parsePoints(answer: string, limit = 12) {
-  return splitList(answer).map(line => { const [title, detail] = line.split(/\s*[:：]\s*|\s+[-–—]\s+/u).map(part => part.trim()); return title ? { title: title.slice(0, 80), ...(detail ? { detail: detail.slice(0, 300) } : {}) } : null; }).filter((point): point is NonNullable<typeof point> => Boolean(point)).slice(0, limit);
+  return lines(answer).map(line => { const [title, detail] = line.split(/\s*[:：]\s*|\s+[-–—]\s+/u).map(part => part.trim()); return title ? { title: title.slice(0, 80), ...(detail ? { detail: detail.slice(0, 300) } : {}) } : null; }).filter((point): point is NonNullable<typeof point> => Boolean(point)).slice(0, limit);
 }
 export function parseFacts(answer: string) {
-  return splitList(answer).map(line => {
+  return lines(answer).map(line => {
     const ascii = asciiDigits(line);
     const dashed = ascii.match(/^\s*([+~≈]?\s*[\d.,]+\s*[%+kKmM]?)\s*(?:[-–—:：]\s*)?(.+)$/u) ?? ascii.match(/^(.+?)\s*[:：-]\s*([+~≈]?\s*[\d.,]+\s*[%+kKmM]?)\s*$/u);
     if (!dashed) return null;
@@ -212,7 +214,7 @@ export function parseFacts(answer: string) {
   }).filter((fact): fact is NonNullable<typeof fact> => Boolean(fact)).slice(0, 6);
 }
 export function parseTestimonials(answer: string) {
-  return splitList(answer.replace(/\n/g, '\n')).map(line => { const match = line.match(/^(.{1,60}?)\s*[:：\-–—]\s*(.+)$/u); return match ? { name: match[1]!.trim(), quote: match[2]!.trim().replace(/^[«"“]+|[»"”]+$/gu, '').slice(0, 400) } : null; }).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry && entry.quote.length > 0)).slice(0, 12);
+  return lines(answer).map(line => { const match = line.match(/^(.{1,60}?)\s*[:：\-–—]\s*(.+)$/u); return match ? { name: match[1]!.trim(), quote: match[2]!.trim().replace(/^[«"“]+|[»"”]+$/gu, '').slice(0, 400) } : null; }).filter((entry): entry is NonNullable<typeof entry> => Boolean(entry && entry.quote.length > 0)).slice(0, 12);
 }
 export function parsePosts(answer: string) {
   return answer.split(/\n\s*\n/).map(block => block.trim()).filter(Boolean).map(block => {
@@ -285,7 +287,8 @@ export function completeBrief(partial: SitePartialBrief, extras: CompleteExtras 
     lang: partial.lang, kind, name: partial.name!, items, offer: partial.offer, hours: partial.hours, testimonials: partial.testimonials ?? [], images: extras.images ?? [], mapUrl: partial.mapUrl, address: partial.address,
   };
   const content: PageContent = { about: partial.about, team: partial.team, faq: partial.faq, pricing: partial.pricing, projects: partial.projects, features: partial.features, steps: partial.steps, facts: partial.facts, posts: partial.posts };
-  const options: PlanOptions = { singlePage: partial.singlePage, form: extras.form ?? requests?.form ?? undefined, map: extras.map ?? requests?.map ?? Boolean(partial.mapUrl) };
+  // A form is on by default except for restaurants; an explicit request turns it on there too.
+  const options: PlanOptions = { singlePage: partial.singlePage, form: extras.form ?? (requests?.form ? true : undefined), map: extras.map ?? Boolean(requests?.map || partial.mapUrl) };
   const brief = SiteBriefSchema.parse({
     lang: partial.lang,
     kind,

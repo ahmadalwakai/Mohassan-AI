@@ -22,6 +22,8 @@ await mkdir(out, { recursive: true });
 const WEB_PORT = 3130;
 
 const fixture = await startMeasureFixture({ withWeb: false, apiPort: 4130, webPort: WEB_PORT });
+// This script starts the web app itself, twice; tell the client where it will answer.
+(fixture as { webBase: string | null }).webBase = fixture.origin;
 const client = new FixtureClient(fixture);
 const next = path.join(repository, 'node_modules', 'next', 'dist', 'bin', 'next');
 async function waitReady(child: OwnedChild, url: string, timeoutMs: number) {
@@ -64,7 +66,8 @@ try {
   await stopOwnedChildren([dev]);
   // 2) next build + next start in the same copy
   started = performance.now();
-  const build = spawnOwned([next, 'build'], webDirectory, { ...webEnv, NODE_ENV: 'production' });
+  // The copied web app reaches node_modules through a junction; Turbopack cannot find Next there, webpack can (as `next dev --webpack` does).
+  const build = spawnOwned([next, 'build', '--webpack'], webDirectory, { ...webEnv, NODE_ENV: 'production' });
   await build.closed;
   result.buildMs = Math.round(performance.now() - started);
   started = performance.now();

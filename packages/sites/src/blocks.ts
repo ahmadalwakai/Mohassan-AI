@@ -63,7 +63,11 @@ export function iconFor(item: Pick<SiteItem, 'title' | 'detail'>, kind: SiteKind
 
 /* ---------- shared pieces ---------- */
 
-const sectionHead = (title: string, lead?: string) => el('div', { class: 'section-head' }, el('h2', {}, escapeText(oneLine(title))), lead ? el('p', { class: 'lead' }, escapeText(lead)) : '');
+/** A section heading; when it repeats the page title it stays in the outline but not on screen. */
+const sectionHead = (title: string, lead?: string, ctx?: RenderContext) => {
+  const repeats = ctx && ctx.page.path !== 'index.html' && oneLine(title) === oneLine(ctx.page.title);
+  return el('div', { class: 'section-head' }, el('h2', repeats ? { class: 'sr-only' } : {}, escapeText(oneLine(title))), lead ? el('p', { class: 'lead' }, escapeText(lead)) : '');
+};
 const imageTag = (image: SiteImageAsset, className: string, sizes: string, eager = false) => {
   const src = `assets/${image.id}.${image.ext}`;
   const srcset = image.small ? `assets/${image.id}-small.${image.ext} 640w, ${src} ${image.width}w` : undefined;
@@ -121,30 +125,29 @@ function itemsBlock(ctx: RenderContext, block: Block<'items'>, id: string): stri
   const lead = block.lead ?? (own ? undefined : writer.text('itemsLead'));
   const body = layout === 'menu' ? el('ul', { class: 'menu-list' }, ...items.map(menuRow)) : layout === 'tiles' ? el('div', { class: 'tiles' }, ...items.map((item, index) => tile(ctx, item, index))) : layout === 'list' ? el('ul', { class: 'list-rows' }, ...items.map(item => listRow(ctx, item))) : el('div', { class: 'cards' }, ...items.map(item => itemCard(ctx, item)));
   const more = fullPage && all.length > items.length ? el('p', { class: 'more' }, button(fullPage.path, writer.labels.buttons.viewAll, 'ghost')) : '';
-  const head = ctx.page.path !== 'index.html' && !own && ctx.page.blocks[0] === block ? (lead ? el('p', { class: 'lead' }, escapeText(lead)) : '') : sectionHead(title, lead);
-  return section(id, 'items', head, body, more);
+  return section(id, 'items', sectionHead(title, lead, ctx), body, more);
 }
 const text = (block: Block<'text'>, ctx: RenderContext, id: string) => {
   const image = asset(ctx, block.image);
-  return section(id, `about ${image ? 'about-grid' : ''}`, el('div', {}, block.title ? sectionHead(block.title) : '', el('div', { class: 'prose' }, paragraphs(block.body))), image ? imageTag(image, 'about-img', '(min-width: 760px) 40vw, 100vw') : '');
+  return section(id, `about ${image ? 'about-grid' : ''}`, el('div', {}, block.title ? sectionHead(block.title, undefined, ctx) : '', el('div', { class: 'prose' }, paragraphs(block.body))), image ? imageTag(image, 'about-img', '(min-width: 760px) 40vw, 100vw') : '');
 };
-const features = (block: Block<'features'>, ctx: RenderContext, id: string) => section(id, 'features', sectionHead(block.title ?? PAGE_TITLES[ctx.lang].features!, block.lead), el('ul', { class: 'points' }, ...block.points.map(point => el('li', {}, el('span', { class: 'point-icon' }, iconSvg('check', { size: 18 })), el('div', {}, el('h3', {}, escapeText(oneLine(point.title))), point.detail ? el('p', {}, escapeText(point.detail)) : '')))));
-const steps = (block: Block<'steps'>, ctx: RenderContext, id: string) => section(id, 'steps', sectionHead(block.title ?? PAGE_TITLES[ctx.lang].steps!, block.lead), el('ol', { class: 'steps-list' }, ...block.steps.map(step => el('li', {}, el('h3', {}, escapeText(oneLine(step.title))), step.detail ? el('p', {}, escapeText(step.detail)) : ''))));
+const features = (block: Block<'features'>, ctx: RenderContext, id: string) => section(id, 'features', sectionHead(block.title ?? PAGE_TITLES[ctx.lang].features!, block.lead, ctx), el('ul', { class: 'points' }, ...block.points.map(point => el('li', {}, el('span', { class: 'point-icon' }, iconSvg('check', { size: 18 })), el('div', {}, el('h3', {}, escapeText(oneLine(point.title))), point.detail ? el('p', {}, escapeText(point.detail)) : '')))));
+const steps = (block: Block<'steps'>, ctx: RenderContext, id: string) => section(id, 'steps', sectionHead(block.title ?? PAGE_TITLES[ctx.lang].steps!, block.lead, ctx), el('ol', { class: 'steps-list' }, ...block.steps.map(step => el('li', {}, el('h3', {}, escapeText(oneLine(step.title))), step.detail ? el('p', {}, escapeText(step.detail)) : ''))));
 const gallery = (block: Block<'gallery'>, ctx: RenderContext, id: string) => {
   const images = block.images ? block.images.map(imageId => asset(ctx, imageId)).filter((image): image is SiteImageAsset => Boolean(image)) : ctx.images.filter(image => image.role === 'gallery');
   if (!images.length) return '';
-  return section(id, 'gallery', sectionHead(block.title ?? ctx.writer.text('galleryTitle')), el('div', { class: 'gallery-grid' }, ...images.map(image => el('figure', {}, imageTag(image, 'gallery-img', '(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw'), el('figcaption', { class: 'sr-only' }, escapeText(image.alt))))));
+  return section(id, 'gallery', sectionHead(block.title ?? ctx.writer.text('galleryTitle'), undefined, ctx), el('div', { class: 'gallery-grid' }, ...images.map(image => el('figure', {}, imageTag(image, 'gallery-img', '(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw'), el('figcaption', { class: 'sr-only' }, escapeText(image.alt))))));
 };
-const team = (block: Block<'team'>, ctx: RenderContext, id: string) => section(id, 'team', sectionHead(block.title ?? PAGE_TITLES[ctx.lang].team!, block.lead), el('div', { class: 'people' }, ...block.members.map(member => {
+const team = (block: Block<'team'>, ctx: RenderContext, id: string) => section(id, 'team', sectionHead(block.title ?? PAGE_TITLES[ctx.lang].team!, block.lead, ctx), el('div', { class: 'people' }, ...block.members.map(member => {
   const image = asset(ctx, member.image);
   return el('article', { class: 'person' }, image ? imageTag(image, 'person-img', '160px') : el('span', { class: 'person-initial', 'aria-hidden': 'true' }, escapeText(initialOf(member.name))), el('h3', {}, escapeText(oneLine(member.name))), member.role ? el('p', { class: 'role' }, escapeText(member.role)) : '', member.bio ? el('p', {}, escapeText(member.bio)) : '');
 })));
-const faq = (block: Block<'faq'>, ctx: RenderContext, id: string) => section(id, 'faq', sectionHead(block.title ?? PAGE_TITLES[ctx.lang].faq!), el('div', { class: 'faq-list' }, ...block.entries.map((entry, index) => el('details', index === 0 ? { open: true } : {}, el('summary', {}, el('span', {}, escapeText(oneLine(entry.question))), iconSvg('chevron-down', { size: 20 })), el('div', { class: 'faq-answer prose' }, paragraphs(entry.answer))))));
-const pricing = (block: Block<'pricing'>, ctx: RenderContext, id: string) => section(id, 'pricing', sectionHead(block.title ?? PAGE_TITLES[ctx.lang].pricing!, block.lead), el('div', { class: 'plans' }, ...block.plans.map(plan => el('article', { class: `plan ${plan.featured ? 'plan-featured' : ''}` }, el('h3', {}, escapeText(oneLine(plan.name))), plan.price ? el('p', { class: 'plan-price' }, el('strong', {}, escapeText(plan.price)), plan.period ? el('span', {}, escapeText(plan.period)) : '') : '', plan.features.length ? el('ul', {}, ...plan.features.map(feature => el('li', {}, iconSvg('check', { size: 16 }), el('span', {}, escapeText(feature))))) : '', plan.note ? el('p', { class: 'plan-note' }, escapeText(plan.note)) : '', (() => { const action = primaryAction(ctx); return action ? button(action.href, action.label, 'primary', action.icon, action.href.startsWith('https://')) : ''; })()))));
+const faq = (block: Block<'faq'>, ctx: RenderContext, id: string) => section(id, 'faq', sectionHead(block.title ?? PAGE_TITLES[ctx.lang].faq!, undefined, ctx), el('div', { class: 'faq-list' }, ...block.entries.map((entry, index) => el('details', index === 0 ? { open: true } : {}, el('summary', {}, el('span', {}, escapeText(oneLine(entry.question))), iconSvg('chevron-down', { size: 20 })), el('div', { class: 'faq-answer prose' }, paragraphs(entry.answer))))));
+const pricing = (block: Block<'pricing'>, ctx: RenderContext, id: string) => section(id, 'pricing', sectionHead(block.title ?? PAGE_TITLES[ctx.lang].pricing!, block.lead, ctx), el('div', { class: 'plans' }, ...block.plans.map(plan => el('article', { class: `plan ${plan.featured ? 'plan-featured' : ''}` }, el('h3', {}, escapeText(oneLine(plan.name))), plan.price ? el('p', { class: 'plan-price' }, el('strong', {}, escapeText(plan.price)), plan.period ? el('span', {}, escapeText(plan.period)) : '') : '', plan.features.length ? el('ul', {}, ...plan.features.map(feature => el('li', {}, iconSvg('check', { size: 16 }), el('span', {}, escapeText(feature))))) : '', plan.note ? el('p', { class: 'plan-note' }, escapeText(plan.note)) : '', (() => { const action = primaryAction(ctx); return action ? button(action.href, action.label, 'primary', action.icon, action.href.startsWith('https://')) : ''; })()))));
 const testimonials = (block: Block<'testimonials'>, ctx: RenderContext, id: string) => {
   const entries = block.entries ?? ctx.brief.testimonials;
   if (!entries.length) return '';
-  return section(id, 'testimonials', sectionHead(block.title ?? ctx.writer.text('testimonialsTitle')), el('div', { class: 'quotes' }, ...entries.map(quote => el('figure', { class: 'quote' }, iconSvg('quote', { size: 22 }), el('blockquote', {}, el('p', {}, escapeText(quote.quote))), el('figcaption', {}, escapeText(quote.name))))));
+  return section(id, 'testimonials', sectionHead(block.title ?? ctx.writer.text('testimonialsTitle'), undefined, ctx), el('div', { class: 'quotes' }, ...entries.map(quote => el('figure', { class: 'quote' }, iconSvg('quote', { size: 22 }), el('blockquote', {}, el('p', {}, escapeText(quote.quote))), el('figcaption', {}, escapeText(quote.name))))));
 };
 const facts = (block: Block<'facts'>, ctx: RenderContext, id: string) => section(id, 'facts', block.title ? sectionHead(block.title) : '', el('dl', { class: 'facts-grid' }, ...block.items.map(fact => el('div', { class: 'fact' }, el('dd', {}, escapeText(fact.value)), el('dt', {}, escapeText(fact.label))))));
 const hours = (block: Block<'hours'>, ctx: RenderContext, id: string) => {
@@ -200,7 +203,7 @@ const map = (_block: Block<'map'>, ctx: RenderContext, id: string) => {
   if (!brief.mapUrl && !brief.address) return '';
   return section(id, 'map', el('div', { class: 'map-card' }, el('span', { class: 'card-icon' }, iconSvg('navigation', { size: 26 })), el('div', {}, brief.address ? el('p', {}, escapeText(brief.address)) : '', brief.mapUrl ? button(brief.mapUrl, writer.labels.buttons.directions, 'ghost', 'external-link', true) : '')));
 };
-const posts = (block: Block<'posts'>, ctx: RenderContext, id: string) => section(id, 'posts', sectionHead(block.title ?? PAGE_TITLES[ctx.lang].posts!), el('div', { class: 'posts' }, ...block.posts.map(post => el('article', { class: 'post' }, el('h3', {}, escapeText(oneLine(post.title))), post.date ? el('p', { class: 'post-date' }, escapeText(post.date)) : '', el('div', { class: 'prose' }, paragraphs(post.body))))));
+const posts = (block: Block<'posts'>, ctx: RenderContext, id: string) => section(id, 'posts', sectionHead(block.title ?? PAGE_TITLES[ctx.lang].posts!, undefined, ctx), el('div', { class: 'posts' }, ...block.posts.map(post => el('article', { class: 'post' }, el('h3', {}, escapeText(oneLine(post.title))), post.date ? el('p', { class: 'post-date' }, escapeText(post.date)) : '', el('div', { class: 'prose' }, paragraphs(post.body))))));
 
 /** Renders one block. Blocks without content render nothing, so a page never shows an empty section. */
 export function renderBlock(ctx: RenderContext, block: SiteBlock, index: number): string {

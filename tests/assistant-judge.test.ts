@@ -74,7 +74,34 @@ const RQ005 = {
 };
 const RQ026 = {
   question: 'ما عاصمة أستراليا؟',
-  reply: ['تقع في نصف الكرة الجنوبي جنوب شرق آسيا وغرب المحيط الهادي، عاصمتها كانبرا.', '', SOURCE('أستراليا', 'https://ar.wikipedia.org/wiki/a')].join('\n'),
+  reply: [
+    'تقع في نصف الكرة الجنوبي جنوب شرق آسيا وغرب المحيط الهادي، عاصمتها كانبرا.',
+    '',
+    '**تفاصيل أخرى من نفس المصدر:**',
+    '- … أستراليا إلى ست ولايات ومقاطعتين أساسيتين: نيو ساوث ويلز وعاصمتها سيدني كوينزلاند وعاصمتها بريزبان جنوب أستراليا وعاصمتها أديليد …',
+    '- تمتلك كل ولاية وكل مقاطعة كبرى له برلمانها الخاص ومجلس تشريعي واحد—في الإقليم الشمالي وإقليم عاصمة أستراليا وكوينزلاند— ومجلسين تشريعين في باقي الولايات.',
+    '',
+    SOURCE('أستراليا', 'https://ar.wikipedia.org/wiki/a'),
+  ].join('\n'),
+};
+const RQ025 = {
+  question: 'من هو ألبرت أينشتاين؟',
+  reply: [
+    'ألْبِرْت أينْشتاين (الألمانية: Albert Einstein) (14 مارس 1879 – 18 أبريل 1955) عالم فيزياء ألماني المولد (تخلى عن الجنسية الألمانية لاحقًا) سويسري وأمريكي الجنسية، يُشتهر بأبي النسبية كواضعٍ لنظريتي النسبية الخاصة والنسبية العامة الشهيرتين اللتين كانتا اللبنة …',
+    '',
+    '**تفاصيل أخرى من نفس المصدر:**',
+    '- ألبرت أينشتاين عام 1893 (14 عامًا).',
+    '',
+    SOURCE('ألبرت أينشتاين', 'https://ar.wikipedia.org/wiki/e'),
+  ].join('\n'),
+};
+const RQ013 = {
+  question: 'ما عاصمة فرنسا؟',
+  reply: ['… رئاسية، ويبلغ عدد سُكانها حوالِيّ 68.6 مليون نسمة في يناير 2025، و‌عاصمتها وأكبر مدنها هي بَارِيس، ولُغتها الرسميّة هي الفرنسِيّة.', '', SOURCE('فرنسا', 'https://ar.wikipedia.org/wiki/fr')].join('\n'),
+};
+const RQ020 = {
+  question: 'ما هو آخر إصدار مستقر من Node.js؟',
+  reply: ['js version: node -v # Should print "v26.13.1".', '', '**تفاصيل أخرى من نفس المصدر:**', '- # Verify npm version: npm -v # Should print "11.20.0".', '', '**المصدر:** [nodejs.org — Node.js — Download Node.js®](https://nodejs.org/en/download)'].join('\n'),
 };
 const RQ027 = {
   question: 'ما هو الذكاء الاصطناعي؟',
@@ -158,12 +185,23 @@ describe('the lead against the question', () => {
     expect(verdict.fixedReply).toContain('**Source:**');
   });
 
-  it('sends the clean answers as they are (rq005, rq026 with the implied page subject, rq027, rq008 superlative)', () => {
-    for (const input of [RQ005, RQ026, RQ027, RQ008]) {
+  it('sends the clean answers as they are (rq005, rq026 with the answer form on the page\'s own subject, rq027, rq008 superlative, rq025 long lead cut with an ellipsis)', () => {
+    for (const input of [RQ005, RQ026, RQ027, RQ008, RQ025]) {
       const verdict = judge(input);
       expect(codesOf(verdict), input.question).toEqual([]);
       expect(verdict.decision, input.question).toBe('send');
     }
+    // «عاصمتها كانبرا» outranks the passing mention «إقليم عاصمة أستراليا» in a later line: the lead is itself the best line.
+    const australia = judge(RQ026);
+    expect(australia.best?.line).toBe(1);
+    expect(australia.lead?.score).toBeGreaterThan(3);
+  });
+
+  it('marks a lead that opens with an ellipsis (rq013) and a lowercase code line under an Arabic question (rq020) as fragments', () => {
+    expect(judge(RQ013).codes).toContain('fragment_lead');
+    const node = judge(RQ020);
+    expect(node.codes).toEqual(expect.arrayContaining(['fragment_lead', 'language_mismatch']));
+    expect(node.decision).toBe('send');
   });
 
   it('uses the previous turn for a follow-up that names its subject with a pronoun', () => {
@@ -227,7 +265,8 @@ describe('helpers', () => {
   });
   it('finds the cue words a question asks about its subject, and the page title in the source line', () => {
     expect(cueWords('كم عدد سكان المغرب؟', ['سكان', 'مغرب'])).toEqual(['عدد']);
-    expect(cueWords('كم تستغرق عملية المياه البيضاء؟', ['مياه', 'بيضاء'])).toEqual(expect.arrayContaining(['تستغرق', 'عمليه']));
+    // «عملية» folds to «عمليه» and loses its final «ه» to the suffix stem; the stem still sits inside «عملية» and «عمليات».
+    expect(cueWords('كم تستغرق عملية المياه البيضاء؟', ['مياه', 'بيضاء'])).toEqual(expect.arrayContaining(['تستغرق', 'عملي']));
     expect(sourceTitleWords(RQ026.reply)).toEqual(['استراليا']);
   });
   it('reads fragments and definition forms', () => {
@@ -235,7 +274,9 @@ describe('helpers', () => {
     expect(isFragment('… رئاسية، ويبلغ عدد سكانها 68.6 مليون نسمة.', 'ar')).toBe(true);
     expect(isFragment('5:11 فيديو لعملية الليزك', 'ar')).toBe(true);
     expect(isFragment('js version: node -v', 'en')).toBe(true);
+    expect(isFragment('js version: node -v', 'ar')).toBe(true);
     expect(isFragment('طوكيو عاصمة اليابان.', 'ar')).toBe(false);
+    expect(isFragment('ألبرت أينشتاين عالم فيزياء ألماني المولد، يُشتهر بأبي النسبية …', 'ar')).toBe(false);
     expect(definitionForm('الذكاء الاصطناعي (AI) هو تقنية تحويلية.', ['ذكاء', 'اصطناعي'])).toBe(true);
     expect(definitionForm('Photosynthesis is the process by which plants make food.', ['photosynthesis'])).toBe(true);
     expect(definitionForm('ويكي بيانات أيقظ قدراتك واصنع مستقبلك هو كتاب.', ['قدراتك'])).toBe(false);
@@ -245,7 +286,8 @@ describe('helpers', () => {
     const answer = relevance('حسب إحصاء سنة 2024، يبلغ عدد سكان المغرب 37 مليون نسمة.', context);
     const minority = relevance('فيما انخفضت الأقلية اليهودية المغربية ويصل عددها إلى نحو 6,000.', context);
     expect(answer).toMatchObject({ topicHits: 2, phrase: true, cue: true, typed: true, fragment: false });
-    expect(minority).toMatchObject({ topicHits: 1, phrase: false, fragment: true });
+    // «المغربية» is in the line; «سكان» only in the page title («التركيبة السكانية»), so it counts as implied beside it.
+    expect(minority).toMatchObject({ topicHits: 2, implied: 1, phrase: false, fragment: true });
     expect(answer.score - minority.score).toBeGreaterThanOrEqual(2);
     expect(ownLines(RQ016.reply).map(line => line.line)).toEqual([1, 4, 5]);
   });

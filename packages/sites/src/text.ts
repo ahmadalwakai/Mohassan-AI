@@ -32,12 +32,16 @@ export function requestedLang(text: string): SiteLang | null {
 
 /** Items from a free-text answer: one per line or comma; "title - price" or "title: detail". */
 export function parseItems(answer: string, limit = 40): SiteItem[] {
-  const parts = answer.split(/\r?\n|[،,;؛]|(?:^|\s)[•*-]\s+/u).map(part => part.trim()).filter(Boolean);
+  // Lines or commas separate items; a dash separates a title from its price, so it never splits items.
+  const parts = answer.split(/\r?\n|[،,;؛]/u).map(part => part.trim()).filter(Boolean);
   const items: SiteItem[] = [];
   for (const part of parts) {
     const cleaned = part.replace(/^[\d]+[.)]\s*/u, '').replace(/^[-–—•*]\s*/u, '').trim();
     if (!cleaned) continue;
-    const separated = cleaned.match(/^(.{1,80}?)\s*(?:[-–—:：]|\(|بسعر|سعره|سعرها|for|at)\s*(.{1,120}?)\)?\s*$/u);
+    // "title - price", "title: detail", "title | detail", "title (price)", "title for £30"; hyphens inside words stay.
+    const separated = cleaned.match(/^(.{1,80}?)(?:\s[-–—]\s|[:：]\s+|\s*[|｜]\s*)(.{1,120})$/u)
+      ?? cleaned.match(/^(.{1,80}?)\s+(?:بسعر|سعره|سعرها|for|at|@)\s+((?:[£$€]\s*)?[\d٠-٩].{0,40})$/iu)
+      ?? cleaned.match(/^(.{1,80}?)\s*\(([^()]{1,120})\)\s*$/u);
     if (separated && separated[1]!.trim()) {
       const title = separated[1]!.trim(), rest = separated[2]!.trim();
       if (/\d/.test(asciiDigits(rest)) && rest.length <= 40) items.push({ title, price: rest });

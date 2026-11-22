@@ -1,7 +1,7 @@
 /**
- * The only script a generated site ships: no network, no third party. It toggles the phone menu,
- * reveals sections as they scroll in (respecting reduced motion) and, when the contact form has no
- * inbox endpoint, turns the filled form into a WhatsApp or mail message the visitor sends themselves.
+ * The only script a generated site ships: no network, no third party. It toggles the phone menu and,
+ * when the contact form has no inbox endpoint, turns the filled form into a WhatsApp or mail message
+ * the visitor sends themselves. Motion is CSS-only (scroll-driven), so nothing depends on this file.
  */
 export function siteScript(): string {
   return `(function () {
@@ -20,14 +20,6 @@ export function siteScript(): string {
     header.querySelectorAll('.site-nav a').forEach(function (link) {
       link.addEventListener('click', function () { header.classList.remove('nav-open'); toggle.setAttribute('aria-expanded', 'false'); });
     });
-  }
-  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var sections = document.querySelectorAll('.section, .cta');
-  if (!reduce && 'IntersectionObserver' in window) {
-    var observer = new IntersectionObserver(function (entries) {
-      entries.forEach(function (entry) { if (entry.isIntersecting) { entry.target.classList.add('in'); observer.unobserve(entry.target); } });
-    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
-    sections.forEach(function (node) { node.classList.add('reveal'); observer.observe(node); });
   }
   document.querySelectorAll('form[data-compose]').forEach(function (form) {
     form.addEventListener('submit', function (event) {

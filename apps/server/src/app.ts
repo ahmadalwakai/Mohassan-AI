@@ -48,6 +48,7 @@ import type { Mind, MindDeps } from './assistant/mind/contract.js';
 import { createMind } from './assistant/mind/index.js';
 import { createShadowRouter } from './assistant/router.js';
 import { createConversationShadow } from './assistant/conversation-state-shadow.js';
+import { createJudgeShadow } from './assistant/judge-shadow.js';
 import { createPageCache } from './assistant/page-cache.js';
 import { createChromeExtensionControl, registerChromeExtensionRoutes } from './chrome-extension.js';
 import { DesktopEngine } from '@mohassan/desktop';
@@ -340,6 +341,9 @@ export async function createApplication(config: AppConfig) {
   // Conversation state v2 runs in shadow outside production (MOHASSAN_CONVERSATION_SHADOW=0 turns it off); no reply path reads it.
   const conversationShadow = !config.production && process.env.MOHASSAN_CONVERSATION_SHADOW !== '0' && !process.env.VITEST
     ? createConversationShadow({ logFile: join(process.cwd(), '.data', 'conversation', 'shadow.jsonl') }) : undefined;
+  // The judge («الحَكَم») runs in shadow outside production (MOHASSAN_JUDGE_SHADOW=0 turns it off): one verdict per reply, read by no reply path.
+  const judgeShadow = !config.production && process.env.MOHASSAN_JUDGE_SHADOW !== '0' && !process.env.VITEST
+    ? createJudgeShadow({ logFile: join(process.cwd(), '.data', 'judge', 'shadow.jsonl') }) : undefined;
   const mind = config.mindEnabled === true && !config.production ? config.mind ?? createMind() : undefined;
   const mindRobots = new RobotsPolicy(searchNetwork);
   const mindSearch = mind && !config.browser?.searchProvider
@@ -381,6 +385,7 @@ export async function createApplication(config: AppConfig) {
    * hidden browser; 'disallowed' skips it there too.
    */
   const READ_PAGE_TIMEOUT_MS = 4000;
+  const READ_PAGE_RETRY_TIMEOUT_MS = 10_000;
   // Pages read over HTTP are kept by site kind (plan §5.2 P4): an encyclopedia article for a week, documentation
   // for a day, news for a quarter of an hour. A page read for a live fact is fetched every time.
   const pageCache = createPageCache();
@@ -395,7 +400,14 @@ export async function createApplication(config: AppConfig) {
     }
     let response: Awaited<ReturnType<SafeNetwork['request']>>;
     try { response = await searchNetwork.request(url, { signal: combined }); }
-    catch (error) { if (signal.aborted) throw error; return null; }
+    catch (error) {
+      if (signal.aborted) throw error;
+      // A large article on a busy machine can outlast the 4 s budget; one more try with a longer one is far cheaper
+      // than the hidden browser it would otherwise fall back to (32 s measured on 2026-11-22 under full load).
+      if (!combined.aborted) return null;
+      try { response = await searchNetwork.request(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(READ_PAGE_RETRY_TIMEOUT_MS)]) }); }
+      catch (retryError) { if (signal.aborted) throw retryError; return null; }
+    }
     const type = response.headers['content-type'] ?? '';
     if (response.status >= 400 || !/^(?:text\/html|application\/xhtml\+xml)(?:[;\s]|$)/i.test(type)) return null;
     const charset = /charset\s*=\s*["']?([^\s;"']+)/i.exec(type)?.[1] ?? 'utf-8';
@@ -410,7 +422,7 @@ export async function createApplication(config: AppConfig) {
   const documentLink=(id:string)=>`${config.webOrigin}/api/documents/${id}/content`;
   // The own image reader (packages/vision): exported weights in artifacts/vision/ocr-v1 unless MOHASSAN_OCR_MODEL_DIR points elsewhere.
   const imageReader=await createImageReader({modelDir:process.env.MOHASSAN_OCR_MODEL_DIR??join(process.cwd(),'artifacts','vision','ocr-v1'),workers:Number(process.env.MOHASSAN_OCR_WORKERS??3)});
-  const chat=await createCommandChatControl(database.db,{...(shadowRouter?{shadowRouter}:{}),...(conversationShadow?{conversationShadow}:{}),...(imageReader.available?{imageReader}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),...(desktop?{desktop:{parse:(text:string)=>desktop.parse(text),describe:(command,lang)=>desktop.describe(command,lang),execute:(command,options)=>desktop.execute(command,options)}}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,documents:{control:documents,link:documentLink},inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,readPage,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',accountFullAccess:(ownerId,tx)=>lockOwnerToolAccess(tx,ownerId),accountActive:async(ownerId,tx)=>{const role=await roleOf(tx,ownerId);if(role!=='member')return role!==null;return Boolean(await tx.selectFrom('workspace_members').select('user_id').where('user_id','=',ownerId).where('role','=','member').where('disabled_at','is',null).forShare().executeTakeFirst());},memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
+  const chat=await createCommandChatControl(database.db,{...(shadowRouter?{shadowRouter}:{}),...(conversationShadow?{conversationShadow}:{}),...(judgeShadow?{judgeShadow}:{}),...(imageReader.available?{imageReader}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),...(desktop?{desktop:{parse:(text:string)=>desktop.parse(text),describe:(command,lang)=>desktop.describe(command,lang),execute:(command,options)=>desktop.execute(command,options)}}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,documents:{control:documents,link:documentLink},inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,readPage,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',accountFullAccess:(ownerId,tx)=>lockOwnerToolAccess(tx,ownerId),accountActive:async(ownerId,tx)=>{const role=await roleOf(tx,ownerId);if(role!=='member')return role!==null;return Boolean(await tx.selectFrom('workspace_members').select('user_id').where('user_id','=',ownerId).where('role','=','member').where('disabled_at','is',null).forShare().executeTakeFirst());},memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
     learningContext:learning.context,chromeExtension,
     knowledgeSearch:async(ownerId,query)=>(await learning.knowledge.retrieve(ownerId,query)).map(({title,text,source})=>({title,text,source})),
     ...(config.skillEngineEnabled?{recordSkillGap,skillContext:skills.context,loadSkill:skills.loadInstruction,runSkill:async(ownerId,input,context)=>{

@@ -66,7 +66,8 @@ export function composeSite(input: SiteBrief, options: ComposeOptions = {}): Com
   const notFoundPage: SitePage = { path: '404.html', title: writer.text('notFoundTitle'), inNav: false, blocks: [{ type: 'cta' }] };
   add('404.html', document({ ...base, page: notFoundPage }, notFound({ ...base, page: notFoundPage }), { title: notFoundPage.title, description, path: '404.html' }));
 
-  add('styles.css', stylesheet(theme, brief.lang));
+  const usedBlocks = new Set<string>([...brief.pages.flatMap(page => page.blocks.map(block => block.type)), 'cta']);
+  add('styles.css', stylesheet(theme, brief.lang, usedBlocks));
   add('site.js', siteScript());
   const shape = pick(seed, 'monogram', MONOGRAM_SHAPES);
   add('assets/logo.svg', monogramSvg(brief.name, theme, shape, 80));

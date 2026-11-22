@@ -134,7 +134,13 @@ def render_line(text: str, base: str, rng: random.Random, registry: FontRegistry
             break
     if path is None:
         return None
-    size = rng.choice([rng.randint(14, 22), rng.randint(20, 40), rng.randint(36, 64)])
+    # "screen": text as a browser or app draws it, small and pixel-exact, then enlarged the way the
+    # reader enlarges its crops. "print": larger text with scanner- and photo-like degradations.
+    screen = augment and rng.random() < 0.4
+    if screen:
+        size = rng.choice([rng.randint(11, 13), rng.randint(14, 16), rng.randint(17, 20)])
+    else:
+        size = rng.choice([rng.randint(14, 22), rng.randint(20, 40), rng.randint(36, 64)])
     font = _font(path, size)
     probe = ImageDraw.Draw(Image.new("L", (1, 1)))
     left, top, right, bottom = probe.textbbox((0, 0), glyphs, font=font)
@@ -142,37 +148,66 @@ def render_line(text: str, base: str, rng: random.Random, registry: FontRegistry
     if text_w / text_h * HEIGHT > MAX_WIDTH * 1.15:
         return None
     dark_on_light = rng.random() < 0.72
-    if dark_on_light:
+    if screen:
+        if dark_on_light:
+            bg = rng.randint(228, 255)
+            fg = rng.randint(90, 150) if rng.random() < 0.2 else rng.randint(0, 80)
+        else:
+            bg = rng.randint(14, 55)
+            fg = rng.randint(150, 200) if rng.random() < 0.2 else rng.randint(200, 255)
+    elif dark_on_light:
         bg = rng.randint(170, 255)
         fg = rng.randint(0, max(0, bg - (25 if rng.random() < 0.1 else 70)))
     else:
         bg = rng.randint(0, 90)
         fg = rng.randint(min(255, bg + (25 if rng.random() < 0.1 else 70)), 255)
-    pad_x = rng.randint(2, 14) if augment else 4
-    pad_top = rng.randint(1, 8) if augment else 3
-    pad_bottom = rng.randint(1, 8) if augment else 3
+    if screen:
+        pad_x, pad_top, pad_bottom = rng.randint(2, 8), rng.randint(1, 4), rng.randint(1, 4)
+    else:
+        pad_x = rng.randint(2, 14) if augment else 4
+        pad_top = rng.randint(1, 8) if augment else 3
+        pad_bottom = rng.randint(1, 8) if augment else 3
     width, height = text_w + 2 * pad_x, text_h + pad_top + pad_bottom
-    image = _background(rng, (width, height), bg) if augment else Image.new("L", (width, height), bg)
+    image = _background(rng, (width, height), bg) if augment and not screen else Image.new("L", (width, height), bg)
     draw = ImageDraw.Draw(image)
-    if augment and rng.random() < 0.10:
+    if augment and rng.random() < (0.25 if screen else 0.10):
         # A sliver of a neighbouring line, as crops of dense text show.
         other = _font(path, size)
         y = -rng.randint(int(text_h * 0.6), text_h) if rng.random() < 0.5 else height - rng.randint(0, int(text_h * 0.35))
         draw.text((rng.randint(-20, 20) + pad_x, y), glyphs[::-1][: max(3, len(glyphs) // 2)], font=other, fill=fg)
     draw.text((pad_x - left, pad_top - top), glyphs, font=font, fill=fg)
-    if augment and rng.random() < 0.08:
+    if augment and rng.random() < (0.12 if screen else 0.08):
         y = pad_top - top + bottom - rng.randint(0, 2)
         draw.line([(pad_x, y), (pad_x + text_w, y)], fill=fg, width=max(1, size // 18))
     if augment and rng.random() < 0.10:
         y = rng.choice([0, height - 1])
         draw.line([(0, y), (width, y)], fill=rng.randint(0, 255), width=1)
-    meta = {"font": os.path.basename(path), "size": size, "dark_on_light": dark_on_light}
-    if augment:
-        image = _degrade(image, rng, bg)
-    arr = _to_height(image, rng if augment else None)
+    meta = {"font": os.path.basename(path), "size": size, "dark_on_light": dark_on_light, "mode": "screen" if screen else "print"}
+    if screen:
+        image = _degrade_screen(image, rng)
+        arr = _to_height(image, rng, bilinear=True)
+    else:
+        if augment:
+            image = _degrade(image, rng, bg)
+        arr = _to_height(image, rng if augment else None)
     if arr is None:
         return None
     return arr, label, meta
+
+
+def _degrade_screen(image: Image.Image, rng: random.Random) -> Image.Image:
+    """Mild changes only: screen text is crisp, its grey levels vary with the renderer and gamma."""
+    arr = np.asarray(image, dtype=np.float32)
+    if rng.random() < 0.4:
+        gamma = rng.uniform(0.75, 1.3)
+        arr = 255 * np.power(np.clip(arr, 0, 255) / 255, gamma)
+    if rng.random() < 0.15:
+        arr = arr + np.random.default_rng(rng.randrange(1 << 30)).normal(0, rng.uniform(1, 3), arr.shape)
+    if rng.random() < 0.2:
+        buffer = io.BytesIO()
+        Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "L").save(buffer, format="JPEG", quality=rng.randint(60, 95))
+        return Image.open(io.BytesIO(buffer.getvalue())).convert("L")
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "L")
 
 
 def _degrade(image: Image.Image, rng: random.Random, bg: int) -> Image.Image:
@@ -207,12 +242,15 @@ def _degrade(image: Image.Image, rng: random.Random, bg: int) -> Image.Image:
     return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "L")
 
 
-def _to_height(image: Image.Image, rng: random.Random | None):
+def _to_height(image: Image.Image, rng: random.Random | None, bilinear: bool = False):
     width, height = image.size
     new_w = int(round(width * HEIGHT / height))
     if new_w < 8 or new_w > MAX_WIDTH:
         return None
-    resample = Image.Resampling.LANCZOS if rng is None or rng.random() < 0.6 else Image.Resampling.BILINEAR
+    if bilinear:
+        resample = Image.Resampling.BILINEAR if height <= HEIGHT else Image.Resampling.BOX
+    else:
+        resample = Image.Resampling.LANCZOS if rng is None or rng.random() < 0.6 else Image.Resampling.BILINEAR
     return np.asarray(image.resize((new_w, HEIGHT), resample), dtype=np.uint8)
 
 

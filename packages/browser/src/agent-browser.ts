@@ -231,6 +231,11 @@ const OWNER_LIMIT_MS = 120000;
 /** Quiet-network window after an action (proposed; Playwright's networkidle uses 500 ms) and the cap it never exceeds. */
 const SETTLE_QUIET_MS = 200;
 const SETTLE_CAP_MS = 900;
+/**
+ * A click, key, form or choice may start its navigation only after the page's own script has run, so a gesture keeps
+ * the old 500 ms of quiet before the page is read; an open or a scroll starts its traffic at once and needs no margin.
+ */
+const GESTURE_QUIET_MS = 500;
 const HELD_MS = 5 * 60000;
 
 /**
@@ -1056,8 +1061,8 @@ export class AgentBrowser {
    * or at SETTLE_CAP_MS. Playwright's own `networkidle` needs a fixed 500 ms of quiet, which with the 120 ms grace
    * made every step cost at least 0.62 s even on a local page (0-baseline §7.2, 2026-11-22).
    */
-  private async settle(page: Page): Promise<void> {
-    const quiet = this.quietNetwork(page, this.settleQuietMs, SETTLE_CAP_MS);
+  private async settle(page: Page, gesture = false): Promise<void> {
+    const quiet = this.quietNetwork(page, gesture ? Math.max(this.settleQuietMs, GESTURE_QUIET_MS) : this.settleQuietMs, SETTLE_CAP_MS);
     await delay(120);
     await page.waitForLoadState('domcontentloaded', { timeout: 4000 }).catch(() => {});
     await quiet;
@@ -1165,9 +1170,11 @@ export class AgentBrowser {
       entry.navigationUrl = next;
       await entry.page.goto(next, { waitUntil: 'domcontentloaded' }).catch(() => {});
     }
+    // While act() runs, entry.operation names the action; a legacy direct call has none and is treated as a gesture.
+    const gesture = !entry.operation || GESTURES.has(entry.operation.kind) || entry.operation.kind === 'select';
     for (let attempt = 0; attempt < 3; attempt++) {
       const current = entry.page;
-      await this.settle(current);
+      await this.settle(current, gesture);
       if (current === entry.page) break;
     }
     if (entry.operation?.denial) throw entry.operation.denial;

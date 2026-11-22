@@ -188,6 +188,91 @@
     { "id": "c41", "dialect": "gulf", "about": "Gulf correction with غلط", "turns": [
       { "text": "متى مباراة الهلال؟", "expect": { "type": ["new_request"], "query": { "contains": ["الهلال"] } } },
       { "text": "غلط، أقصد الاتحاد", "expect": { "type": ["correction"], "query": { "contains": ["الاتحاد"], "notContains": ["الهلال"] } } }
+    ]},
+    { "id": "c42", "dialect": "msa", "about": "bare corrections after a lead", "turns": [
+      { "text": "متى مباراة الهلال؟", "expect": { "type": ["new_request"], "query": { "contains": ["الهلال"] } } },
+      { "text": "لا، النصر", "expect": { "type": ["correction"], "entity": "النصر", "query": { "contains": ["النصر"], "notContains": ["الهلال"] } } },
+      { "text": "مش النصر، الاتحاد", "expect": { "type": ["correction"], "query": { "contains": ["الاتحاد"], "notContains": ["النصر"] } } },
+      { "text": "الشباب بدل الاتحاد", "expect": { "type": ["correction"], "query": { "contains": ["الشباب"], "notContains": ["الاتحاد"] } } }
+    ]},
+    { "id": "c43", "dialect": "en", "about": "English corrections with instead", "turns": [
+      { "text": "When is Arsenal's next match?", "expect": { "type": ["new_request"], "query": { "contains": ["Arsenal"] } } },
+      { "text": "Chelsea instead", "expect": { "type": ["correction"], "query": { "contains": ["Chelsea"], "notContains": ["Arsenal"] } } },
+      { "text": "no, Liverpool", "expect": { "type": ["correction"], "query": { "contains": ["Liverpool"], "notContains": ["Chelsea"] } } }
+    ]},
+    { "id": "c44", "dialect": "levantine", "about": "one operand corrected with خليها / لا، في", "turns": [
+      { "text": "شو الطقس في بيروت اليوم؟", "expect": { "type": ["new_request"], "query": { "contains": ["بيروت"] } } },
+      { "text": "خليها بكرا", "expect": { "type": ["correction", "field_edit"], "query": { "contains": ["بيروت", "بكرا"], "notContains": ["اليوم"] } } },
+      { "text": "لا، في طرابلس", "expect": { "type": ["correction", "follow_up_entity"], "query": { "contains": ["طرابلس"], "notContains": ["بيروت"] } } }
+    ]},
+    { "id": "c45", "dialect": "en", "about": "set it to / make it", "turns": [
+      { "text": "What's the weather in London today?", "expect": { "type": ["new_request"], "query": { "contains": ["London"] } } },
+      { "text": "set it to tomorrow", "expect": { "type": ["correction", "field_edit"], "query": { "contains": ["London", "tomorrow"], "notContains": ["today"] } } },
+      { "text": "make it Paris", "expect": { "type": ["correction", "follow_up_entity"], "query": { "contains": ["Paris"], "notContains": ["London"] } } }
+    ]},
+    { "id": "c46", "dialect": "egyptian", "about": "dialect leads: كمان, برضو, نفس الشي", "turns": [
+      { "text": "عدد سكان المغرب كام؟", "expect": { "type": ["new_request"], "property": "population", "query": { "contains": ["المغرب"] } } },
+      { "text": "وكمان مصر؟", "expect": { "type": ["follow_up_entity"], "entity": "مصر", "query": { "contains": ["مصر"], "notContains": ["المغرب"] } } },
+      { "text": "وبرضو تونس؟", "expect": { "type": ["follow_up_entity"], "entity": "تونس", "query": { "contains": ["تونس"], "notContains": ["مصر"] } } },
+      { "text": "نفس الشي للجزائر", "expect": { "type": ["follow_up_entity"], "entity": "الجزائر", "query": { "contains": ["الجزائر"], "notContains": ["تونس"] } } }
+    ]},
+    { "id": "c47", "dialect": "en", "about": "same for / too", "turns": [
+      { "text": "What is the population of Morocco?", "expect": { "type": ["new_request"], "property": "population", "query": { "contains": ["Morocco"] } } },
+      { "text": "same for Egypt", "expect": { "type": ["follow_up_entity"], "entity": "Egypt", "query": { "contains": ["Egypt"], "notContains": ["Morocco"] } } },
+      { "text": "Tunisia too", "expect": { "type": ["follow_up_entity"], "entity": "Tunisia", "query": { "contains": ["Tunisia"], "notContains": ["Egypt"] } } }
+    ]},
+    { "id": "c48", "dialect": "msa", "about": "Arabic digits and number words in references", "turns": [
+      { "text": "ما آخر أخبار التقنية؟", "expect": { "type": ["new_request"] }, "shown": [{ "label": "خبر أول", "kind": "news" }, { "label": "خبر ثانٍ", "kind": "news" }, { "label": "خبر ثالث", "kind": "news" }] },
+      { "text": "اقرأ الخبر ٢", "expect": { "type": ["reference"], "reference": 2, "query": null } },
+      { "text": "open option three", "expect": { "type": ["reference"], "reference": 3, "query": null } }
+    ]},
+    { "id": "c49", "dialect": "msa", "about": "weekday and relative time operands", "turns": [
+      { "text": "كيف الطقس في جدة يوم الجمعة؟", "expect": { "type": ["new_request"], "property": "weather", "entity": "جدة", "query": { "contains": ["جدة"] } } },
+      { "text": "ويوم السبت؟", "expect": { "type": ["field_edit", "follow_up_property"], "query": { "contains": ["جدة", "السبت"], "notContains": ["الجمعة"] } } },
+      { "text": "ما حكم صلاة الجمعة؟", "expect": { "type": ["topic_change"], "query": { "contains": ["صلاة الجمعة"] } } }
+    ]},
+    { "id": "c50", "dialect": "msa", "about": "two properties in one question keep the entity", "turns": [
+      { "text": "ما عاصمة اليابان وعدد سكانها؟", "expect": { "type": ["new_request"], "property": "capital", "entity": "اليابان", "query": { "contains": ["اليابان"] } } },
+      { "text": "وما عملتها؟", "expect": { "type": ["follow_up_property"], "property": "currency", "query": { "contains": ["اليابان"] } } }
+    ]},
+    { "id": "c51", "dialect": "msa", "about": "open properties outside the closed list", "turns": [
+      { "text": "ما عاصمة اليابان؟", "expect": { "type": ["new_request"], "query": { "contains": ["اليابان"] } }, "shown": [{ "label": "طوكيو", "kind": "place" }] },
+      { "text": "وهي في أي قارة؟", "expect": { "type": ["follow_up_property"], "query": { "contains": ["اليابان", "قارة"] } } },
+      { "text": "وما أشهر معالمها؟", "expect": { "type": ["follow_up_property"], "query": { "contains": ["اليابان", "معالمها"] } } },
+      { "text": "وأين تقع؟", "expect": { "type": ["follow_up_property"], "query": { "contains": ["اليابان", "تقع"] } } },
+      { "text": "هل هي كبيرة؟", "expect": { "type": ["follow_up_property"], "query": { "contains": ["اليابان", "كبيرة"] } } }
+    ]},
+    { "id": "c52", "dialect": "en", "about": "English open properties", "turns": [
+      { "text": "What is the capital of Japan?", "expect": { "type": ["new_request"], "query": { "contains": ["Japan"] } } },
+      { "text": "which continent is it in?", "expect": { "type": ["follow_up_property"], "query": { "contains": ["Japan", "continent"], "notContains": [" it "] } } },
+      { "text": "and when was it founded?", "expect": { "type": ["follow_up_property"], "property": "founded", "query": { "contains": ["Japan"] } } },
+      { "text": "is it expensive to visit?", "expect": { "type": ["follow_up_property"], "query": { "contains": ["Japan", "expensive"] } } }
+    ]},
+    { "id": "c53", "dialect": "msa", "about": "the question shape is reused for a new entity", "turns": [
+      { "text": "من هو ألبرت أينشتاين؟", "expect": { "type": ["new_request"], "query": { "contains": ["أينشتاين"] } } },
+      { "text": "ونيوتن؟", "expect": { "type": ["follow_up_entity"], "entity": "نيوتن", "query": { "contains": ["من هو", "نيوتن"], "notContains": ["أينشتاين"] } } },
+      { "text": "ومتى ولد؟", "expect": { "type": ["follow_up_property"], "query": { "contains": ["نيوتن", "ولد"] } } },
+      { "text": "لا، أقصد غاليليو", "expect": { "type": ["correction"], "query": { "contains": ["غاليليو"], "notContains": ["نيوتن"] } } }
+    ]},
+    { "id": "c54", "dialect": "en", "about": "English question shape", "turns": [
+      { "text": "Who is Albert Einstein?", "expect": { "type": ["new_request"], "query": { "contains": ["Einstein"] } } },
+      { "text": "and Newton?", "expect": { "type": ["follow_up_entity"], "entity": "Newton", "query": { "contains": ["Who is", "Newton"], "notContains": ["Einstein"] } } }
+    ]},
+    { "id": "c55", "dialect": "msa", "about": "comparison keeps the property and the old entity", "turns": [
+      { "text": "كم عدد سكان جدة؟", "expect": { "type": ["new_request"], "property": "population", "query": { "contains": ["جدة"] } } },
+      { "text": "وقارنها بالرياض", "expect": { "type": ["follow_up_entity"], "entity": "الرياض", "query": { "contains": ["الرياض"], "notContains": ["جدة"] } } },
+      { "text": "compare it with Dubai", "expect": { "type": ["follow_up_entity"], "entity": "Dubai", "query": { "contains": ["Dubai"] } } }
+    ]},
+    { "id": "c56", "dialect": "msa", "about": "unit and currency reformulations", "turns": [
+      { "text": "كم سعر الذهب اليوم؟", "expect": { "type": ["new_request"], "property": "price", "query": { "contains": ["الذهب"] } } },
+      { "text": "بالدولار", "expect": { "type": ["field_edit"], "edit": "unit", "query": null } },
+      { "text": "in euros", "expect": { "type": ["field_edit"], "edit": "unit", "query": null } },
+      { "text": "وبالريال؟", "expect": { "type": ["field_edit", "follow_up_property"], "query": null } }
+    ]},
+    { "id": "c57", "dialect": "msa", "about": "stop words keep the topic", "turns": [
+      { "text": "ما عاصمة اليابان؟", "expect": { "type": ["new_request"], "query": { "contains": ["اليابان"] } } },
+      { "text": "توقف", "expect": { "type": ["small_talk"], "query": null } },
+      { "text": "وكم عدد سكانها؟", "expect": { "type": ["follow_up_property"], "query": { "contains": ["اليابان"] } } }
     ]}
   ]
 }

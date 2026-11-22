@@ -15,39 +15,44 @@ export function conv3x3Relu(input: Float32Array, channels: number, height: numbe
   const out = weight.shape[0], inChannels = weight.shape[1];
   if (inChannels !== channels || weight.shape[2] !== 3 || weight.shape[3] !== 3 || bias.shape[0] !== out) throw new Error('conv shape');
   const K = channels * 9, w = weight.data, b = bias.data;
-  const result = new Float32Array(out * height * width), patch = new Float32Array(width * K);
+  // Blocks of columns keep the patch in cache while every output channel reads it.
+  const block = Math.max(8, Math.min(width, Math.floor(49152 / K)));
+  const result = new Float32Array(out * height * width), patch = new Float32Array(block * K);
   const tail = K % 4, main = K - tail;
   for (let y = 0; y < height; y++) {
-    for (let c = 0; c < channels; c++) {
-      for (let ky = 0; ky < 3; ky++) {
-        const iy = y + ky - 1, tap = c * 9 + ky * 3;
-        if (iy < 0 || iy >= height) {
-          for (let x = 0; x < width; x++) { const p = x * K + tap; patch[p] = 0; patch[p + 1] = 0; patch[p + 2] = 0; }
-          continue;
-        }
-        const inRow = (c * height + iy) * width;
-        for (let x = 0; x < width; x++) {
-          const p = x * K + tap;
-          patch[p] = x > 0 ? input[inRow + x - 1] : 0;
-          patch[p + 1] = input[inRow + x];
-          patch[p + 2] = x + 1 < width ? input[inRow + x + 1] : 0;
+    for (let x0 = 0; x0 < width; x0 += block) {
+      const count = Math.min(block, width - x0);
+      for (let c = 0; c < channels; c++) {
+        for (let ky = 0; ky < 3; ky++) {
+          const iy = y + ky - 1, tap = c * 9 + ky * 3;
+          if (iy < 0 || iy >= height) {
+            for (let i = 0; i < count; i++) { const p = i * K + tap; patch[p] = 0; patch[p + 1] = 0; patch[p + 2] = 0; }
+            continue;
+          }
+          const inRow = (c * height + iy) * width;
+          for (let i = 0; i < count; i++) {
+            const x = x0 + i, p = i * K + tap;
+            patch[p] = x > 0 ? input[inRow + x - 1] : 0;
+            patch[p + 1] = input[inRow + x];
+            patch[p + 2] = x + 1 < width ? input[inRow + x + 1] : 0;
+          }
         }
       }
-    }
-    for (let o = 0; o < out; o++) {
-      const wBase = o * K, bo = b[o], outRow = (o * height + y) * width;
-      for (let x = 0; x < width; x++) {
-        const pBase = x * K;
-        let s0 = 0, s1 = 0, s2 = 0, s3 = 0;
-        for (let k = 0; k < main; k += 4) {
-          s0 += w[wBase + k] * patch[pBase + k];
-          s1 += w[wBase + k + 1] * patch[pBase + k + 1];
-          s2 += w[wBase + k + 2] * patch[pBase + k + 2];
-          s3 += w[wBase + k + 3] * patch[pBase + k + 3];
+      for (let o = 0; o < out; o++) {
+        const wBase = o * K, bo = b[o], outRow = (o * height + y) * width + x0;
+        for (let i = 0; i < count; i++) {
+          const pBase = i * K;
+          let s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+          for (let k = 0; k < main; k += 4) {
+            s0 += w[wBase + k] * patch[pBase + k];
+            s1 += w[wBase + k + 1] * patch[pBase + k + 1];
+            s2 += w[wBase + k + 2] * patch[pBase + k + 2];
+            s3 += w[wBase + k + 3] * patch[pBase + k + 3];
+          }
+          let sum = bo + s0 + s1 + s2 + s3;
+          for (let k = main; k < K; k++) sum += w[wBase + k] * patch[pBase + k];
+          result[outRow + i] = sum > 0 ? sum : 0;
         }
-        let sum = bo + s0 + s1 + s2 + s3;
-        for (let k = main; k < K; k++) sum += w[wBase + k] * patch[pBase + k];
-        result[outRow + x] = sum > 0 ? sum : 0;
       }
     }
   }

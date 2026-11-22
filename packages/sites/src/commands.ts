@@ -98,7 +98,7 @@ export function siteCommand(text: string, brief: SiteBrief): SiteCommand | null 
   const name = rest(raw, /(?:غيّر|غير|بدّل|بدل|اجعل|خلي|خل)\s+(?:ال)?(?:اسم|الاسم)(?:\s+(?:الموقع|النشاط|المطعم|العياده|العيادة|المتجر))?\s+(?:إلى|الى|ل|ليكون|يكون|=|:)?\s*(.+)$/iu) ?? rest(raw, /(?:change|set|rename|update)\s+(?:the\s+)?(?:name|title|business name|site name)\s+(?:to|as|=|:)?\s*(.+)$/iu);
   if (name) { const clean = name.replace(/^[«"“'‘]+|[»"”'’]+$/gu, '').trim().slice(0, 80); if (clean) return { kind: 'patch', patch: { name: clean }, summary: say(lang, `غيّرت الاسم إلى «${clean}».`, `Changed the name to "${clean}".`) }; }
   // Tagline.
-  const tagline = rest(raw, /(?:غيّر|غير|بدّل|بدل|اجعل|اضف|أضف|اكتب)\s+(?:ال)?(?:شعار|العنوان الفرعي|الوصف المختصر|الجمله التعريفيه|الجملة التعريفية)\s+(?:إلى|الى|ل|:)?\s*(.+)$/iu) ?? rest(raw, /(?:change|set|add|write)\s+(?:the\s+)?(?:tagline|slogan|subtitle|strapline)\s+(?:to|as|:)?\s*(.+)$/iu);
+  const tagline = rest(raw, /(?:غيّر|غير|بدّل|بدل|اجعل|اضف|أضف|اكتب)\s+(?:ال)?(?:شعار|العنوان الفرعي|الوصف المختصر|الجمله التعريفيه|الجملة التعريفية)\s*(?:[:：]|إلى|الى|ل)?\s*(.+)$/iu) ?? rest(raw, /(?:change|set|add|write)\s+(?:the\s+)?(?:tagline|slogan|subtitle|strapline)\s*(?:[:：]|to|as)?\s*(.+)$/iu);
   if (tagline) { const clean = tagline.replace(/^[«"“'‘]+|[»"”'’]+$/gu, '').slice(0, 140); return { kind: 'patch', patch: { tagline: clean }, summary: say(lang, 'غيّرت الجملة التعريفية.', 'Changed the tagline.') }; }
   // Hours.
   const hours = rest(raw, /(?:ساعات العمل|الدوام|المواعيد|اوقات العمل|أوقات العمل|opening hours|hours|opening times)\s*(?:هي|هو|إلى|الى|:|=|are|is|to)?\s*([\s\S]+)$/iu);
@@ -191,12 +191,12 @@ export function siteCommand(text: string, brief: SiteBrief): SiteCommand | null 
     if (index >= 0) { const items = brief.items.filter((_, position) => position !== index); return { kind: 'patch', patch: { items }, summary: say(lang, `حذفت «${brief.items[index]!.title}».`, `Removed "${brief.items[index]!.title}".`) }; }
   }
   // Price of an existing item: "سعر تنظيف السجاد 60".
-  const priced = raw.match(/(?:سعر|السعر|price of|price for)\s+(.+?)\s*(?:هو|=|:|is|to)?\s*([^\s].{0,30})$/iu);
-  if (priced && /\d/.test(normalize(priced[2]!))) { const index = fuzzyIndex(brief.items, priced[1]!); if (index >= 0) { const items = brief.items.map((item, position) => (position === index ? { ...item, price: priced[2]!.trim().slice(0, 40) } : item)); return { kind: 'patch', patch: { items }, summary: say(lang, `حدّثت سعر «${brief.items[index]!.title}».`, `Updated the price of "${brief.items[index]!.title}".`) }; } }
+  const priced = raw.match(/(?:سعر|السعر|price of|price for)\s+(.+?)\s*(?:هو|=|:|is|to|يصير|يصبح)?\s*((?:[£$€]\s*)?[\d٠-٩][\d٠-٩.,]*(?:\s*[^\d٠-٩\s]{1,12})?)$/iu);
+  if (priced && priced[1]!.trim()) { const index = fuzzyIndex(brief.items, priced[1]!); if (index >= 0) { const items = brief.items.map((item, position) => (position === index ? { ...item, price: priced[2]!.trim().slice(0, 40) } : item)); return { kind: 'patch', patch: { items }, summary: say(lang, `حدّثت سعر «${brief.items[index]!.title}».`, `Updated the price of "${brief.items[index]!.title}".`) }; } }
   // Mood / style.
   for (const entry of MOODS) if (wordIn(norm, entry.words) && /(?:اجعله|خليه|خله|اجعل|صممه|نمط|ستايل|شكل|تصميم|make it|make the|style|look|design|feel)/u.test(norm)) return { kind: 'patch', patch: { mood: entry.mood }, summary: say(lang, 'غيّرت طابع التصميم.', 'Changed the design mood.') };
   // Language.
-  if (/(?:اجعله|حوله|حوّله|ترجمه|ترجم|بدل اللغه|بدّل اللغة|غير اللغه|غيّر اللغة|make it|switch|translate|change the language|in)\b/u.test(norm) || /(?:لغه|اللغه|language)/u.test(norm)) {
+  if (/(?:^|\s)(?:اجعله|اجعل الموقع|خليه|حوله|ترجمه|ترجم|بدل اللغه|غير اللغه|make it|switch|translate|change the language|in)(?![\p{L}])/u.test(norm) || /(?:لغه|اللغه|language)/u.test(norm)) {
     if (/(?:انجليزي|انجليزيه|انكليزي|english)/u.test(norm) && brief.lang !== 'en') return { kind: 'patch', patch: { lang: 'en' }, summary: 'Switched the site to English; your own texts stay as you wrote them.' };
     if (/(?:عربي|عربيه|arabic)/u.test(norm) && brief.lang !== 'ar') return { kind: 'patch', patch: { lang: 'ar' }, summary: 'حوّلت الموقع إلى العربية؛ نصوصك تبقى كما كتبتها.' };
   }

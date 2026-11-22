@@ -36,15 +36,17 @@ export function buildPages(core: Core, content: PageContent, options: PlanOption
   const titles = PAGE_TITLES[core.lang];
   const labels = COPY[core.lang].labels;
   const hasGallery = options.gallery !== false && core.images.some(image => image.role === 'gallery');
+  /** A landing page, or an explicit one-page request, keeps every block on index.html. */
+  const single = Boolean(options.singlePage) || core.kind === 'landing';
   const home: SiteBlock[] = [{ type: 'hero' }];
   const extra: SitePage[] = [];
   const itemsPath = ITEMS_PAGE[core.kind];
 
   if (core.kind === 'landing') {
-    if (core.offer) home.push({ type: 'cta', title: core.offer });
+    // The offer is the hero lead; the band below it only invites, so the same sentence is not shown twice.
     if (core.items.length) home.push({ type: 'items', layout: 'cards' });
   } else if (core.items.length) {
-    const split = Boolean(itemsPath) && core.items.length > HIGHLIGHT_COUNT[core.kind] && !options.singlePage;
+    const split = Boolean(itemsPath) && core.items.length > HIGHLIGHT_COUNT[core.kind] && !single;
     home.push({ type: 'items', limit: split ? HIGHLIGHT_COUNT[core.kind] : undefined });
     if (split && itemsPath) extra.push({ path: itemsPath, title: labels.nav.items[core.kind], inNav: true, blocks: [{ type: 'items' }, { type: 'cta' }] });
   }
@@ -53,45 +55,46 @@ export function buildPages(core: Core, content: PageContent, options: PlanOption
   if (content.facts?.length) home.push({ type: 'facts', items: content.facts });
   if (hasGallery && core.kind === 'portfolio') home.splice(1, 0, { type: 'gallery' });
   else if (hasGallery) home.push({ type: 'gallery' });
+  const longAbout = Boolean(content.about && content.about.length > 400) && !single;
   if (content.about) {
-    if (options.singlePage || content.about.length <= 400) home.push({ type: 'text', title: titles.about, body: content.about });
+    if (!longAbout) home.push({ type: 'text', title: titles.about, body: content.about });
     else extra.push({ path: 'about.html', title: titles.about!, inNav: true, blocks: [{ type: 'text', title: titles.about, body: content.about }, ...(content.team?.length ? [{ type: 'team' as const, members: content.team }] : [])] });
   }
-  if (content.team?.length && !(content.about && content.about.length > 400 && !options.singlePage)) {
-    if (options.singlePage || content.team.length <= 4) home.push({ type: 'team', members: content.team });
+  if (content.team?.length && !longAbout) {
+    if (single || content.team.length <= 4) home.push({ type: 'team', members: content.team });
     else extra.push({ path: 'team.html', title: titles.team!, inNav: true, blocks: [{ type: 'team', members: content.team }, { type: 'cta' }] });
   }
   if (content.projects?.length) {
-    if (options.singlePage) home.push({ type: 'items', title: titles.projects, layout: 'tiles', items: content.projects });
+    if (single) home.push({ type: 'items', title: titles.projects, layout: 'tiles', items: content.projects });
     else extra.push({ path: 'projects.html', title: titles.projects!, inNav: true, blocks: [{ type: 'items', title: titles.projects, layout: 'tiles', items: content.projects }, { type: 'cta' }] });
   }
   if (content.pricing?.length) {
-    if (options.singlePage || content.pricing.length <= 3) home.push({ type: 'pricing', plans: content.pricing });
+    if (single || content.pricing.length <= 3) home.push({ type: 'pricing', plans: content.pricing });
     else extra.push({ path: 'pricing.html', title: titles.pricing!, inNav: true, blocks: [{ type: 'pricing', plans: content.pricing }, { type: 'cta' }] });
   }
   if (core.testimonials.length) home.push({ type: 'testimonials' });
   if (content.faq?.length) {
-    if (options.singlePage || content.faq.length <= 5) home.push({ type: 'faq', entries: content.faq });
+    if (single || content.faq.length <= 5) home.push({ type: 'faq', entries: content.faq });
     else extra.push({ path: 'faq.html', title: titles.faq!, inNav: true, blocks: [{ type: 'faq', entries: content.faq }, { type: 'cta' }] });
   }
   if (content.posts?.length) {
-    if (options.singlePage) home.push({ type: 'posts', posts: content.posts });
+    if (single) home.push({ type: 'posts', posts: content.posts });
     else extra.push({ path: 'news.html', title: titles.posts!, inNav: true, blocks: [{ type: 'posts', posts: content.posts }] });
   }
-  if (core.hours?.length && (core.kind === 'restaurant' || core.kind === 'clinic' || options.singlePage)) home.push({ type: 'hours' });
+  if (core.hours?.length && (core.kind === 'restaurant' || core.kind === 'clinic' || single)) home.push({ type: 'hours' });
   if (core.kind !== 'landing') home.push({ type: 'cta' });
 
   const contactBlocks: SiteBlock[] = [{ type: 'contact', form: options.form ?? core.kind !== 'restaurant' }];
   if (options.map || core.mapUrl) contactBlocks.push({ type: 'map' });
-  if (core.hours?.length) contactBlocks.push({ type: 'hours' });
-  if (core.kind === 'landing' || options.singlePage) home.push(...contactBlocks);
+  if (core.hours?.length && !single) contactBlocks.push({ type: 'hours' });
+  if (single) home.push(...contactBlocks);
 
-  const pages: SitePage[] = [{ path: 'index.html', title: core.name, inNav: true, blocks: home }];
-  if (core.kind !== 'landing' && !options.singlePage) {
+  const pages: SitePage[] = [{ path: 'index.html', title: core.name, inNav: true, blocks: home.slice(0, 16) }];
+  if (!single) {
     pages.push(...extra);
     pages.push({ path: 'contact.html', title: titles.contact!, inNav: true, blocks: contactBlocks });
   }
-  return pages;
+  return pages.slice(0, 12);
 }
 
 /** Where a block added later belongs, mirroring buildPages. Returns the pages unchanged when the block exists. */

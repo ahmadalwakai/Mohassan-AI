@@ -19,7 +19,7 @@ export interface OcrPool {
   readonly size: number;
   ready(): Promise<boolean>;
   recognize(crops: readonly LineCrop[], signal?: AbortSignal): Promise<LineRecognition[]>;
-  stats(): { readonly requests: number; readonly crops: number; readonly failures: number; readonly restarts: number; readonly busyMs: number };
+  stats(): { readonly requests: number; readonly crops: number; readonly failures: number; readonly restarts: number; readonly busyMs: number; readonly lastError: string };
   close(): Promise<void>;
 }
 
@@ -29,6 +29,8 @@ const { parentPort, workerData } = require('node:worker_threads');
 const { performance } = require('node:perf_hooks');
 (async () => {
   try {
+    // While the server runs TypeScript sources, the worker thread needs the same loader for the entry's imports.
+    if (workerData.tsxUrl) { const tsx = await import(workerData.tsxUrl); tsx.register(); }
     const entry = await import(workerData.loaderUrl);
     const model = entry.loadForWorker(workerData.manifest, workerData.weights);
     parentPort.on('message', packet => {
@@ -55,15 +57,20 @@ export function createOcrPool(options: OcrPoolOptions): OcrPool {
   const model = loadOcrModelFromBytes(options.manifestBytes, options.weightsBytes);
   const size = Math.max(1, Math.min(8, options.size ?? 3)), timeoutMs = options.timeoutMs ?? 30_000, startupTimeoutMs = options.startupTimeoutMs ?? 15_000;
   const manifest = Uint8Array.from(options.manifestBytes), weights = Uint8Array.from(options.weightsBytes);
-  const loaderUrl = new URL('./ocr-worker-entry.js', import.meta.url).href;
-  const counters = { requests: 0, crops: 0, failures: 0, restarts: 0, busyMs: 0 };
+  // The entry is loaded by its real extension: `.ts` while the server runs TypeScript sources, `.js` when compiled.
+  const typescript = import.meta.url.endsWith('.ts');
+  const loaderUrl = new URL(typescript ? './ocr-worker-entry.ts' : './ocr-worker-entry.js', import.meta.url).href;
+  let tsxUrl: string | undefined;
+  if (typescript) { try { tsxUrl = import.meta.resolve('tsx/esm/api'); } catch { tsxUrl = undefined; } }
+  const counters = { requests: 0, crops: 0, failures: 0, restarts: 0, busyMs: 0, lastError: '' };
   let closed = false, nextId = 1;
   const slots: Slot[] = [];
 
   function spawn(slot: Slot): void {
-    const worker = new Worker(WORKER_SOURCE, { eval: true, execArgv: [], name: 'mohassan-ocr', stdout: true, stderr: true,
+    // execArgv is inherited on purpose: the server runs TypeScript through `--import tsx`, and the worker must load the entry the same way.
+    const worker = new Worker(WORKER_SOURCE, { eval: true, name: 'mohassan-ocr', stdout: true, stderr: true,
       resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 },
-      workerData: { loaderUrl, manifest: Uint8Array.from(manifest), weights: Uint8Array.from(weights) } });
+      workerData: { loaderUrl, tsxUrl, manifest: Uint8Array.from(manifest), weights: Uint8Array.from(weights) } });
     worker.stdout?.on('data', () => {}); worker.stderr?.on('data', () => {});
     slot.worker = worker;
     slot.ready = new Promise<boolean>(resolve => {
@@ -71,7 +78,7 @@ export function createOcrPool(options: OcrPoolOptions): OcrPool {
       worker.on('message', (packet: { v: number; type: string; id?: number; results?: LineRecognition[]; error?: string; elapsedMs?: number }) => {
         if (!packet || packet.v !== 1) return;
         if (packet.type === 'ready') { clearTimeout(startup); resolve(true); return; }
-        if (packet.type === 'failed') { clearTimeout(startup); resolve(false); return; }
+        if (packet.type === 'failed') { clearTimeout(startup); counters.lastError = String(packet.error ?? 'worker failed').slice(0, 300); resolve(false); return; }
         if (typeof packet.id !== 'number') return;
         const pending = slot.pending.get(packet.id);
         if (!pending) return;
@@ -80,7 +87,7 @@ export function createOcrPool(options: OcrPoolOptions): OcrPool {
         else { counters.failures++; pending.reject(new Error(packet.error ?? 'OCR_WORKER_REJECTED')); }
       });
       const fail = () => { clearTimeout(startup); resolve(false); for (const pending of slot.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('OCR_WORKER_EXITED')); } slot.pending.clear(); slot.busy = 0; slot.worker = null; if (!closed) { counters.restarts++; spawn(slot); } };
-      worker.on('error', fail);
+      worker.on('error', (error: Error) => { counters.lastError = String(error?.message ?? error).slice(0, 300); fail(); });
       worker.on('exit', fail);
     });
     worker.unref();
@@ -92,7 +99,9 @@ export function createOcrPool(options: OcrPoolOptions): OcrPool {
       const worker = slot.worker;
       if (!worker) { reject(new Error('OCR_WORKER_DOWN')); return; }
       const id = nextId++;
-      const timer = setTimeout(() => { slot.pending.delete(id); slot.busy--; counters.failures++; reject(new Error('OCR_WORKER_TIMEOUT')); void worker.terminate(); }, timeoutMs);
+      // A long line on a busy machine can take seconds; the limit grows with the work sent.
+      const limit = timeoutMs + crops.reduce((sum, crop) => sum + crop.width, 0) * 8;
+      const timer = setTimeout(() => { slot.pending.delete(id); slot.busy--; counters.failures++; reject(new Error('OCR_WORKER_TIMEOUT')); void worker.terminate(); }, limit);
       slot.pending.set(id, { resolve, reject, timer });
       slot.busy++;
       const payload = crops.map(crop => ({ width: crop.width, pixels: Uint8Array.from(crop.pixels) }));
@@ -112,11 +121,23 @@ export function createOcrPool(options: OcrPoolOptions): OcrPool {
       const states = await Promise.all(slots.map(slot => slot.ready));
       const live = slots.filter((slot, index) => states[index] && slot.worker);
       if (!live.length) throw new Error('OCR_POOL_UNAVAILABLE');
-      const chunks = Math.min(live.length, crops.length), per = Math.ceil(crops.length / chunks);
-      const ordered = live.slice().sort((a, b) => a.busy - b.busy);
-      const parts = await Promise.all(Array.from({ length: chunks }, (_, index) => send(ordered[index % ordered.length], crops.slice(index * per, (index + 1) * per))));
-      signal?.throwIfAborted();
-      return parts.flat();
+      // Small chunks from a shared queue: every worker stays busy until the last crop, whatever the line widths.
+      const chunkSize = Math.max(1, Math.min(6, Math.ceil(crops.length / (live.length * 2))));
+      const chunks: { start: number; crops: LineCrop[] }[] = [];
+      for (let start = 0; start < crops.length; start += chunkSize) chunks.push({ start, crops: crops.slice(start, start + chunkSize) });
+      const results: LineRecognition[] = new Array(crops.length);
+      let next = 0;
+      const drain = async (slot: Slot) => {
+        while (next < chunks.length) {
+          const chunk = chunks[next++];
+          const part = await send(slot, chunk.crops);
+          for (let i = 0; i < part.length; i++) results[chunk.start + i] = part[i];
+          signal?.throwIfAborted();
+        }
+      };
+      await Promise.all(live.slice().sort((a, b) => a.busy - b.busy).map(slot => drain(slot)));
+      if (results.some(item => !item)) throw new Error('OCR_POOL_INCOMPLETE');
+      return results;
     },
     stats() { return { ...counters }; },
     async close() { closed = true; await Promise.all(slots.map(slot => slot.worker?.terminate())); },

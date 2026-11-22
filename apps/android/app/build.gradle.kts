@@ -44,6 +44,12 @@ android {
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
+
+    lint {
+        // AGP 8.7's lint cannot parse the preview platform folders in this SDK (platforms/android-37.2):
+        // lintVitalAnalyzeRelease fails with `For input string: "37.2"`. Lint still runs on demand (`gradlew lint`).
+        checkReleaseBuilds = false
+    }
 }
 
 kotlin {

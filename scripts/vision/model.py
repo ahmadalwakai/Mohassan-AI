@@ -6,6 +6,8 @@ folded into the convolutions at export time.
 """
 from __future__ import annotations
 
+import math
+
 import torch
 from torch import nn
 
@@ -13,24 +15,31 @@ CHANNELS = (24, 48, 64, 96, 128)
 HIDDEN = 128
 HEIGHT = 32
 DOWNSAMPLE = 4
+# Pooling after each of the five convolutions: height x width factors, None for no pooling.
+# The product of the height factors must be 16 (32 rows -> 2) and of the width factors 4.
+POOLS: tuple[tuple[int, int] | None, ...] = ((2, 2), (2, 2), None, (2, 1), (2, 1))
+# v2: lighter and pooled earlier, about 2.2x fewer multiplications per line in the TypeScript reader.
+CHANNELS_V2 = (16, 32, 48, 64, 96)
+POOLS_V2: tuple[tuple[int, int] | None, ...] = ((2, 2), (2, 2), (2, 1), None, (2, 1))
 
 
 class OCRModel(nn.Module):
-    def __init__(self, classes: int, channels: tuple[int, ...] = CHANNELS, hidden: int = HIDDEN) -> None:
+    def __init__(self, classes: int, channels: tuple[int, ...] = CHANNELS, hidden: int = HIDDEN, pools: tuple[tuple[int, int] | None, ...] = POOLS) -> None:
         super().__init__()
         c1, c2, c3, c4, c5 = channels
-        self.channels, self.hidden, self.classes = tuple(channels), hidden, classes
+        pools = tuple(tuple(p) if p else None for p in pools)
+        assert len(pools) == 5 and math.prod(p[0] for p in pools if p) == 16 and math.prod(p[1] for p in pools if p) == DOWNSAMPLE, pools
+        self.channels, self.hidden, self.classes, self.pools = tuple(channels), hidden, classes, pools
 
         def block(i: int, o: int) -> list[nn.Module]:
             return [nn.Conv2d(i, o, 3, 1, 1, bias=False), nn.BatchNorm2d(o), nn.ReLU(inplace=True)]
 
-        self.cnn = nn.Sequential(
-            *block(1, c1), nn.MaxPool2d(2, 2),           # 16 x W/2
-            *block(c1, c2), nn.MaxPool2d(2, 2),          # 8 x W/4
-            *block(c2, c3),
-            *block(c3, c4), nn.MaxPool2d((2, 1), (2, 1)),  # 4 x W/4
-            *block(c4, c5), nn.MaxPool2d((2, 1), (2, 1)),  # 2 x W/4
-        )
+        layers: list[nn.Module] = []
+        for index, (i, o) in enumerate(zip((1, c1, c2, c3, c4), (c1, c2, c3, c4, c5))):
+            layers += block(i, o)
+            if pools[index]:
+                layers.append(nn.MaxPool2d(pools[index], pools[index]))
+        self.cnn = nn.Sequential(*layers)
         self.rnn = nn.GRU(c5 * 2, hidden, bidirectional=True, batch_first=True)
         self.fc = nn.Linear(hidden * 2, classes)
 

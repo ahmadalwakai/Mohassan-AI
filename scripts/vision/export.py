@@ -24,15 +24,14 @@ from torch.nn import functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from charset import CLASSES, decode, to_logical, to_visual  # noqa: E402
-from model import DOWNSAMPLE, HEIGHT, OCRModel, fold_batchnorm, greedy_decode  # noqa: E402
+from model import DOWNSAMPLE, HEIGHT, OCRModel, POOLS, fold_batchnorm, greedy_decode  # noqa: E402
 from train import LineShards, collate  # noqa: E402
 
 FORMAT = "mohassan-ocr-ts-v1"
 
 
-def folded_forward(tensors: dict[str, torch.Tensor], channels: tuple[int, ...], hidden: int, x: torch.Tensor) -> torch.Tensor:
+def folded_forward(tensors: dict[str, torch.Tensor], channels: tuple[int, ...], hidden: int, x: torch.Tensor, pools=POOLS) -> torch.Tensor:
     """Plain functional forward over the exported tensors; must equal the module output."""
-    pools = [(2, 2), (2, 2), None, (2, 1), (2, 1)]
     for index, pool in enumerate(pools):
         x = F.relu(F.conv2d(x, tensors[f"conv{index}.weight"], tensors[f"conv{index}.bias"], padding=1))
         if pool:
@@ -60,7 +59,8 @@ def main() -> None:
     state = torch.load(checkpoint_path, map_location="cpu")
     assert state["classes"] == CLASSES, "checkpoint classes differ from charset.py"
     channels, hidden = tuple(state["channels"]), state["hidden"]
-    model = OCRModel(len(CLASSES), channels, hidden)
+    pools = tuple(tuple(p) if p else None for p in state.get("pools", POOLS))
+    model = OCRModel(len(CLASSES), channels, hidden, pools)
     model.load_state_dict(state["model"])
     model.eval()
 
@@ -85,7 +85,7 @@ def main() -> None:
             pixels, _, line = holdout[i]
             images, _, _, input_lengths, _ = collate([(pixels, [], line)])
             expected = model(images)
-            check = folded_forward(folded, channels, hidden, images)
+            check = folded_forward(folded, channels, hidden, images, pools)
             assert float((expected - check).abs().max()) < 1e-3, "folded forward differs from the module"
             indices = greedy_decode(expected, input_lengths)[0]
             text = decode(indices)
@@ -117,7 +117,7 @@ def main() -> None:
         "modelId": weights_sha,
         "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "input": {"height": HEIGHT, "channels": 1, "normalize": {"mean": 0.5, "std": 0.5}, "downsample": DOWNSAMPLE, "maxWidth": 1024},
-        "architecture": {"channels": list(channels), "hidden": hidden, "pools": [[2, 2], [2, 2], None, [2, 1], [2, 1]], "classes": len(CLASSES)},
+        "architecture": {"channels": list(channels), "hidden": hidden, "pools": [list(p) if p else None for p in pools], "classes": len(CLASSES)},
         "classes": CLASSES,
         "weights": {"dtype": "float32-le", "bytes": len(weights), "sha256": weights_sha, "maxAbsValue": round(max_abs, 4), "tensors": table},
         "training": {"step": state.get("step"), "parameters": state.get("parameters"),

@@ -30,6 +30,9 @@ describe('answer checks before a line is sent (plan §7.4)', () => {
     expect(checkAnswerLine('What is the capital of Japan?', 'طوكيو هي عاصمة اليابان وأكبر مدنها.').reasons).toContain('language');
     // A proper noun inside an Arabic sentence is not a language change.
     expect(checkAnswerLine('ما هو الذكاء الاصطناعي؟', 'الذكاء الاصطناعي (Artificial Intelligence) هو سلوك وخصائص معينة تتسم بها البرامج الحاسوبية.').ok).toBe(true);
+    // Nor is an English page title quoted inside an Arabic frame.
+    expect(checkAnswerLine('افتح https://docs.python.org/3/tutorial/ ثم اقرأ الصفحة', 'من **Search — Python 3.15.2 documentation** (docs.python.org):').reasons).not.toContain('language');
+    expect(checkAnswerLine('what is the capital of Japan', 'وصلت إلى **Tokyo - Wikipedia** (en.wikipedia.org):').reasons).toContain('language');
   });
 
   it('spots a disambiguation page by its title or its opening', () => {

@@ -15,6 +15,8 @@ export interface JudgeShadowLine {
   conversationId: string;
   runId: string;
   question: string;
+  /** The user's previous turn when the host knew it; null for a first turn or a reply finished before the history was read. */
+  previous: string | null;
   reply: string;
   status: string | null;
   decision: JudgeDecision;
@@ -61,7 +63,7 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
         const verdict = judge(input);
         write({
           at: now().toISOString(), conversationId: input.conversationId, runId: input.runId,
-          question: input.question.slice(0, MAX_TEXT), reply: input.reply.slice(0, MAX_REPLY), status: input.status ?? null,
+          question: input.question.slice(0, MAX_TEXT), previous: input.previous ? input.previous.slice(0, MAX_TEXT) : null, reply: input.reply.slice(0, MAX_REPLY), status: input.status ?? null,
           decision: verdict.decision, kind: verdict.kind, lang: verdict.lang, intent: verdict.frame.intent, answerType: verdict.frame.answerType, sourced: verdict.sourced,
           codes: verdict.codes, findings: verdict.findings, lead: verdict.lead, best: verdict.best,
           fixedReply: verdict.fixedReply ? verdict.fixedReply.slice(0, MAX_REPLY) : null, support: verdict.support, evidence: input.evidence?.length ?? 0, ms: verdict.ms,

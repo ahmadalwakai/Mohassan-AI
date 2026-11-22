@@ -22,7 +22,8 @@ export function cspMeta(options: ComposeOptions): string {
     "style-src 'self'",
     "script-src 'self'",
     "font-src 'self'",
-    "connect-src 'none'",
+    // 'self' rather than 'none': the site makes no requests, but audit tools fetch robots.txt from the page.
+    "connect-src 'self'",
     `form-action 'self' mailto: https://wa.me${formOrigin ? ` ${formOrigin}` : ''}`,
     "base-uri 'none'",
   ].join('; ');

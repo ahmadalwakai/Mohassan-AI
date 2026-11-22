@@ -11,6 +11,18 @@ const repository = fileURLToPath(new URL('../../', import.meta.url));
 const prefix = 'mohassan-e2e-owned-';
 export type E2EFixture = { directory: string; webDirectory: string; environment: NodeJS.ProcessEnv; cleanup(): Promise<void> };
 
+/** Fixture ports: 3100 and 4100 unless MOHASSAN_E2E_WEB_PORT / MOHASSAN_E2E_SERVER_PORT name others, so two sessions can run e2e at once. */
+function fixturePort(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1024 || value > 65535) throw new Error(`E2E_PORT_INVALID:${name}`);
+  return value;
+}
+export const E2E_WEB_PORT = fixturePort('MOHASSAN_E2E_WEB_PORT', 3100);
+export const E2E_SERVER_PORT = fixturePort('MOHASSAN_E2E_SERVER_PORT', 4100);
+if (E2E_WEB_PORT === E2E_SERVER_PORT) throw new Error('E2E_PORTS_EQUAL');
+
 /** Allowlist, not a spread of the parent's credentials/options/proxies/roots. */
 export function isolatedE2EEnvironment(directory: string, ambient: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const systemRoot = ambient.SystemRoot || ambient.SYSTEMROOT || ambient.WINDIR;
@@ -30,8 +42,8 @@ export function isolatedE2EEnvironment(directory: string, ambient: NodeJS.Proces
     STUDIO_AI_DATA_DIR: path.join(directory, 'studio-ai'), BROWSER_PROFILE_DIR: path.join(directory, 'browser-profile'),
     STUDIO_GATEWAY_URL: '', STUDIO_GATEWAY_SECRET: '', GROQ_API_KEY: '', MOHASSAN_LIVE_GROQ_KEY: '',
     SKILL_ENGINE_ENABLED: 'true', RUN_WORKER: 'true', WINDOWS_REMOTE_ENABLED: 'true',
-    WEB_ORIGIN: 'http://127.0.0.1:3100', SERVER_PORT: '4100', SERVER_HOST: '127.0.0.1', PORT: '3100',
-    MOHASSAN_SERVER_URL: 'http://127.0.0.1:4100',
+    WEB_ORIGIN: `http://127.0.0.1:${E2E_WEB_PORT}`, SERVER_PORT: String(E2E_SERVER_PORT), SERVER_HOST: '127.0.0.1', PORT: String(E2E_WEB_PORT),
+    MOHASSAN_SERVER_URL: `http://127.0.0.1:${E2E_SERVER_PORT}`,
     BETTER_AUTH_SECRET: 'browser-test-auth-secret-isolated-fixture-0001',
     INTERNAL_API_SECRET: 'browser-test-internal-secret-isolated-0001',
     SETUP_TOKEN: 'browser-test-setup-token-isolated-fixture-0001',
@@ -121,7 +133,7 @@ export async function stopOwnedChildren(children: OwnedChild[]): Promise<void> {
 
 export async function startIsolatedE2E(options: { localBrain?: boolean } = {}): Promise<{ directory: string; stop(): Promise<void> }> {
   // Never reuse, kill, or contact an existing local server on these fixture ports.
-  await requireFreePort(4100); await requireFreePort(3100);
+  await requireFreePort(E2E_SERVER_PORT); await requireFreePort(E2E_WEB_PORT);
   const fixture = await createE2EFixture();
   if (options.localBrain) fixture.environment.MOHASSAN_E2E_LOCAL_BRAIN = '1';
   const children: OwnedChild[] = [];
@@ -144,14 +156,15 @@ export async function startIsolatedE2E(options: { localBrain?: boolean } = {}): 
     const api = spawnOwned(['--import', pathToFileURL(path.join(repository, 'node_modules', 'tsx', 'dist', 'loader.mjs')).href, path.join(repository, 'tests', 'e2e', 'server-entry.ts')], fixture.directory, fixture.environment, true);
     children.push(api);
     await new Promise<void>((resolve,reject)=>{
-      const timer=setTimeout(()=>reject(new Error('E2E_API_READY_TIMEOUT')),180_000);
+      // E2E_READY_MS widens the wait on a machine busy with other work (the API took over three minutes to start on 2026-11-22).
+      const timer=setTimeout(()=>reject(new Error('E2E_API_READY_TIMEOUT')),Number(process.env.E2E_READY_MS??180_000));
       api.child.once('message',message=>{clearTimeout(timer);const receipt=message as {type?:string;root?:string};if(receipt.type==='e2e.ready'&&receipt.root===fixture.directory)resolve();else reject(new Error('E2E_API_READY_INVALID'));});
       void api.closed.then(()=>{clearTimeout(timer);reject(new Error('E2E_API_EXITED_BEFORE_READY'));},reject);
     });
-    await ready('http://127.0.0.1:4100/health', api, 5000);
-    const web = spawnOwned([path.join(repository, 'node_modules', 'next', 'dist', 'bin', 'next'), 'dev', '--webpack', '--hostname', '127.0.0.1', '--port', '3100'], fixture.webDirectory, fixture.environment);
+    await ready(`http://127.0.0.1:${E2E_SERVER_PORT}/health`, api, 5000);
+    const web = spawnOwned([path.join(repository, 'node_modules', 'next', 'dist', 'bin', 'next'), 'dev', '--webpack', '--hostname', '127.0.0.1', '--port', String(E2E_WEB_PORT)], fixture.webDirectory, fixture.environment);
     children.push(web);
-    await ready('http://127.0.0.1:3100/api/setup', web, 120_000);
+    await ready(`http://127.0.0.1:${E2E_WEB_PORT}/api/setup`, web, 120_000);
     console.log(`Isolated E2E ready: ${fixture.directory}`);
     return { directory: fixture.directory, stop };
   } catch (error) {

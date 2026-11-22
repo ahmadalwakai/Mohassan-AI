@@ -8,7 +8,8 @@ import { colourFromWord } from './theme.ts';
  * Matching runs on normalised text (no diacritics, unified alef/ya/ta marbuta, ASCII digits).
  */
 const WANT = '(?:اريد|ابغي|ابغا|بدي|بغيت|عايز|عاوز|احتاج|محتاج|نريد|نحتاج|ممكن|هل يمكن|هل تستطيع|لو سمحت|من فضلك|رجاء|ارجو|اتمني|حاب|حابب|ودي|نفسي|i want|i need|we want|we need|i would like|i\'d like|can you|could you|please|help me)';
-const VERB = '(?:ابن|ابني|ابنيلي|اعمل|اعملي|اعمللي|انشئ|انشي|انشا|صمم|صممي|صمملي|سوي|سويلي|اكتب|اكتبلي|جهز|جهزلي|اصنع|ركب|طور|طورلي|انجز|كود|برمج|build|make|create|design|set up|setup|develop|code|put together|generate|launch)';
+/** Imperative and present forms: ابنِ، ابني، تبني، نبني، اعمل، تعمل، أنشئ، تنشئ، صمم، تصمم، سوّي، تسوي… */
+const VERB = '(?:(?:ا|ت|ن|ي)?(?:بني|بن|عمل|نشئ|نشي|نشا|صمم|سوي|كتب|جهز|صنع|ركب|طور|نجز|كود|برمج)(?:ي|لي|لنا|وا|ها)?|build|make|create|design|set up|setup|develop|code|put together|generate|launch)';
 const OBJECT = '(?:موقع(?:ا|ي|نا)?(?:\\s+(?:الكتروني|ويب|انترنت|تعريفي|شخصي|تجاري|احترافي|بسيط|كامل))?|صفحه\\s+(?:هبوط|تعريفيه|ويب|انترنت|شخصيه|لنشاطي)|ويب\\s*سايت|ويبسايت|لاندينج|لاندنج|متجر(?:ا)?\\s+الكتروني|بورتفوليو|website|web\\s*site|site|landing\\s*page|home\\s*page|homepage|web\\s*page|online\\s+(?:store|shop|catalog(?:ue)?)|portfolio\\s+(?:site|website|page))';
 const BROWSER_VERB = /(?:^|\s)(?:افتح|ادخل|اذهب|روح|تصفح|ابحث|دور|شوف|اقرا|لخص|ترجم|قيم|حلل|راجع|افحص|صور|حدث|open|visit|go to|browse|search|read|summari[sz]e|translate|check|review|analy[sz]e|look at|screenshot|scrape|fetch|login|log in|sign in)(?=\s)/u;
 const EXISTING_SITE = /(?:موقعي|موقعنا|الموقع الحالي|موقع (?:قديم|موجود)|my (?:current |existing |old )?(?:web)?site|our (?:current |existing )?(?:web)?site|the (?:current |existing )(?:web)?site)/u;

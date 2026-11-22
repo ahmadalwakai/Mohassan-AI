@@ -41,6 +41,37 @@
       "url": "http://127.0.0.1:3100"
     },
     {
+      "name": "mohassan-pdf-lab",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:\\Mohassan AI\\.data\\scratch\\run-pdf-lab.mjs"
+      ],
+      "port": 3200,
+      "url": "http://127.0.0.1:3200"
+    },
+    {
+      "name": "mohassan-vision-lab",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set MOHASSAN_LAB_DIR=.data/vision-lab&& set SERVER_PORT=4321&& set PORT=3321&& set WEB_ORIGIN=http://127.0.0.1:3321&& npm run dev:lab"
+      ],
+      "port": 3321,
+      "url": "http://127.0.0.1:3321"
+    },
+    {
+      "name": "sites-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "tsx",
+        "scripts/sites-serve.ts",
+        "artifacts/sites-smoke-20261122-0456",
+        "5177"
+      ],
+      "port": 5177,
+      "url": "http://127.0.0.1:5177"
+    },
+    {
       "name": "mohassan-lab-ads-v4",
       "runtimeExecutable": "cmd",
       "runtimeArgs": [
@@ -49,6 +80,16 @@
       ],
       "port": 3000,
       "url": "http://127.0.0.1:3000"
+    },
+    {
+      "name": "mohassan-judge-lab",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set MOHASSAN_LAB_DIR=.data/judge-lab&& set SERVER_PORT=4400&& set PORT=3400&& set WEB_ORIGIN=http://127.0.0.1:3400&& npm run dev:lab"
+      ],
+      "port": 3400,
+      "url": "http://127.0.0.1:3400"
     }
   ]
 }

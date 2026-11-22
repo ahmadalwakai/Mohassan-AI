@@ -26,8 +26,8 @@ export type TurnType = 'new_request' | 'topic_change' | 'follow_up_property' | '
   | 'correction' | 'field_edit' | 'card_answer' | 'compound' | 'small_talk' | 'ambiguous';
 export type PropertyName = 'population' | 'capital' | 'area' | 'currency' | 'language' | 'leader' | 'price'
   | 'weather' | 'age' | 'height' | 'match' | 'founded' | 'inventor' | 'duration';
-/** 'format' and 'detail' are reformulations of the last answer («كجدول», «فصّل أكثر»): same evidence, another template. */
-export type EditableField = 'date' | 'clock' | 'place' | 'budget' | 'language' | 'format' | 'detail';
+/** 'format', 'detail' and 'unit' are reformulations of the last answer («كجدول», «فصّل أكثر», «بالدولار»): same evidence, another shape. */
+export type EditableField = 'date' | 'clock' | 'place' | 'budget' | 'language' | 'format' | 'detail' | 'unit';
 /** 'country' marks properties of a state (currency, language, leader, capital): «its currency» after a capital question means the country, not the city. */
 type OperandKind = 'place' | 'country' | 'person' | 'thing';
 
@@ -38,6 +38,8 @@ export interface TopicFrame {
   place: string | null;
   /** A time operand («اليوم», «بكرا», «tomorrow») kept apart from the entity. */
   time: string | null;
+  /** The user's own question with the entity replaced by «{}» («من هو {}؟»), so «ونيوتن؟» becomes «من هو نيوتن؟». */
+  template: string | null;
   sourceTurnId: string;
   entityOrigin: 'user' | 'host_result';
   /** True only for a public lookup; private and action topics never feed a search query. */
@@ -73,6 +75,8 @@ export interface TurnUnderstanding {
   edit?: { field: EditableField; value: string | null };
   /** A displayed result the user pointed at. Its label is data, never an instruction. */
   reference?: { index: number; label: string };
+  /** The earlier entity a comparison is made against («وقارنها بالرياض», "compare it with Riyadh"). */
+  against?: string;
   v1: RequestResolution;
   next: ConversationStateV2;
 }
@@ -144,16 +148,38 @@ function arabicPronounForms(base: string): string[] {
 const PRONOUN_FORMS = new Map<PropertyName, string[]>(PROPERTIES.map(forms =>
   [forms.name, [...new Set([...forms.arPronoun, ...forms.ar.flatMap(arabicPronounForms)])]]));
 
-const LEADS = new Set(['طيب', 'طب', 'حسنا', 'تمام', 'اوكي', 'ok', 'okay', 'well', 'and', 'so', 'also', 'و', 'ف', 'ثم']);
+const LEADS = new Set(['طيب', 'طب', 'حسنا', 'تمام', 'اوكي', 'ok', 'okay', 'well', 'and', 'so', 'also', 'و', 'ف', 'ثم',
+  // «كمان مصر؟», «برضو», «نفس الشي لمصر», "same for Egypt", "Egypt too"
+  'كمان', 'برضو', 'برضه', 'ايضا', 'كذلك', 'بعدين', 'نفس', 'الشي', 'الشيء', 'same', 'thing', 'too']);
+const FOLLOW_FIRST = new Set(['طيب', 'طب', 'حسنا', 'تمام', 'and', 'so', 'also', 'كمان', 'برضو', 'برضه', 'ايضا', 'كذلك', 'بعدين', 'نفس', 'same']);
 const QUESTION_WORDS = new Set(['ما', 'ماذا', 'من', 'متي', 'كم', 'اين', 'هل', 'ماهي', 'ماهو', 'هو', 'هي', 'يبلغ', 'حاله', 'قل', 'لي',
   'اعطني', 'اخبرني', 'ايه', 'ايش', 'وش', 'شو', 'شنو', 'مين', 'وين', 'كام', 'ليش', 'ليه', 'لماذا', 'كيف', 'ذاكرتي', 'ذاكرتك', 'الذاكره',
   'what', 'whats', "what's", 'who', 'whos', "who's", 'when', 'where', 'how', 'is', 'are', 'was', 'were', 'tell', 'me',
   'about', 'much', 'many', 'do', 'does', 'you', 'know', 'give', 'the', 'a', 'an']);
 const PREPOSITIONS = new Set(['في', 'عن', 'ل', 'من', 'علي', 'of', 'in', 'for', 'at', 'about', 'the', 'on']);
+/** Standalone words that point back at the topic; a noun with a ها/هم/هن suffix («معالمها») points back too. */
+const POINTERS = new Set(['هي', 'هو', 'هم', 'عنها', 'عنه', 'عنهم', 'لها', 'له', 'لهم', 'فيها', 'فيه', 'منها', 'منه', 'بها', 'به', 'اليها', 'اليه',
+  'it', 'its', 'that', 'this', 'there', 'them', 'him', 'her', 'his', 'their']);
+const STANDALONE_PRONOUNS = new Set(['هي', 'هو', 'it', 'that', 'this', 'them', 'him', 'her']);
+/** Verbs whose subject is the topic itself: «وأين تقع؟», «ومتى تأسست؟», "where is it located?". */
+const FOLLOW_VERBS = new Set(['تقع', 'يقع', 'تاسست', 'تاسس', 'انشئت', 'انشئ', 'بنيت', 'بني', 'افتتحت', 'افتتح', 'تقام', 'يقام', 'بدات', 'بدا', 'انتهت', 'انتهي',
+  'ولد', 'ولدت', 'توفي', 'توفيت', 'مات', 'ماتت', 'يعيش', 'تعيش', 'يسكن', 'تسكن', 'تشتهر', 'يشتهر', 'تنتج', 'ينتج', 'تصنع', 'يصنع', 'تبعد', 'يبعد',
+  'located', 'founded', 'built', 'born', 'died', 'live', 'lives', 'famous', 'known', 'happened', 'started', 'ended', 'opened', 'closed']);
+/** «وقارنها بالرياض», "compare it with Riyadh": the X after the comparison word is the new entity, the old one is kept as `against`. */
+const COMPARE = /^(?:و)?(?:قارن(?:ها|ه|هم)?|مقارن[هة]|compare(?: (?:it|that|them))?)(?:\s+(?:ب|مع|بين|with|to|against|versus|vs\.?)(?=\s))?\s*/u;
+/** Control words: the host's own cancel handling runs regardless; here they only keep the topic and need no lookup. */
+const CANCEL = /^(?:توقف|قف|كفي|خلاص|الغ(?:ها|ه|ي)?|الغاء|لا تكمل|لا تبحث|لا تتابع|stop|cancel|never ?mind|forget it|that's enough|enough)$/u;
 /** A place operand follows one of these; «الى» folds to «الي». */
 const PLACE_PREPOSITIONS = new Set(['في', 'ب', 'الي', 'in', 'at', 'to']);
-/** Folded time words, longest first. v1 reads an unknown dialect spelling such as «بكرا» as a place; here it is a time. */
-const TIME_FORMS = ['الاسبوع القادم', 'الاسبوع الجاي', 'الشهر القادم', 'هذا الاسبوع', 'بعد غد', 'this weekend', 'this week', 'next week', 'next month',
+/**
+ * Folded time words, longest first. v1 reads an unknown dialect spelling such as «بكرا» as a place; here it is a time.
+ * An Arabic weekday counts only after «يوم» («صلاة الجمعة» is a subject, not a date); English weekdays count on their own.
+ */
+const WEEKDAYS_AR = ['السبت', 'الاحد', 'الاثنين', 'الثلاثاء', 'الاربعاء', 'الخميس', 'الجمعه'];
+const WEEKDAYS_EN = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+const TIME_FORMS = ['الاسبوع القادم', 'الاسبوع الجاي', 'الاسبوع الماضي', 'الشهر القادم', 'الشهر الماضي', 'السنه القادمه', 'السنه الماضيه', 'العام القادم', 'العام الماضي',
+  'هذا الاسبوع', 'هذا الشهر', 'هذه السنه', 'هذا العام', 'بعد غد', 'this weekend', 'this week', 'this month', 'this year', 'next week', 'next month', 'next year',
+  'last week', 'last month', 'last year', ...WEEKDAYS_AR.map(day => `يوم ${day}`), ...WEEKDAYS_EN,
   'اليوم', 'الان', 'حاليا', 'غدا', 'بكرا', 'بكره', 'الليله', 'امس', 'البارحه', 'today', 'now', 'currently', 'tomorrow', 'tonight', 'yesterday']
   .map(form => form.split(' ')).sort((a, b) => b.length - a.length);
 const TIME_SET = new Set(TIME_FORMS.map(form => form.join(' ')));
@@ -168,6 +194,14 @@ const ORDINALS: Record<string, number> = {
 };
 const REFERENCE_NOUNS = new Set(['المدينه', 'مدينه', 'الخبر', 'خبر', 'النتيجه', 'نتيجه', 'الخيار', 'خيار', 'الرابط', 'رابط', 'العنصر',
   'البند', 'رقم', 'number', 'item', 'option', 'result', 'link', 'no']);
+/** "option two", «رقم اثنين»: a number word counts only after a reference noun. */
+const NUMBER_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, واحد: 1, اثنين: 2, ثلاثه: 3, اربعه: 4, خمسه: 5 };
+const CORRECTION_LEADS = ['لا', 'no', 'nope', 'غلط', 'خطا', 'wrong', 'oops', 'sorry', 'عفوا'];
+const CORRECTION_VERBS = ['اقصد', 'قصدت', 'قصدي', 'اعني', 'بل', 'rather', 'actually'];
+const EXCLUSIONS = new Set(['مش', 'مو', 'ليس', 'ليست', 'not']);
+const SWAP_WORDS = new Set(['بدل', 'بدال', 'بديل']);
+/** «خليها باريس», "make it Paris", "set it to tomorrow": the previous request again with one value changed. */
+const MAKE_IT = /^(?:خليها|خليه|خلها|خله|اجعلها|اجعله|غيرها|غيره|بدلها|بدله|حولها|حوله|make it|change it to|set it to|switch (?:it )?to)(?=\s)/u;
 const ACTION_VERBS = /^(?:افتح|اقرا|اعرض|ادخل|شغل|open|read|show|play|visit)$/u;
 const EDIT_VERBS = new Set(['عدل', 'غير', 'بدل', 'حدث', 'خلي', 'اجعل', 'change', 'edit', 'update', 'set', 'make', 'move']);
 const EDIT_FIELDS: Record<string, EditableField> = {
@@ -186,7 +220,7 @@ const DONE = /(?:^|[\s،,])(?:تم|خلصت|انتهيت|سجلت(?: الدخو�
 /** Questions about Mohassan itself («من صنعك؟», "are you groq ai?", real rq084–rq087) go to the local conversation, never to a search. */
 const ABOUT_ASSISTANT = /\b(?:who (?:made|created|built|trained|owns) you|whos? (?:create|created|made|built) you|are you (?:an? |the )?(?:ai|bot|robot|human|model|groq|chatgpt|gpt|claude)|what (?:can|do) you do|what are you|who are you|smarter,? (?:chatgpt|gpt|claude) or you|upgrade you)\b|(?:^|\s)(?:من (?:صنعك|انشاك|صممك|بناك|دربك|انت)|ما (?:هي )?قدراتك|ماذا تستطيع|هل (?:انت|تستطيع|تقدر|يمكنك)|ايش تقدر|شو بتقدر|وش تقدر)(?=\s|$)/u;
 /** The whole message is a go-ahead («تابع», "go on") with no host step to answer: the code resumes or asks, and nothing is searched. */
-const GO_AHEAD_ONLY = /^(?:(?:طيب|تمام|حسنا|موافق|اوكي|ok|okay|yes|sure|fine)[،,\s]+)?(?:تابع|اكمل|كمل|استمر|واصل|امض|نفذ|continue|go on|go ahead|proceed|carry on|resume|next)(?:\s+(?:من فضلك|please))?$/u;
+const GO_AHEAD_ONLY = /^(?:(?:طيب|تمام|حسنا|موافق|اوكي|لا|ok|okay|yes|no|sure|fine)[،,\s]+)?(?:تابع|اكمل|كمل|استمر|واصل|امض|نفذ|continue|go on|go ahead|proceed|carry on|resume|next)(?:\s+(?:من فضلك|please))?$/u;
 const CONTINUE_START = /^(?:تابع|اكمل|كمل|استمر|واصل|continue|go on|go ahead|proceed|carry on|resume)(?!\p{L})/u;
 /** «فصّل أكثر», «بالإنجليزي», «كجدول»: the last answer again, from the same evidence, in another shape. The whole message must be the request. */
 const REFORMULATIONS: ReadonlyArray<readonly [RegExp, { field: EditableField; value: string }]> = [
@@ -197,6 +231,16 @@ const REFORMULATIONS: ReadonlyArray<readonly [RegExp, { field: EditableField; va
   [/^(?:كجدول|في جدول|علي شكل جدول|بجدول)$|^(?:as a table|in a table|table format)$/u, { field: 'format', value: 'table' }],
   [/^(?:كقائمه|كنقاط|نقاط|بالنقاط|علي شكل نقاط)$|^(?:as a list|bullet points|as bullets|in bullets)$/u, { field: 'format', value: 'list' }],
   [/^(?:خطوات|كخطوات|خطوه بخطوه)$|^(?:as steps|step by step|in steps)$/u, { field: 'format', value: 'steps' }],
+  // Units and currencies: the same value, converted.
+  [/^(?:بال(?:دولار|دولارات)(?: الامريكي)?|in (?:us )?dollars?|in usd)$/u, { field: 'unit', value: 'USD' }],
+  [/^(?:باليورو|in euros?|in eur)$/u, { field: 'unit', value: 'EUR' }],
+  [/^(?:بال(?:جنيه|جنيهات)(?: الاسترليني)?|in pounds?(?: sterling)?|in gbp)$/u, { field: 'unit', value: 'GBP' }],
+  [/^(?:بال(?:ريال|ريالات)(?: السعودي)?|in (?:saudi )?riyals?|in sar)$/u, { field: 'unit', value: 'SAR' }],
+  [/^(?:بال(?:درهم|دراهم)(?: الاماراتي)?|in dirhams?|in aed)$/u, { field: 'unit', value: 'AED' }],
+  [/^(?:بال(?:كيلو|كيلومتر|كيلومترات)|in (?:km|kilomet(?:er|re)s?))$/u, { field: 'unit', value: 'km' }],
+  [/^(?:بال(?:ميل|اميال)|in miles)$/u, { field: 'unit', value: 'mi' }],
+  [/^(?:بال(?:مئويه|سيلسيوس)|in celsius)$/u, { field: 'unit', value: 'C' }],
+  [/^(?:بالفهرنهايت|in fahrenheit)$/u, { field: 'unit', value: 'F' }],
 ];
 /** «افتح موقعًا واعرض لي محتواه»: a browser command whose target is only a generic noun must ask which site. */
 const GENERIC_TARGET = /^(?:افتح|ادخل|اعرض|زر|open|visit|go to)\s+(?:لي\s+)?(?:(?:ال)?موقعا?|(?:ال)?صفحه|(?:ال)?رابط|(?:a|the|some|any)\s+(?:website|site|web ?page|page|link))(?=$|\s+(?:ثم|and|then|لي)(?!\p{L})|\s+و(?:اعرض|اقرا|ابحث|افتح|قل|اخبرني|لخص|انسخ))/u;
@@ -204,10 +248,12 @@ const CLOCK = /(?:الساعه|الساعة)\s*\d{1,2}(?::\d{2})?(?:\s*(?:صبا
 const DATE_AR = /(?:يوم\s+)?(?:ال)?(?:سبت|احد|أحد|اثنين|إثنين|ثلاثاء|اربعاء|أربعاء|خميس|جمعة|جمعه)(?!\p{L})|اليوم|غدا|بكرة|بكره|بعد غد|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?/u;
 const DATE_EN = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow)\b|\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/iu;
 
+// Tatweel and the harakat only: the old range ً-ٰ also swallowed the Arabic-Indic digits ٠-٩ («اقرأ الخبر ٢» lost its 2).
 const clean = (text: string) => text.normalize('NFC').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, '')
-  .replace(/[ـً-ٰٟ]/gu, '').replace(/\s+/gu, ' ').trim();
+  .replace(/[ـً-ٰٟ]/gu, '').replace(/\s+/gu, ' ').trim();
 const fold = (text: string) => clean(text).normalize('NFKC').replace(/\p{Cf}/gu, '')
-  .replace(/[أإآٱ]/gu, 'ا').replace(/ى/gu, 'ي').replace(/ة/gu, 'ه').replace(/’/gu, "'").toLowerCase();
+  .replace(/[أإآٱ]/gu, 'ا').replace(/ى/gu, 'ي').replace(/ة/gu, 'ه').replace(/’/gu, "'")
+  .replace(/[٠-٩]/gu, digit => String.fromCharCode(48 + digit.charCodeAt(0) - 0x0660)).toLowerCase();
 const strip = (text: string) => text.replace(/^[\s،,.!?؟:؛;«»"'()[\]]+|[\s،,.!?؟:؛;«»"'()[\]]+$/gu, '');
 const wordsOf = (text: string) => clean(text).split(' ').map(strip).filter(Boolean);
 const isArabic = (text: string) => /\p{Script=Arabic}/u.test(text);
@@ -263,7 +309,9 @@ function findProperty(folded: readonly string[], whole: string): PropertyHit | n
       }
     }
   }
-  hits.sort((a, b) => Number(b.pronoun) - Number(a.pronoun) || a.start - b.start || b.length - a.length);
+  // An English pronoun hit (start −1) comes first; otherwise the earliest property word wins, so in «ما عاصمة اليابان وعدد سكانها؟»
+  // the capital is the property and the pronoun refers to اليابان inside the same sentence.
+  hits.sort((a, b) => a.start - b.start || Number(b.pronoun) - Number(a.pronoun) || b.length - a.length);
   return hits[0] ?? null;
 }
 
@@ -273,7 +321,7 @@ function contentStart(folded: readonly string[]): number {
   while (index < folded.length) {
     const word = folded[index]!;
     const bare = /^[وف].{2,}$/u.test(word) ? word.slice(1) : word;
-    if (LEADS.has(word) || QUESTION_WORDS.has(word) || QUESTION_WORDS.has(bare) || PREPOSITIONS.has(bare) && bare !== word) index++;
+    if (LEADS.has(word) || LEADS.has(bare) || QUESTION_WORDS.has(word) || QUESTION_WORDS.has(bare) || PREPOSITIONS.has(bare) && bare !== word) index++;
     else break;
   }
   return index;
@@ -305,6 +353,8 @@ function operandsFrom(words: readonly string[], folded: readonly string[], from:
   for (const hint of hints) {
     const parts = fold(hint.value).split(' ').filter(Boolean);
     if (!parts.length) continue;
+    // v1 reads «في أي قارة» as a place; a phrase with a question word in it is the question, not an operand.
+    if (parts.some(part => QUESTION_WORDS.has(part))) continue;
     if (TIME_SET.has(parts.join(' '))) { time ??= hint.value; continue; }
     const at = findSequence(folded, parts, from, removed);
     if (at < 0) continue;
@@ -313,17 +363,26 @@ function operandsFrom(words: readonly string[], folded: readonly string[], from:
     if (hint.kind === 'time') time ??= hint.value;
     else place ??= hint.value;
   }
+  // A second property phrase after the first («ما عاصمة اليابان وعدد سكانها؟») is not part of the entity.
+  for (const forms of PROPERTIES) {
+    for (const form of [...forms.ar, ...PRONOUN_FORMS.get(forms.name)!, ...forms.en]) {
+      const parts = form.split(' ');
+      const at = findSequence(folded, parts, from, removed);
+      if (at >= 0) for (let offset = 0; offset < parts.length; offset++) removed.add(at + offset);
+    }
+  }
   let rest: number[] = [];
   for (let index = from; index < words.length; index++) if (!removed.has(index)) rest.push(index);
   while (rest.length && (QUESTION_WORDS.has(folded[rest[0]!]!) || LEADS.has(folded[rest[0]!]!))) rest.shift();
   while (rest.length && (QUESTION_WORDS.has(folded[rest.at(-1)!]!) || LEADS.has(folded[rest.at(-1)!]!))) rest.pop();
   // Without a hint, a remainder that is only «في X» / «in X» names a place.
-  if (!place && rest.length >= 2 && PLACE_PREPOSITIONS.has(bareWord(folded[rest[0]!]!))) {
+  if (!place && rest.length >= 2 && PLACE_PREPOSITIONS.has(bareWord(folded[rest[0]!]!)) && !QUESTION_WORDS.has(folded[rest[1]!]!)) {
     place = rest.slice(1).map(index => words[index]!).join(' ');
     rest = [];
   }
   while (rest.length && PREPOSITIONS.has(folded[rest[0]!]!)) rest.shift();
-  const entity: string | null = rest.length ? rest.map(index => words[index]!).join(' ') : null;
+  // «نفس الشي للجزائر»: a ل glued to the article is a preposition, not part of the name.
+  const entity: string | null = rest.length ? rest.map((index, position) => position === 0 && /^لل.{2,}$/u.test(folded[index]!) ? `ا${words[index]!.slice(1)}` : words[index]!).join(' ') : null;
   // For weather the place is the entity. A place with no entity («كم السكان في مصر؟», «وفي الامارات؟») is left apart:
   // a new request promotes it to the entity, a follow-up reads it as the changed operand.
   if (place && locationValued) return { entity: place, place: null, time };
@@ -335,13 +394,15 @@ function promotePlace(operands: Operands): Operands {
   return !operands.entity && operands.place ? { entity: operands.place, place: null, time: operands.time } : operands;
 }
 
-function startsWithFollowLead(folded: readonly string[], whole: string): boolean {
+function startsWithFollowLead(folded: readonly string[], whole: string, question = false): boolean {
   const first = folded[0] ?? '';
-  if (['طيب', 'طب', 'حسنا', 'تمام', 'and', 'so', 'also'].includes(first)) return true;
-  if (/^(?:what|how) about\b/u.test(whole)) return true;
+  if (FOLLOW_FIRST.has(first)) return true;
+  if (/^(?:what|how) about\b|^same (?:thing )?(?:for|with|about)\b|\b(?:too|as well|كمان|برضو|ايضا|كذلك)$/u.test(whole)) return true;
   if (!/^و.{2,}$/u.test(first)) return false;
+  // «ونيوتن؟»: a short question that is only «و» and a name leans on the question before it.
+  if (question && folded.length <= 3) return true;
   const bare = first.slice(1);
-  return QUESTION_WORDS.has(bare) || PREPOSITIONS.has(bare) || TIME_SET.has(bare) || PROPERTIES.some(forms => [...forms.ar, ...PRONOUN_FORMS.get(forms.name)!]
+  return FOLLOW_FIRST.has(bare) || QUESTION_WORDS.has(bare) || PREPOSITIONS.has(bare) || TIME_SET.has(bare) || PROPERTIES.some(forms => [...forms.ar, ...PRONOUN_FORMS.get(forms.name)!]
     .some(form => [form.split(' ')[0], `ال${form.split(' ')[0]}`].includes(bare)));
 }
 
@@ -349,7 +410,10 @@ function findOrdinal(folded: readonly string[]): number | null {
   for (let index = 0; index < folded.length; index++) {
     const word = folded[index]!.replace(/^[وفبل](?=ال)/u, '');
     if (ORDINALS[word] !== undefined) return ORDINALS[word]!;
-    if (/^\d{1,2}$/u.test(word) && index > 0 && REFERENCE_NOUNS.has(folded[index - 1]!)) return Number(word);
+    if (index > 0 && REFERENCE_NOUNS.has(folded[index - 1]!)) {
+      if (/^\d{1,2}$/u.test(word)) return Number(word);
+      if (NUMBER_WORDS[word] !== undefined) return NUMBER_WORDS[word]!;
+    }
     if (/^#\d{1,2}$/u.test(word)) return Number(word.slice(1));
   }
   return null;
@@ -361,11 +425,54 @@ function pointedResult(state: ConversationStateV2, ordinal: number): HostResult 
   return state.results.find(item => item.index === index) ?? null;
 }
 
-function correctionValueStart(folded: readonly string[]): number | null {
+/**
+ * The words that name the corrected value, or null when the turn is not a correction. Forms, by example:
+ * «لا، أقصد النصر» · «غلط، النصر» · "Chelsea instead" · «مش الهلال، النصر» · «النصر مش الهلال» · «بدل الهلال النصر» ·
+ * "Chelsea instead of Arsenal" · «خليها باريس» · "set it to tomorrow". The old value must be the topic's own entity, place or
+ * time for the exclusion and swap forms, so an unrelated «ليس» sentence is not read as a correction.
+ */
+function correctionValueWords(words: readonly string[], folded: readonly string[], top: TopicFrame | null): { words: string[]; folded: string[] } | null {
+  const slice = (from: number, to = words.length) => to > from ? { words: words.slice(from, to), folded: folded.slice(from, to) } : null;
   let index = 0;
-  while (['لا', 'no', 'غلط', 'خطا', 'wrong', 'oops', 'sorry', 'عفوا'].includes(folded[index] ?? '')) index++;
-  if (folded[index] === 'i' && ['mean', 'meant'].includes(folded[index + 1] ?? '')) return index + 2;
-  if (['اقصد', 'قصدت', 'قصدي', 'اعني', 'بل', 'rather', 'actually'].includes(folded[index] ?? '')) return index + 1;
+  while (CORRECTION_LEADS.includes(folded[index] ?? '')) index++;
+  if (folded[index] === 'i' && ['mean', 'meant'].includes(folded[index + 1] ?? '')) return slice(index + 2);
+  if (CORRECTION_VERBS.includes(folded[index] ?? '')) return slice(index + 1);
+  if (!top) return null;
+  const whole = folded.join(' ');
+  if (MAKE_IT.test(whole)) {
+    const lead = MAKE_IT.exec(whole)![0].split(' ').length;
+    return slice(lead);
+  }
+  const rest = folded.slice(index);
+  const isTop = (parts: readonly string[]) => {
+    const key = parts.join(' ').replace(/^ال/u, '');
+    return [top.entity, top.place, top.time].some(value => value && fold(value).replace(/^ال/u, '') === key);
+  };
+  // "Chelsea instead", "Chelsea instead of Arsenal"
+  const instead = rest.indexOf('instead');
+  if (instead > 0) return slice(index, index + instead);
+  // «مش الهلال، النصر» / «ليس الهلال بل النصر» → the words after the excluded old value
+  if (EXCLUSIONS.has(rest[0] ?? '')) {
+    for (let end = 2; end <= Math.min(rest.length - 1, 4); end++) {
+      if (isTop(rest.slice(1, end))) return slice(index + end + (CORRECTION_VERBS.includes(rest[end] ?? '') ? 1 : 0));
+    }
+    return null;
+  }
+  // «النصر مش الهلال» → the words before the exclusion; «بدل الهلال النصر» / «النصر بدل الهلال»
+  const exclusion = rest.findIndex((word, at) => at > 0 && EXCLUSIONS.has(word));
+  if (exclusion > 0 && isTop(rest.slice(exclusion + 1))) return slice(index, index + exclusion);
+  const swap = rest.findIndex(word => SWAP_WORDS.has(word));
+  if (swap === 0) {
+    for (let end = 2; end <= Math.min(rest.length - 1, 4); end++) if (isTop(rest.slice(1, end))) return slice(index + end);
+    return null;
+  }
+  if (swap > 0 && isTop(rest.slice(swap + 1))) return slice(index, index + swap);
+  // «لا، النصر», «غلط، في مصر»: a lead and then a short value with no question, command, thanks or go-ahead in it
+  const value = rest.join(' ');
+  if (index > 0 && rest.length >= 1 && rest.length <= 4 && !SMALL_TALK.test(value) && !APPROVE.test(value) && !CONTINUE.test(value)
+    && !rest.some(word => QUESTION_WORDS.has(word) || EDIT_VERBS.has(word) || ACTION_VERBS.test(word) || CORRECTION_LEADS.includes(word))) {
+    return slice(index);
+  }
   return null;
 }
 
@@ -440,10 +547,13 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
     type, entity: null, property: null, place: null, time: null, query: null, assumption: null, needs: null, ...fields, v1, next,
   });
   const frameOf = (fields: Partial<TopicFrame> & Pick<TopicFrame, 'entity' | 'property' | 'lookup'>): TopicFrame => ({
-    place: null, time: null, sourceTurnId: turnId, entityOrigin: 'user', ...fields,
+    place: null, time: null, template: null, sourceTurnId: turnId, entityOrigin: 'user', ...fields,
   });
+  /** The query for a new entity under the same question: by property when one is known, else by the user's own question shape. */
+  const entityQuery = (property: PropertyForms | null, frame: TopicFrame): string | null =>
+    property ? composeQuery(property, frame, arabic) : frame.template && frame.entity ? frame.template.replace('{}', frame.entity) : composeQuery(null, frame, arabic);
 
-  if (SMALL_TALK.test(whole)) {
+  if (SMALL_TALK.test(whole) || CANCEL.test(whole)) {
     next.base = state.base;
     return result('small_talk');
   }
@@ -456,7 +566,7 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
       return result('card_answer');
     }
   }
-  const reformulation = REFORMULATIONS.find(([pattern]) => pattern.test(whole))?.[1];
+  const reformulation = REFORMULATIONS.find(([pattern]) => pattern.test(whole) || pattern.test(whole.replace(/^و(?=.{3,})/u, '')))?.[1];
   if (reformulation) {
     if (!top) return result('field_edit', { edit: reformulation, needs: 'missing_reference' });
     // The subject is unchanged: v1's reading of «اختصر» as a new writing task is not kept as the base.
@@ -494,23 +604,35 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
     return result('field_edit', { edit, needs: top ? null : 'missing_reference' });
   }
 
-  const correctionStart = correctionValueStart(folded);
-  if (correctionStart !== null && top) {
-    const valueWords = words.slice(correctionStart);
-    const valueFolded = folded.slice(correctionStart);
+  const corrected = correctionValueWords(words, folded, top);
+  if (corrected && (top || CORRECTION_VERBS.some(verb => folded.includes(verb)) || folded.includes('mean') || folded.includes('meant'))) {
+    if (!top) return result('correction', { needs: 'missing_reference' });
+    const valueWords = corrected.words;
+    const valueFolded = corrected.folded;
     const ordinal = findOrdinal(valueFolded);
     const pointed = ordinal !== null ? pointedResult(state, ordinal) : null;
     if (ordinal !== null && !pointed) return result('correction', { needs: 'missing_reference' });
-    const operands = promotePlace(operandsFrom(valueWords, valueFolded, 0, hints, Boolean(topForms?.locationValued)));
+    const raw = operandsFrom(valueWords, valueFolded, 0, hints, Boolean(topForms?.locationValued));
+    const lookup = top.lookup && !privateNow;
+    if (!pointed && !raw.entity && (raw.place || raw.time) && !(raw.place && placeEntity(topForms))) {
+      // «لا، في مصر», «خليها بكرا», "set it to tomorrow": one operand corrected, the entity kept.
+      const field = raw.place ? 'place' as const : 'date' as const;
+      const value = (raw.place ?? raw.time)!;
+      pushCorrection(next, { field, from: raw.place ? top.place : top.time, to: value, turnId });
+      const frame = frameOf({ entity: top.entity, property: top.property, place: raw.place ?? top.place, time: raw.time ?? top.time, entityOrigin: top.entityOrigin, lookup });
+      pushTopic(next, frame);
+      return result('correction', { edit: { field, value }, entity: top.entity, property: top.property, place: frame.place, time: frame.time,
+        query: lookup ? composeQuery(topForms, frame, arabic) : null });
+    }
+    const operands = promotePlace(raw);
     const entity = pointed?.label ?? operands.entity;
     if (!entity) return result('correction', { needs: 'missing_value' });
-    const lookup = top.lookup && !privateNow;
     pushCorrection(next, { field: 'entity', from: top.entity, to: entity, turnId });
     const frame = frameOf({ entity, property: top.property, place: operands.place ?? top.place, time: operands.time ?? top.time,
-      entityOrigin: pointed ? 'host_result' : 'user', lookup });
+      template: top.template, entityOrigin: pointed ? 'host_result' : 'user', lookup });
     pushTopic(next, frame);
     return result('correction', {
-      entity, property: top.property, place: frame.place, time: frame.time, query: lookup ? composeQuery(topForms, frame, arabic) : null,
+      entity, property: top.property, place: frame.place, time: frame.time, query: lookup ? entityQuery(topForms, frame) : null,
       ...(pointed ? { reference: { index: pointed.index, label: pointed.label } } : {}),
     });
   }
@@ -569,21 +691,59 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
       query: lookup ? composeQuery(hit.forms, frame, arabic) : null });
   }
 
+  // «وقارنها بالرياض», "compare it with Riyadh": the same property for a new entity, with the earlier entity kept as `against`.
+  if (top && !hit && COMPARE.test(whole)) {
+    const lead = COMPARE.exec(whole)![0].trim().split(' ').length;
+    const compared = promotePlace(operandsFrom(words, folded, lead, hints, Boolean(topForms?.locationValued)));
+    // «قارنها بالرياض»: the glued ب after a comparison word is the preposition.
+    if (compared.entity && /^بال.{2,}/u.test(fold(compared.entity))) compared.entity = compared.entity.slice(1);
+    if (!compared.entity) return result('follow_up_entity', { needs: 'missing_value', ...(top.entity ? { against: top.entity } : {}) });
+    const lookup = top.lookup && !privateNow;
+    const frame = frameOf({ entity: compared.entity, property: top.property, place: compared.place ?? (topForms?.locationValued ? null : top.place),
+      time: compared.time ?? top.time, template: top.template, lookup });
+    pushTopic(next, frame);
+    return result('follow_up_entity', { entity: compared.entity, property: top.property, place: frame.place, time: frame.time,
+      query: lookup ? entityQuery(topForms, frame) : null, ...(top.entity ? { against: top.entity } : {}) });
+  }
+
   const start = hit ? hit.start + hit.length : contentStart(folded);
   const operands = operandsFrom(words, folded, start, hints, Boolean(hit?.forms.locationValued));
   // A message made only of a place or a time («وفي مصر؟», «بكرا؟») leans on the topic before it.
   const slotOnly = Boolean(top) && !hit && operands.entity === null && Boolean(operands.place || operands.time);
-  const followLead = startsWithFollowLead(folded, whole) || slotOnly;
+  const asksQuestion = /[؟?]$/u.test(text.trim()) || folded.some(word => QUESTION_WORDS.has(word) || QUESTION_WORDS.has(bareWord(word)));
+  const followLead = startsWithFollowLead(folded, whole, asksQuestion) || slotOnly;
+  // «وهي في أي قارة؟», «وما أشهر معالمها؟», «وأين تقع؟», "which continent is it in?": a question about the same entity with a
+  // property the closed list does not know. A standalone pronoun is replaced by the entity; otherwise the entity is appended.
+  // «ما هو الذكاء الاصطناعي؟»: هو/هي right after a question word and before a subject is the copula, not a pointer (as v1 reads it).
+  const copula = (index: number) => ['هو', 'هي'].includes(bareWord(folded[index]!)) && index > 0 && QUESTION_WORDS.has(bareWord(folded[index - 1]!))
+    && index + 1 < folded.length && !QUESTION_WORDS.has(folded[index + 1]!) && !PREPOSITIONS.has(folded[index + 1]!);
+  const pointsBack = folded.some((word, index) => !copula(index) && (POINTERS.has(word) || POINTERS.has(bareWord(word)) || FOLLOW_VERBS.has(word) || FOLLOW_VERBS.has(bareWord(word))
+    || /^.{3,}(?:ها|هم|هن)$/u.test(word) && !TIME_SET.has(word) && !LEADS.has(word) && !QUESTION_WORDS.has(word)));
+  if (top?.entity && !hit && pointsBack && asksQuestion && !slotOnly) {
+    const lookup = top.lookup && !privateNow;
+    let lead = 0;
+    while (lead < folded.length && (LEADS.has(folded[lead]!) || FOLLOW_FIRST.has(bareWord(folded[lead]!)) && !QUESTION_WORDS.has(bareWord(folded[lead]!)))) lead++;
+    const asked = words.slice(lead).map((word, index) => index === 0 && /^[وف]/u.test(folded[lead]!) && !/^[وف]/u.test(fold(top.entity!)) ? word.slice(1) : word);
+    const standalone = asked.findIndex(word => STANDALONE_PRONOUNS.has(fold(strip(word))));
+    const content = asked.filter(word => { const key = fold(strip(word)); return key && !STANDALONE_PRONOUNS.has(key) && !QUESTION_WORDS.has(key) && !LEADS.has(key); });
+    // «وهو؟», "and it?": a pointer with no question in it.
+    if (!content.length) return result('ambiguous', { entity: top.entity, needs: 'missing_value' });
+    const question = standalone >= 0 ? asked.map((word, index) => index === standalone ? top.entity! : word).join(' ') : `${asked.join(' ').replace(/[؟?]+$/u, '')} ${top.entity}`;
+    pushTopic(next, frameOf({ ...top, property: null, sourceTurnId: turnId, lookup }));
+    return result('follow_up_property', { entity: top.entity, property: null, place: top.place, time: top.time, query: lookup ? question.trim() : null });
+  }
   if (followLead && top) {
     const property = hit?.forms ?? topForms;
     const lookup = top.lookup && !privateNow;
     const current = hit?.forms.locationValued || !hit && topForms?.locationValued ? operandsFrom(words, folded, start, hints, true) : operands;
+    // «ونيوتن؟»: the و that made this a follow-up is not part of the name.
+    if (current.entity && !hit && words.length <= 3 && asksQuestion && /^و.{2,}/u.test(folded[0]!) && fold(current.entity).startsWith(folded[0]!)) current.entity = current.entity.slice(1);
     if (current.entity && (!hit || hit.forms.name === top.property)) {
       const frame = frameOf({ entity: current.entity, property: property?.name ?? null, place: current.place ?? (property?.locationValued ? null : top.place),
-        time: current.time ?? top.time, lookup });
+        time: current.time ?? top.time, template: hit ? null : top.template, lookup });
       pushTopic(next, frame);
       return result('follow_up_entity', { entity: current.entity, property: property?.name ?? null, place: frame.place, time: frame.time,
-        query: lookup ? composeQuery(property, frame, arabic) : null });
+        query: lookup ? entityQuery(property, frame) : null });
     }
     if (hit && (!current.entity || fold(current.entity) === fold(top.entity ?? ''))) {
       const frame = frameOf({ entity: top.entity, property: hit.forms.name, place: current.place ?? top.place, time: current.time ?? top.time,
@@ -633,7 +793,10 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
   const lookup = publicLookup || composed;
   next.results = [];
   next.schedule = (() => { const parsed = parseSchedule(text); return parsed ? { ...parsed, sourceTurnId: turnId } : null; })();
-  const frame = frameOf({ entity, property: hit?.forms.name ?? null, place: fresh.place, time: fresh.time, lookup });
+  // The question shape for later «و{entity}؟» follow-ups: only when the entity appears verbatim in the user's own words.
+  const cleaned = clean(text);
+  const template = entity && lookup && cleaned.includes(entity) ? cleaned.replace(entity, '{}') : null;
+  const frame = frameOf({ entity, property: hit?.forms.name ?? null, place: fresh.place, time: fresh.time, template, lookup });
   pushTopic(next, frame);
   return result(top ? 'topic_change' : 'new_request', { entity, property: hit?.forms.name ?? null, place: frame.place, time: frame.time,
     query: lookup ? v1.query ?? composeQuery(hit?.forms ?? null, frame, arabic) : null });

@@ -46,7 +46,9 @@ describe('renderDocumentHtml', () => {
     const arabic = renderDocumentHtml({ title: 'عرض سعر', theme: 'invoice', blocks: [] });
     expect(arabic.theme).toBe('invoice');
     expect(arabic.html).toContain('class="theme-invoice"');
-    expect(arabic.print.footerTemplate).toContain('صفحة <span class="pageNumber"></span> من');
+    expect(arabic.print.footerTemplate).toContain('<span class="pageNumber"></span> / <span class="totalPages"></span>');
+    expect(arabic.print.footerTemplate).not.toContain('صفحة');
+    expect(renderDocumentHtml({ title: 'x', footer: 'شركة النور', blocks: [] }).print.footerTemplate).toContain('<span>شركة النور</span>');
     const english = renderDocumentHtml({ title: 'Quarterly report', theme: 'report', accent: '#aa0000', pageNumbers: false, orientation: 'landscape', pageSize: 'Letter', blocks: [{ kind: 'heading', level: 2, text: 'Summary' }] });
     expect(english.lang).toBe('en');
     expect(english.html).toContain('<html lang="en" dir="ltr">');
