@@ -133,7 +133,7 @@
 /* Thread */
 .main { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .topbar { display: flex; align-items: center; gap: 8px; flex: none; min-height: 52px; padding: 8px 18px; }
-.topbar span { flex: 1; min-width: 0; color: var(--soft); font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar > span { flex: 1; min-width: 0; color: var(--soft); font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .showBrowser {
   display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--raised); color: var(--soft); font-size: 13px;
 }
@@ -141,6 +141,9 @@
 /* Browser levels (plan §6): the chip stands for a hidden browser; the panel opens by itself only when a step needs the owner. */
 .showBrowser.background { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--ink); }
 .showBrowser .livePip { width: 6px; height: 6px; }
+.showBrowser { max-width: min(62vw, 560px); }
+.chipName, .chipAction { flex: none; white-space: nowrap; }
+.chipAction { color: var(--accent); font-weight: 600; }
 .needsYou {
   display: flex; align-items: center; gap: 8px; flex: none; margin: 0 10px 8px; padding: 8px 10px; border-radius: 9px;
   background: color-mix(in srgb, var(--accent) 14%, var(--panel)); color: var(--ink); font-size: 13px; line-height: 1.5;
@@ -184,6 +187,12 @@
 .replyQuote { margin: 0; padding: 4px 14px; border-inline-start: 3px solid var(--accent); background: var(--user); border-radius: 10px; color: inherit; padding-block: 10px; display: flex; flex-direction: column; gap: 8px; }
 .copyReply { margin-top: 8px; display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--faint); font: inherit; font-size: .8rem; cursor: pointer; }
 .copyReply:hover, .copyReply:focus-visible { border-color: var(--line); color: inherit; }
+.replyTools { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
+.feedback { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+.feedback .copyReply.chosen { border-color: var(--accent); color: var(--ink); }
+.feedbackNote { display: flex; gap: 6px; flex-basis: 100%; margin-top: 4px; }
+.feedbackNote input { flex: 1; min-width: 0; padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--ink); font: inherit; font-size: .85rem; }
+.feedbackNote .secondary { padding: 5px 10px; font-size: .85rem; }
 .reply code { padding: 1px 6px; border-radius: 6px; background: var(--user); font-size: .88em; }
 .reply pre { margin: 0; padding: 13px 15px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow-x: auto; line-height: 1.6; }
 .reply pre code { padding: 0; background: none; }
@@ -340,6 +349,17 @@
 .send:disabled { background: var(--hover); color: var(--faint); opacity: 1; }
 .stop { background: var(--hover); color: var(--ink); }
 .stop:hover:not(:disabled) { background: var(--line); }
+/* Attached images: a picker button, thumbnails before sending, and thumbnails inside the sent message. */
+.attach { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 36px; height: 36px; border: 0; border-radius: 12px; background: transparent; color: var(--muted); cursor: pointer; }
+.attach:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.attach:disabled { color: var(--faint); cursor: default; }
+.attachments { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 4px 0; }
+.attachment { position: relative; width: 64px; height: 64px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--hover); }
+.attachment img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.attachment button { position: absolute; top: 3px; inset-inline-end: 3px; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .55); color: #fff; cursor: pointer; }
+.attachmentBusy { display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 64px; border: 1px dashed var(--line); border-radius: 10px; color: var(--muted); }
+.messageImages { display: flex; flex-wrap: wrap; gap: 8px; max-width: 85%; }
+.messageImages img { display: block; width: auto; height: auto; max-width: 260px; max-height: 220px; border: 1px solid var(--line); border-radius: 12px; background: var(--raised); }
 
 /* Browser */
 .browser { display: flex; flex-direction: column; flex: none; width: min(46vw, 760px); min-width: 0; background: var(--panel); border-inline-start: 1px solid var(--line); animation: fadeIn .2s ease; }

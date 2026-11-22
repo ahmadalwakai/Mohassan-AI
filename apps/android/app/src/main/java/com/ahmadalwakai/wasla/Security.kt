@@ -4,8 +4,10 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -65,7 +67,7 @@ object TokenVault {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, raw, 0, IV_BYTES))
             String(cipher.doFinal(raw, IV_BYTES, raw.size - IV_BYTES), Charsets.UTF_8)
-        } catch (_: Exception) {
+        } catch (ignored: Exception) {
             null
         }
     }
@@ -86,7 +88,7 @@ object TokenVault {
 
     suspend fun delete(context: Context) = withContext(Dispatchers.IO) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(ENTRY).commit()
-        try { KeyStore.getInstance(PROVIDER).apply { load(null) }.deleteEntry(ALIAS) } catch (_: Exception) {}
+        try { KeyStore.getInstance(PROVIDER).apply { load(null) }.deleteEntry(ALIAS) } catch (ignored: Exception) {}
         Unit
     }
 }
@@ -110,9 +112,9 @@ class PinnedTrustManager(host: String, fingerprint: String) : X509TrustManager {
         val leaf = chain?.firstOrNull() ?: throw CertificateException("The computer sent no certificate.")
         val actual = sha256Hex(leaf.encoded)
         if (!MessageDigest.isEqual(actual.toByteArray(), fingerprint.toByteArray())) throw CertificateException("The certificate is not the pinned one.")
-        try { leaf.checkValidity() } catch (_: Exception) { throw CertificateException("The certificate is not valid now.") }
+        try { leaf.checkValidity() } catch (ignored: Exception) { throw CertificateException("The certificate is not valid now.") }
         if (!hostMatches(leaf, host)) throw CertificateException("The certificate does not name this computer.")
-        val usage = try { leaf.extendedKeyUsage } catch (_: Exception) { null }
+        val usage = try { leaf.extendedKeyUsage } catch (ignored: Exception) { null }
         if (usage != null && SERVER_AUTH !in usage) throw CertificateException("The certificate is not for a server.")
     }
 
@@ -128,7 +130,7 @@ class PinnedTrustManager(host: String, fingerprint: String) : X509TrustManager {
         private fun sameAddress(certificateName: String, host: String): Boolean {
             if (certificateName == host) return true
             if (!isLiteral(certificateName) || !isLiteral(host)) return false
-            return try { InetAddress.getByName(certificateName).address.contentEquals(InetAddress.getByName(host).address) } catch (_: Exception) { false }
+            return try { InetAddress.getByName(certificateName).address.contentEquals(InetAddress.getByName(host).address) } catch (ignored: Exception) { false }
         }
 
         private fun dnsMatches(pattern: String, host: String): Boolean {
@@ -142,7 +144,7 @@ class PinnedTrustManager(host: String, fingerprint: String) : X509TrustManager {
         /** True when a subject alternative name (IP or DNS) of the certificate is the host. */
         fun hostMatches(certificate: X509Certificate, host: String): Boolean {
             val wanted = host.trim('[', ']').lowercase()
-            val names = try { certificate.subjectAlternativeNames } catch (_: Exception) { null } ?: return false
+            val names = try { certificate.subjectAlternativeNames } catch (ignored: Exception) { null } ?: return false
             for (entry in names) {
                 val type = entry.getOrNull(0) as? Int ?: continue
                 val value = (entry.getOrNull(1) as? String)?.lowercase() ?: continue
@@ -187,7 +189,7 @@ class ApiClient(val identity: ServerIdentity, private val token: String? = null)
         context.init(null, arrayOf(trust), SecureRandom())
         socketFactory = TlsSocketFactory(context.socketFactory)
         hostnameVerifier = HostnameVerifier { name, session ->
-            val leaf = try { session.peerCertificates.firstOrNull() as? X509Certificate } catch (_: Exception) { null }
+            val leaf = try { session.peerCertificates.firstOrNull() as? X509Certificate } catch (ignored: Exception) { null }
             name.trim('[', ']').equals(identity.host, ignoreCase = true) && leaf != null && PinnedTrustManager.hostMatches(leaf, identity.host)
         }
     }
@@ -229,11 +231,15 @@ class ApiClient(val identity: ServerIdentity, private val token: String? = null)
             bytes
         } catch (error: WaslaException) {
             throw error
-        } catch (_: SSLException) {
+        } catch (error: SSLException) {
+            Log.w(TAG, "TLS to the computer failed for $method $path", error)
             throw WaslaException.certificate()
-        } catch (_: CertificateException) {
+        } catch (error: CertificateException) {
+            Log.w(TAG, "certificate check failed for $method $path", error)
             throw WaslaException.certificate()
-        } catch (_: IOException) {
+        } catch (error: IOException) {
+            // The message names the failure class only; no token, body or address beyond the path.
+            Log.w(TAG, "request failed for $method $path: ${error.javaClass.simpleName}: ${error.message}")
             throw WaslaException.network()
         } finally {
             connection.disconnect()
@@ -254,7 +260,7 @@ class ApiClient(val identity: ServerIdentity, private val token: String? = null)
 
     inline fun <reified R> decode(bytes: ByteArray): R = try {
         WaslaJson.decodeFromString<R>(bytes.decodeToString())
-    } catch (_: Exception) {
+    } catch (ignored: Exception) {
         throw WaslaException.invalidResponse()
     }
 
@@ -274,5 +280,6 @@ class ApiClient(val identity: ServerIdentity, private val token: String? = null)
 
     companion object {
         const val MAX_RESPONSE_BYTES = 25 * 1024 * 1024
+        private const val TAG = "Wasla"
     }
 }

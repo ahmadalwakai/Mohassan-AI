@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ArrowUp, Check, ChevronDown, Copy, ExternalLink, Globe, KeyRound, Laptop, LogOut, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, Settings2, ShieldAlert, SquarePen, Square, Trash2, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, Copy, ExternalLink, Globe, ImagePlus, KeyRound, Laptop, LogOut, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, Settings2, ShieldAlert, SquarePen, Square, Trash2, X } from "lucide-react";
 import type { ChatConversation as Conversation, ChatConversationSummary as Summary, ChatSecureRequest } from "@mohassan/contracts";
 import { Markdown, plainText } from "./markdown";
 import { takeoverInput } from "./takeover-input";
 import { BrowserFilesPanel } from './browser-files-panel';
+import { DocumentsPanel } from './documents-panel';
 import { BrowserViewport } from './browser-viewport';
 import { CampaignCard } from "./campaign-card";
 
@@ -17,7 +18,8 @@ import { adsConnectProblems, pendingAdsConnect } from "./ads-connect";
 import { NOTICE_AFTER_MS, declineNoticeOffer, noticeKindFor, noticeOfferOpen, requestNoticePermission, showTaskNotice } from "./task-notices";
 import styles from "./assistant-app.module.css";
 
-const POLL_MS = 900;
+/** Plan §5.2 P5: the first useful progress line should show within half a second; a local answer is ready in ~30 ms. */
+const POLL_MS = 450;
 /** Proposed in the plan (§6.3): a hidden tab keeps following its task, slowly, instead of stopping. */
 const HIDDEN_POLL_MS = 15_000;
 const HISTORY_POLL_MS = 5_000;
@@ -55,6 +57,36 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   return body as T;
 }
 const messageOf = (error: unknown) => error instanceof Error ? error.message : "تعذر الاتصال. حاول مجددًا.";
+
+const MAX_ATTACHMENTS = 4;
+interface Attachment { id: string; width: number; height: number; url: string; name: string }
+const toBlob = (canvas: HTMLCanvasElement, type: string, quality: number) => new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("تعذر ترميز الصورة.")), type, quality));
+async function base64Of(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  return btoa(binary);
+}
+/** Shrinks an image in the browser so uploads stay small; screenshots keep PNG so their text stays crisp for the reader. */
+async function encodeForUpload(file: File): Promise<{ mimeType: "image/png" | "image/jpeg"; data: string }> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const scale = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("تعذر تجهيز الصورة في المتصفح.");
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const photo = file.type === "image/jpeg";
+    let blob = await toBlob(canvas, photo ? "image/jpeg" : "image/png", 0.92);
+    if (blob.size > 4_500_000 && !photo) blob = await toBlob(canvas, "image/jpeg", 0.9);
+    if (blob.size > 4_500_000) throw new Error("الصورة كبيرة جدًا حتى بعد التصغير؛ جرّب صورة أصغر.");
+    return { mimeType: blob.type === "image/jpeg" ? "image/jpeg" : "image/png", data: await base64Of(blob) };
+  } finally {
+    bitmap.close();
+  }
+}
 const saved = {
   get() { try { return localStorage.getItem(SAVED_CONVERSATION); } catch { return null; } },
   set(id: string | null) { try { if (id) localStorage.setItem(SAVED_CONVERSATION, id); else localStorage.removeItem(SAVED_CONVERSATION); } catch { /* Convenience only. */ } },
@@ -149,7 +181,7 @@ function BrowserPanel({ conversation, reason, onClose, onError, onRestore, onRev
   </aside>;
 }
 
-const SUGGESTIONS = ["لخّص لي أهم أخبار اليوم", "اكتب رسالة بريد احترافية", "افتح موقعًا واعرض لي محتواه", "ساعدني في التخطيط لأسبوعي"];
+const SUGGESTIONS = ["لخّص لي أهم أخبار اليوم", "اكتب رسالة بريد احترافية", "اصنع لي ملف PDF من نصّ أكتبه", "افتح موقعًا واعرض لي محتواه", "ساعدني في التخطيط لأسبوعي"];
 const WORKING = new Set(["running", "waiting_input", "waiting_approval", "waiting_user"]);
 
 function DeleteDialog({ target, busy, error, onCancel, onConfirm }: { target: Summary | null; busy: boolean; error: string; onCancel: () => void; onConfirm: () => void }) {
@@ -183,6 +215,9 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [chatConfigured, setChatConfigured] = useState<boolean | null>(null);
   const [draft, setDraft] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(0);
+  const fileInput = useRef<HTMLInputElement>(null);
   const [browserAccount,setBrowserAccount]=useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -342,7 +377,16 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
     document.addEventListener("visibilitychange", mark);
     return () => document.removeEventListener("visibilitychange", mark);
   }, [conversation?.id, conversation?.updatedAt, conversation?.status, history]);
-  useEffect(() => { document.title = unread ? `(${unread}) موحسن` : "موحسن"; }, [unread]);
+  // The hidden tab's title carries the live words while a run is going; the unread count stays in front of the name.
+  useEffect(() => {
+    const apply = () => {
+      const name = unread ? `(${unread}) موحسن` : "موحسن";
+      document.title = status === "running" && document.hidden && conversation?.progress ? `${conversation.progress} · ${name}` : name;
+    };
+    apply();
+    document.addEventListener("visibilitychange", apply);
+    return () => document.removeEventListener("visibilitychange", apply);
+  }, [unread, status, conversation?.progress]);
 
   useEffect(() => {
     const viewport = thread.current, content = threadContent.current;
@@ -382,8 +426,10 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
 
   const running = status === "running";
   const answering = status === "waiting_user";
+  // The request's own time, for the counter on the chip's live line.
+  const requestedAt = conversation?.messages.filter((message) => message.role === "user").at(-1)?.createdAt ?? null;
   const blocked = status === "waiting_input" || status === "waiting_approval";
-  const canSend = !busy && !running && !blocked && draft.trim().length > 0;
+  const canSend = !busy && !running && !blocked && uploading === 0 && (draft.trim().length > 0 || attachments.length > 0);
   // The brain's questions take the input's place, one at a time, as in Claude.
   const asking = answering && !!conversation?.question?.fields?.length;
 
@@ -422,6 +468,37 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
     }
   }
 
+  /** Image files from the picker, a paste or a drop: shrunk in the browser, then uploaded for the own reader. */
+  async function uploadFiles(list: Iterable<File>) {
+    const files = [...list].filter((file) => /^image\/(?:png|jpeg|webp|gif|bmp)$/.test(file.type)).slice(0, Math.max(0, MAX_ATTACHMENTS - attachments.length));
+    if (!files.length) return;
+    setError("");
+    setUploading((count) => count + files.length);
+    for (const file of files) {
+      try {
+        const encoded = await encodeForUpload(file);
+        const result = await api<{ id: string; width: number; height: number; url: string }>("/api/chat/images", { method: "POST", body: JSON.stringify(encoded) });
+        setAttachments((current) => current.length >= MAX_ATTACHMENTS ? current : [...current, { id: result.id, width: result.width, height: result.height, url: result.url, name: file.name || "صورة" }]);
+      } catch (caught) {
+        setError(messageOf(caught));
+      } finally {
+        setUploading((count) => count - 1);
+      }
+    }
+    composer.current?.focus();
+  }
+  function onPaste(event: { clipboardData: DataTransfer | null; preventDefault(): void }) {
+    const files = [...(event.clipboardData?.files ?? [])].filter((file) => file.type.startsWith("image/"));
+    if (!files.length) return;
+    event.preventDefault();
+    void uploadFiles(files);
+  }
+  function onDrop(event: { dataTransfer: DataTransfer | null; preventDefault(): void }) {
+    event.preventDefault();
+    const files = [...(event.dataTransfer?.files ?? [])];
+    if (files.length) void uploadFiles(files);
+  }
+
   async function send(event?: FormEvent) {
     event?.preventDefault();
     if (!canSend) return;
@@ -429,10 +506,12 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
     // Send the actual input bytes. The server owns display trimming and must
     // detect any change before promising to save a literal note exactly.
     const text = draft;
+    const images = attachments.map((item) => item.id);
+    const withImages = images.length ? { images } : {};
     const sent = await act(() => selectedId
-      ? api<Conversation>(`/api/chat/conversations/${selectedId}/messages`, { method: "POST", body: JSON.stringify({ text }) })
-      : api<Conversation>("/api/chat/conversations", { method: "POST", body: JSON.stringify({ goal: text, ...(browserAccount.trim() ? { browserAccount: browserAccount.trim() } : {}) }) }));
-    if (sent) setDraft((current) => current === text ? "" : current);
+      ? api<Conversation>(`/api/chat/conversations/${selectedId}/messages`, { method: "POST", body: JSON.stringify({ ...(text ? { text } : {}), ...withImages }) })
+      : api<Conversation>("/api/chat/conversations", { method: "POST", body: JSON.stringify({ ...(text.trim() ? { goal: text } : {}), ...withImages, ...(browserAccount.trim() ? { browserAccount: browserAccount.trim() } : {}) }) }));
+    if (sent) { setDraft((current) => current === text ? "" : current); setAttachments((current) => current.filter((item) => !images.includes(item.id))); }
     composer.current?.focus();
   }
   function onComposerKey(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -511,12 +590,18 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
     || conversation?.messages.some(message => message.role === "user" && ADS_WORDS.test(message.text)));
   const showBrowser = Boolean(conversation?.browser && browserOpen);
   const firstName = name.trim().split(/\s+/)[0];
-  const form = <form className={styles.composer} onSubmit={send}>
+  const form = <form className={styles.composer} onSubmit={send} onPaste={onPaste} onDrop={onDrop} onDragOver={(event) => event.preventDefault()}>
     {!selectedId?<details className={styles.browserAccount}><summary>حساب المتصفح: {browserAccount||'الافتراضي'}</summary><label htmlFor="browser-account">اسم جلسة الحساب</label><input id="browser-account" dir="ltr" value={browserAccount} maxLength={128} pattern="[a-zA-Z0-9_-]{1,128}" placeholder="work-account" disabled={busy} onChange={event=>setBrowserAccount(event.target.value)}/><small>اتركه فارغًا للحساب الافتراضي، أو استخدم اسمًا بحروف إنجليزية وأرقام لفصل حسابات المواقع.</small></details>:null}
+    {attachments.length || uploading ? <div className={styles.attachments}>
+      {attachments.map((item) => <span key={item.id} className={styles.attachment}><img src={item.url} alt={item.name} /><button type="button" aria-label="إزالة الصورة" onClick={() => setAttachments((current) => current.filter((other) => other.id !== item.id))}><X size={12} /></button></span>)}
+      {uploading ? <span className={styles.attachmentBusy} aria-label="جارٍ رفع الصورة"><AgentActivity variant="spinner" /></span> : null}
+    </div> : null}
+    <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" multiple hidden onChange={(event) => { const files = event.currentTarget.files; if (files) void uploadFiles(files); event.currentTarget.value = ""; }} />
+    <button type="button" className={styles.attach} aria-label="إرفاق صورة" title="أرفق صورة ليقرأها موحسن" disabled={blocked || attachments.length >= MAX_ATTACHMENTS} onClick={() => fileInput.current?.click()}><ImagePlus size={18} /></button>
     <label className={styles.hidden} htmlFor="assistant-message">رسالتك</label>
     <textarea
       id="assistant-message" ref={composer} dir="auto" rows={1} maxLength={4000} value={draft} autoFocus
-      placeholder={answering ? "اكتب إجابتك…" : "اكتب طلبك هنا…"} disabled={blocked}
+      placeholder={answering ? "اكتب إجابتك…" : attachments.length ? "اسأل عن الصورة أو أرسلها مباشرة…" : "اكتب طلبك هنا…"} disabled={blocked}
       onChange={(event) => { setDraft(event.target.value); event.target.style.height = "auto"; event.target.style.height = `${Math.min(event.target.scrollHeight, 220)}px`; }}
       onKeyDown={onComposerKey}
     />
@@ -572,7 +657,9 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
         <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="فتح القائمة" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
         <span dir="auto">{conversation?.title !== "محادثة جديدة" ? conversation?.title : ""}</span>
         {conversation?.browser && !browserOpen && visibility?.canView !== false ? <button className={`${styles.showBrowser} ${running ? styles.background : ""}`} onClick={showPanel} aria-label="عرض المتصفح" data-testid="browser-chip">
-          {running ? <span className={styles.livePip} aria-hidden="true" /> : <Globe size={15} />}{running ? "المتصفح يعمل في الخلفية · عرض" : "المتصفح · عرض"}</button> : null}
+          {running
+            ? <><span className={styles.chipName}>المتصفح ·</span><ActivityLine text={conversation.progress ?? "يعمل في الخلفية"} since={requestedAt} compact /><span className={styles.chipAction}>· عرض</span></>
+            : <><Globe size={15} />المتصفح · عرض</>}</button> : null}
         {conversation ? <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="محادثة جديدة" onClick={startNew}><SquarePen size={18} /></button> : null}
       </header>
       {noticeOffer ? <div className={styles.noticeBar} role="status" data-testid="notice-offer">
@@ -594,8 +681,9 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
         <div ref={thread} className={styles.thread} role="log" aria-label="المحادثة">
           <div ref={threadContent} className={styles.column}>
             {conversation!.messages.map((message, index) => <article key={message.id} className={message.role === "user" ? styles.userTurn : styles.assistantTurn}>
+              {message.role === "user" && message.images?.length ? <div className={styles.messageImages}>{message.images.map((image) => <a key={image.id} href={`/api/chat/images/${image.id}`} target="_blank" rel="noreferrer"><img src={`/api/chat/images/${image.id}`} alt="صورة مرفقة" width={image.width} height={image.height} /></a>)}</div> : null}
               {message.role === "user" ? <p dir="auto">{message.text}</p> : <Markdown text={asking && index === conversation!.messages.length - 1 ? withoutQuestionList(message.text) : message.text} />}
-              {message.role === "assistant" && message.text.trim() ? <CopyButton text={message.text} /> : null}
+              {message.role === "assistant" && message.text.trim() ? <div className={styles.replyTools}><CopyButton text={message.text} /><FeedbackButtons key={message.id} conversationId={conversation!.id} messageId={message.id} /></div> : null}
               {index === conversation!.messages.length - 1 && message.role === "user" ? <Steps conversation={conversation!} /> : null}
             </article>)}
             {conversation!.messages.at(-1)?.role === "assistant" && (running || conversation!.steps.length > 0) && !answering && !blocked ? <Steps conversation={conversation!} /> : null}
@@ -616,6 +704,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
               <button type="button" className={styles.secondary} onClick={() => onOpenTool("integrations")}><Settings2 size={15} />حالة مزودي النماذج</button>
               <button type="button" className={styles.secondary} onClick={() => onOpenTool("executor")}>المنفّذ المحلي (مهام محددة فقط)</button>
             </div> : null}
+            <DocumentsPanel key={`documents:${conversation!.id}`} conversationId={conversation!.id} version={conversation!.messages.length} busy={busy} />
           </div>
         </div>
         <div className={styles.dock}>{asking ? <QuestionPanel key={conversation!.question!.id} fields={conversation!.question!.fields!} busy={busy}
@@ -643,6 +732,31 @@ function CopyButton({ text }: { text: string }) {
   return <button type="button" className={styles.copyReply} onClick={() => void copy()} aria-label="نسخ الرد" title="نسخ الرد">
     {copied ? <Check size={14} /> : <Copy size={14} />}<span>{copied ? "تم النسخ" : "نسخ"}</span>
   </button>;
+}
+
+/** «مفيد / خطأ / ناقص» under a reply (plan §7.5): one click records the verdict; «خطأ» and «ناقص» can take a short note. */
+function FeedbackButtons({ conversationId, messageId }: { conversationId: string; messageId: string }) {
+  const [verdict, setVerdict] = useState<"useful" | "wrong" | "incomplete" | null>(null);
+  const [noting, setNoting] = useState(false);
+  const [note, setNote] = useState("");
+  const [failed, setFailed] = useState(false);
+  async function send(value: "useful" | "wrong" | "incomplete", text?: string) {
+    setFailed(false);
+    try {
+      await api(`/api/chat/conversations/${conversationId}/feedback`, { method: "POST", body: JSON.stringify({ messageId, verdict: value, ...(text?.trim() ? { note: text.trim() } : {}) }) });
+      setVerdict(value);
+      setNoting(value !== "useful" && !text);
+    } catch { setFailed(true); }
+  }
+  const labels = { useful: "مفيد", wrong: "خطأ", incomplete: "ناقص" } as const;
+  return <div className={styles.feedback} role="group" aria-label="تقييم الرد">
+    {(["useful", "wrong", "incomplete"] as const).map((value) => <button key={value} type="button" className={`${styles.copyReply} ${verdict === value ? styles.chosen : ""}`} aria-pressed={verdict === value} onClick={() => void send(value)}>{labels[value]}</button>)}
+    {noting ? <form className={styles.feedbackNote} onSubmit={(event) => { event.preventDefault(); void send(verdict!, note); setNoting(false); }}>
+      <input dir="auto" value={note} maxLength={500} placeholder="ما الذي كان خطأ أو ناقصًا؟ (اختياري)" onChange={(event) => setNote(event.target.value)} />
+      <button type="submit" className={styles.secondary}>حفظ</button>
+    </form> : null}
+    {failed ? <span className={styles.problem}>لم يُحفظ التقييم.</span> : null}
+  </div>;
 }
 
 /** For pages without the Clipboard API (plain http from a phone) or where it is blocked. */

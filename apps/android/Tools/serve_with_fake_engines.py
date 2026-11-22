@@ -12,7 +12,7 @@ Tools/fake_mohassan_gateway.py). Only the engines behind the API are stand-ins:
   phone's trackpad, clicks and keys can be exercised without touching the real desktop.
 
     python apps/android/Tools/serve_with_fake_engines.py --service-dir <apps/wasla-service> \
-        --state <private state folder> --host 192.168.1.10 --port 47621 --allow-desktop
+        --state <private state folder> --host 192.168.1.10 --port 47621 --allow-desktop [--extra-san 10.0.2.2]
 
 Then make a pairing code as usual:  python -m wasla pair --state <folder> --host <host> --port <port>
 """
@@ -133,7 +133,8 @@ async def serve(args: argparse.Namespace) -> None:
     from wasla.server import create_app
 
     store = AuthStore(Path(args.state))
-    addresses = sorted(set(local_addresses()) | {args.host})
+    # An emulator reaches its host as 10.0.2.2: name it in the certificate when asked, before the first start.
+    addresses = sorted(set(local_addresses()) | {args.host} | set(args.extra_san))
     fingerprint = ensure_certificate(store.root, addresses)
     app = create_app(store, FakeServices(store.root), FakeDesktop(), args.allow_desktop,
                      actions=ActionsController(allowed=False, state_root=store.root), intelligence=FakeIntelligence())
@@ -156,6 +157,7 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=47621)
     parser.add_argument("--allow-desktop", action="store_true")
+    parser.add_argument("--extra-san", action="append", default=[], help="extra IP for the certificate, e.g. 10.0.2.2 for an emulator (only used when the certificate is first made)")
     args = parser.parse_args()
     sys.path.insert(0, str(Path(args.service_dir).resolve()))
     asyncio.run(serve(args))

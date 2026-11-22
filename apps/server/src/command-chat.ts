@@ -1,11 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
+import sharp from 'sharp';
+import type { ImageReading } from '@mohassan/vision';
+import { composeImageReply, readingForTrail } from './assistant/image-reading.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { FastifyInstance } from 'fastify';
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import {
-  ChatApproveSchema, ChatBrowserActivitySchema, ChatConversationSchema, ChatCreateSchema, ChatKeyboardSchema, ChatPointerSchema, ChatQuestionSchema, ChatRespondSchema,
-  ChatSecureSubmitSchema, ChatSendSchema, type ChatConversation, type ChatQuestion, type ChatSecureRequest,
+  ChatApproveSchema, ChatBrowserActivitySchema, ChatConversationSchema, ChatCreateSchema, ChatFeedbackSchema, ChatKeyboardSchema, ChatPointerSchema, ChatQuestionSchema, ChatRespondSchema,
+  ChatSecureSubmitSchema, ChatSendSchema, ChatImageUploadSchema, type ChatConversation, type ChatQuestion, type ChatSecureRequest,
   SkillRunInputSchema, type SkillRunInput, type SkillGapObservation,
 } from '@mohassan/contracts';
 import { AgentEffectHeld, AgentSessionCheckpointSchema, BrowserError, SearchEngine, SafeNetwork, type AgentPostcondition, type AgentAction, type AgentAuthority, type AgentActionResult, type AgentBrowser, type AgentCaptureResult, type AgentPage, type NetworkPolicy, type SearchProvider } from '@mohassan/browser';
@@ -18,14 +21,18 @@ import {
   SEARCH_REPEATED, SEARCH_UNUSABLE, asksToRemember, needsReview, noteAttempt, reviewRequest, searchKey, sensitiveAction, siteOf, situation, skillContextBudget, stepLabel, systemPrompt, type BrainState, type Decision, type ModelTier, type WorkTool,
 } from './assistant/brain.js';
 import { ADS_DRAFT_NOTE, ADS_SKILL_SLUG } from './assistant/ads-check.js';
-import { isFollowUp, notWebReason, parseHands, runHands, tidy, topicWords, webQuestion, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
+import { LIVE, isFollowUp, notWebReason, parseHands, plainTitle, refersBack, runHands, tidy, topicWords, webQuestion, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
 import { liveLabel } from './assistant/activity.js';
 import type { DesktopCommand, DesktopOutcome, ParsedDesktopCommand } from '@mohassan/desktop';
 import { searchRefusedReply, unsupportedReply, unsupportedRequest } from './assistant/unsupported-request.js';
 import { decideBrowserVisibility, deriveBrowserVisibility } from './assistant/browser-visibility.js';
 import type { ShadowRouter } from './assistant/router.js';
+import type { ConversationShadow } from './assistant/conversation-state-shadow.js';
 import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
 import { composePlan, planningQuestion, planningTask } from './assistant/planner.js';
+import { composeDocumentSpec, documentCreatedReply, documentEditedReply, documentInfoReply, documentQuestion, documentTask, noSourceReply, unsupportedDocumentReply, type DocumentEditTask, type DocumentOperation } from './assistant/documents.js';
+import { PdfError, parsePageSelection } from '@mohassan/pdf';
+import type { DocumentControl, DocumentEdit, DocumentInput } from './documents.js';
 import { evaluateLocalComputation } from './assistant/local-computation.js';
 import { evaluateLocalRecall } from './assistant/local-recall.js';
 import { evaluateLocalConversation } from './assistant/local-conversation.js';
@@ -100,6 +107,8 @@ export interface CommandChatConfig {
    */
   createProvider?: (model: string) => ModelProvider;
   models: { fast: string[]; deep: string[]; vision: string };
+  /** The own image reader (packages/vision). Absent or unavailable: image messages are refused with a clear message. */
+  imageReader?: { readonly available: boolean; readonly modelId: string | null; read(bytes: Uint8Array, signal?: AbortSignal): Promise<ImageReading> };
   fetch?: typeof fetch;
   browser: AgentBrowser;
   networkPolicy?: NetworkPolicy;
@@ -109,7 +118,8 @@ export interface CommandChatConfig {
    * browser page. `'disallowed'` when robots.txt forbids it, null when the page is not readable this way.
    * Absent in tests and fixtures without it: the browser reads the result instead, as before.
    */
-  readPage?: (url: string, signal: AbortSignal) => Promise<{ url: string; title: string; text: string; status: number } | 'disallowed' | null>;
+  /** `live`: the page answers a changing fact (a price, the weather), so no cached copy may serve. */
+  readPage?: (url: string, signal: AbortSignal, options?: { live?: boolean }) => Promise<{ url: string; title: string; text: string; status: number; fetchedAt?: string } | 'disallowed' | null>;
   memoryContext?: (ownerId: string, goal: string) => Promise<unknown>;
   /** Read-only retrieval of the owner's active, evaluated knowledge documents. */
   knowledgeSearch?: (ownerId: string, query: string) => Promise<readonly LocalKnowledgeDocument[]>;
@@ -124,6 +134,8 @@ export interface CommandChatConfig {
   recordExperiences?: false;
   /** Absent tools are never offered to the model. */
   tools?: AssistantTools;
+  /** PDF files from the owner's words, and edits of existing ones (documents.ts). Absent: PDF requests are not recognised. */
+  documents?: { control: Pick<DocumentControl, 'create' | 'edit' | 'list' | 'content' | 'readLocal' | 'info'>; link: (id: string) => string };
   /**
    * Optional multi-provider routing (FreeLLMAPI first, then Groq). While it returns null
    * the assistant keeps its original Groq-only path.
@@ -156,6 +168,8 @@ export interface CommandChatConfig {
   chromeExtension?: Pick<ChromeExtensionControl, 'status' | 'queueCampaign'>;
   /** Mohassan's own router model in shadow: logs its route next to the rules' route and changes nothing. */
   shadowRouter?: ShadowRouter;
+  /** Conversation state v2 in shadow (docs/HANDOVER-2026-11-22-CONVERSATION-STATE-V2.md): logs its understanding of each turn and changes nothing. */
+  conversationShadow?: ConversationShadow;
 }
 
 export interface ChatSkillContext {
@@ -319,6 +333,13 @@ export async function commandChatMigration(db: Kysely<any>) {
     if (!await tx.selectFrom('schema_migrations').select('version').where('version','=','028_chat_recovery_review').executeTakeFirst()) {
       await sql`ALTER TABLE chat_effect_receipts ADD COLUMN owner_reviewed_at timestamptz`.execute(tx);
       await tx.insertInto('schema_migrations').values({version:'028_chat_recovery_review'}).execute();
+    }
+    if (!await tx.selectFrom('schema_migrations').select('version').where('version','=','029_chat_images').executeTakeFirst()) {
+      // Images the owner attaches to chat messages; read by the own OCR model, never sent elsewhere.
+      await sql`CREATE TABLE chat_images(id text PRIMARY KEY,owner_id text NOT NULL,conversation_id text REFERENCES chat_conversations(id) ON DELETE SET NULL,content_hash text NOT NULL,mime_type text NOT NULL,width integer NOT NULL,height integer NOT NULL,bytes integer NOT NULL,data_base64 text NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),expires_at timestamptz)`.execute(tx);
+      await sql`CREATE INDEX chat_images_owner_idx ON chat_images(owner_id,created_at DESC)`.execute(tx);
+      await sql`ALTER TABLE chat_messages ADD COLUMN images jsonb`.execute(tx);
+      await tx.insertInto('schema_migrations').values({version:'029_chat_images'}).execute();
     }
     await campaignEventsMigration(tx);
   });
@@ -818,7 +839,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const page = (row.browser_state??(checkpoint?{url:checkpoint.resumeUrl??'about:blank',title:'جلسة محفوظة',observedAt:checkpoint.observedAt??checkpoint.savedAt,version:checkpoint.pageHash??'saved'}:null)) as { url: string; title: string; observedAt: string; version: string } | null;
     return ChatConversationSchema.parse({
       id, title: row.title, status: row.status, browserAccount: row.browser_account ?? null,
-      messages: messages.map((item) => ({ id: item.id, role: item.role, text: item.text, createdAt: iso(item.created_at) })),
+      messages: messages.map((item) => ({ id: item.id, role: item.role, text: item.text, createdAt: iso(item.created_at), ...messageImages(item.images) })),
       question: row.question ?? null,
       approval: row.approval ?? null,
       secure: row.secure ?? null,
@@ -1224,7 +1245,12 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   /** One screenshot question, with the same receipt whether it shows a page or the owner's PC. */
   async function askVision(runId: string, state: BrainState, question: string, image: string, signal: AbortSignal) {
     const provider = providers.get(config.models.vision);
-    if (!provider) throw new BrowserError('ASSISTANT_NO_VISION', 'قراءة الصور غير مهيأة.', 409);
+    if (!provider) {
+      // No vision provider: the own reader reports the text on the screenshot; nothing leaves the machine.
+      if (!config.imageReader?.available) throw new BrowserError('ASSISTANT_NO_VISION', 'قراءة الصور غير مهيأة.', 409);
+      const reading = await config.imageReader.read(Buffer.from(image, 'base64'), signal);
+      return readingForTrail(reading);
+    }
     const current = execution.getStore(); if (!current) throw new RunEnded();
     const receiptId=await beginModelReceipt(current.id,runId,state.steps,config.models.vision,'vision');
     const seen = await provider.generate({
@@ -1515,7 +1541,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       case 'look': {
         if(vault.hasRedactions(id))throw new BrowserError('CHAT_SENSITIVE_SCREEN','توقفت قراءة الصورة أثناء هذه الجلسة لحماية بيانات الدخول المحتمل ظهورها.',403);
         const screen = await browser.screen(ownerId, id);
-        if (!providers.has(config.models.vision) || !screen) throw new BrowserError('ASSISTANT_NO_PAGE', 'There is no page to look at.', 409);
+        if ((!providers.has(config.models.vision) && !config.imageReader?.available) || !screen) throw new BrowserError('ASSISTANT_NO_PAGE', 'There is no page to look at.', 409);
         return { result: `seen: ${await askVision(runId, state, decision.text ?? 'Describe what is on this page.', screen.toString('base64'), signal)}`, changed: true };
       }
       case 'memory_search': {
@@ -1795,7 +1821,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       if (userFactAssessment.candidate && !(legacyMemoryStatement?.scope === 'legacy_adapter_ack_only' && legacyMemoryStatement.eligible)) {
         const ar = /\p{Script=Arabic}/u.test(request);
-        const freshLiteral = !state.writer && !state.planner && !state.adsBrief && !state.hands && !state.pendingTask && !state.pendingComputer && !state.pendingDesktop
+        const freshLiteral = !state.writer && !state.planner && !state.document && !state.adsBrief && !state.hands && !state.pendingTask && !state.pendingComputer && !state.pendingDesktop
           && state.computationMemory === undefined && (!state.steps && state.trail.every(entry => entry.action === 'asked the user') || state.userFactMemory !== undefined);
         if (!userFactReceipt || !userFactSupervisor || !freshLiteral) {
           await finish(id, runId, state, ar
@@ -1878,14 +1904,16 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       };
       const desktopFresh = !state.writer && !state.planner && !state.adsBrief && !state.hands && !state.pendingTask && !state.pendingComputer && !state.pendingDesktop
         && !state.steps && state.trail.every(entry => entry.action === 'asked the user');
-      const desktopParsed = config.desktop && desktopFresh && !hasChatModel() && fullReach() ? config.desktop.parse(actionRequest) : null;
+      // A web address belongs to Mohassan's own browser (plan §6: it opens there at level 2 or 3), never to the computer's shell:
+      // on 2026-11-22 eight real «افتح https://…» requests ended in «تعذر تشغيل powershell.exe» through the desktop path.
+      const desktopParsed = config.desktop && desktopFresh && !hasChatModel() && fullReach() && !/https?:\/\/|\bwww\./iu.test(actionRequest) ? config.desktop.parse(actionRequest) : null;
       if (desktopParsed && requestCapabilityAllowed(constraints, desktopParsed.mutating ? 'computer_action' : 'computer_read')) {
         await runDesktopCommand(desktopParsed.command, desktopParsed.lang, false);
         return;
       }
       if (localComputerPlan) {
         const ar = localComputerPlan.language === 'ar';
-        if (state.writer || state.planner || state.adsBrief || state.hands || state.pendingTask || state.pendingComputer || state.pendingDesktop
+        if (state.writer || state.planner || state.document || state.adsBrief || state.hands || state.pendingTask || state.pendingComputer || state.pendingDesktop
           || state.steps || !state.trail.every(entry => entry.action === 'asked the user')) {
           await finish(id, runId, state, ar ? 'لم أستبدل العمل المعلق بطلب قراءة جديد. ابدأ طلبًا جديدًا لقراءة النافذة.'
             : 'I did not replace pending work with a new read. Start a new request to read the window.', 'blocked');
@@ -2050,7 +2078,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // trace. It can re-enter the normal route without replaying any action.
       const requestTrail = state.trail.filter(entry => !entry.action.startsWith('browser_recovery '));
       const freshRequest = freshBeforeBrowser && (!requestTrail.length || Boolean(state.clarifiedRequest) && requestTrail.every(entry => entry.action === 'asked the user'));
-      const intrinsicAllowed = !handsPlan && !state.writer && !state.planner && !state.adsBrief && freshRequest;
+      const intrinsicAllowed = !handsPlan && !state.writer && !state.planner && !state.document && !state.adsBrief && freshRequest;
       const intrinsicStartedAt = Date.now();
       const intrinsicConversation = intrinsicAllowed ? evaluateLocalConversation(actionRequest) : null;
       const intrinsicComputation = intrinsicAllowed ? evaluateLocalComputation(actionRequest, new Date(effectiveSource.evaluatedAt)) : null;
@@ -2071,6 +2099,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const previousAsk = history.filter(entry => entry.role === 'user').at(-1)?.text ?? null;
         config.shadowRouter.observe({ conversationId: id, text: request, previous: previousAsk, pendingQuestion: Boolean(conversation.question) });
       }
+      // Conversation state v2 in shadow: one understanding per new request, never awaited, never read by any reply path.
+      if (config.conversationShadow && freshRequest) {
+        try {
+          config.conversationShadow.observe({ conversationId: id, turnId: runId, text: request,
+            pending: conversation.question ? { kind: 'question_card', id: conversation.question.id } : null });
+        } catch { /* The shadow never stops a run. */ }
+      }
       if (freshRequest && !intrinsicRuntime && !intrinsicConversation && !intrinsicComputation && state.requestResolution?.kind === 'ambiguous' && state.requestResolution.ambiguities.some(reason =>
         reason === 'missing_reference' || reason === 'missing_question' || reason === 'unclear_replacement')) {
         const attempts = (state.clarificationAttempts ?? 0) + 1;
@@ -2087,7 +2122,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // Deterministic arithmetic, units and calendar operations are shared brain
       // capabilities. They must run before the web fallback, without enabling the
       // experimental Mind route or spending a model request.
-      if (!handsPlan && !state.writer && !state.planner && !state.adsBrief && freshRequest) {
+      if (!handsPlan && !state.writer && !state.planner && !state.document && !state.adsBrief && freshRequest) {
         const localStartedAt = intrinsicStartedAt;
         if (intrinsicRuntime) {
           await finish(id, runId, state, intrinsicRuntime.text, 'completed');
@@ -2211,7 +2246,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         if (!documentFirst && await tryKnowledge()) return;
       }
-      if (!handsPlan && freshRequest && !hasChatModel()) {
+      // A PDF request (create, merge, pages, watermark…) is code work: it never becomes a browser search.
+      const documentWork = config.documents ? (state.document ?? (freshRequest
+        ? documentTask(request, { hasDocuments: history.some(entry => entry.role === 'assistant' && entry.text.includes('/api/documents/')) }) : null)) : null;
+      if (!handsPlan && freshRequest && !hasChatModel() && !documentWork) {
         const desktopRequest = state.routing?.route === 'pc' || state.requestResolution?.sourceAssessment?.source === 'local_state';
         let steps = desktopRequest ? null : parseHands(actionRequest);
         // A question that needs the web goes to the browser without the owner naming it, unless memory or the project list answers it.
@@ -2237,8 +2275,14 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const ownWords = new Set(topicWords(actionRequest));
         const contextualQuery = parsedQuery && topicWords(parsedQuery).some(word => !ownWords.has(word)) ? parsedQuery : null;
         const ambiguousReference = understanding?.kind === 'ambiguous' && understanding.ambiguities.some(reason => reason === 'missing_reference' || reason === 'missing_question' || reason === 'unclear_replacement');
+        // A pronoun follow-up («وكم عدد سكانها؟» after an answer read from the Tokyo article) asks about the thing the last answer
+        // named, not about the words of the last question: «كم عدد سكانها طوكيو», where «كم عدد سكانها عاصمة اليابان» read Hokkaido (2026-11-22).
+        const namedBefore = freshRequest && !steps && isFollowUp(tidy(actionRequest)) && refersBack(tidy(actionRequest))
+          ? plainTitle(String((await db.selectFrom('chat_runs').select('state').where('conversation_id', '=', id).where('owner_id', '=', ownerId).where('id', '!=', runId)
+            .orderBy('created_at', 'desc').limit(1).executeTakeFirst())?.state?.handsFound?.title ?? '')) : '';
+        const entityAsk = namedBefore ? webQuestion(actionRequest, [namedBefore]) : null;
         const asked = !ambiguousReference && !privateRequest && !steps && !(tools?.memory && memoryRecallFormat(request)) && !projectInventoryFormat(request)
-          ? webQuestion(contextualQuery ?? actionRequest, contextualQuery ? [] : earlierAsks) : null;
+          ? entityAsk ?? webQuestion(contextualQuery ?? actionRequest, contextualQuery ? [] : earlierAsks) : null;
         // A follow-up reaches the mind with the previous question's topic, as the browser search does.
         const resolved = asked?.[0]?.kind === 'search' ? asked[0].query : null;
         if (resolved && isFollowUp(tidy(request))) state.resolvedRequest = resolved;
@@ -2247,7 +2291,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         // Search by default is the last resort: the Ads model and the mind see the request first.
         const adsFirst = Boolean(config.adsModel && fullReach());
         if (lookup && (mindReady || (adsFirst && !steps))) state.webFallback = lookup;
-        else if (steps ?? asked) handsPlan = { steps: (steps ?? asked)!, next: 0 };
+        else if (steps ?? asked) handsPlan = { steps: (steps ?? asked)!, next: 0, lang: /\p{Script=Arabic}/u.test(request) ? 'ar' : 'en' };
       }
       if (handsPlan) {
         await runHandsPlan(handsPlan);
@@ -2268,9 +2312,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         state.hands = plan;
         const readPage = config.readPage;
+        // A live question (a price, the weather, a score) reads its pages afresh; anything else may come from the page cache.
+        const liveQuestion = plan.steps.some(step => step.kind === 'search' && LIVE.test(step.query));
         const read = readPage ? async (url: string): Promise<HandsRead> => {
           await active();
-          const result = await readPage(url, signal);
+          const result = await readPage(url, signal, { live: liveQuestion });
           await active();
           const action = `read ${url}`.slice(0, 300);
           if (result === 'disallowed') { state.trail.push({ step: ++state.steps, action, result: 'robots.txt disallows this page', changed: false }); return { kind: 'disallowed' }; }
@@ -2278,7 +2324,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           state.trail.push({ step: ++state.steps, action, result: `HTTP ${result.status} ${result.url} · ${result.text.length} chars`.slice(0, 1100), changed: true });
           return { kind: 'page', page: { id: result.url, url: result.url, title: result.title, text: result.text, elements: [],
             signals: { captcha: false, password: false, otp: false, card: false }, scroll: { top: 0, height: 0, viewport: 0 },
-            hash: createHash('sha256').update(result.text).digest('hex'), observedAt: new Date().toISOString(), documentStatus: result.status } };
+            hash: createHash('sha256').update(result.text).digest('hex'), observedAt: result.fetchedAt ?? new Date().toISOString(), documentStatus: result.status } };
         } : undefined;
         let outcome: HandsOutcome;
         try {
@@ -2307,6 +2353,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           prepare: action => prepareBrowserAction(ownerId, id, action),
           settle: async next => { const settled = await instincts(ownerId, id, runId, state, next, signal, personalSignIn); if (settled) { page = settled; await keepPage(id, settled); } return settled; },
           step: async label => { await active(); await addStep(id, runId, label); await setProgress(id, `${liveLabel(label)}…`); },
+          progress: async label => { await active(); await setProgress(id, `${label}…`); },
           approve: async (action, permit, label) => { await pauseBrowserAction(id, runId, state, { action, permit, label }); },
           hold: async (held, label) => { await pauseHeld(id, runId, state, held, label); },
           });
@@ -2328,6 +2375,93 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         state.handsFound = plan.found;
         state.hands = null;
         await finish(id, runId, state, vault.scrub(id, outcome.text), outcome.status);
+      }
+      // PDF files without a model (assistant/documents.ts): one card for a new file, then Chromium renders the owner's
+      // words through a fixed theme; edits run pdf-lib on files from this conversation or on a path the owner names.
+      if (documentWork && config.documents) {
+        if (documentWork.kind === 'unsupported') {
+          await finish(id, runId, state, unsupportedDocumentReply(documentWork), 'blocked');
+          return;
+        }
+        const documents = config.documents;
+        const ar = documentWork.lang === 'ar';
+        const problem = (error: PdfError) => ar ? error.message : `The PDF step did not complete: ${error.message}`;
+        if (documentWork.kind === 'create') {
+          // The «stop» button ends the run through respond(); only typed or card answers arrive here.
+          const answered = state.document ? state.questionAnswer?.text ?? state.trail.findLast(entry => entry.action === 'asked the user')?.result.replace(/^user answered: /, '') : undefined;
+          if (!answered && !documentWork.suppliedText) {
+            state.document = documentWork;
+            const card = documentQuestion(documentWork);
+            const question: ChatQuestion = { id: randomUUID(), prompt: card.prompt, options: [{ id: 'stop', label: ar ? 'توقف هنا' : 'Stop here' }], fields: card.fields };
+            await addStep(id, runId, ar ? 'أسئلة ملف PDF' : 'PDF questions');
+            await pause(id, runId, state, 'waiting_user', { question: JSON.stringify(question) }, card.prompt);
+            return;
+          }
+          state.document = null;
+          const composed = composeDocumentSpec(documentWork, state.questionAnswer?.fields ?? {});
+          state.questionAnswer = undefined;
+          await addStep(id, runId, ar ? 'إنشاء ملف PDF' : 'Creating the PDF');
+          await setProgress(id, ar ? 'ينشئ ملف PDF…' : 'Creating the PDF…');
+          try {
+            const stored = await documents.control.create(ownerId, id, composed.spec, signal);
+            await finish(id, runId, state, documentCreatedReply(stored, documents.link(stored.id), documentWork.lang, composed.emptyContent), composed.emptyContent ? 'partial' : 'completed');
+          } catch (error) {
+            if (!(error instanceof PdfError)) throw error;
+            await finish(id, runId, state, problem(error), 'blocked');
+          }
+          return;
+        }
+        const task: DocumentEditTask = documentWork;
+        state.document = null;
+        const localFiles = fullReach();
+        await addStep(id, runId, ar ? 'معالجة ملف PDF' : 'Processing the PDF');
+        await setProgress(id, ar ? 'يعالج ملف PDF…' : 'Processing the PDF…');
+        try {
+          const inputs: DocumentInput[] = [];
+          for (const source of task.sources) {
+            if (source.kind === 'path') {
+              if (!localFiles) {
+                await finish(id, runId, state, ar ? 'قراءة الملفات من الجهاز متاحة لحساب المالك فقط. ارفع الملف من لوحة المستندات ثم أعد الطلب.' : 'Reading files from the computer is only available to the owner account. Upload the file from the documents panel and ask again.', 'blocked');
+                return;
+              }
+              inputs.push(await documents.control.readLocal(ownerId, source.path));
+              continue;
+            }
+            // The list is newest first; a merge keeps the order the files were made in.
+            const rows = await documents.control.list(ownerId, id, source.kind === 'all' ? 12 : source.count);
+            for (const row of rows.reverse()) {
+              const content = await documents.control.content(ownerId, row.id);
+              inputs.push({ name: content.name, bytes: content.bytes });
+            }
+          }
+          if (!inputs.length || (task.operation === 'merge' && inputs.length < 2)) {
+            await finish(id, runId, state, noSourceReply(task, localFiles), 'blocked');
+            return;
+          }
+          const first = inputs[0]!;
+          if (task.operation === 'info') {
+            await finish(id, runId, state, documentInfoReply(first.name, first.bytes.byteLength, await documents.control.info(first.bytes, signal), task.lang), 'completed');
+            return;
+          }
+          const pagesOf = async (words: string) => parsePageSelection(words, (await documents.control.info(first.bytes, signal)).pages);
+          const operation = task.operation as Exclude<DocumentOperation, 'info'>;
+          let edit: DocumentEdit;
+          switch (operation) {
+            case 'merge': edit = { op: 'merge' }; break;
+            case 'extract': edit = { op: 'extract', pages: await pagesOf(task.pages ?? '') }; break;
+            case 'delete': edit = { op: 'delete', pages: await pagesOf(task.pages ?? '') }; break;
+            case 'rotate': edit = { op: 'rotate', angle: task.angle ?? 90, ...(task.pages ? { pages: await pagesOf(task.pages) } : {}) }; break;
+            case 'watermark': edit = { op: 'watermark', text: task.text ?? '' }; break;
+            case 'number': edit = { op: 'number' }; break;
+            case 'metadata': edit = { op: 'metadata', ...(task.title ? { title: task.title } : {}), ...(task.author ? { author: task.author } : {}) }; break;
+          }
+          const stored = await documents.control.edit(ownerId, id, inputs, edit, signal);
+          await finish(id, runId, state, documentEditedReply(task, stored, documents.link(stored.id), inputs.map(input => input.name)), 'completed');
+        } catch (error) {
+          if (!(error instanceof PdfError)) throw error;
+          await finish(id, runId, state, problem(error), 'blocked');
+        }
+        return;
       }
       // Letters and emails without a model: one card of questions, then a fixed frame around the owner's words.
       if (!hasChatModel()) {
@@ -2568,7 +2702,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           const steps = state.webFallback;
           state.webFallback = null;
           state.trail.push({ step: ++state.steps, action: 'mind', result: `no proven answer (${reply.status}); browser search next`, changed: false });
-          await runHandsPlan({ steps, next: 0 });
+          await runHandsPlan({ steps, next: 0, lang: /\p{Script=Arabic}/u.test(request) ? 'ar' : 'en' });
         } else {
           delete mindState.mindFrame;
           state.webFallback = null;
@@ -2580,7 +2714,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         // Nothing before this claimed the request (not Ads, no mind): search the web instead of stopping.
         const steps = state.webFallback;
         state.webFallback = null;
-        await runHandsPlan({ steps, next: 0 });
+        await runHandsPlan({ steps, next: 0, lang: /\p{Script=Arabic}/u.test(request) ? 'ar' : 'en' });
         return;
       }
       if (!hasChatModel()) {
@@ -3021,6 +3155,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if (input.questionId && (row.status !== 'waiting_user' || row.question?.id !== input.questionId)) {
       throw new BrowserError('CHAT_QUESTION_CHANGED', 'هذا السؤال لم يعد معلقًا.', 409);
     }
+    if (input.images?.length && intent === 'task') return sendWithImages(ownerId, id, row, input.text, input.images);
     if (input.answers) {
       const fields = row.question?.fields;
       if (!fields?.length || fields.length !== input.answers.length
@@ -3066,7 +3201,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         state.requestResolution = resolution;
         if (resolution.nextState) state.requestContext = resolution.nextState;
-        if ((state.writer || state.planner) && row.question) state.questionAnswer = { questionId: row.question.id, text: clean(input.text),
+        if ((state.writer || state.planner || state.document) && row.question) state.questionAnswer = { questionId: row.question.id, text: clean(input.text),
           ...(input.answers ? { fields: Object.fromEntries(input.answers.map(answer => [answer.fieldId, clean(answer.value)])) } : {}) };
         state.trail.push({ step: state.steps, action: 'asked the user', result: `user answered: ${clean(input.text).slice(0, 400)}`, changed: true });
         state.failures = 0;
@@ -3147,17 +3282,107 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     return detail(ownerId, id);
   }
 
+  const IMAGE_TTL_MS = 6 * 60 * 60 * 1000, IMAGE_QUOTA_PER_DAY = 60, IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+  /** Stored attachments of a message row, tolerant of a driver that returns jsonb as text. */
+  function messageImages(value: unknown): { images?: { id: string; width: number; height: number }[] } {
+    let parsed: unknown = value;
+    if (typeof value === 'string') { try { parsed = JSON.parse(value); } catch { parsed = null; } }
+    const list = Array.isArray(parsed) ? parsed.filter((item): item is { id: string; width: number; height: number } => Boolean(item) && typeof item === 'object' && typeof (item as { id?: unknown }).id === 'string')
+      .map(item => ({ id: item.id, width: Number(item.width), height: Number(item.height) })) : [];
+    return list.length ? { images: list } : {};
+  }
+
+  /** Validates, re-encodes and stores one attached image for the owner; it expires unless a message uses it. */
+  async function uploadImage(ownerId: string, raw: unknown) {
+    const request = ChatImageUploadSchema.parse(raw);
+    const bytes = Buffer.from(request.data, 'base64');
+    if (bytes.byteLength > IMAGE_MAX_BYTES) throw new BrowserError('CHAT_IMAGE_TOO_LARGE', 'حجم الصورة أكبر من 5 ميغابايت. صغّرها ثم أعد الإرفاق.', 413);
+    let width = 0, height = 0, normalized: Buffer, mimeType: 'image/png' | 'image/jpeg';
+    try {
+      const image = sharp(bytes, { limitInputPixels: 40_000_000, failOn: 'error' });
+      const metadata = await image.metadata();
+      const format = metadata.format ?? '';
+      if (!metadata.width || !metadata.height || metadata.width < 16 || metadata.height < 16 || !['png', 'jpeg', 'webp'].includes(format)) throw new Error('unsupported');
+      if (request.mimeType !== (format === 'png' ? 'image/png' : format === 'jpeg' ? 'image/jpeg' : 'image/webp')) throw new Error('mismatch');
+      const encoded = await (format === 'jpeg' ? image.rotate().jpeg({ quality: 92 }) : image.rotate().png({ compressionLevel: 6 })).toBuffer({ resolveWithObject: true });
+      normalized = encoded.data; width = encoded.info.width; height = encoded.info.height; mimeType = format === 'jpeg' ? 'image/jpeg' : 'image/png';
+    } catch { throw new BrowserError('CHAT_IMAGE_INVALID', 'يلزم ملف PNG أو JPEG أو WebP سليم بأبعاد 16×16 على الأقل.', 400); }
+    if (normalized.byteLength > IMAGE_MAX_BYTES * 2) throw new BrowserError('CHAT_IMAGE_TOO_LARGE', 'الصورة كبيرة جدًا. صغّرها ثم أعد الإرفاق.', 413);
+    const imageId = randomUUID(), contentHash = createHash('sha256').update(normalized).digest('hex'), expiresAt = new Date(Date.now() + IMAGE_TTL_MS);
+    await db.transaction().execute(async tx => {
+      if (config.accountActive && !await config.accountActive(ownerId, tx)) throw new BrowserError('CHAT_ACCOUNT_INACTIVE', 'هذا الحساب غير نشط.', 403);
+      await tx.deleteFrom('chat_images').where('owner_id', '=', ownerId).where('expires_at', 'is not', null).where('expires_at', '<=', new Date()).execute();
+      const count = await tx.selectFrom('chat_images').select(eb => eb.fn.countAll().as('n')).where('owner_id', '=', ownerId).where('created_at', '>', new Date(Date.now() - 24 * 60 * 60 * 1000)).executeTakeFirstOrThrow();
+      if (Number(count.n) >= IMAGE_QUOTA_PER_DAY) throw new BrowserError('CHAT_IMAGE_QUOTA', 'بلغت حد الصور المرفقة خلال 24 ساعة.', 429);
+      await tx.insertInto('chat_images').values({ id: imageId, owner_id: ownerId, content_hash: contentHash, mime_type: mimeType, width, height, bytes: normalized.byteLength, data_base64: normalized.toString('base64'), expires_at: expiresAt }).execute();
+    });
+    return { id: imageId, width, height, mimeType, bytes: normalized.byteLength, expiresAt: expiresAt.toISOString(), url: `/api/chat/images/${imageId}` };
+  }
+
+  async function imageBytes(ownerId: string, imageId: string) {
+    const row = await db.selectFrom('chat_images').select(['mime_type', 'data_base64', 'content_hash']).where('id', '=', imageId).where('owner_id', '=', ownerId).executeTakeFirst();
+    if (!row) throw new BrowserError('CHAT_IMAGE_NOT_FOUND', 'لم يُعثر على الصورة.', 404);
+    const bytes = Buffer.from(row.data_base64 as string, 'base64');
+    if (createHash('sha256').update(bytes).digest('hex') !== row.content_hash) throw new BrowserError('CHAT_IMAGE_CHANGED', 'تغيرت الصورة المحفوظة.', 409);
+    return { mimeType: row.mime_type as string, bytes };
+  }
+
+  /**
+   * A message with images is answered at once by the own reader, outside the browser
+   * run machinery: the reply states what was read and measured, and nothing more.
+   */
+  async function sendWithImages(ownerId: string, id: string, row: { status: string; title: string }, text: string, imageIds: string[]) {
+    if (row.status === 'running' || WAITING_STATUSES.includes(row.status)) throw new BrowserError('CHAT_BUSY', 'توجد مهمة جارية في هذه المحادثة. أكملها أو أوقفها قبل إرسال صورة.', 409);
+    if (!config.imageReader?.available) throw new BrowserError('CHAT_IMAGES_UNAVAILABLE', 'قراءة الصور غير مهيأة على هذا الخادم بعد.', 409);
+    const unique = [...new Set(imageIds)];
+    const rows = await db.selectFrom('chat_images').select(['id', 'width', 'height', 'data_base64', 'content_hash']).where('owner_id', '=', ownerId).where('id', 'in', unique).execute();
+    if (rows.length !== unique.length) throw new BrowserError('CHAT_IMAGE_MISSING', 'إحدى الصور لم تعد موجودة؛ أعد إرفاقها.', 409);
+    const ordered = unique.map(imageId => rows.find(item => item.id === imageId)!);
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(new Error('IMAGE_READ_TIMEOUT')), 90_000);
+    const readings: ImageReading[] = [];
+    try {
+      for (const image of ordered) {
+        const bytes = Buffer.from(image.data_base64 as string, 'base64');
+        if (createHash('sha256').update(bytes).digest('hex') !== image.content_hash) throw new BrowserError('CHAT_IMAGE_CHANGED', 'تغيرت الصورة المحفوظة؛ أعد إرفاقها.', 409);
+        readings.push(await config.imageReader.read(bytes, controller.signal));
+      }
+    } catch (error) {
+      if (error instanceof BrowserError) throw error;
+      throw new BrowserError('CHAT_IMAGE_READ_FAILED', controller.signal.aborted ? 'استغرقت قراءة الصورة وقتًا طويلًا. جرّب صورة أصغر.' : 'تعذرت قراءة الصورة. تأكد من أنها PNG أو JPEG سليمة.', 422);
+    } finally { clearTimeout(deadline); }
+    const reply = composeImageReply({ request: text, readings });
+    const attached = ordered.map(image => ({ id: image.id as string, width: Number(image.width), height: Number(image.height) }));
+    const shown = clean(text);
+    const userText = shown || (reply.language === 'ar' ? (attached.length > 1 ? `${attached.length} صور` : 'صورة') : attached.length > 1 ? `${attached.length} images` : 'an image');
+    await db.transaction().execute(async tx => {
+      if (config.accountActive && !await config.accountActive(ownerId, tx)) throw new BrowserError('CHAT_ACCOUNT_INACTIVE', 'هذا الحساب غير نشط.', 403);
+      const current = await tx.selectFrom('chat_conversations').select(['status', 'title']).where('id', '=', id).where('owner_id', '=', ownerId).forUpdate().executeTakeFirst();
+      if (!current) throw notFound();
+      if (current.status === 'running' || WAITING_STATUSES.includes(current.status)) throw new BrowserError('CHAT_BUSY', 'بدأت مهمة أخرى في هذه المحادثة أثناء قراءة الصورة.', 409);
+      const now = Date.now();
+      await tx.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role: 'user', text: userText, images: JSON.stringify(attached), created_at: new Date(now) }).execute();
+      await tx.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role: 'assistant', text: reply.text, created_at: new Date(now + 1) }).execute();
+      await tx.updateTable('chat_images').set({ conversation_id: id, expires_at: null }).where('id', 'in', unique).where('owner_id', '=', ownerId).execute();
+      const title = current.title === 'محادثة جديدة' || current.title === 'قراءة صورة' ? { title: (shown || (reply.language === 'ar' ? 'قراءة صورة' : 'Image reading')).slice(0, 100) } : {};
+      await tx.updateTable('chat_conversations').set({ status: 'idle', error: null, progress: null, updated_at: new Date(), ...title }).where('id', '=', id).execute();
+    });
+    return detail(ownerId, id);
+  }
+
   async function create(ownerId: string, raw: unknown = {}) {
     if(closing)throw new BrowserError('CHAT_SHUTTING_DOWN','الخدمة تتوقف الآن. حاول بعد قليل.',503);
     const input = ChatCreateSchema.parse(raw);
     const id = randomUUID();
     await db.transaction().execute(async tx => {
       if (config.accountActive && !await config.accountActive(ownerId, tx)) throw new BrowserError('CHAT_ACCOUNT_INACTIVE', 'هذا الحساب غير نشط.', 403);
-      await tx.insertInto('chat_conversations').values({ id, owner_id: ownerId, title: clean(input.goal ?? 'محادثة جديدة').slice(0, 100), status: 'idle',browser_account:input.browserAccount??null }).execute();
+      await tx.insertInto('chat_conversations').values({ id, owner_id: ownerId, title: clean(input.goal ?? (input.images?.length ? 'قراءة صورة' : 'محادثة جديدة')).slice(0, 100), status: 'idle',browser_account:input.browserAccount??null }).execute();
     });
     // Preserve the actual caller's bytes until send captures their digest. The
     // public schema still supplies the same trimmed display/routing goal.
     const originalGoal = raw && typeof raw === 'object' && !Array.isArray(raw) ? Object.getOwnPropertyDescriptor(raw, 'goal') : undefined;
+    if (input.images?.length) return send(ownerId, id, { ...(input.goal ? { text: originalGoal && 'value' in originalGoal ? originalGoal.value : input.goal } : {}), images: input.images });
     return input.goal ? send(ownerId, id, { text: originalGoal && 'value' in originalGoal ? originalGoal.value : input.goal }) : detail(ownerId, id);
   }
 
@@ -3178,6 +3403,20 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if(row.status==='running'||WAITING_STATUSES.includes(row.status))throw new BrowserError('CHAT_BUSY','أوقف العمل الجاري قبل تسجيل المراجعة.',409);
     if(!AgentSessionCheckpointSchema.safeParse(row.browser_checkpoint).success)throw new BrowserError('CHAT_CHECKPOINT_MISSING','لا توجد نقطة استعادة صالحة.',409);
     return send(ownerId,id,{text:'راجعت بنفسي أثر الإجراء السابق؛ سجّل المراجعة دون تكراره.'},'review_browser',input.checkpointToken);
+  }
+
+  /** «مفيد / خطأ / ناقص» under a reply (plan §7.5): one event per message, the latest verdict wins; the reply itself never changes. */
+  async function feedback(ownerId: string, id: string, raw: unknown) {
+    const input = ChatFeedbackSchema.parse(raw);
+    await owned(ownerId, id);
+    const message = await db.selectFrom('chat_messages').select(['id', 'role']).where('id', '=', input.messageId).where('conversation_id', '=', id).executeTakeFirst();
+    if (!message || message.role !== 'assistant') throw new BrowserError('CHAT_FEEDBACK_TARGET', 'هذا الرد غير موجود في المحادثة.', 404);
+    await db.transaction().execute(async tx => {
+      await tx.deleteFrom('chat_events').where('conversation_id', '=', id).where('kind', '=', 'feedback').where(sql`data->>'messageId'`, '=', input.messageId).execute();
+      await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: null, kind: 'feedback', message: input.verdict,
+        data: JSON.stringify({ messageId: input.messageId, verdict: input.verdict, note: input.note ? clean(input.note) : null }) }).execute();
+    });
+    return detail(ownerId, id);
   }
 
   async function respond(ownerId: string, id: string, raw: unknown) {
@@ -3340,7 +3579,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   return {
-    create, list, detail, send, respond, approve, secureSubmit, cancel, remove, screen, browserActivity, shutdown,restoreBrowser,reviewBrowser,
+    create, list, detail, send, respond, approve, secureSubmit, cancel, remove, screen, browserActivity, shutdown,restoreBrowser,reviewBrowser, uploadImage, image: imageBytes, feedback,
+    imagesAvailable: () => Boolean(config.imageReader?.available),
     pointer: (ownerId: string, id: string, raw: unknown) => { const input = ChatPointerSchema.parse(raw); return handsOn(ownerId, id, () => browser.pointer(ownerId, id, input.x, input.y)); },
     keyboard: (ownerId: string, id: string, raw: unknown) => { const input = ChatKeyboardSchema.parse(raw); return handsOn(ownerId, id, () => browser.keyboard(ownerId, id, input)); },
     settled: async (id: string) => { await workers.get(id); },
@@ -3356,11 +3596,16 @@ export async function registerCommandChatRoutes(app: FastifyInstance, { control,
   type Conversation = { Params: { id: string } };
   app.get('/api/chat/conversations', async (request) => control.list((await owner(request)).id));
   app.post('/api/chat/conversations', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request) => control.create((await owner(request)).id, request.body ?? {}));
+  // Images the owner attaches to a message. The bytes stay in this database and are read by the own model only.
+  app.post('/api/chat/images', { bodyLimit: 7_500_000, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request) => control.uploadImage((await owner(request)).id, request.body));
+  app.get<{ Params: { imageId: string } }>('/api/chat/images/:imageId', live, async (request, reply) => { const image = await control.image((await owner(request)).id, id(request.params.imageId)); return reply.type(image.mimeType).header('Cache-Control', 'private, max-age=3600').header('Content-Disposition', 'inline').header('X-Content-Type-Options', 'nosniff').send(image.bytes); });
+  app.get('/api/chat/images', async () => ({ available: control.imagesAvailable() }));
   app.get<Conversation>('/api/chat/conversations/:id', live, async (request) => control.detail((await owner(request)).id, id(request.params.id)));
   app.get<Conversation & { Querystring: { after?: string } }>('/api/chat/conversations/:id/campaign-events', live, async (request) => control.campaignEvents((await owner(request)).id, id(request.params.id), z.coerce.number().int().min(0).max(100000).default(0).parse(request.query.after)));
   app.post<Conversation>('/api/chat/conversations/:id/messages', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request) => control.send((await owner(request)).id, id(request.params.id), request.body));
   app.post<Conversation>('/api/chat/conversations/:id/respond', async (request) => control.respond((await owner(request)).id, id(request.params.id), request.body));
   app.post<Conversation>('/api/chat/conversations/:id/approve', async (request) => control.approve((await owner(request)).id, id(request.params.id), request.body));
+  app.post<Conversation>('/api/chat/conversations/:id/feedback', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (request) => control.feedback((await owner(request)).id, id(request.params.id), request.body));
   app.post<Conversation>('/api/chat/conversations/:id/secure', secure, async (request) => control.secureSubmit((await owner(request)).id, id(request.params.id), request.body));
   app.post<Conversation>('/api/chat/conversations/:id/cancel', async (request) => { z.object({}).strict().parse(request.body ?? {}); return control.cancel((await owner(request)).id, id(request.params.id)); });
   app.delete<Conversation>('/api/chat/conversations/:id', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request) => control.remove((await owner(request)).id, id(request.params.id)));

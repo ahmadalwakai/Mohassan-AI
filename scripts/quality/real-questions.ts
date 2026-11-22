@@ -75,7 +75,7 @@ function auto(question: string, observation: RunObservation) {
 
 const stamp = new Date().toISOString().replaceAll(':', '-').slice(0, 19);
 const answersFile = path.join(out, `real-answers-${stamp}.jsonl`);
-const fixture = await startMeasureFixture({ withWeb: false });
+const fixture = await startMeasureFixture({ withWeb: false, apiPort: Number(argument('port', '4110')), webPort: Number(argument('port', '4110')) - 1000 });
 const client = new FixtureClient(fixture);
 let lastCreate = 0;
 const results: { item: SetItem; observation: RunObservation | null; auto: ReturnType<typeof auto> | null; failure?: string }[] = [];

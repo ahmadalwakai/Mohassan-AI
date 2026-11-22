@@ -67,11 +67,25 @@ export const ChatSecureRequestSchema = z.object({
   fields: z.array(ChatSecureFieldSchema).max(3),
 }).strict();
 
+/** An image the user attached; its bytes are served at /api/chat/images/:id to the owner only. */
+export const ChatImageSchema = z.object({
+  id: z.uuid(),
+  width: z.number().int().min(1).max(20000),
+  height: z.number().int().min(1).max(20000),
+}).strict();
+export type ChatImage = z.infer<typeof ChatImageSchema>;
+export const ChatImageUploadSchema = z.object({
+  mimeType: z.enum(['image/png', 'image/jpeg', 'image/webp']),
+  data: z.string().min(16).max(7_000_000).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
+}).strict();
+export const MAX_CHAT_IMAGES = 4;
+
 export const ChatMessageSchema = z.object({
   id: z.uuid(),
   role: z.enum(['user', 'assistant']),
   text: z.string(),
   createdAt: z.string(),
+  images: z.array(ChatImageSchema).max(MAX_CHAT_IMAGES).optional(),
 }).strict();
 
 export const ChatBrowserSchema = z.object({
@@ -161,7 +175,8 @@ export type ChatQuestionField = z.infer<typeof ChatQuestionFieldSchema>;
 export type ChatApproval = z.infer<typeof ChatApprovalSchema>;
 export type ChatSecureRequest = z.infer<typeof ChatSecureRequestSchema>;
 
-export const ChatCreateSchema = z.object({ goal: z.string().trim().min(1).max(4000).optional(), browserAccount: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/).nullable().optional() }).strict();
+export const ChatCreateSchema = z.object({ goal: z.string().trim().min(1).max(4000).optional(), browserAccount: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/).nullable().optional(),
+  images: z.array(z.uuid()).min(1).max(MAX_CHAT_IMAGES).optional() }).strict();
 export const ChatFieldAnswerSchema = z.object({
   fieldId: z.string().regex(/^[a-z]{2,20}$/),
   value: z.string().min(1).max(4000).refine(value => value.trim().length > 0, { message: 'A field answer cannot be blank.' }),
@@ -171,7 +186,10 @@ export const ChatSendSchema = z.object({
   text: z.string().trim().max(4000).default(''),
   questionId: z.uuid().optional(),
   answers: z.array(ChatFieldAnswerSchema).min(1).max(6).optional(),
-}).strict().refine(input => Boolean(input.text) || Boolean(input.answers?.length), { message: 'A message or field answers are required.' })
+  /** Uploaded image ids; a message may be images alone. Never combined with field answers. */
+  images: z.array(z.uuid()).min(1).max(MAX_CHAT_IMAGES).optional(),
+}).strict().refine(input => Boolean(input.text) || Boolean(input.answers?.length) || Boolean(input.images?.length), { message: 'A message, images or field answers are required.' })
+  .refine(input => !input.images || !input.answers, { message: 'Images cannot accompany field answers.' })
   .refine(input => !input.answers || Boolean(input.questionId)
   && new Set(input.answers.map(answer => answer.fieldId)).size === input.answers.length
   && input.answers.reduce((length, answer) => length + answer.value.length, 0) + (input.answers.length > 1 ? input.answers.length * 4 - 1 : 0) <= 4000,
@@ -181,6 +199,9 @@ export const ChatRespondSchema = z.object({
   optionId: z.string().regex(/^[a-zA-Z0-9_-]{1,40}$/),
 }).strict();
 export const ChatApproveSchema = z.object({ approvalId: z.uuid(), approved: z.boolean() }).strict();
+/** The owner's judgement of one reply (plan §7.5): a rating record, never training data. */
+export const ChatFeedbackSchema = z.object({ messageId: z.uuid(), verdict: z.enum(['useful', 'wrong', 'incomplete']), note: z.string().trim().max(500).optional() }).strict();
+export type ChatFeedback = z.infer<typeof ChatFeedbackSchema>;
 export const ChatSecureSubmitSchema = z.object({
   requestId: z.uuid(),
   action: z.enum(['submit', 'done', 'skip']),

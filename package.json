@@ -16,6 +16,9 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:lab": "node scripts/dev.mjs --local-lab",
+    "dev:lab:built": "node scripts/dev.mjs --local-lab --built-web",
+    "desktop": "npm run start --workspace @mohassan/desktop-shell",
+    "desktop:dist": "npm run dist --workspace @mohassan/desktop-shell",
     "start": "node scripts/dev.mjs --production",
     "build": "npm run build --workspace @mohassan/web",
     "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspace @mohassan/web",
@@ -61,6 +64,7 @@
     "@types/pngjs": "^6.0.5",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
+    "lighthouse": "12.8.2",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
     "vitest": "5.1.0"

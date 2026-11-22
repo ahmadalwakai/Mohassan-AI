@@ -28,11 +28,11 @@ function useElapsed(since: string | null | undefined): string | null {
  * and how long the request has taken so far. Only the server names the phase; the icon and its
  * motion follow the words.
  */
-export function ActivityLine({ text, since }: { text: string; since?: string | null }) {
+export function ActivityLine({ text, since, compact = false }: { text: string; since?: string | null; compact?: boolean }) {
   const kind = activityKind(text);
   const Icon = ICONS[kind];
   const elapsed = useElapsed(since);
-  return <span className={styles.line} data-kind={kind}>
+  return <span className={`${styles.line} ${compact ? styles.compact : ""}`} data-kind={kind}>
     <span className={`${styles.icon} ${styles[kind]}`} aria-hidden="true"><Icon size={14} strokeWidth={2.1} /></span>
     <span role="status" className={styles.words} dir="auto"><span key={text} className={styles.enter}>{text}</span></span>
     {elapsed ? <span className={styles.elapsed} aria-hidden="true">{elapsed}</span> : null}

@@ -23,7 +23,7 @@ const firstInformative = (row: { progress: { text: string; firstSeenMs: number }
  * (apps/web/components/assistant-app.tsx) while the run is `running`, so a finished run appears on the
  * first poll tick after it finished. Proxy time per poll (measured in meta.proxy) is not added.
  */
-const UI_POLL_MS = 900;
+const UI_POLL_MS = Number(process.env.UI_POLL_MS ?? 450); // 900 before Phase 2 P5, 450 after
 type UiRow = { sentAt: number; acceptMs: number; assistantAt: number | null; settleMs: number | null; acceptedStatus: string };
 const doneAfterSend = (row: UiRow) => {
   const doneAt = row.assistantAt ?? (row.settleMs === null ? null : row.sentAt + row.settleMs);

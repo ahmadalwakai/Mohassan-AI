@@ -11,9 +11,13 @@ const production = process.argv.includes('--production');
 // points DATABASE_URL at the tunnel to production, so this mode pins it empty BEFORE .env is
 // read and reads .env without override; the server's own dotenv import never overrides either.
 const localLab = process.argv.includes('--local-lab');
+// --built-web: serve the web app from its production build (`npm run build` first) instead of the dev server.
+// The dev server adds ~10 ms per request and compiles pages on first use (plan §5.2 P7).
+const builtWeb = process.argv.includes('--built-web');
 if (localLab && production) throw new Error('--local-lab is for local experiments only, never production.');
 if (localLab) {
-  const lab = path.join(root,'.data','local-lab');
+  // MOHASSAN_LAB_DIR: a second, separate lab (own embedded database and profiles) so two labs never share one PGlite folder.
+  const lab = process.env.MOHASSAN_LAB_DIR ? path.resolve(root, process.env.MOHASSAN_LAB_DIR) : path.join(root,'.data','local-lab');
   Object.assign(process.env, {
     MOHASSAN_LOCAL_LAB: '1', DATABASE_URL: '', DATA_DIR: path.join(lab,'postgres'), BROWSER_PROFILE_DIR: path.join(lab,'browser-profile'),
     MOHASSAN_MIND: process.env.MOHASSAN_MIND ?? '0',
@@ -88,7 +92,17 @@ while(!shuttingDown&&Date.now()<readyDeadline){
   try{const response=await fetch(`${env.MOHASSAN_SERVER_URL}/health`,{signal:AbortSignal.timeout(700)});await response.body?.cancel();if(response.ok){apiReady=true;break;}}catch{/* The API is still starting. */}
   await delay(250);
 }
+if(apiReady&&!shuttingDown&&builtWeb&&!production){
+  try{await readFile(path.join(root,'apps/web/.next/BUILD_ID'),'utf8');}
+  catch{console.error('لا توجد نسخة مبنية من الواجهة. شغّل أولًا: npm run build');stop(1);}
+}
 if(apiReady&&!shuttingDown){
-  launch([path.join(root,'node_modules/next/dist/bin/next'),production?'start':'dev',...(!production?['--webpack']:[]),'--hostname','127.0.0.1','--port',webPort],path.join(root,'apps/web'));
+  const serveBuilt=production||builtWeb;
+  // `next start` insists on NODE_ENV=production for the web process alone; the API keeps its own setting.
+  const webEnv=serveBuilt&&!production?{...env,NODE_ENV:'production'}:env;
+  const child=spawn(process.execPath,[path.join(root,'node_modules/next/dist/bin/next'),serveBuilt?'start':'dev',...(!serveBuilt?['--webpack']:[]),'--hostname','127.0.0.1','--port',webPort],{cwd:path.join(root,'apps/web'),env:webEnv,stdio:'inherit',windowsHide:true});
+  children.push(child);
+  child.on('error',()=>stop(1));
+  child.on('exit',code=>{if(!shuttingDown)stop(code??1);});
   console.log(`افتح ${env.WEB_ORIGIN || 'http://127.0.0.1:3000'} — رمز الإعداد في .data/setup-token`);
 }else if(!shuttingDown){console.error('لم تصبح خدمة المهام جاهزة خلال مهلة التشغيل. راجع إعداد الاتصال وأعد التشغيل.');stop(1);}

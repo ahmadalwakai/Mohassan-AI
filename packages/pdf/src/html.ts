@@ -152,8 +152,10 @@ export function parseDocumentText(input: string): DocumentBlock[] {
       blocks.push({ kind: 'keyvalue', items });
       continue;
     }
-    const paragraph: string[] = [];
-    while (index < lines.length && lines[index]!.trim() && !special(lines[index]!)) paragraph.push(lines[index++]!);
+    // A paragraph ends where a «key: value» group begins.
+    const pairs = (at: number) => KEY_VALUE.test(lines[at] ?? '') && KEY_VALUE.test(lines[at + 1] ?? '') && !special(lines[at + 1]!);
+    const paragraph: string[] = [lines[index++]!];
+    while (index < lines.length && lines[index]!.trim() && !special(lines[index]!) && !pairs(index)) paragraph.push(lines[index++]!);
     blocks.push({ kind: 'paragraph', text: paragraph.join('\n').trim() });
   }
   return blocks;
@@ -265,6 +267,7 @@ export interface PrintOptions {
 }
 export interface RenderedDocument {
   html: string;
+  title: string;
   lang: DocumentLang;
   theme: DocumentTheme;
   /** Chromium print options matching the specification. */
@@ -288,7 +291,7 @@ export function renderDocumentHtml(input: DocumentSpecInput, fontFaces = ''): Re
   const footerTemplate = `<div style="font-family: 'Segoe UI', Tahoma, Arial, sans-serif; font-size: 8.5px; color: #777; width: 100%; padding: 0 14mm; display: flex; justify-content: space-between; direction: ${rtl ? 'rtl' : 'ltr'};"><span>${footerText}</span><span>${spec.pageNumbers ? pageLabel : ''}</span></div>`;
   const side = spec.theme === 'letter' ? '24mm' : '17mm';
   return {
-    html, lang, theme: spec.theme,
+    html, title: spec.title, lang, theme: spec.theme,
     print: { format: spec.pageSize, landscape: spec.orientation === 'landscape', margin: { top: '18mm', bottom: '20mm', left: side, right: side },
       displayHeaderFooter: true, headerTemplate: '<span></span>', footerTemplate },
   };

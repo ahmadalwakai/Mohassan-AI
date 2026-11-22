@@ -1,6 +1,7 @@
 import { AgentEffectHeld, BrowserError, compileQuery, publicSearchScan, publicSearchText, safeResumeUrl, type AgentAction, type AgentElement, type AgentPage, type AgentRequestPermit, type SearchHit } from '@mohassan/browser';
 import { directRoute, namedSite, sensitiveAction } from './brain.js';
 import { hostOf, readingLabel, siteName } from './activity.js';
+import { checkAnswerLine, isDisambiguationPage, isDisambiguationTitle, isMetaLine } from './answer-check.js';
 export { siteName };
 
 /**
@@ -55,7 +56,10 @@ export interface HandsPlan {
   read?: { url: string; start: number; offset: number };
   /** A question's search results, and the first page whose own sentences answer it. */
   results?: { title: string; url: string }[];
-  found?: { url: string; title: string; lines: string[] };
+  /** `readAt`: when the page was fetched (a cached page keeps its original time), shown with the source (plan §7.1). */
+  found?: { url: string; title: string; lines: string[]; readAt?: string };
+  /** The language of the owner's request; replies that are not quotes follow it, not the query's script («ابحث عن Python docs» is Arabic). */
+  lang?: 'ar' | 'en';
 }
 
 const VERBS = '(?:ابحث|أبحث|إبحث|دور|فتش|اضغط|إضغط|انقر|اختر|افتح|إفتح|ادخل|اقرأ|إقرأ|اقرا|لخص|اكتب|أكتب|ارجع|إرجع|مرر|انزل|نزل)';
@@ -192,8 +196,20 @@ const CHAT = /^(?:هلا|مرحبا|السلام|اهلا|أهلا|صباح|مس
 /** Planning a week or a day: the owner's own tasks, laid out by planner.ts, never a web search. */
 export const PLANNING = /(?:^|\s)(?:خط[طّ]|نظ[مّ]|رت[بّ])(?:لي|\s+لي)?\s+(?:ل?[اأ]سبوع|ل?يوم|وقت|مهام|جدول)|(?:التخطيط|خط[ةه]|جدول|تنظيم|ترتيب)\s+(?:ل|لـ)?(?:[اأ]سبوع|يوم|وقت|مهام)|\bplan (?:out )?(?:my|the|a) (?:week|day|schedule|tasks)\b|\b(?:weekly|daily) (?:plan|schedule|planner)\b|\b(?:schedule|organi[sz]e) my (?:week|day|tasks)\b/iu;
 
-export function notWebReason(text: string): 'memory_ads_pc' | 'reminder' | 'arithmetic' | 'planning' | 'writing' | 'chat' | 'address' | 'empty' | null {
+/** A PDF to make or change (assistant/documents.ts does the work): the file word plus an action, or a .pdf path. A question about PDF stays a web question. */
+const PDF_FILE = /(?<![\p{L}\p{N}])(?:pdf|بي ?دي ?[اإأ]ف)(?![\p{L}\p{N}])/iu;
+const PDF_PATH = /\.pdf(?![\p{L}\p{N}])/iu;
+const PDF_ACTION = /(?:^|\s)(?:انشئ|أنشئ|إنشئ|انشاء|إنشاء|اصنع|إصنع|اعمل|أعمل|سوي|سوّي|سو|سولي|جهز|جهّز|حضر|حضّر|كون|كوّن|ولد|ولّد|اكتب|أكتب|اكتبلي|صمم|صمّم|حول|حوّل|حولي|صدر|أصدر|صدّر|اطبع|احفظ|اعطني|أعطني|اعطيني|هات|اريد|أريد|ابغى|بدي|نزل|ادمج|أدمج|دمج|اجمع|ضم|وحد|وحّد|احذف|ازل|أزل|امسح|شيل|استخرج|اقتطع|اقص|افصل|قسم|قسّم|احتفظ|ابق|خذ|دور|دوّر|لف|اقلب|رقم|رقّم|اضف|أضف|ضع|غير|غيّر|عدل|عدّل|اجعل|سم|سمّ|create|make|generate|build|design|convert|export|turn|produce|write|draft|prepare|save|download|give|merge|combine|join|delete|remove|strip|extract|split|take|keep|rotate|flip|number|paginate|add|stamp|set|change|rename|update)(?=\s|$)|علام[ةه] مائي[ةه]|watermark|ترقيم|كم صفح|عدد (?:ال)?صفحات|how many pages|page count/iu;
+const PDF_QUESTION = /^(?:ما ?هو|ما ?هي|ما معنى|ماذا يعني|كيف|لماذا|what is|what are|what does|how do i|how to|why)(?=\s|$)/iu;
+export function isDocumentRequest(text: string): boolean {
+  if (!PDF_FILE.test(text) && !PDF_PATH.test(text)) return false;
+  if (PDF_QUESTION.test(text.replace(/^(?:من فضلك|لو سمحت|please)\s+/iu, ''))) return false;
+  return PDF_ACTION.test(text) || PDF_PATH.test(text);
+}
+
+export function notWebReason(text: string): 'memory_ads_pc' | 'reminder' | 'arithmetic' | 'planning' | 'writing' | 'document' | 'chat' | 'address' | 'empty' | null {
   if (!text || text.length > 200) return 'empty';
+  if (isDocumentRequest(text)) return 'document';
   if (REMIND.test(text)) return 'reminder';
   if (PLANNING.test(text)) return 'planning';
   if (NOT_WEB.test(text)) return 'memory_ads_pc';
@@ -223,6 +239,9 @@ export function webQuestion(request: string, earlier: readonly string[] = []): H
 const FOLLOW_START = /^(?:طيب|طب|طيّب|حسنا|and|what about|how about)\s+|^(?:و\s*)?(?:ماذا|ما|وش|شو|ايش)\s+عن\s+|^و(?=كم|متى|متي|ماذا|ما\s|هل|في\s|بكر|غد|اليوم|الان|الآن|سعر|ايش|شو|اين|أين|كيف|ليش|لماذا|من\s|عن\s|ال)/iu;
 const POINTER = /(?:^|\s)(?:[^\s]{2,}(?:ه|ها|هم|هن))(?=\s|$)|\b(?:it|its|it's|that|there|them|they|he|she|his|her)\b/iu;
 const TIME_WORDS = new Set(['اليوم', 'الان', 'الآن', 'حاليا', 'غدا', 'بكره', 'بكرة', 'الليله', 'today', 'now', 'tomorrow', 'tonight', 'current', 'latest']);
+
+/** «سكانها», «سعره», "its", "it": the message points back at a thing the conversation already named. */
+export const refersBack = (text: string): boolean => POINTER.test(text);
 
 /** Whether this message leans on the one before it rather than naming its own topic. */
 export function isFollowUp(text: string): boolean {
@@ -291,6 +310,7 @@ const WANTS_NUMBER = /(?:^|\s)(?:كم|قديش|اديش|متى|متي)(?=\s|$)|\
 /** Health questions get a plain reminder that a page is not a diagnosis. */
 const MEDICAL = /عين|عيون|العين|بصر|نظر|ليزك|ليزر|المياه البيضاء|المياه الزرقاء|جلوكوما|شبكية|قرنية|عملي[ةه]|جراح|أعراض|اعراض|علاج|مرض|دواء|أدوية|ادوية|طبيب|مستشفى|حمل|سكري|ضغط الدم|سرطان|\b(?:eye|eyes|vision|lasik|cataract|glaucoma|retina|surgery|symptoms?|treatment|disease|medicine|doctor)\b/iu;
 export const MEDICAL_NOTE = 'ملاحظة: هذه معلومات عامة منقولة من المصدر، وليست تشخيصًا. للتشخيص والعلاج راجع طبيبًا مختصًا.';
+export const MEDICAL_NOTE_EN = 'Note: this is general information quoted from the source, not a diagnosis. For diagnosis and treatment, see a doctor.';
 export const isMedical = (question: string) => MEDICAL.test(question);
 
 /**
@@ -416,6 +436,8 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     if (count < (hasNumber ? 3 : 5) || line.length > 400 || seen.has(line) || (wantsNumber && !hasNumber)) continue;
     // A sentence that asks («ما تاريخ الذكاء الاصطناعي؟») is a heading or a contents entry, never an answer.
     if (/[؟?]\s*$/u.test(line)) continue;
+    // Lines about the page, not the subject: hatnotes, bylines, headers (plan §7.4; 0-baseline §8.3 sent these as answers).
+    if (isMetaLine(line)) continue;
     if ((line.match(NAVBOX) ?? []).length >= 2) continue;
     // Infobox cells («معلومات عامة … تعديل مصدري - تعديل») read like a sentence once the toolbar is gone.
     if (WIKI_INFOBOX.test(line) || CITATION.test(line)) continue;
@@ -680,6 +702,8 @@ export interface HandsIO {
   /** Cookie banners, sign-in and human checks; null when the run paused or ended there. */
   settle(page: AgentPage): Promise<AgentPage | null>;
   step(label: string): Promise<void>;
+  /** The live line only («ينتظر ظهور نتائج البحث»); nothing is recorded as a step. */
+  progress?(label: string): Promise<void>;
   /** Saves the plan, then pauses for the owner's approval of this exact request. */
   approve(action: AgentAction, permit: AgentRequestPermit, label: string): Promise<void>;
   hold(held: AgentEffectHeld['held'], label: string): Promise<void>;
@@ -695,11 +719,11 @@ export function readableOverHttp(text: string): boolean {
 }
 
 /** No source answered a changing fact; do not substitute an encyclopedia's old figure. */
-export const noLiveSource = (query: string) => /[؀-ۿ]/u.test(query)
+export const noLiveSource = (query: string, lang: 'ar' | 'en' = /[؀-ۿ]/u.test(query) ? 'ar' : 'en') => lang === 'ar'
   ? `لم أتمكن من الوصول إلى مصدر حديث ومرتبط بسؤالك «${query}» بعد تجربة البحث في الويب. إن أرسلت رابط موقع مناسب أفتحه وأقرأ المعلومة منه.`
   : `I could not reach a current source relevant to “${query}” after trying web search. Send a suitable website link and I can open it and read the information there.`;
 
-const noSearchSource = (query: string) => LIVE.test(query) ? noLiveSource(query) : /[؀-ۿ]/u.test(query)
+const noSearchSource = (query: string, lang: 'ar' | 'en' = /[؀-ۿ]/u.test(query) ? 'ar' : 'en') => LIVE.test(query) ? noLiveSource(query, lang) : lang === 'ar'
   ? `لم أجد في المصادر المتاحة لي (ويكيبيديا والواجهات الموثقة) نتائج مرتبطة بسؤالك «${query}». أرسل رابط موقع مناسب أو حدد اسم الجهة التي تريد البحث لديها.`
   : `I found no results relevant to “${query}” in the sources available to me (Wikipedia and documented APIs). Send a suitable website link or name the organization to search.`;
 
@@ -808,7 +832,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         if (!template && !box) {
           // The shared engine over HTTP: a results list and no browser page.
           const found = await engine(step.query);
-          if (found === 'unavailable') return { kind: 'done', status: 'blocked', text: noSearchSource(step.query) };
+          if (found === 'unavailable') return { kind: 'done', status: 'blocked', text: noSearchSource(step.query, plan.lang) };
           searched = found.results;
         } else {
           let reached: AgentPage | null | 'none';
@@ -823,7 +847,10 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           if (!reached) return { kind: 'paused' };
           page = reached;
           // Some sites draw their results after the page loads: look again, three times at most.
-          for (let look = 0; look < 3 && queryOf(page.url) && !resultLinks(page, 1, step.query).length; look++) page = await io.act({ kind: 'wait', text: '2000' });
+          for (let look = 0; look < 3 && queryOf(page.url) && !resultLinks(page, 1, step.query).length; look++) {
+            if (look === 0) await io.progress?.('ينتظر ظهور نتائج البحث');
+            page = await io.act({ kind: 'wait', text: '2000' });
+          }
         }
         if (searched) plan.results = searched;
         if (step.ask) {
@@ -847,7 +874,8 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           const subject = pure.filter(({ own }) => own.length === widest).map(({ entry }) => entry.item);
           // Engine results keep the engine's order, except that the subject's own article comes first: the engine ranks
           // lexically and can list «سفارة أستراليا في واشنطن» before «أستراليا». A results page's links are ranked by title.
-          const fitting = [...new Set(searched ? [...subject, ...results] : [...subject, ...best])].slice(0, 3);
+          // A disambiguation page lists subjects and answers none.
+          const fitting = [...new Set(searched ? [...subject, ...results] : [...subject, ...best])].filter(item => !isDisambiguationTitle(item.title)).slice(0, 3);
           // Engine results are read over HTTP, all together, so no browser opens for a question. A page that
           // gives no readable text (built by JavaScript, not HTML, timed out) is opened in the hidden browser instead.
           const reads: (HandsRead | null)[] = searched && io.read && fitting.length
@@ -866,8 +894,10 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
               page = shown;
               opened = shown;
             }
-            const lines = relevantLines(opened, step.query, 3, true);
-            if (lines.length) { plan.found = { url: opened.url, title: tidy(opened.title) || hostOf(opened.url), lines }; break; }
+            if (isDisambiguationPage(opened)) continue;
+            // The answer line must carry what the question asks for (a number, a name, the question's language), or the next page is tried.
+            const lines = relevantLines(opened, step.query, 3, true).filter((line, at) => at > 0 || checkAnswerLine(step.query, line).ok);
+            if (lines.length) { plan.found = { url: opened.url, title: tidy(opened.title) || hostOf(opened.url), lines, readAt: opened.observedAt }; break; }
           }
         }
         break;
@@ -966,18 +996,24 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
   const last = plan.steps[plan.steps.length - 1];
   if (last.kind === 'search' && last.ask && plan.results) {
     const list = (items: { title: string; url: string }[]) => items.map((item, index) => `${index + 1}. [${plainTitle(item.title)}](${item.url}) — ${siteName(item.url)}`).join('\n');
-    const note = isMedical(last.query) ? `\n\n${plan.found ? MEDICAL_NOTE : 'للتشخيص والعلاج راجع طبيبًا مختصًا.'}` : '';
+    // The frame around the quotes follows the owner's language (plan §7.3); the quotes themselves stay as the page wrote them.
+    const en = (plan.lang ?? (/[؀-ۿ]/u.test(last.query) ? 'ar' : 'en')) === 'en';
+    const note = isMedical(last.query) ? `\n\n${plan.found ? en ? MEDICAL_NOTE_EN : MEDICAL_NOTE : en ? 'For diagnosis and treatment, see a doctor.' : 'للتشخيص والعلاج راجع طبيبًا مختصًا.'}` : '';
     if (plan.found) {
       // Plain layout for anyone: the answer first, then the rest, then a short named source. Sentences stay as the page wrote them.
       const others = plan.results.filter(item => withoutHash(item.url) !== withoutHash(plan.found!.url)).slice(0, 3);
       const [first, ...rest] = plan.found.lines;
-      const more = rest.length ? `\n\n**تفاصيل أخرى من نفس المصدر:**\n${rest.map(line => `- ${line}`).join('\n')}` : '';
-      const source = `**المصدر:** [${siteName(plan.found.url)} — ${plainTitle(plan.found.title)}](${plan.found.url})`;
-      const also = others.length ? `\n\n**للمزيد:** ${others.map(item => `[${plainTitle(item.title)}](${item.url})`).join(' · ')}` : '';
+      const more = rest.length ? `\n\n**${en ? 'More from the same source:' : 'تفاصيل أخرى من نفس المصدر:'}**\n${rest.map(line => `- ${line}`).join('\n')}` : '';
+      // The read time names the evidence's age; a page served from the cache keeps the time it was really fetched.
+      const readAt = plan.found.readAt && !Number.isNaN(Date.parse(plan.found.readAt)) ? ` · ${en ? 'read' : 'قُرئت'} ${new Date(plan.found.readAt).toISOString().slice(0, 16).replace('T', ' ')} UTC` : '';
+      const source = `**${en ? 'Source:' : 'المصدر:'}** [${siteName(plan.found.url)} — ${plainTitle(plan.found.title)}](${plan.found.url})${readAt}`;
+      const also = others.length ? `\n\n**${en ? 'See also:' : 'للمزيد:'}** ${others.map(item => `[${plainTitle(item.title)}](${item.url})`).join(' · ')}` : '';
       return { status: 'completed', text: `${first}${more}\n\n${source}${also}${note}` };
     }
-    if (plan.results.length) return { status: 'partial', text: `لم أجد صفحة تجيب مباشرة عن «${last.query}»، ولن أنقل لك جوابًا من صفحة لا تخص سؤالك. هذه الصفحات التي ظهرت في البحث:\n\n${list(plan.results)}\n\nاكتب «افتح النتيجة 2» مثلًا وأقرأها لك.${note}` };
-    return { status: 'partial', text: `لم أجد صفحة تجيب عن «${last.query}». جرّب سؤالًا أقصر يذكر الموضوع نفسه.${note}` };
+    if (plan.results.length) return { status: 'partial', text: en
+      ? `I found no page that answers “${last.query}” directly, and I will not pass you an answer from a page that is not about your question. These pages came up in the search:\n\n${list(plan.results)}\n\nSay “open result 2”, for example, and I will read it for you.${note}`
+      : `لم أجد صفحة تجيب مباشرة عن «${last.query}»، ولن أنقل لك جوابًا من صفحة لا تخص سؤالك. هذه الصفحات التي ظهرت في البحث:\n\n${list(plan.results)}\n\nاكتب «افتح النتيجة 2» مثلًا وأقرأها لك.${note}` };
+    return { status: 'partial', text: en ? `I found no page that answers “${last.query}”. Try a shorter question that names the same subject.${note}` : `لم أجد صفحة تجيب عن «${last.query}». جرّب سؤالًا أقصر يذكر الموضوع نفسه.${note}` };
   }
   if (last.kind === 'search' && plan.results?.length) {
     const list = plan.results.slice(0, 8).map((item, index) => `${index + 1}. [${plainTitle(item.title)}](${item.url}) — ${siteName(item.url)}`).join('\n');

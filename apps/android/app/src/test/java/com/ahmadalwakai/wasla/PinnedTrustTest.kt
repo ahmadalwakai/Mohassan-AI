@@ -1,5 +1,6 @@
 package com.ahmadalwakai.wasla
 
+import kotlinx.serialization.decodeFromString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -21,7 +22,7 @@ class PinnedTrustTest {
     private fun check(host: String, pin: String, name: String) = PinnedTrustManager(host, pin).checkServerTrusted(arrayOf(certificate(name)), "ECDHE_ECDSA")
 
     private fun refused(host: String, pin: String, name: String) {
-        try { check(host, pin, name); fail("accepted $name for $host") } catch (_: CertificateException) {}
+        try { check(host, pin, name); fail("accepted $name for $host") } catch (ignored: CertificateException) {}
     }
 
     @Test
@@ -61,8 +62,8 @@ class PinnedTrustTest {
 
     @Test
     fun anEmptyChainIsRefused() {
-        try { PinnedTrustManager("10.0.2.2", fingerprints.getValue("server-valid")).checkServerTrusted(emptyArray(), "ECDHE_ECDSA"); fail("accepted nothing") } catch (_: CertificateException) {}
-        try { PinnedTrustManager("10.0.2.2", fingerprints.getValue("server-valid")).checkClientTrusted(arrayOf(certificate("server-valid")), "RSA"); fail("accepted a client") } catch (_: CertificateException) {}
+        try { PinnedTrustManager("10.0.2.2", fingerprints.getValue("server-valid")).checkServerTrusted(emptyArray(), "ECDHE_ECDSA"); fail("accepted nothing") } catch (ignored: CertificateException) {}
+        try { PinnedTrustManager("10.0.2.2", fingerprints.getValue("server-valid")).checkClientTrusted(arrayOf(certificate("server-valid")), "RSA"); fail("accepted a client") } catch (ignored: CertificateException) {}
     }
 
     @Test

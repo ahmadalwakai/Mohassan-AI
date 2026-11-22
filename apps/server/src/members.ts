@@ -34,6 +34,8 @@ export const MEMBER_ROUTES: ReadonlySet<string> = new Set([
   `POST ${chat}/:id/messages`, `POST ${chat}/:id/respond`, `POST ${chat}/:id/approve`, `POST ${chat}/:id/secure`, `POST ${chat}/:id/cancel`,
   `POST ${chat}/:id/browser/keyboard`, `POST ${chat}/:id/browser/pointer`, `POST ${chat}/:id/browser/restore`, `POST ${chat}/:id/browser/review`,
   `GET ${files}`, `GET ${files}/targets`, `POST ${files}/grants`, `DELETE ${files}/grants/:id`, `POST ${files}/grants/:id/execute`, `POST ${files}/grants/:id/release`, `GET ${files}/grants/:id/content`,
+  // PDF files the member makes or edits in the chat: their own list, download, upload and delete. Local paths stay owner-only.
+  'GET /api/documents', 'POST /api/documents', 'POST /api/documents/upload', 'GET /api/documents/:id/content', 'DELETE /api/documents/:id',
   // The member's own memory. Memory skills run tasks and stay owner-only.
   'GET /api/memory', 'GET /api/memory/items/:id', 'POST /api/memory/items', 'POST /api/memory/search', 'POST /api/memory/feedback',
   'POST /api/memory/items/:id/correct', 'POST /api/memory/items/:id/delete', 'POST /api/memory/items/:id/revoke',

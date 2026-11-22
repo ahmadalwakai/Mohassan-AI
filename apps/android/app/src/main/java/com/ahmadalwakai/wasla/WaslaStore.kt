@@ -35,7 +35,7 @@ class WaslaStore(application: Application) : AndroidViewModel(application) {
     private val prefs = app.getSharedPreferences("wasla", Context.MODE_PRIVATE)
     val bundledIdentity: ServerIdentity? = try {
         app.assets.open("ConnectionDefaults.json").use { BundledConnection.decode(it.readBytes().decodeToString()) }
-    } catch (_: Exception) { null }
+    } catch (ignored: Exception) { null }
 
     var identity by mutableStateOf<ServerIdentity?>(null); private set
     var status by mutableStateOf<ServerStatus?>(null); private set
@@ -172,7 +172,7 @@ class WaslaStore(application: Application) : AndroidViewModel(application) {
     }
 
     private fun deviceName(): String {
-        val fromSettings = try { Settings.Global.getString(app.contentResolver, Settings.Global.DEVICE_NAME) } catch (_: Exception) { null }
+        val fromSettings = try { Settings.Global.getString(app.contentResolver, Settings.Global.DEVICE_NAME) } catch (ignored: Exception) { null }
         val name = (fromSettings ?: Build.MODEL ?: "").trim().take(60)
         return name.ifEmpty { "Android" }
     }
@@ -251,11 +251,11 @@ class WaslaStore(application: Application) : AndroidViewModel(application) {
         if (computerBusy) { errorMessage = "المساعد مشغول حاليًا. انتظر انتهاء المهمة قبل إرسال رسالة أخرى."; return false }
         val clean = text.trim()
         if (clean.isEmpty()) return false
-        if (clean.codePoints() > 8_000) { errorMessage = "الرسالة تتجاوز ٨٬٠٠٠ حرف. اختصرها قبل الإرسال."; return false }
+        if (clean.codePointLength() > 8_000) { errorMessage = "الرسالة تتجاوز ٨٬٠٠٠ حرف. اختصرها قبل الإرسال."; return false }
         messages.add(ChatMessage("user", clean))
         // Python counts Unicode code points; so does codePoints(). Trim only old context; keep the new message.
         val history = ArrayDeque(messages.toList())
-        while (history.size > 1 && (history.size > 16 || history.sumOf { it.content.codePoints() } > 24_000 || history.any { it.content.codePoints() > 8_000 })) history.removeFirst()
+        while (history.size > 1 && (history.size > 16 || history.sumOf { it.content.codePointLength() } > 24_000 || history.any { it.content.codePointLength() > 8_000 })) history.removeFirst()
         chatContextNote = if (history.size < messages.size) "أُرسل أحدث جزء من المحادثة ضمن حدود النموذج: ${history.size} رسالة." else ""
         val request = ChatRequest(history.toList(), newRequestId(), chatMode.wire, rememberConversation, useSavedKnowledge, if (rememberConversation) chatConversationId else null)
         val epoch = sessionEpoch
@@ -561,7 +561,7 @@ class WaslaStore(application: Application) : AndroidViewModel(application) {
             token.toByteArray(Charsets.UTF_8).size in 32..4096 && token.none { it.isWhitespace() || it.code < 32 || it.code == 127 }
 
         suspend fun decodeImage(bytes: ByteArray): ImageBitmap? = withContext(Dispatchers.Default) {
-            try { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() } catch (_: Exception) { null }
+            try { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() } catch (ignored: Exception) { null }
         }
     }
 }

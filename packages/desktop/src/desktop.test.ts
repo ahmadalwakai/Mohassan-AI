@@ -278,6 +278,13 @@ describe('DesktopEngine', () => {
     expect(listed.text).toContain('**تجربة**');
     const search = await engine.execute(command('ابحث عن ملف notes')!, { lang: 'ar' });
     expect(search.text).toContain('notes.txt');
+    // «مجلد المشاريع» and a project name both resolve to real folders, not to a folder literally named so.
+    const inProjects = await engine.execute(command('ابحث عن ملف index.html في مجلد المشاريع')!, { lang: 'ar' });
+    expect(inProjects.text).toContain('index.html');
+    const listed2 = await engine.execute(command('اعرض الملفات في مشروع تجربة')!, { lang: 'ar' });
+    expect(listed2.text).toContain('index.html');
+    const projectsListing = await engine.execute(command('list files in my projects')!, { lang: 'en' });
+    expect(projectsListing.text).toContain('تجربة');
     const missing = await engine.execute(command('اقرأ ملف غير-موجود.txt')!, { lang: 'ar' });
     expect(missing.status).toBe('blocked');
   }, 60_000);

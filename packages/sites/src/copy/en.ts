@@ -1,0 +1,98 @@
+import type { Copy } from './types.ts';
+
+/** English sentence bank. Invitations and labels only: no numbers, no superlatives, no promises of results. */
+export const en: Copy = {
+  bank: {
+    heroTitle: {
+      services: ['Welcome to {name}', '{name}, at your service', '{name}: book a service with ease', 'Help that comes to you, from {name}'],
+      restaurant: ['Welcome to {name}', '{name}: flavours worth the visit', 'Come in to {name}', '{name} welcomes you'],
+      clinic: ['{name}: care with attention', 'Welcome to {name}', '{name}, here for your health', 'Your comfort first at {name}'],
+      portfolio: ['{name}', 'Work by {name}', '{name}: work and ideas', 'Welcome to the page of {name}'],
+      catalogue: ['{name}: choose and order', 'Welcome to {name}', 'Shop from {name}', 'Products by {name}, at your fingertips'],
+      landing: ['{name}', 'An offer from {name}', 'Discover what {name} offers', '{name} brings you'],
+    },
+    heroLead: {
+      services: [
+        'We offer {first} and more in {city}. Get in touch and we will arrange a time that suits you.',
+        'From {first} to the rest of our services: see what we do and reach us the way you prefer.',
+        'Our services in {city}, clearly laid out, with contact one step away.',
+        'See our services and get in touch directly.',
+      ],
+      restaurant: [
+        'Our menu, from {first} to the rest of our dishes. Come and visit us in {city}.',
+        'Dishes prepared with care in {city}. See the menu and contact us to book.',
+        'Browse the menu, pick what you like, and we will be expecting you.',
+        'A relaxed table and a varied menu that starts with {first}.',
+      ],
+      clinic: [
+        'We welcome you in {city} with {first} and other services. Book your appointment with ease.',
+        'Care that starts with listening. See our services and book an appointment.',
+        'Our services include {first} and more. Contact us to arrange a time.',
+        'Our team in {city} is expecting you. Book your appointment today.',
+      ],
+      portfolio: [
+        'Selected work, from {first} onwards. Browse and get in touch.',
+        'Work and ideas from {city}. Browse the selection and get in touch to collaborate.',
+        'A selection of work, and a way to reach us for the next project.',
+        'Browse the work and get in touch to collaborate.',
+      ],
+      catalogue: [
+        'Our products in one place, from {first} onwards. Pick what suits you and order directly.',
+        'Browse the products and order in one step.',
+        'Selected products in {city}, ordered in one step.',
+        'Choose your product and order with ease.',
+      ],
+      landing: ['See what we offer and get in touch.', 'All the details on this page, with contact one step away.', 'Read the details and reach us the way that suits you.'],
+    },
+    itemsTitle: {
+      services: ['Our services', 'What we do', 'Services'],
+      restaurant: ['The menu', 'Our dishes', 'From the menu'],
+      clinic: ['Our services', 'What we offer', 'Medical services'],
+      portfolio: ['Work', 'Selected work', 'Projects'],
+      catalogue: ['Products', 'Shop', 'From our products'],
+      landing: ['What the offer includes', 'The details', 'What you get'],
+    },
+    itemsLead: {
+      services: ['Choose the service you need and get in touch to arrange a time.', 'Each service with its details; contact is one step away.', 'These are our services as we provide them.'],
+      restaurant: ['Each dish as we prepare it.', 'Browse the dishes and choose what you like.', 'Our full menu.'],
+      clinic: ['Browse the services and book a time that suits you.', 'Each service with its details.', 'These are our services.'],
+      portfolio: ['Each piece with its description.', 'Browse the selection.', 'Selected work.'],
+      catalogue: ['Choose a product and order directly.', 'Each product with its details.', 'Our full range.'],
+      landing: ['Everything the offer includes, clearly.', 'The full details.', 'What you get.'],
+    },
+    highlightsTitle: {
+      default: ['Highlights', 'We offer', 'A selection'],
+      restaurant: ['From the menu', 'Selected dishes', 'Taste'],
+      portfolio: ['Selected work', 'From the work', 'A selection'],
+      catalogue: ['Selected products', 'From the products', 'Shop'],
+    },
+    ctaTitle: {
+      services: ['Need a service? Get in touch', 'We are a message away', 'Start your request now'],
+      restaurant: ['Book your table', 'We look forward to your visit', 'Contact us to book'],
+      clinic: ['Book your appointment', 'We are here to help', 'Contact us to arrange a time'],
+      portfolio: ["Let's work together", 'Get in touch for your next project', 'Have an idea?'],
+      catalogue: ['Order now', 'A question about a product?', 'Contact us to order'],
+      landing: ['Get the offer', 'Contact us now', "Don't miss the offer"],
+    },
+    ctaLead: ['Message us or call, and we reply to every message.', 'Choose the way of contacting us that suits you.', 'We look forward to your message.'],
+    contactTitle: ['Contact us', 'How to reach us', 'Contact details'],
+    contactLead: ['Choose the way that suits you.', 'We are here to answer your questions.', 'Reach us through any of these.'],
+    galleryTitle: ['Photos', 'Gallery', 'Snapshots'],
+    hoursTitle: ['Opening hours', 'Our hours', 'When to find us'],
+    testimonialsTitle: ['Reviews', 'What people said', 'Words from our visitors'],
+    aboutTitle: ['About us', 'Our story', 'About {name}'],
+    offerLabel: ['The offer', 'Our current offer', 'What we offer'],
+    notFoundTitle: ['Page not found'],
+    notFoundLead: ['The link you opened is not available. Go back to the home page and continue from there.'],
+    footerRights: ['All rights reserved to {name}.', '{name}. All rights reserved.'],
+    cityLine: ['{city}'],
+  },
+  labels: {
+    nav: { home: 'Home', about: 'About', contact: 'Contact', gallery: 'Photos', hours: 'Hours', items: { services: 'Services', restaurant: 'Menu', clinic: 'Services', portfolio: 'Work', catalogue: 'Products', landing: 'Details' } },
+    buttons: { call: 'Call us', whatsapp: 'WhatsApp', email: 'Email us', order: 'Order on WhatsApp', book: 'Book an appointment', directions: 'Find us on the map', menu: 'Menu', close: 'Close', viewAll: 'View all', backHome: 'Home' },
+    fields: { phone: 'Phone', whatsapp: 'WhatsApp', email: 'Email', address: 'Address', hours: 'Opening hours', follow: 'Follow us', price: 'Price' },
+    messages: { enquiry: 'Hello {name}, I would like to enquire.', order: 'Hello, I would like to order: {item}', book: 'Hello, I would like to book an appointment.' },
+    form: { name: 'Name', contact: 'Phone or email', message: 'Your message', send: 'Send', noteWhatsapp: 'Sending opens your message in WhatsApp for you to send.', noteEmail: 'Sending opens your message in your mail app for you to send.', noteEndpoint: 'Your message reaches us directly.', subject: 'Message from the {name} website' },
+    skip: 'Skip to content',
+  },
+};

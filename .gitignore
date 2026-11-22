@@ -16,3 +16,7 @@ artifacts/
 .venv-execution/
 __pycache__/
 *.pyc
+
+# Electron desktop shell build output
+apps/desktop/dist/
+apps/desktop/release/

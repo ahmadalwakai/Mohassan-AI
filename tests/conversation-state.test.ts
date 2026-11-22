@@ -355,3 +355,98 @@ describe('conversation state v2: a place after a property of places is the new e
     expect(second.query).toBe('سعر ايفون 15 مصر');
   });
 });
+
+// Added 2026-11-22 after reviewing v2's readings of the 107 real items (artifacts/conversation-state-20261122/run-*/real-results.jsonl).
+describe('conversation state v2: more properties, reformulations and go-aheads', () => {
+  it('reads «من اخترع الهاتف؟» as the inventor of الهاتف and «ومن اخترع الراديو؟» as a new entity', () => {
+    const first = ask(emptyConversationState(), 'من اخترع الهاتف؟', 'u1');
+    expect(first.property).toBe('inventor');
+    expect(first.entity).toBe('الهاتف');
+    const second = ask(first.next, 'ومن اخترع الراديو؟', 'u2');
+    expect(second.type).toBe('follow_up_entity');
+    expect(second.query).toBe('مخترع الراديو');
+    const english = ask(emptyConversationState(), 'Who invented the telephone?', 'u1');
+    expect(english.property).toBe('inventor');
+    expect(english.entity).toBe('telephone');
+  });
+
+  it('reads «كم تستغرق عملية المياه البيضاء؟» as a duration', () => {
+    const turn = ask(emptyConversationState(), 'كم تستغرق عملية المياه البيضاء؟', 'u1');
+    expect(turn.property).toBe('duration');
+    expect(turn.entity).toBe('عملية المياه البيضاء');
+  });
+
+  it('finds the entity before the property word ("Tokyo population", «الرياض مساحتها كم»)', () => {
+    const english = ask(emptyConversationState(), 'Tokyo population', 'u1');
+    expect(english.property).toBe('population');
+    expect(english.entity).toBe('Tokyo');
+    const arabic = ask(emptyConversationState(), 'الرياض مساحتها كم؟', 'u1');
+    expect(arabic.property).toBe('area');
+    expect(arabic.entity).toBe('الرياض');
+  });
+
+  it('does not read an Ads «area: Cardiff» as the surface area property', () => {
+    const turn = ask(emptyConversationState(), 'Ads for boiler repair, area: Cardiff, 40 pounds a week, I want calls', 'u1');
+    expect(turn.property).toBeNull();
+    expect(turn.query).toBeNull();
+  });
+
+  it('treats «فصّل أكثر», «بالإنجليزي» and «كجدول» as reformulations of the last answer', () => {
+    const first = ask(emptyConversationState(), 'ما هو الذكاء الاصطناعي؟', 'u1');
+    const more = ask(first.next, 'فصّل أكثر', 'u2');
+    expect(more.type).toBe('field_edit');
+    expect(more.edit).toEqual({ field: 'detail', value: 'more' });
+    expect(more.entity).toBe('الذكاء الاصطناعي');
+    expect(more.query).toBeNull();
+    expect(more.next.topics).toEqual(first.next.topics);
+    const english = ask(more.next, 'بالإنجليزي', 'u3');
+    expect(english.edit).toEqual({ field: 'language', value: 'en' });
+    const table = ask(english.next, 'as a table', 'u4');
+    expect(table.edit).toEqual({ field: 'format', value: 'table' });
+    const shorter = ask(table.next, 'اختصر', 'u5');
+    expect(shorter.edit).toEqual({ field: 'detail', value: 'less' });
+    const nothing = ask(emptyConversationState(), 'فصّل أكثر', 'u1');
+    expect(nothing.type).toBe('field_edit');
+    expect(nothing.needs).toBe('missing_reference');
+  });
+
+  it('asks what to continue when «تابع» arrives with nothing pending, and never searches a go-ahead', () => {
+    for (const text of ['تابع', 'طيب تابع', 'go on', 'continue please']) {
+      const turn = ask(emptyConversationState(), text, 'u1');
+      expect(turn.type, text).toBe('ambiguous');
+      expect(turn.needs, text).toBe('missing_reference');
+      expect(turn.query, text).toBeNull();
+    }
+    const chrome = ask(emptyConversationState(), 'أكمل في Chrome', 'u1');
+    expect(chrome.query).toBeNull();
+  });
+
+  it('never searches a question about Mohassan itself', () => {
+    for (const text of ['من صنعك؟', 'ما هي قدراتك', 'are you groq ai ?', 'whos create you', 'هل تستطيع أنشاء مشروع كامل ؟ موقع إلكتروني']) {
+      const turn = ask(emptyConversationState(), text, 'u1');
+      expect(turn.query, text).toBeNull();
+    }
+    const real = ask(emptyConversationState(), 'ما عاصمة اليابان؟', 'u1');
+    expect(real.query).not.toBeNull();
+  });
+
+  it('points «افتح الأخير» and "the last one" at the last displayed result', () => {
+    const first = ask(emptyConversationState(), 'ما أكبر ثلاث مدن في اليابان؟', 'u1');
+    const shown = withHostResults(first.next, [{ label: 'طوكيو', kind: 'place' }, { label: 'يوكوهاما', kind: 'place' }, { label: 'أوساكا', kind: 'place' }], 'a1');
+    expect(ask(shown, 'افتح الأخير', 'u2').reference).toEqual({ index: 3, label: 'أوساكا' });
+    expect(ask(shown, 'open the last one', 'u2').reference).toEqual({ index: 3, label: 'أوساكا' });
+  });
+
+  it('accepts «غلط، أقصد …» as a correction', () => {
+    const first = ask(emptyConversationState(), 'متى مباراة الهلال؟', 'u1');
+    const turn = ask(first.next, 'غلط، أقصد الاتحاد', 'u2');
+    expect(turn.type).toBe('correction');
+    expect(turn.query).toBe('مباراة الاتحاد');
+  });
+
+  it('drops the memory phrase from a private recall entity', () => {
+    const turn = ask(emptyConversationState(), 'من ذاكرتي، ما مدينتي المفضلة؟', 'u1');
+    expect(turn.entity).toBe('مدينتي المفضلة');
+    expect(turn.query).toBeNull();
+  });
+});

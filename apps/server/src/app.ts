@@ -25,6 +25,8 @@ import { registerBrowserRoutes } from './browser.js';
 import { AgentBrowser, BrowserError, SafeNetwork, SearchEngine, SqlSearchStore, LocalPublicIndex, RobotsPolicy, migrateSearch, readableSource, type BrowserConfig } from '@mohassan/browser';
 import { registerSearchRoutes } from './search.js';
 import { registerBrowserFileRoutes } from './browser-files.js';
+import { createDocumentControl, migrateDocuments, registerDocumentRoutes } from './documents.js';
+import { PdfError } from '@mohassan/pdf';
 import { registerMemoryRoutes } from './memory.js';
 import { registerLearningRoutes, type LearningConfig } from './learning.js';
 import { createIsolatedLearningEvaluator } from './learning-evaluator.js';
@@ -37,6 +39,7 @@ import { createStudioAiControl, registerStudioAiRoutes } from './studio-ai.js';
 import { createStudioLiveControl } from './studio-live.js';
 import { createBrowserTaskControl } from './browser-task.js';
 import { createCommandChatControl, registerCommandChatRoutes } from './command-chat.js';
+import { createImageReader } from './image-reader.js';
 import { createInferenceControl, registerInferenceRoutes, type InferenceConfig } from './inference.js';
 import { createExecutorControl, executorConfigFromEnv, registerExecutorRoutes, type ExecutorConfig } from './executor.js';
 import { createAdsLab, createAdsModelWorker, registerAdsLabRoutes, type AdsLabConfig } from './ads-lab.js';
@@ -44,6 +47,8 @@ import { createAdsModelChat } from './assistant/ads-model-chat.js';
 import type { Mind, MindDeps } from './assistant/mind/contract.js';
 import { createMind } from './assistant/mind/index.js';
 import { createShadowRouter } from './assistant/router.js';
+import { createConversationShadow } from './assistant/conversation-state-shadow.js';
+import { createPageCache } from './assistant/page-cache.js';
 import { createChromeExtensionControl, registerChromeExtensionRoutes } from './chrome-extension.js';
 import { DesktopEngine } from '@mohassan/desktop';
 import { registerDesktopRoutes } from './desktop.js';
@@ -77,6 +82,8 @@ export interface AppConfig {
   /** Absent values leave the integration in its not-configured state. */
   googleAds?: Partial<Omit<GoogleAdsConfig,'webOrigin'>>;
   learning?: LearningConfig;
+  /** Where created PDFs are stored, and bundled fonts for them. Defaults: .data/documents and no bundled fonts. */
+  documentsDir?:string;documentsFontsDir?:string;
   learningLocalModel?:{model:string;baseUrl?:string};
   /** Owner-only local experiment with the scratch-trained execution model. Absent: off. */
   executor?:ExecutorConfig;
@@ -214,6 +221,7 @@ export async function createApplication(config: AppConfig) {
     if (error instanceof StudioError) return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}});
     if (error instanceof BrowserError) return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}});
     if (error instanceof LearningContentError) return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}});
+    if (error instanceof PdfError) return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}});
     if (error instanceof GoogleAdsError) { if (error.options.retryAfterSeconds) reply.header('Retry-After', String(error.options.retryAfterSeconds)); return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}}); }
     if(error instanceof CodingError)return reply.code(error.code==='PROJECT_BUSY'?409:error.code==='SANDBOX_UNAVAILABLE'?503:400).send({error:{code:error.code,message:error.message}});
     const code = typeof error.statusCode === 'number' && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500;
@@ -329,6 +337,9 @@ export async function createApplication(config: AppConfig) {
   const routerDir = join(process.cwd(), 'artifacts', 'router');
   const shadowRouter = !config.production && process.env.MOHASSAN_ROUTER_SHADOW !== '0' && !process.env.VITEST && existsSync(join(routerDir, 'router-b0.bin'))
     ? createShadowRouter({ modelDir: routerDir, logFile: join(process.cwd(), '.data', 'router', 'shadow.jsonl') }) : undefined;
+  // Conversation state v2 runs in shadow outside production (MOHASSAN_CONVERSATION_SHADOW=0 turns it off); no reply path reads it.
+  const conversationShadow = !config.production && process.env.MOHASSAN_CONVERSATION_SHADOW !== '0' && !process.env.VITEST
+    ? createConversationShadow({ logFile: join(process.cwd(), '.data', 'conversation', 'shadow.jsonl') }) : undefined;
   const mind = config.mindEnabled === true && !config.production ? config.mind ?? createMind() : undefined;
   const mindRobots = new RobotsPolicy(searchNetwork);
   const mindSearch = mind && !config.browser?.searchProvider
@@ -370,7 +381,12 @@ export async function createApplication(config: AppConfig) {
    * hidden browser; 'disallowed' skips it there too.
    */
   const READ_PAGE_TIMEOUT_MS = 4000;
-  const readPage = async (url: string, signal: AbortSignal) => {
+  // Pages read over HTTP are kept by site kind (plan §5.2 P4): an encyclopedia article for a week, documentation
+  // for a day, news for a quarter of an hour. A page read for a live fact is fetched every time.
+  const pageCache = createPageCache();
+  const readPage = async (url: string, signal: AbortSignal, options: { live?: boolean } = {}) => {
+    const cached = pageCache.get(url, options);
+    if (cached) return cached;
     const combined = AbortSignal.any([signal, AbortSignal.timeout(READ_PAGE_TIMEOUT_MS)]);
     try { await mindRobots.assertAllowed(url, combined); }
     catch (error) {
@@ -386,9 +402,15 @@ export async function createApplication(config: AppConfig) {
     let body: string;
     try { body = new TextDecoder(charset, { fatal: true }).decode(response.body); } catch { return null; }
     const source = readableSource(body, response.url);
-    return { url: response.url, title: source.title, text: source.text, status: response.status };
+    return pageCache.put({ url: response.url, title: source.title, text: source.text, status: response.status }, options);
   };
-  const chat=await createCommandChatControl(database.db,{...(shadowRouter?{shadowRouter}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),...(desktop?{desktop:{parse:(text:string)=>desktop.parse(text),describe:(command,lang)=>desktop.describe(command,lang),execute:(command,options)=>desktop.execute(command,options)}}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,readPage,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',accountFullAccess:(ownerId,tx)=>lockOwnerToolAccess(tx,ownerId),accountActive:async(ownerId,tx)=>{const role=await roleOf(tx,ownerId);if(role!=='member')return role!==null;return Boolean(await tx.selectFrom('workspace_members').select('user_id').where('user_id','=',ownerId).where('role','=','member').where('disabled_at','is',null).forShare().executeTakeFirst());},memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
+  // PDF files from the chat: stored under the data directory; local .pdf paths are read for the owner only, inside the coding roots.
+  await migrateDocuments(database.db);
+  const documents=createDocumentControl(database.db,{dir:config.documentsDir??resolve('.data/documents'),fontsDir:config.documentsFontsDir,allowedRoots:async ownerId=>await roleOf(database.db,ownerId)==='owner'?(config.codingAllowedRoots??[]):[]});
+  const documentLink=(id:string)=>`${config.webOrigin}/api/documents/${id}/content`;
+  // The own image reader (packages/vision): exported weights in artifacts/vision/ocr-v1 unless MOHASSAN_OCR_MODEL_DIR points elsewhere.
+  const imageReader=await createImageReader({modelDir:process.env.MOHASSAN_OCR_MODEL_DIR??join(process.cwd(),'artifacts','vision','ocr-v1'),workers:Number(process.env.MOHASSAN_OCR_WORKERS??3)});
+  const chat=await createCommandChatControl(database.db,{...(shadowRouter?{shadowRouter}:{}),...(conversationShadow?{conversationShadow}:{}),...(imageReader.available?{imageReader}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),...(desktop?{desktop:{parse:(text:string)=>desktop.parse(text),describe:(command,lang)=>desktop.describe(command,lang),execute:(command,options)=>desktop.execute(command,options)}}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,documents:{control:documents,link:documentLink},inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,readPage,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',accountFullAccess:(ownerId,tx)=>lockOwnerToolAccess(tx,ownerId),accountActive:async(ownerId,tx)=>{const role=await roleOf(tx,ownerId);if(role!=='member')return role!==null;return Boolean(await tx.selectFrom('workspace_members').select('user_id').where('user_id','=',ownerId).where('role','=','member').where('disabled_at','is',null).forShare().executeTakeFirst());},memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
     learningContext:learning.context,chromeExtension,
     knowledgeSearch:async(ownerId,query)=>(await learning.knowledge.retrieve(ownerId,query)).map(({title,text,source})=>({title,text,source})),
     ...(config.skillEngineEnabled?{recordSkillGap,skillContext:skills.context,loadSkill:skills.loadInstruction,runSkill:async(ownerId,input,context)=>{
@@ -398,6 +420,7 @@ export async function createApplication(config: AppConfig) {
   });
   await registerCommandChatRoutes(app,{control:chat,owner:async request=>{const user=await owner(request);windows.noteSession(user.id,request);return user;}});
   await registerBrowserFileRoutes(app,{db:database.db,browser:agentBrowser,owner});
+  await registerDocumentRoutes(app,{control:documents,owner,link:documentLink});
   await registerStudioAiRoutes(app,{control:studioAi,owner});
   await studio.reviews.register(app,owner);
   await studioLive.register(app,owner);

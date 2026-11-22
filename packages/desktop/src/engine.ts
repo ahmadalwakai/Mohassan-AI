@@ -36,6 +36,8 @@ export interface ExecuteOptions { approved?: boolean; lang?: 'ar' | 'en'; signal
 
 const code = (value: string) => `\`${value.replace(/`/gu, "'")}\``;
 const lines = (items: string[]) => items.join('\n');
+/** «المشاريع», «مشاريعي», «projects», «my projects»: the projects folder itself. */
+const PROJECTS_WORD = /^(?:(?:ال)?مشاريع(?:ي)?|(?:my\s+)?projects)$/iu;
 
 /**
  * The desktop engine: files, projects, programs, windows, input and the screen on the
@@ -167,7 +169,7 @@ export class DesktopEngine {
           return { status: 'completed', text: lines([ar ? `محتوى ${code(content.display)} (${formatBytes(content.size)}${content.truncated || content.text.length > 6000 ? (ar ? '، مقتطع' : ', truncated') : ''}):` : `Contents of ${code(content.display)} (${formatBytes(content.size)}${content.truncated || content.text.length > 6000 ? ', truncated' : ''}):`, '```', body.trim() || (ar ? '(فارغ)' : '(empty)'), '```']), data: content };
         }
         case 'file_list': {
-          const listing = await this.files.list(command.path ?? base ?? undefined, { base });
+          const listing = await this.files.list(command.path ? await this.folderPath(command.path, base) : base ?? undefined, { base });
           const shown = listing.entries.slice(0, 60);
           return { status: 'completed', text: lines([
             ar ? `محتويات ${code(listing.display)} (${listing.total}):` : `Contents of ${code(listing.display)} (${listing.total}):`,
@@ -176,7 +178,7 @@ export class DesktopEngine {
           ]), data: listing };
         }
         case 'file_search': {
-          const found = await this.files.search(command.root ?? undefined, command.pattern, { limit: 30 });
+          const found = await this.files.search(command.root ? await this.folderPath(command.root, base) : undefined, command.pattern, { limit: 30 });
           return { status: 'completed', text: lines([
             found.hits.length ? (ar ? `وجدت ${found.hits.length} نتيجة لـ«${command.pattern}» في ${code(this.policy.display(found.root))}${found.truncated ? ' (القائمة مقتطعة)' : ''}:` : `Found ${found.hits.length} result(s) for “${command.pattern}” in ${code(this.policy.display(found.root))}${found.truncated ? ' (truncated)' : ''}:`) : (ar ? `لم أجد شيئًا باسم «${command.pattern}» في ${code(this.policy.display(found.root))} (فحصت ${found.scanned} عنصرًا).` : `Nothing named “${command.pattern}” in ${code(this.policy.display(found.root))} (scanned ${found.scanned} items).`),
             ...found.hits.map(hit => `- ${hit.kind === 'folder' ? '📁' : '📄'} ${code(hit.display)}`),
@@ -289,15 +291,18 @@ export class DesktopEngine {
     }
   }
 
+  /** A folder word from the owner: «المشاريع» is the projects folder, a project name is its path, anything else is a path. */
+  private async folderPath(folder: string, base?: string): Promise<string> {
+    if (PROJECTS_WORD.test(folder.trim())) return this.projects.ensureRoot();
+    const project = await this.projects.find(folder);
+    return this.policy.resolve(project ? project.path : folder, { base, allowRoot: true });
+  }
+
   /** «ملف X في Y»: a name inside a folder word, a path, or the primary root. */
   private async targetPath(name: string, folder: string | null, base?: string): Promise<string> {
     const cleaned = name.trim();
     if (!cleaned) throw new DesktopError('DESKTOP_PATH_REQUIRED', 'يلزم اسم الملف أو المجلد.');
-    if (folder) {
-      const project = await this.projects.find(folder);
-      const parent = project ? project.path : folder;
-      return this.policy.resolve(join(await this.policy.resolve(parent, { base, allowRoot: true }), cleaned));
-    }
+    if (folder) return this.policy.resolve(join(await this.folderPath(folder, base), cleaned));
     return this.policy.resolve(cleaned, { base: base ?? (await this.projects.ensureRoot()) });
   }
 

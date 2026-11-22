@@ -23,10 +23,19 @@ describe('actual authenticated Forge with mocked model transport and real isolat
     return Response.json({ model: body.model, choices: [{ message: { content: JSON.stringify(payload) }, finish_reason: 'stop' }], usage: { prompt_tokens: 17, completion_tokens: 23 } });
   });
   function responseSlot() { let resolve!: (reply: Reply) => void; const promise = new Promise<Reply>(done => { resolve = done; }); const slot = { promise, resolve: (reply: Reply) => { pendingReplies.delete(slot); resolve(reply); } }; replies.push(slot); pendingReplies.add(slot); return slot; }
-  // Independent injected fixture cases have independent local peer addresses.
-  // This suite tests owner/lineage semantics, not the production IP rate limit.
+  // Independent injected fixture cases have independent local peer addresses. Since 2026-11-21 the server keys its
+  // rate limits by the authenticated account (apps/server/src/request-rate-limit.ts), so the per-route budgets (10 Forge
+  // starts a minute) are shared by this suite's single owner: a 429 is waited out once, as a client would, and retried.
+  // This suite tests owner/lineage semantics, not the production rate limit.
   const peer = () => `127.0.0.${fixtureAddress++}`;
-  const post = (url: string, payload: unknown, session = cookie, key = randomUUID()) => application!.app.inject({ method: 'POST', url, headers: { ...headers(session), 'idempotency-key': key }, remoteAddress: peer(), payload: payload as any });
+  const inject = (url: string, payload: unknown, session: string, key: string) => application!.app.inject({ method: 'POST', url, headers: { ...headers(session), 'idempotency-key': key }, remoteAddress: peer(), payload: payload as any });
+  const post = async (url: string, payload: unknown, session = cookie, key = randomUUID()) => {
+    const first = await inject(url, payload, session, key);
+    if (first.statusCode !== 429) return first;
+    const retryAfter = Number(first.headers['retry-after']);
+    await delay(Math.min(61, Math.max(1, Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 60)) * 1000 + 100);
+    return inject(url, payload, session, key);
+  };
   async function detail(id: string) { const response = await application!.app.inject({ url: `/api/skills/${id}`, headers: headers() }); expect(response.statusCode, response.body).toBe(200); return response.json().skill as Version; }
   async function imported(slug: string, version: string, active = true) {
     const folder = join(directory, randomUUID()); await mkdir(folder);

@@ -1,5 +1,6 @@
 package com.ahmadalwakai.wasla
 
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -160,6 +161,6 @@ class ModelsTest {
         assertFalse(isUuid(null))
         assertTrue(mohassanTextFits("م".repeat(4_000)))
         assertFalse(mohassanTextFits("م".repeat(4_001)))
-        assertEquals(1, "😀".codePoints())
+        assertEquals(1, "😀".codePointLength())
     }
 }

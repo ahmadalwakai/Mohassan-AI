@@ -25,8 +25,9 @@ const MAX_LABEL = 200;
 export type TurnType = 'new_request' | 'topic_change' | 'follow_up_property' | 'follow_up_entity' | 'reference'
   | 'correction' | 'field_edit' | 'card_answer' | 'compound' | 'small_talk' | 'ambiguous';
 export type PropertyName = 'population' | 'capital' | 'area' | 'currency' | 'language' | 'leader' | 'price'
-  | 'weather' | 'age' | 'height' | 'match' | 'founded';
-export type EditableField = 'date' | 'clock' | 'place' | 'budget' | 'language';
+  | 'weather' | 'age' | 'height' | 'match' | 'founded' | 'inventor' | 'duration';
+/** 'format' and 'detail' are reformulations of the last answer («كجدول», «فصّل أكثر»): same evidence, another template. */
+export type EditableField = 'date' | 'clock' | 'place' | 'budget' | 'language' | 'format' | 'detail';
 /** 'country' marks properties of a state (currency, language, leader, capital): «its currency» after a capital question means the country, not the city. */
 type OperandKind = 'place' | 'country' | 'person' | 'thing';
 
@@ -100,7 +101,8 @@ const PROPERTIES: PropertyForms[] = [
     phraseAr: 'عدد سكان', phraseEn: 'population of', appliesTo: ['place'] },
   { name: 'capital', ar: ['عاصمه'], arPronoun: [], en: ['capital of', 'capital'], enPronoun: /\b(?:its|their) capital\b/u,
     phraseAr: 'عاصمة', phraseEn: 'capital of', appliesTo: ['country'], answerKind: 'place' },
-  { name: 'area', ar: ['مساحه'], arPronoun: [], en: ['area of', 'area'], enPronoun: /\b(?:its|their) area\b|\bhow big is (?:it|that)\b/u,
+  // A bare English «area» is a region in Ads sentences («area: Cardiff», real rq061), so only «area of» and the pronoun forms count.
+  { name: 'area', ar: ['مساحه'], arPronoun: [], en: ['area of'], enPronoun: /\b(?:its|their) area\b|\bhow big is (?:it|that)\b/u,
     phraseAr: 'مساحة', phraseEn: 'area of', appliesTo: ['place'] },
   { name: 'currency', ar: ['عمله'], arPronoun: [], en: ['currency of', 'currency'], enPronoun: /\b(?:its|their) currency\b/u,
     phraseAr: 'عملة', phraseEn: 'currency of', appliesTo: ['country'] },
@@ -121,6 +123,13 @@ const PROPERTIES: PropertyForms[] = [
     enPronoun: /\b(?:its|their) (?:next )?(?:match|game)\b/u, phraseAr: 'مباراة', phraseEn: 'next match of', appliesTo: ['thing'] },
   { name: 'founded', ar: ['تاريخ تاسيس', 'تاسيس'], arPronoun: [], en: ['founding date of', 'founded'],
     enPronoun: /\bwhen was (?:it|she|he) founded\b/u, phraseAr: 'تاريخ تأسيس', phraseEn: 'founding date of', appliesTo: ['place', 'thing'] },
+  // «من اخترع الهاتف؟» (real rq006): the verb is the property word and what follows it is the entity.
+  { name: 'inventor', ar: ['مخترع', 'اخترع', 'مؤسس', 'اسس'], arPronoun: [], en: ['inventor of', 'invented', 'founder of', 'who founded'],
+    enPronoun: /\bwho (?:invented|founded|created|made) (?:it|that|them)\b|\b(?:its|their) (?:inventor|founder)\b/u,
+    phraseAr: 'مخترع', phraseEn: 'inventor of', appliesTo: ['thing'] },
+  // «كم تستغرق عملية المياه البيضاء؟» (real rq018).
+  { name: 'duration', ar: ['مده', 'تستغرق', 'يستغرق', 'كم تاخذ', 'كم ياخذ'], arPronoun: [], en: ['duration of', 'how long does', 'how long is', 'how long will'],
+    enPronoun: /\bhow long (?:does|will|did) (?:it|that) take\b|\b(?:its|their) duration\b/u, phraseAr: 'مدة', phraseEn: 'duration of', appliesTo: ['thing'] },
 ];
 const PROPERTY_BY_NAME = new Map(PROPERTIES.map(forms => [forms.name, forms]));
 
@@ -137,7 +146,7 @@ const PRONOUN_FORMS = new Map<PropertyName, string[]>(PROPERTIES.map(forms =>
 
 const LEADS = new Set(['طيب', 'طب', 'حسنا', 'تمام', 'اوكي', 'ok', 'okay', 'well', 'and', 'so', 'also', 'و', 'ف', 'ثم']);
 const QUESTION_WORDS = new Set(['ما', 'ماذا', 'من', 'متي', 'كم', 'اين', 'هل', 'ماهي', 'ماهو', 'هو', 'هي', 'يبلغ', 'حاله', 'قل', 'لي',
-  'اعطني', 'اخبرني', 'ايه', 'ايش', 'وش', 'شو', 'شنو', 'مين', 'وين', 'كام', 'ليش', 'ليه', 'لماذا', 'كيف',
+  'اعطني', 'اخبرني', 'ايه', 'ايش', 'وش', 'شو', 'شنو', 'مين', 'وين', 'كام', 'ليش', 'ليه', 'لماذا', 'كيف', 'ذاكرتي', 'ذاكرتك', 'الذاكره',
   'what', 'whats', "what's", 'who', 'whos', "who's", 'when', 'where', 'how', 'is', 'are', 'was', 'were', 'tell', 'me',
   'about', 'much', 'many', 'do', 'does', 'you', 'know', 'give', 'the', 'a', 'an']);
 const PREPOSITIONS = new Set(['في', 'عن', 'ل', 'من', 'علي', 'of', 'in', 'for', 'at', 'about', 'the', 'on']);
@@ -154,6 +163,8 @@ const ORDINALS: Record<string, number> = {
   التاسع: 9, التاسعه: 9, العاشر: 10, العاشره: 10,
   first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10,
   '1st': 1, '2nd': 2, '3rd': 3, '4th': 4, '5th': 5,
+  // −1 is the last displayed result («الأخير», "the last one").
+  الاخير: -1, الاخيره: -1, اخير: -1, last: -1,
 };
 const REFERENCE_NOUNS = new Set(['المدينه', 'مدينه', 'الخبر', 'خبر', 'النتيجه', 'نتيجه', 'الخيار', 'خيار', 'الرابط', 'رابط', 'العنصر',
   'البند', 'رقم', 'number', 'item', 'option', 'result', 'link', 'no']);
@@ -172,6 +183,21 @@ const SMALL_TALK = /^(?:شكرا(?: لك| جزيلا| كثيرا)?|مشكور|ت
 const APPROVE = /^(?:نعم|اي|ايوه|ايوا|اجل|تمام|طيب|حسنا|موافق|اوافق|اكيد|ماشي|يلا|لا|yes|yeah|yep|ok(?:ay)?|sure|fine|agreed|approved?|no|nope)(?!\p{L})/u;
 const CONTINUE = /(?:^|[\s،,])(?:تابع|اكمل|كمل|استمر|امض|واصل|نفذ|go ahead|continue|proceed|carry on|do it|resume)(?!\p{L})/u;
 const DONE = /(?:^|[\s،,])(?:تم|خلصت|انتهيت|سجلت(?: الدخول)?|دخلت|done|finished|logged in|signed in|i'm in|im in)(?!\p{L})/u;
+/** Questions about Mohassan itself («من صنعك؟», "are you groq ai?", real rq084–rq087) go to the local conversation, never to a search. */
+const ABOUT_ASSISTANT = /\b(?:who (?:made|created|built|trained|owns) you|whos? (?:create|created|made|built) you|are you (?:an? |the )?(?:ai|bot|robot|human|model|groq|chatgpt|gpt|claude)|what (?:can|do) you do|what are you|who are you|smarter,? (?:chatgpt|gpt|claude) or you|upgrade you)\b|(?:^|\s)(?:من (?:صنعك|انشاك|صممك|بناك|دربك|انت)|ما (?:هي )?قدراتك|ماذا تستطيع|هل (?:انت|تستطيع|تقدر|يمكنك)|ايش تقدر|شو بتقدر|وش تقدر)(?=\s|$)/u;
+/** The whole message is a go-ahead («تابع», "go on") with no host step to answer: the code resumes or asks, and nothing is searched. */
+const GO_AHEAD_ONLY = /^(?:(?:طيب|تمام|حسنا|موافق|اوكي|ok|okay|yes|sure|fine)[،,\s]+)?(?:تابع|اكمل|كمل|استمر|واصل|امض|نفذ|continue|go on|go ahead|proceed|carry on|resume|next)(?:\s+(?:من فضلك|please))?$/u;
+const CONTINUE_START = /^(?:تابع|اكمل|كمل|استمر|واصل|continue|go on|go ahead|proceed|carry on|resume)(?!\p{L})/u;
+/** «فصّل أكثر», «بالإنجليزي», «كجدول»: the last answer again, from the same evidence, in another shape. The whole message must be the request. */
+const REFORMULATIONS: ReadonlyArray<readonly [RegExp, { field: EditableField; value: string }]> = [
+  [/^(?:(?:فصل|وضح|اشرح|زد|اعطني|قل لي|اريد)\s+)?(?:اكثر|بالتفصيل|تفاصيل(?: اكثر)?|المزيد(?: من التفاصيل)?)$|^(?:more|more details?|elaborate|expand(?: on (?:it|that))?|tell me more|in (?:more )?detail|go deeper)$/u, { field: 'detail', value: 'more' }],
+  [/^(?:اختصر(?:ها|ه)?|لخص(?:ها|ه)?|باختصار|اقصر|بايجاز|مختصر)$|^(?:shorter|briefly|in short|summari[sz]e (?:it|that)|tl;?dr|make it shorter)$/u, { field: 'detail', value: 'less' }],
+  [/^(?:بال(?:عربي|عربيه|فصحي)|ترجم(?:ها|ه)?(?: (?:الي|ل))? ?(?:ال)?عربي[ه]?)$|^in arabic$/u, { field: 'language', value: 'ar' }],
+  [/^(?:بال(?:انجليزي|انجليزيه|انقليزي)|ترجم(?:ها|ه)?(?: (?:الي|ل))? ?(?:ال)?انجليزي[ه]?)$|^(?:in english|translate (?:it|that)(?: to english)?)$/u, { field: 'language', value: 'en' }],
+  [/^(?:كجدول|في جدول|علي شكل جدول|بجدول)$|^(?:as a table|in a table|table format)$/u, { field: 'format', value: 'table' }],
+  [/^(?:كقائمه|كنقاط|نقاط|بالنقاط|علي شكل نقاط)$|^(?:as a list|bullet points|as bullets|in bullets)$/u, { field: 'format', value: 'list' }],
+  [/^(?:خطوات|كخطوات|خطوه بخطوه)$|^(?:as steps|step by step|in steps)$/u, { field: 'format', value: 'steps' }],
+];
 /** «افتح موقعًا واعرض لي محتواه»: a browser command whose target is only a generic noun must ask which site. */
 const GENERIC_TARGET = /^(?:افتح|ادخل|اعرض|زر|open|visit|go to)\s+(?:لي\s+)?(?:(?:ال)?موقعا?|(?:ال)?صفحه|(?:ال)?رابط|(?:a|the|some|any)\s+(?:website|site|web ?page|page|link))(?=$|\s+(?:ثم|and|then|لي)(?!\p{L})|\s+و(?:اعرض|اقرا|ابحث|افتح|قل|اخبرني|لخص|انسخ))/u;
 const CLOCK = /(?:الساعه|الساعة)\s*\d{1,2}(?::\d{2})?(?:\s*(?:صباحا|مساء|ظهرا|عصرا|ليلا|ص|م)(?!\p{L}))?|\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/iu;
@@ -329,8 +355,15 @@ function findOrdinal(folded: readonly string[]): number | null {
   return null;
 }
 
+/** The displayed result an ordinal points at; −1 is the last one. */
+function pointedResult(state: ConversationStateV2, ordinal: number): HostResult | null {
+  const index = ordinal === -1 ? state.results.length : ordinal;
+  return state.results.find(item => item.index === index) ?? null;
+}
+
 function correctionValueStart(folded: readonly string[]): number | null {
-  let index = ['لا', 'no'].includes(folded[0] ?? '') ? 1 : 0;
+  let index = 0;
+  while (['لا', 'no', 'غلط', 'خطا', 'wrong', 'oops', 'sorry', 'عفوا'].includes(folded[index] ?? '')) index++;
   if (folded[index] === 'i' && ['mean', 'meant'].includes(folded[index + 1] ?? '')) return index + 2;
   if (['اقصد', 'قصدت', 'قصدي', 'اعني', 'بل', 'rather', 'actually'].includes(folded[index] ?? '')) return index + 1;
   return null;
@@ -423,6 +456,17 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
       return result('card_answer');
     }
   }
+  const reformulation = REFORMULATIONS.find(([pattern]) => pattern.test(whole))?.[1];
+  if (reformulation) {
+    if (!top) return result('field_edit', { edit: reformulation, needs: 'missing_reference' });
+    // The subject is unchanged: v1's reading of «اختصر» as a new writing task is not kept as the base.
+    next.base = state.base;
+    return result('field_edit', { edit: reformulation, entity: top.entity, property: top.property, place: top.place, time: top.time });
+  }
+  if (GO_AHEAD_ONLY.test(whole)) {
+    next.base = state.base;
+    return result('ambiguous', { needs: 'missing_reference' });
+  }
   if (analyzeCompoundRequest(text).kind === 'compound') {
     next.results = [];
     return result('compound');
@@ -455,7 +499,7 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
     const valueWords = words.slice(correctionStart);
     const valueFolded = folded.slice(correctionStart);
     const ordinal = findOrdinal(valueFolded);
-    const pointed = ordinal !== null ? state.results.find(item => item.index === ordinal) ?? null : null;
+    const pointed = ordinal !== null ? pointedResult(state, ordinal) : null;
     if (ordinal !== null && !pointed) return result('correction', { needs: 'missing_reference' });
     const operands = promotePlace(operandsFrom(valueWords, valueFolded, 0, hints, Boolean(topForms?.locationValued)));
     const entity = pointed?.label ?? operands.entity;
@@ -471,10 +515,16 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
     });
   }
 
-  const hit = findProperty(folded, whole);
+  let hit = findProperty(folded, whole);
+  if (hit?.pronoun && hit.start > 0) {
+    // «الرياض مساحتها كم؟»: the pronoun binds to the entity named before it in the same message, not to an earlier turn.
+    const headFolded = folded.slice(0, hit.start);
+    const head = promotePlace(operandsFrom(words.slice(0, hit.start), headFolded, contentStart(headFolded), hints, false));
+    if (head.entity) hit = { ...hit, pronoun: false };
+  }
   const ordinal = state.results.length ? findOrdinal(folded) : null;
   if (ordinal !== null) {
-    const pointed = state.results.find(item => item.index === ordinal);
+    const pointed = pointedResult(state, ordinal);
     if (!pointed) return result('reference', { needs: 'missing_reference' });
     const reference = { index: pointed.index, label: pointed.label };
     const verb = folded[contentStart(folded)] ?? folded[0] ?? '';
@@ -560,7 +610,13 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
     }
   }
 
-  const fresh = promotePlace(operands);
+  let fresh = promotePlace(operands);
+  if (!fresh.entity && hit && !hit.pronoun && hit.start > 0) {
+    // "Tokyo population", «الرياض مساحتها»: the entity stands before the property word.
+    const head = words.slice(0, hit.start), headFolded = folded.slice(0, hit.start);
+    const before = promotePlace(operandsFrom(head, headFolded, contentStart(headFolded), hints, false));
+    if (before.entity) fresh = { entity: before.entity, place: fresh.place ?? before.place, time: fresh.time ?? before.time };
+  }
   const entity = fresh.entity;
   if (v1.kind === 'ambiguous' && v1.ambiguities.includes('missing_reference') && !entity) return result('ambiguous', { needs: 'missing_reference' });
   if (GENERIC_TARGET.test(whole) && !/https?:\/\/|www\./iu.test(text)) {
@@ -568,9 +624,11 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
     pushTopic(next, frameOf({ entity: null, property: null, lookup: false }));
     return result(top ? 'topic_change' : 'new_request', { needs: 'missing_value' });
   }
-  const publicLookup = !privateNow && v1.scope === 'public' && ['web_search', 'news'].includes(v1.intent);
+  // A question about Mohassan itself, a go-ahead with more words («أكمل في Chrome») or a bare acknowledgement («موافق») is never a public lookup.
+  const aboutSelf = ABOUT_ASSISTANT.test(whole) || CONTINUE_START.test(whole) || APPROVE.test(whole) && words.length <= 3;
+  const publicLookup = !privateNow && !aboutSelf && v1.scope === 'public' && ['web_search', 'news'].includes(v1.intent);
   // «ايه هي عاصمة كندا؟»: v1 knows no dialect question word and leaves no query, but a named property of a named entity is a public lookup.
-  const composed = !privateNow && !publicLookup && Boolean(hit && !hit.pronoun && entity) && ['web_search', 'news', 'unknown'].includes(v1.intent)
+  const composed = !privateNow && !aboutSelf && !publicLookup && Boolean(hit && !hit.pronoun && entity) && ['web_search', 'news', 'unknown'].includes(v1.intent)
     && v1.sourceAssessment?.scope !== 'private';
   const lookup = publicLookup || composed;
   next.results = [];

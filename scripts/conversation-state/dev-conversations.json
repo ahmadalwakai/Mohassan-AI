@@ -144,6 +144,50 @@
     { "id": "c32", "dialect": "msa", "about": "continue after a writing card (real rq096)", "turns": [
       { "text": "اكتب رسالة بريد احترافية", "expect": { "type": ["new_request"], "query": null } },
       { "text": "تابع", "pending": { "kind": "question_card", "id": "writer-card", "fields": ["format"] }, "expect": { "type": ["card_answer"], "query": null } }
+    ]},
+    { "id": "c33", "dialect": "msa", "about": "inventor property (real rq006)", "turns": [
+      { "text": "من اخترع الهاتف؟", "expect": { "type": ["new_request"], "property": "inventor", "entity": "الهاتف", "query": { "contains": ["الهاتف"] } } },
+      { "text": "ومن اخترع الراديو؟", "expect": { "type": ["follow_up_entity"], "query": { "contains": ["الراديو"], "notContains": ["الهاتف"] } } },
+      { "text": "ومتى اخترعه؟", "expect": { "type": ["follow_up_property"], "query": { "contains": ["الراديو"] } } }
+    ]},
+    { "id": "c34", "dialect": "msa", "about": "duration property (real rq018)", "turns": [
+      { "text": "كم تستغرق عملية المياه البيضاء؟", "expect": { "type": ["new_request"], "property": "duration", "query": { "contains": ["المياه البيضاء"] } } }
+    ]},
+    { "id": "c35", "dialect": "msa", "about": "reformulations keep the subject and need no new lookup", "turns": [
+      { "text": "ما هو الذكاء الاصطناعي؟", "expect": { "type": ["new_request"], "query": { "contains": ["الذكاء"] } } },
+      { "text": "فصّل أكثر", "expect": { "type": ["field_edit"], "edit": "detail", "query": null } },
+      { "text": "بالإنجليزي", "expect": { "type": ["field_edit"], "edit": "language", "query": null } },
+      { "text": "كجدول", "expect": { "type": ["field_edit"], "edit": "format", "query": null } },
+      { "text": "وما تاريخ تأسيسه؟", "expect": { "type": ["follow_up_property"], "property": "founded", "query": { "contains": ["الذكاء"] } } }
+    ]},
+    { "id": "c36", "dialect": "en", "about": "English reformulations", "turns": [
+      { "text": "What is photosynthesis?", "expect": { "type": ["new_request"], "query": { "contains": ["photosynthesis"] } } },
+      { "text": "tell me more", "expect": { "type": ["field_edit"], "edit": "detail", "query": null } },
+      { "text": "in Arabic", "expect": { "type": ["field_edit"], "edit": "language", "query": null } },
+      { "text": "step by step", "expect": { "type": ["field_edit"], "edit": "format", "query": null } }
+    ]},
+    { "id": "c37", "dialect": "msa", "about": "a go-ahead with nothing pending asks what to continue (real rq096, rq101)", "turns": [
+      { "text": "تابع", "expect": { "type": ["ambiguous"], "needs": "missing_reference", "query": null } },
+      { "text": "موافق، تابع", "expect": { "type": ["ambiguous", "new_request", "topic_change"], "query": null } }
+    ]},
+    { "id": "c38", "dialect": "mixed", "about": "questions about the assistant are never searched (real rq037, rq084–rq087)", "turns": [
+      { "text": "ما هي قدراتك", "expect": { "type": ["new_request", "small_talk"], "query": null } },
+      { "text": "whos create you", "expect": { "type": ["new_request", "topic_change", "small_talk"], "query": null } },
+      { "text": "are you groq ai ?", "expect": { "type": ["new_request", "topic_change", "small_talk"], "query": null } },
+      { "text": "ما عاصمة اليابان؟", "expect": { "type": ["new_request", "topic_change"], "query": { "contains": ["اليابان"] } } }
+    ]},
+    { "id": "c39", "dialect": "msa", "about": "the last displayed result", "turns": [
+      { "text": "ما أكبر ثلاث مدن في اليابان؟", "expect": { "type": ["new_request"] }, "shown": [{ "label": "طوكيو", "kind": "place" }, { "label": "يوكوهاما", "kind": "place" }, { "label": "أوساكا", "kind": "place" }] },
+      { "text": "افتح الأخير", "expect": { "type": ["reference"], "reference": 3, "query": null } },
+      { "text": "وكم عدد سكان الأخيرة؟", "expect": { "type": ["reference"], "reference": 3, "query": { "contains": ["أوساكا"] } } }
+    ]},
+    { "id": "c40", "dialect": "en", "about": "entity before the property word", "turns": [
+      { "text": "Tokyo population", "expect": { "type": ["new_request"], "property": "population", "entity": "Tokyo", "query": { "contains": ["Tokyo"] } } },
+      { "text": "and its area?", "expect": { "type": ["follow_up_property"], "property": "area", "query": { "contains": ["Tokyo"] } } }
+    ]},
+    { "id": "c41", "dialect": "gulf", "about": "Gulf correction with غلط", "turns": [
+      { "text": "متى مباراة الهلال؟", "expect": { "type": ["new_request"], "query": { "contains": ["الهلال"] } } },
+      { "text": "غلط، أقصد الاتحاد", "expect": { "type": ["correction"], "query": { "contains": ["الاتحاد"], "notContains": ["الهلال"] } } }
     ]}
   ]
 }

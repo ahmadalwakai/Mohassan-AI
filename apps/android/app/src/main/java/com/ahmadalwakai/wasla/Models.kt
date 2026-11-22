@@ -29,7 +29,7 @@ fun isUuid(value: String?): Boolean = value != null && UUID_PATTERN.matches(valu
 fun newRequestId(): String = UUID.randomUUID().toString().lowercase()
 
 /** Counts what the computer counts: Unicode code points, as Python does. */
-fun String.codePoints(): Int = codePointCount(0, length)
+fun String.codePointLength(): Int = codePointCount(0, length)
 
 class WaslaException(val kind: Kind, message: String, val status: Int = 0) : Exception(message) {
     enum class Kind { INVALID_ADDRESS, INVALID_FINGERPRINT, INVALID_PAIRING_CODE, INVALID_RESPONSE, NOT_PAIRED, CERTIFICATE, STORAGE, SERVER, MESSAGE, NETWORK }
@@ -61,7 +61,7 @@ data class ServerIdentity(val baseUrl: String, val fingerprint: String, val devi
         fun validate(address: String, fingerprint: String, deviceId: String = "", name: String = "الكمبيوتر"): ServerIdentity {
             val clean = address.trim()
             if (clean.isEmpty() || '\\' in clean || '%' in clean || clean.any { it.isWhitespace() || it.code < 32 }) throw WaslaException.invalidAddress()
-            val uri = try { URI(clean) } catch (_: Exception) { throw WaslaException.invalidAddress() }
+            val uri = try { URI(clean) } catch (ignored: Exception) { throw WaslaException.invalidAddress() }
             val host = uri.host
             if (!"https".equals(uri.scheme, ignoreCase = true) || host.isNullOrEmpty() || uri.rawUserInfo != null
                 || uri.rawQuery != null || uri.rawFragment != null || !(uri.rawPath.isNullOrEmpty() || uri.rawPath == "/")
@@ -105,12 +105,12 @@ object PairingCode {
 /** An https URL with a host and no credentials, control characters or backslashes; anything else is not opened. */
 fun safeHttpsUrl(value: String?): String? {
     if (value.isNullOrBlank() || '\\' in value || value.any { it.code < 32 || it.code == 127 }) return null
-    val uri = try { URI(value) } catch (_: Exception) { return null }
+    val uri = try { URI(value) } catch (ignored: Exception) { return null }
     if (!"https".equals(uri.scheme, ignoreCase = true) || uri.host.isNullOrEmpty() || uri.rawUserInfo != null) return null
     return uri.toString()
 }
 
-fun hostOf(url: String?): String = try { URI(url ?: "").host ?: "" } catch (_: Exception) { "" }
+fun hostOf(url: String?): String = try { URI(url ?: "").host ?: "" } catch (ignored: Exception) { "" }
 
 // MARK: - Pairing and status
 

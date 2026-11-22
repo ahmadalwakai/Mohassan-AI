@@ -8,7 +8,7 @@
  * Each stage is followed by one memory sample of this process tree (scripts/perf/resource-sampler.ps1 -Once, role `browser`):
  *   started      the browser is running, no page yet
  *   open         N conversations opened and left idle (the server keeps at most 4 per owner)
- *   closed       the idle sweep closed them (idlePageMs is 15 s here; the server default is 15 min, proposed)
+ *   closed       the idle sweep closed them (idlePageMs is 15 s here; the server default is 30 min, proposed)
  *   restored     one conversation opened its page again, as «استعادة» does
  * --public opens real pages (example.com, en.wikipedia.org, bbc.com, gov.uk) instead of the local fixture, which is
  * closer to the owner's day but depends on the network. Both runs write results.json and README.md under --out.
@@ -105,6 +105,6 @@ const name = publicPages ? 'public' : 'local';
 await writeFile(path.join(out, `results-${name}.json`), `${JSON.stringify(results, null, 2)}\n`);
 const row = (stage: typeof stages[number]) => `| ${stage.stage} | ${stage.pagesOpen} | ${stage.browser?.count ?? '—'} | ${stage.browser?.workingSetMB ?? '—'} | ${stage.browser?.privateMB ?? '—'} | ${stage.note ?? ''} |`;
 const table = ['| stage | pages open | chrome processes | working set MB | private MB | note |', '|---|---|---|---|---|---|', ...stages.map(row)].join('\n');
-await writeFile(path.join(out, `README-${name}.md`), `# Idle page close: memory (${name} pages, ${channel ?? 'bundled'})\n\nMeasured ${started}. Conversations: ${conversations}. idlePageMs in this run: ${IDLE_MS} (server default 15 min, proposed).\n\n${table}\n\n${failures.length ? `Failures:\n${failures.map(line => `- ${line}`).join('\n')}\n` : 'No failures.\n'}`);
+await writeFile(path.join(out, `README-${name}.md`), `# Idle page close: memory (${name} pages, ${channel ?? 'bundled'})\n\nMeasured ${started}. Conversations: ${conversations}. idlePageMs in this run: ${IDLE_MS} (server default 30 min, proposed).\n\n${table}\n\n${failures.length ? `Failures:\n${failures.map(line => `- ${line}`).join('\n')}\n` : 'No failures.\n'}`);
 console.log(table);
 if (failures.length) { console.error(failures.join('\n')); process.exitCode = 1; }

@@ -20,7 +20,7 @@ import kotlinx.serialization.encodeToString
 val WaslaStore.mohassanLinked: Boolean get() = mohassanLink?.linked == true
 val WaslaStore.mohassanBusy: Boolean get() = mohassanSending || mohassanConversation?.working == true
 /** While the assistant waits for an answer, an approval or a step, the card answers it, not the composer. */
-val WaslaStore.mohassanWaiting: Boolean get() = mohassanConversation?.status in MohassanStatus.WAITING
+val WaslaStore.mohassanWaiting: Boolean get() = mohassanConversation?.status?.let { it in MohassanStatus.WAITING } == true
 
 internal suspend fun WaslaStore.refreshMohassanLink() {
     val client = client ?: run { mohassanLink = null; return }

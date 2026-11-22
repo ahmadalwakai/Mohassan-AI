@@ -78,7 +78,7 @@ def main() -> None:
 
     folded = {name: tensor for name, tensor in tensors}
     holdout = LineShards(args.data, ["holdout-unseen"])
-    picked = [i for i in range(len(holdout)) if holdout.index[i][2] <= 360][: args.samples]
+    picked = [i for i in range(len(holdout)) if int(holdout.width_array[i]) <= 360][: args.samples]
     parity = []
     with torch.no_grad():
         for i in picked:

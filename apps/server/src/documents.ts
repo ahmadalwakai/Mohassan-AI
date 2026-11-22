@@ -20,7 +20,7 @@ export interface StoredDocument {
   id: string; conversationId: string | null; name: string; size: number; hash: string; pages: number;
   source: DocumentSource; theme: string | null; createdAt: string;
 }
-export interface DocumentInput { name: string; bytes: Uint8Array }
+export interface DocumentInput { name: string; bytes: Buffer }
 export type DocumentEdit =
   | { op: 'merge'; name?: string }
   | { op: 'extract'; pages: number[] }

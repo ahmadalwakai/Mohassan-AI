@@ -1,0 +1,13 @@
+.panel { margin: 8px 0 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.panel summary { cursor: pointer; font-weight: 600; }
+.hint { color: var(--muted); font-size: 12px; margin: 8px 0; }
+.error { color: var(--alert, #b42318); margin: 6px 0; }
+.upload { display: inline-flex; flex-direction: column; gap: 4px; margin: 6px 0 10px; font-weight: 600; }
+.upload input { font: inherit; font-weight: 400; max-width: 100%; }
+.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.row { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.name { font-weight: 600; }
+.meta { font-size: 12px; color: var(--muted); }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.actions a, .actions button { font: inherit; font-size: 12px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--raised, transparent); color: inherit; text-decoration: none; cursor: pointer; }
+.actions button:disabled { opacity: .5; cursor: not-allowed; }

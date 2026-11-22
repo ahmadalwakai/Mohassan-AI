@@ -15,7 +15,9 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
   try {
     const fileGrant=path.length===4&&path[0]==='browser'&&path[1]==='files'&&path[3]==='grants'&&request.method==='POST';
     const desktopFiles=path.length===2&&path[0]==='desktop'&&path[1]==='files'&&request.method==='POST';
-    const limit=fileGrant?720000:path.length===2&&path[0]==='studio'&&path[1]==='images'?1500000:desktopFiles?2300000:16384;
+    const documentUpload=path.length===2&&path[0]==='documents'&&path[1]==='upload'&&request.method==='POST';
+    const chatImage=path.length===2&&path[0]==='chat'&&path[1]==='images'&&request.method==='POST';
+    const limit=fileGrant?720000:chatImage?7500000:path.length===2&&path[0]==='studio'&&path[1]==='images'?1500000:desktopFiles?2300000:documentUpload?14000000:path.length===1&&path[0]==='documents'&&request.method==='POST'?400000:16384;
     const tooLarge=()=>Response.json({error:{code:'PAYLOAD_TOO_LARGE',message:'حجم الطلب أكبر من المسموح.'}},{status:413});
     if (Number(request.headers.get('content-length') || '0') > limit) return tooLarge();
     let body:Uint8Array|undefined;
@@ -25,10 +27,11 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
       body=new Uint8Array(size);let offset=0;for(const part of parts){body.set(part,offset);offset+=part.byteLength;}
     }
     const learningImport=path.length===2&&path[0]==='learning'&&path[1]==='documents'&&request.method==='POST';
-    const response=await fetch(target,{method:request.method,headers,body:body as BodyInit|undefined,cache:'no-store',redirect:'manual',signal:AbortSignal.any([request.signal,AbortSignal.timeout(path[0]==='studio'&&request.method==='POST'?360000:path[0]==='executor'&&request.method==='POST'?180000:path[0]==='desktop'?(request.method==='POST'?930000:60000):learningImport?30000:['research','browser','google-ads','search'].includes(path[0]??'')?60000:15000)])});
+    const response=await fetch(target,{method:request.method,headers,body:body as BodyInit|undefined,cache:'no-store',redirect:'manual',signal:AbortSignal.any([request.signal,AbortSignal.timeout(path[0]==='chat'&&request.method==='POST'&&(path.length===1||path[path.length-1]==='messages')?150000:path[0]==='studio'&&request.method==='POST'?360000:path[0]==='executor'&&request.method==='POST'?180000:path[0]==='desktop'?(request.method==='POST'?930000:60000):learningImport?30000:['research','browser','google-ads','search','documents'].includes(path[0]??'')?60000:15000)])});
     const output=new Headers({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
     const contentType=response.headers.get('content-type');if(contentType)output.set('content-type',contentType);
-    if(path.length===6&&path[0]==='browser'&&path[1]==='files'&&path[3]==='grants'&&path[5]==='content'){
+    // Downloads keep their file name and are sandboxed: browser file grants and PDF documents.
+    if((path.length===6&&path[0]==='browser'&&path[1]==='files'&&path[3]==='grants'&&path[5]==='content')||(path.length===3&&path[0]==='documents'&&path[2]==='content')){
       const disposition=response.headers.get('content-disposition');
       if(disposition&&/^attachment; filename="[a-zA-Z0-9][a-zA-Z0-9._ -]{0,99}"; filename\*=UTF-8''[a-zA-Z0-9._% -]{1,1200}$/.test(disposition))output.set('Content-Disposition',disposition);
       output.set('Content-Security-Policy',"default-src 'none'; sandbox");

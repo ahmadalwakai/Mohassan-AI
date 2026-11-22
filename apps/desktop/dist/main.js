@@ -36,6 +36,7 @@ function loadConfig() {
         mode: flag('--lab') ? 'lab' : flag('--production') ? 'production' : saved.mode ?? 'dev',
         webUrl: saved.webUrl ?? 'http://127.0.0.1:3000',
         serverUrl: saved.serverUrl ?? 'http://127.0.0.1:4000',
+        labDir: saved.labDir ?? '.data/local-lab',
         autostartStack: saved.autostartStack ?? true,
         closeToTray: saved.closeToTray ?? true,
         startHidden: flag('--hidden') || (saved.startHidden ?? false),
@@ -75,6 +76,16 @@ async function reachable(url, timeoutMs = 1500) {
         return false;
     }
 }
+/** A stack already running answers on its API at once, even while the web dev server is compiling a page. */
+async function stackAlreadyRunning() {
+    for (let attempt = 0; attempt < 3; attempt++) {
+        if (await reachable(`${config.serverUrl}/health`, 2500) && await reachable(config.webUrl, 8000))
+            return true;
+        if (!await reachable(`${config.serverUrl}/health`, 2500))
+            return false;
+    }
+    return false;
+}
 function setSplash(text, detail = '', failed = false) {
     if (!splash || splash.isDestroyed())
         return;
@@ -91,7 +102,10 @@ function startStack() {
     const script = (0, node_path_1.join)(config.repoRoot, 'scripts', 'dev.mjs');
     const modeArgs = config.mode === 'lab' ? ['--local-lab'] : config.mode === 'production' ? ['--production'] : [];
     log(`starting stack: node ${script} ${modeArgs.join(' ')} (cwd ${config.repoRoot})`);
-    const child = (0, node_child_process_1.spawn)('node', [script, ...modeArgs], { cwd: config.repoRoot, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, MOHASSAN_DESKTOP_SHELL: '1', FORCE_COLOR: '0' } });
+    // The stack listens where this app expects it; a lab keeps its own folder so two labs never share one database.
+    const web = new URL(config.webUrl), api = new URL(config.serverUrl);
+    const env = { ...process.env, MOHASSAN_DESKTOP_SHELL: '1', FORCE_COLOR: '0', SERVER_PORT: api.port || '4000', PORT: web.port || '3000', WEB_ORIGIN: web.origin, ...(config.mode === 'lab' ? { MOHASSAN_LAB_DIR: config.labDir } : {}) };
+    const child = (0, node_child_process_1.spawn)('node', [script, ...modeArgs], { cwd: config.repoRoot, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env });
     child.stdout?.on('data', chunk => log(`[stack] ${String(chunk).trimEnd()}`));
     child.stderr?.on('data', chunk => log(`[stack!] ${String(chunk).trimEnd()}`));
     child.on('exit', code => {
@@ -212,7 +226,8 @@ async function boot(restart = false) {
     if (!restart && !splash)
         createSplash();
     const started = Date.now();
-    if (await reachable(config.webUrl)) {
+    setSplash('يبحث عن خدمة موحسن…', config.webUrl);
+    if (await stackAlreadyRunning()) {
         log(`web already running at ${config.webUrl}`);
         setSplash('موحسن يعمل بالفعل، يُفتح…');
         if (!mainWindow)

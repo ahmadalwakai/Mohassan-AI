@@ -31,6 +31,16 @@
       "url": "http://127.0.0.1:3001"
     },
     {
+      "name": "mohassan-desktop-lab",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set MOHASSAN_LAB_DIR=.data/desktop-lab&& set SERVER_PORT=4100&& set PORT=3100&& set WEB_ORIGIN=http://127.0.0.1:3100&& npm run dev:lab"
+      ],
+      "port": 3100,
+      "url": "http://127.0.0.1:3100"
+    },
+    {
       "name": "mohassan-lab-ads-v4",
       "runtimeExecutable": "cmd",
       "runtimeArgs": [

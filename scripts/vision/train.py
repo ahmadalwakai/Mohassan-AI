@@ -26,22 +26,40 @@ from model import DOWNSAMPLE, HEIGHT, OCRModel, greedy_decode  # noqa: E402
 
 
 class LineShards(Dataset):
-    def __init__(self, data: Path, names: list[str]) -> None:
+    """Compact index over shards: arrays for offsets and widths, plain lists for labels, so data loader workers stay small."""
+
+    def __init__(self, data: Path, names: list[str], max_width: int | None = None) -> None:
         self.data, self.names = data, names
-        self.index: list[tuple[int, int, int, int]] = []  # shard, offset, width, line position
-        self.lines: list[list[dict]] = []
+        shards, offsets, widths = [], [], []
+        self.labels: list[str] = []
+        self.texts: list[str] = []
+        self.kinds: list[str] = []
+        self.fonts: list[str] = []
+        self.sizes: list[int] = []
         for shard, name in enumerate(names):
             meta = json.loads((data / f"{name}.json").read_text(encoding="utf-8"))
-            self.lines.append(meta["lines"])
-            for position, line in enumerate(meta["lines"]):
-                self.index.append((shard, line["o"], line["w"], position))
+            for line in meta["lines"]:
+                if max_width and line["w"] > max_width:
+                    continue
+                shards.append(shard)
+                offsets.append(line["o"])
+                widths.append(line["w"])
+                self.labels.append(line["l"])
+                self.texts.append(line["t"])
+                self.kinds.append(line["k"])
+                self.fonts.append(line["f"])
+                self.sizes.append(line["s"])
+            del meta
+        self.shards = np.asarray(shards, dtype=np.int16)
+        self.offsets = np.asarray(offsets, dtype=np.int64)
+        self.width_array = np.asarray(widths, dtype=np.int32)
         self._maps: dict[int, np.memmap] = {}
 
     def __len__(self) -> int:
-        return len(self.index)
+        return int(self.width_array.shape[0])
 
     def widths(self) -> list[int]:
-        return [w for _, _, w, _ in self.index]
+        return self.width_array.tolist()
 
     def _map(self, shard: int) -> np.memmap:
         if shard not in self._maps:
@@ -49,9 +67,9 @@ class LineShards(Dataset):
         return self._maps[shard]
 
     def __getitem__(self, item: int):
-        shard, offset, width, position = self.index[item]
+        shard, offset, width = int(self.shards[item]), int(self.offsets[item]), int(self.width_array[item])
         pixels = np.asarray(self._map(shard)[offset:offset + HEIGHT * width]).reshape(HEIGHT, width)
-        line = self.lines[shard][position]
+        line = {"l": self.labels[item], "t": self.texts[item], "k": self.kinds[item], "f": self.fonts[item], "s": self.sizes[item], "w": width}
         return pixels, encode(line["l"]), line
 
 
@@ -143,6 +161,7 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--shards", default="")
+    parser.add_argument("--max-width", type=int, default=800, help="skip wider training lines; caps the memory of the widest batches")
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(args.seed)
@@ -152,7 +171,7 @@ def main() -> None:
     names = [p.stem for p in sorted(args.data.glob("shard-*.json"))]
     if args.shards:
         names = [n for n in names if n in args.shards.split(",")]
-    train = LineShards(args.data, names)
+    train = LineShards(args.data, names, args.max_width)
     holdouts = {name: LineShards(args.data, [name]) for name in ("holdout-seen", "holdout-unseen") if (args.data / f"{name}.json").exists()}
     print(f"train lines {len(train)} from {len(names)} shards; holdouts {[(k, len(v)) for k, v in holdouts.items()]}", flush=True)
 
@@ -191,7 +210,7 @@ def main() -> None:
             fresh = [p.stem for p in sorted(args.data.glob("shard-*.json")) if p.stem not in names]
             if fresh:
                 names += fresh
-                train = LineShards(args.data, names)
+                train = LineShards(args.data, names, args.max_width)
                 widths = train.widths()
                 print(f"added shards {fresh}: {len(train)} train lines", flush=True)
         loader = DataLoader(train, batch_sampler=bucket_batches(widths, args.batch, rng), collate_fn=collate, num_workers=args.workers, pin_memory=use_amp, persistent_workers=False)

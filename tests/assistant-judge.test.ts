@@ -1,0 +1,252 @@
+import { describe, expect, it } from 'vitest';
+import { cueWords, definitionForm, isFragment, judge, mentions, ownLines, relevance, sourceTitleWords, stem } from '../apps/server/src/assistant/judge.js';
+
+// Real replies of the 2026-11-22 run (artifacts/plan-2026-11-22/real-answers-2026-11-22T02-17-34.jsonl), shortened where noted.
+const SOURCE = (title: string, url: string) => `**المصدر:** [ويكيبيديا — ${title}](${url})`;
+const RQ016 = {
+  question: 'كم عدد سكان المغرب؟',
+  reply: [
+    'فيما انخفضت الأقلية اليهودية المغربية بشكل كبير ويصل عددها إلى نحو 6,000 (أنظر تاريخ اليهود في المغرب).',
+    '',
+    '**تفاصيل أخرى من نفس المصدر:**',
+    '- وحسب إحصاء سنة 2024، يبلغ عدد سكان المغرب ما يقارب 37 مليون نسبة بزيادة 8 في المائة مقارنة بنتائج إحصاء عام 2014.',
+    '- حسب إحصاء سنة 2024، يبلغ عدد سكان المغرب 330 828 33.',
+    '',
+    SOURCE('التركيبة السكانية في المغرب', 'https://ar.wikipedia.org/wiki/x'),
+  ].join('\n'),
+};
+const RQ018 = {
+  question: 'كم تستغرق عملية المياه البيضاء؟',
+  reply: [
+    'معركة المياة البيضاء جزء من الحروب العثمانية في أوروبا والحروب العثمانية الألبانية التاريخ 2 سبتمبر 1457م /12 شوال 861 هـ الموقع شمال وسط ألبانيا …',
+    '',
+    '**تفاصيل أخرى من نفس المصدر:**',
+    '- كانت معركة المياه البيضاء مهمة للمقاومة بالتمرد الالباني ضد الدولة العثمانية.',
+    '',
+    SOURCE('معركة المياه البيضاء', 'https://ar.wikipedia.org/wiki/y'),
+  ].join('\n'),
+};
+const RQ037 = {
+  question: 'ما هي قدراتك',
+  reply: [
+    'ويكي بيانات أيقظ قدراتك واصنع مستقبلك هو كتاب من تأليف الدكتور إبراهيم الفقي.',
+    '',
+    '**تفاصيل أخرى من نفس المصدر:**',
+    '- "تلخيص كتاب أيقظ قدراتك ..',
+    '',
+    SOURCE('أيقظ قدراتك واصنع مستقبلك (كتاب)', 'https://ar.wikipedia.org/wiki/z'),
+  ].join('\n'),
+};
+const RQ019 = {
+  question: 'ما هي عملية الليزك؟',
+  reply: [
+    '5:11 فيديو لعملية الليزك من الأعراض الجانبية الشائعة بعد عملية الليزك نزيف مؤقت تحت الملتحمة تعنى كلمة الليزك تعديل شكل القرنية باستعمال الليزر …',
+    '',
+    SOURCE('ليزك', 'https://ar.wikipedia.org/wiki/l'),
+    '',
+    'ملاحظة: هذه معلومات عامة منقولة من المصدر، وليست تشخيصًا. للتشخيص والعلاج راجع طبيبًا مختصًا.',
+  ].join('\n'),
+};
+const RQ010 = {
+  question: 'What is the speed of light?',
+  reply: [
+    'By Vicky Stein last updated October 29, 2024 Beyond the limits of light: exploring the speed of light and the boundaries of faster-than-light travel When you purchase through links on our site, we may earn an affiliate commission.',
+    '',
+    '**تفاصيل أخرى من نفس المصدر:**',
+    '- The speed of light puts a speed limit on matter, lets us peer back into the history of our universe, and has deep implications for physics and space travel.',
+    '- Share Share this article Join the conversation Follow us Add us as a preferred source on Google Newsletter Subscribe to our newsletter The speed of light traveling through a vacuum is exactly 299,792,458 meters (983,571,056 feet) per second.',
+    '',
+    '**المصدر:** [space.com — How fast does light travel?](https://www.space.com/15830-light-speed.html)',
+  ].join('\n'),
+};
+const RQ005 = {
+  question: 'ما عاصمة اليابان؟',
+  reply: [
+    'طوكيو عاصمة اليابان وأكثر مدن العالم اكتظاظًا بالسكان.',
+    '',
+    '**تفاصيل أخرى من نفس المصدر:**',
+    '- بعد انهيار سلالة تشينغ، سمحت لامركزية السلطة وتحسين تقنيات النقل والاتصالات لكل من القوميين الصينيين والشيوعيين الصينيين بنقل العواصم بسرعة.',
+    '',
+    SOURCE('عاصمة', 'https://ar.wikipedia.org/wiki/c'),
+    '',
+    '**للمزيد:** [اليابان](https://ar.wikipedia.org/wiki/j) · [سفارة اليابان في البحرين](https://ar.wikipedia.org/wiki/e)',
+  ].join('\n'),
+};
+const RQ026 = {
+  question: 'ما عاصمة أستراليا؟',
+  reply: ['تقع في نصف الكرة الجنوبي جنوب شرق آسيا وغرب المحيط الهادي، عاصمتها كانبرا.', '', SOURCE('أستراليا', 'https://ar.wikipedia.org/wiki/a')].join('\n'),
+};
+const RQ027 = {
+  question: 'ما هو الذكاء الاصطناعي؟',
+  reply: ['الذكاء الاصطناعي (AI) هو تقنية تحويلية تمكن الآلات من أداء مهام حل المشكلات بطريقة تشبه البشر.', '', SOURCE('ذكاء اصطناعي', 'https://ar.wikipedia.org/wiki/ai')].join('\n'),
+};
+const RQ008 = {
+  question: 'ما هو أطول نهر في العالم؟',
+  reply: ['نهر النيل: أطول أنهار العالم.', '', '**تفاصيل أخرى من نفس المصدر:**', '- نهر المسيسيبي: أطول نهر في أمريكا الشمالية.', '', SOURCE('نهر', 'https://ar.wikipedia.org/wiki/r')].join('\n'),
+};
+const RQ006 = {
+  question: 'من اخترع الهاتف؟',
+  reply: ['وهذا يعني أن ألكسندر غراهام بيل فقط صنع الهاتف بناءً على فكرة اختراع وجدها في نموذج من نماذج اختراعات ميوتشي.', '', SOURCE('هاتف', 'https://ar.wikipedia.org/wiki/t')].join('\n'),
+};
+const RQ028 = {
+  question: 'What is photosynthesis?',
+  reply: ['But green plants and algae can use light energy to make their own food! This process called photosynthesis.', '', '**تفاصيل أخرى من نفس المصدر:**', '- Photosynthesis is the process by which plants make food from light.', '', '**المصدر:** [ويكيبيديا — Photosynthesis](https://en.wikipedia.org/wiki/p)'].join('\n'),
+};
+const codesOf = (verdict: ReturnType<typeof judge>) => verdict.codes.filter(code => code !== 'evidence_unavailable');
+
+describe('reply kinds', () => {
+  it('names a question card, an abstention, a computed value, a memory read, a list, a quote and a letter frame', () => {
+    expect(judge({ question: 'اكتب رسالة بريد احترافية', reply: 'أكتب لك الرسالة من قالب رسمي، والتفاصيل تبقى بكلماتك. أجب عن هذه الأسئلة:', status: 'waiting_user' }).kind).toBe('question');
+    expect(judge({ question: 'كم سعر الذهب اليوم؟', reply: 'لم أتمكن من الوصول إلى مصدر حديث ومرتبط بسؤالك «كم سعر الذهب اليوم» بعد تجربة البحث في الويب. إن أرسلت رابط موقع مناسب أفتحه وأقرأ المعلومة منه.' }).kind).toBe('abstain');
+    expect(judge({ question: 'كم يساوي 15 ضرب 23؟', reply: '15 * 23 = 345' })).toMatchObject({ kind: 'computed', decision: 'send' });
+    expect(judge({ question: 'من ذاكرتي، ما مدينتي المفضلة؟', reply: 'من الذاكرة: «مدينتي المفضلة هي مسقط»' })).toMatchObject({ kind: 'memory', decision: 'send' });
+    expect(judge({ question: 'من ذاكرتي، أعد لغتي المفضلة فقط.', reply: 'Arabic' })).toMatchObject({ kind: 'memory', decision: 'send' });
+    expect(judge({ question: 'لخّص لي أهم أخبار اليوم', reply: 'أهم العناوين الآن على الصفحة الرئيسية لـ**BBC** (bbc.com)، كما تظهر هناك دون أن أعيد صياغتها:\n\n1. [خبر أول](https://www.bbc.com/a)\n2. [خبر ثان](https://www.bbc.com/b)\n\nقل «اقرأ الخبر 2» مثلًا لأفتحه وأقرأه.' })).toMatchObject({ kind: 'list', decision: 'send' });
+    expect(judge({ question: 'افتح https://docs.python.org/3/tutorial/index.html واقرأ الصفحة', reply: 'من **Search — Python 3.15.2 documentation** (docs.python.org):\n\n> Searching for multiple words only shows matches that contain all words.\n\nقل «اقرأ المزيد» لأكمل.' }).kind).toBe('quote');
+    expect(judge({ question: 'تابع', reply: '**الموضوع:** رسالة\n\nإلى: أحمد' }).kind).toBe('composed');
+    expect(judge({ question: 'كيف حالك؟', reply: 'مرحبًا! كيف أساعدك؟' })).toMatchObject({ kind: 'fixed', decision: 'send' });
+    expect(judge({ question: 'hi', reply: 'Hello! How can I help?' })).toMatchObject({ kind: 'fixed', decision: 'send' });
+  });
+});
+
+describe('the lead against the question', () => {
+  it('promotes the sentence that answers «كم عدد سكان المغرب» over the one about a minority (rq016)', () => {
+    const verdict = judge(RQ016);
+    expect(verdict.kind).toBe('answer');
+    expect(verdict.codes).toContain('lead_not_best');
+    expect(verdict.decision).toBe('fix');
+    expect(verdict.best?.line).toBe(4);
+    expect(verdict.fixedReply?.split('\n')[0]).toMatch(/^وحسب إحصاء سنة 2024، يبلغ عدد سكان المغرب/u);
+    expect(verdict.fixedReply).toContain('- فيما انخفضت الأقلية اليهودية');
+    // The page's own words only: nothing was written that the reply did not already hold.
+    for (const line of verdict.fixedReply!.split('\n').filter(Boolean)) expect(RQ016.reply).toContain(line.replace(/^- /u, ''));
+  });
+
+  it('withholds a battle for a question about how long an eye operation takes (rq018)', () => {
+    const verdict = judge(RQ018);
+    expect(verdict.codes).toContain('duration_unit_missing');
+    expect(verdict.decision).toBe('withhold');
+    expect(verdict.withholdText).toMatch(/لم أجد في الصفحات/u);
+  });
+
+  it('withholds a web page about a book for a question about the assistant itself (rq037)', () => {
+    const verdict = judge(RQ037);
+    expect(verdict.codes).toContain('self_question_from_web');
+    expect(verdict.decision).toBe('withhold');
+  });
+
+  it('marks a timestamped fragment and a missing definition form for review, and still sends (rq019)', () => {
+    const verdict = judge(RQ019);
+    expect(verdict.codes).toEqual(expect.arrayContaining(['fragment_lead', 'definition_form_missing']));
+    expect(verdict.decision).toBe('send');
+  });
+
+  it('marks a connective-led lead for review (rq006) and an English «But …» lead with its definition (rq028)', () => {
+    expect(codesOf(judge(RQ006))).toEqual(['fragment_lead']);
+    const en = judge(RQ028);
+    expect(en.codes).toEqual(expect.arrayContaining(['fragment_lead', 'definition_form_missing', 'foreign_heading']));
+    expect(en.decision).toBe('fix');
+    expect(en.fixedReply).toContain('**More from the same source:**');
+  });
+
+  it('fixes the speed-of-light reply: the number sentence leads, the byline line goes, the chrome is cut (rq010)', () => {
+    const verdict = judge(RQ010);
+    expect(verdict.codes).toEqual(expect.arrayContaining(['byline_lead', 'site_chrome', 'foreign_heading', 'lead_not_best']));
+    expect(verdict.decision).toBe('fix');
+    expect(verdict.fixedReply?.split('\n')[0]).toMatch(/^The speed of light traveling through a vacuum is exactly 299,792,458 meters/u);
+    expect(verdict.fixedReply).not.toMatch(/Vicky Stein|Subscribe to our newsletter/u);
+    expect(verdict.fixedReply).toContain('**Source:**');
+  });
+
+  it('sends the clean answers as they are (rq005, rq026 with the implied page subject, rq027, rq008 superlative)', () => {
+    for (const input of [RQ005, RQ026, RQ027, RQ008]) {
+      const verdict = judge(input);
+      expect(codesOf(verdict), input.question).toEqual([]);
+      expect(verdict.decision, input.question).toBe('send');
+    }
+  });
+
+  it('uses the previous turn for a follow-up that names its subject with a pronoun', () => {
+    const verdict = judge({ question: 'وكم عدد سكانها؟', previous: 'ما عاصمة اليابان؟', reply: ['يبلغ عدد سكان اليابان نحو 125 مليون نسمة.', '', SOURCE('اليابان', 'https://ar.wikipedia.org/wiki/j')].join('\n') });
+    expect(codesOf(verdict)).toEqual([]);
+    expect(verdict.decision).toBe('send');
+  });
+
+  it('blocks a lead that names none of the subject words, and a number question with no number anywhere', () => {
+    const offTopic = judge({ question: 'ما عاصمة كندا؟', reply: ['تمتد الغابات على مساحات واسعة من البلاد.', '', SOURCE('غابة', 'https://ar.wikipedia.org/wiki/f')].join('\n') });
+    expect(offTopic.codes).toContain('lead_off_topic');
+    expect(offTopic.decision).toBe('withhold');
+    const noNumber = judge({ question: 'كم عدد سكان مصر؟', reply: ['مصر دولة عربية تقع في الركن الشمالي الشرقي من قارة أفريقيا.', '', SOURCE('مصر', 'https://ar.wikipedia.org/wiki/eg')].join('\n') });
+    expect(noNumber.codes).toContain('lead_needs_number');
+    expect(noNumber.decision).toBe('withhold');
+  });
+});
+
+describe('routes', () => {
+  it('marks an identity question met with a browsing abstention for review (rq084) and an English template to an Arabic request (rq022)', () => {
+    const identity = judge({ question: 'whos create you', reply: 'I haven’t performed this request. The search or browsing route did not verify the requested result. I have not confirmed anything.' });
+    expect(identity).toMatchObject({ kind: 'abstain', decision: 'send' });
+    expect(identity.codes).toContain('local_intent_abstained');
+    const template = judge({ question: 'ابحث عن Python pathlib documentation', reply: 'I could not reach results relevant to “Python pathlib documentation” after trying more than one search engine. Send a suitable website link or name the organization to search.' });
+    expect(template.codes).toContain('language_mismatch');
+    expect(template.decision).toBe('send');
+  });
+});
+
+describe('support against the evidence', () => {
+  const page = 'طوكيو عاصمة اليابان وأكثر مدن العالم اكتظاظًا بالسكان. تقع المدينة على خليج طوكيو.';
+  it('counts every own sentence found in the evidence, and blocks one found nowhere', () => {
+    const supported = judge({ ...RQ005, reply: ['طوكيو عاصمة اليابان وأكثر مدن العالم اكتظاظًا بالسكان.', '', SOURCE('عاصمة', 'https://ar.wikipedia.org/wiki/c')].join('\n'), evidence: [{ kind: 'page', text: page }] });
+    expect(supported.support).toEqual({ sentences: 1, supported: 1 });
+    expect(supported.codes).not.toContain('evidence_unavailable');
+    expect(supported.decision).toBe('send');
+    const invented = judge({ ...RQ005, reply: ['طوكيو عاصمة اليابان وأكثر مدن العالم اكتظاظًا بالسكان.', '', '**تفاصيل أخرى من نفس المصدر:**', '- يبلغ عدد سكان طوكيو أربعين مليون نسمة حسب تقديري.', '', SOURCE('عاصمة', 'https://ar.wikipedia.org/wiki/c')].join('\n'), evidence: [{ kind: 'page', text: page }] });
+    expect(invented.support).toEqual({ sentences: 2, supported: 1 });
+    expect(invented.codes).toContain('unsupported_sentence');
+    expect(invented.decision).toBe('withhold');
+  });
+
+  it('accepts fixed texts, memory items and ellipsis-joined quotes, and reports no measurement without evidence', () => {
+    const fixed = judge({ ...RQ005, reply: ['طوكيو عاصمة اليابان وأكثر مدن العالم اكتظاظًا بالسكان.', 'قرأت هذا من الصفحة المفتوحة في لوحة المتصفح.', '', SOURCE('عاصمة', 'https://ar.wikipedia.org/wiki/c')].join('\n'),
+      evidence: [{ kind: 'page', text: page }], fixedTexts: ['قرأت هذا من الصفحة المفتوحة في لوحة المتصفح.'] });
+    expect(fixed.support).toEqual({ sentences: 2, supported: 2 });
+    const joined = judge({ ...RQ005, reply: ['… اليابان وأكثر مدن العالم اكتظاظًا بالسكان … على خليج طوكيو.', '', SOURCE('عاصمة', 'https://ar.wikipedia.org/wiki/c')].join('\n'), evidence: [{ kind: 'page', text: page }] });
+    expect(joined.support).toEqual({ sentences: 1, supported: 1 });
+    expect(judge(RQ005).support).toBeNull();
+    expect(judge(RQ005).codes).toContain('evidence_unavailable');
+  });
+});
+
+describe('helpers', () => {
+  it('stems pronouns and plurals, and sees «عاصمة» inside «عاصمتها»', () => {
+    expect(stem('سكانها')).toBe('سكان');
+    expect(stem('trains')).toBe('train');
+    expect(stem('class')).toBe('class');
+    expect(mentions('تقع في الجنوب، عاصمتها كانبرا', 'عاصمه')).toBe(true);
+    expect(mentions('تمتد الغابات على مساحات واسعة', 'عاصمه')).toBe(false);
+  });
+  it('finds the cue words a question asks about its subject, and the page title in the source line', () => {
+    expect(cueWords('كم عدد سكان المغرب؟', ['سكان', 'مغرب'])).toEqual(['عدد']);
+    expect(cueWords('كم تستغرق عملية المياه البيضاء؟', ['مياه', 'بيضاء'])).toEqual(expect.arrayContaining(['تستغرق', 'عمليه']));
+    expect(sourceTitleWords(RQ026.reply)).toEqual(['استراليا']);
+  });
+  it('reads fragments and definition forms', () => {
+    expect(isFragment('وهذا يعني أن بيل صنع الهاتف.', 'ar')).toBe(true);
+    expect(isFragment('… رئاسية، ويبلغ عدد سكانها 68.6 مليون نسمة.', 'ar')).toBe(true);
+    expect(isFragment('5:11 فيديو لعملية الليزك', 'ar')).toBe(true);
+    expect(isFragment('js version: node -v', 'en')).toBe(true);
+    expect(isFragment('طوكيو عاصمة اليابان.', 'ar')).toBe(false);
+    expect(definitionForm('الذكاء الاصطناعي (AI) هو تقنية تحويلية.', ['ذكاء', 'اصطناعي'])).toBe(true);
+    expect(definitionForm('Photosynthesis is the process by which plants make food.', ['photosynthesis'])).toBe(true);
+    expect(definitionForm('ويكي بيانات أيقظ قدراتك واصنع مستقبلك هو كتاب.', ['قدراتك'])).toBe(false);
+  });
+  it('scores a sentence by subject, phrase, cue and type', () => {
+    const context = { question: 'كم عدد سكان المغرب؟', topic: ['سكان', 'مغرب'], cues: ['عدد'], titleWords: ['تركيبه', 'سكانيه', 'مغرب'], answerType: 'number', lang: 'ar' as const };
+    const answer = relevance('حسب إحصاء سنة 2024، يبلغ عدد سكان المغرب 37 مليون نسمة.', context);
+    const minority = relevance('فيما انخفضت الأقلية اليهودية المغربية ويصل عددها إلى نحو 6,000.', context);
+    expect(answer).toMatchObject({ topicHits: 2, phrase: true, cue: true, typed: true, fragment: false });
+    expect(minority).toMatchObject({ topicHits: 1, phrase: false, fragment: true });
+    expect(answer.score - minority.score).toBeGreaterThanOrEqual(2);
+    expect(ownLines(RQ016.reply).map(line => line.line)).toEqual([1, 4, 5]);
+  });
+});

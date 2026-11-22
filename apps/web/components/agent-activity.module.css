@@ -58,6 +58,8 @@
   animation: enter .28s cubic-bezier(.2, .7, .2, 1), sweep 2.6s linear infinite;
 }
 .elapsed { flex: none; color: var(--faint, #9a968c); font-size: 12px; font-variant-numeric: tabular-nums; }
+/* One line inside a chip: the words shorten with an ellipsis instead of wrapping. */
+.compact .words { display: inline-block; max-width: 38vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 
 .think { animation: twinkle 1.6s ease-in-out infinite; }
 .wait { animation: breathe 2.2s ease-in-out infinite; }

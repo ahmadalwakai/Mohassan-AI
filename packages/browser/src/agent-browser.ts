@@ -141,9 +141,11 @@ export interface AgentBrowserOptions {
    * Pages of a conversation nobody used for this long (ms) are closed and their checkpoint kept, so the memory of
    * finished conversations is released while «استعادة» still reopens a ready page. Measured 2026-11-22
    * (artifacts/plan-2026-11-22/0-baseline.md §7): about 85 MB per open page, and 1.57 GB with 13 processes after a
-   * day of conversations whose pages never closed. The default is proposed, not fixed by the owner; null disables.
+   * day of conversations whose pages never closed. The default (30 min) is proposed, not fixed by the owner; null disables.
    */
   idlePageMs?: number | null;
+  /** Quiet-network window after each action before the page is read (ms). Default SETTLE_QUIET_MS; 500 reproduces Playwright's networkidle. */
+  settleQuietMs?: number;
 }
 
 interface ConversationPage {
@@ -215,13 +217,20 @@ const VIEWPORT = { width: 1280, height: 800 };
 const ACTIVITY_EVENT_LIMIT = 32;
 const ACTIVITY_EVENT_TTL_MS = 8000;
 const MAX_CONVERSATION_PAGES = 4;
-/** Proposed (docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md §5.2 P2); the owner fixes the value after the E5.3 measurement. */
-const DEFAULT_IDLE_PAGE_MS = 15 * 60000;
+/**
+ * Proposed (docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md §5.2 P2); the owner fixes the value after the E5.3 measurement.
+ * 30 minutes covers 34 of the 36 real follow-up gaps measured on 2026-11-22 (shadow log and lab messages: p50 0.7 min,
+ * p90 9 min, the two longer gaps 35 and 66 min), while 15 minutes would have cut 4 of them.
+ */
+const DEFAULT_IDLE_PAGE_MS = 30 * 60000;
 const MAX_FRAME_ELEMENTS = 220;
 const REF_PATTERN = /^(?:f\d+)?e\d+$/;
 const GESTURES = new Set<AgentAction['kind']>(['click', 'type', 'press', 'form']);
 const OWNER_FOLLOW_MS = 8000;
 const OWNER_LIMIT_MS = 120000;
+/** Quiet-network window after an action (proposed; Playwright's networkidle uses 500 ms) and the cap it never exceeds. */
+const SETTLE_QUIET_MS = 200;
+const SETTLE_CAP_MS = 900;
 const HELD_MS = 5 * 60000;
 
 /**
@@ -427,12 +436,14 @@ export class AgentBrowser {
   private nextRef = 0;
   private checkpointStore?: AgentBrowserOptions['onCheckpoint'];
   private readonly idlePageMs: number | null;
+  private readonly settleQuietMs: number;
   private idleSweep?: ReturnType<typeof setInterval>;
   private sweeping: Promise<number> | null = null;
 
   constructor(private readonly options: AgentBrowserOptions) {
     this.network = new SafeNetwork({ testOrigins: options.testOrigins });
     this.checkpointStore = options.onCheckpoint;
+    this.settleQuietMs = Number.isFinite(options.settleQuietMs) && options.settleQuietMs! >= 0 ? Math.min(options.settleQuietMs!, SETTLE_CAP_MS) : SETTLE_QUIET_MS;
     this.idlePageMs = options.idlePageMs === undefined ? DEFAULT_IDLE_PAGE_MS : options.idlePageMs && options.idlePageMs > 0 ? options.idlePageMs : null;
     if (this.idlePageMs) {
       // The sweep never keeps the process alive: scripts and tests exit when their own work is done.
@@ -1039,10 +1050,36 @@ export class AgentBrowser {
     return entry.activity.cursor ? this.startActivity(entry, 'press') : null;
   }
 
+  /**
+   * Lets the page finish what the action started before it is read. The network is watched from the first moment,
+   * so requests the action triggers are counted; the wait ends once nothing has been in flight for SETTLE_QUIET_MS,
+   * or at SETTLE_CAP_MS. Playwright's own `networkidle` needs a fixed 500 ms of quiet, which with the 120 ms grace
+   * made every step cost at least 0.62 s even on a local page (0-baseline §7.2, 2026-11-22).
+   */
   private async settle(page: Page): Promise<void> {
+    const quiet = this.quietNetwork(page, this.settleQuietMs, SETTLE_CAP_MS);
     await delay(120);
     await page.waitForLoadState('domcontentloaded', { timeout: 4000 }).catch(() => {});
-    await Promise.race([page.waitForLoadState('networkidle', { timeout: 900 }).catch(() => {}), delay(900)]);
+    await quiet;
+  }
+
+  /** Resolves after `quietMs` with no request in flight, or after `capMs`; never rejects, and leaves no listener behind. */
+  private quietNetwork(page: Page, quietMs: number, capMs: number): Promise<void> {
+    return new Promise<void>(resolve => {
+      let inflight = 0;
+      let quietTimer: ReturnType<typeof setTimeout> | undefined;
+      const finish = () => {
+        clearTimeout(quietTimer); clearTimeout(cap);
+        page.off('request', started); page.off('requestfinished', ended); page.off('requestfailed', ended); page.off('close', finish);
+        resolve();
+      };
+      const armQuiet = () => { clearTimeout(quietTimer); if (inflight <= 0) quietTimer = setTimeout(finish, quietMs); };
+      const started = () => { inflight++; clearTimeout(quietTimer); };
+      const ended = () => { inflight = Math.max(0, inflight - 1); armQuiet(); };
+      const cap = setTimeout(finish, capMs);
+      page.on('request', started); page.on('requestfinished', ended); page.on('requestfailed', ended); page.once('close', finish);
+      armQuiet();
+    });
   }
 
   private frames(page: Page): Frame[] {

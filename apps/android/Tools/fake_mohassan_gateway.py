@@ -5,10 +5,10 @@ The real Wasla service on the computer forwards /v1/mohassan/* to this server ov
 brain. The brain here is a script: it answers after a few seconds, and certain words
 in the goal make it stop and ask, as the real brain does.
 
-    "حملة"   -> several questions in one card (fields with suggestions), plus «توقف هنا»
-    "اختر"   -> one question with options, a clarification and a typed answer allowed
-    "نفّذ"   -> an approval before acting
-    "دخول"   -> a sign-in step that only the web can complete
+    "حملة" / campaign -> several questions in one card (fields with suggestions), plus «توقف هنا»
+    "اختر" / choose   -> one question with options, a clarification and a typed answer allowed
+    "نفّذ" / execute  -> an approval before acting
+    "دخول" / login    -> a sign-in step that only the web can complete
     anything else -> steps, progress and a plain answer
 
 Response shapes follow packages/contracts/src/command-chat.ts and the gateway's phone
@@ -101,7 +101,8 @@ async def think(conversation: dict, goal: str) -> None:
             conversation["steps"].append(step(text))
             conversation["progress"] = text
             conversation["updatedAt"] = now()
-        if "حملة" in goal:
+        lowered = goal.lower()
+        if "حملة" in goal or "campaign" in lowered:
             pause(conversation, "waiting_user", question={
                 "id": str(uuid.uuid4()),
                 "prompt": "قبل أن أخطط الحملة أحتاج ثلاث إجابات:\nما هدف الحملة؟\nأين تريد الظهور؟\nما الميزانية اليومية؟",
@@ -114,19 +115,19 @@ async def think(conversation: dict, goal: str) -> None:
                     {"id": "budget", "prompt": "ما الميزانية اليومية بالريال؟", "suggestions": [], "placeholder": "مثال: 50"},
                 ],
             })
-        elif "اختر" in goal:
+        elif "اختر" in goal or "choose" in lowered:
             pause(conversation, "waiting_user", question={
                 "id": str(uuid.uuid4()), "prompt": "وجدت حسابين إعلانيين. أيهما أستخدم؟",
                 "options": [{"id": "first", "label": "الحساب الأول (123-456-7890)"}, {"id": "second", "label": "الحساب الثاني (987-654-3210)"}, {"id": "connect", "label": "ربط حساب آخر"}],
                 "action": "google_ads_connect",
                 "clarification": {"reason": "الحساب الأول هو الذي استُخدم آخر مرة.", "recommendedOptionId": "first", "allowText": True},
             })
-        elif "نفّذ" in goal or "نفذ" in goal:
+        elif "نفّذ" in goal or "نفذ" in goal or "execute" in lowered:
             pause(conversation, "waiting_approval", approval={
                 "id": str(uuid.uuid4()), "prompt": "سأنشئ حملة متوقفة باسم «تجربة الهاتف» بميزانية 50 ر.س يوميًا.",
                 "detail": "الحملة تُنشأ بحالة PAUSED ولا تُنفق شيئًا حتى تفعّلها بنفسك.",
             })
-        elif "دخول" in goal:
+        elif "دخول" in goal or "login" in lowered:
             pause(conversation, "waiting_input", secure={
                 "id": str(uuid.uuid4()), "kind": "login", "site": "ads.google.com", "prompt": "الموقع يطلب تسجيل الدخول قبل المتابعة.", "note": None,
                 "fields": [{"id": "username", "label": "البريد", "type": "text"}, {"id": "password", "label": "كلمة المرور", "type": "password"}],

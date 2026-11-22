@@ -62,7 +62,8 @@ export async function startMeasureFixture(options: { apiPort?: number; webPort?:
       path.join(repository, 'tests', 'e2e', 'server-entry.ts')], fixture.directory, fixture.environment, true);
     children.push(api);
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('FIXTURE_API_READY_TIMEOUT')), 180_000);
+      // On a machine busy with other agents the API took over three minutes to start (2026-11-22); FIXTURE_READY_MS widens the wait.
+      const timer = setTimeout(() => reject(new Error('FIXTURE_API_READY_TIMEOUT')), Number(process.env.FIXTURE_READY_MS ?? 600_000));
       api.child.once('message', message => {
         clearTimeout(timer);
         const receipt = message as { type?: string; root?: string };
@@ -78,7 +79,7 @@ export async function startMeasureFixture(options: { apiPort?: number; webPort?:
       web = spawnOwned([path.join(repository, 'node_modules', 'next', 'dist', 'bin', 'next'), 'dev', '--webpack', '--hostname', '127.0.0.1', '--port', String(webPort)],
         fixture.webDirectory, fixture.environment);
       children.push(web);
-      await waitFor(`${origin}/api/setup`, web, 180_000);
+      await waitFor(`${origin}/api/setup`, web, Number(process.env.FIXTURE_READY_MS ?? 600_000));
       webReadyMs = performance.now() - webStarted;
     }
     return {

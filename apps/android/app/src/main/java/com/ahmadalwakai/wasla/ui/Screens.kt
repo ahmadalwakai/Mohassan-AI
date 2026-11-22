@@ -52,7 +52,7 @@ import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Image as ImageIcon
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.MoreVert
@@ -126,7 +126,7 @@ import com.ahmadalwakai.wasla.DesktopCommand
 import com.ahmadalwakai.wasla.PairingCode
 import com.ahmadalwakai.wasla.PreparedImage
 import com.ahmadalwakai.wasla.WaslaStore
-import com.ahmadalwakai.wasla.codePoints
+import com.ahmadalwakai.wasla.codePointLength
 import com.ahmadalwakai.wasla.hostOf
 import com.ahmadalwakai.wasla.loadMohassanList
 import com.ahmadalwakai.wasla.mohassanLinked
@@ -176,7 +176,7 @@ fun AppShell(store: WaslaStore) {
     val tabs = listOf(
         Tab("التحكم", Icons.Outlined.Tune),
         Tab(if (linked) "موحسن" else "المحادثة", Icons.Outlined.Forum),
-        Tab("الصور", Icons.Outlined.Image),
+        Tab("الصور", Icons.Outlined.ImageIcon),
         Tab("البحث", Icons.Outlined.Public),
     )
     Scaffold(
@@ -435,7 +435,7 @@ fun ChatView(store: WaslaStore) {
     val forest = Forest
     val draft = store.chatDraft
     val clean = draft.trim()
-    val tooLong = draft.codePoints() > 8_000
+    val tooLong = draft.codePointLength() > 8_000
     ChatScaffold(
         draft = draft,
         onDraftChange = { store.chatDraft = it },
@@ -699,7 +699,7 @@ fun DesktopPanel(store: WaslaStore) {
                 value = keyboardText, onValueChange = { keyboardText = it }, modifier = Modifier.fillMaxWidth(),
                 placeholder = { Text("اكتب نصًا لإرساله إلى الكمبيوتر…") }, minLines = 2, maxLines = 5, colors = fieldColors(),
             )
-            val count = keyboardText.codePoints()
+            val count = keyboardText.codePointLength()
             Text("$count / 2000 حرف", style = MaterialTheme.typography.bodySmall, color = if (count > 2_000) forest.alert else forest.softText)
             if (count > 2_000) Footnote("اختصر النص إلى ٢٬٠٠٠ حرف قبل إرساله؛ لن يتم اقتطاعه تلقائيًا.", forest.alert)
             ForestButton(onClick = { store.enqueue(DesktopCommand("text", text = keyboardText)); keyboardText = ""; keyboard?.hide() }, enabled = keyboardText.isNotEmpty() && count <= 2_000) { Text("إرسال النص") }
@@ -799,8 +799,8 @@ private fun SettingsSection(title: String?, content: @Composable ColumnScope.() 
 fun openUrl(context: Context, url: String) {
     try {
         CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(url))
-    } catch (_: ActivityNotFoundException) {
-        try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: ActivityNotFoundException) {}
+    } catch (ignored: ActivityNotFoundException) {
+        try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (ignored: ActivityNotFoundException) {}
     }
 }
 
@@ -817,6 +817,6 @@ fun shareImage(context: Context, bytes: ByteArray) {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(send, "حفظ الصورة أو مشاركتها"))
-    } catch (_: Exception) {
+    } catch (ignored: Exception) {
     }
 }

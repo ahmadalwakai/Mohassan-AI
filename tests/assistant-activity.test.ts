@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentAction, AgentElement, AgentPage } from '@mohassan/browser';
 import { hostOf, liveLabel, readingLabel, siteName } from '../apps/server/src/assistant/activity.js';
-import { runHands, webQuestion, type HandsIO, type HandsPlan } from '../apps/server/src/assistant/hands.js';
+import { parseHands, runHands, webQuestion, type HandsIO, type HandsPlan } from '../apps/server/src/assistant/hands.js';
 import { activityKind, elapsedLabel } from '../apps/web/components/activity-phase';
 
+const el = (ref: string, role: string, label: string, extra: Partial<AgentElement> = {}): AgentElement => ({ ref, role, label, inViewport: true, ...extra });
 const pageOf = (url: string, elements: AgentElement[], text = ''): AgentPage => ({
   id: url, url, title: `Title of ${url}`, text, elements,
   signals: { captcha: false, password: false, otp: false, card: false },
@@ -54,7 +55,7 @@ describe('السطر الحي: نوع العمل من الكلمات', () => {
   it("classifies the server's real live texts", () => {
     const cases: [string, ReturnType<typeof activityKind>][] = [
       ['يفهم طلبك…', 'think'], ['يختار الخطوة التالية…', 'think'], ['يفكر…', 'think'], ['يتابع العمل…', 'think'], ['يرتب خطوته التالية…', 'think'],
-      ['النموذج مشغول مؤقتًا؛ سأستأنف تلقائيًا خلال 20 ثانية (المحاولة 1/3)…', 'wait'],
+      ['النموذج مشغول مؤقتًا؛ سأستأنف تلقائيًا خلال 20 ثانية (المحاولة 1/3)…', 'wait'], ['ينتظر ظهور نتائج البحث…', 'wait'],
       ['يبحث في الذاكرة…', 'memory'], ['يبحث في الذاكرة عن «مدينتي»…', 'memory'], ['يقرأ المستندات المحفوظة…', 'memory'],
       ['يبحث عن «ما عاصمة اليابان»…', 'search'], ['لم يُجب البحث الأول؛ البحث عن «الخوارزمي»…', 'search'],
       ['يقرأ ar.wikipedia.org…', 'read'], ['يقرأ britannica.com، space.com…', 'read'], ['يعيد قراءة الصفحة ويتحقق من الخطوة…', 'read'], ['يفحص الصفحة بصريًا…', 'read'],
@@ -97,5 +98,30 @@ describe('يدا المتصفح تسجّلان ما يُقرأ', () => {
     expect(steps).toContain('step:البحث عن «What is the speed of light»');
     expect(steps).toContain('step:قراءة britannica.test');
     expect(steps.indexOf('step:قراءة britannica.test')).toBeGreaterThan(steps.indexOf('step:البحث عن «What is the speed of light»'));
+  });
+
+  it('says once that it is waiting while a site draws its results after the page loads', async () => {
+    const log: string[] = [];
+    const home = pageOf('https://shop.example/', [el('s', 'searchbox', 'Search the shop')]);
+    const drawing = pageOf('https://shop.example/find?q=tyres', [el('n', 'button', 'Next')], 'Loading results…');
+    let current: AgentPage | null = null;
+    const io: HandsIO = {
+      page: async () => current,
+      act: async (action: AgentAction) => {
+        log.push(`${action.kind}:${action.text ?? ''}`);
+        if (action.kind === 'open') current = /find\?q=/.test(action.text ?? '') ? drawing : home;
+        return current!;
+      },
+      prepare: async () => ({ id: 'p', url: 'https://shop.example/find?q=tyres', method: 'GET', bodyHash: '', pageHash: '', actionHash: '', expiresAt: 0 }),
+      settle: async page => page,
+      step: async label => { log.push(`step:${label}`); },
+      progress: async label => { log.push(`live:${label}`); },
+      approve: async () => {},
+      hold: async () => {},
+    };
+    await runHands({ steps: parseHands('ابحث عن tyres في shop.example')!, next: 0 }, io);
+    expect(log.filter(line => line === 'live:ينتظر ظهور نتائج البحث')).toHaveLength(1);
+    expect(log.filter(line => line === 'wait:2000')).toHaveLength(3);
+    expect(log.indexOf('live:ينتظر ظهور نتائج البحث')).toBeLessThan(log.indexOf('wait:2000'));
   });
 });
