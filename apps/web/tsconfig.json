@@ -38,7 +38,11 @@
     ".next-judge-lab/types/**/*.ts",
     ".next-judge-lab/dev/types/**/*.ts",
     ".next-desktop-app/types/**/*.ts",
-    ".next-desktop-app/dev/types/**/*.ts"
+    ".next-desktop-app/dev/types/**/*.ts",
+    ".next-vision-lab/types/**/*.ts",
+    ".next-vision-lab/dev/types/**/*.ts",
+    ".next-wiring-lab/types/**/*.ts",
+    ".next-wiring-lab/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

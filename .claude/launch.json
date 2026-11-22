@@ -50,6 +50,11 @@
       "url": "http://127.0.0.1:3200"
     },
     {
+      "name": "mohassan-vision-web",
+      "port": 3321,
+      "url": "http://127.0.0.1:3321"
+    },
+    {
       "name": "mohassan-vision-lab",
       "runtimeExecutable": "cmd",
       "runtimeArgs": [
@@ -65,7 +70,7 @@
       "runtimeArgs": [
         "tsx",
         "scripts/sites-serve.ts",
-        "artifacts/sites-smoke-20261122-0456",
+        "artifacts/sites-2026-11-22",
         "5177"
       ],
       "port": 5177,
@@ -82,6 +87,16 @@
       "url": "http://127.0.0.1:3000"
     },
     {
+      "name": "mohassan-sites-lab",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set MOHASSAN_LAB_DIR=.data/sites-lab&& set SERVER_PORT=4500&& set PORT=3500&& set WEB_ORIGIN=http://127.0.0.1:3500&& npm run dev:lab"
+      ],
+      "port": 3500,
+      "url": "http://127.0.0.1:3500"
+    },
+    {
       "name": "mohassan-judge-lab",
       "runtimeExecutable": "cmd",
       "runtimeArgs": [
@@ -90,6 +105,16 @@
       ],
       "port": 3400,
       "url": "http://127.0.0.1:3400"
+    },
+    {
+      "name": "mohassan-wiring-lab",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set MOHASSAN_LAB_DIR=.data/wiring-lab&& set SERVER_PORT=4700&& set PORT=3700&& set WEB_ORIGIN=http://127.0.0.1:3700&& npm run dev:lab"
+      ],
+      "port": 3700,
+      "url": "http://127.0.0.1:3700"
     }
   ]
 }
