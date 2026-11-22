@@ -7,7 +7,7 @@
  * one such failure. A line that fails is dropped before the reply is built; when nothing passes, the reply says so.
  */
 export type AnswerLanguage = 'ar' | 'en' | 'mixed' | 'none';
-export type AnswerProblem = 'meta_line' | 'ui_text' | 'language' | 'needs_number' | 'needs_name' | 'off_topic';
+export type AnswerProblem = 'meta_line' | 'ui_text' | 'language' | 'needs_number' | 'needs_unit' | 'needs_name' | 'off_topic';
 export interface AnswerLineCheck { ok: boolean; reasons: AnswerProblem[] }
 
 /** The language most of a text's letters are in; a text with fewer than 15 letters has none to judge. */
@@ -44,6 +44,32 @@ export function isDisambiguationPage(page: { title: string; text: string }): boo
 }
 
 const NUMBER_QUESTION = /(?:^|\s)(?:كم|قديش|اديش|متى|متي)(?=\s|$)|\bhow (?:many|much|long|old|far|tall|big)\b|\bwhen\b|\bwhat year\b|في أي (?:عام|سنة)/iu;
+
+/**
+ * What kind of figure the question wants (plan §7.2: «كم» is answered by a number with its unit). A duration question
+ * wants minutes or hours, a date question a year or a month, a price a currency. On 2026-11-22 «كم تستغرق عملية المياه
+ * البيضاء» was answered with «فيلم دراما نيجيري صدر سنة 2007»: a number, but not a duration.
+ */
+export type FigureKind = 'duration' | 'date' | 'price' | 'any';
+const DURATION_QUESTION = /تستغرق|يستغرق|(?:^|\s)مد[ةه](?=\s|$)|كم (?:من )?(?:الوقت|وقت)|how long|how many (?:minutes|hours|days|weeks|months|years)/iu;
+const DATE_QUESTION = /(?:^|\s)(?:متى|متي)(?=\s|$)|\bwhen\b|\bwhat year\b|في أي (?:عام|سنة)/iu;
+const PRICE_QUESTION = /(?:^|\s)(?:ال)?(?:سعر|أسعار|اسعار|تكلفة|تكلفه|كلفة)(?=\s|$)|كم (?:يكلف|تكلف|ثمن)|how much (?:does|do|is|are|did|will|would)\b.*\b(?:cost|pay)|\bprice|\bcost/iu;
+export function figureKind(question: string): FigureKind {
+  if (DURATION_QUESTION.test(question)) return 'duration';
+  if (DATE_QUESTION.test(question)) return 'date';
+  if (PRICE_QUESTION.test(question)) return 'price';
+  return 'any';
+}
+const DIGIT = '[\\d٠-٩]';
+const FIGURE_UNITS: Record<Exclude<FigureKind, 'any'>, RegExp> = {
+  duration: new RegExp(`${DIGIT}+(?:[.,]${DIGIT}+)?\\s*(?:ثانية|ثوان|دقيقة|دقائق|دقيقه|ساعة|ساعات|ساعه|يوم|أيام|ايام|أسبوع|اسبوع|أسابيع|اسابيع|شهر|أشهر|اشهر|شهور|سنة|سنه|سنوات|عام|أعوام|اعوام|seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)(?![\\p{L}])`, 'iu'),
+  date: new RegExp(`(?:^|[^\\d٠-٩])(?:1[0-9]|20)${DIGIT}{2}(?![\\d٠-٩])|(?:يناير|فبراير|مارس|أبريل|ابريل|مايو|يونيو|يوليو|أغسطس|اغسطس|سبتمبر|أكتوبر|اكتوبر|نوفمبر|ديسمبر|كانون|شباط|آذار|نيسان|أيار|حزيران|تموز|آب|أيلول|تشرين|january|february|march|april|may|june|july|august|september|october|november|december)`, 'iu'),
+  price: /[$€£¥₺]|(?:^|\s)(?:دولار|دولارات|يورو|جنيه|جنيهات|ريال|ريالات|درهم|دراهم|دينار|دنانير|ليرة|ليرات|USD|EUR|GBP|SAR|AED|EGP|TRY|dollars?|euros?|pounds?|cents?|riyals?|dirhams?|dinars?)(?![\p{L}])/iu,
+};
+/** True when a line carries the kind of figure the question wants; a question of kind «any» needs only a number. */
+export function hasFigureOf(kind: FigureKind, line: string): boolean {
+  return kind === 'any' || FIGURE_UNITS[kind].test(line);
+}
 const NAME_QUESTION = /^(?:من هو|من هي|من الذي|من التي|من (?:اخترع|كتب|ألف|أسس|اكتشف|بنى|صمم|رسم|أنشأ)|who (?:is|was|were|wrote|invented|founded|discovered|built|designed|painted|created|directed|composed))\b/iu;
 const ENGLISH_NAME = /(?:^|[\s(,:;])[A-Z][a-z]+(?:[\s-][A-Z][a-z]+)+/u;
 
@@ -71,6 +97,7 @@ export function checkAnswerLine(question: string, line: string, options: { topic
   if (answered === 'none' && own) { const arabic = /\p{Script=Arabic}/u.test(own), latin = /[A-Za-z]/u.test(own); answered = arabic && !latin ? 'ar' : latin && !arabic ? 'en' : 'none'; }
   if ((answered === 'ar' || answered === 'en') && answered !== asked) reasons.push('language');
   if (NUMBER_QUESTION.test(question) && !/[\d٠-٩]/u.test(text)) reasons.push('needs_number');
+  else if (NUMBER_QUESTION.test(question) && !hasFigureOf(figureKind(question), text)) reasons.push('needs_unit');
   // Arabic has no capitals to spot a name by; the check applies to English answers only.
   if (NAME_QUESTION.test(question.trim()) && asked === 'en' && answered === 'en' && !ENGLISH_NAME.test(text)) reasons.push('needs_name');
   if (options.topic?.length) {

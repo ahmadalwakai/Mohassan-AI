@@ -115,6 +115,8 @@ function fakeIO(pages: Record<string, AgentPage>, start: AgentPage | null, permi
     },
     settle: async page => page,
     step: async label => { log.push(`step:${label}`); },
+    // No real wait between two searches in tests (the engine's one-second provider spacing is the production reason).
+    pause: async () => {},
     approve: async (_action, permit) => { log.push(`approve:${permit.url}`); },
     hold: async () => { log.push('hold'); },
   };

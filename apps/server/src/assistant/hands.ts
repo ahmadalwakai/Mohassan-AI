@@ -56,8 +56,9 @@ export interface HandsPlan {
   read?: { url: string; start: number; offset: number };
   /** A question's search results, and the first page whose own sentences answer it. */
   results?: { title: string; url: string }[];
-  /** `readAt`: when the page was fetched (a cached page keeps its original time), shown with the source (plan §7.1). */
-  found?: { url: string; title: string; lines: string[]; readAt?: string };
+  /** `readAt`: when the page was fetched (a cached page keeps its original time), shown with the source (plan §7.1).
+   *  `second`: for a figure, another page's sentence on the same question, and whether its figure agrees (plan §7.4). */
+  found?: { url: string; title: string; lines: string[]; readAt?: string; second?: { url: string; title: string; line: string; agrees: boolean } };
   /** The language of the owner's request; replies that are not quotes follow it, not the query's script («ابحث عن Python docs» is Arabic). */
   lang?: 'ar' | 'en';
 }
@@ -306,6 +307,53 @@ export function titleScore(title: string, topic: string[]): number {
 
 /** Questions whose answer is a number: a count, a length of time, a price, a date. */
 const WANTS_NUMBER = /(?:^|\s)(?:كم|قديش|اديش|متى|متي)(?=\s|$)|\bhow (?:many|much|long|old|far|tall|big)\b|\bwhen\b/iu;
+/**
+ * The figure a sentence states, as plain Latin digits without grouping marks: «105 مليون» → "105", "299,792,458" → "299792458".
+ * A year («في 2024 بلغ عدد السكان 105 ملايين») is skipped when the sentence holds another number.
+ */
+export function firstFigure(text: string): string | null {
+  const figures = [...text.matchAll(/[\d٠-٩](?:[\d٠-٩,٬]|\.(?=[\d٠-٩]))*/gu)]
+    .map(match => match[0].replace(/[٠-٩]/gu, digit => String(digit.charCodeAt(0) - 0x0660)).replace(/[,٬]/gu, ''));
+  if (!figures.length) return null;
+  return figures.find(figure => !/^(?:1[89]|20)\d\d$/u.test(figure)) ?? figures[0]!;
+}
+/** Two sentences name the same figure when their first figures are equal. */
+export const sameFigure = (first: string, second: string): boolean => firstFigure(first) !== null && firstFigure(first) === firstFigure(second);
+
+/** Words that name what is asked about a subject, not the subject: «سكان» in «كم عدد سكان مصر». Folded, without «ال». */
+const ATTRIBUTE_WORDS = new Set(['سكان', 'يعيش', 'يعيشون', 'شخص', 'اشخاص', 'عاصمه', 'مساحه', 'عمله', 'رئيس', 'ملك', 'لغه', 'ديانه', 'تاسيس', 'ارتفاع', 'طول', 'عمر', 'وزن', 'سعر', 'ميلاد', 'وفاه', 'مؤسس', 'مالك', 'موقع', 'علم', 'نشيد', 'ناتج',
+  'population', 'people', 'live', 'lives', 'inhabitants', 'residents', 'capital', 'area', 'currency', 'president', 'king', 'language', 'religion', 'founded', 'height', 'length', 'age', 'weight', 'price', 'born', 'died', 'founder', 'owner', 'location', 'gdp', 'size']);
+/** The subject itself, for a question about one of its attributes: «كم عدد سكان مصر» → ['مصر']; empty when the question names no attribute. */
+export function entityWords(question: string): string[] {
+  const topic = topicWords(question);
+  const entity = topic.filter(word => !ATTRIBUTE_WORDS.has(word));
+  return entity.length && entity.length < topic.length ? entity : [];
+}
+/** A page whose title is the subject itself («مصر», «المغرب - ويكيبيديا»), so its sentences may name it by a pronoun. */
+export function isOwnArticle(title: string, entity: readonly string[]): boolean {
+  if (!entity.length) return false;
+  const bare = plainTitle(title).replace(/\s+[-–—|:]\s+[^-–—|:]{1,40}$/u, '').trim();
+  // A name made of letters only: «.مصر» (the country's internet domain) or «مصر (توضيح)» is not the country.
+  if (!/^[\p{L}\p{M}\s'’-]+$/u.test(bare)) return false;
+  const own = topicWords(bare);
+  return own.length === entity.length && own.every(word => entity.includes(word));
+}
+/**
+ * A sentence about the subject names it, unless the page is the subject's own article. A name in parentheses is a
+ * disambiguator («صباح (المغرب)» is a village), not the subject.
+ */
+export function namesEntity(line: string, entity: readonly string[], ownArticle: boolean): boolean {
+  if (ownArticle || !entity.length) return true;
+  const folded = fold(line.replace(/\([^)]*\)/gu, ' ')).replace(/ء/gu, '');
+  return entity.every(word => folded.includes(word.replace(/ء/gu, '')));
+}
+/**
+ * For a subject's attribute, only a page about the subject may answer: its own article, or a page whose title holds every
+ * topic word («التركيبة السكانية في مصر»). «القصير (مصر)» and «عرب» hold Egypt's name and someone else's figures.
+ */
+export function aboutSubject(title: string, topic: readonly string[], entity: readonly string[]): boolean {
+  return !entity.length || isOwnArticle(title, entity) || (topic.length > 0 && titleScore(title, [...topic]) >= topic.length);
+}
 
 /** Health questions get a plain reminder that a page is not a diagnosis. */
 const MEDICAL = /عين|عيون|العين|بصر|نظر|ليزك|ليزر|المياه البيضاء|المياه الزرقاء|جلوكوما|شبكية|قرنية|عملي[ةه]|جراح|أعراض|اعراض|علاج|مرض|دواء|أدوية|ادوية|طبيب|مستشفى|حمل|سكري|ضغط الدم|سرطان|\b(?:eye|eyes|vision|lasik|cataract|glaucoma|retina|surgery|symptoms?|treatment|disease|medicine|doctor)\b/iu;
@@ -392,7 +440,8 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
   const titled = words.filter(word => pageTitle.includes(word));
   const scored:{ line: string; score: number; at: number; year: number; glued: boolean }[] = [];
   const seen = new Set<string>();
-  const cleanSentence = (text: string) => withoutChrome(text.replace(/\[(?:\d+|Note \d+|note \d+|ملحوظة \d+|ْ? ?\d+|[ا-ي])\]/gu, '').replace(/\s+/g, ' ').trim(), labels);
+  // Citation marks may carry spaces inside the brackets («[ 5 ] [ 28 ] ويبلغ عدد سكانها…», measured 2026-11-22 on «المغرب»).
+  const cleanSentence = (text: string) => withoutChrome(text.replace(/\[\s*(?:\d+|Note \d+|note \d+|ملحوظة \d+|ْ?\s*\d+|[ا-ي])\s*\]/gu, '').replace(/\s+/g, ' ').trim(), labels);
   // A sentence ends at . ! ? ؟ unless the dot sits inside a number (2.5, 1.3), or at a line break.
   const text = readableText(page.text);
   const sentences = [...text.matchAll(/(?:[^.!?؟\n]|(?<=\d)\.(?=\d))+(?:[.!?؟]+|\n|$)/gu)];
@@ -704,12 +753,17 @@ export interface HandsIO {
   step(label: string): Promise<void>;
   /** The live line only («ينتظر ظهور نتائج البحث»); nothing is recorded as a step. */
   progress?(label: string): Promise<void>;
+  /** Waits before a second search; tests pass a no-op. Defaults to a real timer. */
+  pause?(ms: number): Promise<void>;
   /** Saves the plan, then pauses for the owner's approval of this exact request. */
   approve(action: AgentAction, permit: AgentRequestPermit, label: string): Promise<void>;
   hold(held: AgentEffectHeld['held'], label: string): Promise<void>;
 }
 
 export type HandsOutcome = { kind: 'paused' } | { kind: 'done'; text: string; status: 'completed' | 'partial' | 'blocked' };
+
+/** The shared search engine's spacing between two calls to one provider (1000 ms), with a margin. */
+export const PROVIDER_SPACING_MS = 1100;
 
 /** A page fetched over HTTP whose body is only a JavaScript notice (or nothing) is read in the browser instead. */
 const JS_ONLY = /enable javascript|javascript is (?:required|disabled|turned off|not enabled)|please enable js|يجب تفعيل (?:جافا|javascript)|فعّل جافا/iu;
@@ -794,10 +848,29 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         .map(({ title, url }) => ({ title, url }));
     };
     let results = await lookup(query);
+    // The shared engine keeps one second between two calls to the same provider (packages/browser/src/search/engine.ts,
+    // `health.next`) and answers an earlier call with no hits. A second lookup waits that second out, or it is always empty:
+    // measured on 2026-11-22 (artifacts/plan-2026-11-22/two-sources-2026-11-22T06-17-27.json), the subject lookup and the
+    // narrower-terms fallback both came back empty when sent at once.
+    const pause = io.pause ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
     const narrower = wikiTerms(query);
     if (!results.length && !live && fold(narrower) !== fold(query) && topicWords(narrower).length) {
       await io.step(`لم يُجب البحث الأول؛ البحث عن «${narrower.slice(0, 60)}»`);
+      await pause(PROVIDER_SPACING_MS);
       results = await lookup(narrower);
+    }
+    // A question about a subject's attribute («كم عدد سكان مصر») is answered from the subject's own article first. The shared
+    // ranking keeps only pages whose title and snippet repeat every question word, which dropped «مصر» for «القصير (مصر)» and
+    // «عرب» (artifacts/plan-2026-11-22/two-sources-2026-11-22T06-00-31.json); one more lookup by the subject's name finds it.
+    const entity = entityWords(query);
+    if (entity.length && !live && !results.some(hit => isOwnArticle(hit.title, entity))) {
+      const surface = query.replace(/[؟?،,.!]/gu, ' ').split(/\s+/).filter(word => entity.includes(topicWords(word)[0] ?? '')).join(' ');
+      if (surface) {
+        await io.step(`البحث عن مقالة «${surface.slice(0, 60)}»`);
+        await pause(PROVIDER_SPACING_MS);
+        const own = (await lookup(surface)).filter(hit => isOwnArticle(hit.title, entity));
+        if (own.length) results = [...own, ...results.filter(hit => !own.some(item => withoutHash(item.url) === withoutHash(hit.url)))];
+      }
     }
     return results.length ? { results } : 'unavailable';
   };
@@ -896,8 +969,36 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             }
             if (isDisambiguationPage(opened)) continue;
             // The answer line must carry what the question asks for (a number, a name, the question's language), or the next page is tried.
-            const lines = relevantLines(opened, step.query, 3, true).filter((line, at) => at > 0 || checkAnswerLine(step.query, line).ok);
-            if (lines.length) { plan.found = { url: opened.url, title: tidy(opened.title) || hostOf(opened.url), lines, readAt: opened.observedAt }; break; }
+            // For a subject's attribute («كم عدد سكان مصر») the line names the subject, unless the page is the subject's own article:
+            // «عدد سكان المدينة … 1500 نسمة» from «القصير (مصر)» is not Egypt's population.
+            // A figure is taken only from a page about the subject: a village's or a people's page carries someone else's
+            // numbers beside the country's name. A capital or a definition may come from any page whose sentence names the
+            // subject («Tokyo is the capital of Japan»), and a live price from any price page.
+            const entity = entityWords(step.query);
+            if (WANTS_NUMBER.test(step.query) && !LIVE.test(step.query) && !aboutSubject(opened.title, topic, entity)) continue;
+            // The answer line is the best-scored sentence that passes the checks; the others stay as details. When none passes,
+            // the next page is tried. (Earlier the details were kept even when the first line failed, so an unchecked sentence
+            // became the answer: artifacts/plan-2026-11-22/two-sources-2026-11-22T06-11-30.json, rq015.)
+            const ranked = relevantLines(opened, step.query, 3, true);
+            const answerAt = ranked.findIndex(line => checkAnswerLine(step.query, line).ok && namesEntity(line, entity, isOwnArticle(opened.title, entity)));
+            const lines = answerAt < 0 ? [] : [ranked[answerAt]!, ...ranked.filter((_, at) => at !== answerAt)];
+            if (lines.length) {
+              plan.found = { url: opened.url, title: tidy(opened.title) || hostOf(opened.url), lines, readAt: opened.observedAt };
+              // A figure is shown with a second page's figure when another fitting page was already read (plan §7.4): the
+              // reply says whether the two agree, and shows both when they differ. No extra fetch: the pages came together.
+              // The other page must be about the same subject: its title holds every topic word, or is the subject itself.
+              if (WANTS_NUMBER.test(step.query) || LIVE.test(step.query)) {
+                for (const [other, otherRead] of reads.entries()) {
+                  if (other === index || otherRead?.kind !== 'page' || !readableOverHttp(otherRead.page.text) || isDisambiguationPage(otherRead.page)) continue;
+                  const ownArticle = isOwnArticle(otherRead.page.title, entity);
+                  if (!ownArticle && topic.length && titleScore(otherRead.page.title, topic) < topic.length) continue;
+                  const [line] = relevantLines(otherRead.page, step.query, 1, true)
+                    .filter(candidate => checkAnswerLine(step.query, candidate).ok && namesEntity(candidate, entity, ownArticle));
+                  if (line) { plan.found.second = { url: otherRead.page.url, title: tidy(otherRead.page.title) || hostOf(otherRead.page.url), line, agrees: sameFigure(lines[0], line) }; break; }
+                }
+              }
+              break;
+            }
           }
         }
         break;
@@ -1008,7 +1109,14 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
       const readAt = plan.found.readAt && !Number.isNaN(Date.parse(plan.found.readAt)) ? ` · ${en ? 'read' : 'قُرئت'} ${new Date(plan.found.readAt).toISOString().slice(0, 16).replace('T', ' ')} UTC` : '';
       const source = `**${en ? 'Source:' : 'المصدر:'}** [${siteName(plan.found.url)} — ${plainTitle(plan.found.title)}](${plan.found.url})${readAt}`;
       const also = others.length ? `\n\n**${en ? 'See also:' : 'للمزيد:'}** ${others.map(item => `[${plainTitle(item.title)}](${item.url})`).join(' · ')}` : '';
-      return { status: 'completed', text: `${first}${more}\n\n${source}${also}${note}` };
+      // A second page on the same figure: named when it agrees, quoted when it differs, so a lone number is never presented as settled.
+      // With no second page, the reply says so (plan §7.1: «المصدر يقول…، ولم أتحقق منه في مصدر ثانٍ»).
+      const wantsFigure = WANTS_NUMBER.test(last.query) || LIVE.test(last.query);
+      const second = plan.found.second ? plan.found.second.agrees
+        ? `\n\n**${en ? 'A second source agrees:' : 'مصدر ثانٍ يؤكد:'}** [${siteName(plan.found.second.url)} — ${plainTitle(plan.found.second.title)}](${plan.found.second.url})`
+        : `\n\n**${en ? 'A second source differs:' : 'مصدر ثانٍ يختلف:'}** ${en ? `“${plan.found.second.line}”` : `«${plan.found.second.line}»`} — [${siteName(plan.found.second.url)} — ${plainTitle(plan.found.second.title)}](${plan.found.second.url})`
+        : wantsFigure ? `\n\n${en ? 'I did not check this figure against a second source.' : 'لم أتحقق من هذا الرقم في مصدر ثانٍ.'}` : '';
+      return { status: 'completed', text: `${first}${more}\n\n${source}${second}${also}${note}` };
     }
     if (plan.results.length) return { status: 'partial', text: en
       ? `I found no page that answers “${last.query}” directly, and I will not pass you an answer from a page that is not about your question. These pages came up in the search:\n\n${list(plan.results)}\n\nSay “open result 2”, for example, and I will read it for you.${note}`

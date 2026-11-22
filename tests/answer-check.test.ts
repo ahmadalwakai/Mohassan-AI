@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkAnswerLine, checkAnswerLines, isDisambiguationPage, isDisambiguationTitle, isMetaLine, textLanguage } from '../apps/server/src/assistant/answer-check.js';
+import { checkAnswerLine, checkAnswerLines, figureKind, hasFigureOf, isDisambiguationPage, isDisambiguationTitle, isMetaLine, textLanguage } from '../apps/server/src/assistant/answer-check.js';
 
 describe('answer checks before a line is sent (plan §7.4)', () => {
   it('rejects the lines the baseline sent with confidence', () => {
@@ -20,6 +20,26 @@ describe('answer checks before a line is sent (plan §7.4)', () => {
     expect(checkAnswerLine('كم عدد سكان مصر؟', 'مصر دولة عربية تقع في الركن الشمالي الشرقي من قارة أفريقيا.').reasons).toContain('needs_number');
     expect(checkAnswerLine('When did the Berlin Wall fall?', 'The Berlin Wall divided the city for decades.').reasons).toContain('needs_number');
     expect(checkAnswerLine('When did the Berlin Wall fall?', 'The Berlin Wall fell on 9 November 1989.').ok).toBe(true);
+  });
+
+  it('wants the kind of figure the question asks for: a duration, a date, a price', () => {
+    expect(figureKind('كم تستغرق عملية المياه البيضاء؟')).toBe('duration');
+    expect(figureKind('How long does cataract surgery take?')).toBe('duration');
+    expect(figureKind('متى سقط جدار برلين؟')).toBe('date');
+    expect(figureKind('When did the Berlin Wall fall?')).toBe('date');
+    expect(figureKind('كم سعر الذهب اليوم؟')).toBe('price');
+    expect(figureKind('How much does a Tesla Model 3 cost?')).toBe('price');
+    expect(figureKind('كم عدد سكان مصر؟')).toBe('any');
+    // Measured on 2026-11-22: a film's release year is a number, not how long the operation takes.
+    expect(checkAnswerLine('كم تستغرق عملية المياه البيضاء؟', 'مياه بيضاء (الإنجليزية: White Waters) هُو فيلم دراما نيجيري صدر سنة 2007 وأخرجه إيزو أوجوكو.').reasons).toContain('needs_unit');
+    expect(checkAnswerLine('كم تستغرق عملية المياه البيضاء؟', 'تستغرق عملية إزالة المياه البيضاء عادة بين 15 و30 دقيقة تحت تخدير موضعي.').ok).toBe(true);
+    expect(checkAnswerLine('How long does cataract surgery take?', 'Cataract surgery usually takes 30 to 45 minutes and is done as day surgery.').ok).toBe(true);
+    expect(hasFigureOf('duration', 'The operation takes about 1.5 hours.')).toBe(true);
+    expect(hasFigureOf('date', 'معركة المياه البيضاء وقعت في 2 سبتمبر 1457م.')).toBe(true);
+    expect(hasFigureOf('date', 'يصل عدد هذه الدول إلى 22 دولة.')).toBe(false);
+    expect(checkAnswerLine('كم سعر الذهب اليوم؟', 'ارتفع الذهب بنسبة 1.2% خلال التعاملات.').reasons).toContain('needs_unit');
+    expect(checkAnswerLine('كم سعر الذهب اليوم؟', 'بلغ سعر أونصة الذهب اليوم 2650 دولارًا.').ok).toBe(true);
+    expect(checkAnswerLine('كم عدد سكان مصر؟', 'يبلغ عدد سكان مصر نحو 105 ملايين نسمة.').ok).toBe(true);
   });
 
   it('keeps the reply in the language of the question', () => {
