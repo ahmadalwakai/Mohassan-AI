@@ -21,6 +21,8 @@ const chat = `${base}/conversations`;
 export const WASLA_GATEWAY_ROUTES: ReadonlySet<string> = new Set([
   `POST ${base}/pair`,
   `GET ${base}/status`,
+  // The phone's web search runs on Mohassan's own search engine (owner's decision, 2026-11-22).
+  `GET ${base}/search`,
   `GET ${chat}`, `POST ${chat}`, `GET ${chat}/:id`, `DELETE ${chat}/:id`, `GET ${chat}/:id/campaign-events`,
   `POST ${chat}/:id/messages`, `POST ${chat}/:id/respond`, `POST ${chat}/:id/approve`, `POST ${chat}/:id/cancel`,
 ]);
@@ -59,6 +61,8 @@ export interface WaslaRouteOptions {
   /** Pass the open transaction when there is one: the embedded database may hold a single connection. */
   roleOf: (userId: string, connection?: Kysely<any>) => Promise<WorkspaceRole | null>;
   chat: () => WaslaChat;
+  /** Mohassan's search engine, for the phone's search screen. Absent means the phone gets 503. */
+  search?: (ownerId: string, query: string, signal: AbortSignal) => Promise<{ provider: string; results: { title: string; url: string; snippet: string }[] }>;
 }
 
 export async function waslaMigration(db: Kysely<any>) {
@@ -168,6 +172,18 @@ export async function registerWaslaRoutes(app: FastifyInstance, options: WaslaRo
   });
 
   app.get(`${base}/status`, async (request) => { await gateway(request); return { ok: true, bridge: 'mohassan' }; });
+
+  // The phone's web search: the same engine the web chat uses, bounded to 8 hits and 25 s.
+  const SearchQuery = z.object({ q: z.string().trim().min(1).max(400) }).strict();
+  app.get<{ Querystring: { q?: string } }>(`${base}/search`, { config: { rateLimit: { max: 15, timeWindow: '1 minute' } } }, async (request) => {
+    const { ownerId } = await gateway(request);
+    if (!options.search) throw fault(503, 'WASLA_SEARCH_UNAVAILABLE', 'البحث غير متاح على خادم موحسن هذا.');
+    const { q } = SearchQuery.parse(request.query);
+    const found = await options.search(ownerId, q, AbortSignal.timeout(25_000));
+    const results = found.results.slice(0, 8).map(hit => ({ title: String(hit.title).slice(0, 240), url: String(hit.url).slice(0, 2048), snippet: String(hit.snippet ?? '').slice(0, 600) }))
+      .filter(hit => /^https:\/\//i.test(hit.url));
+    return { query: q, results, provider: found.provider };
+  });
 
   type Conversation = { Params: { id: string } };
   const live = { config: { rateLimit: { max: 400, timeWindow: '1 minute' } } };

@@ -183,6 +183,13 @@ class MohassanBridge:
             raise BridgeError("invalid_request", "رقم الحدث غير صالح.", 400)
         return await self._request("GET", f"{GATEWAY}/conversations/{conversation_id(cid)}/campaign-events?after={after}")
 
+    async def search(self, query: str):
+        """The phone's web search, run by Mohassan's own search engine (owner's decision, 2026-11-22)."""
+        from urllib.parse import quote
+        if not isinstance(query, str) or not 1 <= len(query.strip()) <= 400:
+            raise BridgeError("invalid_request", "اكتب ما تبحث عنه في 400 حرف على الأكثر.", 400)
+        return await self._request("GET", GATEWAY + "/search?q=" + quote(query.strip(), safe=""), timeout=SLOW_SECONDS)
+
     async def act(self, cid, action, body):
         if action not in ("messages", "respond", "approve", "cancel"):
             raise BridgeError("not_found", "هذا الإجراء غير متاح عبر وصلة.", 404)

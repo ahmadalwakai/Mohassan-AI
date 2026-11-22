@@ -56,10 +56,11 @@ class StatusCapabilityTests(unittest.IsolatedAsyncioTestCase):
         self.app[STATE].mohassan = FakeBridge({"linked": True, "reachable": True})
         services = self.app[STATE].services
         body = await self.status()
-        self.assertFalse(body["capabilities"]["search"]["ready"])          # never tried
+        self.assertTrue(body["capabilities"]["search"]["ready"])           # Mohassan's engine, as ready as the bridge
         self.assertTrue(body["capabilities"]["images"]["ready"])           # the fake has no image_error
         self.assertTrue(body["capabilities"]["desktop"]["ready"])          # enabled in the fixture
-        services.last_search = {"ok": False, "at": 0, "code": "search_unavailable", "message": "offline"}
+        import time
+        self.app[STATE].last_search = {"ok": False, "at": time.time(), "code": "search_unavailable", "message": "offline"}
         services.images_available = False
         services.image_error = type("E", (), {"code": "image_engine_missing"})()
         self.app[STATE].desktop_enabled = False

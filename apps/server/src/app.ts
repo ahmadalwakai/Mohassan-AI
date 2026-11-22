@@ -361,7 +361,8 @@ export async function createApplication(config: AppConfig) {
     }}:{}),
   });
   await registerCommandChatRoutes(app,{control:chat,owner:async request=>{const user=await owner(request);windows.noteSession(user.id,request);return user;}});
-  await registerWaslaRoutes(app,{db:database.db,enabled:config.waslaBridgeEnabled===true,owner,roleOf:(userId,connection)=>roleOf(connection??database.db,userId),chat:()=>chat});
+  await registerWaslaRoutes(app,{db:database.db,enabled:config.waslaBridgeEnabled===true,owner,roleOf:(userId,connection)=>roleOf(connection??database.db,userId),chat:()=>chat,
+    search:async(ownerId,query,signal)=>({provider:searchProvider.name,results:await searchProvider.search(query,8,signal,{ownerId})})});
   await registerBrowserFileRoutes(app,{db:database.db,browser:agentBrowser,owner});
   await registerStudioAiRoutes(app,{control:studioAi,owner});
   await studio.reviews.register(app,owner);
