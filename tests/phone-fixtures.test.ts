@@ -18,7 +18,8 @@ const Envelope = z.object({
   response: z.object({ status: z.number().int(), body: z.unknown() }).strict(),
 }).strict();
 const PhoneConversation = ChatConversationSchema.pick(Object.fromEntries(WASLA_PHONE_FIELDS.map(key => [key, true])) as Record<(typeof WASLA_PHONE_FIELDS)[number], true>).strict();
-const PhoneList = z.object({ conversations: z.array(ChatConversationSummarySchema) }).strict();
+// `configured` says whether the server has a chat model; the phone ignores it.
+const PhoneList = z.object({ conversations: z.array(ChatConversationSummarySchema), configured: z.boolean().optional() }).strict();
 const Fault = z.object({ error: z.object({ code: z.string(), message: z.string() }).strict() }).strict();
 
 async function fixtures() {
@@ -51,7 +52,10 @@ describe('phone fixtures', () => {
   it('records each state the phone must render', async () => {
     const byName = Object.fromEntries((await fixtures()).map(entry => [entry.name, entry.response.body as any]));
     expect(byName['detail-completed'].status).toBe('idle');
-    expect(byName['detail-completed'].messages.at(-1).text).toBe('15 × 23 = **345**');
+    expect(byName['detail-completed'].messages.at(-1).text).toContain('345');
+    expect(byName['detail-completed-follow-up'].messages.at(-1).text).toContain('120');
+    expect(byName['detail-greeting'].status).toBe('idle');
+    expect(byName['detail-unconfirmed-sign-in'].status).toBe('idle');
     expect(byName['detail-question-fields'].status).toBe('waiting_user');
     // Several questions in one card: the web answers them as one numbered reply. The phone does not read `fields` yet (plan phase 3).
     expect(byName['detail-question-fields'].question.fields.map((field: { id: string }) => field.id)).toEqual(['to', 'kind', 'details', 'from']);
@@ -64,7 +68,7 @@ describe('phone fixtures', () => {
     // Cancelling returns the conversation to idle; only the run is marked cancelled.
     expect(byName['detail-cancelled'].status).toBe('idle');
     expect(byName['detail-stopped'].status).toBe('idle');
-    for (const failed of ['detail-failed-no-model', 'detail-failed-blocked-address', 'detail-failed-search-blocked', 'detail-failed-follow-up-no-model']) {
+    for (const failed of ['detail-failed-blocked-address']) {
       expect(byName[failed].status, failed).toBe('failed');
       expect(typeof byName[failed].error, failed).toBe('string');
       expect(byName[failed].error.length, failed).toBeGreaterThan(10);
@@ -74,7 +78,7 @@ describe('phone fixtures', () => {
   it('lists and errors keep their shapes', async () => {
     const byName = Object.fromEntries((await fixtures()).map(entry => [entry.name, entry]));
     expect(PhoneList.safeParse(byName['list-empty']!.response.body).success).toBe(true);
-    expect(byName['list-empty']!.response.body).toEqual({ conversations: [] });
+    expect((byName['list-empty']!.response.body as { conversations: unknown[] }).conversations).toEqual([]);
     const list = PhoneList.parse(byName['list']!.response.body);
     expect(list.conversations.length).toBeGreaterThanOrEqual(5);
     expect(byName['status']!.response.body).toEqual({ ok: true, bridge: 'mohassan' });

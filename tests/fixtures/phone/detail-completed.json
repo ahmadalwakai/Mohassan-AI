@@ -1,29 +1,29 @@
 {
-  "capturedAt": "2026-11-22T03:40:05.307Z",
-  "sourceCommit": "55a5f7c",
+  "capturedAt": "2026-11-22T07:31:23.778Z",
+  "sourceCommit": "b865d3d",
   "request": {
     "method": "GET",
-    "url": "/api/wasla/gateway/conversations/a714c73a-439a-4b0e-8f54-534eab599af5"
+    "url": "/api/wasla/gateway/conversations/c8134d86-2d29-4cb0-a569-2f8d1ba361fc"
   },
   "response": {
     "status": 200,
     "body": {
-      "id": "a714c73a-439a-4b0e-8f54-534eab599af5",
+      "id": "c8134d86-2d29-4cb0-a569-2f8d1ba361fc",
       "title": "كم يساوي 15 ضرب 23؟",
       "status": "idle",
-      "updatedAt": "2026-11-22T03:40:05.173Z",
+      "updatedAt": "2026-11-22T07:31:23.725Z",
       "messages": [
         {
-          "id": "401c7f4a-7b96-45a6-b112-51aaf1398fac",
+          "id": "40673c73-7360-444f-b05e-8a36ebc3807a",
           "role": "user",
           "text": "كم يساوي 15 ضرب 23؟",
-          "createdAt": "2026-11-22T03:40:04.965Z"
+          "createdAt": "2026-11-22T07:31:23.162Z"
         },
         {
-          "id": "21b4afe8-4d80-44a5-89a2-6fa974390961",
+          "id": "cf1db72a-9176-430b-80e1-8aaf9046a8b1",
           "role": "assistant",
-          "text": "15 × 23 = **345**",
-          "createdAt": "2026-11-22T03:40:05.121Z"
+          "text": "15 * 23 = 345",
+          "createdAt": "2026-11-22T07:31:23.718Z"
         }
       ],
       "question": null,
@@ -32,9 +32,9 @@
       "progress": null,
       "steps": [
         {
-          "id": "64e1077e-a27e-47dc-95d5-5de6b92758e8",
-          "text": "حساب",
-          "createdAt": "2026-11-22T03:40:05.078Z"
+          "id": "ab305302-f6bf-4d18-9e81-d4f54bdb5e62",
+          "text": "حساب محلي",
+          "createdAt": "2026-11-22T07:31:23.688Z"
         }
       ],
       "error": null,

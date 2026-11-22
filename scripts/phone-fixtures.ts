@@ -115,10 +115,10 @@ async function main() {
     await settle(created.id);
     await record('detail-completed', 'GET', `${gateway}/conversations/${created.id}`);
     await record('campaign-events', 'GET', `${gateway}/conversations/${created.id}/campaign-events?after=0`);
-    // A second message in the finished conversation. Today the brain's calculator does not take «و 40 ضرب 3؟» as a follow-up, so this records the honest no-model failure the phone must show.
+    // A second message in the finished conversation: the brain takes «و 40 ضرب 3؟» as a follow-up sum.
     const followUp = await record('messages-text', 'POST', `${gateway}/conversations/${created.id}/messages`, { text: 'و 40 ضرب 3؟' });
     await settle(followUp.id);
-    await record('detail-failed-follow-up-no-model', 'GET', `${gateway}/conversations/${created.id}`);
+    await record('detail-completed-follow-up', 'GET', `${gateway}/conversations/${created.id}`);
 
     // 2. A question with several fields (the writer), answered as one numbered reply, the way the web does at this commit.
     const letter = await scenario('detail-question-fields', 'اكتب لي رسالة اعتذار لعميل');
@@ -153,11 +153,11 @@ async function main() {
     await record('cancel', 'POST', `${gateway}/conversations/${interrupted.id}/cancel`, {});
     await record('detail-cancelled', 'GET', `${gateway}/conversations/${interrupted.id}`);
 
-    // 5. Three real failures: a sign-in the hands cannot do without a model, a private address, and a
-    //    question that goes to web search (the default) while the fixture allows no public network.
-    await scenario('detail-failed-no-model', `افتح ${origin}/account وسجّل الدخول`);
+    // 5. A sign-in the brain cannot confirm (an honest «not confirmed» reply), a private address it refuses
+    //    (a real failure), and a greeting.
+    await scenario('detail-unconfirmed-sign-in', `افتح ${origin}/account وسجّل الدخول`);
     await scenario('detail-failed-blocked-address', 'افتح http://10.0.0.9/');
-    await scenario('detail-failed-search-blocked', 'مرحبا، كيف حالك اليوم؟');
+    await scenario('detail-greeting', 'مرحبا، كيف حالك اليوم؟');
 
     await record('list', 'GET', `${gateway}/conversations`);
     await record('error-not-found', 'GET', `${gateway}/conversations/00000000-0000-4000-8000-000000000000`);

@@ -1,11 +1,11 @@
 {
-  "capturedAt": "2026-11-22T03:40:05.928Z",
-  "sourceCommit": "55a5f7c",
+  "capturedAt": "2026-11-22T07:31:24.251Z",
+  "sourceCommit": "b865d3d",
   "request": {
     "method": "POST",
-    "url": "/api/wasla/gateway/conversations/3c628165-362f-426c-8b00-23204a8f9003/respond",
+    "url": "/api/wasla/gateway/conversations/17d334f8-b9fc-4287-b24a-7cf4676f0f0c/respond",
     "body": {
-      "questionId": "70098c10-d522-4be6-bd07-5ba85176708d",
+      "questionId": "53c622fa-80cd-4d4c-868b-e7e43844c44f",
       "optionId": "stop"
     }
   },

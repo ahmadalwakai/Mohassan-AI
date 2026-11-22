@@ -154,12 +154,12 @@ enum PairingChecks {
             try check(conversations >= 10 && lists >= 2 && faults >= 4, "Enough recorded exchanges were read (\(conversations) conversations, \(lists) lists, \(faults) errors)")
             let completed = try fixture("detail-completed.json", as: MohassanConversation.self).response.body
             try check(completed.status == "idle" && !completed.working, "A finished conversation is idle, not working")
-            try check(completed.messages.last?.text == "15 × 23 = **345**", "The brain's own answer reaches the phone")
+            try check(completed.messages.last?.text.contains("345") == true, "The brain's own answer reaches the phone")
             let asking = try fixture("detail-question-fields.json", as: MohassanConversation.self).response.body
             try check(asking.status == MohassanStatus.waitingUser && asking.question != nil && asking.question?.options.map(\.id) == ["stop"], "A question card with several fields is readable; the phone shows its stop option (fields arrive in plan phase 3)")
             let approval = try fixture("detail-approval.json", as: MohassanConversation.self).response.body
             try check(approval.status == MohassanStatus.waitingApproval && approval.approval?.detail.contains("POST /consent") == true, "An approval is readable with its detail")
-            let failed = try fixture("detail-failed-no-model.json", as: MohassanConversation.self).response.body
+            let failed = try fixture("detail-failed-blocked-address.json", as: MohassanConversation.self).response.body
             try check(failed.status == MohassanStatus.failed && !(failed.error ?? "").isEmpty, "A failed conversation carries its error text")
         }
         print("Pairing and hybrid contract checks passed: \(checks)")

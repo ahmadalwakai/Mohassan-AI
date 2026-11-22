@@ -23,6 +23,8 @@ export const WASLA_GATEWAY_ROUTES: ReadonlySet<string> = new Set([
   `GET ${base}/status`,
   // The phone's web search runs on Mohassan's own search engine (owner's decision, 2026-11-22).
   `GET ${base}/search`,
+  // What became of one phone request, by its key: checked after a lost reply instead of sending again.
+  `GET ${base}/requests/:key`,
   `GET ${chat}`, `POST ${chat}`, `GET ${chat}/:id`, `DELETE ${chat}/:id`, `GET ${chat}/:id/campaign-events`,
   `POST ${chat}/:id/messages`, `POST ${chat}/:id/respond`, `POST ${chat}/:id/approve`, `POST ${chat}/:id/cancel`,
 ]);
@@ -79,6 +81,9 @@ export async function waslaMigration(db: Kysely<any>) {
     await sql`CREATE INDEX IF NOT EXISTS wasla_gateways_owner_idx ON wasla_gateways(owner_id,created_at)`.execute(tx);
     await sql`CREATE TABLE IF NOT EXISTS wasla_audit(id text PRIMARY KEY,owner_id text NOT NULL,gateway_id text,type text NOT NULL,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`.execute(tx);
     await sql`CREATE INDEX IF NOT EXISTS wasla_audit_owner_idx ON wasla_audit(owner_id,created_at DESC)`.execute(tx);
+    // One row per phone request key: the effect happens at most once (plan phase 3).
+    await sql`CREATE TABLE IF NOT EXISTS wasla_client_requests(owner_id text NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,client_request_id text NOT NULL,kind text NOT NULL,conversation_id text,body_hash text NOT NULL,state text NOT NULL,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(owner_id,client_request_id))`.execute(tx);
+    await sql`CREATE INDEX IF NOT EXISTS wasla_client_requests_created_idx ON wasla_client_requests(created_at)`.execute(tx);
   });
 }
 
@@ -213,13 +218,72 @@ export async function registerWaslaRoutes(app: FastifyInstance, options: WaslaRo
     if (!out || typeof out !== 'object' || !Array.isArray((out as { messages?: unknown }).messages)) return out;
     return Object.fromEntries(WASLA_PHONE_FIELDS.filter(key => key in (out as object)).map(key => [key, (out as Record<string, unknown>)[key]]));
   };
+  // At most one effect per phone request key (plan phase 3). The phone sends `clientRequestId` with every
+  // create, message, answer and approval; the row is written before the chat runs, so a double tap or a
+  // resend after a lost reply never starts a second message or run. The chat's strict contracts never see the key.
+  type Kind = 'create' | 'messages' | 'respond' | 'approve';
+  const KEY_TTL_MS = 48 * 3600_000;
+  const RequestKey = z.uuid();
+  function keyOf(raw: unknown): { key: string | null; body: unknown } {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !Object.hasOwn(raw, 'clientRequestId')) return { key: null, body: raw ?? {} };
+    const { clientRequestId, ...body } = raw as Record<string, unknown>;
+    return { key: RequestKey.parse(clientRequestId), body };
+  }
+  async function once(ownerId: string, kind: Kind, conversationId: string | null, raw: unknown, run: (body: unknown) => Promise<unknown>, current: (conversationId: string) => Promise<unknown>) {
+    const { key, body } = keyOf(raw);
+    if (!key) return run(body);
+    const digest = hash(JSON.stringify([kind, conversationId, body]));
+    const row = { owner_id: ownerId, client_request_id: key };
+    await db.deleteFrom('wasla_client_requests').where('created_at', '<', new Date(Date.now() - KEY_TTL_MS)).execute();
+    const claimed = await db.insertInto('wasla_client_requests').values({ ...row, kind, conversation_id: conversationId, body_hash: digest, state: 'pending' })
+      .onConflict(oc => oc.columns(['owner_id', 'client_request_id']).doNothing()).returning('client_request_id').executeTakeFirst();
+    if (!claimed) {
+      const seen = await db.selectFrom('wasla_client_requests').selectAll().where('owner_id', '=', ownerId).where('client_request_id', '=', key).executeTakeFirstOrThrow();
+      if (seen.body_hash !== digest || seen.kind !== kind) throw fault(409, 'CLIENT_REQUEST_REUSED', 'مفتاح هذا الطلب استُخدم لطلب آخر. أرسل من جديد.');
+      if (seen.state === 'done' && seen.conversation_id) return current(seen.conversation_id as string);
+      if (seen.state === 'pending') throw fault(409, 'CLIENT_REQUEST_IN_PROGRESS', 'الطلب نفسه قيد التنفيذ. انتظر ثم تحقق من المحادثة.');
+      throw fault(409, 'CLIENT_REQUEST_UNKNOWN', 'لم يتأكد مصير هذا الطلب. افتح المحادثة وتحقق منها قبل إرسال جديد.');
+    }
+    try {
+      const result = await run(body);
+      const made = result && typeof result === 'object' && typeof (result as { id?: unknown }).id === 'string' ? (result as { id: string }).id : conversationId;
+      await db.updateTable('wasla_client_requests').set({ state: 'done', conversation_id: made }).where('owner_id', '=', ownerId).where('client_request_id', '=', key).execute();
+      return result;
+    } catch (error) {
+      const status = (error as { statusCode?: number }).statusCode ?? 0;
+      // A refusal changed nothing, so the key is freed for a corrected request. Anything else may
+      // have half-happened: the key stays, and a resend with it is refused instead of repeated blind.
+      if (error instanceof z.ZodError || (status >= 400 && status < 500)) await db.deleteFrom('wasla_client_requests').where('owner_id', '=', ownerId).where('client_request_id', '=', key).execute();
+      else await db.updateTable('wasla_client_requests').set({ state: 'unknown' }).where('owner_id', '=', ownerId).where('client_request_id', '=', key).execute();
+      throw error;
+    }
+  }
+  app.get<{ Params: { key: string } }>(`${base}/requests/:key`, live, async (request) => {
+    const { ownerId } = await gateway(request);
+    const key = RequestKey.parse(request.params.key);
+    const seen = await db.selectFrom('wasla_client_requests').select(['kind', 'state', 'conversation_id']).where('owner_id', '=', ownerId).where('client_request_id', '=', key).executeTakeFirst();
+    return seen ? { known: true, kind: seen.kind, state: seen.state, conversationId: seen.conversation_id ?? null } : { known: false };
+  });
+
   app.get(chat, async (request) => { const { ownerId, control } = await as(request); return control.list(ownerId); });
-  app.post(chat, { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request) => { const { ownerId, control } = await as(request); return forPhone(control.create(ownerId, request.body ?? {})); });
+  app.post(chat, { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request) => {
+    const { ownerId, control } = await as(request);
+    return forPhone(once(ownerId, 'create', null, request.body ?? {}, body => control.create(ownerId, body), made => control.detail(ownerId, made)));
+  });
   app.get<Conversation>(`${chat}/:id`, live, async (request) => { const { ownerId, control } = await as(request); return forPhone(control.detail(ownerId, id(request.params.id))); });
   app.delete<Conversation>(`${chat}/:id`, { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request) => { const { ownerId, control } = await as(request); return control.remove(ownerId, id(request.params.id)); });
   app.get<Conversation & { Querystring: { after?: string } }>(`${chat}/:id/campaign-events`, live, async (request) => { const { ownerId, control } = await as(request); return control.campaignEvents(ownerId, id(request.params.id), z.coerce.number().int().min(0).max(100000).default(0).parse(request.query.after)); });
-  app.post<Conversation>(`${chat}/:id/messages`, { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request) => { const { ownerId, control } = await as(request); return forPhone(control.send(ownerId, id(request.params.id), request.body)); });
-  app.post<Conversation>(`${chat}/:id/respond`, async (request) => { const { ownerId, control } = await as(request); return forPhone(control.respond(ownerId, id(request.params.id), request.body)); });
-  app.post<Conversation>(`${chat}/:id/approve`, async (request) => { const { ownerId, control } = await as(request); return forPhone(control.approve(ownerId, id(request.params.id), request.body)); });
+  app.post<Conversation>(`${chat}/:id/messages`, { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request) => {
+    const { ownerId, control } = await as(request); const cid = id(request.params.id);
+    return forPhone(once(ownerId, 'messages', cid, request.body, body => control.send(ownerId, cid, body), made => control.detail(ownerId, made)));
+  });
+  app.post<Conversation>(`${chat}/:id/respond`, async (request) => {
+    const { ownerId, control } = await as(request); const cid = id(request.params.id);
+    return forPhone(once(ownerId, 'respond', cid, request.body, body => control.respond(ownerId, cid, body), made => control.detail(ownerId, made)));
+  });
+  app.post<Conversation>(`${chat}/:id/approve`, async (request) => {
+    const { ownerId, control } = await as(request); const cid = id(request.params.id);
+    return forPhone(once(ownerId, 'approve', cid, request.body, body => control.approve(ownerId, cid, body), made => control.detail(ownerId, made)));
+  });
   app.post<Conversation>(`${chat}/:id/cancel`, async (request) => { const { ownerId, control } = await as(request); Empty.parse(request.body ?? {}); return forPhone(control.cancel(ownerId, id(request.params.id))); });
 }

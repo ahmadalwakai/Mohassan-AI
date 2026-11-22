@@ -1,39 +1,39 @@
 {
-  "capturedAt": "2026-11-22T03:40:09.768Z",
-  "sourceCommit": "55a5f7c",
+  "capturedAt": "2026-11-22T07:31:26.426Z",
+  "sourceCommit": "b865d3d",
   "request": {
     "method": "POST",
-    "url": "/api/wasla/gateway/conversations/38e8cf1a-f1f0-4eb2-a12a-1f3c27fca78d/approve",
+    "url": "/api/wasla/gateway/conversations/1fb6db99-3b46-4ec3-adae-c08cb2ebc9ec/approve",
     "body": {
-      "approvalId": "b8d15d36-72fe-498e-9b5d-980a75e5f253",
+      "approvalId": "14b67281-d76a-4b3a-81c0-a1b873200f97",
       "approved": false
     }
   },
   "response": {
     "status": 200,
     "body": {
-      "id": "38e8cf1a-f1f0-4eb2-a12a-1f3c27fca78d",
+      "id": "1fb6db99-3b46-4ec3-adae-c08cb2ebc9ec",
       "title": "افتح http://fixture-site.test/ads",
       "status": "running",
-      "updatedAt": "2026-11-22T03:40:09.700Z",
+      "updatedAt": "2026-11-22T07:31:26.391Z",
       "messages": [
         {
-          "id": "88752a13-63bc-4127-9c1d-654529713edd",
+          "id": "de796cee-5799-420e-9044-edecfdcade78",
           "role": "user",
           "text": "افتح http://fixture-site.test/ads",
-          "createdAt": "2026-11-22T03:40:06.257Z"
+          "createdAt": "2026-11-22T07:31:24.419Z"
         },
         {
-          "id": "b652be7a-3d7f-4018-b62d-7bc6e23792f7",
+          "id": "16b9dec6-c12c-4689-b8b9-c84a827cd594",
           "role": "assistant",
           "text": "أريد إرسال «رفض ملفات الارتباط غير الضرورية» إلى fixture-site.test. هل أتابع؟",
-          "createdAt": "2026-11-22T03:40:09.501Z"
+          "createdAt": "2026-11-22T07:31:26.339Z"
         },
         {
-          "id": "17392aa4-394d-4750-8f76-b0b5cb737312",
+          "id": "564b445e-4060-4091-850f-d8a72d5ab99e",
           "role": "user",
           "text": "لا تفعل ذلك",
-          "createdAt": "2026-11-22T03:40:09.695Z"
+          "createdAt": "2026-11-22T07:31:26.389Z"
         }
       ],
       "question": null,
@@ -42,9 +42,9 @@
       "progress": "يتابع العمل…",
       "steps": [
         {
-          "id": "6b5ee859-b9ab-4479-862a-0a4bf96ec872",
+          "id": "1d1e3a84-2b50-41fc-bfd1-45c47e50cee8",
           "text": "فتح fixture-site.test",
-          "createdAt": "2026-11-22T03:40:06.304Z"
+          "createdAt": "2026-11-22T07:31:24.484Z"
         }
       ],
       "error": null,

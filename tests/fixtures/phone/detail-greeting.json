@@ -1,0 +1,38 @@
+{
+  "capturedAt": "2026-11-22T07:31:29.539Z",
+  "sourceCommit": "b865d3d",
+  "request": {
+    "method": "GET",
+    "url": "/api/wasla/gateway/conversations/bfb58a9c-7b1f-4c95-afef-2dbbfd2f60b7"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "bfb58a9c-7b1f-4c95-afef-2dbbfd2f60b7",
+      "title": "مرحبا، كيف حالك اليوم؟",
+      "status": "idle",
+      "updatedAt": "2026-11-22T07:31:29.501Z",
+      "messages": [
+        {
+          "id": "fe27704c-83a5-4e7b-8772-f3d5ed28bf97",
+          "role": "user",
+          "text": "مرحبا، كيف حالك اليوم؟",
+          "createdAt": "2026-11-22T07:31:29.438Z"
+        },
+        {
+          "id": "a088b6ee-a188-4005-a80b-5648cfac9ebf",
+          "role": "assistant",
+          "text": "مرحبًا! كيف أساعدك؟",
+          "createdAt": "2026-11-22T07:31:29.493Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "progress": null,
+      "steps": [],
+      "error": null,
+      "configured": false
+    }
+  }
+}

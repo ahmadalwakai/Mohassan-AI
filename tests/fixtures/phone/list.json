@@ -1,6 +1,6 @@
 {
-  "capturedAt": "2026-11-22T03:40:36.802Z",
-  "sourceCommit": "55a5f7c",
+  "capturedAt": "2026-11-22T07:31:29.551Z",
+  "sourceCommit": "b865d3d",
   "request": {
     "method": "GET",
     "url": "/api/wasla/gateway/conversations"
@@ -8,62 +8,63 @@
   "response": {
     "status": 200,
     "body": {
+      "configured": false,
       "conversations": [
         {
-          "id": "64fe461b-cf24-4ea4-a1f1-f19ca9d5cf6d",
+          "id": "bfb58a9c-7b1f-4c95-afef-2dbbfd2f60b7",
           "title": "مرحبا، كيف حالك اليوم؟",
-          "status": "failed",
+          "status": "idle",
           "browserAccount": null,
-          "updatedAt": "2026-11-22T03:40:36.723Z"
+          "updatedAt": "2026-11-22T07:31:29.501Z"
         },
         {
-          "id": "17c9384f-f88e-4311-aadd-155be900d91d",
+          "id": "02d66440-1003-446f-8beb-e7ebfc4f70d5",
           "title": "افتح http://10.0.0.9/",
           "status": "failed",
           "browserAccount": null,
-          "updatedAt": "2026-11-22T03:40:14.610Z"
+          "updatedAt": "2026-11-22T07:31:29.394Z"
         },
         {
-          "id": "7e9a6c27-cead-449e-96b2-5c06beff0c69",
+          "id": "bd6373b1-e4fb-4a36-b8da-4ec4300375a8",
           "title": "افتح http://fixture-site.test/account وسجّل الدخول",
-          "status": "failed",
+          "status": "idle",
           "browserAccount": null,
-          "updatedAt": "2026-11-22T03:40:14.235Z"
+          "updatedAt": "2026-11-22T07:31:29.201Z"
         },
         {
-          "id": "2b558f96-e7b5-47cd-9c0e-bf708375811c",
+          "id": "b8430ef9-9b2e-4f59-b9e6-e2a2b0822e4a",
           "title": "افتح http://fixture-site.test/ads",
           "status": "idle",
           "browserAccount": null,
-          "updatedAt": "2026-11-22T03:40:12.325Z"
+          "updatedAt": "2026-11-22T07:31:28.193Z"
         },
         {
-          "id": "38e8cf1a-f1f0-4eb2-a12a-1f3c27fca78d",
+          "id": "1fb6db99-3b46-4ec3-adae-c08cb2ebc9ec",
           "title": "افتح http://fixture-site.test/ads",
           "status": "idle",
           "browserAccount": null,
-          "updatedAt": "2026-11-22T03:40:10.220Z"
+          "updatedAt": "2026-11-22T07:31:27.024Z"
         },
         {
-          "id": "de855672-4df0-4112-8874-46e5b920ff78",
+          "id": "1128d649-80ec-4532-9e72-173a6b6b4949",
           "title": "اكتب رسالة شكر لفريق العمل",
           "status": "idle",
           "browserAccount": null,
-          "updatedAt": "2026-11-22T03:40:06.137Z"
+          "updatedAt": "2026-11-22T07:31:24.367Z"
         },
         {
-          "id": "3c628165-362f-426c-8b00-23204a8f9003",
+          "id": "17d334f8-b9fc-4287-b24a-7cf4676f0f0c",
           "title": "اكتب لي رسالة اعتذار لعميل",
           "status": "idle",
           "browserAccount": null,
-          "updatedAt": "2026-11-22T03:40:05.822Z"
+          "updatedAt": "2026-11-22T07:31:24.207Z"
         },
         {
-          "id": "a714c73a-439a-4b0e-8f54-534eab599af5",
+          "id": "c8134d86-2d29-4cb0-a569-2f8d1ba361fc",
           "title": "كم يساوي 15 ضرب 23؟",
-          "status": "failed",
+          "status": "idle",
           "browserAccount": null,
-          "updatedAt": "2026-11-22T03:40:05.464Z"
+          "updatedAt": "2026-11-22T07:31:23.907Z"
         }
       ]
     }

@@ -1,33 +1,33 @@
 {
-  "capturedAt": "2026-11-22T03:40:06.046Z",
-  "sourceCommit": "55a5f7c",
+  "capturedAt": "2026-11-22T07:31:24.351Z",
+  "sourceCommit": "b865d3d",
   "request": {
     "method": "GET",
-    "url": "/api/wasla/gateway/conversations/de855672-4df0-4112-8874-46e5b920ff78"
+    "url": "/api/wasla/gateway/conversations/1128d649-80ec-4532-9e72-173a6b6b4949"
   },
   "response": {
     "status": 200,
     "body": {
-      "id": "de855672-4df0-4112-8874-46e5b920ff78",
+      "id": "1128d649-80ec-4532-9e72-173a6b6b4949",
       "title": "اكتب رسالة شكر لفريق العمل",
       "status": "waiting_user",
-      "updatedAt": "2026-11-22T03:40:06.000Z",
+      "updatedAt": "2026-11-22T07:31:24.329Z",
       "messages": [
         {
-          "id": "76dca672-94d6-41f3-a58d-a2603fb76fed",
+          "id": "046638b4-286e-4ed9-b707-521f52984dd3",
           "role": "user",
           "text": "اكتب رسالة شكر لفريق العمل",
-          "createdAt": "2026-11-22T03:40:05.948Z"
+          "createdAt": "2026-11-22T07:31:24.264Z"
         },
         {
-          "id": "b53d7e60-121e-49de-b45f-a619984798be",
+          "id": "e3e4c3d4-c42e-47f8-8226-cd60f64f52f4",
           "role": "assistant",
           "text": "أكتب لك الرسالة من قالب رسمي، والتفاصيل تبقى بكلماتك. أجب عن هذه الأسئلة:",
-          "createdAt": "2026-11-22T03:40:05.995Z"
+          "createdAt": "2026-11-22T07:31:24.325Z"
         }
       ],
       "question": {
-        "id": "1099d87e-db71-4875-9962-6156716e93ff",
+        "id": "1181be37-c362-4b56-b369-99d7e94e649b",
         "prompt": "أكتب لك الرسالة من قالب رسمي، والتفاصيل تبقى بكلماتك. أجب عن هذه الأسئلة:",
         "options": [
           {
@@ -73,12 +73,14 @@
             "id": "details",
             "prompt": "ماذا تريد أن تقول؟ اكتب الأهم في سطر أو سطرين.",
             "suggestions": [],
+            "multiline": true,
             "placeholder": "مثلاً: تأخر التسليم يومين بسبب الشحن"
           },
           {
             "id": "from",
             "prompt": "من يوقّعها؟",
             "suggestions": [],
+            "multiline": true,
             "placeholder": "اسمك وصفتك"
           }
         ]
@@ -88,9 +90,9 @@
       "progress": null,
       "steps": [
         {
-          "id": "4ec170dc-53e1-4c29-a167-b5bf0f1fff32",
+          "id": "4f715f37-773b-4eb4-a25f-759544c0d396",
           "text": "أسئلة الرسالة",
-          "createdAt": "2026-11-22T03:40:05.984Z"
+          "createdAt": "2026-11-22T07:31:24.312Z"
         }
       ],
       "error": null,

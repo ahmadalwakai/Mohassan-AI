@@ -1,6 +1,6 @@
 {
-  "capturedAt": "2026-11-22T03:40:36.990Z",
-  "sourceCommit": "55a5f7c",
+  "capturedAt": "2026-11-22T07:31:29.610Z",
+  "sourceCommit": "b865d3d",
   "generator": "scripts/phone-fixtures.ts",
   "fixtures": [
     {
@@ -31,9 +31,9 @@
       "conversationStatus": "running"
     },
     {
-      "file": "detail-failed-follow-up-no-model",
+      "file": "detail-completed-follow-up",
       "status": 200,
-      "conversationStatus": "failed"
+      "conversationStatus": "idle"
     },
     {
       "file": "detail-question-fields",
@@ -104,9 +104,9 @@
       "conversationStatus": "idle"
     },
     {
-      "file": "detail-failed-no-model",
+      "file": "detail-unconfirmed-sign-in",
       "status": 200,
-      "conversationStatus": "failed"
+      "conversationStatus": "idle"
     },
     {
       "file": "detail-failed-blocked-address",
@@ -114,9 +114,9 @@
       "conversationStatus": "failed"
     },
     {
-      "file": "detail-failed-search-blocked",
+      "file": "detail-greeting",
       "status": 200,
-      "conversationStatus": "failed"
+      "conversationStatus": "idle"
     },
     {
       "file": "list",

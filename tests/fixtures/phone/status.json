@@ -1,6 +1,6 @@
 {
-  "capturedAt": "2026-11-22T03:40:04.903Z",
-  "sourceCommit": "55a5f7c",
+  "capturedAt": "2026-11-22T07:31:23.118Z",
+  "sourceCommit": "b865d3d",
   "request": {
     "method": "GET",
     "url": "/api/wasla/gateway/status"

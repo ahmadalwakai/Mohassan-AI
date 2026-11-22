@@ -1,9 +1,9 @@
 {
-  "capturedAt": "2026-11-22T03:40:05.354Z",
-  "sourceCommit": "55a5f7c",
+  "capturedAt": "2026-11-22T07:31:23.791Z",
+  "sourceCommit": "b865d3d",
   "request": {
     "method": "GET",
-    "url": "/api/wasla/gateway/conversations/a714c73a-439a-4b0e-8f54-534eab599af5/campaign-events?after=0"
+    "url": "/api/wasla/gateway/conversations/c8134d86-2d29-4cb0-a569-2f8d1ba361fc/campaign-events?after=0"
   },
   "response": {
     "status": 200,

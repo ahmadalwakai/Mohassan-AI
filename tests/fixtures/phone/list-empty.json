@@ -1,6 +1,6 @@
 {
-  "capturedAt": "2026-11-22T03:40:04.929Z",
-  "sourceCommit": "55a5f7c",
+  "capturedAt": "2026-11-22T07:31:23.131Z",
+  "sourceCommit": "b865d3d",
   "request": {
     "method": "GET",
     "url": "/api/wasla/gateway/conversations"
@@ -8,6 +8,7 @@
   "response": {
     "status": 200,
     "body": {
+      "configured": false,
       "conversations": []
     }
   }

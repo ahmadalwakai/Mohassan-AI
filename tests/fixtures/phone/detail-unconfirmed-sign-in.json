@@ -1,0 +1,44 @@
+{
+  "capturedAt": "2026-11-22T07:31:29.229Z",
+  "sourceCommit": "b865d3d",
+  "request": {
+    "method": "GET",
+    "url": "/api/wasla/gateway/conversations/bd6373b1-e4fb-4a36-b8da-4ec4300375a8"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "bd6373b1-e4fb-4a36-b8da-4ec4300375a8",
+      "title": "افتح http://fixture-site.test/account وسجّل الدخول",
+      "status": "idle",
+      "updatedAt": "2026-11-22T07:31:29.201Z",
+      "messages": [
+        {
+          "id": "02a7d778-279a-414e-b155-81a0073ad4ce",
+          "role": "user",
+          "text": "افتح http://fixture-site.test/account وسجّل الدخول",
+          "createdAt": "2026-11-22T07:31:28.252Z"
+        },
+        {
+          "id": "0f933468-45b2-4d8e-b1cc-5099f24ac0a5",
+          "role": "assistant",
+          "text": "لم أؤكد إتمام هذا الطلب. لم يتحقق مسار البحث أو التصفح من النتيجة المطلوبة. لم أؤكد فتح الصفحة أو صحة معلومة حديثة.",
+          "createdAt": "2026-11-22T07:31:29.196Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "progress": null,
+      "steps": [
+        {
+          "id": "e4b0de14-5369-4cb7-bdd6-f60fb8e7b832",
+          "text": "فتح fixture-site.test",
+          "createdAt": "2026-11-22T07:31:28.331Z"
+        }
+      ],
+      "error": null,
+      "configured": false
+    }
+  }
+}

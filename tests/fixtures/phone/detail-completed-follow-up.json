@@ -1,0 +1,56 @@
+{
+  "capturedAt": "2026-11-22T07:31:23.955Z",
+  "sourceCommit": "b865d3d",
+  "request": {
+    "method": "GET",
+    "url": "/api/wasla/gateway/conversations/c8134d86-2d29-4cb0-a569-2f8d1ba361fc"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "c8134d86-2d29-4cb0-a569-2f8d1ba361fc",
+      "title": "كم يساوي 15 ضرب 23؟",
+      "status": "idle",
+      "updatedAt": "2026-11-22T07:31:23.907Z",
+      "messages": [
+        {
+          "id": "40673c73-7360-444f-b05e-8a36ebc3807a",
+          "role": "user",
+          "text": "كم يساوي 15 ضرب 23؟",
+          "createdAt": "2026-11-22T07:31:23.162Z"
+        },
+        {
+          "id": "cf1db72a-9176-430b-80e1-8aaf9046a8b1",
+          "role": "assistant",
+          "text": "15 * 23 = 345",
+          "createdAt": "2026-11-22T07:31:23.718Z"
+        },
+        {
+          "id": "2ff83cd6-b36d-4ab6-b4ac-c64a59eafc78",
+          "role": "user",
+          "text": "و 40 ضرب 3؟",
+          "createdAt": "2026-11-22T07:31:23.810Z"
+        },
+        {
+          "id": "69d79b64-c8da-4da7-a934-81fd8427f6e5",
+          "role": "assistant",
+          "text": "40 * 3 = 120",
+          "createdAt": "2026-11-22T07:31:23.899Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "progress": null,
+      "steps": [
+        {
+          "id": "71d21c5f-b9d7-4af7-8a05-b7736bbdbc53",
+          "text": "حساب محلي",
+          "createdAt": "2026-11-22T07:31:23.878Z"
+        }
+      ],
+      "error": null,
+      "configured": false
+    }
+  }
+}

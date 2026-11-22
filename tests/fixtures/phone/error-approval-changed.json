@@ -1,11 +1,11 @@
 {
-  "capturedAt": "2026-11-22T03:40:10.379Z",
-  "sourceCommit": "55a5f7c",
+  "capturedAt": "2026-11-22T07:31:27.082Z",
+  "sourceCommit": "b865d3d",
   "request": {
     "method": "POST",
-    "url": "/api/wasla/gateway/conversations/38e8cf1a-f1f0-4eb2-a12a-1f3c27fca78d/approve",
+    "url": "/api/wasla/gateway/conversations/1fb6db99-3b46-4ec3-adae-c08cb2ebc9ec/approve",
     "body": {
-      "approvalId": "b8d15d36-72fe-498e-9b5d-980a75e5f253",
+      "approvalId": "14b67281-d76a-4b3a-81c0-a1b873200f97",
       "approved": true
     }
   },

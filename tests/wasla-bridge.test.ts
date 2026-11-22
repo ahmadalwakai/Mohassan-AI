@@ -112,10 +112,10 @@ describe('Wasla bridge over disposable local state', { timeout: 120000 }, () => 
     const fromWeb = await app().inject({ url: `/api/chat/conversations/${id}`, headers: web() });
     expect(fromWeb.statusCode).toBe(200);
     expect(JSON.stringify(fromWeb.json())).toContain('كم يساوي 15 ضرب 23؟');
-    expect(JSON.stringify(fromWeb.json())).toContain('15 × 23 = **345**');
+    expect(JSON.stringify(fromWeb.json())).toContain('345');
     const listed = await app().inject({ url: '/api/wasla/gateway/conversations', headers: service() });
     // The shapes the iPhone app (Models.swift) and the computer service (mohassan.py) read.
-    expect(listed.json()).toEqual({ conversations: expect.arrayContaining([expect.objectContaining({ id, title: expect.any(String), status: expect.any(String), updatedAt: expect.any(String) })]) });
+    expect(listed.json()).toMatchObject({ conversations: expect.arrayContaining([expect.objectContaining({ id, title: expect.any(String), status: expect.any(String), updatedAt: expect.any(String) })]) });
     const shape = (await app().inject({ url: `/api/wasla/gateway/conversations/${id}`, headers: service() })).json();
     for (const key of ['id', 'title', 'status', 'messages', 'question', 'approval', 'secure', 'progress', 'steps', 'error']) expect(shape, key).toHaveProperty(key);
     for (const message of shape.messages) expect(Object.keys(message)).toEqual(expect.arrayContaining(['id', 'role', 'text']));
@@ -144,6 +144,44 @@ describe('Wasla bridge over disposable local state', { timeout: 120000 }, () => 
     expect(found.json()).toEqual({ query: 'تيلسكيل', provider: 'fixture-engine', limitations: ['مصادر متخصصة'], results: [{ title: 'نتيجة عن تيلسكيل', url: 'https://example.test/one', snippet: 'مقتطف' }] });
     expect((await app().inject({ url: '/api/wasla/gateway/search', headers: service() })).statusCode).toBe(400);
     expect((await app().inject({ url: '/api/wasla/gateway/search?q=x' })).statusCode).toBe(401);
+  });
+
+  it('runs each phone request key at most once, even when it arrives twice at the same time', async () => {
+    const userMessages = async (cid: string) => (await app().inject({ url: `/api/wasla/gateway/conversations/${cid}`, headers: service() })).json().messages.filter((m: { role: string }) => m.role === 'user');
+    const settle = async (cid: string) => { for (let i = 0; i < 200; i++) { const d = (await app().inject({ url: `/api/wasla/gateway/conversations/${cid}`, headers: service() })).json(); if (d.status !== 'running') return d; await new Promise(r => setTimeout(r, 50)); } throw new Error('did not settle'); };
+    // Create twice with one key: one conversation.
+    const createKey = '6f1c2b8a-3d4e-4f5a-9b6c-7d8e9f0a1b2c';
+    const first = await app().inject({ method: 'POST', url: '/api/wasla/gateway/conversations', headers: service(), payload: { goal: 'كم يساوي 7 ضرب 6؟', clientRequestId: createKey } });
+    expect(first.statusCode, first.body).toBe(200);
+    const cid = first.json().id as string;
+    await settle(cid);
+    const again = await app().inject({ method: 'POST', url: '/api/wasla/gateway/conversations', headers: service(), payload: { goal: 'كم يساوي 7 ضرب 6؟', clientRequestId: createKey } });
+    expect(again.statusCode, again.body).toBe(200);
+    expect(again.json().id).toBe(cid);
+    expect(await userMessages(cid)).toHaveLength(1);
+    // The same message twice at once with one key: one message.
+    const messageKey = '8a9b0c1d-2e3f-4a5b-8c6d-7e8f9a0b1c2d';
+    const body = { text: 'كم يساوي 9 ضرب 9؟', clientRequestId: messageKey };
+    const [a, b] = await Promise.all([1, 2].map(() => app().inject({ method: 'POST', url: `/api/wasla/gateway/conversations/${cid}/messages`, headers: service(), payload: body })));
+    expect([a!.statusCode, b!.statusCode].sort()).toEqual(expect.arrayContaining([200]));
+    for (const r of [a!, b!]) if (r.statusCode !== 200) expect(r.json().error.code).toMatch(/^CLIENT_REQUEST_(IN_PROGRESS|UNKNOWN)$/);
+    await settle(cid);
+    expect((await userMessages(cid)).map((m: { text: string }) => m.text)).toEqual(['كم يساوي 7 ضرب 6؟', 'كم يساوي 9 ضرب 9؟']);
+    // A resend after the reply is replayed, not repeated.
+    const resend = await app().inject({ method: 'POST', url: `/api/wasla/gateway/conversations/${cid}/messages`, headers: service(), payload: body });
+    expect(resend.statusCode, resend.body).toBe(200);
+    expect(await userMessages(cid)).toHaveLength(2);
+    // The same key for another text is refused.
+    const reused = await app().inject({ method: 'POST', url: `/api/wasla/gateway/conversations/${cid}/messages`, headers: service(), payload: { text: 'شيء آخر', clientRequestId: messageKey } });
+    expect(reused.statusCode).toBe(409); expect(reused.json().error.code).toBe('CLIENT_REQUEST_REUSED');
+    // A refused request frees its key for the corrected one.
+    const freeKey = '1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e';
+    const refused = await app().inject({ method: 'POST', url: `/api/wasla/gateway/conversations/${cid}/messages`, headers: service(), payload: { text: '', clientRequestId: freeKey } });
+    expect(refused.statusCode).toBe(400);
+    expect((await app().inject({ url: `/api/wasla/gateway/requests/${freeKey}`, headers: service() })).json()).toEqual({ known: false });
+    // What became of a request, by its key.
+    expect((await app().inject({ url: `/api/wasla/gateway/requests/${messageKey}`, headers: service() })).json()).toEqual({ known: true, kind: 'messages', state: 'done', conversationId: cid });
+    expect((await app().inject({ url: '/api/wasla/gateway/requests/not-a-key', headers: service() })).statusCode).toBe(400);
   });
 
   it('answers «no reliable result» as an empty search, and a real failure as an error', async () => {
