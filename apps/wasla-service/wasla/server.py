@@ -374,11 +374,14 @@ async def end_desktop(request):
 
 # The phone's way into Mohassan. Each call is the paired device's, checked by the
 # middleware; Mohassan checks the gateway key and runs the chat itself.
+# Each call's allowed and required fields. `clientRequestId` is the phone's key against a repeated
+# effect (Mohassan's gateway runs each key at most once). A message carries text, or a field card's
+# answers with its questionId; Mohassan's contract checks the combination.
 MOHASSAN_FIELDS = {
-    "create": ({"goal"}, set()),
-    "messages": ({"text"}, {"text"}),
-    "respond": ({"questionId", "optionId", "text"}, {"questionId"}),
-    "approve": ({"approvalId", "approved"}, {"approvalId", "approved"}),
+    "create": ({"goal", "clientRequestId"}, set()),
+    "messages": ({"text", "questionId", "answers", "clientRequestId"}, set()),
+    "respond": ({"questionId", "optionId", "clientRequestId"}, {"questionId", "optionId"}),
+    "approve": ({"approvalId", "approved", "clientRequestId"}, {"approvalId", "approved"}),
     "cancel": (set(), set()),
 }
 
@@ -439,6 +442,13 @@ async def mohassan_events(request):
     return web.json_response(await runtime.mohassan.events(request.match_info["id"], int(after)))
 
 
+async def mohassan_request(request):
+    """What became of one phone request, by its key: read after a lost reply instead of sending again."""
+    runtime = request.app[STATE]
+    runtime.limit(("mohassan", request["device_id"]), 240)
+    return web.json_response(await runtime.mohassan.request_status(request.match_info["key"]))
+
+
 async def mohassan_action(request):
     runtime = request.app[STATE]
     action = request.match_info["action"]
@@ -491,6 +501,7 @@ def create_app(store: AuthStore, services, desktop, desktop_enabled=False, *, mo
         web.get('/v1/mohassan/conversations', mohassan_conversations), web.post('/v1/mohassan/conversations', mohassan_conversations),
         web.get('/v1/mohassan/conversations/{id}', mohassan_conversation), web.delete('/v1/mohassan/conversations/{id}', mohassan_conversation),
         web.get('/v1/mohassan/conversations/{id}/events/{after}', mohassan_events),
+        web.get('/v1/mohassan/requests/{key}', mohassan_request),
         web.post('/v1/mohassan/conversations/{id}/{action}', mohassan_action),
     ])
     app.on_startup.append(startup)

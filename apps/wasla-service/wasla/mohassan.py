@@ -178,6 +178,12 @@ class MohassanBridge:
     async def remove(self, cid):
         return await self._request("DELETE", f"{GATEWAY}/conversations/{conversation_id(cid)}")
 
+    async def request_status(self, key):
+        """What became of one phone request (its `clientRequestId`): known, state and conversation."""
+        if not isinstance(key, str) or not UUID.fullmatch(key):
+            raise BridgeError("invalid_request", "مفتاح الطلب غير صالح.", 400)
+        return await self._request("GET", f"{GATEWAY}/requests/{key}")
+
     async def events(self, cid, after):
         if not isinstance(after, int) or not 0 <= after <= 100000:
             raise BridgeError("invalid_request", "رقم الحدث غير صالح.", 400)
