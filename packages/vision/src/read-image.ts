@@ -1,6 +1,6 @@
 import { detectBase, hasArabic, toLogical } from './bidi.js';
 import { decodeImage, describeImage, type ImageFacts } from './image.js';
-import { cropToHeight, findTextLines, orderLines, padBox, splitWide, type Box, type LineBox } from './layout.js';
+import { cropToHeight, findTextLines, orderLines, padBox, splitWide, type Box, type LineBox, type LinePiece } from './layout.js';
 import type { OcrModel } from './ocr-model.js';
 import { recognizeLine, type LineCrop, type LineRecognition } from './recognize.js';
 
@@ -37,12 +37,45 @@ export interface ReadImageOptions {
   readonly recognize?: Recognizer;
   readonly maxLines?: number;
   readonly minConfidence?: number;
+  /**
+   * On a legible image (at least `LEGIBLE_LINES` lines read with confidence 0.9 or more), lines below
+   * this confidence are dropped too: there they are almost always specks of a photo or a texture
+   * read as letters. An image with no legible line keeps its best-effort lines down to `minConfidence`.
+   */
+  readonly pageMinConfidence?: number;
   readonly signal?: AbortSignal;
   readonly includeCrops?: boolean;
 }
 
 const PIECE_WIDTH = 896;
+const LEGIBLE_LINES = 3;
 const JUNK = /^[\s\-_.,:;'"`~^|\\/()[\]{}<>«»•…*+=]*$/u;
+
+/**
+ * The readings of one line's pieces (visual order, left to right) as one visual string: a space
+ * only where a word space separated two pieces (`splitWide` marks it) or the model read one at the
+ * edge, so a cut between two letters of one word does not split the word.
+ */
+export function joinPieces(readings: readonly string[], pieces: readonly { readonly spaceBefore?: boolean }[]): string {
+  let out = '', space = false;
+  readings.forEach((reading, index) => {
+    if (index > 0 && (pieces[index]?.spaceBefore || /^\s/u.test(reading))) space = true;
+    const text = reading.trim();
+    if (!text) return;
+    out += out && space ? ` ${text}` : text;
+    space = /\s$/u.test(reading);
+  });
+  return out;
+}
+
+/**
+ * On a legible image (at least `LEGIBLE_LINES` lines read with confidence 0.9 or more), lines under
+ * `pageMin` are dropped: there they are almost always specks of a photo or a texture read as letters.
+ * An image with no legible line keeps all its lines, so a hard image still gets a best-effort reading.
+ */
+export function keepLegible<T extends { readonly confidence: number }>(lines: readonly T[], pageMin: number): T[] {
+  return lines.filter(line => line.confidence >= 0.9).length >= LEGIBLE_LINES ? lines.filter(line => line.confidence >= pageMin) : lines.slice();
+}
 
 /** Read an image end to end: facts, text lines, text in reading order. */
 export async function readImage(bytes: Uint8Array, options: ReadImageOptions): Promise<ImageReading> {
@@ -52,7 +85,7 @@ export async function readImage(bytes: Uint8Array, options: ReadImageOptions): P
   const facts = describeImage(decoded);
   const found = findTextLines(decoded.gray, decoded.width, decoded.height, { maxLines: options.maxLines ?? 300 });
   const recognize: Recognizer = options.recognize ?? (async crops => crops.map(crop => recognizeLine(model, crop)));
-  const prepared: { line: LineBox; box: Box; pieces: LineCrop[] }[] = [];
+  const prepared: { line: LineBox; box: Box; pieces: LinePiece[] }[] = [];
   for (const line of found) {
     const box = padBox(line, decoded.width, decoded.height);
     const crop = cropToHeight(decoded.gray, decoded.width, box, model.height, Math.max(model.maxWidth, 64) * 8);
@@ -70,7 +103,7 @@ export async function readImage(bytes: Uint8Array, options: ReadImageOptions): P
   for (const item of prepared) {
     const part = results.slice(cursor, cursor + item.pieces.length);
     cursor += item.pieces.length;
-    const visual = part.map(piece => piece.visual.trim()).filter(Boolean).join(' ');
+    const visual = joinPieces(part.map(piece => piece.visual), item.pieces);
     const chars = part.reduce((sum, piece) => sum + piece.chars, 0);
     const confidence = chars ? part.reduce((sum, piece) => sum + piece.confidence * piece.chars, 0) / chars : 0;
     if (!visual || JUNK.test(visual) || confidence < minConfidence || (visual.length <= 2 && confidence < 0.8)) { dropped++; continue; }
@@ -78,6 +111,9 @@ export async function readImage(bytes: Uint8Array, options: ReadImageOptions): P
     const text = toLogical(visual, base).trim();
     read.push({ box: item.box, visual, text, confidence, direction: base === 'R' ? 'rtl' : 'ltr', ...(options.includeCrops ? { crops: item.pieces } : {}) });
   }
+  const legible = keepLegible(read, options.pageMinConfidence ?? 0.7);
+  dropped += read.length - legible.length;
+  read.splice(0, read.length, ...legible);
   const arabicChars = read.reduce((sum, line) => sum + (line.direction === 'rtl' ? line.text.length : 0), 0);
   const totalChars = read.reduce((sum, line) => sum + line.text.length, 0);
   const direction: ImageReading['direction'] = !totalChars ? 'none' : arabicChars === 0 ? 'ltr' : arabicChars === totalChars ? 'rtl' : arabicChars >= totalChars * 0.6 ? 'rtl' : arabicChars <= totalChars * 0.4 ? 'ltr' : 'mixed';

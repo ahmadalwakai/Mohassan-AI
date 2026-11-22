@@ -6,8 +6,12 @@
  */
 
 export interface Box { readonly x: number; readonly y: number; readonly w: number; readonly h: number }
-export interface LineBox extends Box { readonly ink: number; readonly components: number; readonly polarity: 'dark' | 'light'; readonly glyphHeight: number }
-export interface LayoutOptions { readonly maxLines?: number; readonly minHeight?: number }
+export interface LineBox extends Box {
+  readonly ink: number; readonly components: number; readonly polarity: 'dark' | 'light'; readonly glyphHeight: number;
+  /** The ink components of the line, only when `withMembers` is asked for (training data and debugging). */
+  readonly members?: readonly Box[];
+}
+export interface LayoutOptions { readonly maxLines?: number; readonly minHeight?: number; readonly withMembers?: boolean }
 
 interface Component { x0: number; y0: number; x1: number; y1: number; area: number }
 
@@ -92,7 +96,7 @@ function rows(members: Component[]): Component[][] {
   return out.map(row => row.items);
 }
 
-function lineOf(members: Component[], attached: Component[], polarity: 'dark' | 'light'): LineBox | null {
+function lineOf(members: Component[], attached: Component[], polarity: 'dark' | 'light', keepMembers = false): LineBox | null {
   const glyphHeights = members.map(heightOf).sort((a, b) => a - b);
   const glyphHeight = glyphHeights[Math.floor(glyphHeights.length * 0.75)];
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, ink = 0;
@@ -100,7 +104,9 @@ function lineOf(members: Component[], attached: Component[], polarity: 'dark' | 
   const w = x1 - x0 + 1, h = y1 - y0 + 1;
   if (h < 5 || w < 4 || w * h < 40) return null;
   if (members.length === 1 && (w < 6 || glyphHeight < 6)) return null;
-  return { x: x0, y: y0, w, h, ink, components: members.length + attached.length, polarity, glyphHeight };
+  const line: LineBox = { x: x0, y: y0, w, h, ink, components: members.length + attached.length, polarity, glyphHeight };
+  if (!keepMembers) return line;
+  return { ...line, members: [...members, ...attached].map(c => ({ x: c.x0, y: c.y0, w: c.x1 - c.x0 + 1, h: c.y1 - c.y0 + 1 })) };
 }
 
 /**
@@ -109,7 +115,7 @@ function lineOf(members: Component[], attached: Component[], polarity: 'dark' | 
  * attaches to at most one neighbouring taller glyph, so chains of specks cannot
  * bridge two lines, and a group that still spans several rows is split by row.
  */
-function groupLines(glyphs: Component[], polarity: 'dark' | 'light'): LineBox[] {
+function groupLines(glyphs: Component[], polarity: 'dark' | 'light', keepMembers = false): LineBox[] {
   const order = glyphs.map((_, i) => i).sort((a, b) => glyphs[a].x0 - glyphs[b].x0);
   const heights = glyphs.map(heightOf).filter(h => h >= 4).sort((a, b) => a - b);
   const median = heights.length ? heights[Math.floor(heights.length / 2)] : 10;
@@ -170,7 +176,7 @@ function groupLines(glyphs: Component[], polarity: 'dark' | 'light'): LineBox[] 
     for (const part of parts) {
       const y0 = Math.min(...part.map(c => c.y0)), y1 = Math.max(...part.map(c => c.y1));
       const marks = parts.length === 1 ? attached : attached.filter(m => (m.y0 + m.y1) / 2 >= y0 - 0.45 * glyphHeight && (m.y0 + m.y1) / 2 <= y1 + 0.45 * glyphHeight);
-      const line = lineOf(part, marks, polarity);
+      const line = lineOf(part, marks, polarity, keepMembers);
       if (line) lines.push(line);
     }
   }
@@ -221,7 +227,8 @@ export function findTextLines(gray: Uint8Array, width: number, height: number, o
   const limit = 600_000;
   const darkGlyphs = components(dark, width, height, limit).filter(c => plausibleGlyph(c, width, height));
   const lightGlyphs = components(light, width, height, limit).filter(c => plausibleGlyph(c, width, height));
-  const darkLines = groupLines(darkGlyphs, 'dark'), lightLines = groupLines(lightGlyphs, 'light');
+  const keep = options.withMembers === true;
+  const darkLines = groupLines(darkGlyphs, 'dark', keep), lightLines = groupLines(lightGlyphs, 'light', keep);
   const kept: LineBox[] = [
     ...darkLines.filter(line => keepAgainstRival(gray, width, height, line, lightLines)),
     ...lightLines.filter(line => keepAgainstRival(gray, width, height, line, darkLines)),
@@ -272,24 +279,48 @@ export function cropToHeight(gray: Uint8Array, width: number, box: Box, targetHe
   return { pixels: out, width: targetWidth };
 }
 
-/** Columns with no ink, used to split a very long line into pieces the model can take. */
-export function splitWide(crop: { pixels: Uint8Array; width: number }, height: number, pieceWidth: number): { pixels: Uint8Array; width: number }[] {
+/** A piece of a line crop; `spaceBefore` marks a word space between it and the piece before. */
+export interface LinePiece { readonly pixels: Uint8Array; readonly width: number; readonly spaceBefore?: boolean }
+
+/** A gap at least this share of the crop height wide is a word space, not the gap between two letters. */
+export const WORD_GAP = 0.16;
+
+/**
+ * Split a line crop wider than the model takes into pieces. Each cut goes in the middle of the
+ * widest ink-free gap in the second half of the window, so it falls between words rather than
+ * between two letters of one word. The piece after a gap at least a word space wide is marked
+ * `spaceBefore`; readings of pieces cut at a narrower gap join without a space (`joinPieces`).
+ */
+export function splitWide(crop: { pixels: Uint8Array; width: number }, height: number, pieceWidth: number, wordGapShare = WORD_GAP): LinePiece[] {
   if (crop.width <= pieceWidth) return [crop];
   const column = new Float32Array(crop.width);
   let darkest = 255, lightest = 0;
   for (let x = 0; x < crop.width; x++) { let sum = 0; for (let y = 0; y < height; y++) sum += crop.pixels[y * crop.width + x]; column[x] = sum / height; darkest = Math.min(darkest, column[x]); lightest = Math.max(lightest, column[x]); }
   const background = column[crop.width - 1] > (darkest + lightest) / 2 ? 'light' : 'dark';
   const quiet = (x: number) => background === 'light' ? column[x] >= lightest - (lightest - darkest) * 0.08 : column[x] <= darkest + (lightest - darkest) * 0.08;
-  const pieces: { pixels: Uint8Array; width: number }[] = [];
-  let start = 0;
+  const wordGap = Math.max(3, Math.round(height * wordGapShare));
+  const pieces: LinePiece[] = [];
+  const push = (from: number, to: number, space: boolean) => pieces.push(space ? { ...slice(crop, height, from, to), spaceBefore: true } : slice(crop, height, from, to));
+  let start = 0, nextSpace = false;
   while (crop.width - start > pieceWidth) {
-    let cut = -1;
-    for (let x = start + pieceWidth - 1; x > start + pieceWidth * 0.5; x--) if (quiet(x)) { cut = x; break; }
-    if (cut < 0) cut = start + pieceWidth;
-    pieces.push(slice(crop, height, start, cut));
+    const lo = start + Math.floor(pieceWidth * 0.5) + 1, hi = start + pieceWidth - 1;
+    let best: { cut: number; width: number } | null = null;
+    for (let x = hi; x >= lo;) {
+      if (!quiet(x)) { x--; continue; }
+      // The whole gap counts, also where it runs past the window: a word space at the edge is still one.
+      let left = x, right = x;
+      while (right + 1 < crop.width && quiet(right + 1)) right++;
+      while (left - 1 > start && quiet(left - 1)) left--;
+      const width = right - left + 1;
+      if (!best || width > best.width) best = { cut: Math.min(hi + 1, Math.max(lo, Math.round((left + right + 1) / 2))), width };
+      x = left - 1;
+    }
+    const cut = best ? best.cut : start + pieceWidth;
+    push(start, cut, nextSpace);
+    nextSpace = best !== null && best.width >= wordGap;
     start = cut;
   }
-  pieces.push(slice(crop, height, start, crop.width));
+  push(start, crop.width, nextSpace);
   return pieces;
 }
 

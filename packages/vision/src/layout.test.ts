@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { cropToHeight, findTextLines, orderLines, splitWide } from './layout.js';
+import { joinPieces } from './read-image.js';
 
 /** A page with "glyph" rectangles laid out as lines, dark on light. */
 function page(width: number, height: number, lines: { y: number; x: number; glyphs: number; glyphW?: number; glyphH?: number; gap?: number; color?: number }[], background = 240): Uint8Array {
@@ -58,4 +59,54 @@ describe('text line layout', () => {
     expect(pieces.reduce((sum, piece) => sum + piece.width, 0)).toBe(crop.width);
     for (const piece of pieces) expect(piece.width).toBeLessThanOrEqual(800);
   });
+  it('cuts a wide line in a word space, not between two letters of one word', () => {
+    // Words of six 10-px letters 2 px apart, 12 px between words: a cut at the first blank column
+    // from the right would often land inside a word.
+    const runs: number[] = [];
+    for (let word = 0; word < 30; word++) { for (let letter = 0; letter < 6; letter++) runs.push(10, letter < 5 ? 2 : 12); }
+    const crop = strip(runs);
+    const pieces = splitWide(crop, 32, 800);
+    expect(pieces.length).toBeGreaterThan(1);
+    let x = 0;
+    for (const [index, piece] of pieces.entries()) {
+      if (index) {
+        expect(gapAround(runs, x)).toBe(12);
+        expect(piece.spaceBefore).toBe(true);
+      }
+      x += piece.width;
+    }
+  });
+  it('joins pieces cut between two letters without a space, and keeps word spaces', () => {
+    const runs: number[] = [];
+    for (let letter = 0; letter < 100; letter++) runs.push(10, 2);
+    const pieces = splitWide(strip(runs), 32, 800);
+    expect(pieces).toHaveLength(2);
+    expect(pieces[1].spaceBefore).toBeFalsy();
+    expect(joinPieces(['abc', 'def'], pieces)).toBe('abcdef');
+    expect(joinPieces(['abc', 'def'], [{}, { spaceBefore: true }])).toBe('abc def');
+    expect(joinPieces(['abc ', 'def'], [{}, {}])).toBe('abc def');
+    expect(joinPieces(['abc', '  ', 'def'], [{}, { spaceBefore: true }, {}])).toBe('abc def');
+    expect(joinPieces(['', 'def'], [{}, { spaceBefore: true }])).toBe('def');
+  });
 });
+
+/** A 32-row line crop from alternating ink and gap widths (ink first), dark ink on a light ground. */
+function strip(runs: readonly number[]): { pixels: Uint8Array; width: number } {
+  const width = runs.reduce((sum, run) => sum + run, 0), pixels = new Uint8Array(width * 32).fill(240);
+  let x = 0;
+  runs.forEach((run, index) => {
+    if (index % 2 === 0) for (let y = 8; y < 24; y++) for (let dx = 0; dx < run; dx++) pixels[y * width + x + dx] = 20;
+    x += run;
+  });
+  return { pixels, width };
+}
+
+/** Width of the gap run that contains column x (or ends right before it). */
+function gapAround(runs: readonly number[], x: number): number {
+  let at = 0;
+  for (const [index, run] of runs.entries()) {
+    if (index % 2 === 1 && x >= at && x <= at + run) return run;
+    at += run;
+  }
+  return 0;
+}

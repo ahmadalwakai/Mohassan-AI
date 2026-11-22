@@ -10,9 +10,12 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import random
 import sys
 import time
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -28,16 +31,17 @@ from model import CHANNELS_V2, DOWNSAMPLE, HEIGHT, OCRModel, POOLS_V2, greedy_de
 class LineShards(Dataset):
     """Compact index over shards: arrays for offsets and widths, plain lists for labels, so data loader workers stay small."""
 
-    def __init__(self, data: Path, names: list[str], max_width: int | None = None) -> None:
-        self.data, self.names = data, names
+    def __init__(self, data, names: list[str] | None = None, max_width: int | None = None) -> None:
+        # Either one directory with shard names, or a list of (directory, name) sources.
+        self.sources: list[tuple[Path, str]] = list(data) if names is None else [(data, name) for name in names]
         shards, offsets, widths = [], [], []
         self.labels: list[str] = []
         self.texts: list[str] = []
         self.kinds: list[str] = []
         self.fonts: list[str] = []
         self.sizes: list[int] = []
-        for shard, name in enumerate(names):
-            meta = json.loads((data / f"{name}.json").read_text(encoding="utf-8"))
+        for shard, (directory, name) in enumerate(self.sources):
+            meta = json.loads((directory / f"{name}.json").read_text(encoding="utf-8"))
             for line in meta["lines"]:
                 if max_width and line["w"] > max_width:
                     continue
@@ -61,9 +65,16 @@ class LineShards(Dataset):
     def widths(self) -> list[int]:
         return self.width_array.tolist()
 
+    def __getstate__(self):
+        # Workers open their own memory maps; never pickle open maps into them.
+        state = self.__dict__.copy()
+        state["_maps"] = {}
+        return state
+
     def _map(self, shard: int) -> np.memmap:
         if shard not in self._maps:
-            self._maps[shard] = np.memmap(self.data / f"{self.names[shard]}.u8", dtype=np.uint8, mode="r")
+            directory, name = self.sources[shard]
+            self._maps[shard] = np.memmap(directory / f"{name}.u8", dtype=np.uint8, mode="r")
         return self._maps[shard]
 
     def __getitem__(self, item: int):
@@ -89,8 +100,8 @@ def collate(batch):
     return torch.from_numpy(images), targets, target_lengths, input_lengths, [line for _, _, line in batch]
 
 
-def bucket_batches(widths: list[int], batch_size: int, rng: random.Random) -> list[list[int]]:
-    order = list(range(len(widths)))
+def bucket_batches(widths: list[int], batch_size: int, rng: random.Random, order: list[int] | None = None) -> list[list[int]]:
+    order = list(range(len(widths))) if order is None else list(order)
     rng.shuffle(order)
     batches = []
     span = batch_size * 32
@@ -100,6 +111,48 @@ def bucket_batches(widths: list[int], batch_size: int, rng: random.Random) -> li
             batches.append(chunk[i:i + batch_size])
     rng.shuffle(batches)
     return batches
+
+
+GPU_LOCK = Path(__file__).resolve().parents[2] / ".data" / "gpu.lock"
+
+
+@contextmanager
+def gpu_lock(device: str, purpose: str):
+    """One training job on the GPU at a time (owner's rule, RESPONSE-QUALITY-PLAN §6).
+
+    Waits while `.data/gpu.lock` exists, then creates it exclusively with owner, purpose, pid and
+    start time, and removes it on exit. CPU runs take no lock.
+    """
+    if not device.startswith("cuda"):
+        yield
+        return
+    GPU_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    announced = False
+    while True:
+        try:
+            fd = os.open(GPU_LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            if not announced:
+                try:
+                    holder = GPU_LOCK.read_text(encoding="utf-8").strip()
+                except OSError:
+                    holder = "?"
+                print(f"waiting for {GPU_LOCK} (held: {holder})", flush=True)
+                announced = True
+            time.sleep(30)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump({"owner": "Claude Code, own OCR (scripts/vision)", "purpose": purpose, "pid": os.getpid(),
+                   "started": datetime.now(timezone.utc).isoformat(timespec="seconds")}, handle)
+    print(f"holding {GPU_LOCK}", flush=True)
+    try:
+        yield
+    finally:
+        try:
+            if json.loads(GPU_LOCK.read_text(encoding="utf-8")).get("pid") == os.getpid():
+                GPU_LOCK.unlink()
+        except (OSError, ValueError):
+            pass
 
 
 def edit_distance(a: str, b: str) -> int:
@@ -147,7 +200,7 @@ def evaluate(model: nn.Module, dataset: Dataset, device: str, batch_size: int = 
             "lines": len(indices), "by_kind": {k: {"cer": v[0] / max(1, v[1]), "lines": v[2]} for k, v in by_kind.items()}, "samples": samples}
 
 
-def main() -> None:
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
@@ -163,7 +216,14 @@ def main() -> None:
     parser.add_argument("--shards", default="")
     parser.add_argument("--max-width", type=int, default=800, help="skip wider training lines; caps the memory of the widest batches")
     parser.add_argument("--arch", choices=["v1", "v2"], default="v1", help="v1: channels 24-128, hidden 128; v2: channels 16-96, hidden 96, pooled earlier")
-    args = parser.parse_args()
+    parser.add_argument("--real", type=Path, help="directory from build_real_shards.py: *-train shards join training, real-heldout-* are measured")
+    parser.add_argument("--real-share", type=float, default=0.45, help="share of training samples drawn from the real shards")
+    parser.add_argument("--init", type=Path, help="start from this checkpoint's weights (fresh optimizer and schedule)")
+    parser.add_argument("--select", default="holdout-unseen", help="held-out set whose character error rate picks best.pt")
+    return parser.parse_args()
+
+
+def run(args: argparse.Namespace) -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(args.seed)
     rng = random.Random(args.seed)
@@ -172,13 +232,32 @@ def main() -> None:
     names = [p.stem for p in sorted(args.data.glob("shard-*.json"))]
     if args.shards:
         names = [n for n in names if n in args.shards.split(",")]
-    train = LineShards(args.data, names, args.max_width)
+    real_names = [p.stem for p in sorted(args.real.glob("*-train.json"))] if args.real else []
+
+    def training_set() -> tuple[LineShards, list[int] | None]:
+        dataset = LineShards([(args.data, n) for n in names] + [(args.real, n) for n in real_names], max_width=args.max_width)
+        synthetic = int(np.searchsorted(dataset.shards, len(names)))  # sources are in order: synthetic first
+        extra = len(dataset) - synthetic
+        if not extra:
+            return dataset, None
+        repeats = max(1, round(args.real_share / (1 - args.real_share) * synthetic / extra))
+        print(f"real lines {extra} repeated {repeats}x next to {synthetic} synthetic lines", flush=True)
+        return dataset, list(range(synthetic)) + list(range(synthetic, len(dataset))) * repeats
+
+    train, order = training_set()
     holdouts = {name: LineShards(args.data, [name]) for name in ("holdout-seen", "holdout-unseen") if (args.data / f"{name}.json").exists()}
-    print(f"train lines {len(train)} from {len(names)} shards; holdouts {[(k, len(v)) for k, v in holdouts.items()]}", flush=True)
+    if args.real:
+        holdouts.update({name: LineShards(args.real, [name]) for name in ("real-heldout-site", "real-heldout-page") if (args.real / f"{name}.json").exists()})
+    print(f"train lines {len(train)} from {len(names)} synthetic + {len(real_names)} real shards; holdouts {[(k, len(v)) for k, v in holdouts.items()]}", flush=True)
 
     model = (OCRModel(len(CLASSES), CHANNELS_V2, 96, POOLS_V2) if args.arch == "v2" else OCRModel(len(CLASSES))).to(device)
     parameters = sum(p.numel() for p in model.parameters())
     print(f"architecture {args.arch}: channels {model.channels} hidden {model.hidden} pools {model.pools} parameters {parameters}", flush=True)
+    if args.init:
+        initial = torch.load(args.init, map_location=device)
+        assert initial["classes"] == CLASSES, "the initial checkpoint has different classes"
+        model.load_state_dict(initial["model"])
+        print(f"initialised from {args.init} (step {initial.get('step')})", flush=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr, total_steps=args.steps, pct_start=0.06, anneal_strategy="cos", div_factor=20, final_div_factor=200)
     ctc = nn.CTCLoss(blank=0, zero_infinity=True)
@@ -212,10 +291,10 @@ def main() -> None:
             fresh = [p.stem for p in sorted(args.data.glob("shard-*.json")) if p.stem not in names]
             if fresh:
                 names += fresh
-                train = LineShards(args.data, names, args.max_width)
+                train, order = training_set()
                 widths = train.widths()
                 print(f"added shards {fresh}: {len(train)} train lines", flush=True)
-        loader = DataLoader(train, batch_sampler=bucket_batches(widths, args.batch, rng), collate_fn=collate, num_workers=args.workers, pin_memory=use_amp, persistent_workers=False)
+        loader = DataLoader(train, batch_sampler=bucket_batches(widths, args.batch, rng, order), collate_fn=collate, num_workers=args.workers, pin_memory=use_amp, persistent_workers=False)
         for images, targets, target_lengths, input_lengths, _ in loader:
             images = images.to(device, non_blocking=True)
             with torch.autocast("cuda", dtype=torch.float16, enabled=use_amp):
@@ -242,7 +321,7 @@ def main() -> None:
                 status({"loss": entry["loss"]})
             if step % args.eval_every == 0 or step == args.steps:
                 metrics = {name: evaluate(model, dataset, device, limit=args.eval_limit) for name, dataset in holdouts.items()}
-                unseen = metrics.get("holdout-unseen", metrics.get("holdout-seen", {})).get("cer", float("inf"))
+                unseen = metrics.get(args.select, metrics.get("holdout-unseen", metrics.get("holdout-seen", {}))).get("cer", float("inf"))
                 summary = {k: {"cer": round(v["cer"], 4), "line_accuracy": round(v["line_accuracy"], 4), "word_recall": round(v["word_recall"], 4)} for k, v in metrics.items()}
                 print(f"eval step {step}: {summary}", flush=True)
                 log.write(json.dumps({"step": step, "eval": metrics}, ensure_ascii=False) + "\n")
@@ -257,6 +336,12 @@ def main() -> None:
     save(last_path)
     status({"finished": True})
     print("finished", flush=True)
+
+
+def main() -> None:
+    args = parse_args()
+    with gpu_lock(args.device, f"OCR training {args.out.name}"):
+        run(args)
 
 
 if __name__ == "__main__":

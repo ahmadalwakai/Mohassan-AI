@@ -75,6 +75,30 @@ def normalize_text(text: str) -> str | None:
     return collapsed or None
 
 
+def normalize_char(c: str) -> str | None:
+    """One raw character to its label form: '' (dropped), ' ', label characters, or None (not learnable).
+
+    The per-character counterpart of normalize_text, for text whose characters carry positions.
+    """
+    if c in INVISIBLE:
+        return ""
+    c = REMAP.get(c, c)
+    if c in SPACES or c in ("\n", "\r", "\t", " "):
+        return " "
+    code = ord(c)
+    if 0xFB50 <= code <= 0xFDFF or 0xFE70 <= code <= 0xFEFF or 0xFF01 <= code <= 0xFF5E:
+        out = ""
+        for part in strip_marks(unicodedata.normalize("NFKC", c)).replace("ـ", ""):
+            part = REMAP.get(part, part)
+            if part not in CHARSET:
+                return None
+            out += part
+        return out
+    if _is_mark(c):
+        return ""
+    return c if c in CHARSET else None
+
+
 def encode(label: str) -> list[int]:
     return [CHAR_TO_INDEX[c] for c in label]
 
@@ -207,6 +231,28 @@ def _reorder(text: str, levels: list[int]) -> str:
             else:
                 i += 1
     return "".join(chars)
+
+
+def visual_indices(levels: list[int]) -> list[int]:
+    """The logical indices in the left-to-right order they are drawn (rule L2 on positions)."""
+    order = list(range(len(levels)))
+    odd = [lvl for lvl in levels if lvl % 2 == 1]
+    if not odd:
+        return order
+    current = list(levels)
+    for level in range(max(current), min(odd) - 1, -1):
+        i, n = 0, len(order)
+        while i < n:
+            if current[i] >= level:
+                j = i
+                while j < n and current[j] >= level:
+                    j += 1
+                order[i:j] = order[i:j][::-1]
+                current[i:j] = current[i:j][::-1]
+                i = j
+            else:
+                i += 1
+    return order
 
 
 def to_visual(logical: str, base: str | None = None) -> str:

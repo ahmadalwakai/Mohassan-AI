@@ -1,0 +1,32 @@
+{
+ "note": "Extra sites never used for training, to measure the reader on unseen designs. Captured into artifacts/vision-real-v1/captures-site2.",
+ "wikipedia": { "ar": 0, "simple": 0, "en": 0 },
+ "seeds": [
+  { "url": "https://www.almasryalyoum.com/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.shorouknews.com/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.elwatannews.com/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.okaz.com.sa/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.alriyadh.com/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.albayan.ae/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.emaratalyoum.com/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.alkhaleej.ae/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.annahar.com/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.alquds.co.uk/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://sabq.org/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://akhbarelyom.com/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.ahram.org.eg/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.alaraby.co.uk/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.enabbaladi.net/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.alrai.com/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.albawabhnews.com/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.mubasher.info/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.alyaum.com/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.alwatan.com.sa/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://www.hibapress.com/", "lang": "ar", "split": "heldout-site", "follow": 4 },
+  { "url": "https://go.dev/doc/", "lang": "en", "split": "heldout-site", "follow": 3 },
+  { "url": "https://kotlinlang.org/docs/home.html", "lang": "en", "split": "heldout-site", "follow": 3 },
+  { "url": "https://docs.djangoproject.com/en/stable/intro/", "lang": "en", "split": "heldout-site", "follow": 3 },
+  { "url": "https://www.postgresql.org/docs/current/tutorial.html", "lang": "en", "split": "heldout-site", "follow": 3 },
+  { "url": "https://www.rust-lang.org/learn", "lang": "en", "split": "heldout-site", "follow": 3 }
+ ]
+}

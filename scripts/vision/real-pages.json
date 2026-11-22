@@ -1,0 +1,41 @@
+{
+  "comment": "Seeds for real-screenshot training data (scripts/vision/capture-lines.ts). 'heldout-site' sites are never trained on; pages of train sites are also held out by URL hash. capture=false only collects links. The benchmark pages of artifacts/vision-ocr-v1/real/manifest.json are always excluded.",
+  "wikipedia": { "ar": 36, "simple": 20, "en": 12 },
+  "seeds": [
+    { "url": "https://www.aljazeera.net/news/", "lang": "ar", "split": "train", "follow": 4 },
+    { "url": "https://www.bbc.com/arabic", "lang": "ar", "split": "train", "follow": 5, "capture": false },
+    { "url": "https://www.skynewsarabia.com/", "lang": "ar", "split": "train", "follow": 3 },
+    { "url": "https://aawsat.com/", "lang": "ar", "split": "train", "follow": 3 },
+    { "url": "https://www.independentarabia.com/", "lang": "ar", "split": "train", "follow": 3 },
+    { "url": "https://arabic.cnn.com/", "lang": "ar", "split": "train", "follow": 3 },
+    { "url": "https://www.france24.com/ar/", "lang": "ar", "split": "train", "follow": 3 },
+    { "url": "https://www.dw.com/ar/", "lang": "ar", "split": "train", "follow": 3 },
+    { "url": "https://www.masrawy.com/", "lang": "ar", "split": "train", "follow": 3 },
+    { "url": "https://www.hespress.com/", "lang": "ar", "split": "train", "follow": 3 },
+    { "url": "https://mawdoo3.com/", "lang": "ar", "split": "train", "follow": 3 },
+    { "url": "https://www.argaam.com/ar", "lang": "ar", "split": "train", "follow": 2 },
+    { "url": "https://www.who.int/ar", "lang": "ar", "split": "train", "follow": 2 },
+    { "url": "https://www.noon.com/saudi-ar/", "lang": "ar", "split": "train", "follow": 2 },
+
+    { "url": "https://developer.mozilla.org/en-US/docs/Web/HTML", "lang": "en", "split": "train", "follow": 2 },
+    { "url": "https://developer.mozilla.org/en-US/docs/Web/CSS", "lang": "en", "split": "train", "follow": 2 },
+    { "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript", "lang": "en", "split": "train", "follow": 2 },
+    { "url": "https://docs.python.org/3/tutorial/index.html", "lang": "en", "split": "train", "follow": 2 },
+    { "url": "https://docs.python.org/3/library/functions.html", "lang": "en", "split": "train", "follow": 1 },
+    { "url": "https://github.com/python/cpython", "lang": "en", "split": "train", "follow": 0 },
+    { "url": "https://github.com/microsoft/vscode", "lang": "en", "split": "train", "follow": 0 },
+    { "url": "https://www.bbc.com/news", "lang": "en", "split": "train", "follow": 3 },
+    { "url": "https://apnews.com/", "lang": "en", "split": "train", "follow": 3 },
+    { "url": "https://www.npr.org/", "lang": "en", "split": "train", "follow": 2 },
+    { "url": "https://www.who.int/", "lang": "en", "split": "train", "follow": 2 },
+    { "url": "https://nodejs.org/en/learn/getting-started/introduction-to-nodejs", "lang": "en", "split": "train", "follow": 2 },
+    { "url": "https://www.w3schools.com/html/", "lang": "en", "split": "train", "follow": 2 },
+
+    { "url": "https://www.alarabiya.net/", "lang": "ar", "split": "heldout-site", "follow": 3 },
+    { "url": "https://www.youm7.com/", "lang": "ar", "split": "heldout-site", "follow": 3 },
+    { "url": "https://www.un.org/ar/", "lang": "ar", "split": "heldout-site", "follow": 2 },
+    { "url": "https://www.theguardian.com/international", "lang": "en", "split": "heldout-site", "follow": 3 },
+    { "url": "https://react.dev/learn", "lang": "en", "split": "heldout-site", "follow": 2 },
+    { "url": "https://www.gov.uk/", "lang": "en", "split": "heldout-site", "follow": 2 }
+  ]
+}

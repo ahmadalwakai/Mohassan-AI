@@ -15,7 +15,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from charset import CLASSES, decode  # noqa: E402
 from model import OCRModel, greedy_decode  # noqa: E402
-from train import LineShards, collate, edit_distance  # noqa: E402
+from train import LineShards, collate, edit_distance, gpu_lock  # noqa: E402
 
 
 @torch.no_grad()
@@ -64,17 +64,27 @@ def main() -> None:
     parser.add_argument("--checkpoint", default="best.pt")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--json", type=Path)
+    parser.add_argument("--real", type=Path, help="also measure real-heldout-site and real-heldout-page from build_real_shards.py (font column = site)")
+    parser.add_argument("--skip-synthetic", action="store_true")
     args = parser.parse_args()
+    with gpu_lock(args.device, f"OCR evaluation {args.run.name}"):
+        evaluate_run(args)
+
+
+def evaluate_run(args: argparse.Namespace) -> None:
     state = torch.load(args.run / args.checkpoint, map_location=args.device)
     pools = tuple(tuple(p) if p else None for p in state.get("pools", ((2, 2), (2, 2), None, (2, 1), (2, 1))))
     model = OCRModel(len(CLASSES), tuple(state["channels"]), state["hidden"], pools).to(args.device)
     model.load_state_dict(state["model"])
     model.eval()
     report = {"step": state.get("step"), "parameters": state.get("parameters")}
-    for name in ("holdout-seen", "holdout-unseen"):
-        if not (args.data / f"{name}.json").exists():
+    sets = [] if args.skip_synthetic else [(args.data, name) for name in ("holdout-seen", "holdout-unseen")]
+    if args.real:
+        sets += [(args.real, name) for name in ("real-heldout-site", "real-heldout-page")]
+    for directory, name in sets:
+        if not (directory / f"{name}.json").exists():
             continue
-        report[name] = run(model, LineShards(args.data, [name]), args.device)
+        report[name] = run(model, LineShards(directory, [name]), args.device)
         kinds = report[name]["by_kind"]
         print(f"{name}: " + ", ".join(f"{k} CER {v['cer']:.3f} (lines {v['lines']}, exact {v['line_accuracy']:.2f})" for k, v in kinds.items()))
         print("  by length:", {k: v["cer"] for k, v in report[name]["by_length"].items()})
