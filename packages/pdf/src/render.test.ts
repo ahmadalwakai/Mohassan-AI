@@ -9,20 +9,30 @@ import { renderDocumentHtml, watermarkHtml, WATERMARK_PRINT } from './html.ts';
 import { DEFAULT_FONTS_DIR, createPdfRenderer, loadFontFaces, type PdfRenderer } from './render.ts';
 import { extractPdfText } from '../../learning/src/pdf.ts';
 
-/** The PostScript names of the fonts each page's resources reference, subset prefixes (AAAAAA+) removed. */
+/**
+ * The PostScript names of the fonts a PDF's pages use, subset prefixes (AAAAAA+) removed. Chromium draws each
+ * page's body inside a Form XObject with its own resources, and the footer straight on the page, so both are walked.
+ */
 async function fontNames(bytes: Uint8Array): Promise<string[]> {
   const document = await PDFDocument.load(bytes);
   const names = new Set<string>();
-  for (const page of document.getPages()) {
-    const fonts = page.node.Resources()?.lookup(PDFName.of('Font'));
-    if (!(fonts instanceof PDFDict)) continue;
-    for (const [, ref] of fonts.entries()) {
+  const visited = new Set<PDFDict>();
+  const walk = (resources: unknown, depth: number) => {
+    if (!(resources instanceof PDFDict) || visited.has(resources) || depth > 4) return;
+    visited.add(resources);
+    const fonts = resources.lookup(PDFName.of('Font'));
+    if (fonts instanceof PDFDict) for (const [, ref] of fonts.entries()) {
       const font = document.context.lookup(ref);
-      if (!(font instanceof PDFDict)) continue;
-      const base = font.get(PDFName.of('BaseFont'))?.toString();
+      const base = font instanceof PDFDict ? font.get(PDFName.of('BaseFont'))?.toString() : undefined;
       if (base) names.add(base.replace(/^\/(?:[A-Z]{6}\+)?/u, ''));
     }
-  }
+    const objects = resources.lookup(PDFName.of('XObject'));
+    if (objects instanceof PDFDict) for (const [, ref] of objects.entries()) {
+      const object = document.context.lookup(ref) as { dict?: PDFDict } | undefined;
+      walk(object?.dict?.lookup(PDFName.of('Resources')), depth + 1);
+    }
+  };
+  for (const page of document.getPages()) walk(page.node.Resources(), 0);
   return [...names].sort();
 }
 
@@ -92,7 +102,8 @@ describe('Chromium PDF renderer', () => {
   it('embeds the bundled Noto Naskh Arabic for Arabic, Latin and bold text, so the body needs no system font', async () => {
     const faces = await renderer.fontFaces();
     expect(faces).toContain('font-family: "Mohassan Document"');
-    expect(faces).toContain('font-weight: 100 900');
+    expect(faces).toContain('font-weight: 400;');
+    expect(faces).toContain('font-weight: 700;');
     const document = renderDocumentHtml({ title: 'عقد توريد', theme: 'letter', blocks: [{ kind: 'paragraph', text: 'الطرف الأول يورّد 120 طنًا. Delivery in **March**.' }, { kind: 'heading', level: 2, text: 'الشروط' }] }, faces);
     const body = await fontNames(await renderer.render(document.html, { print: { ...document.print, displayHeaderFooter: false } }));
     expect(body.length).toBeGreaterThan(0);
@@ -142,9 +153,13 @@ describe('loadFontFaces', () => {
       expect(css).not.toContain('notes');
       expect(await loadFontFaces(join(dir, 'missing'))).toBe('');
       expect(await loadFontFaces(undefined)).toBe('');
+      // Static instances only: Chromium turns a variable font into Type3 outlines (no embedded TrueType, 2.8× the bytes).
       const bundled = await loadFontFaces(DEFAULT_FONTS_DIR);
-      expect(bundled).toContain('font-weight: 100 900');
+      expect(bundled.match(/@font-face/gu)).toHaveLength(2);
+      expect(bundled).not.toContain('font-weight: 100 900');
       expect(bundled.length).toBeGreaterThan(300_000);
+      await writeFile(join(dir, 'Variable[wght].ttf'), Buffer.from([0, 1, 0, 0, 3]));
+      expect(await loadFontFaces(dir)).toContain('font-weight: 100 900');
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });
