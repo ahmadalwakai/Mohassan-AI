@@ -2,7 +2,11 @@
  * Phase 0: the frozen set of real requests and today's replies to them, for the owner to label
  * (docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md §1.6, §7.5, §8.3, §9).
  *
- * Usage: npx tsx scripts/quality/real-questions.ts [--freeze-only] [--limit N] [--out artifacts/plan-2026-11-22]
+ * Usage: npx tsx scripts/quality/real-questions.ts [--freeze-only] [--limit N] [--out artifacts/plan-2026-11-22] [--judge off]
+ *
+ * `--judge off` measures the hands alone: the pre-send judge (apps/server/src/assistant/judge.ts, wired 2026-11-22 07:56)
+ * otherwise fixes and withholds replies on the owner account, which is the account this tool signs in with. The 02:17
+ * baseline of 2026-11-22 predates the judge, so a hands-only comparison with it needs this switch.
  *
  * Set: every distinct first-turn request in .data/router/shadow.jsonl, real-labeled.jsonl and
  * lab-messages.jsonl, plus follow-up pairs (the previous request, then the follow-up) where the
@@ -75,7 +79,9 @@ function auto(question: string, observation: RunObservation) {
 
 const stamp = new Date().toISOString().replaceAll(':', '-').slice(0, 19);
 const answersFile = path.join(out, `real-answers-${stamp}.jsonl`);
-const fixture = await startMeasureFixture({ withWeb: false, apiPort: Number(argument('port', '4110')), webPort: Number(argument('port', '4110')) - 1000 });
+const judgeOff = argument('judge', 'on') === 'off';
+const fixture = await startMeasureFixture({ withWeb: false, apiPort: Number(argument('port', '4110')), webPort: Number(argument('port', '4110')) - 1000,
+  ...(judgeOff ? { environment: { MOHASSAN_JUDGE_FIX: '0', MOHASSAN_JUDGE_WITHHOLD: '0' } } : {}) });
 const client = new FixtureClient(fixture);
 let lastCreate = 0;
 const results: { item: SetItem; observation: RunObservation | null; auto: ReturnType<typeof auto> | null; failure?: string }[] = [];
@@ -111,7 +117,7 @@ try {
 const done = results.filter(result => result.auto);
 const share = (pick: (facts: NonNullable<typeof results[number]['auto']>) => boolean) => done.length ? Number((done.filter(result => pick(result.auto!)).length / done.length).toFixed(3)) : null;
 const summary = {
-  at: new Date().toISOString(), setSha256, items: results.length, settled: done.length, failures: results.filter(result => result.failure).length,
+  at: new Date().toISOString(), setSha256, judge: judgeOff ? 'off' : 'on', items: results.length, settled: done.length, failures: results.filter(result => result.failure).length,
   status: done.reduce<Record<string, number>>((all, result) => ({ ...all, [result.auto!.status]: (all[result.auto!.status] ?? 0) + 1 }), {}),
   askedShare: share(facts => facts.asked), usedBrowserShare: share(facts => facts.usedBrowser), linkShare: share(facts => facts.hasLink),
   abstainPhraseShare: share(facts => facts.abstainPhrase), sameLanguageShare: share(facts => facts.sameLanguage === true),

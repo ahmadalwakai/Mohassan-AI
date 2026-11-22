@@ -29,7 +29,20 @@ describe('answer checks before a line is sent (plan §7.4)', () => {
     expect(figureKind('When did the Berlin Wall fall?')).toBe('date');
     expect(figureKind('كم سعر الذهب اليوم؟')).toBe('price');
     expect(figureKind('How much does a Tesla Model 3 cost?')).toBe('price');
-    expect(figureKind('كم عدد سكان مصر؟')).toBe('any');
+    expect(figureKind('كم عدد سكان مصر؟')).toBe('people');
+    expect(figureKind('كم عدد سكانها اليابان')).toBe('people');
+    expect(figureKind('How many people live in Japan?')).toBe('people');
+    expect(figureKind('كم عدد الدول العربية؟')).toBe('any');
+    // Measured live on 2026-11-22 08:15 (artifacts/plan-2026-11-22/1-hands-http.md §5.2): a share of the land or of the
+    // people is a number, not a population; the count may carry its unit or stand beside the population word.
+    expect(checkAnswerLine('كم عدد سكان اليابان', 'تحتل المناطق الجبلية ما يزيد عن 70% من أرض اليابان، أما المدن التي يزيد عدد سكانها على مليون نسمة فهي: سابورو.').reasons).toContain('needs_unit');
+    expect(checkAnswerLine('كم عدد سكان فرنسا', 'وبلغ عدد المسيحيين الكاثوليك سنة 2006 حوالي 65% من سكان فرنسا.').reasons).toContain('needs_unit');
+    expect(checkAnswerLine('كم عدد سكان فرنسا', 'قائمة الأقاليم الفرنسية حسب عدد السكان في تعداد 1999.').reasons).toContain('needs_unit');
+    expect(checkAnswerLine('كم عدد سكان اليابان', 'يبلغ عدد سكان اليابان 123 مليون نسمة اعتباراً من 2024.').ok).toBe(true);
+    expect(checkAnswerLine('كم عدد سكان مصر', 'قُدِّر عدد سكانها بأكثرَ من 120 مليون نسَمة.').ok).toBe(true);
+    expect(checkAnswerLine('How many people live in Japan?', 'Japan has a population of 123 million as of 2024.').ok).toBe(true);
+    expect(hasFigureOf('people', 'يبلغ عدد سكانها ٧٠٪ من سكان الإقليم')).toBe(false);
+    expect(hasFigureOf('people', 'يبلغ عدد سكانها ١٢٣ مليون نسمة')).toBe(true);
     // Measured on 2026-11-22: a film's release year is a number, not how long the operation takes.
     expect(checkAnswerLine('كم تستغرق عملية المياه البيضاء؟', 'مياه بيضاء (الإنجليزية: White Waters) هُو فيلم دراما نيجيري صدر سنة 2007 وأخرجه إيزو أوجوكو.').reasons).toContain('needs_unit');
     expect(checkAnswerLine('كم تستغرق عملية المياه البيضاء؟', 'تستغرق عملية إزالة المياه البيضاء عادة بين 15 و30 دقيقة تحت تخدير موضعي.').ok).toBe(true);

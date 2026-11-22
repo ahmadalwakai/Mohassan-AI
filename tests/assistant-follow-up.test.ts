@@ -12,10 +12,12 @@ describe('follow-ups that point back at the last answer', () => {
   });
 
   it('joins the named entity to the pronoun question', () => {
-    expect(withTopic(tidy('وكم عدد سكانها؟'), ['طوكيو'])).toBe('كم عدد سكانها طوكيو');
+    // Once the entity is joined, the attribute drops its pronoun: «سكانها طوكيو» missed the line «يبلغ عدد سكان اليابان 123 مليون
+    // نسمة» that the plain question finds (live 2026-11-22 08:15, artifacts/plan-2026-11-22/1-hands-http.md §5.2).
+    expect(withTopic(tidy('وكم عدد سكانها؟'), ['طوكيو'])).toBe('كم عدد سكان طوكيو');
     expect(withTopic(tidy('ومن أسسها؟'), ['جامعة الملك سعود'])).toBe('من أسسها جامعة الملك سعود');
     expect(webQuestion('وكم سعره في مصر؟', ['الذهب'])?.[0]).toMatchObject({ kind: 'search', query: 'كم سعره في مصر الذهب', ask: true });
     // The question-based path still carries the earlier question's topic when no entity is known.
-    expect(webQuestion('وكم عدد سكانها؟', ['ما عاصمة اليابان؟'])?.[0]).toMatchObject({ query: 'كم عدد سكانها عاصمة اليابان' });
+    expect(webQuestion('وكم عدد سكانها؟', ['ما عاصمة اليابان؟'])?.[0]).toMatchObject({ query: 'كم عدد سكان عاصمة اليابان' });
   });
 });

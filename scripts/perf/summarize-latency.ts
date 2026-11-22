@@ -19,7 +19,7 @@ const resources = await lines('resources.jsonl');
 const measured = rows.filter(row => row.phase === 'measure' && !row.skipped && !row.failure);
 const firstInformative = (row: { progress: { text: string; firstSeenMs: number }[] }) => row.progress.find(entry => entry.text !== 'يفهم طلبك…')?.firstSeenMs ?? null;
 /**
- * What the web page would show: it renders the POST reply at once, then polls every POLL_MS = 900
+ * What the web page would show: it renders the POST reply at once, then polls every POLL_MS
  * (apps/web/components/assistant-app.tsx) while the run is `running`, so a finished run appears on the
  * first poll tick after it finished. Proxy time per poll (measured in meta.proxy) is not added.
  */
@@ -29,7 +29,7 @@ const doneAfterSend = (row: UiRow) => {
   const doneAt = row.assistantAt ?? (row.settleMs === null ? null : row.sentAt + row.settleMs);
   return doneAt === null ? null : doneAt - row.sentAt;
 };
-/** The page as it was until 2026-11-22: one poll every 900 ms. */
+/** The page with one flat poll every UI_POLL_MS: 450 ms today; UI_POLL_MS=900 reproduces the baseline page. */
 const uiEstimate = (row: UiRow) => {
   if (row.acceptedStatus !== 'running') return row.acceptMs;
   const done = doneAfterSend(row);
@@ -37,8 +37,9 @@ const uiEstimate = (row: UiRow) => {
   return row.acceptMs + UI_POLL_MS * Math.max(1, Math.ceil((done - row.acceptMs) / UI_POLL_MS));
 };
 /**
- * The page after 2026-11-22 (assistant-app.tsx): polls every FAST_POLL_MS for the first FAST_WINDOW_MS after a
- * send, then every POLL_MS. Both estimates are reported so a run can be compared under either page.
+ * Proposed, not built: a page that polls every UI_FAST_POLL_MS for the first UI_FAST_WINDOW_MS after a send,
+ * then every UI_POLL_MS. The page itself (assistant-app.tsx) polls a flat POLL_MS; this estimate only shows
+ * what the faster first seconds would change. Both values here are proposals, not measured choices.
  */
 const UI_FAST_POLL_MS = 200, UI_FAST_WINDOW_MS = 3000;
 const uiEstimateAdaptive = (row: UiRow) => {

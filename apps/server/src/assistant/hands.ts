@@ -1,7 +1,7 @@
 import { AgentEffectHeld, BrowserError, compileQuery, publicSearchScan, publicSearchText, safeResumeUrl, type AgentAction, type AgentElement, type AgentPage, type AgentRequestPermit, type SearchHit } from '@mohassan/browser';
 import { directRoute, namedSite, sensitiveAction } from './brain.js';
 import { hostOf, readingLabel, siteName } from './activity.js';
-import { checkAnswerLine, isDisambiguationPage, isDisambiguationTitle, isMetaLine, questionLanguage } from './answer-check.js';
+import { checkAnswerLine, figureKind, isDisambiguationPage, isDisambiguationTitle, isMetaLine, questionLanguage } from './answer-check.js';
 import { releaseLines, releaseQuestion } from './releases.js';
 import { isSiteRequest } from '@mohassan/sites';
 export { siteName };
@@ -283,7 +283,9 @@ export function withTopic(text: string, earlier: readonly string[]): string {
     const key = fold(word).replace(/[؟?،,]/gu, '');
     return key && !ASK_WORDS.has(key) && !TIME_WORDS.has(key) && !have.includes(key.length > 4 && key.startsWith('ال') ? key.slice(2) : key);
   });
-  return [own, ...topic].filter(Boolean).join(' ').trim() || text;
+  // The topic now names what the pronoun pointed at: «وكم عدد سكانها؟» after «اليابان» asks «كم عدد سكان اليابان».
+  const asked = topic.length ? own.split(' ').map(withoutPronoun).join(' ') : own;
+  return [asked, ...topic].filter(Boolean).join(' ').trim() || text;
 }
 const URL_LIKE = /https?:\/\/|\bwww\.|\b[\w-]+\.(?:com|net|org|io|co|uk|sa|ae|dev|app)\b/i;
 
@@ -348,11 +350,57 @@ const ATTRIBUTE_WORDS = new Set(['سكان', 'يعيش', 'يعيشون', 'شخص
  */
 export const ASPECT_QUESTION = /(?:^|\s)(?:فوائد|أضرار|اضرار|أعراض|اعراض|أسباب|اسباب|علاج|مخاطر|أنواع|انواع|مراحل|علامات)(?=\s|$)|\b(?:benefits|symptoms|causes|treatment|risks|types|signs) of\b/iu;
 export const aspectSubject = (question: string): string[] => ASPECT_QUESTION.test(question) ? topicWords(wikiTerms(question)) : [];
+/** Attached pronouns that are never part of a folded noun: «سكانها», «سكانهم». */
+const PRONOUN_SUFFIXES = ['هما', 'هم', 'هن', 'ها'];
+/**
+ * Stems after which a bare «ه» is always a pronoun («سكانه», «طوله»). Elsewhere it may be a folded ta marbuta: «عمره» is also
+ * «عمرة», «ملكه» «ملكة», «سعره» «سعرة», «موقعه» «موقعة», «رئيسه» «رئيسة», «مؤسسه» «مؤسسة», so those stay as they are.
+ */
+const BARE_HA_STEMS = new Set(['سكان', 'طول', 'ارتفاع', 'ميلاد', 'تاسيس', 'نشيد']);
+/**
+ * An attribute word, also with an attached pronoun: «سكانها» is «سكان», «عاصمتها» and «عاصمته» are «عاصمه» (a ta marbuta is
+ * written ta before a pronoun). Folded topic words. Without the pronoun forms, «وكم عدد سكانها؟» after «ما عاصمة اليابان؟» named
+ * no attribute, so the subject check passed any page and the reply showed «ناكادوماري… 10,577 نسمة», a town's population
+ * (all three repetitions of artifacts/perf/2026-11-22/route-latency-after-lever1-2026-11-22T07-43-25; 1-hands-http.md §5.2).
+ */
+export function isAttributeWord(word: string): boolean {
+  if (ATTRIBUTE_WORDS.has(word)) return true;
+  const known = (stem: string) => stem.length >= 2 && (ATTRIBUTE_WORDS.has(stem) || stem.endsWith('ت') && ATTRIBUTE_WORDS.has(`${stem.slice(0, -1)}ه`));
+  if (PRONOUN_SUFFIXES.some(suffix => word.endsWith(suffix) && known(word.slice(0, -suffix.length)))) return true;
+  if (!word.endsWith('ه')) return false;
+  const stem = word.slice(0, -1);
+  return stem.endsWith('ت') && known(stem) || BARE_HA_STEMS.has(stem);
+}
 /** The subject itself, for a question about one of its attributes: «كم عدد سكان مصر» → ['مصر']; empty when the question names no attribute. */
 export function entityWords(question: string): string[] {
   const topic = topicWords(question);
-  const entity = topic.filter(word => !ATTRIBUTE_WORDS.has(word));
+  const entity = topic.filter(word => !isAttributeWord(word));
   return entity.length && entity.length < topic.length ? entity : [];
+}
+/**
+ * The attribute without its pronoun, once the follow-up names what the pronoun pointed at: «سكانها» → «سكان», «عاصمتها» →
+ * «عاصمة», «مساحته» → «مساحة». Any other word is returned as it is. «كم عدد سكانها اليابان» missed the line «يبلغ عدد سكان
+ * اليابان 123 مليون نسمة» that «كم عدد سكان اليابان» ranks second (live 2026-11-22 08:15).
+ */
+export function withoutPronoun(word: string): string {
+  const key = fold(word).replace(/^ال(?=\S{3})/u, '');
+  if (ATTRIBUTE_WORDS.has(key) || !isAttributeWord(key)) return word;
+  for (const suffix of [...PRONOUN_SUFFIXES, 'ه']) {
+    if (!key.endsWith(suffix) || !word.endsWith(suffix)) continue;
+    const stem = key.slice(0, -suffix.length), kept = word.slice(0, -suffix.length);
+    if (ATTRIBUTE_WORDS.has(stem) || suffix === 'ه' && BARE_HA_STEMS.has(stem)) return kept;
+    if (stem.endsWith('ت') && ATTRIBUTE_WORDS.has(`${stem.slice(0, -1)}ه`)) return `${kept.slice(0, -1)}ة`;
+  }
+  return word;
+}
+/**
+ * A figure stated for the past: a year before 1950 in the line («حول 1340»، «سنة 1905») or «في ذلك الوقت»، «آنذاك»، "at the time".
+ * Only a population question prefers a line without one; a date question asks for the past.
+ */
+export function pastFigure(line: string): boolean {
+  const western = line.replace(/[٠-٩]/gu, digit => String(digit.charCodeAt(0) - 0x0660));
+  return /(?<!\d)(?<!\d[.,،٬])1(?:[0-8]\d\d|9[0-4]\d)(?!\d)(?![.,،٬]\d)/u.test(western)
+    || /في ذلك الوقت|آنذاك|حينذاك|\bat the time\b|\bback then\b/iu.test(line);
 }
 /** A page whose title is the subject itself («مصر», «المغرب - ويكيبيديا»), so its sentences may name it by a pronoun. */
 export function isOwnArticle(title: string, entity: readonly string[]): boolean {
@@ -1082,9 +1130,14 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             // The answer line is the best-scored sentence that passes the checks; the others stay as details. When none passes,
             // the next page is tried. (Earlier the details were kept even when the first line failed, so an unchecked sentence
             // became the answer: artifacts/plan-2026-11-22/two-sources-2026-11-22T06-11-30.json, rq015.)
-            const ranked = relevantLines(opened, step.query, 3, true);
-            const answerAt = ranked.findIndex(line => checkAnswerLine(step.query, line).ok && namesEntity(line, entity, ownPage(opened, entity)));
-            const lines = answerAt < 0 ? [] : [ranked[answerAt]!, ...ranked.filter((_, at) => at !== answerAt)];
+            // A population reads further down its page and is today's figure: «كم عدد سكان فرنسا» ranked a share of Catholics, a 1999
+            // census list and «حول 1340، كانت فرنسا يبلغ عدد سكانها حوالي 17 مليون نسمة» above «68.6 مليون نسمة في يناير 2025» (live
+            // 2026-11-22 08:15, artifacts/plan-2026-11-22/wrong-answers-fix/). Every other question reads its top three lines as before.
+            const people = figureKind(step.query) === 'people';
+            const ranked = relevantLines(opened, step.query, people ? 6 : 3, true);
+            const passing = ranked.flatMap((line, at) => checkAnswerLine(step.query, line).ok && namesEntity(line, entity, ownPage(opened, entity)) ? [at] : []);
+            const answerAt = (people ? passing.find(at => !pastFigure(ranked[at]!)) : undefined) ?? passing[0] ?? -1;
+            const lines = answerAt < 0 ? [] : [ranked[answerAt]!, ...ranked.filter((_, at) => at !== answerAt)].slice(0, 3);
             // A page whose title names none of the question's words answers only with a sentence that carries nearly all of them:
             // «The trio visit Misumi again, this time…» from the film «The Third Murder» shares only «visit» and «time» with «What is
             // the best time to visit Japan?» (live 2026-11-22 06:13 and 07:44). Measured on the 208 sourced answers of the eight full

@@ -50,14 +50,21 @@ const NUMBER_QUESTION = /(?:^|\s)(?:كم|قديش|اديش|متى|متي)(?=\s|$
  * wants minutes or hours, a date question a year or a month, a price a currency. On 2026-11-22 «كم تستغرق عملية المياه
  * البيضاء» was answered with «فيلم دراما نيجيري صدر سنة 2007»: a number, but not a duration.
  */
-export type FigureKind = 'duration' | 'date' | 'price' | 'any';
+export type FigureKind = 'duration' | 'date' | 'price' | 'people' | 'any';
 const DURATION_QUESTION = /تستغرق|يستغرق|(?:^|\s)مد[ةه](?=\s|$)|كم (?:من )?(?:الوقت|وقت)|how long|how many (?:minutes|hours|days|weeks|months|years)/iu;
 const DATE_QUESTION = /(?:^|\s)(?:متى|متي)(?=\s|$)|\bwhen\b|\bwhat year\b|في أي (?:عام|سنة)/iu;
 const PRICE_QUESTION = /(?:^|\s)(?:ال)?(?:سعر|أسعار|اسعار|تكلفة|تكلفه|كلفة)(?=\s|$)|كم (?:يكلف|تكلف|ثمن)|how much (?:does|do|is|are|did|will|would)\b.*\b(?:cost|pay)|\bprice|\bcost/iu;
+/**
+ * A population question wants a count of people, not a share of them. Live on 2026-11-22 (artifacts/plan-2026-11-22/1-hands-http.md
+ * §5.2): «كم عدد سكان اليابان» ranked «تحتل المناطق الجبلية ما يزيد عن 70% من أرض اليابان…» first, and «كم عدد سكان فرنسا»
+ * ranked «حوالي 65% من سكان فرنسا» (Catholics) first; both passed, since any number did.
+ */
+const PEOPLE_QUESTION = /(?:^|\s)(?:ال)?سكان(?:ها|ه|هم)?(?=[\s؟?،,.]|$)|كم\s+نسم[ةه]|\bpopulation\b|how many (?:people|inhabitants|residents|persons)/iu;
 export function figureKind(question: string): FigureKind {
   if (DURATION_QUESTION.test(question)) return 'duration';
   if (DATE_QUESTION.test(question)) return 'date';
   if (PRICE_QUESTION.test(question)) return 'price';
+  if (PEOPLE_QUESTION.test(question)) return 'people';
   return 'any';
 }
 const DIGIT = '[\\d٠-٩]';
@@ -65,10 +72,34 @@ const FIGURE_UNITS: Record<Exclude<FigureKind, 'any'>, RegExp> = {
   duration: new RegExp(`${DIGIT}+(?:[.,]${DIGIT}+)?\\s*(?:ثانية|ثوان|دقيقة|دقائق|دقيقه|ساعة|ساعات|ساعه|يوم|أيام|ايام|أسبوع|اسبوع|أسابيع|اسابيع|شهر|أشهر|اشهر|شهور|سنة|سنه|سنوات|عام|أعوام|اعوام|seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)(?![\\p{L}])`, 'iu'),
   date: new RegExp(`(?:^|[^\\d٠-٩])(?:1[0-9]|20)${DIGIT}{2}(?![\\d٠-٩])|(?:يناير|فبراير|مارس|أبريل|ابريل|مايو|يونيو|يوليو|أغسطس|اغسطس|سبتمبر|أكتوبر|اكتوبر|نوفمبر|ديسمبر|كانون|شباط|آذار|نيسان|أيار|حزيران|تموز|آب|أيلول|تشرين|january|february|march|april|may|june|july|august|september|october|november|december)`, 'iu'),
   price: /[$€£¥₺]|(?:^|\s)(?:دولار|دولارات|يورو|جنيه|جنيهات|ريال|ريالات|درهم|دراهم|دينار|دنانير|ليرة|ليرات|USD|EUR|GBP|SAR|AED|EGP|TRY|dollars?|euros?|pounds?|cents?|riyals?|dirhams?|dinars?)(?![\p{L}])/iu,
+  // «123 مليون نسمة», «68,605,616 نسمة», «10,577 people».
+  people: new RegExp(`${DIGIT}+(?:[.,،٬]${DIGIT}+)*\\s*(?:ألف|الف|آلاف|الاف|مليون|ملايين|مليار|thousand|million|billion)?\\s*(?:نسمة|نسمه|نسمات|شخص|أشخاص|اشخاص|مواطن|مواطنا|مواطنين|ساكن|people|persons|inhabitants|residents)(?![\\p{L}])`, 'iu'),
 };
+const PEOPLE_WORD = /سكان|population|inhabitants|residents/iu;
+const NUMBER_TOKEN = /[\d٠-٩]+(?:[.,،٬][\d٠-٩]+)*/gu;
+/**
+ * A count beside the population word («عدد سكانها 125,416,877», "a population of 123 million"): a number that is not a share
+ * («70%», «65 في المئة») and not a bare year («تعداد 1999»).
+ */
+function countOfPeople(text: string): boolean {
+  if (!PEOPLE_WORD.test(text)) return false;
+  for (const found of text.matchAll(NUMBER_TOKEN)) {
+    const after = text.slice(found.index! + found[0].length);
+    if (/^\s*(?:%|٪|في\s*الم[ئا]ئ[ةه]|بالم[ئا]ئ[ةه]|percent)/iu.test(after)) continue;
+    const digits = found[0].replace(/[٠-٩]/gu, digit => String(digit.charCodeAt(0) - 0x0660));
+    if (/^\d{4}$/u.test(digits) && Number(digits) >= 1000 && Number(digits) <= 2099) continue;
+    return true;
+  }
+  return false;
+}
 /** True when a line carries the kind of figure the question wants; a question of kind «any» needs only a number. */
 export function hasFigureOf(kind: FigureKind, line: string): boolean {
-  return kind === 'any' || FIGURE_UNITS[kind].test(line);
+  if (kind === 'any') return true;
+  if (kind !== 'people') return FIGURE_UNITS[kind].test(line);
+  // Wikipedia leads carry vowel marks: «قُدِّر عدد سكانها بأكثرَ من 120 مليون نسَمة». Marks and tatweel only: the range
+  // U+064B–U+0670 written as one span would also take the digits ٠–٩ and the percent sign ٪.
+  const text = line.replace(/[ً-ٰٟـ]/gu, '');
+  return FIGURE_UNITS.people.test(text) || countOfPeople(text);
 }
 
 /**
