@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { directRoute } from './brain.js';
+import { isCampaignRequest } from './campaign-request.js';
 import { parseHands, type HandsStep } from './hands.js';
 import { evaluateLocalComputation, type LocalComputation } from './local-computation.js';
 import { evaluateLocalConversation } from './local-conversation.js';
@@ -169,11 +170,15 @@ export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDe
   }
   let intent: RoutedIntent | 'unknown' = resolution.intent;
   let reason: RoutingReason = resolution.kind === 'follow_up' ? 'context_destination' : 'explicit_handler';
+  // An advertising campaign request keeps its destination: its budget is not a calculation, its business is not a web
+  // question and «create a campaign for …» is not a letter (assistant/campaign-request.ts).
+  const campaign = resolution.kind !== 'follow_up' && isCampaignRequest(action);
   if (resolution.kind !== 'follow_up') {
     const framed = frameIntent(frame.intent);
+    if (campaign) intent = 'ads';
     // A live exchange-rate request is a public lookup even when its digits match
     // a broad arithmetic recogniser. A verified local calculation already won.
-    if (frame.matched.some(match => match.rule === 'live-currency-exchange') && !frame.personal) intent = 'web_search';
+    else if (frame.matched.some(match => match.rule === 'live-currency-exchange') && !frame.personal) intent = 'web_search';
     else if (['memory', 'ads', 'pc', 'reminder', 'coding', 'planning', 'news'].includes(resolution.intent)) {
       // A specific writer/parser result can disambiguate ordinary prose about
       // code or memory. Actual private lookup frames retain their destination.
@@ -188,7 +193,8 @@ export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDe
   }
   // Source/operation provenance can recover a private or numeric destination
   // without treating an unavailable solver or writer as a public search task.
-  if (sourceAssessment.source === 'local_state') intent = 'pc';
+  if (campaign) { /* «40 pounds a week» in a campaign brief is its budget, not an operation on numbers. */ }
+  else if (sourceAssessment.source === 'local_state') intent = 'pc';
   else if (sourceAssessment.operation === 'compute') intent = 'compute';
   else if (sourceAssessment.source === 'supplied_content' && sourceAssessment.operation === 'transform'
     && !['ads', 'coding'].includes(intent)) intent = 'writing';

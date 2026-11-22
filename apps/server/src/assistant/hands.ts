@@ -3,6 +3,7 @@ import { directRoute, namedSite, sensitiveAction } from './brain.js';
 import { hostOf, readingLabel, siteName } from './activity.js';
 import { checkAnswerLine, figureKind, isDisambiguationPage, isDisambiguationTitle, isMetaLine, questionLanguage } from './answer-check.js';
 import { releaseLines, releaseQuestion } from './releases.js';
+import { isCampaignRequest } from './campaign-request.js';
 import { isSiteRequest } from '@mohassan/sites';
 export { siteName };
 
@@ -20,7 +21,9 @@ export type HandsStep =
   | { kind: 'read'; more: boolean }
   | { kind: 'scroll'; up: boolean }
   | { kind: 'back' }
-  | { kind: 'news'; source: NewsSource; topic: string };
+  | { kind: 'news'; source: NewsSource; topic: string }
+  /** «افتح X وأخبرني بـY»: after the page opens, Y is answered from that page's own text, quoted (pageAnswer). */
+  | { kind: 'ask_page'; question: string };
 
 export interface NewsSource { url: string; name: string }
 
@@ -165,11 +168,43 @@ function parseSegment(raw: string): HandsStep | HandsStep[] | null {
   return null;
 }
 
+/** «وأخبرني», «ثم اذكر», «and tell me»: a question about the page that was just opened. */
+const TELL_AR = '(?:أخبرني|اخبرني|خبرني|قل لي|قللي|قلي|اذكر لي|اذكر|أعطني|اعطني|وضح لي|بين لي)';
+const TELL_EN = '(?:tell me|show me|give me|what(?:\'s| is| are)|which)';
+const ASK_SPLIT = new RegExp(`\\s*[،,]?\\s+(?:ثم\\s+|وبعدها\\s+|و)(?=${TELL_AR}(?:\\s|$))|\\s*,?\\s+(?:and(?: then)?|then)\\s+(?=${TELL_EN}\\s)`, 'iu');
+/** The question points at the page: «في الصفحة», «فيها», «المذكور», «on the page», «listed». «وقل لي نكتة» does not. */
+const PAGE_REF = /(?:^|\s)(?:في|على|من)\s+(?:هذه\s+|هذا\s+)?(?:ال)?(?:صفحه|موقع)(?=\s|$)|(?:^|\s)(?:فيها|فيه|عليها|عليه|منها|منه)(?=\s|$)|(?:^|\s)(?:ال)?(?:مذكور|موجود|موجوده|مكتوب|ظاهر)(?=\s|$)|\b(?:on|in|from) (?:the|this|that) (?:page|site|website)\b|\b(?:on it|in it|there|listed|mentioned|shown|written)\b/iu;
+/** …or names a part of it with the definite article: «العنوان الرئيسي», «الرابط», «the version». */
+const PAGE_PART = /(?:^|\s)(?:ب|و)?ال(?:عنوان|روابط|رابط|اصدار)(?=\s|$)|\bthe (?:main heading|heading|headline|title|links?|(?:latest |newest |current )?version)\b/iu;
+
+/**
+ * «افتح X وأخبرني بـY» / «open X and tell me Y» as a plan of two steps: open the page, then answer Y from its own text
+ * (the task cycle's planning step, without a model). Only this shape: an address or a known site, then one question.
+ * Before 2026-11-22 the whole request fell to the direct route, which opened the page and then ended with «لم أؤكد إتمام
+ * هذا الطلب» (artifacts/agent-gaps-2026-11-22/before, two such requests of 107).
+ */
+function parseOpenAndAsk(request: string): HandsStep[] | null {
+  const text = tidy(request);
+  const split = ASK_SPLIT.exec(text);
+  if (!split || split.index === 0) return null;
+  // «افتح الموقع X في المتصفح»: «الموقع» and «في المتصفح» only say where it opens.
+  const head = text.slice(0, split.index).replace(/\s+(?:في|على)\s+(?:ال)?متصفح$|\s+in (?:the |a )?browser$/iu, '')
+    .replace(/(?:^|\s)(?:ال)?موقع(?=\s)|\bthe (?:site|website|page)(?=\s)/iu, ' ').replace(/\s+/gu, ' ').trim();
+  const open = directRoute(head);
+  if (!open?.finishes || open.screenshot) return null;
+  const question = text.slice(split.index + split[0].length).replace(new RegExp(`^(?:${TELL_AR}|${TELL_EN})\\s+`, 'iu'), '').trim();
+  if (!question || question.length > 300 || SPLIT.test(question)) return null;
+  if (!PAGE_REF.test(fold(question)) && !PAGE_PART.test(fold(question))) return null;
+  return [{ kind: 'open', url: open.url, name: open.name }, { kind: 'ask_page', question }];
+}
+
 /**
  * The owner's request as browser steps, or null when any part is not a plain browser command.
  * A lone «افتح موقع» stays with the direct route, which proves the opened destination.
  */
 export function parseHands(request: string): HandsStep[] | null {
+  const openAsk = parseOpenAndAsk(request);
+  if (openAsk) return openAsk;
   const segments = tidy(request).split(SPLIT).map(part => part?.trim()).filter((part): part is string => Boolean(part));
   if (!segments.length || segments.length > 6) return null;
   const steps: HandsStep[] = [];
@@ -220,6 +255,8 @@ export function notWebReason(text: string): 'memory_ads_pc' | 'reminder' | 'arit
   if (REMIND.test(text)) return 'reminder';
   if (PLANNING.test(text)) return 'planning';
   if (NOT_WEB.test(text)) return 'memory_ads_pc';
+  // «Advertise my removals company …», «I run a barbershop and want more bookings, £15 a day»: a campaign, not a search.
+  if (isCampaignRequest(text)) return 'memory_ads_pc';
   if (ARITHMETIC.test(text)) return 'arithmetic';
   if (WRITER.test(text)) return 'writing';
   if (URL_LIKE.test(text) || directRoute(text)) return 'address';
@@ -1305,9 +1342,73 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         page = reached;
         break;
       }
+      case 'ask_page': {
+        // Nothing to run: the answer is read from the page the previous step opened, when the reply is built (describe).
+        if (!page) return { kind: 'done', status: 'blocked', text: NO_PAGE };
+        await io.step(plan.lang === 'en' ? 'Reading the answer on the page' : 'قراءة الجواب من الصفحة');
+        plan.next = index + 1;
+        break;
+      }
     }
   }
   return { kind: 'done', ...describe(plan, page) };
+}
+
+/** What a question about an opened page asks for, beside ordinary sentences: its main heading, its links' text, a version. */
+const HEADING_ASK = /(?:^|\s)(?:ب|و)?(?:ال)?(?:عنوان|عناوين)(?=\s|$)|\b(?:main heading|heading|headline|title|h1)\b/iu;
+const LINK_ASK = /(?:^|\s)(?:ب|و)?(?:ال)?(?:رابط|روابط)(?=\s|$)|\blinks?\b/iu;
+const VERSION_ASK = /(?:^|\s)(?:ب|و)?(?:ال)?(?:اصدار|اصدارات|نسخه)(?=\s|$)|\b(?:version|versions|release)\b/iu;
+/**
+ * A version as a page states it: a release word, then within a few words a number («Latest: Python 3.14.0», «version 2.4.1»).
+ * The browser joins a page's text into one line (agent-browser.ts `clean`), so versions are found as short spans, not lines.
+ */
+const VERSION_SPAN = /\b(?:latest|newest|current|stable|release[sd]?|version|download)\b[^.!?؟\n]{0,40}?\b\d+\.\d+(?:\.\d+)?\b|(?:^|\s)(?:أحدث|احدث|آخر|اخر|الإصدار|الاصدار|إصدار|اصدار|النسخة|نسخة)[^.!?؟\n]{0,40}?\d+\.\d+(?:\.\d+)?/giu;
+const LATEST = /\b(?:latest|newest|current)\b|(?:أحدث|احدث|آخر|اخر)/iu;
+
+export interface PageAnswerPart { label: string | null; quotes: string[] }
+export interface PageAnswer { parts: PageAnswerPart[]; /** What the question asked of the page's structure that the page does not show. */ missing: string[] }
+/**
+ * The answer to a question about an opened page, in the page's own words: each quote is text found on the page. A heading,
+ * links or a version are read from the page's structure, so an Arabic question about an English page still finds them; any
+ * other question takes the page's sentences that share its words (relevantLines). What was asked and not found is named.
+ */
+export function pageAnswer(page: AgentPage, question: string, lang: 'ar' | 'en'): PageAnswer {
+  const asked = fold(question);
+  const ar = lang === 'ar';
+  const text = page.text;
+  const lines = text.split('\n').map(line => tidy(line)).filter(Boolean);
+  const parts: PageAnswerPart[] = [], missing: string[] = [];
+  if (HEADING_ASK.test(asked)) {
+    // The main heading is the page's title where the page's own text shows it: a line of its own, or the opening words of the
+    // text when the browser joined the page into one line. A title the text never shows is not quoted.
+    const plain = plainTitle(page.title);
+    const title = fold(plain);
+    let heading = title ? lines.find(line => line.length <= 120 && fold(line) === title) : undefined;
+    if (!heading && plain.length >= 3) {
+      const at = text.toLowerCase().indexOf(plain.toLowerCase());
+      if (at >= 0 && at <= 300) heading = text.slice(at, at + plain.length);
+    }
+    if (heading) parts.push({ label: ar ? 'العنوان الرئيسي:' : 'Main heading:', quotes: [heading] });
+    else missing.push(ar ? 'العنوان الرئيسي' : 'the main heading');
+  }
+  if (LINK_ASK.test(asked)) {
+    const labels = [...new Set(page.elements.filter(item => item.role === 'link' && item.href && tidy(item.label)).map(item => tidy(item.label)))]
+      .filter(label => text.includes(label)).slice(0, 5);
+    if (labels.length) parts.push({ label: ar ? labels.length > 1 ? 'نصوص الروابط:' : 'نص الرابط:' : labels.length > 1 ? 'Link texts:' : 'Link text:', quotes: labels });
+    else missing.push(ar ? 'نص الرابط' : 'the link text');
+  }
+  if (VERSION_ASK.test(asked)) {
+    const spans = [...text.matchAll(VERSION_SPAN)].map(match => tidy(match[0]));
+    // «Latest: Python 3.14.0» before a list of older releases.
+    const quotes = [...new Set([...spans.filter(span => LATEST.test(span)), ...spans])].slice(0, 2);
+    if (quotes.length) parts.push({ label: ar ? 'الإصدار المذكور في الصفحة:' : 'The version the page names:', quotes });
+    else missing.push(ar ? 'رقم الإصدار' : 'a version number');
+  }
+  if (!parts.length && !missing.length) {
+    const sentences = relevantLines(page, question, 3, true);
+    if (sentences.length) parts.push({ label: null, quotes: sentences });
+  }
+  return { parts, missing };
 }
 
 
@@ -1349,6 +1450,19 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
     return { status: 'completed', text: `بحثت في الويب عن «${last.query}». النتائج المرتبطة بالموضوع:\n\n${list}\n\nقل «افتح النتيجة 2» مثلًا لأفتحها.` };
   }
   if (!page) return { status: 'blocked', text: NO_PAGE };
+  if (last.kind === 'ask_page') {
+    // The page's own words as quotes under the host's labels: the judge checks every quote against the page (kind «quote»).
+    const en = (plan.lang ?? (/[؀-ۿ]/u.test(last.question) ? 'ar' : 'en')) === 'en';
+    const name = `**${plainTitle(page.title) || hostOf(page.url)}** (${hostOf(page.url)})`;
+    const { parts, missing } = pageAnswer(page, last.question, en ? 'en' : 'ar');
+    if (!parts.length) return { status: 'partial', text: en
+      ? `I opened ${name}, but found nothing on the page that answers “${last.question}”. The page is in the browser panel; say “read the page” and I will show its text.`
+      : `فتحت ${name}، ولم أجد في نص الصفحة ما يجيب عن «${last.question}». الصفحة ظاهرة في لوحة المتصفح؛ قل «اقرأ الصفحة» لأعرض نصها.` };
+    const body = parts.map(part => `${part.label ? `${part.label}\n` : ''}${part.quotes.map(quote => `> ${quote}`).join('\n>\n')}`).join('\n\n');
+    // Part of the question unanswered is said, and the task is partial: never a complete-looking reply that drops what was asked.
+    const gap = missing.length ? `\n\n${en ? `Not found in the page's text: ${missing.join(', ')}.` : `لم أجد في نص الصفحة: ${missing.join('، ')}.`}` : '';
+    return { status: missing.length ? 'partial' : 'completed', text: `${en ? 'From' : 'من'} ${name}:\n\n${body}${gap}` };
+  }
   const where = `**${tidy(page.title) || hostOf(page.url)}** (${hostOf(page.url)})`;
   let lead = `وصلت إلى ${where}:`;
   if (last.kind === 'search') {

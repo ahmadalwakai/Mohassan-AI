@@ -41,6 +41,8 @@ import { evaluateLocalRecall } from './assistant/local-recall.js';
 import { evaluateLocalConversation } from './assistant/local-conversation.js';
 import { evaluateCapabilityReply } from './assistant/capability-reply.js';
 import { answerRuntimeStatus } from './assistant/runtime-status.js';
+import { evaluateSelfQuestion } from './assistant/self-knowledge.js';
+import { isCampaignRequest } from './assistant/campaign-request.js';
 import { armProgressPause, createProgressRecovery, restoreProgressRecovery, resumeBrowserProgressAutomatically, resumeProgressAfterRetry, reviewProgressRecovery, type ProgressRecoveryContext } from './assistant/progress-recovery.js';
 import { rebindBrowserAction, reserveBrowserRecovery, transientBrowserFailure, type BrowserRecoveryEntry } from './assistant/browser-recovery.js';
 import { bootstrapRequestContext, parseRequestContextState, requestActionText, resolveRequestContext } from './assistant/request-context.js';
@@ -2158,6 +2160,14 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         shadows: { b0: { state: config.shadowRouter ? 'lab_only' : 'disabled' }, slots: { state: 'disabled' } },
         stages: { before: 'supported', during: 'supported', after: 'supported' },
       }) : null;
+      // Questions about Mohassan itself without a model (assistant/self-knowledge.ts): who made it, which model it runs on,
+      // what it can do, whether it can do one named thing. Built from these host facts only, after the exact forms above;
+      // the web never answers them («ما هي قدراتك» once quoted a book title).
+      const intrinsicSelf = intrinsicAllowed && !intrinsicRuntime && !intrinsicConversation ? evaluateSelfQuestion(actionRequest, {
+        chatModel: hasChatModel(), web: true, browser: true, computation: true, memory: Boolean(tools?.memory), knowledge: Boolean(config.knowledgeSearch),
+        documents: Boolean(config.documents), sites: Boolean(config.sites), skills: Boolean(config.skillAnswer), ads: Boolean(config.adsModel) && fullReach(),
+        imageReading: Boolean(config.imageReader?.available), pc: Boolean(tools?.computer) && fullReach(), planner: true, letters: true,
+      }) : null;
       const mindReady = Boolean(config.mind && config.mindDeps && fullReach());
       // Without a chat model the owner's active instruction skills answer directly (assistant/skill-reader.ts): only a
       // skill that clearly fits, only after the specialised paths had their turn, and the skill is named as the source.
@@ -2221,7 +2231,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           }
         }
       }
-      if (freshRequest && !intrinsicRuntime && !intrinsicConversation && !intrinsicComputation && state.requestResolution?.kind === 'ambiguous' && state.requestResolution.ambiguities.some(reason =>
+      if (freshRequest && !intrinsicRuntime && !intrinsicConversation && !intrinsicSelf && !intrinsicComputation && state.requestResolution?.kind === 'ambiguous' && state.requestResolution.ambiguities.some(reason =>
         reason === 'missing_reference' || reason === 'missing_question' || reason === 'unclear_replacement')) {
         const attempts = (state.clarificationAttempts ?? 0) + 1;
         state.clarificationAttempts = attempts;
@@ -2246,6 +2256,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const conversationReply = intrinsicConversation;
         if (conversationReply) {
           await finish(id, runId, state, conversationReply.text, 'completed');
+          return;
+        }
+        if (intrinsicSelf) {
+          await finish(id, runId, state, intrinsicSelf.text, 'completed');
           return;
         }
         const computation = intrinsicComputation;
@@ -2587,15 +2601,31 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       // Letters and emails without a model: one card of questions, then a fixed frame around the owner's words.
       if (!hasChatModel()) {
-        const writing = state.writer ?? (freshRequest ? writingTask(request) : null);
+        // «create a campaign for <site> selling …» is a campaign for the Ads path below, never a letter (campaign-request.ts).
+        const writing = state.writer ?? (freshRequest && !isCampaignRequest(request) ? writingTask(request) : null);
         if (writing && 'unsupported' in writing) {
           // An article, a post or a CV needs a model to write in full; an active skill still gives its method and outline.
           if (await trySkill('writing')) return;
           await finish(id, runId, state, unsupportedWriting(writing), 'blocked');
           return;
         }
+        // A whole campaign request sent while a letter or week-plan card waits is a new request, not the card's answer: it once
+        // came back as an empty letter («[اكتب التفاصيل هنا]», artifacts/agent-gaps-2026-11-22/before, rq097). The card stops and
+        // says so; the owner sends the request again as a new one. Answers typed into the card's own fields are never read this way.
+        const newCampaignInstead = (answer: string | undefined): answer is string => Boolean(answer && !state.questionAnswer?.fields && isCampaignRequest(answer));
+        const stopForNewRequest = async (card: 'letter' | 'plan', answer: string) => {
+          state.questionAnswer = undefined;
+          await finish(id, runId, state, /[؀-ۿ]/u.test(answer)
+            ? `توقفت عن ${card === 'letter' ? 'كتابة الرسالة' : 'ترتيب الخطة'}: رسالتك الأخيرة طلب حملة إعلانية جديد، لا جواب عن أسئلتها. أرسل طلب الحملة مرة أخرى لأبدأه طلبًا جديدًا.`
+            : `I stopped the ${card === 'letter' ? 'letter' : 'week plan'}: your last message is a new advertising campaign request, not an answer to its questions. Send the campaign request again and I will start it as a new request.`, 'blocked');
+        };
         if (writing) {
           const answer = state.writer ? state.questionAnswer?.text ?? state.trail.findLast(entry => entry.action === 'asked the user')?.result.replace(/^user answered: /, '') : undefined;
+          if (state.writer && newCampaignInstead(answer)) {
+            state.writer = null;
+            await stopForNewRequest('letter', answer);
+            return;
+          }
           if (!answer) {
             state.writer = writing;
             const card = writingQuestion(writing);
@@ -2614,6 +2644,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const planning = state.planner ?? (!state.writer && freshRequest ? planningTask(request) : null);
         if (planning) {
           const answer = state.planner ? state.questionAnswer?.text ?? state.trail.findLast(entry => entry.action === 'asked the user')?.result.replace(/^user answered: /, '') : undefined;
+          if (state.planner && newCampaignInstead(answer)) {
+            state.planner = null;
+            await stopForNewRequest('plan', answer);
+            return;
+          }
           if (!answer) {
             state.planner = planning;
             const card = planningQuestion(planning);
