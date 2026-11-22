@@ -40,6 +40,10 @@ npm run dist --workspace @mohassan/desktop-shell
 
 ينتج `release/Mohassan-Desktop-<الإصدار>-x64.exe` (مثبّت NSIS) و`Mohassan-Desktop-Portable-<الإصدار>.exe`. النسخة المثبتة تحتاج مجلد المشروع على الجهاز نفسه (`repoRoot`)؛ هي تشغّل ما في المجلد ولا تحمل نسخة منه.
 
+البناء يجري عبر `scripts/build-installer.mjs` في مجلد تجهيز خارج المستودع (`%LOCALAPPDATA%\Mohassan\build`، أو `MOHASSAN_DESKTOP_BUILD_DIR`) يحوي `dist/` و`assets/` و`package.json` فقط، ثم تُنسخ ملفات التثبيت إلى `release/`. السبب: داخل مساحة العمل كان electron-builder يحزم `node_modules` الجذر كلها في `app.asar` (311 MB) وتفشل إعادة تسمية `win-unpacked.tmp` بسبب مراقبي الملفات (EPERM/EBUSY)؛ من مجلد التجهيز صار المثبّت 121 MB والبناء أقل من دقيقتين.
+
+التثبيت الصامت: `Mohassan-Desktop-<الإصدار>-x64.exe /S` يثبّت للمستخدم الحالي في `%LOCALAPPDATA%\Programs\Mohassan` مع اختصارَي سطح المكتب وقائمة ابدأ ومدخل في «إزالة البرامج».
+
 ## الملفات
 
 - `src/main.ts` — العملية الرئيسية: النافذة، الصينية، تشغيل الخدمة ومراقبتها، الإعدادات.

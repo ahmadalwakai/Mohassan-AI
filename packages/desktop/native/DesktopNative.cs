@@ -30,6 +30,16 @@ namespace MohassanDesktop
         public bool Foreground { get; set; }
     }
 
+    /// <summary>The element that has keyboard focus, without its value: who owns it and whether typing can land in it.</summary>
+    public class FocusInfo
+    {
+        public int ProcessId { get; set; }
+        public string ControlType { get; set; }
+        public string ClassName { get; set; }
+        public bool Editable { get; set; }
+        public bool Password { get; set; }
+    }
+
     public class ElementInfo
     {
         public string Name { get; set; }
@@ -96,6 +106,10 @@ namespace MohassanDesktop
         [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
         [DllImport("user32.dll")] static extern int GetWindowLongW(IntPtr handle, int index);
         [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr handle, int attribute, out RECT rect, int size);
+        [DllImport("dwmapi.dll", EntryPoint = "DwmGetWindowAttribute")] static extern int DwmGetWindowAttributeInt(IntPtr handle, int attribute, out int value, int size);
+        [DllImport("user32.dll")] static extern bool AttachThreadInput(uint attach, uint attachTo, bool join);
+        [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr handle);
+        [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
         [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr handle, uint flags);
 
         const int SW_MINIMIZE = 6, SW_MAXIMIZE = 3, SW_RESTORE = 9, SW_SHOW = 5;
@@ -187,6 +201,10 @@ namespace MohassanDesktop
                 {
                     if (!IsWindowVisible(handle)) return true;
                     if ((GetWindowLongW(handle, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) != 0) return true;
+                    // Cloaked windows (DWMWA_CLOAKED = 14) report "visible" but are not on screen: hidden UWP frames and
+                    // XAML "PopupHost" windows. On 2026-11-22 a Notepad PopupHost was picked as "Notepad" and swallowed typed text.
+                    int cloaked;
+                    if (DwmGetWindowAttributeInt(handle, 14, out cloaked, 4) == 0 && cloaked != 0) return true;
                     var title = WindowText(handle);
                     if (title.Length == 0) return true;
                     var info = Describe(handle, foreground);
@@ -219,10 +237,34 @@ namespace MohassanDesktop
             var pointer = new IntPtr(handle);
             if (!IsWindow(pointer)) return "NOT_FOUND";
             if (IsIconic(pointer)) ShowWindow(pointer, SW_RESTORE);
-            // Windows lets the process that received the last input change the foreground window; a harmless Alt tap is that input.
+            if (GetForegroundWindow() == pointer) return "FOCUSED";
+            // First try without any keystroke: share the foreground thread's input state, then switch.
+            var current = GetForegroundWindow();
+            uint ignored;
+            uint foregroundThread = current == IntPtr.Zero ? 0 : GetWindowThreadProcessId(current, out ignored);
+            uint self = GetCurrentThreadId();
+            bool attached = false;
+            try
+            {
+                attached = foregroundThread != 0 && foregroundThread != self && AttachThreadInput(self, foregroundThread, true);
+                BringWindowToTop(pointer);
+                SetForegroundWindow(pointer);
+            }
+            finally { if (attached) AttachThreadInput(self, foregroundThread, false); }
+            var settle = DateTime.UtcNow.AddMilliseconds(400);
+            while (DateTime.UtcNow < settle)
+            {
+                if (GetForegroundWindow() == pointer) return "FOCUSED";
+                Thread.Sleep(40);
+            }
+            // Last resort: an Alt tap lets this process change the foreground window. Alt alone puts the window that gets it
+            // into menu/access-key mode (on 2026-11-22 Notepad opened its File menu and swallowed typed text), so Escape
+            // follows at once, while that same window still has the keyboard.
             try { AllowSetForegroundWindow(-1); } catch { }
             keybd_event(0x12, 0, 0, UIntPtr.Zero);
             keybd_event(0x12, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+            keybd_event(0x1B, 0, 0, UIntPtr.Zero);
+            keybd_event(0x1B, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
             SetForegroundWindow(pointer);
             var deadline = DateTime.UtcNow.AddMilliseconds(1500);
             while (DateTime.UtcNow < deadline)
@@ -322,29 +364,53 @@ namespace MohassanDesktop
         public static string TypeText(string text)
         {
             if (string.IsNullOrEmpty(text)) return "NOTHING";
-            int total = 0;
-            foreach (char character in text)
+            // A Unicode keystroke (VK_PACKET) becomes its character only when the target thread translates it, and a busy
+            // thread turns every packet still queued into the LAST character sent: on 2026-11-22 Notepad received «مرحبا »
+            // followed by eight «ن». So each character waits until the target is input-idle, longer after word breaks
+            // (spellcheck and layout run there).
+            Process target = null;
+            try { uint pid; GetWindowThreadProcessId(GetForegroundWindow(), out pid); if (pid != 0) target = Process.GetProcessById((int)pid); } catch { }
+            try
             {
-                var batch = new List<INPUT>();
-                if (character == '\n')
+                foreach (char character in text)
                 {
-                    batch.Add(KeyInput(13, false, false)); batch.Add(KeyInput(13, true, false));
+                    var result = TypeCharacter(character);
+                    if (result == "SKIP") continue;
+                    if (result != "APPLIED") return result;
+                    Thread.Sleep(char.IsWhiteSpace(character) || char.IsPunctuation(character) ? 35 : 6);
+                    if (target != null) { try { target.WaitForInputIdle(250); } catch { } }
                 }
-                else if (character == '\r') continue;
-                else if (character == '\t')
-                {
-                    batch.Add(KeyInput(9, false, false)); batch.Add(KeyInput(9, true, false));
-                }
-                else
-                {
-                    batch.Add(UnicodeInput(character, false)); batch.Add(UnicodeInput(character, true));
-                }
-                var result = Send(batch);
-                if (result != "APPLIED") return result;
-                total++;
-                if (total % 40 == 0) Thread.Sleep(5);
             }
+            finally { if (target != null) target.Dispose(); }
             return "APPLIED";
+        }
+
+        static string TypeCharacter(char character)
+        {
+            var batch = new List<INPUT>();
+            if (character == '\n') { batch.Add(KeyInput(13, false, false)); batch.Add(KeyInput(13, true, false)); }
+            else if (character == '\r') return "SKIP";
+            else if (character == '\t') { batch.Add(KeyInput(9, false, false)); batch.Add(KeyInput(9, true, false)); }
+            else { batch.Add(UnicodeInput(character, false)); batch.Add(UnicodeInput(character, true)); }
+            return Send(batch);
+        }
+
+        /// <summary>Whether the focused field now holds the given text. Compared here; the field's value never leaves this process.</summary>
+        public static string FocusedContains(string expected)
+        {
+            try
+            {
+                var focused = AutomationElement.FocusedElement;
+                if (focused == null || focused.Current.IsPassword) return "UNREADABLE";
+                string value = null;
+                object pattern;
+                if (focused.TryGetCurrentPattern(ValuePattern.Pattern, out pattern)) value = ((ValuePattern)pattern).Current.Value;
+                if (string.IsNullOrEmpty(value) && focused.TryGetCurrentPattern(TextPattern.Pattern, out pattern)) value = ((TextPattern)pattern).DocumentRange.GetText(-1);
+                if (value == null) return "UNREADABLE";
+                Func<string, string> lines = delegate(string s) { return s.Replace("\r\n", "\n").Replace('\r', '\n'); };
+                return lines(value).Contains(lines(expected)) ? "MATCH" : "MISMATCH";
+            }
+            catch { return "UNREADABLE"; }
         }
 
         static bool Extended(ushort vk)
@@ -501,6 +567,31 @@ namespace MohassanDesktop
                 return focused != null && focused.Current.IsPassword;
             }
             catch { return false; }
+        }
+
+        /// <summary>Who owns the keyboard focus and whether text typed now can land there. Never reads the field's value.</summary>
+        public static FocusInfo FocusedInfo()
+        {
+            var info = new FocusInfo();
+            info.ControlType = "";
+            info.ClassName = "";
+            try
+            {
+                var focused = AutomationElement.FocusedElement;
+                if (focused == null) return info;
+                var current = focused.Current;
+                info.ProcessId = current.ProcessId;
+                info.ControlType = current.ControlType == null ? "" : current.ControlType.ProgrammaticName.Replace("ControlType.", "");
+                info.ClassName = current.ClassName ?? "";
+                info.Password = current.IsPassword;
+                bool editable = false;
+                object pattern;
+                if (focused.TryGetCurrentPattern(ValuePattern.Pattern, out pattern)) editable = !((ValuePattern)pattern).Current.IsReadOnly;
+                else if (focused.TryGetCurrentPattern(TextPattern.Pattern, out pattern)) editable = current.ControlType == System.Windows.Automation.ControlType.Document || current.ControlType == System.Windows.Automation.ControlType.Edit;
+                info.Editable = editable && current.IsEnabled;
+            }
+            catch { }
+            return info;
         }
 
         static T Sta<T>(Func<T> work)

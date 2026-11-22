@@ -30,7 +30,15 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     ".next-e2e/types/**/*.ts",
-    ".next-e2e/dev/types/**/*.ts"
+    ".next-e2e/dev/types/**/*.ts",
+    ".next-desktop-lab/types/**/*.ts",
+    ".next-desktop-lab/dev/types/**/*.ts",
+    ".next-sites-lab/types/**/*.ts",
+    ".next-sites-lab/dev/types/**/*.ts",
+    ".next-judge-lab/types/**/*.ts",
+    ".next-judge-lab/dev/types/**/*.ts",
+    ".next-desktop-app/types/**/*.ts",
+    ".next-desktop-app/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

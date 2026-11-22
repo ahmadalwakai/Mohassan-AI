@@ -35,6 +35,18 @@ export interface DesktopOutcome {
 export interface ExecuteOptions { approved?: boolean; lang?: 'ar' | 'en'; signal?: AbortSignal; cwd?: string }
 
 const code = (value: string) => `\`${value.replace(/`/gu, "'")}\``;
+
+/** A title showing a secret file or a credentials screen: typing or pressing keys there is refused outright. */
+const SECRET_TITLE = /(?:^|[\s*\\/"'«(])(?:\.env(?:\.[\w-]+)*|[\w.-]*credentials?[\w.-]*|id_(?:rsa|ed25519|ecdsa)[\w.-]*|[\w.-]+\.(?:pem|key|pfx|p12|kdbx|ppk))(?=$|[\s"'»),|:•-])|\bpasswords?\b|\bpasswd\b|كلمة المرور|كلمات المرور|\bsecrets?\b|\btokens?\b/iu;
+/** A title naming an open file ("notes.txt - Notepad", "*report.md • Code"): typing there changes that file's text. */
+const NAMED_FILE_TITLE = /(?:^|[\s*•"'«(])[^\s\\/:*?"<>|]+\.[a-z][a-z0-9]{0,7}(?=$|[\s"'»),|:•-])/iu;
+
+/** What typing into a window with this title would touch: a secret (refuse), an open named file (ask first), or nothing special. */
+export function typingTargetRisk(title: string): 'secret' | 'named_file' | null {
+  if (SECRET_TITLE.test(title)) return 'secret';
+  if (NAMED_FILE_TITLE.test(title)) return 'named_file';
+  return null;
+}
 const lines = (items: string[]) => items.join('\n');
 /** «المشاريع», «مشاريعي», «projects», «my projects»: the projects folder itself. */
 const PROJECTS_WORD = /^(?:(?:ال)?مشاريع(?:ي)?|(?:my\s+)?projects)$/iu;
@@ -235,12 +247,42 @@ export class DesktopEngine {
           return { status: 'completed', text: ar ? `التقطت لقطة ${shot.window ? `لنافذة **${shot.window.title.slice(0, 80)}**` : 'للشاشة كاملة'} (${shot.width}×${shot.height})${shot.file ? ` وحفظتها في ${code(this.policy.display(shot.file))}` : ''}. تظهر اللقطة في لوحة «سطح المكتب».` : `Captured ${shot.window ? `the window **${shot.window.title.slice(0, 80)}**` : 'the whole screen'} (${shot.width}×${shot.height})${shot.file ? ` and saved it to ${code(this.policy.display(shot.file))}` : ''}. The picture is shown in the Desktop panel.`, screenshot: shot };
         }
         case 'type': {
-          if (command.window) await this.windows.focus(windowKeysFor(command.window));
+          // Typing only counts when it lands: the target window must take the focus and hold an editable field.
+          // On 2026-11-22 «اكتب … في المفكرة» picked Notepad's hidden PopupHost and reported 14 characters that landed nowhere.
+          const target = command.window ? await this.windows.find(windowKeysFor(command.window)) : await this.windows.foreground();
+          if (command.window && !target) return { status: 'blocked', text: ar ? `لم أجد نافذة «${command.window}» مفتوحة. افتحها أولًا ثم أعد الطلب.` : `No “${command.window}” window is open. Open it first, then ask again.` };
+          const shown = (target?.title ?? '').slice(0, 60) || (ar ? 'النافذة النشطة' : 'the active window');
+          const risk = typingTargetRisk(target?.title ?? '');
+          if (risk === 'secret') return { status: 'blocked', text: ar ? `النافذة «${shown}» تعرض ملفًا أو حقلًا حساسًا (مفاتيح أو كلمات مرور)؛ لن أكتب فيها. اكتب فيها بنفسك إن أردت.` : `The window “${shown}” shows a sensitive file or field (keys or passwords); I will not type there. Type there yourself if you want.` };
+          if (risk === 'named_file' && !options.approved) return { status: 'needs_approval', text: ar ? `سأكتب ${command.text.length} حرفًا في «${shown}»، وهذا يغيّر نص ملف مفتوح فيها. هل أتابع؟` : `I will type ${command.text.length} characters into “${shown}”, which changes the text of a file open there. Proceed?`, approval: { prompt: ar ? `أريد الكتابة في «${shown}»؛ سيتغيّر نص الملف المفتوح فيها، ولن أحفظه. هل أتابع؟` : `Type into “${shown}”? The open file's text will change; I will not save it.`, detail: ar ? `النص: ${command.text.slice(0, 300)}` : `Text: ${command.text.slice(0, 300)}`, label: ar ? 'الكتابة في الملف المفتوح' : 'Type into the open file' } };
+          if (target && command.window) {
+            const focused = await this.windows.focus(target.handle);
+            if (focused.result !== 'FOCUSED') return { status: 'blocked', text: ar ? `لم يسمح Windows بنقل التركيز إلى «${shown}»؛ لم أكتب شيئًا. انقر النافذة مرة ثم أعد الطلب.` : `Windows did not let me focus “${shown}”; nothing was typed. Click the window once, then ask again.` };
+            await new Promise(resolve => setTimeout(resolve, 150));
+          }
+          const field = await this.input.focused();
+          // A UWP frame (ApplicationFrameHost) hosts its content in another process, so the owner check skips it.
+          const elsewhere = Boolean(target && field.processId && field.processId !== target.processId && target.processName.toLowerCase() !== 'applicationframehost');
+          if (field.password) return { status: 'blocked', text: ar ? 'الحقل الذي عليه التركيز حقل كلمة مرور؛ هذه الكتابة لك أنت.' : 'The focused field is a password field; that typing is yours to do.' };
+          if (!field.editable || elsewhere) return { status: 'blocked', text: ar ? `ركّزت «${shown}» لكن لا يوجد فيها مكان كتابة نشط${field.controlType ? ` (العنصر المركّز: ${field.controlType})` : ''}؛ لم أكتب شيئًا. انقر داخل مكان الكتابة أو قل «انقر على …» ثم أعد الطلب.` : `I focused “${shown}” but it has no active text field${field.controlType ? ` (focused element: ${field.controlType})` : ''}; nothing was typed. Click where the text should go, or say “click …”, then ask again.` };
           const typed = await this.input.type(command.text);
-          return { status: typed.result === 'APPLIED' ? 'completed' : 'partial', text: ar ? `كتبت ${typed.characters} حرفًا${command.window ? ` في نافذة ${command.window}` : ' في النافذة النشطة'}.` : `Typed ${typed.characters} characters${command.window ? ` into ${command.window}` : ' into the active window'}.` };
+          if (typed.result !== 'APPLIED') return { status: 'partial', text: ar ? `لم يقبل Windows إرسال المفاتيح إلى «${shown}» (${typed.result})؛ راجع النافذة.` : `Windows did not accept the keystrokes for “${shown}” (${typed.result}); check the window.` };
+          // Say only what landed: the field is read back inside the native host and compared there. The reply opens with
+          // «أدخلت», not «كتبت»: the judge's byline rule (reply-check.ts) cuts a leading «كتبت » from the owner's replies.
+          const check = await this.input.focusedContains(command.text);
+          if (check === 'MISMATCH') return { status: 'partial', text: ar ? `أرسلت ${typed.characters} حرفًا إلى «${shown}» لكن ما ظهر في الحقل لا يطابق النص المطلوب؛ راجعه قبل أي حفظ.` : `I sent ${typed.characters} characters to “${shown}”, but what appeared in the field does not match the requested text; check it before saving anything.` };
+          return { status: 'completed', text: check === 'MATCH'
+            ? (ar ? `أدخلت ${typed.characters} حرفًا في «${shown}» وتحققت أنها ظهرت كما هي.` : `Typed ${typed.characters} characters into “${shown}” and checked that they appear as written.`)
+            : (ar ? `أدخلت ${typed.characters} حرفًا في «${shown}»؛ لم أستطع قراءة الحقل للتحقق.` : `Typed ${typed.characters} characters into “${shown}”; the field could not be read back to check.`) };
         }
         case 'keys': {
-          if (command.window) await this.windows.focus(windowKeysFor(command.window));
+          if (command.window) {
+            const target = await this.windows.find(windowKeysFor(command.window));
+            if (!target) return { status: 'blocked', text: ar ? `لم أجد نافذة «${command.window}» مفتوحة.` : `No “${command.window}” window is open.` };
+            if (typingTargetRisk(target.title) === 'secret') return { status: 'blocked', text: ar ? `النافذة «${target.title.slice(0, 60)}» تعرض ملفًا أو حقلًا حساسًا؛ لن أضغط مفاتيح فيها.` : `The window “${target.title.slice(0, 60)}” shows a sensitive file or field; I will not press keys there.` };
+            const focused = await this.windows.focus(target.handle);
+            if (focused.result !== 'FOCUSED') return { status: 'blocked', text: ar ? `لم يسمح Windows بنقل التركيز إلى «${target.title.slice(0, 60)}»؛ لم أضغط شيئًا.` : `Windows did not let me focus “${target.title.slice(0, 60)}”; nothing was pressed.` };
+          }
           const pressed = await this.input.keys(command.combo);
           return { status: pressed.result === 'APPLIED' ? 'completed' : 'partial', text: ar ? `ضغطت ${code(pressed.combo)}.` : `Pressed ${code(pressed.combo)}.` };
         }

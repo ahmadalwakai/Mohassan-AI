@@ -1,4 +1,4 @@
-export { DesktopEngine, type DesktopEngineOptions, type DesktopOutcome, type ExecuteOptions } from './engine.ts';
+export { DesktopEngine, typingTargetRisk, type DesktopEngineOptions, type DesktopOutcome, type ExecuteOptions } from './engine.ts';
 export { DesktopError, isDesktopError } from './errors.ts';
 export { PathPolicy, knownFolders, looksLikePath, type PathPolicyOptions } from './paths.ts';
 export { DesktopAudit, type AuditEntry } from './audit.ts';
@@ -6,6 +6,6 @@ export { DesktopFiles, nameMatcher, type FileEntry, type Listing, type FileConte
 export { DesktopProjects, TEMPLATES, findTemplate, folderNameFor, slugFor, type TemplateId, type TemplateInfo, type ProjectRecord, type ProjectView, type CreateProjectInput, type CreateProjectResult } from './projects.ts';
 export { DesktopApps, KNOWN_APPS, findKnownApp, knownFolderPath, type KnownApp } from './apps.ts';
 export { classifyCommand, runCommand, preferredShell, psQuote, type ShellResult, type DangerLevel, type CommandClassification } from './shell.ts';
-export { NativeHost, DesktopWindows, DesktopInput, normalizeCombo, type WindowInfo, type ElementInfo, type Screenshot, type ScreenInfo } from './native.ts';
+export { NativeHost, DesktopWindows, DesktopInput, normalizeCombo, isHelperWindow, type WindowInfo, type ElementInfo, type FocusedInfo, type Screenshot, type ScreenInfo } from './native.ts';
 export { systemInfo, formatBytes, type SystemInfo, type DiskInfo } from './system.ts';
 export { parseDesktopCommand, describeDesktopCommand, tidyRequest, folderReference, type DesktopCommand, type ParsedDesktopCommand } from './commands.ts';

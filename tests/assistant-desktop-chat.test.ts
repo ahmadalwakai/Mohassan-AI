@@ -4,6 +4,7 @@ import type { AgentBrowser, SearchProvider } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { parseDesktopCommand, describeDesktopCommand, type DesktopCommand, type DesktopOutcome } from '@mohassan/desktop';
 import { createCommandChatControl, type DesktopChatPort } from '../apps/server/src/command-chat.js';
+import { applyReplyFixes } from '../apps/server/src/assistant/reply-check.js';
 
 /**
  * The chat's desktop path without a model: a plain sentence about the owner's computer
@@ -108,5 +109,23 @@ describe('desktop commands in the chat', () => {
     const unavailable = await settled(absent.control, second.id);
     expect(unavailable.status).toBe('idle');
     expect(absent.execute).not.toHaveBeenCalled();
+  });
+});
+
+describe('desktop replies and the judge', () => {
+  // The judge applies its mechanical fixes to the owner's replies. Its byline rule cuts a leading «كتبت »/«كتب » (on 2026-11-22
+  // «كتبت 14 حرفًا…» reached the owner as «14 حرفًا…»), so every desktop reply must open with a word it leaves alone.
+  it('passes the reply fixes unchanged', () => {
+    const replies = [
+      'أدخلت 14 حرفًا في «Untitled - Notepad» وتحققت أنها ظهرت كما هي.',
+      'أدخلت 14 حرفًا في «Untitled - Notepad»؛ لم أستطع قراءة الحقل للتحقق.',
+      'أرسلت 14 حرفًا إلى «Untitled - Notepad» لكن ما ظهر في الحقل لا يطابق النص المطلوب؛ راجعه قبل أي حفظ.',
+      'النافذة «*.env.txt - Notepad» تعرض ملفًا أو حقلًا حساسًا (مفاتيح أو كلمات مرور)؛ لن أكتب فيها. اكتب فيها بنفسك إن أردت.',
+      'أنشأت مشروع **تجربة** (Node.js) في `~\Mohassan Projects\تجربة`. بدأت مستودع Git بأول حفظ.',
+      'أنشأت الملف `~\Mohassan Projects\تجربة\ملاحظات.txt` وكتبت فيه 54 بايت.',
+      'نفّذت `npm test` في `~\Mohassan Projects\تجربة` — رمز الخروج 0 خلال 2.1 ث.',
+      'شغّلت المفكرة (PID 43216).',
+    ];
+    for (const reply of replies) expect(applyReplyFixes({ question: 'اكتب مرحبا من موحسن في المفكرة', reply }), reply).toBe(reply);
   });
 });

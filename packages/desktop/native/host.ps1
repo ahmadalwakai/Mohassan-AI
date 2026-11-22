@@ -44,6 +44,8 @@ while($true){
       'input.scroll' {$result=[MohassanDesktop.Native]::Scroll([int]$a.delta)}
       'input.cursor' {$result=@([MohassanDesktop.Native]::CursorPosition())}
       'input.focusedIsPassword' {$result=[MohassanDesktop.Native]::FocusedIsPassword()}
+      'input.focusedInfo' {$result=[MohassanDesktop.Native]::FocusedInfo()}
+      'input.focusedContains' {$result=[MohassanDesktop.Native]::FocusedContains([string]$a.text)}
       'elements.list' {$result=@([MohassanDesktop.Native]::Elements([long]($(if($null -eq $a.handle){0}else{$a.handle})),[int]($(if($null -eq $a.limit){150}else{$a.limit}))))}
       'clipboard.get' {$result=[MohassanDesktop.Native]::ClipboardGet()}
       'clipboard.set' {$result=[MohassanDesktop.Native]::ClipboardSet([string]$a.text)}

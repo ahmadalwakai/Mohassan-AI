@@ -8,6 +8,8 @@ import { DesktopError } from './errors.ts';
 
 export interface WindowInfo { handle: number; title: string; processId: number; processName: string; className: string; x: number; y: number; width: number; height: number; minimized: boolean; maximized: boolean; foreground: boolean }
 export interface ElementInfo { name: string; type: string; x: number; y: number; width: number; height: number; password: boolean; enabled: boolean }
+/** The element with keyboard focus (never its value): its process, UIA control type and whether typing can land in it. */
+export interface FocusedInfo { processId: number; controlType: string; className: string; editable: boolean; password: boolean }
 export interface Screenshot { png: string; width: number; height: number; scaledWidth: number; scaledHeight: number; left: number; top: number; capturedAt: string; window: WindowInfo | null }
 export interface ScreenInfo { device: string; x: number; y: number; width: number; height: number; primary: boolean }
 
@@ -107,6 +109,11 @@ export class NativeHost {
 const fold = (text: string) => text.normalize('NFKC').toLowerCase().replace(/[ـً-ٰٟ]/gu, '').replace(/[أإآٱ]/gu, 'ا').replace(/ى/gu, 'ي').replace(/ة/gu, 'ه').replace(/\s+/gu, ' ').trim();
 const asList = <T>(value: unknown): T[] => (Array.isArray(value) ? value as T[] : value ? [value as T] : []);
 
+/** Helper frames a program owns besides its main window; they are never the place to type or click. */
+const HELPER_TITLES = new Set(['popuphost', 'default ime', 'msctfime ui', 'gdi+ window', 'hidden window']);
+export const isHelperWindow = (window: Pick<WindowInfo, 'title' | 'width' | 'height'>): boolean =>
+  HELPER_TITLES.has(window.title.trim().toLowerCase()) || window.width * window.height < 120 * 60;
+
 /** Windows, screen and input on the owner's own session, through the native host. */
 export class DesktopWindows {
   constructor(private readonly host: NativeHost, private readonly audit: DesktopAudit) {}
@@ -119,7 +126,10 @@ export class DesktopWindows {
     return (await this.host.call<WindowInfo | null>('windows.foreground')) ?? null;
   }
 
-  /** Finds one window by handle or by title/process fragments; several matches prefer the exact, then the foreground, then the first. */
+  /**
+   * Finds one window by handle or by title/process fragments; several matches prefer the exact, then a real main
+   * window over a helper (a XAML "PopupHost" or a tiny frame), then the foreground, then the largest.
+   */
   async find(reference: string | number | string[]): Promise<WindowInfo | null> {
     const windows = await this.list();
     if (typeof reference === 'number') return windows.find(window => window.handle === reference) ?? null;
@@ -130,8 +140,9 @@ export class DesktopWindows {
       const title = fold(window.title), process = fold(window.processName);
       let score = 0;
       for (const key of keys) score = Math.max(score, title === key || process === key ? 3 : title.startsWith(key) || process.startsWith(key) ? 2 : title.includes(key) || process.includes(key) ? 1 : 0);
-      return { window, score };
-    }).filter(item => item.score > 0).sort((a, b) => b.score - a.score || Number(b.window.foreground) - Number(a.window.foreground));
+      return { window, score, helper: isHelperWindow(window), area: window.width * window.height };
+    }).filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score || Number(a.helper) - Number(b.helper) || Number(b.window.foreground) - Number(a.window.foreground) || b.area - a.area);
     return scored[0]?.window ?? null;
   }
 
@@ -179,7 +190,8 @@ export class DesktopInput {
     if (!text) throw new DesktopError('DESKTOP_INPUT_EMPTY', 'لا يوجد نص للكتابة.');
     if (text.length > 4000) throw new DesktopError('DESKTOP_INPUT_TOO_LONG', 'النص أطول من 4000 حرف.');
     if (!options.allowPassword && await this.host.call<boolean>('input.focusedIsPassword')) throw new DesktopError('DESKTOP_PASSWORD_FIELD', 'الحقل الذي عليه التركيز حقل كلمة مرور؛ هذه الكتابة لك أنت.', 403);
-    const result = await this.host.call<string>('input.type', { text }, 60_000);
+    // Typing is paced per character (see TypeText in DesktopNative.cs), about 10–40 ms each.
+    const result = await this.host.call<string>('input.type', { text }, Math.max(60_000, text.length * 60));
     await this.audit.record('input_type', { characters: text.length, result });
     return { result, characters: text.length };
   }
@@ -207,6 +219,21 @@ export class DesktopInput {
     const result = await this.host.call<string>('input.scroll', { delta: steps });
     await this.audit.record('input_scroll', { delta: steps, result });
     return { result };
+  }
+
+  /**
+   * Whether the focused field now holds `text`: MATCH, MISMATCH, or UNREADABLE when the field exposes no text.
+   * The comparison happens inside the native host; the field's value never reaches this process.
+   */
+  async focusedContains(text: string): Promise<'MATCH' | 'MISMATCH' | 'UNREADABLE'> {
+    const result = await this.host.call<string>('input.focusedContains', { text }, 30_000);
+    return result === 'MATCH' || result === 'MISMATCH' ? result : 'UNREADABLE';
+  }
+
+  /** The element that has keyboard focus now: its process, control type and whether text can land there (no value is read). */
+  async focused(): Promise<FocusedInfo> {
+    const info = await this.host.call<Partial<FocusedInfo> | null>('input.focusedInfo');
+    return { processId: info?.processId ?? 0, controlType: info?.controlType ?? '', className: info?.className ?? '', editable: info?.editable === true, password: info?.password === true };
   }
 
   async cursor(): Promise<{ x: number; y: number }> {

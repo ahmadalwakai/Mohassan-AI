@@ -24,8 +24,6 @@ interface Config {
 const APP_ID = 'ai.mohassan.desktop';
 app.setName('Mohassan');
 app.setAppUserModelId(APP_ID);
-// Expose the page to UI Automation (screen readers, and Mohassan's own desktop engine when it drives this window).
-app.setAccessibilitySupportEnabled(true);
 
 const userDir = app.getPath('userData');
 const logDir = join(userDir, 'logs');
@@ -166,6 +164,20 @@ function createMainWindow() {
   void mainWindow.loadURL(config.webUrl);
 }
 
+/**
+ * Opens the page once the service answers. A new window closes the splash itself when it is ready to show; an existing one
+ * (after «أعد التشغيل») only reloads, so it closes the splash here. Before 2026-11-22 the splash stayed on top saying «جاهز».
+ */
+function openMain() {
+  if (!mainWindow) { createMainWindow(); return; }
+  const window = mainWindow;
+  window.webContents.once('did-stop-loading', () => {
+    splash?.close(); splash = null;
+    if (!config.startHidden && !window.isDestroyed()) { window.show(); window.focus(); }
+  });
+  void window.loadURL(config.webUrl);
+}
+
 function showMain() {
   if (!mainWindow) { createMainWindow(); return; }
   if (mainWindow.isMinimized()) mainWindow.restore();
@@ -217,7 +229,7 @@ async function boot(restart = false): Promise<void> {
   if (await stackAlreadyRunning()) {
     log(`web already running at ${config.webUrl}`);
     setSplash('موحسن يعمل بالفعل، يُفتح…');
-    if (!mainWindow) createMainWindow(); else void mainWindow.loadURL(config.webUrl);
+    openMain();
     return;
   }
   if (!config.autostartStack) {
@@ -237,7 +249,7 @@ async function boot(restart = false): Promise<void> {
     if (await reachable(config.webUrl, 1200)) {
       log(`stack ready in ${Date.now() - started} ms`);
       setSplash('جاهز.', `${Math.round((Date.now() - started) / 1000)} ث`);
-      if (!mainWindow) createMainWindow(); else void mainWindow.loadURL(config.webUrl);
+      openMain();
       if (Notification.isSupported()) new Notification({ title: 'موحسن', body: `جاهز للعمل بعد ${Math.round((Date.now() - started) / 1000)} ثانية.`, icon: icon() }).show();
       return;
     }
@@ -253,6 +265,9 @@ if (!single) app.quit();
 else {
   app.on('second-instance', showMain);
   app.whenReady().then(() => {
+    // Expose the page to UI Automation (screen readers, and Mohassan's own desktop engine when it drives this window).
+    // Electron only accepts this call after `ready`; calling it earlier aborted the packaged app with exit code 1.
+    app.setAccessibilitySupportEnabled(true);
     buildTray();
     globalShortcut.register('CommandOrControl+Shift+M', toggleMain);
     void boot();

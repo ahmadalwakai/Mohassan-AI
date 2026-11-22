@@ -18,6 +18,10 @@ if (localLab && production) throw new Error('--local-lab is for local experiment
 if (localLab) {
   // MOHASSAN_LAB_DIR: a second, separate lab (own embedded database and profiles) so two labs never share one PGlite folder.
   const lab = process.env.MOHASSAN_LAB_DIR ? path.resolve(root, process.env.MOHASSAN_LAB_DIR) : path.join(root,'.data','local-lab');
+  // A named lab gets its own Next build folder: Next 16 keeps one dev lock per distDir (apps/web/<distDir>/dev/lock),
+  // so a second `next dev` in apps/web only starts when its distDir differs from the running one's. Not for
+  // --built-web (`next start` serves the production build in .next) or the isolated e2e run (.next-e2e).
+  if (process.env.MOHASSAN_LAB_DIR && !builtWeb && process.env.MOHASSAN_ISOLATED_TEST !== 'true' && !process.env.NEXT_DIST_DIR) process.env.NEXT_DIST_DIR = `.next-${path.basename(lab)}`;
   Object.assign(process.env, {
     MOHASSAN_LOCAL_LAB: '1', DATABASE_URL: '', DATA_DIR: path.join(lab,'postgres'), BROWSER_PROFILE_DIR: path.join(lab,'browser-profile'),
     MOHASSAN_MIND: process.env.MOHASSAN_MIND ?? '0',

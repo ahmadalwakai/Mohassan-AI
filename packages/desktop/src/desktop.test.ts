@@ -5,10 +5,10 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DesktopAudit } from './audit.ts';
 import { parseDesktopCommand, describeDesktopCommand, folderReference } from './commands.ts';
-import { DesktopEngine } from './engine.ts';
+import { DesktopEngine, typingTargetRisk } from './engine.ts';
 import { DesktopError } from './errors.ts';
 import { DesktopFiles, nameMatcher } from './files.ts';
-import { normalizeCombo } from './native.ts';
+import { DesktopWindows, isHelperWindow, normalizeCombo, type FocusedInfo, type NativeHost, type WindowInfo } from './native.ts';
 import { PathPolicy, knownFolders } from './paths.ts';
 import { DesktopProjects, findTemplate, folderNameFor, slugFor } from './projects.ts';
 import { classifyCommand } from './shell.ts';
@@ -320,4 +320,122 @@ describe('DesktopEngine', () => {
     const info = await engine.execute(command('ما مواصفات جهازي')!, { lang: 'ar' });
     expect(info.text).toContain('المعالج');
   }, 120_000);
+});
+
+describe('typing into other programs', () => {
+  // A stub native host: no real window is touched. Records every call so the tests can check what was (not) done.
+  const win = (over: Partial<WindowInfo>): WindowInfo => ({ handle: 8, title: 'Untitled - Notepad', processId: 100, processName: 'Notepad', className: 'Notepad', x: 0, y: 0, width: 900, height: 700, minimized: false, maximized: false, foreground: false, ...over });
+  const field = (over: Partial<FocusedInfo> = {}): FocusedInfo => ({ processId: 100, controlType: 'Document', className: 'RichEditD2DPT', editable: true, password: false, ...over });
+  const stubHost = (windows: WindowInfo[], focused: FocusedInfo, focusResult = 'FOCUSED', landed = 'MATCH') => {
+    const calls: Array<{ op: string; args: unknown }> = [];
+    return {
+      calls,
+      async call(op: string, args?: unknown): Promise<unknown> {
+        calls.push({ op, args });
+        switch (op) {
+          case 'windows.list': return windows;
+          case 'windows.foreground': return windows.find(window => window.foreground) ?? null;
+          case 'windows.focus': return focusResult;
+          case 'input.focusedInfo': return focused;
+          case 'input.focusedIsPassword': return focused.password;
+          case 'input.type': case 'input.keys': return 'APPLIED';
+          case 'input.focusedContains': return landed;
+          default: throw new Error(`unexpected native op ${op}`);
+        }
+      },
+      async dispose() {},
+    };
+  };
+  const typeInNotepad = parseDesktopCommand('اكتب مرحبا من موحسن في المفكرة')!.command;
+  let root: string;
+  beforeAll(async () => { root = await tempRoot('mohassan-typing-'); });
+  afterAll(async () => { await rm(root, { recursive: true, force: true }); });
+  const engineWith = (host: ReturnType<typeof stubHost>) => new DesktopEngine({ dataDir: join(root, 'data'), roots: [root], projectsRoot: join(root, 'Projects'), screenshotsDir: join(root, 'shots'), nativeHost: host as unknown as NativeHost });
+  const typedAnything = (host: ReturnType<typeof stubHost>) => host.calls.some(call => call.op === 'input.type');
+
+  it('judges window titles before typing', () => {
+    expect(typeInNotepad).toMatchObject({ kind: 'type', text: 'مرحبا من موحسن' });
+    for (const title of ['*.env.txt - Notepad', '.env - Notepad', 'owner-credentials.txt - Notepad', 'id_rsa - Notepad', 'server.pem - Notepad', 'Change password - Settings', 'API tokens - Google Chrome', 'كلمة المرور - الإعدادات']) expect(typingTargetRisk(title), title).toBe('secret');
+    for (const title of ['notes.txt - Notepad', '*ملاحظات.txt - Notepad', 'index.ts - mohassan - Visual Studio Code', 'budget.xlsx - Excel']) expect(typingTargetRisk(title), title).toBe('named_file');
+    for (const title of ['Untitled - Notepad', 'بلا عنوان - المفكرة', 'موحسن', 'Version 1.2 - Setup', 'Calculator']) expect(typingTargetRisk(title), title).toBeNull();
+  });
+
+  it('prefers the main window over a helper frame of the same program', async () => {
+    const popup = win({ handle: 7, title: 'PopupHost', width: 300, height: 200 });
+    const main = win({ handle: 8 });
+    expect(isHelperWindow(popup)).toBe(true);
+    expect(isHelperWindow(main)).toBe(false);
+    const host = stubHost([popup, main], field());
+    const windows = new DesktopWindows(host as unknown as NativeHost, new DesktopAudit(join(root, 'audit-find.jsonl')));
+    expect((await windows.find('notepad'))?.handle).toBe(8);
+  });
+
+  it('types only when the focus lands in an editable field of the target window', async () => {
+    const host = stubHost([win({ handle: 7, title: 'PopupHost', width: 300, height: 200 }), win({ handle: 8 })], field());
+    const engine = engineWith(host);
+    const done = await engine.execute(typeInNotepad, { lang: 'ar' });
+    expect(done.status).toBe('completed');
+    expect(done.text).toContain('أدخلت 14 حرفًا في «Untitled - Notepad» وتحققت أنها ظهرت كما هي');
+    expect(host.calls.find(call => call.op === 'windows.focus')?.args).toEqual({ handle: 8 });
+    expect(typedAnything(host)).toBe(true);
+    await engine.dispose();
+  });
+
+  it('says so when the typed text did not land as written, or cannot be read back', async () => {
+    for (const [landed, status, expected] of [['MISMATCH', 'partial', 'لا يطابق النص المطلوب'], ['UNREADABLE', 'completed', 'لم أستطع قراءة الحقل للتحقق']] as const) {
+      const host = stubHost([win({})], field(), 'FOCUSED', landed);
+      const engine = engineWith(host);
+      const outcome = await engine.execute(typeInNotepad, { lang: 'ar' });
+      expect(outcome.status).toBe(status);
+      expect(outcome.text).toContain(expected);
+      expect(host.calls.find(call => call.op === 'input.focusedContains')?.args).toEqual({ text: 'مرحبا من موحسن' });
+      await engine.dispose();
+    }
+  });
+
+  it('types nothing and says so when no field is active, the focus is refused or the field belongs elsewhere', async () => {
+    for (const [focused, focusResult, expected] of [
+      [field({ editable: false, controlType: 'Pane' }), 'FOCUSED', 'لا يوجد فيها مكان كتابة نشط'],
+      [field(), 'NOT_FOCUSED', 'لم يسمح Windows بنقل التركيز'],
+      [field({ processId: 555 }), 'FOCUSED', 'لا يوجد فيها مكان كتابة نشط'],
+      [field({ password: true }), 'FOCUSED', 'حقل كلمة مرور'],
+    ] as const) {
+      const host = stubHost([win({})], focused, focusResult);
+      const engine = engineWith(host);
+      const outcome = await engine.execute(typeInNotepad, { lang: 'ar' });
+      expect(outcome.status).toBe('blocked');
+      expect(outcome.text).toContain(expected);
+      expect(typedAnything(host)).toBe(false);
+      await engine.dispose();
+    }
+    const missing = stubHost([], field());
+    const engine = engineWith(missing);
+    expect((await engine.execute(typeInNotepad, { lang: 'ar' })).text).toContain('لم أجد نافذة');
+    await engine.dispose();
+  });
+
+  it('refuses secret windows and asks before typing into an open named file', async () => {
+    const secret = stubHost([win({ title: '*.env.txt - Notepad' })], field());
+    let engine = engineWith(secret);
+    const refused = await engine.execute(typeInNotepad, { lang: 'ar' });
+    expect(refused.status).toBe('blocked');
+    expect(refused.text).toContain('لن أكتب فيها');
+    expect(secret.calls.some(call => call.op === 'windows.focus')).toBe(false);
+    expect(typedAnything(secret)).toBe(false);
+    const keys = await engine.execute(parseDesktopCommand('اضغط ctrl+s في المفكرة')!.command, { lang: 'ar' });
+    expect(keys.status).toBe('blocked');
+    expect(secret.calls.some(call => call.op === 'input.keys')).toBe(false);
+    await engine.dispose();
+
+    const named = stubHost([win({ title: 'notes.txt - Notepad' })], field());
+    engine = engineWith(named);
+    const asked = await engine.execute(typeInNotepad, { lang: 'ar' });
+    expect(asked.status).toBe('needs_approval');
+    expect(asked.approval?.prompt).toContain('notes.txt - Notepad');
+    expect(typedAnything(named)).toBe(false);
+    const approved = await engine.execute(typeInNotepad, { lang: 'ar', approved: true });
+    expect(approved.status).toBe('completed');
+    expect(typedAnything(named)).toBe(true);
+    await engine.dispose();
+  });
 });

@@ -11,6 +11,7 @@ playwright-report/
 artifacts/
 *.log
 .next-e2e/
+.next-*/
 
 # Local Python environment and caches for the execution model
 .venv-execution/
