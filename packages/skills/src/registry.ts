@@ -9,9 +9,12 @@ import { SkillError } from './errors.ts';
 import { grantDto } from './grants.ts';
 import { sha256, skillContentHash, skillContentMatches } from './hash.ts';
 import { classifySkillFile } from './inspector.ts';
+import { MAX_GITHUB_VERSIONS_PER_OWNER, MAX_IMPORTED_VERSIONS_PER_OWNER } from './import-store.ts';
 import { legacyDetail, legacySkills } from './legacy.ts';
 
 const iso = (value: unknown) => new Date(value as string | Date).toISOString();
+/** Every version the limits allow: GitHub, local imports and Forge, plus room for the built-in and project skills. Filters and pages apply after it. */
+const LIST_LIMIT = MAX_GITHUB_VERSIONS_PER_OWNER + MAX_IMPORTED_VERSIONS_PER_OWNER + 100;
 const json = (value: unknown) => (typeof value === 'string' ? JSON.parse(value) : value);
 const VERSION_COLUMNS = ['v.id', 'v.family_id', 'f.slug', 'f.active_version_id', 'v.name', 'v.description', 'v.category', 'v.version', 'v.revision', 'v.level', 'v.origin', 'v.status', 'v.status_reason', 'v.content_hash', 'v.created_at', 'v.updated_at'] as const;
 
@@ -56,7 +59,7 @@ export function createSkillRegistry(db: Kysely<any>, options: { rebuildGraph?: (
     const query = SkillRegistryQuerySchema.parse(input ?? {});
     await seedBuiltins(ownerId);
     const rows = await db.selectFrom('skill_versions as v').innerJoin('skill_families as f', 'f.id', 'v.family_id')
-      .select(VERSION_COLUMNS).where('v.owner_id', '=', ownerId).orderBy('v.updated_at', 'desc').orderBy('v.id').limit(500).execute();
+      .select(VERSION_COLUMNS).where('v.owner_id', '=', ownerId).orderBy('v.updated_at', 'desc').orderBy('v.id').limit(LIST_LIMIT).execute();
     const merged: SkillVersion[] = [...rows.map((row) => versionDto(row, row.active_version_id)), ...await legacySkills(db, ownerId)];
     const needle = query.q.toLocaleLowerCase('ar');
     const matches = merged.filter((skill) =>

@@ -146,6 +146,17 @@ target يعتمد locator/observation موجودة داخل الجلسة؛ يع�
 
 القراءة تستبعد المنتهي أو الملغى وتعيد provenance. feedback لا تتحول تلقائيًا إلى حقيقة أو قاعدة دائمة؛ تفضيل مستمر يحتاج تصنيفًا وموافقة المستخدم قبل تفعيله خارج المهمة. skill version غير قابلة للاستبدال؛ activation يتطلب اختبارًا مستقلًا وholdout ناجحًا وعدم تراجع المعايير.
 
+### 5أ. مصدر مهارات GitHub — منفَّذ (2026-11-22)
+
+المساران للمالك فقط: غير مدرجين في `MEMBER_ROUTES`، فالعضو يتلقى 403 `MEMBER_FORBIDDEN`، وبلا سر الخدمة أو جلسة 401. العقود `.strict()` في `packages/contracts/src/skill-remote.ts`.
+
+| الطريقة والمسار | Payload → Data | الحالات | أكواد الخطأ |
+|---|---|---|---|
+| GET `/api/skills/remote` | — → `SkillRemoteStatus` `{configured, engineEnabled, problem, repo, ref, path, autoActivate, intervalMinutes, running, last: SkillRemoteSync\|null, lastSuccess:{commit,finishedAt}\|null, nextSyncAt, pending[≤20], pendingTotal, quota:{used,limit}}` مع `cache-control: private, no-store`؛ `quota` يعدّ إصدارات GitHub المحفوظة مقابل حدها 4000 | 200 | — |
+| POST `/api/skills/remote/sync` | `{}` فقط → `SkillRemoteStartResult` `{started:true, syncId}`؛ يعود قبل أي عمل شبكي، وتكتمل المزامنة في الخلفية بحد 30 دقيقة؛ التشغيل الذي يتوقف يحفظ تقدّمه وتكمل المزامنة التالية من حيث توقف | 202؛ 400 لجسم غير فارغ؛ 409 | `SKILL_REMOTE_NOT_CONFIGURED`، `SKILL_REMOTE_UNAVAILABLE` (محرك المهارات متوقف)، `SKILL_REMOTE_SYNC_RUNNING`؛ حد المعدل 4 طلبات/دقيقة |
+
+`SkillRemoteSync`: `{id, repo, ref, path, commit|null, cause:'schedule'|'manual', status:'running'|'succeeded'|'failed', errorCode|null, startedAt, finishedAt|null, unchanged, counts:{total,unchanged,activated,pendingReview,rejected,errors,pruned}, items[≤200], itemsOmitted, orphans[≤200], orphansOmitted, progress:{processed,total}|null}`. عدّاد `rejected` يضم نتيجتَي `rejected` و`incompatible`، و`pruned` عدد الإصدارات القديمة التي حذفها التنظيف في هذا التشغيل. حتى 200 مهارة يسرد التقرير كل العناصر؛ فوقها يحتفظ بالأخطاء وما يحتاج المالك أولاً ويعدّ الباقي في `itemsOmitted`. `progress` يُكتب أثناء التشغيل كل 10 ث ويبقى بعد التوقف. نتائج العناصر: `unchanged | activated | pending_review | rejected | incompatible | skipped | error`؛ يحمل `code` سبب الانتظار (`AUTO_ACTIVATE_OFF`، `FINDINGS_NEED_ACK`، `NOT_INSTRUCTION_ONLY`، `HAS_SCRIPTS`، `REQUESTS_ACCESS`، `FOREIGN_SOURCE`، `NOT_NEWER`، `NOT_ACTIVATABLE`) أو كود خطأ العنصر (`SKILL_REMOTE_SYMLINK`، `SKILL_REMOTE_SUBMODULE`، `SKILL_TOO_LARGE`، `SKILL_FILE_UNSUPPORTED`، `SKILL_REMOTE_SLUG_MISMATCH`، `SKILL_SLUG_TAKEN`، `SKILL_VERSION_EXISTS`، `SKILL_QUOTA_EXCEEDED`، `SKILL_SOURCE_REJECTED`). أكواد فشل التشغيل كله في `errorCode`: `GIT_REMOTE_UNREACHABLE`، `GIT_REMOTE_REF_MISSING`، `GIT_REMOTE_PATH_MISSING`، `GIT_REMOTE_TOO_LARGE`، `SKILL_REMOTE_TOO_MANY`، `SKILL_REMOTE_SYNC_ABORTED`، `SKILL_REMOTE_SYNC_INTERRUPTED`، `SKILL_REMOTE_SYNC_FAILED`. التشغيل المجدول الذي يجد رأس الفرع نفسه ينتهي `unchanged:true` دون قراءة؛ التشغيل اليدوي يقرأ دائماً، لكنه يتجاوز كل مهارة لم تتغير شجرتها. أكثر من 1000 مجلد مهارة يُنهي التشغيل `SKILL_REMOTE_TOO_MANY` قبل قراءة أي منها. الحذف من المستودع لا يلغي شيئاً: تبقى المهارة مفعّلة وتظهر في `orphans` حتى يقرر المالك.
+
 ## 6. الأجهزة والربط والتحكم وiPhone — مقترحة
 
 | الطريقة والمسار | Payload/query → Data | Scope | A/K |

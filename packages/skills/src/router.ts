@@ -38,17 +38,37 @@ export interface SkillRoutingRelations {
   relatedCandidates?: readonly SkillContextMetadata[];
 }
 
+/** The router reads at most this many candidates per request. */
+const ROUTER_WINDOW = 200;
+type Scored = { skill: SkillContextMetadata; score: number };
+/** Term overlap with the slug, the name, the description and the category words, weighted in that order. */
+function scorer(terms: readonly string[]): (skill: SkillContextMetadata) => number {
+  const overlap = (text: string) => { const words = new Set(skillTerms(text)); return terms.filter(term => words.has(term)).length; };
+  return skill => overlap(skill.slug.replace(/-/g, ' ')) * 6 + overlap(skill.name) * 4 + overlap(skill.description) * 2 + overlap(CATEGORY_WORDS[skill.category]);
+}
+const byScore = (a: Scored, b: Scored) => b.score - a.score || a.skill.slug.localeCompare(b.skill.slug, 'en') || a.skill.id.localeCompare(b.skill.id, 'en');
+
 /** Deterministic metadata-only ranking. A match is guidance, never a tool grant. */
 export function routeInstructionSkills(goal: string, candidates: readonly SkillContextMetadata[], limit = 6, relations: SkillRoutingRelations = {}): SkillContextMetadata[] {
   const terms = skillTerms(goal.slice(0, 16000));
   const related = relations.relatedCandidates?.slice(0, 12) ?? [];
   if (!terms.length && !related.length) return [];
   const relatedIds = new Set(related.map(skill => skill.id));
-  const combined = [...new Map([...candidates.slice(0, 200), ...related].map(skill => [skill.id, skill])).values()];
-  const overlap = (text: string) => { const words = new Set(skillTerms(text)); return terms.filter(term => words.has(term)).length; };
-  return combined.map(skill => ({ skill, score: overlap(skill.slug.replace(/-/g, ' ')) * 6 + overlap(skill.name) * 4 + overlap(skill.description) * 2 + overlap(CATEGORY_WORDS[skill.category]) }))
+  const combined = [...new Map([...candidates.slice(0, ROUTER_WINDOW), ...related].map(skill => [skill.id, skill])).values()];
+  const score = scorer(terms);
+  return combined.map(skill => ({ skill, score: score(skill) }))
     .filter(entry => entry.score > 0 || relatedIds.has(entry.skill.id))
-    .sort((a, b) => b.score - a.score || a.skill.slug.localeCompare(b.skill.slug, 'en') || a.skill.id.localeCompare(b.skill.id, 'en'))
+    .sort(byScore)
     .slice(0, Math.min(6, Math.max(0, Math.floor(limit))))
     .map(entry => entry.skill);
+}
+
+/** With more active skills than the router reads, this picks the ones that score highest, with the same score and the same order,
+ * so routing over its result returns exactly what routing over every candidate would. Skills that share no term are left out. */
+export function rankInstructionCandidates(goal: string, candidates: readonly SkillContextMetadata[], limit = ROUTER_WINDOW): SkillContextMetadata[] {
+  const terms = skillTerms(goal.slice(0, 16000));
+  if (!terms.length) return [];
+  const score = scorer(terms);
+  return candidates.map(skill => ({ skill, score: score(skill) })).filter(entry => entry.score > 0).sort(byScore)
+    .slice(0, Math.max(0, Math.floor(limit))).map(entry => entry.skill);
 }

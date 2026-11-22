@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { routeInstructionSkills, skillTerms, type SkillContextMetadata } from './router.ts';
+import { rankInstructionCandidates, routeInstructionSkills, skillTerms, type SkillContextMetadata } from './router.ts';
 
 const skill = (slug: string, category: SkillContextMetadata['category'] = 'reasoning', description = 'Helpful guidance for a bounded task'): SkillContextMetadata => ({ id: slug, slug, name: slug, description, category, version: '1.0.0', contentHash: 'a'.repeat(64) });
 describe('instruction metadata routing', () => {
@@ -24,6 +24,18 @@ describe('instruction metadata routing', () => {
     expect(routeInstructionSkills('coding', candidates, 500)).toHaveLength(6);
     expect(routeInstructionSkills('specialneedle', [...candidates.slice(0, 200), skill('specialneedle')])).toEqual([]);
     expect(routeInstructionSkills('coding', candidates, 0)).toEqual([]);
+  });
+  it('ranks every candidate first, so routing past the 200-candidate window finds a late match and keeps the same order', () => {
+    const fillers = Array.from({ length: 300 }, (_, index) => skill(`guide-${String(index).padStart(3, '0')}`, 'coding'));
+    const late = skill('zz-lateneedle-guide', 'coding');
+    const all = [...fillers, late];
+    expect(routeInstructionSkills('lateneedle', all)).toEqual([]);
+    expect(routeInstructionSkills('lateneedle', rankInstructionCandidates('lateneedle', all)).map(item => item.id)).toEqual([late.id]);
+    // Within the window the ranked route is exactly the plain route, ties included.
+    const window = fillers.slice(0, 200);
+    expect(routeInstructionSkills('coding review', rankInstructionCandidates('coding review', window))).toEqual(routeInstructionSkills('coding review', window));
+    expect(rankInstructionCandidates('coding', all)).toHaveLength(200);
+    expect(rankInstructionCandidates('the and', all)).toEqual([]);
   });
   it('does not treat instruction text or declared tools as routing inputs', () => {
     const candidate = { ...skill('plain-guide'), instructions: 'secretneedle', tools: ['secretneedle'] };

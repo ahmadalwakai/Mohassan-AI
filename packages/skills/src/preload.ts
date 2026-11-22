@@ -5,7 +5,8 @@ import { compileInstructionContext, emptySkillContext, skillContextBudget, type 
 import { SkillError } from './errors.ts';
 import { sha256, skillContentMatches } from './hash.ts';
 import { classifySkillFile, INSPECTOR_VERSION } from './inspector.ts';
-import { routeInstructionSkills, type SkillContextMetadata } from './router.ts';
+import { rankInstructionCandidates, routeInstructionSkills, type SkillContextMetadata } from './router.ts';
+import { MAX_GITHUB_SKILLS, MAX_IMPORTED_VERSIONS_PER_OWNER } from './import-store.ts';
 import { relatedSkills } from './graph.ts';
 
 const json = (value: unknown) => typeof value === 'string' ? JSON.parse(value) : value;
@@ -19,9 +20,11 @@ function instructionMetadataQuery(db: Kysely<any>, ownerId: string) {
     .where('v.status', '=', 'active').where('v.level', '=', 'instruction').whereRef('f.active_version_id', '=', 'v.id');
 }
 
+/** Active instruction skills read per chat request: every GitHub skill, every local or Forge one, and the built-ins with room to spare. */
+const DISCOVERY_LIMIT = MAX_GITHUB_SKILLS + MAX_IMPORTED_VERSIONS_PER_OWNER + 50;
 /** Reads metadata only. It never invokes registry.list(), seeds rows, or touches the filesystem. */
-export async function preloadInstructionMetadata(db: Kysely<any>, ownerId: string): Promise<SkillContextMetadata[]> {
-  const rows = await instructionMetadataQuery(db, ownerId).orderBy('f.slug').orderBy('v.id').limit(200).execute();
+export async function preloadInstructionMetadata(db: Kysely<any>, ownerId: string, limit = 200): Promise<SkillContextMetadata[]> {
+  const rows = await instructionMetadataQuery(db, ownerId).orderBy('f.slug').orderBy('v.id').limit(limit).execute();
   return metadataRows(rows);
 }
 
@@ -58,7 +61,8 @@ export function createInstructionContext(db: Kysely<any>, enabled = false) {
     if (!enabled) return emptySkillContext();
     const budget = skillContextBudget(options.budgetChars);
     if (typeof goal !== 'string' || goal.length > 16000 || (options.loadedIds?.length ?? 0) > 12 || options.loadedIds?.some(id => typeof id !== 'string' || id.length > 100)) throw new SkillError('SKILL_CONTEXT_INPUT_INVALID', 'طلب سياق المهارات غير صالح.');
-    const candidates = await preloadInstructionMetadata(db, ownerId);
+    // Every active instruction skill is a candidate; the router then reads the highest-scoring ones, so a skill late in the alphabet is not missed.
+    const candidates = rankInstructionCandidates(goal, await preloadInstructionMetadata(db, ownerId, DISCOVERY_LIMIT));
     const lexical = routeInstructionSkills(goal, candidates);
     const loadedIds = [...new Set(options.loadedIds ?? [])].filter(id => z.uuid().safeParse(id).success);
     const loadedMetadata = loadedIds.length ? metadataRows(await instructionMetadataQuery(db, ownerId)

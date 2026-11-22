@@ -6,6 +6,7 @@ export * from './skill-quality';
 export * from './skill-benchmarks';
 export * from './skill-forge';
 export * from './skill-run-gaps';
+export * from './skill-remote';
 import { SkillRunInputSchema, SkillNodeBindingSchema, isBoundedSkillJson } from './skills';
 export * from './command-chat';
 export * from './skills';

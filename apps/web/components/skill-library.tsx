@@ -9,7 +9,8 @@ import { SkillActivateSchema, SkillCategorySchema, SkillCompositionRequestSchema
   type SkillCompositionRequest, type SkillCompositionResult, type SkillDetail, type SkillFileContent, type SkillRunSummary, type SkillVersion } from '@mohassan/contracts';
 import { SkillExperiments } from './skill-experiments';
 import { CapabilityEvolution } from './capability-evolution';
-import { SkillApiError, skillCategories, skillDate, skillErrorText, skillLevels, skillPost, skillRequest, skillStatuses } from './skill-client';
+import { SkillRemotePanel } from './skill-remote-panel';
+import { SkillApiError, skillCategories, skillDate, skillErrorText, skillLevels, skillPost, skillRequest, skillSources, skillStatuses } from './skill-client';
 import styles from './skill-library.module.css';
 
 type Registry = z.infer<typeof SkillRegistryResultSchema>;
@@ -203,6 +204,7 @@ export function SkillLibrary({ offline, onOpenLegacy, onOpenTask }: { offline: b
       </form>
       <div className={styles.columns}><aside className={styles.list} aria-busy={loading}>
         <details className={styles.panel}><summary>استيراد مهارة محلية</summary><form className={styles.form} onSubmit={importSkill}><label>مسار مجلد المهارة<Input aria-label="مسار مجلد المهارة" name="path" required minLength={3} maxLength={1000} dir="ltr" disabled={disabled}/></label><p className={styles.hint}>يلزم SKILL.md داخل أحد جذور الخادم المسموح بها. تبقى الملفات في الحجر بعد الاستيراد.</p><Button type="submit" disabled={disabled}>استيراد للمراجعة</Button></form></details>
+        <details className={styles.panel}><summary>مصدر GitHub</summary><SkillRemotePanel offline={offline} engineEnabled={enabled} onOpenSkill={openSkill} onChanged={changed}/></details>
         {listError ? <p role="alert" className={styles.error}>{listError}</p> : null}
         {loading ? <p className={styles.empty} role="status"><Spinner size="sm"/> جارٍ تحميل المهارات…</p> : null}
         {!loading && registry?.items.length === 0 ? <Box className={styles.empty}><BookOpen/><h3>لا توجد مهارات مطابقة</h3><p>غيّر المرشحات أو استورد مصدرًا محليًا للمراجعة.</p></Box> : null}
@@ -215,7 +217,7 @@ export function SkillLibrary({ offline, onOpenLegacy, onOpenTask }: { offline: b
       <div className={styles.detail} aria-busy={detailLoading}>
         {detailLoading ? <p className={styles.empty} role="status"><Spinner/> جارٍ قراءة النسخة ومصادرها…</p> : !detail ? <Box className={styles.empty}><ShieldCheck size={32}/><h3>اختر مهارة للمراجعة</h3><p>ستظهر هنا العقود، المصادر، الفحوص والمنح الفعلية لهذه النسخة.</p></Box> : <>
           <section className={styles.panel} aria-label="تفاصيل المهارة"><div className={styles.badges}><Level level={detail.skill.level}/><Badge>{skillStatuses[detail.skill.status]}</Badge></div><h3 ref={detailHeading} tabIndex={-1}>تفاصيل المهارة: {detail.skill.name}</h3><p>{detail.skill.description}</p>
-            <dl className={styles.metadata}><div><dt>الإصدار والمراجعة</dt><dd>{detail.skill.version} · {detail.skill.revision}</dd></div><div><dt>المصدر</dt><dd>{detail.source?.kind ?? 'غير موثق'}</dd></div><div><dt>الأثر المعلن</dt><dd dir="ltr">{detail.contract.sideEffects}</dd></div><div><dt>آخر تحديث</dt><dd>{skillDate(detail.skill.updatedAt)}</dd></div></dl>
+            <dl className={styles.metadata}><div><dt>الإصدار والمراجعة</dt><dd>{detail.skill.version} · {detail.skill.revision}</dd></div><div><dt>المصدر</dt><dd>{detail.source ? skillSources[detail.source.kind] ?? detail.source.kind : 'غير موثق'}</dd></div><div><dt>الأثر المعلن</dt><dd dir="ltr">{detail.contract.sideEffects}</dd></div><div><dt>آخر تحديث</dt><dd>{skillDate(detail.skill.updatedAt)}</dd></div></dl>
             <p className={styles.hash}>بصمة النسخة <code dir="ltr">{detail.skill.contentHash}</code></p>{detail.source ? <p className={styles.hint}>المصدر المسجل: <bdi>{detail.source.locator}</bdi> · {detail.source.fileCount} ملفات · {detail.source.totalBytes} بايت</p> : null}
             {detail.skill.level === 'executable' ? <p className={styles.warning}>بوابات العزل الإلزامية غير مكتملة. هذه النسخة غير متاحة للتشغيل أو الترقية التنفيذية.</p> : null}
             {detail.skill.readOnly ? <Button onClick={onOpenLegacy} variant="outline">فتح قوائم الفحص السابقة</Button> : <div className={styles.actions}><Button disabled={disabled} onClick={() => void action('inspect', async () => { await skillPost(`/api/skills/${detail.skill.id}/inspect`, { expectedRevision: detail.skill.revision }, SkillDetailSchema); changed(); }, 'حُفظ تقرير الفحص لهذه البصمة.')}><ShieldCheck size={15}/>فحص المهارة</Button><Button variant="outline" disabled={disabled || detail.skill.level === 'executable' || !['inspected', 'tested', 'benchmarked'].includes(detail.skill.status)} onClick={() => lifecycle('activate')}>مراجعة التفعيل</Button><Button variant="outline" disabled={disabled || detail.skill.status === 'revoked'} onClick={() => lifecycle('revoke')}>إلغاء التفعيل</Button><Button variant="outline" disabled={disabled || !detail.skill.active} onClick={addToComposition}><Layers size={15}/>إضافة إلى التركيب</Button></div>}

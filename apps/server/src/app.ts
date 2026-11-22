@@ -70,7 +70,8 @@ import { registerSkillForgeRoutes } from './skill-forge.js';
 import { rebuildSkillGraph } from '../../../packages/skills/src/graph.js';
 import { createSkillBenchmarkRunner } from './skill-benchmark-runner.js';
 import { benchmarkSuites, getSkillBenchmarkSuite } from '../../../packages/skills/src/benchmark-suites.js';
-import { recordSkillGap, createSkillBenchmarkControl, createSkillForgeControl } from '@mohassan/skills';
+import { recordSkillGap, createSkillBenchmarkControl, createSkillForgeControl, createGitSkillTransport, type SkillRemoteTransport } from '@mohassan/skills';
+import { createSkillRemoteScheduler, registerSkillRemoteRoutes, type SkillRemoteSettings } from './skill-remote.js';
 
 export interface AppConfig {
   dataDir?: string; databaseUrl?: string; authSecret: string; internalSecret: string;
@@ -80,6 +81,10 @@ export interface AppConfig {
   browser?:BrowserConfig;windowsEnabled?:boolean;browserProfileDir?:string;browserChannel?:'chrome'|null;
   studioAiDataDir?:string;groqVisionModel?:string;studioGatewayUrl?:string;studioGatewaySecret?:string;studioPreviewPort?:number;
   skillEngineEnabled?: boolean;
+  /** The GitHub skills source from SKILL_REMOTE_*. Absent, or `config: null`: the library panel reports it as not configured. */
+  skillRemote?: SkillRemoteSettings;
+  /** Injected by isolated tests only; otherwise the restricted Git transport is built from `skillRemote`. */
+  skillRemoteTransport?: SkillRemoteTransport;
   /** FreeLLMAPI gateway and failover policy. Absent: FreeLLMAPI stays off and Groq works as before. */
   inference?: Omit<InferenceConfig,'groq'|'fetch'>;
   /** Absent values leave the integration in its not-configured state. */
@@ -282,7 +287,14 @@ export async function createApplication(config: AppConfig) {
   const learning=await registerLearningRoutes(app,{db:database.db,owner,config:{allowedRoots:config.codingAllowedRoots??[],...(localEvaluation?{evaluate:localEvaluation,stopEvaluation:()=>learningAbort.abort()}:{}),...config.learning}});
   // Reading readiness starts no process; available() already ran its fixed probes.
   const scriptsReady=(await coding.sandbox.executableReadiness?.())?.enabled===true;
-  skills=await registerSkillRoutes(app,{db:database.db,owner,allowedRoots:config.codingAllowedRoots??[],enabled:config.skillEngineEnabled,executableReady:async()=>scriptsReady,environment:()=>({capabilities:createCapabilities(Boolean(config.groqApiKey),coding.available,studioAi.available,moduleAvailability,true,config.skillEngineEnabled),modelReady:Boolean(config.groqApiKey),visionReady:Boolean(config.groqApiKey&&config.groqVisionModel),executableReady:scriptsReady,gatewayTools:skillGatewayTools({enabled:config.skillEngineEnabled,coding:coding.available,studio:studioAi.available,vision:Boolean(config.groqApiKey&&config.groqVisionModel)})})});
+  // The GitHub skills source: no network at boot; the transport is only used by a started sync.
+  const skillRemote=config.skillRemote??{config:null,problem:null,dataDir:resolve('.data/skills-remote')};
+  const skillRemoteTransport=config.skillRemoteTransport??(skillRemote.config?createGitSkillTransport(skillRemote.dataDir,skillRemote.config):null);
+  skills=await registerSkillRoutes(app,{db:database.db,owner,allowedRoots:config.codingAllowedRoots??[],enabled:config.skillEngineEnabled,executableReady:async()=>scriptsReady,remote:{config:skillRemote.config,problem:skillRemote.problem,transport:skillRemoteTransport},environment:()=>({capabilities:createCapabilities(Boolean(config.groqApiKey),coding.available,studioAi.available,moduleAvailability,true,config.skillEngineEnabled),modelReady:Boolean(config.groqApiKey),visionReady:Boolean(config.groqApiKey&&config.groqVisionModel),executableReady:scriptsReady,gatewayTools:skillGatewayTools({enabled:config.skillEngineEnabled,coding:coding.available,studio:studioAi.available,vision:Boolean(config.groqApiKey&&config.groqVisionModel)})})});
+  await registerSkillRemoteRoutes(app,{skills,owner});
+  await skills.remote.recoverInterrupted();
+  const skillRemoteScheduler=skillRemote.config&&config.skillEngineEnabled===true&&skillRemote.config.intervalMinutes>0?createSkillRemoteScheduler({skills,db:database.db,intervalMinutes:skillRemote.config.intervalMinutes}):null;
+  skillRemoteScheduler?.start();
   const skillExecutionSupport = createSkillRuntime(database.db,{skills,browser,memory,sandbox:coding.sandbox,testOrigins:config.browser?.testOrigins,
     ...(ai.engine?{modelGenerate:ai.generateSkill}:{}),
     ...(config.groqApiKey&&config.groqVisionModel?{vision:{provider:new GroqProvider({apiKey:config.groqApiKey,model:config.groqVisionModel,fetch:config.aiFetch,timeoutMs:20000}),image:studioAi.image}}:{}),
@@ -494,7 +506,7 @@ export async function createApplication(config: AppConfig) {
   app.get<{Params: {id: string}}>('/api/tasks/:id', async (request) => runtime.detail((await owner(request)).id, request.params.id));
   app.post<{Params: {id: string}}>('/api/tasks/:id/cancel', async (request) => runtime.cancel((await owner(request)).id, request.params.id));
   app.post<{Params: {id: string}}>('/api/tasks/:id/approve', async (request) => runtime.approve((await owner(request)).id, request.params.id));
-  app.addHook('onClose', async () => {clearInterval(benchmarkMaintenance);try{await benchmarkMaintenanceRun;await Promise.all([skillBenchmarks.shutdown(),skillForge.shutdown()]);}finally{try{await chat.shutdown();}finally{try{await runtime.stop();}finally{try{await browser.shutdown();}finally{try{await studioLive.close();}finally{await database.close();}}}}}});
+  app.addHook('onClose', async () => {clearInterval(benchmarkMaintenance);try{await skillRemoteScheduler?.stop();await skills.remote.shutdown();await benchmarkMaintenanceRun;await Promise.all([skillBenchmarks.shutdown(),skillForge.shutdown()]);}finally{try{await chat.shutdown();}finally{try{await runtime.stop();}finally{try{await browser.shutdown();}finally{try{await studioLive.close();}finally{await database.close();}}}}}});
   if (config.runWorker) runtime.start();
   await app.ready();
   return {app, routes, runtime, database, auth,ai,coding,studio,studioAi,studioLive,browser,browserTask,memory,skills,chat,skillExecution,skillBenchmarks,skillForge,googleAds,inference,chromeExtension};

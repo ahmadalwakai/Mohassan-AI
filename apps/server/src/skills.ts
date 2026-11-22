@@ -1,11 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import { z } from 'zod';
-import { createSkillControl, skillsMigration, type SkillEnvironment } from '@mohassan/skills';
+import { createSkillControl, skillsMigration, type SkillControlOptions, type SkillEnvironment } from '@mohassan/skills';
 
-export async function registerSkillRoutes(app: FastifyInstance, { db, owner, allowedRoots, environment, enabled = false, executableReady }: { executableReady?: () => Promise<boolean>; db: Kysely<any>; owner: (request: any) => Promise<{ id: string }>; allowedRoots: readonly string[]; environment: () => SkillEnvironment; enabled?: boolean }) {
+export async function registerSkillRoutes(app: FastifyInstance, { db, owner, allowedRoots, environment, enabled = false, executableReady, remote }: { executableReady?: () => Promise<boolean>; db: Kysely<any>; owner: (request: any) => Promise<{ id: string }>; allowedRoots: readonly string[]; environment: () => SkillEnvironment; enabled?: boolean; remote?: SkillControlOptions['remote'] }) {
   await skillsMigration(db);
-  const skills = createSkillControl(db, { allowedRoots, environment, enabled, ...(executableReady ? { executableReady } : {}) });
+  const skills = createSkillControl(db, { allowedRoots, environment, enabled, ...(executableReady ? { executableReady } : {}), ...(remote ? { remote } : {}) });
   const write = { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } };
   type Skill = { Params: { id: string } };
   const id = (value: string) => z.uuid().parse(value);

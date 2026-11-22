@@ -27,5 +27,6 @@ export function skillErrorText(error: unknown): string {
 export const skillDate = (value: string | null | undefined) => value ? new Intl.DateTimeFormat('ar', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : 'لا توجد بيانات كافية';
 export const skillPercent = (value: number | null | undefined) => typeof value === 'number' && Number.isFinite(value) ? `${Math.round(value * 100)}٪` : 'لا توجد بيانات كافية';
 export const skillLevels = { instruction: 'تعليمات فقط', tool: 'تنفّذ عبر الأدوات', executable: 'تنفيذية معزولة — محجوبة' } as const;
+export const skillSources: Record<string, string> = { builtin: 'مدمجة', local_folder: 'مجلد محلي', forge: 'مولّدة', memory: 'الذاكرة', github: 'GitHub' };
 export const skillStatuses: Record<string, string> = { quarantined: 'في الحجر للمراجعة', inspected: 'مفحوصة', tested: 'مختبرة', benchmarked: 'مقاسة', active: 'مفعّلة', deprecated: 'إصدار سابق', revoked: 'ملغاة', rejected: 'مرفوضة', incompatible: 'غير متوافقة', stale: 'تحتاج إعادة تحقق' };
 export const skillCategories: Record<string, string> = { reasoning: 'التفكير', coding: 'البرمجة', browser: 'المتصفح', computer: 'الكمبيوتر', design: 'التصميم', creativity: 'الإبداع', documents: 'المستندات', languages: 'اللغات', business: 'الأعمال', marketing: 'التسويق', research: 'البحث', security: 'الأمان', analytics: 'التحليل', media: 'الوسائط' };

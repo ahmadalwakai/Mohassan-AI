@@ -168,6 +168,19 @@ describe('instruction context from an isolated real skill lifecycle', () => {
     await skills.activate(owner, version.id, { expectedRevision: inspected.skill.revision, approve: true, acknowledgeFindings: true });
     expect((await skills.loadInstruction(owner, version.id)).text).toContain('Keep the meaning');
   });
+  it('routes to an active skill that sorts after the first 200 by slug', async () => {
+    const wideOwner = 'context-wide-fixture';
+    await store.db.insertInto('user').values({ id: wideOwner, name: 'Wide fixture', email: 'context-wide@example.test' }).execute();
+    const filler = await active('filler-template', undefined, undefined, wideOwner);
+    const target = await active('zzzz-needle-target', 'Follow the needle checklist.', undefined, wideOwner);
+    const template = await store.db.selectFrom('skill_versions').selectAll().where('id', '=', filler.id).executeTakeFirstOrThrow();
+    const entries = Array.from({ length: 200 }, (_, index) => ({ id: randomUUID(), family: randomUUID(), slug: `aaa-${index}` }));
+    await store.db.insertInto('skill_families').values(entries.map(entry => ({ id: entry.family, owner_id: wideOwner, slug: entry.slug, active_version_id: entry.id }))).execute();
+    await store.db.insertInto('skill_versions').values(entries.map(entry => ({ ...template, id: entry.id, family_id: entry.family, content_hash: sha256(entry.id), contract: JSON.stringify(template.contract) }))).execute();
+    // The old 200-row window alone does not reach the target.
+    expect((await preloadInstructionMetadata(store.db, wideOwner)).some(skill => skill.id === target.id)).toBe(false);
+    expect((await skills.context(wideOwner, 'needle')).skills.map(skill => skill.id)).toContain(target.id);
+  });
   it('refreshes explicit IDs outside the bounded metadata discovery window', async () => {
     const capacityOwner = 'context-capacity-fixture';
     await store.db.insertInto('user').values({ id: capacityOwner, name: 'Capacity fixture', email: 'context-capacity@example.test' }).execute();

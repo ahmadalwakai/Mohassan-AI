@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
-import { SkillActivateSchema, SkillContractSchema, SkillInspectRequestSchema, SkillRevokeSchema, SkillRollbackSchema, type SkillStatus } from '@mohassan/contracts';
-import { SkillError } from './errors.ts';
+import { z } from 'zod';
+import { SkillActivateSchema, SkillContractSchema, SkillInspectRequestSchema, SkillRemoteCommitSchema, SkillRemoteRefSchema, SkillRemoteRepoSchema, SkillRevokeSchema, SkillRollbackSchema, type SkillStatus } from '@mohassan/contracts';
+import { SkillError, SkillPolicyError, type SkillPolicyReason } from './errors.ts';
 import { skillContentMatches } from './hash.ts';
 import { INSPECTOR_VERSION, inspectSkill, type SkillFileKind } from './inspector.ts';
 import { acquireSkillLifecycleLock } from './lifecycle-lock.ts';
@@ -10,6 +11,11 @@ import { assertForgePromotion } from './forge-promotion.ts';
 const ACTIVATABLE: readonly SkillStatus[] = ['inspected', 'tested', 'benchmarked'];
 const REINSPECTABLE: readonly SkillStatus[] = [...ACTIVATABLE, 'active', 'deprecated'];
 const json = (value: unknown) => (typeof value === 'string' ? JSON.parse(value) : value);
+const PolicyRequestSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+  proof: z.object({ repo: SkillRemoteRepoSchema, ref: SkillRemoteRefSchema, commit: SkillRemoteCommitSchema }).strict(),
+}).strict();
+const AUTO_ACTIVATION_REASON = 'تفعيل تلقائي: مهارة تعليمات من مصدر GitHub اجتازت الفحص.';
 
 type Audit = (connection: Kysely<any>, ownerId: string, targetId: string, event: string, detail?: Record<string, unknown>) => Promise<void>;
 export interface LifecycleOptions {
@@ -139,5 +145,35 @@ export function createSkillLifecycle(db: Kysely<any>, options: LifecycleOptions)
     });
   }
 
-  return { inspect, activate, revoke, rollback };
+  /** Automatic activation for instruction-only skills that a GitHub source created and the inspector passed without findings.
+   * Every condition is re-read inside the transaction; nothing the caller says is trusted. A `review` verdict never qualifies. */
+  async function activateByPolicy(ownerId: string, id: string, input: unknown) {
+    const request = PolicyRequestSchema.parse(input);
+    const unmet: (reason: SkillPolicyReason, message: string) => never = (reason, message) => { throw new SkillPolicyError(reason, message); };
+    await db.transaction().execute(async (tx) => {
+      const { family, version } = await lockedWithFamily(tx, ownerId, id);
+      expect(version, request.expectedRevision);
+      if (!ACTIVATABLE.includes(version.status)) unmet('NOT_ACTIVATABLE', 'لا يمكن تفعيل المهارة تلقائياً في حالتها الحالية.');
+      const lineage = await tx.selectFrom('skill_versions as v').leftJoin('skill_sources as s', 's.version_id', 'v.id').select(['v.id', 's.kind as source_kind'])
+        .where('v.owner_id', '=', ownerId).where('v.family_id', '=', family.id).orderBy('v.sequence').execute();
+      if (version.origin !== 'local_import' || lineage.find((row) => row.id === id)?.source_kind !== 'github' || lineage[0]?.source_kind !== 'github') unmet('FOREIGN_SOURCE', 'التفعيل التلقائي يخص المهارات التي أنشأها مصدر GitHub وحده.');
+      const { contract, files } = await verifiedFiles(tx, version);
+      if (contract.level !== 'instruction') unmet('NOT_INSTRUCTION_ONLY', 'التفعيل التلقائي يخص مهارات التعليمات فقط.');
+      if (contract.requires.tools.length || contract.requires.scopes.length || contract.requires.paths.length || contract.sideEffects !== 'none') unmet('REQUESTS_ACCESS', 'تطلب المهارة أدوات أو نطاقات أو مسارات أو تعلن أثراً جانبياً؛ يلزم تفعيل صريح.');
+      if (files.some((file) => file.kind === 'script')) unmet('HAS_SCRIPTS', 'تحتوي المهارة سكربتات مخزنة؛ يلزم تفعيل صريح.');
+      const inspection = await currentInspection(tx, version);
+      if (!inspection || inspection.inspector_version !== INSPECTOR_VERSION) unmet('NOT_ACTIVATABLE', 'يلزم فحص حديث لهذه البصمة قبل التفعيل التلقائي.');
+      if (inspection.verdict !== 'pass') unmet('FINDINGS_NEED_ACK', 'للفحص ملاحظات تحتاج إقرارك؛ لا تُفعَّل تلقائياً.');
+      if (family.active_version_id === id) unmet('NOT_ACTIVATABLE', 'المهارة مفعّلة بالفعل.');
+      if (family.active_version_id) {
+        const active = await tx.selectFrom('skill_versions').select('sequence').where('id', '=', family.active_version_id).where('owner_id', '=', ownerId).executeTakeFirst();
+        if (!active || active.sequence >= version.sequence) unmet('NOT_NEWER', 'الإصدار المفعّل أحدث من هذا الإصدار أو يساويه.');
+      }
+      await replaceActive(tx, family, version, 'activate', AUTO_ACTIVATION_REASON, { approve: true });
+      await options.audit(tx, ownerId, id, 'skill.auto_activated', { policy: 'remote-instruction-v1', ...request.proof, contentHash: version.content_hash });
+      await options.rebuildGraph?.(tx, ownerId);
+    });
+  }
+
+  return { inspect, activate, revoke, rollback, activateByPolicy };
 }
