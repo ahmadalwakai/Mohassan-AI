@@ -11,17 +11,27 @@ import { signInAsFixtureOwner } from './helpers';
  * Not a pass/fail gate: the proposed E5.2 bar (p95 ≤ 0.3 s) is recorded next to the numbers for the owner.
  */
 const ROUNDS = Number(process.env.LATENCY_ROUNDS ?? 8);
-const CASES: { kind: 'compute' | 'chat'; text: string; expect: string }[] = [
-  { kind: 'compute', text: 'كم 15 ضرب 23؟', expect: '345' },
-  { kind: 'chat', text: 'مرحبا', expect: 'مرحبًا! كيف أساعدك؟' },
-  { kind: 'compute', text: 'كم 7 ضرب 8؟', expect: '56' },
-  { kind: 'compute', text: 'احسب 15% من 240', expect: '36' },
-];
+type Case = { kind: 'compute' | 'chat'; text: string; expect: string };
+/** Different numbers every round: the chat treats a repeated identical message as a replay and adds nothing. */
+function casesFor(round: number): Case[] {
+  const a = 11 + round, b = 13 + round, percent = 10 + 5 * round;
+  return [
+    { kind: 'compute', text: `كم ${a} ضرب ${b}؟`, expect: String(a * b) },
+    ...(round === 0 ? [{ kind: 'chat' as const, text: 'مرحبا', expect: 'مرحبًا! كيف أساعدك؟' }] : []),
+    { kind: 'compute', text: `كم ${b} ضرب ${a + 1}؟`, expect: String(b * (a + 1)) },
+    { kind: 'compute', text: `احسب ${percent}% من 200`, expect: String(percent * 2) },
+  ];
+}
+const CASES = casesFor(0);
 const stats = (values: number[]) => { const sorted = [...values].sort((a, b) => a - b); const at = (p: number) => sorted[Math.min(sorted.length - 1, Math.floor(p * (sorted.length - 1)))] ?? 0; return { n: sorted.length, p50: Math.round(at(0.5)), p95: Math.round(at(0.95)), min: Math.round(sorted[0] ?? 0), max: Math.round(sorted.at(-1) ?? 0) }; };
 
 async function sendAndTime(page: Page, text: string, expected: string): Promise<{ perceivedMs: number; serverMs: number | null }> {
+  // The composer must be idle: no stop button from the previous run; the send button enables only once there is text.
+  await expect(page.getByRole('button', { name: 'إيقاف' })).toHaveCount(0);
   const box = page.getByRole('textbox', { name: 'رسالتك' });
+  await expect(box).toBeEnabled();
   await box.fill(text);
+  await expect(page.getByRole('button', { name: 'إرسال' })).toBeEnabled();
   // Before the first message there is no conversation log yet; count earlier occurrences only when it exists.
   const before = await page.evaluate(() => document.querySelector('[role="log"]')?.textContent ?? '');
   const count = before.split(expected).length - 1;
@@ -42,7 +52,7 @@ test('local paths: time to the answer on screen, in a real browser', async ({ pa
   await expect(page.getByRole('heading', { name: /كيف أساعدك اليوم/ })).toBeVisible();
   const samples: { round: number; kind: string; text: string; perceivedMs: number; acceptMs: number | null }[] = [];
   for (let round = 0; round < ROUNDS; round++) {
-    for (const item of CASES) {
+    for (const item of casesFor(round)) {
       const { perceivedMs, serverMs } = await sendAndTime(page, item.text, item.expect);
       samples.push({ round, kind: item.kind, text: item.text, perceivedMs, acceptMs: serverMs });
     }
@@ -50,7 +60,7 @@ test('local paths: time to the answer on screen, in a real browser', async ({ pa
   const byKind = Object.fromEntries(['compute', 'chat'].map(kind => [kind, stats(samples.filter(sample => sample.kind === kind).map(sample => sample.perceivedMs))]));
   const all = stats(samples.map(sample => sample.perceivedMs));
   const accept = stats(samples.flatMap(sample => sample.acceptMs === null ? [] : [sample.acceptMs]));
-  const results = { at: new Date().toISOString(), rounds: ROUNDS, cases: CASES.map(item => item.text), perceivedMs: { all, ...byKind }, postRoundTripMs: accept,
+  const results = { at: new Date().toISOString(), rounds: ROUNDS, cases: CASES.map(item => item.text), requests: samples.length, perceivedMs: { all, ...byKind }, postRoundTripMs: accept,
     proposedBar: 'E5.2: p95 of what the user sees for local paths ≤ 300 ms (proposed, not fixed by the owner)', samples };
   const out = path.resolve('artifacts', `perceived-latency-${new Date().toISOString().slice(0, 10)}`);
   mkdirSync(out, { recursive: true });
@@ -59,7 +69,7 @@ test('local paths: time to the answer on screen, in a real browser', async ({ pa
     `| all | ${all.n} | ${all.p50} | ${all.p95} | ${all.min} | ${all.max} |`,
     ...Object.entries(byKind).map(([kind, value]) => `| ${kind} | ${value.n} | ${value.p50} | ${value.p95} | ${value.min} | ${value.max} |`),
     `| POST round trip | ${accept.n} | ${accept.p50} | ${accept.p95} | ${accept.min} | ${accept.max} |`].join('\n');
-  writeFileSync(path.join(out, 'README.md'), `# Perceived latency of local paths (real browser)\n\nMeasured ${results.at}, ${ROUNDS} rounds × ${CASES.length} requests against the isolated e2e fixture.\n\n${table}\n\n${results.proposedBar}\n`);
+  writeFileSync(path.join(out, 'README.md'), `# Perceived latency of local paths (real browser)\n\nMeasured ${results.at}, ${ROUNDS} rounds, ${samples.length} requests against the isolated e2e fixture.\n\n${table}\n\n${results.proposedBar}\n`);
   console.log(table);
-  expect(samples.length).toBe(ROUNDS * CASES.length);
+  expect(samples.length).toBeGreaterThanOrEqual(ROUNDS * 3);
 });
