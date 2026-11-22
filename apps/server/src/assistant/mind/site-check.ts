@@ -6,6 +6,7 @@ import { missingText, replyCopy, requiresSourceDate, showBareValue, siteQuoteTex
 import type { Claim, Evidence, Frame, MindDeps, MindReply, SiteObservation } from './contract.js';
 import { declaredDate, extractQuote, isPageInstruction, matchMention, topicScore } from './extract.js';
 import { matchText, stripCourtesyTail } from './normalize.js';
+import { siteName } from '../activity.js';
 
 // مقترحات الخطة، غير مقيسة قبل اختبار المسارات الكاملة.
 const READ_LIMIT_MS = 8_000;
@@ -273,6 +274,7 @@ export async function checkSite(frame: Frame, deps: MindDeps, signal: AbortSigna
   const address = frame.urls[0];
   if (!address || frame.personal) return { links: [] };
   const deadline = Math.min(performance.now() + SITE_LIMIT_MS, options.deadline ?? Infinity);
+  await deps.step(`قراءة ${siteName(address)}`);
   let result = await readSite(address, deps, signal, deadline);
   if (frame.intent === 'site_question' && result.page?.status === 404) {
     const recovered = await recoverMovedPage(result.page, frame, deps, signal, deadline);
@@ -284,8 +286,9 @@ export async function checkSite(frame: Frame, deps: MindDeps, signal: AbortSigna
   if (!page) return { address, result, links: [] };
   const details = inspectSite(page);
   const eligible = frame.intent === 'site_check' && isSuccess(page.status) && !result.failure;
-  const links = eligible && wantsLinkSample(frame)
-    ? await Promise.all(details.links.slice(0, MAX_INTERNAL_LINKS).map(link => readSite(link.url, deps, signal, deadline, true))) : [];
+  const sample = eligible && wantsLinkSample(frame) ? details.links.slice(0, MAX_INTERNAL_LINKS) : [];
+  if (sample.length) await deps.step(`قراءة ${sample.length} من صفحات ${siteName(address)}`);
+  const links = await Promise.all(sample.map(link => readSite(link.url, deps, signal, deadline, true)));
   const contentHash = page.html || page.text ? createHash('sha256').update(page.html || page.text).digest('hex') : undefined;
   let prior: SiteCheck['prior'];
   if (eligible && contentHash && deps.siteSnapshot && performance.now() < deadline) {

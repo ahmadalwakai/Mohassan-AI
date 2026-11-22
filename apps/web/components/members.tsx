@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Button, Spinner } from "@chakra-ui/react";
 import { ArrowRight, Check, Copy, LogOut, MessageCircle, UserPlus } from "lucide-react";
 import dynamic from "next/dynamic";
@@ -25,46 +25,106 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
 const message = (caught: unknown) => caught instanceof Error ? caught.message : "تعذر الاتصال بالخدمة.";
 const day = (value: string) => new Intl.DateTimeFormat("ar", { day: "numeric", month: "short" }).format(new Date(value));
 
+type InviteFailure = Error & { status?: number; retryAfterMs?: number };
+/** Only the invitation flow needs abortable requests and the auth retry metadata. */
+async function inviteRequest<T>(path: string, body: unknown | undefined, signal: AbortSignal): Promise<T> {
+  const response = await fetch(path, { method: body === undefined ? "GET" : "POST", cache: "no-store", credentials: "same-origin", signal,
+    headers: { "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const parsed = await response.json().catch(() => null);
+  if (!response.ok) {
+    const retry = response.headers.get("retry-after") ?? response.headers.get("x-retry-after");
+    const numeric = retry && /^\d+(?:\.\d+)?$/u.test(retry.trim()) ? Number(retry) * 1000 : NaN;
+    const dated = retry ? Date.parse(retry) - Date.now() : NaN;
+    const retryAfterMs = Number.isFinite(numeric) ? numeric : Number.isFinite(dated) ? Math.max(0, dated) : 1000;
+    throw Object.assign(new Error(parsed?.error?.message ?? parsed?.message ?? "تعذر إتمام الطلب. حاول مجددًا."), { status: response.status, retryAfterMs });
+  }
+  return parsed as T;
+}
+
+function waitForInviteRetry(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((done, reject) => {
+    if (signal.aborted) { reject(signal.reason); return; }
+    const abort = () => { clearTimeout(timer); signal.removeEventListener("abort", abort); reject(signal.reason); };
+    const timer = setTimeout(() => { signal.removeEventListener("abort", abort); done(); }, milliseconds);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
 /** Opened from an invite link. The token lives in the URL fragment and is sent only in a request body. */
 export function InviteScreen({ token, onDone, onCancel }: { token: string; onDone: (session: Session) => void; onCancel: () => void }) {
   const [invite, setInvite] = useState<{ name: string; email: string } | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "invalid">("loading");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [accepted, setAccepted] = useState(false);
+  const [retryUntil, setRetryUntil] = useState(0);
+  const flow = useRef<{ token: string; controller: AbortController; accepted: boolean; submitting: boolean } | null>(null);
   useEffect(() => {
-    let active = true;
-    api<{ name: string; email: string }>("/api/invites/inspect", { token })
-      .then(value => { if (active) { setInvite(value); setState("ready"); } })
-      .catch(caught => { if (active) { setError(message(caught)); setState("invalid"); } });
-    return () => { active = false; };
+    const current = { token, controller: new AbortController(), accepted: false, submitting: false };
+    flow.current = current;
+    setState("loading"); setAccepted(false); setRetryUntil(0); setBusy(false); setError("");
+    inviteRequest<{ name: string; email: string }>("/api/invites/inspect", { token }, current.controller.signal)
+      .then(value => { if (!current.controller.signal.aborted) { setInvite(value); setState("ready"); } })
+      .catch(caught => { if (!current.controller.signal.aborted) { setError(message(caught)); setState("invalid"); } });
+    return () => { current.controller.abort(); if (flow.current === current) flow.current = null; };
   }, [token]);
+  useEffect(() => {
+    if (!retryUntil) return;
+    const timer = setTimeout(() => setRetryUntil(current => current <= Date.now() ? 0 : current), Math.min(Math.max(0, retryUntil - Date.now()), 2_147_483_647));
+    return () => clearTimeout(timer);
+  }, [retryUntil]);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy || !invite) return;
+    const current = flow.current;
+    if (!current || current.token !== token || current.submitting || current.controller.signal.aborted || retryUntil > Date.now() || !invite) return;
     const values = new FormData(event.currentTarget);
     const password = String(values.get("password") ?? ""), confirm = String(values.get("confirm") ?? "");
-    if (password !== confirm) { setError("كلمتا المرور غير متطابقتين."); return; }
+    if (!current.accepted && password !== confirm) { setError("كلمتا المرور غير متطابقتين."); return; }
+    current.submitting = true;
     setBusy(true); setError("");
     try {
-      await api("/api/invites/accept", { token, name: String(values.get("name") ?? ""), password });
-      await api("/api/auth/sign-in/email", { email: invite.email, password });
-      const session = await api<Session | null>("/api/auth/get-session");
-      if (!session?.user) throw new Error("أُنشئ حسابك. سجّل الدخول ببريدك وكلمة المرور.");
-      onDone(session);
-    } catch (caught) { setError(message(caught)); } finally { setBusy(false); }
+      if (!current.accepted) {
+        await inviteRequest("/api/invites/accept", { token, name: String(values.get("name") ?? ""), password }, current.controller.signal);
+        // A successful acceptance consumes the token. Every later attempt is
+        // sign-in only, including after a transient auth/network failure.
+        current.accepted = true;
+        if (!current.controller.signal.aborted) setAccepted(true);
+      }
+      for (let attempt = 0; ; attempt++) {
+        try { await inviteRequest("/api/auth/sign-in/email", { email: invite.email, password }, current.controller.signal); break; }
+        catch (caught) {
+          const failure = caught as InviteFailure;
+          if (current.controller.signal.aborted) throw caught;
+          if (failure.status !== 429) throw caught;
+          const delay = Math.max(0, failure.retryAfterMs ?? 1000);
+          if (attempt >= 2 || delay > 30_000) {
+            setRetryUntil(Date.now() + delay);
+            throw new Error("أُنشئ حسابك. انتظر انتهاء مهلة تسجيل الدخول، ثم حاول تسجيل الدخول مجددًا.");
+          }
+          setError("أُنشئ حسابك. ننتظر مهلة تسجيل الدخول ثم نعيد المحاولة تلقائيًا.");
+          await waitForInviteRetry(delay, current.controller.signal);
+        }
+      }
+      const session = await inviteRequest<Session | null>("/api/auth/get-session", undefined, current.controller.signal);
+      if (!session?.user || session.user.email.toLowerCase() !== invite.email.toLowerCase()) throw new Error("أُنشئ حسابك. سجّل الدخول ببريدك وكلمة المرور.");
+      if (!current.controller.signal.aborted && flow.current === current) onDone(session);
+    } catch (caught) {
+      if (!current.controller.signal.aborted && flow.current === current) setError(current.accepted && !(caught instanceof Error && caught.message.startsWith("أُنشئ حسابك"))
+        ? `أُنشئ حسابك. تعذر تسجيل الدخول الآن: ${message(caught)}` : message(caught));
+    } finally { current.submitting = false; if (!current.controller.signal.aborted && flow.current === current) setBusy(false); }
   }
   return <main className="auth-shell"><section className="auth-form-panel"><div className="auth-form-wrap">
     <h2>انضم إلى موحسن</h2>
     {state === "loading" ? <Spinner size="md" /> : null}
     {state === "invalid" ? <><p className="inline-error" role="alert">{error}</p><Button className={styles.secondary} onClick={onCancel}>الذهاب لتسجيل الدخول</Button></> : null}
     {state === "ready" && invite ? <>
-      <p className="muted">أنشئ كلمة مرورك لحساب <bdi dir="ltr">{invite.email}</bdi>.</p>
+      <p className="muted">{accepted ? "أُنشئ حسابك. أكمل تسجيل الدخول بعنوان" : "أنشئ كلمة مرورك لحساب"} <bdi dir="ltr">{invite.email}</bdi>.</p>
       <form onSubmit={submit} className="stack-form">
-        <label>الاسم<input name="name" autoComplete="name" required minLength={2} maxLength={80} defaultValue={invite.name} /></label>
-        <label>كلمة المرور<input name="password" type="password" dir="ltr" autoComplete="new-password" required minLength={12} maxLength={128} placeholder="12 حرفًا على الأقل" /></label>
-        <label>تأكيد كلمة المرور<input name="confirm" type="password" dir="ltr" autoComplete="new-password" required minLength={12} maxLength={128} /></label>
+        <label>الاسم<input name="name" autoComplete="name" required minLength={2} maxLength={80} defaultValue={invite.name} disabled={busy || accepted} /></label>
+        <label>كلمة المرور<input name="password" type="password" dir="ltr" autoComplete={accepted ? "current-password" : "new-password"} required minLength={12} maxLength={128} placeholder="12 حرفًا على الأقل" disabled={busy} /></label>
+        {!accepted ? <label>تأكيد كلمة المرور<input name="confirm" type="password" dir="ltr" autoComplete="new-password" required minLength={12} maxLength={128} disabled={busy} /></label> : null}
         {error ? <p className="inline-error" role="alert">{error}</p> : null}
-        <Button type="submit" className="primary-button" disabled={busy}>{busy ? <Spinner size="sm" /> : <Check size={16} />}إنشاء الحساب</Button>
+        <Button type="submit" className="primary-button" disabled={busy || retryUntil > Date.now()}>{busy ? <Spinner size="sm" /> : <Check size={16} />}{accepted ? "تسجيل الدخول" : "إنشاء الحساب"}</Button>
       </form>
     </> : null}
   </div></section></main>;

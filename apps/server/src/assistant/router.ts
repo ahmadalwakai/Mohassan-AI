@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { appendFile, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
+import { z } from 'zod';
 import { directRoute } from './brain.js';
 import { notWebReason, parseHands, tidy, webQuestion } from './hands.js';
 
@@ -13,6 +14,31 @@ import { notWebReason, parseHands, tidy, webQuestion } from './hands.js';
 export const ROUTES = ['web_search', 'browser_command', 'news', 'memory', 'reminder', 'compute', 'ads', 'pc', 'writing', 'chat', 'reply',
   'image', 'media', 'unsupported'] as const;
 export type Route = typeof ROUTES[number];
+const MAX_ROUTER_TEXT = 8000;
+const MAX_MODEL_BYTES = 128 * 1024 * 1024;
+const RouterHeader = z.object({
+  kind: z.literal('b0'), buckets: z.number().int().min(1).max(1 << 20), dim: z.number().int().min(1).max(512),
+  routes: z.array(z.enum(ROUTES)).length(ROUTES.length).refine(routes => routes.every((route, index) => route === ROUTES[index])),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
+/** Read a bounded immutable export; a growing or oversized file is rejected. */
+async function readRouterBytes(file: string, limit: number): Promise<Buffer> {
+  const handle = await open(file, 'r');
+  try {
+    const size = (await handle.stat()).size;
+    if (!Number.isSafeInteger(size) || size < 0 || size > limit) throw new Error('ROUTER_MODEL_SIZE_MISMATCH');
+    const buffer = Buffer.alloc(size + 1);
+    let at = 0;
+    while (at < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, at, buffer.length - at, at);
+      if (!bytesRead) break;
+      at += bytesRead;
+    }
+    if (at !== size) throw new Error('ROUTER_MODEL_SIZE_MISMATCH');
+    return buffer.subarray(0, at);
+  } finally { await handle.close(); }
+}
 
 /** The same folding as train.py `fold`: marks and tatweel removed, letter forms unified, digits Latin, lower case. */
 export function foldForRouter(text: string): string {
@@ -27,6 +53,8 @@ const stable = (text: string) => parseInt(createHash('sha256').update(text, 'utf
 
 /** The bucket ids train.py `ngram_ids` produces: character 2-, 3- and 4-grams of «^text$», then whole words. */
 export function ngramIds(text: string, buckets: number): number[] {
+  if (typeof text !== 'string' || text.length > MAX_ROUTER_TEXT) throw new Error('ROUTER_REQUEST_TOO_LARGE');
+  if (!Number.isSafeInteger(buckets) || buckets < 1 || buckets > 1 << 20) throw new Error('ROUTER_MODEL_HEADER_INVALID');
   const chars = Array.from(`^${foldForRouter(text)}$`);
   const ids: number[] = [];
   for (const size of [2, 3, 4]) for (let at = 0; at + size <= chars.length; at++) ids.push(stable(`c${size}:${chars.slice(at, at + size).join('')}`) % buckets);
@@ -50,6 +78,7 @@ export function routerLogits(model: RouterModel, text: string): number[] {
 
 export function routeWithModel(model: RouterModel, text: string): { route: string; confidence: number } {
   const logits = routerLogits(model, text), top = Math.max(...logits);
+  if (!logits.length || !logits.every(Number.isFinite)) throw new Error('ROUTER_MODEL_NONFINITE');
   const exps = logits.map(value => Math.exp(value - top)), total = exps.reduce((a, b) => a + b, 0);
   const best = logits.indexOf(top);
   return { route: model.routes[best], confidence: exps[best] / total };
@@ -57,12 +86,18 @@ export function routeWithModel(model: RouterModel, text: string): { route: strin
 
 /** Loads router-b0.bin and checks it against the sha256 in its JSON header. */
 export async function loadRouterModel(dir: string): Promise<RouterModel> {
-  const header = JSON.parse(await readFile(path.join(dir, 'router-b0.json'), 'utf8')) as { buckets: number; dim: number; routes: string[]; sha256: string };
-  const bytes = await readFile(path.join(dir, 'router-b0.bin'));
+  const metadata = await readRouterBytes(path.join(dir, 'router-b0.json'), 16 * 1024);
+  let header: z.infer<typeof RouterHeader>;
+  try { header = RouterHeader.parse(JSON.parse(metadata.toString('utf8'))); }
+  catch { throw new Error('ROUTER_MODEL_HEADER_INVALID'); }
+  const embedded = header.buckets * header.dim, weights = header.routes.length * header.dim;
+  const expectedBytes = (embedded + weights + header.routes.length) * Float32Array.BYTES_PER_ELEMENT;
+  if (!Number.isSafeInteger(expectedBytes) || expectedBytes > MAX_MODEL_BYTES) throw new Error('ROUTER_MODEL_SIZE_MISMATCH');
+  const bytes = await readRouterBytes(path.join(dir, 'router-b0.bin'), expectedBytes);
+  if (bytes.byteLength !== expectedBytes) throw new Error('ROUTER_MODEL_SIZE_MISMATCH');
   if (createHash('sha256').update(bytes).digest('hex') !== header.sha256) throw new Error('ROUTER_MODEL_HASH_MISMATCH');
   const floats = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
-  const embedded = header.buckets * header.dim, weights = header.routes.length * header.dim;
-  if (floats.length !== embedded + weights + header.routes.length) throw new Error('ROUTER_MODEL_SIZE_MISMATCH');
+  if (!floats.every(Number.isFinite)) throw new Error('ROUTER_MODEL_NONFINITE');
   return { buckets: header.buckets, dim: header.dim, routes: header.routes,
     embedding: floats.subarray(0, embedded), weight: floats.subarray(embedded, embedded + weights), bias: floats.subarray(embedded + weights) };
 }

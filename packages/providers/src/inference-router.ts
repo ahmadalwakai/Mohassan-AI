@@ -1,5 +1,5 @@
 import { ProviderError, type ModelProvider, type ModelRequest, type ModelResult } from './index.js';
-import { MAX_AUTOMATIC_RETRY_DELAY_MS, validatedRetryAfterMs, waitForRetryAfter } from './retry.js';
+import { classifyProviderFallback, MAX_AUTOMATIC_RETRY_DELAY_MS, validatedRetryAfterMs, waitForRetryAfter } from './retry.js';
 import { UsageMonitor } from './usage-monitor.js';
 import type { StreamEvent } from './freellmapi.js';
 
@@ -123,6 +123,98 @@ export class InferenceRouter {
     });
   }
 
+  /** A fresh generate() must not turn a deferred retry into an unapproved switch. */
+  allowsDeferredRetry(request: ModelRequest, requires: RouteRequirements = {}): boolean {
+    if (request.signal?.aborted) return false;
+    const possible = this.candidates.filter(candidate => {
+      const capabilities = candidate.capabilities ?? {};
+      return !(this.policy.freeOnly && candidate.cost !== 'free'
+        || this.isPaidFallback(candidate) && !this.policy.allowPaidFallback
+        || request.structured && capabilities.structured === false
+        || request.image && capabilities.vision === false
+        || requires.tools && capabilities.tools !== true);
+    });
+    // Cool-downs and token windows can expire while waiting. They cannot prove
+    // that restarting the queue will still pick the same configured candidate.
+    return possible.length === 1 || possible.length > 1 && this.policy.automaticFallback;
+  }
+
+  /**
+   * Host-owned delay for a new request when every usable route is temporarily
+   * blocked. This does not certify the outcome or usage of an earlier request.
+   */
+  retryCooldown(request: ModelRequest, requires: RouteRequirements = {}): { reason: 'RATE_LIMITED' | 'UPSTREAM_ERROR'; retryAfterMs: number; noRequestSent: true } | null {
+    if (request.signal?.aborted) return null;
+    const now = this.now();
+    let reason: 'RATE_LIMITED' | 'UPSTREAM_ERROR' | undefined;
+    let earliest = Infinity;
+    for (const candidate of this.candidates) {
+      const capabilities = candidate.capabilities ?? {};
+      if (this.policy.freeOnly && candidate.cost !== 'free'
+        || this.isPaidFallback(candidate) && !this.policy.allowPaidFallback
+        || request.structured && capabilities.structured === false
+        || request.image && capabilities.vision === false
+        || requires.tools && capabilities.tools !== true) continue;
+      // Check this even while blocked: eligibility() reports the cool-down first.
+      const window = requires.estimatedTokens ? this.monitor.tokenWindow(candidate.providerId, candidate.model) : null;
+      if (window && window.remaining < requires.estimatedTokens!) continue;
+      const until = this.monitor.blockedUntil(candidate.key);
+      const cause = this.monitor.blockedBy(candidate.key);
+      const delay = validatedRetryAfterMs(until - now);
+      if (delay === undefined || delay === 0 || (cause !== 'RATE_LIMITED' && cause !== 'UPSTREAM_ERROR')
+        || reason !== undefined && cause !== reason) return null;
+      reason = cause;
+      earliest = Math.min(earliest, delay);
+    }
+    return reason === undefined ? null : { reason, retryAfterMs: earliest, noRequestSent: true };
+  }
+
+  /**
+   * A request-scoped free retry can leave a rejected model behind without
+   * forgetting its failure or redispatching it after the global block expires.
+   * The caller retains this child for the remainder of the same decision only.
+   */
+  recoveryPlan(error: unknown, request: ModelRequest, requires: RouteRequirements = {}): { router: InferenceRouter; excludedCause: 'REQUEST_REJECTED' } | null {
+    if (!this.policy.automaticFallback || request.signal?.aborted || !(error instanceof ProviderError)
+      || error.code !== 'NO_ELIGIBLE_PROVIDER' || !(error.cause instanceof ProviderError)
+      || error.failedGeneration !== undefined || error.retryAfterInvalid === true
+      || error.retryAfterMs !== undefined && validatedRetryAfterMs(error.retryAfterMs) === undefined
+      || error.usage !== undefined && !zeroUsage(error)) return null;
+    const rejection = error.cause;
+    const fallback = classifyProviderFallback(rejection);
+    // A long, valid Retry-After still proves a zero-usage rejection. The host
+    // decision budget controls deferred waiting; immediate fallback keeps 60s.
+    if (rejection.failedGeneration !== undefined
+      || !fallback.allowed && fallback.reason !== 'retry_budget_exceeded') return null;
+    const reason = rejection.code;
+    if ((reason !== 'RATE_LIMITED' && reason !== 'UPSTREAM_ERROR') || !Array.isArray(error.causes)
+      || error.causes.length > 8 || !error.causes.includes('REQUEST_REJECTED') || !error.causes.includes(reason)
+      || !error.causes.every(cause => cause === 'REQUEST_REJECTED' || cause === reason)) return null;
+    const retry: RouteCandidate[] = [];
+    let excluded = 0;
+    for (const candidate of this.candidates) {
+      const capabilities = candidate.capabilities ?? {};
+      if (this.policy.freeOnly && candidate.cost !== 'free'
+        || this.isPaidFallback(candidate) && !this.policy.allowPaidFallback
+        || request.structured && capabilities.structured === false
+        || request.image && capabilities.vision === false
+        || requires.tools && capabilities.tools !== true) continue;
+      // A child containing only free candidates preserves paid-fallback policy
+      // even though the original free-to-paid ordering is no longer present.
+      if (candidate.cost !== 'free' || this.monitor.blockedUntil(candidate.key) <= this.now()) return null;
+      const cause = this.monitor.blockedBy(candidate.key);
+      if (cause === 'REQUEST_REJECTED') excluded += 1;
+      else if (cause === reason) {
+        const window = requires.estimatedTokens ? this.monitor.tokenWindow(candidate.providerId, candidate.model) : null;
+        if (window && window.remaining < requires.estimatedTokens!) return null;
+        retry.push(candidate);
+      }
+      else return null;
+    }
+    if (!excluded || !retry.length) return null;
+    return { router: new InferenceRouter(retry, this.policy, this.monitor, this.deps), excludedCause: 'REQUEST_REJECTED' };
+  }
+
   generate<T>(request: ModelRequest, options: RouteOptions<T> = {}): Promise<RoutedResult> {
     const key = request.idempotencyKey;
     const inflight = this.deps.inflight;
@@ -225,6 +317,9 @@ export class InferenceRouter {
               await waitForRetryAfter(wait, signal);
               continue;
             }
+          }
+          if (kind === 'transient' && provider!.httpStatus === 503 && provider!.retryAfterInvalid !== true) {
+            this.monitor.block(candidate.key, retryAfter ?? 30_000, 'UPSTREAM_ERROR');
           }
           attempts.push({ candidate: candidate.key, outcome: 'failure', code: provider?.code });
           if (kind === 'candidate') this.monitor.block(candidate.key, CANDIDATE_COOLDOWN_MS[provider!.code] ?? 60_000, provider!.code);

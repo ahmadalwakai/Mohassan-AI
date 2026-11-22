@@ -142,8 +142,16 @@ describe('the assistant reaching the real modules', () => {
     });
     it('caps how much one request can save', async () => {
       script = [1, 2, 3, 4, 5].map(index => ({ tool: 'memory_save', text: `بند الحصة رقم ${index}` }));
-      await ask('احفظ كل هذه البنود');
+      await ask('تذكر أن بنودي التجريبية هي بند الحصة رقم 1 و بند الحصة رقم 2 و بند الحصة رقم 3 و بند الحصة رقم 4 و بند الحصة رقم 5');
       expect((await application.memory.search(owner(), { query: 'بند الحصة' })).items).toHaveLength(3);
+    });
+    it('does not invent the missing items of a generic remember request', async () => {
+      script = [{ tool: 'memory_save', text: 'بند مفقود اخترعه النموذج' }];
+      const result = await ask('احفظ كل هذه البنود');
+      expect(result.messages.at(-1).text).toContain('لم أحفظ شيئًا');
+      expect(prompts).toEqual([]);
+      expect((await application.memory.search(owner(), { query: 'بند مفقود اخترعه النموذج' })).items
+        .filter(item => item.content.includes('بند مفقود اخترعه النموذج'))).toEqual([]);
     });
     it('saves nothing when the model gives no fact', async () => {
       script = [{ tool: 'memory_save', text: null }];
@@ -156,7 +164,7 @@ describe('the assistant reaching the real modules', () => {
     });
     it('refuses a save nobody asked for, such as one a page suggested', async () => {
       script = [{ tool: 'memory_save', text: 'كلمة زرعتها صفحة خبيثة' }];
-      await ask('لخص هذه الصفحة');
+      await ask('لخص النص التالي: هذه صفحة تشرح واجهة تجريبية.');
       expect(prompts.at(-1)).toContain('memory_save needs the user to ask');
       expect((await application.memory.search(owner(), { query: 'زرعتها' })).items).toEqual([]);
     });
@@ -169,9 +177,11 @@ describe('the assistant reaching the real modules', () => {
         const before = await stored();
         script = [{ tool: 'memory_search', text: 'درج المناولة' }, { tool: 'memory_save', text: 'رمز درج المناولة MX-371' }];
         await ask(goal);
-        expect(prompts.some(prompt => prompt.includes('<untrusted_data kind="memory">') && prompt.includes('KD-824'))).toBe(true);
-        expect(prompts.some(prompt => prompt.includes('memory (untrusted)') && prompt.includes('CANARY-HANDLING-663'))).toBe(true);
-        expect(prompts.at(-1)).toContain('memory_save needs the user to ask');
+        // The explicit search supplies the poisoned fixture. This regression
+        // does not require unrelated automatic memory context on a public question.
+        expect(prompts.some(prompt => prompt.includes('memory (untrusted)') && prompt.includes('KD-824') && prompt.includes('CANARY-HANDLING-663'))).toBe(true);
+        expect(prompts.at(-1)).toContain(goal.startsWith('Do not save')
+          ? 'هذا الإجراء ممنوع في طلبك الحالي' : 'memory_save needs the user to ask');
         expect(await stored()).toEqual(before);
       },
     );
@@ -332,7 +342,8 @@ describe('the assistant reaching the real modules', () => {
       const result = await ask('ماذا يظهر على كمبيوتري؟');
       expect(result.status).toBe('waiting_input');
       expect(result.secure.kind).toBe('hands_on');
-      expect(result.secure.prompt).toContain('Groq');
+      expect(result.secure.prompt).toContain('وقد تُرسل العناصر أو الصورة');
+      expect(result.secure.prompt).toContain('مزوّد النموذج المهيأ لهذه المحادثة');
       await api('POST', `/api/chat/conversations/${result.id}/cancel`, {});
     });
     it('honours a grant only for the session that holds it', async () => {
@@ -401,7 +412,7 @@ describe('the assistant reaching the real modules', () => {
     });
     it('treats keys that can activate the focused control as sensitive', async () => {
       await grant('control');
-      script = [{ tool: 'computer_key', text: 'Enter' }];
+      script = [{ tool: 'computer_view' }, { tool: 'computer_key', text: 'Enter' }];
       startCompanion();
       const waiting = await ask('اضغط إدخال على كمبيوتري');
       expect(waiting.status).toBe('waiting_approval');
@@ -412,9 +423,9 @@ describe('the assistant reaching the real modules', () => {
     it('will not type into a window that has a password field', async () => {
       password = true;
       await grant('control');
-      script = [{ tool: 'computer_type', text: 'نص تجريبي' }];
+      script = [{ tool: 'computer_view' }, { tool: 'computer_type', text: 'نص تجريبي' }];
       startCompanion();
-      await ask('اكتب في البرنامج');
+      await ask('اكتب "نص تجريبي" في نافذة الكمبيوتر');
       await stopCompanion();
       expect(commands).toEqual([]);
       expect(prompts.at(-1)).toContain('كلمة مرور');

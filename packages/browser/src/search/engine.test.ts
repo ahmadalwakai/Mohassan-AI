@@ -37,7 +37,7 @@ describe('documented deterministic search',()=>{
     expect(ranked.slice(0,2).map(row=>row.url).sort()).toEqual(['https://arxiv.org/abs/matching','https://doi.org/10.1/matching']);
     expect(ranked.at(-1)?.url).toBe(encyclopedia.url);
     expect(rankResults(query,[...rows].reverse(),5)).toEqual(ranked);
-    expect(rankResults(compileQuery('antibiotic resistance'),rows,5)[0]?.url).toBe(encyclopedia.url);
+    expect(rankResults(compileQuery('antibiotic resistance'),rows,5).at(-1)?.url).toBe(encyclopedia.url);
     expect(rankResults(compileQuery('"antibiotic resistance" research paper'),[{provider:'Crossref',hits:[hit('Antibiotic reduced resistance','https://doi.org/10.1/wrong-phrase','Research paper study')]}],5)).toEqual([]);
   });
   it('applies academic purpose ordering to Arabic subjects without accepting generic study terms',()=>{

@@ -1,7 +1,66 @@
 import { spawnSync } from 'node:child_process';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { lpacRegistryReadCapability, snapshotHash, WindowsAppContainerSandbox, type SandboxFile, type SandboxRunInput, type SandboxTestResult } from './index.js';
+
+type PowerShellIdentity = { kind: 'packaged' | 'unpackaged'; path: string; packageFullName: string | null; initialStatus: number }
+  | { kind: 'unavailable' | 'error'; detail: string };
+
+/** Directory names do not establish process identity: https://learn.microsoft.com/en-us/windows/win32/api/appmodel/nf-appmodel-getcurrentpackagefullname */
+function discoverPowerShellIdentity(): PowerShellIdentity {
+  if (process.platform !== 'win32') return { kind: 'unavailable', detail: 'Optional PowerShell discovery requires Windows.' };
+  const resolved = spawnSync('pwsh.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '(Get-Process -Id $PID).Path'],
+    { encoding: 'utf8', windowsHide: true, timeout: 12_000, maxBuffer: 64 * 1024 });
+  if (resolved.error && 'code' in resolved.error && resolved.error.code === 'ENOENT') return { kind: 'unavailable', detail: 'Optional pwsh.exe is not installed.' };
+  const executable = resolved.stdout?.trim();
+  if (resolved.error || resolved.status !== 0 || !executable || /[\r\n\u0000]/u.test(executable)) {
+    return { kind: 'error', detail: `PowerShell path discovery failed: ${resolved.error?.message ?? `exit=${resolved.status}; ${resolved.stderr?.trim().slice(0, 500)}`}` };
+  }
+  const script = `
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+Add-Type -WarningAction Stop -TypeDefinition @'
+using System.Runtime.InteropServices;
+using System.Text;
+public static class MohassanSandboxHostIdentityProbe {
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode)]
+  public static extern int GetCurrentPackageFullName(ref uint length, StringBuilder fullName);
+}
+'@
+[uint32]$length = 0
+$initialStatus = [MohassanSandboxHostIdentityProbe]::GetCurrentPackageFullName([ref]$length, $null)
+$status = $initialStatus
+$packageFullName = $null
+if ($initialStatus -eq 122) {
+  if ($length -lt 1 -or $length -gt 32768) { throw 'Invalid package identity buffer size.' }
+  $buffer = [System.Text.StringBuilder]::new([int]$length)
+  $status = [MohassanSandboxHostIdentityProbe]::GetCurrentPackageFullName([ref]$length, $buffer)
+  $packageFullName = $buffer.ToString()
+}
+@{ path=(Get-Process -Id $PID).Path; initialStatus=$initialStatus; status=$status; packageFullName=$packageFullName } | ConvertTo-Json -Compress
+`;
+  // An AppExecutionAlias may activate a different package context. Query through
+  // the exact resolved image and sanitized environment used by sandbox.execute.
+  const probe = spawnSync(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
+    { encoding: 'utf8', windowsHide: true, timeout: 12_000, maxBuffer: 64 * 1024,
+      env: { SystemRoot: 'C:\\Windows', WINDIR: 'C:\\Windows', TEMP: tmpdir(), TMP: tmpdir(), PATH: 'C:\\Windows\\System32' } });
+  if (probe.error || probe.status !== 0) return { kind: 'error', detail: `PowerShell package identity probe failed: ${probe.error?.message ?? `exit=${probe.status}; ${probe.stderr?.trim().slice(0, 500)}`}` };
+  try {
+    const identity = JSON.parse(probe.stdout.trim());
+    if (!identity || typeof identity.path !== 'string' || !identity.path.trim()) throw new Error('Missing executable identity.');
+    // APPMODEL_ERROR_NO_PACKAGE=15700 is the native runner's exact prerequisite.
+    if (identity.initialStatus === 15700 && identity.status === 15700 && identity.packageFullName === null) {
+      return { kind: 'unpackaged', path: identity.path, packageFullName: null, initialStatus: 15700 };
+    }
+    // A zero-buffer query reports ERROR_INSUFFICIENT_BUFFER=122 for a packaged
+    // process, followed by ERROR_SUCCESS=0 and a nonempty full package name.
+    if (identity.initialStatus === 122 && identity.status === 0 && typeof identity.packageFullName === 'string' && identity.packageFullName.trim()) {
+      return { kind: 'packaged', path: identity.path, packageFullName: identity.packageFullName, initialStatus: 122 };
+    }
+    return { kind: 'error', detail: `Unexpected native package identity result: ${probe.stdout.trim().slice(0, 500)}` };
+  } catch (error) { return { kind: 'error', detail: `Invalid package identity evidence: ${error instanceof Error ? error.message : String(error)}` }; }
+}
 
 describe('sandbox input boundary', () => {
   it.each(['../outside.mjs', '.git/config', '.env', 'src/.env.local', 'C:/outside.mjs', 'src\\outside.mjs', '.ENV.LOCAL', 'src/NUL.mjs', 'src/trailing.'])('rejects disallowed path %s before creating any process', async (path) => {
@@ -94,14 +153,43 @@ describe.skipIf(process.platform !== 'win32')('real Windows AppContainer + Job b
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('نتيجة عربية');
   });
-  const pwshPath = spawnSync('pwsh.exe', ['-NoProfile', '-Command', '(Get-Process -Id $PID).Path'], { encoding: 'utf8', windowsHide: true }).stdout?.trim();
-  const packagedPwsh = pwshPath?.includes('\\WindowsApps\\') ? pwshPath : undefined;
+  const powerShellIdentity = discoverPowerShellIdentity();
+  it.skipIf(powerShellIdentity.kind === 'unavailable')('discovers optional PowerShell package identity using the native API', () => {
+    expect(powerShellIdentity.kind, 'detail' in powerShellIdentity ? powerShellIdentity.detail : undefined).not.toBe('error');
+    if (powerShellIdentity.kind === 'packaged') {
+      expect(powerShellIdentity.initialStatus).toBe(122);
+      expect(powerShellIdentity.packageFullName).toBeTruthy();
+    } else if (powerShellIdentity.kind === 'unpackaged') {
+      expect(powerShellIdentity.initialStatus).toBe(15700);
+      expect(powerShellIdentity.packageFullName).toBeNull();
+    }
+  });
+  const packagedPwsh = powerShellIdentity.kind === 'packaged' ? powerShellIdentity.path : undefined;
   it.skipIf(!packagedPwsh)('refuses a packaged PowerShell host instead of running in its child AppContainer', async () => {
     const refused = new WindowsAppContainerSandbox({ powerShellPath: packagedPwsh });
     // This message comes after the host started, so the refusal is the runner's own package check.
     await expect((refused as unknown as { execute(input: unknown): Promise<unknown> }).execute({ files: [{ path: 'a.test.mjs', content: "import test from 'node:test';test('x',()=>{});" }], testFiles: ['a.test.mjs'], timeoutMs: 4000 })).rejects.toThrow('فشل إثبات عزل العملية');
+    expect((refused as unknown as { lastNativeError?: string }).lastNativeError).toBe('Sandbox host must be unpackaged.');
     expect((await refused.available()).available).toBe(false);
   }, 30_000);
+  const unpackagedWindowsAppsPwsh = powerShellIdentity.kind === 'unpackaged' && /\\WindowsApps\\/iu.test(powerShellIdentity.path) ? powerShellIdentity.path : undefined;
+  it.skipIf(!unpackagedWindowsAppsPwsh)('runs an unpackaged WindowsApps PowerShell host only with verified isolation', async () => {
+    const accepted = new WindowsAppContainerSandbox({ powerShellPath: unpackagedWindowsAppsPwsh });
+    expect((await accepted.available()).available).toBe(true);
+    expect(accepted.probeEvidence).toMatchObject({ isolation: 'appcontainer', isolationVerified: true, network: 'denied', exitCode: 0 });
+    expect(accepted.probeEvidence?.stdout).toContain('MOHASSAN_BOUNDARY_PROVEN');
+    const verdicts = accepted.probeEvidence?.stdout.match(/^BOUNDARY_NETWORK=.+$/gm) ?? [];
+    expect(verdicts.length).toBeGreaterThan(0);
+    expect(verdicts).toHaveLength(accepted.networkProbeEvidence?.length ?? 0);
+    for (const verdict of verdicts) expect(verdict).toMatch(/:(?:EACCES|EPERM|ETIMEDOUT)\s*$/);
+    expect(accepted.networkProbeEvidence?.every(entry => entry.controlBefore && entry.controlAfter && entry.isolatedConnections === 0)).toBe(true);
+    const files = [{ path: 'unpackaged-host.test.mjs', content: "import test from 'node:test';import assert from 'node:assert/strict';test('isolated host',()=>assert.equal(2+3,5));" }];
+    const result = await accepted.run({ files, testFiles: ['unpackaged-host.test.mjs'], timeoutMs: 5000 });
+    expect(result).toMatchObject({ exitCode: 0, timedOut: false, isolation: 'appcontainer', isolationVerified: true, network: 'denied',
+      snapshotHash: snapshotHash(files), nativeControls: { lowPrivilege: false, memoryLimitBytes: 512 * 1024 * 1024,
+        quotaVolumeBytes: 0, uiRestrictionMask: 255, uiRestrictionsVerified: true } });
+    expect(result.stdout).toContain('pass 1');
+  }, 120_000);
   it('stays unavailable when the trusted host cannot start', async () => {
     const missing = new WindowsAppContainerSandbox({ powerShellPath: 'C:\Windows\System32\WindowsPowerShell\v1.0\missing.exe' });
     await expect(missing.run({ files: [{ path: 'a.test.mjs', content: "import test from 'node:test';test('x',()=>{});" }], testFiles: ['a.test.mjs'] })).rejects.toMatchObject({ code: 'SANDBOX_UNAVAILABLE' });

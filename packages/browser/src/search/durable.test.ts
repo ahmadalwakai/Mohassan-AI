@@ -18,6 +18,12 @@ const fixture=(page='Node API supports verified requests.')=>{
 const result=(at:number):SearchOutcome=>({hits:[{title:'Node API',url:'https://example.com/node',snippet:'Node API documentation',providers:['fixture'],score:1,relevance:'lexical'}],fetchedAt:new Date(at).toISOString(),freshness:'fresh',coverage:'specialized_sources',failures:[],limitations:[]});
 
 describe('durable owner search cache',()=>{
+  it('preserves public web coverage and provider provenance across store instances',async()=>{
+    const store=new SqlSearchStore(database.db,()=>initial),key=searchHash('public-web-coverage');
+    const outcome={...result(initial),coverage:'web_sources' as const,hits:result(initial).hits.map(hit=>({...hit,providers:['Bing RSS','DuckDuckGo HTML']}))};
+    await store.put('web-cache-owner',key,0,outcome,60000);
+    expect(await new SqlSearchStore(database.db,()=>initial+1000).get('web-cache-owner',key,0)).toMatchObject({coverage:'web_sources',freshness:'cached',hits:[{providers:['Bing RSS','DuckDuckGo HTML']}]});
+  });
   it('survives a new store instance, isolates owners, preserves fetch time and expires without stale fallback',async()=>{
     let now=initial;const store=new SqlSearchStore(database.db,()=>now),key=searchHash('durable');
     await store.put('cache-owner',key,0,result(now),15000);now+=5000;

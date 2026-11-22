@@ -22,6 +22,10 @@ export const ChatQuestionFieldSchema = z.object({
   suggestions: z.array(ChatSuggestionSchema).max(6),
   /** Several suggestions may be chosen together (places). */
   multiple: z.boolean().optional(),
+  /** Keep line breaks in supplied text such as a letter body. */
+  multiline: z.boolean().optional(),
+  /** User-supplied literal content to review and edit, never an inferred fact. */
+  initialValue: z.string().max(4000).optional(),
   /** Suggestions the brain is confident in, chosen in advance; the owner can change them. */
   selected: z.array(z.number().int().min(0).max(5)).max(6).optional(),
   placeholder: z.string().max(120).optional(),
@@ -80,11 +84,51 @@ export const ChatBrowserSchema = z.object({
   recoveryToken: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).strict();
 
+const ChatBrowserCursorSchema = z.object({
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    action: z.enum(['move', 'click', 'type', 'select', 'scroll', 'press']),
+    phase: z.enum(['moving', 'acting', 'done']),
+    updatedAt: z.iso.datetime(),
+}).strict();
+/** Live host telemetry only: never includes typed text or page-supplied labels. */
+export const ChatBrowserActivitySchema = z.object({
+  sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  cursor: ChatBrowserCursorSchema.nullable(),
+  sessionId: z.uuid().optional(),
+  events: z.array(z.object({
+    sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    cursor: ChatBrowserCursorSchema.nullable(),
+    updatedAt: z.iso.datetime(),
+  }).strict()).max(32).optional(),
+}).strict();
+export type ChatBrowserActivity = z.infer<typeof ChatBrowserActivitySchema>;
+
 export const ChatStepSchema = z.object({
   id: z.uuid(),
   text: z.string(),
   createdAt: z.string(),
 }).strict();
+
+/** The five browser levels of docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md §6.1: 0 none, 1 network only, 2 hidden, 3 in front, 4 forbidden. */
+export const ChatBrowserVisibilityLevelSchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(4)]);
+export type ChatBrowserVisibilityLevel = z.infer<typeof ChatBrowserVisibilityLevelSchema>;
+/** Decided by code and logged with its reason; the UI opens the panel by itself only at level 3. */
+export const ChatBrowserVisibilitySchema = z.object({
+  version: z.literal(1),
+  level: ChatBrowserVisibilityLevelSchema,
+  code: z.string().min(1).max(40),
+  /** Shown to the user, in the request's language. */
+  reason: z.string().max(300),
+  lang: z.enum(['ar', 'en']),
+  decidedAt: z.string(),
+  /** The level the request-time table chose; a run may raise or lower the current level with a logged reason. */
+  requested: ChatBrowserVisibilityLevelSchema,
+  /** False for members: the live panel is never offered to them. */
+  canView: z.boolean(),
+  history: z.array(z.object({ level: ChatBrowserVisibilityLevelSchema, code: z.string().min(1).max(40), at: z.string() }).strict()).max(8),
+}).strict();
+export type ChatBrowserVisibility = z.infer<typeof ChatBrowserVisibilitySchema>;
 
 export const ChatConversationSummarySchema = z.object({
   id: z.uuid(),
@@ -104,6 +148,8 @@ export const ChatConversationSchema = ChatConversationSummarySchema.extend({
   steps: z.array(ChatStepSchema),
   error: z.string().nullable(),
   configured: z.boolean(),
+  /** Absent for conversations recorded before the browser levels existed. */
+  visibility: ChatBrowserVisibilitySchema.nullable().optional(),
   /** Structured events of the latest Google Ads campaign task in this conversation. Absent when there is none. */
   campaign: CampaignEventStreamSchema.nullable().optional(),
 }).strict();
@@ -116,7 +162,20 @@ export type ChatApproval = z.infer<typeof ChatApprovalSchema>;
 export type ChatSecureRequest = z.infer<typeof ChatSecureRequestSchema>;
 
 export const ChatCreateSchema = z.object({ goal: z.string().trim().min(1).max(4000).optional(), browserAccount: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/).nullable().optional() }).strict();
-export const ChatSendSchema = z.object({ text: z.string().trim().min(1).max(4000) }).strict();
+export const ChatFieldAnswerSchema = z.object({
+  fieldId: z.string().regex(/^[a-z]{2,20}$/),
+  value: z.string().min(1).max(4000).refine(value => value.trim().length > 0, { message: 'A field answer cannot be blank.' }),
+}).strict();
+export type ChatFieldAnswer = z.infer<typeof ChatFieldAnswerSchema>;
+export const ChatSendSchema = z.object({
+  text: z.string().trim().max(4000).default(''),
+  questionId: z.uuid().optional(),
+  answers: z.array(ChatFieldAnswerSchema).min(1).max(6).optional(),
+}).strict().refine(input => Boolean(input.text) || Boolean(input.answers?.length), { message: 'A message or field answers are required.' })
+  .refine(input => !input.answers || Boolean(input.questionId)
+  && new Set(input.answers.map(answer => answer.fieldId)).size === input.answers.length
+  && input.answers.reduce((length, answer) => length + answer.value.length, 0) + (input.answers.length > 1 ? input.answers.length * 4 - 1 : 0) <= 4000,
+  { message: 'Field answers require a question ID, distinct fields, and at most 4000 characters.' });
 export const ChatRespondSchema = z.object({
   questionId: z.uuid(),
   optionId: z.string().regex(/^[a-zA-Z0-9_-]{1,40}$/),

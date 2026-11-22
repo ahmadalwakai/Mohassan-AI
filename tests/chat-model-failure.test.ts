@@ -54,4 +54,13 @@ describe('chat model failure naming', () => {
     expect(unknown.message).not.toContain('gsk_');
     expect(failureCauses(none(['RATE_LIMITED'], new ProviderError('RATE_LIMITED', 'x')))).toEqual(['RATE_LIMITED']);
   });
+
+  it('does not describe exhausted quota as a temporary wait or ask for a continuation message', () => {
+    const quota = chatModelFailure(none(['QUOTA_EXHAUSTED', 'RATE_LIMITED']));
+    expect(quota.code).toBe('CHAT_PROVIDER_QUOTA');
+    expect(quota.message).toContain('تجدد الحصة');
+    expect(quota.message).not.toContain('تابع');
+    expect(classifyFailure(quota)).toMatchObject({ retryable: false, strategy: 'stop_and_report' });
+    expect(chatModelFailure(none(['RATE_LIMITED'])).message).not.toMatch(/(?:أرسل|اكتب).*تابع/);
+  });
 });

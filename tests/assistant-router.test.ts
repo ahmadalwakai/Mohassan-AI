@@ -39,6 +39,49 @@ describe('router model in TypeScript', () => {
     await expect(loadRouterModel(await tinyModel('ads', true))).rejects.toThrow('ROUTER_MODEL_HASH_MISMATCH');
   });
 
+  it.each([
+    { buckets: 0 }, { buckets: -1 }, { buckets: 1.5 }, { dim: 0 }, { dim: 100000 },
+    { kind: 'unknown' }, { routes: [...ROUTES].reverse() }, { routes: ROUTES.map(() => 'web_search') },
+  ])('rejects an invalid export header before using its dimensions %j', async change => {
+    const dir = await tinyModel('ads');
+    const file = path.join(dir, 'router-b0.json');
+    const header = JSON.parse(await readFile(file, 'utf8'));
+    await writeFile(file, JSON.stringify({ ...header, ...change }));
+    await expect(loadRouterModel(dir)).rejects.toThrow('ROUTER_MODEL_HEADER_INVALID');
+  });
+
+  it('rejects truncated and oversized binary exports even with a matching hash', async () => {
+    for (const extra of [-1, 1]) {
+      const dir = await tinyModel('ads');
+      const bytes = await readFile(path.join(dir, 'router-b0.bin'));
+      const changed = extra < 0 ? bytes.subarray(0, bytes.length - 1) : Buffer.concat([bytes, Buffer.from([0])]);
+      const header = JSON.parse(await readFile(path.join(dir, 'router-b0.json'), 'utf8'));
+      header.sha256 = createHash('sha256').update(changed).digest('hex');
+      await writeFile(path.join(dir, 'router-b0.bin'), changed);
+      await writeFile(path.join(dir, 'router-b0.json'), JSON.stringify(header));
+      await expect(loadRouterModel(dir)).rejects.toThrow('ROUTER_MODEL_SIZE_MISMATCH');
+    }
+  });
+
+  it.each([NaN, Infinity, -Infinity])('rejects nonfinite weights despite a valid export checksum: %s', async value => {
+    const dir = await tinyModel('ads');
+    const bytes = await readFile(path.join(dir, 'router-b0.bin'));
+    bytes.writeFloatLE(value, 0);
+    const header = JSON.parse(await readFile(path.join(dir, 'router-b0.json'), 'utf8'));
+    header.sha256 = createHash('sha256').update(bytes).digest('hex');
+    await writeFile(path.join(dir, 'router-b0.bin'), bytes);
+    await writeFile(path.join(dir, 'router-b0.json'), JSON.stringify(header));
+    await expect(loadRouterModel(dir)).rejects.toThrow('ROUTER_MODEL_NONFINITE');
+  });
+
+  it('bounds model and request sizes without truncating text into another classification', async () => {
+    expect(() => ngramIds('x'.repeat(8001), 16)).toThrow('ROUTER_REQUEST_TOO_LARGE');
+    expect(() => ngramIds('hello', 0)).toThrow('ROUTER_MODEL_HEADER_INVALID');
+    const dir = await tinyModel('ads');
+    await writeFile(path.join(dir, 'router-b0.json'), ' '.repeat(16385));
+    await expect(loadRouterModel(dir)).rejects.toThrow('ROUTER_MODEL_SIZE_MISMATCH');
+  });
+
   it.skipIf(!existsSync('artifacts/router/router-b0-parity.json'))('matches the Python logits of the trained model', async () => {
     const model = await loadRouterModel('artifacts/router');
     const rows = JSON.parse(await readFile('artifacts/router/router-b0-parity.json', 'utf8')) as { text: string; logits: number[] }[];

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify from 'fastify';
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { AgentBrowser } from '@mohassan/browser';
+import { AgentBrowser, type AgentCaptureResult } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { recordExperience } from '@mohassan/learning';
 import { Runtime } from '@mohassan/runtime';
@@ -48,6 +48,9 @@ beforeAll(async () => {
   await migrate(database.db);
   runtime = new Runtime(database.db);
   class FixtureBrowser extends AgentBrowser {
+    override async captureEvidence(...args: Parameters<AgentBrowser['captureEvidence']>): Promise<AgentCaptureResult> {
+      return skipCapture ? { status: 'unavailable', reason: 'capture_failed' } : super.captureEvidence(...args);
+    }
     override async screen(owner: string, conversation: string) {
       return skipCapture ? null : super.screen(owner, conversation);
     }
@@ -123,7 +126,9 @@ it('records 20 isolated terminal tasks once with goal-bound evidence and redacti
   await runChat(`افتح ${origin}/first`, 'browser', {outcome: 'verified_success'});
   const captured = await runChat(`افتح ${origin}/capture واعرض لقطة من الصفحة`, 'browser', {outcome: 'verified_success'});
   skipCapture = true;
-  await runChat(`افتح ${origin}/missing واعرض لقطة من الصفحة`, 'browser', {outcome: 'verified_failure', status: 'partial'});
+  // Missing capture evidence establishes an unresolved artifact, rather than
+  // independently proving that the requested capture itself failed.
+  await runChat(`افتح ${origin}/missing واعرض لقطة من الصفحة`, 'browser', {outcome: 'unverified', status: 'partial'});
   skipCapture = false;
   // A redirect elsewhere cannot certify the requested page, so the run ends partial.
   await runChat(`افتح ${origin}/redirect`, 'browser', {status: 'partial'});
@@ -136,8 +141,10 @@ it('records 20 isolated terminal tasks once with goal-bound evidence and redacti
     await runChat('جهّز تعديلًا للمراجعة.', 'coding', {decisions: [{tool, url: 'project', text: 'تعديل العنوان'}], end: 'cancel', status: 'cancelled'});
   }
   await runChat('اقرأ النافذة.', 'computer', {decisions: [{tool: 'computer_view'}, answer]});
-  await runChat('اعرض التفاصيل في النافذة.', 'computer', {decisions: [{tool: 'computer_view'}, {tool: 'computer_click', ref: 'c1'}, answer]});
-  await runChat('أعد إجراء الحذف للموافقة.', 'computer', {decisions: [{tool: 'computer_view'}, {tool: 'computer_click', ref: 'c2'}], end: 'cancel', status: 'cancelled'});
+  // Bind this input fixture to the actual requested button. A generic window
+  // read does not certify an additional click in the action-completion ledger.
+  await runChat('انقر على زر "عرض التفاصيل" في نافذة الكمبيوتر.', 'computer', {decisions: [{tool: 'computer_view'}, {tool: 'computer_click', ref: 'c1'}, answer]});
+  await runChat('انقر على زر "Delete" في نافذة الكمبيوتر.', 'computer', {decisions: [{tool: 'computer_view'}, {tool: 'computer_click', ref: 'c2'}], end: 'cancel', status: 'cancelled'});
 
   for (const [autonomy, shouldCancel] of [['scoped', false], ['shadow', false], ['scoped', true]] as const) {
     const title = `فحص محلي ${autonomy} ${shouldCancel}`;

@@ -1,0 +1,130 @@
+import { createServer, type Server } from 'node:http';
+import { expect, test, type Page } from '@playwright/test';
+import { signInAsFixtureOwner } from './helpers';
+
+/**
+ * The browser levels of docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md §6, against the model-free brain
+ * (playwright.browser-visibility.config.ts): a calculation never shows a panel; a hidden browser shows only the
+ * chip; a sign-in opens the panel with its reason and folds it back when answered; a hidden tab gets one notice.
+ */
+test.describe.configure({ mode: 'serial' });
+
+let site: Server;
+test.beforeAll(async () => {
+  test.setTimeout(200_000);
+  site = createServer((request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    if (request.url?.startsWith('/login')) {
+      response.end(`<!doctype html><html lang="ar"><head><meta charset="utf-8"><title>Sign in</title></head><body style="font:18px Arial">
+        <main><h1>تسجيل الدخول</h1><form method="post" action="/session"><label>البريد<input name="email" type="email" autocomplete="username"></label>
+        <label>كلمة المرور<input name="password" type="password" autocomplete="current-password"></label><button type="submit">دخول</button></form></main></body></html>`);
+      return;
+    }
+    response.end(`<!doctype html><html lang="ar"><head><meta charset="utf-8"><title>صفحة القياس</title></head><body style="font:18px Arial">
+      <main><h1>صفحة اختبار المتصفح المخفي</h1><p>هذه الصفحة تُقرأ في الخلفية. العاصمة هنا هي مدينة الاختبار، وعدد السكان مئة.</p></main></body></html>`);
+  });
+  await new Promise<void>((resolve, reject) => { site.once('error', reject); site.listen({ port: 4201, host: '127.0.0.1', exclusive: true }, resolve); });
+  // The dev web server compiles the page on its first request; on a loaded machine that alone took up to two minutes
+  // and timed out the first story. Pay it here, once, outside any test's clock.
+  await fetch('http://127.0.0.1:3100/', { signal: AbortSignal.timeout(170_000) }).then(response => response.text()).catch(() => undefined);
+});
+test.afterAll(async () => { await new Promise<void>(resolve => site.close(() => resolve())); });
+
+async function send(page: Page, text: string): Promise<string> {
+  const accepted = page.waitForResponse(response => response.request().method() === 'POST'
+    && /\/api\/chat\/conversations(?:\/[^/]+\/messages)?$/.test(new URL(response.url()).pathname));
+  await page.getByRole('textbox', { name: 'رسالتك' }).fill(text);
+  await page.getByRole('button', { name: 'إرسال', exact: true }).click();
+  const response = await accepted;
+  expect(response.ok(), await response.text()).toBe(true);
+  return (await response.json()).id as string;
+}
+const detail = async (page: Page, id: string) => (await (await page.request.get(`/api/chat/conversations/${id}`)).json());
+async function settled(page: Page, id: string) {
+  await expect.poll(async () => (await detail(page, id)).status, { timeout: 60_000 }).not.toBe('running');
+  return detail(page, id);
+}
+const panel = (page: Page) => page.getByRole('complementary', { name: 'المتصفح' });
+const chip = (page: Page) => page.getByTestId('browser-chip');
+
+test('a calculation never shows the browser panel or its chip (level 0)', async ({ page }) => {
+  await signInAsFixtureOwner(page, 'assistant');
+  await page.getByRole('button', { name: 'محادثة جديدة', exact: true }).click();
+  const id = await send(page, 'كم 15 ضرب 23؟');
+  const result = await settled(page, id);
+  expect(result.visibility).toMatchObject({ level: 0, code: 'local_compute', requested: 0, canView: true });
+  expect(result.browser).toBeNull();
+  await expect(page.getByRole('log')).toContainText('345');
+  await expect(panel(page)).toHaveCount(0);
+  await expect(chip(page)).toHaveCount(0);
+});
+
+test('a hidden browser shows only the chip; the owner can open the panel from it (level 2)', async ({ page }, testInfo) => {
+  await signInAsFixtureOwner(page, 'assistant');
+  await page.getByRole('button', { name: 'محادثة جديدة', exact: true }).click();
+  const id = await send(page, 'افتح http://127.0.0.1:4201/ ثم اقرأ الصفحة');
+  const result = await settled(page, id);
+  expect(result.visibility).toMatchObject({ level: 2, canView: true });
+  expect(result.browser).not.toBeNull();
+  await expect(chip(page)).toBeVisible();
+  await expect(chip(page)).toContainText('المتصفح');
+  await expect(panel(page)).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('level-2-chip.png') });
+  await chip(page).click();
+  await expect(panel(page)).toBeVisible();
+  await expect(page.getByTestId('browser-reason')).toHaveCount(0);
+  await page.getByRole('button', { name: 'إغلاق المتصفح', exact: true }).click();
+  await expect(panel(page)).toHaveCount(0);
+  await expect(chip(page)).toBeVisible();
+});
+
+test('a sign-in opens the panel with its reason, then folds it back when the step is answered (level 3 → 2)', async ({ page }, testInfo) => {
+  await signInAsFixtureOwner(page, 'assistant');
+  await page.getByRole('button', { name: 'محادثة جديدة', exact: true }).click();
+  const id = await send(page, 'افتح http://127.0.0.1:4201/login ثم اقرأ الصفحة');
+  await expect.poll(async () => (await detail(page, id)).status, { timeout: 60_000 }).toBe('waiting_input');
+  const waiting = await detail(page, id);
+  expect(waiting.secure.kind).toBe('login');
+  expect(waiting.visibility).toMatchObject({ level: 3, code: 'needs_login', requested: 2 });
+  expect(waiting.visibility.reason).toContain('تسجيل الدخول إلى 127.0.0.1:4201');
+  await expect(panel(page)).toBeVisible();
+  await expect(page.getByTestId('browser-reason')).toContainText('هذه الخطوة تحتاجك');
+  await expect(chip(page)).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('level-3-panel.png') });
+  await page.getByRole('button', { name: 'تخطي', exact: true }).click();
+  await expect(panel(page)).toHaveCount(0, { timeout: 20_000 });
+  await expect(chip(page)).toBeVisible();
+  const after = await settled(page, id);
+  expect(after.visibility.level).toBeLessThanOrEqual(2);
+});
+
+test('a hidden tab keeps following its task and gets one system notice when it finishes', async ({ page, context }) => {
+  await context.grantPermissions(['notifications']);
+  await page.addInitScript(() => {
+    const shown: { title: string; body: string }[] = [];
+    class FakeNotification {
+      static permission = 'granted';
+      static requestPermission = async () => 'granted';
+      onclick: (() => void) | null = null;
+      constructor(title: string, options?: { body?: string }) { shown.push({ title, body: options?.body ?? '' }); }
+      close() { /* nothing to close */ }
+    }
+    Object.defineProperty(window, 'Notification', { value: FakeNotification, configurable: true });
+    Object.defineProperty(window, '__notices', { value: shown });
+    Object.defineProperty(window, '__hidden', { value: false, writable: true });
+    Object.defineProperty(Document.prototype, 'hidden', { get: () => (window as unknown as { __hidden: boolean }).__hidden, configurable: true });
+    Object.defineProperty(Document.prototype, 'visibilityState', { get: () => (window as unknown as { __hidden: boolean }).__hidden ? 'hidden' : 'visible', configurable: true });
+  });
+  await signInAsFixtureOwner(page, 'assistant');
+  await page.getByRole('button', { name: 'محادثة جديدة', exact: true }).click();
+  const id = await send(page, 'افتح http://127.0.0.1:4201/ ثم اقرأ الصفحة');
+  // The owner switches tabs right after sending.
+  await page.evaluate(() => { (window as unknown as { __hidden: boolean }).__hidden = true; document.dispatchEvent(new Event('visibilitychange')); });
+  await settled(page, id);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __notices: { title: string }[] }).__notices.map(notice => notice.title)), { timeout: 40_000 })
+    .toEqual(['اكتملت المهمة']);
+  // Back to the tab: the title counted the finished task while it was hidden, and clears once the owner looks.
+  await page.evaluate(() => { (window as unknown as { __hidden: boolean }).__hidden = false; document.dispatchEvent(new Event('visibilitychange')); });
+  await expect.poll(() => page.title()).toBe('موحسن');
+  expect(await page.evaluate(() => (window as unknown as { __notices: unknown[] }).__notices.length)).toBe(1);
+});

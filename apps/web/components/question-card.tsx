@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Check, ChevronLeft, ChevronRight, X } from "lucide-react";
-import type { ChatQuestionField } from "@mohassan/contracts";
+import type { ChatFieldAnswer, ChatQuestionField } from "@mohassan/contracts";
 import styles from "./assistant-app.module.css";
 
 /**
@@ -14,9 +14,9 @@ import styles from "./assistant-app.module.css";
  *
  * Keys: a number picks that option, Enter goes on, the arrows move between options.
  */
-export function QuestionPanel({ fields, busy, onSubmit, onStop }: { fields: ChatQuestionField[]; busy: boolean; onSubmit: (text: string) => void; onStop?: () => void }) {
+export function QuestionPanel({ fields, busy, onSubmit, onStop }: { fields: ChatQuestionField[]; busy: boolean; onSubmit: (text: string, answers: ChatFieldAnswer[]) => void; onStop?: () => void }) {
   const [chosen, setChosen] = useState<Set<number>[]>(() => fields.map(field => new Set(field.selected ?? [])));
-  const [other, setOther] = useState<string[]>(() => fields.map(() => ""));
+  const [other, setOther] = useState<string[]>(() => fields.map(field => field.initialValue ?? ""));
   const [step, setStep] = useState(0);
   const panel = useRef<HTMLDivElement>(null);
   const several = fields.length > 1;
@@ -25,13 +25,16 @@ export function QuestionPanel({ fields, busy, onSubmit, onStop }: { fields: Chat
   const answerOf = (index: number, sets = chosen, typedAnswers = other) => {
     const field = fields[index]!;
     const picked = [...sets[index]!].sort((a, b) => a - b).map(item => field.suggestions[item]?.label).filter(Boolean) as string[];
-    const typed = typedAnswers[index]!.trim();
+    const supplied = typedAnswers[index]!;
+    const typed = field.multiline ? supplied : supplied.trim();
     // In a single-answer question a typed answer replaces the chosen suggestion.
-    return (field.multiple ? [...picked, ...(typed ? [typed] : [])] : typed ? [typed] : picked).join(", ");
+    return (field.multiple ? [...picked, ...(typed.trim() ? [typed] : [])] : typed.trim() ? [typed] : picked).join(", ");
   };
   const answers = fields.map((_, index) => answerOf(index));
-  const ready = answers.every(Boolean);
   const reply = (list = answers) => list.map((answer, index) => several ? `${index + 1}. ${answer}` : answer).join("\n");
+  const replyLength = reply().length;
+  const ready = answers.every(Boolean) && replyLength <= 4000;
+  const submit = (list = answers) => onSubmit(reply(list), fields.map((field, index) => ({ fieldId: field.id, value: list[index]! })));
 
   // Each new step starts at its first option, or at the box when there is nothing to choose.
   useEffect(() => {
@@ -45,7 +48,7 @@ export function QuestionPanel({ fields, busy, onSubmit, onStop }: { fields: Chat
     if (busy) return;
     if (!several) {
       const answer = answerOf(0, sets, typedAnswers);
-      if (answer) onSubmit(answer);
+      if (answer) submit([answer]);
       return;
     }
     if (!answerOf(step, sets, typedAnswers)) return;
@@ -72,10 +75,13 @@ export function QuestionPanel({ fields, busy, onSubmit, onStop }: { fields: Chat
   const onKey = (event: KeyboardEvent<HTMLDivElement>) => {
     if (busy) return;
     const target = event.target as HTMLElement;
-    const inBox = target.tagName === "INPUT";
+    const inBox = target.tagName === "INPUT" || target.tagName === "TEXTAREA";
+    const multiline = target.tagName === "TEXTAREA";
+    if (event.nativeEvent.isComposing) return;
     if (event.key === "Escape" && onStop) { event.preventDefault(); onStop(); return; }
     if (reviewing) return;
     const field = fields[step]!;
+    if (multiline && (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Enter" && event.shiftKey)) return;
     if (!inBox && /^[1-9]$/.test(event.key)) {
       const index = Number(event.key) - 1;
       if (index < field.suggestions.length) { event.preventDefault(); pick(step, index); }
@@ -112,6 +118,7 @@ export function QuestionPanel({ fields, busy, onSubmit, onStop }: { fields: Chat
 
     {field ? <div key={field.id} className={styles.askBody}>
       <p className={styles.askPrompt} dir="auto">{field.prompt}</p>
+      {field.multiline ? <p className={styles.askNote}>استخدم Shift + Enter لإضافة سطر جديد.</p> : null}
       {field.multiple ? <p className={styles.askNote}>يمكنك اختيار أكثر من واحد، ثم اضغط «التالي».</p> : null}
       <div className={styles.askOptions} role={field.multiple ? "group" : "radiogroup"} aria-label={field.prompt}>
         {field.suggestions.map((suggestion, index) => {
@@ -125,8 +132,10 @@ export function QuestionPanel({ fields, busy, onSubmit, onStop }: { fields: Chat
         })}
         <label className={`${styles.askOption} ${styles.askOther} ${typedHere ? styles.askOptionOn : ""}`}>
           <kbd aria-hidden="true">{field.suggestions.length + 1}</kbd>
-          <input data-other dir="auto" value={other[step]} disabled={busy} placeholder={field.placeholder ?? (field.suggestions.length ? "إجابة أخرى…" : "اكتب إجابتك…")} aria-label={`${field.prompt}: ${field.suggestions.length ? "إجابة أخرى" : "إجابتك"}`}
+          {field.multiline ? <textarea data-other dir="auto" rows={3} maxLength={4000} value={other[step]} disabled={busy} placeholder={field.placeholder ?? "اكتب إجابتك…"} aria-label={`${field.prompt}: ${field.suggestions.length ? "إجابة أخرى" : "إجابتك"}`}
             onChange={event => { const value = event.target.value; setOther(current => current.map((item, i) => i === step ? value : item)); }} />
+          : <input data-other dir="auto" maxLength={4000} value={other[step]} disabled={busy} placeholder={field.placeholder ?? (field.suggestions.length ? "إجابة أخرى…" : "اكتب إجابتك…")} aria-label={`${field.prompt}: ${field.suggestions.length ? "إجابة أخرى" : "إجابتك"}`}
+            onChange={event => { const value = event.target.value; setOther(current => current.map((item, i) => i === step ? value : item)); }} />}
         </label>
       </div>
     </div> : <div className={styles.askBody}>
@@ -141,11 +150,12 @@ export function QuestionPanel({ fields, busy, onSubmit, onStop }: { fields: Chat
     </div>}
 
     <div className={styles.askFoot}>
+      {replyLength > 4000 ? <p className={styles.askNote} role="status">الإجابات {replyLength} من 4000 حرف. اختصر بعض النص قبل الإرسال.</p> : null}
       <span className={styles.askKeys}>{reviewing ? <>اضغط سؤالاً لتعديل إجابته</> : <><kbd>1</kbd>–<kbd>{Math.min(9, (field?.suggestions.length ?? 0) + 1)}</kbd> للاختيار · <kbd>Enter</kbd> للتالي{onStop ? <> · <kbd>Esc</kbd> للتوقف</> : null}</>}</span>
       <div className={styles.askActions}>
         {several && step > 0 ? <button type="button" className={styles.secondary} disabled={busy} onClick={() => setStep(step - 1)}><ChevronRight size={15} aria-hidden="true" />رجوع</button> : null}
         {reviewing
-          ? <button type="button" data-send className={styles.primary} disabled={busy || !ready} onClick={() => onSubmit(reply())}>أرسل الإجابات</button>
+          ? <button type="button" data-send className={styles.primary} disabled={busy || !ready} onClick={() => submit()}>أرسل الإجابات</button>
           : <button type="button" className={styles.primary} disabled={busy || !answers[step]} onClick={() => next()}>{several ? <>التالي<ChevronLeft size={15} aria-hidden="true" /></> : "أرسل"}</button>}
       </div>
     </div>

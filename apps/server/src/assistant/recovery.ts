@@ -32,7 +32,8 @@ const RULES: Readonly<Record<string, Rule>> = Object.freeze({
   ASSISTANT_INPUT: ['schema', 'correct_and_revalidate', false],
   RATE_LIMITED: ['quota', 'wait_retry_after', true], QUOTA_EXHAUSTED: ['quota', 'stop_and_report', false],
   UPSTREAM_ERROR: ['provider', 'retry_with_backoff', true], NO_ELIGIBLE_PROVIDER: ['provider', 'stop_and_report', false], ASSISTANT_MODEL_BUSY: ['provider', 'stop_and_report', false],
-  // Chat model failures named by assistant/model-failure.ts: each needs a person or a later «تابع», never a silent retry.
+  // Terminal chat model failures; confirmed transient decisions retry before this classification.
+  CHAT_PROVIDER_QUOTA: ['quota', 'stop_and_report', false], CHAT_MODEL_RETRY_EXHAUSTED: ['provider', 'stop_and_report', false],
   CHAT_GATEWAY_UNREACHABLE: ['provider', 'stop_and_report', false], CHAT_GATEWAY_NO_PROVIDERS: ['provider', 'stop_and_report', false], CHAT_PROVIDER_REJECTED: ['provider', 'stop_and_report', false], CHAT_PROVIDER_NOT_CONFIGURED: ['provider', 'stop_and_report', false],
   CHAT_MODEL_UNAVAILABLE: ['provider', 'stop_and_report', false], CHAT_NO_ELIGIBLE_PROVIDER: ['provider', 'stop_and_report', false], CHAT_PROVIDER_UNREACHABLE: ['provider', 'stop_and_report', false], CHAT_PROVIDER_FAILED: ['provider', 'stop_and_report', false],
   NETWORK_ERROR: ['network', 'retry_with_backoff', true], ABORTED: ['network', 'stop_and_report', false],

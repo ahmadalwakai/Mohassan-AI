@@ -1,4 +1,5 @@
 import { sql,type Kysely } from 'kysely';
+import { memoryExactWriteMigration } from './exact-write-migration.ts';
 export async function memoryMigration(db:Kysely<any>){
   await sql`CREATE TABLE IF NOT EXISTS schema_migrations(version text PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`.execute(db);
   await db.transaction().execute(async tx=>{
@@ -18,4 +19,5 @@ export async function memoryMigration(db:Kysely<any>){
     ])await sql.raw(statement).execute(tx);
     await tx.insertInto('schema_migrations').values({version:'007_memory_learning_v1'}).execute();
   });
+  await memoryExactWriteMigration(db);
 }

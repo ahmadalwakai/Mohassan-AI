@@ -19,7 +19,7 @@ const cases = [
   { label: 'invalid calendar date', header: 'Tue, 31 Nov 2026 12:00:40 GMT', delay: 60_000 },
 ];
 const providers = [
-  { name: 'Wikipedia', question: 'Node API', nextQuestion: 'React hooks' },
+  { name: 'Wikipedia', question: 'Cedar ferry history', nextQuestion: 'Elm bridge history' },
   { name: 'Stack Exchange', question: 'Node API', nextQuestion: 'React hooks' },
   { name: 'Crossref', question: 'quantum research paper', nextQuestion: 'electron research paper' },
   { name: 'Hacker News', question: 'Node API', nextQuestion: 'React hooks' },

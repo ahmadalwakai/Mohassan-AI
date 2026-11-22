@@ -9,6 +9,12 @@ const frame = (text: string, lang: Lang, overrides: Partial<Frame> = {}): Frame 
 });
 
 describe('recall in English', () => {
+  it('does not substitute a matching subject with the wrong requested field', async () => {
+    const input = frame('What is my workshop address from memory?', 'en');
+    const result = await recall(input, input.text, { memory: async () => ['The workshop name is Cedar Repairs.'] }, signal);
+    expect(result?.status).toBe('blocked');
+    expect(result?.text).not.toContain('Cedar Repairs');
+  });
   it('quotes the matching personal note and skips knowledge', async () => {
     const input = frame('What is my private rehearsal code from memory?', 'en');
     const knowledge = vi.fn(async () => []);

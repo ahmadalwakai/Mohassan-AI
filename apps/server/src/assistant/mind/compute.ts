@@ -1,8 +1,10 @@
 import type { Frame } from './contract.js';
 import { fixedReply, type LocalReply } from './limits.js';
-import { stripCourtesyTail } from './normalize.js';
+import { evaluateArithmeticExpression } from '../calculator.js';
+import { finishComputationConsumption, prepareComputationSource, type ComputationConsumption, type ComputationKind, type PreparedComputationSource } from './computation-consumption.js';
+export type { ComputationConsumption } from './computation-consumption.js';
 
-type Failure = 'division' | 'range' | 'expression' | 'units' | 'date' | 'timezone' | 'hijri';
+type Failure = 'division' | 'range' | 'domain' | 'complexity' | 'expression' | 'units' | 'quantity' | 'date' | 'date_direction' | 'date_year' | 'timezone' | 'hijri';
 class CalculationError extends Error {
   constructor(readonly kind: Failure) { super(kind); }
 }
@@ -10,9 +12,14 @@ class CalculationError extends Error {
 const MESSAGES: Record<Failure, { ar: string; en: string }> = {
   division: { ar: 'القسمة على صفر غير معرّفة.', en: 'Division by zero is undefined.' },
   range: { ar: 'لا يمكن تمثيل نتيجة هذا الحساب بدقة كافية.', en: 'The calculation exceeds the number range I can represent reliably.' },
+  domain: { ar: 'التعبير خارج نطاق الحساب بالأعداد الحقيقية المدعوم.', en: 'The expression is outside the supported real-number domain.' },
+  complexity: { ar: 'التعبير يتجاوز حدود تعقيد الحساب المدعومة.', en: 'The expression exceeds the supported calculation complexity.' },
   expression: { ar: 'لم أتمكن من قراءة هذا التعبير الحسابي. أعد كتابته بأرقام وعلامات العمليات.', en: 'I couldn’t read the arithmetic expression. Please write it with numbers and operators.' },
   units: { ar: 'لم أتعرف على تحويل بين وحدتين من النوع نفسه. اذكر وحدة الأصل ووحدة التحويل.', en: 'I couldn’t identify two compatible units. Name the original and target units.' },
+  quantity: { ar: 'الكمية المكتوبة قد تعني عددًا أو كسرًا. اكتبها بالأرقام أو بكسر رقمي مثل 1/5 لأحسبها بدقة.', en: 'The written quantity could mean a count or a fraction. Write digits or a numeric fraction such as 1/5.' },
   date: { ar: 'التاريخ الميلادي غير صالح أو غير مكتمل. حدّده باليوم والشهر والسنة.', en: 'The Gregorian date is invalid or incomplete. Specify the day, month and year.' },
+  date_direction: { ar: 'اتجاه التاريخ يناقض الطلب: «منذ» تحتاج تاريخًا مضى و«حتى» تحتاج تاريخًا لم يمضِ. حدّد التاريخ أو الاتجاه المقصود.', en: 'The date contradicts the requested direction: since needs a past date and until needs a date that has not passed. Specify the intended date or direction.' },
+  date_year: { ar: 'المدى المكتوب يعكس ترتيب الشهرين دون تحديد السنة. اذكر السنة لكل تاريخ لأحسب المدى المقصود.', en: 'The month/day order runs backwards without an explicit year. Specify the year for each date so I can calculate the intended interval.' },
   timezone: { ar: 'تعذر تحديد وقت واحد من المناطق والتاريخ المكتوبين. اذكر منطقة زمنية ووقتًا محددين.', en: 'I couldn’t resolve a single time from those zones and dates. Specify the time and time zone.' },
   hijri: { ar: 'أستطيع إجراء الحساب بالتقويم الميلادي. حساب التقويم الهجري غير متاح حاليًا.', en: 'I can calculate Gregorian dates. Hijri calendar calculations are currently unavailable.' },
 };
@@ -22,25 +29,10 @@ const RESULT_FORMAT = new Intl.NumberFormat('en', { useGrouping: false, maximumS
 const formatNumber = (value: number) => Number.isInteger(value) ? String(value) : RESULT_FORMAT.format(value);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
-const THOUSANDS = /(?<![\d.,٬٫])\d{1,3}(?:(?:,\d{3})+|(?:٬\d{3})+)(?!\d|[,٬]\d)/gu;
-const tidy = (input: string) => input.normalize('NFKC')
-  .replace(/[\u0640\u064b-\u065f\u0670]/gu, '')
-  .replace(/[٠-٩۰-۹]/gu, digit => String(digit.charCodeAt(0) % 16))
-  .replace(/[أإآٱ]/gu, 'ا').replace(/[ى]/gu, 'ي')
-  .replace(/٫/gu, '.').replace(/[−–]/gu, '-').replace(/٪/gu, '%')
-  .replace(THOUSANDS, group => group.replace(/[,٬]/gu, ''))
-  .trim();
 
 const SHORT_EN = String.raw`(?:(?:return|give|show|reply with|output)\s+)?(?:(?:just|only)\s+(?:the\s+)?(?:answer|result|value|number)|(?:the\s+)?(?:answer|result|value|number)\s+(?:only|alone)|only|(?:no|without(?:\s+an)?)\s+(?:explanation|steps))`;
 const SHORT_AR = String.raw`(?:(?:اعطني|اعطيني|اريد|اكتب|اجب)\s+)?(?:(?:ال)?(?:نتيج[ةه]|ناتج|جواب|اجاب[ةه]|قيم[ةه]|رقم|عدد)\s+(?:فقط|بس|وحده[ا]?)|فقط|بس|(?:من دون|بدون|بلا|دون)\s+(?:شرح|تفصيل))`;
 const SHORT_ANSWER_TAIL = new RegExp(String.raw`[\s,.!?:؟،؛;]+(?:${SHORT_EN}|${SHORT_AR})[\s,.!?؟،؛;]*$`, 'iu');
-
-function arithmeticInput(text: string) {
-  const courteous = stripCourtesyTail(tidy(text));
-  const short = SHORT_ANSWER_TAIL.exec(courteous);
-  const expression = short ? courteous.slice(0, short.index) : courteous;
-  return { input: expression.replace(/[\s,.!?؟،؛;]+$/u, ''), valueOnly: Boolean(short) };
-}
 
 function safeNumber(value: number): number {
   if (!Number.isFinite(value) || Math.abs(value) > Number.MAX_SAFE_INTEGER) throw new CalculationError('range');
@@ -56,8 +48,6 @@ function calculated(frame: Frame, value: string, line: string): LocalReply {
   };
 }
 
-type Operator = '+' | '-' | '*' | '/' | '^' | 'positive' | 'negative';
-const PRECEDENCE: Record<Operator, number> = { '+': 0, '-': 0, '*': 1, '/': 1, positive: 2, negative: 2, '^': 3 };
 const ARITHMETIC_INTRO = /^(?:(?:please|kindly|من فضلك|لو سمحت)[,،:\s]+)?(?:(?:calculate|compute|evaluate|solve|what is|what['’]s|how much is|كم(?: يساوي)?|ما ناتج|ما حاصل)|(?:(?:نبي|نبغي|ابغي|ابي|بدي|بدنا|عايز|عايزة|عايزين|اريد|نريد)\s+(?:ان\s+)?)?(?:احسب(?:وا|ي)?|نحسب))[\s:،]+/iu;
 
 const OPERAND_COMMANDS = [
@@ -78,8 +68,9 @@ function directedExpression(input: string) {
   return input;
 }
 
-function arithmetic(input: string): { value: number; expression: string } | null {
+function arithmeticExpression(input: string): string | null {
   const math = input.replace(ARITHMETIC_INTRO, '');
+  if (/\b0(?:x[0-9a-f]+|b[01]+|o[0-7]+)\b/iu.test(math)) return null;
   const expression = directedExpression(math)
     .replace(/\b(?:percent|per cent)\b|(?:بال|في\s+ال)م(?:ا?ئ[ةه]|ي[ةه])(?!\p{L})/giu, '%')
     .replace(/%\s*(?:of\b|من(?!\p{L}))/giu, '% *')
@@ -88,75 +79,38 @@ function arithmetic(input: string): { value: number; expression: string } | null
     .replace(/\bplus\b|(?:زائد|جمع)(?!\p{L})/giu, '+')
     .replace(/\bminus\b|(?:ناقص|طرح)(?!\p{L})/giu, '-')
     .replace(/÷/gu, '/').trim();
-  const tokens = [...expression.matchAll(/(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?|[()+*\/^%\-]/giu)].map(match => match[0]);
+  // Retain the unsupported-language boundary: a currency/source request or an
+  // instruction with extra words stays available to routing. Numeric grammar
+  // and evaluation belong to the one shared, bounded parser.
+  const tokens = [...expression.matchAll(/(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?|[()+*\/^%\-]/giu)].map(match => match[0]);
   if (!tokens.length || tokens.join('') !== expression.replace(/\s+/gu, '')) return null;
-
-  const operands: number[] = [];
-  const operators: (Operator | '(')[] = [];
-  let needsOperand = true;
-  function apply(operator: Operator) {
-    const right = operands.pop();
-    if (right === undefined) throw new CalculationError('expression');
-    if (operator === 'positive' || operator === 'negative') {
-      operands.push(operator === 'negative' ? -right : right);
-      return;
-    }
-    const left = operands.pop();
-    if (left === undefined) throw new CalculationError('expression');
-    if (operator === '/' && right === 0) throw new CalculationError('division');
-    const result = operator === '+' ? left + right : operator === '-' ? left - right
-      : operator === '*' ? left * right : operator === '/' ? left / right : left ** right;
-    operands.push(safeNumber(result));
-  }
-
-  for (const token of tokens) {
-    if (/^[\d.]/u.test(token) && needsOperand) {
-      operands.push(safeNumber(Number(token)));
-      needsOperand = false;
-    } else if (token === '(' && needsOperand) {
-      operators.push(token);
-    } else if (token === ')' && !needsOperand) {
-      while (operators.length && operators.at(-1) !== '(') apply(operators.pop() as Operator);
-      if (operators.pop() !== '(') throw new CalculationError('expression');
-    } else if (token === '%' && !needsOperand) {
-      operands.push(operands.pop()! / 100);
-    } else if ((token === '+' || token === '-') && needsOperand) {
-      operators.push(token === '+' ? 'positive' : 'negative');
-    } else if (token in PRECEDENCE && !needsOperand) {
-      const next = token as Operator;
-      for (let top = operators.at(-1); top && top !== '('; top = operators.at(-1)) {
-        if (PRECEDENCE[top] < PRECEDENCE[next] || PRECEDENCE[top] === PRECEDENCE[next] && next === '^') break;
-        apply(operators.pop() as Operator);
-      }
-      operators.push(next);
-      needsOperand = true;
-    } else throw new CalculationError('expression');
-  }
-  if (needsOperand) throw new CalculationError('expression');
-  for (let top = operators.pop(); top; top = operators.pop()) {
-    if (top === '(') throw new CalculationError('expression');
-    apply(top);
-  }
-  if (operands.length !== 1) throw new CalculationError('expression');
-  return { value: operands[0], expression };
+  return expression;
 }
 
-type Unit = { dim: string; factor: number; offset?: number; names: string; abbreviations?: string };
+function arithmetic(input: string): { value: number; expression: string } | null {
+  const expression = arithmeticExpression(input);
+  if (expression === null) return null;
+  const result = evaluateArithmeticExpression(expression, { allowPercent: true });
+  if (result.ok) return { value: result.value, expression };
+  throw new CalculationError(result.error === 'division_by_zero' ? 'division' : result.error === 'syntax' ? 'expression' : result.error);
+}
+
+type Unit = { dim: string; factor: number; offset?: number; names: string; pluralNames?: string; abbreviations?: string };
 // SI, IEC, common imperial units, and affine temperature scales.
 const UNITS: readonly Unit[] = [
-  { dim: 'length', factor: 1, names: 'm|meter|metre|م|متر|امتار' },
-  { dim: 'length', factor: 1e3, names: 'km|kilometer|kilometre|كم|كيلومتر|كيلو متر|كيلومترات' },
+  { dim: 'length', factor: 1, names: 'm|meter|metre|م|متر|امتار', pluralNames: 'امتار' },
+  { dim: 'length', factor: 1e3, names: 'km|kilometer|kilometre|كم|كيلومتر|كيلو متر|كيلومترات', pluralNames: 'كيلومترات' },
   { dim: 'length', factor: 1e-2, names: 'cm|centimeter|centimetre|سم|سنتيمتر|سنتيمترات' },
   { dim: 'length', factor: 1e-3, names: 'mm|millimeter|millimetre|مم|ملليمتر|مليمتر' },
   { dim: 'length', factor: 0.0254, names: 'in|inch|inches|بوصة|بوصه|انش' },
-  { dim: 'length', factor: 0.3048, names: 'ft|foot|feet|قدم|اقدام' },
+  { dim: 'length', factor: 0.3048, names: 'ft|foot|feet|قدم|اقدام', pluralNames: 'اقدام' },
   { dim: 'length', factor: 0.9144, names: 'yd|yard|ياردة|يارده' },
-  { dim: 'length', factor: 1609.344, names: 'mi|mile|ميل|اميال' },
-  { dim: 'mass', factor: 1, names: 'kg|kilogram|كغ|كجم|كيلوغرام|كيلوجرام|كيلو غرام|كيلو جرام' },
-  { dim: 'mass', factor: 1e-3, names: 'g|gram|غ|جم|غرام|جرام' },
+  { dim: 'length', factor: 1609.344, names: 'mi|mile|ميل|اميال', pluralNames: 'اميال' },
+  { dim: 'mass', factor: 1, names: 'kg|kilogram|كغ|كجم|كيلوغرام|كيلوجرام|كيلو غرام|كيلو جرام', pluralNames: 'كيلوغرامات|كيلوجرامات' },
+  { dim: 'mass', factor: 1e-3, names: 'g|gram|غ|جم|غرام|جرام', pluralNames: 'غرامات|جرامات' },
   { dim: 'mass', factor: 1e-6, names: 'mg|milligram|ملغ|مليغرام|مليجرام|ملليجرام' },
-  { dim: 'mass', factor: 1e3, names: 't|tonne|metric ton|طن|اطنان' },
-  { dim: 'mass', factor: 0.45359237, names: 'lb|pound|رطل|ارطال' },
+  { dim: 'mass', factor: 1e3, names: 't|tonne|metric ton|طن|اطنان', pluralNames: 'اطنان' },
+  { dim: 'mass', factor: 0.45359237, names: 'lb|pound|رطل|ارطال', pluralNames: 'ارطال' },
   { dim: 'mass', factor: 0.45359237 / 16, names: 'oz|ounce|اونصة|اونصه' },
   { dim: 'temperature', factor: 1, offset: 273.15, names: 'c|°c|celsius|centigrade|مئوي|مئوية|مئويه|سيليسيوس|سيلسيوس|سلسيوس' },
   { dim: 'temperature', factor: 5 / 9, offset: 273.15 - 32 * 5 / 9, names: 'f|°f|fahrenheit|فهرنهايت' },
@@ -168,7 +122,7 @@ const UNITS: readonly Unit[] = [
   { dim: 'area', factor: 0.3048 ** 2, names: 'ft2|ft^2|sq ft|square foot|square feet|قدم مربع' },
   { dim: 'area', factor: 4046.8564224, names: 'acre|ايكر' },
   { dim: 'volume', factor: 1, names: 'm3|m^3|cubic meter|cubic metre|متر مكعب' },
-  { dim: 'volume', factor: 1e-3, names: 'l|liter|litre|ل|لتر|لترات' },
+  { dim: 'volume', factor: 1e-3, names: 'l|liter|litre|ل|لتر|لترات', pluralNames: 'لترات' },
   { dim: 'volume', factor: 1e-6, names: 'ml|milliliter|millilitre|مل|مليلتر|ملليلتر|ملي لتر|cm3' },
   { dim: 'volume', factor: 0.003785411784, names: 'us gallon|american gallon|غالون امريكي|جالون امريكي' },
   { dim: 'volume', factor: 0.00454609, names: 'imperial gallon|uk gallon|british gallon|غالون بريطاني|جالون بريطاني' },
@@ -189,9 +143,9 @@ const UNITS: readonly Unit[] = [
   { dim: 'data', factor: 2 ** 20, names: 'mebibyte|ميبيبايت', abbreviations: 'MiB' },
   { dim: 'data', factor: 2 ** 30, names: 'gibibyte|جيبيبايت', abbreviations: 'GiB' },
   { dim: 'data', factor: 2 ** 40, names: 'tebibyte|تيبيبايت', abbreviations: 'TiB' },
-  { dim: 'duration', factor: 1, names: 'sec|second|ثانية|ثانيه|ثوان' },
-  { dim: 'duration', factor: 60, names: 'min|minute|دقيقة|دقيقه|دقائق' },
-  { dim: 'duration', factor: 3600, names: 'h|hr|hour|ساعة|ساعه|ساعات' },
+  { dim: 'duration', factor: 1, names: 'sec|second|ثانية|ثانيه|ثوان', pluralNames: 'ثوان' },
+  { dim: 'duration', factor: 60, names: 'min|minute|دقيقة|دقيقه|دقائق', pluralNames: 'دقائق' },
+  { dim: 'duration', factor: 3600, names: 'h|hr|hour|ساعة|ساعه|ساعات', pluralNames: 'ساعات' },
 ];
 
 function unit(raw: string) {
@@ -201,7 +155,7 @@ function unit(raw: string) {
   const arabicUninflected = words.replace(/^ال(?=\p{Script=Arabic})/u, '').replace(/(?<=\p{Script=Arabic})ا(?=\s|$)/gu, '');
   return UNITS.find(item => {
     if (item.abbreviations?.split('|').includes(label)) return true;
-    const names = item.names.split('|');
+    const names = `${item.names}|${item.pluralNames ?? ''}`.split('|');
     return names.includes(words) || names.includes(singular) || names.includes(arabicUninflected);
   });
 }
@@ -230,10 +184,12 @@ for (const [index, [english, englishPlural, arabic, arabicPlural]] of [
 }
 
 const SPOKEN_FRACTION = String.raw`(?:(?:${[...FRACTION_COUNTS.keys()].join('|')}|\d+)\s+)?(?:${[...FRACTION_WORDS.keys()].join('|')})(?![\p{L}\p{N}])`;
+const SPOKEN_CARDINAL = String.raw`(?:${[...FRACTION_COUNTS.keys()].join('|')})(?![\p{L}\p{N}])`;
 const NUMERIC_FRACTION = String.raw`${NUMBER}\s*/\s*${NUMBER}`;
-const CONVERSION = new RegExp(String.raw`(?:^|[\s:،])(${SPOKEN_FRACTION}|${NUMERIC_FRACTION}|${NUMBER})\s*(.+?)(?:[\s,،;؛:]+(?:to|into|in|الي|ب)[\s,،;؛:]+|\s*(?:→|⇒|->)\s*)(.+)$`, 'iu');
+const CONVERSION = new RegExp(String.raw`(?:^|[\s:،])(${SPOKEN_FRACTION}|${SPOKEN_CARDINAL}|${NUMERIC_FRACTION}|${NUMBER})\s*(.+?)(?:[\s,،;؛:]+(?:to|into|in|الي|ب)[\s,،;؛:]+|\s*(?:→|⇒|->)\s*)(.+)$`, 'iu');
+const unitLabel = (raw: string) => raw.trim().replace(/^[,،;؛:.]+|[,،;؛:.]+$/gu, '').trim().replace(/^\(\s*([^()]+?)\s*\)$/u, '$1');
 
-function unitQuantity(raw: string): { value: number; fraction: boolean } | null {
+function unitQuantity(raw: string, original: string, rawUnit: string): { value: number; fraction: boolean } | null {
   const slash = raw.indexOf('/');
   if (slash >= 0) {
     const numerator = safeNumber(Number(raw.slice(0, slash)));
@@ -243,22 +199,41 @@ function unitQuantity(raw: string): { value: number; fraction: boolean } | null 
   }
 
   const words = raw.toLowerCase().split(/\s+/u);
+  // These unmarked Arabic forms collide with cardinals (and, in the dual,
+  // decades). Retain the source vowel or require clear plural-unit grammar.
+  const ambiguous = /^(خمس|سبع|تسع|عشر)(ان|ين|ي)?$/u.exec(raw);
+  if (ambiguous) {
+    const initialMarks = /^[\p{L}][\p{M}]*/u.exec(original.trim().replace(/[\u0640\p{Cf}]/gu, ''))?.[0] ?? '';
+    if (!initialMarks.includes('\u064f')) {
+      const cardinal = ambiguous[2] ? ambiguous[2] === 'ين' && initialMarks.includes('\u064e')
+        ? new Map([['خمس', 50], ['سبع', 70], ['تسع', 90], ['عشر', 20]]).get(ambiguous[1]!) : undefined
+        : FRACTION_COUNTS.get(ambiguous[1]!);
+      const label = unitLabel(rawUnit).replace(/^ال(?=\p{Script=Arabic})/u, '');
+      const plural = unit(label)?.pluralNames?.split('|').includes(label) ?? false;
+      if (cardinal !== undefined && (initialMarks.includes('\u064e') || !ambiguous[2] && plural)) return { value: cardinal, fraction: false };
+      throw new CalculationError('quantity');
+    }
+  }
   const word = FRACTION_WORDS.get(words.at(-1)!);
-  if (!word) return { value: safeNumber(Number(raw)), fraction: false };
+  if (!word) {
+    const cardinal = FRACTION_COUNTS.get(raw.toLowerCase());
+    return { value: safeNumber(cardinal ?? Number(raw)), fraction: false };
+  }
   const count = words.length === 1 ? word.implicitCount : FRACTION_COUNTS.get(words[0]) ?? Number(words[0]);
   if (count === null || !Number.isSafeInteger(count) || words.length > 1 && word.implicitCount === 2) return null;
   return { value: count / word.denominator, fraction: true };
 }
 
-function conversion(input: string, frame: Frame, requested: boolean): LocalReply | null {
+function conversion(input: string, frame: Frame, requested: boolean, source: PreparedComputationSource): LocalReply | null {
   const phrase = CONVERSION.exec(input);
   if (!phrase) return null;
   const [, sourceNumber, rawSource, rawTarget] = phrase;
-  const quantity = unitQuantity(sourceNumber);
+  const numberStart = phrase.index + phrase[0].indexOf(sourceNumber);
+  const originalNumber = source.span(numberStart, numberStart + sourceNumber.length);
+  const quantity = unitQuantity(sourceNumber, source.original.slice(originalNumber.start, originalNumber.end), rawSource);
   if (!quantity) return null;
-  const label = (raw: string) => raw.trim().replace(/^[,،;؛:.]+|[,،;؛:.]+$/gu, '').trim().replace(/^\(\s*([^()]+?)\s*\)$/u, '$1');
-  const sourceLabel = label(quantity.fraction ? rawSource.replace(/^\s*(?:of\s+)?(?:an?|the)\s+/iu, '') : rawSource);
-  const targetLabel = label(rawTarget);
+  const sourceLabel = unitLabel(quantity.fraction ? rawSource.replace(/^\s*(?:of\s+)?(?:an?|the)\s+/iu, '') : rawSource);
+  const targetLabel = unitLabel(rawTarget);
   const from = unit(sourceLabel);
   const target = unit(targetLabel);
   if (!from || !target) {
@@ -279,7 +254,7 @@ const MONTHS = [
   'october|oct|اكتوبر|تشرين الاول', 'november|nov|نوفمبر|تشرين الثاني', 'december|dec|ديسمبر|كانون الاول',
 ];
 const monthAliases = MONTHS.join('|');
-const namedDates = new RegExp(String.raw`(?<!\p{L})(?:(\d{1,2})(?:st|nd|rd|th)?\s+(${monthAliases})|(${monthAliases})\s+(\d{1,2})(?:st|nd|rd|th)?)(?![\p{L}\d])(?:[ ,،]+(\d{4})(?!\d))?`, 'giu');
+const namedDates = new RegExp(String.raw`(?<!\p{L})و?(?:(\d{1,2})(?:st|nd|rd|th)?\s+(${monthAliases})|(${monthAliases})\s+(\d{1,2})(?:st|nd|rd|th)?)(?![\p{L}\d])(?:[ ,،]+(\d{4})(?!\d))?`, 'giu');
 
 function calendarDate(year: number, month: number, day: number) {
   const value = new Date(0);
@@ -309,19 +284,22 @@ function dayRange(frame: Frame, input: string, left: Date, right: Date): LocalRe
   return calculated(frame, value, line);
 }
 
-function dateCalculation(frame: Frame, input: string, now: Date): LocalReply | null {
+function dateCalculation(frame: Frame, input: string, now: Date, kind: ComputationKind): LocalReply | null {
   const dates = datesIn(input, now.getUTCFullYear());
   const first = dates[0];
   if (!first) return null;
-  if (/\b(?:day of the week|weekday|what day)\b|(?:اي يوم|ما اليوم|يوم الاسبوع|يصادف|يوافق)/iu.test(input)) {
+  if (kind === 'weekday') {
     const day = new Intl.DateTimeFormat(frame.lang, { timeZone: 'UTC', weekday: 'long' }).format(first.date);
     return calculated(frame, day, `${iso(first.date)} = ${day}`);
   }
 
-  if (dates.length === 2 && /\b(?:between|from|difference|until)\b|(?:بين|فرق|الفارق|من|حتي)/iu.test(input)) return dayRange(frame, input, first.date, dates[1].date);
+  if (kind === 'date_range' && dates.length === 2) {
+    if (first.date > dates[1].date && (first.implicitYear || dates[1].implicitYear)) throw new CalculationError('date_year');
+    return dayRange(frame, input, first.date, dates[1].date);
+  }
 
   const shift = /(?<![\d/-])([+-]?\d+)\s*(days?|weeks?|months?|years?|ايام|يوما?|اسابيع|اسبوعا?|شهور|اشهر|شهرا?|سنوات|سنة|عاما?)(?!\p{L})/iu.exec(input);
-  if (shift && /\b(?:after|before|add|subtract|later|earlier)\b|(?:اضف|اطرح|بعد|قبل)/iu.test(input)) {
+  if (kind === 'date_shift' && shift) {
     const count = safeNumber(Number(shift[1])) * (/\b(?:before|subtract|earlier)\b|(?:اطرح|قبل)/iu.test(input) ? -1 : 1);
     const units = shift[2].toLowerCase();
     const original = first.date;
@@ -338,11 +316,13 @@ function dateCalculation(frame: Frame, input: string, now: Date): LocalReply | n
     return calculated(frame, iso(result), `${iso(original)} ${count < 0 ? '−' : '+'} ${Math.abs(count)} ${units} = ${iso(result)}`);
   }
 
-  if (/\b(?:until|since|away|to go)\b|(?:حتي|الي|منذ|متبقي|باقي)/iu.test(input)) {
+  if (kind === 'date_distance') {
     const today = calendarDate(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-    const next = first.implicitYear && first.date < today && !/\bsince\b|منذ/iu.test(input)
+    const since = /\bsince\b|منذ/iu.test(input);
+    const next = first.implicitYear && first.date < today && !since
       ? calendarDate(today.getUTCFullYear() + 1, first.date.getUTCMonth(), first.date.getUTCDate()) : first.date;
-    return dayRange(frame, input, today, next);
+    if (since && next > today || !since && next < today) throw new CalculationError('date_direction');
+    return since ? dayRange(frame, input, next, today) : dayRange(frame, input, today, next);
   }
   return null;
 }
@@ -389,14 +369,14 @@ function zoneCalculation(frame: Frame, input: string, now: Date): LocalReply | n
   if (!matches.length || matches.length > 2) return null;
 
   const finalZone = zoneFor(matches.at(-1)![0]);
-  const clock = /(?<![\d:+-])(\d{1,2}):([0-5]\d)(?:\s*([ap])\.?m\.?)?(?![\d:])/iu.exec(input)
+  const clock = /(?<![\d:+-])(\d{1,2}):(\d{2})(?:\s*([ap])\.?m\.?)?(?![\d:])/iu.exec(input)
     ?? /(?<![\d:+-])(\d{1,2})\s*()([ap])\.?m\.?(?!\p{L})/iu.exec(input);
   let instant = now;
   let source: Zone | undefined;
   const hour = clock && Number(clock[1]);
   const minute = clock && Number(clock[2]);
   if (clock && hour !== null && minute !== null) {
-    if (matches.length !== 2 || hour > 23 || (clock[3] && (hour < 1 || hour > 12))) throw new CalculationError('timezone');
+    if (matches.length !== 2 || hour > 23 || minute > 59 || (clock[3] && (hour < 1 || hour > 12))) throw new CalculationError('timezone');
     source = zoneFor(matches[0][0]);
     const [year, month, day] = source.parts(now);
     const date = datesIn(input, year)[0]?.date ?? calendarDate(year, month - 1, day);
@@ -427,28 +407,94 @@ function zoneCalculation(frame: Frame, input: string, now: Date): LocalReply | n
 
 const CURRENCIES = /\b(?:currency|exchange rate|USD|EUR|GBP|AED|SAR|JPY|INR|CAD|AUD|CHF|EGP|dollars?|euros?|sterling|yen|rupees?|riyals?|dirhams?)\b|[$€£¥]|(?:دولار|يورو|استرليني|عملة|عمله|سعر الصرف|درهم|ريال|ليرة|ليره|جنيه)/iu;
 
-export function compute(frame: Frame, now: Date): LocalReply | null {
-  const { input, valueOnly } = arithmeticInput(frame.text);
+// Grammar envelopes consume a whole supported question. Operand extraction below
+// does not itself prove that unrelated instructions/prefixes were understood.
+const DATE_OPERAND = String.raw`(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|(?:(?:\d{1,2})(?:st|nd|rd|th)?\s+(?:${monthAliases})|(?:${monthAliases})\s+\d{1,2}(?:st|nd|rd|th)?)(?:[ ,،]+\d{4})?)`;
+const SHIFT_UNITS = String.raw`(?:days?|weeks?|months?|years?|ايام|يوما?|اسابيع|اسبوعا?|شهور|اشهر|شهرا?|سنوات|سن[ةه]|عاما?)`;
+const SHIFT_COUNT = String.raw`[+-]?\d+\s*${SHIFT_UNITS}`;
+const ZONE_OPERAND = String.raw`(?:[a-z_]+(?:/[a-z0-9_+-]+)+|(?:UTC|GMT)(?:\s*[+-]\s*\d{1,2}(?::?\d{2})?)?|${Object.keys(ZONES).sort((a, b) => b.length - a.length).join('|')})`;
+const CLOCK_OPERAND = String.raw`(?:\d{1,2}:\d{2}(?:\s*[ap]\.?m\.?)?|\d{1,2}\s*[ap]\.?m\.?)`;
+const ENVELOPE = (body: string) => new RegExp(String.raw`^(?:${body})(?=$|[^\p{L}\p{N}_])`, 'iu');
+const DATE_ENVELOPES: readonly (readonly [ComputationKind, RegExp])[] = [
+  ['weekday', ENVELOPE(String.raw`(?:what (?:day of the week|weekday|day)(?: (?:is|was|will be))?|which (?:weekday|day of the week)(?: (?:is|was|will be))?|ما (?:اليوم الموافق|يوم الاسبوع|اليوم الذي يصادف)|اي يوم(?: من الاسبوع)?(?: (?:كان|يصادف|يوافق))?)\s+${DATE_OPERAND}`)],
+  ['date_range', ENVELOPE(String.raw`(?:(?:how many|number of) (?:days|weeks)(?: are there)? (?:between|from)|(?:calculate|compute) (?:the )?(?:days|weeks|difference) (?:between|from)|كم (?:يوما?|اسبوعا?) (?:بين|من)|(?:احسب )?(?:فرق الايام|فرق التاريخين|الفارق بين التاريخين)(?: بين| من)?)\s+${DATE_OPERAND}\s*(?:and|to|until|و|الي|الى|حتي|حتى)\s*${DATE_OPERAND}`)],
+  ['date_shift', ENVELOPE(String.raw`(?:(?:add|subtract|اضف|اطرح|زود)\s+${SHIFT_COUNT}\s+(?:to|from|الي|الى|من|علي|على)\s+${DATE_OPERAND}|(?:what (?:date|day)(?: (?:is|will it be))?|(?:ما|اي) (?:التاريخ|تاريخ|يوم)(?: (?:يكون|يصادف))?)\s+${SHIFT_COUNT}\s+(?:after|before|بعد|قبل)\s+${DATE_OPERAND}|(?:ما|اي) (?:التاريخ|تاريخ|يوم)\s+(?:بعد|قبل)\s+${SHIFT_COUNT}\s+(?:من\s+)?${DATE_OPERAND}|${SHIFT_COUNT}\s+(?:after|before|بعد|قبل)\s+${DATE_OPERAND})`)],
+  ['date_distance', ENVELOPE(String.raw`(?:(?:how many|number of) (?:days|weeks)(?: are (?:left|remaining))? (?:until|since)|(?:days|weeks) (?:until|since)|كم (?:يوما?|اسبوعا?) (?:حتي|حتى|منذ)|(?:كم )?(?:يوما?|ايام|اسبوعا?|اسابيع) (?:باقي[ةه]?|متبقي[ةه]?)(?: حتي| حتى)?)\s+${DATE_OPERAND}`)],
+  ['date_distance', ENVELOPE(String.raw`(?:calculate a date in the hijri calendar|احسب(?: التاريخ| تاريخا?)? الهجري)`) ],
+];
+const CLOCK_ENVELOPES: readonly (readonly [ComputationKind, RegExp])[] = [
+  ['clock_now', ENVELOPE(String.raw`(?:what time is it|what(?:'|’)s the (?:current |local )?time|what is the (?:current |local )?time|(?:كم|ما) (?:الساعة|الساعه|الوقت|التوقيت))(?: (?:now|الان))?\s+(?:in|at|في|ب)\s*${ZONE_OPERAND}(?: (?:now|الان))?`)],
+  ['clock_conversion', ENVELOPE(String.raw`(?:(?:convert|حول)[\s:،]+${CLOCK_OPERAND}\s+(?:(?:from|من)\s+)?${ZONE_OPERAND}\s+(?:to|into|in|الي|الى)\s+${ZONE_OPERAND}|(?:at\s+)?${CLOCK_OPERAND}\s+(?:in\s+)?${ZONE_OPERAND}[,،]?\s+(?:what time is it|what (?:is|will be) the time)\s+(?:in|at)\s+${ZONE_OPERAND})(?:\s+(?:on|في|بتاريخ)\s+${DATE_OPERAND})?`)],
+];
+
+function inspectPreparedComputation(source: PreparedComputationSource): ComputationConsumption {
+  if (!source.valid || source.literal) return finishComputationConsumption(source, 'unsupported');
+  // NFKC intentionally folds unit m²/m³ aliases, but raised/lowered numeric
+  // positions are not baseline digits. Never flatten them into another sum,
+  // date, clock or quantity; subscripts do not denote square/cubic units.
+  if (/[\u2080-\u209f]/u.test(source.original)) return finishComputationConsumption(source, 'unsupported');
+  const raised = /[¹²³\u2070-\u207f]/u.test(source.original);
+  for (const [kind, pattern] of [...CLOCK_ENVELOPES, ...DATE_ENVELOPES]) {
+    const match = pattern.exec(source.input);
+    if (match) return raised ? finishComputationConsumption(source, 'unsupported') : finishComputationConsumption(source, kind, { start: 0, end: match[0].length });
+  }
+  if (arithmeticExpression(source.input) !== null) return raised ? finishComputationConsumption(source, 'unsupported') : finishComputationConsumption(source, 'arithmetic', { start: 0, end: source.input.length });
+  const intro = /^(?:(?:convert|conversion|حول|تحويل)[\s:،]+)/iu.exec(source.input);
+  const offset = intro?.[0].length ?? 0;
+  const phrase = CONVERSION.exec(source.input.slice(offset));
+  if (phrase && phrase.index === 0) {
+    const number = phrase[1]!;
+    const originalQuantity = source.span(offset + phrase[0].indexOf(number), offset + phrase[0].indexOf(number) + number.length);
+    if (/[¹²³\u2070-\u207f]/u.test(source.original.slice(originalQuantity.start, originalQuantity.end))) return finishComputationConsumption(source, 'unsupported');
+    const targetText = phrase[3]!;
+    const targetStart = source.input.length - targetText.length;
+    // A known target followed by extra text proves a remainder. Unknown units
+    // can still receive an honest units boundary, never a completed result.
+    if (!unit(unitLabel(targetText))) {
+      let longestUnitEnd = 0;
+      for (const boundary of targetText.matchAll(/\s|[,،;؛:]/gu)) {
+        if (unit(unitLabel(targetText.slice(0, boundary.index)))) longestUnitEnd = boundary.index;
+      }
+      if (longestUnitEnd) return finishComputationConsumption(source, 'conversion', { start: 0, end: targetStart + longestUnitEnd });
+    }
+    return finishComputationConsumption(source, 'conversion', { start: 0, end: source.input.length });
+  }
+  return finishComputationConsumption(source, 'unsupported');
+}
+
+/** Matching diagnostics only; exact source ranges do not grant any action. */
+export function inspectComputationRequest(original: string): ComputationConsumption {
+  return inspectPreparedComputation(prepareComputationSource(original, SHORT_ANSWER_TAIL));
+}
+
+export interface ComputedReply extends LocalReply { consumption: ComputationConsumption }
+
+export function compute(frame: Frame, now: Date, options: { originalText?: string } = {}): ComputedReply | null {
+  const source = prepareComputationSource(options.originalText ?? frame.text, SHORT_ANSWER_TAIL);
+  const consumption = inspectPreparedComputation(source);
+  if (!consumption.complete || !Number.isFinite(now.getTime())) return null;
+  const { input, valueOnly } = source;
   const display = valueOnly && !frame.valueOnly ? { ...frame, valueOnly: true } : frame;
+  const covered = (reply: LocalReply): ComputedReply => ({ ...reply, consumption });
   const conversionRequest = /\b(?:convert|conversion|exchange rate)\b|(?:حول|تحويل|يساوي كم|سعر الصرف)/iu.test(input);
   if (CURRENCIES.test(input) && (conversionRequest || /\b(?:to|into|in)\b|(?:الي|→|⇒|->)/iu.test(input))) return null;
   try {
     if (/\b(?:hijri|islamic calendar)\b|(?:هجري|الهجري)/iu.test(input)) throw new CalculationError('hijri');
-    const zoned = zoneCalculation(display, input, now);
-    if (zoned) return zoned;
-    if (/\b(?:date|day|days|weekday|weeks?|months?|years?|until|since)\b|(?:يوم|ايام|اسبوع|اسابيع|شهر|تاريخ|سنة|سنه|سنوات|حتي|عام)/iu.test(input)) {
-      const dated = dateCalculation(display, input, now);
-      if (dated) return dated;
+    const zoned = consumption.kind === 'clock_now' || consumption.kind === 'clock_conversion' ? zoneCalculation(display, input, now) : null;
+    if (zoned) return covered(zoned);
+    if (['date_range', 'date_shift', 'weekday', 'date_distance'].includes(consumption.kind)) {
+      const dated = dateCalculation(display, input, now, consumption.kind);
+      if (dated) return covered(dated);
     }
-    const operation = arithmetic(input);
+    const operation = consumption.kind === 'arithmetic' ? arithmetic(input) : null;
     if (operation) {
       const value = formatNumber(operation.value);
-      return calculated(display, value, `${operation.expression} = ${value}`);
+      return covered(calculated(display, value, `${operation.expression} = ${value}`));
     }
-    const converted = conversion(input, display, conversionRequest);
-    return converted ?? (conversionRequest ? fixedReply(MESSAGES.units[frame.lang], 'blocked') : null);
+    const converted = consumption.kind === 'conversion' ? conversion(input, display, conversionRequest, source) : null;
+    return converted ? covered(converted) : conversionRequest ? covered(fixedReply(MESSAGES.units[frame.lang], 'blocked')) : null;
   } catch (error) {
-    if (error instanceof CalculationError) return fixedReply(MESSAGES[error.kind][frame.lang], 'blocked');
+    if (error instanceof CalculationError) return covered(fixedReply(MESSAGES[error.kind][frame.lang], 'blocked'));
     throw error;
   }
 }

@@ -43,3 +43,42 @@
 @media (prefers-reduced-motion: reduce) {
   .dots, .spinner { animation: none; }
 }
+
+/* The live line: icon by kind of work, words that sweep with light, time so far. */
+.line { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+.icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 16px; height: 16px; color: var(--accent, #1f6f5c); }
+.words { min-width: 0; overflow-wrap: anywhere; }
+.enter {
+  display: inline-block;
+  background: linear-gradient(90deg, var(--soft, #6b675f) 0%, var(--ink, #22201c) 45%, var(--soft, #6b675f) 90%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: enter .28s cubic-bezier(.2, .7, .2, 1), sweep 2.6s linear infinite;
+}
+.elapsed { flex: none; color: var(--faint, #9a968c); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.think { animation: twinkle 1.6s ease-in-out infinite; }
+.wait { animation: breathe 2.2s ease-in-out infinite; }
+.memory { animation: breathe 1.8s ease-in-out infinite; }
+.search { animation: seek 1.5s ease-in-out infinite; }
+.open { animation: turn 3.2s linear infinite; }
+.read { animation: leaf 1.7s ease-in-out infinite; }
+.write { animation: scribble 1s ease-in-out infinite; }
+.act { animation: tap 1.1s ease-in-out infinite; }
+
+@keyframes enter { from { opacity: 0; transform: translateY(4px); } }
+@keyframes sweep { from { background-position: 110% 0; } to { background-position: -110% 0; } }
+@keyframes twinkle { 0%, 100% { transform: scale(1) rotate(0); opacity: 1; } 50% { transform: scale(.78) rotate(15deg); opacity: .55; } }
+@keyframes breathe { 50% { transform: scale(.88); opacity: .5; } }
+@keyframes seek { 0%, 100% { transform: translate(0, 0); } 30% { transform: translate(2px, -1px); } 60% { transform: translate(-2px, 1px); } }
+@keyframes turn { to { transform: rotate(360deg); } }
+@keyframes leaf { 0%, 100% { transform: scaleX(1); } 50% { transform: scaleX(.72); } }
+@keyframes scribble { 0%, 100% { transform: translate(0, 0) rotate(0); } 35% { transform: translate(1px, -1px) rotate(-8deg); } 70% { transform: translate(-1px, 1px) rotate(5deg); } }
+@keyframes tap { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(2px) scale(.9); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .think, .wait, .memory, .search, .open, .read, .write, .act, .enter { animation: none; }
+  .enter { color: var(--soft, #6b675f); background: none; }
+}

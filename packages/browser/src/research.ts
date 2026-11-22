@@ -25,7 +25,18 @@ export class DuckDuckGoSearch implements SearchProvider {
     const page=await this.network.text(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(question)}`,{signal}),tree=parse(page.text);
     const anchors=find(tree,node=>node.tagName==='a'&&attr(node,'class').split(/\s+/).includes('result__a'));
     const hits:SearchHit[]=[];
-    for(const anchor of anchors){try{let url=new URL(attr(anchor,'href'),page.url);if(url.searchParams.has('uddg'))url=new URL(url.searchParams.get('uddg')!);const validated=this.network.validate(url.href);if(!hits.some(hit=>hit.url===validated.href))hits.push({title:clean(domText(anchor)).slice(0,240),url:validated.href,snippet:''});}catch{/* Unsupported result is not a source. */}if(hits.length>=limit)break;}
+    for(const anchor of anchors){
+      try{
+        let url=new URL(attr(anchor,'href'),page.url);
+        if(url.searchParams.has('uddg'))url=new URL(url.searchParams.get('uddg')!);
+        const validated=this.network.validate(url.href);
+        let container=anchor.parentNode;
+        while(container&&!attr(container,'class').split(/\s+/).includes('result'))container=container.parentNode;
+        const snippet=container&&find(container,node=>attr(node,'class').split(/\s+/).includes('result__snippet'))[0];
+        if(!hits.some(hit=>hit.url===validated.href))hits.push({title:clean(domText(anchor)).slice(0,240),url:validated.href,snippet:snippet?clean(domText(snippet)).slice(0,700):''});
+      }catch{/* Unsupported result is not a source. */}
+      if(hits.length>=limit)break;
+    }
     if(!hits.length)throw new BrowserError('RESEARCH_SEARCH_UNAVAILABLE','لم يُرجع محرك البحث مصادر قابلة للقراءة، أو طلب تحققًا بشريًا. يمكنك تقديم روابط مصادر مباشرة.',502);
     return hits;
   }

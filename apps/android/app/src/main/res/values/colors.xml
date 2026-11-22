@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The web workspace's --page token, light and dark; everything else is drawn by Compose. -->
+    <color name="page_light">#FAF9F6</color>
+    <color name="page_dark">#1E1D1B</color>
+    <color name="ic_launcher_background">#040603</color>
+</resources>

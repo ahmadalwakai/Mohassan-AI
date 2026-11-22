@@ -44,10 +44,11 @@ async function chooseReply(
   const sources = route(frame);
   if (sources.includes('fixed')) return { reply: limits(frame), local: true };
   if (sources.includes('computed')) {
-    const result = compute(frame, deps.now());
+    const result = compute(frame, deps.now(), { originalText: request });
     if (result) return { reply: result, local: true };
   }
   if (sources.includes('memory') || sources.includes('knowledge')) {
+    await deps.progress?.(sources.includes('memory') ? 'يبحث في الذاكرة' : 'يقرأ المستندات المحفوظة');
     const result = await recall(frame, request, deps, signal);
     if (result) return { reply: result, local: true };
   }
@@ -83,6 +84,7 @@ function observeDependencies(deps: MindDeps) {
     },
     async search(query, limit, signal) {
       context.searches = (context.searches ?? 0) + 1;
+      await deps.step(`البحث عن «${query.slice(0, 60)}»`);
       return deps.search(query, limit, signal);
     },
     ...(memory && { async memory(query) {

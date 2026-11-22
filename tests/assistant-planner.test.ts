@@ -38,8 +38,31 @@ describe('composePlan', () => {
     const en = composePlan({ lang: 'en' }, '1. write the report, call Sam\n2. Monday, Wednesday\n3. Friday gym');
     expect(en.text).toContain('**Monday**\n- write the report');
     expect(en.text).toContain('**Wednesday**\n- call Sam');
-    expect(en.text).toContain('Appointments with no day I could read: Friday gym');
+    expect(en.text).toContain('Unplaced appointments (unclear day or outside the selected working days): Friday gym');
+    expect(en.complete).toBe(false);
     expect(composePlan({ lang: 'ar' }, '2. الأحد إلى الخميس')).toMatchObject({ complete: false });
     expect(planningQuestion({ lang: 'ar' }).fields.map(field => field.id)).toEqual(['tasks', 'days', 'fixed']);
+  });
+  it('keeps numbered tasks in structured answers and reads explicit no-appointment replies', () => {
+    const result = composePlan({ lang: 'en' }, { tasks: '1. Review the budget\n2. Call Pat', days: 'Monday to Thursday', fixed: 'none' });
+    expect(result.complete).toBe(true);
+    expect(result.text).toContain('1. Review the budget');
+    expect(result.text).toContain('2. Call Pat');
+    expect(result.text).toContain('**Thursday**');
+    expect(result.text).not.toContain('**Friday**');
+  });
+  it('labels unrecognized or negated working days as provisional rather than confirmed', () => {
+    for (const days of ['not Monday to Friday', 'whenever I am free', 'كل يوم إلا الجمعة']) {
+      const result = composePlan({ lang: 'en' }, { tasks: 'Review the budget', days, fixed: '' });
+      expect(result.complete, days).toBe(false);
+      expect(result.text).toContain('provisional');
+    }
+  });
+  it('does not pick the first day of an ambiguous fixed appointment', () => {
+    const result = composePlan({ lang: 'en' }, { tasks: 'Review the budget', days: 'Every day', fixed: 'Monday or Friday meeting' });
+    expect(result.complete).toBe(false);
+    expect(result.text).toContain('Unplaced appointments');
+    expect(result.text).toContain('Monday or Friday meeting');
+    expect(result.text).not.toContain('meeting (fixed)');
   });
 });

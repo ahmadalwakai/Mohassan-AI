@@ -157,7 +157,10 @@ export class UsageMonitor {
     const previous = this.blocks.get(key) ?? 0;
     this.blocks.set(key, Math.max(until, previous));
     // The cause of the longest cool-down is the one still in force.
-    if (cause && until >= previous) this.blockCauses.set(key, cause);
+    if (until >= previous) {
+      if (cause) this.blockCauses.set(key, cause);
+      else this.blockCauses.delete(key);
+    }
     if (this.blocks.size > MAX_COUNTER_KEYS) for (const [entry, value] of this.blocks) if (value <= this.now()) { this.blocks.delete(entry); this.blockCauses.delete(entry); }
   }
 

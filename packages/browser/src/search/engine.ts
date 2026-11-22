@@ -6,12 +6,13 @@ import { documentedProviders, SearchProviderFailure, type DocumentedProvider } f
 import { PROVIDER_INTERVALS, SEARCH_POLICY_VERSION, searchHash, type SearchCacheStore, type SearchProviderAdmission } from './store.js';
 import { publicSearchScan, publicSearchText, type LocalIndexHit, type SearchLocalIndex } from './local-index.js';
 import { safeResumeUrl } from '../session-state.js';
+import { publicWebProviders } from './web-providers.js';
 
 export interface SearchOutcome {
   hits: (RankedHit & Partial<Pick<LocalIndexHit,'coverage'|'freshness'|'fetchedAt'|'expiresAt'|'contentHash'|'sourceHash'|'trust'>>)[];
   fetchedAt: string;
   freshness: 'fresh' | 'cached' | 'indexed_snapshot';
-  coverage: 'specialized_sources' | 'local_only' | 'mixed';
+  coverage: 'web_sources' | 'specialized_sources' | 'local_only' | 'mixed';
   failures: { provider: string; kind: 'rate_limited' | 'unavailable' | 'invalid_response' }[];
   limitations: string[];
 }
@@ -19,15 +20,21 @@ export interface SearchContext { ownerId: string }
 /** Owner-partitioned bounded cache, circuit breaker and deterministic concurrent retrieval. */
 export class SearchEngine implements SearchProvider {
   readonly name:string;
-  readonly limitations = ['مصادر متخصصة وليست فهرسًا شاملًا للويب؛ لا تثبت الأسعار أو الطقس أو المواعيد الحالية.'];
+  readonly limitations = ['نتائج البحث روابط مرشحة؛ يلزم قراءة الموقع المرتبط بالسؤال والتحقق من تاريخ معلوماته قبل الاستشهاد.'];
   private cache = new Map<string, { until: number; result: SearchOutcome }>();
   private health = new Map<string, { failures: number; next: number }>();
   private active = new Set<string>();
   private providers: DocumentedProvider[];
   private now: () => number;
-  constructor(private network: SafeNetwork, private options: { providers?: DocumentedProvider[]; now?: () => number; store?:SearchCacheStore; localIndex?:SearchLocalIndex; admission?:SearchProviderAdmission } = {}) {
+  /**
+   * `publicWeb: false` leaves out the scraped public engines (Bing RSS, DuckDuckGo HTML). Measured on
+   * 2026-11-22: bing.com/robots.txt forbids /search, and html.duckduckgo.com answers every request with a
+   * human check (artifacts/perf/2026-11-22/search-providers). The documented APIs remain.
+   */
+  constructor(private network: SafeNetwork, private options: { providers?: DocumentedProvider[]; publicWeb?: boolean; now?: () => number; store?:SearchCacheStore; localIndex?:SearchLocalIndex; admission?:SearchProviderAdmission } = {}) {
     this.now = options.now ?? Date.now;
-    this.providers = (options.providers ?? documentedProviders(network, this.now)).filter(provider=>provider.name!=='arXiv'||options.admission);
+    const web = options.publicWeb === false ? [] : publicWebProviders(network);
+    this.providers = (options.providers ?? [...web, ...documentedProviders(network, this.now)]).filter(provider=>provider.name!=='arXiv'||options.admission);
     this.name=[...this.providers.map(provider=>provider.name),...(options.localIndex?[options.localIndex.name]:[])].join(' / ');
   }
   async execute(question: string, limit: number, signal?: AbortSignal, context?: SearchContext): Promise<SearchOutcome> {
@@ -91,8 +98,10 @@ export class SearchEngine implements SearchProvider {
     const indexed=new Map(local.map(hit=>[hit.url,hit]));
     const annotated:SearchOutcome['hits']=hits.map(hit=>{const item=indexed.get(hit.url);return item?{...hit,...item}:hit;});
     const hasLocal=annotated.some(hit=>hit.coverage==='local_only'),hasRemote=annotated.some(hit=>hit.providers.some(name=>name!==this.options.localIndex?.name));
-    const result: SearchOutcome = { hits:annotated,fetchedAt:new Date(this.now()).toISOString(),freshness:hasLocal&&!hasRemote?'indexed_snapshot':'fresh',coverage:hasLocal?(hasRemote?'mixed':'local_only'):'specialized_sources',failures:failures.sort((a,b)=>a.provider.localeCompare(b.provider)),
-      limitations:['هذه مصادر موسوعية وتقنية وأكاديمية متخصصة، وليست فهرسًا شاملاً للويب.','الترتيب مبني على تطابق النص؛ يلزم فتح المصدر للتحقق من الادعاءات.',...(hasLocal?['المصادر المحلية نسخ أضافها المالك صراحة؛ fetchedAt وقت جلب النسخة وليس تاريخ تحديث الموقع.']:[]),...(query.timeSensitive?['لا تثبت هذه النتائج الأسعار أو الطقس أو المواعيد الحالية؛ استخدم مصدر الخدمة المباشر.']:[])] };
+    const webNames=new Set(this.providers.filter(provider=>provider.coverage==='web').map(provider=>provider.name));
+    const hasWeb=annotated.some(hit=>hit.providers.some(name=>webNames.has(name)));
+    const result: SearchOutcome = { hits:annotated,fetchedAt:new Date(this.now()).toISOString(),freshness:hasLocal&&!hasRemote?'indexed_snapshot':'fresh',coverage:hasLocal?(hasRemote?'mixed':'local_only'):hasWeb?'web_sources':'specialized_sources',failures:failures.sort((a,b)=>a.provider.localeCompare(b.provider)),
+      limitations:[hasWeb?'نتائج من الويب العام مع مصادر متخصصة عند ملاءمتها للسؤال؛ التغطية ليست شاملة.':'لم تتوفر نتائج من الويب العام؛ النتائج المتاحة مصادر متخصصة أو محلية محدودة التغطية.','الترتيب مبني على تطابق النص؛ يلزم فتح المصدر للتحقق من الادعاءات.',...(hasLocal?['المصادر المحلية نسخ أضافها المالك صراحة؛ fetchedAt وقت جلب النسخة وليس تاريخ تحديث الموقع.']:[]),...(query.timeSensitive?['الأسعار والطقس والمواعيد تتغير؛ تحقّق من الموقع المعني وتاريخ تحديثه.']:[])] };
     const ttl=result.hits.length?(query.timeSensitive?15_000:query.intent==='general'?60_000:120_000):10_000;
     if(key&&this.options.store){signal?.throwIfAborted();await this.options.store.put(context!.ownerId,key,revision,result,ttl);signal?.throwIfAborted();}
     else if (key&&!this.options.localIndex) {
@@ -103,7 +112,7 @@ export class SearchEngine implements SearchProvider {
   }
   async search(question:string,limit:number,signal?:AbortSignal,context?:SearchContext): Promise<SearchHit[]> {
     const result=await this.execute(question,limit,signal,context);
-    if (!result.hits.length) throw new BrowserError('RESEARCH_SEARCH_UNAVAILABLE','لم تجد المصادر المتخصصة نتيجة موثوقة. افتح موقع الخدمة مباشرة أو أضف رابطًا للمصدر.',502);
+    if (!result.hits.length) throw new BrowserError('RESEARCH_SEARCH_UNAVAILABLE','لم يُرجع البحث مصادر مرتبطة بالسؤال قابلة للقراءة. افتح موقع الخدمة مباشرة أو أضف رابطًا للمصدر.',502);
     return result.hits.map(hit=>hit.coverage==='local_only'?{...hit,snippet:`نسخة مفهرسة بتاريخ ${hit.fetchedAt}. ${hit.snippet}`} : hit);
   }
 }

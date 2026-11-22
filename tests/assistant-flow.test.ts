@@ -187,7 +187,12 @@ describe('the assistant finishing real work', () => {
     expect(finished.status, finished.error ?? '').toBe('idle');
     expect(finished.browser).toMatchObject({ url: `${origin}/ads`, title: 'Ads landing page (analytics blocked)' });
     expect(finished.messages.at(-1)?.text).toContain('Ads landing page');
-    expect(finished.messages.at(-1)?.text).toContain('لقطة');
+    // Consent drops the original ?slow=1 query. The approved POST did happen
+    // and a real image exists, but opening the exact requested URL is partial.
+    expect(finished.messages.at(-1)?.text).toContain('التقطت صورة');
+    const firstRun = await store.db.selectFrom('chat_runs').select(['status', 'state']).where('conversation_id', '=', id).executeTakeFirstOrThrow();
+    expect(firstRun.status).toBe('partial');
+    expect(firstRun.state.completionReview.allowCompletion).toBe(false);
     expect((await control.screen(OWNER, id)).length).toBeGreaterThan(500);
 
     const next = await control.create(OWNER, { goal });
@@ -196,7 +201,10 @@ describe('the assistant finishing real work', () => {
     expect(reopened.approval).toBeNull();
     expect(reopened.browser).toMatchObject({ url: `${origin}/ads?slow=1`, title: 'Ads landing page (analytics blocked)' });
     expect(reopened.messages.at(-1)?.text).toContain('Ads landing page');
-    expect(reopened.messages.at(-1)?.text).toContain('لقطة');
+    expect(reopened.messages.at(-1)?.text).toContain('التقطت صورة');
+    const reopenedRun = await store.db.selectFrom('chat_runs').select(['status', 'state']).where('conversation_id', '=', next.id).executeTakeFirstOrThrow();
+    expect(reopenedRun.status).toBe('completed');
+    expect(reopenedRun.state.completionReview.allowCompletion).toBe(true);
     expect((await control.screen(OWNER, next.id)).length).toBeGreaterThan(500);
     expect(groq.prompts).toHaveLength(0);
     expect(site.state.landingBackgroundRequests).toEqual(['GET /landing-frame', 'GET /landing-frame']);

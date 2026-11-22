@@ -38,6 +38,46 @@ export interface AgentActionResult {
   verification?: AgentVerificationReport;
 }
 
+/** Ephemeral host telemetry only: no element identity, input value or saved page data. */
+export interface AgentBrowserActivity {
+  sequence: number;
+  sessionId?: string;
+  cursor: {
+    x: number;
+    y: number;
+    action: 'move' | 'click' | 'type' | 'select' | 'scroll' | 'press';
+    phase: 'moving' | 'acting' | 'done';
+    updatedAt: string;
+  } | null;
+  events?: Array<{ sequence: number; cursor: AgentBrowserActivity['cursor']; updatedAt: string }>;
+}
+
+/** A sampled stability receipt, never a claim that DOM and pixels were atomic. */
+export interface AgentCaptureReceipt {
+  version: 1;
+  scope: 'stable_observation_samples';
+  ownerId: string;
+  conversationId: string;
+  requestedPageId: string;
+  pageId: string;
+  pageHash: string;
+  url: string;
+  imageHash: string;
+  imageBytes: number;
+  mimeType: 'image/jpeg';
+  startedAt: string;
+  finishedAt: string;
+  captureStartedAt: string;
+  captureFinishedAt: string;
+  documentFingerprint: string;
+  viewportFingerprint: string;
+  /** Equal, host-hashed samples surrounding the capture; not a pixel/DOM proof. */
+  beforeFingerprint: string;
+  afterFingerprint: string;
+}
+export type AgentCaptureResult = { status: 'captured'; page: AgentPage; image: Buffer; receipt: AgentCaptureReceipt }
+  | { status: 'unavailable'; reason: 'no_page' | 'busy' | 'stale_page' | 'changed' | 'capture_failed' | 'unreadable' | 'unsupported_frames' };
+
 /** Owner-only transfer descriptor. No local path, cookie or hidden form value is exposed. */
 export interface AgentFileTarget {
   direction: 'upload' | 'download'; ref: string; label: string; url: string;
@@ -97,6 +137,13 @@ export interface AgentBrowserOptions {
   headless?: boolean;
   /** Trusted runtime persists under its existing owner/lease fence. Throwing blocks dispatch. */
   onCheckpoint?: (checkpoint: AgentSessionCheckpoint) => Promise<void>;
+  /**
+   * Pages of a conversation nobody used for this long (ms) are closed and their checkpoint kept, so the memory of
+   * finished conversations is released while «استعادة» still reopens a ready page. Measured 2026-11-22
+   * (artifacts/plan-2026-11-22/0-baseline.md §7): about 85 MB per open page, and 1.57 GB with 13 processes after a
+   * day of conversations whose pages never closed. The default is proposed, not fixed by the owner; null disables.
+   */
+  idlePageMs?: number | null;
 }
 
 interface ConversationPage {
@@ -105,6 +152,9 @@ interface ConversationPage {
   page: Page;
   pages: Set<Page>;
   readers: number;
+  mutations: number;
+  captureReservation?: symbol;
+  captureEpoch: number;
   shot: Buffer | null;
   lastHash: string | null;
   lastUsed: number;
@@ -121,8 +171,11 @@ interface ConversationPage {
   historyIndex:number;
   targets: Map<string, ObservedTarget>;
   lastObservation?: Pick<AgentPage, 'url' | 'hash' | 'observedAt' | 'documentStatus'>;
+  lastObservationId?: string;
   recovery: { status: AgentSessionCheckpoint['status']; actionKind: AgentAction['kind'] | null; effect: AgentSessionCheckpoint['effect']; reviewRequired: boolean };
   checkpointWrite: Promise<void>;
+  activity: AgentBrowserActivity;
+  activityToken?: symbol;
   closed?: boolean;
 }
 
@@ -142,6 +195,7 @@ interface FrameModel {
   prepareForm(action: AgentAction): { url: string; method: 'GET' | 'POST'; body: string; multipart: boolean } | null;
   canWrite(ref: string, value: string, approved: boolean): boolean;
   recordWrite(ref: string): void;
+  captureSample(): { epoch: number; viewport: number[]; ready: boolean };
 }
 
 interface ObservedTarget {
@@ -158,7 +212,11 @@ interface OwnerBrowser {
 }
 
 const VIEWPORT = { width: 1280, height: 800 };
+const ACTIVITY_EVENT_LIMIT = 32;
+const ACTIVITY_EVENT_TTL_MS = 8000;
 const MAX_CONVERSATION_PAGES = 4;
+/** Proposed (docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md §5.2 P2); the owner fixes the value after the E5.3 measurement. */
+const DEFAULT_IDLE_PAGE_MS = 15 * 60000;
 const MAX_FRAME_ELEMENTS = 220;
 const REF_PATTERN = /^(?:f\d+)?e\d+$/;
 const GESTURES = new Set<AgentAction['kind']>(['click', 'type', 'press', 'form']);
@@ -171,6 +229,19 @@ const HELD_MS = 5 * 60000;
  * observed identity without writing selectors into the page's markup.
  */
 const FRAME_MODEL_SCRIPT = String.raw`(() => {
+  let captureEpoch = 0;
+  const captureChange = () => { captureEpoch = Math.min(2147483647, captureEpoch + 1); };
+  let captureObserver;
+  const captureSample = () => {
+    if (!captureObserver) {
+      captureObserver = new MutationObserver(captureChange);
+      captureObserver.observe(document, { subtree: true, attributes: true, childList: true, characterData: true });
+      for (const event of ['input','change','pointerdown','keydown','wheel','scroll','resize']) addEventListener(event, captureChange, true);
+    }
+    if (captureObserver.takeRecords().length) captureChange();
+    const visual = visualViewport;
+    return { epoch: captureEpoch, ready: document.readyState === 'complete', viewport: [innerWidth, innerHeight, devicePixelRatio, scrollX, scrollY, visual?.width ?? innerWidth, visual?.height ?? innerHeight, visual?.offsetLeft ?? 0, visual?.offsetTop ?? 0, visual?.scale ?? 1] };
+  };
   const clean = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
   const identities = new WeakMap();
   const agentValues = new WeakMap();
@@ -300,7 +371,7 @@ const FRAME_MODEL_SCRIPT = String.raw`(() => {
     return node.tagName === 'SELECT' && Array.from(node.options).every((option, index) => option.selected === (option.defaultSelected || !Array.from(node.options).some(item => item.defaultSelected) && index === 0));
   };
   const recordWrite = ref => { const node = resolve(ref); if (node) agentValues.set(node, valueOf(node)); };
-  return { read, resolve, prepareForm, canWrite, recordWrite };
+  return { read, resolve, prepareForm, canWrite, recordWrite, captureSample };
 })()`;
 
 function hashOf(value: string): string {
@@ -352,12 +423,23 @@ export class AgentBrowser {
   private recoveryBindings = new Map<string, AgentSessionCheckpoint>();
   private readonly network: SafeNetwork;
   private readonly frameModels = new WeakMap<Frame, Promise<JSHandle<FrameModel>>>();
+  private readonly captureModelTokens = new WeakMap<JSHandle<FrameModel>, string>();
   private nextRef = 0;
   private checkpointStore?: AgentBrowserOptions['onCheckpoint'];
+  private readonly idlePageMs: number | null;
+  private idleSweep?: ReturnType<typeof setInterval>;
+  private sweeping: Promise<number> | null = null;
 
   constructor(private readonly options: AgentBrowserOptions) {
     this.network = new SafeNetwork({ testOrigins: options.testOrigins });
     this.checkpointStore = options.onCheckpoint;
+    this.idlePageMs = options.idlePageMs === undefined ? DEFAULT_IDLE_PAGE_MS : options.idlePageMs && options.idlePageMs > 0 ? options.idlePageMs : null;
+    if (this.idlePageMs) {
+      // The sweep never keeps the process alive: scripts and tests exit when their own work is done.
+      const timer: ReturnType<typeof setInterval> = setInterval(() => { void this.sweepIdlePages().catch(() => {}); }, Math.max(250, Math.min(30000, Math.floor(this.idlePageMs / 2))));
+      (timer as { unref?: () => void }).unref?.();
+      this.idleSweep = timer;
+    }
   }
 
   /** Installed once by the trusted server; never exposed as a page/model capability. */
@@ -765,10 +847,11 @@ export class AgentBrowser {
   private adoptPopup(entry: ConversationPage, popup: Page, previous: Page): void {
     if (entry.pages.has(popup)) return;
     if (!entry.operation && (entry.ownerInputUntil ?? 0) <= Date.now()) { void popup.close().catch(() => {}); return; }
+    this.clearActivity(entry);
     entry.page = popup;
     this.watch(entry, popup);
     popup.once('close', () => {
-      if (entry.page === popup && !previous.isClosed()) entry.page = previous;
+      if (entry.page === popup && !previous.isClosed()) { this.clearActivity(entry); entry.page = previous; }
     });
   }
 
@@ -778,7 +861,13 @@ export class AgentBrowser {
     page.setDefaultTimeout(7000);
     page.setDefaultNavigationTimeout(25000);
     page.on('dialog', (dialog) => void dialog.dismiss().catch(() => {}));
+    const captureChange = () => { entry.captureEpoch = Math.min(2_147_483_647, entry.captureEpoch + 1); };
+    page.on('frameattached', captureChange);
+    page.on('framedetached', captureChange);
+    page.on('framenavigated', captureChange);
+    page.on('close', captureChange);
     page.on('framenavigated',frame=>{
+      if (entry.page === page) this.clearActivity(entry);
       if(frame!==entry.page.mainFrame()||!/^https?:/.test(frame.url()))return;
       const url=frame.url();
       if(entry.history[entry.historyIndex]===url)return;
@@ -786,10 +875,10 @@ export class AgentBrowser {
       entry.history=entry.history.slice(0,entry.historyIndex+1);entry.history.push(url);entry.historyIndex=entry.history.length-1;
     });
     page.on('popup', popup => this.adoptPopup(entry, popup, page));
-    page.once('close', () => entry.pages.delete(page));
+    page.once('close', () => { if (entry.page === page) this.clearActivity(entry); entry.pages.delete(page); });
   }
 
-  private async conversation(ownerId: string, conversationId: string, reserve?: NonNullable<ConversationPage['operation']>): Promise<ConversationPage> {
+  private async conversation(ownerId: string, conversationId: string, reserve?: NonNullable<ConversationPage['operation']>, capture = false): Promise<ConversationPage> {
     const owner = await this.owner(ownerId, conversationId);
     // Serialize creation and eviction; concurrent callers must get one page per conversation.
     const previousAllocation = owner.allocation;
@@ -804,6 +893,7 @@ export class AgentBrowser {
       entry = undefined;
     }
     if (!entry) {
+      if (capture) throw new BrowserError('AGENT_NO_PAGE', 'لا توجد صفحة مفتوحة لالتقاطها.', 409);
       if (owner.conversations.size >= MAX_CONVERSATION_PAGES) {
         const candidate = [...owner.conversations.entries()].filter(([, item]) => !item.operation && !item.held && item.readers === 0 && (item.ownerInputUntil ?? 0) <= Date.now()).sort(([, a], [, b]) => a.lastUsed - b.lastUsed)[0];
         if (!candidate) throw new BrowserError('AGENT_PAGE_LIMIT', 'جميع صفحات المتصفح مشغولة؛ انتظر انتهاء إجراء أو أغلق جلسة.', 409);
@@ -813,7 +903,7 @@ export class AgentBrowser {
       }
       const blank = owner.conversations.size === 0 ? owner.context.pages().find((page) => page.url() === 'about:blank') : undefined;
       const page = blank ?? await owner.context.newPage();
-      entry = { ownerId, conversationId, page, pages: new Set(), readers: 0, shot: null, lastHash: null, lastUsed: Date.now(), redactions:new Map(),history:[],historyIndex:-1,targets:new Map(), recovery: { status: 'ready', actionKind: null, effect: null, reviewRequired: false }, checkpointWrite: Promise.resolve() };
+      entry = { ownerId, conversationId, page, pages: new Set(), readers: 0, mutations: 0, captureEpoch: 0, shot: null, lastHash: null, lastUsed: Date.now(), redactions:new Map(),history:[],historyIndex:-1,targets:new Map(), recovery: { status: 'ready', actionKind: null, effect: null, reviewRequired: false }, checkpointWrite: Promise.resolve(), activity: { sequence: 0, cursor: null, sessionId: randomUUID(), events: [] } };
       const checkpoint = this.recoveryBindings.get(JSON.stringify([ownerId, conversationId]));
       if (checkpoint) {
         const safePendingRead = checkpoint.status === 'action_pending' && ['open', 'back', 'scroll', 'wait'].includes(checkpoint.actionKind ?? '');
@@ -824,6 +914,12 @@ export class AgentBrowser {
       this.watch(entry, page);
       owner.conversations.set(conversationId, entry);
     }
+    if (entry.captureReservation) throw new BrowserError('AGENT_CAPTURE_BUSY', 'يجري التقاط قراءة موثقة لهذه الصفحة؛ انتظر اكتمالها.', 409);
+    if (capture) {
+      if (entry.operation || entry.held || entry.readers || entry.mutations || (entry.ownerInputUntil ?? 0) > Date.now()) throw new BrowserError('AGENT_CAPTURE_BUSY', 'الصفحة مشغولة بإجراء أو إدخال من المالك؛ أعد قراءتها بعد انتهائه.', 409);
+      entry.captureReservation = Symbol('capture');
+      entry.readers++;
+    }
     entry.lastUsed = Date.now();
     if (reserve) {
       if (entry.operation) throw new BrowserError('AGENT_ACTION_BUSY', 'هناك إجراء جارٍ في هذه الصفحة.', 409);
@@ -833,12 +929,114 @@ export class AgentBrowser {
     } finally { release(); }
   }
 
+  /** Legacy direct action methods also exclude a concurrent evidence capture. */
+  private async withMutation<T>(entry: ConversationPage, run: () => Promise<T>): Promise<T> {
+    if (entry.captureReservation) throw new BrowserError('AGENT_CAPTURE_BUSY', 'يجري التقاط قراءة موثقة لهذه الصفحة؛ انتظر اكتمالها.', 409);
+    entry.mutations++;
+    try { return await run(); } finally { entry.mutations--; }
+  }
+
+  private beginRead(entry: ConversationPage): void {
+    // Allocation can admit a capture before an already-waiting reader resumes.
+    // Check and increment synchronously, just as legacy mutations do.
+    if (entry.captureReservation) throw new BrowserError('AGENT_CAPTURE_BUSY', 'يجري التقاط قراءة موثقة لهذه الصفحة؛ انتظر اكتمالها.', 409);
+    entry.readers++;
+  }
+
   /** True when this conversation already has a page; never starts a browser. */
   async hasPage(ownerId: string, conversationId: string): Promise<boolean> {
     const owner = this.owners.get(this.profileKey(ownerId, conversationId));
     if (!owner) return false;
     const entry = (await owner.catch(() => null))?.conversations.get(conversationId);
     return Boolean(entry && !entry.page.isClosed() && entry.page.url() !== 'about:blank');
+  }
+
+  /** Read existing host state only; polling never allocates or restores a browser/page. */
+  async activity(ownerId: string, conversationId: string): Promise<AgentBrowserActivity | null> {
+    const owner = this.owners.get(this.profileKey(ownerId, conversationId));
+    const entry = owner && (await owner.catch(() => null))?.conversations.get(conversationId);
+    if (!entry || entry.closed || entry.page.isClosed() || entry.page.url() === 'about:blank') return null;
+    const now = Date.now();
+    return { sequence: entry.activity.sequence, sessionId: entry.activity.sessionId,
+      cursor: entry.activity.cursor ? { ...entry.activity.cursor } : null,
+      events: (entry.activity.events ?? []).filter(event => now - Date.parse(event.updatedAt) <= ACTIVITY_EVENT_TTL_MS)
+        .map(event => ({ ...event, cursor: event.cursor ? { ...event.cursor } : null })),
+    };
+  }
+
+  /** Every actual cursor state update has a bounded, short-lived host event. */
+  private publishActivity(entry: ConversationPage, cursor: AgentBrowserActivity['cursor']): void {
+    const now = Date.now(), updatedAt = new Date(now).toISOString(), sequence = entry.activity.sequence + 1;
+    const current = cursor ? { ...cursor, updatedAt } : null;
+    const events = (entry.activity.events ?? []).filter(event => now - Date.parse(event.updatedAt) <= ACTIVITY_EVENT_TTL_MS);
+    events.push({ sequence, cursor: current ? { ...current } : null, updatedAt });
+    entry.activity = { sequence, sessionId: entry.activity.sessionId, cursor: current, events: events.slice(-ACTIVITY_EVENT_LIMIT) };
+  }
+
+  private clearActivity(entry: ConversationPage): void {
+    entry.activityToken = undefined;
+    if (entry.activity.cursor) this.publishActivity(entry, null);
+  }
+
+  /** Geometry and mouse telemetry are best effort; they must never replay or fail a real action. */
+  private async startActivity(entry: ConversationPage, action: NonNullable<AgentBrowserActivity['cursor']>['action'], target?: ElementHandle<Element>): Promise<symbol | null> {
+    const page = entry.page, token = Symbol('browser-activity');
+    // Keep the last point visible while measuring the next target so the viewer
+    // can animate between real positions; the new token still fences late output.
+    entry.activityToken = token;
+    const active = () => entry.activityToken === token && entry.page === page && !entry.closed && !page.isClosed();
+    try {
+      const viewport = page.viewportSize() ?? VIEWPORT;
+      const previous = action === 'press' ? entry.activity.cursor : null;
+      let x = previous ? previous.x * viewport.width : viewport.width / 2;
+      let y = previous ? previous.y * viewport.height : viewport.height / 2;
+      if (target) {
+        if ((await target.ownerFrame())?.page() !== page) { if (active()) this.clearActivity(entry); return null; }
+        await target.scrollIntoViewIfNeeded({ timeout: 750 });
+        const box = await target.boundingBox();
+        if (!box || box.width <= 0 || box.height <= 0) { if (active()) this.clearActivity(entry); return null; }
+        const left = Math.max(0, box.x), right = Math.min(viewport.width, box.x + box.width);
+        const top = Math.max(0, box.y), bottom = Math.min(viewport.height, box.y + box.height);
+        if (right <= left || bottom <= top) { if (active()) this.clearActivity(entry); return null; }
+        x = (left + right) / 2; y = (top + bottom) / 2;
+      }
+      if (!active()) return null;
+      const publish = (phase: 'moving' | 'acting') => {
+        this.publishActivity(entry, { x: x / viewport.width, y: y / viewport.height, action, phase, updatedAt: new Date().toISOString() });
+      };
+      publish('moving');
+      await page.mouse.move(x, y, { steps: 4 });
+      if (!active()) return null;
+      publish('acting');
+      return token;
+    } catch { if (active()) this.clearActivity(entry); return null; }
+  }
+
+  private finishActivity(entry: ConversationPage, token: symbol | null): void {
+    if (!token || entry.activityToken !== token || entry.closed || entry.page.isClosed() || !entry.activity.cursor) return;
+    this.publishActivity(entry, { ...entry.activity.cursor, phase: 'done' });
+    entry.activityToken = undefined;
+  }
+
+  private async duringActivity<T>(entry: ConversationPage, token: symbol | null, run: () => Promise<T>): Promise<T> {
+    try { const result = await run(); this.finishActivity(entry, token); return result; }
+    catch (error) { if (token && entry.activityToken === token) this.clearActivity(entry); throw error; }
+  }
+
+  /** Keyboard focus can be inside nested frames; boundingBox already uses main-frame coordinates. */
+  private async startKeyboardActivity(entry: ConversationPage): Promise<symbol | null> {
+    const page = entry.page;
+    const depth = (frame: Frame): number => { let count = 0; for (let parent = frame.parentFrame(); parent; parent = parent.parentFrame()) count++; return count; };
+    for (const frame of page.frames().sort((a, b) => depth(b) - depth(a))) {
+      let focused: JSHandle<Element | null> | undefined;
+      try {
+        focused = await frame.evaluateHandle(() => document.hasFocus() && !['BODY', 'HTML', 'IFRAME'].includes(document.activeElement?.tagName ?? '') ? document.activeElement : null);
+        const target = focused.asElement();
+        if (target) return await this.startActivity(entry, 'press', target);
+      } catch { /* A detached or changing frame does not block the key. */ }
+      finally { await focused?.dispose().catch(() => {}); }
+    }
+    return entry.activity.cursor ? this.startActivity(entry, 'press') : null;
   }
 
   private async settle(page: Page): Promise<void> {
@@ -920,8 +1118,8 @@ export class AgentBrowser {
     return scrub(snapshot) as AgentPage;
   }
 
-  private async result(entry: ConversationPage, screenshot = true): Promise<AgentActionResult> {
-    entry.readers++;
+  private async result(entry: ConversationPage, screenshot = true, moveToViewport = false): Promise<AgentActionResult> {
+    this.beginRead(entry);
     try {
     if (entry.page.isClosed()) throw new BrowserError('AGENT_PAGE_CLOSED', 'أُغلقت الصفحة؛ لم تُفترض نتيجة ناجحة.', 409);
     for (let count = 0; entry.redirectTarget; count++) {
@@ -936,9 +1134,14 @@ export class AgentBrowser {
       if (current === entry.page) break;
     }
     if (entry.operation?.denial) throw entry.operation.denial;
+    // Opening a page has no element target, but still has a real browser pointer.
+    // Move once before reading/capturing so hover changes belong to this view.
+    if (moveToViewport) await this.duringActivity(entry, await this.startActivity(entry, 'move'), async () => {});
+    if (entry.operation?.denial) throw entry.operation.denial;
     const page = await this.read(entry, screenshot);
     const changed = page.hash !== entry.lastHash;
     entry.lastHash = page.hash;
+    entry.lastObservationId = page.id;
     entry.lastObservation = { url: page.url, hash: page.hash, observedAt: page.observedAt, ...(page.documentStatus ? { documentStatus: page.documentStatus } : {}) };
     return { page, changed };
     } finally { entry.readers--; }
@@ -987,7 +1190,7 @@ export class AgentBrowser {
     if (!await this.hasPage(ownerId, conversationId)) throw new BrowserError('BROWSER_FILE_PAGE_REQUIRED', 'افتح الصفحة في المحادثة أولًا.', 409);
     const entry = await this.conversation(ownerId, conversationId);
     if (entry.operation || entry.held || entry.recovery.reviewRequired) throw new BrowserError('BROWSER_FILE_SESSION_BUSY', 'أكمل الإجراء أو مراجعة الجلسة قبل نقل ملف.', 409);
-    entry.readers++;
+    this.beginRead(entry);
     try { return (await this.fileTarget(entry, ref, direction)).target; } finally { entry.readers--; }
   }
 
@@ -995,7 +1198,7 @@ export class AgentBrowser {
     if (!await this.hasPage(ownerId, conversationId)) return { uploads: [], downloads: [] };
     const entry = await this.conversation(ownerId, conversationId);
     if (entry.operation || entry.held || entry.recovery.reviewRequired) throw new BrowserError('BROWSER_FILE_SESSION_BUSY', 'أكمل الإجراء أو مراجعة الجلسة قبل نقل ملف.', 409);
-    entry.readers++;
+    this.beginRead(entry);
     try {
       const page = await this.read(entry, false);
       return { uploads: page.elements.filter(item => item.role === 'file').slice(0, 10).map(({ ref, label }) => ({ ref, label })), downloads: page.elements.filter(item => item.role === 'link' && item.href).slice(0, 40).map(({ ref, label, href }) => ({ ref, label, url: href! })) };
@@ -1071,6 +1274,8 @@ export class AgentBrowser {
     const url = this.normalizeUrl(input);
     if (!await this.isAllowed(url)) throw new BrowserError('AGENT_NETWORK_DENIED', 'هذا العنوان داخلي أو غير موجود، ولا يمكن فتحه.', 403);
     const entry = await this.conversation(ownerId, conversationId);
+    return this.withMutation(entry, async () => {
+    this.clearActivity(entry);
     entry.documentResponse = undefined;
     entry.navigationUrl = this.network.validate(url, this.options.allowedOrigins).href;
     try {
@@ -1079,13 +1284,16 @@ export class AgentBrowser {
       if (entry.operation?.denial) throw entry.operation.denial;
       throw new BrowserError('AGENT_NAVIGATION_FAILED', `تعذر فتح ${new URL(url).hostname}؛ قد يكون الموقع متوقفًا أو الرابط خاطئًا.`, 502);
     }
-    return this.result(entry);
+    return this.result(entry, true, true);
+    });
   }
 
   /** No script from the model is evaluated. Only bounded native forms can be authorized. */
   async prepareAction(ownerId: string, conversationId: string, action: AgentAction): Promise<AgentRequestPermit | null> {
     if (!['click', 'type', 'press', 'form'].includes(action.kind) || action.kind === 'type' && !action.submit || action.kind === 'press' && action.text !== 'Enter') return null;
     const entry = await this.conversation(ownerId, conversationId);
+    this.beginRead(entry);
+    try {
     const observed = await this.read(entry, false);
     const model = action.kind === 'press'
       ? await this.frameModels.get(entry.page.mainFrame())
@@ -1097,6 +1305,7 @@ export class AgentBrowser {
     if (!prepared) return null;
     this.network.validate(prepared.url, this.options.allowedOrigins);
     return { id:randomUUID(),url: prepared.url, method: prepared.method, bodyHash: requestBodyHash((prepared.multipart ? 'multipart-text:' : '') + prepared.body), pageHash: observed.hash, actionHash: hashOf(JSON.stringify([action.kind,action.ref??null,action.text??null,action.submit??false])), expiresAt: Date.now() + 5 * 60000 };
+    } finally { entry.readers--; }
   }
 
   /** Re-check durable authority immediately before every request, not just before clicking. */
@@ -1166,7 +1375,7 @@ export class AgentBrowser {
     authority.signal.throwIfAborted(); await authority.assertActive();
     if (!await this.hasPage(ownerId, conversationId)) throw new BrowserError('AGENT_NO_PAGE', 'لا توجد صفحة مستقلة للتحقق منها.', 409);
     const entry = await this.conversation(ownerId, conversationId), previousHash = entry.lastHash;
-    entry.readers++;
+    this.beginRead(entry);
     const deadline = Date.now() + timeoutMs;
     try {
       for (let samples = 1; ; samples++) {
@@ -1195,6 +1404,7 @@ export class AgentBrowser {
         if (status === 'passed' || Date.now() >= deadline || samples >= 30) {
           authority.signal.throwIfAborted(); await authority.assertActive();
           entry.lastHash = page.hash;
+          entry.lastObservationId = page.id;
           entry.lastObservation = { url: page.url, hash: page.hash, observedAt: page.observedAt, ...(page.documentStatus ? { documentStatus: page.documentStatus } : {}) };
           await this.capture(entry);
           authority.signal.throwIfAborted(); await authority.assertActive();
@@ -1221,37 +1431,60 @@ export class AgentBrowser {
     }
   }
 
+  /** Scroll/hover may rebuild a control after resolution but before native input. */
+  private async assertTargetCurrent(entry: ConversationPage, ref: string, target: ElementHandle<Element>, observed: ObservedTarget): Promise<void> {
+    const current = observed.frame.page() === entry.page && await observed.model.evaluate((model, input) =>
+      input.target.isConnected && model.resolve(input.ref) === input.target, { ref, target }).catch(() => false);
+    if (!current || observed.frame.page() !== entry.page)
+      throw new BrowserError('AGENT_REF_STALE', 'تغيّر العنصر المرصود أو اختفى قبل إدخال الإجراء. حدّث قراءة الصفحة قبل المحاولة.', 409);
+  }
+
   async click(ownerId: string, conversationId: string, ref: string): Promise<AgentActionResult> {
     const entry = await this.conversation(ownerId, conversationId);
+    return this.withMutation(entry, async () => {
     await this.withTarget(entry, ref, async (target, observed) => {
       if (observed.href) {
         entry.navigationUrl = this.network.validate(observed.href, this.options.allowedOrigins).href;
         const targetName = await target.getAttribute('target');
         if (targetName && !['_self', '_parent', '_top'].includes(targetName.toLowerCase())) entry.popupIntent = { url: entry.navigationUrl, operation: entry.operation };
       }
-      try {
-        await target.click({ timeout: 5000 });
-      } catch {
-        if (entry.operation?.denial) throw entry.operation.denial;
-        throw new BrowserError(entry.operation?.used ? 'AGENT_EFFECT_UNKNOWN' : 'AGENT_CLICK_FAILED', 'لم تُحسم نتيجة النقر؛ لم يُكرر الإجراء تلقائيًا.', 409);
-      }
+      await this.duringActivity(entry, await this.startActivity(entry, 'click', target), async () => {
+        await this.assertTargetCurrent(entry, ref, target, observed);
+        try { await target.click({ timeout: 5000 }); }
+        catch {
+          if (entry.operation?.denial) throw entry.operation.denial;
+          throw new BrowserError(entry.operation?.used ? 'AGENT_EFFECT_UNKNOWN' : 'AGENT_CLICK_FAILED', 'لم تُحسم نتيجة النقر؛ لم يُكرر الإجراء تلقائيًا.', 409);
+        }
+      });
     });
     return this.result(entry);
+    });
   }
 
   async type(ownerId: string, conversationId: string, ref: string, text: string, submit: boolean): Promise<AgentActionResult> {
     const entry = await this.conversation(ownerId, conversationId);
+    return this.withMutation(entry, async () => {
     await this.withTarget(entry, ref, async (target, observed) => {
-      const canWrite = await observed.model.evaluate((model, input) => model.canWrite(input.ref, input.text, input.approved), { ref, text, approved: Boolean(entry.operation?.permit) });
-      if (!canWrite) throw new BrowserError('AGENT_FIELD_VALUE_PROTECTED', 'الحقل يحتوي على قيمة من المالك أو الصفحة؛ يلزم تأكيده قبل استبدالها.', 409);
+      const assertCanWrite = async () => {
+        const canWrite = await observed.model.evaluate((model, input) => model.canWrite(input.ref, input.text, input.approved), { ref, text, approved: Boolean(entry.operation?.permit) });
+        if (!canWrite) throw new BrowserError('AGENT_FIELD_VALUE_PROTECTED', 'الحقل يحتوي على قيمة من المالك أو الصفحة؛ يلزم تأكيده قبل استبدالها.', 409);
+      };
+      await assertCanWrite();
+      await this.duringActivity(entry, await this.startActivity(entry, 'type', target), async () => {
+      await this.assertTargetCurrent(entry, ref, target, observed);
+      await assertCanWrite();
       try {
         await target.fill(text, { timeout: 5000 });
       } catch {
+        await this.assertTargetCurrent(entry, ref, target, observed);
+        await assertCanWrite();
         try {
           await target.click({ timeout: 3000 });
+          await assertCanWrite();
           await entry.page.keyboard.press('Control+A');
           await entry.page.keyboard.insertText(text);
-        } catch {
+        } catch (error) {
+          if (error instanceof BrowserError && error.code === 'AGENT_FIELD_VALUE_PROTECTED') throw error;
           throw new BrowserError('AGENT_TYPE_FAILED', 'تعذرت الكتابة في هذا الحقل؛ قد يكون غير قابل للتعديل.', 409);
         }
       }
@@ -1259,113 +1492,309 @@ export class AgentBrowser {
       if (value !== text) throw new BrowserError('AGENT_FIELD_UNVERIFIED', 'لم يثبت أن الحقل احتفظ بالقيمة المطلوبة؛ راجع الصفحة قبل المتابعة.', 409);
       await observed.model.evaluate((model, ref) => model.recordWrite(ref), ref);
       if (submit) await target.press('Enter');
+      });
     });
     return this.result(entry);
+    });
   }
 
   async select(ownerId: string, conversationId: string, ref: string, value: string): Promise<AgentActionResult> {
     const entry = await this.conversation(ownerId, conversationId);
+    return this.withMutation(entry, async () => {
     await this.withTarget(entry, ref, async (target, observed) => {
-      const canWrite = await observed.model.evaluate((model, input) => model.canWrite(input.ref, input.value, false), { ref, value });
-      if (!canWrite) throw new BrowserError('AGENT_FIELD_VALUE_PROTECTED', 'تغيّر اختيار المالك؛ يلزم تأكيده قبل استبداله.', 409);
-      await target.selectOption({ label: value }, { timeout: 4000 }).catch(() => target.selectOption(value, { timeout: 4000 })).catch(() => {
+      const assertCanWrite = async () => {
+        const canWrite = await observed.model.evaluate((model, input) => model.canWrite(input.ref, input.value, false), { ref, value });
+        if (!canWrite) throw new BrowserError('AGENT_FIELD_VALUE_PROTECTED', 'تغيّر اختيار المالك؛ يلزم تأكيده قبل استبداله.', 409);
+      };
+      await assertCanWrite();
+      await this.duringActivity(entry, await this.startActivity(entry, 'select', target), async () => {
+      await this.assertTargetCurrent(entry, ref, target, observed);
+      await assertCanWrite();
+      await target.selectOption({ label: value }, { timeout: 4000 }).catch(async () => {
+        await this.assertTargetCurrent(entry, ref, target, observed);
+        await assertCanWrite();
+        return target.selectOption(value, { timeout: 4000 });
+      }).catch(error => {
+        if (error instanceof BrowserError && ['AGENT_REF_STALE', 'AGENT_FIELD_VALUE_PROTECTED'].includes(error.code)) throw error;
         throw new BrowserError('AGENT_SELECT_FAILED', 'هذا الخيار غير موجود في القائمة.', 409);
       });
       await observed.model.evaluate((model, ref) => model.recordWrite(ref), ref);
+      });
     });
     return this.result(entry);
+    });
   }
 
   async press(ownerId: string, conversationId: string, key: string): Promise<AgentActionResult> {
     const entry = await this.conversation(ownerId, conversationId);
-    await entry.page.keyboard.press(key).catch(() => {
+    return this.withMutation(entry, async () => {
+    await this.duringActivity(entry, await this.startKeyboardActivity(entry), () => entry.page.keyboard.press(key).catch(() => {
       throw new BrowserError('AGENT_KEY_INVALID', 'هذا المفتاح غير معروف.');
-    });
+    }));
     return this.result(entry);
+    });
   }
 
   async scroll(ownerId: string, conversationId: string, direction: 'up' | 'down'): Promise<AgentActionResult> {
     const entry = await this.conversation(ownerId, conversationId);
-    await entry.page.mouse.move(VIEWPORT.width / 2, VIEWPORT.height / 2);
-    await entry.page.mouse.wheel(0, direction === 'down' ? 650 : -650);
+    return this.withMutation(entry, async () => {
+    await this.duringActivity(entry, await this.startActivity(entry, 'scroll'), async () => {
+      await entry.page.mouse.wheel(0, direction === 'down' ? 650 : -650);
+    });
     await delay(350);
     return this.result(entry);
+    });
   }
 
   async back(ownerId: string, conversationId: string): Promise<AgentActionResult> {
     const entry = await this.conversation(ownerId, conversationId);
+    return this.withMutation(entry, async () => {
     const previous=entry.history[entry.historyIndex-1];
     if(!previous)return this.result(entry);
+    this.clearActivity(entry);
     entry.navigationUrl=this.network.validate(previous, this.options.allowedOrigins).href;
     await entry.page.goBack({ waitUntil: 'domcontentloaded' }).catch(() => {});
     return this.result(entry);
+    });
   }
 
   async wait(ownerId: string, conversationId: string, milliseconds: number): Promise<AgentActionResult> {
     const entry = await this.conversation(ownerId, conversationId);
+    return this.withMutation(entry, async () => {
     await delay(Math.min(Math.max(milliseconds, 200), 8000));
     return this.result(entry);
+    });
   }
 
   /**
-   * Writes a credential into the page. No page state is read here and no
+   * Writes a credential into the page. No field value is read here and no
    * screenshot is taken, so the value cannot reach a saved image or the model.
    */
   async fillSecret(ownerId: string, conversationId: string, ref: string, value: string): Promise<void> {
     const entry = await this.conversation(ownerId, conversationId);
+    return this.withMutation(entry, async () => {
     if(value.length>=4)entry.redactions.set(value,Date.now()+10*60000);
-    await this.withTarget(entry, ref, target => target.fill(value, { timeout: 5000 }).catch(() => {
-      throw new BrowserError('AGENT_SECRET_FILL_FAILED', 'تعذرت تعبئة الحقل.', 409);
+    await this.withTarget(entry, ref, async (target, observed) => this.duringActivity(entry, await this.startActivity(entry, 'type', target), async () => {
+      await this.assertTargetCurrent(entry, ref, target, observed);
+      await target.fill(value, { timeout: 5000 }).catch(() => {
+        throw new BrowserError('AGENT_SECRET_FILL_FAILED', 'تعذرت تعبئة الحقل.', 409);
+      });
     }));
+    });
   }
 
   /** Code inputs split across single-digit boxes take keystrokes, not a fill. */
   async typeSecretKeys(ownerId: string, conversationId: string, ref: string, value: string): Promise<void> {
     const entry = await this.conversation(ownerId, conversationId);
+    return this.withMutation(entry, async () => {
     if(value.length>=4)entry.redactions.set(value,Date.now()+10*60000);
-    await this.withTarget(entry, ref, target => target.click({ timeout: 4000 }));
-    await entry.page.keyboard.type(value, { delay: 40 });
+    await this.withTarget(entry, ref, async (target, observed) => this.duringActivity(entry, await this.startActivity(entry, 'type', target), async () => {
+      await this.assertTargetCurrent(entry, ref, target, observed);
+      await target.click({ timeout: 4000 });
+      await entry.page.keyboard.type(value, { delay: 40 });
+    }));
+    });
   }
 
   /** Submits a filled form with Enter and reads the page that follows. */
   async submitForm(ownerId: string, conversationId: string, ref: string): Promise<AgentActionResult> {
     const entry = await this.conversation(ownerId, conversationId);
-    await this.withTarget(entry, ref, target => target.press('Enter'));
+    return this.withMutation(entry, async () => {
+    await this.withTarget(entry, ref, async (target, observed) => this.duringActivity(entry, await this.startActivity(entry, 'press', target), async () => {
+      await this.assertTargetCurrent(entry, ref, target, observed);
+      await target.press('Enter');
+    }));
     return this.result(entry);
+    });
   }
 
   /** Newest view of the page for the person following along. */
   async screen(ownerId: string, conversationId: string): Promise<Buffer | null> {
     if (!await this.hasPage(ownerId, conversationId)) return null;
     const entry = await this.conversation(ownerId, conversationId);
-    await this.capture(entry);
-    return entry.shot;
+    this.beginRead(entry);
+    try { await this.capture(entry); return entry.shot; } finally { entry.readers--; }
+  }
+
+  private async captureSample(entry: ConversationPage, page: Page) {
+    const frames = page.frames();
+    if (frames.length > 6 || frames.some(frame => frame.isDetached())) return null;
+    const samples = await Promise.all(frames.map(async frame => {
+      const read = await this.readFrame(frame);
+      if (!read) return null;
+      let token = this.captureModelTokens.get(read.model);
+      if (!token) { token = randomUUID(); this.captureModelTokens.set(read.model, token); }
+      const sample = await read.model.evaluate(model => model.captureSample()).catch(() => null);
+      if (!sample || !sample.ready || !Number.isInteger(sample.epoch) || sample.epoch < 0 || sample.epoch >= 2_147_483_647
+        || !Array.isArray(sample.viewport) || sample.viewport.length !== 10 || sample.viewport.some(value => !Number.isFinite(value))) return null;
+      // Tokens belong to host-held document handles, never a page-supplied ID.
+      return { token, url: frame.url(), epoch: sample.epoch, viewport: sample.viewport };
+    }));
+    if (samples.some(sample => !sample) || page !== entry.page || entry.closed || page.isClosed() || entry.captureEpoch >= 2_147_483_647) return null;
+    const documents = evidenceHash(JSON.stringify(samples.map(sample => [sample!.token, sample!.url])));
+    const viewport = evidenceHash(JSON.stringify([page.viewportSize(), samples.map(sample => sample!.viewport)]));
+    return { documents, viewport, fingerprint: evidenceHash(JSON.stringify([entry.captureEpoch, documents, viewport, samples.map(sample => sample!.epoch)])) };
+  }
+
+  /**
+   * Read-only capture bound to an exact previously returned observation. Equal
+   * document/URL/viewport/DOM-event samples bracket the JPEG, under a host input
+   * exclusion. This is sampled stability: CSS animation, canvas/video changes,
+   * adversarial script and unobserved ABA changes are not atomic pixel/DOM truth.
+   * Playwright masking overlays can themselves change the observed DOM; those
+   * pages conservatively yield no receipt rather than ignoring spoofable nodes.
+   * A failed or unstable attempt returns no image/receipt and never reuses one.
+   */
+  async captureEvidence(ownerId: string, conversationId: string, expectedPage: Pick<AgentPage, 'id' | 'url' | 'hash'>,
+    authority?: Pick<AgentAuthority, 'signal' | 'assertActive'>): Promise<AgentCaptureResult> {
+    const active = async () => { authority?.signal.throwIfAborted(); await authority?.assertActive(); authority?.signal.throwIfAborted(); };
+    await active();
+    const exists = await this.hasPage(ownerId, conversationId);
+    await active();
+    if (!exists) return { status: 'unavailable', reason: 'no_page' };
+    let entry: ConversationPage;
+    try { entry = await this.conversation(ownerId, conversationId, undefined, true); }
+    catch (error) {
+      await active();
+      if (error instanceof BrowserError && error.code === 'AGENT_CAPTURE_BUSY') return { status: 'unavailable', reason: 'busy' };
+      if (error instanceof BrowserError && error.code === 'AGENT_NO_PAGE') return { status: 'unavailable', reason: 'no_page' };
+      throw error;
+    }
+    let captured = false;
+    entry.shot = null;
+    try {
+      await active();
+      if (!expectedPage || typeof expectedPage.id !== 'string' || expectedPage.id !== entry.lastObservationId
+        || expectedPage.url !== entry.lastObservation?.url || expectedPage.hash !== entry.lastObservation?.hash) return { status: 'unavailable', reason: 'stale_page' };
+      const page = entry.page;
+      const startedAt = new Date().toISOString();
+      if (page.frames().length > 6) return { status: 'unavailable', reason: 'unsupported_frames' };
+      const before = await this.captureSample(entry, page);
+      if (!before) return { status: 'unavailable', reason: 'unreadable' };
+      const observation = await this.read(entry, false);
+      if (observation.url !== expectedPage.url || observation.hash !== expectedPage.hash) return { status: 'unavailable', reason: 'stale_page' };
+      const ready = await this.captureSample(entry, page);
+      if (!ready || ready.fingerprint !== before.fingerprint) return { status: 'unavailable', reason: 'changed' };
+      await active();
+      const captureStartedAt = new Date().toISOString();
+      await this.capture(entry);
+      const captureFinishedAt = new Date().toISOString();
+      const shot = entry.shot as Buffer | null;
+      if (!shot?.length) return { status: 'unavailable', reason: 'capture_failed' };
+      const image = Buffer.from(shot);
+      const finalPage = await this.read(entry, false);
+      await active();
+      const after = await this.captureSample(entry, page);
+      if (!after || after.fingerprint !== before.fingerprint || finalPage.hash !== observation.hash || finalPage.url !== observation.url
+        || page !== entry.page || entry.closed || page.isClosed()) return { status: 'unavailable', reason: 'changed' };
+      const finishedAt = new Date().toISOString();
+      entry.lastHash = finalPage.hash;
+      entry.lastObservationId = finalPage.id;
+      entry.lastObservation = { url: finalPage.url, hash: finalPage.hash, observedAt: finalPage.observedAt,
+        ...(finalPage.documentStatus ? { documentStatus: finalPage.documentStatus } : {}) };
+      captured = true;
+      return { status: 'captured', page: finalPage, image, receipt: {
+        version: 1, scope: 'stable_observation_samples', ownerId, conversationId,
+        requestedPageId: expectedPage.id, pageId: finalPage.id, pageHash: finalPage.hash, url: finalPage.url,
+        imageHash: createHash('sha256').update(image).digest('hex'), imageBytes: image.length, mimeType: 'image/jpeg',
+        startedAt, finishedAt, captureStartedAt, captureFinishedAt,
+        documentFingerprint: before.documents, viewportFingerprint: before.viewport,
+        beforeFingerprint: before.fingerprint, afterFingerprint: after.fingerprint,
+      } };
+    } catch (error) {
+      await active();
+      if (error instanceof BrowserError && error.code === 'AGENT_PAGE_UNREADABLE') return { status: 'unavailable', reason: 'unreadable' };
+      if (entry.closed || entry.page.isClosed()) return { status: 'unavailable', reason: 'changed' };
+      throw error;
+    } finally {
+      try { await active(); }
+      catch (error) { captured = false; throw error; }
+      finally {
+        if (!captured) entry.shot = null;
+        entry.captureReservation = undefined;
+        entry.readers--;
+      }
+    }
   }
 
   /** Direct control for the owner when a page needs a person, such as a CAPTCHA. */
   async pointer(ownerId: string, conversationId: string, x: number, y: number): Promise<void> {
     if (!await this.hasPage(ownerId, conversationId)) throw new BrowserError('AGENT_NO_PAGE', 'لا توجد صفحة مفتوحة.', 409);
     const entry = await this.conversation(ownerId, conversationId);
+    return this.withMutation(entry, async () => {
+    this.clearActivity(entry);
     entry.recovery.status = 'review_required';
     await this.persist(entry);
     this.ownerInput(entry);
     await entry.page.mouse.click(x * VIEWPORT.width, y * VIEWPORT.height);
+    });
   }
 
   async keyboard(ownerId: string, conversationId: string, input: { text?: string; key?: string }): Promise<void> {
     if (!await this.hasPage(ownerId, conversationId)) throw new BrowserError('AGENT_NO_PAGE', 'لا توجد صفحة مفتوحة.', 409);
     const entry = await this.conversation(ownerId, conversationId);
+    return this.withMutation(entry, async () => {
+    this.clearActivity(entry);
     entry.recovery.status = 'review_required';
     await this.persist(entry);
     this.ownerInput(entry);
     if (input.text) await entry.page.keyboard.insertText(input.text);
     if (input.key) await entry.page.keyboard.press(input.key).catch(() => {});
+    });
+  }
+
+  /**
+   * Closes the pages of every conversation idle for `idlePageMs`: no action, held effect, reader, capture or owner
+   * input in flight, and nothing used it since. The checkpoint is persisted first with the conversation's current
+   * status, so a ready page is restored with one click («استعادة») and nothing unresolved is forgotten. Returns how
+   * many conversations were closed. `now` is injectable so tests need not wait.
+   */
+  async sweepIdlePages(now = Date.now()): Promise<number> {
+    if (!this.idlePageMs) return 0;
+    if (this.sweeping) return this.sweeping;
+    this.sweeping = (async () => {
+      let closed = 0;
+      for (const pending of [...this.owners.values()]) {
+        const owner = await pending.catch(() => null);
+        if (!owner) continue;
+        for (const [conversationId, entry] of [...owner.conversations]) {
+          if (!this.idle(entry, now)) continue;
+          // Serialize with page allocation: a request arriving now finds either the live page or none, never a closing one.
+          const previousAllocation = owner.allocation;
+          let release!: () => void;
+          owner.allocation = new Promise<void>(resolve => { release = resolve; });
+          await previousAllocation;
+          try {
+            if (owner.conversations.get(conversationId) !== entry || !this.idle(entry, now)) continue;
+            await this.retire(owner, entry);
+            closed++;
+          } finally { release(); }
+        }
+      }
+      return closed;
+    })();
+    try { return await this.sweeping; } finally { this.sweeping = null; }
+  }
+
+  private idle(entry: ConversationPage, now: number): boolean {
+    return !entry.closed && !entry.operation && !entry.held && entry.readers === 0 && entry.mutations === 0 && !entry.captureReservation
+      && (entry.ownerInputUntil ?? 0) <= now && now - entry.lastUsed >= this.idlePageMs!;
+  }
+
+  /** Like closeConversation without the owner's word: the recovery status stays as it is, so a ready page restores without review. */
+  private async retire(owner: OwnerBrowser, entry: ConversationPage): Promise<void> {
+    this.clearActivity(entry);
+    entry.closed = true;
+    owner.conversations.delete(entry.conversationId);
+    const results = await Promise.allSettled([this.persist(entry), ...[...entry.pages].map(page => page.close())]);
+    if (results[0].status === 'rejected') throw results[0].reason;
   }
 
   async closeConversation(ownerId: string, conversationId: string): Promise<void> {
     const owner = await this.owners.get(this.profileKey(ownerId, conversationId))?.catch(() => null);
     const entry = owner?.conversations.get(conversationId);
     if (!owner || !entry) return;
+    this.clearActivity(entry);
     entry.closed = true;
     entry.recovery.status = entry.operation?.used || entry.recovery.reviewRequired ? 'review_required' : 'closed';
     owner.conversations.delete(conversationId);
@@ -1376,10 +1805,11 @@ export class AgentBrowser {
   }
 
   async close(): Promise<void> {
+    if (this.idleSweep) { clearInterval(this.idleSweep); this.idleSweep = undefined; }
     const owners = await Promise.allSettled(this.owners.values());
     // Shutdown preserves durable ready/pending evidence. It is not an owner request to forget a session.
     const entries = owners.flatMap(owner => owner.status === 'fulfilled' ? [...owner.value.conversations.values()] : []);
-    for (const entry of entries) { entry.closed = true; this.discard(entry); entry.operation?.pending.abort(); }
+    for (const entry of entries) { this.clearActivity(entry); entry.closed = true; this.discard(entry); entry.operation?.pending.abort(); }
     await Promise.allSettled(entries.map(entry => entry.checkpointWrite));
     this.owners.clear();
     this.accounts.clear();

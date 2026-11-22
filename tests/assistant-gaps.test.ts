@@ -81,7 +81,7 @@ describe('trusted gap metadata from chat', () => {
 
   it('records a provider outage as failed environment evidence while preserving chat status', async () => {
     const fixture = await setup(async () => { throw new Error('private-provider-response-marker'); });
-    const item = await fixture.control.create(owner, { goal: 'Answer this question.' }); await fixture.control.settled(item.id);
+    const item = await fixture.control.create(owner, { goal: 'Describe a stack data structure.' }); await fixture.control.settled(item.id);
     expect((await fixture.control.detail(owner, item.id)).status).toBe('failed');
     const [gap] = await fixture.gaps();
     expect(gap).toMatchObject({ outcome: 'failed', category: 'environment_failure', signal: { source: 'environment', code: 'NETWORK_ERROR' } });
@@ -122,7 +122,7 @@ describe('trusted gap metadata from chat', () => {
       advance: async () => { executions++; throw new Error('Must not execute'); }, verify: async () => null, wakeCandidates: async () => [], cancelRun: async () => {},
       mapChild: () => null, validateBinding: async () => false, executeNode: async () => { executions++; throw new Error('Must not execute'); }, verifyNode: async () => null,
     } }); runtimes.push(runtime);
-    const item = await fixture.control.create(owner, { goal: 'Run this skill workflow after my review.' }); await fixture.control.settled(item.id);
+    const item = await fixture.control.create(owner, { goal: 'Run the verified-web-research skill workflow after my review.' }); await fixture.control.settled(item.id);
     const [task] = (await runtime.snapshot(owner)).tasks;
     expect(task.status).toBe('waiting_approval'); expect(await runtime.tick()).toBeNull(); expect(executions).toBe(0);
     expect(await fixture.gaps()).toEqual([expect.objectContaining({ outcome: 'partial', category: 'missing_permission', signal: { source: 'workflow', code: 'APPROVAL_REQUIRED', taskId: task.id } })]);
@@ -148,16 +148,45 @@ describe('trusted gap metadata from chat', () => {
     expect(await fixture.database.db.selectFrom('chat_messages').select('id').where('role', '=', 'assistant').execute()).toEqual([]);
   });
 
-  it('preserves prompt and state bytes when the optional recorder is absent, and never records completed answers', async () => {
+  it('preserves prompt and task behavior when the optional recorder is absent, and never records completed answers', async () => {
     const prompts: string[] = [], states: unknown[] = [];
+    const withoutRunIdentity = (raw: Record<string, any>) => {
+      const state = structuredClone(raw);
+      // Request provenance and declared goal hashes are deliberately bound to
+      // each independent run. Compare their content after normalizing only that
+      // identity; optional gap recording must still leave behavior unchanged.
+      for (const context of [state.requestContext, state.requestResolution?.nextState]) {
+        if (!context) continue;
+        if (context.topicSourceTurnId) context.topicSourceTurnId = '<run>';
+        for (const slot of context.slots) {
+          slot.sourceTurnId = '<run>';
+          if (slot.relativeTo) slot.relativeTo.sourceTurnId = '<run>';
+        }
+      }
+      if (state.requestResolution) for (const field of state.requestResolution.provenance) field.sourceTurnId = '<run>';
+      if (state.supervision) {
+        state.supervision.contract.id = '<run>';
+        state.supervision.contract.hash = '<run-bound-hash>';
+        state.supervision.startedAt = 0;
+      }
+      if (state.progressRecovery) {
+        state.progressRecovery.runId = '<run>';
+        state.progressRecovery.contractHash = '<run-bound-hash>';
+      }
+      if (state.actionCompletion) {
+        state.actionCompletion.contract.runId = '<run>';
+        state.actionCompletion.contract.hash = '<run-bound-hash>';
+      }
+      return state;
+    };
     for (const enabled of [false, true]) {
       const fixture = await setup(async (_url, init) => {
         const request = JSON.parse(String(init?.body)); prompts.push(JSON.stringify(request.messages));
         return response(request.model, { tool: 'answer', text: 'A complete response.', outcome: 'done' });
       }, { recordSkillGap: enabled ? recordSkillGap : undefined });
-      const item = await fixture.control.create(owner, { goal: 'Answer the same simple question.' }); await fixture.control.settled(item.id);
+      const item = await fixture.control.create(owner, { goal: 'Describe a stack data structure.' }); await fixture.control.settled(item.id);
       const run = await fixture.database.db.selectFrom('chat_runs').select(['state', 'status']).executeTakeFirstOrThrow();
-      expect(run.status).toBe('completed'); expect(run.state).not.toHaveProperty('gapSignal'); states.push(run.state);
+      expect(run.status).toBe('completed'); expect(run.state).not.toHaveProperty('gapSignal'); states.push(withoutRunIdentity(run.state));
       expect(await fixture.gaps()).toEqual([]);
     }
     expect(prompts[0]).toBe(prompts[1]); expect(states[0]).toEqual(states[1]);

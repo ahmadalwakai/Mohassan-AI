@@ -1,5 +1,7 @@
-import { AgentEffectHeld, type AgentAction, type AgentElement, type AgentPage, type AgentRequestPermit } from '@mohassan/browser';
-import { directRoute, namedSite, sensitiveAction, situation } from './brain.js';
+import { AgentEffectHeld, BrowserError, compileQuery, publicSearchScan, publicSearchText, safeResumeUrl, type AgentAction, type AgentElement, type AgentPage, type AgentRequestPermit, type SearchHit } from '@mohassan/browser';
+import { directRoute, namedSite, sensitiveAction } from './brain.js';
+import { hostOf, readingLabel, siteName } from './activity.js';
+export { siteName };
 
 /**
  * The browser's hands without a model: the owner's words become a short list of steps,
@@ -172,7 +174,7 @@ export function parseHands(request: string): HandsStep[] | null {
 }
 
 /** Information that lives on the web and changes: prices, weather, scores, schedules, anything «today» or «latest». */
-const LIVE = /(?:^|\s)(?:ب|و|ل)?(?:ال)?(?:سعر|اسعار|أسعار|طقس|حرار[ةه]|صرف|نتيج[ةه]|نتائج|مباراة|مباريات|موعد|مواعيد|دوام|ترتيب|عنوان)(?=\s|$)|(?:^|\s)(?:اليوم|الآن|الان|حاليا|حاليًا|هالأيام|هذه الأيام|غدا|غدًا|بكرة|الليلة|آخر|اخر|أحدث|احدث)(?=\s|$)|\b(?:price|prices|cost|weather|forecast|temperature|score|scores|exchange rate|fixtures?|schedule|today|tonight|tomorrow|now|current(?:ly)?|latest|this week|opening hours)\b/iu;
+export const LIVE = /(?:^|\s)(?:ب|و|ل)?(?:ال)?(?:سعر|اسعار|أسعار|طقس|حرار[ةه]|صرف|نتيج[ةه]|نتائج|مباراة|مباريات|موعد|مواعيد|دوام|ترتيب|عنوان)(?=\s|$)|(?:^|\s)(?:اليوم|الآن|الان|حاليا|حاليًا|هالأيام|هذه الأيام|غدا|غدًا|بكرة|الليلة|آخر|اخر|أحدث|احدث)(?=\s|$)|\b(?:price|prices|cost|weather|forecast|temperature|score|scores|exchange rate|fixtures?|schedule|today|tonight|tomorrow|now|current(?:ly)?|latest|this week|opening hours)\b/iu;
 /** «دورلي على…», «شوفلي…»: a lookup asked without the formal verb. */
 const LOOKUP = /^(?:ابحثلي|ابحث لي|دورلي|دور لي|شوفلي|شوف لي|اعرفلي|اعرف لي|جدلي|جد لي|find out|google)\s+(?:عن\s+|على\s+)?(.+)$/iu;
 /**
@@ -301,6 +303,12 @@ const WIKI_HEAD = /From Wikipedia, the free encyclopedia|من ويكيبيديا
 const WIKI_FOOT = /(?:Authority control databases|Authority control|Retrieved from "|This page was last edited|Categories:|ضبط استنادي|تصنيفات:|استرجع من «|آخر تعديل لهذه الصفحة)/u;
 /** Reference-list lines: archive notes and broken-link marks are sources, not answers. */
 const CITATION = /نسخة محفوظة|وصلة مكسورة|واي باك مشين|Archived from|Retrieved \d|Wayback Machine|ISBN|doi:/iu;
+const OVERVIEW_QUESTION = /\b(?:documentation|docs|overview|introduction)\b|(?:^|\s)(?:وثائق|توثيق|مقدمة|نظرة عامة)(?=\s|$)|^(?:what is|what are|ما هو|ما هي|ما معنى)\s/iu;
+/** Questions asking what or who something is: their answer is a definition sentence. */
+const DEFINE_QUESTION = /^(?:ما هو|ما هي|من هو|من هي|ما معنى|ما المقصود ب|ماذا يعني|what is|what are|what was|who is|who was|who were)\s/iu;
+const ARABIC_DEFINITION_LEAD = /^(?:(?:ما معنى|ماذا يعني)\s+|ما المقصود\s+ب\s*)/iu;
+const ERROR_QUESTION =/\b(?:traceback|stack\s*trace|exception|debug|error)\b|خطأ|اخطاء|أخطاء|تتبع/iu;
+const TRACEBACK_FRAGMENT = /\bTraceback\s*\(|\bFile\s+["'][^"']+["'],?\s+line\s+\d+\b/iu;
 const WIKI_INFOBOX = /معلومات عامة|تعديل مصدري|Edit this at Wikidata|edit on Wikidata/u;
 const WIKI_APPEARANCE = /(?:تلقائي فاتح داكن|Automatic Light Dark)/u;
 /** Redirect notes and maintenance banners: about the article, never part of an answer. */
@@ -318,6 +326,12 @@ export function readableText(text: string): string {
     if (menu?.index !== undefined && menu.index < 4000) body = body.slice(menu.index + menu[0].length);
   }
   body = body.replace(WIKI_BANNERS, ' ');
+  // The infobox ends in its edit links, glued to the article's first sentence on a folded page.
+  // Near the top, everything before them is the infobox (photo caption, cells): drop it whole,
+  // so the definition sentence is the article's first; later ones still become a sentence break.
+  const infoboxEnd = body.match(/تعديل مصدري\s*-\s*تعديل|Edit this at Wikidata/u);
+  if (infoboxEnd?.index !== undefined && infoboxEnd.index < 8000) body = body.slice(infoboxEnd.index + infoboxEnd[0].length);
+  body = body.replace(/(تعديل مصدري)\s*-\s*تعديل|(Edit this at Wikidata)/gu, (_, ar, en) => `${ar ?? en}.\n`);
   const foot = body.search(WIKI_FOOT);
   if (foot > 0) body = body.slice(0, foot);
   return body.replace(EDIT_MARK, '. ');
@@ -325,29 +339,83 @@ export function readableText(text: string): string {
 
 /** The page's own sentences that share the question's words, best first by page order; quoted, never rewritten. */
 export function relevantLines(page: AgentPage, question: string, limit = 3, bestFirst = false): string[] {
-  const words = queryWords(fold(question).replace(/[؟?]/gu, ' ').split(/\s+/).filter(word => word && !ASK_WORDS.has(word)).join(' '));
+  const overview = OVERVIEW_QUESTION.test(question) && !ERROR_QUESTION.test(question);
+  let matchingQuestion = question;
+  try {
+    const compiled = compileQuery(question);
+    if (compiled.intent === 'technical') matchingQuestion = compiled.retrievalQuestion;
+  } catch { /* Local matching still accepts a question that does not compile as a public search. */ }
+  // The definition cue is not part of the subject; «بـ» may be attached to its first word.
+  matchingQuestion = matchingQuestion.trim().replace(ARABIC_DEFINITION_LEAD, '');
+  const words = queryWords(fold(matchingQuestion).replace(/[؟?]/gu, ' ').split(/\s+/).filter(word => word && !ASK_WORDS.has(word)).join(' '));
   if (!words.length) return [];
   const need = Math.min(2, words.length);
   // The question's own words in a row («عدد سكان المغرب»): a sentence that holds the phrase is about the question itself.
-  const phraseWords = fold(question).replace(/[؟?]/gu, ' ').split(/\s+/).filter(word => word && !ASK_WORDS.has(word));
+  const phraseWords = fold(matchingQuestion).replace(/[؟?]/gu, ' ').split(/\s+/).filter(word => word && !ASK_WORDS.has(word));
   const phrase = phraseWords.length >= 2 ? phraseWords.join(' ') : '';
+  // «ما هو الذكاء الاصطناعي»: the sentence «الذكاء الاصطناعي (AI) هو …» is the definition itself.
+  const subject = phraseWords.join(' ').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const definition = (DEFINE_QUESTION.test(question.trim()) || ARABIC_DEFINITION_LEAD.test(question.trim())) && subject
+    ? new RegExp(`^(?:\\S+\\s){0,2}?(?:ال)?${subject}(?:\\s*\\([^)]*\\))?\\s+(?:هو|هي|يعد|تعد|يعرف|تعرف|عباره عن|(?:is|are|was|were)\\s+(?:a|an|the|one of|defined as|known as|called)|refers to|means)(?=\\s)`, 'u')
+    : null;
+  // Without a definition, a sentence that opens with the subject is about it, not a passing mention.
+  const aboutSubject = definition ? new RegExp(`^(?:ال)?${subject}(?=[\\s(،,:]|$)`, 'u') : null;
+  // Some sources explain a process first, then name it in the next sentence.
+  const namesSubject = definition ? new RegExp(`^this (?:process|reaction|method|technique|phenomenon) (?:(?:is )?called|is known as) ${subject}$`, 'u') : null;
   // A price, a time or a score is a number: for such questions a sentence without one does not answer.
   const wantsNumber = LIVE.test(question);
   const numberAnswer = wantsNumber || WANTS_NUMBER.test(question);
   const labels = [...new Set(page.elements.filter(element => ['link', 'button'].includes(element.role)).map(element => tidy(element.label).toLowerCase()).filter(label => label.length >= 2))]
     .sort((a, b) => b.length - a.length);
   const labelSet = new Set(labels.map(fold));
-  const scored: { line: string; score: number; at: number; year: number; glued: boolean }[] = [];
+  const pageTitle = fold(page.title ?? '');
+  const titled = words.filter(word => pageTitle.includes(word));
+  const scored:{ line: string; score: number; at: number; year: number; glued: boolean }[] = [];
   const seen = new Set<string>();
+  const cleanSentence = (text: string) => withoutChrome(text.replace(/\[(?:\d+|Note \d+|note \d+|ملحوظة \d+|ْ? ?\d+|[ا-ي])\]/gu, '').replace(/\s+/g, ' ').trim(), labels);
   // A sentence ends at . ! ? ؟ unless the dot sits inside a number (2.5, 1.3), or at a line break.
-  for (const match of readableText(page.text).matchAll(/(?:[^.!?؟\n]|(?<=\d)\.(?=\d))+(?:[.!?؟]+|\n|$)/gu)) {
-    let line = withoutChrome(match[0].replace(/\[(?:\d+|Note \d+|ملحوظة \d+|ْ? ?\d+)\]/gu, '').replace(/\s+/g, ' ').trim(), labels);
+  const text = readableText(page.text);
+  const sentences = [...text.matchAll(/(?:[^.!?؟\n]|(?<=\d)\.(?=\d))+(?:[.!?؟]+|\n|$)/gu)];
+  for (const [index, match] of sentences.entries()) {
+    let line = cleanSentence(match[0]);
+    let pairedDefinition = false, at = match.index ?? 0;
+    if (/[.!]$/u.test(line) && namesSubject?.test(fold(line)) && index > 0) {
+      const previousMatch = sentences[index - 1], previous = cleanSentence(previousMatch[0]);
+      const pair = `${previous} ${line}`;
+      const gap = text.slice((previousMatch.index ?? 0) + previousMatch[0].length, at);
+      // Keep only a short, adjacent declarative explanation, never a question,
+      // contents/link label or a clipped quote that would lose the naming sentence.
+      if (/[.!]$/u.test(previous) && !/[?؟]/u.test(previous) && prose(previous)
+        && !/^(?:contents|table of contents|index|overview|navigation)\b/iu.test(previous)
+        && !labelSet.has(fold(previous.replace(/[.!]+$/u, '')))
+        && !WIKI_INFOBOX.test(previous) && !CITATION.test(previous) && !TRACEBACK_FRAGMENT.test(previous)
+        && (previous.match(NAVBOX) ?? []).length < 2 && !/\n[ \t]*\n/u.test(gap)
+        && pair.length <= 300 && pair.split(' ').length <= 40) {
+        line = pair; pairedDefinition = true; at = previousMatch.index ?? at;
+      }
+    }
+    // A code example's filenames can match the topic; they do not explain the module to an overview request.
+    if (overview && TRACEBACK_FRAGMENT.test(line)) continue;
     // An infobox glued before an article's first sentence: the sentence is the tail of the run.
-    const glued = line.split(' ').length > 40 || line.length > 400;
-    if (glued) line = `… ${line.split(' ').slice(-40).join(' ')}`.slice(0, 400);
+    let glued = line.split(' ').length > 40 || line.length > 400;
+    if (glued) {
+      const parts = line.split(' ');
+      const tail = `… ${parts.slice(-40).join(' ')}`.slice(0, 400);
+      // An encyclopedia's own long first sentence names its subject only at the start
+      // («ألبرت أينشتاين (…) عالم فيزياء …»): keep that start when the tail misses the question.
+      const head = `${parts.slice(0, 40).join(' ')} …`.slice(0, 400);
+      const matched = (text: string) => words.filter(word => fold(text).includes(word)).length;
+      const lead = matched(tail) < need && matched(head) >= need;
+      line = lead ? head : tail;
+      // A sentence that opens with the subject is the article's own lead, not infobox cells: no penalty,
+      // so a later photo caption («ألبرت أينشتاين عام 1893») does not outrank the definition.
+      if (lead) glued = false;
+    }
     const count = glued ? 40 : line.split(' ').length;
     const hasNumber = /[\d٠-٩]/u.test(line);
     if (count < (hasNumber ? 3 : 5) || line.length > 400 || seen.has(line) || (wantsNumber && !hasNumber)) continue;
+    // A sentence that asks («ما تاريخ الذكاء الاصطناعي؟») is a heading or a contents entry, never an answer.
+    if (/[؟?]\s*$/u.test(line)) continue;
     if ((line.match(NAVBOX) ?? []).length >= 2) continue;
     // Infobox cells («معلومات عامة … تعديل مصدري - تعديل») read like a sentence once the toolbar is gone.
     if (WIKI_INFOBOX.test(line) || CITATION.test(line)) continue;
@@ -355,14 +423,21 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     // A run of the page's own menu labels is navigation, not an answer.
     const menuWords = labels.length ? folded.split(' ').filter(word => labelSet.has(word)).length : 0;
     if (menuWords / count > 0.3) continue;
-    const hits = words.filter(word => folded.includes(word)).length;
+    // The page's own subject («أستراليا» on its article) is implied in its sentences («عاصمتها كانبرا»),
+    // but only once the sentence holds another question word: the title alone answers nothing.
+    const own = words.filter(word => !titled.includes(word) && folded.includes(word)).length;
+    const hits = own ? own + titled.length : words.filter(word => folded.includes(word)).length;
     if (hits < need) continue;
     seen.add(line);
     // A number in the sentence is often the answer itself: a price, a time, a score. A run past 40 words
     // is usually table cells glued to a sentence (an infobox), so it ranks below a plain sentence.
     // Among equals, the newest year wins: «إحصاء 2024» answers «كم عدد السكان» better than «إحصاء 2014».
     const year = Math.max(0, ...[...line.matchAll(/(?<!\d)(1[89]\d\d|20\d\d)(?!\d)/g)].map(found => Number(found[1])));
-    scored.push({ line, score: hits + (numberAnswer && /\d/u.test(line) ? 1 : 0) - (glued ? 1 : 0) + (phrase && folded.includes(phrase) ? 2 : 0), at: match.index ?? 0, year, glued });
+    // On the subject's own page, a question word carrying a pronoun is the Arabic answer form
+    // («عاصمتها كانبرا»: its capital is Canberra), stronger than a name that repeats the phrase.
+    const answerForm = titled.length > 0 && own > 0 && words.some(word => !titled.includes(word)
+      && new RegExp(`(?:^|\\s)[وف]?(?:ال)?${word}(?:\\p{L}{0,2}(?:ها|هم)|\\p{L}{1,2}ه)(?=[\\s،,:]|$)`, 'u').test(folded));
+    scored.push({ line, score: hits + (numberAnswer && /\d/u.test(line) ? 1 : 0) - (glued ? 1 : 0) + (phrase && folded.includes(phrase) ? 2 : 0) + (answerForm ? 3 : 0) + (pairedDefinition || definition?.test(folded) ? 3 : 0) + (aboutSubject?.test(folded) ? 1 : 0), at, year, glued });
   }
   // «كم تستغرق …» is answered by a number: sentences without one only look related.
   if (numberAnswer && !scored.some(item => /[\d٠-٩]/u.test(item.line))) return [];
@@ -561,11 +636,10 @@ export function excerpt(page: AgentPage, offset = 0, size = READ_WINDOW): { line
   return { lines, end: position, more: position < text.trim().length - 25 };
 }
 
-const DUCK = (query: string) => `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
 /** Question words only narrow an encyclopedia search; «ما عاصمة اليابان» searches «عاصمة اليابان». */
 const WIKI_ASK_LEAD = /^(?:(?:ما|ماذا|من|متى|أين|اين|كم|كيف|هل|لماذا|ما هي|ما هو|what|who|when|where|which|how|why|is|are|was|were|the|of)\s+)+/iu;
-/** Wikipedia's own full-text search in the question's language: keyless and with no human check. */
-export const WIKI_SEARCH = (query: string) => {
+/** The question's subject words alone: no question lead, no frame words, no place tail. «كم تستغرق عملية المياه البيضاء» → «المياه البيضاء». */
+export function wikiTerms(query: string): string {
   const asked = query.trim().replace(/[؟?]+$/u, '').replace(WIKI_ASK_LEAD, '').trim() || query.trim();
   // «كم تستغرق عملية المياه البيضاء» searches «المياه البيضاء»: frame words pull in unrelated articles.
   const kept = asked.split(/\s+/).filter(word => !FRAME_WORDS.has(fold(word)));
@@ -573,9 +647,14 @@ export const WIKI_SEARCH = (query: string) => {
   // «المياه البيضاء في العين» searches «المياه البيضاء»: the place part pulls in «العين السخنة».
   const head = words.split(/\s+(?:في|عند|لدى|in)\s+/iu)[0];
   if (head !== words && head.split(/\s+/).length >= 2) words = head;
-  return `https://${/[؀-ۿ]/u.test(query) ? 'ar' : 'en'}.wikipedia.org/w/index.php?search=${encodeURIComponent(words)}&fulltext=1&ns0=1`;
-};
+  // «من هو ألبرت أينشتاين» → «ألبرت أينشتاين»: a pronoun or question word left after the lead names no subject.
+  const subject = words.split(/\s+/).filter(word => !ASK_WORDS.has(fold(word)));
+  return subject.length ? subject.join(' ') : words;
+}
+/** Wikipedia's own full-text search in the question's language, for an explicit «ابحث في ويكيبيديا»: keyless and with no human check. */
+export const WIKI_SEARCH = (query: string) => `https://${/[؀-ۿ]/u.test(query) ? 'ar' : 'en'}.wikipedia.org/w/index.php?search=${encodeURIComponent(wikiTerms(query))}&fulltext=1&ns0=1`;
 const SEARCH_TEMPLATES: [RegExp, (query: string) => string][] = [
+  [/(?:^|\.)wikipedia\.org$/, WIKI_SEARCH],
   [/(?:^|\.)youtube\.com$/, query => `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`],
   [/(?:^|\.)google\.com$/, query => `https://www.google.com/search?q=${encodeURIComponent(query)}`],
   [/(?:^|\.)github\.com$/, query => `https://github.com/search?q=${encodeURIComponent(query)}&type=repositories`],
@@ -586,9 +665,16 @@ function templateFor(siteUrl: string, query: string): string | null {
   return found ? found[1](query) : null;
 }
 
+/** A public page read over HTTP without the browser; `unreadable` (no text, not HTML, timeout) falls back to the browser, `disallowed` (robots) is skipped. */
+export type HandsRead = { kind: 'page'; page: AgentPage } | { kind: 'unreadable' } | { kind: 'disallowed' };
+
 export interface HandsIO {
   /** The conversation's live page, or null when no page is open. */
   page(): Promise<AgentPage | null>;
+  /** The same public web search used by the model, with topic relevance and source ranking. */
+  search?(query: string, limit: number): Promise<SearchHit[]>;
+  /** Reads a search result over HTTP, so a question is answered without opening the browser. */
+  read?(url: string): Promise<HandsRead>;
   act(action: AgentAction): Promise<AgentPage>;
   prepare(action: AgentAction): Promise<AgentRequestPermit | null>;
   /** Cookie banners, sign-in and human checks; null when the run paused or ended there. */
@@ -601,22 +687,22 @@ export interface HandsIO {
 
 export type HandsOutcome = { kind: 'paused' } | { kind: 'done'; text: string; status: 'completed' | 'partial' | 'blocked' };
 
-/** Said instead of an old figure: the question needs today's value and no live source answered. */
-export const noLiveSource = (query: string) => /[؀-ۿ]/u.test(query)
-  ? `«${query}» سؤال عن معلومة تتغير، مثل سعر أو طقس أو نتيجة. محركات البحث ترفض متصفحي الخفي الآن، وويكيبيديا لا تحمل أرقام اليوم، فلن أعطيك رقمًا قديمًا على أنه الجواب.\n\nإن كان عندك موقع تثق به فقل مثلًا «افتح الموقع وابحث عن ${query}» وسأقرأ الرقم منه.`
-  : `“${query}” asks for something that changes, like a price, the weather or a score. Search engines refuse my hidden browser right now, and Wikipedia does not hold today's figures, so I won't give you an old number as the answer.\n\nIf you have a site you trust, say for example “open that site and search for ${query}” and I'll read the figure from it.`;
-
-const hostOf = (url: string) => URL.parse(url)?.hostname.replace(/^www\./, '') ?? url;
-
-/** A site as people call it: «ويكيبيديا», not «ar.wikipedia.org». */
-const SITE_NAMES: [RegExp, string][] = [
-  [/(^|\.)wikipedia\.org$/, 'ويكيبيديا'], [/(^|\.)bbc\.(com|co\.uk)$/, 'بي بي سي'], [/(^|\.)aljazeera\.(net|com)$/, 'الجزيرة'],
-  [/(^|\.)skynewsarabia\.com$/, 'سكاي نيوز عربية'], [/(^|\.)theguardian\.com$/, 'الغارديان'], [/(^|\.)gov\.uk$/, 'GOV.UK'],
-];
-export function siteName(url: string): string {
-  const host = hostOf(url);
-  return SITE_NAMES.find(([pattern]) => pattern.test(host))?.[1] ?? host;
+/** A page fetched over HTTP whose body is only a JavaScript notice (or nothing) is read in the browser instead. */
+const JS_ONLY = /enable javascript|javascript is (?:required|disabled|turned off|not enabled)|please enable js|يجب تفعيل (?:جافا|javascript)|فعّل جافا/iu;
+export function readableOverHttp(text: string): boolean {
+  const body = text.trim();
+  return body.length >= 40 && !JS_ONLY.test(body.slice(0, 600));
 }
+
+/** No source answered a changing fact; do not substitute an encyclopedia's old figure. */
+export const noLiveSource = (query: string) => /[؀-ۿ]/u.test(query)
+  ? `لم أتمكن من الوصول إلى مصدر حديث ومرتبط بسؤالك «${query}» بعد تجربة البحث في الويب. إن أرسلت رابط موقع مناسب أفتحه وأقرأ المعلومة منه.`
+  : `I could not reach a current source relevant to “${query}” after trying web search. Send a suitable website link and I can open it and read the information there.`;
+
+const noSearchSource = (query: string) => LIVE.test(query) ? noLiveSource(query) : /[؀-ۿ]/u.test(query)
+  ? `لم أجد في المصادر المتاحة لي (ويكيبيديا والواجهات الموثقة) نتائج مرتبطة بسؤالك «${query}». أرسل رابط موقع مناسب أو حدد اسم الجهة التي تريد البحث لديها.`
+  : `I found no results relevant to “${query}” in the sources available to me (Wikipedia and documented APIs). Send a suitable website link or name the organization to search.`;
+
 
 /** A page title without the site's own suffix («… - ويكيبيديا») and without link brackets. */
 export function plainTitle(title: string): string {
@@ -646,29 +732,50 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
   };
 
   /**
-   * A general web search. The server's hidden browser is refused by search engines: a human check, or
-   * (DuckDuckGo, 2026-11-21) an error page with no results. The owner cannot solve that from the chat,
-   * so either case sends the search to Wikipedia instead of pausing. A page with results goes through
-   * `settle` as before.
+   * General questions search over HTTP through the shared engine (documented APIs; nothing is opened in
+   * the browser). The result is a list; reading comes next. When the question's own words find nothing,
+   * its subject words alone are tried («المياه البيضاء» for «كم تستغرق عملية المياه البيضاء»), because
+   * the engine keeps a few hits per site by lexical score and can drop the subject's own article.
+   * The scraped engines that used to run in the browser are gone: bing.com/robots.txt forbids /search,
+   * and html.duckduckgo.com answers with a human check (both measured 2026-11-22; they took ~7 s of every
+   * 13 s web question). An encyclopedia never answers a changing fact: a price, the weather or a score.
    */
-  const engine = async (query: string): Promise<AgentPage | null | 'no_live'> => {
-    const label = `البحث عن ${query}`;
-    let first: AgentPage;
-    try { first = await io.act({ kind: 'open', text: DUCK(query) }); }
-    catch (error) {
-      if (error instanceof AgentEffectHeld) { await io.hold(error.held, label); return null; }
-      throw error;
+  const engine = async (query: string): Promise<{ results: { title: string; url: string }[] } | 'unavailable'> => {
+    const publicQuery = query.normalize('NFKC').replace(/\p{Cf}/gu, '');
+    const decoded = publicSearchScan(publicQuery);
+    if (publicSearchText(publicQuery) !== publicQuery || publicSearchText(decoded) !== decoded || (decoded.match(/https?:\/\/\S+/gi) ?? []).some(url => safeResumeUrl(url) === null)) {
+      throw new BrowserError('RESEARCH_QUERY_SECRET', 'أزل بيانات الاعتماد من الاستعلام قبل البحث العام.', 400);
     }
-    const checked = situation(first) === 'captcha';
-    if (!checked) {
-      // Results can be drawn after the load: look twice more before giving up on the engine.
-      for (let look = 0; look < 2 && !resultLinks(first, 1, query).length; look++) first = await io.act({ kind: 'wait', text: '2000' });
-      if (resultLinks(first, 1, query).length) return io.settle(first);
+    try { compileQuery(query); } catch { throw new BrowserError('RESEARCH_QUERY_INVALID', 'اكتب موضوعًا محددًا للبحث، واستخدم site: مع اسم نطاق صالح فقط.', 400); }
+    if (!io.search) return 'unavailable';
+    const live = LIVE.test(query);
+    const topic = topicWords(query);
+    const lookup = async (words: string) => {
+      let hits: SearchHit[] = [];
+      try { hits = await io.search!(words, 6); }
+      catch (error) {
+        // Cancellation, rejected query policy and lost execution authority must stop the run.
+        if (!(error instanceof BrowserError) || error.code !== 'RESEARCH_SEARCH_UNAVAILABLE') throw error;
+      }
+      const seen = new Set<string>();
+      const ranked = hits.flatMap((hit, at) => {
+        const url = URL.parse(hit.url);
+        if (!url || !/^https?:$/.test(url.protocol) || seen.has(withoutHash(url.href))) return [];
+        seen.add(withoutHash(url.href));
+        return [{ title: tidy(hit.title), url: url.href, at, score: titleScore(`${hit.title} ${hit.snippet}`, topic), wiki: /(?:^|\.)wikipedia\.org$/.test(url.hostname) }];
+      });
+      // Preserve the shared engine's authority and relevance ranking; a topic-specific site comes before the encyclopedia.
+      return ranked.filter(hit => (!topic.length || hit.score > 0) && !(live && hit.wiki))
+        .sort((a, b) => Number(a.wiki) - Number(b.wiki) || a.at - b.at)
+        .map(({ title, url }) => ({ title, url }));
+    };
+    let results = await lookup(query);
+    const narrower = wikiTerms(query);
+    if (!results.length && !live && fold(narrower) !== fold(query) && topicWords(narrower).length) {
+      await io.step(`لم يُجب البحث الأول؛ البحث عن «${narrower.slice(0, 60)}»`);
+      results = await lookup(narrower);
     }
-    // A price, the weather or a score changes: an encyclopedia holds old figures, so no fallback.
-    if (LIVE.test(query)) return 'no_live';
-    await io.step(`${checked ? `طلب ${hostOf(first.url)} تحققًا بشريًا` : `لم يعرض ${hostOf(first.url)} نتائج`}؛ البحث في ويكيبيديا بدلًا منه`);
-    return go({ kind: 'open', text: WIKI_SEARCH(query) }, label);
+    return results.length ? { results } : 'unavailable';
   };
 
   while (plan.next < plan.steps.length) {
@@ -691,47 +798,92 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         }
         await io.step(`البحث عن «${step.query.slice(0, 60)}»`);
         plan.next = index + 1;
-        const box = !template && page ? findSearchBox(page) : undefined;
+        delete plan.results;
+        delete plan.found;
+        // A new question is a web search even if the previous answer left an encyclopedia open.
+        const scoped = step.here || index > 0 && plan.steps[index - 1].kind === 'open';
+        const box = !template && page && scoped ? findSearchBox(page) : undefined;
         if (!template && !box && step.here) return { kind: 'done', status: 'partial', text: page ? `لم أجد خانة بحث في ${hostOf(page.url)}. الصفحة ظاهرة في لوحة المتصفح؛ قل «ابحث عن ${step.query} في الإنترنت» لأبحث خارجها.` : NO_PAGE };
-        let reached: AgentPage | null | 'none';
-        if (template) reached = await go({ kind: 'open', text: template }, `البحث عن ${step.query}`);
-        else if (!box) {
+        let searched: { title: string; url: string }[] | undefined;
+        if (!template && !box) {
+          // The shared engine over HTTP: a results list and no browser page.
           const found = await engine(step.query);
-          if (found === 'no_live') return { kind: 'done', status: 'blocked', text: noLiveSource(step.query) };
-          reached = found;
-        }
-        else {
-          reached = await submit({ kind: 'type', ref: box.ref, text: step.query, submit: true }, `البحث عن «${step.query}»`);
-          if (reached === 'none') {
-            await io.act({ kind: 'type', ref: box.ref, text: step.query });
-            reached = await go({ kind: 'press', text: 'Enter' }, `البحث عن «${step.query}»`);
+          if (found === 'unavailable') return { kind: 'done', status: 'blocked', text: noSearchSource(step.query) };
+          searched = found.results;
+        } else {
+          let reached: AgentPage | null | 'none';
+          if (template) reached = await go({ kind: 'open', text: template }, `البحث عن ${step.query}`);
+          else {
+            reached = await submit({ kind: 'type', ref: box!.ref, text: step.query, submit: true }, `البحث عن «${step.query}»`);
+            if (reached === 'none') {
+              await io.act({ kind: 'type', ref: box!.ref, text: step.query });
+              reached = await go({ kind: 'press', text: 'Enter' }, `البحث عن «${step.query}»`);
+            }
           }
+          if (!reached) return { kind: 'paused' };
+          page = reached;
+          // Some sites draw their results after the page loads: look again, three times at most.
+          for (let look = 0; look < 3 && queryOf(page.url) && !resultLinks(page, 1, step.query).length; look++) page = await io.act({ kind: 'wait', text: '2000' });
         }
-        if (!reached) return { kind: 'paused' };
-        page = reached;
-        // Some sites draw their results after the page loads: look again, three times at most.
-        for (let look = 0; look < 3 && queryOf(page.url) && !resultLinks(page, 1, step.query).length; look++) page = await io.act({ kind: 'wait', text: '2000' });
+        if (searched) plan.results = searched;
         if (step.ask) {
-          // A question wants its answer, not a list: open the top results until one page answers in its own words.
-          const results = resultLinks(page, 6, step.query);
-          plan.results = results.map(item => ({ title: tidy(item.element.label).slice(0, 90).replace(/[[\]]/g, ''), url: item.url }));
+          // A question wants its answer, not a list: read the top results until one page answers in its own words.
+          const results = searched ?? resultLinks(page!, 6, step.query).map(item => ({ title: tidy(item.element.label).slice(0, 90).replace(/[[\]]/g, ''), url: item.url }));
+          plan.results = results;
           // Open only the results whose titles name the question's topic best: «إمداد المياه» is not «المياه البيضاء».
           const topic = topicWords(step.query);
-          const ranked = results.map((item, at) => ({ item, at, score: topic.length ? titleScore(item.element.label, topic) : 1 }));
+          const ranked = results.map((item, at) => ({ item, at, score: topic.length ? titleScore(item.title, topic) : 1 }));
           const top = Math.max(0, ...ranked.map(entry => entry.score));
-          const fitting = top > 0 ? ranked.filter(entry => entry.score === top).sort((a, b) => a.at - b.at).map(entry => entry.item) : [];
-          for (const item of fitting.slice(0, 3)) {
-            await io.step(`قراءة ${hostOf(item.url)}`);
-            const opened = await go({ kind: 'open', text: item.url }, `فتح ${hostOf(item.url)}`);
-            if (!opened) return { kind: 'paused' };
-            page = opened;
-            const lines = relevantLines(page, step.query, 3, true);
-            if (lines.length) { plan.found = { url: page.url, title: tidy(page.title) || hostOf(page.url), lines }; break; }
+          const best = top > 0 ? ranked.filter(entry => entry.score === top).sort((a, b) => a.at - b.at).map(entry => entry.item) : [];
+          // The subject's own article («أستراليا» for «ما عاصمة أستراليا») comes first, even when another
+          // title repeats more question words («سفارة أستراليا في واشنطن العاصمة»).
+          // Among titles made only of question words, the one naming most of them is the subject:
+          // «طاقة شمسية» for «ما هي الطاقة الشمسية», not «طاقة».
+          // A site's own suffix («Cataract surgery - NHS») is not part of the subject.
+          const bare = (title: string) => plainTitle(title).replace(/\s+[-–—|:]\s+[^-–—|:]{1,40}$/u, '');
+          const pure = ranked.map(entry => ({ entry, own: topicWords(bare(entry.item.title)) }))
+            .filter(({ own }) => own.length > 0 && own.every(word => topic.includes(word)));
+          const widest = Math.max(0, ...pure.map(({ own }) => own.length));
+          const subject = pure.filter(({ own }) => own.length === widest).map(({ entry }) => entry.item);
+          // Engine results keep the engine's order, except that the subject's own article comes first: the engine ranks
+          // lexically and can list «سفارة أستراليا في واشنطن» before «أستراليا». A results page's links are ranked by title.
+          const fitting = [...new Set(searched ? [...subject, ...results] : [...subject, ...best])].slice(0, 3);
+          // Engine results are read over HTTP, all together, so no browser opens for a question. A page that
+          // gives no readable text (built by JavaScript, not HTML, timed out) is opened in the hidden browser instead.
+          const reads: (HandsRead | null)[] = searched && io.read && fitting.length
+            ? (await io.step(readingLabel(fitting.map(item => item.url))), await Promise.all(fitting.map(item => io.read!(item.url).catch((): HandsRead => ({ kind: 'unreadable' })))))
+            : fitting.map(() => null);
+          for (const [index, item] of fitting.entries()) {
+            const read = reads[index];
+            if (read?.kind === 'disallowed') continue;
+            let opened: AgentPage;
+            if (read?.kind === 'page' && readableOverHttp(read.page.text)) opened = read.page;
+            else {
+              await io.step(read ? `فتح ${hostOf(item.url)} في المتصفح` : `قراءة ${hostOf(item.url)}`);
+              const current = page;
+              const shown = searched && current && withoutHash(current.url) === withoutHash(item.url) ? current : await go({ kind: 'open', text: item.url }, `فتح ${hostOf(item.url)}`);
+              if (!shown) return { kind: 'paused' };
+              page = shown;
+              opened = shown;
+            }
+            const lines = relevantLines(opened, step.query, 3, true);
+            if (lines.length) { plan.found = { url: opened.url, title: tidy(opened.title) || hostOf(opened.url), lines }; break; }
           }
         }
         break;
       }
       case 'click': {
+        if (step.ordinal && plan.results?.length) {
+          // The numbered results came from the HTTP search, so no page needs to be open yet.
+          const chosen = plan.results[step.ordinal - 1];
+          if (!chosen) return { kind: 'done', status: 'partial', text: `لم أجد النتيجة رقم ${step.ordinal} ضمن نتائج البحث السابقة.` };
+          await io.step(`فتح النتيجة ${step.ordinal}: ${chosen.title.slice(0, 60)}`);
+          plan.next = index + 1;
+          const opened = page && withoutHash(page.url) === withoutHash(chosen.url) ? page : await go({ kind: 'open', text: chosen.url }, `فتح ${hostOf(chosen.url)}`);
+          if (!opened) return { kind: 'paused' };
+          page = opened;
+          break;
+        }
         if (!page) return { kind: 'done', status: 'blocked', text: NO_PAGE };
         const element = findTarget(page, step);
         if (!element) {
@@ -773,7 +925,14 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         break;
       }
       case 'read': {
-        if (!page) return { kind: 'done', status: 'blocked', text: NO_PAGE };
+        if (!page) {
+          // The last answer was read over HTTP, so «اقرأ المزيد» opens that page in the browser first.
+          if (!plan.found?.url) return { kind: 'done', status: 'blocked', text: NO_PAGE };
+          await io.step(`فتح ${hostOf(plan.found.url)}`);
+          const opened = await go({ kind: 'open', text: plan.found.url }, `فتح ${hostOf(plan.found.url)}`);
+          if (!opened) return { kind: 'paused' };
+          page = opened;
+        }
         await io.step('قراءة الصفحة');
         plan.next = index + 1;
         const offset = step.more && plan.read?.url === page.url ? plan.read.offset : 0;
@@ -798,16 +957,13 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
       }
     }
   }
-  if (!page) return { kind: 'done', status: 'blocked', text: NO_PAGE };
   return { kind: 'done', ...describe(plan, page) };
 }
 
 
-/** The reply is built only from what the page shows: titles, links and quoted sentences. */
-export function describe(plan: HandsPlan, page: AgentPage): { text: string; status: 'completed' | 'partial' } {
+/** The reply is built only from what the pages show: titles, links and quoted sentences. A question answered over HTTP needs no open page. */
+export function describe(plan: HandsPlan, page: AgentPage | null): { text: string; status: 'completed' | 'partial' | 'blocked' } {
   const last = plan.steps[plan.steps.length - 1];
-  const where = `**${tidy(page.title) || hostOf(page.url)}** (${hostOf(page.url)})`;
-  let lead = `وصلت إلى ${where}:`;
   if (last.kind === 'search' && last.ask && plan.results) {
     const list = (items: { title: string; url: string }[]) => items.map((item, index) => `${index + 1}. [${plainTitle(item.title)}](${item.url}) — ${siteName(item.url)}`).join('\n');
     const note = isMedical(last.query) ? `\n\n${plan.found ? MEDICAL_NOTE : 'للتشخيص والعلاج راجع طبيبًا مختصًا.'}` : '';
@@ -823,6 +979,13 @@ export function describe(plan: HandsPlan, page: AgentPage): { text: string; stat
     if (plan.results.length) return { status: 'partial', text: `لم أجد صفحة تجيب مباشرة عن «${last.query}»، ولن أنقل لك جوابًا من صفحة لا تخص سؤالك. هذه الصفحات التي ظهرت في البحث:\n\n${list(plan.results)}\n\nاكتب «افتح النتيجة 2» مثلًا وأقرأها لك.${note}` };
     return { status: 'partial', text: `لم أجد صفحة تجيب عن «${last.query}». جرّب سؤالًا أقصر يذكر الموضوع نفسه.${note}` };
   }
+  if (last.kind === 'search' && plan.results?.length) {
+    const list = plan.results.slice(0, 8).map((item, index) => `${index + 1}. [${plainTitle(item.title)}](${item.url}) — ${siteName(item.url)}`).join('\n');
+    return { status: 'completed', text: `بحثت في الويب عن «${last.query}». النتائج المرتبطة بالموضوع:\n\n${list}\n\nقل «افتح النتيجة 2» مثلًا لأفتحها.` };
+  }
+  if (!page) return { status: 'blocked', text: NO_PAGE };
+  const where = `**${tidy(page.title) || hostOf(page.url)}** (${hostOf(page.url)})`;
+  let lead = `وصلت إلى ${where}:`;
   if (last.kind === 'search') {
     const results = resultLinks(page, 8, queryOf(page.url) ?? last.query);
     if (results.length && queryOf(page.url)) {

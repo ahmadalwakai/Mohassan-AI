@@ -4,6 +4,7 @@ import type { Claim, Evidence, Frame, MindDeps, MindReply } from './contract.js'
 import { missingText, requiresSourceDate, researchText, showBareValue } from './compose.js';
 import { boundedQuote, declaredDate, evidenceKeyDomain, extractQuote, isPageInstruction, topicScore, typedNumbers, type ExtractedQuote } from './extract.js';
 import { header, inspectSite, readableUrl, readSite, signalUntil, siteHost, withDeadline, type ReadPage, type SiteRead } from './site-check.js';
+import { readingLabel } from '../activity.js';
 
 // حدود الخطة، غير مقيسة كقيم مثلى. القياس على النقل الوهمي في تقرير الدور هـ.
 const MAX_QUERIES = 3;
@@ -80,6 +81,8 @@ export async function collectEvidence(
       return true;
     }).slice(0, MAX_SOURCES - allSeen.size);
     batch.forEach(url => allSeen.add(url));
+    // One step for the batch: the pages are read together, and the live line names them all.
+    if (batch.length) await deps.step(readingLabel(batch));
     const outcomes = await Promise.all(batch.map(url => readSite(url, deps, signal, deadline)));
     for (const result of outcomes) {
       collection.pages.push(result);

@@ -16,6 +16,7 @@ type Registry = z.infer<typeof SkillRegistryResultSchema>;
 type Evidence = z.infer<typeof SkillEvidencePageSchema>;
 type Review = { title: string; description: string; facts: string[]; perform(): Promise<void> };
 type ComposerNode = { id: string; detail: SkillDetail; inputs: Record<string, string>; dependsOn: string[] };
+type DetailFocusIntent = { id: string; epoch: number; source: Element | null };
 const RunCreated = z.object({ task: TaskSchema, runId: z.uuid().nullable() }).strict();
 const RunCancelled = z.object({ task: TaskSchema, run: SkillRunSummarySchema }).strict();
 const Ok = z.object({ ok: z.literal(true) }).strict();
@@ -36,12 +37,33 @@ export function SkillLibrary({ offline, onOpenLegacy, onOpenTask }: { offline: b
   const [nodes, setNodes] = useState<ComposerNode[]>([]), [validation, setValidation] = useState<SkillCompositionResult | null>(null), [validationFingerprint, setValidationFingerprint] = useState(''), [valuesText, setValuesText] = useState('{}');
   const [runId, setRunId] = useState(''), [run, setRun] = useState<SkillRunSummary | null>(null), [evidence, setEvidence] = useState<Evidence | null>(null), [evidenceOffset, setEvidenceOffset] = useState(0);
   const detailHeading = useRef<HTMLHeadingElement>(null), sourceAbort = useRef<AbortController | null>(null), runAbort = useRef<AbortController | null>(null), selectedRef = useRef(selectedId), actionInFlight = useRef(false), nodeSequence = useRef(0), taskRequest = useRef<{ fingerprint: string; key: string } | null>(null);
+  const focusEpoch = useRef(0), detailFocusIntent = useRef<DetailFocusIntent | null>(null);
   const compositionFingerprint = JSON.stringify(nodes.map(node => ({ id: node.id, skillId: node.detail.skill.id, revision: node.detail.skill.revision, inputs: node.inputs, dependsOn: node.dependsOn })));
   const compositionRef = useRef(compositionFingerprint); compositionRef.current = compositionFingerprint;
   const currentValidation = validationFingerprint === compositionFingerprint ? validation : null;
   selectedRef.current = selectedId;
   const disabled = offline || Boolean(busy), changed = useCallback(() => setRefreshKey(value => value + 1), []);
-  const openSkill = useCallback((id: string) => { setSelectedId(id); setTab('library'); setError(''); setNotice(''); }, []);
+  const openSkill = useCallback((id: string, importFocus?: Omit<DetailFocusIntent, 'id'>) => {
+    // Persisted import results still refresh the registry, but cannot replace a
+    // tab/selection the user chose while the POST was pending.
+    if (importFocus && importFocus.epoch !== focusEpoch.current) return;
+    if (selectedRef.current !== id || importFocus) detailFocusIntent.current = { id,
+      ...(importFocus ?? { epoch: focusEpoch.current, source: document.activeElement }) };
+    setSelectedId(id); setTab('library'); setError(''); setNotice('');
+  }, []);
+
+  useEffect(() => {
+    // A delayed selection/import must not undo navigation made while it loads.
+    const moved = () => { focusEpoch.current++; };
+    document.addEventListener('focusin', moved, true);
+    document.addEventListener('pointerdown', moved, true);
+    document.addEventListener('keydown', moved, true);
+    return () => {
+      document.removeEventListener('focusin', moved, true);
+      document.removeEventListener('pointerdown', moved, true);
+      document.removeEventListener('keydown', moved, true);
+    };
+  }, []);
 
   useEffect(() => {
     if (offline) return;
@@ -64,9 +86,12 @@ export function SkillLibrary({ offline, onOpenLegacy, onOpenTask }: { offline: b
     return () => controller.abort();
   }, [selectedId, offline, refreshKey]);
   useEffect(() => () => { sourceAbort.current?.abort(); sourceAbort.current = null; }, []);
-  useEffect(() => { if (offline) runAbort.current?.abort(); return () => runAbort.current?.abort(); }, [offline]);
+  useEffect(() => { if (offline) { focusEpoch.current++; detailFocusIntent.current = null; runAbort.current?.abort(); } return () => runAbort.current?.abort(); }, [offline]);
   useEffect(() => {
-    if (!detail?.skill.id) return;
+    const intent = detailFocusIntent.current;
+    if (!detail?.skill.id || intent?.id !== detail.skill.id) return;
+    detailFocusIntent.current = null;
+    if (intent.epoch !== focusEpoch.current || document.activeElement !== intent.source && document.activeElement !== document.body) return;
     detailHeading.current?.focus({ preventScroll: true });
     detailHeading.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }, [detail?.skill.id]);
@@ -84,7 +109,8 @@ export function SkillLibrary({ offline, onOpenLegacy, onOpenTask }: { offline: b
   }
   async function importSkill(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const path = String(new FormData(event.currentTarget).get('path') ?? '');
-    await action('import', async () => { const imported = await skillPost('/api/skills/import', { path }, SkillImportResultSchema); openSkill(imported.skill.id); changed(); }, 'حُفظ المصدر للمراجعة. الاستيراد لا يفعّل المهارة.');
+    const importFocus = { epoch: focusEpoch.current, source: document.activeElement };
+    await action('import', async () => { const imported = await skillPost('/api/skills/import', { path }, SkillImportResultSchema); openSkill(imported.skill.id, importFocus); changed(); }, 'حُفظ المصدر للمراجعة. الاستيراد لا يفعّل المهارة.');
   }
   async function readSource(path: string) {
     if (!detail || offline) return; sourceAbort.current?.abort(); const controller = new AbortController(); sourceAbort.current = controller; const id = detail.skill.id;

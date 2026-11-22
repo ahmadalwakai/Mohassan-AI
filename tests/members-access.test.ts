@@ -121,15 +121,32 @@ describe('workspace members over disposable local state', () => {
     }
   }, 120000);
 
+  it('lets a member read its browser activity while denying other conversations and anonymous callers', async () => {
+    const own = await app().inject({ method: 'POST', url: '/api/chat/conversations', headers: headers(memberCookie), payload: {} });
+    expect(own.statusCode, own.body).toBe(200);
+    const activityUrl = `/api/chat/conversations/${own.json().id}/browser/activity`;
+    const activity = await app().inject({ url: activityUrl, headers: headers(memberCookie) });
+    expect(activity.statusCode, activity.body).toBe(200);
+    expect(activity.json()).toBeNull();
+    expect(activity.headers['cache-control']).toBe('no-store');
+    expect((await app().inject({ url: activityUrl, headers: headers('') })).statusCode).toBe(401);
+    expect((await app().inject({ url: activityUrl, headers: headers() })).statusCode).toBe(404);
+    const foreign = await app().inject({ method: 'POST', url: '/api/chat/conversations', headers: headers(), payload: {} });
+    expect(foreign.statusCode, foreign.body).toBe(200);
+    expect((await app().inject({ url: `/api/chat/conversations/${foreign.json().id}/browser/activity`, headers: headers(memberCookie) })).statusCode).toBe(404);
+  });
+
   it('never offers a member the owner tools in chat, while the owner keeps them', async () => {
     modelBodies.length = 0;
-    const created = await app().inject({ method: 'POST', url: '/api/chat/conversations', headers: headers(memberCookie), payload: { goal: 'مرحبا، كيف حالك اليوم؟' } });
+    // Greetings are now served locally. A substantive request still exercises
+    // the model's offered-tool boundary for each account role.
+    const created = await app().inject({ method: 'POST', url: '/api/chat/conversations', headers: headers(memberCookie), payload: { goal: 'اشرح كيف تعمل قائمة الانتظار البرمجية.' } });
     expect(created.statusCode, created.body).toBe(200);
     await settle(created.json().id, memberCookie);
     expect(modelBodies.length).toBeGreaterThan(0);
     for (const body of modelBodies) for (const tool of ['workspace_list', 'code_change', 'studio_change', 'computer_view', 'computer_click', 'run_skill']) expect(body, tool).not.toContain(`"${tool}"`);
     modelBodies.length = 0;
-    const own = await app().inject({ method: 'POST', url: '/api/chat/conversations', headers: headers(), payload: { goal: 'مرحبا، كيف حالك اليوم؟' } });
+    const own = await app().inject({ method: 'POST', url: '/api/chat/conversations', headers: headers(), payload: { goal: 'اشرح كيف تعمل قائمة الانتظار البرمجية.' } });
     expect(own.statusCode, own.body).toBe(200);
     await settle(own.json().id, ownerCookie);
     expect(modelBodies.some(body => body.includes('"workspace_list"'))).toBe(true);
@@ -157,6 +174,7 @@ describe('workspace members over disposable local state', () => {
     const again = await login(member); expect(again.status).toBe(200);
     const refused = await app().inject({ url: '/api/access', headers: headers(again.cookie) });
     expect(refused.statusCode).toBe(403); expect(refused.json().error.code).toBe('MEMBER_FORBIDDEN');
+    expect((await app().inject({ url: `/api/chat/conversations/${randomUUID()}/browser/activity`, headers: headers(again.cookie) })).statusCode).toBe(403);
     expect((await app().inject({ method: 'POST', url: '/api/chat/conversations', headers: headers(again.cookie), payload: {} })).statusCode).toBe(403);
     expect((await app().inject({ method: 'POST', url: `/api/members/${memberId}/access`, headers: headers(), payload: { enabled: true } })).statusCode).toBe(200);
     expect((await app().inject({ url: '/api/access', headers: headers(again.cookie) })).json().role).toBe('member');

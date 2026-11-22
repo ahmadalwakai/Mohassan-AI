@@ -2,8 +2,10 @@ import { createHash,randomUUID } from 'node:crypto';
 import { sql,type Kysely } from 'kysely';
 import { MemoryCorrectionSchema,MemoryCreateSchema,MemoryFeedbackSchema,MemoryItemSchema,MemoryMutationSchema,MemorySearchSchema,SkillActionSchema,SkillActivationSchema,SkillCreateSchema,SkillEvaluationSchema,SkillRevokeSchema,SkillRunSchema,SkillSchema,type MemoryLayer,type MemoryItem } from './contracts.ts';
 import { evaluateChecklist,executeChecklist,manifestHash } from './skills.ts';
+import { MemoryExactOwnerSchema,MemoryExactPayloadSchema,MemoryExactReconcileInputSchema,MemoryExactWriteInputSchema,MemoryExactWriteReceiptSchema,exactMemoryPayloadHash,type MemoryExactReconciliation,type MemoryExactWriteOptions,type MemoryExactWriteReceipt,type MemoryExactWriteResult } from './exact-write.ts';
 export * from './contracts.ts';
 export * from './skills.ts';
+export * from './exact-write.ts';
 export { memoryMigration } from './migration.ts';
 
 export class MemoryError extends Error {constructor(public readonly code:string,message:string,public readonly statusCode=400){super(message);this.name='MemoryError';}}
@@ -42,9 +44,9 @@ export function createMemoryControl(db:Kysely<any>,options:{now?:()=>Date}={}){
     for(const evidenceId of new Set(input.evidenceIds))await connection.insertInto('memory_provenance').values({memory_id:id,evidence_id:evidenceId,relation:details.confidenceKind==='task_observed'?'observed':'asserted'}).execute();
     return row;
   }
-  async function provenance(rows:any[]){
+  async function provenance(rows:any[],connection:Kysely<any>=db){
     if(!rows.length)return [];
-    const refs=await db.selectFrom('memory_provenance as p').innerJoin('memory_evidence as e','e.id','p.evidence_id').selectAll('e').select('p.memory_id').where('p.memory_id','in',rows.map(row=>row.id)).execute();
+    const refs=await connection.selectFrom('memory_provenance as p').innerJoin('memory_evidence as e','e.id','p.evidence_id').selectAll('e').select('p.memory_id').where('p.memory_id','in',rows.map(row=>row.id)).execute();
     return rows.map(row=>MemoryItemSchema.parse({id:row.id,rootId:row.root_id,version:row.version,title:row.title,content:row.content,layer:row.layer,status:row.status==='active'&&new Date(row.expires_at)<=now()?'expired':row.status,confidence:Number(row.confidence),confidenceKind:row.confidence_kind,taskId:row.task_id,expiresAt:iso(row.expires_at),createdAt:iso(row.created_at),updatedAt:iso(row.updated_at),provenance:refs.filter(ref=>ref.memory_id===row.id).map(ref=>({id:ref.id,kind:ref.kind,description:ref.description,taskId:ref.task_id,eventId:ref.event_id,contentHash:ref.content_hash,trust:ref.trust,status:ref.status,observedAt:iso(ref.observed_at),expiresAt:ref.expires_at?iso(ref.expires_at):null}))}));
   }
   async function itemRow(ownerId:string,id:string,connection:Kysely<any>=db,lock=false){let query=connection.selectFrom('memory_items').selectAll().where('id','=',id).where('owner_id','=',ownerId);if(lock)query=query.forUpdate();const row=await query.executeTakeFirst();if(!row)throw new MemoryError('MEMORY_NOT_FOUND','لم يُعثر على الذاكرة.',404);return row;}
@@ -60,6 +62,99 @@ export function createMemoryControl(db:Kysely<any>,options:{now?:()=>Date}={}){
     });return (await provenance([row]))[0];
   }
   async function detail(ownerId:string,id:string){const row=await itemRow(ownerId,id);const versions=await db.selectFrom('memory_items').selectAll().where('owner_id','=',ownerId).where('root_id','=',row.root_id).orderBy('version','desc').limit(20).execute();return {item:(await provenance([row]))[0],versions:await provenance(versions)};}
+
+  function exactReceipt(row:any):MemoryExactWriteReceipt {
+    const parsed=MemoryExactWriteReceiptSchema.safeParse({version:1,ownerId:row.owner_id,operationKey:row.operation_key,
+      payloadHash:row.payload_hash,payloadBytes:row.payload_bytes,itemId:row.item_id,rootId:row.root_id,itemVersion:row.item_version,
+      evidenceId:row.evidence_id,layer:'semantic',createdAt:iso(row.created_at),expiresAt:iso(row.expires_at)});
+    if(!parsed.success)throw new MemoryError('MEMORY_OPERATION_INVALID','بيانات عملية الذاكرة غير صالحة للتحقق.',409);
+    return parsed.data;
+  }
+
+  /**
+   * Exact, owner-scoped write identity. This is not user authorization, proof of
+   * factual correctness, or proof the item is still available. Never append the
+   * original request to the canonical payload. A caller uncertain about commit
+   * must reconcile by operation key read-only, not automatically call write again.
+   */
+  async function writeExact(ownerId:string,input:unknown,options:MemoryExactWriteOptions={}):Promise<MemoryExactWriteResult> {
+    MemoryExactOwnerSchema.parse(ownerId);
+    const request=MemoryExactWriteInputSchema.parse(input);
+    checked(request.payload);
+    const bytes=Buffer.byteLength(request.payload,'utf8');
+    if(exactMemoryPayloadHash(request.payload)!==request.payloadHash)throw new MemoryError('MEMORY_PAYLOAD_HASH_MISMATCH','بصمة المحتوى لا تطابق البايتات المطلوب حفظها.');
+    const fenced=async(tx:Kysely<any>)=>{options.signal?.throwIfAborted();await options.fence?.(tx);options.signal?.throwIfAborted();};
+    options.signal?.throwIfAborted();
+    return db.transaction().execute(async tx=>{
+      await ownerLock(tx,ownerId);
+      await fenced(tx);
+      const previous=await tx.selectFrom('memory_exact_operations').selectAll().where('owner_id','=',ownerId).where('operation_key','=',request.operationKey).executeTakeFirst();
+      let result:MemoryExactWriteResult;
+      if(previous){
+        if(previous.payload_hash!==request.payloadHash||previous.payload_bytes!==bytes)throw new MemoryError('MEMORY_OPERATION_CONFLICT','مفتاح العملية مرتبط بمحتوى مختلف.',409);
+        result={created:false,receipt:exactReceipt(previous)};
+      }else{
+        const count=await tx.selectFrom('memory_items').select(eb=>eb.fn.countAll().as('n')).where('owner_id','=',ownerId).executeTakeFirstOrThrow();
+        if(Number(count.n)>=2000)throw new MemoryError('MEMORY_LIMIT','بلغت الذاكرة حد ألفي إصدار محفوظ.',409);
+        const evidenceId=randomUUID();
+        await tx.insertInto('memory_evidence').values({id:evidenceId,owner_id:ownerId,source_key:`exact:${request.operationKey}`,
+          kind:'manual',description:'محتوى صريح محفوظ بهوية عملية محددة.',task_id:null,event_id:null,content_hash:request.payloadHash,
+          trust:'manual',status:'active',observed_at:now(),expires_at:null}).execute();
+        const item=await insertItem(tx,ownerId,{title:'Saved result',content:request.payload,layer:'semantic',evidenceIds:[evidenceId]});
+        const operation={owner_id:ownerId,operation_key:request.operationKey,payload_hash:request.payloadHash,payload_bytes:bytes,
+          item_id:item.id,root_id:item.root_id,item_version:item.version,evidence_id:evidenceId,created_at:item.created_at,expires_at:item.expires_at};
+        await tx.insertInto('memory_exact_operations').values(operation).execute();
+        result={created:true,receipt:exactReceipt(operation)};
+      }
+      // The final fence is the last awaited work before returning to COMMIT.
+      // A thrown fence/abort rolls every insert back; no compensation runs later.
+      await fenced(tx);
+      return result;
+    });
+  }
+
+  /** Snapshot-bound persistence verification only; never creates, repairs or revives an item. */
+  async function reconcileExact(ownerId:string,input:unknown,options:{signal?:AbortSignal}={}):Promise<MemoryExactReconciliation> {
+    MemoryExactOwnerSchema.parse(ownerId);
+    const request=MemoryExactReconcileInputSchema.parse(input);
+    options.signal?.throwIfAborted();
+    return db.transaction().execute(async tx=>{
+      // Kysely's installed PGlite driver ignores TransactionSettings, so these
+      // protections must be explicit SQL before the first data read.
+      await sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`.execute(tx);
+      options.signal?.throwIfAborted();
+      const operation=await tx.selectFrom('memory_exact_operations').selectAll().where('owner_id','=',ownerId).where('operation_key','=',request.operationKey).executeTakeFirst();
+      if(!operation){options.signal?.throwIfAborted();return {status:'missing'};}
+      const receipt=exactReceipt(operation);
+      if(receipt.payloadHash!==request.payloadHash)throw new MemoryError('MEMORY_OPERATION_CONFLICT','مفتاح العملية مرتبط بمحتوى مختلف.',409);
+      const unavailable=(reason:Extract<MemoryExactReconciliation,{status:'unavailable'}>['reason']):MemoryExactReconciliation=>{
+        options.signal?.throwIfAborted();return {status:'unavailable',reason,receipt};
+      };
+      const item=await tx.selectFrom('memory_items').selectAll().where('owner_id','=',ownerId).where('id','=',receipt.itemId).executeTakeFirst();
+      if(!item)return unavailable('item_missing');
+      if(item.root_id!==receipt.rootId||item.version!==receipt.itemVersion||item.layer!=='semantic'||item.title!=='Saved result'
+        ||item.task_id!==null||item.confidence_kind!=='user_asserted'||iso(item.created_at)!==receipt.createdAt||iso(item.expires_at)!==receipt.expiresAt)return unavailable('identity_mismatch');
+      if(item.status!=='active')return unavailable('item_inactive');
+      if(new Date(item.expires_at)<=now())return unavailable('item_expired');
+      if(!MemoryExactPayloadSchema.safeParse(item.content).success||Buffer.byteLength(item.content,'utf8')!==receipt.payloadBytes
+        ||exactMemoryPayloadHash(item.content)!==receipt.payloadHash)return unavailable('payload_mismatch');
+      const refs=await tx.selectFrom('memory_provenance as p').innerJoin('memory_evidence as e','e.id','p.evidence_id')
+        .selectAll('e').select(['p.memory_id','p.relation']).where('p.memory_id','=',receipt.itemId).limit(2).execute();
+      const ref=refs[0];
+      if(refs.length!==1||!ref||ref.id!==receipt.evidenceId||ref.owner_id!==ownerId||ref.source_key!==`exact:${receipt.operationKey}`
+        ||ref.kind!=='manual'||ref.trust!=='manual'||ref.status!=='active'||ref.task_id!==null||ref.event_id!==null
+        ||ref.relation!=='asserted'||ref.content_hash!==receipt.payloadHash||ref.expires_at&&new Date(ref.expires_at)<=now())return unavailable('provenance_unavailable');
+      const saved=(await provenance([item],tx))[0];
+      options.signal?.throwIfAborted();
+      const observedAt=now().toISOString();
+      if(saved.status!=='active'||new Date(saved.expiresAt)<=new Date(observedAt))return unavailable('item_expired');
+      const savedRef=saved.provenance[0];
+      if(saved.provenance.length!==1||!savedRef||savedRef.id!==receipt.evidenceId||savedRef.status!=='active'
+        ||savedRef.contentHash!==receipt.payloadHash||savedRef.expiresAt&&new Date(savedRef.expiresAt)<=new Date(observedAt))return unavailable('provenance_unavailable');
+      options.signal?.throwIfAborted();
+      return {status:'verified',scope:'memory_persistence_only',receipt,item:saved,observedAt};
+    });
+  }
   async function correct(ownerId:string,id:string,input:unknown){
     const request=MemoryCorrectionSchema.parse(input);checked(request.title);checked(request.content);
     const row=await db.transaction().execute(async tx=>{
@@ -136,5 +231,5 @@ export function createMemoryControl(db:Kysely<any>,options:{now?:()=>Date}={}){
   async function runSkill(ownerId:string,id:string,input:unknown){const request=SkillRunSchema.parse(input),row=await skillRow(ownerId,id);const family=await db.selectFrom('memory_skill_families').select('active_skill_id').where('id','=',row.family_id).where('owner_id','=',ownerId).executeTakeFirstOrThrow();if(row.status!=='active'||family.active_skill_id!==id)throw new MemoryError('SKILL_NOT_ACTIVE','هذا الإصدار غير مفعّل.',409);await evidence(ownerId,row.evidence_ids);return {skillId:id,version:row.version,manifestHash:row.manifest_hash,...executeChecklist(row.manifest,request.input)};}
   async function metrics(ownerId:string){const counts=await db.selectFrom('tasks').select('status').select(eb=>eb.fn.countAll().as('n')).where('owner_id','=',ownerId).where('status','in',['completed','failed','cancelled']).groupBy('status').execute();const usage=await sql<any>`SELECT COALESCE(SUM(m.input_tokens),0) AS input,COALESCE(SUM(m.output_tokens),0) AS output,COUNT(*) FILTER(WHERE m.usage_known=false) AS unknown FROM model_runs m JOIN tasks t ON t.id=m.task_id WHERE t.owner_id=${ownerId}`.execute(db);return {terminalTasks:counts.reduce((sum,row)=>sum+Number(row.n),0),completed:Number(counts.find(row=>row.status==='completed')?.n??0),failed:Number(counts.find(row=>row.status==='failed')?.n??0),knownInputTokens:Number(usage.rows[0]?.input??0),knownOutputTokens:Number(usage.rows[0]?.output??0),unknownUsageRuns:Number(usage.rows[0]?.unknown??0)};}
   async function workspace(ownerId:string){await sync(ownerId);const rows=await db.selectFrom('memory_items').selectAll().where('owner_id','=',ownerId).where('status','!=','superseded').orderBy('updated_at','desc').limit(100).execute();const skills=await db.selectFrom('memory_skill_versions').selectAll().where('owner_id','=',ownerId).orderBy('created_at','desc').limit(100).execute();const feedbackRows=await db.selectFrom('memory_feedback').selectAll().where('owner_id','=',ownerId).orderBy('created_at','desc').limit(50).execute();const expiredCount=await db.selectFrom('memory_items').select(eb=>eb.fn.countAll().as('n')).where('owner_id','=',ownerId).where('status','=','active').where('expires_at','<=',now()).executeTakeFirstOrThrow();return {items:await provenance(rows),skills:await Promise.all(skills.map(skillDto)),feedback:feedbackRows.map(row=>({id:row.id,taskId:row.task_id,kind:row.kind,comment:row.comment,rating:row.rating,persistedPreference:row.persisted_preference,createdAt:iso(row.created_at)})),metrics:await metrics(ownerId),method:'lexical-v1' as const,expiredCount:Number(expiredCount.n)};}
-  return {workspace,search,context,create,detail,correct,revoke,remove,sync,feedback,createSkill,evaluateSkill,activateSkill,revokeSkill,runSkill,metrics};
+  return {workspace,search,context,create,detail,writeExact,reconcileExact,correct,revoke,remove,sync,feedback,createSkill,evaluateSkill,activateSkill,revokeSkill,runSkill,metrics};
 }

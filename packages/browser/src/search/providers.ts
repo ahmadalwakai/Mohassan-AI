@@ -2,14 +2,14 @@ import { parseFragment } from 'parse5';
 import { createHash } from 'node:crypto';
 import { SafeNetwork } from '../network.js';
 import type { SearchHit } from '../research.js';
-import type { compileQuery } from './ranking.js';
+import { excludesWikipedia, requestsWikipedia, type compileQuery } from './ranking.js';
 import { extraDocumentedProviders } from './extra-providers.js';
 
 export type SearchQuery = ReturnType<typeof compileQuery>;
 export interface DocumentedProvider {
   name: string;
-  coverage: 'encyclopedia' | 'programming' | 'scholarly';
-  accessBasis: 'documented_api';
+  coverage: 'encyclopedia' | 'programming' | 'scholarly' | 'web';
+  accessBasis: 'documented_api' | 'public_search';
   supports(query: SearchQuery): boolean;
   search(query: SearchQuery, limit: number, signal: AbortSignal): Promise<SearchHit[]>;
   /** Carries successful-response backoff/quota instructions to the shared gate. */
@@ -74,7 +74,9 @@ export function documentedProviders(network: SafeNetwork, now = Date.now): Docum
   let stackBackoff = 0;
   const stackQueries = new Map<string,number>();
   return [
-    { name: 'Wikipedia', coverage: 'encyclopedia', accessBasis: 'documented_api', supports: () => true,
+    { name: 'Wikipedia', coverage: 'encyclopedia', accessBasis: 'documented_api',
+      supports: query => requestsWikipedia(query)
+        || !excludesWikipedia(query) && query.intent === 'general' && !query.timeSensitive && !query.sites.length,
       async search(query, limit, signal) {
         const url = new URL(`https://${query.language}.wikipedia.org/w/api.php`);
         url.search = new URLSearchParams({ action:'query', list:'search', srsearch:query.retrievalQuestion, srlimit:String(limit), format:'json', utf8:'1' }).toString();

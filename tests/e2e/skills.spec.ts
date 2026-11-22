@@ -222,7 +222,8 @@ test('360px library runs an approved file-read composition with persisted eviden
   await expect(page.getByRole('button',{name:'فحص المهارة',exact:true})).toBeDisabled();
   await context.setOffline(false);await expect(page.getByRole('button',{name:'فحص المهارة',exact:true})).toBeEnabled();
   await page.getByLabel('البحث في المهارات',{exact:true}).focus();await page.keyboard.press('Tab');
-  expect(await page.evaluate(()=>{const element=document.activeElement;if(!element||element===document.body)return false;const style=getComputedStyle(element);return style.outlineStyle!=='none'||style.boxShadow!=='none';})).toBe(true);
+  const category=page.getByRole('combobox',{name:'تصفية الفئة',exact:true});await expect(category).toBeFocused();
+  expect(await category.evaluate(element=>{const style=getComputedStyle(element);return element.matches(':focus-visible')&&(style.outlineStyle!=='none'||style.boxShadow!=='none');})).toBe(true);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:info.outputPath('skills-mobile-360.png'),fullPage:true,animations:'disabled'});
   expect(contrastFailures).toEqual([]);
@@ -265,4 +266,90 @@ test('Forge UI preserves quarantine until source inspection, actual isolated ben
   await page.getByRole('button',{name:'تفعيل المرشح بعد المراجعة',exact:true}).click();const promotedResponse=await promoted;expect(promotedResponse.ok(),await promotedResponse.text()).toBe(true);
   const candidate=await detail(page,candidateId);expect(candidate.skill.active).toBe(true);expect(candidate.grants).toEqual([]);expect((await detail(page,baseline.id)).skill.status).toBe('deprecated');
   expect(candidate.audit.some(event=>event.event==='skill.forge_promoted')).toBe(true);
+});
+
+test('skill detail focus follows explicit selection without stealing delayed import, refresh or reconnect navigation',async({page,context})=>{
+  test.setTimeout(120000);await page.setViewportSize({width:1440,height:1000});await openLibrary(page);
+  const firstContract=SkillContractSchema.parse({slug:'m13-focus-first',name:'اختبار التركيز الأول M13',description:'مصدر واجهة معزول لقياس انتقال التركيز.',version:'1.0.0',category:'documents',level:'instruction'});
+  const firstFolder=await sourceFixture('m13-focus-first',firstContract);
+  const secondFolder=await sourceFixture('m13-focus-second',{...firstContract,slug:'m13-focus-second',name:'اختبار التركيز الثاني M13'});
+  const thirdFolder=await sourceFixture('m13-focus-tab',{...firstContract,slug:'m13-focus-tab',name:'اختبار الحفاظ على القسم M13'});
+  const first=await importUI(page,firstFolder.directory);
+  await expect(page.getByRole('heading',{name:'تفاصيل المهارة: اختبار التركيز الأول M13',exact:true})).toBeFocused();
+
+  const releases:Array<()=>void>=[];
+  async function holdResponse(endpoint:string,method='GET') {
+    let release!:()=>void,arrived!:()=>void;
+    const gate=new Promise<void>(resolve=>{release=resolve;}),reached=new Promise<void>(resolve=>{arrived=resolve;});
+    releases.push(release);
+    const pattern=`**${endpoint}`;
+    await page.route(pattern,async route=>{
+      if(route.request().method()!==method){await route.continue();return;}
+      const response=await route.fetch();arrived();await gate;await route.fulfill({response});
+    });
+    return {reached,async finish(){
+      const response=page.waitForResponse(value=>new URL(value.url()).pathname===endpoint&&value.request().method()===method);
+      release();const received=await response;expect(received.ok(),await received.text()).toBe(true);await page.unroute(pattern);
+      return received;
+    }};
+  }
+  const category=page.getByRole('combobox',{name:'تصفية الفئة',exact:true});
+  async function navigateToCategory(){await page.getByLabel('البحث في المهارات',{exact:true}).focus();await page.keyboard.press('Tab');await expect(category).toBeFocused();}
+  async function expectRetainedCategory(name:string){
+    await expect(page.getByRole('heading',{name:`تفاصيل المهارة: ${name}`,exact:true})).toBeVisible();
+    await expect(page.locator('[aria-label="تفاصيل المهارة"]').locator('..')).toHaveAttribute('aria-busy','false');
+    // Cross the loaded commit's paint/effect boundary; an immediate generic
+    // active-element assertion previously passed before the late focus effect.
+    await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+    await expect(category).toBeFocused();
+    expect(await category.evaluate(element=>element.matches(':focus-visible')&&getComputedStyle(element).outlineStyle==='solid')).toBe(true);
+  }
+  try {
+    // Import intent starts before POST: moving to the filter during the request
+    // must win over the later imported-detail response.
+    const importing=await holdResponse('/api/skills/import','POST');
+    await page.getByLabel('مسار مجلد المهارة',{exact:true}).fill(secondFolder.directory);
+    await page.getByRole('button',{name:'استيراد للمراجعة',exact:true}).click();await importing.reached;
+    await navigateToCategory();const imported=await importing.finish();const second=(await imported.json()).skill;
+    await expect(page.getByRole('button',{name:'عرض اختبار التركيز الثاني M13',exact:true})).toBeVisible();
+    await expect(page.getByTestId(`skill-card-${first.id}`)).toHaveClass(/selected/u);
+    await expectRetainedCategory('اختبار التركيز الأول M13');
+
+    // A deliberate selection with no later navigation still moves focus to its
+    // detail heading, preserving the original accessibility behavior.
+    await page.getByRole('button',{name:'عرض اختبار التركيز الثاني M13',exact:true}).click();
+    await expect(page.getByRole('heading',{name:'تفاصيل المهارة: اختبار التركيز الثاني M13',exact:true})).toBeFocused();
+
+    const selecting=await holdResponse(`/api/skills/${first.id}`);
+    await page.getByRole('button',{name:'عرض اختبار التركيز الأول M13',exact:true}).click();await selecting.reached;
+    await navigateToCategory();await selecting.finish();await expectRetainedCategory('اختبار التركيز الأول M13');
+
+    const refreshing=await holdResponse(`/api/skills/${first.id}`);
+    await page.getByRole('button',{name:'تحديث المكتبة',exact:true}).click();await refreshing.reached;
+    await navigateToCategory();await refreshing.finish();await expectRetainedCategory('اختبار التركيز الأول M13');
+
+    await context.setOffline(true);await expect(page.getByText('غير متصل. البيانات المعروضة من آخر قراءة، والعمليات متوقفة حتى عودة الاتصال.',{exact:true})).toBeVisible();
+    const reconnecting=await holdResponse(`/api/skills/${first.id}`);
+    await context.setOffline(false);await reconnecting.reached;
+    await navigateToCategory();await reconnecting.finish();await expectRetainedCategory('اختبار التركيز الأول M13');
+
+    const backgroundImport=await holdResponse('/api/skills/import','POST');
+    await page.getByLabel('مسار مجلد المهارة',{exact:true}).fill(thirdFolder.directory);
+    await page.getByRole('button',{name:'استيراد للمراجعة',exact:true}).click();await backgroundImport.reached;
+    const composeTab=page.getByRole('button',{name:'تركيب وتشغيل',exact:true});await composeTab.click();
+    await expect(page.getByRole('region',{name:'تركيب المهارات',exact:true})).toBeVisible();
+    await page.locator('summary').filter({hasText:'طلب تشغيل مدخلات محددة'}).click();
+    const values=page.getByLabel('مدخلات التشغيل JSON',{exact:true});await values.fill('{"focus":"retained"}');
+    const backgroundResponse=await backgroundImport.finish(),third=(await backgroundResponse.json()).skill;
+    await expect(page.getByRole('status').filter({hasText:'حُفظ المصدر للمراجعة. الاستيراد لا يفعّل المهارة.'})).toBeVisible();
+    await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+    await expect(composeTab).toHaveAttribute('aria-pressed','true');await expect(values).toBeFocused();await expect(values).toHaveValue('{"focus":"retained"}');
+    await page.getByRole('button',{name:'المكتبة والمراجعة',exact:true}).click();
+    await expect(page.getByRole('button',{name:'عرض اختبار الحفاظ على القسم M13',exact:true})).toBeVisible();
+    await expect(page.getByTestId(`skill-card-${first.id}`)).toHaveClass(/selected/u);
+    await expect(page.getByRole('heading',{name:'تفاصيل المهارة: اختبار التركيز الأول M13',exact:true})).toBeVisible();
+    expect((await detail(page,third.id)).skill.id).toBe(third.id);
+    expect((await detail(page,second.id)).skill.id).toBe(second.id);
+    expect((await detail(page,first.id)).skill.id).toBe(first.id);
+  } finally {for(const release of releases)release();}
 });

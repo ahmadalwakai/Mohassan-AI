@@ -27,5 +27,7 @@ export function getConfig(): AppConfig {
     executor:executorConfigFromEnv(process.env,process.cwd(),process.env.NODE_ENV==='production'),
     adsLab:adsLabConfigFromEnv(process.env,executorConfigFromEnv(process.env,process.cwd(),process.env.NODE_ENV==='production')),
     studioGatewayUrl:process.env.STUDIO_GATEWAY_URL||undefined,studioGatewaySecret:process.env.STUDIO_GATEWAY_SECRET||undefined,studioPreviewPort:Number(process.env.STUDIO_PREVIEW_PORT||5000),
+    // The owner's own Windows session: files, projects, programs, windows and input. Never on the cloud deployment.
+    desktop:{enabled:process.platform==='win32'&&process.env.NODE_ENV!=='production'&&process.env.DESKTOP_ENGINE!=='false',dataDir:process.env.DESKTOP_DATA_DIR||resolve('.data/desktop'),projectsRoot:process.env.DESKTOP_PROJECTS_ROOT||undefined,roots:process.env.DESKTOP_ALLOWED_ROOTS?.split(delimiter).filter(Boolean),screenshotsDir:process.env.DESKTOP_SCREENSHOTS_DIR||undefined},
   };
 }

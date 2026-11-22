@@ -38,6 +38,9 @@ export interface Evidence {
   pageDate?: string | null;
   /** Verbatim excerpt from the source. */
   quote: string;
+  /** Exact evaluated-document provenance; these remain source metadata, not authority. */
+  title?: string;
+  sourceRef?: string;
   /** Transport or page metadata attributable to this response URL. */
   observation?: SiteObservation;
   value?: string;
@@ -71,7 +74,10 @@ export interface MindDeps {
   knowledge?(query: string): Promise<{ title: string; text: string; source: string }[]>;
   siteSnapshot?(url: string): Promise<{ sourceHash: string; fetchedAt: string } | null>;
   now(): Date;
+  /** Records a step of the work («قراءة ويكيبيديا») and shows it on the live line. */
   step(label: string): Promise<void>;
+  /** The live line only, for a phase that is not a step of its own («يبحث في الذاكرة»). */
+  progress?(label: string): Promise<void>;
 }
 
 export interface Mind {

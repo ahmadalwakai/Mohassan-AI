@@ -1,8 +1,9 @@
 import { BrowserError } from '@mohassan/browser';
 import type { CreateTaskInput, Task } from '@mohassan/contracts';
-import type { WindowsControl } from '@mohassan/windows';
+import { WindowsOriginSchema, type WindowsControl, type WindowsInputOptions, type WindowsOrigin, type WindowsView } from '@mohassan/windows';
 import { GoogleAdsBriefSchema } from '@mohassan/contracts';
 import type { GoogleAdsControl } from '@mohassan/google-ads';
+import type { MemoryExactWriteInput, MemoryExactWriteOptions, MemoryExactWriteResult, MemoryExactReconcileInput, MemoryExactReconciliation } from '@mohassan/memory';
 import { z } from 'zod';
 import type { CampaignPorts } from './campaign-run.js';
 
@@ -16,9 +17,19 @@ const Goal = z.string().trim().min(5).max(4000);
 const CodeInput = z.object({ projectId: z.uuid(), goal: Goal }).strict();
 const StudioInput = z.object({ sessionId: z.uuid(), goal: Goal }).strict();
 
-export type ComputerStep = { kind: 'click'; name: string; type: string } | { kind: 'text'; text: string } | { kind: 'key'; key: string };
-export interface ComputerElement { ref: string; name: string; type: string }
-export interface ComputerScreen { title: string; canAct: boolean; hasPasswordField: boolean; elements: ComputerElement[]; jpeg: string }
+export type ComputerStep = ({ kind: 'click'; name: string; type: string; /** Host-observed ambiguity, never model supplied. */ ambiguous?: true }
+  | { kind: 'text'; text: string } | { kind: 'key'; key: string }) & { /** Host-observed device/grant/window binding, never model supplied. */ origin?: WindowsOrigin };
+export interface ComputerElement {
+  ref: string;
+  /** Full domain-bounded accessible name (at most 160 characters), never a clipped selector. */
+  name: string;
+  type: string;
+  /** Same full name/type appeared more than once in the observed eligible frame. */
+  ambiguous?: true;
+}
+export interface ComputerScreen { title: string; canAct: boolean; hasPasswordField: boolean; elements: ComputerElement[]; jpeg: string; origin?: WindowsOrigin }
+/** Runtime host fence only; never serialized as a step or supplied by a model. */
+export type ComputerInputOptions = Pick<WindowsInputOptions, 'fence'>;
 export interface PendingWorkTask { id: string; label: string; prompt: string; detail: string }
 export interface TaskOutcome { settled: boolean; text: string }
 export interface AdsAccountChoice { customerId: string; loginCustomerId: string | null; name: string }
@@ -29,6 +40,10 @@ export interface AssistantTools {
     search(ownerId: string, query: string): Promise<MemoryLookupResult>;
     /** The owner's own words are kept beside the fact, so a later search in their language finds it. */
     save(ownerId: string, text: string, request: string): Promise<string>;
+    /** Trusted host only: intent, calculation evidence and exact payload binding are checked separately. */
+    writeExact?(ownerId: string, input: MemoryExactWriteInput, options?: MemoryExactWriteOptions): Promise<MemoryExactWriteResult>;
+    /** Read-only persistence reconciliation, never an automatic write retry or model tool. */
+    reconcileExact?(ownerId: string, input: MemoryExactReconcileInput, options?: Pick<MemoryExactWriteOptions, 'signal'>): Promise<MemoryExactReconciliation>;
   };
   work?: {
     list(ownerId: string): Promise<string>;
@@ -54,12 +69,18 @@ export interface AssistantTools {
     campaign?: CampaignPorts;
   };
   computer?: {
+    /** Native adapter requires a real view before input; absent on limited legacy injected ports. */
+    requiresViewOrigin?: true;
     view(ownerId: string): Promise<ComputerScreen>;
-    perform(ownerId: string, step: ComputerStep, signal: AbortSignal): Promise<string>;
+    perform(ownerId: string, step: ComputerStep, signal: AbortSignal, options?: ComputerInputOptions): Promise<string>;
   };
 }
 
 const MAX_LISTED_ELEMENTS = 24;
+const MAX_MEMORY_ITEMS = 5;
+// Match the canonical recall verifier's per-evidence UTF-16 bound. A shorter
+// display snippet is never authoritative evidence for an unobserved suffix.
+const MAX_MEMORY_EVIDENCE = 4000;
 const ACTIONABLE = /Button|Edit|MenuItem|ListItem|TabItem|CheckBox|ComboBox|Hyperlink|RadioButton/;
 /** A key that can activate whatever has focus has a sending effect we cannot see. */
 export const EFFECT_KEYS = new Set(['Enter', 'Space', 'Delete']);
@@ -91,6 +112,16 @@ export function parseAdsDraft(text: string, request: string) {
 }
 
 const shortType = (type: string) => type.replace(/^ControlType\./, '');
+const computerElementKey = (element: { name: string; type: string }) => JSON.stringify([element.name, shortType(element.type)]);
+const eligibleComputerElements = <T extends { name: string; password: boolean; width: number; height: number }>(elements: readonly T[]): T[] =>
+  elements.filter(element => element.name.trim().length > 0 && !element.password && element.width > 0 && element.height > 0);
+function viewOrigin(view: WindowsView, required: boolean): WindowsOrigin | undefined {
+  if (view.origin === undefined && !required) return undefined;
+  const parsed = WindowsOriginSchema.safeParse(view.origin);
+  if (!parsed.success || parsed.data.targetKey !== view.frame.targetKey)
+    throw new BrowserError('COMPUTER_SCOPE_CHANGED', 'لم أتحقق من جهاز ونافذة وإذن متطابقة لهذه المشاهدة؛ حدّث computer_view.', 409);
+  return parsed.data;
+}
 
 /** Module errors become tool results the assistant can report honestly. */
 export async function guarded<T>(run: () => Promise<T>): Promise<T> {
@@ -129,6 +160,8 @@ interface ToolModules {
   memory: {
     search(ownerId: string, input: unknown, options: { readOnly: true }): Promise<{ items: { title: string; content: string; layer: string }[] }>;
     create(ownerId: string, input: unknown): Promise<unknown>;
+    writeExact?(ownerId: string, input: MemoryExactWriteInput, options?: MemoryExactWriteOptions): Promise<MemoryExactWriteResult>;
+    reconcileExact?(ownerId: string, input: MemoryExactReconcileInput, options?: Pick<MemoryExactWriteOptions, 'signal'>): Promise<MemoryExactReconciliation>;
   };
   coding: { available: boolean; workspace(ownerId: string): Promise<{ projects: { id: string; name: string; path: string }[] }> };
   studio: {
@@ -142,13 +175,18 @@ interface ToolModules {
     cancel(ownerId: string, id: string): Promise<unknown>;
     detail(ownerId: string, id: string): Promise<{ task: Task }>;
   };
-  windows: Pick<WindowsControl, 'enabled' | 'view' | 'act' | 'command'>;
+  windows: Pick<WindowsControl, 'enabled' | 'view' | 'act' | 'command'> & { requiresViewOrigin?: true };
   googleAds?: GoogleAdsControl;
   /** How long to wait for the companion to confirm one input action. */
   commandWaitMs?: number;
 }
 
 export function createAssistantTools({ memory, coding, studio, studioChange, runtime, windows, googleAds, commandWaitMs = 4000 }: ToolModules): AssistantTools {
+  // These domain methods are deliberately not run through guarded(): an exact
+  // host fence/cancellation error must retain identity, even if it has a code.
+  // Pin the paired capability and preserve its receiver, inputs and options.
+  const exactMemory = typeof memory.writeExact === 'function' && typeof memory.reconcileExact === 'function'
+    ? { writeExact: memory.writeExact.bind(memory), reconcileExact: memory.reconcileExact.bind(memory) } : {};
   async function waitForCommand(ownerId: string, id: string, signal: AbortSignal) {
     const deadline = Date.now() + commandWaitMs;
     for (;;) {
@@ -162,10 +200,14 @@ export function createAssistantTools({ memory, coding, studio, studioChange, run
   }
   return {
     memory: {
+      ...exactMemory,
       search: (ownerId, query) => guarded(async () => {
-        const { items } = await memory.search(ownerId, { query: query.slice(0, 500), limit: 5 }, { readOnly: true });
-        const evidence = items.map(item => item.content.slice(0, 300));
-        const text = items.length ? items.map((item, index) => `- [${item.layer}] ${item.title}: ${evidence[index]}`).join('\n') : 'no matching memory';
+        const result = await memory.search(ownerId, { query: query.slice(0, 500), limit: MAX_MEMORY_ITEMS }, { readOnly: true });
+        const items = result.items.slice(0, MAX_MEMORY_ITEMS);
+        const evidence = items.flatMap(item => item.content.length > 0 && item.content.length <= MAX_MEMORY_EVIDENCE
+          && item.content.trim().length > 0 && !item.content.includes('\0') && Buffer.from(item.content, 'utf8').toString('utf8') === item.content
+          ? [item.content] : []);
+        const text = items.length ? items.map(item => `- [${item.layer}] ${item.title}: ${item.content.slice(0, 300)}`).join('\n') : 'no matching memory';
         return { text, evidence };
       }),
       save: (ownerId, text, request) => guarded(async () => {
@@ -250,29 +292,71 @@ export function createAssistantTools({ memory, coding, studio, studioChange, run
       }),
     } } : {}),
     ...(windows.enabled ? { computer: {
+      ...(windows.requiresViewOrigin ? { requiresViewOrigin: true as const } : {}),
       view: ownerId => guarded(async () => {
-        const { scope, target, frame } = await windows.view(ownerId);
-        const visible = frame.elements.filter(element => element.name && !element.password && element.width > 0 && element.height > 0);
+        const observed = await windows.view(ownerId), { scope, target, frame } = observed;
+        const origin = viewOrigin(observed, windows.requiresViewOrigin === true);
+        const visible = eligibleComputerElements(frame.elements);
+        const counts = new Map<string, number>();
+        for (const element of visible) counts.set(computerElementKey(element), (counts.get(computerElementKey(element)) ?? 0) + 1);
         const ordered = [...visible.filter(element => ACTIONABLE.test(element.type)), ...visible.filter(element => !ACTIONABLE.test(element.type))].slice(0, MAX_LISTED_ELEMENTS);
         return {
           title: target.title, canAct: scope === 'control', hasPasswordField: frame.elements.some(element => element.password), jpeg: frame.jpeg,
-          elements: ordered.map((element, index) => ({ ref: `w${index + 1}`, name: element.name.slice(0, 50), type: shortType(element.type) })),
+          ...(origin ? { origin } : {}),
+          elements: ordered.map((element, index) => ({ ref: `w${index + 1}`, name: element.name, type: shortType(element.type),
+            ...((counts.get(computerElementKey(element)) ?? 0) > 1 ? { ambiguous: true as const } : {}) })),
         };
       }),
-      perform: (ownerId, step, signal) => guarded(async () => {
+      perform: async (ownerId, step, signal, options) => {
+        let fenceFailed = false, fenceFailure: unknown;
+        try { return await guarded(async () => {
+        signal.throwIfAborted();
         // Every action is resolved against the screen as it is now, never a remembered one.
-        const { target, frame } = await windows.view(ownerId);
+        const observed = await windows.view(ownerId), { target, frame } = observed;
+        const currentOrigin = viewOrigin(observed, windows.requiresViewOrigin === true);
+        if (windows.requiresViewOrigin && step.origin === undefined)
+          throw new BrowserError('COMPUTER_SCOPE_REQUIRED', 'يلزم computer_view صالح في هذا الطلب قبل إدخال الكمبيوتر.', 409);
+        let expectedOrigin: WindowsOrigin | undefined;
+        if (step.origin !== undefined) {
+          const expected = WindowsOriginSchema.safeParse(step.origin);
+          if (!expected.success || !currentOrigin || expected.data.deviceId !== currentOrigin.deviceId
+            || expected.data.grantId !== currentOrigin.grantId || expected.data.targetKey !== currentOrigin.targetKey)
+            throw new BrowserError('COMPUTER_SCOPE_CHANGED', 'تغير الجهاز أو النافذة أو الإذن بعد المشاهدة؛ حدّث computer_view قبل الإدخال.', 409);
+          expectedOrigin = expected.data;
+        }
         if (step.kind === 'text' && frame.elements.some(element => element.password)) throw new BrowserError('ASSISTANT_SECRET_FIELD', 'توجد خانة كلمة مرور في هذه النافذة؛ هذه الكتابة لك أنت.', 403);
         let action: Record<string, unknown>;
         if (step.kind === 'click') {
-          const element = frame.elements.find(item => !item.password && item.name.slice(0, 50) === step.name && shortType(item.type) === step.type);
-          if (!element) throw new BrowserError('COMPUTER_ELEMENT_GONE', 'لم يعد هذا العنصر على الشاشة. استخدم computer_view.', 409);
+          // A sampled accessible-name selector is not object identity. Preserve
+          // observed ambiguity even if another duplicate later disappears.
+          // Legacy steps without this metadata can only check the current frame;
+          // arbitrary same-name replacement/ABA is not proven by this schema.
+          if (step.ambiguous) throw new BrowserError('COMPUTER_ELEMENT_AMBIGUOUS', 'كان اسم هذا العنصر ونوعه متكررين في المشاهدة؛ لم أرسل نقرة. حدّث المشاهدة وحدد هدفًا غير ملتبس.', 409);
+          const matches = eligibleComputerElements(frame.elements).filter(item => item.name === step.name && shortType(item.type) === step.type);
+          if (!matches.length) throw new BrowserError('COMPUTER_ELEMENT_GONE', 'لم يعد هذا العنصر على الشاشة. استخدم computer_view.', 409);
+          if (matches.length !== 1) throw new BrowserError('COMPUTER_ELEMENT_AMBIGUOUS', 'يتكرر اسم هذا العنصر ونوعه في المشاهدة الحالية؛ لم أرسل نقرة. حدد هدفًا غير ملتبس.', 409);
+          const element = matches[0]!;
           action = { type: 'click', button: 'left', ...elementCenter(element, target) };
         } else action = step.kind === 'text' ? { type: 'text', text: step.text } : { type: 'key', key: step.key };
-        const queued = await windows.act(ownerId, frame.id, action);
+        signal.throwIfAborted();
+        // Native queue admission checks cancellation and the trusted host fence
+        // inside its own transaction. Legacy injected ports retain their bounded
+        // current-frame API and make no same-transaction execution guarantee.
+        const queued = windows.requiresViewOrigin
+          ? await windows.act(ownerId, frame.id, action, expectedOrigin, { signal, ...(options?.fence ? { fence: async transaction => {
+            try { await options.fence!(transaction); } catch (error) { fenceFailed = true; fenceFailure = error; throw error; }
+          } } : {}) })
+          : expectedOrigin ? await windows.act(ownerId, frame.id, action, expectedOrigin) : await windows.act(ownerId, frame.id, action);
         await waitForCommand(ownerId, queued.id, signal);
         return 'input applied on the device; use computer_view to confirm the result';
-      }),
+        }); } catch (error) {
+          // Host lifecycle errors keep their identity; generic domain mapping
+          // must not turn a revoked run/account fence into model feedback.
+          if (fenceFailed) throw fenceFailure;
+          signal.throwIfAborted();
+          throw error;
+        }
+      },
     } } : {}),
   };
 }

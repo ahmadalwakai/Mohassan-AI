@@ -17,7 +17,12 @@ const Action = z.discriminatedUnion('type',[
 const ActionRequest = z.object({grantId:uuid,nonce:uuid,frameId:uuid,action:Action}).strict();
 const Poll = z.object({nonce:uuid,sentAt:z.iso.datetime(),state:State,frame:Frame.nullable(),ack:z.object({id:uuid,status:z.enum(['applied','rejected','unknown']),code:z.string().regex(/^[A-Z_]{2,80}$/)}).strict().nullable()}).strict();
 type Frame = z.infer<typeof Frame>;
-export interface WindowsView {scope:'view'|'control';target:{title:string;width:number;height:number};frame:Frame}
+/** Existing host device/grant/window identity, not an element ID or pixel-stability proof. */
+export const WindowsOriginSchema=z.object({deviceId:uuid,grantId:uuid,targetKey:z.string().regex(/^[a-f0-9]{64}$/)}).strict();
+export type WindowsOrigin=z.infer<typeof WindowsOriginSchema>;
+export interface WindowsView {scope:'view'|'control';target:{title:string;width:number;height:number};frame:Frame;origin?:WindowsOrigin}
+/** Host-only execution checks, never accepted from HTTP/model action payloads. */
+export interface WindowsInputOptions {signal?:AbortSignal;fence?:(transaction:Kysely<any>)=>Promise<void>}
 export type WindowsControl = Awaited<ReturnType<typeof registerWindowsRoutes>>;
 /** Saved frames carry the server's receipt time beside the strict companion shape. */
 const stored = ({receivedAt:_,...frame}:Record<string,unknown>) => frame;
@@ -105,15 +110,27 @@ export async function registerWindowsRoutes(app:FastifyInstance,{db,owner,config
     return active(grant)&&!device.revoked_at&&state?.safeDesktop&&state.localView&&state.approvalNonce===grant.approval_nonce&&state.target?.key===grant.target_key&&(grant.scope!=='control'||state.localControl)?grant:null;
   }
   /** The single path for input: routes and the assistant meet the same grant, frame and pending checks. */
-  async function queueAction(ownerId:string,sessionBinding:string,deviceId:string,input:z.infer<typeof ActionRequest>,origin:'owner'|'assistant'='owner') {
-    return db.transaction().execute(async transaction=>{const device=await deviceFor(ownerId,deviceId,transaction,true);const grant=await sessionGrant(sessionBinding,ownerId,device,transaction);const state=device.state?State.parse(decode(device.state)):null;const frame=device.last_frame?decode(device.last_frame):null;
+  async function queueAction(ownerId:string,sessionBinding:string,deviceId:string,input:z.infer<typeof ActionRequest>,origin:'owner'|'assistant'='owner',expectedOrigin?:WindowsOrigin,inputOptions?:WindowsInputOptions) {
+    const checkExecution=async(transaction:Kysely<any>)=>{
+      inputOptions?.signal?.throwIfAborted();
+      await inputOptions?.fence?.(transaction);
+      inputOptions?.signal?.throwIfAborted();
+    };
+    return db.transaction().execute(async transaction=>{
+      // Acquire the host run/account fence before the device lock. The same
+      // transaction rechecks it before committing an admitted queue record.
+      await checkExecution(transaction);
+      const device=await deviceFor(ownerId,deviceId,transaction,true);const grant=await sessionGrant(sessionBinding,ownerId,device,transaction);const state=device.state?State.parse(decode(device.state)):null;const frame=device.last_frame?decode(device.last_frame):null;
+      // The device row serializes grant replacement. A bound assistant input
+      // keeps its observed grant ID; resolving the latest grant cannot rebind it.
+      if(expectedOrigin&&(!grant||device.id!==expectedOrigin.deviceId||grant.id!==expectedOrigin.grantId||grant.target_key!==expectedOrigin.targetKey))throw fault('COMPUTER_SCOPE_CHANGED','تغير الجهاز أو النافذة أو الإذن بعد المشاهدة؛ حدّث computer_view قبل الإدخال.');
       if(!grant||grant.id!==input.grantId||grant.scope!=='control')throw fault('WINDOWS_CONTROL_DENIED','هذا الإذن لا يسمح بالإدخال.',403);
       const inputHash=hash(JSON.stringify([input.grantId,input.frameId,input.action]));
-      const previous=await transaction.selectFrom('windows_commands').select(['id','status','result_code','input_hash']).where('grant_id','=',grant.id).where('nonce','=',input.nonce).executeTakeFirst();if(previous){if(previous.input_hash!==inputHash)throw fault('WINDOWS_NONCE_CONFLICT','استُخدم معرف الطلب لإجراء مختلف.');return {id:previous.id,status:previous.status,code:previous.result_code};}
+      const previous=await transaction.selectFrom('windows_commands').select(['id','status','result_code','input_hash']).where('grant_id','=',grant.id).where('nonce','=',input.nonce).executeTakeFirst();if(previous){if(previous.input_hash!==inputHash)throw fault('WINDOWS_NONCE_CONFLICT','استُخدم معرف الطلب لإجراء مختلف.');await checkExecution(transaction);return {id:previous.id,status:previous.status,code:previous.result_code};}
       if(device.revoked_at||!state?.safeDesktop||!state.localControl||!state.localView||state.approvalNonce!==grant.approval_nonce||state.approvalNonce===device.stopped_nonce||state.target?.key!==grant.target_key||Date.now()-instant(device.last_seen_at)>3500||!frame||frame.id!==input.frameId||Date.now()-instant(frame.capturedAt)>3000)throw fault('WINDOWS_FRESH_SCREEN_REQUIRED','توقف الإدخال؛ حدّث الشاشة وتحقق من الاتصال والموافقة المحلية.');
       const pending=await transaction.selectFrom('windows_commands').select('id').where('device_id','=',device.id).where('status','in',['queued','dispatched']).where('expires_at','>',new Date()).executeTakeFirst();if(pending)throw fault('WINDOWS_INPUT_PENDING','انتظر نتيجة الإجراء السابق ثم حدّث الشاشة.');
       const id=randomUUID(),sequence=grant.next_sequence;
-      await transaction.updateTable('windows_grants').set({next_sequence:sequence+1}).where('id','=',grant.id).execute();await transaction.insertInto('windows_commands').values({id,grant_id:grant.id,device_id:device.id,owner_id:ownerId,nonce:input.nonce,sequence,frame_id:input.frameId,input_hash:inputHash,payload:JSON.stringify(input.action),status:'queued',expires_at:new Date(Date.now()+2000)}).execute();await audit(transaction,ownerId,device.id,'input_requested',{id,sequence,type:input.action.type,...(origin==='assistant'?{origin}:{}),...(input.action.type==='text'?{characters:input.action.text.length}:{})});return {id,status:'queued'};
+      await transaction.updateTable('windows_grants').set({next_sequence:sequence+1}).where('id','=',grant.id).execute();await transaction.insertInto('windows_commands').values({id,grant_id:grant.id,device_id:device.id,owner_id:ownerId,nonce:input.nonce,sequence,frame_id:input.frameId,input_hash:inputHash,payload:JSON.stringify(input.action),status:'queued',expires_at:new Date(Date.now()+2000)}).execute();await audit(transaction,ownerId,device.id,'input_requested',{id,sequence,type:input.action.type,...(origin==='assistant'?{origin}:{}),...(input.action.type==='text'?{characters:input.action.text.length}:{})});await checkExecution(transaction);return {id,status:'queued'};
     });
   }
   /** Only the session the owner is using now can reach a device, and only through a grant it already holds. */
@@ -200,15 +217,24 @@ export async function registerWindowsRoutes(app:FastifyInstance,{db,owner,config
     enabled,
     /** Keeps only the hash, so grants stay tied to the session the owner is actively using. */
     noteSession(ownerId:string,request:FastifyRequest){if(request.headers.cookie)sessions.set(ownerId,binding(request));},
+    requiresViewOrigin:true as const,
     async view(ownerId:string):Promise<WindowsView>{
       const {device,grant}=await assistantTarget(ownerId);const state=State.parse(decode(device.state));const frame=device.last_frame?Frame.parse(stored(decode(device.last_frame))):null;
       if(!frame||Date.now()-instant(frame.capturedAt)>3500||frame.targetKey!==grant.target_key)throw fault('WINDOWS_FRAME_UNAVAILABLE','لا توجد صورة حديثة ضمن إذن مشاهدة صالح.');
       await audit(db,ownerId,device.id,'assistant_view',{frameId:frame.id});
-      return {scope:grant.scope,target:{title:state.target!.title,width:state.target!.width,height:state.target!.height},frame};
+      return {scope:grant.scope,target:{title:state.target!.title,width:state.target!.width,height:state.target!.height},frame,
+        origin:{deviceId:device.id,grantId:grant.id,targetKey:grant.target_key}};
     },
-    async act(ownerId:string,frameId:string,action:unknown){
+    async act(ownerId:string,frameId:string,action:unknown,expectedOrigin?:WindowsOrigin,inputOptions?:WindowsInputOptions){
+      inputOptions?.signal?.throwIfAborted();
+      const parsed=expectedOrigin===undefined?undefined:WindowsOriginSchema.safeParse(expectedOrigin);
+      if(parsed&&!parsed.success)throw fault('COMPUTER_SCOPE_CHANGED','لم أتحقق من نطاق الإدخال المرتبط بالمشاهدة.');
+      const expected=parsed?.success?parsed.data:undefined;
       const {device,grant,sessionBinding}=await assistantTarget(ownerId);if(grant.scope!=='control')throw fault('WINDOWS_CONTROL_DENIED','هذا الإذن لا يسمح بالإدخال.',403);
-      return queueAction(ownerId,sessionBinding,device.id,{grantId:grant.id,nonce:randomUUID(),frameId,action:Action.parse(action)},'assistant');
+      if(expected&&(device.id!==expected.deviceId||grant.id!==expected.grantId||grant.target_key!==expected.targetKey))throw fault('COMPUTER_SCOPE_CHANGED','تغير الجهاز أو النافذة أو الإذن بعد المشاهدة؛ حدّث computer_view قبل الإدخال.');
+      // Unbound legacy callers retain only the existing current-grant/frame
+      // checks. New native-assistant steps must carry their observed origin.
+      return queueAction(ownerId,sessionBinding,device.id,{grantId:expected?.grantId??grant.id,nonce:randomUUID(),frameId,action:Action.parse(action)},'assistant',expected,inputOptions);
     },
     async command(ownerId:string,id:string){const row=await db.selectFrom('windows_commands').select(['status','result_code']).where('id','=',id).where('owner_id','=',ownerId).executeTakeFirst();if(!row)throw fault('WINDOWS_COMMAND_NOT_FOUND','لم يُعثر على الإجراء.',404);return {status:row.status as string,code:row.result_code as string|null};},
   };

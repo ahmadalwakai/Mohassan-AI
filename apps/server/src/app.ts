@@ -11,6 +11,8 @@ import { Runtime } from '@mohassan/runtime';
 import { CreateTaskSchema, SetupSchema, WorkspaceSnapshotSchema, SkillBenchmarkSuiteSchema, type Integration } from '@mohassan/contracts';
 import { createAuth, createOwner, migrateAuth, recoverLocalSetupClaim } from './auth.js';
 import { MEMBER_QUOTA_ROUTES, MEMBER_ROUTES, PUBLIC_ROUTES, memberRunsToday, migrateMembers, registerMemberRoutes, roleOf, routeKey, type WorkspaceRole } from './members.js';
+import { lockOwnerToolAccess } from './owner-tool-authorization.js';
+import { createRequestRateLimitKey } from './request-rate-limit.js';
 import { createAIControl } from './ai.js';
 import { ProviderError, GroqProvider } from '@mohassan/providers';
 import { createCodingControl } from './coding.js';
@@ -43,6 +45,8 @@ import type { Mind, MindDeps } from './assistant/mind/contract.js';
 import { createMind } from './assistant/mind/index.js';
 import { createShadowRouter } from './assistant/router.js';
 import { createChromeExtensionControl, registerChromeExtensionRoutes } from './chrome-extension.js';
+import { DesktopEngine } from '@mohassan/desktop';
+import { registerDesktopRoutes } from './desktop.js';
 import { createGoogleAdsControl, googleAdsMigration, GoogleAdsError, type GoogleAdsConfig } from '@mohassan/google-ads';
 import { landingPageReader, registerGoogleAdsRoutes } from './google-ads.js';
 import { createSkillRuntime, skillGatewayTools } from './skill-runtime.js';
@@ -86,6 +90,8 @@ export interface AppConfig {
   testRequestLimit?:number;
   /** Chat requests a member may start in 24 hours. */
   memberDailyRuns?:number;
+  /** The owner's own Windows session (desktop app): off on the cloud deployment and in tests unless enabled. */
+  desktop?:{enabled:boolean;dataDir?:string;projectsRoot?:string;roots?:string[];screenshotsDir?:string};
 }
 export function secretEqual(a: string, b: string) {
   const left = Buffer.from(a), right = Buffer.from(b);
@@ -123,7 +129,9 @@ export async function createApplication(config: AppConfig) {
   let browser:Awaited<ReturnType<typeof registerBrowserRoutes>>;
   await migrateSearch(database.db);
   const searchNetwork=new SafeNetwork(config.browser),searchStore=new SqlSearchStore(database.db),searchIndex=new LocalPublicIndex(database.db,searchNetwork);
-  const searchProvider=config.browser?.searchProvider??new SearchEngine(searchNetwork,{store:searchStore,localIndex:searchIndex,admission:searchStore});
+  // publicWeb:false — the scraped engines are out: bing.com/robots.txt forbids /search and html.duckduckgo.com answers
+  // with a human check (measured 2026-11-22, artifacts/perf/2026-11-22/search-providers). The documented APIs remain.
+  const searchProvider=config.browser?.searchProvider??new SearchEngine(searchNetwork,{store:searchStore,localIndex:searchIndex,admission:searchStore,publicWeb:false});
   const browserTask=await createBrowserTaskControl(database.db,{browser:{create:(ownerId,input)=>browser.create(ownerId,input),action:(ownerId,id,input)=>browser.action(ownerId,id,input),detail:(ownerId,id)=>browser.detail(ownerId,id),close:(ownerId,id)=>browser.close(ownerId,id)},networkPolicy:config.browser});
   const moduleAvailability={studioVisual:true,browser:true,memory:true,windows:true};
   const ai=await createAIControl(database.db,{apiKey:config.groqApiKey,model:config.groqModel,reasoningModel:config.groqReasoningModel,fetch:config.aiFetch,capabilities:createCapabilities(Boolean(config.groqApiKey),coding.available,studioAi.available,moduleAvailability,true,config.skillEngineEnabled)});
@@ -138,7 +146,26 @@ export async function createApplication(config: AppConfig) {
   // Every registered route, so tests can prove each one sits behind the member gate.
   const routes = new Set<string>();
   app.addHook('onRoute', route => { for (const method of [route.method].flat()) { const key = routeKey(method, route.url); if (key) routes.add(key); } });
-  await app.register(rateLimit, {max: config.testRequestLimit??120, timeWindow: '1 minute'});
+  type SessionUser = {id: string; name: string; email: string};
+  const sessions = new WeakMap<object, Promise<SessionUser | null>>();
+  const roles = new WeakMap<object, Promise<WorkspaceRole | null>>();
+  const sessionUser = (request: {headers: Record<string, unknown>}) => {
+    let found = sessions.get(request);
+    if (!found) {
+      const headers = new Headers();
+      if (typeof request.headers.cookie === 'string') headers.set('cookie', request.headers.cookie);
+      found = auth.api.getSession({headers}).then(session => session ? {id: session.user.id, name: session.user.name, email: session.user.email} : null);
+      sessions.set(request, found);
+    }
+    return found;
+  };
+  await app.register(rateLimit, {max: config.testRequestLimit??120, timeWindow: '1 minute',
+    keyGenerator: createRequestRateLimitKey({
+      trusted: request => typeof request.headers['x-mohassan-internal'] === 'string'
+        && secretEqual(request.headers['x-mohassan-internal'], config.internalSecret),
+      userId: async request => (await sessionUser(request))?.id ?? null,
+    }),
+  });
   const origins = new Set([new URL(config.webOrigin).origin]);
   if (!config.production) {
     const alias = new URL(config.webOrigin);
@@ -163,19 +190,6 @@ export async function createApplication(config: AppConfig) {
       }
     }
   });
-  type SessionUser = {id: string; name: string; email: string};
-  const sessions = new WeakMap<object, Promise<SessionUser | null>>();
-  const roles = new WeakMap<object, Promise<WorkspaceRole | null>>();
-  const sessionUser = (request: {headers: Record<string, unknown>}) => {
-    let found = sessions.get(request);
-    if (!found) {
-      const headers = new Headers();
-      if (typeof request.headers.cookie === 'string') headers.set('cookie', request.headers.cookie);
-      found = auth.api.getSession({headers}).then(session => session ? {id: session.user.id, name: session.user.name, email: session.user.email} : null);
-      sessions.set(request, found);
-    }
-    return found;
-  };
   const roleFor = (request: {headers: Record<string, unknown>}, userId: string) => {
     let found = roles.get(request);
     if (!found) { found = roleOf(database.db, userId); roles.set(request, found); }
@@ -282,6 +296,10 @@ export async function createApplication(config: AppConfig) {
   }, 10000);
   benchmarkMaintenance.unref();
   const windows=await registerWindowsRoutes(app,{db:database.db,owner,config:{webOrigin:config.webOrigin,production:config.production,windowsEnabled:config.windowsEnabled}});
+  // The desktop engine acts on this computer's own session; it never exists on the cloud server.
+  const desktop=config.desktop?.enabled&&!config.production?new DesktopEngine({dataDir:config.desktop.dataDir??resolve('.data/desktop'),...(config.desktop.projectsRoot?{projectsRoot:config.desktop.projectsRoot}:{}),...(config.desktop.roots?.length?{roots:config.desktop.roots}:{}),...(config.desktop.screenshotsDir?{screenshotsDir:config.desktop.screenshotsDir}:{})}):null;
+  await registerDesktopRoutes(app,{owner,engine:desktop});
+  if(desktop)app.addHook('onClose',async()=>{await desktop.dispose();});
   const googleAds=createGoogleAdsControl(database.db,{...config.googleAds,webOrigin:config.webOrigin,fetchPage:config.googleAds?.fetchPage??landingPageReader(config.browser)});
   await registerGoogleAdsRoutes(app,{control:googleAds,owner});
   await registerMemberRoutes(app,{db:database.db,auth,webOrigin:config.webOrigin,owner,role,dailyRuns:memberDailyRuns,adsAvailable:()=>googleAds.configured,imagesAvailable:()=>false});
@@ -346,8 +364,33 @@ export async function createApplication(config: AppConfig) {
     },
     now: () => new Date(),
   });
-  const chat=await createCommandChatControl(database.db,{...(shadowRouter?{shadowRouter}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
+  /**
+   * A search result read over HTTP for the model-free hands: robots.txt first, HTML only, a bounded time
+   * (READ_PAGE_TIMEOUT_MS is a proposed value; the report counts how often it is hit). Null hands the page to the
+   * hidden browser; 'disallowed' skips it there too.
+   */
+  const READ_PAGE_TIMEOUT_MS = 4000;
+  const readPage = async (url: string, signal: AbortSignal) => {
+    const combined = AbortSignal.any([signal, AbortSignal.timeout(READ_PAGE_TIMEOUT_MS)]);
+    try { await mindRobots.assertAllowed(url, combined); }
+    catch (error) {
+      if (signal.aborted) throw error;
+      return error instanceof BrowserError && error.code === 'RESEARCH_ROBOTS_DENIED' ? 'disallowed' as const : null;
+    }
+    let response: Awaited<ReturnType<SafeNetwork['request']>>;
+    try { response = await searchNetwork.request(url, { signal: combined }); }
+    catch (error) { if (signal.aborted) throw error; return null; }
+    const type = response.headers['content-type'] ?? '';
+    if (response.status >= 400 || !/^(?:text\/html|application\/xhtml\+xml)(?:[;\s]|$)/i.test(type)) return null;
+    const charset = /charset\s*=\s*["']?([^\s;"']+)/i.exec(type)?.[1] ?? 'utf-8';
+    let body: string;
+    try { body = new TextDecoder(charset, { fatal: true }).decode(response.body); } catch { return null; }
+    const source = readableSource(body, response.url);
+    return { url: response.url, title: source.title, text: source.text, status: response.status };
+  };
+  const chat=await createCommandChatControl(database.db,{...(shadowRouter?{shadowRouter}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),...(desktop?{desktop:{parse:(text:string)=>desktop.parse(text),describe:(command,lang)=>desktop.describe(command,lang),execute:(command,options)=>desktop.execute(command,options)}}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,readPage,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',accountFullAccess:(ownerId,tx)=>lockOwnerToolAccess(tx,ownerId),accountActive:async(ownerId,tx)=>{const role=await roleOf(tx,ownerId);if(role!=='member')return role!==null;return Boolean(await tx.selectFrom('workspace_members').select('user_id').where('user_id','=',ownerId).where('role','=','member').where('disabled_at','is',null).forShare().executeTakeFirst());},memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
     learningContext:learning.context,chromeExtension,
+    knowledgeSearch:async(ownerId,query)=>(await learning.knowledge.retrieve(ownerId,query)).map(({title,text,source})=>({title,text,source})),
     ...(config.skillEngineEnabled?{recordSkillGap,skillContext:skills.context,loadSkill:skills.loadInstruction,runSkill:async(ownerId,input,context)=>{
       context.signal.throwIfAborted();
       return runtime.createTask(ownerId,{title:'تشغيل مهارة من المحادثة',goal:context.goal.slice(0,4000),capabilityId:'skill.run',autonomy:'assisted',skillInput:input},context.idempotencyKey,context.runId);
@@ -373,6 +416,7 @@ export async function createApplication(config: AppConfig) {
       {id:'studio',name:'Visual Studio',description:'معاينة وتعديل المصدر ومراجعة الفروقات',status:'connected',detail:'اختيار عناصر وتعديلها، ومقترحات ذكية بموافقة وصور مقارنة قبل التطبيق؛ تشغيل Next الكامل يحتاج ربط مشغّل المعاينة.'},
       {id: 'browser', name: 'Browser & Research', description: 'بحث موثق وجلسات مستقلة', status: 'connected', detail: 'جلسات Chromium مستقلة، ومصادر محفوظة، وموافقة منفصلة لإرسال النماذج.'},
       {id:'memory',name:'Memory & Skills',description:'ذاكرة بأدلة ومهارات مقاسة',status:'connected',detail:'استرجاع مرتبط بالمصدر والصلاحية، وتقييم وموافقة قبل تفعيل المهارات.'},
+      {id: 'desktop', name: 'سطح المكتب', description: 'إنشاء المشاريع والملفات والتحكم بهذا الكمبيوتر', status: desktop?'connected':'needs_configuration', detail: desktop?`يعمل على هذا الجهاز. مجلد المشاريع: ${desktop.projects.projectsRoot}`:'يعمل من تطبيق موحسن لسطح المكتب على جهاز المالك فقط.'},
       {id: 'windows', name: 'Windows Companion', description: 'ربط الجهاز والتحكم المصرح', status: 'needs_configuration', detail: 'يلزم ربط المساعد المحلي واختيار نافذة وموافقة محلية قبل أي تحكم.'},
       {id: 'iphone', name: 'iPhone', description: 'مركز تحكم SwiftUI', status: 'planned', detail: 'يحتاج Xcode وتوقيع Apple وAPNs.'},
       {id: 'ads', name: 'Google Ads', description: 'تحليل الحملات والتحويلات', status: adsStatus.state==='connected'||adsStatus.state==='rate_limited'?'connected':'needs_configuration', detail: adsStatus.message},

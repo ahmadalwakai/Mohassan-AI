@@ -210,3 +210,42 @@ describe('written and numeric fractions in English unit conversions', () => {
     expect(compute(frame('Convert half a dollar to euros.', 'en'), now)).toBeNull();
   });
 });
+
+describe('shared arithmetic semantics and boundaries', () => {
+  it.each([
+    ['Evaluate -2^2^3; only the result.', '-256'],
+    ['Compute 2^-2^2, answer only.', '0.0625'],
+    ['Calculate (-3)^2 + .5, only the value.', '9.5'],
+    ['Calculate (5.) + .25, just the result.', '5.25'],
+    ['Calculate .2e+2 + 1, number only.', '21'],
+    ['احسب ٢^-٢^٢، الناتج فقط', '0.0625'],
+    ['احسب -٣^٢، الجواب فقط', '-9'],
+  ])('%s', (text, value) => {
+    const lang: Lang = /\p{Script=Arabic}/u.test(text) ? 'ar' : 'en';
+    const result = compute(frame(text, lang), now);
+    expect(result).toMatchObject({ status: 'completed', text: value, evidence: [{ source: 'computed', value }] });
+    expect(result?.claims[0].support).toEqual(['calculation']);
+  });
+
+  it.each([
+    ['Calculate (-1)^.5.', 'real-number domain'],
+    ['Calculate 0^-2.', 'zero'],
+    ['Calculate 1e-400 + 1.', 'number range'],
+    ['Calculate 5e-324 * .5.', 'number range'],
+    ['Calculate 1 / 0 + ).', 'arithmetic expression'],
+    ['Calculate 1e309 + ) + 2.', 'arithmetic expression'],
+    [`Calculate ${'('.repeat(65)}1+1${')'.repeat(65)}.`, 'complexity'],
+    [`Calculate ${'-'.repeat(257)}1.`, 'complexity'],
+    ['احسب (-١)^٫٥', 'الأعداد الحقيقية'],
+  ])('returns an honest boundary for %s', (text, expected) => {
+    const lang: Lang = /\p{Script=Arabic}/u.test(text) ? 'ar' : 'en';
+    expect(compute(frame(text, lang), now)).toMatchObject({ status: 'blocked', text: expect.stringContaining(expected), evidence: [] });
+  });
+
+  it.each([
+    'Calculate 0x10 + 1.', 'Calculate 0b10 + 1.', 'Calculate 0o10 + 1.',
+    'Calculate 1e + 2.', 'Calculate 1 + 2 and then send the result.',
+  ])('preserves unsupported input for ordinary routing: %s', text => {
+    expect(compute(frame(text, 'en'), now)).toBeNull();
+  });
+});

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { signInAsFixtureOwner } from './helpers';
 
 const now = '2026-11-15T10:00:00.000Z';
@@ -9,6 +9,25 @@ const campaign = {
   locations: ['Leeds'], countryCode: 'GB', adLanguage: 'en', keywords: ['mobile tyres'], negativeKeywords: [],
   headlines: ['Mobile Tyres Leeds', 'Local Tyre Fitting', 'Tyres At Your Door'], descriptions: ['Mobile tyre fitting in Leeds.', 'Local tyre fitting at your door.'], finalUrl: 'https://example.org/', paths: [],
 };
+
+/** The Chrome tool is intentionally absent from unrelated/empty chat. */
+async function openAdsFixtureConversation(page: Page) {
+  const id = '11111111-2222-4333-8444-333333333333';
+  const title = 'مسودة حملة Chrome التجريبية';
+  const summary = { id, title, status: 'idle', updatedAt: now, browserAccount: null };
+  const conversation = { ...summary, messages: [{ id: '11111111-2222-4333-8444-444444444444', role: 'user', text: 'جهز مسودة حملة بحث في حساب Google Ads.', createdAt: now }],
+    question: null, approval: null, secure: null, browser: null, progress: null, steps: [], error: null, configured: true };
+  await page.route('**/api/chat/conversations**', route => {
+    expect(route.request().method()).toBe('GET');
+    return new URL(route.request().url()).pathname.endsWith(id)
+      ? route.fulfill({ json: conversation }) : route.fulfill({ json: { conversations: [summary] } });
+  });
+  await signInAsFixtureOwner(page, 'assistant');
+  await expect(page.getByRole('region', { name: 'إضافة Chrome', exact: true })).toHaveCount(0);
+  if ((page.viewportSize()?.width ?? 1280) < 600) await page.getByRole('button', { name: 'فتح القائمة', exact: true }).click();
+  await page.getByRole('navigation', { name: 'المحادثات' }).getByRole('button', { name: title, exact: true }).click();
+  await expect(page.getByRole('region', { name: 'إضافة Chrome', exact: true })).toBeVisible();
+}
 
 test('Chrome choice persists before pairing; queued and running work can be stopped without claiming publication', async ({ page }, testInfo) => {
   let status: Record<string, unknown> = { connected: false, binding: null, lastSeenAt: null, latestJob: null, preferredTransport: 'api' };
@@ -25,7 +44,7 @@ test('Chrome choice persists before pairing; queued and running work can be stop
     }
     return route.fulfill({ json: status });
   });
-  await signInAsFixtureOwner(page, 'assistant');
+  await openAdsFixtureConversation(page);
   const panel = page.getByRole('region', { name: 'إضافة Chrome', exact: true });
   await panel.getByRole('button', { name: /Chrome غير متصل/ }).click();
   await panel.getByRole('button', { name: 'إضافة Chrome', exact: true }).click();
@@ -65,7 +84,7 @@ test('Chrome choice persists before pairing; queued and running work can be stop
 test('Chrome instructions remain usable in a narrow window', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 720 });
   await page.route('**/api/chrome-extension/status', route => route.fulfill({ json: { connected: false, binding: null, lastSeenAt: null, latestJob: null, preferredTransport: 'chrome' } }));
-  await signInAsFixtureOwner(page, 'assistant');
+  await openAdsFixtureConversation(page);
   const panel = page.getByRole('region', { name: 'إضافة Chrome', exact: true });
   await panel.getByRole('button', { name: /Chrome بانتظار الربط/ }).click();
   await expect(panel.getByText('chrome://extensions', { exact: true })).toBeVisible();

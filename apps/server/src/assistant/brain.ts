@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { AgentElement, AgentPage } from '@mohassan/browser';
+import { parseRequestContextState, type RequestContextState, type RequestResolution } from './request-context.js';
 
 /**
  * The assistant's own thinking. Everything that can be decided from the page
@@ -51,10 +52,16 @@ const REMEMBER_REQUEST_AR = /^(?:(?:من فضلك|لو سمحت|رجاء)[،,\s]
 const REMEMBER_REQUEST_EN = /^(?:please[,\s]+)?(?:remember\b|don['’]?t forget\b|save (?:this|that|it)\b|keep in mind\b)/i;
 const DENY_MEMORY_WRITE = /(?:^|[.!?؟،,;\n]\s*|\bbut\s+|لكن\s+)(?:(?:please\s+)?(?:do not|don['’]t|never)\s+(?:save|store|remember|record|write|change|update)\b|لا\s+(?:تحفظ|تخزن|تسجل|تكتب|تضف|تعدل|تغير|تحدث)(?:ها|ه)?(?=[^\p{L}]|$))/iu;
 
+/** Shared denial precedence; a later parser must not bypass a current-user refusal. */
+export function deniesMemoryWrite(request: string): boolean {
+  const text = request.normalize('NFKC').replace(/[\u0640\u064b-\u065f\u0670]/gu, '').replace(/[أإآٱ]/gu, 'ا').trim();
+  return DENY_MEMORY_WRITE.test(text);
+}
+
 /** Saving requires an affirmative directive at the start of the owner's request. */
 export function asksToRemember(request: string): boolean {
   const text = request.normalize('NFKC').replace(/[\u0640\u064b-\u065f\u0670]/gu, '').replace(/[أإآٱ]/gu, 'ا').trim();
-  return !/[?؟]\s*$/u.test(text) && !DENY_MEMORY_WRITE.test(text)
+  return !/[?؟]\s*$/u.test(text) && !deniesMemoryWrite(request)
     && (REMEMBER_REQUEST_AR.test(text) || REMEMBER_REQUEST_EN.test(text));
 }
 
@@ -258,6 +265,49 @@ Rules:
 export interface TrailEntry { step: number; action: string; result: string; changed: boolean | null }
 
 export interface BrainState {
+  /** Data-only user context carried between runs; never an action permission. */
+  requestContext?: RequestContextState | null;
+  requestResolution?: RequestResolution;
+  /** A rewritten request supplied in response to a reference-clarification card. */
+  clarifiedRequest?: string;
+  /** Exact persisted user message, resolved by the host before choosing a relative-date reference. */
+  clarifiedRequestSource?: import('./effective-request-source.js').ClarifiedRequestSource;
+  /** Host hash of the current user's pre-schema/pre-redaction bytes; never model-provided. */
+  requestOriginalHash?: string;
+  requestClarification?: { attempts: number };
+  clarificationAttempts?: number;
+  /** Full bounded answer for deterministic templates; diagnostic trails are abbreviated. */
+  questionAnswer?: { questionId: string; text: string; fields?: Record<string, string> };
+  /** Host-declared criteria and observed progress; no model may set these. */
+  supervision?: import('./task-supervisor.js').TaskSupervisorState;
+  completionReview?: import('./task-supervisor.js').TaskCompletionReview;
+  /** Retry budgets are host-owned checkpoints; evidence and lifetime steps never reset. */
+  progressRecovery?: import('./progress-recovery.js').ProgressRecoveryState;
+  /** Host-owned retries of rejected model decisions, shared across this run. */
+  modelRetries?: number;
+  /** Exact calculation/save checkpoint. Attempted phases reconcile read-only. */
+  computationMemory?: import('./computation-memory-flow.js').ComputationMemoryFlowState;
+  /** Exact literal user statement, separate from calculated-result authority. */
+  userFactMemory?: import('./user-fact-memory-flow.js').UserFactMemoryFlowState;
+  /** Current read-status run points to one original operation; never old write authority. */
+  memoryVerification?: import('./memory-verification.js').MemoryVerificationState;
+  /** Read-only note status; distinct from computed-result recovery and all write authority. */
+  userFactMemoryVerification?: import('./user-fact-memory-verification.js').UserFactMemoryVerificationState;
+  /** Typed host events; model notes/prose cannot acknowledge an action. */
+  actionCompletion?: import('./action-completion.js').ActionCompletionLedger;
+  actionCompletionReview?: import('./action-completion.js').ActionCompletionReview;
+  /** Owner refusal survives model retries within this run. Read-only viewing remains possible. */
+  computerInputRefused?: boolean;
+  /** Host-observed device, grant epoch and target; never accepted from a model decision. */
+  computerOrigin?: import('@mohassan/windows').WindowsOrigin;
+  /** Hashes and host receipt times only; accessible UI strings remain in the requested reply. */
+  localComputerRead?: import('./local-computer-read.js').LocalComputerReadProof;
+  /** Source labels from the prior user task; contains no prior private values. */
+  previousSource?: import('./request-scope.js').RequestScopeAssessment | null;
+  routing?: Pick<import('./routing-decision.js').RequestRoutingDecision,
+    'route' | 'intent' | 'handler' | 'availability' | 'missingCapabilities' | 'reason'>;
+  /** Bounded words from explicit public user context and real public-search receipts only. */
+  publicQueryTerms?: string[];
   plan: string[];
   notes: string[];
   trail: TrailEntry[];
@@ -304,6 +354,10 @@ export interface BrainState {
   campaign?: import('./campaign-run.js').CampaignRunState;
   /** The model-free browser plan from the owner's words, kept across approvals and sign-in pauses. Only code sets this. */
   hands?: import('./hands.js').HandsPlan | null;
+  /** Numbered search choices retained for the next browser command in this conversation. */
+  handsResults?: import('./hands.js').HandsPlan['results'];
+  /** The page whose own sentences answered the last question, read over HTTP; «اقرأ المزيد» opens it in the browser. */
+  handsFound?: import('./hands.js').HandsPlan['found'];
   /** A web lookup held while the mind answers first; the browser runs it only when the mind has no proven answer. */
   webFallback?: import('./hands.js').HandsStep[] | null;
   /** A follow-up question with the previous question's topic added; the mind answers this instead of the bare words. */
@@ -316,6 +370,10 @@ export interface BrainState {
   /** A Runtime task that exists but has not been approved, so it never ran. */
   pendingTask?: { id: string; label: string; tool: WorkTool } | null;
   pendingComputer?: { step: import('./tools.js').ComputerStep; label: string } | null;
+  /** A desktop action (delete, dangerous command) waiting for the owner's yes. Only code sets this. */
+  pendingDesktop?: { command: import('@mohassan/desktop').DesktopCommand; label: string; lang: 'ar' | 'en' } | null;
+  /** The owner refused the pending desktop action; the resumed run reports that and stops. */
+  desktopRefused?: boolean;
   /** From the latest computer_view; refs are meaningful only against this list. */
   computerElements?: import('./tools.js').ComputerElement[];
   /** Trusted metadata only. Absent when gap recording is disabled. */
@@ -416,6 +474,14 @@ export function buildPrompt(input: PromptInput): string {
     if (sections.join('\n\n').length + section.length + 2 <= PROMPT_CHAR_BUDGET) sections.splice(sections.length - 1, 0, section);
   };
   if (skillContext && skillContext.length <= skillContextBudget(input)) addReference(SKILL_CONTEXT_LABEL + skillContext);
+  if (input.state.requestResolution?.kind === 'follow_up' || input.state.requestResolution?.kind === 'answer') {
+    const context = parseRequestContextState(input.state.requestContext);
+    if (context) {
+      const value = JSON.stringify({ intent: context.intent, scope: context.scope, topic: context.topic,
+        slots: context.slots, permissionsGranted: false, source: 'earlier_user_requests' });
+      if (value.length <= 1800) addReference(untrustedData('user_request_context', value));
+    }
+  }
   if (memory) addReference(untrustedData('memory', memory.slice(0, 400)));
   for (const entry of history.slice(-6).reverse()) addReference(untrustedData('earlier_conversation', `${entry.role}: ${entry.text.slice(0, 500)}`));
   return sections.join('\n\n');

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>موحسن</title>
+  <style>
+    :root { color-scheme: light; }
+    html, body { margin: 0; height: 100%; background: #f7f8f5; color: #172d2b; font-family: "Segoe UI", Tahoma, sans-serif; -webkit-app-region: drag; user-select: none; }
+    main { height: 100%; display: grid; place-items: center; text-align: center; }
+    .mark { width: 72px; height: 72px; border-radius: 18px; background: #196b56; color: #fff; display: grid; place-items: center; font-size: 40px; font-weight: 700; margin: 0 auto 18px; box-shadow: 0 10px 30px #196b5633; }
+    h1 { font-size: 22px; margin: 0 0 6px; }
+    p { margin: 0; color: #7d8c88; font-size: 13px; line-height: 1.8; min-height: 24px; }
+    .bar { width: 240px; height: 4px; border-radius: 4px; background: #e7ece8; margin: 18px auto 0; overflow: hidden; }
+    .bar span { display: block; width: 40%; height: 100%; background: #196b56; border-radius: 4px; animation: slide 1.4s ease-in-out infinite; }
+    @keyframes slide { 0% { transform: translateX(160%); } 100% { transform: translateX(-260%); } }
+    small { display: block; margin-top: 14px; color: #a3aea9; font-size: 11px; direction: ltr; }
+    .error { color: #9e4332; white-space: pre-wrap; max-width: 420px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div>
+      <div class="mark">م</div>
+      <h1>موحسن</h1>
+      <p id="status">يبدأ التشغيل…</p>
+      <div class="bar" id="bar"><span></span></div>
+      <small id="detail"></small>
+    </div>
+  </main>
+  <script>
+    window.setStatus = (text, detail, failed) => {
+      const status = document.getElementById('status');
+      status.textContent = text; status.className = failed ? 'error' : '';
+      document.getElementById('detail').textContent = detail || '';
+      document.getElementById('bar').style.visibility = failed ? 'hidden' : 'visible';
+    };
+  </script>
+</body>
+</html>

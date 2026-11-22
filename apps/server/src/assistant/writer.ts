@@ -1,4 +1,7 @@
 import { notWebReason, tidy } from './hands.js';
+import { matchText, normalizeRequest } from './mind/normalize.js';
+import { requestActionText } from './request-context.js';
+import { requestOperationText, requestScopeActionText } from './request-scope.js';
 
 /**
  * Letters and emails without a model: one card asks who it is for, what kind it is, what to say and who signs it,
@@ -7,10 +10,16 @@ import { notWebReason, tidy } from './hands.js';
  */
 export type LetterKind = 'request' | 'apology' | 'thanks' | 'followup' | 'congrats' | 'complaint' | 'general';
 export type Lang = 'ar' | 'en';
-export interface WritingTask { kind: LetterKind; lang: Lang }
+export interface WritingTask {
+  kind: LetterKind;
+  lang: Lang;
+  /** Explicit literal body from the current request; never an invented summary. */
+  suppliedText?: string;
+  /** The template can draft, but cannot perform an outbound delivery action. */
+  pendingDelivery?: true;
+}
 export type WritingDecision = WritingTask | { unsupported: string; lang: Lang };
 
-const ARABIC = /[؀-ۿ]/u;
 const KINDS: [LetterKind, RegExp][] = [
   ['apology', /اعتذار|أعتذر|اعتذر|apolog|sorry/iu],
   ['thanks', /شكر|thank/iu],
@@ -21,19 +30,84 @@ const KINDS: [LetterKind, RegExp][] = [
 ];
 /** Writing that needs a model: a frame cannot translate, compose verse or a story, or rework the owner's text. */
 const FREE: [RegExp, string, string][] = [
-  [/^(?:ترجم|translate)|ترجم[ةه]/iu, 'الترجمة', 'translation'],
+  [/^(?:ترجم|تترجم|translate)|ترجم[ةه]/iu, 'الترجمة', 'translation'],
   [/شعر|قصيد|poem|verse/iu, 'كتابة الشعر', 'poems'],
   [/قص[ةه]|حكاي|story/iu, 'كتابة القصص', 'stories'],
   [/صحح|صحّح|حسّن|حسن\s|اعد صياغ|أعد صياغ|صيغ|اختصر|لخص|rewrite|proofread|shorten|summari[sz]e|improve|correct/iu, 'تحسين نص أو إعادة صياغته', 'rewriting a text'],
   [/مقال|بحث|سيرة ذاتي|cv\b|résumé|resume|essay|article|وصف منتج|product description|تغريد|منشور|tweet|post\b|caption/iu, 'المقالات والمنشورات والأوصاف', 'articles, posts and descriptions'],
 ];
-const LETTER = /رسال|بريد|إيميل|ايميل|ايميل|ميل|خطاب|إشعار|email|e-mail|mail|letter|message|note/iu;
+const LETTER = /رسال|بريد|ايميل|ميل|خطاب|اشعار|\b(?:email|e-mail|mail|letter|message|note)\b/iu;
+const MODAL = /^(?:(?:can|could|would) you(?: please)?\s+|(?:هل يمكنك|هل تستطيع|هل تقدر|ممكن|تقدر|ممكنك)\s+(?:ان\s+)?)/iu;
+const WRITING_START = /^(?:اكتب(?:لي)?|تكتب(?:لي)?|صغ|تصيغ|حرر|الف|ترجم|تترجم|اعد صياغه|تعيد صياغه|صحح|تصحح|حسن|اختصر|تختصر|لخص(?:لي)?|تلخص|write|draft|compose|translate|rewrite|paraphrase|proofread|shorten|summari[sz]e|reword|edit|polish|improve|correct)(?!\p{L})/iu;
+const CODE_ARTIFACT = /(?<!\p{L})(?:كود|داله|سكريبت|اختبار برمجي|برنامج|function|class|script|code|test|endpoint)(?!\p{L})/iu;
+const ADS_ARTIFACT = /(?<!\p{L})(?:حمله|حملات|اعلان|اعلانات|campaign|campaigns|ads|advertisements?)(?!\p{L})/iu;
+const REWORK = /^(?:ترجم|تترجم|اعد صياغه|تعيد صياغه|صحح|تصحح|حسن|اختصر|تختصر|لخص(?:لي)?|تلخص|translate|rewrite|paraphrase|proofread|shorten|summari[sz]e|reword|edit|polish|improve|correct)(?!\p{L})/iu;
+const MAX_WRITING_INPUT = 4000;
+const QUOTES: Record<string, string> = { '«': '»', '“': '”', '"': '"', "'": "'" };
+
+interface LiteralBody { text: string; start: number; end: number }
+function quotedBody(request: string, start: number): LiteralBody | null {
+  const closing = QUOTES[request[start]!];
+  if (!closing) return null;
+  for (let index = start + 1; index < request.length; index++) {
+    if (request[index] === closing && request[index - 1] !== '\\') return request.slice(start + 1, index).trim()
+      ? { text: request.slice(start + 1, index), start, end: index + 1 } : null;
+  }
+  return null;
+}
+
+/** Delimiters identify literal body data; all characters inside remain unchanged. */
+function suppliedBody(request: string): LiteralBody | null {
+  const marker = /\b(?:saying|with (?:this|the) (?:text|body))\s*[:：]?\s*|(?:بالنص|نصها|محتواها|تقول)\s*[:：]?\s*/iu.exec(request);
+  if (marker) {
+    const start = marker.index + marker[0].length;
+    const quoted = quotedBody(request, start);
+    if (quoted) return quoted;
+  }
+  for (const match of request.matchAll(/[:：]/gu)) {
+    const at = match.index;
+    if (/https?$/iu.test(request.slice(Math.max(0, at - 5), at)) || /\d/u.test(request[at - 1] ?? '') && /\d/u.test(request[at + 1] ?? '')) continue;
+    if (!LETTER.test(matchText(request.slice(0, at)))) continue;
+    if (/(?:\b(?:subject|title|to|from)|الموضوع|العنوان|الى|إلى|من)\s*$/iu.test(request.slice(0, at))) continue;
+    let start = at + 1;
+    if (request[start] === ' ') start++;
+    const quoted = quotedBody(request, start);
+    if (quoted) return quoted;
+    const text = request.slice(start);
+    if (text.trim()) return { text, start, end: request.length };
+  }
+  return null;
+}
+
+function outerInstruction(request: string, body: LiteralBody | null): string {
+  const outer = body ? request.slice(0, body.start) + ' [literal body] ' + request.slice(body.end) : request;
+  return outer.replace(/«[^»]*»|“[^”]*”|"[^"\r\n]*"|(?<![\p{L}\p{N}])'[^'\r\n]*'(?=$|[\s\p{P}])/gu, ' [literal] ');
+}
+
+/** A body instruction mentioning send is data; only an outer directive is pending work. */
+function requestsDelivery(instruction: string): boolean {
+  const text = matchText(instruction).replace(/’/gu, "'");
+  const positive = [...text.matchAll(/(?:\b(?:and(?: then)?|then|also)\s+|[.;!؟]\s*|(?:^|\s)(?:ثم|وبعدين|بعدها)\s+|و(?=ارسل|انشر|ابعت|ابعث|ترسل))(?:(?:please|رجاء)\s+)?(?:send|email|mail|publish|post|deliver|ارسل(?:ها|ه|هم)?|انشر(?:ها|ه)?|ابعت(?:ها|ه)?|ابعث(?:ها|ه)?|ترسل(?:ها|ه)?)(?!\p{L})/giu)];
+  if (!positive.length) return false;
+  const negative = [...text.matchAll(/\b(?:do not|don't|never|without)\s+(?:(?:actually|ever)\s+)?(?:send(?:ing)?|email(?:ing)?|mail(?:ing)?|publish(?:ing)?|post(?:ing)?|deliver(?:ing)?)\b|(?:^|\s)(?:لا|دون|بدون)\s+(?:ترسل(?:ها|ه)?|ارسل(?:ها|ه)?|ارسال|تنشر(?:ها|ه)?|انشر(?:ها|ه)?|نشر)(?!\p{L})/giu)];
+  return (positive.at(-1)?.index ?? -1) > (negative.at(-1)?.index ?? -1);
+}
 
 /** What a writing request is, or null when it is not one. */
 export function writingTask(request: string): WritingDecision | null {
-  const text = tidy(request);
-  if (notWebReason(text) !== 'writing') return null;
-  const lang: Lang = ARABIC.test(text) ? 'ar' : 'en';
+  if (typeof request !== 'string' || !request.trim() || request.length > MAX_WRITING_INPUT) return null;
+  const action = requestActionText(requestScopeActionText(request));
+  const body = suppliedBody(request);
+  const outer = outerInstruction(request, body);
+  const normalized = normalizeRequest(requestActionText(requestScopeActionText(outer)));
+  const text = requestOperationText(normalized.match.replace(MODAL, ''));
+  const strongWriting = WRITING_START.test(text);
+  const coarse = notWebReason(tidy(action));
+  if (!strongWriting && coarse !== 'writing') return null;
+  const head = text.split(/\b(?:about|regarding|concerning)\b|(?<!\p{L})(?:عن|حول)(?!\p{L})/iu, 1)[0]!;
+  const letter = LETTER.exec(head), code = CODE_ARTIFACT.exec(head), ads = ADS_ARTIFACT.exec(head);
+  if (!REWORK.test(text) && (code && (!letter || code.index < letter.index) || ads && !letter || coarse === 'planning' && !letter)) return null;
+  const lang: Lang = /^(?:can|could|would) you\b/iu.test(normalized.match) ? 'en' : normalized.lang;
   // Translating or reworking a text is never a new letter, even when the text is «رسالتي»; verse, stories and
   // articles are, only when no letter is named («اكتب رسالة فيها قصة» is a letter).
   for (const [index, [pattern, ar, en]] of FREE.entries()) {
@@ -42,7 +116,7 @@ export function writingTask(request: string): WritingDecision | null {
   }
   const kind = KINDS.find(([, pattern]) => pattern.test(text))?.[0] ?? 'general';
   if (!LETTER.test(text) && kind === 'general') return { unsupported: lang === 'ar' ? 'هذا النوع من الكتابة' : 'this kind of writing', lang };
-  return { kind, lang };
+  return { kind, lang, ...(body ? { suppliedText: body.text } : {}), ...(requestsDelivery(outer) ? { pendingDelivery: true as const } : {}) };
 }
 
 const KIND_LABELS: Record<LetterKind, [string, string]> = {
@@ -60,8 +134,8 @@ export function writingQuestion(task: WritingTask) {
     fields: [
       { id: 'to', prompt: ar ? 'لمن الرسالة؟ (الاسم والصفة)' : 'Who is it for? (name and role)', suggestions: [], placeholder: ar ? 'مثلاً: الأستاذ خالد، مدير المشتريات' : 'e.g. Ms Brown, purchasing manager' },
       { id: 'kind', prompt: ar ? 'ما نوعها؟' : 'What kind is it?', suggestions: kinds.slice(0, 6).map(kind => ({ label: KIND_LABELS[kind][ar ? 0 : 1] })), selected: task.kind === 'general' ? [] : [0] },
-      { id: 'details', prompt: ar ? 'ماذا تريد أن تقول؟ اكتب الأهم في سطر أو سطرين.' : 'What do you want to say? The main point in a line or two.', suggestions: [], placeholder: ar ? 'مثلاً: تأخر التسليم يومين بسبب الشحن' : 'e.g. delivery is two days late because of shipping' },
-      { id: 'from', prompt: ar ? 'من يوقّعها؟' : 'Who signs it?', suggestions: [], placeholder: ar ? 'اسمك وصفتك' : 'your name and role' },
+      { id: 'details', prompt: task.suppliedText ? (ar ? 'هذا هو النص الذي أرسلته. يمكنك تعديله قبل إعداد المسودة.' : 'Your supplied text is shown here; edit it if needed.') : ar ? 'ماذا تريد أن تقول؟ اكتب الأهم في سطر أو سطرين.' : 'What do you want to say? The main point in a line or two.', suggestions: [], multiline: true, ...(task.suppliedText ? { initialValue: task.suppliedText } : {}), placeholder: ar ? 'مثلاً: تأخر التسليم يومين بسبب الشحن' : 'e.g. delivery is two days late because of shipping' },
+      { id: 'from', prompt: ar ? 'من يوقّعها؟' : 'Who signs it?', suggestions: [], multiline: true, placeholder: ar ? 'اسمك وصفتك' : 'your name and role' },
     ],
   };
 }
@@ -99,21 +173,48 @@ const FRAMES: Record<LetterKind, { ar: [string, string, string]; en: [string, st
     en: ['Message', 'I am writing to you about the following:', 'Kind regards.'] },
 };
 
-/** The letter: a fixed frame around the owner's own words, which are never changed. */
-export function composeLetter(task: WritingTask, reply: string): { text: string; complete: boolean } {
-  const [to, kindAnswer, details, from] = numberedAnswers(reply, 4);
+export interface ComposedLetter {
+  text: string;
+  /** Entire request fulfilled. A requested send/publish always remains incomplete here. */
+  complete: boolean;
+  draftComplete: boolean;
+  pendingDelivery: boolean;
+}
+
+const UNBOUND_PERSON = /^(?:him|her|them|that person|the person|someone|me|myself|my name|my company|our company|unknown|not sure|don't know|له|لها|لهم|هو|هي|هم|الشخص|شخص ما|انا|اسمي|توقيعي|لا اعرف|غير معروف)[.!?؟]*$/iu;
+const PLACEHOLDER = /^\s*(?:\[[^\]]{1,100}\]|<[^>]{1,100}>)\s*$/u;
+const knownPerson = (value: string) => /[\p{L}\p{N}]/u.test(value) && !PLACEHOLDER.test(value) && !UNBOUND_PERSON.test(matchText(value.trim()));
+
+/** Structured fields avoid treating numbered lines inside the body as card delimiters. */
+export function composeLetter(task: WritingTask, reply: string | Readonly<Record<string, string>>): ComposedLetter {
+  const structured = typeof reply === 'object' && reply !== null && !Array.isArray(reply) ? reply : null;
+  const value = (key: string) => structured && typeof structured[key] === 'string' && structured[key]!.length <= MAX_WRITING_INPUT ? structured[key]! : '';
+  const legacy = typeof reply === 'string' ? numberedAnswers(reply, 4) : [];
+  const to = structured ? value('to') : legacy[0] ?? '';
+  const kindAnswer = structured ? value('kind') : legacy[1] ?? '';
+  const enteredDetails = structured ? value('details') : legacy[2] ?? '';
+  const from = structured ? value('from') : legacy[3] ?? '';
+  const details = enteredDetails.trim() ? enteredDetails : typeof task.suppliedText === 'string' && task.suppliedText.length <= MAX_WRITING_INPUT ? task.suppliedText : '';
   const kind = kindOf(kindAnswer, task.kind);
   const ar = task.lang === 'ar';
   const [subject, opening, closing] = FRAMES[kind][ar ? 'ar' : 'en'];
-  const greeting = ar ? (to ? `${to} المحترم،` : 'السادة المحترمون،') : (to ? `Dear ${to},` : 'Dear Sir or Madam,');
-  const body = details || (ar ? '[اكتب التفاصيل هنا]' : '[write the details here]');
+  const recipientKnown = knownPerson(to);
+  const signerKnown = knownPerson(from);
+  const greeting = ar ? (recipientKnown ? `${to} المحترم،` : '[اسم المستلم]،') : (recipientKnown ? `Dear ${to},` : 'Dear [recipient],');
+  const body = details.trim() ? details : ar ? '[اكتب التفاصيل هنا]' : '[write the details here]';
   const letter = ar
-    ? [`**الموضوع:** ${subject}`, '', greeting, 'السلام عليكم ورحمة الله وبركاته، وبعد:', '', opening, body, '', closing, '', 'مع التحية،', from || '[الاسم]'].join('\n')
-    : [`**Subject:** ${subject}`, '', greeting, '', opening, body, '', closing, '', 'Best regards,', from || '[Name]'].join('\n');
+    ? [`**الموضوع:** ${subject}`, '', greeting, 'السلام عليكم ورحمة الله وبركاته، وبعد:', '', opening, body, '', closing, '', 'مع التحية،', signerKnown ? from : '[الاسم]'].join('\n')
+    : [`**Subject:** ${subject}`, '', greeting, '', opening, body, '', closing, '', 'Best regards,', signerKnown ? from : '[Name]'].join('\n');
   const note = ar
     ? '\n\n---\nهذه مسودة من قالب: الإطار ثابت والتفاصيل بكلماتك كما كتبتها. لم يكتبها نموذج.'
     : '\n\n---\nThis draft comes from a template: the frame is fixed and the details are your own words. No model wrote it.';
-  return { text: letter + note, complete: Boolean(details && to && from) };
+  const pendingDelivery = task.pendingDelivery === true;
+  const deliveryNote = pendingDelivery ? ar
+    ? '\n\nطلب الإرسال أو النشر ما زال معلقًا. هذه مسودة فقط؛ لم تُرسل ولم تُنشر.'
+    : '\n\nThe requested sending or publishing is still pending. This is a draft only; it has not been sent or published.' : '';
+  const missingRecipient = !recipientKnown ? ar ? '\n\nحدّد اسم المستلم أو المجموعة المقصودة لإكمال المسودة.' : '\n\nSpecify the recipient name or intended group to complete the draft.' : '';
+  const draftComplete = Boolean(details.trim()) && !PLACEHOLDER.test(details) && recipientKnown && signerKnown;
+  return { text: letter + note + deliveryNote + missingRecipient, complete: draftComplete && !pendingDelivery, draftComplete, pendingDelivery };
 }
 
 /** The plain answer for writing a frame cannot do, instead of a «no model» error. */

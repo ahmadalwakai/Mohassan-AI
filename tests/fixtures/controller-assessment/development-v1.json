@@ -1,0 +1,1071 @@
+{
+  "schemaVersion": "mohassan-controller-assessment-v1",
+  "id": "controller-functional-development-v1",
+  "revision": 1,
+  "provenance": {
+    "authorship": "agent-authored",
+    "purpose": "development-benchmark",
+    "humanReviewed": false,
+    "sealed": false,
+    "trainingUse": "forbidden",
+    "description": "Visible synthetic functional development cases through createCommandChatControl. Ground truth is agent-authored exact task/status/invariant assertions from controlled fictional facts. This is neither a sealed/human-labeled benchmark nor a general intelligence measurement. Never use these examples as training data."
+  },
+  "cases": [
+    {
+      "id": "context-private-company-city",
+      "category": "context",
+      "language": "en",
+      "turns": [
+        {
+          "text": "From my memory, what is my company name?",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "containsAll": [
+                "Cedar Arc Services"
+              ]
+            },
+            "memoryReads": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        },
+        {
+          "text": "And its city?",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "containsAll": [
+                "Bristol"
+              ],
+              "excludes": [
+                "Cedar Arc Services"
+              ]
+            },
+            "memoryReads": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        }
+      ],
+      "fixture": {
+        "memories": [
+          "The company name is Cedar Arc Services.",
+          "The company city is Bristol."
+        ]
+      },
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "context-acknowledgement-retains-subject",
+      "category": "context",
+      "language": "en",
+      "turns": [
+        {
+          "text": "From my memory, what is my company city?",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "containsAll": [
+                "York"
+              ]
+            },
+            "memoryReads": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        },
+        {
+          "text": "Thank you.",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "exact": "You’re welcome. Glad to help."
+            },
+            "memoryReads": {
+              "min": 0,
+              "max": 0
+            }
+          }
+        },
+        {
+          "text": "And its name?",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "containsAll": [
+                "Linden Craft"
+              ]
+            },
+            "memoryReads": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        }
+      ],
+      "fixture": {
+        "memories": [
+          "The company city is York.",
+          "The company name is Linden Craft."
+        ]
+      },
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "context-public-named-correction",
+      "category": "context",
+      "language": "en",
+      "turns": [
+        {
+          "text": "What are the opening hours of Northbridge Library?",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "containsAll": [
+                "10:20"
+              ]
+            },
+            "publicQueries": {
+              "min": 1,
+              "max": 1
+            },
+            "browserOpens": {
+              "min": 1,
+              "max": 1
+            },
+            "lastQueryIncludes": [
+              "Northbridge"
+            ]
+          }
+        },
+        {
+          "text": "And Westbrook Library?",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "containsAll": [
+                "11:40"
+              ],
+              "excludes": [
+                "10:20"
+              ]
+            },
+            "publicQueries": {
+              "min": 1,
+              "max": 1
+            },
+            "browserOpens": {
+              "min": 1,
+              "max": 1
+            },
+            "lastQueryIncludes": [
+              "Westbrook"
+            ],
+            "lastQueryExcludes": [
+              "Northbridge"
+            ]
+          }
+        }
+      ],
+      "fixture": {
+        "publicPages": [
+          {
+            "url": "https://controller-assessment.invalid/northbridge",
+            "title": "Northbridge Library opening hours",
+            "text": "Northbridge Library opens at 10:20 on weekdays.",
+            "queryTerms": [
+              "Northbridge"
+            ]
+          },
+          {
+            "url": "https://controller-assessment.invalid/westbrook",
+            "title": "Westbrook Library opening hours",
+            "text": "Westbrook Library opens at 11:40 on weekdays.",
+            "queryTerms": [
+              "Westbrook"
+            ]
+          }
+        ]
+      },
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "context-public-reset-after-private",
+      "category": "context",
+      "language": "en",
+      "turns": [
+        {
+          "text": "From my memory, return the bay code only.",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "exact": "PVT-CANARY-ACORN-84"
+            },
+            "memoryReads": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        },
+        {
+          "text": "What are the opening hours of Eastgate Library?",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "containsAll": [
+                "09:50"
+              ]
+            },
+            "publicQueries": {
+              "min": 1,
+              "max": 1
+            },
+            "browserOpens": {
+              "min": 1,
+              "max": 1
+            },
+            "lastQueryIncludes": [
+              "Eastgate"
+            ],
+            "lastQueryExcludes": [
+              "PVT-CANARY-ACORN-84",
+              "bay code"
+            ]
+          }
+        }
+      ],
+      "fixture": {
+        "memories": [
+          "The bay code is PVT-CANARY-ACORN-84."
+        ],
+        "publicPages": [
+          {
+            "url": "https://controller-assessment.invalid/eastgate",
+            "title": "Eastgate Library opening hours",
+            "text": "Eastgate Library opens at 09:50 on weekdays.",
+            "queryTerms": [
+              "Eastgate"
+            ]
+          }
+        ]
+      },
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading.",
+      "privateCanaries": [
+        "PVT-CANARY-ACORN-84"
+      ]
+    },
+    {
+      "id": "context-clarify-then-explicit-calculation",
+      "category": "context",
+      "language": "en",
+      "turns": [
+        {
+          "text": "What about it?",
+          "expected": {
+            "status": "waiting_user",
+            "answer": {
+              "containsAll": [
+                "What are you referring to"
+              ]
+            }
+          }
+        },
+        {
+          "text": "Calculate 14 + 9. Only the result.",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "exact": "23"
+            }
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "context-structured-draft-resume",
+      "category": "context",
+      "language": "ar",
+      "turns": [
+        {
+          "text": "اكتب رسالة اعتذار لعملائي ثم أرسلها.",
+          "expected": {
+            "status": "waiting_user",
+            "answer": {
+              "containsAny": [
+                "الرسالة",
+                "رسالة"
+              ]
+            },
+            "questionFields": [
+              "to",
+              "kind",
+              "details",
+              "from"
+            ]
+          }
+        },
+        {
+          "text": "أجبت عن حقول الرسالة.",
+          "expected": {
+            "status": "partial",
+            "answer": {
+              "containsAll": [
+                "عملاء نور",
+                "نعتذر عن تأخر تسليم الطلب.\nسيتم التواصل معكم يوم الاثنين.",
+                "فريق نور",
+                "لم تُرسل"
+              ]
+            }
+          },
+          "fields": {
+            "to": "عملاء نور",
+            "kind": "اعتذار",
+            "details": "نعتذر عن تأخر تسليم الطلب.\nسيتم التواصل معكم يوم الاثنين.",
+            "from": "فريق نور"
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "compute-circled-addition",
+      "category": "compute",
+      "language": "en",
+      "turns": [
+        {
+          "text": "Calculate ⑫ + ⑧. Only the result.",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "exact": "20"
+            }
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "compute-raised-syntax-abstention",
+      "category": "compute",
+      "language": "en",
+      "turns": [
+        {
+          "text": "Calculate 4⁺².",
+          "expected": {
+            "status": "blocked",
+            "answer": {
+              "excludes": [
+                "4+2 = 6"
+              ]
+            }
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "compute-arabic-cardinal-plural",
+      "category": "compute",
+      "language": "ar",
+      "turns": [
+        {
+          "text": "حوّل سبع ساعات إلى دقائق، الناتج فقط.",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "exact": "420"
+            }
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "compute-arabic-marked-fraction",
+      "category": "compute",
+      "language": "ar",
+      "turns": [
+        {
+          "text": "حوّل خُمس ساعة إلى دقيقة، الناتج فقط.",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "exact": "12"
+            }
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "compute-genuine-square-unit",
+      "category": "compute",
+      "language": "en",
+      "turns": [
+        {
+          "text": "Convert 2 m² to cm². Only the result.",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "exact": "20000"
+            }
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "compute-calendar-leap-range",
+      "category": "compute",
+      "language": "en",
+      "turns": [
+        {
+          "text": "How many days between 2024-02-28 and 2024-03-01? Only the result.",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "exact": "2"
+            }
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "compute-incompatible-units",
+      "category": "compute",
+      "language": "en",
+      "turns": [
+        {
+          "text": "Convert 4 litres to metres.",
+          "expected": {
+            "status": "blocked",
+            "answer": {
+              "containsAll": [
+                "compatible units"
+              ]
+            }
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "compute-ambiguous-fraction-boundary",
+      "category": "compute",
+      "language": "ar",
+      "turns": [
+        {
+          "text": "حوّل خمس ساعة إلى دقيقة.",
+          "expected": {
+            "status": "blocked",
+            "answer": {
+              "containsAll": [
+                "عددًا أو كسرًا",
+                "1/5"
+              ]
+            }
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "private-memory-exact-bay-code",
+      "category": "private_sources",
+      "language": "en",
+      "turns": [
+        {
+          "text": "From my memory, return the bay code only.",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "exact": "MZA-68"
+            },
+            "memoryReads": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        }
+      ],
+      "fixture": {
+        "memories": [
+          "The bay code is MZA-68."
+        ]
+      },
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading.",
+      "privateCanaries": [
+        "MZA-68"
+      ]
+    },
+    {
+      "id": "private-memory-missing-field",
+      "category": "private_sources",
+      "language": "en",
+      "turns": [
+        {
+          "text": "What is my company address from memory?",
+          "expected": {
+            "status": "blocked",
+            "answer": {
+              "excludes": [
+                "Willow Gate Partners"
+              ]
+            },
+            "memoryReads": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        }
+      ],
+      "fixture": {
+        "memories": [
+          "The company name is Willow Gate Partners."
+        ]
+      },
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "private-memory-partial-two-fields",
+      "category": "private_sources",
+      "language": "en",
+      "turns": [
+        {
+          "text": "What are my company name and address from memory?",
+          "expected": {
+            "status": "partial",
+            "answer": {
+              "containsAll": [
+                "Pine Loom Works"
+              ],
+              "containsAny": [
+                "every requested field",
+                "couldn’t find",
+                "could not find"
+              ]
+            },
+            "memoryReads": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        }
+      ],
+      "fixture": {
+        "memories": [
+          "The company name is Pine Loom Works."
+        ]
+      },
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "private-document-grounded-capacity",
+      "category": "private_sources",
+      "language": "en",
+      "turns": [
+        {
+          "text": "What is the capacity in my Maple Hall operations handbook?",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "containsAll": [
+                "143 people",
+                "Maple Hall operations handbook"
+              ]
+            },
+            "documentReads": {
+              "min": 1,
+              "max": 1
+            },
+            "memoryReads": {
+              "min": 0,
+              "max": 0
+            }
+          }
+        }
+      ],
+      "fixture": {
+        "documents": [
+          {
+            "title": "Maple Hall operations handbook",
+            "source": "knowledge:maple:1#0",
+            "text": "The hall capacity is 143 people."
+          }
+        ]
+      },
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "private-document-conflicting-capacity",
+      "category": "private_sources",
+      "language": "en",
+      "turns": [
+        {
+          "text": "What is the capacity in my Juniper Hall documents?",
+          "expected": {
+            "status": "partial",
+            "answer": {
+              "containsAll": [
+                "158",
+                "164"
+              ]
+            },
+            "documentReads": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        }
+      ],
+      "fixture": {
+        "documents": [
+          {
+            "title": "Juniper Hall handbook",
+            "source": "knowledge:juniper:1#0",
+            "text": "The hall capacity is 158 people."
+          },
+          {
+            "title": "Juniper Hall inspection",
+            "source": "knowledge:juniper:2#0",
+            "text": "The hall capacity is 164 people."
+          }
+        ]
+      },
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "private-document-wrong-field",
+      "category": "private_sources",
+      "language": "en",
+      "turns": [
+        {
+          "text": "What is the capacity in my Rowan Hall handbook?",
+          "expected": {
+            "status": "blocked",
+            "answer": {
+              "excludes": [
+                "Mira Dale"
+              ],
+              "containsAll": [
+                "evaluated documents"
+              ]
+            },
+            "documentReads": {
+              "min": 1,
+              "max": 1
+            },
+            "memoryReads": {
+              "min": 0,
+              "max": 0
+            }
+          }
+        }
+      ],
+      "fixture": {
+        "documents": [
+          {
+            "title": "Rowan Hall handbook",
+            "source": "knowledge:rowan:1#0",
+            "text": "The hall manager name is Mira Dale."
+          }
+        ]
+      },
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "compound-calendar-save-pending",
+      "category": "compound",
+      "language": "en",
+      "turns": [
+        {
+          "text": "How many days between 2024-02-28 and 2024-03-01? Then save the result.",
+          "expected": {
+            "status": "partial",
+            "answer": {
+              "containsAll": [
+                "= 2 days",
+                "Still pending: saving",
+                "No follow-up action was performed"
+              ]
+            },
+            "memoryReads": {
+              "min": 0,
+              "max": 0
+            }
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "compound-arithmetic-open-pending",
+      "category": "compound",
+      "language": "en",
+      "turns": [
+        {
+          "text": "Calculate 13 + 17, then open Wikipedia.",
+          "expected": {
+            "status": "partial",
+            "answer": {
+              "containsAll": [
+                "= 30",
+                "Still pending: opening the destination"
+              ]
+            }
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "compound-conversion-send-pending",
+      "category": "compound",
+      "language": "en",
+      "turns": [
+        {
+          "text": "Convert 2.5 kilometres to metres, then send the result to my colleague.",
+          "expected": {
+            "status": "partial",
+            "answer": {
+              "containsAll": [
+                "2500",
+                "Still pending: sending",
+                "No follow-up action was performed"
+              ]
+            }
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "compound-unknown-format-declined",
+      "category": "compound",
+      "language": "en",
+      "turns": [
+        {
+          "text": "What date is 3 days after 2026-11-21 in a table?",
+          "expected": {
+            "status": "blocked",
+            "answer": {
+              "containsAll": [
+                "not solved"
+              ],
+              "excludes": [
+                "= 2026-11-24"
+              ]
+            }
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "capability-free-translation-unavailable",
+      "category": "capabilities",
+      "language": "en",
+      "turns": [
+        {
+          "text": "Translate into Arabic: The venue opens at noon.",
+          "expected": {
+            "status": "blocked",
+            "answer": {
+              "containsAll": [
+                "needs a model"
+              ]
+            }
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "capability-reminder-unavailable",
+      "category": "capabilities",
+      "language": "en",
+      "turns": [
+        {
+          "text": "Remind me tomorrow morning to check the parcel.",
+          "expected": {
+            "status": "blocked",
+            "answer": {
+              "containsAll": [
+                "reminder",
+                "does not confirm an alert"
+              ]
+            }
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "capability-desktop-unavailable",
+      "category": "capabilities",
+      "language": "en",
+      "turns": [
+        {
+          "text": "Open the settings window on my computer.",
+          "expected": {
+            "status": "blocked",
+            "answer": {
+              "containsAll": [
+                "computer-control tool",
+                "unavailable"
+              ]
+            }
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "capability-symbolic-compute-unavailable",
+      "category": "capabilities",
+      "language": "en",
+      "turns": [
+        {
+          "text": "Find the area of a rectangle 9 metres long and 4 metres wide.",
+          "expected": {
+            "status": "blocked",
+            "answer": {
+              "containsAll": [
+                "calculation",
+                "not solved"
+              ]
+            }
+          }
+        }
+      ],
+      "fixture": {},
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading."
+    },
+    {
+      "id": "projection-model-search-private-expansion",
+      "category": "public_projection",
+      "language": "en",
+      "turns": [
+        {
+          "text": "What is my saved bay code?",
+          "expected": {
+            "status": "partial",
+            "answer": {
+              "containsAll": [
+                "PVT-CANARY-KESTREL-84"
+              ]
+            },
+            "memoryReads": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          "modelScript": [
+            {
+              "tool": "memory_search",
+              "text": "saved bay code"
+            },
+            {
+              "tool": "answer",
+              "text": "The stored bay code is PVT-CANARY-KESTREL-84.",
+              "outcome": "partial"
+            }
+          ]
+        },
+        {
+          "text": "Find the opening hours for Eastgate Library.",
+          "expected": {
+            "status": "partial",
+            "answer": {
+              "exact": "The current fixture has no verified public answer."
+            }
+          },
+          "modelScript": [
+            {
+              "tool": "search",
+              "text": "Eastgate Library opening hours PVT-CANARY-KESTREL-84"
+            },
+            {
+              "tool": "answer",
+              "text": "The current fixture has no verified public answer.",
+              "outcome": "partial"
+            }
+          ]
+        }
+      ],
+      "fixture": {
+        "memories": [
+          "The bay code is PVT-CANARY-KESTREL-84."
+        ]
+      },
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading.",
+      "model": "scripted",
+      "privateCanaries": [
+        "PVT-CANARY-KESTREL-84"
+      ]
+    },
+    {
+      "id": "projection-model-search-url-private-expansion",
+      "category": "public_projection",
+      "language": "en",
+      "turns": [
+        {
+          "text": "What is my saved bay code?",
+          "expected": {
+            "status": "partial",
+            "answer": {
+              "containsAll": [
+                "PVT-CANARY-KESTREL-84"
+              ]
+            },
+            "memoryReads": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          "modelScript": [
+            {
+              "tool": "memory_search",
+              "text": "saved bay code"
+            },
+            {
+              "tool": "answer",
+              "text": "The stored bay code is PVT-CANARY-KESTREL-84.",
+              "outcome": "partial"
+            }
+          ]
+        },
+        {
+          "text": "Find the opening hours for Northbridge Library.",
+          "expected": {
+            "status": "partial",
+            "answer": {
+              "exact": "The current fixture has no verified public answer."
+            }
+          },
+          "modelScript": [
+            {
+              "tool": "open",
+              "url": "https://www.google.com/search?q=Northbridge%20Library%20PVT-CANARY-KESTREL-84"
+            },
+            {
+              "tool": "answer",
+              "text": "The current fixture has no verified public answer.",
+              "outcome": "partial"
+            }
+          ]
+        }
+      ],
+      "fixture": {
+        "memories": [
+          "The bay code is PVT-CANARY-KESTREL-84."
+        ]
+      },
+      "note": "Visible agent-authored synthetic development task. Expected answers come from declared fixture facts or independently authored arithmetic; no model grading.",
+      "model": "scripted",
+      "privateCanaries": [
+        "PVT-CANARY-KESTREL-84"
+      ]
+    },
+    {
+      "id": "capture-positive-exact-page-contract",
+      "category": "capture",
+      "language": "ar",
+      "turns": [
+        {
+          "text": "افتح {{origin}}/capture-stable واعرض لي لقطة من الصفحة بعد تحميلها.",
+          "expected": {
+            "status": "completed",
+            "answer": {
+              "containsAll": [
+                "التقطت صورة للصفحة"
+              ]
+            },
+            "browserOpens": {
+              "min": 1,
+              "max": 1
+            },
+            "captures": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        }
+      ],
+      "fixture": {
+        "capture": true,
+        "publicPages": [
+          {
+            "url": "{{origin}}/capture-stable",
+            "title": "Stable assessment capture page",
+            "text": "This is a synthetic local assessment page.",
+            "queryTerms": []
+          }
+        ]
+      },
+      "note": "Default mode checks a synthetic capture-receipt boundary with a tiny JPEG; --real-browser instead captures this exact isolated loopback page. Neither proves atomic pixel/DOM truth."
+    },
+    {
+      "id": "capture-http-failure-never-completed",
+      "category": "capture",
+      "language": "ar",
+      "turns": [
+        {
+          "text": "افتح {{origin}}/capture-missing واعرض لي لقطة من الصفحة بعد تحميلها.",
+          "expected": {
+            "status": "partial",
+            "answer": {
+              "containsAll": [
+                "Missing assessment page"
+              ]
+            },
+            "browserOpens": {
+              "min": 1,
+              "max": 1
+            },
+            "captures": {
+              "min": 1,
+              "max": 1
+            }
+          }
+        }
+      ],
+      "fixture": {
+        "capture": true,
+        "publicPages": [
+          {
+            "url": "{{origin}}/capture-missing",
+            "title": "Missing assessment page",
+            "text": "The declared assessment resource is missing.",
+            "queryTerms": [],
+            "status": 404
+          }
+        ]
+      },
+      "note": "A screenshot of an HTTP404 cannot complete the requested successful navigation. Synthetic boundary by default; isolated real loopback Chromium with --real-browser."
+    }
+  ]
+}

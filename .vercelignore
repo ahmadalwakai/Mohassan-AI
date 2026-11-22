@@ -1,0 +1,22 @@
+# Upload source only; local application state and verification files stay local.
+.git
+.vercel
+.env
+.env.*
+!.env.example
+.data
+.claude
+.playwright-mcp
+.pytest_cache
+.venv-execution
+artifacts
+test-results
+playwright-report
+coverage
+**/node_modules
+**/.next
+**/.next-e2e
+**/__pycache__
+**/*.pyc
+**/*.tsbuildinfo
+**/*.log

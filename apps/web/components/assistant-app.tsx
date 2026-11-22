@@ -1,23 +1,52 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent } from "react";
-import { ArrowUp, Check, ChevronDown, Copy, ExternalLink, Globe, KeyRound, LogOut, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, Settings2, ShieldAlert, SquarePen, Square, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { ArrowUp, Check, ChevronDown, Copy, ExternalLink, Globe, KeyRound, Laptop, LogOut, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, Settings2, ShieldAlert, SquarePen, Square, Trash2, X } from "lucide-react";
 import type { ChatConversation as Conversation, ChatConversationSummary as Summary, ChatSecureRequest } from "@mohassan/contracts";
 import { Markdown, plainText } from "./markdown";
 import { takeoverInput } from "./takeover-input";
 import { BrowserFilesPanel } from './browser-files-panel';
+import { BrowserViewport } from './browser-viewport';
 import { CampaignCard } from "./campaign-card";
 
 const ADS_WORDS = /حمل[ةت]|حملات|إعلان|اعلان|google ads|campaign|\bads?\b|advertis|ppc/i;
-import { AgentActivity } from "./agent-activity";
+import { ActivityLine, AgentActivity } from "./agent-activity";
 import { QuestionPanel, withoutQuestionList } from "./question-card";
 import { ChromeExtensionPanel } from "./chrome-extension-panel";
 import { adsConnectProblems, pendingAdsConnect } from "./ads-connect";
+import { NOTICE_AFTER_MS, declineNoticeOffer, noticeKindFor, noticeOfferOpen, requestNoticePermission, showTaskNotice } from "./task-notices";
 import styles from "./assistant-app.module.css";
 
 const POLL_MS = 900;
-const HANDS_ON_REFRESH_MS = 1200;
+/** Proposed in the plan (§6.3): a hidden tab keeps following its task, slowly, instead of stopping. */
+const HIDDEN_POLL_MS = 15_000;
+const HISTORY_POLL_MS = 5_000;
 const SAVED_CONVERSATION = "mohassan-conversation";
+const PANEL_SETTING = "mohassan-browser-panel";
+const SEEN_TASKS = "mohassan-seen-tasks";
+/** «اعرض المتصفح»: when a step needs me (default), always, or only for sign-in and the like. */
+type PanelSetting = "needed" | "always" | "necessary";
+type Visibility = NonNullable<Conversation["visibility"]>;
+const PANEL_SETTINGS: { value: PanelSetting; label: string }[] = [
+  { value: "needed", label: "عند الحاجة (افتراضي)" }, { value: "always", label: "دائمًا" }, { value: "necessary", label: "عند الضرورة فقط" },
+];
+/** Mirrors opensPanel() in the server's browser-visibility module: level 3 opens the panel; «necessary» leaves explicit asks closed. */
+function panelOpens(visibility: Visibility, setting: PanelSetting): boolean {
+  if (!visibility.canView) return false;
+  if (setting === "always") return visibility.level >= 2;
+  if (visibility.level !== 3) return false;
+  return setting === "needed" || (visibility.code !== "explicit_show" && visibility.code !== "open_only");
+}
+/** The phone layout never opens the panel by itself (plan §6.1); the chip stays. */
+const narrowViewport = () => typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches;
+const panelSetting = {
+  get(): PanelSetting { try { const value = localStorage.getItem(PANEL_SETTING); return value === "always" || value === "necessary" ? value : "needed"; } catch { return "needed"; } },
+  set(value: PanelSetting) { try { localStorage.setItem(PANEL_SETTING, value); } catch { /* Convenience only. */ } },
+};
+const seenTasks = {
+  get(): Record<string, string> { try { const raw = JSON.parse(localStorage.getItem(SEEN_TASKS) ?? "{}"); return raw && typeof raw === "object" ? raw : {}; } catch { return {}; } },
+  set(value: Record<string, string>) { try { localStorage.setItem(SEEN_TASKS, JSON.stringify(value)); } catch { /* Convenience only. */ } },
+};
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { ...options, credentials: "same-origin", cache: "no-store", headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...options.headers } });
@@ -65,10 +94,11 @@ function Steps({ conversation }: { conversation: Conversation }) {
   const [open, setOpen] = useState(false);
   const running = conversation.status === "running";
   if (!running && !conversation.steps.length) return null;
+  // The request's own time: its user message, so a reload keeps the count honest.
+  const since = conversation.messages.filter((message) => message.role === "user").at(-1)?.createdAt ?? null;
   return <div className={styles.steps}>
     <button type="button" className={styles.stepsToggle} aria-expanded={open} disabled={!conversation.steps.length} onClick={() => setOpen((value) => !value)}>
-      {running ? <AgentActivity /> : <Check size={14} />}
-      <span className={running ? styles.shimmer : ""} dir="auto">{running ? conversation.progress ?? "يعمل…" : stepCount(conversation.steps.length)}</span>
+      {running ? <ActivityLine text={conversation.progress ?? "يعمل…"} since={since} /> : <><Check size={14} /><span dir="auto">{stepCount(conversation.steps.length)}</span></>}
       {conversation.steps.length ? <ChevronDown size={14} className={open ? styles.flipped : ""} /> : null}
     </button>
     {open ? <ol className={styles.stepList}>
@@ -78,25 +108,16 @@ function Steps({ conversation }: { conversation: Conversation }) {
   </div>;
 }
 
-function BrowserPanel({ conversation, onClose, onError, onRestore, onReview, busy }: { conversation: Conversation; onClose: () => void; onError: (message: string) => void; onRestore:()=>void; onReview:()=>void; busy:boolean }) {
+function BrowserPanel({ conversation, reason, onClose, onError, onRestore, onReview, busy }: { conversation: Conversation; reason: string | null; onClose: () => void; onError: (message: string) => void; onRestore:()=>void; onReview:()=>void; busy:boolean }) {
   const page = conversation.browser!;
   const handsOn = conversation.status === "waiting_input" && conversation.secure?.kind === "hands_on";
-  const [tick, setTick] = useState(0);
   const [typed, setTyped] = useState("");
-  const [broken, setBroken] = useState<string | null>(null);
   const [reviewedToken,setReviewedToken]=useState<string|null>(null);
   const reviewed=Boolean(page.recoveryToken&&reviewedToken===page.recoveryToken);
-  useEffect(() => {
-    if (!handsOn) return;
-    const timer = setInterval(() => setTick((value) => value + 1), HANDS_ON_REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [handsOn]);
-  const source = `${page.screenUrl}${handsOn ? `&t=${tick}` : ""}`;
   const base = `/api/chat/conversations/${conversation.id}/browser`;
-  function point(event: MouseEvent<HTMLImageElement>) {
+  function point(x: number, y: number) {
     if (!handsOn) return;
-    const box = event.currentTarget.getBoundingClientRect();
-    void api(`${base}/pointer`, { method: "POST", body: JSON.stringify({ x: (event.clientX - box.left) / box.width, y: (event.clientY - box.top) / box.height }) }).catch((caught) => onError(messageOf(caught)));
+    void api(`${base}/pointer`, { method: "POST", body: JSON.stringify({ x, y }) }).catch((caught) => onError(messageOf(caught)));
   }
   function send(input: { text?: string; key?: string }) {
     void api(`${base}/keyboard`, { method: "POST", body: JSON.stringify(input) }).catch((caught) => onError(messageOf(caught)));
@@ -112,10 +133,10 @@ function BrowserPanel({ conversation, onClose, onError, onRestore, onReview, bus
       <div className={styles.address} dir="ltr"><Globe size={13} /><span>{page.url}</span></div>
       <a className={styles.iconButton} href={page.url} target="_blank" rel="noopener noreferrer" aria-label="فتح في نافذة جديدة"><ExternalLink size={16} /></a>
     </header>
+    {reason ? <p className={styles.needsYou} role="status" data-testid="browser-reason"><KeyRound size={15} /><span dir="auto">{reason}</span></p> : null}
     <p className={styles.cardHint}>حساب المتصفح: {conversation.browserAccount||'الافتراضي'}</p>
-    <div className={`${styles.viewport} ${handsOn ? styles.viewportActive : ""}`}>
-      {page.live && broken !== source ? <img src={source} alt={`الصفحة: ${page.title}`} onClick={point} onError={() => setBroken(source)} draggable={false} /> : <p className={styles.noView}>{page.live ? "تتحمّل الصفحة…" : "أُغلقت هذه الصفحة."}</p>}
-    </div>
+    <BrowserViewport key={`viewport:${conversation.id}`} conversationId={conversation.id} screenUrl={page.screenUrl} title={page.title}
+      live={page.live} running={conversation.status === 'running'} handsOn={handsOn} onPoint={point} />
     {!page.live&&page.recovery==='available'?<div className={styles.card}><p>استعد قراءة الصفحة قبل متابعة العمل.</p><button type="button" className={styles.secondary} disabled={busy||WORKING.has(conversation.status)} onClick={onRestore}>استعادة الصفحة</button></div>:null}
     {/* While the owner has the controls (signing in by hand) the review cannot be recorded (the chat
         is busy), and on a narrow panel its card covered the page image: it waits until afterwards. */}
@@ -154,32 +175,45 @@ function DeleteDialog({ target, busy, error, onCancel, onConfirm }: { target: Su
 }
 
 /** Owner-only views a failed turn can point to. The executor is a separate local experiment, never a stand-in for the chat model. */
-export type AssistantToolView = "integrations" | "executor";
+export type AssistantToolView = "integrations" | "executor" | "desktop";
 
 export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name: string; onAdvanced: () => void; onOpenTool?: (view: AssistantToolView) => void; onSignOut: () => void }) {
   const [history, setHistory] = useState<Summary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [conversation, setConversation] = useState<Conversation | null>(null);
+  const [chatConfigured, setChatConfigured] = useState<boolean | null>(null);
   const [draft, setDraft] = useState("");
   const [browserAccount,setBrowserAccount]=useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [browserOpen, setBrowserOpen] = useState(true);
+  // The panel starts closed. A level-3 step opens it once (autoOpened remembers which), the owner can open it from the
+  // chip, and «closed» keeps it shut after they close it until the conversation changes.
+  const [browserOpen, setBrowserOpen] = useState(false);
+  const openedBy = useRef<"auto" | "user" | "closed" | null>(null);
+  const autoOpened = useRef<string | null>(null);
+  const [setting, setSetting] = useState<PanelSetting>("needed");
+  const [unread, setUnread] = useState(0);
+  const [noticeOffer, setNoticeOffer] = useState(false);
+  const tasks = useRef(new Map<string, { startedAt: number; done: boolean; noticed: boolean }>());
+  const seen = useRef<Record<string, string> | null>(null);
   const [itemMenu, setItemMenu] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Summary | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [notice, setNotice] = useState("");
-  const end = useRef<HTMLDivElement>(null);
+  const thread = useRef<HTMLDivElement>(null);
+  const threadContent = useRef<HTMLDivElement>(null);
+  const followEnd = useRef(true);
   const composer = useRef<HTMLTextAreaElement>(null);
   const selection = useRef<string | null>(null);
   selection.current = selectedId;
 
   const refreshHistory = useCallback(async () => {
-    const result = await api<{ conversations: Summary[] }>("/api/chat/conversations");
+    const result = await api<{ conversations: Summary[]; configured?: boolean }>("/api/chat/conversations");
     setHistory(result.conversations);
+    if (typeof result.configured === "boolean") setChatConfigured(result.configured);
     return result.conversations;
   }, []);
 
@@ -217,26 +251,133 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
   }, [selectedId, conversation?.id]);
 
   const status = conversation?.status;
+  const hasThread = Boolean(conversation?.messages.length);
   useEffect(() => {
     if (!conversation || status !== "running") return;
     const id = conversation.id;
     let active = true;
     let inFlight = false;
-    const timer = setInterval(() => {
-      if (document.hidden || inFlight) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // A hidden tab keeps following its task every 15 s instead of stopping, and catches up the moment it is shown again.
+    const schedule = (delay: number) => { clearTimeout(timer); timer = setTimeout(poll, delay); };
+    const poll = () => {
+      if (!active) return;
+      if (inFlight) { schedule(POLL_MS); return; }
       inFlight = true;
       void api<Conversation>(`/api/chat/conversations/${id}`).then((result) => {
         if (!active || selection.current !== id) return;
         setConversation(result);
         setError("");
         if (result.status !== "running") void refreshHistory().catch(() => {});
-      }).catch((caught) => { if (active) setError(messageOf(caught)); }).finally(() => { inFlight = false; });
-    }, POLL_MS);
-    return () => { active = false; clearInterval(timer); };
+      }).catch((caught) => { if (active) setError(messageOf(caught)); }).finally(() => { inFlight = false; if (active) schedule(document.hidden ? HIDDEN_POLL_MS : POLL_MS); });
+    };
+    const shown = () => { if (!document.hidden) schedule(0); };
+    document.addEventListener("visibilitychange", shown);
+    schedule(document.hidden ? HIDDEN_POLL_MS : POLL_MS);
+    return () => { active = false; clearTimeout(timer); document.removeEventListener("visibilitychange", shown); };
   }, [conversation?.id, status, refreshHistory]);
 
+  useEffect(() => { setSetting(panelSetting.get()); }, []);
+
+  // Browser levels (plan §6): the panel opens by itself only at level 3, once per step, never on a narrow screen,
+  // and folds back when the step is answered. «دائمًا» opens it for any hidden browser instead.
+  const visibility = conversation?.visibility ?? null;
+  const episode = conversation ? `${conversation.id}:${conversation.secure?.id ?? conversation.approval?.id ?? visibility?.code ?? ""}` : null;
   useEffect(() => {
-    end.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    if (!conversation?.browser || !visibility || openedBy.current === "closed") return;
+    if (panelOpens(visibility, setting) && episode && autoOpened.current !== episode && !narrowViewport()) {
+      autoOpened.current = episode;
+      openedBy.current = "auto";
+      setBrowserOpen(true);
+    } else if (visibility.level < 3 && setting !== "always" && openedBy.current === "auto" && browserOpen) {
+      openedBy.current = null;
+      setBrowserOpen(false);
+    }
+  }, [conversation?.id, conversation?.browser, visibility, episode, setting, browserOpen]);
+
+  // Task center (plan §6.2–6.3): the list follows running tasks (slowly when hidden), counts what finished since the
+  // viewer last looked, puts the count in the tab title, and shows at most one system notice per task.
+  const anyRunning = status === "running" || history.some((item) => WORKING.has(item.status) && item.status === "running");
+  useEffect(() => {
+    if (!anyRunning) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = () => { if (active) void refreshHistory().catch(() => {}).finally(() => { if (active) timer = setTimeout(tick, document.hidden ? HIDDEN_POLL_MS : HISTORY_POLL_MS); }); };
+    timer = setTimeout(tick, document.hidden ? HIDDEN_POLL_MS : HISTORY_POLL_MS);
+    return () => { active = false; clearTimeout(timer); };
+  }, [anyRunning, refreshHistory]);
+  useEffect(() => {
+    seen.current ??= seenTasks.get();
+    const record = seen.current;
+    const now = Date.now();
+    let offer = false;
+    for (const item of history) {
+      const task = tasks.current.get(item.id);
+      if (item.status === "running") {
+        if (!task || task.done) tasks.current.set(item.id, { startedAt: now, done: false, noticed: false });
+        else if (now - task.startedAt >= NOTICE_AFTER_MS) offer = true;
+        continue;
+      }
+      // A conversation first seen already finished is old news, never a new result.
+      if (!(item.id in record)) record[item.id] = item.updatedAt;
+      if (task && !task.done) {
+        task.done = true;
+        const kind = noticeKindFor(item.status);
+        if (kind && !task.noticed) task.noticed = showTaskNotice(kind, item.title, () => open(item.id));
+      }
+    }
+    if (offer && noticeOfferOpen()) setNoticeOffer(true);
+    setUnread(history.filter((item) => item.status !== "running" && item.id in record && item.updatedAt > record[item.id] && item.id !== selection.current).length);
+    seenTasks.set(record);
+  }, [history]);
+  useEffect(() => {
+    // Looking at a conversation while the tab is shown marks it seen.
+    const mark = () => {
+      if (document.hidden || !conversation || conversation.status === "running") return;
+      seen.current ??= seenTasks.get();
+      if (seen.current[conversation.id] !== conversation.updatedAt) { seen.current[conversation.id] = conversation.updatedAt; seenTasks.set(seen.current); }
+      setUnread(history.filter((item) => item.status !== "running" && seen.current && item.id in seen.current && item.updatedAt > seen.current[item.id] && item.id !== conversation.id).length);
+    };
+    mark();
+    document.addEventListener("visibilitychange", mark);
+    return () => document.removeEventListener("visibilitychange", mark);
+  }, [conversation?.id, conversation?.updatedAt, conversation?.status, history]);
+  useEffect(() => { document.title = unread ? `(${unread}) موحسن` : "موحسن"; }, [unread]);
+
+  useEffect(() => {
+    const viewport = thread.current, content = threadContent.current;
+    if (!viewport || !content) return;
+    followEnd.current = true;
+    let frame = 0;
+    let size = { width: viewport.clientWidth, height: viewport.clientHeight, content: viewport.scrollHeight };
+    const onScroll = () => {
+      // Reaching the end always opts back in, including while an entry's CSS
+      // animation temporarily changes scroll overflow without changing its box.
+      if (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 64) {
+        followEnd.current = true;
+        return;
+      }
+      // Layout changes can emit a scroll event before ResizeObserver runs.
+      // They must not turn a reader following the latest answer into history mode.
+      if (viewport.clientWidth === size.width && viewport.clientHeight === size.height && viewport.scrollHeight === size.content)
+        followEnd.current = false;
+    };
+    const resize = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (followEnd.current) viewport.scrollTop = viewport.scrollHeight;
+        size = { width: viewport.clientWidth, height: viewport.clientHeight, content: viewport.scrollHeight };
+      });
+    };
+    const observer = new ResizeObserver(resize);
+    observer.observe(viewport); observer.observe(content);
+    viewport.addEventListener("scroll", onScroll, { passive: true });
+    resize();
+    return () => { observer.disconnect(); cancelAnimationFrame(frame); viewport.removeEventListener("scroll", onScroll); };
+  }, [conversation?.id, hasThread]);
+
+  useEffect(() => {
+    if (followEnd.current && thread.current) thread.current.scrollTop = thread.current.scrollHeight;
   }, [conversation?.messages.length, conversation?.progress, conversation?.status]);
 
   const running = status === "running";
@@ -246,18 +387,21 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
   // The brain's questions take the input's place, one at a time, as in Claude.
   const asking = answering && !!conversation?.question?.fields?.length;
 
-  async function act(operation: () => Promise<Conversation>) {
-    if (busy) return;
+  async function act(operation: () => Promise<Conversation>): Promise<boolean> {
+    if (busy) return false;
+    followEnd.current = true;
     setBusy(true);
     setError("");
     try {
       const result = await operation();
       setConversation(result);
       setSelectedId(result.id);
-      setBrowserOpen(true);
-      await refreshHistory();
+      // A sidebar refresh failure must not make a successful send look rejected.
+      await refreshHistory().catch(() => {});
+      return true;
     } catch (caught) {
       setError(messageOf(caught));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -282,11 +426,13 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
     event?.preventDefault();
     if (!canSend) return;
     if(!selectedId&&browserAccount.trim()&&!/^[a-zA-Z0-9_-]{1,128}$/.test(browserAccount.trim())){setError('استخدم حروفًا إنجليزية وأرقامًا وشرطة لاسم حساب المتصفح.');return;}
-    const text = draft.trim();
-    setDraft("");
-    await act(() => selectedId
+    // Send the actual input bytes. The server owns display trimming and must
+    // detect any change before promising to save a literal note exactly.
+    const text = draft;
+    const sent = await act(() => selectedId
       ? api<Conversation>(`/api/chat/conversations/${selectedId}/messages`, { method: "POST", body: JSON.stringify({ text }) })
-      : api<Conversation>("/api/chat/conversations", { method: "POST", body: JSON.stringify({ goal: text,browserAccount:browserAccount.trim()||null }) }));
+      : api<Conversation>("/api/chat/conversations", { method: "POST", body: JSON.stringify({ goal: text, ...(browserAccount.trim() ? { browserAccount: browserAccount.trim() } : {}) }) }));
+    if (sent) setDraft((current) => current === text ? "" : current);
     composer.current?.focus();
   }
   function onComposerKey(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -349,12 +495,15 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
   }
 
   function open(id: string) {
-    if (id !== selectedId) setConversation(null);
+    if (id !== selectedId) { setConversation(null); setBrowserOpen(false); openedBy.current = null; autoOpened.current = null; }
     setSelectedId(id);
-    setBrowserOpen(true);
     setError("");
     setSidebarOpen(false);
   }
+  function showPanel() { openedBy.current = "user"; setBrowserOpen(true); }
+  function hidePanel() { openedBy.current = "closed"; setBrowserOpen(false); }
+  function chooseSetting(value: PanelSetting) { panelSetting.set(value); setSetting(value); }
+  async function enableNotices() { await requestNoticePermission(); setNoticeOffer(false); }
 
   const empty = !conversation || !conversation.messages.length;
   // The Chrome bar belongs to Google Ads work: campaign events, or a campaign asked for in this conversation.
@@ -386,14 +535,17 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
       </div>
       <button className={styles.newChat} onClick={startNew}><SquarePen size={16} />محادثة جديدة</button>
       <div className={styles.history}>
-        {history.length ? <span className={styles.historyLabel}>المحادثات</span> : <p className={styles.historyEmpty}><MessageSquare size={16} />ستظهر محادثاتك هنا.</p>}
+        {history.length ? <span className={styles.historyLabel}>المحادثات{unread ? <span className={styles.unreadBadge} aria-label={`${unread} غير مقروء`}>{unread}</span> : null}</span> : <p className={styles.historyEmpty}><MessageSquare size={16} />ستظهر محادثاتك هنا.</p>}
         {history.map((item) => {
           const current = item.id === selectedId;
           const shown = itemMenu === item.id;
           return <div key={item.id} className={`${styles.historyItem} ${current ? styles.current : ""} ${shown ? styles.menuShown : ""}`} data-item-menu="">
             <button className={styles.historyOpen} aria-current={current ? "true" : undefined} onClick={() => open(item.id)} title={item.title}>
-              {item.status === "running" ? <span className={styles.livePip} role="img" aria-label="يعمل الآن" /> : null}
+              {item.status === "running" ? <span className={styles.livePip} role="img" aria-label="يعمل الآن" />
+                : item.status === "idle" && seen.current && item.id in seen.current && item.updatedAt > seen.current[item.id] && !current ? <span className={styles.doneDot} role="img" aria-label="اكتمل" /> : null}
               <span dir="auto">{item.title}</span>
+              {item.status === "waiting_input" || item.status === "waiting_approval" || item.status === "waiting_user" ? <span className={`${styles.taskTag} ${styles.needs}`}>تحتاجك</span>
+                : item.status === "failed" ? <span className={`${styles.taskTag} ${styles.failed}`}>تعذّر</span> : null}
             </button>
             <button className={styles.itemMenuButton} aria-label={`خيارات المحادثة: ${item.title}`} aria-haspopup="menu" aria-expanded={shown} onClick={() => setItemMenu(shown ? null : item.id)}><MoreHorizontal size={16} /></button>
             {shown ? <div className={styles.itemMenu} role="menu">
@@ -404,6 +556,10 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
       </div>
       <div className={styles.account}>
         {menuOpen ? <div className={styles.menu}>
+          <label className={styles.settingRow}><span>اعرض المتصفح</span>
+            <select value={setting} onChange={(event) => chooseSetting(event.target.value as PanelSetting)}>{PANEL_SETTINGS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+          </label>
+          {onOpenTool ? <button onClick={() => { setMenuOpen(false); onOpenTool("desktop"); }}><Laptop size={15} />سطح المكتب</button> : null}
           <button onClick={() => { setMenuOpen(false); onAdvanced(); }}><Settings2 size={15} />الأدوات المتقدمة</button>
           <button onClick={onSignOut}><LogOut size={15} />تسجيل الخروج</button>
         </div> : null}
@@ -415,9 +571,15 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
       <header className={styles.topbar}>
         <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="فتح القائمة" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
         <span dir="auto">{conversation?.title !== "محادثة جديدة" ? conversation?.title : ""}</span>
-        {conversation?.browser && !browserOpen ? <button className={styles.showBrowser} onClick={() => setBrowserOpen(true)}><Globe size={15} />المتصفح</button> : null}
+        {conversation?.browser && !browserOpen && visibility?.canView !== false ? <button className={`${styles.showBrowser} ${running ? styles.background : ""}`} onClick={showPanel} aria-label="عرض المتصفح" data-testid="browser-chip">
+          {running ? <span className={styles.livePip} aria-hidden="true" /> : <Globe size={15} />}{running ? "المتصفح يعمل في الخلفية · عرض" : "المتصفح · عرض"}</button> : null}
         {conversation ? <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="محادثة جديدة" onClick={startNew}><SquarePen size={18} /></button> : null}
       </header>
+      {noticeOffer ? <div className={styles.noticeBar} role="status" data-testid="notice-offer">
+        <span>مهمة تعمل في الخلفية منذ أكثر من 20 ثانية. أعلمك عند انتهاء المهام حين يكون التبويب مخفيًا؟</span>
+        <button type="button" className={styles.primary} onClick={() => void enableNotices()}>تفعيل الإشعارات</button>
+        <button type="button" className={styles.secondary} onClick={() => { declineNoticeOffer(); setNoticeOffer(false); }}>ليس الآن</button>
+      </div> : null}
       {onOpenTool ? <ChromeExtensionPanel relevant={adsConversation} /> : null}
       {empty ? <div className={styles.welcome}>
         <span className={styles.welcomeMark} aria-hidden="true">م</span>
@@ -426,11 +588,11 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
         <div className={styles.suggestions}>
           {SUGGESTIONS.map((text) => <button key={text} type="button" onClick={() => { setDraft(text); composer.current?.focus(); }}>{text}</button>)}
         </div>
-        {conversation && !conversation.configured ? <p className={styles.problem} role="alert">المحادثة بلا نموذج الآن: أُوقفت منصات الذكاء الاصطناعي الخارجية، ونموذج موحسن الخاص لم يتعلم المحادثة بعد.</p> : null}
+        {(conversation?.configured ?? chatConfigured) === false ? <p className={styles.localMode} role="status">موحسن يعمل بقدرات محلية محددة: الحساب، واسترجاع الذاكرة والمستندات، والبحث. المحادثة الحرة غير متاحة في هذه الجلسة.</p> : null}
         {error ? <p className={styles.problem} role="alert">{error}</p> : null}
       </div> : <>
-        <div className={styles.thread} role="log" aria-label="المحادثة">
-          <div className={styles.column}>
+        <div ref={thread} className={styles.thread} role="log" aria-label="المحادثة">
+          <div ref={threadContent} className={styles.column}>
             {conversation!.messages.map((message, index) => <article key={message.id} className={message.role === "user" ? styles.userTurn : styles.assistantTurn}>
               {message.role === "user" ? <p dir="auto">{message.text}</p> : <Markdown text={asking && index === conversation!.messages.length - 1 ? withoutQuestionList(message.text) : message.text} />}
               {message.role === "assistant" && message.text.trim() ? <CopyButton text={message.text} /> : null}
@@ -454,16 +616,15 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
               <button type="button" className={styles.secondary} onClick={() => onOpenTool("integrations")}><Settings2 size={15} />حالة مزودي النماذج</button>
               <button type="button" className={styles.secondary} onClick={() => onOpenTool("executor")}>المنفّذ المحلي (مهام محددة فقط)</button>
             </div> : null}
-            <div ref={end} />
           </div>
         </div>
         <div className={styles.dock}>{asking ? <QuestionPanel key={conversation!.question!.id} fields={conversation!.question!.fields!} busy={busy}
-            onSubmit={text => void act(() => post("messages", { text }))}
+            onSubmit={(_text, answers) => void act(() => post("messages", { answers, questionId: conversation!.question!.id }))}
             onStop={conversation!.question!.options.some(option => option.id === "stop") ? () => void act(() => post("respond", { questionId: conversation!.question!.id, optionId: "stop" })) : undefined} />
           : <>{form}<p className={styles.dockHint}><kbd>Enter</kbd> للإرسال، و<bdi dir="ltr"><kbd>Shift</kbd> + <kbd>Enter</kbd></bdi> لسطر جديد</p></>}</div>
       </>}
     </main>
-    {showBrowser ? <BrowserPanel conversation={conversation!} onClose={() => setBrowserOpen(false)} onError={setError} busy={busy} onRestore={()=>void act(()=>post("browser/restore",{}))} onReview={()=>void act(()=>post("browser/review",{reviewed:true,checkpointToken:conversation?.browser?.recoveryToken}))} /> : null}
+    {showBrowser ? <BrowserPanel conversation={conversation!} reason={visibility?.level === 3 ? visibility.reason : null} onClose={hidePanel} onError={setError} busy={busy} onRestore={()=>void act(()=>post("browser/restore",{}))} onReview={()=>void act(()=>post("browser/review",{reviewed:true,checkpointToken:conversation?.browser?.recoveryToken}))} /> : null}
     <DeleteDialog target={deleting} busy={deleteBusy} error={deleteError} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} />
     {notice ? <div className={styles.toast} role="status"><Check size={15} />{notice}</div> : null}
   </div>;

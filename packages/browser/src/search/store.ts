@@ -3,8 +3,8 @@ import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import type { SearchOutcome } from './engine.js';
 
-export const SEARCH_POLICY_VERSION = 'owner-sql-public-index-v4';
-export const PROVIDER_INTERVALS: Readonly<Record<string, number>> = Object.freeze({ Wikipedia: 1000, 'Stack Exchange': 1000, Crossref: 1000, 'Hacker News': 1000, arXiv: 3000 });
+export const SEARCH_POLICY_VERSION = 'owner-sql-public-web-v5';
+export const PROVIDER_INTERVALS: Readonly<Record<string, number>> = Object.freeze({ 'Bing RSS': 1000, 'DuckDuckGo HTML': 1000, Wikipedia: 1000, 'Stack Exchange': 1000, Crossref: 1000, 'Hacker News': 1000, arXiv: 3000 });
 export const searchHash = (text: string) => createHash('sha256').update(text).digest('hex');
 export const searchOwner = (ownerId: string) => z.string().min(1).max(200).parse(ownerId);
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -14,7 +14,7 @@ const cachedOutcome = z.object({
     coverage: z.literal('local_only').optional(), freshness:z.literal('indexed_snapshot').optional(), fetchedAt: z.iso.datetime().optional(), expiresAt: z.iso.datetime().optional(),
     contentHash: hash.optional(), sourceHash: hash.optional(), trust: z.literal('untrusted').optional(),
   }).strict()).max(20),
-  fetchedAt: z.iso.datetime(), freshness: z.enum(['fresh','cached','indexed_snapshot']), coverage: z.enum(['specialized_sources','local_only','mixed']),
+  fetchedAt: z.iso.datetime(), freshness: z.enum(['fresh','cached','indexed_snapshot']), coverage: z.enum(['web_sources','specialized_sources','local_only','mixed']),
   failures: z.array(z.object({ provider: z.string().max(100), kind: z.enum(['rate_limited','unavailable','invalid_response']) }).strict()).max(20),
   limitations: z.array(z.string().max(1000)).max(20),
 }).strict();

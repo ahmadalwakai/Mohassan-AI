@@ -51,6 +51,10 @@ test('a task runs from one message through sign-in, a code and an approval', asy
     for (const hidden of ['نظرة عامة', 'القدرات', 'النظام متصل', 'مساحة العمل']) await expect(page.getByText(hidden)).toHaveCount(0);
 
     await send(page, 'مرحبا');
+    await expect(page.getByRole('log').getByText('مرحبًا! كيف أساعدك؟')).toBeVisible();
+    // A substantive model request retains the Markdown-rendering coverage now
+    // that a standalone greeting is deliberately handled by the local brain.
+    await send(page, 'اشرح باختصار فوائد تنظيم المهام في قائمة');
     await expect(page.getByRole('log').getByText('إجابة')).toBeVisible();
     await expect(page.getByRole('log').locator('li')).toHaveCount(2);
     await expect(page.getByRole('complementary')).toHaveCount(0);

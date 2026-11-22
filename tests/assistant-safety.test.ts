@@ -268,7 +268,12 @@ it('refreshes a stale click in command chat and clicks only the newly observed s
   const database = await store();
   let conversationId: string;
   const selectedRefs: string[] = [];
-  let refreshedPrompt: string | undefined;
+  const dispatchedRefs: string[] = [];
+  const act = browser.act.bind(browser);
+  browser.act = async (...args: Parameters<AgentBrowser['act']>) => {
+    if (args[2].kind === 'click') dispatchedRefs.push(args[2].ref!);
+    return act(...args);
+  };
   const control = await createCommandChatControl(database.db, configuration(async (_url, init) => {
     const request = JSON.parse(String(init?.body));
     const prompt: string = request.messages.at(-1).content;
@@ -284,8 +289,6 @@ it('refreshes a stale click in command chat and clicks only the newly observed s
         button.textContent = 'Delete account';
         button.after(replacement);
       });
-    } else {
-      refreshedPrompt = prompt;
     }
     selectedRefs.push(selectedRef);
     return response(request.model, { tool: 'click', ref: selectedRef });
@@ -299,13 +302,16 @@ it('refreshes a stale click in command chat and clicks only the newly observed s
     const chat = await control.detail(owner, conversationId);
     expect(chat.status, chat.error ?? '').toBe('idle');
     expect(chat.messages.at(-1)?.text).toBe('Clicked the safe button.');
-    expect(selectedRefs).toHaveLength(2);
-    expect(selectedRefs[1]).not.toBe(selectedRefs[0]);
-    expect(refreshedPrompt).toContain('button "Delete account"');
+    expect(selectedRefs).toHaveLength(1);
+    expect(dispatchedRefs).toHaveLength(2);
+    expect(dispatchedRefs[0]).toBe(selectedRefs[0]);
+    expect(dispatchedRefs[1]).not.toBe(dispatchedRefs[0]);
     const handle = await conversationPage(conversationId);
+    expect(await handle.getByRole('button', { name: 'Delete account', exact: true }).count()).toBe(1);
     expect(await handle.locator('#clicks').textContent()).toBe('["Safe action"]');
     expect(await database.db.selectFrom('chat_runs').select('status').executeTakeFirstOrThrow()).toEqual({ status: 'completed' });
   } finally {
+    browser.act = act;
     await control.shutdown();
     await database.close();
   }
@@ -393,7 +399,9 @@ describe('instruction context in the assistant', () => {
       loadSkill: async (...args) => { loads++; return skills.loadInstruction(...args); },
     });
     try {
-      const item = await control.create(owner, { goal: mode === 'disabled' ? 'Use verified-web-research.' : 'Compute 2 plus 2.' }); await control.settled(item.id);
+      // A deterministic calculation now correctly bypasses the model entirely.
+      // Use unrelated writing to exercise the unavailable model tool boundary.
+      const item = await control.create(owner, { goal: mode === 'disabled' ? 'Use verified-web-research.' : 'Write a short birthday greeting.' }); await control.settled(item.id);
       expect(calls).toBe(1); expect(loads).toBe(0);
       expect(await database.db.selectFrom('chat_events').select('id').where('kind', '=', 'skill_context').execute()).toEqual([]);
       expect((await database.db.selectFrom('chat_model_receipts').select('status').executeTakeFirstOrThrow()).status).toBe('invalid');
@@ -411,7 +419,7 @@ describe('instruction context in the assistant', () => {
       loadSkill: skills.loadInstruction,
     });
     try {
-      const item = await control.create(owner, { goal: 'Use verified-web-research and inspect this form.' }); await control.settled(item.id);
+      const item = await control.create(owner, { goal: `Use verified-web-research and inspect the form at ${origin}/form.` }); await control.settled(item.id);
       expect((await control.detail(owner, item.id)).status).toBe('waiting_approval'); expect(requests).toEqual([]);
       expect(await database.db.selectFrom('chat_effect_receipts').selectAll().execute()).toEqual([]);
       expect(await database.db.selectFrom('skill_grants').selectAll().execute()).toEqual([]);
