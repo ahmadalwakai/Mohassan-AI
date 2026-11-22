@@ -31,6 +31,7 @@ import type { ConversationShadow } from './assistant/conversation-state-shadow.j
 import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
 import { composePlan, planningQuestion, planningTask } from './assistant/planner.js';
+import { buildSiteReply, siteAnswers, siteCard, siteCommandTurn, siteTask, type SitesChatPort } from './assistant/site-builder.js';
 import { composeDocumentSpec, documentCreatedReply, documentEditedReply, documentInfoReply, documentQuestion, documentTask, noSourceReply, unsupportedDocumentReply, type DocumentEditTask, type DocumentOperation } from './assistant/documents.js';
 import { PdfError, parsePageSelection } from '@mohassan/pdf';
 import type { DocumentControl, DocumentEdit, DocumentInput } from './documents.js';
@@ -158,6 +159,8 @@ export interface CommandChatConfig {
   campaignSleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
   /** Mohassan's own Ads model (owner-only lab): an English campaign sentence is handled by brain + model, with no chat model. */
   adsModel?: AdsModelChat;
+  /** Generated websites without a model (owner decision 2026-11-22): cards for missing content, then the site from the user's words. */
+  sites?: SitesChatPort;
   /**
    * The owner's own computer (desktop app): files, projects, programs, windows and the
    * screen, parsed and executed without a model. Owner-only; absent on the cloud server.
@@ -1841,7 +1844,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       if (userFactAssessment.candidate && !(legacyMemoryStatement?.scope === 'legacy_adapter_ack_only' && legacyMemoryStatement.eligible)) {
         const ar = /\p{Script=Arabic}/u.test(request);
-        const freshLiteral = !state.writer && !state.planner && !state.document && !state.adsBrief && !state.hands && !state.pendingTask && !state.pendingComputer && !state.pendingDesktop
+        const freshLiteral = !state.site && !state.writer && !state.planner && !state.document && !state.adsBrief && !state.hands && !state.pendingTask && !state.pendingComputer && !state.pendingDesktop
           && state.computationMemory === undefined && (!state.steps && state.trail.every(entry => entry.action === 'asked the user') || state.userFactMemory !== undefined);
         if (!userFactReceipt || !userFactSupervisor || !freshLiteral) {
           await finish(id, runId, state, ar
@@ -1922,7 +1925,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         state.trail.push({ step: ++state.steps, action: `desktop ${command.kind}`, result: clean(outcome.text).slice(0, 1100), changed: outcome.status === 'completed' });
         await finish(id, runId, state, vault.scrub(id, outcome.text), outcome.status === 'needs_approval' ? 'blocked' : outcome.status);
       };
-      const desktopFresh = !state.writer && !state.planner && !state.adsBrief && !state.hands && !state.pendingTask && !state.pendingComputer && !state.pendingDesktop
+      const desktopFresh = !state.site && !state.writer && !state.planner && !state.adsBrief && !state.hands && !state.pendingTask && !state.pendingComputer && !state.pendingDesktop
         && !state.steps && state.trail.every(entry => entry.action === 'asked the user');
       // A web address belongs to Mohassan's own browser (plan §6: it opens there at level 2 or 3), never to the computer's shell:
       // on 2026-11-22 eight real «افتح https://…» requests ended in «تعذر تشغيل powershell.exe» through the desktop path.
@@ -1933,7 +1936,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       if (localComputerPlan) {
         const ar = localComputerPlan.language === 'ar';
-        if (state.writer || state.planner || state.document || state.adsBrief || state.hands || state.pendingTask || state.pendingComputer || state.pendingDesktop
+        if (state.site || state.writer || state.planner || state.document || state.adsBrief || state.hands || state.pendingTask || state.pendingComputer || state.pendingDesktop
           || state.steps || !state.trail.every(entry => entry.action === 'asked the user')) {
           await finish(id, runId, state, ar ? 'لم أستبدل العمل المعلق بطلب قراءة جديد. ابدأ طلبًا جديدًا لقراءة النافذة.'
             : 'I did not replace pending work with a new read. Start a new request to read the window.', 'blocked');
@@ -2099,7 +2102,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // trace. It can re-enter the normal route without replaying any action.
       const requestTrail = state.trail.filter(entry => !entry.action.startsWith('browser_recovery '));
       const freshRequest = freshBeforeBrowser && (!requestTrail.length || Boolean(state.clarifiedRequest) && requestTrail.every(entry => entry.action === 'asked the user'));
-      const intrinsicAllowed = !handsPlan && !state.writer && !state.planner && !state.document && !state.adsBrief && freshRequest;
+      const intrinsicAllowed = !handsPlan && !state.site && !state.writer && !state.planner && !state.document && !state.adsBrief && freshRequest;
       const intrinsicStartedAt = Date.now();
       const intrinsicConversation = intrinsicAllowed ? evaluateLocalConversation(actionRequest) : null;
       const intrinsicComputation = intrinsicAllowed ? evaluateLocalComputation(actionRequest, new Date(effectiveSource.evaluatedAt)) : null;
@@ -2127,6 +2130,41 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             pending: conversation.question ? { kind: 'question_card', id: conversation.question.id } : null });
         } catch { /* The shadow never stops a run. */ }
       }
+      // A website without a model (owner, 2026-11-22): cards for whatever the brief still needs, as many as it takes,
+      // then the site is composed from the owner's own words only; later sentences in the conversation edit it.
+      // It sits before the clarifier and the web fallback: "فيه الأسئلة الشائعة" refers to the site, and
+      // "غيّر اللون إلى أزرق" after a build is an edit, not a search.
+      if (config.sites) {
+        const sitePort = config.sites;
+        if (state.site && state.questionAnswer) { state.site = siteAnswers(state.site, state.questionAnswer.fields ?? {}); state.questionAnswer = undefined; }
+        const siteFlow = state.site ?? (freshRequest ? siteTask(request) : null);
+        if (siteFlow) {
+          const lang = siteFlow.partial.lang;
+          const card = siteCard(siteFlow);
+          if (card) {
+            state.site = { ...siteFlow, asked: card.wants };
+            const question: ChatQuestion = { id: randomUUID(), prompt: card.prompt, options: [{ id: 'stop', label: lang === 'ar' ? 'توقف هنا' : 'Stop here' }], fields: card.fields };
+            await addStep(id, runId, lang === 'ar' ? 'أسئلة الموقع' : 'Website questions');
+            await pause(id, runId, state, 'waiting_user', { question: JSON.stringify(question) }, card.prompt);
+            return;
+          }
+          await addStep(id, runId, lang === 'ar' ? 'بناء الموقع' : 'Building the website');
+          const built = await buildSiteReply(sitePort, ownerId, siteFlow, id);
+          state.site = null;
+          if (built.siteId) { state.siteId = built.siteId; state.sitePendingWant = null; }
+          await finish(id, runId, state, vault.scrub(id, built.text), built.status);
+          return;
+        }
+        if (state.siteId && freshRequest) {
+          const turn = await siteCommandTurn(sitePort, ownerId, state.siteId, request, state.sitePendingWant);
+          if (turn.handled) {
+            state.sitePendingWant = turn.pendingWant ?? null;
+            await addStep(id, runId, 'تعديل الموقع');
+            await finish(id, runId, state, vault.scrub(id, turn.text), 'completed');
+            return;
+          }
+        }
+      }
       if (freshRequest && !intrinsicRuntime && !intrinsicConversation && !intrinsicComputation && state.requestResolution?.kind === 'ambiguous' && state.requestResolution.ambiguities.some(reason =>
         reason === 'missing_reference' || reason === 'missing_question' || reason === 'unclear_replacement')) {
         const attempts = (state.clarificationAttempts ?? 0) + 1;
@@ -2143,7 +2181,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // Deterministic arithmetic, units and calendar operations are shared brain
       // capabilities. They must run before the web fallback, without enabling the
       // experimental Mind route or spending a model request.
-      if (!handsPlan && !state.writer && !state.planner && !state.document && !state.adsBrief && freshRequest) {
+      if (!handsPlan && !state.site && !state.writer && !state.planner && !state.document && !state.adsBrief && freshRequest) {
         const localStartedAt = intrinsicStartedAt;
         if (intrinsicRuntime) {
           await finish(id, runId, state, intrinsicRuntime.text, 'completed');
@@ -3223,7 +3261,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         state.requestResolution = resolution;
         if (resolution.nextState) state.requestContext = resolution.nextState;
-        if ((state.writer || state.planner || state.document) && row.question) state.questionAnswer = { questionId: row.question.id, text: clean(input.text),
+        if ((state.writer || state.planner || state.document || state.site) && row.question) state.questionAnswer = { questionId: row.question.id, text: clean(input.text),
           ...(input.answers ? { fields: Object.fromEntries(input.answers.map(answer => [answer.fieldId, clean(answer.value)])) } : {}) };
         state.trail.push({ step: state.steps, action: 'asked the user', result: `user answered: ${clean(input.text).slice(0, 400)}`, changed: true });
         state.failures = 0;
@@ -3284,6 +3322,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         ? createUserFactMemoryVerificationSupervisor(clean(input.text), noteVerificationBinding, userFactMemoryVerification.source) : null;
       const initialState: BrainState = { ...newBrainState(), requestContext: resolution.nextState, requestResolution: resolution,
         ...(!input.answers && requestOriginalHash ? { requestOriginalHash } : {}),
+        // The conversation's website, so a later sentence edits it instead of starting a search.
+        ...(previousRun?.state?.siteId ? { siteId: previousRun.state.siteId, sitePendingWant: previousRun.state.sitePendingWant ?? null } : {}),
         ...(memoryVerification ? { memoryVerification } : {}),
         ...(userFactMemoryVerification ? { userFactMemoryVerification } : {}),
         previousSource,

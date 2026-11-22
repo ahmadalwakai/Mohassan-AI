@@ -140,6 +140,21 @@ export function detectRequests(text: string): SiteRequests {
   return { wants, form: FORM_WORDS.test(norm), map: MAP_WORDS.test(norm), gallery: GALLERY_WORDS.test(norm), singlePage: SINGLE_PAGE.test(norm), bilingual: BILINGUAL.test(norm) };
 }
 
+/** The word as the user typed it ("عيادة"), for quoting back, given its normalised form ("عياده"). */
+export function originalWord(text: string, normalisedWord: string): string {
+  const tokens = text.split(/[\s،,.؛;:!?؟«»"“”()]+/u).filter(Boolean);
+  for (let size = 1; size <= 3; size++) {
+    for (let start = 0; start + size <= tokens.length; start++) {
+      const words = tokens.slice(start, start + size);
+      const variants = [words.join(' ')];
+      const first = words[0]!;
+      for (const prefix of ['وال', 'بال', 'لل', 'ال', 'و', 'ف', 'ب', 'ل', 'ك']) if (first.startsWith(prefix) && first.length > prefix.length + 1) variants.push([first.slice(prefix.length), ...words.slice(1)].join(' '));
+      for (const variant of variants.reverse()) if (normalize(variant) === normalisedWord) return variant;
+    }
+  }
+  return normalisedWord;
+}
+
 /** Everything the sentence itself states. Nothing is inferred beyond kind, language and the detected words. */
 export function siteSentence(text: string): SitePartialBrief | null {
   if (!isSiteRequest(text)) return null;
@@ -154,7 +169,8 @@ export function siteSentence(text: string): SitePartialBrief | null {
   const url = findUrl(text) ?? undefined;
   const colour = colourFromWord(text);
   const requests = detectRequests(text);
-  const kindReason = kind ? (lang === 'ar' ? `ذكرتَ كلمة «${kind.word}»` : `you mentioned "${kind.word}"`) : undefined;
+  const said = kind ? originalWord(text, kind.word) : '';
+  const kindReason = kind ? (lang === 'ar' ? `ذكرتَ كلمة «${said}»` : `you mentioned "${said}"`) : undefined;
   return {
     lang,
     ...(kind ? { kind: kind.kind, kindReason } : {}),
@@ -165,7 +181,8 @@ export function siteSentence(text: string): SitePartialBrief | null {
     ...(email ? { email } : {}),
     ...(url ? { url } : {}),
     ...(colour ? { primary: colour.hex, colourWord: colour.word } : {}),
-    requested: requests.wants,
+    // A map needs the user's address or map link, so asking for a map means asking for those.
+    requested: requests.map && !requests.wants.includes('address') ? [...requests.wants, 'address'] : requests.wants,
     skipped: [],
     ...(requests.singlePage ? { singlePage: true } : {}),
     rounds: 0,

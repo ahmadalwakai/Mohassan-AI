@@ -204,7 +204,7 @@ ul, ol { margin: 0; padding: 0; }
 .facts-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); margin: 0; }
 .fact { padding: 1.5rem; text-align: center; background: var(--c-primary-soft); border-radius: var(--radius); }
 .fact dd { margin: 0; font-size: 2.2rem; font-weight: 800; color: var(--c-primary-soft-ink); line-height: 1.1; }
-.fact dt { color: var(--c-muted); font-weight: 600; margin-top: 0.3rem; }
+.fact dt { color: var(--c-primary-soft-ink); font-weight: 600; margin-top: 0.3rem; }
 ` },
     { blocks: ['posts'], css: `
 .post { padding: 1.5rem; }
@@ -219,7 +219,7 @@ ul, ol { margin: 0; padding: 0; }
 .cta { padding-block: 0 var(--space); }
 .cta-band { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1.5rem; padding: 2.25rem; border-radius: var(--radius); background: var(--c-primary-deep); color: #fff; background-image: url("assets/pattern.svg"); }
 .cta-band h2 { color: #fff; }
-.cta-band p { color: rgba(255, 255, 255, 0.85); margin: 0; }
+.cta-band p { color: #ffffff; margin: 0; }
 .cta-band .actions { margin: 0; }
 .cta-band .btn-primary { background: #fff; color: var(--c-primary-deep); }
 .cta-band .btn-ghost { color: #fff; }
@@ -249,7 +249,7 @@ ul, ol { margin: 0; padding: 0; }
     .section, .cta { animation: reveal linear both; animation-timeline: view(); animation-range: entry 0% entry 28%; }
   }
 }
-@keyframes reveal { from { opacity: 0.2; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes reveal { from { transform: translateY(16px); } to { transform: none; } }
 @media (min-width: 760px) {
   .hero-grid { grid-template-columns: 1.1fr 0.9fr; }
   .about-grid { grid-template-columns: 1.2fr 0.8fr; }

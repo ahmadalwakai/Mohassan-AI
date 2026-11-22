@@ -21,6 +21,8 @@ export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
   'GET /api/auth/*', 'POST /api/auth/*',
   'POST /api/windows/companion/pair', 'POST /api/windows/companion/poll',
   'POST /api/invites/inspect', 'POST /api/invites/accept',
+  // A generated site's preview files, by a per-revision token: the sandboxed iframe sends no cookie.
+  'GET /api/sites/:id/p/:token/*',
 ]);
 
 const chat = '/api/chat/conversations';
@@ -44,6 +46,9 @@ export const MEMBER_ROUTES: ReadonlySet<string> = new Set([
   `GET ${ads}/report`, `GET ${ads}/audit`, `GET ${ads}/recommendations`, `GET ${ads}/experiences`, `POST ${ads}/market`, `POST ${ads}/booking-map`,
   `GET ${ads}/drafts`, `POST ${ads}/drafts`, `GET ${ads}/drafts/:id`, `GET ${ads}/drafts/:id/launch-hash`, `POST ${ads}/drafts/:id/revise`,
   ...['save', 'validate', 'verify', 'publish', 'launch', 'reconcile', 'discard', 'approve-publish', 'approve-launch'].map(step => `POST ${ads}/drafts/:id/${step}`),
+  // The member's own generated websites: build, preview, edit, images and ZIP. Publishing stays owner-only for now.
+  'GET /api/sites', 'POST /api/sites', 'POST /api/sites/draft', 'GET /api/sites/:id', 'POST /api/sites/:id/brief', 'POST /api/sites/:id/commands', 'POST /api/sites/:id/undo', 'POST /api/sites/:id/regenerate',
+  'POST /api/sites/:id/images', 'DELETE /api/sites/:id/images/:imageId', 'GET /api/sites/:id/export', 'DELETE /api/sites/:id',
 ]);
 
 /** Requests that start chat work, counted against a member's daily allowance. */
@@ -111,6 +116,7 @@ interface MemberRouteOptions {
   dailyRuns: number;
   imagesAvailable: () => boolean;
   adsAvailable: () => boolean;
+  sitesAvailable?: () => boolean;
 }
 
 export async function registerMemberRoutes(app: FastifyInstance, options: MemberRouteOptions) {
@@ -123,7 +129,7 @@ export async function registerMemberRoutes(app: FastifyInstance, options: Member
 
   app.get('/api/access', async (request) => {
     const user = await options.owner(request), role = await options.role(request);
-    const services = role === 'owner' ? ['all'] : ['chat', 'memory', ...(options.adsAvailable() ? ['ads'] : []), ...(options.imagesAvailable() ? ['images'] : [])];
+    const services = role === 'owner' ? ['all'] : ['chat', 'memory', ...(options.adsAvailable() ? ['ads'] : []), ...(options.imagesAvailable() ? ['images'] : []), ...(options.sitesAvailable?.() ? ['sites'] : [])];
     const used = role === 'member' ? await memberRunsToday(db, user.id) : 0;
     return { user: { id: user.id, name: user.name, email: user.email }, role, services, ...(role === 'member' ? { quota: { dailyRuns: options.dailyRuns, used } } : {}) };
   });

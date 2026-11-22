@@ -36,6 +36,8 @@ import { registerSkillRoutes } from './skills.js';
 import { registerWindowsRoutes, windowsMigration, revokeWindowsSession } from '@mohassan/windows';
 import { createAssistantTools } from './assistant/tools.js';
 import { createStudioAiControl, registerStudioAiRoutes } from './studio-ai.js';
+import { createSitesControl, registerSiteRoutes } from './sites.js';
+import { createVercelPublisher, noPublisher } from './sites-publish.js';
 import { createStudioLiveControl } from './studio-live.js';
 import { createBrowserTaskControl } from './browser-task.js';
 import { createCommandChatControl, registerCommandChatRoutes } from './command-chat.js';
@@ -98,6 +100,8 @@ export interface AppConfig {
   testRequestLimit?:number;
   /** Chat requests a member may start in 24 hours. */
   memberDailyRuns?:number;
+  /** Generated websites: where they publish. Absent or 'none': preview and ZIP only. */
+  sites?:{vercelToken?:string;vercelTeamId?:string;publishTarget?:'vercel'|'none';fetch?:typeof fetch};
   /** The owner's own Windows session (desktop app): off on the cloud deployment and in tests unless enabled. */
   desktop?:{enabled:boolean;dataDir?:string;projectsRoot?:string;roots?:string[];screenshotsDir?:string};
 }
@@ -311,7 +315,10 @@ export async function createApplication(config: AppConfig) {
   if(desktop)app.addHook('onClose',async()=>{await desktop.dispose();});
   const googleAds=createGoogleAdsControl(database.db,{...config.googleAds,webOrigin:config.webOrigin,fetchPage:config.googleAds?.fetchPage??landingPageReader(config.browser)});
   await registerGoogleAdsRoutes(app,{control:googleAds,owner});
-  await registerMemberRoutes(app,{db:database.db,auth,webOrigin:config.webOrigin,owner,role,dailyRuns:memberDailyRuns,adsAvailable:()=>googleAds.configured,imagesAvailable:()=>false});
+  // Generated websites (no model): composed from a brief, previewed by token, exported as ZIP, published to Vercel when a token is set.
+  const sites=await createSitesControl(database.db,{tokenSecret:config.internalSecret,publisher:config.sites?.publishTarget==='vercel'?createVercelPublisher({token:config.sites.vercelToken,teamId:config.sites.vercelTeamId,fetch:config.sites.fetch}):noPublisher});
+  await registerSiteRoutes(app,{control:sites,owner,role});
+  await registerMemberRoutes(app,{db:database.db,auth,webOrigin:config.webOrigin,owner,role,dailyRuns:memberDailyRuns,adsAvailable:()=>googleAds.configured,imagesAvailable:()=>false,sitesAvailable:()=>true});
   const assistantTools=createAssistantTools({memory,coding,studio,studioChange:studioAi.available,runtime,windows,googleAds});
   const inference=await createInferenceControl(database.db,{...config.inference,groq:{apiKey:config.groqApiKey,fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b']},fetch:config.aiFetch});
   await registerInferenceRoutes(app,{control:inference,owner});
@@ -426,7 +433,7 @@ export async function createApplication(config: AppConfig) {
   const documentLink=(id:string)=>`${config.webOrigin}/api/documents/${id}/content`;
   // The own image reader (packages/vision): exported weights in artifacts/vision/ocr-v1 unless MOHASSAN_OCR_MODEL_DIR points elsewhere.
   const imageReader=await createImageReader({modelDir:process.env.MOHASSAN_OCR_MODEL_DIR??join(process.cwd(),'artifacts','vision','ocr-v1'),workers:Number(process.env.MOHASSAN_OCR_WORKERS??3)});
-  const chat=await createCommandChatControl(database.db,{...(shadowRouter?{shadowRouter}:{}),...(conversationShadow?{conversationShadow}:{}),...(judgeShadow?{judgeShadow}:{}),...(imageReader.available?{imageReader}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),...(desktop?{desktop:{parse:(text:string)=>desktop.parse(text),describe:(command,lang)=>desktop.describe(command,lang),execute:(command,options)=>desktop.execute(command,options)}}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,documents:{control:documents,link:documentLink},inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,readPage,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',accountFullAccess:(ownerId,tx)=>lockOwnerToolAccess(tx,ownerId),accountActive:async(ownerId,tx)=>{const role=await roleOf(tx,ownerId);if(role!=='member')return role!==null;return Boolean(await tx.selectFrom('workspace_members').select('user_id').where('user_id','=',ownerId).where('role','=','member').where('disabled_at','is',null).forShare().executeTakeFirst());},memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
+  const chat=await createCommandChatControl(database.db,{...(shadowRouter?{shadowRouter}:{}),...(conversationShadow?{conversationShadow}:{}),...(judgeShadow?{judgeShadow}:{}),...(imageReader.available?{imageReader}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),sites:{createFromBrief:(ownerId,brief,options)=>sites.create(ownerId,{brief,conversationId:options.conversationId,role:options.role}),command:(ownerId,siteId,input)=>sites.command(ownerId,siteId,input),detail:(ownerId,siteId)=>sites.detail(ownerId,siteId),roleOf:ownerId=>roleOf(database.db,ownerId),link:siteId=>`${new URL(config.webOrigin).origin}/#sites=${siteId}`},...(desktop?{desktop:{parse:(text:string)=>desktop.parse(text),describe:(command,lang)=>desktop.describe(command,lang),execute:(command,options)=>desktop.execute(command,options)}}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,documents:{control:documents,link:documentLink},inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,readPage,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',accountFullAccess:(ownerId,tx)=>lockOwnerToolAccess(tx,ownerId),accountActive:async(ownerId,tx)=>{const role=await roleOf(tx,ownerId);if(role!=='member')return role!==null;return Boolean(await tx.selectFrom('workspace_members').select('user_id').where('user_id','=',ownerId).where('role','=','member').where('disabled_at','is',null).forShare().executeTakeFirst());},memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
     learningContext:learning.context,chromeExtension,
     knowledgeSearch:async(ownerId,query)=>(await learning.knowledge.retrieve(ownerId,query)).map(({title,text,source})=>({title,text,source})),
     ...(config.skillEngineEnabled?{recordSkillGap,skillContext:skills.context,loadSkill:skills.loadInstruction,runSkill:async(ownerId,input,context)=>{

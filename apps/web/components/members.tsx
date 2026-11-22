@@ -7,6 +7,7 @@ import dynamic from "next/dynamic";
 import styles from "./members.module.css";
 
 const GoogleAdsWorkspace = dynamic(() => import("./google-ads-workspace").then(module => module.GoogleAdsWorkspace));
+const SitesWorkspace = dynamic(() => import("./sites-workspace").then(module => module.SitesWorkspace));
 
 export type Access = { user: { id: string; name: string; email: string }; role: "owner" | "member"; services: string[]; quota?: { dailyRuns: number; used: number } };
 type Session = { user: { id: string; name: string; email: string } };
@@ -201,6 +202,7 @@ export function MemberTools({ access, onChat, onSignOut }: { access: Access; onC
       </div>
     </header>
     <main className={styles.memberMain}>
+      {access.services.includes("sites") ? <><h1>المواقع</h1><SitesWorkspace offline={false} /></> : null}
       <h1>Google Ads</h1>
       {ads ? <GoogleAdsWorkspace offline={false} /> : <p className={styles.empty}>ربط Google Ads غير متاح بعد. سيظهر هنا عندما يفعّله صاحب الحساب.</p>}
     </main>

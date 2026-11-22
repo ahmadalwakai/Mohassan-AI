@@ -113,6 +113,9 @@ export function deriveTheme(primaryHex: string, mood: SiteMood): Theme {
   primaryDeep = ensureContrast(primaryDeep, surface, 4.6, 'darker');
   const primaryInk = textOn(primary, ink);
   const primarySoft = hsl(base.h, Math.min(70, Math.max(20, base.s * 0.6)), 93);
+  // Links and ghost buttons also sit on the pale backgrounds (current page, hover, social chips).
+  primaryDeep = ensureContrast(primaryDeep, primarySoft, 4.6, 'darker');
+  primaryDeep = ensureContrast(primaryDeep, surfaceAlt, 4.6, 'darker');
   const primarySoftInk = ensureContrast(primaryDeep, primarySoft, 4.6, 'darker');
   const accentHue = (base.h + settings.accentShift + 360) % 360;
   const accent = hsl(accentHue, Math.min(80, Math.max(45, base.s)), mood === 'bold' ? 52 : 58);
@@ -136,6 +139,9 @@ export function themePairs(theme: Theme): { name: string; foreground: string; ba
     { name: 'hero ink on hero', foreground: theme.heroInk, background: theme.heroBg, minimum: 4.5 },
     { name: 'hero muted on hero', foreground: theme.heroMuted, background: theme.heroBg, minimum: 4.5 },
     { name: 'primaryDeep link on surface', foreground: theme.primaryDeep, background: theme.surface, minimum: 4.5 },
+    { name: 'primaryDeep on surfaceAlt (current page, social)', foreground: theme.primaryDeep, background: theme.surfaceAlt, minimum: 4.5 },
+    { name: 'primaryDeep on primarySoft (ghost hover)', foreground: theme.primaryDeep, background: theme.primarySoft, minimum: 4.5 },
+    { name: 'fact label on primarySoft', foreground: theme.primarySoftInk, background: theme.primarySoft, minimum: 4.5 },
   ];
 }
 

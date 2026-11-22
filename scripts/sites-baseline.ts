@@ -7,7 +7,7 @@
  * Every number in summary.md comes from this run; nothing is a target.
  */
 import { createServer, type Server } from 'node:http';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { checkSite, composeSite, contentTypeFor, zipFiles, type SiteFile } from '@mohassan/sites';
@@ -36,13 +36,19 @@ function serve(files: SiteFile[]): Promise<{ server: Server; origin: string }> {
   return new Promise(resolvePromise => server.listen(0, '127.0.0.1', () => { const address = server.address(); resolvePromise({ server, origin: `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}` }); }));
 }
 
+/** A free loopback port for Chrome's debugging endpoint, so two runs never collide. */
+function freePort(): Promise<number> {
+  return new Promise(resolvePromise => { const probe = createServer(); probe.listen(0, '127.0.0.1', () => { const address = probe.address(); const port = typeof address === 'object' && address ? address.port : 0; probe.close(() => resolvePromise(port)); }); });
+}
+
 async function measureInBrowser(run: ScenarioRun, files: SiteFile[], dir: string): Promise<Pick<Row, 'lighthouse' | 'screenshots'>> {
   const { chromium } = await import('playwright');
   const { server, origin } = await serve(files);
   const screenshots: string[] = [];
   const lighthouse: Record<string, Record<string, number | null>> = {};
   try {
-    const browser = await chromium.launch({ headless: true, args: ['--remote-debugging-port=9333'] });
+    const debugPort = await freePort();
+    const browser = await chromium.launch({ headless: true, args: [`--remote-debugging-port=${debugPort}`] });
     try {
       for (const width of WIDTHS) {
         const page = await browser.newPage({ viewport: { width, height: 900 } });
@@ -59,7 +65,9 @@ async function measureInBrowser(run: ScenarioRun, files: SiteFile[], dir: string
       try { lighthouseModule = await import('lighthouse'); } catch { lighthouseModule = null; }
       if (lighthouseModule) {
         for (const preset of ['mobile', 'desktop'] as const) {
-          const result = await lighthouseModule.default(`${origin}/index.html`, { port: 9333, output: 'json', logLevel: 'silent', onlyCategories: ['performance', 'accessibility', 'best-practices', 'seo'], formFactor: preset, screenEmulation: preset === 'desktop' ? { mobile: false, width: 1350, height: 940, deviceScaleFactor: 1, disabled: false } : { mobile: true, width: 412, height: 823, deviceScaleFactor: 1.75, disabled: false }, throttlingMethod: 'simulate' });
+          const audit = () => lighthouseModule!.default(`${origin}/index.html`, { port: debugPort, output: 'json', logLevel: 'silent', onlyCategories: ['performance', 'accessibility', 'best-practices', 'seo'], formFactor: preset, screenEmulation: preset === 'desktop' ? { mobile: false, width: 1350, height: 940, deviceScaleFactor: 1, disabled: false } : { mobile: true, width: 412, height: 823, deviceScaleFactor: 1.75, disabled: false }, throttlingMethod: 'simulate' });
+          let result: Awaited<ReturnType<typeof audit>>;
+          try { result = await audit(); } catch { await new Promise(resolvePromise => setTimeout(resolvePromise, 1500)); result = await audit(); }
           const categories = result?.lhr.categories ?? {};
           lighthouse[preset] = Object.fromEntries(Object.entries(categories).map(([key, category]) => [key, category.score === null ? null : Math.round(category.score * 100)]));
           await writeFile(join(dir, `lighthouse-${preset}.json`), JSON.stringify({ categories: lighthouse[preset], audits: Object.fromEntries(Object.entries(result?.lhr.audits ?? {}).filter(([, audit]) => audit.score !== null && audit.score < 1).map(([key, audit]) => [key, { score: audit.score, title: audit.title, displayValue: audit.displayValue }])) }, null, 2));
@@ -71,11 +79,14 @@ async function measureInBrowser(run: ScenarioRun, files: SiteFile[], dir: string
 }
 
 async function main() {
-  await rm(outDir, { recursive: true, force: true });
+  // With --only, earlier rows stay and only that scenario is replaced.
+  let rows: Row[] = [];
+  if (only) { try { rows = JSON.parse(await readFile(join(outDir, 'rows.json'), 'utf8')) as Row[]; } catch { rows = []; } await rm(join(outDir, only), { recursive: true, force: true }); }
+  else await rm(outDir, { recursive: true, force: true });
   await mkdir(outDir, { recursive: true });
-  const rows: Row[] = [];
   for (const scenario of SCENARIOS) {
     if (only && scenario.id !== only) continue;
+    rows = rows.filter(row => row.id !== scenario.id);
     const dir = join(outDir, scenario.id);
     await mkdir(dir, { recursive: true });
     try {

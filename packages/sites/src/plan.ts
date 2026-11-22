@@ -66,7 +66,7 @@ const WANT_PROMPTS: Readonly<Record<SiteLang, Partial<Record<SiteWant, Prompt>>>
     offer: { prompt: 'ما العرض في جملة واحدة كما تريد أن يقرأه الزائر؟', placeholder: 'مثلاً: استشارة تسويقية أولى مجانية هذا الشهر' },
     city: { prompt: 'في أي مدينة أو منطقة تخدم؟ (اختياري)', placeholder: 'مثلاً: دمشق' },
     tagline: { prompt: 'جملة تعريفية قصيرة تظهر تحت الاسم (اختياري).', placeholder: 'مثلاً: خدمات تنظيف للمنازل والمكاتب' },
-    address: { prompt: 'ما العنوان الذي يظهر في صفحة التواصل؟ (اختياري)', placeholder: 'مثلاً: شارع الملك فهد، مبنى 12' },
+    address: { prompt: 'ما العنوان الذي يظهر في الموقع؟ وإن أردت خريطة فألصق رابط موقعكم على خرائط Google في سطر ثانٍ.', placeholder: 'مثلاً: شارع الملك فهد، مبنى 12\nhttps://maps.app.goo.gl/…' },
   },
   en: {
     about: { prompt: 'Write the about text in your words; it goes in as is.', placeholder: 'Who you are, what you do, and for whom.' },
@@ -83,7 +83,7 @@ const WANT_PROMPTS: Readonly<Record<SiteLang, Partial<Record<SiteWant, Prompt>>>
     offer: { prompt: 'What is the offer, in one sentence as the visitor should read it?', placeholder: 'e.g. A free first marketing consultation this month' },
     city: { prompt: 'Which city or area do you serve? (optional)', placeholder: 'e.g. Manchester' },
     tagline: { prompt: 'A short line under the name (optional).', placeholder: 'e.g. Cleaning for homes and offices' },
-    address: { prompt: 'Which address should the contact page show? (optional)', placeholder: 'e.g. 12 King Street' },
+    address: { prompt: 'Which address should the site show? For a map, paste your Google Maps link on a second line.', placeholder: 'e.g. 12 King Street\nhttps://maps.app.goo.gl/…' },
   },
 };
 
@@ -139,7 +139,7 @@ function field(partial: SitePartialBrief, want: SiteWant): SiteQuestionField {
     return { id: 'colour', prompt: ar ? 'ما اللون الأساسي للموقع؟ اختر لوناً أو اكتب رمزاً سداسياً.' : 'Main colour of the site? Pick one or type a hex code.', suggestions: options.map(colour => ({ label: ar ? colour.ar : colour.en })), ...(selected >= 0 ? { selected: [selected] } : {}), placeholder: ar ? 'مثلاً #1d4ed8' : 'e.g. #1d4ed8' };
   }
   const prompt = WANT_PROMPTS[lang][want]!;
-  const multiline = !['city', 'offer', 'tagline', 'address'].includes(want);
+  const multiline = !['city', 'offer', 'tagline'].includes(want);
   return { id: want, prompt: prompt.prompt, suggestions: [], ...(multiline ? { multiline: true } : {}), placeholder: prompt.placeholder };
 }
 
@@ -150,7 +150,7 @@ export function siteQuestion(partial: SitePartialBrief): SiteQuestion | null {
   const ar = partial.lang === 'ar';
   const wants = missing.slice(0, 6);
   const kindLine = partial.kind
-    ? (ar ? `فهمتُ أنك تريد موقعاً لـ${KIND_LABELS.ar[partial.kind]}${partial.kindReason ? ` (${partial.kindReason})` : ''}${partial.name ? ` باسم «${partial.name}»` : ''}.` : `I understood you want a ${KIND_LABELS.en[partial.kind].toLocaleLowerCase()} site${partial.kindReason ? ` (${partial.kindReason})` : ''}${partial.name ? ` named "${partial.name}"` : ''}.`)
+    ? (ar ? `فهمتُ أنك تريد موقعاً ل${KIND_LABELS.ar[partial.kind]}${partial.kindReason ? ` (${partial.kindReason})` : ''}${partial.name ? ` باسم «${partial.name}»` : ''}.` : `I understood you want a ${KIND_LABELS.en[partial.kind].toLocaleLowerCase()} site${partial.kindReason ? ` (${partial.kindReason})` : ''}${partial.name ? ` named "${partial.name}"` : ''}.`)
     : (ar ? 'فهمتُ أنك تريد موقعاً.' : 'I understood you want a website.');
   const requestedLine = partial.requested.length && partial.rounds === 0
     ? (ar ? ` وطلبتَ أيضاً: ${partial.requested.map(want => WANT_LABELS.ar[want]).join('، ')}.` : ` You also asked for: ${partial.requested.map(want => WANT_LABELS.en[want]).join(', ')}.`)
@@ -162,8 +162,8 @@ export function siteQuestion(partial: SitePartialBrief): SiteQuestion | null {
   return { prompt: intro, fields: wants.map(want => field(partial, want)), wants };
 }
 export const WANT_LABELS: Readonly<Record<SiteLang, Readonly<Record<SiteWant, string>>>> = {
-  ar: { name: 'الاسم', kind: 'النوع', contact: 'التواصل', items: 'الخدمات أو الأصناف', city: 'المدينة', hours: 'ساعات العمل', offer: 'العرض', colour: 'اللون', about: 'من نحن', team: 'الفريق', faq: 'الأسئلة الشائعة', pricing: 'الأسعار', projects: 'المشاريع', features: 'المميزات', steps: 'خطوات العمل', facts: 'الأرقام', testimonials: 'آراء العملاء', posts: 'الأخبار', tagline: 'الجملة التعريفية', address: 'العنوان' },
-  en: { name: 'name', kind: 'kind', contact: 'contact', items: 'services or items', city: 'city', hours: 'opening hours', offer: 'the offer', colour: 'colour', about: 'about', team: 'team', faq: 'FAQ', pricing: 'pricing', projects: 'projects', features: 'features', steps: 'how it works', facts: 'numbers', testimonials: 'reviews', posts: 'news', tagline: 'tagline', address: 'address' },
+  ar: { name: 'الاسم', kind: 'النوع', contact: 'التواصل', items: 'الخدمات أو الأصناف', city: 'المدينة', hours: 'ساعات العمل', offer: 'العرض', colour: 'اللون', about: 'من نحن', team: 'الفريق', faq: 'الأسئلة الشائعة', pricing: 'الأسعار', projects: 'المشاريع', features: 'المميزات', steps: 'خطوات العمل', facts: 'الأرقام', testimonials: 'آراء العملاء', posts: 'الأخبار', tagline: 'الجملة التعريفية', address: 'العنوان والخريطة' },
+  en: { name: 'name', kind: 'kind', contact: 'contact', items: 'services or items', city: 'city', hours: 'opening hours', offer: 'the offer', colour: 'colour', about: 'about', team: 'team', faq: 'FAQ', pricing: 'pricing', projects: 'projects', features: 'features', steps: 'how it works', facts: 'numbers', testimonials: 'reviews', posts: 'news', tagline: 'tagline', address: 'address and map' },
 };
 
 export const kindByLabel = (lang: SiteLang, label: string): SiteKind | null => {
@@ -248,7 +248,13 @@ export function applyAnswers(partial: SitePartialBrief, answers: Readonly<Record
         break;
       }
       case 'city': next.city = value.replace(/^(?:في|in)\s+/iu, '').slice(0, 60); break;
-      case 'address': next.address = value.slice(0, 200); { const map = findUrl(value); if (map && /maps|goo\.gl/.test(map)) next.mapUrl = map; } break;
+      case 'address': {
+        const map = findUrl(value);
+        if (map && /maps|goo\.gl|openstreetmap/i.test(map)) next.mapUrl = map;
+        const text = (map ? value.replace(map, '') : value).replace(/\s+/g, ' ').trim();
+        if (text) next.address = text.slice(0, 200);
+        break;
+      }
       case 'hours': { const hours = splitList(value).slice(0, 7).map(line => line.slice(0, 80)); if (hours.length) next.hours = hours; break; }
       case 'offer': next.offer = value.slice(0, 300); break;
       case 'tagline': next.tagline = value.slice(0, 140); break;

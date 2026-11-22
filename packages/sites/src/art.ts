@@ -4,7 +4,8 @@ import type { Theme } from './theme.ts';
 
 /** The first letter of the name, Arabic or Latin, for the monogram. */
 export function initialOf(name: string): string {
-  const trimmed = name.trim().replace(/^(?:ال|the\s+|a\s+|an\s+)/iu, '');
+  // Skip articles and honorifics ("د. سارة" → س, "Dr Amina" → A) so the mark shows the name itself.
+  const trimmed = name.trim().replace(/^(?:(?:د|م|أ|ا|الدكتور|الدكتوره|الدكتورة|دكتور|دكتوره|دكتورة|المهندس|المهندسة|الأستاذ|الأستاذة|dr|mr|mrs|ms|miss|eng|prof)\.?\s+)+/iu, '').replace(/^(?:ال|the\s+|a\s+|an\s+)/iu, '');
   const match = trimmed.match(/\p{L}/u);
   return (match?.[0] ?? name.trim().charAt(0) ?? '•').toLocaleUpperCase();
 }

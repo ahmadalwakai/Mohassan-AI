@@ -365,6 +365,10 @@ export interface BrainState {
   /** A letter waiting for the owner's answers to its one card of questions. Only code sets this. */
   writer?: import('./writer.js').WritingTask | null;
   planner?: import('./planner.js').PlanningTask | null;
+  /** A website being collected or edited in this conversation (packages/sites, no model). Only code sets this. */
+  site?: import('./site-builder.js').SiteChatState | null;
+  siteId?: string | null;
+  sitePendingWant?: { want: import('@mohassan/contracts').SiteWant; title?: string } | null;
   /** A PDF to create, waiting for the owner's answers to its one card. Only code sets this. */
   document?: import('./documents.js').DocumentTask | null;
   /** The option id of the owner's latest button answer; cleared once read. */

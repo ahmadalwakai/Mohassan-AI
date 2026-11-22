@@ -3,6 +3,7 @@ import { directRoute, namedSite, sensitiveAction } from './brain.js';
 import { hostOf, readingLabel, siteName } from './activity.js';
 import { checkAnswerLine, isDisambiguationPage, isDisambiguationTitle, isMetaLine } from './answer-check.js';
 import { releaseLines, releaseQuestion } from './releases.js';
+import { isSiteRequest } from '@mohassan/sites';
 export { siteName };
 
 /**
@@ -210,8 +211,10 @@ export function isDocumentRequest(text: string): boolean {
   return PDF_ACTION.test(text) || PDF_PATH.test(text);
 }
 
-export function notWebReason(text: string): 'memory_ads_pc' | 'reminder' | 'arithmetic' | 'planning' | 'writing' | 'document' | 'chat' | 'address' | 'empty' | null {
+export function notWebReason(text: string): 'memory_ads_pc' | 'reminder' | 'arithmetic' | 'planning' | 'writing' | 'document' | 'site' | 'chat' | 'address' | 'empty' | null {
   if (!text || text.length > 200) return 'empty';
+  // "ابنِ لي موقعاً" is a website to build (packages/sites), never a search and not a letter or a PDF.
+  if (isSiteRequest(text)) return 'site';
   if (isDocumentRequest(text)) return 'document';
   if (REMIND.test(text)) return 'reminder';
   if (PLANNING.test(text)) return 'planning';
