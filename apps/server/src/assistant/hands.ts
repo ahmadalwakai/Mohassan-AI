@@ -2,6 +2,7 @@ import { AgentEffectHeld, BrowserError, compileQuery, publicSearchScan, publicSe
 import { directRoute, namedSite, sensitiveAction } from './brain.js';
 import { hostOf, readingLabel, siteName } from './activity.js';
 import { checkAnswerLine, isDisambiguationPage, isDisambiguationTitle, isMetaLine } from './answer-check.js';
+import { releaseLines, releaseQuestion } from './releases.js';
 export { siteName };
 
 /**
@@ -57,8 +58,9 @@ export interface HandsPlan {
   /** A question's search results, and the first page whose own sentences answer it. */
   results?: { title: string; url: string }[];
   /** `readAt`: when the page was fetched (a cached page keeps its original time), shown with the source (plan §7.1).
-   *  `second`: for a figure, another page's sentence on the same question, and whether its figure agrees (plan §7.4). */
-  found?: { url: string; title: string; lines: string[]; readAt?: string; second?: { url: string; title: string; line: string; agrees: boolean } };
+   *  `second`: for a figure, another page's sentence on the same question, and whether its figure agrees (plan §7.4).
+   *  `official`: the product's own release page (releases.ts), so no second source is asked of it. */
+  found?: { url: string; title: string; lines: string[]; readAt?: string; second?: { url: string; title: string; line: string; agrees: boolean }; official?: boolean };
   /** The language of the owner's request; replies that are not quotes follow it, not the query's script («ابحث عن Python docs» is Arabic). */
   lang?: 'ar' | 'en';
 }
@@ -902,6 +904,22 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         const box = !template && page && scoped ? findSearchBox(page) : undefined;
         if (!template && !box && step.here) return { kind: 'done', status: 'partial', text: page ? `لم أجد خانة بحث في ${hostOf(page.url)}. الصفحة ظاهرة في لوحة المتصفح؛ قل «ابحث عن ${step.query} في الإنترنت» لأبحث خارجها.` : NO_PAGE };
         let searched: { title: string; url: string }[] | undefined;
+        // «What is the latest version of Node.js?» is read from the product's own release page first (releases.ts): the
+        // search only finds old forum threads for it. When that page cannot be read or no longer states a version, the
+        // general search runs as before.
+        const release = !template && !box && step.ask && io.read ? releaseQuestion(step.query) : null;
+        if (release) {
+          await io.step(readingLabel([release.page]));
+          const read = await io.read!(release.page).catch((): HandsRead => ({ kind: 'unreadable' }));
+          const official = read.kind === 'page' ? read.page : null;
+          const fact = official ? release.parse(official.text) : null;
+          if (official && fact) {
+            const lang = plan.lang ?? (/[؀-ۿ]/u.test(step.query) ? 'ar' : 'en');
+            plan.results = [{ title: release.title[lang], url: official.url }, ...(release.more ? [{ title: release.more.title[lang], url: release.more.url }] : [])];
+            plan.found = { url: official.url, title: release.title[lang], lines: releaseLines(release, fact, lang), readAt: official.observedAt, official: true };
+            break;
+          }
+        }
         if (!template && !box) {
           // The shared engine over HTTP: a results list and no browser page.
           const found = await engine(step.query);
@@ -1115,7 +1133,7 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
       const second = plan.found.second ? plan.found.second.agrees
         ? `\n\n**${en ? 'A second source agrees:' : 'مصدر ثانٍ يؤكد:'}** [${siteName(plan.found.second.url)} — ${plainTitle(plan.found.second.title)}](${plan.found.second.url})`
         : `\n\n**${en ? 'A second source differs:' : 'مصدر ثانٍ يختلف:'}** ${en ? `“${plan.found.second.line}”` : `«${plan.found.second.line}»`} — [${siteName(plan.found.second.url)} — ${plainTitle(plan.found.second.title)}](${plan.found.second.url})`
-        : wantsFigure ? `\n\n${en ? 'I did not check this figure against a second source.' : 'لم أتحقق من هذا الرقم في مصدر ثانٍ.'}` : '';
+        : wantsFigure && !plan.found.official ? `\n\n${en ? 'I did not check this figure against a second source.' : 'لم أتحقق من هذا الرقم في مصدر ثانٍ.'}` : '';
       return { status: 'completed', text: `${first}${more}\n\n${source}${second}${also}${note}` };
     }
     if (plan.results.length) return { status: 'partial', text: en

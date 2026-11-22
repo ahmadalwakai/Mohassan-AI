@@ -1,7 +1,7 @@
 /**
  * Phase 3 §7.4: how often a figure answer carries a second source, measured on the frozen real set.
  *
- * Usage: npx tsx scripts/quality/two-sources.ts [--port 4140] [--out artifacts/plan-2026-11-22]
+ * Usage: npx tsx scripts/quality/two-sources.ts [--port 4140] [--out artifacts/plan-2026-11-22] [--ids rq020,rq021]
  *
  * Takes the figure questions of real-questions-v1.jsonl (a count, a duration, a price, a version: the
  * same WANTS_NUMBER/LIVE test the hands use) that go to the web, not to arithmetic, memory or a named site,
@@ -25,7 +25,10 @@ const NOT_WEB_FIGURE = /احسب|حاصل|ضرب|يساوي|[×x*+]\s*\d|افت�
 
 interface SetItem { id: string; kind: 'single' | 'pair'; text: string; previous: string | null }
 const set = (await readFile(path.join(out, 'real-questions-v1.jsonl'), 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line) as SetItem);
-const items = set.filter(item => item.kind === 'single' && (WANTS_NUMBER.test(item.text) || LIVE.test(item.text)) && !NOT_WEB_FIGURE.test(item.text));
+// `--ids rq020,rq021,rq041` measures those questions only, whatever the filters say.
+const ids = argument('ids', '').split(',').map(id => id.trim()).filter(Boolean);
+const items = ids.length ? set.filter(item => ids.includes(item.id))
+  : set.filter(item => item.kind === 'single' && (WANTS_NUMBER.test(item.text) || LIVE.test(item.text)) && !NOT_WEB_FIGURE.test(item.text));
 console.log(`${items.length} figure questions of ${set.length}: ${items.map(item => item.id).join(', ')}`);
 
 const SECOND = /\*\*(?:مصدر ثانٍ (يؤكد|يختلف)|A second source (agrees|differs)):\*\*\s*(.*)/u;
