@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkAnswerLine, checkAnswerLines, figureKind, hasFigureOf, isDisambiguationPage, isDisambiguationTitle, isMetaLine, textLanguage } from '../apps/server/src/assistant/answer-check.js';
+import { aspectKind, checkAnswerLine, checkAnswerLines, figureKind, hasFigureOf, isDisambiguationPage, isDisambiguationTitle, isMetaLine, textLanguage } from '../apps/server/src/assistant/answer-check.js';
 
 describe('answer checks before a line is sent (plan §7.4)', () => {
   it('rejects the lines the baseline sent with confidence', () => {
@@ -40,6 +40,18 @@ describe('answer checks before a line is sent (plan §7.4)', () => {
     expect(checkAnswerLine('كم سعر الذهب اليوم؟', 'ارتفع الذهب بنسبة 1.2% خلال التعاملات.').reasons).toContain('needs_unit');
     expect(checkAnswerLine('كم سعر الذهب اليوم؟', 'بلغ سعر أونصة الذهب اليوم 2650 دولارًا.').ok).toBe(true);
     expect(checkAnswerLine('كم عدد سكان مصر؟', 'يبلغ عدد سكان مصر نحو 105 ملايين نسمة.').ok).toBe(true);
+  });
+
+  it('wants the aspect the question asks of its subject: symptoms, benefits, causes', () => {
+    expect(aspectKind('ما أعراض المياه البيضاء في العين؟')).toBe('symptoms');
+    expect(aspectKind('ما فوائد الشاي الأخضر؟')).toBe('benefits');
+    expect(aspectKind('What are the causes of migraine?')).toBe('causes');
+    expect(aspectKind('ما عاصمة فرنسا؟')).toBeNull();
+    // Measured on 2026-11-22: a film whose title is the subject's words is not a symptom.
+    expect(checkAnswerLine('ما أعراض المياه البيضاء في العين؟', 'مياه بيضاء (الإنجليزية: White Waters) هُو فيلم دراما نيجيري صدر سنة 2007 وأخرجه إيزو أوجوكو.').reasons).toContain('needs_aspect');
+    expect(checkAnswerLine('ما أعراض المياه البيضاء في العين؟', 'من أعراض المياه البيضاء ضبابية الرؤية وصعوبة الرؤية الليلية.').ok).toBe(true);
+    expect(checkAnswerLine('ما فوائد الشاي الأخضر؟', 'خلال العقود الماضية تعرض الشاي الأخضر لكثير من الدراسات لتحديد مدى فوائده الصحية.').ok).toBe(true);
+    expect(checkAnswerLine('ما فوائد الشاي الأخضر؟', 'الشاي الأخضر نوع من الشاي يُصنع من أوراق نبات الكاميليا.').reasons).toContain('needs_aspect');
   });
 
   it('keeps the reply in the language of the question', () => {

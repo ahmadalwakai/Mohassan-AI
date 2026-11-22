@@ -60,8 +60,9 @@ export interface HandsPlan {
   results?: { title: string; url: string }[];
   /** `readAt`: when the page was fetched (a cached page keeps its original time), shown with the source (plan §7.1).
    *  `second`: for a figure, another page's sentence on the same question, and whether its figure agrees (plan §7.4).
-   *  `official`: the product's own release page (releases.ts), so no second source is asked of it. */
-  found?: { url: string; title: string; lines: string[]; readAt?: string; second?: { url: string; title: string; line: string; agrees: boolean }; official?: boolean };
+   *  `official`: the product's own release page (releases.ts), so no second source is asked of it; `quote` is that page's
+   *  own entry, shown under the answer line. */
+  found?: { url: string; title: string; lines: string[]; readAt?: string; second?: { url: string; title: string; line: string; agrees: boolean }; official?: boolean; quote?: string };
   /** The language of the owner's request; replies that are not quotes follow it, not the query's script («ابحث عن Python docs» is Arabic). */
   lang?: 'ar' | 'en';
 }
@@ -294,7 +295,8 @@ const ASK_WORDS = new Set(['كم', 'متي', 'وين', 'اين', 'من', 'ما',
 /** Words that ask about a topic without naming it: «أعراض المياه البيضاء» is about «المياه البيضاء». Folded forms. */
 const FRAME_WORDS = new Set(['اعراض', 'علامات', 'اسباب', 'سبب', 'علاج', 'عمليه', 'عمليات', 'جراحه', 'تستغرق', 'يستغرق', 'مده', 'مدة', 'تعريف', 'معني', 'معنى',
   'فوائد', 'اضرار', 'مخاطر', 'عدد', 'نسبه', 'طريقه', 'انواع', 'نوع', 'مراحل', 'تكلفه', 'هل', 'يمكن', 'بعد', 'قبل', 'خلال', 'مع', 'او', 'و',
-  'symptoms', 'signs', 'causes', 'cause', 'treatment', 'surgery', 'operation', 'long', 'take', 'takes', 'many', 'much', 'risks', 'types', 'definition', 'meaning', 'and', 'or', 'to', 'after', 'before']);
+  'symptoms', 'signs', 'causes', 'cause', 'treatment', 'surgery', 'operation', 'long', 'take', 'takes', 'many', 'much', 'risks', 'types', 'definition', 'meaning', 'and', 'or', 'to', 'after', 'before',
+  'benefits', 'benefit']);
 
 /** The question's topic words, folded and without «ال», for matching page titles. */
 export function topicWords(question: string): string[] {
@@ -328,6 +330,13 @@ export const sameFigure = (first: string, second: string): boolean => firstFigur
 /** Words that name what is asked about a subject, not the subject: «سكان» in «كم عدد سكان مصر». Folded, without «ال». */
 const ATTRIBUTE_WORDS = new Set(['سكان', 'يعيش', 'يعيشون', 'شخص', 'اشخاص', 'عاصمه', 'مساحه', 'عمله', 'رئيس', 'ملك', 'لغه', 'ديانه', 'تاسيس', 'ارتفاع', 'طول', 'عمر', 'وزن', 'سعر', 'ميلاد', 'وفاه', 'مؤسس', 'مالك', 'موقع', 'علم', 'نشيد', 'ناتج',
   'population', 'people', 'live', 'lives', 'inhabitants', 'residents', 'capital', 'area', 'currency', 'president', 'king', 'language', 'religion', 'founded', 'height', 'length', 'age', 'weight', 'price', 'born', 'died', 'founder', 'owner', 'location', 'gdp', 'size']);
+/**
+ * A question about one aspect of a subject: its benefits, symptoms, causes, treatment, risks, types. Its answer is on a page
+ * about the subject: «ما فوائد الشاي الأخضر» was answered from «دبس الرمان» in the full runs since 04:48 on 2026-11-22
+ * (rq030; the 02:17 baseline had read a green-tea page). The subject is the name without the aspect and place words.
+ */
+export const ASPECT_QUESTION = /(?:^|\s)(?:فوائد|أضرار|اضرار|أعراض|اعراض|أسباب|اسباب|علاج|مخاطر|أنواع|انواع|مراحل|علامات)(?=\s|$)|\b(?:benefits|symptoms|causes|treatment|risks|types|signs) of\b/iu;
+export const aspectSubject = (question: string): string[] => ASPECT_QUESTION.test(question) ? topicWords(wikiTerms(question)) : [];
 /** The subject itself, for a question about one of its attributes: «كم عدد سكان مصر» → ['مصر']; empty when the question names no attribute. */
 export function entityWords(question: string): string[] {
   const topic = topicWords(question);
@@ -446,7 +455,17 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
   const scored:{ line: string; score: number; at: number; year: number; glued: boolean }[] = [];
   const seen = new Set<string>();
   // Citation marks may carry spaces inside the brackets («[ 5 ] [ 28 ] ويبلغ عدد سكانها…», measured 2026-11-22 on «المغرب»).
-  const cleanSentence = (text: string) => withoutChrome(text.replace(/\[\s*(?:\d+|Note \d+|note \d+|ملحوظة \d+|ْ?\s*\d+|[ا-ي])\s*\]/gu, '').replace(/\s+/g, ' ').trim(), labels);
+  // A page read over HTTP is one line of words joined by spaces, so the full run of 07:06 sent first lines that began with a
+  // stray «]» (4 of 23), carried «[لغات أخرى]» or a leading «ويكي بيانات», and put a space before every «.» and «،».
+  const cleanSentence = (text: string) => withoutChrome(text
+    .replace(/\[\s*(?:\d+|Note \d+|note \d+|ملحوظة \d+|ْ?\s*\d+|[ا-ي])\s*\]/gu, '')
+    .replace(/\[\s*(?:لغات أخرى|عدل|تعديل|عدل المصدر|بحاجة لمصدر|بحاجة إلى مصدر|edit|citation needed)\s*\]/giu, '')
+    .replace(/[​‎‏]/gu, '')
+    .replace(/\s+/g, ' ').trim()
+    .replace(/^[\])]+\s*/u, '')
+    .replace(/^(?:ويكي بيانات|Wikidata)\s+/iu, '')
+    .replace(/\s+([.،,؛;:!?؟)\]»])/gu, '$1')
+    .replace(/([(\[«])\s+/gu, '$1'), labels);
   // A sentence ends at . ! ? ؟ unless the dot sits inside a number (2.5, 1.3), or at a line break.
   const text = readableText(page.text);
   const sentences = [...text.matchAll(/(?:[^.!?؟\n]|(?<=\d)\.(?=\d))+(?:[.!?؟]+|\n|$)/gu)];
@@ -858,22 +877,34 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     // measured on 2026-11-22 (artifacts/plan-2026-11-22/two-sources-2026-11-22T06-17-27.json), the subject lookup and the
     // narrower-terms fallback both came back empty when sent at once.
     const pause = io.pause ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
+    // Words already searched in this round are not searched again: the same words return the same results.
+    const looked = new Set([fold(query)]);
     const narrower = wikiTerms(query);
     if (!results.length && !live && fold(narrower) !== fold(query) && topicWords(narrower).length) {
       await io.step(`لم يُجب البحث الأول؛ البحث عن «${narrower.slice(0, 60)}»`);
       await pause(PROVIDER_SPACING_MS);
       results = await lookup(narrower);
+      looked.add(fold(narrower));
     }
     // A question about a subject's attribute («كم عدد سكان مصر») is answered from the subject's own article first. The shared
     // ranking keeps only pages whose title and snippet repeat every question word, which dropped «مصر» for «القصير (مصر)» and
     // «عرب» (artifacts/plan-2026-11-22/two-sources-2026-11-22T06-00-31.json); one more lookup by the subject's name finds it.
+    // Every attribute, not only figures: in the full run of 07:06 (real-answers-2026-11-22T07-06-58.jsonl) the lookup turned
+    // «ما عاصمة فرنسا» from an embassy page into Paris and «ما عاصمة أستراليا» from a line about Washington into Canberra.
+    // Its cost, measured there: about 1.5 to 3 s more, and «ما عاصمة اليابان» now quotes the Japan article, not Tokyo's.
+    // «من هو ألبرت أينشتاين», «ما هي الطاقة الشمسية»: the subject is the whole topic, and its own article is the source (plan
+    // §7.2). In the full runs since 04:48 the search returned only his sons' pages for «من هو ألبرت أينشتاين», so the reply
+    // quoted Eduard Einstein's article (rq025, rq079; the 02:17 baseline had quoted Albert's). Looked up only when missing.
     const entity = entityWords(query);
-    if (entity.length && !live && !results.some(hit => isOwnArticle(hit.title, entity))) {
-      const surface = query.replace(/[؟?،,.!]/gu, ' ').split(/\s+/).filter(word => entity.includes(topicWords(word)[0] ?? '')).join(' ');
-      if (surface) {
+    const subject = entity.length ? entity : DEFINE_QUESTION.test(query.trim()) ? topicWords(query) : aspectSubject(query);
+    if (subject.length && !live && !results.some(hit => isOwnArticle(hit.title, subject))) {
+      const surface = entity.length
+        ? query.replace(/[؟?،,.!]/gu, ' ').split(/\s+/).filter(word => entity.includes(topicWords(word)[0] ?? '')).join(' ')
+        : wikiTerms(query);
+      if (surface && !looked.has(fold(surface))) {
         await io.step(`البحث عن مقالة «${surface.slice(0, 60)}»`);
         await pause(PROVIDER_SPACING_MS);
-        const own = (await lookup(surface)).filter(hit => isOwnArticle(hit.title, entity));
+        const own = (await lookup(surface)).filter(hit => isOwnArticle(hit.title, subject));
         if (own.length) results = [...own, ...results.filter(hit => !own.some(item => withoutHash(item.url) === withoutHash(hit.url)))];
       }
     }
@@ -919,7 +950,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           if (official && fact) {
             const lang = plan.lang ?? (/[؀-ۿ]/u.test(step.query) ? 'ar' : 'en');
             plan.results = [{ title: release.title[lang], url: official.url }, ...(release.more ? [{ title: release.more.title[lang], url: release.more.url }] : [])];
-            plan.found = { url: official.url, title: release.title[lang], lines: releaseLines(release, fact, lang), readAt: official.observedAt, official: true };
+            plan.found = { url: official.url, title: release.title[lang], lines: releaseLines(release, fact, lang), readAt: official.observedAt, official: true, quote: fact.evidence };
             break;
           }
         }
@@ -997,6 +1028,9 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             // subject («Tokyo is the capital of Japan»), and a live price from any price page.
             const entity = entityWords(step.query);
             if (WANTS_NUMBER.test(step.query) && !LIVE.test(step.query) && !aboutSubject(opened.title, topic, entity)) continue;
+            // An aspect («فوائد الشاي الأخضر») is read only from a page about its subject, not from one that mentions it.
+            const aspect = entity.length ? [] : aspectSubject(step.query);
+            if (aspect.length && !isOwnArticle(opened.title, aspect) && titleScore(opened.title, aspect) < aspect.length) continue;
             // The answer line is the best-scored sentence that passes the checks; the others stay as details. When none passes,
             // the next page is tried. (Earlier the details were kept even when the first line failed, so an unchecked sentence
             // became the answer: artifacts/plan-2026-11-22/two-sources-2026-11-22T06-11-30.json, rq015.)
@@ -1137,7 +1171,9 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
         ? `\n\n**${en ? 'A second source agrees:' : 'مصدر ثانٍ يؤكد:'}** [${siteName(plan.found.second.url)} — ${plainTitle(plan.found.second.title)}](${plan.found.second.url})`
         : `\n\n**${en ? 'A second source differs:' : 'مصدر ثانٍ يختلف:'}** ${en ? `“${plan.found.second.line}”` : `«${plan.found.second.line}»`} — [${siteName(plan.found.second.url)} — ${plainTitle(plan.found.second.title)}](${plan.found.second.url})`
         : wantsFigure && !plan.found.official ? `\n\n${en ? 'I did not check this figure against a second source.' : 'لم أتحقق من هذا الرقم في مصدر ثانٍ.'}` : '';
-      return { status: 'completed', text: `${first}${more}\n\n${source}${second}${also}${note}` };
+      // A line composed from a page's data shows the page's own words under it («> node-v26.13.1-… 11-Nov-2026 16:41»).
+      const quoted = plan.found.quote ? `\n\n> ${plan.found.quote}` : '';
+      return { status: 'completed', text: `${first}${quoted}${more}\n\n${source}${second}${also}${note}` };
     }
     if (plan.results.length) return { status: 'partial', text: en
       ? `I found no page that answers “${last.query}” directly, and I will not pass you an answer from a page that is not about your question. These pages came up in the search:\n\n${list(plan.results)}\n\nSay “open result 2”, for example, and I will read it for you.${note}`

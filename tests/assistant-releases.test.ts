@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentAction, AgentPage } from '@mohassan/browser';
 import { runHands, webQuestion, type HandsIO, type HandsRead } from '../apps/server/src/assistant/hands.js';
+import { judge } from '../apps/server/src/assistant/judge.js';
 import { nodeLatest, releaseQuestion } from '../apps/server/src/assistant/releases.js';
 
 /** The text the page reader extracted from https://nodejs.org/dist/latest/ on 2026-11-22 (shortened). */
@@ -36,14 +37,19 @@ describe('latest-version questions from the official release page', () => {
     expect(releaseQuestion('ابحث في الويب عن آخر إصدار مستقر من Node.js، افتح صفحة المصدر الرسمي، وأخبرني برقم الإصدار مع رابط المصدر')?.product).toBe('Node.js');
     expect(releaseQuestion('what is the latest version of node?')?.product).toBe('Node.js');
     expect(releaseQuestion('أحدث نسخة من نود')?.product).toBe('Node.js');
+    expect(releaseQuestion('ما هو آخر إصدار Node.js؟')?.product).toBe('Node.js');
+    expect(releaseQuestion('what is the latest node version?')?.product).toBe('Node.js');
+    expect(releaseQuestion('newest stable Node.js release')?.product).toBe('Node.js');
     expect(releaseQuestion('آخر إصدار من آيفون')).toBeNull();
+    expect(releaseQuestion('آخر إصدار مستقر')).toBeNull();
+    expect(releaseQuestion('the latest python version')).toBeNull();
     expect(releaseQuestion('latest version of node-sass')).toBeNull();
     expect(releaseQuestion('ما هو Node.js؟')).toBeNull();
     expect(releaseQuestion('latest news today')).toBeNull();
   });
 
   it('reads the version and its publication time from the folder listing', () => {
-    expect(nodeLatest(LISTING)).toEqual({ version: 'v26.13.1', publishedAt: '2026-11-11T16:41:00.000Z' });
+    expect(nodeLatest(LISTING)).toEqual({ version: 'v26.13.1', publishedAt: '2026-11-11T16:41:00.000Z', evidence: 'node-v26.13.1-aix-ppc64.tar.gz 11-Nov-2026 16:41' });
     // A folder that names two versions is not one release; a page without files states none.
     expect(nodeLatest(`${LISTING} node-v26.14.0-x64.msi 12-Nov-2026 09:00 35 MB`)).toBeNull();
     expect(nodeLatest('Index of /dist/latest/ ../ docs/')).toBeNull();
@@ -54,14 +60,28 @@ describe('latest-version questions from the official release page', () => {
     const arabic = await runHands({ steps: webQuestion('ما هو آخر إصدار مستقر من Node.js؟')!, next: 0, lang: 'ar' }, io({ [FOLDER]: { kind: 'page', page: page(FOLDER, LISTING) } }, searched));
     expect(searched).toEqual([]);
     expect(arabic).toMatchObject({ kind: 'done', status: 'completed' });
-    expect(text(arabic).split('\n')[0]).toBe('آخر إصدار مستقر من Node.js هو v26.13.1، ونُشرت ملفاته في موقع Node.js الرسمي يوم 2026-11-11 الساعة 16:41 UTC.');
+    expect(text(arabic).split('\n')[0]).toBe('من **مجلد أحدث إصدار في موقع Node.js الرسمي**: آخر إصدار مستقر من Node.js هو v26.13.1، ونُشرت ملفاته يوم 2026-11-11 الساعة 16:41 UTC.');
+    // The page's own entry stands under the line, so the version is seen as the page states it.
+    expect(text(arabic)).toContain('\n\n> node-v26.13.1-aix-ppc64.tar.gz 11-Nov-2026 16:41\n\n');
     expect(text(arabic)).toContain(`](${FOLDER}) · قُرئت 2026-11-22 07:10 UTC`);
     expect(text(arabic)).toContain('**للمزيد:** [صفحة إصدارات Node.js وخطوط الدعم](https://nodejs.org/en/about/previous-releases)');
     // The product's own page is the primary source: no «not checked in a second source» line.
     expect(text(arabic)).not.toContain('لم أتحقق');
     const english = await runHands({ steps: webQuestion('Node.js latest version')!, next: 0, lang: 'en' }, io({ [FOLDER]: { kind: 'page', page: page(FOLDER, LISTING) } }, searched));
-    expect(text(english).split('\n')[0]).toBe('The latest stable Node.js release is v26.13.1; its files were published on the official Node.js site on 2026-11-11 at 16:41 UTC.');
+    expect(text(english).split('\n')[0]).toBe('From **Latest release folder on the official Node.js site**: the latest stable Node.js release is v26.13.1; its files were published on 2026-11-11 at 16:41 UTC.');
     expect(text(english)).toContain('**Source:**');
+  });
+
+  it('passes the pre-send judge, which withheld the first form of this answer on 2026-11-22', () => {
+    // The judge (judge.ts) withholds a page answer whose own sentences are not in the pages read. A quoted reply is judged on
+    // its «> » lines, which here are the folder's own words.
+    return (async () => {
+      for (const [question, lang] of [['ما هو آخر إصدار مستقر من Node.js؟', 'ar'], ['Node.js latest version', 'en']] as const) {
+        const outcome = await runHands({ steps: webQuestion(question)!, next: 0, lang }, io({ [FOLDER]: { kind: 'page', page: page(FOLDER, LISTING) } }, []));
+        const verdict = judge({ question, reply: text(outcome), status: 'completed', evidence: [{ kind: 'page', text: LISTING, url: FOLDER, title: 'Index of /dist/latest/' }] });
+        expect(verdict.decision).toBe('send');
+      }
+    })();
   });
 
   it('falls back to the general search when the official page is unreadable or states no version', async () => {

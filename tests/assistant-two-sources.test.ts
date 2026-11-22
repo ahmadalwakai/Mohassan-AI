@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentAction, AgentPage } from '@mohassan/browser';
-import { entityWords, firstFigure, isOwnArticle, namesEntity, runHands, sameFigure, webQuestion, type HandsIO } from '../apps/server/src/assistant/hands.js';
+import { aspectSubject, entityWords, firstFigure, isOwnArticle, namesEntity, runHands, sameFigure, webQuestion, type HandsIO } from '../apps/server/src/assistant/hands.js';
 
 /** Plan §7.4: a figure comes with a second source when one was read; both are shown when they differ. */
 // The engine normalizes result URLs (`new URL(...).href`), so pages are keyed by that form.
@@ -13,11 +13,11 @@ const pageOf = (address: string, title: string, text: string): AgentPage => {
 };
 const by = (...pages: AgentPage[]) => Object.fromEntries(pages.map(page => [page.url, page]));
 // Engine hits need a topic word in their title or snippet, as real ones do. `hits` may answer per query.
-type Hit = { title: string; url: string };
+type Hit = { title: string; url: string; snippet?: string };
 function io(pages: Record<string, AgentPage>, hits: Hit[] | ((query: string) => Hit[]), searched: string[] = []): HandsIO {
   return {
     page: async () => null,
-    search: async (query: string) => { searched.push(query); return (Array.isArray(hits) ? hits : hits(query)).map(hit => ({ ...hit, snippet: hit.title })); },
+    search: async (query: string) => { searched.push(query); return (Array.isArray(hits) ? hits : hits(query)).map(hit => ({ ...hit, snippet: hit.snippet ?? hit.title })); },
     read: async url => pages[url] ? { kind: 'page', page: pages[url] } : { kind: 'unreadable' },
     act: async (action: AgentAction) => pages[action.text ?? ''] ?? pageOf(action.text ?? 'https://none.example/', '', ''),
     prepare: async () => null,
@@ -96,6 +96,56 @@ describe('two sources for a figure', () => {
     const fromDemography = await runHands({ steps: webQuestion('كم عدد سكان مصر؟')!, next: 0, lang: 'ar' }, io(by(town, demography), [{ title: town.title, url: town.url }, { title: demography.title, url: demography.url }]));
     expect(fromDemography).toMatchObject({ kind: 'done', status: 'completed' });
     expect(text(fromDemography).split('\n')[0]).toContain('105 ملايين');
+  });
+
+  it('looks the person up when the search returned only relatives: «من هو ألبرت أينشتاين» is not his son', async () => {
+    // What the shared search returned on 2026-11-22 for the question, and for the bare name.
+    const son = pageOf('https://ar.wikipedia.org/wiki/إدوارد_ألبرت_أينشتاين', 'إدوارد ألبرت أينشتاين - ويكيبيديا', 'إدوارد ألبرت أينشتاين (28 يوليو 1910 - 25 أكتوبر 1965) هو الابن الثاني لألبرت أينشتاين وميلفا ماريك.');
+    const albert = pageOf('https://ar.wikipedia.org/wiki/ألبرت_أينشتاين', 'ألبرت أينشتاين - ويكيبيديا', 'ألبرت أينشتاين (14 مارس 1879 – 18 أبريل 1955) عالم فيزياء نظرية ألماني المولد، اشتهر بالنظرية النسبية.');
+    const searched: string[] = [];
+    const engine = (query: string): Hit[] => query === 'ألبرت أينشتاين'
+      ? [{ title: albert.title, url: albert.url }, { title: son.title, url: son.url }]
+      : [{ title: son.title, url: son.url, snippet: 'هو الابن الثاني لألبرت أينشتاين' }];
+    const outcome = await runHands({ steps: webQuestion('من هو ألبرت أينشتاين؟')!, next: 0, lang: 'ar' }, io(by(son, albert), engine, searched));
+    expect(searched).toEqual(['من هو ألبرت أينشتاين', 'ألبرت أينشتاين']);
+    expect(text(outcome).split('\n')[0]).toContain('عالم فيزياء نظرية');
+    expect(text(outcome)).toContain(`](${albert.url})`);
+    // When the search already holds the person's own article, nothing more is looked up.
+    const direct: string[] = [];
+    await runHands({ steps: webQuestion('من هو ألبرت أينشتاين؟')!, next: 0, lang: 'ar' }, io(by(son, albert), [{ title: albert.title, url: albert.url }, { title: son.title, url: son.url }], direct));
+    expect(direct).toEqual(['من هو ألبرت أينشتاين']);
+  });
+
+  it('reads an aspect only from a page about its subject: green tea’s benefits are not pomegranate molasses’', async () => {
+    expect(aspectSubject('ما فوائد الشاي الأخضر؟')).toEqual(['شاي', 'اخضر']);
+    expect(aspectSubject('ما أعراض المياه البيضاء في العين؟')).toEqual(['مياه', 'بيضاء']);
+    expect(aspectSubject('What are the benefits of green tea?')).toEqual(['green', 'tea']);
+    expect(aspectSubject('ما عاصمة فرنسا؟')).toEqual([]);
+    // Measured in the full runs since 04:48 on 2026-11-22 (rq030): the search returned «دبس الرمان», which mentions green tea.
+    const molasses = pageOf('https://ar.wikipedia.org/wiki/دبس_الرمان', 'دبس الرمان - ويكيبيديا', 'يحتوي دبس الرمان على تركيز عالٍ من مضادات الأكسدة التي تفوق الموجودة في الشاي الأخضر، وله فوائد متعددة.');
+    const tea = pageOf('https://ar.wikipedia.org/wiki/شاي_أخضر', 'شاي أخضر - ويكيبيديا', 'الشاي الأخضر نوع من الشاي. من فوائد الشاي الأخضر أن شاربيه أقل إصابة بأمراض القلب بحسب دراسات عدة.');
+    const searched: string[] = [];
+    const engine = (query: string): Hit[] => query === 'الشاي الأخضر'
+      ? [{ title: tea.title, url: tea.url }]
+      : [{ title: molasses.title, url: molasses.url, snippet: 'فوائد الشاي الأخضر' }];
+    const outcome = await runHands({ steps: webQuestion('ما فوائد الشاي الأخضر؟')!, next: 0, lang: 'ar' }, io(by(molasses, tea), engine, searched));
+    expect(searched).toEqual(['ما فوائد الشاي الأخضر', 'الشاي الأخضر']);
+    expect(text(outcome).split('\n')[0]).toBe('من فوائد الشاي الأخضر أن شاربيه أقل إصابة بأمراض القلب بحسب دراسات عدة.');
+    // Without a page about green tea, the molasses page is not quoted.
+    const alone = await runHands({ steps: webQuestion('ما فوائد الشاي الأخضر؟')!, next: 0, lang: 'ar' }, io(by(molasses), [{ title: molasses.title, url: molasses.url, snippet: 'فوائد الشاي الأخضر' }]));
+    expect(alone).toMatchObject({ kind: 'done', status: 'partial' });
+    expect(text(alone)).not.toContain('دبس الرمان على تركيز');
+  });
+
+  it('looks the subject up for any attribute: a capital from an embassy page becomes the country’s own line', async () => {
+    // Measured in the full run of 2026-11-22 07:06: «ما عاصمة فرنسا» had been answered from an embassy page.
+    const embassy = pageOf('https://ar.wikipedia.org/wiki/سفارة_فرنسا_في_واشنطن', 'سفارة فرنسا في واشنطن العاصمة - ويكيبيديا', 'السفارة الفرنسية القديمة في واشنطن العاصمة سنة 1917.');
+    const france = pageOf('https://ar.wikipedia.org/wiki/فرنسا', 'فرنسا - ويكيبيديا', 'فرنسا دولة في غرب أوروبا. عاصمتها وأكبر مدنها هي باريس، ولغتها الرسمية هي الفرنسية.');
+    const searched: string[] = [];
+    const engine = (query: string): Hit[] => query === 'فرنسا' ? [{ title: france.title, url: france.url }] : [{ title: embassy.title, url: embassy.url }];
+    const outcome = await runHands({ steps: webQuestion('ما عاصمة فرنسا؟')!, next: 0, lang: 'ar' }, io(by(embassy, france), engine, searched));
+    expect(searched).toEqual(['ما عاصمة فرنسا', 'فرنسا']);
+    expect(text(outcome).split('\n')[0]).toBe('عاصمتها وأكبر مدنها هي باريس، ولغتها الرسمية هي الفرنسية.');
   });
 
   it('quotes the second page when its figure differs, and names it when it agrees', async () => {

@@ -7,7 +7,7 @@
  * one such failure. A line that fails is dropped before the reply is built; when nothing passes, the reply says so.
  */
 export type AnswerLanguage = 'ar' | 'en' | 'mixed' | 'none';
-export type AnswerProblem = 'meta_line' | 'ui_text' | 'language' | 'needs_number' | 'needs_unit' | 'needs_name' | 'off_topic';
+export type AnswerProblem = 'meta_line' | 'ui_text' | 'language' | 'needs_number' | 'needs_unit' | 'needs_aspect' | 'needs_name' | 'off_topic';
 export interface AnswerLineCheck { ok: boolean; reasons: AnswerProblem[] }
 
 /** The language most of a text's letters are in; a text with fewer than 15 letters has none to judge. */
@@ -70,6 +70,34 @@ const FIGURE_UNITS: Record<Exclude<FigureKind, 'any'>, RegExp> = {
 export function hasFigureOf(kind: FigureKind, line: string): boolean {
   return kind === 'any' || FIGURE_UNITS[kind].test(line);
 }
+
+/**
+ * The aspect a question asks of its subject (plan §7.4, type match): a symptoms answer names symptoms, a benefits answer
+ * benefits. On 2026-11-22 «ما أعراض المياه البيضاء في العين» was answered with «مياه بيضاء… هو فيلم دراما نيجيري»: the
+ * film's title is the subject's words, and nothing in the line is a symptom.
+ */
+export type AspectKind = 'benefits' | 'symptoms' | 'causes' | 'treatment' | 'risks' | 'types' | 'stages';
+const ASPECT_ASKED: [AspectKind, RegExp][] = [
+  ['benefits', /(?:^|\s)فوائد(?=\s|$)|\bbenefits? of\b/iu],
+  ['symptoms', /(?:^|\s)(?:أعراض|اعراض|علامات)(?=\s|$)|\b(?:symptoms|signs) of\b/iu],
+  ['causes', /(?:^|\s)(?:أسباب|اسباب)(?=\s|$)|\bcauses of\b/iu],
+  ['treatment', /(?:^|\s)علاج(?=\s|$)|\btreatment (?:of|for)\b/iu],
+  ['risks', /(?:^|\s)(?:أضرار|اضرار|مخاطر)(?=\s|$)|\b(?:risks|dangers|harms) of\b/iu],
+  ['types', /(?:^|\s)(?:أنواع|انواع)(?=\s|$)|\btypes of\b/iu],
+  ['stages', /(?:^|\s)مراحل(?=\s|$)|\bstages of\b/iu],
+];
+const ASPECT_LINE: Record<AspectKind, RegExp> = {
+  benefits: /فوائد|فائد|مفيد|يفيد|تفيد|منافع|benefit|beneficial/iu,
+  symptoms: /أعراض|اعراض|عوارض|علامات|يعاني|يشعر|تشوش|ضبابي|symptom|signs?\b/iu,
+  causes: /أسباب|اسباب|سبب|يسبب|تسبب|ينتج عن|ناتج عن|يحدث نتيجة|cause|due to|results? from/iu,
+  treatment: /علاج|يعالج|تعالج|معالجة|دواء|أدوية|ادوية|جراح|treat|therap|medication|surgery/iu,
+  risks: /أضرار|اضرار|ضرر|مخاطر|خطر|أخطار|آثار جانبية|الآثار الجانبية|مضاعفات|risk|harm|side effect|danger/iu,
+  types: /أنواع|انواع|نوع|أصناف|اصناف|ينقسم|تنقسم|types?\b|kinds?\b/iu,
+  stages: /مراحل|مرحلة|stages?\b|phases?\b/iu,
+};
+export function aspectKind(question: string): AspectKind | null {
+  return ASPECT_ASKED.find(([, pattern]) => pattern.test(question))?.[0] ?? null;
+}
 const NAME_QUESTION = /^(?:من هو|من هي|من الذي|من التي|من (?:اخترع|كتب|ألف|أسس|اكتشف|بنى|صمم|رسم|أنشأ)|who (?:is|was|were|wrote|invented|founded|discovered|built|designed|painted|created|directed|composed))\b/iu;
 const ENGLISH_NAME = /(?:^|[\s(,:;])[A-Z][a-z]+(?:[\s-][A-Z][a-z]+)+/u;
 
@@ -98,6 +126,8 @@ export function checkAnswerLine(question: string, line: string, options: { topic
   if ((answered === 'ar' || answered === 'en') && answered !== asked) reasons.push('language');
   if (NUMBER_QUESTION.test(question) && !/[\d٠-٩]/u.test(text)) reasons.push('needs_number');
   else if (NUMBER_QUESTION.test(question) && !hasFigureOf(figureKind(question), text)) reasons.push('needs_unit');
+  const aspect = aspectKind(question);
+  if (aspect && !ASPECT_LINE[aspect].test(text)) reasons.push('needs_aspect');
   // Arabic has no capitals to spot a name by; the check applies to English answers only.
   if (NAME_QUESTION.test(question.trim()) && asked === 'en' && answered === 'en' && !ENGLISH_NAME.test(text)) reasons.push('needs_name');
   if (options.topic?.length) {

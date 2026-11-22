@@ -16,6 +16,8 @@ export interface ReleaseFact {
   version: string;
   /** When the source's own files for that version appeared, ISO 8601 UTC. */
   publishedAt: string;
+  /** The page's own words the fact was read from, verbatim, quoted under the answer («node-v26.13.1-… 11-Nov-2026 16:41»). */
+  evidence: string;
 }
 
 export interface ReleaseSource {
@@ -41,14 +43,15 @@ export function nodeLatest(text: string): ReleaseFact | null {
   if (!found.length) return null;
   const versions = new Set(found.map(match => match[1]));
   if (versions.size !== 1) return null;
-  const times = found.flatMap(match => {
+  const entries = found.flatMap(match => {
     const month = MONTHS[match[3]!];
     if (month === undefined) return [];
     const time = Date.UTC(Number(match[4]), month, Number(match[2]), Number(match[5]), Number(match[6]));
-    return Number.isNaN(time) ? [] : [time];
+    return Number.isNaN(time) ? [] : [{ time, text: match[0] }];
   });
-  if (!times.length) return null;
-  return { version: found[0]![1]!, publishedAt: new Date(Math.min(...times)).toISOString() };
+  if (!entries.length) return null;
+  const first = entries.reduce((earliest, entry) => entry.time < earliest.time ? entry : earliest);
+  return { version: found[0]![1]!, publishedAt: new Date(first.time).toISOString(), evidence: first.text };
 }
 
 export const RELEASE_SOURCES: readonly ReleaseSource[] = [{
@@ -61,16 +64,18 @@ export const RELEASE_SOURCES: readonly ReleaseSource[] = [{
 }];
 
 const fold = (text: string) => text.normalize('NFKC').toLowerCase().replace(/[\s.]+/gu, '').replace(/[أإآ]/gu, 'ا');
-// «آخر إصدار مستقر من Node.js»، «أحدث نسخة من نود»: the subject follows the version words.
-const ARABIC_ASK = /(?:^|\s)(?:آخر|اخر|أحدث|احدث)\s+(?:إصدار|اصدار|نسخة|نسخه)(?:\s+(?:مستقر[ةه]?|ثابت[ةه]?|رسمي[ةه]?|lts))?\s+(?:من|في|ل|لـ)\s+(\S+(?:\s+\S+){0,2})/iu;
+// «آخر إصدار مستقر من Node.js»، «أحدث نسخة من نود»، «آخر إصدار Node.js»: the subject follows the version words.
+const ARABIC_ASK = /(?:^|\s)(?:آخر|اخر|أحدث|احدث)\s+(?:إصدار|اصدار|نسخة|نسخه)(?:\s+(?:مستقر[ةه]?|ثابت[ةه]?|رسمي[ةه]?|lts))?\s+(?:(?:من|في|ل|لـ)\s+)?(\S+(?:\s+\S+){0,2})/iu;
 // "latest stable version of Node.js", "the newest release of node".
 const ENGLISH_ASK_OF = /\b(?:latest|newest|most recent|current)\s+(?:stable\s+|lts\s+)?(?:version|release)\s+of\s+(\S+(?:\s+\S+){0,2})/iu;
 // "Node.js latest version", "node lts release".
 const ENGLISH_ASK_BEFORE = /(?:^|\s)(\S+(?:\s+\S+)?)\s+(?:latest|newest|current)\s+(?:stable\s+|lts\s+)?(?:version|release)\b/iu;
+// "the latest node version", "newest stable Node.js release".
+const ENGLISH_ASK_BETWEEN = /\b(?:latest|newest|most recent|current)\s+(?:stable\s+|lts\s+)?(\S+(?:\s+\S+)?)\s+(?:version|release)\b/iu;
 
 /** The official source for a «latest version» question, or null when the question asks something else or names no listed product. */
 export function releaseQuestion(text: string): ReleaseSource | null {
-  for (const pattern of [ARABIC_ASK, ENGLISH_ASK_OF, ENGLISH_ASK_BEFORE]) {
+  for (const pattern of [ARABIC_ASK, ENGLISH_ASK_OF, ENGLISH_ASK_BEFORE, ENGLISH_ASK_BETWEEN]) {
     const subject = pattern.exec(text)?.[1];
     if (!subject) continue;
     // The subject is one to three words, cut at punctuation: «Node.js،» and «Node.js?» are «Node.js».
@@ -88,10 +93,14 @@ export function releaseQuestion(text: string): ReleaseSource | null {
   return null;
 }
 
-/** The answer line, framed in the owner's language; the version and time are the source's own. */
+/**
+ * The answer line in the owner's language, naming the page it is read from; the page's own entry is quoted under it
+ * (`fact.evidence`). That is the quoted-reply form the pre-send judge reads (judge.ts: a lead «من **…**» / «From **…**» and
+ * «> » lines it finds in the pages read), so the frame is ours and the version stands on the page's own words.
+ */
 export function releaseLines(source: ReleaseSource, fact: ReleaseFact, lang: 'ar' | 'en'): string[] {
   const [day, time] = [fact.publishedAt.slice(0, 10), fact.publishedAt.slice(11, 16)];
   return [lang === 'en'
-    ? `The latest stable ${source.product} release is ${fact.version}; its files were published on the official ${source.product} site on ${day} at ${time} UTC.`
-    : `آخر إصدار مستقر من ${source.product} هو ${fact.version}، ونُشرت ملفاته في موقع ${source.product} الرسمي يوم ${day} الساعة ${time} UTC.`];
+    ? `From **${source.title.en}**: the latest stable ${source.product} release is ${fact.version}; its files were published on ${day} at ${time} UTC.`
+    : `من **${source.title.ar}**: آخر إصدار مستقر من ${source.product} هو ${fact.version}، ونُشرت ملفاته يوم ${day} الساعة ${time} UTC.`];
 }
