@@ -48,7 +48,12 @@ describe('Wasla bridge over disposable local state', { timeout: 120000 }, () => 
   beforeAll(async () => {
     directory = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'mohassan-wasla-')));
     application = await createApplication({ authSecret: 'wasla-fixture-auth-secret-000000000001', internalSecret: secret, setupToken, webOrigin: origin, production: false, runWorker: false,
-      codingAllowedRoots: [directory], browserProfileDir: join(directory, 'browser'), testRequestLimit: 2000, waslaBridgeEnabled: true });
+      codingAllowedRoots: [directory], browserProfileDir: join(directory, 'browser'), testRequestLimit: 2000, waslaBridgeEnabled: true,
+      // The phone's search goes through Mohassan's engine; a fixture provider stands in for the network.
+      browser: { searchProvider: { name: 'fixture-engine', search: async (question: string) => [
+        { title: `نتيجة عن ${question}`, url: 'https://example.test/one', snippet: 'مقتطف' },
+        { title: 'insecure', url: 'http://example.test/two', snippet: 'dropped' },
+      ] } } });
     expect((await app().inject({ method: 'POST', url: '/api/setup', headers: web(''), payload: { ...owner, setupToken } })).statusCode).toBe(200);
     const signIn = await app().inject({ method: 'POST', url: '/api/auth/sign-in/email', headers: web(''), payload: { email: owner.email, password: owner.password } });
     ownerCookie = cookieOf(signIn);
@@ -127,6 +132,14 @@ describe('Wasla bridge over disposable local state', { timeout: 120000 }, () => 
     expect(direct.statusCode).toBe(401); expect(direct.json().error.code).toBe('SERVICE_UNAUTHORIZED');
     const removed = await app().inject({ method: 'DELETE', url: `/api/wasla/gateway/conversations/${id}`, headers: service() });
     expect(removed.statusCode, removed.body).toBe(200);
+  });
+
+  it('searches with Mohassan\'s engine and keeps only https results', async () => {
+    const found = await app().inject({ url: '/api/wasla/gateway/search?q=%D8%AA%D9%8A%D9%84%D8%B3%D9%83%D9%8A%D9%84', headers: service() });
+    expect(found.statusCode, found.body).toBe(200);
+    expect(found.json()).toEqual({ query: 'تيلسكيل', provider: 'fixture-engine', results: [{ title: 'نتيجة عن تيلسكيل', url: 'https://example.test/one', snippet: 'مقتطف' }] });
+    expect((await app().inject({ url: '/api/wasla/gateway/search', headers: service() })).statusCode).toBe(400);
+    expect((await app().inject({ url: '/api/wasla/gateway/search?q=x' })).statusCode).toBe(401);
   });
 
   it('stops the key as soon as the owner revokes it', async () => {

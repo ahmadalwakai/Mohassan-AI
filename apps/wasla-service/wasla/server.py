@@ -57,6 +57,7 @@ class Runtime:
         self.store, self.services, self.desktop = store, services, desktop
         self.mohassan = mohassan or MohassanBridge(store.root)
         self.desktop_enabled = desktop_enabled
+        self.last_search = None
         self.lease = None
         self.desktop_lock = asyncio.Lock()
         self.jobs = read_json(store.root / "jobs.json", {})
@@ -170,13 +171,14 @@ async def capabilities(runtime, display):
         chat = {"ready": False, "reason": BRIDGE_REASONS.get(link["error"], f"موحسن رفض الربط ({link['error']})."), "code": link["error"]}
     else:
         chat = {"ready": True}
-    last = getattr(runtime.services, "last_search", None)
-    if last and last.get("ok") and time.time() - last.get("at", 0) < 24 * 3600:
-        search = {"ready": True}
-    elif last and not last.get("ok"):
-        search = {"ready": False, "reason": "آخر بحث فشل: " + last.get("message", last.get("code", "")), "code": last.get("code")}
+    # Search runs on Mohassan's engine, so it is as ready as the bridge, until a search says otherwise.
+    last = runtime.last_search
+    if not chat["ready"]:
+        search = {"ready": False, "reason": "البحث يمر عبر موحسن: " + chat["reason"]}
+    elif last and not last.get("ok") and time.time() - last.get("at", 0) < 3600:
+        search = {"ready": False, "reason": "آخر بحث فشل: " + str(last.get("message") or last.get("code") or ""), "code": last.get("code")}
     else:
-        search = {"ready": False, "reason": "لم يُجرَّب البحث من هذا الكمبيوتر بعد؛ مصدره قيد القرار."}
+        search = {"ready": True, "reason": "بمحرك بحث موحسن."}
     images_available = getattr(runtime.services, "images_available", True)
     if images_available:
         images = {"ready": True}
@@ -307,10 +309,18 @@ async def image_content(request):
 
 
 async def search(request):
+    """The phone's search runs on Mohassan's engine through the bridge; the outcome feeds /v1/status."""
     runtime = request.app[STATE]
     runtime.limit(("search", request["device_id"]), 15)
     data = await body(request, ("query",))
-    return web.json_response(await runtime.services.search(data["query"]))
+    query = text_value(data["query"], "query", 400)
+    try:
+        result = await runtime.mohassan.search(query)
+    except Exception as exc:
+        runtime.last_search = {"ok": False, "at": time.time(), "code": getattr(exc, "code", "search_failed"), "message": getattr(exc, "message", str(exc))}
+        raise
+    runtime.last_search = {"ok": True, "at": time.time(), "provider": result.get("provider") if isinstance(result, dict) else None}
+    return web.json_response(result)
 
 
 async def start_desktop(request):

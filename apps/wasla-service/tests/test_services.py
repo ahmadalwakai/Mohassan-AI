@@ -8,24 +8,11 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlencode, urlsplit
 from xml.sax.saxutils import escape
 
-from wasla.services import LocalServices, ServiceError, MODEL, _HTTP, _duckduckgo, _bing, _safe_result_url
+from wasla.services import LocalServices, ServiceError, MODEL, _HTTP
 
 
-ARABIC_SEARCH = "ابحث عن وثائق Tailscale الرسمية لتوصيل iPhone بكمبيوتر Windows، وأظهر المصادر."
 
 
-def rss(query, items=()):
-    """Provider fixture with an accurately echoed query, including Arabic."""
-    link = "https://www.bing.com/search?" + urlencode({"q": query, "format": "rss"})
-    rows = "".join(
-        f"<item><title>{escape(title)}</title><link>{escape(url)}</link>"
-        f"<description>{escape(snippet)}</description></item>"
-        for title, url, snippet in items
-    )
-    return f"<rss><channel><title>Bing: {escape(query)}</title><link>{escape(link)}</link>{rows}</channel></rss>"
-
-
-TAILSCALE_RESULT = ("Tailscale documentation", "https://tailscale.com/kb", "Connect iPhone and Windows")
 
 
 class FakeTransport:
@@ -191,147 +178,6 @@ class ServicesTests(unittest.IsolatedAsyncioTestCase):
         self.service._guard = guard
         await self.service.chat([{"role": "user", "content": "hi"}])
         self.assertEqual(guarded, ["acquired", "released"])
-
-    # Bing RSS is no longer tried (its robots.txt forbids it): one provider, and an honest
-    # record of the last outcome for /v1/status.
-    async def test_challenge_page_is_search_unavailable_and_recorded(self):
-        self.transport.search_bodies["DuckDuckGo HTML"] = '<form id="challenge-form"></form>'
-        with self.assertRaises(ServiceError) as caught:
-            await self.service.search("local image generation")
-        self.assertEqual(caught.exception.code, "search_unavailable")
-        self.assertEqual([name for name, _ in self.transport.searches], ["DuckDuckGo HTML"])
-        self.assertFalse(self.service.last_search["ok"])
-        self.assertEqual(self.service.last_search["code"], "search_unavailable")
-
-    async def test_relevant_results_are_returned_and_recorded(self):
-        self.transport.search_bodies["DuckDuckGo HTML"] = (
-            f'<a class="result__a" href="{TAILSCALE_RESULT[1]}">{TAILSCALE_RESULT[0]}</a>'
-            f'<a class="result__snippet">{TAILSCALE_RESULT[2]}</a>')
-        result = await self.service.search(ARABIC_SEARCH)
-        self.assertEqual(result["provider"], "DuckDuckGo HTML")
-        self.assertEqual(result["results"][0]["url"], TAILSCALE_RESULT[1])
-        self.assertTrue(self.service.last_search["ok"])
-        self.assertEqual(self.transport.calls, [])  # Relevance checking never invokes the model.
-
-    async def test_irrelevant_results_never_become_an_answer(self):
-        self.transport.search_bodies["DuckDuckGo HTML"] = (
-            '<a class="result__a" href="https://example.org/stocks">Barclays share price</a>')
-        with self.assertRaises(ServiceError) as caught:
-            await self.service.search(ARABIC_SEARCH)
-        self.assertEqual(caught.exception.code, "search_irrelevant")
-
-    async def test_mismatched_query_echo_never_becomes_an_answer(self):
-        self.transport.search_bodies["DuckDuckGo HTML"] = (
-            '<input name="q" value="another query">'
-            '<a class="result__a" href="https://tailscale.com">Tailscale</a>')
-        with self.assertRaises(ServiceError) as caught:
-            await self.service.search(ARABIC_SEARCH)
-        self.assertEqual(caught.exception.code, "search_irrelevant")
-
-    async def test_explicit_empty_result_remains_empty(self):
-        self.transport.search_bodies["DuckDuckGo HTML"] = '<div class="no-results">No results found</div>'
-        result = await self.service.search(ARABIC_SEARCH)
-        self.assertEqual(result["results"], [])
-        self.assertEqual(len(self.transport.searches), 1)
-        self.assertTrue(self.service.last_search["ok"])
-
-    async def test_upstream_failure_is_search_unavailable(self):
-        self.transport.search_bodies["DuckDuckGo HTML"] = ServiceError("upstream_unavailable", "offline")
-        with self.assertRaises(ServiceError) as caught:
-            await self.service.search(ARABIC_SEARCH)
-        self.assertEqual(caught.exception.code, "search_unavailable")
-
-    async def test_correct_query_echo_does_not_make_unrelated_page_acceptable(self):
-        for title in ("FLINTMANOR company information", "Barclays stock quotes"):
-            self.transport.search_bodies["DuckDuckGo HTML"] = (
-                f'<input name="q" value="{ARABIC_SEARCH}">'
-                f'<a class="result__a" href="https://example.org/company">{title}</a>'
-                '<a class="result__snippet">Shares and company registration</a>')
-            with self.subTest(title=title), self.assertRaises(ServiceError) as error:
-                await self.service.search(ARABIC_SEARCH)
-            self.assertEqual(error.exception.code, "search_irrelevant")
-        self.assertEqual(self.transport.calls, [])
-
-    async def test_search_failure_is_honest(self):
-        with self.assertRaises(ServiceError) as error:
-            await self.service.search("some query")
-        self.assertEqual(error.exception.code, "search_unavailable")
-
-
-class SearchParserTests(unittest.TestCase):
-    def test_bing_filters_unrelated_results_even_when_platforms_match(self):
-        items = [
-            ("Windows and iPhone accessories", "https://example.org/shop", "Buy cases"),
-            TAILSCALE_RESULT,
-            ("Barclays", "https://example.org/stocks", "Financial information"),
-        ]
-        results = _bing(rss(ARABIC_SEARCH, items), query=ARABIC_SEARCH)
-        self.assertEqual([result["url"] for result in results], [TAILSCALE_RESULT[1]])
-
-    def test_relevance_is_checked_before_six_result_display_limit(self):
-        items = [(f"Unrelated company {index}", f"https://example.org/{index}", "Stocks") for index in range(6)]
-        items.append(TAILSCALE_RESULT)
-        self.assertEqual(_bing(rss(ARABIC_SEARCH, items), query=ARABIC_SEARCH)[0]["url"], TAILSCALE_RESULT[1])
-
-    def test_bing_query_echo_mismatch_is_rejected_even_with_relevant_results(self):
-        with self.assertRaises(ServiceError) as error:
-            _bing(rss("different question", [TAILSCALE_RESULT]), query=ARABIC_SEARCH)
-        self.assertEqual(error.exception.code, "search_query_mismatch")
-
-    def test_bing_link_echo_must_also_match(self):
-        body = rss(ARABIC_SEARCH, [TAILSCALE_RESULT]).replace(
-            urlencode({"q": ARABIC_SEARCH, "format": "rss"}).replace("&", "&amp;"), "q=other&amp;format=rss")
-        with self.assertRaises(ServiceError) as error:
-            _bing(body, query=ARABIC_SEARCH)
-        self.assertEqual(error.exception.code, "search_query_mismatch")
-
-    def test_ddg_query_input_and_title_echo_mismatch_are_rejected(self):
-        result = '<a class="result__a" href="https://tailscale.com">Tailscale</a>'
-        for metadata in ('<input name="q" value="other">', '<title>other at DuckDuckGo</title>'):
-            with self.subTest(metadata=metadata), self.assertRaises(ServiceError) as error:
-                _duckduckgo(metadata + result, query="Tailscale")
-            self.assertEqual(error.exception.code, "search_query_mismatch")
-
-    def test_arabic_spelling_and_diacritics_are_normalized_for_relevance(self):
-        query = "ابحث عن وَثَائِق تايلسكيل آيفون ويندوز"
-        results = _bing(rss(query, [TAILSCALE_RESULT]), query=query)
-        self.assertEqual(results[0]["url"], TAILSCALE_RESULT[1])
-
-    def test_unusable_feed_items_are_not_reported_as_genuine_empty(self):
-        with self.assertRaises(ServiceError) as error:
-            _bing(rss("Tailscale", [("Tailscale", "file:///secret", "")]), query="Tailscale")
-        self.assertEqual(error.exception.code, "invalid_search_response")
-
-    def test_http_search_sends_exact_query_and_discourages_stale_responses(self):
-        transport = _HTTP()
-        with patch.object(transport, "_read", return_value=(b"<rss/>", "application/rss+xml")) as read:
-            transport.search("Bing RSS", ARABIC_SEARCH)
-        request = read.call_args.args[1]
-        self.assertEqual(parse_qs(urlsplit(request.full_url).query), {"q": [ARABIC_SEARCH], "format": ["rss"]})
-        self.assertEqual(request.get_header("Cache-control"), "no-cache")
-        self.assertEqual(read.call_args.args[2:], (18, 1024 * 1024))
-
-    def test_ddg_nested_titles_snippets_and_redirect_urls(self):
-        body = '''<div><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.org%2Farticle">A <b>result</b></a><a class="result__snippet">A useful <b>snippet</b>.</a></div>'''
-        results = _duckduckgo(body)
-        self.assertEqual(results, [{"title": "A result", "url": "https://example.org/article", "snippet": "A useful snippet."}])
-
-    def test_rejects_unsafe_links_and_deduplicates(self):
-        for url in ("javascript:alert(1)", "file:///C:/private", "https://localhost/a", "http://127.0.0.1/a", "http://10.0.0.1/a", "https://user:pass@example.org", "https://example.org:8443/a", "https://intranet/a"):
-            self.assertIsNone(_safe_result_url(url), url)
-        html = '<a class="result__a" href="https://example.org">One</a>' * 8
-        self.assertEqual(len(_duckduckgo(html)), 1)
-
-    def test_empty_search_is_distinct_from_unparseable_page(self):
-        self.assertEqual(_duckduckgo('<div class="result--no-result">No results found</div>'), [])
-        with self.assertRaises(ServiceError):
-            _duckduckgo('<html>Something changed</html>')
-
-    def test_bing_rejects_entities_and_html_page(self):
-        for body in ('<!DOCTYPE rss [<!ENTITY x SYSTEM "file:///secret">]><rss/>', '<html>challenge</html>'):
-            with self.assertRaises(ServiceError):
-                _bing(body)
-
 
 if __name__ == "__main__":
     unittest.main()
