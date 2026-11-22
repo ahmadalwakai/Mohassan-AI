@@ -38,6 +38,14 @@ config.conversationShadow?.observe({ conversationId: id, turnId: runId, text: re
 3. سطر الحفظ عند الإغلاق أُضيف في `app.ts` (07:56 UTC، الدفعة التاسعة، الملف هادئ منذ 22 دقيقة): `if (conversationShadow) app.addHook('onClose', …flush())`.
 4. أداة إعادة السجل الحقيقي عبر الشفرة الحالية: `npx tsx scripts/conversation-state/replay-shadow.ts`.
 
+## مراجعة المالك (المقياس المستقل)
+
+1. `npx tsx scripts/conversation-state/review-sheet.ts` يكتب ورقة عربية بكل رسالة حقيقية اختلفت فيها القراءتان، تحت `artifacts/conversation-state-20261122/review-*/`.
+2. المالك يكتب بعد «الحكم:» كلمة: v1 أو v2 أو كلاهما أو لا أحد، أو يرسلها في المحادثة «1 v2، 2 كلاهما».
+3. `npx tsx scripts/conversation-state/score-review.ts <REVIEW-AR.md> [--answers "…"]` يحسب صحة كل قراءة وMcNemar.
+
+الأحكام للمالك وحده؛ لا يملؤها وكيل.
+
 ## لا تلمس
 
 - لا تعدّل `conversation-state.ts` واختباراته دون كلمة المالك؛ وسّع ملف الاختبار بدل إعادة كتابته (فيه 20 اختبارًا من جلسة أخرى + 56 من هذه الجلسة، 76 كلها تنجح عند 06:20 UTC؛ التفاصيل والأرقام في `artifacts/conversation-state-20261122/REPORT.md` §2.1 إلى §2.6، ومعها أداة الثبات `scripts/conversation-state/robustness.ts`).
