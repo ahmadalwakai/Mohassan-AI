@@ -50,19 +50,33 @@ export function verifyBenchmarkInstruction(snapshot: SkillBenchmarkSnapshot, con
     });
   } catch { return false; }
 }
-export function createBenchmarkControls(db: Kysely<any>, directory: string, executeNode?: (next: () => Promise<any>, context: any) => Promise<any>) {
+/**
+ * Task lease of a benchmark session, in ms. The runtime aborts a task 500 ms before its lease ends (TASK_TIMEOUT in
+ * packages/runtime/src/index.ts), so the former 1 s lease left every task 500 ms. Under load the confirmed-rollback
+ * case needed about 0.69 s: the file was restored, but the task was aborted and reported failed, in 7 of 10 runs on
+ * 2026-11-22. A 10 s lease leaves 9.5 s, well inside the 120 s deadline of a whole benchmark run.
+ */
+export const BENCHMARK_LEASE_MS = 10_000;
+/**
+ * Only the crash-recovery worker needs a lease that really expires within the runner's short wait (this value + 100 ms).
+ * It cannot be 1 s either: that left its file write 500 ms, and on 2026-11-22 the write was failed 544 ms after it
+ * started in a natural run under load, and every time once the step was slowed to 600 ms on purpose. 3 s leaves 2.5 s.
+ */
+export const BENCHMARK_CRASH_LEASE_MS = 3000;
+export interface BenchmarkControlOptions { leaseMs?: number }
+export function createBenchmarkControls(db: Kysely<any>, directory: string, executeNode?: (next: () => Promise<any>, context: any) => Promise<any>, options: BenchmarkControlOptions = {}) {
   const skills = createSkillControl(db, { enabled: true, allowedRoots: [directory], executableReady: async () => false,
     environment: () => ({ capabilities: [], gatewayTools: ['file.read', 'file.write'], executableReady: false, modelReady: false, visionReady: false }) });
   // No browser/memory engine is constructed. The suite rejects their contracts
   // and the permission snapshot exposes file tools alone.
   const execution = createSkillRuntime(db, { skills, browser: Object.freeze({}) as SkillToolControls['browser'], memory: Object.freeze({}) as SkillToolControls['memory'] });
   const rollback = createSkillRollbackControl(db);
-  const runtime = new Runtime(db, { leaseMs: 1000, maxAttempts: 1,
+  const runtime = new Runtime(db, { leaseMs: options.leaseMs ?? BENCHMARK_LEASE_MS, maxAttempts: 1,
     skillRuntime: executeNode ? { ...execution.runtimeOptions, executeNode: context => executeNode(() => execution.runtimeOptions.executeNode(context), context) } : execution.runtimeOptions,
     rollback: { prepare: rollback.prepare, execute: rollback.execute, verify: rollback.verify, recoverExpired: rollback.recoverExpired } });
   return { skills, runtime, rollback, execution };
 }
-export async function initializeBenchmarkClone(db: Kysely<any>, directory: string, snapshot: SkillBenchmarkSnapshot) {
+export async function initializeBenchmarkClone(db: Kysely<any>, directory: string, snapshot: SkillBenchmarkSnapshot, options: BenchmarkControlOptions = {}) {
   const contract = verifyBenchmarkSnapshot(snapshot);
   await migrateAuth(db); await migrate(db); await skillsMigration(db);
   await db.insertInto('user').values({ id: BENCHMARK_OWNER, name: 'Private benchmark copy', email: 'private-benchmark@example.test' }).execute();
@@ -74,7 +88,7 @@ export async function initializeBenchmarkClone(db: Kysely<any>, directory: strin
     name: contract.name, description: contract.description, category: contract.category, level: contract.level, origin: 'custom', status: 'quarantined',
     contract: JSON.stringify(contract), content_hash: snapshot.pin.contentHash }).execute();
   await db.insertInto('skill_files').values(snapshot.files.map(file => ({ version_id: versionId, path: file.path, kind: file.kind, content: file.content, content_hash: file.contentHash, size_bytes: file.sizeBytes }))).execute();
-  const controls = createBenchmarkControls(db, directory);
+  const controls = createBenchmarkControls(db, directory, undefined, options);
   let version = (await controls.skills.inspect(BENCHMARK_OWNER, versionId, { expectedRevision: 1 })).skill;
   version = (await controls.skills.activate(BENCHMARK_OWNER, versionId, { expectedRevision: version.revision, approve: true, acknowledgeFindings: true })).skill;
   return { ...controls, versionId: version.id, contract };

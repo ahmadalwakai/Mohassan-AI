@@ -12,6 +12,7 @@ import { createSkillControl, skillsMigration } from '@mohassan/skills';
 import { Runtime } from '@mohassan/runtime';
 import { migrateAuth } from '../apps/server/src/auth.js';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
+import { MAX_MODEL_RETRIES } from '../apps/server/src/assistant/model-retry.js';
 
 const owner='safety-owner';
 let server:Server, origin:string, tempBase:string, directory:string, browser:AgentBrowser;
@@ -456,14 +457,19 @@ describe('durable assistant claims',()=>{
     try{
       const item=await control.create(owner,{goal:'A bounded model request'});await control.settled(item.id);
       const rows=await database.db.selectFrom('chat_model_receipts').selectAll().orderBy('started_at','asc').execute();
-      expect(calls).toBe(['network','paid-invalid','long-retry','invalid-retry'].includes(kind)?1:2);expect(rows).toHaveLength(calls);
+      // Since 2026-11-21 a zero-usage rejection gets up to MAX_MODEL_RETRIES deferred retries after 30, 45 and 60 s
+      // (apps/server/src/assistant/model-retry.ts), each sent to the primary and the fallback model. Replay stays
+      // bounded at 2 × (1 + MAX_MODEL_RETRIES) calls, every one recorded as a zero-usage rejection.
+      expect(calls).toBe(['network','paid-invalid','long-retry','invalid-retry'].includes(kind)?1:kind==='two-rejections'?2*(1+MAX_MODEL_RETRIES):2);expect(rows).toHaveLength(calls);
+      if(kind==='two-rejections')expect(rows.every(row=>row.http_status===429&&row.input_tokens===0&&row.output_tokens===0)).toBe(true);
       if(kind==='network'){expect(rows[0]).toMatchObject({status:'unknown',usage_known:false,error_code:'NETWORK_ERROR',http_status:null,retry_after_ms:null,retry_reason:'not_confirmed_rejection'});}
       if(kind==='paid-invalid'){expect(rows[0]).toMatchObject({status:'invalid',usage_known:true,input_tokens:23,output_tokens:7});}
       if(kind==='rate-limit'){expect(new Set(rows.map(row=>row.model)).size).toBe(2);expect(rows[0]).toMatchObject({input_tokens:0,output_tokens:0,usage_known:true,http_status:429,retry_after_ms:0,retry_reason:'confirmed_zero_usage_rejection'});expect(rows[1].status).toBe('succeeded');}
       if(kind==='long-retry')expect(rows[0]).toMatchObject({http_status:429,retry_after_ms:600000,retry_reason:'retry_budget_exceeded'});
       if(kind==='invalid-retry')expect(rows[0]).toMatchObject({http_status:429,retry_after_ms:null,retry_reason:'retry_after_invalid'});
     }finally{await control.shutdown();await database.close();}
-  });
+  // two-rejections waits out the real 30 + 45 + 60 s backoff; the other variants finish in seconds.
+  },240_000);
   it('atomically consumes concurrent question answers and implements stop without redispatch',async()=>{
     const database=await store();let calls=0;
     const control=await createCommandChatControl(database.db,configuration(async(_url,init)=>{const request=JSON.parse(String(init?.body));calls++;return response(request.model,calls===1?{tool:'ask_user',text:'Choose',options:['Proceed','Stop']}:{tool:'answer',text:'done',outcome:'done'});}));

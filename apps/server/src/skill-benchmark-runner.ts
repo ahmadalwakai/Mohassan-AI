@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { SkillError, hashSkillData, sha256 } from '@mohassan/skills';
 import { SkillBenchmarkCaseResultSchema, SkillBenchmarkSnapshotSchema, SkillBenchmarkSuiteSchema, type SkillBenchmarkCaseResult, type SkillBenchmarkSnapshot, type SkillBenchmarkSuite } from '../../../packages/contracts/src/skill-benchmarks.ts';
 import { BENCHMARK_ASCII, BENCHMARK_BEFORE, BENCHMARK_UNICODE, skillBenchmarkDefinition, skillBenchmarkSuite, skillBenchmarkSupport, type TrustedSkillBenchmarkCase, type TrustedSkillBenchmarkSuite } from '../../../packages/skills/src/benchmark-suites.ts';
-import { BENCHMARK_OWNER, benchmarkJson, benchmarkReceipt, createBenchmarkDatabase, grantBenchmarkRoot, initializeBenchmarkClone, prepareBenchmarkRoot, readBenchmarkText, startBenchmarkTask, tickBenchmarkTask, verifyBenchmarkSnapshot, verifyBenchmarkInstruction } from './skill-benchmark-isolation.ts';
+import { BENCHMARK_CRASH_LEASE_MS, BENCHMARK_OWNER, benchmarkJson, benchmarkReceipt, createBenchmarkDatabase, grantBenchmarkRoot, initializeBenchmarkClone, prepareBenchmarkRoot, readBenchmarkText, startBenchmarkTask, tickBenchmarkTask, verifyBenchmarkSnapshot, verifyBenchmarkInstruction } from './skill-benchmark-isolation.ts';
 
 type CaseEvidence = SkillBenchmarkCaseResult['evidence'];
 export interface SkillBenchmarkRunnerInput { benchmarkRunId: string; arm: 'baseline' | 'candidate'; snapshot: SkillBenchmarkSnapshot; suite: SkillBenchmarkSuite; signal: AbortSignal }
@@ -126,7 +126,7 @@ async function crashCase(snapshot: SkillBenchmarkSnapshot, signal: AbortSignal):
     await writeFile(join(temp.directory, 'manifest.json'), JSON.stringify({ nonce, snapshot }), { flag: 'wx', mode: 0o600 });
     await runWorker(temp.directory, nonce, 'start', signal);
     // Lease time is real; never forge expiration or task/receipt state.
-    await new Promise<void>((resolveDelay, reject) => { const abort = () => { clearTimeout(timer); reject(new Error('BENCHMARK_CANCELLED')); }; const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolveDelay(); }, 1100); signal.addEventListener('abort', abort, { once: true }); if (signal.aborted) abort(); });
+    await new Promise<void>((resolveDelay, reject) => { const abort = () => { clearTimeout(timer); reject(new Error('BENCHMARK_CANCELLED')); }; const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolveDelay(); }, BENCHMARK_CRASH_LEASE_MS + 100); signal.addEventListener('abort', abort, { once: true }); if (signal.aborted) abort(); });
     const resumed = await runWorker(temp.directory, nonce, 'resume', signal);
     const store = await createBenchmarkDatabase(join(temp.directory, 'database'));
     try {

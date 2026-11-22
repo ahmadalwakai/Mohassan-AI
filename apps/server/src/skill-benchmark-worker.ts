@@ -7,7 +7,9 @@ import { createDatabase, sql } from '@mohassan/database';
 import { sha256 } from '@mohassan/skills';
 import { SkillBenchmarkSnapshotSchema } from '../../../packages/contracts/src/skill-benchmarks.ts';
 import { BENCHMARK_BEFORE, BENCHMARK_UNICODE, skillBenchmarkSuite, skillBenchmarkSupport } from '../../../packages/skills/src/benchmark-suites.ts';
-import { BENCHMARK_OWNER, createBenchmarkControls, grantBenchmarkRoot, initializeBenchmarkClone, prepareBenchmarkRoot, startBenchmarkTask, tickBenchmarkTask, verifyBenchmarkSnapshot } from './skill-benchmark-isolation.ts';
+import { BENCHMARK_CRASH_LEASE_MS, BENCHMARK_OWNER, createBenchmarkControls, grantBenchmarkRoot, initializeBenchmarkClone, prepareBenchmarkRoot, startBenchmarkTask, tickBenchmarkTask, verifyBenchmarkSnapshot } from './skill-benchmark-isolation.ts';
+// The crash case must see a real lease expiry within the runner's short wait, so this worker keeps the short lease.
+const crashLease = { leaseMs: BENCHMARK_CRASH_LEASE_MS };
 
 const [rawDirectory, phase] = process.argv.slice(2), directory = await realpath(resolve(rawDirectory ?? ''));
 const base = await realpath(tmpdir()), inside = relative(base, directory);
@@ -21,7 +23,7 @@ const store = await createDatabase({ dataDir: join(directory, 'database') });
 let controls: ReturnType<typeof createBenchmarkControls> | undefined;
 try {
   if (phase === 'start') {
-    const setup = await initializeBenchmarkClone(store.db, directory, manifest.snapshot);
+    const setup = await initializeBenchmarkClone(store.db, directory, manifest.snapshot, crashLease);
     const root = await prepareBenchmarkRoot(directory, 'confirmed-crash'); await writeFile(join(root, 'reports', 'result.txt'), BENCHMARK_BEFORE);
     controls = createBenchmarkControls(store.db, directory, async next => {
       await appendFile(join(directory, 'dispatches.txt'), 'dispatch\n');
@@ -30,7 +32,7 @@ try {
       process.send!({ kind: 'checkpoint', nonce: manifest.nonce, pid: process.pid, stage: 'confirmed-receipt-before-runtime-finish' });
       await new Promise<void>(() => {});
       return result;
-    });
+    }, crashLease);
     await grantBenchmarkRoot(controls, setup.versionId, root, 'file.write');
     const parent = await startBenchmarkTask(controls, setup.versionId, contract, { root, path: 'reports/result.txt', content: BENCHMARK_UNICODE, expectedHash: sha256(BENCHMARK_BEFORE) });
     await tickBenchmarkTask(store.db, controls, parent.id, AbortSignal.timeout(45000));
@@ -39,7 +41,7 @@ try {
   const versions = await store.db.selectFrom('skill_versions').select(['id', 'content_hash']).where('owner_id', '=', BENCHMARK_OWNER).execute();
   if (versions.length !== 1 || versions[0].content_hash !== manifest.snapshot.pin.contentHash) throw new Error('BENCHMARK_WORKER_PIN_CHANGED');
   const parent = await store.db.selectFrom('tasks').select('id').where('owner_id', '=', BENCHMARK_OWNER).where('capability_id', '=', 'skill.run').executeTakeFirstOrThrow();
-  controls = createBenchmarkControls(store.db, directory, async next => { await appendFile(join(directory, 'dispatches.txt'), 'dispatch\n'); return next(); });
+  controls = createBenchmarkControls(store.db, directory, async next => { await appendFile(join(directory, 'dispatches.txt'), 'dispatch\n'); return next(); }, crashLease);
   await tickBenchmarkTask(store.db, controls, parent.id, AbortSignal.timeout(45000), false);
   await controls.runtime.stop(); await store.close();
   process.send!({ kind: 'finished', nonce: manifest.nonce, pid: process.pid, parentId: parent.id }); process.disconnect();
