@@ -135,9 +135,13 @@
 
 | الملف | التغيير |
 |---|---|
-| `packages/browser/src/agent-browser.ts` | +67 سطرًا تقريبًا: `idlePageMs`، والمؤقت، و`sweepIdlePages`، و`idle`، و`retire`، وإيقاف المؤقت في `close()` |
+| `packages/browser/src/agent-browser.ts` | `idlePageMs` (30 دقيقة مقترحة)، والمؤقت، و`sweepIdlePages`، و`idle`، و`retire`، وإيقاف المؤقت في `close()`؛ ثم `settleQuietMs` و`quietNetwork()` بدل `networkidle` (§7.2) |
 | `packages/browser/src/agent-browser-idle.test.ts` | جديد، 4 حالات |
 | `scripts/browser-idle/measure.ts` | جديد، قياس الذاكرة قبل المسح وبعده |
+| `scripts/browser-settle/ab.ts` | جديد، A/B لنافذة هدوء الشبكة (§7.2) |
+| `packages/browser/src/agent-browser-settle.test.ts` | جديد، 3 حالات لنافذة الهدوء (§7.2) |
+| `tests/skills-forge-integration.test.ts` | إعادة الطلب مرة بعد 429 بمدة `Retry-After` (§7.1) |
+| `artifacts/browser-idle-close-2026-11-22/follow-up-gaps.json` | قياس فجوات المتابعة الحقيقية (§1) |
 | `apps/server/src/assistant/reply-check.ts` | جديد، الفاحص والإصلاحات الآلية |
 | `tests/assistant-reply-check.test.ts` | جديد، 12 حالة |
 | `scripts/reply-check/shadow.ts` | جديد، التشغيل في الظل وتقريره |
@@ -145,10 +149,58 @@
 
 لم يُعدَّل أي ملف آخر، ولم يُحذف شيء، ولم يُلمس `.env` ولا قاعدة المختبر ولا الإنتاج.
 
+## 7. الجولة الثانية (من 04:12): ما أُضيف بعد قول المالك «اكمل دون أن تسألني»
+
+عند إعادة فحص الشجرة في 04:12 كانت `command-chat.ts` و`app.ts` و`assistant-app.tsx` و`hands.ts` و`config.ts` ما زالت تُعدَّل بيد جلسات أخرى (آخر تعديل بين 04:05 و04:11)، وكانت منافذ الاختبار المعزول 3100 و4100 مشغولة بجلسة أخرى تشغّل Playwright. فبقي العمل في الملفات الباردة.
+
+### 7.1 إصلاح اختبار Forge الذي كان يفشل في كل تشغيل
+
+- **السبب المقيس:** منذ 2026-11-21 (`apps/server/src/request-rate-limit.ts`) يُحسب حد الطلبات بالحساب لا بعنوان IP حين يحمل الطلب رأس الخدمة الداخلي، فصارت ميزانية مسار `/api/skills/forge/generations` (10 في الدقيقة) مشتركة بين حالات الاختبار الإحدى عشرة لمالك واحد، بينما كان الاختبار يعتمد على عنوان IP مختلف لكل حالة. خمس حالات كانت تتلقى 429 «Rate limit exceeded».
+- **الإصلاح** في `tests/skills-forge-integration.test.ts` وحده: عند 429 ينتظر الاختبار مدة `Retry-After` مرة واحدة ويعيد الطلب، كما يفعل عميل حقيقي. لا تغيير في الخادم ولا في الحد.
+- **النتيجة:** 11 من 11 تمر (195 ث بدل 81 ث، لأنه ينتظر نافذة الدقيقة مرة واحدة).
+
+### 7.2 نافذة هدوء الشبكة بعد كل خطوة متصفح
+
+- **المقيس في خط الأساس §7.2:** 0.63 إلى 0.67 ث لكل خطوة حتى على صفحة محلية بلا شبكة. السبب أن `settle()` تنتظر 120 ms ثم `networkidle`، وPlaywright يعرّفها بـ500 ms بلا طلبات، فالحد الأدنى 620 ms بالبناء.
+- **ما بُني:** `quietNetwork()` في `agent-browser.ts` تعدّ الطلبات الجارية من أول لحظة بعد الفعل وتنتهي بعد 200 ms بلا طلب جارٍ، أو عند 900 ms كما كان. وخيار جديد `settleQuietMs` في `AgentBrowserOptions`؛ القيمة 500 تعيد السلوك السابق بالضبط.
+- **القياس A/B** في عملية واحدة وبالتناوب خطوة بخطوة، فيصيب حمل الجهاز الإعدادين بالتساوي (`scripts/browser-settle/ab.ts`، 12 خطوة لكل إعداد، صفحة محلية، المخرجات في `artifacts/browser-settle-2026-11-22/`):
+
+| المتصفح | نافذة 500 ms (السابق) p50 / p95 | نافذة 200 ms p50 / p95 | الفرق في الوسيط |
+|---|---|---|---|
+| Chrome المثبت (افتراضي الخادم) | 792 / 812 ms | 489 / 549 ms | −303 ms (−38%) |
+| Chromium المرفق | 765 / 784 ms | 461 / 507 ms | −304 ms (−40%) |
+
+- أمر متصفح كامل كان وسيطه 2.5 ث وp95 ‏5.4 ث في خط الأساس، بثلاث إلى تسع خطوات. الوفر المتوقع **محسوب** لا مقيس: 0.9 إلى 2.7 ث لكل أمر، ولم يُقَس على أوامر كاملة بعد.
+- **المخاطرة:** صفحة تبدأ جلب محتواها بطلب جديد بعد أكثر من 200 ms من الهدوء تُقرأ قبل وصوله؛ النافذة السابقة كانت تحتمل حتى 500 ms. القيمة 200 **مقترحة** ويثبّتها المالك.
+- **الاختبارات:** بعد التعديل تمر الملفات الثلاثة التي تقود متصفحًا حقيقيًا (`agent-browser-idle`، و`agent-capture-evidence`، و`assistant-flow` بتدفقات تسجيل الدخول والرموز والموافقات): **38 من 38**. وأُضيف `packages/browser/src/agent-browser-settle.test.ts` بثلاث حالات تمر: صفحة تجلب محتواها بعد التحميل بـ100 ms يُقرأ محتواها كاملًا، وصفحة لا تهدأ شبكتها تنتهي عند السقف دون تعليق، ونافذة 200 أرخص من 500 التي تعيد الأرضية القديمة.
+
+### 7.3 بناء الإنتاج للواجهة
+
+`npm run build` (Next.js 16.4.5، webpack) **يمر**: التجميع 3.4 دقيقة وفحص TypeScript 5.5 دقيقة تحت حمل الجهاز الحالي، وثلاث صفحات مولَّدة. أي أن الفرع المرفوع يُبنى من جهة الواجهة.
+
+### 7.4 تشخيص إخفاقين لم يُصلَحا لأن ملفاتهما حارة
+
+- `tests/assistant-safety.test.ts`، الحالة «records each model attempt and bounds replay for two-rejections»: تنتهي بمهلة 30 ث في كل تشغيل منذ خط الأساس. **السبب:** `model-retry.ts` (2026-11-21 17:05) يفرض تراجعًا أدنى 30 ث قبل إعادة طلب النموذج (`BACKOFF_MS = [30, 45, 60] ث`)، بينما يتوقع الاختبار إعادة فورية مع `retry-after: 0` ومهلته 30 ث. الحل إما رفع مهلة الحالة وقبول الانتظار، أو حقن قيمة التراجع في الاختبارات؛ وموضع الربط `command-chat.ts`.
+- `tests/assistant-tools.test.ts`: في اللقطة المعزولة فشلت حالتا التحكم الحسّاس بالحاسوب («does nothing when the owner refuses a sensitive control» و«treats keys that can activate the focused control as sensitive»). في الشجرة الحالية لم يمكن الحكم، لأن `beforeAll` تجاوز 60 ث تحت الحمل (بناء الإنتاج وإحدى عشرة جلسة). يُعاد على جهاز هادئ قبل أي استنتاج.
+
+### 7.5 رأس الفرع لا يمرّ فحص الأنواع (ليس من ملفات هذه الجلسة)
+
+في 04:52 أضافت جلسة أخرى commit ‏`d24be07` «feat: page cache, answer checks, feedback buttons, conversation shadow wiring (phases 2–4 in progress)»، ولم يُرفع بعد. فحص الأنواع على المستودع بعده **يفشل** في `apps/server/src/command-chat.ts:3158`: تُمرَّر `row` بنوع `{ [x: string]: any }` إلى `sendWithImages(…, row: { status: string; title: string }, …)`. الفحص الذي سبقه (04:22) كان يمر. بناء الواجهة لا يتأثر لأنه يفحص `apps/web` وحدها. **أُصلح بكلمة المالك في 05:1x** بتضييق الصف عند موضع الاستدعاء إلى `{ status, title }` (commit ‏`dcf8b36`): فحص الأنواع يمر، واختبارات رسائل الصور 5 من 5 تمر، ورُفع الفرع إلى `origin/feat/skill-engine` عند `dcf8b36` ومعه `d24be07`.
+
+### 7.6 ما تُرك عمدًا
+
+- Vercel: المشروع تحت نطاق فريق يحتاج تفويضًا من المالك، فلم يُفحص نشر المعاينة للفرع المرفوع.
+- قياس «ما يراه المستخدم» في متصفح حقيقي (E5.2): يحتاج منفذي 3100 و4100 المشغولين بجلسة أخرى.
+- `BROWSER_IDLE_PAGE_MS` وربط الفاحص: ما زالا يلمسان ملفات حارة.
+
 ## الأوامر
 
 ```powershell
-npx vitest run packages/browser/src/agent-browser-idle.test.ts tests/assistant-reply-check.test.ts
+npx vitest run packages/browser/src/agent-browser-idle.test.ts tests/assistant-reply-check.test.ts tests/skills-forge-integration.test.ts
+```
+
+```powershell
+npx tsx scripts/browser-settle/ab.ts --steps 12 --channel chrome
 ```
 
 ```powershell
@@ -171,4 +223,21 @@ npx tsx scripts/reply-check/shadow.ts
 | `tests/assistant-tools.test.ts` | 34 | 2 | «does nothing when the owner refuses a sensitive control»، و«treats keys that can activate the focused control as sensitive» |
 | `tests/skills-forge-integration.test.ts` | 11 | 5 | الخمس نفسها التي رآها تقرير المرحلة 0 عند 02:32 |
 
-التشغيل مستمر في الخلفية ويكتب تقريره في `.data/brain-test-snapshots/2026-11-22T03-26-57-856Z-12836-d3b91c07/.data/brain-test-run/`. لا شيء من هذه الإخفاقات في ملفات هذه الجلسة، واختباراتها الـ16 تمر على الشجرة الحالية.
+**تحديث 04:58:** أنجز التشغيل 59 ملفًا. الملفات الفاشلة حتى الآن، مع مدتها لأن المدد الطويلة تدل على مهلات تحت حمل الجهاز (إحدى عشرة جلسة وبناء إنتاج وتدريب T1 في الوقت نفسه) لا على منطق:
+
+| الملف | الفاشلة / الحالات | المدة | ملاحظة |
+|---|---|---|---|
+| `tests/assistant-hands.test.ts` | 8 / 65 | 0.6 ث | منطق البحث، جلسة أخرى تعدّله |
+| `tests/assistant-safety.test.ts` | 1 / 43 | 298 ث | تراجع 30 ث في `model-retry.ts` (§7.4) |
+| `tests/assistant-tools.test.ts` | 2 / 34 | 92 ث | التحكم الحسّاس بالحاسوب (§7.4) |
+| `tests/skills-forge-integration.test.ts` | 5 / 11 | 52 ث | **أُصلح في §7.1** (اللقطة سابقة للإصلاح) |
+| `tests/skills-rollback.test.ts` | 3 / 17 | 283 ث | مهلات على الأرجح |
+| `packages/desktop/src/desktop.test.ts` | 10 / 23 | 20 ث | حزمة جديدة غير محفوظة لجلسة أخرى؛ فشل منطقي سريع |
+| `tests/skills-tools.test.ts` | 1 / 15 | 28 ث | لم يُفحص |
+| `tests/browser-activity.test.ts` | 1 / 16 | 61 ث | مهلة على الأرجح |
+| `tests/browser-session-state.test.ts` | 2 / 19 | 209 ث | مهلات على الأرجح |
+| `packages/skills/src/benchmark.test.ts` | 1 / 23 | 36 ث | لم يُفحص |
+| `tests/skills-benchmark-runner.test.ts` | 3 / 11 | 171 ث | مهلات على الأرجح |
+| `tests/sandbox-escape.test.ts` | 2 / 25 | 144 ث | مهلات على الأرجح |
+
+التشغيل مستمر في الخلفية ويكتب تقريره النهائي (JSON) في `.data/brain-test-snapshots/2026-11-22T03-26-57-856Z-12836-d3b91c07/.data/brain-test-run/`. الحكم النهائي يحتاج إعادة التشغيل على جهاز هادئ. لا شيء من هذه الإخفاقات في ملفات هذه الجلسة، واختباراتها تمر على الشجرة الحالية.
