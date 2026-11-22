@@ -3155,7 +3155,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if (input.questionId && (row.status !== 'waiting_user' || row.question?.id !== input.questionId)) {
       throw new BrowserError('CHAT_QUESTION_CHANGED', 'هذا السؤال لم يعد معلقًا.', 409);
     }
-    if (input.images?.length && intent === 'task') return sendWithImages(ownerId, id, row, input.text, input.images);
+    // owned() returns the raw conversation row; sendWithImages needs only its status and title.
+    if (input.images?.length && intent === 'task') return sendWithImages(ownerId, id, { status: String(row.status), title: typeof row.title === 'string' ? row.title : '' }, input.text, input.images);
     if (input.answers) {
       const fields = row.question?.fields;
       if (!fields?.length || fields.length !== input.answers.length
