@@ -1,0 +1,7 @@
+# The computer service's own environment (Setup-Wasla.ps1 installs this into .venv).
+# Versions are the ones running on the owner's computer on 2026-11-22.
+aiohttp==3.14.3
+cryptography==50.0.1
+psutil==7.2.2
+pywin32==312; sys_platform == "win32"
+Pillow==12.3.0

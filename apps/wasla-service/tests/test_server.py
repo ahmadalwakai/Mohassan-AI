@@ -77,10 +77,14 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 403)
         response = await self.client.get('/v1/status?token=secret', headers=self.headers)
         self.assertEqual(response.status, 400)
+        # The phone's own chat is gone (one brain): the old route answers 410 whatever the body.
         response = await self.client.post('/v1/chat', headers=self.headers, json={'messages': [], 'command': 'bad'})
-        self.assertEqual(response.status, 400)
-        response = await self.client.post('/v1/chat', headers=self.headers, json={'messages': 'x' * 70000})
+        self.assertEqual(response.status, 410)
+        self.assertEqual((await response.json())['error']['code'], 'legacy_chat_removed')
+        response = await self.client.post('/v1/images/prepare', headers=self.headers, json={'description': 'x' * 70000})
         self.assertEqual(response.status, 413)
+        for path in ('/v1/knowledge', '/v1/conversations', '/v1/settings', '/v1/metrics'):
+            self.assertEqual((await self.client.get(path, headers=self.headers)).status, 404, path)
 
     async def test_desktop_requires_enabled_lease_and_ends(self):
         response = await self.client.get('/v1/desktop/frame', headers=self.headers)

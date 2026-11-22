@@ -1,11 +1,16 @@
 @echo off
 setlocal
-set "WASLA_PYTHONW=C:\Users\Administrator\Documents\Codex\2026-11-01\local-browser-agent\work\local-image-engine\venv\Scripts\pythonw.exe"
-if not exist "%WASLA_PYTHONW%" (
-  echo The existing Wasla Python runtime was not found.
-  echo No software was installed or changed.
+rem The service's own environment first (Setup-Wasla.ps1), then the Python launcher.
+set "WASLA_PYTHONW=%~dp0.venv\Scripts\pythonw.exe"
+if exist "%WASLA_PYTHONW%" (
+  start "" /D "%~dp0" "%WASLA_PYTHONW%" "%~dp0companion.py"
+  exit /b 0
+)
+where py >nul 2>nul
+if errorlevel 1 (
+  echo Python 3.11 or newer was not found. Run Setup-Wasla.ps1 first.
   pause
   exit /b 1
 )
-start "" /D "%~dp0" "%WASLA_PYTHONW%" "%~dp0companion.py"
+start "" /D "%~dp0" pyw -3 "%~dp0companion.py"
 exit /b 0
