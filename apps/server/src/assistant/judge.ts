@@ -15,7 +15,7 @@
  */
 import { performance } from 'node:perf_hooks';
 import { checkAnswerLine, isMetaLine } from './answer-check.js';
-import { fold, topicWords } from './hands.js';
+import { entityWords, fold, isFollowUp, refersBack, topicWords } from './hands.js';
 import { buildFrame } from './mind/frame.js';
 import { applyReplyFixes, checkReply, questionLanguage, type ReplyFindingCode } from './reply-check.js';
 
@@ -154,6 +154,26 @@ const ELLIPSIS_START = /^(?:…|\.\.\.)/u;
 const QUESTION_WORDS = new Set(['ما', 'ماذا', 'من', 'هو', 'هي', 'كم', 'متى', 'متي', 'أين', 'اين', 'كيف', 'هل', 'لماذا', 'ليش', 'في', 'عن', 'على', 'علي', 'إلى', 'الى', 'مع', 'لي', 'و', 'أو', 'او', 'ثم', 'هذا', 'هذه', 'ذلك',
   'what', 'is', 'are', 'the', 'of', 'in', 'who', 'how', 'when', 'where', 'which', 'does', 'do', 'did', 'a', 'an', 'to', 'for', 'i', 'my', 'me', 'you', 'and', 'or', 'was', 'were', 'it', 'that', 'this', 'please', 'tell', 'with', 'about']);
 const ARABIC_SUFFIX = /(?:هما|ها|هم|كم|كن|نا|ني|ك|ه|ي)$/u;
+/** A folded word that ends in a possessive pronoun («سكانها», «عاصمتهم»). */
+const POSSESSIVE = /\p{L}{3,}(?:هما|ها|هم|هن)$/u;
+/** «وكم», «فما», «ومن»: a conjunction glued to the question word, which topicWords would keep as a subject word. */
+const CONJUNCTION_ASK = /(^|[\s،,؛])[وف](?=(?:كم|ما|ماذا|من|متى|متي|أين|اين|هل|كيف|لماذا|ليش|شو|ايش)(?=[\s؟?]|$))/gu;
+/**
+ * The question as the judge scores it. A follow-up that points back with a pronoun and names no subject of its own
+ * («وكم عدد سكانها؟» after «ما عاصمة اليابان؟») borrows the previous turn's subject: «كم عدد سكانها؟ يابان». Only the subject,
+ * not the attribute asked before («عاصمة»), and nothing when the follow-up names its own («وماذا عن فرنسا؟»).
+ */
+export function resolvedQuestion(question: string, previous?: string | null): string {
+  const own = question.replace(CONJUNCTION_ASK, '$1');
+  // refersBack reads whole words: «سكانها؟» with its question mark attached is not seen as «سكانها».
+  const words = question.replace(/[؟?!.،,؛;:]/gu, ' ').replace(/\s+/gu, ' ').trim();
+  if (!previous || !isFollowUp(question) || !refersBack(words) || entityWords(own).length) return own;
+  const before = entityWords(previous);
+  const subject = before.length ? before : topicWords(previous);
+  const have = topicWords(own);
+  const missing = subject.filter(word => !have.some(item => mentions(item, word) || mentions(word, item)));
+  return missing.length ? `${own.trim()} ${missing.join(' ')}` : own;
+}
 /** Capitalised words that open or join a question and name nothing. */
 const QUESTION_NAMES = new Set(['What', 'Who', 'Whom', 'Whose', 'How', 'When', 'Where', 'Which', 'Why', 'Is', 'Are', 'Was', 'Were', 'Do', 'Does', 'Did', 'Can', 'Could',
   'Should', 'Would', 'Will', 'Tell', 'Give', 'Show', 'Find', 'Please', 'The', 'And', 'Or', 'In', 'On', 'At', 'Of', 'For', 'To', 'From', 'Me', 'My', 'Our', 'Your']);
@@ -356,9 +376,12 @@ export function relevance(text: string, context: RelevanceContext, raw?: string)
     : context.answerType === 'number' || context.answerType === 'money' || context.answerType === 'date' ? hasNumber
     : context.answerType === 'definition' ? definitionForm(text, context.topic)
     : false;
-  // Only the possessive «ها» and «هم» count: a bare «ه» is also the folded feminine ending («عاصمة», «المغربية»).
+  // Only the possessive «ها» and «هم» count: a bare «ه» is also the folded feminine ending («عاصمة», «المغربية»). A word the
+  // question itself asks with a pronoun («سكانها» in «وكم عدد سكانها؟») is no sign of an answer: any sentence repeating it
+  // would win (live 2026-11-22 08:30, «أما المدن التي يزيد عدد سكانها…» outranked «يبلغ عدد سكان اليابان 123 مليون نسمة»).
   const answerForm = context.titleWords.length > 0 && inLine.length > 0
-    && context.topic.some(word => new RegExp(`(?:^|\\s)[وف]?(?:ال)?${escape(stem(word))}\\p{L}{0,2}(?:ها|هم)(?=[\\s،,:.؛]|$)`, 'u').test(folded));
+    && context.topic.some(word => !POSSESSIVE.test(word)
+      && new RegExp(`(?:^|\\s)[وف]?(?:ال)?${escape(stem(word))}\\p{L}{0,2}(?:ها|هم)(?=[\\s،,:.؛]|$)`, 'u').test(folded));
   const fragment = isFragment(text, context.lang) || Boolean(raw && ELLIPSIS_START.test(raw.replace(/^\s*(?:[-*•]|\d+[.)])\s+/u, '').trim()));
   const meta = isMetaLine(text);
   const score = topicHits + (phrase ? 2 : 0) + (cue ? 1 : 0) + (typed ? context.answerType === 'definition' ? 2 : 1 : 0) + (answerForm ? 3 : 0) - (fragment ? 1 : 0) - (meta ? JUDGE_THRESHOLDS.metaPenalty : 0);
@@ -396,9 +419,11 @@ export function judge(input: JudgeInput): JudgeVerdict {
   const question = input.question ?? '';
   const reply = input.reply ?? '';
   const lang = questionLanguage(question);
-  const frame = buildFrame(question);
-  // The question's own subject words; a short follow-up («وكم عدد سكانها؟») borrows the previous turn's for matching, never for its subject.
-  const ownTopic = topicWords(question);
+  // What the first brain answered: a follow-up resolved with the previous turn's subject. Lines are scored against it.
+  const asked = resolvedQuestion(question, input.previous);
+  const frame = buildFrame(asked);
+  // The question's own subject words; a short follow-up still borrows the previous turn's for matching, never for its subject.
+  const ownTopic = topicWords(asked);
   let topic = ownTopic;
   if (topic.length < 2 && input.previous) topic = [...new Set([...topic, ...topicWords(input.previous)])];
   // A reply quotes a page when it carries the host's source line. Evidence alone does not make it so: a run that opened a
@@ -422,19 +447,19 @@ export function judge(input: JudgeInput): JudgeVerdict {
   }
 
   const own = ownLines(reply);
-  const cues = cueWords(question, topic);
+  const cues = cueWords(asked, topic);
   const titleWords = sourceTitleWords(reply);
   let lead: ScoredLine | null = null, best: ScoredLine | null = null, dropOldLead = false;
 
   if (kind === 'answer' && sourced && own.length) {
-    const context: RelevanceContext = { question, topic, cues, titleWords, answerType: frame.answerType, lang };
+    const context: RelevanceContext = { question: asked, topic, cues, titleWords, answerType: frame.answerType, lang };
     const scored = own.map(item => ({ ...item, relevance: relevance(item.text, context, item.raw) }));
     const first = scored[0]!;
     lead = { line: first.line, text: first.text, score: first.relevance.score };
     const top = [...scored].sort((a, b) => b.relevance.score - a.relevance.score || a.line - b.line)[0]!;
     best = { line: top.line, text: top.text, score: top.relevance.score };
 
-    const check = checkAnswerLine(question, first.text);
+    const check = checkAnswerLine(asked, first.text);
     const anyNumber = scored.some(item => /[\d٠-٩]/u.test(item.text));
     const bylineFixed = form.findings.some(finding => finding.code === 'byline_lead' && finding.line === first.line);
     for (const reason of check.reasons) {
@@ -449,7 +474,7 @@ export function judge(input: JudgeInput): JudgeVerdict {
     if (topic.length && first.relevance.topicHits === 0) {
       add('lead_off_topic', first.line, first.text, lang === 'ar' ? `لا يذكر السطر الأول أي كلمة من الموضوع (${topic.join('، ')})` : `The first line names none of the subject words (${topic.join(', ')})`);
     } else {
-      const subject = questionSubject(question, ownTopic, lang);
+      const subject = questionSubject(asked, ownTopic, lang);
       const named = (word: string) => mentions(fold(first.text), word)
         || titleWords.some(title => mentions(title, word) || title.length >= 4 && mentions(word, title));
       if (subject && !subject.words.some(named)) add('subject_missing', first.line, first.text, lang === 'ar'
@@ -458,13 +483,19 @@ export function judge(input: JudgeInput): JudgeVerdict {
         subject.from === 'name' ? 'block' : 'review');
     }
     if (first.relevance.fragment) add('fragment_lead', first.line, first.text, lang === 'ar' ? 'السطر الأول مقطوع من سياقه: يبدأ بأداة ربط أو بنقاط حذف أو بوقت، أو طويل كجدول' : 'The first line is cut from its context: a connective, an ellipsis, a timestamp or a table-long run');
-    if (frame.answerType === 'definition' && frame.intent === 'fact_question' && !SUPERLATIVE.test(question) && !first.relevance.typed) {
+    if (frame.answerType === 'definition' && frame.intent === 'fact_question' && !SUPERLATIVE.test(asked) && !first.relevance.typed) {
       add('definition_form_missing', first.line, first.text, lang === 'ar' ? 'سؤال تعريف والسطر الأول ليس بصيغة «X هو …»' : 'A definition question whose first line is not «X is …»');
     }
-    if (DURATION_QUESTION.test(question) && !scored.some(item => item.relevance.typed)) {
+    if (DURATION_QUESTION.test(asked) && !scored.some(item => item.relevance.typed)) {
       add('duration_unit_missing', first.line, first.text, lang === 'ar' ? 'سؤال عن مدة ولا سطر فيه رقم مع وحدة زمن' : 'A how-long question with no line holding a number and a time unit');
     }
-    if (top.line !== first.line && top.relevance.score - first.relevance.score >= JUDGE_THRESHOLDS.leadNotBestMargin) {
+    // A lead is replaced only when it is itself defective: cut from its context, about the page, naming nothing of the
+    // question, or neither stating the question's words in order nor answering in their pronoun form. A clean lead that states
+    // the question («يبلغ عدد سكان اليابان 123 مليون نسمة») is never demoted, and the line promoted must pass the line checks.
+    // The three promotions the owner judged correct on 2026-11-22 (rq010, rq016, rq028) all had a meta or cut lead.
+    const defectiveLead = first.relevance.fragment || first.relevance.meta || first.relevance.topicHits === 0 || !first.relevance.phrase && !first.relevance.answerForm;
+    if (defectiveLead && top.line !== first.line && top.relevance.score - first.relevance.score >= JUDGE_THRESHOLDS.leadNotBestMargin
+      && checkAnswerLine(asked, top.text).ok) {
       dropOldLead = first.relevance.meta;
       add('lead_not_best', first.line, first.text, lang === 'ar'
         ? `السطر ${top.line} يجيب أفضل (${top.relevance.score} مقابل ${first.relevance.score}): «${excerptOf(top.text)}»`

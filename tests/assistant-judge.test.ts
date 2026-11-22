@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { comparable, cueWords, definitionForm, isFragment, judge, mentions, ownLines, pageKey, pageSubjectMismatch, questionSubject, relevance, sourceTitleWords, sourceUrls, stem, supportedBy } from '../apps/server/src/assistant/judge.js';
+import { comparable, cueWords, definitionForm, isFragment, judge, mentions, ownLines, pageKey, pageSubjectMismatch, questionSubject, relevance, resolvedQuestion, sourceTitleWords, sourceUrls, stem, supportedBy } from '../apps/server/src/assistant/judge.js';
 import { topicWords } from '../apps/server/src/assistant/hands.js';
 
 // Real replies of the 2026-11-22 run (artifacts/plan-2026-11-22/real-answers-2026-11-22T02-17-34.jsonl), shortened where noted.
@@ -307,6 +307,36 @@ describe('the page\'s own subject', () => {
     expect(pageSubjectMismatch('**المصدر:** [ويكيبيديا — وكالة الفضاء (توضيح)](https://x)', ['وكاله', 'فضاء', 'سعوديه'])).toBeNull();
     expect(pageSubjectMismatch('**Source:** [Wikipedia — Sabah (Morocco)](https://x)', ['population', 'morocco'])).toEqual({ page: 'Sabah', qualifier: 'Morocco' });
     expect(pageSubjectMismatch(RQ026.reply, ['عاصمه', 'استراليا'])).toBeNull();
+  });
+});
+
+describe('follow-ups (regression: live 2026-11-22 08:30, the fix replaced a right answer with a wrong line)', () => {
+  // «وكم عدد سكانها؟» after «ما عاصمة اليابان؟»: the first brain answered right; the judge promoted a line about mountains
+  // because it repeats «سكانها» (the question's own pronoun form scored as an answer form) and scored the raw follow-up.
+  const right = 'يبلغ عدد سكان اليابان 123 مليون نسمة اعتباراً من 2024.';
+  const mountains = 'تحتل المناطق الجبلية ما يزيد عن 70% من أرض اليابان، وتتركز المدن الكبرى في السهول المتبقية التي تشكل أقل من 30% من المساحة، أما المدن التي يزيد عدد سكانها على مليون نسمة فهي: مدينة سابّورو في هوكايدو، مدينة سنداي في …';
+  const reply = [right, '', '**تفاصيل أخرى من نفس المصدر:**', `- ${mountains}`, '', SOURCE('اليابان', 'https://ar.wikipedia.org/wiki/j')].join('\n');
+
+  it('keeps a clean lead that states the question, and sends the reply as the first brain wrote it', () => {
+    const verdict = judge({ question: 'وكم عدد سكانها؟', previous: 'ما عاصمة اليابان؟', reply, status: 'completed' });
+    expect(verdict.codes).not.toContain('lead_not_best');
+    expect(verdict.decision).toBe('send');
+    expect(verdict.fixedReply).toBeNull();
+    expect(verdict.lead?.text).toBe(right);
+  });
+
+  it('resolves a pronoun follow-up with the previous subject only, and leaves a follow-up that names its own subject', () => {
+    expect(resolvedQuestion('وكم عدد سكانها؟', 'ما عاصمة اليابان؟')).toBe('كم عدد سكانها؟ يابان');
+    expect(topicWords(resolvedQuestion('وكم عدد سكانها؟', 'ما عاصمة اليابان؟'))).toEqual(['سكانها', 'يابان']);
+    expect(resolvedQuestion('وماذا عن فرنسا؟', 'ما عاصمة اليابان؟')).toBe('ماذا عن فرنسا؟');
+    expect(resolvedQuestion('and what about France?', 'What is the capital of Japan?')).toBe('and what about France?');
+    expect(resolvedQuestion('كم عدد سكان مصر؟', 'ما عاصمة اليابان؟')).toBe('كم عدد سكان مصر؟');
+    expect(resolvedQuestion('وكم عدد سكانها؟', null)).toBe('كم عدد سكانها؟');
+  });
+
+  it('still promotes over a defective lead: the owner-approved rq016 (a cut lead) and rq010 (a byline lead)', () => {
+    expect(judge(RQ016).codes).toContain('lead_not_best');
+    expect(judge(RQ010).codes).toContain('lead_not_best');
   });
 });
 
