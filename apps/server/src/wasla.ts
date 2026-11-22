@@ -62,7 +62,13 @@ export interface WaslaRouteOptions {
   roleOf: (userId: string, connection?: Kysely<any>) => Promise<WorkspaceRole | null>;
   chat: () => WaslaChat;
   /** Mohassan's search engine, for the phone's search screen. Absent means the phone gets 503. */
-  search?: (ownerId: string, query: string, signal: AbortSignal) => Promise<{ provider: string; results: { title: string; url: string; snippet: string }[] }>;
+  search?: (ownerId: string, query: string, signal: AbortSignal) => Promise<{
+    provider: string; results: { title: string; url: string; snippet: string }[];
+    /** What these sources cannot prove, in the owner's words. */
+    limitations?: string[];
+    /** Sources that failed to answer (not a rate limit). */
+    unreachable?: string[];
+  }>;
 }
 
 export async function waslaMigration(db: Kysely<any>) {
@@ -179,10 +185,21 @@ export async function registerWaslaRoutes(app: FastifyInstance, options: WaslaRo
     const { ownerId } = await gateway(request);
     if (!options.search) throw fault(503, 'WASLA_SEARCH_UNAVAILABLE', 'البحث غير متاح على خادم موحسن هذا.');
     const { q } = SearchQuery.parse(request.query);
-    const found = await options.search(ownerId, q, AbortSignal.timeout(25_000));
+    let found: Awaited<ReturnType<NonNullable<WaslaRouteOptions['search']>>>;
+    try {
+      found = await options.search(ownerId, q, AbortSignal.timeout(25_000));
+    } catch (error) {
+      // «No reliable result» is an answer, not an outage: the phone shows it as an empty search.
+      if ((error as { code?: string }).code !== 'RESEARCH_SEARCH_UNAVAILABLE') throw error;
+      found = { provider: 'Mohassan', results: [], limitations: [], unreachable: [] };
+    }
     const results = found.results.slice(0, 8).map(hit => ({ title: String(hit.title).slice(0, 240), url: String(hit.url).slice(0, 2048), snippet: String(hit.snippet ?? '').slice(0, 600) }))
       .filter(hit => /^https:\/\//i.test(hit.url));
-    return { query: q, results, provider: found.provider };
+    const unreachable = found.unreachable ?? [];
+    const notice = results.length ? undefined : unreachable.length
+      ? `لم تُرجع المصادر نتيجة، وتعذّر الوصول إلى بعضها: ${unreachable.join('، ')}.`
+      : 'لم تجد مصادر موحسن نتيجة لهذا البحث. هي مصادر موسوعية وتقنية وأكاديمية، وليست فهرسًا شاملًا للويب.';
+    return { query: q, results, provider: found.provider, limitations: (found.limitations ?? []).slice(0, 4), ...(notice ? { notice } : {}) };
   });
 
   type Conversation = { Params: { id: string } };
