@@ -52,6 +52,7 @@ import { createShadowRouter } from './assistant/router.js';
 import { createConversationShadow } from './assistant/conversation-state-shadow.js';
 import { createJudgeShadow } from './assistant/judge-shadow.js';
 import { createPageCache } from './assistant/page-cache.js';
+import { withoutFigures } from './assistant/readable-page.js';
 import { createChromeExtensionControl, registerChromeExtensionRoutes } from './chrome-extension.js';
 import { DesktopEngine } from '@mohassan/desktop';
 import { registerDesktopRoutes } from './desktop.js';
@@ -440,7 +441,8 @@ export async function createApplication(config: AppConfig) {
     const charset = /charset\s*=\s*["']?([^\s;"']+)/i.exec(type)?.[1] ?? 'utf-8';
     let body: string;
     try { body = new TextDecoder(charset, { fatal: true }).decode(response.body); } catch { return null; }
-    const source = readableSource(body, response.url);
+    // Captions are not the article's sentences; joined into the text they glued onto the next one (readable-page.ts).
+    const source = readableSource(withoutFigures(body), response.url);
     return pageCache.put({ url: response.url, title: source.title, text: source.text, status: response.status }, options);
   };
   // PDF files from the chat: stored under the data directory; local .pdf paths are read for the owner only, inside the coding roots.

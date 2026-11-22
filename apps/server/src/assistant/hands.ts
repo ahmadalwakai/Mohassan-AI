@@ -298,6 +298,9 @@ const FRAME_WORDS = new Set(['اعراض', 'علامات', 'اسباب', 'سبب
   'symptoms', 'signs', 'causes', 'cause', 'treatment', 'surgery', 'operation', 'long', 'take', 'takes', 'many', 'much', 'risks', 'types', 'definition', 'meaning', 'and', 'or', 'to', 'after', 'before',
   'benefits', 'benefit']);
 
+/** Words that name the kind of thing a definition question asks about, not the thing: «عملية» in «ما هي عملية الليزك». Folded. */
+const KIND_WORDS = new Set(['عمليه', 'عمليات', 'جراحه', 'surgery', 'operation', 'procedure']);
+
 /** The question's topic words, folded and without «ال», for matching page titles. */
 export function topicWords(question: string): string[] {
   return [...new Set(fold(question).replace(/[؟?،,.!]/gu, ' ').split(/\s+/)
@@ -437,17 +440,24 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
   } catch { /* Local matching still accepts a question that does not compile as a public search. */ }
   // The definition cue is not part of the subject; «بـ» may be attached to its first word.
   matchingQuestion = matchingQuestion.trim().replace(ARABIC_DEFINITION_LEAD, '');
-  const words = queryWords(fold(matchingQuestion).replace(/[؟?]/gu, ' ').split(/\s+/).filter(word => word && !ASK_WORDS.has(word)).join(' '));
+  // «ما هي عملية الليزك»: «عملية» names the kind of thing, not the thing, and the article's own definition («تعنى كلمة الليزك…»)
+  // never says it. Required as a match word, it kept that definition out (measured on «ليزك», 2026-11-22).
+  const definitionAsk = DEFINE_QUESTION.test(question.trim()) || ARABIC_DEFINITION_LEAD.test(question.trim());
+  const asked = fold(matchingQuestion).replace(/[؟?]/gu, ' ').split(/\s+/).filter(word => word && !ASK_WORDS.has(word));
+  const kindless = asked.filter(word => !KIND_WORDS.has(word));
+  // The question's own words in a row («عدد سكان المغرب»): a sentence that holds the phrase is about the question itself.
+  const phraseWords = definitionAsk && kindless.length && kindless.length < asked.length ? kindless : asked;
+  const words = queryWords(phraseWords.join(' '));
   if (!words.length) return [];
   const need = Math.min(2, words.length);
-  // The question's own words in a row («عدد سكان المغرب»): a sentence that holds the phrase is about the question itself.
-  const phraseWords = fold(matchingQuestion).replace(/[؟?]/gu, ' ').split(/\s+/).filter(word => word && !ASK_WORDS.has(word));
   const phrase = phraseWords.length >= 2 ? phraseWords.join(' ') : '';
   // «ما هو الذكاء الاصطناعي»: the sentence «الذكاء الاصطناعي (AI) هو …» is the definition itself.
   const subject = phraseWords.join(' ').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const definition = (DEFINE_QUESTION.test(question.trim()) || ARABIC_DEFINITION_LEAD.test(question.trim())) && subject
+  const definition = definitionAsk && subject
     ? new RegExp(`^(?:\\S+\\s){0,2}?(?:ال)?${subject}(?:\\s*\\([^)]*\\))?\\s+(?:هو|هي|يعد|تعد|يعرف|تعرف|عباره عن|(?:is|are|was|were)\\s+(?:a|an|the|one of|defined as|known as|called)|refers to|means)(?=\\s)`, 'u')
     : null;
+  // «تعنى كلمة الليزك …»: Arabic articles also define a term by its meaning, verb first.
+  const wordMeans = definition ? new RegExp(`^(?:تعني|يعني)\\s+(?:كلمه|مصطلح|لفظ|لفظه|عباره)\\s+(?:ال)?${subject}(?=[\\s(،,:]|$)`, 'u') : null;
   // Without a definition, a sentence that opens with the subject is about it, not a passing mention.
   const aboutSubject = definition ? new RegExp(`^(?:ال)?${subject}(?=[\\s(،,:]|$)`, 'u') : null;
   // Some sources explain a process first, then name it in the next sentence.
@@ -472,6 +482,7 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     .replace(/\s+/g, ' ').trim()
     .replace(/^[\])]+\s*/u, '')
     .replace(/^(?:ويكي بيانات|Wikidata)\s+/iu, '')
+    .replace(/\s*\[\s*([.!?؟])$/u, '$1')
     .replace(/\s+([.،,؛;:!?؟)\]»])/gu, '$1')
     .replace(/([(\[«])\s+/gu, '$1'), labels);
   // A sentence ends at . ! ? ؟ unless the dot sits inside a number (2.5, 1.3), or at a line break.
@@ -506,7 +517,9 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
       // («ألبرت أينشتاين (…) عالم فيزياء …»): keep that start when the tail misses the question.
       const head = `${parts.slice(0, 40).join(' ')} …`.slice(0, 400);
       const matched = (text: string) => words.filter(word => fold(text).includes(word)).length;
-      const lead = matched(tail) < need && matched(head) >= need;
+      // A definition's head is the answer even when its tail repeats the subject: «تعنى كلمة الليزك …» runs 74 words on «ليزك».
+      const definesAtHead = Boolean(definition?.test(fold(head)) || wordMeans?.test(fold(head)));
+      const lead = definesAtHead || matched(tail) < need && matched(head) >= need;
       line = lead ? head : tail;
       // A sentence that opens with the subject is the article's own lead, not infobox cells: no penalty,
       // so a later photo caption («ألبرت أينشتاين عام 1893») does not outrank the definition.
@@ -540,7 +553,7 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     // («عاصمتها كانبرا»: its capital is Canberra), stronger than a name that repeats the phrase.
     const answerForm = titled.length > 0 && own > 0 && words.some(word => !titled.includes(word)
       && new RegExp(`(?:^|\\s)[وف]?(?:ال)?${word}(?:\\p{L}{0,2}(?:ها|هم)|\\p{L}{1,2}ه)(?=[\\s،,:]|$)`, 'u').test(folded));
-    scored.push({ line, score: hits + (numberAnswer && /\d/u.test(line) ? 1 : 0) - (glued ? 1 : 0) + (phrase && folded.includes(phrase) ? 2 : 0) + (answerForm ? 3 : 0) + (pairedDefinition || definition?.test(folded) ? 3 : 0) + (aboutSubject?.test(folded) ? 1 : 0), at, year, glued });
+    scored.push({ line, score: hits + (numberAnswer && /\d/u.test(line) ? 1 : 0) - (glued ? 1 : 0) + (phrase && folded.includes(phrase) ? 2 : 0) + (answerForm ? 3 : 0) + (pairedDefinition || definition?.test(folded) || wordMeans?.test(folded) ? 3 : 0) + (aboutSubject?.test(folded) ? 1 : 0), at, year, glued });
   }
   // «كم تستغرق …» is answered by a number: sentences without one only look related.
   if (numberAnswer && !scored.some(item => /[\d٠-٩]/u.test(item.line))) return [];
