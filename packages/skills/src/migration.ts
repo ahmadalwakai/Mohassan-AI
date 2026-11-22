@@ -76,13 +76,19 @@ const REMOTE = [
   `CREATE UNIQUE INDEX skill_remote_syncs_running_idx ON skill_remote_syncs(owner_id) WHERE status='running'`,
 ] as const;
 
+/** Its own number, so a database that already applied 032 still receives it. */
+const RETENTION = [
+  // Retention deletes old GitHub versions; a deleted version number keeps its content hash so it never returns with other content.
+  `CREATE TABLE skill_version_tombstones(family_id text NOT NULL REFERENCES skill_families(id) ON DELETE CASCADE,owner_id text NOT NULL,version text NOT NULL,content_hash text NOT NULL,sequence integer NOT NULL,status text NOT NULL,policy text NOT NULL,pruned_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(family_id,version))`,
+] as const;
+
 /** Fixed, versioned SQL. Existing rows are retained. Reversal requires a reviewed
  * database restore/migration plan; dropping skill tables would destroy history. */
 export async function skillsMigration(db: Kysely<any>): Promise<void> {
   await sql`CREATE TABLE IF NOT EXISTS schema_migrations(version text PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`.execute(db);
   await db.transaction().execute(async (tx) => {
     await sql`SELECT pg_advisory_xact_lock(1846021108)`.execute(tx);
-    for (const [version, statements] of [['015_skill_registry', REGISTRY], ['016_skill_security', SECURITY], ['017_skill_execution', EXECUTION], ['024_skill_recovery', RECOVERY], ['018_skill_gaps', GAPS], ['019_skill_graph', GRAPH], ['020_skill_eval', EVALUATION], ['021_skill_forge', FORGE], ['032_skill_remote', REMOTE]] as const) {
+    for (const [version, statements] of [['015_skill_registry', REGISTRY], ['016_skill_security', SECURITY], ['017_skill_execution', EXECUTION], ['024_skill_recovery', RECOVERY], ['018_skill_gaps', GAPS], ['019_skill_graph', GRAPH], ['020_skill_eval', EVALUATION], ['021_skill_forge', FORGE], ['032_skill_remote', REMOTE], ['033_skill_retention', RETENTION]] as const) {
       if (await tx.selectFrom('schema_migrations').select('version').where('version', '=', version).executeTakeFirst()) continue;
       for (const statement of statements) await sql.raw(statement).execute(tx);
       await tx.insertInto('schema_migrations').values({ version }).execute();

@@ -9,7 +9,7 @@ import { canonicalSkillEvidenceJson, hashSkillData } from './evidence.ts';
 import { SkillError } from './errors.ts';
 import { sha256 } from './hash.ts';
 import { classifySkillFile, INSPECTOR_VERSION } from './inspector.ts';
-import { lockSkillStoreOwner, MAX_IMPORTED_VERSIONS_PER_OWNER, nextSkillFamilyVersion, storeImmutableSkill } from './import-store.ts';
+import { countImportedVersions, lockSkillStoreOwner, MAX_IMPORTED_VERSIONS_PER_OWNER, nextSkillFamilyVersion, storeImmutableSkill } from './import-store.ts';
 import { trustedSkillBenchmarkTrainingContext } from './benchmark-suites.ts';
 import { classifyGap } from './gaps.ts';
 
@@ -128,8 +128,8 @@ export function createSkillForgeControl(db: Kysely<any>, options: SkillForgeOpti
       const attempts = await tx.selectFrom('skill_forge_generations').select(eb => eb.fn.countAll<string>().as('n')).where('owner_id', '=', ownerId).executeTakeFirstOrThrow();
       if (Number(attempts.n) >= 500) throw new SkillError('SKILL_FORGE_QUOTA', 'بلغ سجل التوليد حده دون حذف التاريخ.', 409);
       if (await tx.selectFrom('skill_forge_generations').select('id').where('owner_id', '=', ownerId).where('status', '=', 'running').executeTakeFirst()) throw new SkillError('SKILL_FORGE_BUSY', 'توجد تجربة توليد جارية لهذا المالك.', 409);
-      const count = await tx.selectFrom('skill_versions').select(eb => eb.fn.countAll<string>().as('n')).where('owner_id', '=', ownerId).where('origin', 'in', ['local_import', 'forge']).executeTakeFirstOrThrow();
-      if (Number(count.n) >= MAX_IMPORTED_VERSIONS_PER_OWNER) throw new SkillError('SKILL_QUOTA_EXCEEDED', 'بلغت حصة الإصدارات المشتركة حدها.', 409);
+      // GitHub versions have their own limit; Forge shares the local import limit as before.
+      if (await countImportedVersions(tx, ownerId, 'other') >= MAX_IMPORTED_VERSIONS_PER_OWNER) throw new SkillError('SKILL_QUOTA_EXCEEDED', 'بلغت حصة الإصدارات المشتركة حدها.', 409);
       const baseline = await loadSkillBenchmarkSnapshot(tx, ownerId, request.baselineId, request.baselineRevision);
       if (credentialLike(JSON.stringify(baseline))) throw new SkillError('SKILL_SOURCE_REJECTED', 'يتضمن المصدر صيغة اعتماد حساسة.');
       const parent = await tx.selectFrom('skill_versions as v').leftJoin('skill_sources as s', 's.version_id', 'v.id').select(['v.family_id', 'v.origin', 's.kind as source_kind']).where('v.owner_id', '=', ownerId).where('v.id', '=', request.baselineId).executeTakeFirstOrThrow();

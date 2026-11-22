@@ -15,6 +15,8 @@ export { createSkillForgeControl } from './forge.ts';
 export { builtinSkills, type BuiltinSkill } from './builtin/index.ts';
 export { SkillError, SkillPolicyError, type SkillPolicyReason } from './errors.ts';
 export { createGitSkillTransport } from './remote-git.ts';
+export { pruneGithubSkillVersions, retentionCandidates, SKILL_RETENTION_POLICY, type SkillRetentionRow } from './prune.ts';
+export { compactRemoteItems } from './remote.ts';
 export type { SkillRemoteTransport, SkillRemoteEntry, SkillRemoteControl, SkillRemoteCause } from './remote.ts';
 export { sha256, skillContentHash, skillContentMatches } from './hash.ts';
 export { INSPECTOR_VERSION, inspectSkill } from './inspector.ts';
@@ -57,7 +59,9 @@ export function createSkillControl(db: Kysely<any>, options: SkillControlOptions
   const registry = createSkillRegistry(db, { rebuildGraph });
   const importLocal = createSkillImporter(db, { allowedRoots, audit: registry.audit, view: registry.view, rebuildGraph });
   const lifecycle = createSkillLifecycle(db, { audit: registry.audit, executableReady: options.executableReady ?? (async () => false), rebuildGraph });
-  const remote = createSkillRemote(db, { config: options.remote?.config ?? null, problem: options.remote?.problem ?? null, engineEnabled: options.enabled === true, transport: options.remote?.transport ?? null, lifecycle, audit: registry.audit, rebuildGraph, now: options.now });
+  // The sync inspects and activates through a lifecycle without its own graph rebuild: with up to 1000 skills it rebuilds the graph once per batch of activations.
+  const remoteLifecycle = createSkillLifecycle(db, { audit: registry.audit, executableReady: options.executableReady ?? (async () => false) });
+  const remote = createSkillRemote(db, { config: options.remote?.config ?? null, problem: options.remote?.problem ?? null, engineEnabled: options.enabled === true, transport: options.remote?.transport ?? null, lifecycle: remoteLifecycle, audit: registry.audit, rebuildGraph, now: options.now });
   const grants = createSkillGrants(db, { allowedRoots, audit: registry.audit, now: options.now });
   const environment = options.environment ?? (() => ({ capabilities: [], modelReady: false, visionReady: false, executableReady: false }));
   const validateComposition = createSkillPlanner(db, { environment, access: grants.effective });

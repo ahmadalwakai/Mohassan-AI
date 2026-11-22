@@ -8,7 +8,8 @@ import { memoryMigration } from '@mohassan/memory';
 import { CodingError } from '@mohassan/coding/security';
 import type { SkillRemoteStatus } from '@mohassan/contracts';
 import { migrateAuth } from '../../../apps/server/src/auth.ts';
-import { createSkillControl, skillsMigration, type SkillControl, type SkillRemoteEntry, type SkillRemoteTransport } from './index.ts';
+import { compactRemoteItems, createSkillControl, retentionCandidates, skillsMigration, type SkillControl, type SkillRemoteEntry, type SkillRemoteTransport, type SkillRetentionRow } from './index.ts';
+import type { SkillRemoteItem } from '@mohassan/contracts';
 
 const oid = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex').slice(0, 40);
 const manifest = (name: string, body = 'Do the task carefully.', extra = '') => `---\nname: ${name}\ndescription: يوضح هذا الوصف ما تفعله المهارة.\n${extra}---\n\n${body}\n`;
@@ -19,7 +20,9 @@ class FakeRepo implements SkillRemoteTransport {
   readonly skills = new Map<string, Record<string, FakeFile>>();
   readonly calls = { head: 0, ensure: 0, children: 0, entries: 0, blob: [] as string[] };
   failHead: Error | null = null; hang = false;
-  private readonly blobs = new Map<string, Uint8Array>();
+  /** A blob whose read waits until the run is aborted, to stop a run in the middle of a skill. */
+  hangBlob: string | null = null;
+  protected readonly objects = new Map<string, Uint8Array>();
   set(slug: string, files: Record<string, FakeFile | string>) { this.skills.set(slug, Object.fromEntries(Object.entries(files).map(([path, file]) => [path, typeof file === 'string' ? { content: file } : file]))); }
   remove(slug: string) { this.skills.delete(slug); }
   private bytesOf(file: FakeFile) { return file.bytes ?? new Uint8Array(Buffer.from(file.content ?? '', 'utf8')); }
@@ -41,16 +44,32 @@ class FakeRepo implements SkillRemoteTransport {
   async entries(_commit: string, slug: string): Promise<SkillRemoteEntry[]> {
     this.calls.entries++;
     return Object.entries(this.skills.get(slug) ?? {}).map(([path, file]) => {
-      const bytes = this.bytesOf(file), id = oid(bytes); this.blobs.set(id, bytes);
+      const bytes = this.bytesOf(file), id = oid(bytes); this.objects.set(id, bytes);
       return { mode: file.mode ?? '100644', type: file.type ?? 'blob', objectId: id, size: file.type === 'commit' ? null : file.size ?? bytes.byteLength, path };
     });
   }
-  async blob(objectId: string, maxBytes: number) {
+  async blob(objectId: string, maxBytes: number, signal?: AbortSignal) {
     this.calls.blob.push(objectId);
-    const bytes = this.blobs.get(objectId);
+    if (this.hangBlob === objectId) await new Promise((_, reject) => signal?.addEventListener('abort', () => reject(new CodingError('ABORTED', 'أُلغيت.')), { once: true }));
+    const bytes = this.objects.get(objectId);
     if (!bytes) throw new CodingError('GIT_REMOTE_UNREACHABLE', 'الكائن غير موجود.');
     if (bytes.byteLength > maxBytes) throw new CodingError('GIT_REMOTE_TOO_LARGE', 'الملف أكبر من المسموح.');
     return bytes;
+  }
+}
+
+/** A fake that also reads many blobs at once, as the real transport does. */
+class BatchRepo extends FakeRepo {
+  readonly batches: string[][] = [];
+  failBatch = false;
+  async readBlobs(requests: readonly { objectId: string; size: number }[]) {
+    this.batches.push(requests.map((request) => request.objectId));
+    if (this.failBatch) throw new CodingError('GIT_REMOTE_UNREACHABLE', 'تعذرت القراءة المجمعة.');
+    return new Map(requests.map((request): [string, Uint8Array] => {
+      const bytes = this.objects.get(request.objectId);
+      if (!bytes) throw new CodingError('GIT_REMOTE_UNREACHABLE', 'الكائن غير موجود.');
+      return [request.objectId, bytes];
+    }));
   }
 }
 
@@ -96,7 +115,7 @@ describe('GitHub skills source sync', () => {
       expect(detail.source).toMatchObject({ kind: 'github', locator: `github:owner/skills@${fake.commit}:skills/${slug}` });
     }
     expect(status.pending.map((entry) => entry.slug).sort()).toEqual(['plain-notes', 'seo-arabic']);
-    expect(status).toMatchObject({ running: false, configured: true, engineEnabled: true, autoActivate: false, nextSyncAt: null, quota: { used: 2, limit: 200 } });
+    expect(status).toMatchObject({ running: false, configured: true, engineEnabled: true, autoActivate: false, nextSyncAt: null, quota: { used: 2, limit: 4000 }, pendingTotal: 2 });
     expect(status.lastSuccess).toEqual({ commit: fake.commit, finishedAt: status.last!.finishedAt });
     expect(await store.db.selectFrom('skill_families').select('id').where('owner_id', '=', owner).where('slug', '=', 'Bad_Name').execute()).toHaveLength(0);
   });
@@ -239,17 +258,22 @@ describe('GitHub skills source sync', () => {
     expect(itemFor(await sync(manual), 'pinned-version')).toMatchObject({ outcome: 'error', code: 'SKILL_VERSION_EXISTS' });
   });
   it('reports quota exhaustion per item and still finishes the run', async () => {
-    const familyId = randomUUID();
-    await store.db.insertInto('skill_families').values({ id: familyId, owner_id: quotaOwner, slug: 'quota-seed' }).execute();
-    await store.db.insertInto('skill_versions').values(Array.from({ length: 200 }, (_, index) => ({
-      id: randomUUID(), family_id: familyId, owner_id: quotaOwner, version: `1.0.${index}`, sequence: index + 1, name: 'Quota fixture', description: 'Synthetic storage quota fixture.',
-      category: 'reasoning', level: 'instruction', origin: 'local_import', status: 'quarantined', contract: '{}', content_hash: index.toString(16).padStart(64, '0'),
-    }))).execute();
+    // The GitHub limit, filled with one-version families: each is its family's newest version, so retention can free nothing.
+    for (let start = 0; start < 4000; start += 500) {
+      const rows = Array.from({ length: 500 }, (_, offset) => ({ index: start + offset, family: randomUUID(), version: randomUUID() }));
+      await store.db.insertInto('skill_families').values(rows.map((row) => ({ id: row.family, owner_id: quotaOwner, slug: `quota-seed-${row.index}` }))).execute();
+      await store.db.insertInto('skill_versions').values(rows.map((row) => ({
+        id: row.version, family_id: row.family, owner_id: quotaOwner, version: '1.0.0', sequence: 1, name: 'Quota fixture', description: 'Synthetic storage quota fixture.',
+        category: 'reasoning', level: 'instruction', origin: 'local_import', status: 'inspected', contract: '{}', content_hash: row.index.toString(16).padStart(64, '0'),
+      }))).execute();
+      await store.db.insertInto('skill_sources').values(rows.map((row) => ({ version_id: row.version, kind: 'github', locator: `github:owner/skills@${'0'.repeat(40)}:skills/quota-seed-${row.index}`, file_count: 1, total_bytes: 1 }))).execute();
+    }
     const status = await sync(manual, 'manual', quotaOwner);
     expect(status.last!.status).toBe('succeeded');
     expect(status.last!.items.length).toBeGreaterThan(0);
     expect(status.last!.items.every((item) => item.outcome === 'error' && item.code === 'SKILL_QUOTA_EXCEEDED')).toBe(true);
-    expect(status.quota).toEqual({ used: 200, limit: 200 });
+    expect(status.last!.counts.pruned).toBe(0);
+    expect(status.quota).toEqual({ used: 4000, limit: 4000 });
   });
   it('hashes Arabic content and an Arabic reference file name exactly like a local import', async () => {
     const files = { 'SKILL.md': manifest('arabic-hash', 'اكتب الملخص بالعربية الفصحى.'), 'مراجع/الكلمات.md': 'محتوى عربي للمرجع.' };
@@ -297,5 +321,169 @@ describe('GitHub skills source sync', () => {
     await control.remote.shutdown();
     expect(await store.db.selectFrom('skill_remote_syncs').select(['status', 'error_code']).where('id', '=', syncId).executeTakeFirstOrThrow()).toEqual({ status: 'failed', error_code: 'SKILL_REMOTE_SYNC_ABORTED' });
     expect((await control.remote.status(other)).running).toBe(false);
+  });
+  it('keeps the progress of a stopped run and continues from it', async () => {
+    const resumeOwner = 'remote-sync-resume';
+    await store.db.insertInto('user').values({ id: resumeOwner, name: resumeOwner, email: `${resumeOwner}@example.test` }).execute();
+    const repo = new FakeRepo();
+    for (const slug of ['r-a', 'r-b', 'r-c', 'r-d', 'r-e']) repo.set(slug, { 'SKILL.md': manifest(slug, `Body of ${slug}.`) });
+    repo.hangBlob = repo.objectId('r-d', 'SKILL.md');
+    const first = createSkillControl(store.db, { enabled: true, remote: { config: { ...config, autoActivate: false }, transport: repo } });
+    const { syncId } = await first.remote.start(resumeOwner, 'manual');
+    for (let attempt = 0; attempt < 750 && !repo.calls.blob.includes(repo.hangBlob); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(repo.calls.blob).toContain(repo.hangBlob);
+    await first.remote.shutdown();
+    const stopped = await first.remote.status(resumeOwner);
+    expect(stopped.last).toMatchObject({ id: syncId, status: 'failed', errorCode: 'SKILL_REMOTE_SYNC_ABORTED', progress: { processed: 3, total: 5 }, counts: { pendingReview: 3 } });
+    const row = await store.db.selectFrom('skill_remote_syncs').select('trees').where('id', '=', syncId).executeTakeFirstOrThrow();
+    expect(Object.keys(typeof row.trees === 'string' ? JSON.parse(row.trees) : row.trees).sort()).toEqual(['r-a', 'r-b', 'r-c']);
+    repo.hangBlob = null;
+    const listed = repo.calls.entries;
+    const second = createSkillControl(store.db, { enabled: true, remote: { config: { ...config, autoActivate: false }, transport: repo } });
+    const resumed = await sync(second, 'manual', resumeOwner);
+    expect(resumed.last).toMatchObject({ status: 'succeeded', progress: { processed: 5, total: 5 }, counts: { unchanged: 3, pendingReview: 2, errors: 0 } });
+    expect(['r-d', 'r-e'].map((slug) => itemFor(resumed, slug).outcome)).toEqual(['pending_review', 'pending_review']);
+    expect(repo.calls.entries - listed).toBe(2);
+    expect(resumed.pendingTotal).toBe(5);
+  });
+  it('reads the blobs of a group in one call and falls back to one read per file when that call fails', async () => {
+    const batchOwner = 'remote-sync-batch';
+    await store.db.insertInto('user').values({ id: batchOwner, name: batchOwner, email: `${batchOwner}@example.test` }).execute();
+    const repo = new BatchRepo();
+    repo.set('b-one', { 'SKILL.md': manifest('b-one', 'First batched body.') });
+    repo.set('b-two', { 'SKILL.md': manifest('b-two', 'Second batched body.'), 'references/notes.md': 'ملاحظات عربية للمرجع.' });
+    const control = createSkillControl(store.db, { enabled: true, remote: { config: { ...config, autoActivate: false }, transport: repo } });
+    const first = await sync(control, 'manual', batchOwner);
+    expect(first.last!.counts).toMatchObject({ total: 2, pendingReview: 2, errors: 0 });
+    expect(repo.batches).toHaveLength(1);
+    expect(repo.batches[0]).toHaveLength(3);
+    expect(repo.calls.blob).toEqual([]);
+    repo.failBatch = true;
+    repo.set('b-three', { 'SKILL.md': manifest('b-three', 'Third batched body.') });
+    const second = await sync(control, 'manual', batchOwner);
+    expect(itemFor(second, 'b-three').outcome).toBe('pending_review');
+    expect(repo.calls.blob).toEqual([repo.objectId('b-three', 'SKILL.md')]);
+  });
+  it('refuses a repository with more than 1000 skill folders before reading any of them', async () => {
+    const repo = new FakeRepo();
+    for (let index = 0; index <= 1000; index++) repo.set(`many-${index}`, { 'SKILL.md': 'x' });
+    const control = createSkillControl(store.db, { enabled: true, remote: { config: { ...config, autoActivate: false }, transport: repo } });
+    const status = await sync(control, 'manual', 'remote-sync-many');
+    expect(status.last).toMatchObject({ status: 'failed', errorCode: 'SKILL_REMOTE_TOO_MANY', items: [] });
+    expect(repo.calls.entries).toBe(0);
+  });
+  it('recovers a running row by its heartbeat, and a new start recovers a dead row of the same owner', async () => {
+    const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000);
+    const row = (id: string, ownerId: string, heartbeat: number) => ({ id, owner_id: ownerId, repo: 'owner/skills', ref: 'main', path: 'skills', cause: 'schedule', status: 'running', started_at: minutesAgo(30), report: JSON.stringify({ heartbeatAt: minutesAgo(heartbeat).toISOString() }) });
+    const live = randomUUID(), dead = randomUUID(), blocking = randomUUID();
+    await store.db.insertInto('skill_remote_syncs').values([row(live, 'remote-sync-live', 1), row(dead, 'remote-sync-dead', 11), row(blocking, 'remote-sync-blocked', 2)]).execute();
+    await manual.remote.recoverInterrupted();
+    const state = async (id: string) => store.db.selectFrom('skill_remote_syncs').select(['status', 'error_code']).where('id', '=', id).executeTakeFirstOrThrow();
+    expect(await state(live)).toEqual({ status: 'running', error_code: null });
+    expect(await state(dead)).toEqual({ status: 'failed', error_code: 'SKILL_REMOTE_SYNC_INTERRUPTED' });
+    expect(await state(blocking)).toEqual({ status: 'running', error_code: null });
+    // The blocking row goes silent: a new start of the same owner recovers it instead of answering «already running» forever.
+    await store.db.updateTable('skill_remote_syncs').set({ report: JSON.stringify({ heartbeatAt: minutesAgo(20).toISOString() }) }).where('id', '=', blocking).execute();
+    const empty = createSkillControl(store.db, { enabled: true, remote: { config: { ...config, autoActivate: false }, transport: new FakeRepo() } });
+    const fresh = await sync(empty, 'manual', 'remote-sync-blocked');
+    expect(fresh.last!.status).toBe('succeeded');
+    expect(await state(blocking)).toEqual({ status: 'failed', error_code: 'SKILL_REMOTE_SYNC_INTERRUPTED' });
+    await store.db.updateTable('skill_remote_syncs').set({ status: 'failed', error_code: 'SKILL_REMOTE_SYNC_INTERRUPTED', finished_at: new Date() }).where('id', '=', live).execute();
+  });
+  it('deletes superseded GitHub versions and keeps the active one, the newest, the rollback target and revoked ones', async () => {
+    const keeper = 'remote-sync-retention';
+    await store.db.insertInto('user').values({ id: keeper, name: keeper, email: `${keeper}@example.test` }).execute();
+    const repo = new FakeRepo();
+    const control = createSkillControl(store.db, { enabled: true, remote: { config: { ...config, autoActivate: true }, transport: repo } });
+    const publish = async (body: string) => {
+      repo.set('kept-skill', { 'SKILL.md': manifest('kept-skill', body) });
+      const status = await sync(control, 'manual', keeper);
+      return { status, id: itemFor(status, 'kept-skill').versionId! };
+    };
+    const states = async (id: string) => (await control.detail(keeper, id)).versions.map((version) => [version.version, version.status]).sort();
+    const v1 = await publish('First body.');
+    const v1Hash = (await control.detail(keeper, v1.id)).skill.contentHash;
+    const v2 = await publish('Second body.');
+    expect(v2.status.last!.counts).toMatchObject({ activated: 1, pruned: 0 });
+    const v3 = await publish('Third body.');
+    expect(v3.status.last!.counts).toMatchObject({ activated: 1, pruned: 1 });
+    await expect(control.detail(keeper, v1.id)).rejects.toMatchObject({ code: 'SKILL_NOT_FOUND' });
+    expect(await states(v3.id)).toEqual([['1.0.1', 'deprecated'], ['1.0.2', 'active']]);
+    expect(await store.db.selectFrom('skill_version_tombstones').select(['version', 'content_hash', 'status', 'policy']).where('owner_id', '=', keeper).execute())
+      .toEqual([{ version: '1.0.0', content_hash: v1Hash, status: 'deprecated', policy: 'github-retention-v1' }]);
+    expect(await store.db.selectFrom('skill_audit').select('event').where('owner_id', '=', keeper).where('target_id', '=', v1.id).where('event', '=', 'skill.pruned').execute()).toHaveLength(1);
+    // The rollback target survived and still works.
+    const rolled = await control.rollback(keeper, v2.id, { expectedRevision: (await control.detail(keeper, v2.id)).skill.revision, approve: true, reason: 'الرجوع خطوة للتحقق من الاحتفاظ.' });
+    expect(rolled.skill).toMatchObject({ id: v2.id, status: 'active' });
+    await control.revoke(keeper, v3.id, { expectedRevision: (await control.detail(keeper, v3.id)).skill.revision, reason: 'إلغاء للتحقق من بقاء الملغى.' });
+    const v4 = await publish('Fourth body.');
+    expect(v4.status.last!.counts.pruned).toBe(0);
+    const v5 = await publish('Fifth body.');
+    expect(v5.status.last!.counts.pruned).toBe(1);
+    expect(await states(v5.id)).toEqual([['1.0.2', 'revoked'], ['1.0.3', 'deprecated'], ['1.0.4', 'active']]);
+  });
+  it('never deletes a version that another record still names', async () => {
+    const guarded = 'remote-sync-guarded';
+    await store.db.insertInto('user').values({ id: guarded, name: guarded, email: `${guarded}@example.test` }).execute();
+    const repo = new FakeRepo();
+    const control = createSkillControl(store.db, { enabled: true, remote: { config: { ...config, autoActivate: true }, transport: repo } });
+    const publish = async (body: string) => { repo.set('guarded-skill', { 'SKILL.md': manifest('guarded-skill', body) }); return itemFor(await sync(control, 'manual', guarded), 'guarded-skill').versionId!; };
+    const v1 = await publish('First guarded body.');
+    await publish('Second guarded body.');
+    // A grant row names v1, so retention must leave it even though v1 is an older replaced version.
+    const v1Hash = (await control.detail(guarded, v1)).skill.contentHash;
+    await store.db.insertInto('skill_grants').values({ id: randomUUID(), version_id: v1, owner_id: guarded, content_hash: v1Hash, tools: '[]', scopes: '[]', roots: '[]', expires_at: new Date(Date.now() - 60_000), revoked_at: new Date() }).execute();
+    await publish('Third guarded body.');
+    expect((await control.detail(guarded, v1)).skill.status).toBe('deprecated');
+    expect(await store.db.selectFrom('skill_version_tombstones').select('version').where('owner_id', '=', guarded).execute()).toEqual([]);
+  });
+  it('keeps a removed version number bound to its content', async () => {
+    const tomb = 'remote-sync-tombstone';
+    await store.db.insertInto('user').values({ id: tomb, name: tomb, email: `${tomb}@example.test` }).execute();
+    const repo = new FakeRepo();
+    const control = createSkillControl(store.db, { enabled: true, remote: { config: { ...config, autoActivate: false }, transport: repo } });
+    const publish = async (body: string, version: string) => { repo.set('pinned-number', { 'SKILL.md': manifest('pinned-number', body, `version: ${version}\n`) }); return sync(control, 'manual', tomb); };
+    expect(itemFor(await publish('Content A.', '3.0.0'), 'pinned-number')).toMatchObject({ outcome: 'pending_review', version: '3.0.0' });
+    const replaced = await publish('Content B.', '3.1.0');
+    expect(itemFor(replaced, 'pinned-number')).toMatchObject({ outcome: 'pending_review', version: '3.1.0' });
+    expect(replaced.last!.counts.pruned).toBe(1);
+    expect(itemFor(await publish('Content C.', '3.0.0'), 'pinned-number')).toMatchObject({ outcome: 'error', code: 'SKILL_VERSION_EXISTS' });
+    expect(itemFor(await publish('Content A.', '3.0.0'), 'pinned-number')).toMatchObject({ outcome: 'pending_review', version: '3.0.0' });
+  });
+  it('lists every stored version in the library, past the old 500-row window', async () => {
+    const library = 'remote-sync-library';
+    await store.db.insertInto('user').values({ id: library, name: library, email: `${library}@example.test` }).execute();
+    const before = (await manual.list(library, { limit: 1 })).total;
+    const familyId = randomUUID();
+    await store.db.insertInto('skill_families').values({ id: familyId, owner_id: library, slug: 'wide-library' }).execute();
+    await store.db.insertInto('skill_versions').values(Array.from({ length: 600 }, (_, index) => ({
+      id: randomUUID(), family_id: familyId, owner_id: library, version: `1.0.${index}`, sequence: index + 1, name: 'Library fixture', description: 'Synthetic library fixture.',
+      category: 'reasoning', level: 'instruction', origin: 'local_import', status: 'inspected', contract: '{}', content_hash: `${'a'.repeat(60)}${index.toString(16).padStart(4, '0')}`,
+    }))).execute();
+    expect((await manual.list(library, { limit: 1 })).total).toBe(before + 600);
+  });
+});
+
+describe('GitHub sync reports and retention rules', () => {
+  const item = (index: number, outcome: SkillRemoteItem['outcome']): SkillRemoteItem => ({ slug: `s-${String(index).padStart(3, '0')}`, outcome, deduplicated: false, versionId: null, version: null, verdict: null, code: null, message: null });
+  it('keeps at most 200 report items, with errors and what needs the owner first', () => {
+    const items = Array.from({ length: 250 }, (_, index) => item(index, index % 25 === 0 ? 'error' : index % 10 === 1 ? 'pending_review' : 'unchanged'));
+    const kept = compactRemoteItems(items);
+    expect(kept.items).toHaveLength(200); expect(kept.omitted).toBe(50);
+    expect(kept.items.filter((entry) => entry.outcome === 'error')).toHaveLength(10);
+    expect(kept.items.filter((entry) => entry.outcome === 'pending_review')).toHaveLength(25);
+    expect(kept.items.map((entry) => entry.slug)).toEqual(kept.items.map((entry) => entry.slug).sort());
+    expect(compactRemoteItems(items.slice(0, 200))).toEqual({ items: items.slice(0, 200), omitted: 0 });
+  });
+  it('only ever selects GitHub instruction imports that are not kept for a reason', () => {
+    const row = (id: string, family: string, sequence: number, status: string, minute: number, extra: Partial<SkillRetentionRow> = {}): SkillRetentionRow => ({
+      id, family_id: family, slug: family, active_version_id: null, version: `1.0.${sequence}`, sequence, status, level: 'instruction', origin: 'local_import',
+      content_hash: `${id}-hash`, updated_at: new Date(Date.UTC(2026, 10, 22, 6, minute)), source_kind: 'github', ...extra,
+    });
+    const github = [row('g1', 'gh', 1, 'deprecated', 1), row('g2', 'gh', 2, 'deprecated', 9), row('g3', 'gh', 3, 'active', 3), row('g4', 'gh', 4, 'rejected', 4),
+      row('g5', 'gh', 5, 'revoked', 5), row('g6', 'gh', 6, 'inspected', 6, { level: 'tool' }), row('g7', 'gh', 7, 'inspected', 7, { origin: 'forge', source_kind: 'forge' }), row('g8', 'gh', 8, 'inspected', 8)]
+      .map((entry) => ({ ...entry, active_version_id: 'g3' }));
+    const local = [row('l1', 'local', 1, 'deprecated', 1, { source_kind: 'local_folder' }), row('l2', 'local', 2, 'deprecated', 2, { source_kind: 'github' }), row('l3', 'local', 3, 'active', 3, { source_kind: 'github' })];
+    expect(retentionCandidates([...local, ...github]).map((entry) => entry.id)).toEqual(['g1', 'g4']);
   });
 });

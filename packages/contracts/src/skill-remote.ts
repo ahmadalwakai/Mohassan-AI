@@ -31,10 +31,14 @@ export const SkillRemoteSyncSchema = z.object({
   id: z.uuid(), repo: SkillRemoteRepoSchema, ref: SkillRemoteRefSchema, path: SkillRemotePathSchema, commit: SkillRemoteCommitSchema.nullable(),
   cause: z.enum(['schedule', 'manual']), status: z.enum(['running', 'succeeded', 'failed']), errorCode: z.string().max(64).nullable(),
   startedAt: z.iso.datetime(), finishedAt: z.iso.datetime().nullable(), unchanged: z.boolean(),
-  counts: z.object({ total: Count, unchanged: Count, activated: Count, pendingReview: Count, rejected: Count, errors: Count }).strict(),
-  items: z.array(SkillRemoteItemSchema).max(100),
+  /** `pruned` counts old GitHub versions that retention deleted during this run. */
+  counts: z.object({ total: Count, unchanged: Count, activated: Count, pendingReview: Count, rejected: Count, errors: Count, pruned: Count }).strict(),
+  /** Every skill of the run when there are at most 200; above that, errors and outcomes that need the owner come first. */
+  items: z.array(SkillRemoteItemSchema).max(200), itemsOmitted: Count,
   /** Skills that left the repository while a version from it is still active here. Nothing is revoked automatically. */
-  orphans: z.array(z.object({ slug: Slug, versionId: z.uuid() }).strict()).max(100),
+  orphans: z.array(z.object({ slug: Slug, versionId: z.uuid() }).strict()).max(200), orphansOmitted: Count,
+  /** Skill folders handled so far out of those found; kept while running and after a stop, so a later run resumes. */
+  progress: z.object({ processed: Count, total: Count }).strict().nullable(),
 }).strict();
 export type SkillRemoteSync = z.infer<typeof SkillRemoteSyncSchema>;
 
@@ -46,7 +50,7 @@ export const SkillRemoteStatusSchema = z.object({
   repo: SkillRemoteRepoSchema.nullable(), ref: SkillRemoteRefSchema.nullable(), path: SkillRemotePathSchema.nullable(),
   autoActivate: z.boolean(), intervalMinutes: z.number().int().min(0).max(1440), running: z.boolean(),
   last: SkillRemoteSyncSchema.nullable(), lastSuccess: z.object({ commit: SkillRemoteCommitSchema, finishedAt: z.iso.datetime() }).strict().nullable(),
-  nextSyncAt: z.iso.datetime().nullable(), pending: z.array(SkillRemotePendingSchema).max(20),
+  nextSyncAt: z.iso.datetime().nullable(), pending: z.array(SkillRemotePendingSchema).max(20), pendingTotal: Count,
   quota: z.object({ used: Count, limit: z.number().int().positive() }).strict(),
 }).strict();
 export type SkillRemoteStatus = z.infer<typeof SkillRemoteStatusSchema>;

@@ -8,7 +8,13 @@ import { classifySkillFile, type InspectableFile } from './inspector.ts';
 import { sha256, skillContentHash, skillContentMatches } from './hash.ts';
 import { acquireSkillLifecycleLock } from './lifecycle-lock.ts';
 
+/** Local imports and Forge versions together. GitHub versions are counted apart, against their own limit below. */
 export const MAX_IMPORTED_VERSIONS_PER_OWNER = 200;
+/** Skill folders one GitHub repository may hold. */
+export const MAX_GITHUB_SKILLS = 1000;
+/** GitHub versions one owner may keep. Retention leaves at most three per skill (the active one, one rollback target and the
+ * newest under review), so 1000 skills need 3000; the other 1000 cover skills that left the repository and revocations. */
+export const MAX_GITHUB_VERSIONS_PER_OWNER = 4000;
 export const MAX_IMPORTED_TOTAL_BYTES = 256000;
 export interface ImmutableSkillSource { contract: SkillContract; explicitVersion: boolean; files: InspectableFile[]; totalBytes: number; root: string }
 export interface ImmutableSkillStoreOptions {
@@ -33,6 +39,13 @@ export async function nextSkillFamilyVersion(tx: Kysely<any>, familyId: string):
 export async function lockSkillStoreOwner(tx: Kysely<any>, ownerId: string): Promise<void> {
   if (!await tx.selectFrom('user').select('id').where('id', '=', ownerId).forUpdate().executeTakeFirst()) throw new SkillError('SKILL_OWNER_NOT_FOUND', 'لم يُعثر على المالك.', 404);
   await acquireSkillLifecycleLock(tx, ownerId);
+}
+/** Imported or forged versions of one owner, counted for the GitHub limit or for the shared local and Forge limit. */
+export async function countImportedVersions(db: Kysely<any>, ownerId: string, scope: 'github' | 'other'): Promise<number> {
+  const row = await db.selectFrom('skill_versions as v').leftJoin('skill_sources as s', 's.version_id', 'v.id').select(eb => eb.fn.countAll<string>().as('n'))
+    .where('v.owner_id', '=', ownerId).where('v.origin', 'in', ['local_import', 'forge'])
+    .where(scope === 'github' ? sql<boolean>`s.kind = 'github'` : sql<boolean>`s.kind IS DISTINCT FROM 'github'`).executeTakeFirstOrThrow();
+  return Number(row.n);
 }
 export function validateImmutableSkillSource(raw: ImmutableSkillSource): ImmutableSkillSource {
   const contract = SkillContractSchema.parse(raw.contract), files = raw.files.map(file => ({ ...file }));
@@ -96,8 +109,12 @@ export async function storeImmutableSkill(tx: Kysely<any>, ownerId: string, raw:
   if (latest && !loaded.explicitVersion) { contract = SkillContractSchema.parse({ ...contract, version: nextSkillVersion(latest.version) }); contentHash = skillContentHash(contract, loaded.files); }
   if (options.origin === 'forge' && contract.version !== await nextSkillFamilyVersion(tx, family.id)) throw new SkillError('SKILL_FORGE_VERSION_CHANGED', 'تغير الإصدار التالي المتاح قبل حفظ المرشح.', 409);
   if (latest && await versions.select('id').where('version', '=', contract.version).executeTakeFirst()) throw new SkillError('SKILL_VERSION_EXISTS', 'هذا الإصدار موجود بمحتوى مختلف؛ الإصدارات لا تُعدَّل.', 409);
-  const count = await tx.selectFrom('skill_versions').select(eb => eb.fn.countAll<string>().as('n')).where('owner_id', '=', ownerId).where('origin', 'in', ['local_import', 'forge']).executeTakeFirstOrThrow();
-  if (Number(count.n) >= MAX_IMPORTED_VERSIONS_PER_OWNER) throw new SkillError('SKILL_QUOTA_EXCEEDED', 'بلغت الحد الأقصى المشترك للإصدارات المستوردة والمولّدة.', 409);
+  // A number that retention removed stays bound to its content: it may come back only with exactly that content.
+  const tombstone = await tx.selectFrom('skill_version_tombstones').select('content_hash').where('family_id', '=', family.id).where('version', '=', contract.version).executeTakeFirst();
+  if (tombstone && tombstone.content_hash !== contentHash) throw new SkillError('SKILL_VERSION_EXISTS', 'هذا الإصدار موجود بمحتوى مختلف؛ الإصدارات لا تُعدَّل.', 409);
+  if (options.source) {
+    if (await countImportedVersions(tx, ownerId, 'github') >= MAX_GITHUB_VERSIONS_PER_OWNER) throw new SkillError('SKILL_QUOTA_EXCEEDED', 'بلغت إصدارات مهارات GitHub حدها الأقصى.', 409);
+  } else if (await countImportedVersions(tx, ownerId, 'other') >= MAX_IMPORTED_VERSIONS_PER_OWNER) throw new SkillError('SKILL_QUOTA_EXCEEDED', 'بلغت الحد الأقصى المشترك للإصدارات المستوردة والمولّدة.', 409);
   const id = randomUUID();
   await tx.insertInto('skill_versions').values({ id, family_id: family.id, owner_id: ownerId, version: contract.version, sequence: (latest?.sequence ?? 0) + 1, name: contract.name, description: contract.description, category: contract.category,
     level: contract.level, origin: options.origin, status: 'quarantined', status_reason: 'بانتظار الفحص.', contract: JSON.stringify(contract), content_hash: contentHash }).execute();

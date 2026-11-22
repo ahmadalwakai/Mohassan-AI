@@ -71,6 +71,9 @@ export function SkillRemotePanel({ offline, engineEnabled, onOpenSkill, onChange
   const engineOff = !engineEnabled || status?.engineEnabled === false;
   const last = status?.last ?? null, finished = last && last.status !== 'running' ? last : null;
   const itemErrors = finished?.items.filter(item => item.outcome === 'error') ?? [];
+  const progress = last?.progress ?? null;
+  // A run stopped by shutdown, a restart or its time limit keeps its progress; the next run continues instead of starting over.
+  const stopped = finished?.status === 'failed' && ['SKILL_REMOTE_SYNC_ABORTED', 'SKILL_REMOTE_SYNC_INTERRUPTED'].includes(finished.errorCode ?? '') && Boolean(progress?.processed);
   const quota = status?.quota, nearQuota = Boolean(quota && quota.limit > 0 && quota.used / quota.limit >= 0.9);
   const canSync = Boolean(status?.configured) && !offline && !engineOff && !status?.running && !loading;
 
@@ -84,16 +87,18 @@ export function SkillRemotePanel({ offline, engineEnabled, onOpenSkill, onChange
       <p className={styles.header}><GitBranch size={15} aria-hidden="true"/><bdi dir="ltr"><code>{status.repo}@{status.ref}:{status.path}</code></bdi><Badge colorPalette={status.autoActivate ? 'green' : 'gray'}>{status.autoActivate ? 'التفعيل التلقائي: مفعّل' : 'التفعيل التلقائي: متوقف'}</Badge></p>
       {engineOff ? <p className={shared.warning}>محرك المهارات غير مفعّل؛ المزامنة متوقفة.</p> : null}
       <div className={styles.status} aria-busy={status.running || undefined}>
-        {status.running ? <p role="status"><Spinner size="sm"/> جارٍ جلب المهارات من GitHub…</p> : null}
+        {status.running ? <p role="status"><Spinner size="sm"/> جارٍ جلب المهارات من GitHub…{progress?.total ? <> <bdi>{progress.processed}</bdi> من <bdi>{progress.total}</bdi></> : null}</p> : null}
         {status.lastSuccess ? <p>آخر مزامنة ناجحة: {skillDate(status.lastSuccess.finishedAt)} · <code dir="ltr">{status.lastSuccess.commit.slice(0, 7)}</code></p> : <p>لم تُجرَ مزامنة بعد.</p>}
-        {finished ? <p className={shared.hint}>مفعّلة تلقائيًا {finished.counts.activated} · بانتظار مراجعتك {finished.counts.pendingReview} · مرفوضة {finished.counts.rejected} · أخطاء {finished.counts.errors}</p> : null}
-        {finished?.status === 'failed' ? <p role="alert" className={shared.error}>فشلت آخر مزامنة ({finished.errorCode ?? 'SKILL_REMOTE_SYNC_FAILED'}). المهارات المفعّلة سابقًا ما زالت تعمل.</p> : null}
+        {finished ? <p className={shared.hint}>مفعّلة تلقائيًا {finished.counts.activated} · بانتظار مراجعتك {finished.counts.pendingReview} · مرفوضة {finished.counts.rejected} · أخطاء {finished.counts.errors}{finished.counts.pruned ? ` · حُذفت ${finished.counts.pruned} من الإصدارات القديمة` : ''}</p> : null}
+        {stopped && progress ? <p className={shared.warning}>توقفت آخر مزامنة بعد <bdi>{progress.processed}</bdi> من <bdi>{progress.total}</bdi> مهارة ({finished?.errorCode}). تكمل المزامنة التالية من حيث توقفت.</p> : null}
+        {finished?.status === 'failed' && !stopped ? <p role="alert" className={shared.error}>فشلت آخر مزامنة ({finished.errorCode ?? 'SKILL_REMOTE_SYNC_FAILED'}). المهارات المفعّلة سابقًا ما زالت تعمل.</p> : null}
         {itemErrors.length ? <ul className={`${shared.warning} ${styles.errors}`}>{itemErrors.map(item => <li key={item.slug}><bdi>{item.slug}</bdi>: {item.message ?? 'تعذر استيراد هذه المهارة.'} ({item.code ?? 'SKILL_REMOTE_ITEM_FAILED'})</li>)}</ul> : null}
+        {finished?.itemsOmitted ? <p className={shared.hint}>لم تُعرض {finished.itemsOmitted} من نتائج هذه المزامنة؛ تظهر الأخطاء وما يحتاج مراجعتك أولاً.</p> : null}
         {status.nextSyncAt && !status.running ? <p className={shared.hint}>المزامنة التالية المقدّرة: {skillDate(status.nextSyncAt)}</p> : null}
       </div>
-      {status.pending.length ? <section aria-label="بانتظار مراجعتك"><h4>بانتظار مراجعتك</h4><div className={styles.rows}>{status.pending.map(item => <div className={styles.row} key={item.id}><span><bdi>{item.name}</bdi> · {item.version} · {item.verdict ? verdicts[item.verdict] ?? item.verdict : 'بلا فحص محفوظ'}</span><Button size="sm" variant="outline" onClick={() => onOpenSkill(item.id)} aria-label={`مراجعة ${item.name}`}>مراجعة</Button></div>)}</div></section> : null}
-      {finished?.orphans.length ? <section aria-label="حُذفت من المستودع"><p className={shared.warning}>حُذفت من المستودع وما زالت مفعّلة هنا</p><div className={styles.rows}>{finished.orphans.map(item => <div className={styles.row} key={item.versionId}><span><bdi>{item.slug}</bdi></span><Button size="sm" variant="outline" onClick={() => onOpenSkill(item.versionId)} aria-label={`فتح ${item.slug}`}>فتح</Button></div>)}</div></section> : null}
-      {quota ? <p className={nearQuota ? shared.warning : shared.hint}>الإصدارات المستوردة: {quota.used}/{quota.limit}{nearQuota ? ' · اقترب الحد الأقصى؛ لا يوجد حذف للإصدارات القديمة.' : ''}</p> : null}
+      {status.pending.length ? <section aria-label="بانتظار مراجعتك"><h4>بانتظار مراجعتك (<bdi>{status.pendingTotal}</bdi>)</h4>{status.pendingTotal > status.pending.length ? <p className={shared.hint}>تظهر أحدث {status.pending.length}.</p> : null}<div className={styles.rows}>{status.pending.map(item => <div className={styles.row} key={item.id}><span><bdi>{item.name}</bdi> · {item.version} · {item.verdict ? verdicts[item.verdict] ?? item.verdict : 'بلا فحص محفوظ'}</span><Button size="sm" variant="outline" onClick={() => onOpenSkill(item.id)} aria-label={`مراجعة ${item.name}`}>مراجعة</Button></div>)}</div></section> : null}
+      {finished?.orphans.length ? <section aria-label="حُذفت من المستودع"><p className={shared.warning}>حُذفت من المستودع وما زالت مفعّلة هنا</p><div className={styles.rows}>{finished.orphans.map(item => <div className={styles.row} key={item.versionId}><span><bdi>{item.slug}</bdi></span><Button size="sm" variant="outline" onClick={() => onOpenSkill(item.versionId)} aria-label={`فتح ${item.slug}`}>فتح</Button></div>)}</div>{finished.orphansOmitted ? <p className={shared.hint}>و{finished.orphansOmitted} مهارة أخرى.</p> : null}</section> : null}
+      {quota ? <p className={nearQuota ? shared.warning : shared.hint}>إصدارات GitHub المحفوظة: {quota.used}/{quota.limit}{nearQuota ? ' · اقترب الحد الأقصى رغم الحذف التلقائي للإصدارات القديمة؛ ألغِ مهارات لم تعد تحتاجها.' : ''}</p> : null}
       {error ? <p role="alert" className={shared.error}>{error}</p> : null}
     </> : null}
     <div className={shared.actions}><Button disabled={!canSync} onClick={() => void start()}><RefreshCw size={15}/>مزامنة الآن</Button></div>
