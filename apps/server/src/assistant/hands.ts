@@ -291,7 +291,7 @@ const URL_LIKE = /https?:\/\/|\bwww\.|\b[\w-]+\.(?:com|net|org|io|co|uk|sa|ae|de
 
 /** Question words carry no topic: dropped before matching a page's sentences to the question. */
 const ASK_WORDS = new Set(['كم', 'متي', 'وين', 'اين', 'من', 'ما', 'ماذا', 'هل', 'ليش', 'لماذا', 'كيف', 'شو', 'ايش', 'وش', 'قديش', 'اديش', 'هو', 'هي', 'في', 'عن', 'على', 'علي',
-  'what', "what's", 'whats', 'when', 'where', 'who', "who's", 'how', 'which', 'is', 'are', 'does', 'do', 'did', 'why', 'the', 'in', 'of', 'for', 'a',
+  'what', "what's", 'whats', 'when', 'where', 'who', "who's", 'how', 'which', 'is', 'are', 'was', 'were', 'does', 'do', 'did', 'why', 'the', 'in', 'of', 'for', 'a',
   'اليوم', 'الان', 'الآن', 'حاليا', 'now', 'today', 'current', 'currently', 'latest', 'اخر', 'احدث']);
 
 /** Words that ask about a topic without naming it: «أعراض المياه البيضاء» is about «المياه البيضاء». Folded forms. */
@@ -371,10 +371,26 @@ export function isAttributeWord(word: string): boolean {
   const stem = word.slice(0, -1);
   return stem.endsWith('ت') && known(stem) || BARE_HA_STEMS.has(stem);
 }
+/**
+ * Words that name what happened to a subject, when a date question asks when it happened: «سقط» in «متى سقط جدار برلين»,
+ * "fall" in "When did the Berlin Wall fall?". Folded, without «ال». Kept in the subject, they made it «سقط جدار برلين»: no
+ * article has that name, and the search answered with a film about the night the wall fell (live 2026-11-22 13:35, c9 in
+ * artifacts/plan-2026-11-22/wrong-answers-fix/live-check-commit-2026-11-22T13-35-11.json). «بني» is left out: it is also
+ * «sons of» («بني أمية»).
+ */
+const EVENT_WORDS = new Set(['سقط', 'سقطت', 'سقوط', 'تاسس', 'تاسست', 'انشئ', 'انشئت', 'انشات', 'انشاء', 'بدا', 'بدات', 'بدء', 'بدايه',
+  'انتهي', 'انتهت', 'انتهاء', 'نهايه', 'اندلع', 'اندلعت', 'اندلاع', 'استقل', 'استقلت', 'استقلال', 'ولد', 'ولدت', 'توفي', 'توفيت', 'مات', 'ماتت',
+  'اغتيل', 'اغتيلت', 'اغتيال', 'افتتح', 'افتتحت', 'افتتاح', 'حدث', 'حدثت', 'وقع', 'وقعت', 'قام', 'قامت', 'اكتشف', 'اكتشفت', 'اكتشاف',
+  'اخترع', 'اخترعت', 'اختراع', 'صدر', 'صدرت', 'انهار', 'انهارت', 'انهيار', 'توحد', 'توحدت', 'توحيد', 'احتل', 'احتلت', 'احتلال', 'فتح', 'فتحت',
+  'هدم', 'هدمت', 'تحرر', 'تحررت', 'تحرير', 'اعلن', 'اعلنت', 'انضم', 'انضمت',
+  'fall', 'fell', 'fallen', 'start', 'started', 'begin', 'began', 'begun', 'end', 'ended', 'happen', 'happened', 'occur', 'occurred',
+  'invent', 'invented', 'discover', 'discovered', 'build', 'built', 'open', 'opened', 'die', 'establish', 'established', 'collapse', 'collapsed',
+  'release', 'released', 'launch', 'launched', 'sign', 'signed', 'create', 'created', 'form', 'formed', 'dissolve', 'dissolved', 'become', 'became']);
 /** The subject itself, for a question about one of its attributes: «كم عدد سكان مصر» → ['مصر']; empty when the question names no attribute. */
 export function entityWords(question: string): string[] {
   const topic = topicWords(question);
-  const entity = topic.filter(word => !isAttributeWord(word));
+  const asksWhen = figureKind(question) === 'date';
+  const entity = topic.filter(word => !isAttributeWord(word) && !(asksWhen && EVENT_WORDS.has(word)));
   return entity.length && entity.length < topic.length ? entity : [];
 }
 /**
@@ -401,6 +417,14 @@ export function pastFigure(line: string): boolean {
   const western = line.replace(/[٠-٩]/gu, digit => String(digit.charCodeAt(0) - 0x0660));
   return /(?<!\d)(?<!\d[.,،٬])1(?:[0-8]\d\d|9[0-4]\d)(?!\d)(?![.,،٬]\d)/u.test(western)
     || /في ذلك الوقت|آنذاك|حينذاك|\bat the time\b|\bback then\b/iu.test(line);
+}
+/**
+ * A figure for a year still to come: a projection, not today's count. «Japan's population is expected to drop to around 88
+ * million by 2065» passes every check of a population line (Japan article, read 2026-11-22).
+ */
+export function projectedFigure(line: string): boolean {
+  const western = line.replace(/[٠-٩]/gu, digit => String(digit.charCodeAt(0) - 0x0660));
+  return [...western.matchAll(/(?<!\d)(20\d\d|21\d\d)(?!\d)/gu)].some(found => Number(found[1]) > THIS_YEAR);
 }
 /** A page whose title is the subject itself («مصر», «المغرب - ويكيبيديا»), so its sentences may name it by a pronoun. */
 export function isOwnArticle(title: string, entity: readonly string[]): boolean {
@@ -513,18 +537,37 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
   // A price, a time or a score is a number: for such questions a sentence without one does not answer.
   const wantsNumber = LIVE.test(question);
   const numberAnswer = wantsNumber || WANTS_NUMBER.test(question);
+  const kind = figureKind(question);
+  // "How many people live in Japan?": the article says «population» or «inhabitants» ("With a population of almost 123 million
+  // as of 2026, it is the world's 11th most populous country"), so those words match «people», and a sentence that names a
+  // population outranks one that only counts people. Live on 2026-11-22 the answers were «…Greater Tokyo Area… with 37.4
+  // million people» and «a 2014 ruling sentencing 529 people to death» (p1, p2 in date-questions-2026-11-22T13-44-22.json).
+  // English only: an Arabic population question already names «سكان», the article's own word.
+  const peopleAsk = kind === 'people' && questionLanguage(question) === 'en';
+  const has = (text: string, word: string) => text.includes(word) || peopleAsk && PEOPLE_STEMS.has(word) && PEOPLE_FORMS.some(form => text.includes(form));
+  // A date question is answered by the dates its subject's article opens with: «الحرب العالمية الثانية هي حرب دولية بدأت في
+  // الأول من سبتمبر من عام 1939…», "World War II … (1 September 1939 – 2 September 1945)". Later sentences carry the dates of
+  // other events, and the newest of them ranked first: «upon his death in 2016, the German Foreign Office tweeted…» for "When
+  // did the Berlin Wall fall?", a prize first awarded in 1996 for «متى ولد نجيب محفوظ» (measured 2026-11-22 on the articles).
+  // The opening counts only on a page whose subject the question names, and only as a sentence: the name, its asides, then
+  // its verb («… (الألمانية: Berliner Mauer…) كان جدارا…»). A caption also opens with the name («Berlin Wall Berliner Mauer
+  // From the West Berlin side, Berlin Wall graffiti art in 1986.»), and so does another subject («The United Nations Security
+  // Council Resolution 1244…»).
+  const pageSubject = kind === 'date' ? fold(plainTitle(page.title ?? '')) : '';
+  const opensWithSubject = pageSubject && queryWords(pageSubject).length && queryWords(pageSubject).every(word => words.includes(word))
+    ? new RegExp(`^(?:the\\s+)?${pageSubject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s*\\[[^\\]]*\\]|\\s*\\([^)]*\\)|\\s*[،,])*\\s+(?:is|was|are|were|or|هو|هي|كان|كانت|عرفت|عرف|يعد|تعد|يعتبر|تعتبر)(?=\\s)`, 'u') : null;
   const labels = [...new Set(page.elements.filter(element => ['link', 'button'].includes(element.role)).map(element => tidy(element.label).toLowerCase()).filter(label => label.length >= 2))]
     .sort((a, b) => b.length - a.length);
   const labelSet = new Set(labels.map(fold));
   const pageTitle = fold(page.title ?? '');
-  const titled = words.filter(word => pageTitle.includes(word));
+  const titled = words.filter(word => has(pageTitle, word));
   const scored:{ line: string; score: number; at: number; year: number; glued: boolean }[] = [];
   const seen = new Set<string>();
   // Citation marks may carry spaces inside the brackets («[ 5 ] [ 28 ] ويبلغ عدد سكانها…», measured 2026-11-22 on «المغرب»).
   // A page read over HTTP is one line of words joined by spaces, so the full run of 07:06 sent first lines that began with a
   // stray «]» (4 of 23), carried «[لغات أخرى]» or a leading «ويكي بيانات», and put a space before every «.» and «،».
   const cleanSentence = (text: string) => withoutChrome(text
-    .replace(/\[\s*(?:\d+|Note \d+|note \d+|ملحوظة \d+|ْ?\s*\d+|[ا-ي])\s*\]/gu, '')
+    .replace(/\[\s*(?:\d+|Note \d+|note \d+|ملحوظة \d+|ْ?\s*\d+|[ا-ي]|[a-z])\s*\]/gu, '')
     .replace(/\[\s*(?:لغات أخرى|عدل|تعديل|عدل المصدر|بحاجة لمصدر|بحاجة إلى مصدر|edit|citation needed)\s*\]/giu, '')
     .replace(/[​‎‏]/gu, '')
     .replace(/\s+/g, ' ').trim()
@@ -564,7 +607,7 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
       // An encyclopedia's own long first sentence names its subject only at the start
       // («ألبرت أينشتاين (…) عالم فيزياء …»): keep that start when the tail misses the question.
       const head = `${parts.slice(0, 40).join(' ')} …`.slice(0, 400);
-      const matched = (text: string) => words.filter(word => fold(text).includes(word)).length;
+      const matched = (text: string) => words.filter(word => has(fold(text), word)).length;
       // A definition's head is the answer even when its tail repeats the subject: «تعنى كلمة الليزك …» runs 74 words on «ليزك».
       const definesAtHead = Boolean(definition?.test(fold(head)) || wordMeans?.test(fold(head)));
       const lead = definesAtHead || matched(tail) < need && matched(head) >= need;
@@ -589,23 +632,29 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     if (menuWords / count > 0.3) continue;
     // The page's own subject («أستراليا» on its article) is implied in its sentences («عاصمتها كانبرا»),
     // but only once the sentence holds another question word: the title alone answers nothing.
-    const own = words.filter(word => !titled.includes(word) && folded.includes(word)).length;
-    const hits = own ? own + titled.length : words.filter(word => folded.includes(word)).length;
+    const own = words.filter(word => !titled.includes(word) && has(folded, word)).length;
+    // A date sentence names its subject: on «الجزائر», «بنى عاصمته القلعة عام 1007 م … واستقل بالحكم» is about a dynasty.
+    const implied = kind !== 'date' || titled.some(word => has(folded, word));
+    const hits = own && implied ? own + titled.length : words.filter(word => has(folded, word)).length;
     if (hits < need) continue;
     seen.add(line);
     // A number in the sentence is often the answer itself: a price, a time, a score. A run past 40 words
     // is usually table cells glued to a sentence (an infobox), so it ranks below a plain sentence.
     // Among equals, the newest year wins: «إحصاء 2024» answers «كم عدد السكان» better than «إحصاء 2014».
-    const year = Math.max(0, ...[...line.matchAll(/(?<!\d)(1[89]\d\d|20\d\d)(?!\d)/g)].map(found => Number(found[1])));
+    // A year still to come is a projection, not the newest figure: «Japan's population is expected to drop to around 88
+    // million by 2065» outranked «With a population of almost 123 million as of 2026» (Japan article, 2026-11-22).
+    const year = Math.max(0, ...[...line.matchAll(/(?<!\d)(1[89]\d\d|20\d\d)(?!\d)/g)].map(found => Number(found[1])).filter(value => value <= THIS_YEAR));
     // On the subject's own page, a question word carrying a pronoun is the Arabic answer form
     // («عاصمتها كانبرا»: its capital is Canberra), stronger than a name that repeats the phrase.
     const answerForm = titled.length > 0 && own > 0 && words.some(word => !titled.includes(word)
       && new RegExp(`(?:^|\\s)[وف]?(?:ال)?${word}(?:\\p{L}{0,2}(?:ها|هم)|\\p{L}{1,2}ه)(?=[\\s،,:]|$)`, 'u').test(folded));
-    scored.push({ line, score: hits + (numberAnswer && /\d/u.test(line) ? 1 : 0) - (glued ? 1 : 0) + (phrase && folded.includes(phrase) ? 2 : 0) + (answerForm ? 3 : 0) + (pairedDefinition || definition?.test(folded) || wordMeans?.test(folded) ? 3 : 0) + (aboutSubject?.test(folded) ? 1 : 0), at, year, glued });
+    scored.push({ line, score: hits + (numberAnswer && /\d/u.test(line) ? 1 : 0) - (glued ? 1 : 0) + (phrase && folded.includes(phrase) ? 2 : 0) + (answerForm ? 3 : 0) + (pairedDefinition || definition?.test(folded) || wordMeans?.test(folded) ? 3 : 0) + (aboutSubject?.test(folded) ? 1 : 0)
+      + (peopleAsk && POPULATION_NOUN.test(folded) ? 2 : 0) + (opensWithSubject?.test(folded) ? 2 : 0), at, year, glued });
   }
   // «كم تستغرق …» is answered by a number: sentences without one only look related.
   if (numberAnswer && !scored.some(item => /[\d٠-٩]/u.test(item.line))) return [];
-  const best = scored.sort((a, b) => b.score - a.score || (numberAnswer ? b.year - a.year : 0) || a.at - b.at).slice(0, limit);
+  // Among equals the newest year wins («إحصاء 2024» over «إحصاء 2014»), except for a date: there it is the page order.
+  const best = scored.sort((a, b) => b.score - a.score || (numberAnswer && kind !== 'date' ? b.year - a.year : 0) || a.at - b.at).slice(0, limit);
   return (bestFirst ? best : best.sort((a, b) => a.at - b.at)).map(item => item.line.length > 300 ? `${item.line.slice(0, 299)}…` : item.line);
 }
 
@@ -647,6 +696,12 @@ const queryWords = (query: string) => [...new Set(fold(query).split(/[\s,،.:;/+
   .map(word => word.length > 4 && word.startsWith('ال') ? word.slice(2) : word)
   .filter(word => word.length >= 3 || /[؀-ۿ]{2,}/u.test(word))
   .map(word => word.length > 4 ? word.slice(0, Math.max(4, word.length - 2)) : word))];
+/** An English population question's own words (cut as queryWords cuts them) and the forms an article uses for them. */
+const PEOPLE_STEMS = new Set(queryWords('people population inhabitants residents persons'));
+const PEOPLE_FORMS = ['peop', 'popul', 'inhabit', 'resident', 'person'];
+/** A sentence that names a population, not only a number of people. Folded text. */
+const POPULATION_NOUN = /\b(?:population|populous|populated|inhabitants|residents)\b/u;
+const THIS_YEAR = new Date().getUTCFullYear();
 
 /**
  * Result-like links in page order: descriptive text, a real destination, no navigation chrome or ads.
@@ -1136,7 +1191,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             const people = figureKind(step.query) === 'people';
             const ranked = relevantLines(opened, step.query, people ? 6 : 3, true);
             const passing = ranked.flatMap((line, at) => checkAnswerLine(step.query, line).ok && namesEntity(line, entity, ownPage(opened, entity)) ? [at] : []);
-            const answerAt = (people ? passing.find(at => !pastFigure(ranked[at]!)) : undefined) ?? passing[0] ?? -1;
+            const answerAt = (people ? passing.find(at => !pastFigure(ranked[at]!) && !projectedFigure(ranked[at]!)) : undefined) ?? passing[0] ?? -1;
             const lines = answerAt < 0 ? [] : [ranked[answerAt]!, ...ranked.filter((_, at) => at !== answerAt)].slice(0, 3);
             // A page whose title names none of the question's words answers only with a sentence that carries nearly all of them:
             // «The trio visit Misumi again, this time…» from the film «The Third Murder» shares only «visit» and «time» with «What is
