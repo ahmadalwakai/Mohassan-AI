@@ -7,7 +7,6 @@ import { buildSkillSource, type SkillSourceEntry } from './importer.ts';
 import { countImportedVersions, MAX_GITHUB_SKILLS, MAX_GITHUB_VERSIONS_PER_OWNER, MAX_IMPORTED_TOTAL_BYTES, storeImmutableSkill } from './import-store.ts';
 import { classifySkillFile } from './inspector.ts';
 import type { createSkillLifecycle } from './lifecycle.ts';
-import { pruneGithubSkillVersions } from './prune.ts';
 
 /** One entry of a Git tree, with `path` relative to the listed folder. */
 export interface SkillRemoteEntry { mode: string; type: 'blob' | 'tree' | 'commit'; objectId: string; size: number | null; path: string }
@@ -35,6 +34,11 @@ export interface SkillRemoteOptions {
   lifecycle: Pick<ReturnType<typeof createSkillLifecycle>, 'inspect' | 'activateByPolicy'>;
   audit(tx: Kysely<any>, ownerId: string, targetId: string, event: string, detail?: Record<string, unknown>): Promise<void>;
   rebuildGraph?(tx: Kysely<any>, ownerId: string): Promise<void>;
+  /**
+   * Retention (prune.ts): deletes old GitHub versions at the version limit and after each complete pass.
+   * Absent: a sync never deletes a version, and a full limit is reported as SKILL_QUOTA_EXCEEDED for the skills it stops.
+   */
+  prune?(ownerId: string): Promise<{ pruned: number }>;
   now?: () => Date;
 }
 export type SkillRemoteCause = 'schedule' | 'manual';
@@ -181,9 +185,10 @@ export function createSkillRemote(db: Kysely<any>, options: SkillRemoteOptions) 
       let stored: Awaited<ReturnType<typeof store>>;
       try { stored = await store(); }
       catch (error) {
-        // At the GitHub limit, retention runs and this skill is tried once more; once retention frees nothing, the limit stands for the rest of the run.
+        // At the GitHub limit, retention runs and this skill is tried once more; once retention frees nothing, or where
+        // no retention is configured, the limit stands for the rest of the run.
         if (!(error instanceof SkillError && error.code === 'SKILL_QUOTA_EXCEEDED') || quota.exhausted) throw error;
-        const { pruned } = await pruneGithubSkillVersions(db, ownerId);
+        const pruned = options.prune ? (await options.prune(ownerId)).pruned : 0;
         quota.pruned += pruned;
         if (!pruned) { quota.exhausted = true; throw error; }
         stored = await store();
@@ -282,8 +287,8 @@ export function createSkillRemote(db: Kysely<any>, options: SkillRemoteOptions) 
       // Keep orphaned slugs in the tree map so the notice stays until the owner revokes or the skill returns.
       for (const orphan of orphans) trees[orphan.slug] = base[orphan.slug];
       await rebuild();
-      // Routine retention after a complete pass; versions deleted earlier in this run to make room are counted too.
-      quota.pruned += (await pruneGithubSkillVersions(db, ownerId)).pruned;
+      // Routine retention after a complete pass, where it is configured; versions deleted earlier in this run to make room are counted too.
+      if (options.prune) quota.pruned += (await options.prune(ownerId)).pruned;
       await stopHeartbeat();
       const kept = compactRemoteItems(items);
       await finish(id, 'succeeded', { commit, trees, report: {

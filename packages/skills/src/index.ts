@@ -8,6 +8,7 @@ import type { SkillEnvironment } from './permissions.ts';
 import { createSkillPlanner } from './planner.ts';
 import { createSkillRegistry } from './registry.ts';
 import { createInstructionContext } from './preload.ts';
+import { pruneGithubSkillVersions } from './prune.ts';
 import { rebuildSkillGraph } from './graph.ts';
 
 export { skillsMigration } from './migration.ts';
@@ -49,8 +50,12 @@ export interface SkillControlOptions {
   /** What the host can do right now. Without it every tool counts as unavailable. */
   environment?: () => Promise<SkillEnvironment> | SkillEnvironment;
   now?: () => Date;
-  /** The GitHub skills source. Absent: status reports `configured: false` and a sync cannot start. */
-  remote?: { config: SkillRemoteConfig | null; problem?: string | null; transport?: SkillRemoteTransport | null };
+  /**
+   * The GitHub skills source. Absent: status reports `configured: false` and a sync cannot start.
+   * `pruneOldVersions: false` turns retention off: a sync then never deletes a GitHub version, and at the version limit
+   * it reports SKILL_QUOTA_EXCEEDED instead of making room.
+   */
+  remote?: { config: SkillRemoteConfig | null; problem?: string | null; transport?: SkillRemoteTransport | null; pruneOldVersions?: boolean };
 }
 
 export function createSkillControl(db: Kysely<any>, options: SkillControlOptions = {}) {
@@ -61,7 +66,8 @@ export function createSkillControl(db: Kysely<any>, options: SkillControlOptions
   const lifecycle = createSkillLifecycle(db, { audit: registry.audit, executableReady: options.executableReady ?? (async () => false), rebuildGraph });
   // The sync inspects and activates through a lifecycle without its own graph rebuild: with up to 1000 skills it rebuilds the graph once per batch of activations.
   const remoteLifecycle = createSkillLifecycle(db, { audit: registry.audit, executableReady: options.executableReady ?? (async () => false) });
-  const remote = createSkillRemote(db, { config: options.remote?.config ?? null, problem: options.remote?.problem ?? null, engineEnabled: options.enabled === true, transport: options.remote?.transport ?? null, lifecycle: remoteLifecycle, audit: registry.audit, rebuildGraph, now: options.now });
+  const remote = createSkillRemote(db, { config: options.remote?.config ?? null, problem: options.remote?.problem ?? null, engineEnabled: options.enabled === true, transport: options.remote?.transport ?? null, lifecycle: remoteLifecycle, audit: registry.audit, rebuildGraph, now: options.now,
+    ...(options.remote?.pruneOldVersions === false ? {} : { prune: (ownerId: string) => pruneGithubSkillVersions(db, ownerId) }) });
   const grants = createSkillGrants(db, { allowedRoots, audit: registry.audit, now: options.now });
   const environment = options.environment ?? (() => ({ capabilities: [], modelReady: false, visionReady: false, executableReady: false }));
   const validateComposition = createSkillPlanner(db, { environment, access: grants.effective });

@@ -422,6 +422,58 @@ describe('GitHub skills source sync', () => {
     expect(v5.status.last!.counts.pruned).toBe(1);
     expect(await states(v5.id)).toEqual([['1.0.2', 'revoked'], ['1.0.3', 'deprecated'], ['1.0.4', 'active']]);
   });
+  it('with retention off keeps every superseded version, writes no tombstone and reports nothing pruned', async () => {
+    const keeper = 'remote-sync-keep-all';
+    await store.db.insertInto('user').values({ id: keeper, name: keeper, email: `${keeper}@example.test` }).execute();
+    const repo = new FakeRepo();
+    const control = createSkillControl(store.db, { enabled: true, remote: { config: { ...config, autoActivate: true }, transport: repo, pruneOldVersions: false } });
+    const publish = async (body: string) => {
+      repo.set('kept-forever', { 'SKILL.md': manifest('kept-forever', body) });
+      const status = await sync(control, 'manual', keeper);
+      return { status, id: itemFor(status, 'kept-forever').versionId! };
+    };
+    const published = [];
+    for (const body of ['First body.', 'Second body.', 'Third body.', 'Fourth body.', 'Fifth body.']) {
+      const next = await publish(body);
+      expect(next.status.last!.counts).toMatchObject({ activated: 1, pruned: 0, errors: 0 });
+      published.push(next);
+    }
+    // With retention on, the third publication already deletes the first version (the test above); here every one is still readable.
+    for (const version of published) expect((await control.detail(keeper, version.id)).skill.id).toBe(version.id);
+    expect((await control.detail(keeper, published[4].id)).versions.map((version) => [version.version, version.status]).sort())
+      .toEqual([['1.0.0', 'deprecated'], ['1.0.1', 'deprecated'], ['1.0.2', 'deprecated'], ['1.0.3', 'deprecated'], ['1.0.4', 'active']]);
+    expect(await store.db.selectFrom('skill_version_tombstones').select('version').where('owner_id', '=', keeper).execute()).toEqual([]);
+    expect(await store.db.selectFrom('skill_audit').select('event').where('owner_id', '=', keeper).where('event', '=', 'skill.pruned').execute()).toEqual([]);
+    expect(published[4].status.quota.used).toBe(5);
+    await control.remote.shutdown();
+  });
+  it('with retention off reports the version limit instead of deleting to make room', async () => {
+    const full = 'remote-sync-full-quota';
+    await store.db.insertInto('user').values({ id: full, name: full, email: `${full}@example.test` }).execute();
+    // 4000 superseded GitHub versions of one skill: all of them deletable by the retention rule, were it on.
+    const familyId = randomUUID(), LIMIT = 4000, CHUNK = 500;
+    await store.db.insertInto('skill_families').values({ id: familyId, owner_id: full, slug: 'full-family' }).execute();
+    for (let start = 0; start < LIMIT; start += CHUNK) {
+      const rows = Array.from({ length: CHUNK }, (_, offset) => ({ id: randomUUID(), index: start + offset }));
+      await store.db.insertInto('skill_versions').values(rows.map(({ id, index }) => ({
+        id, family_id: familyId, owner_id: full, version: `1.0.${index}`, sequence: index + 1, name: 'Full family', description: 'Synthetic GitHub version.',
+        category: 'reasoning', level: 'instruction', origin: 'local_import', status: 'deprecated', contract: '{}', content_hash: `${'b'.repeat(56)}${index.toString(16).padStart(8, '0')}`,
+      }))).execute();
+      await store.db.insertInto('skill_sources').values(rows.map(({ id, index }) => ({ version_id: id, kind: 'github', locator: `github:owner/skills@${'a'.repeat(40)}:skills/full-family#${index}`, file_count: 1, total_bytes: 10 }))).execute();
+    }
+    const versions = async () => Number((await store.db.selectFrom('skill_versions').select((eb) => eb.fn.countAll<string>().as('n')).where('owner_id', '=', full).executeTakeFirstOrThrow()).n);
+    expect(await versions()).toBe(LIMIT);
+    const repo = new FakeRepo();
+    repo.set('over-the-limit', { 'SKILL.md': manifest('over-the-limit') });
+    const control = createSkillControl(store.db, { enabled: true, remote: { config: { ...config, autoActivate: true }, transport: repo, pruneOldVersions: false } });
+    const status = await sync(control, 'manual', full);
+    expect(itemFor(status, 'over-the-limit')).toMatchObject({ outcome: 'error', code: 'SKILL_QUOTA_EXCEEDED', versionId: null });
+    expect(status.last!.counts).toMatchObject({ errors: 1, activated: 0, pruned: 0 });
+    expect(status.quota).toEqual({ used: LIMIT, limit: LIMIT });
+    expect(await versions()).toBe(LIMIT);
+    expect(await store.db.selectFrom('skill_version_tombstones').select('version').where('owner_id', '=', full).execute()).toEqual([]);
+    await control.remote.shutdown();
+  }, 120000);
   it('never deletes a version that another record still names', async () => {
     const guarded = 'remote-sync-guarded';
     await store.db.insertInto('user').values({ id: guarded, name: guarded, email: `${guarded}@example.test` }).execute();
