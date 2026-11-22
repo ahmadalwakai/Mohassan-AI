@@ -443,7 +443,15 @@ export async function createApplication(config: AppConfig) {
   });
   await registerCommandChatRoutes(app,{control:chat,owner:async request=>{const user=await owner(request);windows.noteSession(user.id,request);return user;}});
   await registerWaslaRoutes(app,{db:database.db,enabled:config.waslaBridgeEnabled===true,owner,roleOf:(userId,connection)=>roleOf(connection??database.db,userId),chat:()=>chat,
-    search:async(ownerId,query,signal)=>({provider:searchProvider.name,results:await searchProvider.search(query,8,signal,{ownerId})})});
+    // The phone's search: the engine's full outcome when it has one, so «no result» and «sources unreachable» stay apart.
+    search:async(ownerId,query,signal)=>{
+      const engine=searchProvider as Partial<{execute:(question:string,limit:number,signal?:AbortSignal,context?:{ownerId:string})=>Promise<{hits:{title:string;url:string;snippet:string}[];failures:{provider:string;kind:string}[];limitations:string[]}>}>;
+      if(typeof engine.execute==='function'){
+        const outcome=await engine.execute(query,8,signal,{ownerId});
+        return {provider:searchProvider.name,results:outcome.hits,limitations:outcome.limitations,unreachable:outcome.failures.filter(failure=>failure.kind!=='rate_limited').map(failure=>failure.provider)};
+      }
+      return {provider:searchProvider.name,results:await searchProvider.search(query,8,signal,{ownerId}),limitations:[...(searchProvider.limitations??[])],unreachable:[]};
+    }});
   await registerBrowserFileRoutes(app,{db:database.db,browser:agentBrowser,owner});
   await registerDocumentRoutes(app,{control:documents,owner,link:documentLink});
   await registerStudioAiRoutes(app,{control:studioAi,owner});

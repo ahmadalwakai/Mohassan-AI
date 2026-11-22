@@ -214,7 +214,15 @@ struct SearchResult: Decodable, Identifiable {
         return components.url
     }
 }
-struct SearchResponse: Decodable { let query: String; let results: [SearchResult]; let provider: String }
+/// Mohassan's search engine through the computer. `notice` explains an empty result; `limitations`
+/// says what these sources cannot prove. Both are absent on older computer services.
+struct SearchResponse: Decodable {
+    let query: String
+    let results: [SearchResult]
+    let provider: String
+    let notice: String?
+    let limitations: [String]?
+}
 // MARK: - Mohassan, through the Wasla service on the computer (/v1/mohassan/*)
 // Field names follow Mohassan's contract (packages/contracts/src/command-chat.ts).
 // Unknown fields are ignored, so newer servers stay readable.

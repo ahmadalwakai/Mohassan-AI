@@ -132,7 +132,7 @@ workflows:
       # Pinned 2026-11-22 to the version that built 1.0 (7) on 2026-11-11 (Codemagic build 6af3bb2a6f37641a00179485: "Xcode 26.6, Build version 17F113").
       xcode: "26.6"
       vars:
-        WASLA_BUILD_NUMBER: "10"
+        WASLA_BUILD_NUMBER: "11"
     scripts:
       - name: Verify and assign the build (WASLA_BUILD_NUMBER) to the existing internal group
         script: |

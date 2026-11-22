@@ -576,8 +576,8 @@ struct SearchView: View {
             }
             if let response = store.searchResponse {
                 Text(response.query).font(.title3.bold())
-                Text("المصدر: \(response.provider)").font(.caption).foregroundStyle(.secondary)
-                if response.results.isEmpty { Text("لم تظهر نتائج لهذا البحث. جرّب عبارة أخرى.").foregroundStyle(.secondary) }
+                Text("المصادر: \(response.provider)").font(.caption).foregroundStyle(.secondary)
+                if response.results.isEmpty { Text(response.notice ?? "لم تظهر نتائج لهذا البحث. جرّب عبارة أخرى.").foregroundStyle(.secondary) }
                 ForEach(response.results) { result in
                     Button { if let url = result.safeURL { selectedURL = BrowserDestination(url: url) } } label: {
                         Card {
@@ -586,6 +586,10 @@ struct SearchView: View {
                             HStack { Text(result.safeURL?.host ?? "رابط غير مدعوم").font(.caption).lineLimit(1).environment(\.layoutDirection, .leftToRight); Spacer(); Image(systemName: "arrow.up.left") }.foregroundStyle(Forest.accent)
                         }
                     }.buttonStyle(.plain).disabled(result.safeURL == nil)
+                }
+                // What these sources cannot prove, as Mohassan's engine states it.
+                ForEach(Array((response.limitations ?? []).enumerated()), id: \.offset) { _, limitation in
+                    Label(limitation, systemImage: "info.circle").font(.footnote).foregroundStyle(.secondary)
                 }
             } else {
                 ContentUnavailableView("ابدأ بسؤال واحد", systemImage: "globe", description: Text("تظهر هنا النتائج وروابط المصادر الفعلية."))

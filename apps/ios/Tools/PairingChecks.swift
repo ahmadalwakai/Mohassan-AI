@@ -72,6 +72,13 @@ enum PairingChecks {
             let result = try JSONDecoder().decode(SearchResult.self, from: resultData)
             try check(result.safeURL == nil, "Reject unsafe result links")
         }
+        // Search through Mohassan's engine: an empty answer carries its notice; older services send neither field.
+        let emptySearch = try JSONDecoder().decode(SearchResponse.self, from: Data("""
+        {"query":"Tailscale","results":[],"provider":"Wikipedia / Stack Exchange","limitations":["مصادر متخصصة"],"notice":"لم تجد مصادر موحسن نتيجة لهذا البحث."}
+        """.utf8))
+        try check(emptySearch.results.isEmpty && emptySearch.notice?.isEmpty == false && emptySearch.limitations?.count == 1, "An empty search explains itself")
+        let oldSearch = try JSONDecoder().decode(SearchResponse.self, from: Data("{\"query\":\"q\",\"results\":[],\"provider\":\"DuckDuckGo HTML\"}".utf8))
+        try check(oldSearch.notice == nil && oldSearch.limitations == nil, "An older search reply stays readable")
         // The computer's status, with and without the capability block (older services).
         let richStatus = try JSONDecoder().decode(ServerStatus.self, from: Data("""
         {"name":"Wasla Windows","model":"Mohassan","busy":null,"desktop_enabled":false,"desktop":null,"app_actions_enabled":false,
