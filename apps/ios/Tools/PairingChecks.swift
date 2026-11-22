@@ -67,23 +67,31 @@ enum PairingChecks {
             let raw = try JSONSerialization.jsonObject(with: bundledData) as? [String: Any]
             try check(Set(raw?.keys.map { $0 } ?? []) == Set(["server_url", "certificate_sha256", "computer_name"]), "Bundled preset contains only public connection settings")
         }
-        let requestID = UUID().uuidString.lowercased()
-        let chat = ChatRequest(messages: [ChatMessage(role: "user", content: "افتح المتصفح")], request_id: requestID, mode: "auto", remember: false, use_memory: false, conversation_id: nil)
-        let encodedChat = try JSONSerialization.jsonObject(with: JSONEncoder().encode(chat)) as! [String: Any]
-        try check(encodedChat["request_id"] as? String == requestID, "Preserve the command request identifier")
-        try check(encodedChat["remember"] as? Bool == false && encodedChat["use_memory"] as? Bool == false, "Memory remains explicitly off")
-        try check(encodedChat["conversation_id"] == nil, "Do not send an absent conversation identifier")
-        let encodedMessages = encodedChat["messages"] as! [[String: Any]]
-        try check(Set(encodedMessages[0].keys) == Set(["role", "content"]), "Message metadata never enters the API prompt")
-        let oldAnswer = try JSONDecoder().decode(ChatResponse.self, from: Data("{\"content\":\"hello\",\"model\":\"local\"}".utf8))
-        try check(oldAnswer.route == nil && oldAnswer.sources == nil, "Legacy chat answers remain readable")
-        let noteSource = try JSONDecoder().decode(ChatSource.self, from: Data("{\"id\":\"K1\",\"title\":\"Note\",\"url\":null}".utf8))
-        try check(noteSource.safeURL == nil && noteSource.title == "Note", "Saved notes need no fabricated URL")
         for link in ["javascript:alert(1)", "http://example.com", "https://user:secret@example.com"] {
-            let sourceData = try JSONSerialization.data(withJSONObject: ["id": "S1", "title": "Source", "url": link])
-            let source = try JSONDecoder().decode(ChatSource.self, from: sourceData)
-            try check(source.safeURL == nil, "Reject unsafe source links")
+            let resultData = try JSONSerialization.data(withJSONObject: ["title": "Result", "url": link, "snippet": ""])
+            let result = try JSONDecoder().decode(SearchResult.self, from: resultData)
+            try check(result.safeURL == nil, "Reject unsafe result links")
         }
+        // The computer's status, with and without the capability block (older services).
+        let richStatus = try JSONDecoder().decode(ServerStatus.self, from: Data("""
+        {"name":"Wasla Windows","model":"Mohassan","busy":null,"desktop_enabled":false,"desktop":null,"app_actions_enabled":false,
+         "capabilities":{"chat":{"ready":true},"search":{"ready":false,"reason":"لم يُجرَّب البحث بعد"},"images":{"ready":false,"reason":"محرك الصور غير موجود","code":"image_engine_missing"},"desktop":{"ready":false,"reason":"غير مفعّل"}}}
+        """.utf8))
+        try check(richStatus.unavailableReason { $0.chat } == nil && richStatus.unavailableReason { $0.images } == "محرك الصور غير موجود", "Read each function's readiness and reason")
+        let plainStatus = try JSONDecoder().decode(ServerStatus.self, from: Data("{\"name\":\"Wasla Windows\",\"model\":\"x\",\"busy\":false,\"desktop_enabled\":true,\"desktop\":null}".utf8))
+        try check(plainStatus.capabilities == nil && plainStatus.unavailableReason { $0.images } == nil, "An older service without capabilities stays readable")
+        // The seven connection states, from what the phone last read.
+        let linked = MohassanLink(linked: true, reachable: true, error: nil)
+        try check(ConnectionState.derive(status: nil, statusError: nil, link: nil) == .checking, "Nothing read yet is «checking»")
+        try check(ConnectionState.derive(status: nil, statusError: .message("timeout"), link: nil) == .unreachable, "A failed status read is «unreachable»")
+        try check(ConnectionState.derive(status: nil, statusError: .certificate, link: nil) == .certificateMismatch, "A certificate failure is its own state")
+        try check(ConnectionState.derive(status: nil, statusError: .server(401, "x"), link: linked) == .trustRevoked, "401 from the computer means the phone is no longer trusted")
+        try check(ConnectionState.derive(status: richStatus, statusError: nil, link: nil) == .notLinked, "No Mohassan link read means not linked")
+        try check(ConnectionState.derive(status: richStatus, statusError: nil, link: MohassanLink(linked: false, reachable: false, error: nil)) == .notLinked, "An unlinked service is «not linked»")
+        try check(ConnectionState.derive(status: richStatus, statusError: nil, link: MohassanLink(linked: true, reachable: false, error: "mohassan_unavailable")) == .mohassanDown, "Linked but unreachable means Mohassan is down")
+        try check(ConnectionState.derive(status: richStatus, statusError: nil, link: MohassanLink(linked: true, reachable: true, error: "WASLA_GATEWAY_UNAUTHORIZED")) == .linkRevoked("WASLA_GATEWAY_UNAUTHORIZED"), "A refused key means the link was revoked")
+        try check(ConnectionState.derive(status: richStatus, statusError: nil, link: linked) == .ready, "Linked and reachable is ready")
+        try check(ConnectionState.ready.canSend && !ConnectionState.mohassanDown.canSend && !ConnectionState.checking.canSend, "Only the ready state lets the composer send")
         // Mohassan conversation, as Mohassan's server returns it through the computer service.
         let conversationID = "8f2c1a9e-4b7d-4c3e-9a1f-2d5e6b7c8a90", questionID = "1a2b3c4d-5e6f-4a1b-8c2d-3e4f5a6b7c8d"
         // A literal JSON reply keeps the fixture free of heterogeneous Swift collection literals.

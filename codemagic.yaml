@@ -22,6 +22,11 @@ workflows:
             "$CM_BUILD_DIR/apps/ios/Tools/PairingChecks.swift" \
             -o "$CM_BUILD_DIR/build/checks/pairing-checks"
           "$CM_BUILD_DIR/build/checks/pairing-checks" "$CM_BUILD_DIR/apps/ios/Wasla/ConnectionDefaults.json" "$CM_BUILD_DIR/tests/fixtures/phone"
+      - name: The app never calls the removed phone chat
+        script: |
+          set -euo pipefail
+          if grep -rn '"/v1/chat"' "$CM_BUILD_DIR/apps/ios/Wasla"; then echo "The phone's own chat is gone: no /v1/chat call may remain."; exit 1; fi
+          echo "No /v1/chat call in the app."
       - name: Inspect Xcode project and shared scheme
         script: |
           set -euo pipefail
