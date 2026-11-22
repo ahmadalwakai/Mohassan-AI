@@ -40,6 +40,8 @@ export interface TopicFrame {
   time: string | null;
   /** The user's own question with the entity replaced by «{}» («من هو {}؟»), so «ونيوتن؟» becomes «من هو نيوتن؟». */
   template: string | null;
+  /** An arithmetic turn: its «entity» is an expression, so no property or open follow-up refers to it. */
+  operation?: 'compute';
   sourceTurnId: string;
   entityOrigin: 'user' | 'host_result';
   /** True only for a public lookup; private and action topics never feed a search query. */
@@ -77,6 +79,8 @@ export interface TurnUnderstanding {
   reference?: { index: number; label: string };
   /** The earlier entity a comparison is made against («وقارنها بالرياض», "compare it with Riyadh"). */
   against?: string;
+  /** Closed-list words read through a one-letter typo («tomorow» → tomorrow), as written and as read. */
+  corrected?: { from: string; to: string }[];
   v1: RequestResolution;
   next: ConversationStateV2;
 }
@@ -153,14 +157,28 @@ const LEADS = new Set(['طيب', 'طب', 'حسنا', 'تمام', 'اوكي', 'ok
   'كمان', 'برضو', 'برضه', 'ايضا', 'كذلك', 'بعدين', 'نفس', 'الشي', 'الشيء', 'same', 'thing', 'too']);
 const FOLLOW_FIRST = new Set(['طيب', 'طب', 'حسنا', 'تمام', 'and', 'so', 'also', 'كمان', 'برضو', 'برضه', 'ايضا', 'كذلك', 'بعدين', 'نفس', 'same']);
 const QUESTION_WORDS = new Set(['ما', 'ماذا', 'من', 'متي', 'كم', 'اين', 'هل', 'ماهي', 'ماهو', 'هو', 'هي', 'يبلغ', 'حاله', 'قل', 'لي',
-  'اعطني', 'اخبرني', 'ايه', 'ايش', 'وش', 'شو', 'شنو', 'مين', 'وين', 'كام', 'ليش', 'ليه', 'لماذا', 'كيف', 'ذاكرتي', 'ذاكرتك', 'الذاكره',
-  'what', 'whats', "what's", 'who', 'whos', "who's", 'when', 'where', 'how', 'is', 'are', 'was', 'were', 'tell', 'me',
+  'اعطني', 'اخبرني', 'ايه', 'ايش', 'وش', 'شو', 'شنو', 'مين', 'وين', 'كام', 'ليش', 'ليه', 'لماذا', 'كيف', 'اي', 'لاي', 'which', 'يساوي', 'تساوي', 'ذاكرتي', 'ذاكرتك', 'الذاكره',
+  'what', 'whats', "what's", 'who', 'whos', "who's", 'when', 'where', 'why', 'how', 'is', 'are', 'was', 'were', 'tell', 'me',
   'about', 'much', 'many', 'do', 'does', 'you', 'know', 'give', 'the', 'a', 'an']);
 const PREPOSITIONS = new Set(['في', 'عن', 'ل', 'من', 'علي', 'of', 'in', 'for', 'at', 'about', 'the', 'on']);
+/** Politeness around the request («من فضلك …», «… لو سمحت», "could you tell me …", "… please") says nothing about what is asked. */
+const POLITE_PREFIXES = ['اريد ان اعرف', 'اريد معرفه', 'ابغي اعرف', 'بدي اعرف', 'عايز اعرف', 'هل يمكنك', 'هل تستطيع', 'هل تقدر', 'من فضلك', 'من فضلكم', 'لو سمحت', 'لو سمحتي', 'لو سمحتم',
+  'ارجوك', 'ارجوكم', 'رجاء', 'ممكن', 'يمكنك', 'تقدر',
+  'could you please tell me', 'can you please tell me', 'would you please tell me', 'could you tell me', 'can you tell me', 'would you tell me',
+  'i would like to know', "i'd like to know", 'i want to know', 'could you please', 'can you please', 'would you please', 'could you', 'can you', 'would you',
+  'tell me', 'please', 'kindly'].map(form => form.split(' ')).sort((a, b) => b.length - a.length);
+const POLITE_SUFFIXES = ['من فضلك', 'لو سمحت', 'ارجوك', 'thank you', 'please', 'thanks', 'شكرا'].map(form => form.split(' ')).sort((a, b) => b.length - a.length);
 /** Standalone words that point back at the topic; a noun with a ها/هم/هن suffix («معالمها») points back too. */
 const POINTERS = new Set(['هي', 'هو', 'هم', 'عنها', 'عنه', 'عنهم', 'لها', 'له', 'لهم', 'فيها', 'فيه', 'منها', 'منه', 'بها', 'به', 'اليها', 'اليه',
   'it', 'its', 'that', 'this', 'there', 'them', 'him', 'her', 'his', 'their']);
 const STANDALONE_PRONOUNS = new Set(['هي', 'هو', 'it', 'that', 'this', 'them', 'him', 'her']);
+/** Interrogatives that make a message a question wherever they stand («وهي في أي قارة»). «ما» and «من» only when they lead it
+ * («ومن اخترعه؟»), since they are also "what/that" and "from"; English ones only when they lead it. */
+const ASKS_ANYWHERE = new Set(['ماذا', 'متي', 'كم', 'اين', 'هل', 'كيف', 'لماذا', 'ليش', 'ليه', 'ايش', 'وش', 'شو', 'شنو', 'مين', 'وين', 'كام', 'ايه', 'اي', 'لاي']);
+const ASKS_FIRST = new Set([...ASKS_ANYWHERE, 'ما', 'من', 'ماهي', 'ماهو', 'what', 'whats', "what's", 'who', 'whos', "who's", 'when', 'where', 'why', 'how',
+  'which', 'is', 'are', 'was', 'were', 'do', 'does', 'did', 'can', 'could', 'will', 'should']);
+/** An open follow-up is short: «وما أشهر معالمها؟» has one content word, "is it expensive to visit?" three. */
+const OPEN_FOLLOW_MAX_CONTENT = 4;
 /** Verbs whose subject is the topic itself: «وأين تقع؟», «ومتى تأسست؟», "where is it located?". */
 const FOLLOW_VERBS = new Set(['تقع', 'يقع', 'تاسست', 'تاسس', 'انشئت', 'انشئ', 'بنيت', 'بني', 'افتتحت', 'افتتح', 'تقام', 'يقام', 'بدات', 'بدا', 'انتهت', 'انتهي',
   'ولد', 'ولدت', 'توفي', 'توفيت', 'مات', 'ماتت', 'يعيش', 'تعيش', 'يسكن', 'تسكن', 'تشتهر', 'يشتهر', 'تنتج', 'ينتج', 'تصنع', 'يصنع', 'تبعد', 'يبعد',
@@ -183,6 +201,14 @@ const TIME_FORMS = ['الاسبوع القادم', 'الاسبوع الجاي', 
   'اليوم', 'الان', 'حاليا', 'غدا', 'بكرا', 'بكره', 'الليله', 'امس', 'البارحه', 'today', 'now', 'currently', 'tomorrow', 'tonight', 'yesterday']
   .map(form => form.split(' ')).sort((a, b) => b.length - a.length);
 const TIME_SET = new Set(TIME_FORMS.map(form => form.join(' ')));
+/** A year («في 2020», "in 2019") or a day-month(-year) date («25 ديسمبر», "25 December 2026") is a time operand too. */
+const YEAR = /^(?:19|20)\d{2}$/u;
+const MONTHS = new Set(['يناير', 'فبراير', 'مارس', 'ابريل', 'مايو', 'يونيو', 'يوليو', 'اغسطس', 'سبتمبر', 'اكتوبر', 'نوفمبر', 'ديسمبر',
+  'شباط', 'اذار', 'نيسان', 'ايار', 'حزيران', 'تموز', 'ايلول',
+  'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
+  'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'sept', 'oct', 'nov', 'dec']);
+/** Words that introduce a time and go with it: «في 2020», "on Friday", «خلال الأسبوع الماضي», «سنة 2019». */
+const TIME_PREPOSITIONS = new Set(['في', 'خلال', 'سنه', 'عام', 'بتاريخ', 'in', 'on', 'at', 'for', 'during', 'year', 'since']);
 const ORDINALS: Record<string, number> = {
   الاول: 1, الاولي: 1, اول: 1, اولي: 1, الثاني: 2, الثانيه: 2, ثاني: 2, ثانيه: 2, الثالث: 3, الثالثه: 3, ثالث: 3, ثالثه: 3,
   الرابع: 4, الرابعه: 4, الخامس: 5, الخامسه: 5, السادس: 6, السادسه: 6, السابع: 7, السابعه: 7, الثامن: 8, الثامنه: 8,
@@ -231,6 +257,7 @@ const REFORMULATIONS: ReadonlyArray<readonly [RegExp, { field: EditableField; va
   [/^(?:كجدول|في جدول|علي شكل جدول|بجدول)$|^(?:as a table|in a table|table format)$/u, { field: 'format', value: 'table' }],
   [/^(?:كقائمه|كنقاط|نقاط|بالنقاط|علي شكل نقاط)$|^(?:as a list|bullet points|as bullets|in bullets)$/u, { field: 'format', value: 'list' }],
   [/^(?:خطوات|كخطوات|خطوه بخطوه)$|^(?:as steps|step by step|in steps)$/u, { field: 'format', value: 'steps' }],
+  [/^(?:اعد(?:ها|ه)?|كرر(?:ها|ه)?|مره (?:ثانيه|اخري|تانيه)|تاني|again|repeat(?: (?:that|it))?|say (?:that|it) again|once more)$/u, { field: 'detail', value: 'again' }],
   // Units and currencies: the same value, converted.
   [/^(?:بال(?:دولار|دولارات)(?: الامريكي)?|in (?:us )?dollars?|in usd)$/u, { field: 'unit', value: 'USD' }],
   [/^(?:باليورو|in euros?|in eur)$/u, { field: 'unit', value: 'EUR' }],
@@ -242,6 +269,23 @@ const REFORMULATIONS: ReadonlyArray<readonly [RegExp, { field: EditableField; va
   [/^(?:بال(?:مئويه|سيلسيوس)|in celsius)$/u, { field: 'unit', value: 'C' }],
   [/^(?:بالفهرنهايت|in fahrenheit)$/u, { field: 'unit', value: 'F' }],
 ];
+/**
+ * The owner's own file or document is not a public lookup. Live shadow, 2026-11-22 05:23: «أضف علامة مائية «سري» على آخر ملف pdf» came
+ * out of v1 as a web search, and so do «ما حجم ملفي؟» and «حوّل الملف إلى وورد». A possessive or a demonstrative marks the owner's own file
+ * by itself («ملفي», «هذا التقرير», "my report", "this pdf"). «آخر/الـ ملف» and "the (last) file" do so only after a leading action verb,
+ * because «آخر تقرير للبنك الدولي عن التضخم» and "the latest report on inflation" are public lookups.
+ */
+const ARTIFACT_AR = '(?:ملف|ملفات|مستند|مستندات|تقرير|صوره|صور|جدول|pdf)';
+const ARTIFACT_EN = '(?:files?|pdfs?|documents?|docs?|reports?|images?|photos?|pictures?|spreadsheets?|sheets?|slides|presentations?)';
+const OWN_ARTIFACT = new RegExp(`(?:^|\\s)(?:ملفي|ملفاتي|مستندي|مستنداتي|تقريري|صورتي|صوري|جدولي)(?=\\s|$)`
+  + `|(?:^|\\s)(?:هذا|هذه|ذلك|تلك|هاد|هاذا)\\s+(?:ال)?${ARTIFACT_AR}(?=\\s|$)|(?:^|\\s)ال${ARTIFACT_AR}\\s+(?:هذا|هذه|ده|دي|هاد)(?=\\s|$)`
+  + `|\\b(?:my|our|this|these)\\s+(?:[a-z]+\\s+)?${ARTIFACT_EN}\\b`, 'u');
+const RECENT_ARTIFACT = new RegExp(`(?:^|\\s)(?:اخر|نفس)\\s+(?:ال)?${ARTIFACT_AR}(?=\\s|$)|(?:^|\\s)ال${ARTIFACT_AR}(?=\\s|$)`
+  + `|\\bthe\\s+(?:(?:last|latest|previous|same|attached|uploaded|new)\\s+)?(?:[a-z]+\\s+)?${ARTIFACT_EN}\\b`, 'u');
+const ACT_VERBS = new Set(['اضف', 'ضيف', 'احذف', 'امسح', 'ازل', 'شيل', 'عدل', 'غير', 'نقح', 'ادمج', 'اضغط', 'انسخ', 'الصق', 'ارفق', 'ضع', 'حط',
+  'ارسل', 'ابعث', 'ابعت', 'شارك', 'ارفع', 'نزل', 'اطبع', 'حول', 'وقع', 'افتح', 'اغلق', 'احفظ', 'ترجم', 'لخص',
+  'add', 'remove', 'delete', 'erase', 'edit', 'merge', 'split', 'compress', 'convert', 'export', 'print', 'send', 'rename', 'move', 'upload',
+  'download', 'attach', 'insert', 'append', 'copy', 'save', 'watermark', 'sign', 'share', 'open', 'close', 'update', 'fix', 'translate', 'summarize', 'summarise']);
 /** «افتح موقعًا واعرض لي محتواه»: a browser command whose target is only a generic noun must ask which site. */
 const GENERIC_TARGET = /^(?:افتح|ادخل|اعرض|زر|open|visit|go to)\s+(?:لي\s+)?(?:(?:ال)?موقعا?|(?:ال)?صفحه|(?:ال)?رابط|(?:a|the|some|any)\s+(?:website|site|web ?page|page|link))(?=$|\s+(?:ثم|and|then|لي)(?!\p{L})|\s+و(?:اعرض|اقرا|ابحث|افتح|قل|اخبرني|لخص|انسخ))/u;
 const CLOCK = /(?:الساعه|الساعة)\s*\d{1,2}(?::\d{2})?(?:\s*(?:صباحا|مساء|ظهرا|عصرا|ليلا|ص|م)(?!\p{L}))?|\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/iu;
@@ -279,6 +323,21 @@ export function withPending(state: ConversationStateV2, pending: PendingStep | n
   next.pending = pending ? structuredClone(pending) : null;
   return next;
 }
+
+/** The words without the politeness around them; a message that is only politeness keeps its words and says so. */
+function stripPoliteness(words: readonly string[], folded: readonly string[]): { words: string[]; folded: string[]; onlyPoliteness: boolean } {
+  let start = 0, end = words.length;
+  const matches = (forms: readonly string[][], at: number, backwards: boolean) => forms.find(form => {
+    const from = backwards ? at - form.length : at;
+    return from >= start && from + form.length <= end && form.every((want, offset) => folded[from + offset] === want);
+  });
+  for (let found = matches(POLITE_PREFIXES, start, false); found; found = matches(POLITE_PREFIXES, start, false)) start += found.length;
+  for (let found = matches(POLITE_SUFFIXES, end, true); found; found = matches(POLITE_SUFFIXES, end, true)) end -= found.length;
+  if (start >= end) return { words: [...words], folded: [...folded], onlyPoliteness: words.length > 0 };
+  return { words: words.slice(start, end), folded: folded.slice(start, end), onlyPoliteness: false };
+}
+/** Names that begin with و, so «وادي رم» after a topic is not «و» + «ادي رم». */
+const WAW_NAMES = new Set(['وادي', 'واشنطن', 'ويلز', 'ويكيبيديا', 'وهران', 'ولايه', 'ولايات', 'واتساب', 'ويندوز', 'وورد', 'ورزازات', 'والي', 'وجده', 'ودان']);
 
 /** Index of the folded word sequence `form` in `folded`; و/ف/ب may lead the first word and ال any word. */
 function findSequence(folded: readonly string[], form: readonly string[], from = 0, skip?: ReadonlySet<number>): number {
@@ -344,15 +403,36 @@ function operandsFrom(words: readonly string[], folded: readonly string[], from:
   const removed = new Set<number>();
   let time: string | null = null;
   let place: string | null = null;
+  // «في 2020», "on Friday": the preposition that introduces a time goes with it.
+  const dropTimePreposition = (at: number) => { if (at - 1 >= from && TIME_PREPOSITIONS.has(bareWord(folded[at - 1]!))) removed.add(at - 1); };
   for (const form of TIME_FORMS) {
     const at = findSequence(folded, form, from, removed);
     if (at < 0) continue;
     for (let offset = 0; offset < form.length; offset++) removed.add(at + offset);
+    dropTimePreposition(at);
     time ??= originalSpan(words, folded, at, form.length, form[0]!);
+  }
+  for (let index = from; index < folded.length; index++) {
+    if (removed.has(index)) continue;
+    const word = folded[index]!;
+    if (MONTHS.has(bareWord(word)) || MONTHS.has(word)) {
+      // [day] month [year]
+      let start = index, end = index;
+      if (start - 1 >= from && /^\d{1,2}$/u.test(folded[start - 1]!) && !removed.has(start - 1)) start--;
+      if (end + 1 < folded.length && YEAR.test(folded[end + 1]!)) end++;
+      for (let offset = start; offset <= end; offset++) removed.add(offset);
+      dropTimePreposition(start);
+      time ??= words.slice(start, end + 1).join(' ');
+      index = end;
+    } else if (YEAR.test(word) && !(index > from && REFERENCE_NOUNS.has(folded[index - 1]!))) {
+      removed.add(index);
+      dropTimePreposition(index);
+      time ??= words[index]!;
+    }
   }
   for (const hint of hints) {
     const parts = fold(hint.value).split(' ').filter(Boolean);
-    if (!parts.length) continue;
+    if (!parts.length || parts.length > 3) continue; // v1 may take half a sentence after «في» for a place; a place is one to three words
     // v1 reads «في أي قارة» as a place; a phrase with a question word in it is the question, not an operand.
     if (parts.some(part => QUESTION_WORDS.has(part))) continue;
     if (TIME_SET.has(parts.join(' '))) { time ??= hint.value; continue; }
@@ -375,10 +455,22 @@ function operandsFrom(words: readonly string[], folded: readonly string[], from:
   for (let index = from; index < words.length; index++) if (!removed.has(index)) rest.push(index);
   while (rest.length && (QUESTION_WORDS.has(folded[rest[0]!]!) || LEADS.has(folded[rest[0]!]!))) rest.shift();
   while (rest.length && (QUESTION_WORDS.has(folded[rest.at(-1)!]!) || LEADS.has(folded[rest.at(-1)!]!))) rest.pop();
-  // Without a hint, a remainder that is only «في X» / «in X» names a place.
+  // Without a hint, a remainder that is only «في X» / «in X» names a place; so does «وفي X» whose preposition was skipped as a lead.
   if (!place && rest.length >= 2 && PLACE_PREPOSITIONS.has(bareWord(folded[rest[0]!]!)) && !QUESTION_WORDS.has(folded[rest[1]!]!)) {
     place = rest.slice(1).map(index => words[index]!).join(' ');
     rest = [];
+  } else if (!place && rest.length >= 1 && rest.length <= 3 && from > 0 && PLACE_PREPOSITIONS.has(bareWord(folded[from - 1]!)) && bareWord(folded[from - 1]!) !== folded[from - 1]!
+    && !rest.some(index => QUESTION_WORDS.has(folded[index]!))) {
+    place = rest.map(index => words[index]!).join(' ');
+    rest = [];
+  } else if (!place && rest.length >= 3) {
+    // «ايفون 15 في السعودية» with no hint from v1 (its regex misses a vowelled «فِي»): a final «في X» of one or two words is the place.
+    // Arabic «في» only: English places come from v1's in/at hints, and in "the best time to visit Japan" (live shadow) "to" opens a verb.
+    const at = rest.findIndex((index, position) => position >= 1 && position >= rest.length - 3 && folded[index] === 'في');
+    if (at >= 1 && !rest.slice(at + 1).some(index => QUESTION_WORDS.has(folded[index]!) || TIME_SET.has(folded[index]!))) {
+      place = rest.slice(at + 1).map(index => words[index]!).join(' ');
+      rest = rest.slice(0, at);
+    }
   }
   while (rest.length && PREPOSITIONS.has(folded[rest[0]!]!)) rest.shift();
   // «نفس الشي للجزائر»: a ل glued to the article is a preposition, not part of the name.
@@ -399,8 +491,8 @@ function startsWithFollowLead(folded: readonly string[], whole: string, question
   if (FOLLOW_FIRST.has(first)) return true;
   if (/^(?:what|how) about\b|^same (?:thing )?(?:for|with|about)\b|\b(?:too|as well|كمان|برضو|ايضا|كذلك)$/u.test(whole)) return true;
   if (!/^و.{2,}$/u.test(first)) return false;
-  // «ونيوتن؟»: a short question that is only «و» and a name leans on the question before it.
-  if (question && folded.length <= 3) return true;
+  // «ونيوتن؟», «ونيوتن»: a short message that is only «و» and a name leans on the question before it.
+  if (question && folded.length <= 3 || folded.length <= 2) return true;
   const bare = first.slice(1);
   return FOLLOW_FIRST.has(bare) || QUESTION_WORDS.has(bare) || PREPOSITIONS.has(bare) || TIME_SET.has(bare) || PROPERTIES.some(forms => [...forms.ar, ...PRONOUN_FORMS.get(forms.name)!]
     .some(form => [form.split(' ')[0], `ال${form.split(' ')[0]}`].includes(bare)));
@@ -417,6 +509,125 @@ function findOrdinal(folded: readonly string[]): number | null {
     if (/^#\d{1,2}$/u.test(word)) return Number(word.slice(1));
   }
   return null;
+}
+
+/** Whether the message is about the owner's own file (OWN_ARTIFACT), or acts on a recent one after a leading verb (RECENT_ARTIFACT). */
+function actsOnArtifact(folded: readonly string[], whole: string): boolean {
+  if (OWN_ARTIFACT.test(whole)) return true;
+  const verb = folded[contentStart(folded)] ?? '';
+  return (ACT_VERBS.has(verb) || ACT_VERBS.has(bareWord(verb))) && RECENT_ARTIFACT.test(whole);
+}
+
+/**
+ * What a frame's entity is, by the property it was asked with: a place (population, capital, weather…), a thing (price, match…),
+ * an arithmetic expression, or unknown (no property, or one that fits several kinds such as age or height).
+ */
+function frameKind(frame: TopicFrame): 'place' | 'thing' | 'value' | null {
+  if (frame.operation === 'compute') return 'value';
+  const forms = frame.property ? PROPERTY_BY_NAME.get(frame.property) : null;
+  if (!forms) return null;
+  if (forms.appliesTo.every(kind => kind === 'place' || kind === 'country')) return 'place';
+  if (forms.appliesTo.every(kind => kind === 'thing')) return 'thing';
+  return null;
+}
+function fits(forms: PropertyForms, frame: TopicFrame): boolean {
+  const kind = frameKind(frame);
+  if (kind === null) return true;
+  if (kind === 'value') return false;
+  return kind === 'place' ? forms.appliesTo.some(applies => applies === 'place' || applies === 'country') : forms.appliesTo.includes(kind);
+}
+/**
+ * The frame a property follow-up refers to: the latest, unless its entity cannot have the property and an earlier one can.
+ * «ما عاصمة اليابان؟» → «كم سعر الذهب؟» → «وكم عدد سكانها؟»: gold has no population, Japan has. Only a frame whose kind is known
+ * to fit is taken, except after an arithmetic turn, where any earlier subject is better than an expression.
+ */
+function antecedent(topics: readonly TopicFrame[], forms: PropertyForms): { frame: TopicFrame; older: boolean; mismatch?: true } | null {
+  const top = topics.at(-1);
+  if (!top) return null;
+  if (fits(forms, top)) return { frame: top, older: false };
+  const afterArithmetic = frameKind(top) === 'value';
+  for (let index = topics.length - 2; index >= 0; index--) {
+    const frame = topics[index]!;
+    if (!frame.entity || frame.operation === 'compute') continue;
+    if (fits(forms, frame) && (afterArithmetic || frameKind(frame) !== null)) return { frame, older: true };
+  }
+  // Nothing said so far can have this property («وكم عدد سكانها؟» right after a gold price): ask rather than search for it.
+  return { frame: top, older: false, mismatch: true };
+}
+/** The latest frame that names a subject; an arithmetic turn in between («كم يساوي 15 ضرب 23؟») is not one. */
+function subjectFrame(topics: readonly TopicFrame[]): { frame: TopicFrame; older: boolean } | null {
+  const top = topics.at(-1);
+  if (!top) return null;
+  if (top.operation !== 'compute') return { frame: top, older: false };
+  for (let index = topics.length - 2; index >= 0; index--) {
+    const frame = topics[index]!;
+    if (frame.entity && frame.operation !== 'compute') return { frame, older: true };
+  }
+  return { frame: top, older: false };
+}
+
+/**
+ * One-letter typos in closed word lists only. Live set rq036: "find train teckit from glasgow to london tomorow". A word of five
+ * letters or more that no list knows is read as the one listed word that is one adjacent swap, one dropped letter or one added letter
+ * away: time words and «about/meant/actually/instead» always, ordinals only while numbered results are on screen, edit fields only
+ * after an edit verb, reformulations and greetings only in a message of three words or fewer. A letter added at the end is not a typo
+ * (it makes «اليومي», "seconds", "Fridays", "Augusta"). Months, weekdays, property words and names are never corrected: a typo there
+ * reaches the search as written, and «مسامحة» is one letter from «مساحة».
+ */
+const TYPO_MIN = 5;
+let typoLists: { known: Set<string>; always: string[]; ordinals: string[]; fields: string[]; short: string[] } | null = null;
+function typoVocab() {
+  if (typoLists) return typoLists;
+  const long = (list: Iterable<string>) => [...new Set(list)].filter(word => word.length >= TYPO_MIN);
+  const always = long([...TIME_FORMS.filter(form => form.length === 1).map(form => form[0]!).filter(word => !WEEKDAYS_EN.includes(word)),
+    'about', 'meant', 'actually', 'instead']);
+  const ordinals = long(Object.keys(ORDINALS));
+  const fields = long(Object.keys(EDIT_FIELDS));
+  const short = long(['كجدول', 'بالجدول', 'كقائمه', 'بالدولار', 'باليورو', 'بالريال', 'بالدرهم', 'بالجنيه', 'بالانجليزي', 'بالانجليزيه', 'بالعربي',
+    'بالعربيه', 'بالتفصيل', 'باختصار', 'اختصر', 'again', 'repeat', 'shorter', 'elaborate', 'مرحبا', 'اهلين', 'thanks', 'مشكور', 'يعطيك', 'العافيه', 'hello']);
+  const known = new Set<string>([...always, ...ordinals, ...fields, ...short, ...QUESTION_WORDS, ...LEADS, ...FOLLOW_FIRST, ...PREPOSITIONS, ...POINTERS,
+    ...FOLLOW_VERBS, ...ACT_VERBS, ...EDIT_VERBS, ...REFERENCE_NOUNS, ...CORRECTION_LEADS, ...CORRECTION_VERBS, ...ASKS_FIRST, ...Object.keys(NUMBER_WORDS),
+    ...WEEKDAYS_AR, ...WEEKDAYS_AR.map(day => day.replace(/^ال/u, '')), ...WEEKDAYS_EN, ...MONTHS, ...TIME_FORMS.flat(), 'اليومي', 'اليوميه',
+    ...PROPERTIES.flatMap(forms => [...forms.ar, ...forms.en].flatMap(form => form.split(' '))), ...[...PRONOUN_FORMS.values()].flat().flatMap(form => form.split(' '))]);
+  typoLists = { known, always, ordinals, fields, short };
+  return typoLists;
+}
+/** One adjacent swap, one dropped letter or one added letter, but not a letter added at the end of the listed word. */
+function oneTypo(written: string, listed: string): boolean {
+  if (written === listed) return false;
+  if (written.length === listed.length) {
+    let at = 0;
+    while (at < written.length && written[at] === listed[at]) at++;
+    return at < written.length - 1 && written[at] === listed[at + 1] && written[at + 1] === listed[at] && written.slice(at + 2) === listed.slice(at + 2);
+  }
+  if (written.length === listed.length + 1 && written.startsWith(listed)) return false;
+  if (Math.abs(written.length - listed.length) !== 1) return false;
+  const [shorter, longer] = written.length < listed.length ? [written, listed] : [listed, written];
+  let at = 0;
+  while (at < shorter.length && shorter[at] === longer[at]) at++;
+  return shorter.slice(at) === longer.slice(at + 1);
+}
+function correctTypos(words: readonly string[], folded: readonly string[], context: { results: boolean }) {
+  const lists = typoVocab();
+  const editing = folded.slice(0, 2).some(word => EDIT_VERBS.has(word));
+  const pool = [...lists.always, ...(context.results ? lists.ordinals : []), ...(editing ? lists.fields : []), ...(folded.length <= 3 ? lists.short : [])];
+  const outWords = [...words], outFolded = [...folded];
+  const corrected: { from: string; to: string }[] = [];
+  folded.forEach((word, index) => {
+    if (lists.known.has(word) || /\d/u.test(word)) return;
+    for (const prefix of ['', 'و', 'ف']) {
+      if (prefix && !word.startsWith(prefix)) continue;
+      const rest = word.slice(prefix.length);
+      if (rest.length < TYPO_MIN || lists.known.has(rest)) continue;
+      const candidates = [...new Set(pool.filter(candidate => oneTypo(rest, candidate)))];
+      if (candidates.length !== 1) continue;
+      outFolded[index] = `${prefix}${candidates[0]}`;
+      outWords[index] = outFolded[index]!;
+      corrected.push({ from: words[index]!, to: outWords[index]! });
+      return;
+    }
+  });
+  return { words: outWords, folded: outFolded, corrected };
 }
 
 /** The displayed result an ordinal points at; −1 is the last one. */
@@ -530,21 +741,40 @@ function pushCorrection(next: ConversationStateV2, record: CorrectionRecord): vo
 
 export function understandTurn(state: ConversationStateV2, text: string, turnId: string): TurnUnderstanding {
   const pendingQuestion = state.pending?.kind === 'question_card' ? { id: state.pending.id, fields: state.pending.fields } : undefined;
-  const v1 = resolveRequestContext(text, state.base, { turnId, pendingQuestion });
-  const words = wordsOf(text);
-  const folded = words.map(fold);
-  const whole = fold(strip(text));
+  // «من فضلك»، "could you tell me" and a trailing "please" are dropped before any reading; the question mark is kept.
+  const rawWords = wordsOf(text);
+  const stripped = stripPoliteness(rawWords, rawWords.map(fold));
+  const mark = /[؟?]\s*$/u.exec(text.trim())?.[0]?.trim() ?? '';
+  // One-letter typos in closed word lists («tomorow», «الاثلثة» while results are shown); v1 reads the corrected words too.
+  const typos = correctTypos(stripped.words, stripped.folded, { results: state.results.length > 0 });
+  const polished = stripped.words.length === rawWords.length && !typos.corrected.length ? text : `${typos.words.join(' ')}${mark}`;
+  const rawWhole = fold(strip(text));
+  let v1 = resolveRequestContext(polished, state.base, { turnId, pendingQuestion });
+  // v1 withholds a phrase that is not phrased as a question once it ends in a question mark («آخر تقرير للبنك الدولي عن التضخم؟»,
+  // "find train … tomorrow?") as missing_target, and gives the same words a query without the mark. The mark adds no meaning there.
+  if (mark && v1.kind === 'new' && !v1.query && v1.sourceAssessment?.reasons.includes('missing_target')) {
+    const unmarked = resolveRequestContext(polished.replace(/\s*[؟?]+\s*$/u, ''), state.base, { turnId, pendingQuestion });
+    if (unmarked.kind === 'new' && unmarked.scope === 'public' && unmarked.query) v1 = unmarked;
+  }
+  const words = typos.words;
+  const folded = typos.folded;
+  const whole = fold(strip(polished));
   const arabic = isArabic(text);
   const top = state.topics.at(-1) ?? null;
   const topForms = top?.property ? PROPERTY_BY_NAME.get(top.property) ?? null : null;
   const next = structuredClone(state);
   next.base = v1.nextState ?? state.base;
   const privateNow = v1.scope === 'private';
+  // v1 reads a follow-up after an arithmetic turn as part of that arithmetic, which it keeps private. When v2 leans past the
+  // arithmetic to an earlier subject, the privacy that counts is that subject's own (its `lookup`) and the current words' own.
+  const privateFor = (older: boolean) => older && top?.operation === 'compute' && v1.intent === 'compute'
+    ? resolveRequestContext(polished, null, { turnId }).scope === 'private' : privateNow;
   // v1 extracted this turn's own place and time operands; they are hints for splitting the entity, never instructions.
   const hints: SlotHint[] = v1.slots.filter(slot => slot.sourceTurnId === turnId && (slot.kind === 'place' || slot.kind === 'time'))
     .map(slot => ({ kind: slot.kind as 'place' | 'time', value: slot.value }));
   const result = (type: TurnType, fields: Partial<Omit<TurnUnderstanding, 'type' | 'v1' | 'next'>> = {}): TurnUnderstanding => ({
-    type, entity: null, property: null, place: null, time: null, query: null, assumption: null, needs: null, ...fields, v1, next,
+    type, entity: null, property: null, place: null, time: null, query: null, assumption: null, needs: null,
+    ...(typos.corrected.length ? { corrected: typos.corrected } : {}), ...fields, v1, next,
   });
   const frameOf = (fields: Partial<TopicFrame> & Pick<TopicFrame, 'entity' | 'property' | 'lookup'>): TopicFrame => ({
     place: null, time: null, template: null, sourceTurnId: turnId, entityOrigin: 'user', ...fields,
@@ -553,7 +783,7 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
   const entityQuery = (property: PropertyForms | null, frame: TopicFrame): string | null =>
     property ? composeQuery(property, frame, arabic) : frame.template && frame.entity ? frame.template.replace('{}', frame.entity) : composeQuery(null, frame, arabic);
 
-  if (SMALL_TALK.test(whole) || CANCEL.test(whole)) {
+  if (SMALL_TALK.test(whole) || CANCEL.test(whole) || stripped.onlyPoliteness) {
     next.base = state.base;
     return result('small_talk');
   }
@@ -663,29 +893,37 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
   if (hit?.pronoun) {
     if (!top) return result('ambiguous', { property: hit.forms.name, needs: 'missing_reference' });
     const current = operandsFrom(words, folded, hit.start >= 0 ? hit.start + hit.length : contentStart(folded), hints, false);
-    const answer = state.results.length === 1 ? state.results[0]! : null;
+    // The frame the pronoun refers to: the latest, unless its entity cannot have this property and an earlier one can.
+    const chosen = antecedent(state.topics, hit.forms)!;
+    if (chosen.mismatch) return result('ambiguous', { property: hit.forms.name, needs: 'missing_reference' });
+    const base = chosen.frame;
+    const baseForms = base.property ? PROPERTY_BY_NAME.get(base.property) ?? null : null;
+    // A displayed answer belongs to the latest reply only.
+    const answer = !chosen.older && state.results.length === 1 ? state.results[0]! : null;
     // «وكم عدد سكانها؟» after a capital question asks about the city answered; «وشو عاصمتها؟» after a president question
     // asks about the country, because a capital is not a property of a person.
-    const refersToAnswer = Boolean(topForms?.answerKind && hit.forms.appliesTo.includes(topForms.answerKind));
+    const refersToAnswer = Boolean(baseForms?.answerKind && hit.forms.appliesTo.includes(baseForms.answerKind));
     let entity: string | null;
-    let origin: TopicFrame['entityOrigin'] = top.entityOrigin;
+    let origin: TopicFrame['entityOrigin'] = base.entityOrigin;
     let assumption: string | null = null;
     if (refersToAnswer && answer) {
       entity = answer.label;
       origin = 'host_result';
       assumption = assumptionLine(entity, arabic);
-    } else if (refersToAnswer && top.entity) {
-      entity = compose(topForms, top.entity, arabic);
+    } else if (refersToAnswer && base.entity) {
+      entity = compose(baseForms, base.entity, arabic);
       assumption = entity ? assumptionLine(entity, arabic) : null;
     } else {
-      entity = top.entity;
+      entity = base.entity;
+      // Skipping the latest subject is a guess the reply should say in one line.
+      if (chosen.older && entity) assumption = assumptionLine(entity, arabic);
     }
     if (!entity) return result('ambiguous', { property: hit.forms.name, needs: 'missing_reference' });
     // «وكم عدد سكانها في مصر؟»: a place named with a property of places is the entity asked about.
     if (current.place && placeEntity(hit.forms)) { entity = current.place; origin = 'user'; assumption = null; }
-    const lookup = top.lookup && !privateNow;
-    const frame = frameOf({ entity, property: hit.forms.name, place: placeEntity(hit.forms) ? null : current.place ?? (refersToAnswer ? null : top.place),
-      time: current.time ?? top.time, entityOrigin: origin, lookup });
+    const lookup = base.lookup && !privateFor(chosen.older);
+    const frame = frameOf({ entity, property: hit.forms.name, place: placeEntity(hit.forms) ? null : current.place ?? (refersToAnswer ? null : base.place),
+      time: current.time ?? base.time, entityOrigin: origin, lookup });
     pushTopic(next, frame);
     return result('follow_up_property', { entity, property: hit.forms.name, place: frame.place, time: frame.time, assumption,
       query: lookup ? composeQuery(hit.forms, frame, arabic) : null });
@@ -710,63 +948,93 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
   const operands = operandsFrom(words, folded, start, hints, Boolean(hit?.forms.locationValued));
   // A message made only of a place or a time («وفي مصر؟», «بكرا؟») leans on the topic before it.
   const slotOnly = Boolean(top) && !hit && operands.entity === null && Boolean(operands.place || operands.time);
-  const asksQuestion = /[؟?]$/u.test(text.trim()) || folded.some(word => QUESTION_WORDS.has(word) || QUESTION_WORDS.has(bareWord(word)));
+  // A question: a question mark, an interrogative leading the message, or one that only asks («كم», «هل», «أي») anywhere in it.
+  // «لي» and «قل» trim an entity but ask nothing: «ابنِ لي موقعاً…» (live shadow, 06:32) is a request, not a question.
+  let leadWords = 0;
+  while (leadWords < folded.length && (LEADS.has(folded[leadWords]!) || FOLLOW_FIRST.has(folded[leadWords]!))) leadWords++;
+  const firstWord = bareWord(folded[leadWords] ?? '');
+  const asksQuestion = Boolean(mark) || ASKS_FIRST.has(firstWord) || folded.some(word => ASKS_ANYWHERE.has(word) || ASKS_ANYWHERE.has(bareWord(word)));
   const followLead = startsWithFollowLead(folded, whole, asksQuestion) || slotOnly;
   // «وهي في أي قارة؟», «وما أشهر معالمها؟», «وأين تقع؟», "which continent is it in?": a question about the same entity with a
   // property the closed list does not know. A standalone pronoun is replaced by the entity; otherwise the entity is appended.
-  // «ما هو الذكاء الاصطناعي؟»: هو/هي right after a question word and before a subject is the copula, not a pointer (as v1 reads it).
-  const copula = (index: number) => ['هو', 'هي'].includes(bareWord(folded[index]!)) && index > 0 && QUESTION_WORDS.has(bareWord(folded[index - 1]!))
+  // «ما هو الذكاء الاصطناعي؟»: هو/هي right after an identity question word (ما، من، أين…) and before a subject is the copula, not a
+  // pointer, as v1 reads it. After «هل» («هل هي كبيرة؟») the pronoun is the pointer.
+  const COPULA_LEADS = new Set(['ما', 'ماذا', 'من', 'مين', 'ايش', 'وش', 'شو', 'شنو', 'ايه', 'متي', 'اين', 'وين', 'كيف', 'كم', 'what', 'who', 'where', 'when', 'how']);
+  const copula = (index: number) => ['هو', 'هي'].includes(bareWord(folded[index]!)) && index > 0 && COPULA_LEADS.has(bareWord(folded[index - 1]!))
     && index + 1 < folded.length && !QUESTION_WORDS.has(folded[index + 1]!) && !PREPOSITIONS.has(folded[index + 1]!);
-  const pointsBack = folded.some((word, index) => !copula(index) && (POINTERS.has(word) || POINTERS.has(bareWord(word)) || FOLLOW_VERBS.has(word) || FOLLOW_VERBS.has(bareWord(word))
-    || /^.{3,}(?:ها|هم|هن)$/u.test(word) && !TIME_SET.has(word) && !LEADS.has(word) && !QUESTION_WORDS.has(word)));
-  if (top?.entity && !hit && pointsBack && asksQuestion && !slotOnly) {
-    const lookup = top.lookup && !privateNow;
+  const isPointer = (word: string) => POINTERS.has(word) || POINTERS.has(bareWord(word)) || /^.{3,}(?:ها|هم|هن)$/u.test(word) && !TIME_SET.has(word) && !LEADS.has(word) && !QUESTION_WORDS.has(word);
+  const isVerb = (word: string) => FOLLOW_VERBS.has(word) || FOLLOW_VERBS.has(bareWord(word));
+  const isFunction = (word: string) => [word, bareWord(word)].some(form => LEADS.has(form) || QUESTION_WORDS.has(form) || PREPOSITIONS.has(form) || TIME_SET.has(form) || FOLLOW_FIRST.has(form));
+  const explicitPointer = folded.some((word, index) => !copula(index) && isPointer(word));
+  // «أين تقع باريس؟» names its own subject: the verb alone makes no follow-up. «وأين تقع؟» and «ولماذا؟» name none.
+  const namesOwnEntity = folded.some(word => !isFunction(word) && !isVerb(word) && !isPointer(word));
+  const pointsBack = explicitPointer || !namesOwnEntity && asksQuestion && folded.some(word => isVerb(word) || QUESTION_WORDS.has(word) || QUESTION_WORDS.has(bareWord(word)));
+  // An open follow-up opens like one (a lead, a glued و/ف, an interrogative or a pronoun) and is short. A long message whose
+  // pronoun points inside itself («لعيادة أسنان اسمها «ابتسامة»», «لعيادتي وأضع فيه اسمها») names its own subject.
+  const opensAsFollowUp = leadWords > 0 || /^[وف].{2,}$/u.test(folded[0] ?? '') || ASKS_FIRST.has(firstWord) || POINTERS.has(firstWord);
+  const contentWords = folded.filter((word, index) => !copula(index) && !isFunction(word) && !isPointer(word)).length;
+  // The subject of an open follow-up: the latest frame, or the one before an arithmetic turn («كم يساوي 15 ضرب 23؟»).
+  const subject = subjectFrame(state.topics);
+  if (subject?.frame.entity && !hit && pointsBack && asksQuestion && !slotOnly && opensAsFollowUp && contentWords <= OPEN_FOLLOW_MAX_CONTENT) {
+    const base = subject.frame;
+    const lookup = base.lookup && !privateFor(subject.older);
     let lead = 0;
     while (lead < folded.length && (LEADS.has(folded[lead]!) || FOLLOW_FIRST.has(bareWord(folded[lead]!)) && !QUESTION_WORDS.has(bareWord(folded[lead]!)))) lead++;
-    const asked = words.slice(lead).map((word, index) => index === 0 && /^[وف]/u.test(folded[lead]!) && !/^[وف]/u.test(fold(top.entity!)) ? word.slice(1) : word);
+    const asked = words.slice(lead).map((word, index) => index === 0 && /^[وف]/u.test(folded[lead]!) && !/^[وف]/u.test(fold(base.entity!)) ? word.slice(1) : word);
     const standalone = asked.findIndex(word => STANDALONE_PRONOUNS.has(fold(strip(word))));
-    const content = asked.filter(word => { const key = fold(strip(word)); return key && !STANDALONE_PRONOUNS.has(key) && !QUESTION_WORDS.has(key) && !LEADS.has(key); });
+    const content = asked.filter(word => { const key = fold(strip(word)); return key && !STANDALONE_PRONOUNS.has(key) && !LEADS.has(key); });
     // «وهو؟», "and it?": a pointer with no question in it.
-    if (!content.length) return result('ambiguous', { entity: top.entity, needs: 'missing_value' });
-    const question = standalone >= 0 ? asked.map((word, index) => index === standalone ? top.entity! : word).join(' ') : `${asked.join(' ').replace(/[؟?]+$/u, '')} ${top.entity}`;
-    pushTopic(next, frameOf({ ...top, property: null, sourceTurnId: turnId, lookup }));
-    return result('follow_up_property', { entity: top.entity, property: null, place: top.place, time: top.time, query: lookup ? question.trim() : null });
+    if (!content.length) return result('ambiguous', { entity: base.entity, needs: 'missing_value' });
+    const question = standalone >= 0 ? asked.map((word, index) => index === standalone ? base.entity! : word).join(' ') : `${asked.join(' ').replace(/[؟?]+$/u, '')} ${base.entity}`;
+    pushTopic(next, frameOf({ ...base, property: null, sourceTurnId: turnId, lookup }));
+    return result('follow_up_property', { entity: base.entity, property: null, place: base.place, time: base.time,
+      ...(subject.older ? { assumption: assumptionLine(base.entity!, arabic) } : {}), query: lookup ? question.trim() : null });
   }
   if (followLead && top) {
-    const property = hit?.forms ?? topForms;
-    const lookup = top.lookup && !privateNow;
-    const current = hit?.forms.locationValued || !hit && topForms?.locationValued ? operandsFrom(words, folded, start, hints, true) : operands;
-    // «ونيوتن؟»: the و that made this a follow-up is not part of the name.
-    if (current.entity && !hit && words.length <= 3 && asksQuestion && /^و.{2,}/u.test(folded[0]!) && fold(current.entity).startsWith(folded[0]!)) current.entity = current.entity.slice(1);
-    if (current.entity && (!hit || hit.forms.name === top.property)) {
-      const frame = frameOf({ entity: current.entity, property: property?.name ?? null, place: current.place ?? (property?.locationValued ? null : top.place),
-        time: current.time ?? top.time, template: hit ? null : top.template, lookup });
+    // After an arithmetic turn a «و…» follow-up leans on the subject before it: «من هو أينشتاين؟» → «كم يساوي 2+2؟» → «ونيوتن؟».
+    const lead = subject?.frame ?? top;
+    const leadForms = lead.property ? PROPERTY_BY_NAME.get(lead.property) ?? null : null;
+    const leadAssumption = subject?.older && lead.entity ? { assumption: assumptionLine(lead.entity, arabic) } : {};
+    const property = hit?.forms ?? leadForms;
+    const lookup = lead.lookup && !privateFor(Boolean(subject?.older));
+    const current = hit?.forms.locationValued || !hit && leadForms?.locationValued ? operandsFrom(words, folded, start, hints, true) : operands;
+    // «ونيوتن؟», «ونيوتن»: the و that made this a follow-up is not part of the name, unless the name itself begins with و («وادي رم»).
+    if (current.entity && !hit && words.length <= 3 && /^و.{2,}/u.test(folded[0]!) && fold(current.entity).startsWith(folded[0]!) && !WAW_NAMES.has(folded[0]!)) current.entity = current.entity.slice(1);
+    if (current.entity && (!hit || hit.forms.name === lead.property)) {
+      const frame = frameOf({ entity: current.entity, property: property?.name ?? null, place: current.place ?? (property?.locationValued ? null : lead.place),
+        time: current.time ?? lead.time, template: hit ? null : lead.template, lookup });
       pushTopic(next, frame);
       return result('follow_up_entity', { entity: current.entity, property: property?.name ?? null, place: frame.place, time: frame.time,
         query: lookup ? entityQuery(property, frame) : null });
     }
-    if (hit && (!current.entity || fold(current.entity) === fold(top.entity ?? ''))) {
-      const frame = frameOf({ entity: top.entity, property: hit.forms.name, place: current.place ?? top.place, time: current.time ?? top.time,
-        entityOrigin: top.entityOrigin, lookup });
+    if (hit && (!current.entity || fold(current.entity) === fold(lead.entity ?? ''))) {
+      // «وعدد السكان؟» after a price question in between: the subject is the latest frame that can have this property.
+      const chosen: { frame: TopicFrame; older: boolean; mismatch?: true } = current.entity ? { frame: lead, older: Boolean(subject?.older) } : antecedent(state.topics, hit.forms)!;
+      if (chosen.mismatch) return result('ambiguous', { property: hit.forms.name, needs: 'missing_reference' });
+      const base = chosen.frame;
+      const baseLookup = base.lookup && !privateFor(chosen.older);
+      const frame = frameOf({ entity: base.entity, property: hit.forms.name, place: current.place ?? base.place, time: current.time ?? base.time,
+        entityOrigin: base.entityOrigin, lookup: baseLookup });
       pushTopic(next, frame);
-      return result('follow_up_property', { entity: top.entity, property: hit.forms.name, place: frame.place, time: frame.time,
-        query: lookup ? composeQuery(hit.forms, frame, arabic) : null });
+      return result('follow_up_property', { entity: base.entity, property: hit.forms.name, place: frame.place, time: frame.time,
+        ...(chosen.older && base.entity ? { assumption: assumptionLine(base.entity, arabic) } : {}),
+        query: baseLookup ? composeQuery(hit.forms, frame, arabic) : null });
     }
-    if (!hit && !current.entity && current.place && placeEntity(topForms)) {
+    if (!hit && !current.entity && current.place && placeEntity(leadForms)) {
       // «وفي مصر؟» after the population of a city asks about مصر: for a property of places the new place is the entity.
-      const frame = frameOf({ entity: current.place, property: top.property, place: null, time: current.time ?? top.time, lookup });
+      const frame = frameOf({ entity: current.place, property: lead.property, place: null, time: current.time ?? lead.time, lookup });
       pushTopic(next, frame);
-      return result('follow_up_entity', { entity: current.place, property: top.property, place: null, time: frame.time,
-        query: lookup ? composeQuery(topForms, frame, arabic) : null });
+      return result('follow_up_entity', { entity: current.place, property: lead.property, place: null, time: frame.time,
+        query: lookup ? composeQuery(leadForms, frame, arabic) : null });
     }
     if (!hit && !current.entity && (current.place || current.time)) {
       // Same entity and property, one operand changed: «وفي الامارات؟» after an iPhone price, «وبكرا؟» after today's weather.
       const edit = { field: current.place ? 'place' as const : 'date' as const, value: current.place ?? current.time };
-      const frame = frameOf({ entity: top.entity, property: top.property, place: current.place ?? top.place, time: current.time ?? top.time,
-        entityOrigin: top.entityOrigin, lookup });
+      const frame = frameOf({ entity: lead.entity, property: lead.property, place: current.place ?? lead.place, time: current.time ?? lead.time,
+        entityOrigin: lead.entityOrigin, lookup });
       pushTopic(next, frame);
-      return result('field_edit', { edit, entity: top.entity, property: top.property, place: frame.place, time: frame.time,
-        query: lookup ? composeQuery(topForms, frame, arabic) : null });
+      return result('field_edit', { edit, entity: lead.entity, property: lead.property, place: frame.place, time: frame.time, ...leadAssumption,
+        query: lookup ? composeQuery(leadForms, frame, arabic) : null });
     }
   }
 
@@ -779,25 +1047,32 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
   }
   const entity = fresh.entity;
   if (v1.kind === 'ambiguous' && v1.ambiguities.includes('missing_reference') && !entity) return result('ambiguous', { needs: 'missing_reference' });
-  if (GENERIC_TARGET.test(whole) && !/https?:\/\/|www\./iu.test(text)) {
+  if (GENERIC_TARGET.test(whole) && !/https?:\/\/|www\./iu.test(polished)) {
     next.results = [];
     pushTopic(next, frameOf({ entity: null, property: null, lookup: false }));
     return result(top ? 'topic_change' : 'new_request', { needs: 'missing_value' });
   }
   // A question about Mohassan itself, a go-ahead with more words («أكمل في Chrome») or a bare acknowledgement («موافق») is never a public lookup.
-  const aboutSelf = ABOUT_ASSISTANT.test(whole) || CONTINUE_START.test(whole) || APPROVE.test(whole) && words.length <= 3;
+  // The owner's own file («أضف علامة مائية على آخر ملف pdf», «ما حجم ملفي؟») is not a public lookup either.
+  const aboutSelf = ABOUT_ASSISTANT.test(whole) || ABOUT_ASSISTANT.test(rawWhole) || CONTINUE_START.test(whole) || APPROVE.test(whole) && words.length <= 3
+    || actsOnArtifact(folded, whole);
   const publicLookup = !privateNow && !aboutSelf && v1.scope === 'public' && ['web_search', 'news'].includes(v1.intent);
   // «ايه هي عاصمة كندا؟»: v1 knows no dialect question word and leaves no query, but a named property of a named entity is a public lookup.
   const composed = !privateNow && !aboutSelf && !publicLookup && Boolean(hit && !hit.pronoun && entity) && ['web_search', 'news', 'unknown'].includes(v1.intent)
     && v1.sourceAssessment?.scope !== 'private';
   const lookup = publicLookup || composed;
   next.results = [];
-  next.schedule = (() => { const parsed = parseSchedule(text); return parsed ? { ...parsed, sourceTurnId: turnId } : null; })();
+  next.schedule = (() => { const parsed = parseSchedule(polished); return parsed ? { ...parsed, sourceTurnId: turnId } : null; })();
   // The question shape for later «و{entity}؟» follow-ups: only when the entity appears verbatim in the user's own words.
-  const cleaned = clean(text);
+  const cleaned = clean(polished);
   const template = entity && lookup && cleaned.includes(entity) ? cleaned.replace(entity, '{}') : null;
-  const frame = frameOf({ entity, property: hit?.forms.name ?? null, place: fresh.place, time: fresh.time, template, lookup });
+  const frame = frameOf({ entity, property: hit?.forms.name ?? null, place: fresh.place, time: fresh.time, template, lookup,
+    ...(v1.intent === 'compute' ? { operation: 'compute' as const } : {}) });
   pushTopic(next, frame);
+  // A new request searches with v1's own-words query when v1 read it as new; v1's follow-up query is not used, because v2 decided
+  // this is a new subject. When v1 withheld the query («افحص المشروع ما هي الوظائف…» is not a public lookup) and no named property
+  // can be composed, there is no query: v1's boundary stands.
+  const own = v1.kind === 'new' && v1.query ? v1.query : null;
   return result(top ? 'topic_change' : 'new_request', { entity, property: hit?.forms.name ?? null, place: frame.place, time: frame.time,
-    query: lookup ? v1.query ?? composeQuery(hit?.forms ?? null, frame, arabic) : null });
+    query: lookup ? own ?? (hit && !hit.pronoun ? composeQuery(hit.forms, frame, arabic) : null) : null });
 }

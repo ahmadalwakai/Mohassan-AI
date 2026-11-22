@@ -2156,10 +2156,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const previousAsk = history.filter(entry => entry.role === 'user').at(-1)?.text ?? null;
         config.shadowRouter.observe({ conversationId: id, text: request, previous: previousAsk, pendingQuestion: Boolean(conversation.question) });
       }
-      // Conversation state v2 in shadow: one understanding per new request, never awaited, never read by any reply path.
+      // Conversation state v2 in shadow: one understanding per new request, read by no reply path. observeLater runs it after this
+      // request has gone on (the live log measured 36 ms median per turn under load), in order, from a copy of these values.
       if (config.conversationShadow && freshRequest) {
         try {
-          config.conversationShadow.observe({ conversationId: id, turnId: runId, text: request,
+          config.conversationShadow.observeLater({ conversationId: id, turnId: runId, text: request,
             pending: conversation.question ? { kind: 'question_card', id: conversation.question.id } : null });
         } catch { /* The shadow never stops a run. */ }
       }

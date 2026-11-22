@@ -32,17 +32,16 @@ config.conversationShadow?.observe({ conversationId: id, turnId: runId, text: re
 
 **حالة الربط في 04:58 UTC:** الأسطر الثلاثة موجودة في `command-chat.ts` (الاستيراد في السطر 30، والحقل بعد `shadowRouter`، والاستدعاء بعد `shadowRouter.observe` داخل `try/catch`) وفي `app.ts` (الإنشاء بعد `shadowRouter` والتمرير إلى `createCommandChatControl`). الخادم الجاري لا يلتقطها قبل إعادة تشغيله، وعندها يبدأ `.data/conversation/shadow.jsonl`.
 
-**ناقصان صغيران لمالك `command-chat.ts`، حين يناسبه:**
-1. تهيئة محادثة نسيها الخادم بعد إعادة التشغيل، قبل `observe`، من رسائل المستخدم وحدها:
-   ```ts
-   if (!config.conversationShadow.state(id)) config.conversationShadow.seed(id, history.filter(entry => entry.role === 'user').map((entry, index) => ({ id: `${id}-h${index}`, text: entry.text })));
-   ```
-   بدونها تبدو أول متابعة بعد إعادة التشغيل طلبًا جديدًا في السجل.
-2. في `app.ts`: `app.addHook('onClose', async () => { await conversationShadow?.flush(); });` حتى لا يضيع آخر سطر عند الإغلاق.
+**تحديث 07:40 UTC (الدفعة الثامنة):**
+1. التهيئة بعد إعادة التشغيل لم تعد تحتاج سطرًا في `command-chat.ts`: الظل يعيد بناء المحادثة المنسية من سجله هو (`.data/conversation/shadow.jsonl`، أدوار المستخدم وحدها).
+2. الاستدعاء في `command-chat.ts` صار `observeLater` بدل `observe` (هذه الجلسة، 07:37 UTC، بكلمة المالك «اربط الآن»): لا يضيف زمنًا إلى الطلب.
+3. سطر الحفظ عند الإغلاق أُضيف في `app.ts` (07:56 UTC، الدفعة التاسعة، الملف هادئ منذ 22 دقيقة): `if (conversationShadow) app.addHook('onClose', …flush())`.
+4. أداة إعادة السجل الحقيقي عبر الشفرة الحالية: `npx tsx scripts/conversation-state/replay-shadow.ts`.
 
 ## لا تلمس
 
-- لا تعدّل `conversation-state.ts` واختباراته دون كلمة المالك؛ وسّع ملف الاختبار بدل إعادة كتابته (فيه 20 اختبارًا من جلسة أخرى + 37 من هذه الجلسة، 57 كلها تنجح عند 05:20 UTC؛ التفاصيل والأرقام في `artifacts/conversation-state-20261122/REPORT.md` §2.1 و§2.2).
+- لا تعدّل `conversation-state.ts` واختباراته دون كلمة المالك؛ وسّع ملف الاختبار بدل إعادة كتابته (فيه 20 اختبارًا من جلسة أخرى + 56 من هذه الجلسة، 76 كلها تنجح عند 06:20 UTC؛ التفاصيل والأرقام في `artifacts/conversation-state-20261122/REPORT.md` §2.1 إلى §2.6، ومعها أداة الثبات `scripts/conversation-state/robustness.ts`).
+- قاعدة ثابتة بعد الدفعة السابعة: v2 لا يركّب استعلامًا عامًا من كيان بلا خاصية مسمّاة؛ حين يحجب v1 الاستعلام يبقى الحجب.
 - اختبار الربط عبر المتحكم الحقيقي جاهز في `tests/conversation-state-chat.test.ts` ويفترض الحقل `conversationShadow` في `CommandChatConfig`؛ لا يُشغَّل قبل الربط.
 - بيانات `scripts/conversation-state/dev-conversations.json` كتبها وكيل؛ ليست مقياس اعتماد.
 

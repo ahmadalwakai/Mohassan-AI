@@ -360,6 +360,8 @@ export async function createApplication(config: AppConfig) {
   // Conversation state v2 runs in shadow outside production (MOHASSAN_CONVERSATION_SHADOW=0 turns it off); no reply path reads it.
   const conversationShadow = !config.production && process.env.MOHASSAN_CONVERSATION_SHADOW !== '0' && !process.env.VITEST
     ? createConversationShadow({ logFile: join(process.cwd(), '.data', 'conversation', 'shadow.jsonl') }) : undefined;
+  // Deferred shadow turns (observeLater) are written before the server closes.
+  if (conversationShadow) app.addHook('onClose', async () => { await conversationShadow.flush(); });
   // The judge («الحَكَم») runs in shadow outside production (MOHASSAN_JUDGE_SHADOW=0 turns it off): one verdict per reply, read by no reply path.
   // Its mechanical fix is applied on the owner's own account (the owner's word, 2026-11-22; MOHASSAN_JUDGE_FIX=0 turns that off),
   // and so is its withhold: a fixed sentence with the page link instead of a refused answer (same day; MOHASSAN_JUDGE_WITHHOLD=0 turns it off).

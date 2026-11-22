@@ -273,6 +273,75 @@
       { "text": "ما عاصمة اليابان؟", "expect": { "type": ["new_request"], "query": { "contains": ["اليابان"] } } },
       { "text": "توقف", "expect": { "type": ["small_talk"], "query": null } },
       { "text": "وكم عدد سكانها؟", "expect": { "type": ["follow_up_property"], "query": { "contains": ["اليابان"] } } }
+    ]},
+    { "id": "c58", "dialect": "msa", "about": "negative controls: new questions after a topic stay new", "turns": [
+      { "text": "ما عاصمة اليابان؟", "expect": { "type": ["new_request"], "query": { "contains": ["اليابان"] } } },
+      { "text": "أين تقع باريس؟", "expect": { "type": ["topic_change"], "query": { "contains": ["باريس"], "notContains": ["اليابان"] } } },
+      { "text": "متى تأسست شركة أبل؟", "expect": { "type": ["topic_change"], "query": { "contains": ["أبل"], "notContains": ["باريس", "اليابان"] } } },
+      { "text": "هل تمطر في لندن اليوم؟", "expect": { "type": ["topic_change"], "query": { "contains": ["لندن"], "notContains": ["أبل"] } } },
+      { "text": "كم عدد سكان أبها؟", "expect": { "type": ["topic_change"], "entity": "أبها", "query": { "contains": ["أبها"], "notContains": ["لندن"] } } }
+    ]},
+    { "id": "c59", "dialect": "en", "about": "English negative controls", "turns": [
+      { "text": "What is the capital of Japan?", "expect": { "type": ["new_request"], "query": { "contains": ["Japan"] } } },
+      { "text": "where is Paris located?", "expect": { "type": ["topic_change"], "query": { "contains": ["Paris"], "notContains": ["Japan"] } } },
+      { "text": "who founded Apple?", "expect": { "type": ["topic_change"], "property": "inventor", "query": { "contains": ["Apple"], "notContains": ["Paris"] } } },
+      { "text": "why?", "expect": { "type": ["follow_up_property"], "query": { "contains": ["Apple", "why"] } } }
+    ]},
+    { "id": "c60", "dialect": "msa", "about": "question word alone follows up", "turns": [
+      { "text": "ما عاصمة اليابان؟", "expect": { "type": ["new_request"], "query": { "contains": ["اليابان"] } } },
+      { "text": "ولماذا؟", "expect": { "type": ["follow_up_property"], "query": { "contains": ["اليابان", "لماذا"] } } },
+      { "text": "وكيف؟", "expect": { "type": ["follow_up_property"], "query": { "contains": ["اليابان", "كيف"] } } }
+    ]},
+    { "id": "c61", "dialect": "msa", "about": "years and dates are time operands", "turns": [
+      { "text": "كم كان سعر الذهب في 2020؟", "expect": { "type": ["new_request"], "property": "price", "entity": "الذهب", "query": { "contains": ["الذهب", "2020"] } } },
+      { "text": "وفي 2021؟", "expect": { "type": ["field_edit", "follow_up_property"], "query": { "contains": ["الذهب", "2021"], "notContains": ["2020"] } } },
+      { "text": "وفي 25 ديسمبر 2021؟", "expect": { "type": ["field_edit", "follow_up_property"], "query": { "contains": ["الذهب", "ديسمبر"] } } }
+    ]},
+    { "id": "c62", "dialect": "en", "about": "English years and dates", "turns": [
+      { "text": "What was the gold price in 2019?", "expect": { "type": ["new_request"], "property": "price", "entity": "gold", "query": { "contains": ["gold", "2019"] } } },
+      { "text": "and in 2020?", "expect": { "type": ["field_edit", "follow_up_property"], "query": { "contains": ["gold", "2020"], "notContains": ["2019"] } } },
+      { "text": "weather in London on 25 December 2026", "expect": { "type": ["topic_change"], "property": "weather", "entity": "London", "query": { "contains": ["London", "December"] } } }
+    ]},
+    { "id": "c63", "dialect": "msa", "about": "repeat the last answer", "turns": [
+      { "text": "ما عاصمة اليابان؟", "expect": { "type": ["new_request"], "query": { "contains": ["اليابان"] } } },
+      { "text": "أعد", "expect": { "type": ["field_edit"], "edit": "detail", "query": null } },
+      { "text": "again", "expect": { "type": ["field_edit"], "edit": "detail", "query": null } }
+    ]},
+    { "id": "c64", "dialect": "msa", "about": "from the live shadow log 2026-11-22: a command on the owner's own file is not a lookup", "turns": [
+      { "text": "اصنع لي تقرير pdf عن مبيعات الربع الثالث", "expect": { "type": ["new_request"], "query": null } },
+      { "text": "أضف علامة مائية «سري» على آخر ملف pdf", "expect": { "type": ["topic_change"], "query": null } },
+      { "text": "ما حجم ملفي؟", "expect": { "type": ["topic_change"], "query": null } },
+      { "text": "آخر تقرير للبنك الدولي عن التضخم", "expect": { "type": ["topic_change"], "query": { "contains": ["بنك الدولي", "التضخم"] } } }
+    ]},
+    { "id": "c65", "dialect": "en", "about": "from the live shadow log 2026-11-22: an infinitive is not a place", "turns": [
+      { "text": "What is the best time to visit Japan?", "expect": { "type": ["new_request"], "entity": "best time to visit Japan", "query": { "contains": ["Japan"] } } },
+      { "text": "كم عدد سكان المغرب؟", "expect": { "type": ["topic_change"], "property": "population", "entity": "المغرب", "query": { "contains": ["المغرب"], "notContains": ["Japan"] } } },
+      { "text": "convert the file to word", "expect": { "type": ["topic_change"], "query": null } }
+    ]},
+    { "id": "c66", "dialect": "msa", "about": "from the live shadow log 2026-11-22: arithmetic after a lookup", "turns": [
+      { "text": "ما عاصمة اليابان؟", "expect": { "type": ["new_request"], "property": "capital", "entity": "اليابان", "query": { "contains": ["اليابان"] } } },
+      { "text": "كم يساوي 15 ضرب 23؟", "expect": { "type": ["topic_change"], "entity": "15 ضرب 23", "query": null } },
+      { "text": "ما عاصمة أستراليا؟", "expect": { "type": ["topic_change"], "property": "capital", "entity": "أستراليا", "query": { "contains": ["أستراليا"], "notContains": ["اليابان"] } } }
+    ]},
+    { "id": "c67", "dialect": "msa", "about": "a pronoun skips a subject that cannot have the property", "turns": [
+      { "text": "ما عاصمة اليابان؟", "expect": { "type": ["new_request"], "query": { "contains": ["اليابان"] } } },
+      { "text": "كم سعر الذهب اليوم؟", "expect": { "type": ["topic_change"], "property": "price", "entity": "الذهب", "query": { "contains": ["الذهب"] } } },
+      { "text": "وكم عدد سكانها؟", "expect": { "type": ["follow_up_property"], "property": "population", "query": { "contains": ["اليابان"], "notContains": ["الذهب"] } } }
+    ]},
+    { "id": "c68", "dialect": "msa", "about": "nothing said so far can have the property: ask", "turns": [
+      { "text": "كم سعر الذهب اليوم؟", "expect": { "type": ["new_request"], "query": { "contains": ["الذهب"] } } },
+      { "text": "وكم عدد سكانها؟", "expect": { "type": ["ambiguous"], "needs": "missing_reference", "query": null } }
+    ]},
+    { "id": "c69", "dialect": "msa", "about": "follow-ups lean past an arithmetic turn", "turns": [
+      { "text": "من هو ألبرت أينشتاين؟", "expect": { "type": ["new_request"], "query": { "contains": ["أينشتاين"] } } },
+      { "text": "كم يساوي 2+2؟", "expect": { "type": ["topic_change"], "query": null } },
+      { "text": "ونيوتن؟", "expect": { "type": ["follow_up_entity"], "entity": "نيوتن", "query": { "contains": ["من هو", "نيوتن"] } } },
+      { "text": "ومتى ولد؟", "expect": { "type": ["follow_up_property"], "query": { "contains": ["نيوتن", "ولد"] } } }
+    ]},
+    { "id": "c70", "dialect": "mixed", "about": "one-letter typos in closed word lists (rq036 from the frozen real set)", "turns": [
+      { "text": "find train teckit from glasgow to london tomorow", "expect": { "type": ["new_request"], "query": { "contains": ["tomorrow"] } } },
+      { "text": "ذكّرني بموعد الطبيب يوم الخميس الساعة 5 مساءً", "expect": { "type": ["topic_change"], "query": null } },
+      { "text": "عدّل الاتريخ فقط إلى الجمعة", "expect": { "type": ["field_edit"], "edit": "date", "query": null } }
     ]}
   ]
 }

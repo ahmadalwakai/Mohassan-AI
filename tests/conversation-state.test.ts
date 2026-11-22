@@ -635,3 +635,314 @@ describe('conversation state v2: question templates, comparisons, units and cont
     }
   });
 });
+
+// Added 2026-11-22 (fifth batch): negative controls, question-only follow-ups, years and dates, «أعد».
+describe('conversation state v2: what must NOT be a follow-up', () => {
+  const japan = () => ask(emptyConversationState(), 'ما عاصمة اليابان؟', 'u1');
+
+  it('keeps a question that names its own subject as a new topic, even with a follow verb or a pronoun shape', () => {
+    for (const [text, word] of [
+      ['أين تقع باريس؟', 'باريس'], ['where is Paris located?', 'Paris'], ['كم عدد سكان مصر؟', 'مصر'], ['من اخترع الهاتف؟', 'الهاتف'],
+      ['هل تمطر في لندن اليوم؟', 'لندن'], ['ما هو الذكاء الاصطناعي؟', 'الذكاء'], ['متى تأسست شركة أبل؟', 'أبل'], ['ما حكم صلاة الجمعة؟', 'صلاة'],
+    ] as const) {
+      const turn = ask(japan().next, text, 'u2');
+      expect(turn.type, text).toBe('topic_change');
+      expect(turn.query, text).toContain(word);
+      expect(turn.query, text).not.toContain('اليابان');
+    }
+  });
+
+  it('does not read a city whose name ends in ها as a pointer', () => {
+    const turn = ask(japan().next, 'كم عدد سكان أبها؟', 'u2');
+    expect(turn.type).toBe('topic_change');
+    expect(turn.entity).toBe('أبها');
+  });
+
+  it('reads a question word alone as an open follow-up («ولماذا؟», "why?")', () => {
+    const why = ask(japan().next, 'ولماذا؟', 'u2');
+    expect(why.type).toBe('follow_up_property');
+    expect(why.query).toBe('لماذا اليابان');
+    const english = ask(ask(emptyConversationState(), 'What is the capital of Japan?', 'u1').next, 'why?', 'u2');
+    expect(english.type).toBe('follow_up_property');
+    expect(english.query).toBe('why Japan');
+  });
+});
+
+describe('conversation state v2: years, dates and «أعد»', () => {
+  it('keeps a year or a date apart from the entity, with its preposition', () => {
+    const gold = ask(emptyConversationState(), 'كم كان سعر الذهب في 2020؟', 'u1');
+    expect(gold.property).toBe('price');
+    expect(gold.entity).toBe('الذهب');
+    expect(gold.time).toBe('2020');
+    const next = ask(gold.next, 'وفي 2021؟', 'u2');
+    expect(next.type).toBe('field_edit');
+    expect(next.edit).toEqual({ field: 'date', value: '2021' });
+    expect(next.query).toBe('سعر الذهب 2021');
+    const english = ask(emptyConversationState(), 'What was the gold price in 2019?', 'u1');
+    expect(english.entity).toBe('gold');
+    expect(english.time).toBe('2019');
+    const date = ask(emptyConversationState(), 'كيف الطقس في جدة 25 ديسمبر؟', 'u1');
+    expect(date.entity).toBe('جدة');
+    expect(date.time).toBe('25 ديسمبر');
+    const london = ask(emptyConversationState(), 'weather in London on 25 December 2026', 'u1');
+    expect(london.entity).toBe('London');
+    expect(london.time).toBe('25 December 2026');
+  });
+
+  it('does not take a referenced number for a year («الخبر 2020» is a reference label)', () => {
+    const news = ask(emptyConversationState(), 'ما آخر أخبار التقنية؟', 'u1');
+    expect(news.time).toBeNull();
+  });
+
+  it('reads «أعد» and "again" as a repeat of the last answer', () => {
+    const first = ask(emptyConversationState(), 'ما عاصمة اليابان؟', 'u1');
+    for (const text of ['أعد', 'مرة ثانية', 'again', 'say that again']) {
+      const turn = ask(first.next, text, 'u2');
+      expect(turn.type, text).toBe('field_edit');
+      expect(turn.edit, text).toEqual({ field: 'detail', value: 'again' });
+      expect(turn.query, text).toBeNull();
+    }
+  });
+});
+
+// Added 2026-11-22 (sixth batch): robustness under meaning-preserving rewrites (scripts/conversation-state/robustness.ts).
+describe('conversation state v2: politeness and spelling noise do not change the reading', () => {
+  it('drops politeness before and after the request', () => {
+    const japan = ask(emptyConversationState(), 'من فضلك، ما عاصمة اليابان؟', 'u1');
+    expect(japan.entity).toBe('اليابان');
+    expect(japan.next.topics.at(-1)?.template).toBe('ما عاصمة {}؟');
+    for (const text of ['من فضلك وكم عدد سكانها؟', 'لو سمحت، وكم عدد سكانها؟', 'وكم عدد سكانها من فضلك؟', 'ممكن وكم عدد سكانها؟']) {
+      const turn = ask(japan.next, text, 'u2');
+      expect(turn.type, text).toBe('follow_up_property');
+      expect(turn.query, text).toBe('عدد سكان عاصمة اليابان');
+    }
+    const english = ask(ask(emptyConversationState(), 'could you tell me Who is Albert Einstein?', 'u1').next, 'please and Newton?', 'u2');
+    expect(english.type).toBe('follow_up_entity');
+    expect(english.query).toBe('Who is Newton?');
+    const more = ask(japan.next, 'من فضلك فصّل أكثر', 'u2');
+    expect(more.edit).toEqual({ field: 'detail', value: 'more' });
+    const open = ask(japan.next, 'please open the last one', 'u2');
+    expect(open.type).not.toBe('reference');
+  });
+
+  it('keeps a message that is only politeness as it is', () => {
+    const turn = ask(emptyConversationState(), 'من فضلك', 'u1');
+    expect(turn.type).toBe('small_talk');
+    expect(turn.query).toBeNull();
+    const wadi = ask(ask(emptyConversationState(), 'كم عدد سكان جدة؟', 'u1').next, 'ووادي رم؟', 'u2');
+    expect(wadi.entity).toBe('وادي رم');
+  });
+
+  it('still asks about Mohassan itself when the politeness words are the trigger', () => {
+    const turn = ask(emptyConversationState(), 'هل تستطيع أنشاء مشروع كامل ؟', 'u1');
+    expect(turn.query).toBeNull();
+  });
+
+  it('reads «ونيوتن» without a question mark, and a vowelled «وَفي الاَمارَات؟», the same as the plain forms', () => {
+    const einstein = ask(emptyConversationState(), 'من هو ألبرت أينشتاين؟', 'u1');
+    expect(ask(einstein.next, 'ونيوتن', 'u2').query).toBe('من هو نيوتن؟');
+    const price = ask(emptyConversationState(), 'كَم سِعر ايفون 15 في السعودية؟', 'u1');
+    expect(price.entity).toBe('ايفون 15');
+    expect(price.place).toBe('السعودية');
+    const emirates = ask(price.next, 'وَفي الاَمارَات؟', 'u2');
+    expect(emirates.type).toBe('field_edit');
+    expect(emirates.query).toBe('سعر ايفون 15 الامارات');
+  });
+});
+
+// Added 2026-11-22 (seventh batch): integrity of the state object and bounded cost.
+describe('conversation state v2: integrity', () => {
+  it('never mutates the state it is given', () => {
+    const first = ask(emptyConversationState(), 'ما عاصمة اليابان؟', 'u1');
+    const shown = withHostResults(first.next, [{ label: 'طوكيو', kind: 'place' }], 'a1');
+    const frozen = JSON.stringify(shown);
+    ask(shown, 'وكم عدد سكانها؟', 'u2');
+    ask(shown, 'أقصد الأولى', 'u2');
+    ask(shown, 'عدّل التاريخ فقط إلى الجمعة', 'u2');
+    ask(withPending(shown, { kind: 'approval', id: 'a' }), 'موافق', 'u2');
+    expect(JSON.stringify(shown)).toBe(frozen);
+  });
+
+  it('reads the same after a JSON round trip of the state', () => {
+    const first = ask(emptyConversationState(), 'كم سعر ايفون 15 في السعودية؟', 'u1');
+    const restored = JSON.parse(JSON.stringify(first.next)) as typeof first.next;
+    const direct = ask(first.next, 'وفي الامارات؟', 'u2');
+    const viaJson = ask(restored, 'وفي الامارات؟', 'u2');
+    expect(viaJson.type).toBe(direct.type);
+    expect(viaJson.query).toBe(direct.query);
+    expect(viaJson.next.topics).toEqual(direct.next.topics);
+  });
+
+  it('gives the same reading twice for the same input', () => {
+    const state = ask(emptyConversationState(), 'متى مباراة الهلال؟', 'u1').next;
+    const a = ask(state, 'طيب ومباراة النصر؟', 'u2');
+    const b = ask(state, 'طيب ومباراة النصر؟', 'u2');
+    expect(JSON.stringify({ ...a, next: a.next })).toBe(JSON.stringify({ ...b, next: b.next }));
+  });
+
+  it('stays bounded on a very long message and on an empty one', () => {
+    const long = Array.from({ length: 1500 }, (_, index) => index % 7 === 0 ? 'في' : `كلمة${index}`).join(' ');
+    const started = performance.now();
+    const turn = ask(emptyConversationState(), long, 'u1');
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(turn.type).toBe('new_request');
+    for (const text of ['', '   ', '؟', '...']) {
+      const empty = ask(emptyConversationState(), text, 'u1');
+      expect(empty.query, JSON.stringify(text)).toBeNull();
+    }
+  });
+});
+
+// Added 2026-11-22 (eighth batch): cases from the live shadow log (.data/conversation/shadow.jsonl, 15 turns, 05:20–06:57 UTC).
+describe('conversation state v2: lessons from the live shadow log', () => {
+  it("never turns a question or command about the owner's own file into a public query", () => {
+    const report = ask(emptyConversationState(), 'اصنع لي تقرير pdf عن مبيعات الربع الثالث', 'u1');
+    expect(report.query).toBeNull();
+    for (const text of ['أضف علامة مائية «سري» على آخر ملف pdf', 'ما حجم ملفي؟', 'حوّل الملف إلى وورد', 'convert the file to word', 'summarize this pdf', 'هل هذا التقرير كامل؟']) {
+      const turn = ask(report.next, text, 'u2');
+      expect(turn.query, text).toBeNull();
+    }
+  });
+
+  it('keeps public lookups about reports and file formats', () => {
+    for (const text of ['آخر تقرير للبنك الدولي عن التضخم', 'the latest report on inflation', 'What is the PDF format?', 'compress pdf']) {
+      const turn = ask(emptyConversationState(), text, 'u1');
+      expect(turn.query, text).not.toBeNull();
+    }
+  });
+
+  it('does not read "to visit Japan" as a place', () => {
+    const turn = ask(emptyConversationState(), 'What is the best time to visit Japan?', 'u1');
+    expect(turn.place).toBeNull();
+    expect(turn.entity).toBe('best time to visit Japan');
+    expect(turn.query).toBe('What is the best time to visit Japan?');
+    expect(ask(emptyConversationState(), 'flights to Paris next week', 'u1').time).toBe('next week');
+  });
+
+  it('keeps «يساوي» out of an arithmetic entity', () => {
+    const turn = ask(emptyConversationState(), 'كم يساوي 15 ضرب 23؟', 'u1');
+    expect(turn.entity).toBe('15 ضرب 23');
+    expect(turn.query).toBeNull();
+  });
+});
+
+describe('conversation state v2: a long request with an inner pronoun is not a follow-up (live shadow, 06:32)', () => {
+  it('reads the second site request as a new subject, not as the first site', () => {
+    const first = ask(emptyConversationState(), 'أريد موقعاً لمطعم «بيت الشام» في دمشق فيه الأسئلة الشائعة وخريطة', 'u1');
+    const second = ask(first.next, 'ابنِ لي موقعاً لعيادة أسنان اسمها «ابتسامة» في جدة فيه الفريق والأسئلة الشائعة وخريطة', 'u2');
+    expect(second.type).toBe('topic_change');
+    expect(second.entity).toContain('عيادة');
+    expect(second.query).toBeNull();
+  });
+
+  it('keeps a long question about its own subject apart from the previous topic', () => {
+    const japan = ask(emptyConversationState(), 'ما عاصمة اليابان؟', 'u1');
+    const own = ask(japan.next, 'كيف أبني موقعاً لعيادتي وأضع فيه اسمها وعنوانها ورقم هاتفها؟', 'u2');
+    expect(own.type).toBe('topic_change');
+    expect(own.query ?? '').not.toContain('اليابان');
+  });
+
+  it('still reads short open follow-ups, with or without a question mark', () => {
+    const japan = ask(emptyConversationState(), 'ما عاصمة اليابان؟', 'u1');
+    for (const text of ['وهي في أي قارة', 'وهل يوجد فيها مطار دولي كبير؟', 'is it expensive to visit?']) {
+      const turn = ask(japan.next, text, 'u2');
+      expect(turn.type, text).toBe('follow_up_property');
+      expect(turn.query ?? '', text).toMatch(/اليابان|Japan/u);
+    }
+  });
+});
+
+// Added 2026-11-22 (ninth batch): the antecedent by property type, and one-letter typos in closed word lists.
+describe('conversation state v2: a pronoun reaches the subject that can have the property', () => {
+  it('skips a gold price for a population: «ما عاصمة اليابان؟» → «كم سعر الذهب اليوم؟» → «وكم عدد سكانها؟»', () => {
+    const japan = ask(emptyConversationState(), 'ما عاصمة اليابان؟', 'u1');
+    const gold = ask(japan.next, 'كم سعر الذهب اليوم؟', 'u2');
+    const turn = ask(gold.next, 'وكم عدد سكانها؟', 'u3');
+    expect(turn.type).toBe('follow_up_property');
+    expect(turn.query).toBe('عدد سكان عاصمة اليابان');
+    expect(turn.assumption).toBe('فهمتُ أن المقصود عاصمة اليابان.');
+  });
+
+  it('says which subject it took when it skips the latest one', () => {
+    const egypt = ask(emptyConversationState(), 'كم عدد سكان مصر؟', 'u1');
+    const gold = ask(egypt.next, 'كم سعر الذهب اليوم؟', 'u2');
+    const area = ask(gold.next, 'وما مساحتها؟', 'u3');
+    expect(area.query).toBe('مساحة مصر');
+    expect(area.assumption).toBe('فهمتُ أن المقصود مصر.');
+    const back = ask(ask(gold.next, 'ما عاصمة اليابان؟', 'u3').next, 'وكم سعره؟', 'u4');
+    expect(back.query).toBe('سعر الذهب اليوم');
+    expect(back.assumption).toBe('فهمتُ أن المقصود الذهب.');
+  });
+
+  it('keeps the latest subject when it fits, and asks when nothing said so far fits', () => {
+    const japan = ask(emptyConversationState(), 'ما عاصمة اليابان؟', 'u1');
+    const egypt = ask(japan.next, 'كم عدد سكان مصر؟', 'u2');
+    const area = ask(egypt.next, 'وما مساحتها؟', 'u3');
+    expect(area.query).toBe('مساحة مصر');
+    expect(area.assumption).toBeNull();
+    const gold = ask(emptyConversationState(), 'كم سعر الذهب اليوم؟', 'u1');
+    const lost = ask(gold.next, 'وكم عدد سكانها؟', 'u2');
+    expect(lost.type).toBe('ambiguous');
+    expect(lost.needs).toBe('missing_reference');
+    expect(lost.query).toBeNull();
+  });
+
+  it('leans past an arithmetic turn to the subject before it', () => {
+    const japan = ask(emptyConversationState(), 'ما عاصمة اليابان؟', 'u1');
+    const sum = ask(japan.next, 'كم يساوي 15 ضرب 23؟', 'u2');
+    expect(ask(sum.next, 'وكم عدد سكانها؟', 'u3').query).toBe('عدد سكان عاصمة اليابان');
+    const einstein = ask(emptyConversationState(), 'من هو ألبرت أينشتاين؟', 'u1');
+    const two = ask(einstein.next, 'كم يساوي 2+2؟', 'u2');
+    expect(ask(two.next, 'ونيوتن؟', 'u3').query).toBe('من هو نيوتن؟');
+    const born = ask(two.next, 'ومتى ولد؟', 'u3');
+    expect(born.query).toBe('متى ولد ألبرت أينشتاين');
+    expect(born.assumption).toBe('فهمتُ أن المقصود ألبرت أينشتاين.');
+  });
+
+  it('keeps a private subject private when it is the one reached', () => {
+    const memory = ask(emptyConversationState(), 'من ذاكرتي، ما مدينتي المفضلة؟', 'u1');
+    const sum = ask(memory.next, 'كم يساوي 2+2؟', 'u2');
+    expect(ask(sum.next, 'وكم عدد سكانها؟', 'u3').query).toBeNull();
+  });
+});
+
+describe('conversation state v2: one-letter typos in closed word lists', () => {
+  it('reads "tomorow" in the real request rq036 as tomorrow', () => {
+    const turn = ask(emptyConversationState(), 'find train teckit from glasgow to london tomorow', 'u1');
+    expect(turn.time).toBe('tomorrow');
+    expect(turn.corrected).toEqual([{ from: 'tomorow', to: 'tomorrow' }]);
+    expect(turn.query).toContain('tomorrow');
+  });
+
+  it('reads a typo in an edit field, an ordinal, a correction verb and a one-word message', () => {
+    const reminder = ask(emptyConversationState(), 'ذكّرني بموعد الطبيب يوم الخميس الساعة 5 مساءً', 'u1');
+    const edit = ask(reminder.next, 'عدّل الاتريخ فقط إلى الجمعة', 'u2');
+    expect(edit.type).toBe('field_edit');
+    expect(edit.edit?.field).toBe('date');
+    expect(edit.query).toBeNull();
+    const cities = withHostResults(ask(emptyConversationState(), 'ما أكبر ثلاث مدن في اليابان؟', 'u1').next,
+      [{ label: 'طوكيو', kind: 'place' }, { label: 'يوكوهاما', kind: 'place' }, { label: 'أوساكا', kind: 'place' }], 'a1');
+    expect(ask(cities, 'افتح الاثلثة', 'u2').reference).toEqual({ index: 3, label: 'أوساكا' });
+    const arsenal = ask(emptyConversationState(), "When is Arsenal's next match?", 'u1');
+    const chelsea = ask(arsenal.next, 'I menat Chelsea', 'u2');
+    expect(chelsea.type).toBe('correction');
+    expect(chelsea.query).toBe('next match of Chelsea');
+    expect(ask(emptyConversationState(), 'مربحا', 'u1').type).toBe('small_talk');
+    expect(ask(ask(emptyConversationState(), 'ما هو الذكاء الاصطناعي؟', 'u1').next, 'كجودل', 'u2').edit).toEqual({ field: 'format', value: 'table' });
+  });
+
+  it('never corrects names, property words, plurals, adjectives or ordinals with no list on screen', () => {
+    expect(ask(emptyConversationState(), 'ما هي عجائب الدنيا السبع؟', 'u1').corrected).toBeUndefined();
+    const daily = ask(emptyConversationState(), 'التقرير اليومي للمبيعات', 'u1');
+    expect(daily.corrected).toBeUndefined();
+    expect(daily.time).toBeNull();
+    const augusta = ask(emptyConversationState(), 'weather in Augusta', 'u1');
+    expect(augusta.entity).toBe('Augusta');
+    expect(augusta.time).toBeNull();
+    expect(ask(emptyConversationState(), 'كم عدد سكان الغمرب؟', 'u1').entity).toBe('الغمرب');
+    expect(ask(emptyConversationState(), 'ما معنى مسامحة؟', 'u1').corrected).toBeUndefined();
+    const cities = withHostResults(ask(emptyConversationState(), 'ما أكبر ثلاث مدن في اليابان؟', 'u1').next,
+      [{ label: 'طوكيو', kind: 'place' }, { label: 'يوكوهاما', kind: 'place' }], 'a1');
+    expect(ask(cities, 'how many seconds in a day', 'u2').type).not.toBe('reference');
+  });
+});

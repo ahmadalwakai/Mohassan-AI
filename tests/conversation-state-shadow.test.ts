@@ -52,6 +52,49 @@ describe('conversation state v2 shadow', () => {
     await shadow.flush();
   });
 
+  it('rebuilds a conversation it forgot (a restart) from the user turns in its own log', async () => {
+    const logFile = join(directory, 'restart.jsonl');
+    const before = createConversationShadow({ logFile });
+    await before.ready();
+    before.observe({ conversationId: 'r1', turnId: 'u1', text: 'ما عاصمة اليابان؟' });
+    before.observe({ conversationId: 'r2', turnId: 'u1', text: 'متى مباراة الهلال؟' });
+    await before.flush();
+    const after = createConversationShadow({ logFile });
+    await after.ready();
+    const japan = after.observe({ conversationId: 'r1', turnId: 'u2', text: 'وكم عدد سكانها؟' });
+    expect(japan?.type).toBe('follow_up_property');
+    expect(japan?.query).toBe('عدد سكان عاصمة اليابان');
+    expect(after.observe({ conversationId: 'r2', turnId: 'u2', text: 'طيب ومباراة النصر؟' })?.query).toBe('مباراة النصر');
+    await after.flush();
+    const lines = (await readFile(logFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as ConversationShadowLine);
+    expect(lines.map(line => line.seeded ?? 0)).toEqual([0, 0, 1, 1]);
+    const off = createConversationShadow({ logFile, replayLog: false });
+    expect(off.observe({ conversationId: 'r1', turnId: 'u3', text: 'وكم عدد سكانها؟' })?.type).toBe('ambiguous');
+    await off.flush();
+  });
+
+  it('runs observeLater after the caller, in call order, and flush waits for it', async () => {
+    const shadow = createConversationShadow({ logFile: join(directory, 'later.jsonl') });
+    shadow.observeLater({ conversationId: 'l1', turnId: 'u1', text: 'متى مباراة الهلال؟' });
+    shadow.observeLater({ conversationId: 'l1', turnId: 'u2', text: 'طيب ومباراة النصر؟' });
+    expect(shadow.state('l1')).toBeUndefined();
+    await shadow.flush();
+    const lines = (await readFile(shadow.logFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as ConversationShadowLine);
+    expect(lines.map(line => line.type)).toEqual(['new_request', 'follow_up_entity']);
+    expect(shadow.state('l1')?.topics.at(-1)?.entity).toBe('النصر');
+  });
+
+  it('copies the input of observeLater before the caller changes it', async () => {
+    const shadow = createConversationShadow({ logFile: join(directory, 'copy.jsonl') });
+    shadow.observe({ conversationId: 'k1', turnId: 'u1', text: 'ما عاصمة اليابان؟' });
+    const shown = [{ label: 'طوكيو', kind: 'place' as const }];
+    shadow.observeLater({ conversationId: 'k1', turnId: 'u2', text: 'وكم عدد سكانها؟', shown });
+    shown[0]!.label = 'أوساكا';
+    await shadow.flush();
+    const lines = (await readFile(shadow.logFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as ConversationShadowLine);
+    expect(lines.at(-1)?.query).toBe('عدد سكان طوكيو');
+  });
+
   it('never throws into the chat when the log cannot be written', async () => {
     const shadow = createConversationShadow({ logFile: join(directory, 'seed.jsonl', 'impossible', 'shadow.jsonl') });
     const turn = shadow.observe({ conversationId: 'c4', turnId: 'u1', text: 'شكرًا' });

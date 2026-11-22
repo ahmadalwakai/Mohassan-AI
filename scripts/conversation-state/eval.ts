@@ -48,7 +48,8 @@ const fixturePath = 'scripts/conversation-state/dev-conversations.json';
 const realPath = 'artifacts/plan-2026-11-22/real-questions-v1.jsonl';
 const REFUSED = ['rq003', 'rq004', 'rq021', 'rq047', 'rq058', 'rq059', 'rq100', 'rq105'];
 
-const fold = (text: string) => text.normalize('NFKC').replace(/[ـً-ٰٟ]/gu, '').replace(/[أإآٱ]/gu, 'ا').replace(/ى/gu, 'ي').replace(/ة/gu, 'ه').toLowerCase();
+const fold = (text: string) => text.normalize('NFKC').replace(/[ـً-ٰٟ]/gu, '').replace(/[أإآٱ]/gu, 'ا').replace(/ى/gu, 'ي').replace(/ة/gu, 'ه')
+  .replace(/[٠-٩]/gu, digit => String.fromCharCode(48 + digit.charCodeAt(0) - 0x0660)).toLowerCase();
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 const pct = (k: number, n: number) => n ? `${(100 * k / n).toFixed(1)}%` : 'n/a';
 const quantile = (values: number[], q: number) => { const sorted = [...values].sort((a, b) => a - b); return sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]! : NaN; };
@@ -97,7 +98,9 @@ function v1Acceptable(v1: RequestResolution): TurnType[] {
 
 interface TurnScore {
   conversation: string; dialect: string; turn: number; text: string; expected: TurnType[];
-  v2: { type: TurnType; query: string | null; needs: string | null; entity: string | null; property: string | null; ms: number; typeOk: boolean; queryOk: boolean | null; needsOk: boolean | null; ok: boolean };
+  v2: { type: TurnType; query: string | null; needs: string | null; entity: string | null; property: string | null; ms: number; typeOk: boolean; queryOk: boolean | null; needsOk: boolean | null; ok: boolean;
+    /** Entity, property, edit field and reference index, scored only where the fixture names them; v1 has no such fields. */
+    fieldsOk: boolean | null; fieldMisses: string[] };
   v1: { kind: string; intent: string; query: string | null; ambiguities: string[]; typeOk: boolean; queryOk: boolean | null; needsOk: boolean | null; ok: boolean };
 }
 
@@ -122,10 +125,18 @@ async function scoreFixture(fixture: Fixture): Promise<TurnScore[]> {
       const v1QueryOk = queryOk(v1.query, expectation.query);
       const v1NeedsOk = expectation.needs === undefined ? null
         : expectation.needs === 'missing_reference' ? v1.ambiguities.includes('missing_reference') : false;
+      const fieldMisses: string[] = [];
+      let fieldsNamed = 0;
+      const check = (name: string, want: unknown, have: unknown, same: boolean) => { fieldsNamed++; if (!same) fieldMisses.push(`${name}: want ${JSON.stringify(want)}, got ${JSON.stringify(have ?? null)}`); };
+      if (expectation.entity !== undefined) check('entity', expectation.entity, v2.entity, fold(v2.entity ?? '') === fold(expectation.entity));
+      if (expectation.property !== undefined) check('property', expectation.property, v2.property, v2.property === expectation.property);
+      if (expectation.edit !== undefined) check('edit', expectation.edit, v2.edit?.field, v2.edit?.field === expectation.edit);
+      if (expectation.reference !== undefined) check('reference', expectation.reference, v2.reference?.index, v2.reference?.index === expectation.reference);
       scores.push({
         conversation: conversation.id, dialect: conversation.dialect, turn: index + 1, text: turn.text, expected: expectation.type,
         v2: { type: v2.type, query: v2.query, needs: v2.needs, entity: v2.entity, property: v2.property, ms: Number(ms.toFixed(3)),
-          typeOk: v2TypeOk, queryOk: v2QueryOk, needsOk: v2NeedsOk, ok: v2TypeOk && v2QueryOk !== false && v2NeedsOk !== false },
+          typeOk: v2TypeOk, queryOk: v2QueryOk, needsOk: v2NeedsOk, ok: v2TypeOk && v2QueryOk !== false && v2NeedsOk !== false,
+          fieldsOk: fieldsNamed ? fieldMisses.length === 0 : null, fieldMisses },
         v1: { kind: v1.kind, intent: v1.intent, query: v1.query, ambiguities: v1.ambiguities,
           typeOk: v1TypeOk, queryOk: v1QueryOk, needsOk: v1NeedsOk, ok: v1TypeOk && v1QueryOk !== false && v1NeedsOk !== false },
       });
@@ -138,7 +149,7 @@ async function scoreFixture(fixture: Fixture): Promise<TurnScore[]> {
   return scores;
 }
 
-interface RealScore { id: string; kind: string; previous: string | null; text: string; type: TurnType; query: string | null; needs: string | null; entity: string | null; property: string | null; assumption: string | null; v1Kind: string; v1Intent: string; v1Query: string | null; ms: number }
+interface RealScore { id: string; kind: string; previous: string | null; text: string; type: TurnType; query: string | null; needs: string | null; entity: string | null; property: string | null; place: string | null; time: string | null;assumption: string | null; v1Kind: string; v1Intent: string; v1Query: string | null; ms: number }
 
 function scoreReal(items: RealItem[]): RealScore[] {
   return items.map(item => {
@@ -154,6 +165,7 @@ function scoreReal(items: RealItem[]): RealScore[] {
     const ms = performance.now() - started;
     const v1 = resolveRequestContext(item.text, v1State, { turnId: item.id });
     return { id: item.id, kind: item.kind, previous: item.previous, text: item.text, type: v2.type, query: v2.query, needs: v2.needs, entity: v2.entity,
+      place: v2.place, time: v2.time,
       property: v2.property, assumption: v2.assumption, v1Kind: v1.kind, v1Intent: v1.intent, v1Query: v1.query, ms: Number(ms.toFixed(3)) };
   });
 }
@@ -204,6 +216,9 @@ const outDir = join(outRoot, `run-${stamp}`);
 await mkdir(outDir, { recursive: true });
 const fmt = ([low, high]: [number, number]) => `${(100 * low).toFixed(1)}–${(100 * high).toFixed(1)}%`;
 const wrong = dev.filter(score => !score.v2.ok);
+const fieldScored = dev.filter(score => score.v2.fieldsOk !== null);
+const fieldRight = fieldScored.filter(score => score.v2.fieldsOk).length;
+const fieldMissed = dev.filter(score => score.v2.fieldsOk === false);
 
 const report = `# Conversation state v2 vs v1: offline comparison (E1.1 preparation)
 
@@ -229,6 +244,8 @@ const report = `# Conversation state v2 vs v1: offline comparison (E1.1 preparat
 
 v1 scoring is generous: each v1 kind counts for every v2 type it could stand for (see the header of \`eval.ts\`). Types v1 has no word for (reference, compound) count against it, as the plan says.
 
+**v2 named fields** (entity, property, edit field, reference index, scored only where the fixture names them; v1 has no such fields, so this is not part of the comparison): ${fieldRight}/${fieldScored.length} turns.
+
 ### By dialect
 
 | Dialect | Turns | v2 right | v1 right |
@@ -246,6 +263,12 @@ ${byType.map(row => `| ${row.type} | ${row.count} | ${row.v2} | ${row.v1} |`).jo
 | Conversation | Turn | Text | Expected | v2 type | v2 query | v2 needs |
 |---|---|---|---|---|---|---|
 ${wrong.map(score => `| ${score.conversation} | ${score.turn} | ${score.text.replace(/\|/gu, '\\|')} | ${score.expected.join(' / ')} | ${score.v2.type}${score.v2.typeOk ? '' : ' ✗'} | ${score.v2.query === null ? '—' : score.v2.query.replace(/\|/gu, '\\|')}${score.v2.queryOk === false ? ' ✗' : ''} | ${score.v2.needs ?? '—'}${score.v2.needsOk === false ? ' ✗' : ''} |`).join('\n') || '| — | — | none | | | | |'}
+
+### v2 named-field misses (${fieldMissed.length})
+
+| Conversation | Turn | Text | Misses |
+|---|---|---|---|
+${fieldMissed.map(score => `| ${score.conversation} | ${score.turn} | ${score.text.replace(/\|/gu, '\\|')} | ${score.v2.fieldMisses.join('; ').replace(/\|/gu, '\\|')} |`).join('\n') || '| — | — | none | |'}
 
 ## 2. Frozen real set (unlabelled)
 
@@ -279,7 +302,7 @@ await writeFile(join(outDir, 'summary.json'), JSON.stringify({
   at: startedAt.toISOString(), fixtureSha256: sha256(fixtureText), realSha256: sha256(realText), turns: n,
   v2: { right: v2Right, typeRight: v2TypeRight, queryRight: v2QueryRight, queriesScored: scoredQueries.length, followQueryRight: v2FollowRight, followScored: followUps.length },
   v1: { right: v1Right, typeRight: v1TypeRight, queryRight: v1QueryRight, followQueryRight: v1FollowRight },
-  mcnemar: { b, c, p }, msP50: quantile(ms, 0.5), msP95: quantile(ms, 0.95), realTypes, realPairTypes,
+  fields: { right: fieldRight, scored: fieldScored.length }, mcnemar: { b, c, p }, msP50: quantile(ms, 0.5), msP95: quantile(ms, 0.95), realTypes, realPairTypes,
 }, null, 2), 'utf8');
 console.log(report);
 console.log(`\nwritten: ${outDir}`);
