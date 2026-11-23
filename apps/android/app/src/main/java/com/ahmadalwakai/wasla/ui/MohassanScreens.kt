@@ -312,6 +312,8 @@ private fun ApprovalCard(store: WaslaStore, approval: MohassanApproval) {
     ForestCard {
         LabelRow(Icons.Outlined.VerifiedUser, "يحتاج موافقتك")
         Text(approval.prompt, style = MaterialTheme.typography.bodyLarge, color = forest.ink)
+        // What the server's permission gate bound this approval to (2026-11-23); absent from older servers.
+        approval.bindingLines.forEach { Footnote(it) }
         if (approval.detail.isNotEmpty()) Footnote(approval.detail)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             ForestButton(onClick = { store.approveMohassan(false) }, Modifier.weight(1f), prominent = false, enabled = !busy) { Text("رفض") }

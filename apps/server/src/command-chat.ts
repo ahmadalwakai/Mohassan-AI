@@ -21,7 +21,7 @@ import {
   SEARCH_REPEATED, SEARCH_UNUSABLE, asksToRemember, needsReview, noteAttempt, reviewRequest, searchKey, sensitiveAction, siteOf, situation, skillContextBudget, stepLabel, systemPrompt, type BrainState, type Decision, type ModelTier, type WorkTool,
 } from './assistant/brain.js';
 import { ADS_DRAFT_NOTE, ADS_SKILL_SLUG } from './assistant/ads-check.js';
-import { LIVE, PROVIDER_SPACING_MS, isBareAddress, isFollowUp, notWebReason, parseHands, plainTitle, refersBack, runHands, siteQuestion, siteToOpen, tidy, topicWords, unnamedSite, webQuestion, type HandsIO, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
+import { LIVE, PROVIDER_SPACING_MS, answerSubject, isBareAddress, isFollowUp, notWebReason, parseHands, plainTitle, refersBack, runHands, siteQuestion, siteToOpen, tidy, topicWords, unnamedSite, webQuestion, type HandsIO, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
 import { liveLabel } from './assistant/activity.js';
 import type { DesktopCommand, DesktopOutcome, ParsedDesktopCommand } from '@mohassan/desktop';
 import { searchRefusedReply, unsupportedReply, unsupportedRequest } from './assistant/unsupported-request.js';
@@ -37,7 +37,7 @@ import type { SkillReader, SkillReadMode } from './assistant/skill-reader.js';
 import { buildSiteReply, siteAnswers, siteCard, siteCommandTurn, siteTask, type SitesChatPort } from './assistant/site-builder.js';
 import { composeDocumentSpec, documentCreatedReply, documentEditedReply, documentInfoReply, documentQuestion, documentRequestGaps, documentTask, noSourceReply, unsupportedDocumentReply, type DocumentEditTask, type DocumentOperation } from './assistant/documents.js';
 import { PdfError, parsePageSelection } from '@mohassan/pdf';
-import type { DocumentControl, DocumentEdit, DocumentInput } from './documents.js';
+import type { DocumentControl, DocumentEdit, DocumentInput, StoredDocument } from './documents.js';
 import { evaluateLocalComputation } from './assistant/local-computation.js';
 import { composeReferencedComputation, computationReference, computedRecord, evaluateReferencedComputation, latestComputedResult, missingReferenceQuestion, referencedValueFromAnswer, withReferencedValue } from './assistant/computation-reference.js';
 import { evaluateLocalRecall } from './assistant/local-recall.js';
@@ -96,6 +96,14 @@ import { guardMemorySave } from './assistant/mind/index.js';
 import { stopChromeJobsForRun, type ChromeExtensionControl } from './chrome-extension.js';
 import { assessBrowserVerification } from './assistant/verification.js';
 import { newGoalState, observeFailure, observeOutcome, reviewOpen, reviewStop, stagnationWarning, type BrainVersion } from './assistant/goal-integrity.js';
+import { ChatWaitQuerySchema, abortWhenClosed, conversationVersion, waitForChange } from './chat-wait.js';
+import { noPreviousAnswer, shorterAnswer, shorterRequest } from './assistant/answer-reshape.js';
+import { fullerName, returnParts } from './assistant/return-to.js';
+import { RunLedgerError, addEvidence, appendStep, beginRepair, cancelLedger, classifySteering, collectStateEvidence, countModelCall, createRunLedger, criterionLabel, decideVerdict, planStep,
+  projectRunView, restoreRunLedger, setStepAuthorization, settleOpenSteps, settleStep, startStep, tryEnterPhase, type RunLedger } from './assistant/agent-run.js';
+import { PermissionGateError, checkPermission, consumePermission, pendingActionMaterial, recordDecision, requestPermission } from './assistant/permission-gate.js';
+import { TOOL_ACTION, advanceHandsStep, desktopPlanStep, documentPlanStep, gateRefusalText, handsStepId, pathOfHandler, platformCapabilityOf, recordHandsPlan, recordModelStep,
+  settleHandsPart, verifyStoredPdf } from './assistant/run-plans.js';
 
 export interface DesktopChatPort {
   parse(request: string): ParsedDesktopCommand | null;
@@ -205,6 +213,12 @@ export interface CommandChatConfig {
    * under its own access rules. `all` (the default, labs): every line keeps its text, as before.
    */
   judgeLogText?: 'all' | 'owner';
+  /**
+   * Run limits of the runtime (docs/architecture/agent-execution.md). `repairsPerRun`: how many corrections one run may
+   * make after a check fails (default 1, at most 20); the same failure twice on one step is never retried again. The run
+   * time limit (15 min) and the model loop's decision budgets stay where they are (RUN_LIMIT_MS, progress-recovery.ts).
+   */
+  limits?: { repairsPerRun?: number };
 }
 
 export interface ChatSkillContext {
@@ -218,6 +232,8 @@ const MAX_AUTH_ATTEMPTS = 8;
 const RUN_LIMIT_MS = 15 * 60000;
 const MAX_OUTPUT_TOKENS = 1800;
 const HISTORY_MESSAGES = 6;
+/** The newest messages a conversation's detail carries; `olderMessages` counts the rest. */
+const MESSAGE_WINDOW = 300;
 const WAITING_STATUSES = ['waiting_user', 'waiting_input', 'waiting_approval'];
 const GOOGLE_SIGN_IN_ORIGIN = 'https://accounts.google.com';
 const GOOGLE_SIGN_IN_STOP = 'توقفت عند صفحة تسجيل الدخول إلى Google. متصفح موحسن الحالي لا يدعم إكمال تسجيل الدخول إلى Google داخل هذه الجلسة.';
@@ -772,6 +788,122 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     await runTransaction(current.id,runId,tx=>tx.updateTable('chat_runs').set({ state: JSON.stringify(vault.scrubValue(current.id,state,clean)), steps: state.steps, updated_at: new Date() }).where('id', '=', runId).execute());
   }
 
+  /**
+   * The run ledger (assistant/agent-run.ts) carried in the run's state: created when the run is sent; a run recorded before
+   * ledgers existed gets one the first time the runtime touches it. Only host code writes it.
+   */
+  function ledgerOf(state: BrainState, runId: string): RunLedger {
+    const restored = restoreRunLedger(state.agentRun, runId);
+    state.agentRun = restored ?? createRunLedger({ runId, at: Date.now(), repairLimit: config.limits?.repairsPerRun });
+    return state.agentRun;
+  }
+  /** A ledger hook never stops a run: an unexpected transition is logged, and the run row's status stays the authority. */
+  function ledgerSafe(state: BrainState, runId: string, change: (ledger: RunLedger) => void) {
+    try { change(ledgerOf(state, runId)); }
+    catch (error) {
+      if (!(error instanceof RunLedgerError)) throw error;
+      console.error(JSON.stringify({ level: 'warn', event: 'run_ledger_rejected', runId, code: error.code, message: error.message, details: error.details.slice(0, 4) }));
+    }
+  }
+
+  /**
+   * The permission gate at the execution boundary (assistant/permission-gate.ts): the stored pending action runs only
+   * when the owner's recorded yes covers its exact details, for this actor, conversation and run. Whatever resumed the
+   * run (the approve route, a retry, a reconnect) comes through here. Returns false after ending the run as blocked;
+   * nothing is dispatched then, and the pending action is cleared so it can never run later. A run whose approval was
+   * asked before the gate existed has no permission record and keeps the approval it was asked under.
+   */
+  async function admitPending(id: string, runId: string, state: BrainState, request: string): Promise<boolean> {
+    const ledger = restoreRunLedger(state.agentRun, runId);
+    const pending = pendingActionMaterial(state);
+    if (!ledger || !pending || !ledger.permissions.length) return true;
+    const current = execution.getStore();
+    if (!current) throw new RunEnded();
+    const at = Date.now();
+    const asked = ledger.permissions.findLast(item => item.decision !== 'invalidated' && item.decision !== 'expired');
+    const capability = pending.material.capability;
+    const platform = platformCapabilityOf(capability);
+    const ownerOnly = capability.startsWith('desktop.') || capability.startsWith('computer.') || capability === 'runtime.task';
+    const decision = checkPermission(ledger, { material: pending.material, actorId: current.ownerId, conversationId: id, runId,
+      actorAllowed: !ownerOnly || current.full && (!config.fullAccess || await config.fullAccess(current.ownerId) === true),
+      platformAllowed: !platform || requestCapabilityAllowed(parseUserRequestConstraints(request), platform), approvalId: asked?.id ?? null, at });
+    const stepId = asked?.stepId ?? null;
+    if (decision.decision === 'allow') {
+      consumePermission(ledger, decision.record.id, at);
+      if (stepId) ledgerSafe(state, runId, run => startStep(run, stepId, at));
+      tryEnterPhase(ledger, 'executing', at);
+      await saveState(runId, state);
+      return true;
+    }
+    if (stepId) ledgerSafe(state, runId, run => settleStep(run, stepId, 'invalidated', at));
+    const held = Boolean(state.pendingHeld);
+    state.pendingAction = null; state.pendingHeld = null; state.pendingTask = null; state.pendingComputer = null; state.pendingDesktop = null;
+    if (held) state.dropHeld = true;
+    state.trail.push({ step: state.steps, action: 'permission gate', result: `not run: ${decision.reason}`, changed: false });
+    await finish(id, runId, state, gateRefusalText(decision.reason, /\p{Script=Arabic}/u.test(request) ? 'ar' : 'en'), 'blocked');
+    return false;
+  }
+
+  /** The run ledger: a PDF to create or edit is one step, verified only by reading the stored file back. */
+  function startDocumentStep(state: BrainState, runId: string, kind: 'create' | 'edit', lang: 'ar' | 'en', name: string | null) {
+    ledgerSafe(state, runId, ledger => {
+      const at = Date.now();
+      const step = documentPlanStep(kind, lang, name);
+      if (!ledger.plan?.steps.some(item => item.id === step.id)) appendStep(ledger, step, at);
+      if (ledger.plan?.steps.find(item => item.id === step.id)?.state !== 'running') startStep(ledger, step.id, at);
+      tryEnterPhase(ledger, 'executing', at);
+    });
+  }
+  /**
+   * The resulting-state check of a stored PDF: the file is read back from storage and must be the PDF the create or edit
+   * call reported (run-plans.ts verifyStoredPdf). Returns '' when it is, or the sentence that makes the reply partial.
+   */
+  async function readBackDocument(ownerId: string, state: BrainState, runId: string, kind: 'create' | 'edit', lang: 'ar' | 'en', stored: StoredDocument): Promise<string> {
+    let readback: Awaited<ReturnType<DocumentControl['content']>> | null = null;
+    try { readback = await config.documents!.control.content(ownerId, stored.id); }
+    catch (error) { if (!(error instanceof PdfError)) throw error; }
+    await assertActive();
+    const checked = verifyStoredPdf(stored, readback);
+    ledgerSafe(state, runId, ledger => {
+      const at = Date.now();
+      settleStep(ledger, `document-${kind}`, checked.ok ? 'verified' : 'failed', at);
+      addEvidence(ledger, { stepId: `document-${kind}`, kind: 'readback', reference: `document:${stored.id}`, independent: checked.ok,
+        label: checked.ok ? `${stored.name}: ${stored.pages} page(s), ${stored.size} bytes, read back` : `${stored.name}: read-back check failed (${checked.problems.join(', ')})` }, at);
+    });
+    state.trail.push({ step: ++state.steps, action: 'document_readback', changed: false, result: checked.ok ? 'stored PDF read back: same size and hash' : `read-back failed: ${checked.problems.join(', ')}` });
+    if (checked.ok) return '';
+    return lang === 'ar'
+      ? `\n\nلم أتحقق من الملف بعد حفظه: قراءته من التخزين لم تطابق ما أُنشئ (${checked.problems.join('، ')}). لا تعتمد عليه قبل فتحه.`
+      : `\n\nI could not verify the file after saving it: reading it back from storage did not match what was made (${checked.problems.join(', ')}). Do not rely on it before opening it.`;
+  }
+
+  /**
+   * Ends a working or waiting run because the owner corrected it (steering), inside the transaction that starts the
+   * corrected run. Same effects as a stop: the lease token rotates so the old worker can no longer write, started browser
+   * effects become unknown and are never repeated, and every pending action and approval of the old objective is
+   * cleared and invalidated in its ledger.
+   */
+  async function supersedeRun(tx: Kysely<any>, ownerId: string, id: string, oldRunId: string, newRunId: string) {
+    const run = await tx.selectFrom('chat_runs').select(['lease_token', 'state', 'goal']).where('id', '=', oldRunId).where('conversation_id', '=', id).where('owner_id', '=', ownerId).forUpdate().executeTakeFirstOrThrow();
+    const state: BrainState = { ...newBrainState(), ...(run.state ?? {}) };
+    const at = Date.now();
+    const ledger = ledgerOf(state, oldRunId);
+    try { cancelLedger(ledger, 'superseded', at); } catch (error) { if (!(error instanceof RunLedgerError)) throw error; }
+    const pendingTask = state.pendingTask ?? null;
+    const held = Boolean(state.pendingHeld);
+    state.pendingAction = null; state.pendingHeld = null; state.pendingTask = null; state.pendingComputer = null; state.pendingDesktop = null; state.pendingClick = null;
+    state.trail.push({ step: state.steps, action: 'owner correction', result: `superseded by run ${newRunId}; queued actions were invalidated and not run`, changed: false });
+    await tx.updateTable('chat_runs').set({ status: 'cancelled', lease_token: randomUUID(), state: JSON.stringify(state), updated_at: new Date() }).where('id', '=', oldRunId).execute();
+    if (config.chromeExtension) await stopChromeJobsForRun(tx, ownerId, oldRunId);
+    await tx.updateTable('chat_effect_receipts').set({ status: 'unknown', finished_at: new Date() }).where('run_id', '=', oldRunId).where('status', '=', 'started').execute();
+    await tx.updateTable('chat_model_receipts').set({ status: 'unknown', error_code: 'CHAT_SUPERSEDED', finished_at: new Date() }).where('run_id', '=', oldRunId).where('status', '=', 'started').execute();
+    await recordTerminalRun(tx, oldRunId, 'cancelled');
+    await closeOpenCampaignTasks(tx, id, oldRunId, unresolved => campaignCancelEvent('owner_cancelled', unresolved));
+    await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: oldRunId, kind: 'superseded',
+      message: 'صحّح المالك الطلب أثناء العمل؛ أُلغي ما كان معلّقًا ولم يُنفَّذ.', data: JSON.stringify({ by: newRunId }) }).execute();
+    return { runId: oldRunId, token: run.lease_token as string, goal: String(run.goal ?? ''), pendingTask, held };
+  }
+
   async function recordChatAction(runId: string, state: BrainState, event: ActionCompletionEventInput) {
     const request = execution.getStore()?.request;
     const current = request ? restoreActionCompletionLedger(state.actionCompletion, { runId, request }) : null;
@@ -877,13 +1009,21 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
 
   async function detail(ownerId: string, id: string): Promise<ChatConversation> {
     const row = await owned(ownerId, id);
-    const lastRun = await db.selectFrom('chat_runs').select(['id', 'state']).where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(1).executeTakeFirst();
-    const [messages, steps] = await Promise.all([
-      db.selectFrom('chat_messages').selectAll().where('conversation_id', '=', id).orderBy('created_at', 'asc').orderBy('id', 'asc').limit(300).execute(),
+    // The mark is read before the lists, so the lists are never older than it: a change in between only makes the next
+    // held request (chat-wait.ts) answer at once.
+    const version = await conversationVersion(db, ownerId, id);
+    const lastRun = await db.selectFrom('chat_runs').select(['id', 'state', 'status', 'created_at', 'updated_at']).where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(1).executeTakeFirst();
+    // The newest 300 messages. Until 2026-11-23 these were the first 300, so a conversation past 300 messages kept its new
+    // questions and answers in the database and never showed them.
+    const [newest, steps] = await Promise.all([
+      db.selectFrom('chat_messages').selectAll().where('conversation_id', '=', id).orderBy('created_at', 'desc').orderBy('id', 'desc').limit(MESSAGE_WINDOW).execute(),
       lastRun
-        ? db.selectFrom('chat_events').select(['id', 'message', 'created_at']).where('run_id', '=', lastRun.id).where('kind', '=', 'step').orderBy('created_at', 'desc').limit(40).execute()
+        ? db.selectFrom('chat_events').select(['id', 'message', 'created_at']).where('conversation_id', '=', id).where('run_id', '=', lastRun.id).where('kind', '=', 'step').orderBy('created_at', 'desc').limit(40).execute()
         : Promise.resolve([]),
     ]);
+    const olderMessages = newest.length < MESSAGE_WINDOW ? 0 : Math.max(0, Number((await db.selectFrom('chat_messages')
+      .select(eb => eb.fn.countAll<string | number>().as('n')).where('conversation_id', '=', id).executeTakeFirstOrThrow()).n) - newest.length);
+    const messages = newest.reverse();
     const saved=AgentSessionCheckpointSchema.safeParse(row.browser_checkpoint);
     const checkpoint=saved.success?saved.data:null;
     const page = (row.browser_state??(checkpoint?{url:checkpoint.resumeUrl??'about:blank',title:'جلسة محفوظة',observedAt:checkpoint.observedAt??checkpoint.savedAt,version:checkpoint.pageHash??'saved'}:null)) as { url: string; title: string; observedAt: string; version: string } | null;
@@ -901,6 +1041,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       visibility: deriveBrowserVisibility({ request: messages.findLast(item => item.role === 'user')?.text ?? '', route: lastRun?.state?.routing?.route ?? null,
         role: (config.fullAccess ? await config.fullAccess(ownerId) : true) ? 'owner' : 'member', hasPage: Boolean(page), status: row.status,
         secure: row.secure ?? null, approval: row.approval ?? null, firstStep: steps[0]?.message ?? null, decidedAt: iso(row.updated_at) }),
+      ...(version ? { version } : {}),
+      ...(olderMessages ? { olderMessages } : {}),
+      // The latest run as the runtime committed it (assistant/agent-run.ts); its row status is the authority for the verdict.
+      run: lastRun ? projectRunView({ runId: lastRun.id, status: lastRun.status, ledger: lastRun.state?.agentRun, createdAt: lastRun.created_at, updatedAt: lastRun.updated_at,
+        // Model calls are counted in the ledger; only a run recorded before ledgers existed is counted from its receipts.
+        ...(lastRun.state?.agentRun ? {} : { modelCalls: Number((await db.selectFrom('chat_model_receipts').select(eb => eb.fn.countAll<string | number>().as('n'))
+          .where('run_id', '=', lastRun.id).where('status', '=', 'succeeded').executeTakeFirstOrThrow()).n) }) }) : null,
     });
   }
 
@@ -932,7 +1079,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       await assertActive();
       signal.throwIfAborted();
       try {
-        return await thinkOnce(id, runId, state, prompt, tier, signal, skillsEnabled, offered, memoryJson, recoveryRouter);
+        const decision = await thinkOnce(id, runId, state, prompt, tier, signal, skillsEnabled, offered, memoryJson, recoveryRouter);
+        // The run ledger counts each model call that returned a valid decision: the engine a client sees is this count.
+        ledgerSafe(state, runId, ledger => countModelCall(ledger, Date.now()));
+        return decision;
       } catch (error) {
         signal.throwIfAborted();
         await assertActive();
@@ -1075,7 +1225,59 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     };
   }
 
+  /**
+   * Binds an approval card to the exact action waiting for it (permission-gate.ts): the card's id, the actor, the
+   * conversation, the run and the fingerprint of the stored pending action are recorded, and the card gains what the
+   * action touches, what follows and whether it can be undone. An action the owner already refused in this run is not
+   * asked about again: 'refused'.
+   */
+  function gateApprovalCard(id: string, runId: string, state: BrainState, fields: Record<string, unknown>, at: number): Record<string, unknown> | 'refused' {
+    const current = execution.getStore();
+    const lang = /\p{Script=Arabic}/u.test(current?.request ?? '') ? 'ar' : 'en';
+    const pending = pendingActionMaterial(state, lang);
+    let card: { id?: unknown; prompt?: unknown; detail?: unknown } | null = null;
+    try { card = typeof fields.approval === 'string' ? JSON.parse(fields.approval) : null; } catch { card = null; }
+    if (!current || !pending || !card || typeof card.id !== 'string') return fields;
+    const approvalId = card.id;
+    const ledger = ledgerOf(state, runId);
+    const earlier = checkPermission(ledger, { material: pending.material, actorId: current.ownerId, conversationId: id, runId, actorAllowed: true, platformAllowed: true, at });
+    if (earlier.decision === 'deny' && earlier.reason === 'owner_refused') return 'refused';
+    let stepId: string | null = null;
+    ledgerSafe(state, runId, run => {
+      const working = run.plan?.steps.find(step => step.state === 'running')
+        ?? (pending.kind === 'desktop' ? run.plan?.steps.find(step => step.id === 'desktop' && step.state === 'pending') : undefined);
+      if (working) stepId = working.id;
+      else {
+        const appended = planStep({ id: `approve-${(run.plan?.steps.length ?? 0) + 1}`, capability: pending.material.capability, outcome: pending.material.action,
+          input: pending.material.target, acceptance: [lang === 'ar' ? 'نُفّذ الإجراء الموافَق عليه بتفاصيله نفسها مرة واحدة' : 'The approved action ran once with the same details'], authorization: 'required' });
+        if (appendStep(run, appended, at)) stepId = appended.id;
+      }
+      if (stepId) { setStepAuthorization(run, stepId, 'required', at); settleStep(run, stepId, 'awaiting_approval', at); }
+    });
+    try {
+      requestPermission(ledger, { approvalId, actorId: current.ownerId, conversationId: id, runId, material: pending.material, stepId, at });
+    } catch (error) {
+      if (!(error instanceof PermissionGateError)) throw error;
+      return fields; // Not a registered action: the card stays as asked, and admitPending refuses it before it runs.
+    }
+    return { ...fields, approval: JSON.stringify({ ...card, target: pending.material.target, consequence: pending.material.consequence, reversible: pending.material.reversible }) };
+  }
+
   async function pause(id: string, runId: string, state: BrainState, status: string, fields: Record<string, unknown>, say?: string) {
+    // The run ledger: the run is suspended, waiting for the owner. An approval card is bound to its exact action first; an
+    // action already refused in this run ends the run instead of being asked again.
+    const pausedAt = Date.now();
+    if (status === 'waiting_approval') {
+      const gated = gateApprovalCard(id, runId, state, fields, pausedAt);
+      if (gated === 'refused') {
+        state.pendingAction = null; state.pendingHeld = null; state.pendingTask = null; state.pendingComputer = null; state.pendingDesktop = null;
+        await finish(id, runId, state, gateRefusalText('owner_refused', /\p{Script=Arabic}/u.test(execution.getStore()?.request ?? '') ? 'ar' : 'en'), 'blocked');
+        return;
+      }
+      fields = gated;
+      ledgerSafe(state, runId, ledger => tryEnterPhase(ledger, 'awaiting_approval', pausedAt));
+    } else ledgerSafe(state, runId, ledger => tryEnterPhase(ledger, 'awaiting_input', pausedAt));
+    ledgerSafe(state, runId, ledger => collectStateEvidence(ledger, state, pausedAt));
     await saveState(runId, state);
     await runTransaction(id,runId,async (tx) => {
       const current = await tx.selectFrom('chat_conversations').select(['status', 'active_run_id']).where('id', '=', id).forUpdate().executeTakeFirstOrThrow();
@@ -1214,6 +1416,18 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           }
         }
       }
+      // The runtime's verdict (assistant/agent-run.ts), committed with the reply in this transaction: it can lower the
+      // status the path concluded (a required plan step failed, never ran or has an unknown effect; an enforced criterion
+      // is unmet), never raise it. The path is direct when the run used no tool.
+      const verdictAt = Date.now();
+      ledgerSafe(state, runId, ledger => {
+        collectStateEvidence(ledger, state, verdictAt);
+        ledger.path ??= state.trail.some(entry => TOOL_ACTION.test(entry.action)) ? 'action' : 'direct';
+        settleOpenSteps(ledger, finalStatus, verdictAt);
+        if (ledger.path === 'direct') tryEnterPhase(ledger, 'answering', verdictAt);
+        finalStatus = decideVerdict(ledger, { hostStatus: finalStatus, review: state.completionReview ?? null, at: verdictAt,
+          criterionLabels: Object.fromEntries((state.supervision?.contract.criteria ?? []).map(item => [item.id, criterionLabel(ledger, item.id, item.description)])) }).status;
+      });
       await addMessage(tx, id, 'assistant', finalText);
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',
@@ -1772,6 +1986,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const constraints = parseUserRequestConstraints(request);
       const currentExecution = execution.getStore()!;
       currentExecution.request = request; currentExecution.constraints = constraints; currentExecution.state = state;
+      // The run ledger: the worker starts (or resumes, after a card or an approval) by understanding the request.
+      ledgerSafe(state, runId, ledger => tryEnterPhase(ledger, 'understanding', Date.now()));
       // Level 4 (plan §6.1): a member asked for the computer's browser. One line with the reason and the alternative; no browser starts.
       if (!currentExecution.full) {
         const level = decideBrowserVisibility({ request, route: state.routing?.route ?? null, role: 'member' });
@@ -2007,6 +2223,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const runDesktopCommand = async (command: DesktopCommand, lang: 'ar' | 'en', approved: boolean): Promise<void> => {
         const desktop = config.desktop!;
         const label = desktop.describe(command, lang);
+        // The run ledger: one desktop command is one plan step, checked only by the engine's own report (run-plans.ts).
+        ledgerSafe(state, runId, ledger => {
+          const at = Date.now();
+          if (!ledger.plan?.steps.some(step => step.id === 'desktop')) appendStep(ledger, desktopPlanStep(command, label, lang), at);
+          if (ledger.plan?.steps.find(step => step.id === 'desktop')?.state !== 'running') startStep(ledger, 'desktop', at);
+          tryEnterPhase(ledger, 'executing', at);
+        });
         await addStep(id, runId, label);
         await setProgress(id, `${label}…`);
         const outcome = await desktop.execute(command, { approved, lang, signal });
@@ -2017,6 +2240,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           await pause(id, runId, state, 'waiting_approval', { approval: JSON.stringify({ id: randomUUID(), prompt: clean(outcome.approval.prompt).slice(0, 1000), detail: clean(outcome.approval.detail).slice(0, 1000) }) }, outcome.approval.prompt);
           return;
         }
+        ledgerSafe(state, runId, ledger => {
+          const at = Date.now();
+          settleStep(ledger, 'desktop', outcome.status === 'completed' ? 'verified' : 'failed', at);
+          addEvidence(ledger, { stepId: 'desktop', kind: 'adapter_report', label: clean(outcome.text).slice(0, 200), independent: false }, at);
+        });
         state.trail.push({ step: ++state.steps, action: `desktop ${command.kind}`, result: clean(outcome.text).slice(0, 1100), changed: outcome.status === 'completed' });
         await finish(id, runId, state, vault.scrub(id, outcome.text), outcome.status === 'needs_approval' ? 'blocked' : outcome.status);
       };
@@ -2134,6 +2362,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           : 'A previous browser operation has an unresolved result. Read and review its outcome before continuing actions; it has not been repeated.', 'partial');
         return;
       }
+      // The permission gate at the execution boundary (assistant/permission-gate.ts): whatever resumed this run (the
+      // approve route, a retry, a reconnect), a pending action runs only when the owner's recorded yes covers its exact
+      // details, for this account, conversation and run. Otherwise nothing runs and the run ends blocked.
+      if ((state.pendingAction || state.pendingHeld || state.pendingTask || state.pendingComputer || state.pendingDesktop) && !await admitPending(id, runId, state, request)) return;
       if (state.pendingAction) {
         const pending=state.pendingAction;
         state.pendingAction=null;
@@ -2193,6 +2425,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       // The browser's hands without a model: plain commands run on the observed page.
       let handsPlan = state.hands ?? null;
+      // The fuller name a return to an earlier subject is searched under («ألبرت أينشتاين» for «ارجع إلى أينشتاين: …»). Its
+      // words come from the titles of public pages this conversation read, so its search is checked as a generated query:
+      // every word must be in the request or in those public receipts (state.publicQueryTerms).
+      let returnName: string | null = null;
       // A clarification has performed no tools; only the owner's reply is in its
       // trace. It can re-enter the normal route without replaying any action.
       const requestTrail = state.trail.filter(entry => !entry.action.startsWith('browser_recovery '));
@@ -2365,6 +2601,23 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             return;
           }
           // An earlier result exists but the request does not read as a calculation on it: the ordinary paths go on.
+        }
+        // «اختصر جوابك السابق في جملة واحدة», "make it shorter": the previous answer's own opening and its source, quoted
+        // (assistant/answer-reshape.ts). Refused as an unfollowable reference before 2026-11-23.
+        const shorter = shorterRequest(actionRequest);
+        if (shorter) {
+          const previousAnswer = history.findLast(entry => entry.role === 'assistant')?.text ?? null;
+          const shortened = previousAnswer ? shorterAnswer(previousAnswer, shorter) : null;
+          // The page the answer was read from stays the conversation's page, so «اشرح أكثر» next reads more of it.
+          const previousFound = shortened ? (await db.selectFrom('chat_runs').select('state').where('conversation_id', '=', id).where('owner_id', '=', ownerId)
+            .where('id', '!=', runId).orderBy('created_at', 'desc').limit(1).executeTakeFirst())?.state?.handsFound : null;
+          if (previousFound && typeof previousFound.url === 'string') state.handsFound = previousFound;
+          await addStep(id, runId, shorter.lang === 'ar' ? 'اختصار الجواب السابق' : 'Shortening the previous answer');
+          state.trail.push({ step: ++state.steps, action: 'shorten_previous_answer', changed: false, result: clean(shortened ?? 'no earlier answer').slice(0, 1100) });
+          // A quote of the previous answer, which the judge saw when it was sent: judged again against «اختصر جوابك», it was
+          // withheld as «the page does not talk about your question» (long-after turn 17, 2026-11-23).
+          await finish(id, runId, state, vault.scrub(id, shortened ?? noPreviousAnswer(shorter.lang)), shortened ? 'completed' : 'blocked', undefined, undefined, true);
+          return;
         }
       }
       // «افتح موقعًا واعرض لي محتواه», the home screen's own suggestion, names no website: one card asks which, and the answer
@@ -2571,12 +2824,23 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const ambiguousReference = understanding?.kind === 'ambiguous' && understanding.ambiguities.some(reason => reason === 'missing_reference' || reason === 'missing_question' || reason === 'unclear_replacement');
         // A pronoun follow-up («وكم عدد سكانها؟» after an answer read from the Tokyo article) asks about the thing the last answer
         // named, not about the words of the last question: «كم عدد سكانها طوكيو», where «كم عدد سكانها عاصمة اليابان» read Hokkaido (2026-11-22).
-        const namedBefore = freshRequest && !steps && isFollowUp(tidy(actionRequest)) && refersBack(tidy(actionRequest))
-          ? plainTitle(String((await db.selectFrom('chat_runs').select('state').where('conversation_id', '=', id).where('owner_id', '=', ownerId).where('id', '!=', runId)
-            .orderBy('created_at', 'desc').limit(1).executeTakeFirst())?.state?.handsFound?.title ?? '')) : '';
+        // The item the answer named stands for its page when narrower («نهر النيل» read from «نهر»): answerSubject in hands.ts.
+        const foundBefore = freshRequest && !steps && isFollowUp(tidy(actionRequest)) && refersBack(tidy(actionRequest))
+          ? (await db.selectFrom('chat_runs').select('state').where('conversation_id', '=', id).where('owner_id', '=', ownerId).where('id', '!=', runId)
+            .orderBy('created_at', 'desc').limit(1).executeTakeFirst())?.state?.handsFound : null;
+        const namedBefore = foundBefore && typeof foundBefore.title === 'string'
+          ? answerSubject({ title: foundBefore.title, lines: Array.isArray(foundBefore.lines) ? foundBefore.lines.filter((line: unknown): line is string => typeof line === 'string') : [] }) : '';
         const entityAsk = namedBefore ? webQuestion(actionRequest, [namedBefore]) : null;
+        // «ارجع إلى أينشتاين: أين ولد؟» asks about the subject by the fuller name an earlier answer was read under («ألبرت
+        // أينشتاين»): searched as the one word, it was answered from his father's page (long-final turn 11, 2026-11-23).
+        const returning = freshRequest && !steps && !entityAsk ? returnParts(clean(request)) : null;
+        const earlierTitles = returning ? (await db.selectFrom('chat_runs').select('state').where('conversation_id', '=', id).where('owner_id', '=', ownerId)
+          .where('id', '!=', runId).orderBy('created_at', 'desc').limit(12).execute())
+          .map(row => row.state?.handsFound?.title).filter((title): title is string => typeof title === 'string').map(title => plainTitle(title)) : [];
+        returnName = returning ? fullerName(returning.subject, earlierTitles) : null;
+        const returnAsk = returning && returnName ? webQuestion(`${returning.question} ${returnName}`) : null;
         const asked = !ambiguousReference && !privateRequest && !steps && !(tools?.memory && memoryRecallFormat(request)) && !projectInventoryFormat(request)
-          ? entityAsk ?? webQuestion(contextualQuery ?? actionRequest, contextualQuery ? [] : earlierAsks) : null;
+          ? entityAsk ?? returnAsk ?? webQuestion(contextualQuery ?? actionRequest, contextualQuery ? [] : earlierAsks) : null;
         // A follow-up reaches the mind with the previous question's topic, as the browser search does.
         const resolved = asked?.[0]?.kind === 'search' ? asked[0].query : null;
         if (resolved && isFollowUp(tidy(request))) state.resolvedRequest = resolved;
@@ -2625,6 +2889,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           }
         }
         state.hands = plan;
+        // The run ledger: the hands plan as typed steps, recorded once per plan (a resumed run finds its own steps).
+        let handsPrefix = '';
+        ledgerSafe(state, runId, ledger => { handsPrefix = recordHandsPlan(ledger, plan, Date.now()); });
         const readPage = config.readPage;
         // A live question (a price, the weather, a score) reads its pages afresh; anything else may come from the page cache.
         const liveQuestion = plan.steps.some(step => step.kind === 'search' && LIVE.test(step.query));
@@ -2656,7 +2923,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           },
           search: async (query, limit) => {
             await active();
-            assertPublicSearch(request, query, state);
+            assertPublicSearch(request, query, state, Boolean(returnName && query.includes(returnName)));
             // The shared engine reports each provider's failure: a search whose providers did not answer is a failed request
             // (RESEARCH_PROVIDERS_FAILED), told apart from one that answered with nothing about the question (2026-11-23).
             const engine = search as Partial<Pick<SearchEngine, 'execute'>>;
@@ -2679,7 +2946,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           act: async action => { await active(); const result = await actBrowser(ownerId, id, action, authority()); page = result.page; await keepPage(id, page); state.trail.push({ step: ++state.steps, action: `${action.kind} ${action.text ?? action.ref ?? ''}`.trim().slice(0, 300), result: `now at ${page.url}`, changed: result.changed }); return page; },
           prepare: action => prepareBrowserAction(ownerId, id, action),
           settle: async next => { const settled = await instincts(ownerId, id, runId, state, next, signal, personalSignIn); if (settled) { page = settled; await keepPage(id, settled); } return settled; },
-          step: async label => { await active(); await addStep(id, runId, label); await setProgress(id, `${liveLabel(label)}…`); },
+          step: async label => { await active(); if (handsPrefix) ledgerSafe(state, runId, ledger => advanceHandsStep(ledger, plan, handsPrefix, Date.now())); await addStep(id, runId, label); await setProgress(id, `${liveLabel(label)}…`); },
           progress: async label => { await active(); await setProgress(id, `${label}…`); },
           approve: async (action, permit, label) => { await pauseBrowserAction(id, runId, state, { action, permit, label }); },
           hold: async (held, label) => { await pauseHeld(id, runId, state, held, label); },
@@ -2702,7 +2969,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           const asking = plan.steps.at(-1);
           const refusal = outcome.kind === 'done' && asking?.kind === 'search' && asking.ask && plan.found?.url && !plan.found.official && !plan.rejected?.length
             ? judgeWouldWithhold(vault.scrub(id, outcome.text), outcome.status, judgedAs) : null;
-          if (refusal && plan.found) {
+          // The run ledger counts the correction against the run's repair limit (CommandChatConfig.limits.repairsPerRun);
+          // the same refusal twice on one step is not corrected a third time (agent-run.ts beginRepair).
+          let repairAllowed = true;
+          if (refusal && plan.found) ledgerSafe(state, runId, ledger => {
+            repairAllowed = beginRepair(ledger, { stepId: handsPrefix ? handsStepId(handsPrefix, plan.steps.length - 1) : null, signature: `judge:${refusal.join(',')}` }, Date.now()).allowed;
+          });
+          if (refusal && plan.found && repairAllowed) {
             const firstFound = plan.found, firstResults = plan.results;
             plan.rejected = [firstFound.url];
             plan.next = plan.steps.length - 1;
@@ -2747,6 +3020,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           const next = continueWebSequence(plan.sequel, { request: plan.sequel.asked, text: judged.text, status: judged.withheld && outcome.status === 'completed' ? 'partial' : outcome.status },
             plan.found?.title ? plainTitle(plan.found.title) : '', lang);
           if ('plan' in next) {
+            // The run ledger: this part's steps settle with its own judged status before the next part's plan is recorded.
+            const partStatus = judged.withheld && outcome.status === 'completed' ? 'partial' : outcome.status;
+            if (handsPrefix) ledgerSafe(state, runId, ledger => settleHandsPart(ledger, handsPrefix, partStatus, Date.now()));
             // The next part is a new search: wait out the engine's one second between two calls to a provider.
             await new Promise(resolve => setTimeout(resolve, PROVIDER_SPACING_MS));
             await active();
@@ -2792,13 +3068,17 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           state.questionAnswer = undefined;
           await addStep(id, runId, ar ? 'إنشاء ملف PDF' : 'Creating the PDF');
           await setProgress(id, ar ? 'ينشئ ملف PDF…' : 'Creating the PDF…');
+          startDocumentStep(state, runId, 'create', documentWork.lang, documentWork.fileName ?? null);
           try {
             const stored = await documents.control.create(ownerId, id, composed.spec, signal, documentWork.fileName ? { name: documentWork.fileName } : {});
             // What the request asked of the file and the stored file does not show (page count, unsupported design) is said, and the task is partial.
             const gaps = documentRequestGaps(documentWork, stored);
             state.trail.push({ step: ++state.steps, action: 'document_create', changed: true,
               result: clean(`${stored.name}: ${stored.pages} page(s), ${stored.size} bytes, theme ${stored.theme ?? 'plain'}${gaps.length ? `; gaps: ${gaps.join(' | ')}` : ''}`).slice(0, 600) });
-            await finish(id, runId, state, documentCreatedReply(stored, documents.link(stored.id), documentWork.lang, composed.emptyContent, gaps), composed.emptyContent || gaps.length ? 'partial' : 'completed');
+            // The create call's success is not the outcome: the stored file is read back and must be the same PDF.
+            const unread = await readBackDocument(ownerId, state, runId, 'create', documentWork.lang, stored);
+            await finish(id, runId, state, documentCreatedReply(stored, documents.link(stored.id), documentWork.lang, composed.emptyContent, gaps) + unread,
+              composed.emptyContent || gaps.length || unread ? 'partial' : 'completed');
           } catch (error) {
             if (!(error instanceof PdfError)) throw error;
             await finish(id, runId, state, problem(error), 'blocked');
@@ -2849,8 +3129,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             case 'number': edit = { op: 'number' }; break;
             case 'metadata': edit = { op: 'metadata', ...(task.title ? { title: task.title } : {}), ...(task.author ? { author: task.author } : {}) }; break;
           }
+          startDocumentStep(state, runId, 'edit', task.lang, null);
           const stored = await documents.control.edit(ownerId, id, inputs, edit, signal);
-          await finish(id, runId, state, documentEditedReply(task, stored, documents.link(stored.id), inputs.map(input => input.name)), 'completed');
+          const unread = await readBackDocument(ownerId, state, runId, 'edit', task.lang, stored);
+          await finish(id, runId, state, documentEditedReply(task, stored, documents.link(stored.id), inputs.map(input => input.name)) + unread, unread ? 'partial' : 'completed');
         } catch (error) {
           if (!(error instanceof PdfError)) throw error;
           await finish(id, runId, state, problem(error), 'blocked');
@@ -3398,6 +3680,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           continue;
         }
         const label = stepLabel(decision.tool, decision, element);
+        // The run ledger: a step the model chose, under its registered capability. Informational: the reply's own checks,
+        // not the model's choice, decide the outcome.
+        ledgerSafe(state, runId, ledger => recordModelStep(ledger, decision.tool, label, state.trail.at(-1)?.result ?? '', Date.now()));
         await addStep(id, runId, label);
         await setProgress(id, `${liveLabel(label)}…`);
         const toolStartedAt = Date.now();
@@ -3632,17 +3917,30 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         state.unchanged = 0;
       }, input.text,{status:'waiting_user',field:'question',requestId:row.question?.id});
     }
-    if (row.status === 'running' || WAITING_STATUSES.includes(row.status)) throw new BrowserError('CHAT_BUSY', 'أكمل ما ينتظر ردك، أو أوقف العمل قبل إرسال طلب جديد.', 409);
+    // A message sent while a task works, or waits for an approval or for the owner's hands on a page, corrects that task
+    // (steering): the old run ends as superseded in the same transaction that starts the corrected one, everything it had
+    // queued is invalidated and never runs, and the corrected run carries the old objective as context. «توقف» alone stops it.
+    // A sign-in or code card is not steered: its values belong in its own fields, never in a chat message.
+    const steerableRow = (status: string, secure: { kind?: string } | null | undefined) => status === 'running' || status === 'waiting_approval' || status === 'waiting_input' && secure?.kind === 'hands_on';
+    const steering = intent === 'task' && !input.answers && row.active_run_id && steerableRow(String(row.status), row.secure) ? String(row.active_run_id) : null;
+    if (steering && classifySteering(clean(input.text)) === 'stop') return cancel(ownerId, id);
+    if (!steering && (row.status === 'running' || WAITING_STATUSES.includes(row.status))) throw new BrowserError('CHAT_BUSY', 'أكمل ما ينتظر ردك، أو أوقف العمل قبل إرسال طلب جديد.', 409);
+    let superseded: Awaited<ReturnType<typeof supersedeRun>> | null = null;
     const runId = randomUUID();
     const token=randomUUID();
     const fullForRouting = config.fullAccess ? await config.fullAccess(ownerId) : true;
+    const sessionCapabilities = await capabilitiesFor(ownerId);
     await db.transaction().execute(async (tx) => {
-      const locked = await tx.selectFrom('chat_conversations').select(['status','browser_checkpoint']).where('id', '=', id).where('owner_id', '=', ownerId).forUpdate().executeTakeFirst();
+      const locked = await tx.selectFrom('chat_conversations').select(['status','browser_checkpoint','active_run_id','secure']).where('id', '=', id).where('owner_id', '=', ownerId).forUpdate().executeTakeFirst();
       if (!locked) throw notFound();
       if (config.accountActive && !await config.accountActive(ownerId, tx)) throw new BrowserError('CHAT_ACCOUNT_INACTIVE', 'هذا الحساب غير نشط.', 403);
       if(closing)throw new BrowserError('CHAT_SHUTTING_DOWN','الخدمة تتوقف الآن. حاول بعد قليل.',503);
       if(intent==='review_browser'&&(!expectedCheckpointToken||checkpointToken(locked.browser_checkpoint)!==expectedCheckpointToken))throw new BrowserError('CHAT_REVIEW_CHANGED','تغيرت حالة الجلسة بعد عرضها. حدّث الصفحة وراجع النتيجة الحالية.',409);
-      if (locked.status === 'running' || WAITING_STATUSES.includes(locked.status)) throw new BrowserError('CHAT_BUSY', 'أكمل ما ينتظر ردك، أو أوقف العمل قبل إرسال طلب جديد.', 409);
+      const steeredHere = steering !== null && locked.active_run_id === steering && steerableRow(locked.status, locked.secure);
+      if (!steeredHere && (locked.status === 'running' || WAITING_STATUSES.includes(locked.status))) throw new BrowserError('CHAT_BUSY', 'أكمل ما ينتظر ردك، أو أوقف العمل قبل إرسال طلب جديد.', 409);
+      if (steeredHere) superseded = await supersedeRun(tx, ownerId, id, steering!, runId);
+      const previousTurns = Number((await tx.selectFrom('chat_messages').select(eb => eb.fn.countAll<string | number>().as('n'))
+        .where('conversation_id', '=', id).where('role', '=', 'user').executeTakeFirstOrThrow()).n);
       const previousRun = await tx.selectFrom('chat_runs').select('state').where('conversation_id', '=', id).where('owner_id', '=', ownerId)
         .orderBy('created_at', 'desc').limit(1).executeTakeFirst();
       let previousContext = parseRequestContextState(previousRun?.state?.requestContext);
@@ -3695,7 +3993,18 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           routing.sourceAssessment.publicQueryEligible ? [clean(input.text), resolution.query ?? ''] : []),
         routing: { route: routing.route, intent: routing.intent, handler: routing.handler, availability: routing.availability,
           missingCapabilities: routing.missingCapabilities, reason: routing.reason },
-        supervision: verificationSupervisor ?? noteVerificationSupervisor ?? createChatSupervisor(runId, clean(input.text), resolution, createdAt.getTime(), { ownerId, conversationId: id, runId, evaluatedAt: createdAt.getTime() }) };
+        supervision: verificationSupervisor ?? noteVerificationSupervisor ?? createChatSupervisor(runId, clean(input.text), resolution, createdAt.getTime(), { ownerId, conversationId: id, runId, evaluatedAt: createdAt.getTime() }),
+        // The run ledger (assistant/agent-run.ts) with this turn's bounded context: the objective, how many turns came before,
+        // what the request's own words forbid, the request it corrected, and what this session can and cannot do.
+        agentRun: createRunLedger({ runId, at: createdAt.getTime(), path: pathOfHandler(routing.handler), repairLimit: config.limits?.repairsPerRun,
+          steeredFrom: (superseded as { runId: string } | null)?.runId ?? null,
+          context: { objective: clean(input.text).trim().slice(0, 400) || '…', previousTurns: Math.min(50, previousTurns),
+            constraints: (parseUserRequestConstraints(clean(input.text))?.forbiddenCapabilities ?? []).slice(0, 12),
+            corrections: superseded ? [clean((superseded as { goal: string }).goal).slice(0, 300)].filter(Boolean) : [],
+            capabilities: sessionCapabilities.available.slice(0, 20),
+            limitations: [...new Set([...routing.missingCapabilities, ...(sessionCapabilities.chatModel ? [] : ['chatModel'])])].slice(0, 12) } }),
+        // A request the page tried to send, held for the corrected run's approval, is dropped: it belonged to the old objective.
+        ...((superseded as { held: boolean } | null)?.held ? { dropHeld: true } : {}) };
       await addMessage(tx, id, 'user', input.text);
       await tx.insertInto('chat_runs').values({ id: runId, conversation_id: id, owner_id: ownerId, status: 'running', intent, goal: clean(input.text), steps: 0, lease_token:token,worker_id:instanceId,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, state: JSON.stringify(initialState), created_at: createdAt }).execute();
       await tx.updateTable('chat_conversations').set({ status: 'running', active_run_id: runId, question: null, approval: null, secure: null, error: null, progress: 'يفهم طلبك…', updated_at: new Date() }).where('id', '=', id).execute();
@@ -3704,6 +4013,15 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId, kind: 'visibility', message: visibility.reason,
         data: JSON.stringify({ level: visibility.level, code: visibility.code, route: routing.route }) }).execute();
     });
+    // The corrected run is committed; the old worker stops at once (its lease token already changed, so it can no longer
+    // write), and a prepared task nobody approved is withdrawn.
+    const replaced = superseded as Awaited<ReturnType<typeof supersedeRun>> | null;
+    if (replaced) {
+      const active = controllers.get(id);
+      if (active && active.runId === replaced.runId && active.token === replaced.token) active.controller.abort(new Error('CHAT_SUPERSEDED'));
+      forgetVault(id, replaced.token);
+      await dropUnapproved(ownerId, { pendingTask: replaced.pendingTask });
+    }
     await dispatch(ownerId, id, runId,token);
     return detail(ownerId, id);
   }
@@ -3870,6 +4188,21 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if (row.status !== 'waiting_approval' || row.approval?.id !== input.approvalId || !row.active_run_id) throw new BrowserError('CHAT_APPROVAL_CHANGED', 'هذا الطلب لم يعد معلقًا.', 409);
     let refused:BrainState['pendingTask'];
     const result = await resume(ownerId, id, row.active_run_id, (state) => {
+      // The permission gate records this answer against the exact action that was asked, for this account and conversation
+      // only (permission-gate.ts). The run then checks it again at the execution boundary before anything is dispatched.
+      const ledger = restoreRunLedger(state.agentRun, row.active_run_id);
+      if (ledger?.permissions.some(item => item.id === input.approvalId)) {
+        try {
+          const decided = recordDecision(ledger, { approvalId: input.approvalId, actorId: ownerId, conversationId: id, approved: input.approved, at: Date.now() });
+          const step = decided.stepId ? ledger.plan?.steps.find(item => item.id === decided.stepId) : undefined;
+          if (step) step.authorization = decided.decision === 'granted' ? 'granted' : 'refused';
+          if (step && decided.decision !== 'granted' && step.state === 'awaiting_approval') step.state = 'invalidated';
+        } catch (error) {
+          if (error instanceof PermissionGateError) throw new BrowserError('CHAT_APPROVAL_CHANGED', 'هذا الطلب لم يعد معلقًا.', 409);
+          throw error;
+        }
+        state.agentRun = ledger;
+      }
       if (input.approved) return;
       refused = state.pendingTask;
       if (state.pendingComputer) state.computerInputRefused = true;
@@ -3924,7 +4257,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         cancelledState=run.state;
         const active=controllers.get(id);
         if(active&&active.runId===row.active_run_id&&active.token===cancelledToken)cancelledController=active.controller;
-        await tx.updateTable('chat_runs').set({ status: 'cancelled',lease_token:randomUUID(),updated_at: new Date() }).where('id', '=', row.active_run_id).execute();
+        // The run ledger ends with the run: unfinished steps and every unused approval are invalidated (agent-run.ts).
+        const stopped: BrainState = { ...newBrainState(), ...(run.state ?? {}) };
+        const stoppedLedger = restoreRunLedger(stopped.agentRun, row.active_run_id);
+        if (stoppedLedger) { try { cancelLedger(stoppedLedger, 'owner_cancelled', Date.now()); stopped.agentRun = stoppedLedger; } catch (error) { if (!(error instanceof RunLedgerError)) throw error; } }
+        await tx.updateTable('chat_runs').set({ status: 'cancelled',lease_token:randomUUID(),...(stoppedLedger ? { state: JSON.stringify(stopped) } : {}),updated_at: new Date() }).where('id', '=', row.active_run_id).execute();
         if (config.chromeExtension) await stopChromeJobsForRun(tx, ownerId, row.active_run_id);
         await tx.updateTable('chat_effect_receipts').set({status:'unknown',finished_at:new Date()}).where('run_id','=',row.active_run_id).where('status','=','started').execute();
         await tx.updateTable('chat_model_receipts').set({status:'unknown',error_code:'CHAT_CANCELLED',finished_at:new Date()}).where('run_id','=',row.active_run_id).where('status','=','started').execute();
@@ -4012,6 +4349,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     settled: async (id: string) => { await workers.get(id); },
     /** Replay or resume of the campaign event log: every event after `after`, in order. */
     campaignEvents: async (ownerId: string, id: string, after: number) => { await owned(ownerId, id); return await readCampaignEvents(db, id, after) ?? { taskId: null, lastSeq: 0, events: [] }; },
+    /** Holds until the conversation's mark differs from `since` (chat-wait.ts); the caller then reads the detail. */
+    waitForChange: (ownerId: string, id: string, since: string, waitMs: number, signal?: AbortSignal) =>
+      waitForChange(() => conversationVersion(db, ownerId, id), since, waitMs, { signal }),
   };
 }
 
@@ -4026,7 +4366,13 @@ export async function registerCommandChatRoutes(app: FastifyInstance, { control,
   app.post('/api/chat/images', { bodyLimit: 7_500_000, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request) => control.uploadImage((await owner(request)).id, request.body));
   app.get<{ Params: { imageId: string } }>('/api/chat/images/:imageId', live, async (request, reply) => { const image = await control.image((await owner(request)).id, id(request.params.imageId)); return reply.type(image.mimeType).header('Cache-Control', 'private, max-age=3600').header('Content-Disposition', 'inline').header('X-Content-Type-Options', 'nosniff').send(image.bytes); });
   app.get('/api/chat/images', async () => ({ available: control.imagesAvailable() }));
-  app.get<Conversation>('/api/chat/conversations/:id', live, async (request) => control.detail((await owner(request)).id, id(request.params.id)));
+  // `?since=<version>&wait=<ms>` holds the answer until the conversation changes (chat-wait.ts); without them it answers at once.
+  app.get<Conversation & { Querystring: Record<string, string | undefined> }>('/api/chat/conversations/:id', live, async (request, reply) => {
+    const ownerId = (await owner(request)).id, conversationId = id(request.params.id), hold = ChatWaitQuerySchema.parse(request.query ?? {});
+    // A caller that went away while held gets nothing built for it (499: closed by the client).
+    if (hold.since && hold.wait && await control.waitForChange(ownerId, conversationId, hold.since, hold.wait, abortWhenClosed(reply.raw)) === 'aborted') return reply.code(499).send();
+    return control.detail(ownerId, conversationId);
+  });
   app.get<Conversation & { Querystring: { after?: string } }>('/api/chat/conversations/:id/campaign-events', live, async (request) => control.campaignEvents((await owner(request)).id, id(request.params.id), z.coerce.number().int().min(0).max(100000).default(0).parse(request.query.after)));
   app.post<Conversation>('/api/chat/conversations/:id/messages', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request) => control.send((await owner(request)).id, id(request.params.id), request.body));
   app.post<Conversation>('/api/chat/conversations/:id/respond', async (request) => control.respond((await owner(request)).id, id(request.params.id), request.body));

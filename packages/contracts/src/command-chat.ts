@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { CampaignEventStreamSchema } from './campaign-progress';
+import { ChatRunViewSchema } from './agent-run';
 
 export const ChatStatusSchema = z.enum(['idle', 'running', 'waiting_user', 'waiting_input', 'waiting_approval', 'failed', 'cancelled']);
 
@@ -46,6 +47,13 @@ export const ChatApprovalSchema = z.object({
   id: z.uuid(),
   prompt: z.string().min(1).max(1000),
   detail: z.string().max(1000),
+  /**
+   * The exact thing the action touches, what follows from it, and whether it can be undone (null: the server cannot
+   * tell). Written by the server's permission gate (2026-11-23); absent on approvals asked before it existed.
+   */
+  target: z.string().max(300).optional(),
+  consequence: z.string().max(300).optional(),
+  reversible: z.boolean().nullable().optional(),
 }).strict();
 
 export const ChatSecureFieldSchema = z.object({
@@ -179,6 +187,18 @@ export const ChatConversationSchema = ChatConversationSummarySchema.extend({
   visibility: ChatBrowserVisibilitySchema.nullable().optional(),
   /** Structured events of the latest Google Ads campaign task in this conversation. Absent when there is none. */
   campaign: CampaignEventStreamSchema.nullable().optional(),
+  /**
+   * An opaque mark of what this view shows. `GET /api/chat/conversations/:id?since=<version>&wait=<ms>` answers as soon as
+   * the conversation's mark differs from it (or after the wait, at most 8 s). Absent from servers older than 2026-11-23.
+   */
+  version: z.string().regex(/^[0-9a-f]{24}$/).optional(),
+  /** How many earlier messages are not in `messages`, which holds the newest 300. Absent when none are left out. */
+  olderMessages: z.number().int().min(1).optional(),
+  /**
+   * The latest run as the server's runtime committed it: phase, plan, evidence, permission decisions and verdict
+   * (agent-run.ts). Null when the conversation has no run; absent from servers older than 2026-11-23.
+   */
+  run: ChatRunViewSchema.nullable().optional(),
 }).strict();
 
 export type ChatConversation = z.infer<typeof ChatConversationSchema>;

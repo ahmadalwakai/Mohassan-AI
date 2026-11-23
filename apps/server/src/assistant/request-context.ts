@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { returnedTo } from './return-to.js';
 import { assessRequestScope, parseRequestScopeAssessment, requestOperationText, RequestScopeAssessmentSchema, reviewPublicProjection, parseUserRequestConstraints, maskRequestLiteralData, isEntireLiteralRequest, type UserRequestConstraints, type RequestScopeAssessment } from './request-scope.js';
 
 /**
@@ -137,9 +138,13 @@ const NEW_ACTION = /^(?:انشئ|اصنع|جهز|احفظ|تذكر|ذكرني|ا
 const THANKS = /^(?:شكرا|شكرا لك|thanks|thank you)[.!?؟]*$/iu;
 const CONTEXT_FIELD = /(?<![\p{L}\p{N}])(?:name|city|address|colou?r|price|cost|height|age|specifications?|اسم|مدين[ةه]|عنوان|لون|سعر|تكلف[ةه]|طول|ارتفاع|عمر|مواصفات)(?![\p{L}\p{N}])/giu;
 
-/** Removes discourse filler for classification only; the full instruction is retained. */
+/**
+ * Removes discourse filler for classification only; the full instruction is retained. A return to an earlier subject
+ * («ارجع إلى أينشتاين: أين ولد؟») is classified as the question it asks («أين ولد أينشتاين»), the query the hands search.
+ */
 export function requestActionText(text: string): string {
   let result = clean(text).replace(/^(?:(?:طيب|طب|حسنا|حسنًا|تمام|okay|ok|well)[،,\s]+)+/iu, '');
+  result = returnedTo(result) ?? result;
   if (/^and\s+/iu.test(result) && startsNewAction(result.replace(/^and\s+/iu, ''))) result = result.replace(/^and\s+/iu, '');
   if (/^و/u.test(result) && startsNewAction(result.slice(1))) result = result.slice(1);
   return result;

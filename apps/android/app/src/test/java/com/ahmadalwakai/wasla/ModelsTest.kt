@@ -151,6 +151,18 @@ class ModelsTest {
     }
 
     @Test
+    fun approvalCardsShowWhatTheGateBoundThemTo() {
+        // A conversation from the server of 2026-11-23: the approval names its exact target, and the run view the phone
+        // does not draw yet is skipped (ignoreUnknownKeys), never a decoding failure.
+        val bound = WaslaJson.decodeFromString<MohassanConversation>("""{"id":"c","status":"waiting_approval","approval":{"id":"a","prompt":"أريد نقل الملف «old.txt» إلى سلة المحذوفات. هل أتابع؟","detail":"لا حذف نهائي.","target":"old.txt","consequence":"يُنقل العنصر إلى سلة المحذوفات.","reversible":true},"run":{"id":"r","phase":"awaiting_approval","permissions":[]}}""")
+        assertEquals(listOf("الهدف: old.txt", "ما سيحدث: يُنقل العنصر إلى سلة المحذوفات.", "يمكن التراجع عنه."), bound.approval?.bindingLines)
+        val older = WaslaJson.decodeFromString<MohassanApproval>("""{"id":"a","prompt":"هل أتابع؟","detail":"d"}""")
+        assertEquals(emptyList<String>(), older.bindingLines)
+        val unknown = WaslaJson.decodeFromString<MohassanApproval>("""{"id":"a","prompt":"p","target":"POST https://shop.test/pay","consequence":"","reversible":null}""")
+        assertEquals(listOf("الهدف: POST https://shop.test/pay"), unknown.bindingLines)
+    }
+
+    @Test
     fun tokensAndIdsAreChecked() {
         assertTrue(WaslaStore.validToken("x".repeat(32)))
         assertFalse(WaslaStore.validToken("x".repeat(31)))

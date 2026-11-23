@@ -177,6 +177,15 @@ describe('trusted gap metadata from chat', () => {
         state.actionCompletion.contract.runId = '<run>';
         state.actionCompletion.contract.hash = '<run-bound-hash>';
       }
+      // The run ledger (agent-run.ts) is bound to its run and stamped with wall-clock times; its content must still match.
+      if (state.agentRun) {
+        state.agentRun.runId = '<run>';
+        state.agentRun.updatedAt = '<time>';
+        for (const entry of state.agentRun.history) entry.at = '<time>';
+        if (state.agentRun.verdict) state.agentRun.verdict.decidedAt = '<time>';
+        if (state.agentRun.verification) state.agentRun.verification.checkedAt = '<time>';
+        for (const item of state.agentRun.evidence) { item.id = '<run-bound-id>'; item.observedAt = '<time>'; }
+      }
       return state;
     };
     for (const enabled of [false, true]) {

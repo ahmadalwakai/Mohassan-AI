@@ -7,6 +7,9 @@ import { isCampaignRequest } from './campaign-request.js';
 import { isSiteRequest } from '@mohassan/sites';
 import type { WebSequel } from './web-sequence.js';
 import { splitReplyDirective, type ReplyField } from './reply-directive.js';
+import { returnedTo } from './return-to.js';
+
+export { returnedTo };
 export { siteName };
 
 /**
@@ -229,6 +232,9 @@ function parseSegment(raw: string): HandsStep | HandsStep[] | null {
   if (readOrdinal) return [{ kind: 'click', target: strip(match![1]), ordinal: readOrdinal }, { kind: 'read', more: false }];
 
   if (/^(?:اقرأ|إقرأ|اقرا|أكمل|اكمل)\s+(?:لي\s+)?(?:المزيد|الباقي|البقي[ةه]|القراء[ةه])$|^(?:read more|continue reading|more)$/iu.test(text)) return { kind: 'read', more: true };
+  // «اشرح أكثر», «تفاصيل أكثر», "tell me more": more from the page the last answer was read from. Searched as words until
+  // 2026-11-23 («لم أجد … نتائج مرتبطة بسؤالك «اشرح أكثر»»).
+  if (EXPLAIN_MORE.test(text)) return { kind: 'read', more: true };
   if (READ_PAGE.test(text)) return { kind: 'read', more: false };
 
   if (/^(?:انزل|نزل|مرر|مرّر)(?:\s+(?:لل?[أا]سفل|تحت|للتحت|الصفح[ةه]))?$|^scroll(?:\s+down)?$/iu.test(text)) return { kind: 'scroll', up: false };
@@ -400,12 +406,25 @@ export function webQuestion(request: string, earlier: readonly string[] = []): H
   const asked = tidy(explainedQuestion(framing.directive ? framing.body : raw));
   if (!asked || notWebReason(asked)) return null;
   const lookup = LOOKUP.exec(asked);
-  const own = lookup ? strip(lookup[1]) : asked;
+  const own = lookup ? strip(lookup[1]) : returnedTo(asked) ?? workQuestion(asked) ?? asked;
   const query = withTopic(own, earlier);
   const directive = framing.directive;
   const reply: HandsReply | null = directive && (directive.lang || directive.sentences || directive.fields?.length)
     ? { ...(directive.lang ? { lang: directive.lang } : {}), ...(directive.sentences ? { sentences: directive.sentences } : {}), ...(directive.fields?.length ? { fields: directive.fields } : {}) } : null;
   return query ? [{ kind: 'search', query, site: null, ask: true, ...(reply ? { reply } : {}) }] : null;
+}
+
+/**
+ * «من كتب رواية البؤساء؟», «من مؤلف كتاب الأيام؟», «من ألّف مسرحية هاملت؟»: who made a work is said in the opening sentence of the
+ * work's own article («البؤساء … رواية للأديب الفرنسي فيكتور هوغو…»), so the work's own name is searched: «البؤساء». On
+ * 2026-11-23 the words «كتب رواية البؤساء» opened no article and the search found nothing (turn 14 of
+ * artifacts/conversation-quality-2026-11-23/long-before). Only the request's own words are searched: «ما هي البؤساء» added two
+ * words, and the search guard refused it after a turn that was not a public question (browser check, 13:40 UTC).
+ * English "Who wrote …?" has its own path (MAKER_WORDS). Null otherwise.
+ */
+export function workQuestion(text: string): string | null {
+  const match = /^(?:من|مين)\s+(?:هو\s+|هي\s+)?(?:كتب|كتبت|كاتب|ألف|ألّف|ألفت|الف|الفت|مؤلف|أخرج|اخرج|مخرج|لحن|لحّن|ملحن|رسم|صمم|صمّم)\s+(?:(?:ال)?(?:رواي[ةه]|كتاب|قصيد[ةه]|مسرحي[ةه]|فيلم|أغني[ةه]|اغني[ةه]|لوح[ةه]|قص[ةه]|ديوان|مسلسل)\s+)?(\S.{1,58}?)[\s؟?.!]*$/u.exec(text.trim());
+  return match ? match[1]!.trim() : null;
 }
 
 /** «Explain why X» → «why X», «اشرح لماذا X» → «لماذا X»: the question an instruction to explain carries. Else the text as it is. */
@@ -420,12 +439,48 @@ const POINTER = /(?:^|\s)(?:[^\s]{2,}(?:ه|ها|هم|هن))(?=\s|$)|\b(?:it|its|
 const TIME_WORDS = new Set(['اليوم', 'الان', 'الآن', 'حاليا', 'غدا', 'بكره', 'بكرة', 'الليله', 'today', 'now', 'tomorrow', 'tonight', 'current', 'latest']);
 
 /** «سكانها», «سعره», "its", "it": the message points back at a thing the conversation already named. */
-export const refersBack = (text: string): boolean => POINTER.test(text);
+export const refersBack = (text: string): boolean => POINTER.test(text) || lacksSubject(text);
 
 /** Whether this message leans on the one before it rather than naming its own topic. */
 export function isFollowUp(text: string): boolean {
   if (FOLLOW_START.test(text)) return true;
-  return text.split(' ').length <= 4 && POINTER.test(text);
+  return text.split(' ').length <= 4 && POINTER.test(text) || lacksSubject(text);
+}
+
+/** «اشرح أكثر», «وضّح بالتفصيل», «أريد تفاصيل أكثر», «زدني», "tell me more": a request for more of the last answer's source. */
+const EXPLAIN_MORE = /^(?:(?:اشرح|إشرح|وضح|وضّح|فصل|فصّل|فسر|فسّر)(?:\s+(?:لي|ها|ه|هذا|ذلك))?\s+(?:أكثر|اكثر|أكثر من ذلك|بالتفصيل|بتفصيل(?:\s+أكثر)?|بشكل أوسع)|(?:أريد|اريد|أعطني|اعطني)\s+(?:المزيد|تفاصيل أكثر|تفاصيل اكثر)|المزيد من التفاصيل|تفاصيل أكثر|تفاصيل اكثر|زدني)[\s.!؟?]*$|^(?:tell me more|explain (?:more|further)|more details|elaborate|go on)[\s.!?]*$/iu;
+
+/**
+ * What the last answer was about, for a follow-up that points back: the page's own title, or the narrower item the answer's
+ * first line names before a colon («نهر النيل: أطول أنهار العالم.» read from the page «نهر»). On 2026-11-23 «وكم طوله؟»
+ * after «ما هو أطول نهر في العالم؟» searched «كم طول نهر» and showed the Danube's length.
+ */
+export function answerSubject(found: { title: string; lines: readonly string[] }): string {
+  const title = plainTitle(found.title);
+  const label = /^([^:،,.؟?!()]{2,40}):\s/u.exec(found.lines[0] ?? '')?.[1]?.trim();
+  if (label && label.split(/\s+/u).length <= 4) {
+    const titleWords = topicWords(title);
+    const folded = fold(label);
+    if (titleWords.length && titleWords.every(word => folded.includes(word))) return label;
+  }
+  return title;
+}
+
+/** Verbs of an event in a life or a work, folded: the event's subject is the one the conversation is about. */
+const EVENT_VERBS = new Set(['توفي', 'توفيت', 'مات', 'ماتت', 'ولد', 'ولدت', 'تزوج', 'تزوجت', 'اكتشف', 'اكتشفت', 'اخترع', 'اخترعت',
+  'كتب', 'كتبت', 'الف', 'الفت', 'اسس', 'اسست', 'تاسس', 'تاسست', 'نشر', 'نشرت', 'صدر', 'صدرت', 'بني', 'بنيت', 'حكم', 'حكمت',
+  'عاش', 'عاشت', 'درس', 'درست', 'فاز', 'فازت', 'انتهي', 'انتهت', 'بدا', 'بدات', 'اغتيل', 'اغتيلت', 'استقل', 'استقلت', 'اعتزل', 'اعتزلت']);
+
+/**
+ * A question with no subject, only a question word and an event verb («متى توفي؟», «أين ولد؟», «ومتى نشرت؟»): it asks about
+ * the subject of the answer before it. On 2026-11-23 «متى توفي؟» after an answer on Einstein was searched alone and showed the
+ * death of another man (artifacts/conversation-quality-2026-11-23/long-before). English follow-ups carry a pronoun instead.
+ */
+export function lacksSubject(text: string): boolean {
+  const words = fold(text).replace(/[؟?،,.!]/gu, ' ').split(/\s+/u).filter(Boolean);
+  if (words.length !== 2) return false;
+  const ask = words[0]!.replace(/^و(?=\S{2,})/u, '');
+  return ['متي', 'اين', 'وين', 'كيف', 'لماذا', 'ليش', 'كم', 'من', 'هل'].includes(ask) && EVENT_VERBS.has(words[1]!);
 }
 
 /**
@@ -841,7 +896,11 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
   // A reason question prefers the sentence that states a cause («… بسبب تبعثر ضوء الشمس»).
   const reasonAsk = isReasonQuestion(question);
   const makerAsk = questionLanguage(question) === 'en' && /^(?:who|whom)\s/iu.test(question.trim()) && topicWords(question).some(word => MAKER_WORDS.has(word));
-  const has = (text: string, word: string) => text.includes(word) || peopleAsk && PEOPLE_STEMS.has(word) && PEOPLE_FORMS.some(form => text.includes(form))
+  // An event verb of the question («ولد», «توفي», «نشر») counts only as a whole word, with «و/ف» before it and «ت/وا» after:
+  // as part of a word, «ولد» matched «ولديهم» and «المولد», and «أين ولد ألبرت أينشتاين» led with a sentence about his letter
+  // on the Japanese («… ولديهم إحساس حقيقي بالفن», 2026-11-23).
+  const verbs = new Map(words.filter(word => EVENT_VERBS.has(word)).map(word => [word, new RegExp(`(?:^|[^\\p{L}])[وف]?${word}(?:ت|وا)?(?![\\p{L}])`, 'u')]));
+  const has = (text: string, word: string) => (verbs.get(word)?.test(text) ?? text.includes(word)) || peopleAsk && PEOPLE_STEMS.has(word) && PEOPLE_FORMS.some(form => text.includes(form))
     || makerAsk && MAKER_STEMS.has(word) && MAKER_FORMS.some(form => text.includes(form));
   // A date question is answered by the dates its subject's article opens with: «الحرب العالمية الثانية هي حرب دولية بدأت في
   // الأول من سبتمبر من عام 1939…», "World War II … (1 September 1939 – 2 September 1945)". Later sentences carry the dates of
@@ -866,7 +925,7 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
   const labelSet = new Set(labels.map(fold));
   const pageTitle = fold(page.title ?? '');
   const titled = words.filter(word => has(pageTitle, word));
-  const scored:{ line: string; score: number; at: number; year: number; glued: boolean }[] = [];
+  const scored:{ line: string; score: number; at: number; year: number; glued: boolean; lead: boolean }[] = [];
   const seen = new Set<string>();
   // Citation marks may carry spaces inside the brackets («[ 5 ] [ 28 ] ويبلغ عدد سكانها…», measured 2026-11-22 on «المغرب»).
   // A page read over HTTP is one line of words joined by spaces, so the full run of 07:06 sent first lines that began with a
@@ -908,6 +967,7 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     if (overview && TRACEBACK_FRAGMENT.test(line)) continue;
     // An infobox glued before an article's first sentence: the sentence is the tail of the run.
     let glued = line.split(' ').length > 40 || line.length > 400;
+    let lead = false;
     if (glued) {
       const parts = line.split(' ');
       const tail = `… ${parts.slice(-40).join(' ')}`.slice(0, 400);
@@ -917,15 +977,16 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
       const matched = (text: string) => words.filter(word => has(fold(text), word)).length;
       // A definition's head is the answer even when its tail repeats the subject: «تعنى كلمة الليزك …» runs 74 words on «ليزك».
       const definesAtHead = Boolean(definition?.test(fold(head)) || wordMeans?.test(fold(head)));
-      const lead = definesAtHead || matched(tail) < need && matched(head) >= need;
-      line = lead ? head : tail;
+      lead = definesAtHead || matched(tail) < need && matched(head) >= need;
+      // The lead is shown whole when it fits (leadSentence), not cut at 40 words in mid-clause as it was until 2026-11-23.
+      line = lead ? leadSentence(parts) : tail;
       // A sentence that opens with the subject is the article's own lead, not infobox cells: no penalty,
       // so a later photo caption («ألبرت أينشتاين عام 1893») does not outrank the definition.
       if (lead) glued = false;
     }
     const count = glued ? 40 : line.split(' ').length;
     const hasNumber = /[\d٠-٩]/u.test(line);
-    if (count < (hasNumber ? 3 : 5) || line.length > 400 || seen.has(line) || (wantsNumber && !hasNumber)) continue;
+    if (count < (hasNumber ? 3 : 5) || line.length > (lead ? LEAD_MAX_CHARS : 400) || seen.has(line) || (wantsNumber && !hasNumber)) continue;
     // A sentence that asks («ما تاريخ الذكاء الاصطناعي؟») is a heading or a contents entry, never an answer.
     if (/[؟?]\s*$/u.test(line)) continue;
     // Lines about the page, not the subject: hatnotes, bylines, headers (plan §7.4; 0-baseline §8.3 sent these as answers).
@@ -956,13 +1017,40 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     const answerForm = titled.length > 0 && own > 0 && words.some(word => !titled.includes(word)
       && new RegExp(`(?:^|\\s)[وف]?(?:ال)?${word}(?:\\p{L}{0,2}(?:ها|هم)|\\p{L}{1,2}ه)(?=[\\s،,:]|$)`, 'u').test(folded));
     scored.push({ line, score: hits + (numberAnswer && /\d/u.test(line) ? 1 : 0) - (glued ? 1 : 0) + (phrase && folded.includes(phrase) ? 2 : 0) + (answerForm ? 3 : 0) + (pairedDefinition || definition?.test(folded) || wordMeans?.test(folded) ? 3 : 0) + (aboutSubject?.test(folded) ? 1 : 0)
-      + (peopleAsk && POPULATION_NOUN.test(folded) ? 2 : 0) + (opensWithSubject?.test(folded) ? 2 : 0) + (makerAsk && MAKER_STATEMENT.test(folded) ? 2 : 0) + (reasonAsk && reasonAnswers(question, line) ? 3 : 0), at, year, glued });
+      + (peopleAsk && POPULATION_NOUN.test(folded) ? 2 : 0) + (opensWithSubject?.test(folded) ? 2 : 0) + (makerAsk && MAKER_STATEMENT.test(folded) ? 2 : 0) + (reasonAsk && reasonAnswers(question, line) ? 3 : 0), at, year, glued, lead });
   }
   // «كم تستغرق …» is answered by a number: sentences without one only look related.
   if (numberAnswer && !scored.some(item => /[\d٠-٩]/u.test(item.line))) return [];
   // Among equals the newest year wins («إحصاء 2024» over «إحصاء 2014»), except for a date: there it is the page order.
   const best = scored.sort((a, b) => b.score - a.score || (numberAnswer && kind !== 'date' ? b.year - a.year : 0) || a.at - b.at).slice(0, limit);
-  return (bestFirst ? best : best.sort((a, b) => a.at - b.at)).map(item => item.line.length > 300 ? `${item.line.slice(0, 299)}…` : item.line);
+  return (bestFirst ? best : best.sort((a, b) => a.at - b.at)).map(item => item.lead ? item.line : wholeWords(item.line, 300));
+}
+
+/** The longest opening sentence shown whole (measured 2026-11-23 on ar Wikipedia: Einstein 73 words / 490 characters). */
+const LEAD_MAX_WORDS = 80, LEAD_MAX_CHARS = 560;
+
+/**
+ * An article's long opening sentence as the answer's first line: whole when it fits, else up to its last clause break («،»,
+ * «؛», ",", ";") from the 25th word on, else its first 40 words. Until 2026-11-23 it was always cut at 40 words, so the
+ * answers on Einstein, LASIK and cataract ended in mid-clause with «…» (5 of 25 sourced replies on the 107 real requests).
+ */
+export function leadSentence(parts: readonly string[]): string {
+  const whole = parts.join(' ');
+  if (parts.length <= LEAD_MAX_WORDS && whole.length <= LEAD_MAX_CHARS) return whole;
+  let cut = -1, length = -1;
+  for (let index = 0; index < Math.min(parts.length, LEAD_MAX_WORDS); index++) {
+    length += parts[index]!.length + 1;
+    if (length > LEAD_MAX_CHARS - 2) break;
+    if (index >= 24 && /[،,؛;]$/u.test(parts[index]!)) cut = index;
+  }
+  return cut > 0 ? `${parts.slice(0, cut + 1).join(' ').replace(/[،,؛;]$/u, '')} …` : `${parts.slice(0, 40).join(' ')} …`;
+}
+
+/** A line cut to `max` characters on a word boundary, with «…»; it was cut inside a word before 2026-11-23. */
+function wholeWords(line: string, max: number): string {
+  if (line.length <= max) return line;
+  const space = line.lastIndexOf(' ', max - 2);
+  return `${(space > max / 2 ? line.slice(0, space) : line.slice(0, max - 1)).replace(/[\s،,؛;:\-–—]+$/u, '')} …`;
 }
 
 const SEARCHY = /search|بحث|ابحث|query|find|look for|keywords?/i;
@@ -1754,6 +1842,19 @@ export function pageAnswer(page: AgentPage, question: string, lang: 'ar' | 'en')
 }
 
 
+/**
+ * A detail worth its own bullet under the answer: not a run cut at both ends («… أستراليا إلى ست ولايات … ولايات ومقاطعات …»),
+ * and seven words or more, or four with a number; shorter lines are section headings («الذكاء الاصطناعي القائم على المعرفة.»).
+ * The end of a long sentence («… وجعلوا عاصمتهم القاهرة التي أسسها المعز …، والعراق.») stays: the judge may make it the
+ * answer (measured on «ما عاصمة مصر؟», 2026-11-23, long-after turn 1).
+ */
+export function isWholeDetail(line: string): boolean {
+  const text = line.trim();
+  if (text.startsWith('…') && text.endsWith('…')) return false;
+  const words = text.split(/\s+/u).filter(Boolean).length;
+  return /[\d٠-٩]/u.test(text) ? words >= 4 : words >= 7;
+}
+
 /** The reply is built only from what the pages show: titles, links and quoted sentences. A question answered over HTTP needs no open page. */
 export function describe(plan: HandsPlan, page: AgentPage | null): { text: string; status: 'completed' | 'partial' | 'blocked' } {
   const last = plan.steps[plan.steps.length - 1];
@@ -1766,7 +1867,12 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
     const note = isMedical(last.query) ? `\n\n${plan.found ? en ? MEDICAL_NOTE_EN : MEDICAL_NOTE : en ? 'For diagnosis and treatment, see a doctor.' : 'للتشخيص والعلاج راجع طبيبًا مختصًا.'}` : '';
     if (plan.found) {
       // Plain layout for anyone: the answer first, then the rest, then a short named source. Sentences stay as the page wrote them.
-      const others = plan.results.filter(item => withoutHash(item.url) !== withoutHash(plan.found!.url)).slice(0, 3);
+      // «للمزيد» lists only results whose titles carry the question's topic (one of its words, two when it has three or more):
+      // the engine ranks lexically, and the 107 real requests of 2026-11-23 listed «فيصل محمد الطبيقي» under LASIK and «عرب»
+      // under the population of Egypt. One word is enough for a short topic, since a plural title («أسعار») does not hold «سعر».
+      const topic = topicWords(last.query);
+      const others = plan.results.filter(item => withoutHash(item.url) !== withoutHash(plan.found!.url)
+        && topic.length > 0 && titleScore(plainTitle(item.title), topic) >= (topic.length >= 3 ? 2 : 1)).slice(0, 3);
       // «in two sentences»: no more of the page's sentences than were asked for.
       const shownLines = reply?.sentences ? plan.found.lines.slice(0, Math.max(1, reply.sentences)) : plan.found.lines;
       // «Return the page title and source link»: the page that was read and found about the question, named first.
@@ -1787,7 +1893,10 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
       const officialNote = notOfficial ? `\n\n${en
         ? 'This is not the organisation’s own page: the search sources available to me (Wikipedia and documented APIs, with no general web index) returned no page from its own site. Send the official page’s link and I will read it.'
         : 'هذه ليست صفحة الجهة نفسها: مصادر البحث المتاحة لي (ويكيبيديا والواجهات الموثقة، بلا فهرس عام للويب) لم تُرجع صفحة من موقعها. أرسل رابط الصفحة الرسمية وأقرأها لك.'}` : '';
-      const [first, ...rest] = shownLines;
+      const [first, ...lines] = shownLines;
+      // A detail is a whole sentence: a run cut at both ends («… ست ولايات ومقاطعتين…») or a heading that reads as a sentence
+      // («الذكاء الاصطناعي القائم على المعرفة.») is left out (6 of 44 details on the 107 real requests of 2026-11-23).
+      const rest = lines.filter(line => isWholeDetail(line));
       const more = rest.length ? `\n\n**${en ? 'More from the same source:' : 'تفاصيل أخرى من نفس المصدر:'}**\n${rest.map(line => `- ${line}`).join('\n')}` : '';
       // The read time names the evidence's age; a page served from the cache keeps the time it was really fetched.
       const readAt = plan.found.readAt && !Number.isNaN(Date.parse(plan.found.readAt)) ? ` · ${en ? 'read' : 'قُرئت'} ${new Date(plan.found.readAt).toISOString().slice(0, 16).replace('T', ' ')} UTC` : '';

@@ -24,6 +24,8 @@ import { CampaignCard } from "./campaign-card";
 
 const ADS_WORDS = /حمل[ةت]|حملات|إعلان|اعلان|google ads|campaign|\bads?\b|advertis|ppc/i;
 import { ActivityLine, AgentActivity } from "./agent-activity";
+import { RunDetails, RunVerdict } from "./run-status";
+import { isNewerSnapshot, steerable } from "./run-view";
 import { QuestionPanel, withoutQuestionList } from "./question-card";
 import { ChromeExtensionPanel } from "./chrome-extension-panel";
 import { adsConnectProblems, pendingAdsConnect } from "./ads-connect";
@@ -32,6 +34,8 @@ import styles from "./assistant-app.module.css";
 
 /** Plan §5.2 P5: the first useful progress line should show within half a second; a local answer is ready in ~30 ms. */
 const POLL_MS = 450;
+/** How long the server may hold one request open for a change (its own cap is 8 s, chat-wait.ts). */
+const WAIT_MS = 8_000;
 /** Proposed in the plan (§6.3): a hidden tab keeps following its task, slowly, instead of stopping. */
 const HIDDEN_POLL_MS = 15_000;
 const HISTORY_POLL_MS = 5_000;
@@ -134,21 +138,28 @@ function SecureCard({ request, busy, onSubmit }: { request: ChatSecureRequest; b
 
 const stepCount = (count: number) => count === 1 ? "خطوة واحدة" : count === 2 ? "خطوتان" : count <= 10 ? `${count} خطوات` : `${count} خطوة`;
 
+/** A finished run whose verdict is not «completed» shows its verdict even when it took no step (a refusal, a blocked request). */
+const unfinishedVerdict = (conversation: Conversation) => conversation.status !== "running" && Boolean(conversation.run?.verdict && conversation.run.verdict.status !== "completed");
+
 function Steps({ conversation }: { conversation: Conversation }) {
   const [open, setOpen] = useState(false);
   const running = conversation.status === "running";
-  if (!running && !conversation.steps.length) return null;
+  const run = conversation.run ?? null;
+  if (!running && !conversation.steps.length && !unfinishedVerdict(conversation)) return null;
   // The request's own time: its user message, so a reload keeps the count honest.
   const since = conversation.messages.filter((message) => message.role === "user").at(-1)?.createdAt ?? null;
   return <div className={styles.steps}>
     <button type="button" className={styles.stepsToggle} aria-expanded={open} disabled={!conversation.steps.length} onClick={() => setOpen((value) => !value)}>
-      {running ? <ActivityLine text={conversation.progress ?? "يعمل…"} since={since} /> : <><Check size={14} /><span dir="auto">{stepCount(conversation.steps.length)}</span></>}
+      {/* The finished run shows the server's verdict (2026-11-23); a check mark was drawn for blocked and partial runs too. */}
+      {running ? <ActivityLine text={conversation.progress ?? "يعمل…"} since={since} />
+        : <>{run?.verdict ? <RunVerdict run={run} /> : <Check size={14} />}{conversation.steps.length ? <span dir="auto">{stepCount(conversation.steps.length)}</span> : null}</>}
       {conversation.steps.length ? <ChevronDown size={14} className={open ? styles.flipped : ""} /> : null}
     </button>
     {open ? <ol className={styles.stepList}>
       {conversation.steps.map((step) => <li key={step.id} dir="auto">{step.text}</li>)}
       {running ? <li className={styles.activeStep} aria-current="step"><AgentActivity variant="spinner" /><span dir="auto">{conversation.progress ?? "يعمل…"}</span></li> : null}
     </ol> : null}
+    {!running && run ? <RunDetails key={run.id} run={run} /> : null}
   </div>;
 }
 
@@ -307,23 +318,38 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
     let active = true;
     let inFlight = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const held = new AbortController();
+    // The server's mark of what this view shows (2026-11-23). While the tab is shown, the next request asks the server to
+    // answer as soon as the mark changes (up to WAIT_MS), so a reply appears when it is written, not on the next poll.
+    // A server without marks, or one that answers at once with the same mark, is polled every POLL_MS as before.
+    let since = conversation.version;
     // A hidden tab keeps following its task every 15 s instead of stopping, and catches up the moment it is shown again.
     const schedule = (delay: number) => { clearTimeout(timer); timer = setTimeout(poll, delay); };
     const poll = () => {
       if (!active) return;
       if (inFlight) { schedule(POLL_MS); return; }
       inFlight = true;
-      void api<Conversation>(`/api/chat/conversations/${id}`).then((result) => {
+      const waiting = Boolean(since) && !document.hidden;
+      const sent = Date.now(), asked = since;
+      let next = POLL_MS;
+      void api<Conversation>(`/api/chat/conversations/${id}${waiting ? `?since=${asked}&wait=${WAIT_MS}` : ""}`, { signal: held.signal }).then((result) => {
         if (!active || selection.current !== id) return;
-        setConversation(result);
+        // A slow answer never moves the view back past a newer one (run-view.ts isNewerSnapshot).
+        setConversation((current) => isNewerSnapshot(current, result) ? result : current);
         setError("");
         if (result.status !== "running") void refreshHistory().catch(() => {});
-      }).catch((caught) => { if (active) setError(messageOf(caught)); }).finally(() => { inFlight = false; if (active) schedule(document.hidden ? HIDDEN_POLL_MS : POLL_MS); });
+        since = result.version;
+        // Waited on and answered: ask again at once. The same mark back within moments means the server did not wait.
+        // An answer that shows the task ended waits POLL_MS instead: this effect is replaced within moments and its timer
+        // cleared, so no request starts only to be cancelled (browser check of 2026-11-23); and when the view kept a newer
+        // snapshot over it (isNewerSnapshot, a task superseded while running), the following goes on.
+        if (result.status === "running" && waiting && result.version && !(result.version === asked && Date.now() - sent < WAIT_MS / 2)) next = 0;
+      }).catch((caught) => { if (active) setError(messageOf(caught)); }).finally(() => { inFlight = false; if (active) schedule(document.hidden ? HIDDEN_POLL_MS : next); });
     };
     const shown = () => { if (!document.hidden) schedule(0); };
     document.addEventListener("visibilitychange", shown);
-    schedule(document.hidden ? HIDDEN_POLL_MS : POLL_MS);
-    return () => { active = false; clearTimeout(timer); document.removeEventListener("visibilitychange", shown); };
+    schedule(document.hidden ? HIDDEN_POLL_MS : since ? 0 : POLL_MS);
+    return () => { active = false; clearTimeout(timer); held.abort(); document.removeEventListener("visibilitychange", shown); };
   }, [conversation?.id, status, refreshHistory]);
 
   useEffect(() => { setSetting(panelSetting.get()); }, []);
@@ -443,7 +469,11 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
   // The request's own time, for the counter on the chip's live line.
   const requestedAt = conversation?.messages.filter((message) => message.role === "user").at(-1)?.createdAt ?? null;
   const blocked = status === "waiting_input" || status === "waiting_approval";
-  const canSend = !busy && !running && !blocked && uploading === 0 && (draft.trim().length > 0 || attachments.length > 0);
+  // While a task works or waits for approval or for the owner's hands, a typed message corrects it (the server ends the
+  // old run, drops what it had queued and starts the corrected one); «توقف» alone stops it. Images do not steer.
+  const steering = Boolean(selectedId) && steerable(status, conversation?.secure?.kind);
+  const canSend = !busy && uploading === 0 && (steering ? draft.trim().length > 0 && attachments.length === 0
+    : !running && !blocked && (draft.trim().length > 0 || attachments.length > 0));
   // The brain's questions take the input's place, one at a time, as in Claude.
   const asking = answering && !!conversation?.question?.fields?.length;
 
@@ -454,7 +484,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
     setError("");
     try {
       const result = await operation();
-      setConversation(result);
+      setConversation((current) => isNewerSnapshot(current, result) ? result : current);
       setSelectedId(result.id);
       // A sidebar refresh failure must not make a successful send look rejected.
       await refreshHistory().catch(() => {});
@@ -611,18 +641,18 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
       {uploading ? <span className={styles.attachmentBusy} aria-label="جارٍ رفع الصورة"><AgentActivity variant="spinner" /></span> : null}
     </div> : null}
     <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" multiple hidden onChange={(event) => { const files = event.currentTarget.files; if (files) void uploadFiles(files); event.currentTarget.value = ""; }} />
-    <button type="button" className={styles.attach} aria-label="إرفاق صورة" title="أرفق صورة ليقرأها موحسن" disabled={blocked || attachments.length >= MAX_ATTACHMENTS} onClick={() => fileInput.current?.click()}><ImagePlus size={18} /></button>
+    <button type="button" className={styles.attach} aria-label="إرفاق صورة" title="أرفق صورة ليقرأها موحسن" disabled={blocked || running || attachments.length >= MAX_ATTACHMENTS} onClick={() => fileInput.current?.click()}><ImagePlus size={18} /></button>
     <label className={styles.hidden} htmlFor="assistant-message">رسالتك</label>
     <textarea
       id="assistant-message" ref={composer} dir="auto" rows={1} maxLength={4000} value={draft} autoFocus
-      placeholder={answering ? "اكتب إجابتك…" : attachments.length ? "اسأل عن الصورة أو أرسلها مباشرة…" : "اكتب طلبك هنا…"} disabled={blocked}
+      placeholder={steering ? "صحّح الطلب أو وجّهه… («توقف» يوقفه)" : answering ? "اكتب إجابتك…" : attachments.length ? "اسأل عن الصورة أو أرسلها مباشرة…" : "اكتب طلبك هنا…"} disabled={blocked && !steering}
       onChange={(event) => { setDraft(event.target.value); event.target.style.height = "auto"; event.target.style.height = `${Math.min(event.target.scrollHeight, 220)}px`; }}
       onKeyDown={onComposerKey}
     />
     {running || blocked || answering
       ? <button type="button" className={styles.stop} aria-label="إيقاف" disabled={busy} onClick={() => void act(() => post("cancel", {}))}><Square size={13} fill="currentColor" /></button>
       : null}
-    {!running ? <button type="submit" className={styles.send} aria-label="إرسال" disabled={!canSend}>{busy ? <AgentActivity variant="spinner" /> : <ArrowUp size={19} />}</button> : null}
+    {!running || draft.trim() ? <button type="submit" className={styles.send} aria-label={steering ? "إرسال التصحيح" : "إرسال"} disabled={!canSend}>{busy ? <AgentActivity variant="spinner" /> : <ArrowUp size={19} />}</button> : null}
   </form>;
 
   return <div className={styles.app}>
@@ -694,19 +724,25 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
       </div> : <>
         <div ref={thread} className={styles.thread} role="log" aria-label="المحادثة">
           <div ref={threadContent} className={styles.column}>
+            {conversation!.olderMessages ? <p className={styles.localMode} role="note">{`رسائل أقدم غير معروضة هنا (${conversation!.olderMessages})، والمعروض آخر ${conversation!.messages.length} رسالة.`}</p> : null}
             {conversation!.messages.map((message, index) => <article key={message.id} className={message.role === "user" ? styles.userTurn : styles.assistantTurn}>
               {message.role === "user" && message.images?.length ? <div className={styles.messageImages}>{message.images.map((image) => <a key={image.id} href={`/api/chat/images/${image.id}`} target="_blank" rel="noreferrer"><img src={`/api/chat/images/${image.id}`} alt="صورة مرفقة" width={image.width} height={image.height} /></a>)}</div> : null}
               {message.role === "user" ? <p dir="auto">{message.text}</p> : <Markdown text={asking && index === conversation!.messages.length - 1 ? withoutQuestionList(message.text) : message.text} />}
               {message.role === "assistant" && message.text.trim() ? <div className={styles.replyTools}><CopyButton text={message.text} /><FeedbackButtons key={message.id} conversationId={conversation!.id} messageId={message.id} /></div> : null}
               {index === conversation!.messages.length - 1 && message.role === "user" ? <Steps conversation={conversation!} /> : null}
             </article>)}
-            {conversation!.messages.at(-1)?.role === "assistant" && (running || conversation!.steps.length > 0) && !answering && !blocked ? <Steps conversation={conversation!} /> : null}
+            {conversation!.messages.at(-1)?.role === "assistant" && (running || conversation!.steps.length > 0 || unfinishedVerdict(conversation!)) && !answering && !blocked ? <Steps conversation={conversation!} /> : null}
             {conversation!.campaign?.events.length ? <CampaignCard stream={conversation!.campaign} running={running} /> : null}
             {conversation!.question?.fields?.length ? null
             : conversation!.question ? <div className={styles.choices}>{conversation!.question.options.map((option) => <button key={option.id} disabled={busy} onClick={() => conversation!.question!.action === "google_ads_connect" && option.id === "connect" ? void connectGoogleAds() : void act(() => post("respond", { questionId: conversation!.question!.id, optionId: option.id }))}>{option.label}</button>)}</div> : null}
             {conversation!.approval ? <div className={styles.card}>
               <div className={styles.cardTitle}><ShieldAlert size={16} />يحتاج موافقتك</div>
+              {/* What the server's permission gate bound this approval to (2026-11-23): the exact target, what follows, and whether it can be undone. */}
+              {conversation!.approval.target ? <p className={styles.cardHint} data-testid="approval-target"><strong>الهدف:</strong> <bdi>{conversation!.approval.target}</bdi></p> : null}
+              {conversation!.approval.consequence ? <p className={styles.cardHint}><strong>ما سيحدث:</strong> {conversation!.approval.consequence}</p> : null}
+              {typeof conversation!.approval.reversible === "boolean" ? <p className={styles.cardHint}>{conversation!.approval.reversible ? "يمكن التراجع عنه." : "لا يمكن التراجع عنه."}</p> : null}
               <p className={styles.cardHint}>{conversation!.approval.detail}</p>
+              <p className={styles.cardHint}>تنطبق الموافقة على هذا الإجراء بتفاصيله هذه فقط. وإن كتبت تصحيحًا بدلها، يُلغى هذا الإجراء ولا يُنفَّذ.</p>
               <div className={styles.cardActions}>
                 <button className={styles.primary} disabled={busy} onClick={() => void act(() => post("approve", { approvalId: conversation!.approval!.id, approved: true }))}>موافق</button>
                 <button className={styles.secondary} disabled={busy} onClick={() => void act(() => post("approve", { approvalId: conversation!.approval!.id, approved: false }))}>لا تفعل</button>
@@ -724,7 +760,9 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
         <div className={styles.dock}>{asking ? <QuestionPanel key={conversation!.question!.id} fields={conversation!.question!.fields!} busy={busy}
             onSubmit={(_text, answers) => void act(() => post("messages", { answers, questionId: conversation!.question!.id }))}
             onStop={conversation!.question!.options.some(option => option.id === "stop") ? () => void act(() => post("respond", { questionId: conversation!.question!.id, optionId: "stop" })) : undefined} />
-          : <>{form}<p className={styles.dockHint}><kbd>Enter</kbd> للإرسال، و<bdi dir="ltr"><kbd>Shift</kbd> + <kbd>Enter</kbd></bdi> لسطر جديد</p></>}</div>
+          : <>{form}<p className={styles.dockHint}>{steering
+            ? "رسالتك الآن تصحّح المهمة الجارية: يُلغى ما كان معلّقًا منها ولا يُنفَّذ، وتبدأ بالطلب المصحّح."
+            : <><kbd>Enter</kbd> للإرسال، و<bdi dir="ltr"><kbd>Shift</kbd> + <kbd>Enter</kbd></bdi> لسطر جديد</>}</p></>}</div>
       </>}
     </main>
     {showBrowser ? <BrowserPanel conversation={conversation!} reason={visibility?.level === 3 ? visibility.reason : null} onClose={hidePanel} onError={setError} busy={busy} onRestore={()=>void act(()=>post("browser/restore",{}))} onReview={()=>void act(()=>post("browser/review",{reviewed:true,checkpointToken:conversation?.browser?.recoveryToken}))} /> : null}

@@ -312,7 +312,26 @@ data class MohassanQuestion(
     val stopOption: MohassanOption? get() = options.firstOrNull { it.id == "stop" }
 }
 
-@Serializable data class MohassanApproval(val id: String, val prompt: String, val detail: String = "")
+/**
+ * An approval card. `target`, `consequence` and `reversible` are what the server's permission gate bound the approval to
+ * (2026-11-23): the exact thing the action touches, what follows, and whether it can be undone (null: the server cannot tell).
+ */
+@Serializable
+data class MohassanApproval(
+    val id: String,
+    val prompt: String,
+    val detail: String = "",
+    val target: String? = null,
+    val consequence: String? = null,
+    val reversible: Boolean? = null,
+) {
+    /** The card's lines about the bound action, in the order the web shows them; empty for an older server. */
+    val bindingLines: List<String> get() = listOfNotNull(
+        target?.takeIf { it.isNotBlank() }?.let { "الهدف: $it" },
+        consequence?.takeIf { it.isNotBlank() }?.let { "ما سيحدث: $it" },
+        reversible?.let { if (it) "يمكن التراجع عنه." else "لا يمكن التراجع عنه." },
+    )
+}
 @Serializable data class MohassanSecure(val id: String, val kind: String = "", val site: String = "", val prompt: String = "")
 @Serializable data class MohassanMessage(val id: String, val role: String, val text: String)
 @Serializable data class MohassanStep(val id: String, val text: String)
