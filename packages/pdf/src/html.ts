@@ -186,8 +186,15 @@ function themeCss(theme: DocumentTheme, accent: string, rtl: boolean): string {
     h3 { font-size: 14pt; margin: 14pt 0 4pt; color: var(--ink); }
     h4 { font-size: 12.5pt; margin: 12pt 0 3pt; color: var(--ink); }
     p { margin: 0 0 9pt; white-space: pre-line; }
-    ul, ol { margin: 0 0 9pt; padding-${start}: 22pt; }
-    li { margin: 0 0 3pt; white-space: pre-line; }
+    /* Each item draws its own marker at the start of its own direction («dir=auto»), inside its own padding. The list's
+       default outside marker sat on the item's start side while the padding sat on the document's: an English item in an
+       Arabic file (or the reverse) put the bullet in the print margin, where Chromium clips it (measured 2026-11-23). */
+    ul, ol { margin: 0 0 9pt; padding: 0; list-style: none; }
+    ol { counter-reset: item; }
+    li { margin: 0 0 3pt; white-space: pre-line; position: relative; padding-inline-start: 20pt; }
+    ul > li::before { content: "\\2022"; position: absolute; inset-inline-start: 6pt; top: 0; }
+    ol > li { counter-increment: item; }
+    ol > li::before { content: counter(item) "."; position: absolute; inset-inline-start: 0; top: 0; min-width: 16pt; text-align: end; unicode-bidi: isolate; }
     blockquote { margin: 8pt 0 12pt; padding: 6pt 14pt; border-${start}: 3px solid var(--accent); background: var(--soft); color: #333; white-space: pre-line; }
     table { width: 100%; border-collapse: collapse; margin: 6pt 0 12pt; font-size: 11.5pt; }
     tr { page-break-inside: avoid; }

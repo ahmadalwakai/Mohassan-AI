@@ -2,6 +2,7 @@ import { buildFrame } from './mind/frame.js';
 import { compute, type ComputationConsumption } from './mind/compute.js';
 import type { Claim, Evidence } from './mind/contract.js';
 import { analyzeCompoundRequest, type CompoundRequestAnalysis, type PendingActionKind } from './compound-request.js';
+import { splitReplyDirective, type ReplyDirective, type ReplyLanguage } from './reply-directive.js';
 
 /** A local calculation is a reusable capability, independent of the experimental Mind route. */
 export interface LocalComputation {
@@ -27,6 +28,36 @@ export interface LocalComputation {
  */
 export function evaluateLocalComputation(request: string, now = new Date()): LocalComputation | null {
   if (!request.trim() || request.length > 4000 || !Number.isFinite(now.getTime())) return null;
+  const whole = evaluateComputationText(request, now);
+  if (whole) return whole;
+  // «QA test 2026-11-23: Calculate 37 × 24 and reply with the result in one short Arabic sentence.» (live test, 2026-11-23):
+  // the label in front and the closing instruction about the reply are not part of the calculation. Only the request
+  // between them is calculated, and only when it is a complete calculation on its own; the reply then follows the
+  // instruction. A label or an instruction alone never turns other words into a calculation.
+  const framing = splitReplyDirective(request);
+  if ((!framing.label && !framing.directive) || framing.body === request.trim()) return null;
+  const inner = evaluateComputationText(framing.body, now);
+  if (!inner) return null;
+  return framing.directive ? shapedReply(inner, framing.directive) : inner;
+}
+
+/** «37 * 24 = 888» as the reply the owner asked for: one sentence in the requested language. Code writes it, not a model. */
+function shapedReply(result: LocalComputation, directive: ReplyDirective): LocalComputation {
+  const lang: ReplyLanguage = directive.lang ?? result.lang;
+  if (result.status !== 'completed' || result.compound?.pendingActions.length || (lang === result.lang && !directive.sentences)) return result;
+  const evidence = result.evidence.find(item => item.id === 'calculation' && item.value !== undefined);
+  if (!evidence?.value) return result;
+  const equation = /^(.+?)\s=\s(.+)$/u.exec(evidence.quote);
+  const shown = equation && equation[2] === evidence.value
+    ? equation[1]!.replace(/\((-?\d+(?:\.\d+)?)\)/gu, '$1').replace(/\s*\*\s*/gu, ' × ').replace(/\s*\/\s*/gu, ' ÷ ').trim() : null;
+  const sentence = lang === 'ar'
+    ? shown ? `ناتج ${shown} هو ${evidence.value}.` : `النتيجة: ${evidence.quote}.`
+    : shown ? `${shown} equals ${evidence.value}.` : `The result is ${evidence.quote}.`;
+  const reply: Evidence = { id: 'calculation-reply', source: 'computed', quote: sentence, value: evidence.value };
+  return { ...result, lang, text: sentence, claims: [{ text: sentence, support: [reply.id], status: 'confirmed' }], evidence: [...result.evidence, reply] };
+}
+
+function evaluateComputationText(request: string, now: Date): LocalComputation | null {
   const compound = analyzeCompoundRequest(request);
   if (compound.kind === 'invalid' || compound.kind === 'unsupported_tail') return null;
   const frame = buildFrame(compound.kind === 'compound' ? compound.primary.text : request);

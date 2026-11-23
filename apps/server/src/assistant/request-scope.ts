@@ -73,6 +73,12 @@ const CLITIC_REFERENCE = /^(?:افتح|اغلق|احذف|ارسل|احفظ|غي�
 // bare «لماذا؟» names nothing to look up and stays unresolved, as it was. «لمَ» is left out: folded it is «لم», the
 // particle of «لم أجد الملف».
 const FACT_QUESTION = /^(?:(?:ما|ماذا|كم|كيف|متي|اين|وين|من|مين|هل|اي|وش|شو|ايش)(?=\s|[\p{P}]|$)|(?:لماذا|ليش|ليه)(?=\s+[\p{L}\p{N}]))|^(?:what|who|when|where|why|how|which|is|are|does|do|can|will)\b/iu;
+// «Explain why rain falls», «describe how vaccines work», «اشرح لماذا تسقط الأمطار»: a question about the world asked as
+// an instruction to explain. Until 2026-11-23 it matched no question form, ended as `missing_target`, and the search
+// guard refused «Explain why rain falls in two short Arabic sentences.» as possibly private (live test). A reference or an
+// owned record in it («explain why my account was blocked») is still found first and keeps the request private.
+const EXPLAIN_QUESTION = /^(?:explain|describe|tell me|teach me)(?:\s+(?:to me|for me|briefly|simply|in simple terms))?\s+(?:why|how|what|when|where|which|who)\s+[\p{L}\p{N}]|^(?:اشرح|وضح|فسر|بين|علمني)(?:\s+لي)?\s+(?:لماذا|ليش|ليه|كيف|ما|ماذا|متي|اين|من|سبب)\s+[\p{L}\p{N}]/iu;
+const isQuestion = (text: string) => FACT_QUESTION.test(text) || EXPLAIN_QUESTION.test(text);
 const NEWS = /(?:^|\s)(?:اخبار|الاخبار|طقس|الطقس|سعر الصرف|صرف العملات)(?=\s|[\p{P}]|$)|\b(?:news|headlines|weather|exchange rate)\b/iu;
 const CONVERSE = /^(?:مرحبا|اهلا|هلا|شكرا|تسلم|السلام عليكم|hi|hello|hey|thanks|thank you|good morning|good evening)(?=\s|[\p{P}]|$)/iu;
 const SOCIAL_QUESTION = /^(?:كيف حالك|كيفك|كيف الحال|how are you|how do you do|how are you doing)[.!?؟]*$/iu;
@@ -98,7 +104,7 @@ export function requestScopeActionText(value: string): string {
     if (!greeting || !/^(?:(?:مرحبا|اهلا|هلا|شكرا|تسلم|السلام عليكم)(?:\s+يا\s+[\p{L}]{1,30})?|(?:hello|hi|hey|thanks|thank you|good morning|good evening)(?:\s+[\p{L}]{1,30})?)$/iu.test(fold(greeting[1]))) break;
     const rest = stripLead(fold(greeting[2]));
     if (SOCIAL_QUESTION.test(rest)) break;
-    if (![FACT_QUESTION, PUBLIC_ACTION, FIND_PUBLIC_FACT, TRANSFORM, DESCRIBE_CONTENT, DESCRIBE_LOCAL, LOCAL_ACT, UNKNOWN_ACTION, NEWS, MEMORY_ACTION, NAVIGATE].some(pattern => pattern.test(rest))) break;
+    if (![FACT_QUESTION, EXPLAIN_QUESTION, PUBLIC_ACTION, FIND_PUBLIC_FACT, TRANSFORM, DESCRIBE_CONTENT, DESCRIBE_LOCAL, LOCAL_ACT, UNKNOWN_ACTION, NEWS, MEMORY_ACTION, NAVIGATE].some(pattern => pattern.test(rest))) break;
     text = greeting[2].trim();
   }
   return text;
@@ -181,7 +187,7 @@ export function assessRequestScope(value: string, options: RequestScopeOptions =
 
   const parsedPrevious = options.previous === undefined ? null : parseRequestScopeAssessment(options.previous);
   const reference = REFERENCE.test(outer) || FOLLOW.test(outer) || CLITIC_REFERENCE.test(outer);
-  const independentQuestion = (FACT_QUESTION.test(outer) || NEWS.test(outer)) && !reference && options.contextKind !== 'answer';
+  const independentQuestion = (isQuestion(outer) || NEWS.test(outer)) && !reference && options.contextKind !== 'answer';
   const selfContainedPublic = (explicitPublic || findPublicFact) && !reference || hasPublicDocument || independentQuestion;
   if (selfContainedPublic) return make('public_lookup', navigation ? 'act' : transformation ? 'transform' : 'lookup', navigation ? 'browser_command' : 'web_search', [hasPublicDocument ? 'public_document_reference' : explicitPublic ? 'explicit_public_lookup' : 'public_subject', 'explicit_new_task']);
   if (options.contextKind === 'follow_up' || options.contextKind === 'answer') {
@@ -197,7 +203,7 @@ export function assessRequestScope(value: string, options: RequestScopeOptions =
   }
   if (reference || transformation && !hasPublicDocument && !NEWS.test(outer)) return make('unresolved', transformation ? 'transform' : 'unknown', transformation ? 'writing' : 'unknown', [reference ? 'unresolved_reference' : 'missing_target']);
   if (options.contextKind === 'ambiguous') return make('unresolved', 'unknown', 'unknown', ['missing_target']);
-  if (NEWS.test(outer) || explicitPublic || FACT_QUESTION.test(outer)) return make('public_lookup', 'lookup', 'web_search', [explicitPublic ? 'explicit_public_lookup' : 'public_subject']);
+  if (NEWS.test(outer) || explicitPublic || isQuestion(outer)) return make('public_lookup', 'lookup', 'web_search', [explicitPublic ? 'explicit_public_lookup' : 'public_subject']);
   if (CONVERSE.test(outer)) return make('unresolved', 'converse', 'unknown', ['non_lookup_operation']);
   if (UNKNOWN_ACTION.test(outer) || CURRENT_CODE_ACTION.test(outer)) return make('unresolved', 'act', 'unknown', ['missing_target']);
   const words = outer.match(/[\p{L}][\p{L}\p{N}'’-]*/gu) ?? [];

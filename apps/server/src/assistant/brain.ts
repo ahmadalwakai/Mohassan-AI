@@ -371,6 +371,10 @@ export interface BrainState {
   sitePendingWant?: { want: import('@mohassan/contracts').SiteWant; title?: string } | null;
   /** A PDF to create, waiting for the owner's answers to its one card. Only code sets this. */
   document?: import('./documents.js').DocumentTask | null;
+  /** The result of this run's local calculation, so a later turn of the same conversation can refer to it. Only code sets this. */
+  computed?: import('./computation-reference.js').ComputedRecord | null;
+  /** A calculation on an earlier result that this conversation does not have, waiting for the owner to give the number. */
+  pendingComputation?: { request: string; phrase: string; lang: 'ar' | 'en' } | null;
   /** The option id of the owner's latest button answer; cleared once read. */
   lastChoice?: string | null;
   /** A Runtime task that exists but has not been approved, so it never ran. */

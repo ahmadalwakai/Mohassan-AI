@@ -6,7 +6,14 @@ import { releaseLines, releaseQuestion } from './releases.js';
 import { isCampaignRequest } from './campaign-request.js';
 import { isSiteRequest } from '@mohassan/sites';
 import type { WebSequel } from './web-sequence.js';
+import { splitReplyDirective, type ReplyField } from './reply-directive.js';
 export { siteName };
+
+/**
+ * How the owner asked the reply to look (reply-directive.ts), kept apart from the search words: «in two short Arabic
+ * sentences», «Return the page title and source link». `lang` is the language asked for; `fields` are what to name.
+ */
+export interface HandsReply { lang?: 'ar' | 'en'; sentences?: number; fields?: ReplyField[] }
 
 /**
  * The browser's hands without a model: the owner's words become a short list of steps,
@@ -16,7 +23,7 @@ export { siteName };
 export type HandsStep =
   | { kind: 'open'; url: string; name: string }
   /** `ask`: the owner asked a question, so the run opens the top results and quotes the sentences that answer it. */
-  | { kind: 'search'; query: string; site: { url: string; name: string } | null; here?: boolean; ask?: boolean }
+  | { kind: 'search'; query: string; site: { url: string; name: string } | null; here?: boolean; ask?: boolean; reply?: HandsReply }
   | { kind: 'click'; target: string; ordinal: number | null }
   | { kind: 'type'; text: string; field: string }
   | { kind: 'read'; more: boolean }
@@ -135,6 +142,11 @@ function parseSegment(raw: string): HandsStep | HandsStep[] | null {
   }
   match = /^(?:search|look up)\s+(\S+)\s+for\s+(.+)$/i.exec(text);
   if (match && namedSite(match[1])) return { kind: 'search', query: strip(match[2]), site: namedSite(match[1]) };
+  // «Search the web for X» searches for X: «the web for …» was searched as the query itself in the live test of 2026-11-23,
+  // as «ابحث في الإنترنت عن X» already was not.
+  match = /^(?:search|look)(?:\s+up)?\s+(?:on\s+|in\s+)?(?:the\s+)?(?:web|internet|net|online)\s+(?:for|about)\s+(.+)$/i.exec(text)
+    ?? /^(?:search|look up)\s+online\s+(.+)$/i.exec(text);
+  if (match) return { kind: 'search', query: strip(match[1]), site: null };
   match = /^(?:search(?:\s+for)?|look up)\s+(.+)$/i.exec(text);
   if (match) {
     const peeled = peelSite(match[1], /^(?:on|in|at)$/i);
@@ -174,13 +186,15 @@ function parseSegment(raw: string): HandsStep | HandsStep[] | null {
 }
 
 /** «وأخبرني», «ثم اذكر», «and tell me»: a question about the page that was just opened. */
-const TELL_AR = '(?:أخبرني|اخبرني|خبرني|قل لي|قللي|قلي|اذكر لي|اذكر|أعطني|اعطني|وضح لي|بين لي)';
-const TELL_EN = '(?:tell me|show me|give me|what(?:\'s| is| are)|which)';
+const TELL_AR = '(?:أخبرني|اخبرني|خبرني|قل لي|قللي|قلي|اذكر لي|اذكر|أعطني|اعطني|وضح لي|بين لي|انقل لي|انقل)';
+// «and report the page heading…» asks about the page as «and tell me…» does (live test of 2026-11-23: the page opened and
+// the run ended «not verified», because only «tell/show/give me» joined a question to the open).
+const TELL_EN = '(?:tell me|show me|give me|report|state|quote|return|extract|copy|list|what(?:\'s| is| are)|which)';
 const ASK_SPLIT = new RegExp(`\\s*[،,]?\\s+(?:ثم\\s+|وبعدها\\s+|و)(?=${TELL_AR}(?:\\s|$))|\\s*,?\\s+(?:and(?: then)?|then)\\s+(?=${TELL_EN}\\s)`, 'iu');
 /** The question points at the page: «في الصفحة», «فيها», «المذكور», «on the page», «listed». «وقل لي نكتة» does not. */
-const PAGE_REF = /(?:^|\s)(?:في|على|من)\s+(?:هذه\s+|هذا\s+)?(?:ال)?(?:صفحه|موقع)(?=\s|$)|(?:^|\s)(?:فيها|فيه|عليها|عليه|منها|منه)(?=\s|$)|(?:^|\s)(?:ال)?(?:مذكور|موجود|موجوده|مكتوب|ظاهر)(?=\s|$)|\b(?:on|in|from) (?:the|this|that) (?:page|site|website)\b|\b(?:on it|in it|there|listed|mentioned|shown|written)\b/iu;
-/** …or names a part of it with the definite article: «العنوان الرئيسي», «الرابط», «the version». */
-const PAGE_PART = /(?:^|\s)(?:ب|و)?ال(?:عنوان|روابط|رابط|اصدار)(?=\s|$)|\bthe (?:main heading|heading|headline|title|links?|(?:latest |newest |current )?version)\b/iu;
+const PAGE_REF = /(?:^|\s)(?:في|على|من)\s+(?:هذه\s+|هذا\s+)?(?:ال)?(?:صفحه|موقع)(?=\s|$)|(?:^|\s)(?:فيها|فيه|عليها|عليه|منها|منه)(?=\s|$)|(?:^|\s)(?:ال)?(?:مذكور|موجود|موجوده|مكتوب|ظاهر)(?=\s|$)|\b(?:on|in|from) (?:the|this|that) (?:(?:live|current|opened|open|same) )?(?:page|site|website)\b|\b(?:on it|in it|there|listed|mentioned|shown|written)\b/iu;
+/** …or names a part of it with the definite article: «العنوان الرئيسي», «الرابط», «the version», «the page heading», «the first sentence». */
+const PAGE_PART = /(?:^|\s)(?:ب|و)?ال(?:عنوان|روابط|رابط|اصدار)(?=\s|$)|(?:^|\s)(?:ب|و)?(?:ال)?جمله (?:ال)?اولي(?=\s|$)|(?:^|\s)(?:ب|و)?اول (?:جمله|فقره|سطر)(?=\s|$)|\bthe (?:page(?:'s)? )?(?:main heading|heading|headline|title|links?|first (?:sentence|paragraph|line)|(?:latest |newest |current )?version)\b/iu;
 
 /**
  * «افتح X وأخبرني بـY» / «open X and tell me Y» as a plan of two steps: open the page, then answer Y from its own text
@@ -208,6 +222,25 @@ function parseOpenAndAsk(request: string): HandsStep[] | null {
  * A lone «افتح موقع» stays with the direct route, which proves the opened destination.
  */
 export function parseHands(request: string): HandsStep[] | null {
+  // An instruction about the reply is not a step, and a tag in front is not part of the command: «Search the web for X.
+  // Return the page title and source link.» searches for X and names the found page's title and link (reply-directive.ts).
+  const framing = typeof request === 'string' ? splitReplyDirective(request) : null;
+  if (framing && (framing.label || framing.directive) && framing.body !== request.trim()) {
+    const steps = parseCommand(framing.body);
+    if (steps) {
+      const directive = framing.directive;
+      if (directive) for (const step of steps) if (step.kind === 'search') {
+        step.reply = { ...(directive.lang ? { lang: directive.lang } : {}), ...(directive.sentences ? { sentences: directive.sentences } : {}), ...(directive.fields?.length ? { fields: directive.fields } : {}) };
+        // Naming a page's title and link asks for a page that was read and found about the subject, not a bare list.
+        if (directive.fields?.some(field => field === 'title' || field === 'link')) step.ask = true;
+      }
+      return steps;
+    }
+  }
+  return parseCommand(request);
+}
+
+function parseCommand(request: string): HandsStep[] | null {
   const openAsk = parseOpenAndAsk(request);
   if (openAsk) return openAsk;
   const segments = tidy(request).split(SPLIT).map(part => part?.trim()).filter((part): part is string => Boolean(part));
@@ -278,10 +311,25 @@ export function webQuestion(request: string, earlier: readonly string[] = []): H
   const raw = request.normalize('NFC').replace(/^(?:من فضلك|لو سمحت|please)[،,\s]+/iu, '').trim();
   const text = tidy(raw);
   if (notWebReason(text)) return null;
-  const lookup = LOOKUP.exec(text);
-  const own = lookup ? strip(lookup[1]) : text;
+  // «Explain why rain falls in two short Arabic sentences.» asks «why rain falls»: «explain» only asks for the answer, and
+  // the closing instruction shapes the reply (reply-directive.ts). In the live test of 2026-11-23 the whole sentence was the
+  // query, and the search guard refused it as private before any search.
+  const framing = splitReplyDirective(raw);
+  const asked = tidy(explainedQuestion(framing.directive ? framing.body : raw));
+  if (!asked || notWebReason(asked)) return null;
+  const lookup = LOOKUP.exec(asked);
+  const own = lookup ? strip(lookup[1]) : asked;
   const query = withTopic(own, earlier);
-  return query ? [{ kind: 'search', query, site: null, ask: true }] : null;
+  const directive = framing.directive;
+  const reply: HandsReply | null = directive && (directive.lang || directive.sentences || directive.fields?.length)
+    ? { ...(directive.lang ? { lang: directive.lang } : {}), ...(directive.sentences ? { sentences: directive.sentences } : {}), ...(directive.fields?.length ? { fields: directive.fields } : {}) } : null;
+  return query ? [{ kind: 'search', query, site: null, ask: true, ...(reply ? { reply } : {}) }] : null;
+}
+
+/** «Explain why X» → «why X», «اشرح لماذا X» → «لماذا X»: the question an instruction to explain carries. Else the text as it is. */
+export function explainedQuestion(text: string): string {
+  return text.replace(/^(?:please\s+)?(?:explain|describe|tell me|teach me)(?:\s+(?:to me|for me|briefly|simply|in simple terms))?\s+(?=(?:why|how|what|when|where|which|who)\b)/iu, '')
+    .replace(/^(?:من فضلك\s+)?(?:اشرح|إشرح|وضح|وضّح|فسر|فسّر|بين|بيّن|علمني)(?:\s+لي)?\s+(?=(?:لماذا|ليش|ليه|كيف|ما|ماذا|متى|متي|أين|اين|من|سبب)(?:\s|$))/u, '');
 }
 
 /** «وكم سعره في مصر؟», «طيب وبكرة؟», «what about Paris»: a question that leans on the one before it. */
@@ -409,7 +457,21 @@ export const aspectSubject = (question: string): string[] => ASPECT_QUESTION.tes
 const AFTER_CAUSE = /بسبب|(?:^|\s)(?:و|ف)?لان(?:ه|ها|هم|هما|نا|ك)(?=[\s،.]|$)|(?:^|\s)(?:و|ف)?لان\s+ال|نتيجه\s+(?:ل|عن)|وذلك\s+ل|(?:يعود|تعود|يرجع|ترجع|يعزي|تعزي)\s+(?:(?:ذلك|هذا|السبب)\s+)?الي|(?:^|\s)نسبه\s+(?:الي|ل)|\bbecause\b|\bdue to\b|\bcaused by\b|\bas a result of\b|\bresult(?:s|ing|ed)? from\b|\bowing to\b/u;
 const CAUSE_NOUN = /(?:^|\s)(?:و|ف)?(?:ال)?(?:سبب|اسباب)(?=\s)|\bthe (?:main |primary |chief |real )?(?:reason|cause)s?\b/gu;
 const REASON_FILLER = new Set(['ليه', 'بهذا', 'هذا', 'هذه', 'قبل', 'بعد', 'ان', 'جدا', 'كثيرا', 'دائما', 'so', 'very', 'always', 'often', 'much', 'reason', 'reasons', 'cause', 'causes', 'caused']);
+/**
+ * What is asked, narrowed to one place, season or case before the cause: «… وتسقط به الأمطار في فصل الشتاء … بسبب هبوب
+ * الرياح الغربية» gives the cause of winter rain in one climate, not why rain falls. It was shown as the answer to «اشرح
+ * لماذا تسقط الأمطار» in the live check of 2026-11-23. A question that names such a case itself is not narrowed by it.
+ */
+const RESTRICTED_CASE = /(?:^|\s)(?:في|خلال)\s+(?:فصل|موسم|فصول|الشتاء|الصيف|الربيع|الخريف|المناطق|منطقه|مناطق|غرب|شرق|شمال|جنوب|بعض|هذه|تلك|اغلب|معظم)(?=\s|$)|(?:^|\s)(?:به|بها|فيه|فيها)(?=\s|$)|\b(?:in|during)\s+(?:winter|summer|spring|autumn|(?:the\s+)?(?:tropics|monsoon|north|south|east|west)|some|these|those|this\s+region|that\s+region|parts\s+of|most\s+of)\b|\b(?:within|across|throughout)\s+\S/u;
+/**
+ * Where a word of the question is found in a sentence word. Arabic words carry their clitics («وتسقط», «بالأمطار»), so the
+ * stem may sit inside the word. An English word starts with it («falls», «falling»): inside a word, «rainfall» held both
+ * «rain» and «fall», and «Within Asia, rainfall is favored … due to the monsoon» was shown for «Explain why rain falls»
+ * (live check of 2026-11-23).
+ */
+const holds = (word: string, stem: string) => /\p{Script=Arabic}/u.test(stem) ? word.includes(stem) : word.replace(/^[^\p{L}\p{N}]+/u, '').startsWith(stem);
 export function reasonAnswers(question: string, line: string): boolean {
+  const narrowedQuestion = RESTRICTED_CASE.test(fold(question));
   const subject = topicWords(reasonSubject(question));
   const stem = (word: string) => word.length > 4 ? word.slice(0, 4) : word;
   const asked = topicWords(question).filter(word => !subject.includes(word) && !REASON_FILLER.has(word)).map(stem);
@@ -422,13 +484,14 @@ export function reasonAnswers(question: string, line: string): boolean {
   const names = !subject.length || subject.some(word => text.includes(stem(word)));
   for (const clause of text.split(/[،,؛;]|\.(?!\d)/u)) {
     const cause = AFTER_CAUSE.exec(clause);
+    if (cause && !narrowedQuestion && RESTRICTED_CASE.test(clause.slice(0, cause.index))) continue;
     if (cause) {
       // What is asked and the subject stand together before the cause («انقرضت الديناصورات نتيجةً لـ…», "the sky is blue due
       // to…"): «الديناصورات ساهمت في تسريع وتيرة انقراض الحيوانات الأخرى بسبب…» is about other animals' extinction.
       const before = clause.slice(0, cause.index).trim().split(/\s+/);
-      const at = (stems: readonly string[]) => before.flatMap((word, index) => stems.some(item => word.includes(item)) ? [index] : []);
+      const at = (stems: readonly string[]) => before.flatMap((word, index) => stems.some(item => holds(word, item)) ? [index] : []);
       const stated = at(wanted), subjects = at(subject.map(stem));
-      const opens = before.slice(0, 2).some(first => asked.some(word => first.includes(word)));
+      const opens = before.slice(0, 2).some(first => asked.some(word => holds(first, word)));
       if (stated.length && (!asked.length || (subjects.length ? stated.some(i => subjects.some(j => Math.abs(i - j) <= 3)) : names || opens))) return true;
     }
     for (const noun of clause.matchAll(CAUSE_NOUN)) {
@@ -1092,6 +1155,14 @@ export const noLiveSource = (query: string, lang: 'ar' | 'en' = /[؀-ۿ]/u.test(
   ? `لم أتمكن من الوصول إلى مصدر حديث ومرتبط بسؤالك «${query}» بعد تجربة البحث في الويب. إن أرسلت رابط موقع مناسب أفتحه وأقرأ المعلومة منه.`
   : `I could not reach a current source relevant to “${query}” after trying web search. Send a suitable website link and I can open it and read the information there.`;
 
+/**
+ * The search request itself failed: the providers that read the question did not answer (`detail` names each one and how,
+ * as the shared engine reports it). Not the same as a search that answered with nothing relevant.
+ */
+export const searchFailed = (query: string, detail: string, lang: 'ar' | 'en' = /[؀-ۿ]/u.test(query) ? 'ar' : 'en') => lang === 'ar'
+  ? `تعذّر البحث عن «${query}»: مصادر البحث لم تستجب الآن (${detail}). هذا فشل في الطلب، لا بحث بلا نتائج. أعد المحاولة بعد قليل.`
+  : `The search for “${query}” failed: the search sources did not answer just now (${detail}). This is a failed request, not a search without results. Please try again shortly.`;
+
 const noSearchSource = (query: string, lang: 'ar' | 'en' = /[؀-ۿ]/u.test(query) ? 'ar' : 'en') => LIVE.test(query) ? noLiveSource(query, lang) : lang === 'ar'
   ? `لم أجد في المصادر المتاحة لي (ويكيبيديا والواجهات الموثقة) نتائج مرتبطة بسؤالك «${query}». أرسل رابط موقع مناسب أو حدد اسم الجهة التي تريد البحث لديها.`
   : `I found no results relevant to “${query}” in the sources available to me (Wikipedia and documented APIs). Send a suitable website link or name the organization to search.`;
@@ -1136,7 +1207,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
   /** Articles opened by the subject's own name (Wikipedia resolves its redirects): the subject's article whatever its title. */
   const ownUrls = new Set<string>();
   const ownPage = (page: { url: string; title: string }, entity: readonly string[]) => ownUrls.has(withoutHash(page.url)) || isOwnArticle(page.title, entity);
-  const engine = async (query: string): Promise<{ results: { title: string; url: string }[] } | 'unavailable'> => {
+  const engine = async (query: string): Promise<{ results: { title: string; url: string }[] } | { failed: string } | 'unavailable'> => {
     const publicQuery = query.normalize('NFKC').replace(/\p{Cf}/gu, '');
     const decoded = publicSearchScan(publicQuery);
     if (publicSearchText(publicQuery) !== publicQuery || publicSearchText(decoded) !== decoded || (decoded.match(/https?:\/\/\S+/gi) ?? []).some(url => safeResumeUrl(url) === null)) {
@@ -1146,12 +1217,16 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     if (!io.search) return 'unavailable';
     const live = LIVE.test(query);
     const topic = topicWords(query);
+    // The search providers did not answer (unavailable, rate limited, invalid answer): a failed request, told apart from a
+    // search that answered with nothing about the question.
+    let providerFailure: string | null = null;
     const lookup = async (words: string) => {
       let hits: SearchHit[] = [];
       try { hits = await io.search!(words, 6); }
       catch (error) {
+        if (error instanceof BrowserError && error.code === 'RESEARCH_PROVIDERS_FAILED') providerFailure = error.message;
         // Cancellation, rejected query policy and lost execution authority must stop the run.
-        if (!(error instanceof BrowserError) || error.code !== 'RESEARCH_SEARCH_UNAVAILABLE') throw error;
+        else if (!(error instanceof BrowserError) || error.code !== 'RESEARCH_SEARCH_UNAVAILABLE') throw error;
       }
       const seen = new Set<string>();
       const ranked = hits.flatMap((hit, at) => {
@@ -1220,7 +1295,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         if (own.length) results = [...own, ...results.filter(hit => !own.some(item => withoutHash(item.url) === withoutHash(hit.url)))];
       }
     }
-    return results.length ? { results } : 'unavailable';
+    return results.length ? { results } : providerFailure ? { failed: providerFailure } : 'unavailable';
   };
 
   while (plan.next < plan.steps.length) {
@@ -1270,6 +1345,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           // The shared engine over HTTP: a results list and no browser page.
           const found = await engine(step.query);
           if (found === 'unavailable') return { kind: 'done', status: 'blocked', text: noSearchSource(step.query, plan.lang) };
+          if ('failed' in found) return { kind: 'done', status: 'blocked', text: searchFailed(step.query, found.failed, plan.lang) };
           searched = found.results;
         } else {
           let reached: AgentPage | null | 'none';
@@ -1494,6 +1570,24 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
 
 /** What a question about an opened page asks for, beside ordinary sentences: its main heading, its links' text, a version. */
 const HEADING_ASK = /(?:^|\s)(?:ب|و)?(?:ال)?(?:عنوان|عناوين)(?=\s|$)|\b(?:main heading|heading|headline|title|h1)\b/iu;
+/** «the first sentence», «the opening paragraph», «أول جملة», «الجملة الأولى» (folded). */
+const FIRST_SENTENCE_ASK = /\b(?:first|opening|1st) (?:sentence|line|paragraph)\b|(?:^|\s)(?:ب|و)?اول (?:جمله|سطر|فقره)(?=\s|$)|(?:^|\s)(?:ب|و)?(?:ال)?(?:جمله|فقره) (?:ال)?اولي(?=\s|$)/iu;
+/**
+ * The first sentence of the page's own text after its heading: the browser joins a page into one line, so the sentence is
+ * found by its end mark. Navigation runs and lines of fewer than four words are not sentences.
+ */
+function firstSentence(text: string, heading: string | null): string | null {
+  let body = text.replace(/\s+/gu, ' ').trim();
+  if (heading) {
+    const at = body.toLowerCase().indexOf(heading.toLowerCase());
+    if (at >= 0 && at <= 300) body = body.slice(at + heading.length).trim();
+  }
+  for (const candidate of body.split(/(?<=[.!?؟])\s+/u).slice(0, 12)) {
+    const sentence = candidate.trim();
+    if (sentence.split(/\s+/u).length >= 4 && /[.!?؟]$/u.test(sentence) && sentence.length <= 400) return sentence;
+  }
+  return null;
+}
 const LINK_ASK = /(?:^|\s)(?:ب|و)?(?:ال)?(?:رابط|روابط)(?=\s|$)|\blinks?\b/iu;
 const VERSION_ASK = /(?:^|\s)(?:ب|و)?(?:ال)?(?:اصدار|اصدارات|نسخه)(?=\s|$)|\b(?:version|versions|release)\b/iu;
 /**
@@ -1529,6 +1623,11 @@ export function pageAnswer(page: AgentPage, question: string, lang: 'ar' | 'en')
     if (heading) parts.push({ label: ar ? 'العنوان الرئيسي:' : 'Main heading:', quotes: [heading] });
     else missing.push(ar ? 'العنوان الرئيسي' : 'the main heading');
   }
+  if (FIRST_SENTENCE_ASK.test(asked)) {
+    const sentence = firstSentence(text, plainTitle(page.title) || null);
+    if (sentence) parts.push({ label: ar ? 'أول جملة في الصفحة:' : 'First sentence on the page:', quotes: [sentence] });
+    else missing.push(ar ? 'أول جملة في الصفحة' : 'the first sentence');
+  }
   if (LINK_ASK.test(asked)) {
     const labels = [...new Set(page.elements.filter(item => item.role === 'link' && item.href && tidy(item.label)).map(item => tidy(item.label)))]
       .filter(label => text.includes(label)).slice(0, 5);
@@ -1556,12 +1655,34 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
   if (last.kind === 'search' && last.ask && plan.results) {
     const list = (items: { title: string; url: string }[]) => items.map((item, index) => `${index + 1}. [${plainTitle(item.title)}](${item.url}) — ${siteName(item.url)}`).join('\n');
     // The frame around the quotes follows the owner's language (plan §7.3); the quotes themselves stay as the page wrote them.
+    // A reply asked in another language («in two short Arabic sentences») is said not to be met below, in this same language.
+    const reply = last.reply;
     const en = (plan.lang ?? (/[؀-ۿ]/u.test(last.query) ? 'ar' : 'en')) === 'en';
     const note = isMedical(last.query) ? `\n\n${plan.found ? en ? MEDICAL_NOTE_EN : MEDICAL_NOTE : en ? 'For diagnosis and treatment, see a doctor.' : 'للتشخيص والعلاج راجع طبيبًا مختصًا.'}` : '';
     if (plan.found) {
       // Plain layout for anyone: the answer first, then the rest, then a short named source. Sentences stay as the page wrote them.
       const others = plan.results.filter(item => withoutHash(item.url) !== withoutHash(plan.found!.url)).slice(0, 3);
-      const [first, ...rest] = plan.found.lines;
+      // «in two sentences»: no more of the page's sentences than were asked for.
+      const shownLines = reply?.sentences ? plan.found.lines.slice(0, Math.max(1, reply.sentences)) : plan.found.lines;
+      // «Return the page title and source link»: the page that was read and found about the question, named first.
+      const named = reply?.fields?.some(field => field === 'title' || field === 'link')
+        ? `**${en ? 'Page title:' : 'عنوان الصفحة:'}** ${plainTitle(plan.found.title)}\n**${en ? 'Source link:' : 'رابط المصدر:'}** ${plan.found.url}\n\n` : '';
+      // A reply asked in a language the page is not written in: the page's own sentences, and that said plainly.
+      const quotedArabic = /\p{Script=Arabic}/u.test(shownLines.join(' '));
+      const otherLanguage = reply?.lang && (reply.lang === 'ar') !== quotedArabic;
+      const asked = reply?.lang === 'ar' ? en ? 'Arabic' : 'العربية' : en ? 'English' : 'الإنجليزية';
+      const written = quotedArabic ? en ? 'Arabic' : 'العربية' : en ? 'English' : 'الإنجليزية';
+      const languageNote = otherLanguage ? `\n\n${en
+        ? `You asked for the answer in ${asked}, but the source I read is written in ${written}, and I do not translate text without a language model; these are the source’s own sentences.`
+        : `طلبت الجواب بـ${asked}، لكن المصدر الذي قرأته مكتوب بـ${written}، ولا أترجم النصوص دون نموذج لغوي؛ فهذه جمل المصدر كما كُتبت.`}` : '';
+      // «the official IANA documentation»: an encyclopedia article is not the organisation's own page. The search sources have
+      // no general web index (no engine without a human check or a paid key), so the official page may not be reachable here.
+      const officialAsked = /\bofficial\b|(?:^|\s)(?:ال)?رسمي(?:ة|ه)?(?=\s|$)/iu.test(last.query);
+      const notOfficial = officialAsked && /(?:^|\.)wikipedia\.org$/iu.test(URL.parse(plan.found.url)?.hostname ?? '');
+      const officialNote = notOfficial ? `\n\n${en
+        ? 'This is not the organisation’s own page: the search sources available to me (Wikipedia and documented APIs, with no general web index) returned no page from its own site. Send the official page’s link and I will read it.'
+        : 'هذه ليست صفحة الجهة نفسها: مصادر البحث المتاحة لي (ويكيبيديا والواجهات الموثقة، بلا فهرس عام للويب) لم تُرجع صفحة من موقعها. أرسل رابط الصفحة الرسمية وأقرأها لك.'}` : '';
+      const [first, ...rest] = shownLines;
       const more = rest.length ? `\n\n**${en ? 'More from the same source:' : 'تفاصيل أخرى من نفس المصدر:'}**\n${rest.map(line => `- ${line}`).join('\n')}` : '';
       // The read time names the evidence's age; a page served from the cache keeps the time it was really fetched.
       const readAt = plan.found.readAt && !Number.isNaN(Date.parse(plan.found.readAt)) ? ` · ${en ? 'read' : 'قُرئت'} ${new Date(plan.found.readAt).toISOString().slice(0, 16).replace('T', ' ')} UTC` : '';
@@ -1576,7 +1697,7 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
         : wantsFigure && !plan.found.official ? `\n\n${en ? 'I did not check this figure against a second source.' : 'لم أتحقق من هذا الرقم في مصدر ثانٍ.'}` : '';
       // A line composed from a page's data shows the page's own words under it («> node-v26.13.1-… 11-Nov-2026 16:41»).
       const quoted = plan.found.quote ? `\n\n> ${plan.found.quote}` : '';
-      return { status: 'completed', text: `${first}${quoted}${more}\n\n${source}${second}${also}${note}` };
+      return { status: otherLanguage || notOfficial ? 'partial' : 'completed', text: `${named}${first}${quoted}${more}\n\n${source}${second}${also}${note}${languageNote}${officialNote}` };
     }
     if (plan.results.length) return { status: 'partial', text: en
       ? `I found no page that answers “${last.query}” directly, and I will not pass you an answer from a page that is not about your question. These pages came up in the search:\n\n${list(plan.results)}\n\nSay “open result 2”, for example, and I will read it for you.${note}`
@@ -1585,6 +1706,8 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
   }
   if (last.kind === 'search' && plan.results?.length) {
     const list = plan.results.slice(0, 8).map((item, index) => `${index + 1}. [${plainTitle(item.title)}](${item.url}) — ${siteName(item.url)}`).join('\n');
+    // The list's frame follows the owner's language: an English request got an Arabic frame until 2026-11-23.
+    if ((plan.lang ?? (/[؀-ۿ]/u.test(last.query) ? 'ar' : 'en')) === 'en') return { status: 'completed', text: `I searched the web for “${last.query}”. Results related to the subject:\n\n${list}\n\nSay “open result 2”, for example, and I will open it.` };
     return { status: 'completed', text: `بحثت في الويب عن «${last.query}». النتائج المرتبطة بالموضوع:\n\n${list}\n\nقل «افتح النتيجة 2» مثلًا لأفتحها.` };
   }
   if (!page) return { status: 'blocked', text: NO_PAGE };

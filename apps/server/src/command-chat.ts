@@ -8,7 +8,7 @@ import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import {
   ChatApproveSchema, ChatBrowserActivitySchema, ChatConversationSchema, ChatCreateSchema, ChatFeedbackSchema, ChatKeyboardSchema, ChatPointerSchema, ChatQuestionSchema, ChatRespondSchema,
-  ChatSecureSubmitSchema, ChatSendSchema, ChatImageUploadSchema, type ChatConversation, type ChatQuestion, type ChatSecureRequest,
+  ChatSecureSubmitSchema, ChatSendSchema, ChatImageUploadSchema, chatCapabilityIds, type ChatCapabilities, type ChatConversation, type ChatQuestion, type ChatSecureRequest,
   SkillRunInputSchema, type SkillRunInput, type SkillGapObservation,
 } from '@mohassan/contracts';
 import { AgentEffectHeld, AgentSessionCheckpointSchema, BrowserError, SearchEngine, SafeNetwork, type AgentPostcondition, type AgentAction, type AgentAuthority, type AgentActionResult, type AgentBrowser, type AgentCaptureResult, type AgentPage, type NetworkPolicy, type SearchProvider } from '@mohassan/browser';
@@ -35,10 +35,11 @@ import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from 
 import { composePlan, planningQuestion, planningTask } from './assistant/planner.js';
 import type { SkillReader, SkillReadMode } from './assistant/skill-reader.js';
 import { buildSiteReply, siteAnswers, siteCard, siteCommandTurn, siteTask, type SitesChatPort } from './assistant/site-builder.js';
-import { composeDocumentSpec, documentCreatedReply, documentEditedReply, documentInfoReply, documentQuestion, documentTask, noSourceReply, unsupportedDocumentReply, type DocumentEditTask, type DocumentOperation } from './assistant/documents.js';
+import { composeDocumentSpec, documentCreatedReply, documentEditedReply, documentInfoReply, documentQuestion, documentRequestGaps, documentTask, noSourceReply, unsupportedDocumentReply, type DocumentEditTask, type DocumentOperation } from './assistant/documents.js';
 import { PdfError, parsePageSelection } from '@mohassan/pdf';
 import type { DocumentControl, DocumentEdit, DocumentInput } from './documents.js';
 import { evaluateLocalComputation } from './assistant/local-computation.js';
+import { composeReferencedComputation, computationReference, computedRecord, evaluateReferencedComputation, latestComputedResult, missingReferenceQuestion, referencedValueFromAnswer, withReferencedValue } from './assistant/computation-reference.js';
 import { evaluateLocalRecall } from './assistant/local-recall.js';
 import { ownFactQuestion } from './assistant/own-fact-question.js';
 import { evaluateLocalConversation } from './assistant/local-conversation.js';
@@ -895,7 +896,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       browser: page ? { url: page.url, title: page.title, observedAt: page.observedAt, live: await browser.hasPage(ownerId, id), screenUrl: `/api/chat/conversations/${id}/screen?v=${page.version}`, recovery: row.browser_checkpoint ? row.browser_checkpoint.status === 'ready' && row.browser_checkpoint.resumeUrl ? 'available' : 'review_required' : 'unavailable',...(checkpoint?{recoveryToken:checkpointToken(checkpoint)}:{}) } : null,
       progress: row.progress, error: row.error, campaign: await readCampaignEvents(db, id),
       steps: steps.reverse().map((item) => ({ id: item.id, text: item.message, createdAt: iso(item.created_at) })),
-      updatedAt: iso(row.updated_at), configured: hasChatModel(),
+      updatedAt: iso(row.updated_at), configured: hasChatModel(), capabilities: await capabilitiesFor(ownerId),
       // The browser level (plan §6.1) is read from the rows above, never stored apart from them: the UI opens the panel by itself only at 3.
       visibility: deriveBrowserVisibility({ request: messages.findLast(item => item.role === 'user')?.text ?? '', route: lastRun?.state?.routing?.route ?? null,
         role: (config.fullAccess ? await config.fullAccess(ownerId) : true) ? 'owner' : 'member', hasPage: Boolean(page), status: row.status,
@@ -903,10 +904,24 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     });
   }
 
+  /**
+   * What this account's session can do now, from the runtime: the same facts the self-knowledge answers use, filtered by
+   * the account's reach (a member has no Ads model or computer). The web's banner listed a fixed three until 2026-11-23.
+   */
+  async function capabilitiesFor(ownerId: string): Promise<ChatCapabilities> {
+    const full = config.fullAccess ? await config.fullAccess(ownerId) : true;
+    const facts: Record<(typeof chatCapabilityIds)[number], boolean> = {
+      computation: true, web: true, browser: true, memory: Boolean(tools?.memory), knowledge: Boolean(config.knowledgeSearch),
+      documents: Boolean(config.documents), sites: Boolean(config.sites), skills: Boolean(config.skillAnswer), planner: true, letters: true,
+      imageReading: Boolean(config.imageReader?.available), ads: Boolean(config.adsModel) && full, pc: Boolean(tools?.computer) && full,
+    };
+    return { chatModel: hasChatModel(), available: chatCapabilityIds.filter(capability => facts[capability]) };
+  }
+
   async function list(ownerId: string) {
     await recoverExpired();
     const rows = await db.selectFrom('chat_conversations').select(['id', 'title', 'status', 'updated_at','browser_account']).where('owner_id', '=', ownerId).orderBy('updated_at', 'desc').limit(60).execute();
-    return { configured: hasChatModel(),
+    return { configured: hasChatModel(), capabilities: await capabilitiesFor(ownerId),
       conversations: rows.map((row) => ({ id: row.id, title: row.title, status: row.status, browserAccount:row.browser_account??null, updatedAt: iso(row.updated_at) })) };
   }
 
@@ -2275,7 +2290,69 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           }
         }
       }
-      if (freshRequest && !intrinsicRuntime && !intrinsicConversation && !intrinsicSelf && !intrinsicComputation && !intrinsicSequence && state.requestResolution?.kind === 'ambiguous' && state.requestResolution.ambiguities.some(reason =>
+      // A calculation on an earlier result of this conversation (assistant/computation-reference.ts). «Add 12 to your previous
+      // result.» after «37 × 24 = 888» ended «not solved by the available local capabilities» in the live test of 2026-11-23.
+      // The referent is read from this conversation's own earlier runs only, never another conversation's; with none, the
+      // owner is asked once for the number and the same request then finishes. It runs before the clarifier below, which
+      // would otherwise ask what «it» is in «Add 12 to it».
+      const computedAt = new Date(effectiveSource.evaluatedAt);
+      // A PDF request (create, merge, pages, watermark…) is code work: it never becomes a browser search. It is recognised
+      // before the clarifier below: the content of a requested file is data, so «هذا» in «Arabic text: مرحباً، هذا مستند
+      // تجريبي» is not an unresolved reference (live test of 2026-11-23, which asked «ما الشيء الذي تقصده؟» instead).
+      const documentWork = config.documents ? (state.document ?? (freshRequest
+        ? documentTask(request, { hasDocuments: history.some(entry => entry.role === 'assistant' && entry.text.includes('/api/documents/')) }) : null)) : null;
+      if (state.pendingComputation && !handsPlan) {
+        const pending = state.pendingComputation;
+        state.pendingComputation = null;
+        const answer = clean(state.trail.findLast(entry => entry.action === 'asked the user')?.result.replace(/^user answered: /u, '') ?? '');
+        const given = referencedValueFromAnswer(answer, computedAt);
+        const reference = computationReference(pending.request);
+        const result = given && reference ? evaluateReferencedComputation(withReferencedValue(pending.request, reference, given.value), computedAt) : null;
+        if (!given || !result || result.status !== 'completed') {
+          await finish(id, runId, state, pending.lang === 'ar'
+            ? `لم أجد في ردك «${answer.slice(0, 80)}» رقمًا أكمل به «${pending.request.slice(0, 120)}». أعد كتابة الطلب كاملًا مع الرقم.`
+            : `I could not read a number in your answer “${answer.slice(0, 80)}” to finish “${pending.request.slice(0, 120)}”. Please resend the request with the number in it.`, 'blocked');
+          return;
+        }
+        const composed = composeReferencedComputation(result, { value: given.value, line: given.line, from: 'owner' });
+        await addStep(id, runId, composed.lang === 'ar' ? 'حساب بالرقم الذي كتبته' : 'Calculation with the number you gave');
+        state.trail.push({ step: ++state.steps, action: 'calculate', result: clean(composed.evidence.find(item => item.id === 'calculation')?.quote ?? composed.text).slice(0, 1100), changed: false });
+        if (state.supervision) observeChatLocalAnswer(state.supervision, { source: 'computation', ...composed, startedAt: intrinsicStartedAt });
+        state.computed = computedRecord(composed);
+        await finish(id, runId, state, vault.scrub(id, composed.text), composed.status);
+        return;
+      }
+      if (intrinsicAllowed && !intrinsicComputation && !intrinsicSequence && !intrinsicSelf && !intrinsicRuntime && !intrinsicConversation && !computationMemoryReceipt) {
+        const reference = computationReference(actionRequest);
+        if (reference) {
+          const earlier = await db.selectFrom('chat_runs').select('state').where('conversation_id', '=', id).where('owner_id', '=', ownerId)
+            .where('id', '!=', runId).orderBy('created_at', 'desc').limit(8).execute();
+          await active();
+          const previous = latestComputedResult(earlier.map(row => row.state));
+          const result = previous ? evaluateReferencedComputation(withReferencedValue(actionRequest, reference, previous.value), computedAt) : null;
+          if (previous && result?.status === 'completed') {
+            const composed = composeReferencedComputation(result, { value: previous.value, line: previous.line, from: 'conversation' });
+            await addStep(id, runId, composed.lang === 'ar' ? 'حساب على الناتج السابق' : 'Calculation on the previous result');
+            state.trail.push({ step: ++state.steps, action: 'calculate', changed: false,
+              result: clean(`${composed.evidence.find(item => item.id === 'calculation')?.quote ?? composed.text}\nreferenced: ${previous.line}`).slice(0, 1100) });
+            if (state.supervision) observeChatLocalAnswer(state.supervision, { source: 'computation', ...composed, startedAt: intrinsicStartedAt });
+            state.computed = computedRecord(composed);
+            await finish(id, runId, state, vault.scrub(id, composed.text), composed.status);
+            return;
+          }
+          // Asked only when the request is a calculation once a number stands in for the reference: «Add 2 eggs to it» is not.
+          if (!previous && evaluateReferencedComputation(withReferencedValue(actionRequest, reference, '1'), computedAt)?.status === 'completed') {
+            const question = missingReferenceQuestion(actionRequest, reference);
+            state.pendingComputation = { request: actionRequest, phrase: reference.phrase, lang: question.lang };
+            await addStep(id, runId, question.lang === 'ar' ? 'سؤال عن النتيجة المقصودة' : 'Which result is meant');
+            await pause(id, runId, state, 'waiting_user', { question: JSON.stringify({ id: randomUUID(), prompt: question.prompt,
+              options: [{ id: 'stop', label: question.lang === 'ar' ? 'توقف هنا' : 'Stop here' }] } satisfies ChatQuestion) }, question.prompt);
+            return;
+          }
+          // An earlier result exists but the request does not read as a calculation on it: the ordinary paths go on.
+        }
+      }
+      if (freshRequest && !documentWork && !intrinsicRuntime && !intrinsicConversation && !intrinsicSelf && !intrinsicComputation && !intrinsicSequence && state.requestResolution?.kind === 'ambiguous' && state.requestResolution.ambiguities.some(reason =>
         reason === 'missing_reference' || reason === 'missing_question' || reason === 'unclear_replacement')) {
         const attempts = (state.clarificationAttempts ?? 0) + 1;
         state.clarificationAttempts = attempts;
@@ -2291,7 +2368,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // Deterministic arithmetic, units and calendar operations are shared brain
       // capabilities. They must run before the web fallback, without enabling the
       // experimental Mind route or spending a model request.
-      if (!handsPlan && !state.site && !state.writer && !state.planner && !state.document && !state.adsBrief && freshRequest) {
+      // A PDF request never reaches the memory or knowledge readers: «Title: Sample Document» is not a question about the owner's documents.
+      if (!handsPlan && !state.site && !state.writer && !state.planner && !state.document && !state.adsBrief && freshRequest && !documentWork) {
         const localStartedAt = intrinsicStartedAt;
         if (intrinsicRuntime) {
           await finish(id, runId, state, intrinsicRuntime.text, 'completed');
@@ -2364,6 +2442,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           await addStep(id, runId, computation.lang === 'ar' ? 'حساب محلي' : 'Local calculation');
           state.trail.push({ step: ++state.steps, action: 'calculate', result: clean(computation.evidence.map(item => item.quote).join('\n') || computation.text).slice(0, 1100), changed: false });
           observeChatLocalAnswer(state.supervision!, { source: 'computation', ...computation, startedAt: localStartedAt });
+          // A later turn may ask for a calculation on this result («Add 12 to your previous result»).
+          state.computed = computedRecord(computation);
           await finish(id, runId, state, vault.scrub(id, computation.text), computation.status);
           return;
         }
@@ -2431,9 +2511,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         if (!documentFirst && await tryKnowledge()) return;
       }
-      // A PDF request (create, merge, pages, watermark…) is code work: it never becomes a browser search.
-      const documentWork = config.documents ? (state.document ?? (freshRequest
-        ? documentTask(request, { hasDocuments: history.some(entry => entry.role === 'assistant' && entry.text.includes('/api/documents/')) }) : null)) : null;
       // A message of several questions waiting behind the Ads model or the mind: its first search sits in state.webFallback.
       let pendingSequence: HandsPlan | null = null;
       if (!handsPlan && freshRequest && !hasChatModel() && !documentWork) {
@@ -2546,7 +2623,20 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           search: async (query, limit) => {
             await active();
             assertPublicSearch(request, query, state);
-            const hits = await search.search(query, limit, signal, { ownerId });
+            // The shared engine reports each provider's failure: a search whose providers did not answer is a failed request
+            // (RESEARCH_PROVIDERS_FAILED), told apart from one that answered with nothing about the question (2026-11-23).
+            const engine = search as Partial<Pick<SearchEngine, 'execute'>>;
+            let hits: Awaited<ReturnType<SearchProvider['search']>>;
+            if (typeof engine.execute === 'function') {
+              const outcome = await engine.execute.call(search, query, limit, signal, { ownerId });
+              if (!outcome.hits.length) {
+                state.trail.push({ step: ++state.steps, action: `search ${query}`.slice(0, 300), changed: false,
+                  result: `no results; provider failures: ${outcome.failures.map(item => `${item.provider} ${item.kind}`).join(', ') || 'none'}`.slice(0, 1100) });
+                if (outcome.failures.length) throw new BrowserError('RESEARCH_PROVIDERS_FAILED', outcome.failures.map(item => `${item.provider}: ${item.kind === 'rate_limited' ? 'rate limited' : item.kind === 'invalid_response' ? 'invalid response' : 'unavailable'}`).join(', '), 502);
+                throw new BrowserError('RESEARCH_SEARCH_UNAVAILABLE', 'لم يُرجع البحث مصادر مرتبطة بالسؤال قابلة للقراءة.', 502);
+              }
+              hits = outcome.hits.map(hit => hit.coverage === 'local_only' ? { ...hit, snippet: `نسخة مفهرسة بتاريخ ${hit.fetchedAt}. ${hit.snippet}` } : hit);
+            } else hits = await search.search(query, limit, signal, { ownerId });
             state.publicQueryTerms = mergePublicQueryTerms(state.publicQueryTerms, hits.flatMap(hit => [hit.title, hit.snippet]));
             await active();
             state.trail.push({ step: ++state.steps, action: `search ${query}`.slice(0, 300), result: `results: ${hits.map(hit => `${hit.title} | ${hit.url}`).join('\n')}`.slice(0, 1100), changed: hits.length > 0 });
@@ -2560,8 +2650,14 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           approve: async (action, permit, label) => { await pauseBrowserAction(id, runId, state, { action, permit, label }); },
           hold: async (held, label) => { await pauseHeld(id, runId, state, held, label); },
         };
-        // One part of a message of several questions is judged on its own question (web-sequence.ts).
-        const judgedAs = plan.sequel ? { question: plan.sequel.asked, previous: plan.sequel.previous } : undefined;
+        // One part of a message of several questions is judged on its own question (web-sequence.ts). A question reshaped from
+        // the request by an instruction about the reply («Explain why rain falls in two short Arabic sentences» searched as «why
+        // rain falls») is judged on what was searched: judged on the whole request, the right Rain answer was withheld as
+        // «subject_missing» in the live check of 2026-11-23.
+        const searched = plan.steps.at(-1);
+        const reshaped = !plan.sequel && searched?.kind === 'search' && searched.ask && searched.reply
+          ? { question: searched.query, previous: currentExecution.previousRequest ?? null } : undefined;
+        const judgedAs = plan.sequel ? { question: plan.sequel.asked, previous: plan.sequel.previous } : reshaped;
         let outcome: HandsOutcome;
         try {
           outcome = await runHands(plan, io);
@@ -2629,6 +2725,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           return;
         }
         state.hands = null;
+        if (reshaped) {
+          const judged = judgeReply(id, runId, vault.scrub(id, outcome.text), outcome.status, true, reshaped);
+          await finish(id, runId, state, judged.text, judged.withheld && outcome.status === 'completed' ? 'partial' : outcome.status, undefined, undefined, true);
+          return;
+        }
         await finish(id, runId, state, vault.scrub(id, outcome.text), outcome.status);
       }
       // PDF files without a model (assistant/documents.ts): one card for a new file, then Chromium renders the owner's
@@ -2658,8 +2759,12 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           await addStep(id, runId, ar ? 'إنشاء ملف PDF' : 'Creating the PDF');
           await setProgress(id, ar ? 'ينشئ ملف PDF…' : 'Creating the PDF…');
           try {
-            const stored = await documents.control.create(ownerId, id, composed.spec, signal);
-            await finish(id, runId, state, documentCreatedReply(stored, documents.link(stored.id), documentWork.lang, composed.emptyContent), composed.emptyContent ? 'partial' : 'completed');
+            const stored = await documents.control.create(ownerId, id, composed.spec, signal, documentWork.fileName ? { name: documentWork.fileName } : {});
+            // What the request asked of the file and the stored file does not show (page count, unsupported design) is said, and the task is partial.
+            const gaps = documentRequestGaps(documentWork, stored);
+            state.trail.push({ step: ++state.steps, action: 'document_create', changed: true,
+              result: clean(`${stored.name}: ${stored.pages} page(s), ${stored.size} bytes, theme ${stored.theme ?? 'plain'}${gaps.length ? `; gaps: ${gaps.join(' | ')}` : ''}`).slice(0, 600) });
+            await finish(id, runId, state, documentCreatedReply(stored, documents.link(stored.id), documentWork.lang, composed.emptyContent, gaps), composed.emptyContent || gaps.length ? 'partial' : 'completed');
           } catch (error) {
             if (!(error instanceof PdfError)) throw error;
             await finish(id, runId, state, problem(error), 'blocked');
@@ -2998,7 +3103,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (!hasChatModel()) {
         // Every other path passed on this request: a skill that clearly fits is better than «not completed».
         // A fact of the owner's own that memory could not be asked for is not a how-to: no skill stands in for it.
-        if (!ownFact && await trySkill('fallback')) return;
+        // Nor is an operation the request states: a calculation or an address to open is not answered by a method. In the
+        // live test of 2026-11-23 «QA test …: Calculate 37 × 24 …» reached the software-testing skill by the words «QA» and «test».
+        const statedOperation = state.routing?.intent === 'compute' || state.routing?.intent === 'browser_command' || Boolean(computationReference(actionRequest));
+        if (!ownFact && !statedOperation && await trySkill('fallback')) return;
         const unavailable = evaluateCapabilityReply(actionRequest, state.routing, {
           handlersExhausted: true, purpose: 'capability_question',
           execution: !state.steps && !state.trail.length ? 'not_started' : 'unconfirmed',

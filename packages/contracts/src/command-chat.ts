@@ -152,6 +152,18 @@ export const ChatConversationSummarySchema = z.object({
   browserAccount: z.string().nullable().optional(),
 }).strict();
 
+/**
+ * What this session can do, from the server's runtime state for this account (2026-11-23). `chatModel`: a language model
+ * that writes free replies is connected. `available`: the capabilities that answer without one. Clients show these instead
+ * of a fixed sentence; absent from servers older than this field.
+ */
+export const chatCapabilityIds = ['computation', 'web', 'browser', 'memory', 'knowledge', 'documents', 'sites', 'skills', 'planner', 'letters', 'imageReading', 'ads', 'pc'] as const;
+export const ChatCapabilitiesSchema = z.object({
+  chatModel: z.boolean(),
+  available: z.array(z.enum(chatCapabilityIds)).max(chatCapabilityIds.length),
+}).strict();
+export type ChatCapabilities = z.infer<typeof ChatCapabilitiesSchema>;
+
 export const ChatConversationSchema = ChatConversationSummarySchema.extend({
   messages: z.array(ChatMessageSchema),
   question: ChatQuestionSchema.nullable(),
@@ -162,6 +174,7 @@ export const ChatConversationSchema = ChatConversationSummarySchema.extend({
   steps: z.array(ChatStepSchema),
   error: z.string().nullable(),
   configured: z.boolean(),
+  capabilities: ChatCapabilitiesSchema.optional(),
   /** Absent for conversations recorded before the browser levels existed. */
   visibility: ChatBrowserVisibilitySchema.nullable().optional(),
   /** Structured events of the latest Google Ads campaign task in this conversation. Absent when there is none. */

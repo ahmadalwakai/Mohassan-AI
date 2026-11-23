@@ -83,11 +83,11 @@ export function createDocumentControl(db: Kysely<any>, options: DocumentControlO
 
   return {
     renderer,
-    /** The owner's words through a theme into a stored PDF. */
-    async create(ownerId: string, conversationId: string | null, spec: DocumentSpecInput, signal?: AbortSignal): Promise<StoredDocument> {
+    /** The owner's words through a theme into a stored PDF. `name`: the file name the owner asked for («named sample.pdf»); the title otherwise. */
+    async create(ownerId: string, conversationId: string | null, spec: DocumentSpecInput, signal?: AbortSignal, options: { name?: string } = {}): Promise<StoredDocument> {
       const document = renderDocumentHtml(spec, await renderer.fontFaces());
       const bytes = await renderer.render(document.html, { print: document.print, signal });
-      return store(ownerId, conversationId, documentFileName(document.title), bytes, 'created', document.theme);
+      return store(ownerId, conversationId, documentFileName(options.name?.trim() ? options.name : document.title), bytes, 'created', document.theme);
     },
     async upload(ownerId: string, conversationId: string | null, name: string, bytes: Uint8Array): Promise<StoredDocument> {
       if (bytes.byteLength > UPLOAD_MAX_BYTES) throw new PdfError('PDF_SIZE_LIMIT', `حد الرفع ${UPLOAD_MAX_BYTES / 1_000_000} ميغابايت.`);

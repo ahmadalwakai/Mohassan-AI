@@ -2,7 +2,19 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ArrowUp, Check, ChevronDown, Copy, ExternalLink, Globe, ImagePlus, KeyRound, Laptop, LogOut, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, Settings2, ShieldAlert, SquarePen, Square, Trash2, X } from "lucide-react";
-import type { ChatConversation as Conversation, ChatConversationSummary as Summary, ChatSecureRequest } from "@mohassan/contracts";
+import type { ChatCapabilities, ChatConversation as Conversation, ChatConversationSummary as Summary, ChatSecureRequest } from "@mohassan/contracts";
+
+/** What each capability the server reports is called on the banner (2026-11-23: the banner listed a fixed three before). */
+const CAPABILITY_LABELS: Record<ChatCapabilities["available"][number], string> = {
+  computation: "الحساب", web: "البحث في الويب", browser: "فتح الصفحات وقراءتها", memory: "الذاكرة", knowledge: "مستنداتك المحفوظة",
+  documents: "ملفات PDF", sites: "بناء المواقع", skills: "المهارات المفعّلة", planner: "تخطيط الأسبوع", letters: "قوالب الرسائل",
+  imageReading: "قراءة النص في الصور", ads: "إعلانات Google", pc: "التحكم بالكمبيوتر",
+};
+/** The banner shown when no language model is connected, built from the server's own capability list when it sends one. */
+function localModeText(capabilities: ChatCapabilities | null | undefined): string {
+  if (!capabilities?.available.length) return "موحسن يعمل بقدرات محلية محددة: الحساب، واسترجاع الذاكرة والمستندات، والبحث. المحادثة الحرة غير متاحة في هذه الجلسة.";
+  return `لا يتصل بهذه الجلسة نموذج لغوي، فالردود الحرة غير متاحة. ما يعمل الآن دون نموذج: ${capabilities.available.map(id => CAPABILITY_LABELS[id]).join("، ")}.`;
+}
 import { Markdown, plainText } from "./markdown";
 import { takeoverInput } from "./takeover-input";
 import { BrowserFilesPanel } from './browser-files-panel';
@@ -214,6 +226,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [chatConfigured, setChatConfigured] = useState<boolean | null>(null);
+  const [chatCapabilities, setChatCapabilities] = useState<ChatCapabilities | null>(null);
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(0);
@@ -246,9 +259,10 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
   selection.current = selectedId;
 
   const refreshHistory = useCallback(async () => {
-    const result = await api<{ conversations: Summary[]; configured?: boolean }>("/api/chat/conversations");
+    const result = await api<{ conversations: Summary[]; configured?: boolean; capabilities?: ChatCapabilities }>("/api/chat/conversations");
     setHistory(result.conversations);
     if (typeof result.configured === "boolean") setChatConfigured(result.configured);
+    if (result.capabilities) setChatCapabilities(result.capabilities);
     return result.conversations;
   }, []);
 
@@ -675,7 +689,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
         <div className={styles.suggestions}>
           {SUGGESTIONS.map((text) => <button key={text} type="button" onClick={() => { setDraft(text); composer.current?.focus(); }}>{text}</button>)}
         </div>
-        {(conversation?.configured ?? chatConfigured) === false ? <p className={styles.localMode} role="status">موحسن يعمل بقدرات محلية محددة: الحساب، واسترجاع الذاكرة والمستندات، والبحث. المحادثة الحرة غير متاحة في هذه الجلسة.</p> : null}
+        {(conversation?.configured ?? chatConfigured) === false ? <p className={styles.localMode} role="status">{localModeText(conversation?.capabilities ?? chatCapabilities)}</p> : null}
         {error ? <p className={styles.problem} role="alert">{error}</p> : null}
       </div> : <>
         <div ref={thread} className={styles.thread} role="log" aria-label="المحادثة">

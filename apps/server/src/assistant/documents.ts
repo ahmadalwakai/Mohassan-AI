@@ -10,7 +10,17 @@ import type { Lang } from './writer.js';
  */
 export type DocumentOperation = 'merge' | 'extract' | 'delete' | 'rotate' | 'watermark' | 'number' | 'info' | 'metadata';
 export type DocumentSourceRef = { kind: 'path'; path: string } | { kind: 'latest'; count: number } | { kind: 'all' };
-export interface DocumentCreateTask { kind: 'create'; lang: Lang; title?: string; theme?: DocumentTheme; suppliedText?: string; topic?: string }
+export interface DocumentCreateTask {
+  kind: 'create'; lang: Lang; title?: string; theme?: DocumentTheme; suppliedText?: string; topic?: string;
+  /** «named sample.pdf»: the stored file's name, apart from the title printed in it. */
+  fileName?: string;
+  /** «black text»: the heading colour, the one colour choice the themes take (DocumentSpec.accent). */
+  accent?: string;
+  /** «a one-page PDF»: the page count asked for, checked against the file that was made. */
+  pages?: number;
+  /** Design words the themes cannot honour («a blue background»), named in the reply instead of silently dropped. */
+  unsupportedDesign?: string[];
+}
 export interface DocumentEditTask {
   kind: 'edit'; lang: Lang; operation: DocumentOperation; sources: DocumentSourceRef[];
   /** The owner's page words, read against the real page count when the file is open. */
@@ -155,6 +165,51 @@ function sourcesOf(request: string, folded: string, operation: DocumentOperation
 
 const FILE_WORD = /(?<![\p{L}])(?:ملف|الملف|ملفين|الملفين|ملفات|الملفات|مستند|المستند|وثيق[هة]|الوثيق[هة]|file|files|document|documents)(?![\p{L}])/iu;
 
+/**
+ * A request that opens with making a file is a new PDF, even when it lists its fields as «Title: …»: the metadata edit
+ * read «Title:» as «set the title of the last PDF» (live test of 2026-11-23, «Create a downloadable one-page PDF named
+ * sample.pdf. Title: …»). Folded text. Only a reference to an existing file keeps it an edit («make this PDF …»).
+ */
+const CREATE_LEAD = /^(?:(?:please|من فضلك|لو سمحت)\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:create|make|generate|build|design|produce|prepare|draft|i\s+(?:want|need|would like)|i'd\s+like|give\s+me|get\s+me|انشئ|اصنع|اعمل|سوي|سولي|جهز|ولد|صمم|حضر|كون|اريد|ابغي|ابغا|بدي|ابي|عايز|اعطني|اعطيني)(?![\p{L}])/iu;
+/** A written-out body field («Body: …», «النص: …») is content for a file being made: a title edit of an old file has none. */
+const BODY_FIELD = /(?<![\p{L}])(?:body|content|(?:arabic|english)\s+text)\s*[:：]|(?<![\p{L}])(?:ال)?(?:نص|محتوى|محتوي|متن)\s*[:：]/iu;
+const EXISTING_FILE = /\b(?:the|this|that|my|our)\s+(?:last|latest|previous|existing|uploaded|attached|current|old|same)\s+(?:pdf|file|document)s?\b|\b(?:this|that|these|those)\s+(?:pdf|file|document)s?\b|\b(?:copy|version)\s+of\s+(?:the|this|that|my)\b|(?:الملف|المستند|ملف)\s+(?:ال)?(?:سابق|اخير|حالي|مرفوع|مرفق|نفسه)|(?:هذا|ذلك)\s+الملف|الملف\s+(?:هذا|ذلك)|نفس الملف/iu;
+/** «Title: …», «Body: …», «Arabic text: …», «العنوان: …», «النص: …»: the fields of a document the owner wrote out. */
+const FIELD_LABEL = /(?<![\p{L}])((?:arabic|english|french|main|body|extra)\s+text|sub-?title|title|heading|body|content|text|footer|author|(?:ال)?(?:عنوان(?:\s+(?:ال)?فرعي)?|نص(?:\s+(?:ال)?(?:عربي|انجليزي|إنجليزي))?|محتوى|متن|تذييل|مؤلف|كاتب))\s*[:：]\s*/giu;
+/**
+ * A sentence after the fields that is an instruction, not content: a verb about the file, its design or its delivery
+ * («Use a plain white background…», «generate the file now…»), or a statement about the request («The content is complete»).
+ */
+const INSTRUCTION_SENTENCE = /^(?:(?:please|من فضلك)\s+)?(?:(?:use|make|set|keep|apply|choose|add|include|generate|create|provide|give|send|save|export|render|format|put|ensure|print|اجعل|استخدم|اعتمد|اضف|ضع|انشئ|ولد|اعطني|ارسل|احفظ|صدر|نسق)(?![\p{L}])[\s\S]*(?:background|colou?r|black|white|font|theme|design|layout|style|file|pdf|download|link|page|margin|خلفي|لون|اسود|ابيض|خط|تصميم|ملف|رابط|تنزيل|صفح)|(?:the\s+)?(?:content|text|information|request)\s+is\s+(?:complete|final|all)|that(?:'s| is) all|this is (?:all|everything)|(?:ال)?(?:محتوي|نص|معلومات)\s+(?:كامل|مكتمل|نهائي)|هذا كل)/iu;
+const FILE_NAME = /(?:\b(?:named|called|file\s?name(?:d)?|save(?:d)?\s+(?:it\s+)?as|as\s+a\s+file\s+named)|(?<![\p{L}])(?:باسم|اسمه|اسم الملف))\s*[:：]?\s*[«"“']?([^\s«»"“”'/\\:*?<>|]{1,80}\.pdf)\b/iu;
+const ONE_PAGE = /\b(?:one|single|1)[- ]page\b|(?<![\p{L}])صفح[ةه] واحد[ةه](?![\p{L}])|من صفح[ةه] واحد[ةه]/iu;
+const BLACK_TEXT = /\bblack\s+(?:text|font|ink|letters|writing|headings?|titles?)\b|(?:نص|النص|خط|الخط|كتاب[ةه]|الكتاب[ةه]|حروف)\s+(?:اسود|أسود|سوداء|باللون الأسود|باللون الاسود)/iu;
+const BACKGROUND = /\b(?!(?:white|plain|clean|simple|blank|light|default|a|the)\b)([a-z]+)\s+background\b|(?:خلفي[ةه])\s+(?!(?:بيضاء|بيضا|ساده|عاديه|بسيطه|فاتحه)(?![\p{L}]))(\S+)/iu;
+
+/** The owner's written fields and the instructions after them. Values are kept exactly as typed. */
+function labelledFields(request: string): { fields: { label: string; value: string }[]; instructions: string } | null {
+  const matches = [...request.matchAll(FIELD_LABEL)];
+  if (!matches.length) return null;
+  const fields: { label: string; value: string }[] = [];
+  let instructions = request.slice(0, matches[0]!.index);
+  for (let at = 0; at < matches.length; at++) {
+    const match = matches[at]!;
+    const start = match.index + match[0].length, end = matches[at + 1]?.index ?? request.length;
+    let value = request.slice(start, end);
+    // Instruction sentences end the last field's value: «… مستند تجريبي. Use a plain white background…».
+    const sentences = value.split(/(?<=[.!?؟])\s+/u);
+    const cut = sentences.findIndex((sentence, index) => index > 0 && INSTRUCTION_SENTENCE.test(matchText(sentence.trim())));
+    if (cut > 0) { instructions += ` ${sentences.slice(cut).join(' ')}`; value = sentences.slice(0, cut).join(' '); }
+    else if (at === matches.length - 1 && INSTRUCTION_SENTENCE.test(matchText(value.trim()))) { instructions += ` ${value}`; value = ''; }
+    // «Title: Sample Document.»: a single-line field keeps its words without the closing full stop.
+    const label = matchText(match[1]!);
+    value = value.trim().replace(/[\s,،;؛]+$/u, '');
+    if (/^(?:sub-?title|title|heading|footer|author|(?:ال)?(?:عنوان(?:\s+(?:ال)?فرعي)?|تذييل|مؤلف|كاتب))$/u.test(label)) value = value.replace(/[.。]+$/u, '').trim();
+    if (value) fields.push({ label, value });
+  }
+  return { fields, instructions };
+}
+
 export interface DocumentTaskContext {
   /** The conversation already holds PDFs Mohassan made: «ادمج الملفين» or «احذف الصفحة 2» then means those files. */
   hasDocuments?: boolean;
@@ -172,8 +227,13 @@ export function documentTask(request: string, context: DocumentTaskContext = {})
   if (!named && !implied) return null;
   const language = lang(request);
   if (QUESTION.test(firstLine.replace(/^(?:من فضلك|لو سمحت|please)\s+/iu, ''))) return null;
-  const editOperation: DocumentOperation | null =
-    WATERMARK.test(firstLine) ? 'watermark'
+  // «Create … PDF … Title: … Body: …» makes a new file: its «Title:» is a field of that file, not an edit of an old one.
+  // In such a request «named sample.pdf» names the file to make, so it is not a path to read (it was, in the live test of
+  // 2026-11-23's wording, as soon as the clarifier no longer stopped it). An edit keeps every named file as its input.
+  const outputOnly = CREATE_LEAD.test(firstLine) || BODY_FIELD.test(request) ? pdfPaths(request.replace(FILE_NAME, ' ')) : null;
+  const createsNew = outputOnly !== null && !outputOnly.length && !EXISTING_FILE.test(folded);
+  const editOperation: DocumentOperation | null = createsNew ? null
+    : WATERMARK.test(firstLine) ? 'watermark'
     : NUMBER.test(firstLine) ? 'number'
     : MERGE.test(firstLine) && (paths.length !== 1) ? 'merge'
     : ROTATE.test(firstLine) ? 'rotate'
@@ -205,16 +265,33 @@ export function documentTask(request: string, context: DocumentTaskContext = {})
     return task;
   }
   if (implied) return null;
-  if (!CREATE.test(firstLine) && !/\n/u.test(request.trim())) return null;
-  if (OTHER_FILE.test(request) && !paths.length) return { kind: 'unsupported', lang: language, reason: 'convert_format' };
-  const { text, instruction } = suppliedContent(request.trim());
-  const task: DocumentCreateTask = { kind: 'create', lang: language };
-  const title = TITLE.exec(instruction);
-  if (title) task.title = unquote(title[1]!).slice(0, 200);
+  if (!createsNew && !CREATE.test(firstLine) && !/\n/u.test(request.trim())) return null;
+  if (OTHER_FILE.test(request.replace(FILE_NAME, ' ')) && !paths.length) return { kind: 'unsupported', lang: language, reason: 'convert_format' };
+  const trimmed = request.trim();
+  const fileName = FILE_NAME.exec(trimmed)?.[1];
+  // The fields the owner wrote out are the file's content, word for word; what follows them is instructions (design, delivery).
+  const written = createsNew ? labelledFields(trimmed) : null;
+  const contentFields = written?.fields.filter(field => !/^(?:sub-?title|title|heading|footer|author|(?:ال)?(?:عنوان(?:\s+(?:ال)?فرعي)?|تذييل|مؤلف|كاتب))$/u.test(field.label)) ?? [];
+  const { text, instruction } = written && contentFields.length
+    ? { text: contentFields.map(field => field.value).join('\n\n'), instruction: written.instructions }
+    : suppliedContent(trimmed);
+  // The reply speaks the language of the instructions, not of the content: «Arabic text: مرحباً…» inside an English request
+  // is the file's words, and the live test's reply came back in Arabic for it.
+  const task: DocumentCreateTask = { kind: 'create', lang: written && contentFields.length ? lang(written.instructions) : language };
+  const titleField = written?.fields.find(field => /^(?:title|heading|(?:ال)?عنوان)$/u.test(field.label));
+  const title = titleField ? null : TITLE.exec(instruction.replace(FILE_NAME, ' '));
+  if (titleField) task.title = unquote(titleField.value).slice(0, 200);
+  else if (title && !/\.pdf$/iu.test(unquote(title[1]!))) task.title = unquote(title[1]!).slice(0, 200);
+  if (fileName) task.fileName = fileName;
   const topic = TOPIC.exec(instruction.replace(TITLE, ' '));
   if (topic) task.topic = topic[1]!.trim().slice(0, 200);
-  const theme = themeOf(instruction);
+  const design = `${instruction} ${firstLine}`;
+  const theme = themeOf(design);
   if (theme) task.theme = theme;
+  if (BLACK_TEXT.test(design)) task.accent = '#000000';
+  if (ONE_PAGE.test(design)) task.pages = 1;
+  const background = BACKGROUND.exec(matchText(design));
+  if (background) task.unsupportedDesign = [`${background[0]}`.trim()];
   if (text.trim()) task.suppliedText = text;
   return task;
 }
@@ -224,21 +301,33 @@ export const THEME_LABELS: Record<DocumentTheme, [string, string]> = {
 };
 const ORDER: DocumentTheme[] = ['plain', 'report', 'letter', 'invoice', 'modern'];
 
-/** One card: the title, the content as it should appear, and the design. The guessed design is chosen in advance. */
+/**
+ * One card: the title, the content as it should appear, and the design. The guessed design is chosen in advance. A title
+ * or a design the request already gave is not asked again (the content is never asked when the request supplied it: no
+ * card is shown then). The guided card of the PDF suggestion, which gives nothing, keeps all three questions.
+ */
 export function documentQuestion(task: DocumentCreateTask) {
   const ar = task.lang === 'ar';
   const themes = task.theme ? [task.theme, ...ORDER.filter(theme => theme !== task.theme)] : ORDER;
+  // A design is given only when the request named one («plain», «modern», «black text»); a theme guessed from the kind of
+  // document («تقرير» → report) stays a preselected suggestion the owner can change.
+  const given = { title: Boolean(task.title), style: task.theme === 'plain' || task.theme === 'modern' || Boolean(task.accent) };
+  const fields = documentQuestionFields(task, ar, themes).filter(field => !(field.id === 'title' && given.title) && !(field.id === 'style' && given.style));
   return {
     prompt: ar ? 'أصنع لك ملف PDF من كلماتك أنت، بلا إضافة من عندي. أجب عن هذه الأسئلة:' : 'I will make the PDF from your own words, adding nothing of my own. Answer these:',
-    fields: [
+    fields,
+  };
+}
+
+function documentQuestionFields(task: DocumentCreateTask, ar: boolean, themes: readonly DocumentTheme[]) {
+  return [
       { id: 'title', prompt: ar ? 'ما عنوان الملف؟' : 'What is the title?', suggestions: [], ...(task.title ?? task.topic ? { initialValue: (task.title ?? task.topic)!.slice(0, 200) } : {}), placeholder: ar ? 'مثلاً: تقرير المبيعات لشهر نوفمبر' : 'e.g. Sales report for November' },
       { id: 'content', multiline: true, prompt: task.suppliedText
           ? (ar ? 'هذا هو النص الذي أرسلته. عدّله إن شئت قبل الإنشاء.' : 'Your supplied text is shown here; edit it if needed.')
           : (ar ? 'ما محتوى الملف؟ اكتبه كما تريده أن يظهر: # للعناوين، و- للنقاط، و| للجداول.' : 'What goes in the file? Write it as it should appear: # for headings, - for bullets, | for tables.'),
         suggestions: [], ...(task.suppliedText ? { initialValue: task.suppliedText.slice(0, 4000) } : {}), placeholder: ar ? 'مثلاً:\n# المقدمة\nنص الفقرة…\n- نقطة أولى\n- نقطة ثانية' : 'e.g.\n# Introduction\nParagraph text…\n- first point\n- second point' },
       { id: 'style', prompt: ar ? 'ما التصميم؟' : 'Which design?', suggestions: themes.map(theme => ({ label: THEME_LABELS[theme][ar ? 0 : 1] })), selected: [0] },
-    ],
-  };
+  ];
 }
 
 const themeFromAnswer = (answer: string, fallback: DocumentTheme): DocumentTheme =>
@@ -270,8 +359,24 @@ export function composeDocumentSpec(task: DocumentCreateTask, answers: Readonly<
   // An explicit title repeated as the first heading of the content is kept once.
   if (blocks[0]?.kind === 'heading' && blocks[0].level === 1 && blocks[0].text.trim() === title) blocks = blocks.slice(1);
   const theme = themeFromAnswer(value('style'), task.theme ?? 'plain');
-  const spec: DocumentSpecInput = { title, theme, blocks, lang: detectLang(`${title} ${content}`), ...(today ? { date: today } : {}) };
+  const spec: DocumentSpecInput = { title, theme, blocks, lang: detectLang(`${title} ${content}`), ...(today ? { date: today } : {}), ...(task.accent ? { accent: task.accent } : {}) };
   return { spec, theme, emptyContent: !blocks.length };
+}
+
+/**
+ * What the request asked of the file that the file does not show, checked against the stored PDF: a page count that
+ * differs, design words the themes cannot honour. Each is said in the reply, and the task is then partial.
+ */
+export function documentRequestGaps(task: DocumentCreateTask, document: DocumentSummary): string[] {
+  const ar = task.lang === 'ar';
+  const gaps: string[] = [];
+  if (task.pages && document.pages !== task.pages) gaps.push(ar
+    ? `طلبت ${pagesLabel(task.pages, true)}، وخرج الملف في ${pagesLabel(document.pages, true)} لأن المحتوى أطول من ذلك.`
+    : `You asked for ${pagesLabel(task.pages, false)}; the file came out at ${pagesLabel(document.pages, false)} because the content is longer than that.`);
+  if (task.unsupportedDesign?.length) gaps.push(ar
+    ? `لم أطبّق «${task.unsupportedDesign.join('، ')}»: التصاميم المتاحة بخلفية بيضاء، والذي أستطيع تغييره هو لون العناوين.`
+    : `I did not apply “${task.unsupportedDesign.join(', ')}”: the available designs have a white background, and the heading colour is what I can change.`);
+  return gaps;
 }
 
 export function formatBytes(size: number, language: Lang): string {
@@ -282,13 +387,14 @@ const pagesLabel = (pages: number, ar: boolean) => ar ? pages === 1 ? 'صفحة 
 
 export interface DocumentSummary { name: string; pages: number; size: number; theme?: string | null }
 
-export function documentCreatedReply(document: DocumentSummary, url: string, language: Lang, emptyContent = false): string {
+export function documentCreatedReply(document: DocumentSummary, url: string, language: Lang, emptyContent = false, gaps: readonly string[] = []): string {
   const ar = language === 'ar';
   const theme = document.theme && document.theme in THEME_LABELS ? THEME_LABELS[document.theme as DocumentTheme][ar ? 0 : 1] : null;
   const lines = ar
     ? [`أنشأت ملف PDF: **${document.name}**`, `- ${pagesLabel(document.pages, true)}، ${formatBytes(document.size, 'ar')}${theme ? `، تصميم «${theme}»` : ''}`, '', `[تنزيل الملف](${url})`]
     : [`Created the PDF: **${document.name}**`, `- ${pagesLabel(document.pages, false)}, ${formatBytes(document.size, 'en')}${theme ? `, ${theme} design` : ''}`, '', `[Download the file](${url})`];
   if (emptyContent) lines.push('', ar ? 'الملف يحمل العنوان فقط لأن المحتوى لم يُذكر. أرسل النص وأعيد إنشاءه.' : 'The file holds only the title because no content was given. Send the text and I will remake it.');
+  for (const gap of gaps) lines.push('', gap);
   lines.push('', '---', ar
     ? 'النص في الملف كما كتبته أنت؛ لم يكتبه نموذج. يمكنك بعدها أن تقول مثلاً: «أضف علامة مائية سري»، أو «احذف الصفحة 2»، أو «رقّم الصفحات».'
     : 'The text in the file is yours as typed; no model wrote it. Next you can say, for example: “add a watermark CONFIDENTIAL”, “delete page 2” or “number the pages”.');
