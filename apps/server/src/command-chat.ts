@@ -21,7 +21,7 @@ import {
   SEARCH_REPEATED, SEARCH_UNUSABLE, asksToRemember, needsReview, noteAttempt, reviewRequest, searchKey, sensitiveAction, siteOf, situation, skillContextBudget, stepLabel, systemPrompt, type BrainState, type Decision, type ModelTier, type WorkTool,
 } from './assistant/brain.js';
 import { ADS_DRAFT_NOTE, ADS_SKILL_SLUG } from './assistant/ads-check.js';
-import { LIVE, PROVIDER_SPACING_MS, isFollowUp, notWebReason, parseHands, plainTitle, refersBack, runHands, tidy, topicWords, webQuestion, type HandsIO, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
+import { LIVE, PROVIDER_SPACING_MS, isBareAddress, isFollowUp, notWebReason, parseHands, plainTitle, refersBack, runHands, siteQuestion, siteToOpen, tidy, topicWords, unnamedSite, webQuestion, type HandsIO, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
 import { liveLabel } from './assistant/activity.js';
 import type { DesktopCommand, DesktopOutcome, ParsedDesktopCommand } from '@mohassan/desktop';
 import { searchRefusedReply, unsupportedReply, unsupportedRequest } from './assistant/unsupported-request.js';
@@ -2322,6 +2322,21 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await finish(id, runId, state, vault.scrub(id, composed.text), composed.status);
         return;
       }
+      // The owner named the website the card asked for: open it (and read it out, when the request asked to see it), as the
+      // same request. An answer that names no address or known site is said so, and nothing is opened.
+      if (state.pendingOpen && !handsPlan) {
+        const pending = state.pendingOpen;
+        state.pendingOpen = null;
+        const answer = clean(state.trail.findLast(entry => entry.action === 'asked the user')?.result.replace(/^user answered: /u, '') ?? '');
+        const site = siteToOpen(answer);
+        if (!site) {
+          await finish(id, runId, state, pending.lang === 'ar'
+            ? `لم أجد في ردك «${answer.slice(0, 80)}» رابطًا أو اسم موقع أفتحه. اكتب الرابط، مثل «افتح bbc.com واعرض لي محتواه».`
+            : `I could not find a website address or name in your answer “${answer.slice(0, 80)}”. Write the address, for example “open bbc.com and show me its content”.`, 'blocked');
+          return;
+        }
+        handsPlan = { steps: [{ kind: 'open', url: site.url, name: site.name }, ...(pending.read ? [{ kind: 'read' as const, more: false }] : [])], next: 0, lang: pending.lang };
+      }
       if (intrinsicAllowed && !intrinsicComputation && !intrinsicSequence && !intrinsicSelf && !intrinsicRuntime && !intrinsicConversation && !computationMemoryReceipt) {
         const reference = computationReference(actionRequest);
         if (reference) {
@@ -2351,6 +2366,19 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           }
           // An earlier result exists but the request does not read as a calculation on it: the ordinary paths go on.
         }
+      }
+      // «افتح موقعًا واعرض لي محتواه», the home screen's own suggestion, names no website: one card asks which, and the answer
+      // finishes the same request (state.pendingOpen above). In production on 2026-11-23 the sentence itself was searched for,
+      // and the search guard refused it as private information. Before the general clarifier below, which would ask what
+      // «its» in «show me its content» refers to instead of which website.
+      const unnamed = freshRequest && !handsPlan && !documentWork && !hasChatModel() && state.routing?.route !== 'pc' ? unnamedSite(actionRequest) : null;
+      if (unnamed) {
+        state.pendingOpen = unnamed;
+        const card = siteQuestion(unnamed);
+        await addStep(id, runId, unnamed.lang === 'ar' ? 'سؤال عن الموقع المقصود' : 'Which website is meant');
+        await pause(id, runId, state, 'waiting_user', { question: JSON.stringify({ id: randomUUID(), prompt: card.prompt,
+          options: [{ id: 'stop', label: unnamed.lang === 'ar' ? 'توقف هنا' : 'Stop here' }], fields: card.fields } satisfies ChatQuestion) }, card.prompt);
+        return;
       }
       if (freshRequest && !documentWork && !intrinsicRuntime && !intrinsicConversation && !intrinsicSelf && !intrinsicComputation && !intrinsicSequence && state.requestResolution?.kind === 'ambiguous' && state.requestResolution.ambiguities.some(reason =>
         reason === 'missing_reference' || reason === 'missing_question' || reason === 'unclear_replacement')) {
@@ -2571,7 +2599,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         if (sequencePlan && (mindReady || adsFirst)) { state.webFallback = sequencePlan.steps; pendingSequence = sequencePlan; }
         else if (sequencePlan) handsPlan = sequencePlan;
         else if (lookup && (mindReady || (adsFirst && !steps))) state.webFallback = lookup;
-        else if (steps ?? asked) handsPlan = { steps: (steps ?? asked)!, next: 0, lang: /\p{Script=Arabic}/u.test(request) ? 'ar' : 'en' };
+        else if (steps ?? asked) {
+          // A message that is only an address has no language of its own: the owner's last words in this conversation frame
+          // the reply, else Arabic, the app's own language (a bare link was answered in English on 2026-11-23).
+          const spoken = isBareAddress(request) ? earlierAsks.filter(text => !isBareAddress(text)).findLast(text => /\p{L}/u.test(text)) : undefined;
+          const lang = /\p{Script=Arabic}/u.test(request) || isBareAddress(request) && (!spoken || /\p{Script=Arabic}/u.test(spoken)) ? 'ar' : 'en';
+          handsPlan = { steps: (steps ?? asked)!, next: 0, lang };
+        }
       }
       if (handsPlan) {
         await runHandsPlan(handsPlan);

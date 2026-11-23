@@ -1,10 +1,13 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Sans_Arabic } from "next/font/google";
+import { Alexandria } from "next/font/google";
 import { Providers } from "../components/providers";
 import "./globals.css";
 
-/** The chat screen's typeface. Other screens keep their own font through globals.css. */
-const chatFont = IBM_Plex_Sans_Arabic({ subsets: ["arabic", "latin"], weight: ["400", "500", "600", "700"], variable: "--font-chat", display: "swap" });
+/**
+ * The chat screen's typeface: Alexandria, the owner's choice on 2026-11-23 (IBM Plex Sans Arabic before). A variable font, so
+ * one file per subset carries every weight the chat uses (400 to 700). Other screens keep their own font through globals.css.
+ */
+const chatFont = Alexandria({ subsets: ["arabic", "latin"], variable: "--font-chat", display: "swap" });
 
 export const metadata: Metadata = {
   title: "موحسن",

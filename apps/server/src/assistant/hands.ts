@@ -85,6 +85,70 @@ export interface HandsPlan {
 const VERBS = '(?:ابحث|أبحث|إبحث|دور|فتش|اضغط|إضغط|انقر|اختر|افتح|إفتح|ادخل|اقرأ|إقرأ|اقرا|لخص|اكتب|أكتب|ارجع|إرجع|مرر|انزل|نزل)';
 const SPLIT = new RegExp(`\\s*[،,؛;]\\s*(?:ثم\\s+|و\\s*)?(?=${VERBS})|\\s+(?:ثم|وبعدين|وبعدها|بعدها|and then|then)\\s+|\\s+and\\s+(?=(?:search|look up|click|tap|open|read|type|scroll|go back|summari))|\\s+و(?=${VERBS})`, 'iu');
 
+/** Asking to see what a page says: «اقرأ», «لخص», «اعرض», «أرني», with an object pronoun («اقرأها») or not. Tidied text. */
+const SHOW_PAGE_AR = '(?:اقرأ|إقرأ|اقرا|لخص|اعرض|أعرض|اظهر|أظهر|ارني|أرني)(?:ها|ه)?';
+/** What is to be seen: the page, its content or its text, by name or by a pronoun («محتواه», «ما فيها»). */
+const PAGE_CONTENT_AR = '(?:محتوى\\s+)?(?:هذه\\s+)?(?:الصفح[ةه]|المحتوى|النص|المقال[ةه]?|الموقع|ما فيها|ما فيه|محتواه|محتواها|محتوياته|محتوياتها|نصه|نصها)';
+const SHOW_PAGE_EN = '(?:read|summari[sz]e|show|display)';
+const PAGE_CONTENT_EN = "(?:me\\s+)?(?:it|(?:the|this|its)\\s+(?:page|article|content|contents|text)|the\\s+page(?:'s)?\\s+(?:content|contents|text)|what(?:'s|\\s+is)\\s+on\\s+(?:it|the\\s+page))";
+/**
+ * «اقرأ الصفحة», «اعرض لي محتواه», «read the page», «show me its content»: the open page read out. «محتواه» and «أرني» were
+ * not read until 2026-11-23, so «اعرض لي محتواه» after an open was searched as a question.
+ */
+const READ_PAGE = new RegExp(`^${SHOW_PAGE_AR}(?:\\s+لي)?(?:\\s+${PAGE_CONTENT_AR})?$|^(?:ماذا|ما الذي|شو)\\s+(?:في|يوجد في|تقول|مكتوب في)\\s+(?:هذه\\s+)?(?:الصفح[ةه])$|^(?:read|summari[sz]e)(?:\\s+(?:me\\s+)?(?:the|this)\\s+(?:page|article))?$|^(?:show|display)(?:\\s+${PAGE_CONTENT_EN})$|^what(?:'s| is| does)\\s+(?:on\\s+)?(?:the|this)\\s+page(?:\\s+say)?$`, 'iu');
+/**
+ * «افتح X واعرض لي محتواه» (the home screen's own suggestion, with an address), «افتح X ثم اقرأها», «open X and show me its
+ * content»: the page opened, then read out. In production on 2026-11-23 the page opened and the run ended «لم أؤكد إتمام هذا
+ * الطلب», because nothing joined «اعرض لي محتواه» to the open. Group 1 or 2 is what comes before: the open itself.
+ */
+const OPEN_THEN_READ = new RegExp(`^(.+?)\\s*[،,]?\\s+(?:ثم\\s+|وبعدها\\s+|و)${SHOW_PAGE_AR}(?:\\s+لي)?(?:\\s+${PAGE_CONTENT_AR})?$|^(.+?)\\s*,?\\s+(?:and(?:\\s+then)?|then)\\s+${SHOW_PAGE_EN}(?:\\s+${PAGE_CONTENT_EN})?$`, 'iu');
+/** Common top-level domains, so a bare «example.org» is an address but «node.js» stays a word to search for. */
+const TLD = '(?:com|net|org|edu|gov|mil|int|info|biz|io|ai|app|dev|me|tv|co|uk|us|ca|au|de|fr|es|it|nl|se|ch|tr|ru|in|cn|jp|news|blog|site|online|store|tech|sa|ae|eg|jo|kw|qa|bh|om|ma|tn|dz|iq|sy|lb|ps|ly|sd|ye)';
+/** A whole message that is one web address: «https://example.com», «www.bbc.com/arabic», «example.org». Tidied text. */
+const BARE_ADDRESS = new RegExp(`^(?:https?:\\/\\/[^\\s<>"'«»]+|(?:www\\.)?(?:[a-z0-9-]+\\.)+${TLD}(?:[/?#][^\\s<>"'«»]*)?)$`, 'iu');
+/**
+ * «افتح موقعًا واعرض لي محتواه» with no address, «افتح موقعًا», «open a website and show me its content»: a page to open that
+ * the request does not name. Production searched the sentence itself on 2026-11-23, and the search guard refused it as
+ * private. Group 1 is the request to see the content. Folded text (fold()).
+ */
+const UNNAMED_SITE_AR = /^(?:من فضلك\s+|لو سمحت\s+)?(?:افتح|ادخل|اذهب)(?:\s+لي)?(?:\s+(?:الي|علي))?\s+(?:موقعا|موقع|صفحه|رابطا|رابط)(?:\s+(?:ما|ويب|الكترونيا?|انترنت))?(\s*[،,]?\s+(?:ثم\s+|و)(?:اقرا|لخص|اعرض|اظهر|ارني)(?:ها|ه)?(?:\s+لي)?(?:\s+(?:محتواه|محتواها|محتوياته|محتوياتها|نصه|نصها|ما فيه|ما فيها|المحتوي|النص|الصفحه))?)?$/u;
+const UNNAMED_SITE_EN = /^(?:please\s+)?(?:open|visit|go to)\s+(?:a|any|some)\s+(?:website|web ?site|site|web ?page|page|link)(\s*,?\s+(?:and(?:\s+then)?|then)\s+(?:show|read|display)(?:\s+me)?(?:\s+(?:it|its (?:content|contents|text)|the (?:content|contents|text)|what(?:'s| is) on it))?)?$/u;
+
+/** A whole message that is one web address, which has no language of its own. */
+export const isBareAddress = (request: string): boolean => typeof request === 'string' && BARE_ADDRESS.test(tidy(request));
+
+/** A request to open a website that names none: whether it also asks to see the content, and its language. */
+export interface UnnamedSite { read: boolean; lang: 'ar' | 'en' }
+export function unnamedSite(request: string): UnnamedSite | null {
+  if (typeof request !== 'string' || request.length > 200) return null;
+  const text = fold(request);
+  const ar = UNNAMED_SITE_AR.exec(text);
+  if (ar) return { read: Boolean(ar[1]), lang: 'ar' };
+  const en = UNNAMED_SITE_EN.exec(text);
+  return en ? { read: Boolean(en[1]), lang: 'en' } : null;
+}
+
+/** The card that asks which website to open, in the request's language. */
+export function siteQuestion(task: UnnamedSite) {
+  const ar = task.lang === 'ar';
+  return {
+    prompt: ar ? task.read ? 'أفتح الموقع الذي تختاره وأعرض لك محتواه من نص الصفحة نفسها. أي موقع؟' : 'أفتح الموقع الذي تختاره. أي موقع؟'
+      : task.read ? "I'll open the website you choose and show you its content, from the page's own text. Which website?" : "I'll open the website you choose. Which website?",
+    fields: [{ id: 'site', prompt: ar ? 'رابط الموقع أو اسمه' : "The website's address or name", suggestions: [],
+      placeholder: ar ? 'مثلاً: bbc.com أو https://example.com' : 'e.g. bbc.com or https://example.com' }],
+  };
+}
+
+/** The website the owner named in answer to that card: an address, a known site («ويكيبيديا»), or «افتح X». */
+export function siteToOpen(answer: string): { url: string; name: string } | null {
+  if (typeof answer !== 'string') return null;
+  const text = tidy(answer).replace(/^(?:افتح|إفتح|ادخل(?:\s+(?:على|إلى|الى))?|اذهب\s+(?:إلى|الى)|open|go to|visit)\s+(?:لي\s+)?/iu, '').trim();
+  if (!text || text.length > 300) return null;
+  const route = directRoute(`افتح ${text}`);
+  if (route?.finishes && !route.screenshot) return { url: route.url, name: route.name };
+  return namedSite(text);
+}
+
 /** Removes Arabic marks and tatweel and trailing punctuation; keeps the owner's words. */
 export function tidy(text: string): string {
   return text.normalize('NFC').replace(/[ـً-ٰٟ]/gu, '').replace(/\s+/g, ' ').replace(/[\s.!؟?]+$/u, '').trim();
@@ -165,7 +229,7 @@ function parseSegment(raw: string): HandsStep | HandsStep[] | null {
   if (readOrdinal) return [{ kind: 'click', target: strip(match![1]), ordinal: readOrdinal }, { kind: 'read', more: false }];
 
   if (/^(?:اقرأ|إقرأ|اقرا|أكمل|اكمل)\s+(?:لي\s+)?(?:المزيد|الباقي|البقي[ةه]|القراء[ةه])$|^(?:read more|continue reading|more)$/iu.test(text)) return { kind: 'read', more: true };
-  if (/^(?:اقرأ|إقرأ|اقرا|لخص|اعرض)(?:\s+لي)?(?:\s+(?:محتوى\s+)?(?:هذه\s+)?(?:الصفح[ةه]|المحتوى|النص|المقال[ةه]?|الموقع|ما فيها))?$|^(?:ماذا|ما الذي|شو)\s+(?:في|يوجد في|تقول|مكتوب في)\s+(?:هذه\s+)?(?:الصفح[ةه])$|^(?:read|summari[sz]e)(?:\s+(?:me\s+)?(?:the|this)\s+(?:page|article))?$|^what(?:'s| is| does)\s+(?:on\s+)?(?:the|this)\s+page(?:\s+say)?$/iu.test(text)) return { kind: 'read', more: false };
+  if (READ_PAGE.test(text)) return { kind: 'read', more: false };
 
   if (/^(?:انزل|نزل|مرر|مرّر)(?:\s+(?:لل?[أا]سفل|تحت|للتحت|الصفح[ةه]))?$|^scroll(?:\s+down)?$/iu.test(text)) return { kind: 'scroll', up: false };
   if (/^(?:اطلع|اصعد|مرر\s+لل?[أا]على)$|^scroll up$/iu.test(text)) return { kind: 'scroll', up: true };
@@ -240,9 +304,27 @@ export function parseHands(request: string): HandsStep[] | null {
   return parseCommand(request);
 }
 
+/** «افتح X واعرض لي محتواه» as two steps: open the page, then read it out. Only an address or a known site comes before. */
+function parseOpenAndRead(request: string): HandsStep[] | null {
+  const match = OPEN_THEN_READ.exec(tidy(request));
+  // «افتح الموقع X في المتصفح»: «الموقع» and «في المتصفح» only say where it opens, as in parseOpenAndAsk.
+  const head = (match?.[1] ?? match?.[2])?.replace(/\s+(?:في|على)\s+(?:ال)?متصفح$|\s+in (?:the |a )?browser$/iu, '')
+    .replace(/(?:^|\s)(?:ال)?موقع(?=\s)|\bthe (?:site|website|page)(?=\s)/iu, ' ').replace(/\s+/gu, ' ').trim();
+  if (!head) return null;
+  const open = directRoute(head);
+  if (!open?.finishes || open.screenshot) return null;
+  return [{ kind: 'open', url: open.url, name: open.name }, { kind: 'read', more: false }];
+}
+
 function parseCommand(request: string): HandsStep[] | null {
+  // A message that is only an address asks to see that page, as the search refusal itself promises («أرسل رابط الموقع المقصود
+  // وأقرأه لك»). In production on 2026-11-23 a bare link was answered «The required search or browsing route is not fully available».
+  const address = tidy(request);
+  if (BARE_ADDRESS.test(address)) return [{ kind: 'open', url: address, name: address.replace(/^https?:\/\//iu, '').split(/[/?#]/u)[0] }, { kind: 'read', more: false }];
   const openAsk = parseOpenAndAsk(request);
   if (openAsk) return openAsk;
+  const openRead = parseOpenAndRead(request);
+  if (openRead) return openRead;
   const segments = tidy(request).split(SPLIT).map(part => part?.trim()).filter((part): part is string => Boolean(part));
   if (!segments.length || segments.length > 6) return null;
   const steps: HandsStep[] = [];
@@ -1172,6 +1254,29 @@ const noSearchSource = (query: string, lang: 'ar' | 'en' = /[؀-ۿ]/u.test(query
 export function plainTitle(title: string): string {
   return tidy(title).replace(/\s+[-–—|]\s+(ويكيبيديا|Wikipedia|BBC News عربي|BBC News|الجزيرة نت)$/iu, '').replace(/[[\]]/g, '').slice(0, 90) || title;
 }
+
+/** The browser keeps the first 90 characters of an element's text (packages/browser agent-browser.ts, `label`). */
+const ELEMENT_LABEL_CAP = 90;
+/**
+ * A link's text as a reply lists it: whole words only, and «…» where the text was cut. A headline the browser kept only 90
+ * characters of was listed «… ولقاء أمريكي قطري في وا» in production on 2026-11-23. `max` is the longest text shown.
+ */
+export function shownLabel(label: string, max = ELEMENT_LABEL_CAP): string {
+  const text = tidy(label).replace(/[[\]]/g, '');
+  const cut = label.length >= ELEMENT_LABEL_CAP;
+  if (!cut && text.length <= max) return text;
+  const room = Math.max(1, max - 1);
+  let kept = text.slice(0, room);
+  // The cut went through a word when a letter or digit follows it, or when the browser had already cut the text there.
+  const throughWord = text.length > room ? /[\p{L}\p{N}]/u.test(text.charAt(room)) && /[\p{L}\p{N}]/u.test(kept.slice(-1)) : cut;
+  if (throughWord && kept.includes(' ')) kept = kept.slice(0, kept.lastIndexOf(' '));
+  return `${kept.replace(/[\s،,.:;!?؟\-–—]+$/u, '')}…`;
+}
+/** A page title in a list of links: plainTitle(), with «…» when it is as long as the browser keeps a label. */
+const shownTitle = (title: string): string => {
+  const plain = plainTitle(title);
+  return plain.length >= ELEMENT_LABEL_CAP ? shownLabel(plain) : plain;
+};
 const NO_PAGE = 'لا توجد صفحة مفتوحة في هذه المحادثة. قل لي أي موقع أفتح أولًا، مثل «افتح bbc.com».';
 
 /** Runs the plan from `plan.next`. The caller persists `plan` in the run state before any pause. */
@@ -1653,7 +1758,7 @@ export function pageAnswer(page: AgentPage, question: string, lang: 'ar' | 'en')
 export function describe(plan: HandsPlan, page: AgentPage | null): { text: string; status: 'completed' | 'partial' | 'blocked' } {
   const last = plan.steps[plan.steps.length - 1];
   if (last.kind === 'search' && last.ask && plan.results) {
-    const list = (items: { title: string; url: string }[]) => items.map((item, index) => `${index + 1}. [${plainTitle(item.title)}](${item.url}) — ${siteName(item.url)}`).join('\n');
+    const list = (items: { title: string; url: string }[]) => items.map((item, index) => `${index + 1}. [${shownTitle(item.title)}](${item.url}) — ${siteName(item.url)}`).join('\n');
     // The frame around the quotes follows the owner's language (plan §7.3); the quotes themselves stay as the page wrote them.
     // A reply asked in another language («in two short Arabic sentences») is said not to be met below, in this same language.
     const reply = last.reply;
@@ -1687,7 +1792,7 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
       // The read time names the evidence's age; a page served from the cache keeps the time it was really fetched.
       const readAt = plan.found.readAt && !Number.isNaN(Date.parse(plan.found.readAt)) ? ` · ${en ? 'read' : 'قُرئت'} ${new Date(plan.found.readAt).toISOString().slice(0, 16).replace('T', ' ')} UTC` : '';
       const source = `**${en ? 'Source:' : 'المصدر:'}** [${siteName(plan.found.url)} — ${plainTitle(plan.found.title)}](${plan.found.url})${readAt}`;
-      const also = others.length ? `\n\n**${en ? 'See also:' : 'للمزيد:'}** ${others.map(item => `[${plainTitle(item.title)}](${item.url})`).join(' · ')}` : '';
+      const also = others.length ? `\n\n**${en ? 'See also:' : 'للمزيد:'}** ${others.map(item => `[${shownTitle(item.title)}](${item.url})`).join(' · ')}` : '';
       // A second page on the same figure: named when it agrees, quoted when it differs, so a lone number is never presented as settled.
       // With no second page, the reply says so (plan §7.1: «المصدر يقول…، ولم أتحقق منه في مصدر ثانٍ»).
       const wantsFigure = WANTS_NUMBER.test(last.query) || LIVE.test(last.query);
@@ -1705,7 +1810,7 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
     return { status: 'partial', text: en ? `I found no page that answers “${last.query}”. Try a shorter question that names the same subject.${note}` : `لم أجد صفحة تجيب عن «${last.query}». جرّب سؤالًا أقصر يذكر الموضوع نفسه.${note}` };
   }
   if (last.kind === 'search' && plan.results?.length) {
-    const list = plan.results.slice(0, 8).map((item, index) => `${index + 1}. [${plainTitle(item.title)}](${item.url}) — ${siteName(item.url)}`).join('\n');
+    const list = plan.results.slice(0, 8).map((item, index) => `${index + 1}. [${shownTitle(item.title)}](${item.url}) — ${siteName(item.url)}`).join('\n');
     // The list's frame follows the owner's language: an English request got an Arabic frame until 2026-11-23.
     if ((plan.lang ?? (/[؀-ۿ]/u.test(last.query) ? 'ar' : 'en')) === 'en') return { status: 'completed', text: `I searched the web for “${last.query}”. Results related to the subject:\n\n${list}\n\nSay “open result 2”, for example, and I will open it.` };
     return { status: 'completed', text: `بحثت في الويب عن «${last.query}». النتائج المرتبطة بالموضوع:\n\n${list}\n\nقل «افتح النتيجة 2» مثلًا لأفتحها.` };
@@ -1729,7 +1834,7 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
   if (last.kind === 'search') {
     const results = resultLinks(page, 8, queryOf(page.url) ?? last.query);
     if (results.length && queryOf(page.url)) {
-      const list = results.map((item, index) => `${index + 1}. [${tidy(item.element.label).slice(0, 90).replace(/[[\]]/g, '')}](${item.url}) — ${hostOf(item.url)}`).join('\n');
+      const list = results.map((item, index) => `${index + 1}. [${shownLabel(item.element.label)}](${item.url}) — ${hostOf(item.url)}`).join('\n');
       return { status: 'completed', text: `بحثت عن «${last.query}» في ${hostOf(page.url)}. أول النتائج:\n\n${list}\n\nقل «افتح النتيجة 2» مثلًا لأفتحها، أو «اقرأ الصفحة».` };
     }
     // No search words in the address: the site sent the search straight to a page.
@@ -1744,16 +1849,21 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
     if (!shown.length) return { status: 'partial', text: all.length
       ? `فتحت ${where}، ولا يذكر أي عنوان على صفحتها الرئيسية الآن «${last.topic}». قل «أخبار اليوم» لأعرض كل العناوين.`
       : `فتحت ${where}، لكن لم أميّز روابط الأخبار في صفحتها. الصفحة ظاهرة في لوحة المتصفح.` };
-    const list = shown.map(item => `${item.number}. [${tidy(item.element.label).slice(0, 110).replace(/[[\]]/g, '')}](${item.url})`).join('\n');
+    const list = shown.map(item => `${item.number}. [${shownLabel(item.element.label, 110)}](${item.url})`).join('\n');
     const others = NEWS_SOURCES.map(([, source]) => source.name).filter(name => name !== last.source.name).slice(0, 2).map(name => `«أخبار ${name}»`).join(' أو ');
     return { status: 'completed', text: `${last.topic ? `عناوين عن «${last.topic}»` : 'أهم العناوين'} الآن على الصفحة الرئيسية لـ${where}، كما تظهر هناك دون أن أعيد صياغتها:\n\n${list}\n\nقل «اقرأ الخبر ${shown[Math.min(1, shown.length - 1)].number}» مثلًا لأفتحه وأقرأه، أو ${others} لمصدر آخر.` };
   }
   if (last.kind === 'type') return { status: 'completed', text: `كتبت «${last.text}» في ${where}. قل «اضغط على …» لأتابع.` };
   const isRead = last.kind === 'read';
-  if (isRead) lead = `من ${where}:`;
+  // The frame of a reading follows the owner's language («open X and show me its content» was framed in Arabic until 2026-11-23);
+  // the page's own sentences stay as the page wrote them. A search's frame above stays as it was.
+  const en = plan.lang === 'en' && last.kind !== 'search';
+  if (isRead) lead = en ? `From ${where}:` : `من ${where}:`;
+  else if (en) lead = `I reached ${where}:`;
   const from = isRead && plan.read?.url === page.url ? plan.read.start : 0;
   const part = excerpt(page, from, isRead ? READ_WINDOW : 500);
-  const quote = part.lines.length ? `\n\n${part.lines.map(line => `> ${line}`).join('\n>\n')}` : '\n\nلم أجد نصًا مقروءًا في الجزء الظاهر من الصفحة.';
-  const tail = isRead ? (part.more ? '\n\nقل «اقرأ المزيد» لأكمل.' : '') : '\n\nقل «اقرأ الصفحة» لأقرأ أكثر، أو «اضغط على …».';
+  const quote = part.lines.length ? `\n\n${part.lines.map(line => `> ${line}`).join('\n>\n')}` : en ? '\n\nI found no readable text in the visible part of the page.' : '\n\nلم أجد نصًا مقروءًا في الجزء الظاهر من الصفحة.';
+  const tail = isRead ? (part.more ? en ? '\n\nSay “read more” and I will go on.' : '\n\nقل «اقرأ المزيد» لأكمل.' : '')
+    : en ? '\n\nSay “read the page” to read more, or “click …”.' : '\n\nقل «اقرأ الصفحة» لأقرأ أكثر، أو «اضغط على …».';
   return { status: 'completed', text: `${lead}${quote}${tail}` };
 }

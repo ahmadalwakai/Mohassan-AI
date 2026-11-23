@@ -3,13 +3,24 @@ import styles from "./assistant-app.module.css";
 
 /** Renders the assistant's replies. It builds React elements only, so a reply can never inject HTML. */
 
-const INLINE = /(\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s<>()]+[^\s<>().,،])/g;
+/**
+ * A link's address may hold balanced brackets, as Wikipedia's do («…/wiki/القصير_(مصر)»): the link ends at the bracket that
+ * closes it, not at the first «)». Until 2026-11-23 such a link lost its «)» and left a stray one in the text.
+ */
+const ADDRESS = String.raw`https?:\/\/(?:[^\s()]|\([^\s()]*\)|\()+`;
+/** A bare address: the same brackets, and never the sentence's closing bracket or punctuation. */
+const BARE_ADDRESS = String.raw`https?:\/\/(?:[^\s<>()]|\([^\s<>()]*\))*(?:[^\s<>().,،]|\([^\s<>()]*\))`;
+const INLINE = new RegExp(String.raw`(\*\*[^*\n]+\*\*|` + "`[^`\\n]+`" + String.raw`|\[[^\]\n]+\]\(${ADDRESS}\)|${BARE_ADDRESS})`, "g");
+const LINK = new RegExp(String.raw`^\[([^\]]+)\]\((${ADDRESS})\)$`);
+const LINKS = new RegExp(String.raw`\[([^\]\n]+)\]\((${ADDRESS})\)`, "g");
+/** «---», «***» or «___» alone on a line: a dividing line. The planner, letter and PDF replies put one before their note. */
+const RULE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
 
 function inline(text: string): ReactNode[] {
   return text.split(INLINE).map((part, index) => {
     if (part.startsWith("**") && part.endsWith("**") && part.length > 4) return <strong key={index}>{part.slice(2, -2)}</strong>;
     if (part.startsWith("`") && part.endsWith("`") && part.length > 2) return <code key={index}>{part.slice(1, -1)}</code>;
-    const link = /^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/.exec(part);
+    const link = LINK.exec(part);
     if (link) return <a key={index} href={link[2]} target="_blank" rel="noopener noreferrer">{link[1]}</a>;
     if (/^https?:\/\//.test(part)) return <a key={index} href={part} target="_blank" rel="noopener noreferrer" title={part}>{shortLink(part)}</a>;
     return part;
@@ -28,10 +39,10 @@ export function shortLink(url: string): string {
   } catch { return url.length > 50 ? `${url.slice(0, 49)}…` : url; }
 }
 
-/** The reply as plain text for the clipboard: no ** or >, links as «title (address)». */
+/** The reply as plain text for the clipboard: no ** or >, no dividing lines, links as «title (address)». */
 export function plainText(text: string): string {
-  return text.split("\n").map(line => line.replace(/^\s*>\s?/, "")).join("\n")
-    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, title: string, url: string) => `${title} (${url})`)
+  return text.split("\n").map(line => RULE.test(line) ? "" : line.replace(/^\s*>\s?/, "")).join("\n")
+    .replace(LINKS, (_, title: string, url: string) => `${title} (${url})`)
     .replace(/\*\*([^*\n]+)\*\*/g, "$1").replace(/\n{3,}/g, "\n\n").trim();
 }
 
@@ -47,6 +58,11 @@ export function Markdown({ text }: { text: string }) {
       while (index < lines.length && !lines[index].trimStart().startsWith("```")) code.push(lines[index++]);
       index++;
       blocks.push(<pre key={blocks.length} dir="ltr"><code>{code.join("\n")}</code></pre>);
+      continue;
+    }
+    if (RULE.test(line)) {
+      blocks.push(<hr key={blocks.length} />);
+      index++;
       continue;
     }
     const heading = /^(#{1,3})\s+(.+)$/.exec(line);
@@ -74,7 +90,7 @@ export function Markdown({ text }: { text: string }) {
       continue;
     }
     const paragraph: string[] = [];
-    while (index < lines.length && lines[index].trim() && !lines[index].trimStart().startsWith("```") && !/^#{1,3}\s/.test(lines[index]) && !ordered.test(lines[index]) && !bullet.test(lines[index]) && !/^\s*>/.test(lines[index])) paragraph.push(lines[index++]);
+    while (index < lines.length && lines[index].trim() && !lines[index].trimStart().startsWith("```") && !/^#{1,3}\s/.test(lines[index]) && !ordered.test(lines[index]) && !bullet.test(lines[index]) && !/^\s*>/.test(lines[index]) && !RULE.test(lines[index])) paragraph.push(lines[index++]);
     blocks.push(<p key={blocks.length} dir="auto">{inline(paragraph.join("\n"))}</p>);
   }
   return <div className={styles.reply}>{blocks}</div>;

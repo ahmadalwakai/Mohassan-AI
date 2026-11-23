@@ -184,6 +184,7 @@
 .reply ol { list-style: decimal; }
 .reply li::marker { color: var(--faint); }
 .reply a { color: var(--accent); text-underline-offset: 3px; overflow-wrap: anywhere; }
+.reply hr { width: 100%; margin: 2px 0; border: 0; border-top: 1px solid var(--line); }
 .replyQuote { margin: 0; padding: 4px 14px; border-inline-start: 3px solid var(--accent); background: var(--user); border-radius: 10px; color: inherit; padding-block: 10px; display: flex; flex-direction: column; gap: 8px; }
 .copyReply { margin-top: 8px; display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--faint); font: inherit; font-size: .8rem; cursor: pointer; }
 .copyReply:hover, .copyReply:focus-visible { border-color: var(--line); color: inherit; }

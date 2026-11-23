@@ -375,6 +375,8 @@ export interface BrainState {
   computed?: import('./computation-reference.js').ComputedRecord | null;
   /** A calculation on an earlier result that this conversation does not have, waiting for the owner to give the number. */
   pendingComputation?: { request: string; phrase: string; lang: 'ar' | 'en' } | null;
+  /** «افتح موقعًا واعرض لي محتواه» with no site named, waiting for the owner to name it (hands.ts siteQuestion). */
+  pendingOpen?: { read: boolean; lang: 'ar' | 'en' } | null;
   /** The option id of the owner's latest button answer; cleared once read. */
   lastChoice?: string | null;
   /** A Runtime task that exists but has not been approved, so it never ran. */
