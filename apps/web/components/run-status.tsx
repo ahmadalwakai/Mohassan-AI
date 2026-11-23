@@ -62,7 +62,7 @@ export function RunDetails({ run }: { run: ChatRunView }) {
         <ul className={styles.list}>
           {run.verification.criteria.map(item => <li key={item.id} className={styles.item}>
             <span className={`${styles.state} ${styles[item.status === "verified" ? "verified" : item.status === "failed" ? "failed" : "unknown"]}`}>{item.status === "verified" ? "تحقق" : item.status === "failed" ? "لم يتحقق" : item.status === "expired" ? "انتهت صلاحيته" : "غير مثبت"}</span>
-            <span dir="auto" className={styles.outcome}>{item.label}{item.required ? "" : " (اختياري)"}</span>
+            <span dir="auto" className={styles.outcome}>{item.label}{item.required ? "" : " (إرشادي، لا يمنع الإكمال)"}</span>
           </li>)}
         </ul>
       </section> : null}

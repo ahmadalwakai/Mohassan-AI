@@ -345,6 +345,12 @@ const CRITERION_STATUS = { verified: 'verified', failed: 'failed', unverified: '
  * A completed step that only has its tool's report counts as done but is labelled so in the verification list.
  */
 export function decideVerdict(ledger: RunLedger, input: { hostStatus: 'completed' | 'partial' | 'blocked'; review?: TaskCompletionReview | null;
+  /**
+   * Whether the supervisor's criteria gate completion for this run (an enforced contract, or a memory publication). Advisory
+   * criteria are shown as guidance only: they never count as required, so a missing advisory observation is not reported
+   * as a failed requirement of an answer the path itself verified.
+   */
+  enforced?: boolean;
   criterionLabels?: Record<string, string>; at: number }): { status: 'completed' | 'partial' | 'blocked'; verdict: RunVerdict; verification: VerificationResult } {
   const steps = ledger.plan?.steps ?? [];
   const required = steps.filter(step => step.required);
@@ -363,7 +369,7 @@ export function decideVerdict(ledger: RunLedger, input: { hostStatus: 'completed
     ...steps.map(step => ({ id: `step:${step.id}`, label: step.outcome, required: step.required,
       status: step.state === 'verified' || step.state === 'skipped' ? 'verified' as const : step.state === 'failed' || step.state === 'invalidated' ? 'failed' as const
         : step.state === 'unknown' ? 'unverified' as const : 'missing' as const })),
-    ...(input.review?.criteria ?? []).map(item => ({ id: item.id, label: clip(input.criterionLabels?.[item.id] ?? item.id, 200), required: item.required, status: CRITERION_STATUS[item.status] })),
+    ...(input.review?.criteria ?? []).map(item => ({ id: item.id, label: clip(input.criterionLabels?.[item.id] ?? item.id, 200), required: item.required && Boolean(input.enforced), status: CRITERION_STATUS[item.status] })),
   ].slice(0, 24);
   const counted = criteria.filter(item => item.required);
   const verificationStatus: VerificationResult['status'] = !counted.length ? 'not_applicable'

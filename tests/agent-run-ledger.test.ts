@@ -105,9 +105,21 @@ describe('verdicts', () => {
     enterPhase(enforced, 'understanding', T0);
     const review = { status: 'unverified', allowCompletion: false, shouldBlockCompletion: true, missingCriteria: ['memory'], stagnantSteps: 0,
       criteria: [{ id: 'memory', required: true, status: 'missing', reason: 'missing_evidence' }] } as const;
-    const decided = decideVerdict(enforced, { hostStatus: 'completed', review: { ...review, criteria: [...review.criteria], missingCriteria: [...review.missingCriteria] }, criterionLabels: { memory: 'Saved note read back' }, at: T0 + 1 });
+    const decided = decideVerdict(enforced, { hostStatus: 'completed', review: { ...review, criteria: [...review.criteria], missingCriteria: [...review.missingCriteria] }, enforced: true, criterionLabels: { memory: 'Saved note read back' }, at: T0 + 1 });
     expect(decided).toMatchObject({ status: 'partial', verdict: { reason: 'criteria_unmet' }, verification: { status: 'unverified' } });
-    expect(decided.verification.criteria[0]).toMatchObject({ label: 'Saved note read back', status: 'missing' });
+    expect(decided.verification.criteria[0]).toMatchObject({ label: 'Saved note read back', status: 'missing', required: true });
+  });
+
+  it('shows an advisory criterion as guidance, never as a failed requirement of an answer the plan verified', () => {
+    const run = ledger();
+    setPlan(run, { version: 1, steps: [step('ask')] }, T0);
+    enterPhase(run, 'understanding', T0); enterPhase(run, 'executing', T0);
+    startStep(run, 'ask', T0); settleStep(run, 'ask', 'verified', T0 + 1);
+    const review = { status: 'unverified', allowCompletion: true, shouldBlockCompletion: false, missingCriteria: ['factual-answer'], stagnantSteps: 0,
+      criteria: [{ id: 'factual-answer', required: true, status: 'missing', reason: 'missing_evidence' }] } as const;
+    const decided = decideVerdict(run, { hostStatus: 'completed', review: { ...review, criteria: [...review.criteria], missingCriteria: [...review.missingCriteria] }, at: T0 + 2 });
+    expect(decided).toMatchObject({ status: 'completed', verification: { status: 'verified' } });
+    expect(decided.verification.criteria.find(item => item.id === 'factual-answer')).toMatchObject({ required: false, status: 'missing' });
   });
 
   it('completes a direct answer with no plan, and a run resumed after a card reaches its verdict through understanding', () => {

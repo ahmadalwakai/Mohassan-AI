@@ -1426,6 +1426,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         settleOpenSteps(ledger, finalStatus, verdictAt);
         if (ledger.path === 'direct') tryEnterPhase(ledger, 'answering', verdictAt);
         finalStatus = decideVerdict(ledger, { hostStatus: finalStatus, review: state.completionReview ?? null, at: verdictAt,
+          enforced: state.supervision?.contract.mode === 'enforced' || Boolean(memoryPublication),
           criterionLabels: Object.fromEntries((state.supervision?.contract.criteria ?? []).map(item => [item.id, criterionLabel(ledger, item.id, item.description)])) }).status;
       });
       await addMessage(tx, id, 'assistant', finalText);
