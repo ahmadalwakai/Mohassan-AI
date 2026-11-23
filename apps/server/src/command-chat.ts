@@ -2407,11 +2407,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         // not a web question, and the router's «unsupported» verdict used to be ignored here («ارسم لي صورة قطة»
         // searched for 11 s on 2026-11-22). Memory, Ads, the PC, reminders, planning and writing keep their own paths.
         if (!steps && !privateRequest && !notWebReason(tidy(actionRequest))) {
-          const unsupported = unsupportedRequest(actionRequest)
+          const unsupported = unsupportedRequest(actionRequest, earlierAsks)
             ?? (state.routing?.handler === 'unsupported' ? { kind: 'generic' as const, lang: /[؀-ۿ]/u.test(request) ? 'ar' as const : 'en' as const } : null);
           if (unsupported) {
             await addStep(id, runId, unsupported.lang === 'ar' ? 'طلب خارج القدرات الحالية' : 'Outside current capabilities');
-            await finish(id, runId, state, unsupportedReply(unsupported), 'blocked');
+            await finish(id, runId, state, vault.scrub(id, unsupportedReply(unsupported)), 'blocked');
             return;
           }
         }

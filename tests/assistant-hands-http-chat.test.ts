@@ -103,6 +103,34 @@ it('replies with an honest limit before any search for a request it cannot perfo
   expect(booking.messages.at(-1)?.text).toContain('I do not book, buy, call or send');
 });
 
+it('takes a description of colours after a picture request as that picture, not as a search', async () => {
+  // Real request rq091 (2026-11-22): a colour-on-background description after a logo was searched on its own words
+  // and answered with a physics sentence from the article «لون». Own wording here, not the set's.
+  const { control, queries, actions } = await harness();
+  const { id } = await control.create(owner, { goal: 'can you draw pictures?' });
+  await control.settled(id);
+  await control.send(owner, id, { text: 'باللون الأخضر' });
+  await control.settled(id);
+  await control.send(owner, id, { text: 'أخضر على خلفية رمادية' });
+  await control.settled(id);
+  const result = await control.detail(owner, id);
+  expect(result.error).toBeNull();
+  expect(result.status).toBe('idle');
+  expect(queries).toEqual([]);
+  expect(actions).toEqual([]);
+  const replies = result.messages.filter(message => message.role === 'assistant').map(message => message.text);
+  expect(replies.at(-2)).toContain('فهمت «باللون الأخضر» وصفًا لشكل الصورة');
+  expect(replies.at(-1)).toContain('فهمت «أخضر على خلفية رمادية» وصفًا لشكل الصورة');
+  expect(replies.at(-1)).not.toContain('**المصدر:**');
+  // A real question about a colour still reads its sources, and a bare colour with no picture before it is not taken as one.
+  const { id: second } = await control.create(owner, { goal: 'ما لون السماء؟' });
+  await control.settled(second);
+  expect(queries.length).toBeGreaterThan(0);
+  const { id: third } = await control.create(owner, { goal: 'باللون الأخضر' });
+  await control.settled(third);
+  expect((await control.detail(owner, third)).messages.at(-1)?.text).not.toContain('وصفًا لشكل الصورة');
+});
+
 it('turns a refused public search into a reply instead of a failed run', async () => {
   const { control, queries } = await harness();
   const { id } = await control.create(owner, { goal: 'افعل شيئًا مفيدًا' });
