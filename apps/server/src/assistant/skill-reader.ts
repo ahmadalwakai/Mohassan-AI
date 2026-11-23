@@ -83,11 +83,24 @@ function englishStem(word: string): string {
 const stemOf = (word: string) => ARABIC.test(word) ? arabicStem(word) : englishStem(word);
 const words = (text: string) => matchText(text).replace(/[_-]+/gu, ' ').match(/[\p{L}\p{N}]+/gu) ?? [];
 
+/**
+ * A function word, bare or behind a clitic: «وكل», «لكل», «فما», «وبعد» name no topic. «وكل كم» in the backup skill's description
+ * matched «وكل الملفات» in a ransomware request and took it (skills-pilot/tests/heldout-2.json, 2026-11-22). «واي» stays: «واي فاي».
+ */
+function functionWord(word: string): boolean {
+  if (STOP_WORDS.has(word)) return true;
+  if (!ARABIC.test(word)) return false;
+  return CLITICS.some(clitic => {
+    const rest = word.slice(clitic.length);
+    return word.startsWith(clitic) && rest.length >= 2 && rest !== 'اي' && STOP_WORDS.has(rest);
+  });
+}
+
 /** Stems a skill is indexed by. The same folding and stemming runs on both sides, so they meet even when the stem is imperfect. */
 export function skillStems(text: string): string[] {
   const stems = new Set<string>();
   for (const word of words(text)) {
-    if (STOP_WORDS.has(word)) continue;
+    if (functionWord(word)) continue;
     const stem = stemOf(word);
     if (stem.length >= 2 && !STOP_WORDS.has(stem)) stems.add(stem);
   }
@@ -98,7 +111,7 @@ export function skillStems(text: string): string[] {
 export function requestTerms(request: string): { word: string; variants: string[] }[] {
   const seen = new Set<string>(), terms: { word: string; variants: string[] }[] = [];
   for (const word of words(request.slice(0, MAX_REQUEST_CHARS))) {
-    if (STOP_WORDS.has(word) || seen.has(word)) continue;
+    if (functionWord(word) || seen.has(word)) continue;
     seen.add(word);
     const variants = new Set([stemOf(word)]);
     if (ARABIC.test(word)) for (const clitic of CLITICS) if (word.startsWith(clitic) && word.length - clitic.length >= 3) {
@@ -161,14 +174,17 @@ export function buildSkillReaderIndex(candidates: readonly SkillReaderCandidate[
 function scoreSkills(terms: { word: string; variants: string[] }[], items: readonly { skill: SkillReaderCandidate; title: ReadonlySet<string>; body: ReadonlySet<string> }[], rarity: (stem: string) => number): SkillMatch[] {
   const matches: SkillMatch[] = [];
   for (const entry of items) {
-    let score = 0; const matched: string[] = [];
+    // A stem counts once: «سؤال … وسؤال» is one subject, yet it scored twice and gave an interview question to clarifying-requests
+    // (skills-pilot/tests/heldout-2.json, 2026-11-22).
+    let score = 0; const matched: string[] = []; const used = new Set<string>();
     for (const term of terms) {
-      let best = 0;
+      let best = 0, stem = '';
       for (const variant of term.variants) {
+        if (used.has(variant)) continue;
         const weight = entry.title.has(variant) ? 3 : entry.body.has(variant) ? 1.5 : 0;
-        if (weight) best = Math.max(best, weight * rarity(variant));
+        if (weight && weight * rarity(variant) > best) { best = weight * rarity(variant); stem = variant; }
       }
-      if (best > 0) { score += best; matched.push(term.word); }
+      if (best > 0) { score += best; matched.push(term.word); used.add(stem); }
     }
     const covered = matched.length / terms.length >= COVERED_SHARE && score >= COVERED_SCORE;
     if (matched.length >= MIN_SKILL_TERMS && (score >= MIN_SKILL_SCORE || covered)) matches.push({ skill: entry.skill, score: Math.round(score * 1000) / 1000, terms: matched });
@@ -206,8 +222,16 @@ export function matchSkills(request: string, candidates: readonly SkillReaderCan
 // A request that only asks what something is, who, when, where or how much is better answered from sources; a skill is a method.
 const FACT_START = /^(?:ما هو|ما هي|ماهو|ماهي|من هو|من هي|متي|اين|وين|كم|هل|ما معني|ما تعريف|عرف|what is|what are|what's|who|when|where|how much|how many|is|are|does|did|define)(?![\p{L}\p{N}])/u;
 const ADVICE = /(?:^|[^\p{L}])(?:كيف|كيفيه|طريقه|خطوات|خطوه|نصائح|نصيحه|دليل|افضل طريقه|خطه|ساعدني|ارشدني|علمني|راجع|قيم|حلل|جهز|ضع|اعمل|how to|how do|how can|how should|steps?|tips?|guide|best way|plan|help me|review|checklist)(?:$|[^\p{L}])/u;
-// Time-bound facts only. A price word alone is not live: «كيف أحدد سعر منتجي» asks for a method.
-const LIVE = /(?:^|[^\p{L}])(?:اليوم|الان|حاليا|هالايام|غدا|بكره|الليله|طقس|نتيجه المباراه|مباراه|مباريات|مواعيد|today|now|tonight|tomorrow|current|currently|latest|weather|score|scores)(?:$|[^\p{L}])/u;
+// Time-bound facts only. A price word alone is not live: «كيف أحدد سعر منتجي» asks for a method. A subject that is always live
+// stays live in any wording («كيف الطقس غدا؟»). A time word is live in a question about a value («كم سعر الذهب اليوم؟»,
+// «لخّص أخبار اليوم») or with no how-to at all («ذكرني بموعد الطبيب بكرة»), but not in a request for what to do: «عندي مقابلة
+// عمل بكره كيف أستعد؟» asks for preparation and "our website got hacked, what should we do now?" for steps. Until 2026-11-22
+// every time word blocked the skill, so both went unanswered.
+const LIVE = /(?:^|[^\p{L}])(?:(?:ال)?طقس|نتيجه المباراه|مباراه|مباريات|مواعيد|weather|score|scores)(?:$|[^\p{L}])/u;
+const LIVE_TIME = /(?:^|[^\p{L}])(?:اليوم|الان|حاليا|هالايام|غدا|بكره|الليله|today|now|tonight|tomorrow|current|currently|latest)(?:$|[^\p{L}])/u;
+const LIVE_VALUE = /(?:^|[^\p{L}])(?:ال)?(?:سعر|اسعار|اخبار|خبر|نتيجه|نتائج|price|prices|rate|rates|news|result|results)(?:$|[^\p{L}])/u;
+/** How the asker should act: «كيف أتجهز»، «كيف نتصرف»، "how do I", "how to". «كيف الطقس» and «كيف حالك» are not. */
+const DOING = /(?:^|[^\p{L}])(?:(?:كيف|كيفيه|ازاي|شلون|اشلون)\s+(?:ا(?!ل)|ن)\p{L}{2,}|how\s+(?:to|(?:do|can|should|could|would)\s+(?:i|we)))(?:$|[^\p{L}])/u;
 /** Translating or reworking a supplied text is work on that text; a method instead of the text would not answer it. */
 const REWORK = /^(?:ترجم|تترجم|اعد صياغه|تعيد صياغه|صحح|تصحح|حسن|اختصر|تختصر|لخص|تلخص|translate|rewrite|paraphrase|proofread|shorten|summari[sz]e|reword|edit|polish|improve|correct)(?![\p{L}])|ترجمه/u;
 
@@ -215,17 +239,30 @@ const REWORK = /^(?:ترجم|تترجم|اعد صياغه|تعيد صياغه|ص
 // follow: «ما ميزانية حملتي؟», «ما خطة مشروعي؟». No mode answers it from a skill: «ما هو بريدي الإلكتروني؟» reached the
 // email-marketing skill through `fallback` on 2026-11-22 (pf14 in artifacts/wiring-check-2026-11-22). «كيف أسعّر منتجي؟» asks for a method.
 const WH_START =/^(?:ما|ماذا|من(?!\s+فضلك)|كم|اين|وين|متي|امتي|هل|اي|ايهما|وش|شنو|شو|ايش|ايه|what|what's|whats|which|who|whom|whose|when|where|is|are|was|were|does|do|did|has|have)(?![\p{L}\p{N}])/u;
+/**
+ * A question word followed by what the asker should do asks for a method, not for a stored fact: «ماذا أفعل بعد اختراق حسابي؟»,
+ * «ما الخطوات بعد اختراق موقعنا؟», "what should I check before I tell my team the bug is fixed" (refused until 2026-11-22).
+ * «ماذا كتبت في تقرير فريقي؟», «وش آخر نسخة سويتها لملفاتي؟» and "what did my team ship?" still ask for a fact: no first-person
+ * verb or modal follows the question word.
+ */
+const ASKS = String.raw`(?:what|which)(?:\s+[\p{L}'’]+){0,2}\s+(?:should|shall|must)\s+(?:i|we)|what\s+(?:can|do)\s+(?:i|we)\s+do|what\s+do\s+(?:i|we)\s+need\s+to|what(?:'s|’s|\s+is)\s+the\s+best\s+way`
+  + String.raw`|(?:ماذا|ايش|وش|شو|شنو|ما\s+(?:الذي|اللي)|(?:ايش|وش|شو)\s+اللي)\s+(?:(?:افعل|نفعل|اسوي|نسوي|اعمل|نعمل|بعمل|اتصرف|نتصرف|اكتب|نكتب|بكتب|اقول|نقول)(?:ه|ها)?|لازم|يلزم|يجب|ينبغي|المفروض|علي|علينا)`
+  + String.raw`|(?:ما|ماهي|ما\s+هي|وش|ايش|شو)\s+(?:هي\s+)?(?:الخطوات|الخطوه|الطريقه|افضل\s+طريقه)|ما\s+(?:يجب|ينبغي)`;
+/** At the start, it lifts the stored-fact refusal; anywhere, it is a how-to cue like `ADVICE`. */
+const ADVICE_QUESTION = new RegExp(String.raw`^(?:${ASKS})(?![\p{L}\p{N}])`, 'u');
+const ASKS_HOW = new RegExp(String.raw`(?:^|[^\p{L}])(?:${ASKS})(?![\p{L}\p{N}])`, 'u');
 
 /** Whether a request in the given mode may be answered from a skill at all, before any skill is read. */
 export function skillReadable(request: string, mode: SkillReadMode): boolean {
   if (typeof request !== 'string') return false;
   const text = matchText(request).trim();
   if (!text || text.length > MAX_REQUEST_CHARS) return false;
-  if (LIVE.test(text)) return false;
+  const doing = DOING.test(text) || ASKS_HOW.test(text);
+  if (LIVE.test(text) || (LIVE_TIME.test(text) && (LIVE_VALUE.test(text) || !doing))) return false;
   if (mode === 'writing') return !REWORK.test(text);
-  if ((FACT_START.test(text) || WH_START.test(text)) && buildFrame(request).personal) return false;
-  if (mode === 'advice') return ADVICE.test(text) || !FACT_START.test(text);
-  if (mode === 'personal') return ADVICE.test(text) && !FACT_START.test(text) && !WH_START.test(text);
+  if ((FACT_START.test(text) || WH_START.test(text)) && !ADVICE_QUESTION.test(text) && buildFrame(request).personal) return false;
+  if (mode === 'advice') return ADVICE.test(text) || ASKS_HOW.test(text) || !FACT_START.test(text);
+  if (mode === 'personal') return (ADVICE.test(text) || doing) && (ADVICE_QUESTION.test(text) || (!FACT_START.test(text) && !WH_START.test(text)));
   return true;
 }
 

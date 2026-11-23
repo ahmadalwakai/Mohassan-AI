@@ -1,6 +1,6 @@
 ---
 name: تجهيز طلب مراجعة كود
-description: يوجّه تجهيز طلب مراجعة كود يسهل على المراجع: متى تطلب المراجعة، وحجم التغيير، والوصف، وأدلة الاختبار، وما تريد أن يركز عليه المراجع. كلمات: طلب مراجعة الكود تجهيز طلب الدمج وصف التغيير قبل الدمج مراجعة مبكرة request code review pull request description before merge reviewer focus
+description: يوجّه من يريد أن يطلب مراجعة لكوده من زميل: متى يطلبها، وحجم التغيير، وكتابة وصف طلب الدمج (PR)، وأدلة الاختبار، وما يركز عليه المراجع، حتى تكون المراجعة سهلة وسريعة. كلمات: أطلب مراجعة اطلب مراجعة الكود طلب مراجعة طلب الدمج وصف طلب الدمج وصف التغيير للمراجعة زميلي يراجع الكود المراجع قبل الدمج مراجعة مبكرة تسهل المراجعة request code review request a review ask for a review pull request description pr description merge request reviewer focus easy to review
 category: coding
 version: 1.0.0
 language: ar

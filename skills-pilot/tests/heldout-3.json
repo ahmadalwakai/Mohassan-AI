@@ -1,0 +1,46 @@
+{
+  "note": "Third held-out set, written 2026-11-22 after heldout-2 was run once and before any change to job-interview-prep, security-incident-response, verify-before-done or the reader for the third revision; frozen by the sha256 in FREEZE.md. Never used to edit a skill. neighbours: requests another skill owns (expect); no pilot skill outside expect may take them. storedFacts: questions about the owner's own stored facts; no skill may answer them.",
+  "positive": [
+    { "skill": "job-interview-prep", "request": "أول مرة أسوي مقابلة عمل وأنا متوتر، وش أسوي عشان أكون جاهز؟", "mustContain": ["STAR"] },
+    { "skill": "job-interview-prep", "request": "شو بحكي إذا سألوني بالمقابلة ليش بدي أترك شغلي الحالي؟", "mustContain": ["STAR"] },
+    { "skill": "job-interview-prep", "request": "عايز نصايح للمقابلة الشخصية بتاعة وظيفة خدمة العملاء", "mustContain": ["STAR"] },
+    { "skill": "job-interview-prep", "request": "كيف أجيب عن سؤال نقاط ضعفي في مقابلة التوظيف؟", "mustContain": ["STAR"] },
+    { "skill": "job-interview-prep", "request": "what questions should I ask the interviewer at the end of my job interview?", "mustContain": ["STAR"] },
+    { "skill": "security-incident-response", "request": "موظف عندنا ضغط على رابط مشبوه والحين الجهاز يتصرف بغرابة، وش نسوي بسرعة؟", "mustContain": ["احتوِ"] },
+    { "skill": "security-incident-response", "request": "اكتشفنا إنو في حدا دخل على السيرفر وسرق بيانات الزبائن، شو منعمل هلق؟", "mustContain": ["احفظ الأدلة"] },
+    { "skill": "security-incident-response", "request": "الموقع بتاعنا اتهكر وحطوا عليه صفحة غريبة، نعمل إيه؟", "mustContain": ["احتوِ"] },
+    { "skill": "security-incident-response", "request": "تعرّضت شبكة الشركة لهجوم برمجيات خبيثة، فما الإجراءات الواجب اتخاذها فورًا؟", "mustContain": ["احتوِ"] },
+    { "skill": "security-incident-response", "request": "our shop's customer database was leaked online. what are the first steps?", "mustContain": ["احفظ الأدلة"] },
+    { "skill": "verify-before-done", "request": "خلصت الميزة على جهازي، وش أتأكد منه قبل ما أقول للعميل إنها جاهزة؟", "mustContain": ["الدليل"] },
+    { "skill": "verify-before-done", "request": "بدي اعرف إذا الإصلاح فعلاً اشتغل قبل ما ادمجه، شو بفحص؟", "mustContain": ["الدليل"] },
+    { "skill": "verify-before-done", "request": "الزميل قال إن التست عدّى، إزاي أتأكد بنفسي قبل ما أوافق؟", "mustContain": ["رمز الخروج"] },
+    { "skill": "verify-before-done", "request": "كيف أتحقق من أن جميع الاختبارات ناجحة فعلًا قبل إعلان اكتمال المهمة؟", "mustContain": ["الدليل"] },
+    { "skill": "verify-before-done", "request": "لا أريد أن أقول إن المشكلة حُلّت ثم يتضح العكس، ما الذي أفعله قبل الإعلان؟", "mustContain": ["الدليل"] }
+  ],
+  "neighbours": [
+    { "request": "أنا مسؤول توظيف، كيف أقيّم إجابات المرشحين في المقابلة؟", "expect": ["hiring-interview", "hiring-hr"] },
+    { "request": "اكتب لي سيناريو مسرحية قصيرة عن مقابلة عمل", "expect": ["creative-writing-stories"] },
+    { "request": "كيف أحمي أجهزة المكتب من برامج الفدية قبل ما تصير مشكلة؟", "expect": ["data-backup-plan", "account-device-security", "web-app-security", "privacy-data-protection"] },
+    { "request": "كيف أكتب وصف منتج جذاب لمتجري الإلكتروني؟", "expect": ["product-description", "ecommerce-store", "copywriting"] },
+    { "request": "كيف أفتح متجر إلكتروني على سلة أو شوبيفاي؟", "expect": ["ecommerce-store"] },
+    { "request": "وش الفرق بين اختبار الوحدة واختبار التكامل؟", "expect": ["software-testing", "test-driven-development"] },
+    { "request": "كيف أكتب أسئلة توضيحية قبل ما أبدأ مشروع لعميل؟", "expect": ["clarifying-requests"] },
+    { "request": "كيف أغيّر كلمة المرور لكل حساباتي بطريقة آمنة؟", "expect": ["account-security", "account-device-security", "authentication-access"] },
+    { "request": "how do I protect my small business from phishing emails", "expect": ["scam-phishing-awareness", "account-device-security"] },
+    { "request": "قبل الدمج، كيف أكتب وصف طلب الدمج؟", "expect": ["request-code-review", "finish-development-branch"] }
+  ],
+  "storedFacts": [
+    "وش آخر شي كتبته في ملاحظاتي عن المقابلة؟",
+    "what did my interviewer say about my salary?",
+    "هل تم حل مشكلة موقعي؟",
+    "which tests did I run on my branch yesterday?"
+  ],
+  "unrelated": [
+    "من اخترع الإنترنت؟",
+    "كم عدد سكان الكويت؟",
+    "متى تبدأ إجازة نهاية السنة الدراسية؟",
+    "what is ransomware"
+  ],
+  "ambiguous": ["مقابلة", "فحص", "هجوم"],
+  "unavailableTool": []
+}

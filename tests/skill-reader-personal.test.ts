@@ -39,6 +39,20 @@ describe('the personal reading mode', () => {
     expect(skillReadable('عرض تقديمي عن مشروعي للمستثمرين', 'personal')).toBe(false);
     expect(skillReadable('كيف حال طقس مدينتي اليوم؟', 'personal')).toBe(false);
   });
+
+  it('reads a how-to that opens with a question word or names a day, and still refuses a stored fact or a live value', () => {
+    // A question word followed by what to do, and a time word inside a how-to, ask for a method (both refused until 2026-11-22).
+    for (const request of ['ماذا أفعل بعد اختراق حسابي؟', 'ما الخطوات بعد اختراق موقعنا؟', 'وش أسوي إذا انسرق جوالي؟', 'what should I check before I tell my team the bug is fixed',
+      'what do I do if my laptop gets ransomware', 'our website got hacked, what should we do now?', 'عندي مقابلة عمل بكره كيف أستعد؟', 'how do I install the latest version of node']) {
+      for (const mode of ['advice', 'personal'] as const) expect(skillReadable(request, mode), `${mode}: ${request}`).toBe(true);
+    }
+    // No first-person verb or modal after the question word: a stored fact. A value asked with a time word, or a time word without a how-to: live.
+    for (const request of ['وش كتبت في ملاحظاتي أمس؟', 'متى موعد اجتماع فريقي؟', 'ما هي خطة مشروعي؟', 'what did my manager say in the last email?', 'what time is my dentist appointment?',
+      'which pricing plan does my company use?', 'كيف أعرف سعر الدولار اليوم؟', 'لخّص لي أهم أخبار اليوم', 'ذكرني بموعد الطبيب بكرة', 'كيف الجو اليوم؟', 'كيف الطقس غدا في الرياض؟',
+      'what is the latest version of node', 'what is the weather tomorrow', 'وش نتيجة مباراة الاتحاد اليوم؟', 'how much is silver today']) {
+      for (const mode of ['advice', 'fallback', 'personal'] as const) expect(skillReadable(request, mode), `${mode}: ${request}`).toBe(false);
+    }
+  });
 });
 
 /** The shipped skills, served as if they were the owner's active, inspected skills. */
@@ -96,6 +110,17 @@ describe('a private how-to that memory and documents did not answer', () => {
     expect(knowledge).toHaveBeenCalled();
     expect(search).not.toHaveBeenCalled();
   });
+
+  // Refused by both reader gates until 2026-11-22: a question word before the how-to, or a day named inside it.
+  it.each(['ما الخطوات لعمل تحليل SWOT لمشروعي؟', 'what should I include in a SWOT analysis of my project?', 'كيف أجهز تحليل SWOT لمشروعي قبل اجتماع بكرة؟'])(
+    'answers the how-to «%s» from the matching skill through the private path', async goal => {
+      const result = await run(withSkills, goal);
+      expect(result.error).toBeNull();
+      expect(result.trail.find(entry => entry.action === 'skill_read')?.result).toMatch(/^swot-analysis \S+ \(personal\)/u);
+      expect(reads).toEqual(['id-swot-analysis']);
+      expect(knowledge).toHaveBeenCalled();
+      expect(search).not.toHaveBeenCalled();
+    });
 
   it.each(['ما خطة مشروعي؟', 'ما ميزانية حملتي؟', 'كم سعر منتجي؟', 'ما هو بريدي الإلكتروني؟'])('leaves the stored-fact question «%s» to the private sources', async goal => {
     const result = await run(withSkills, goal);

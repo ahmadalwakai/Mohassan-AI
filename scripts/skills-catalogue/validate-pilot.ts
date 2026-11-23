@@ -28,7 +28,13 @@ const PACKAGES = [
   { label: 'owner library', path: join(ROOT, 'skills-library'), skillsDir: 'skills' },
   { label: 'pilot', path: join(ROOT, 'skills-pilot'), skillsDir: 'skills' },
 ];
-interface Cases { positive: { skill: string; request: string; mustContain: string[] }[]; unrelated: string[]; ambiguous: string[]; unavailableTool: { request: string; allow: string[] }[] }
+interface Cases {
+  positive: { skill: string; request: string; mustContain: string[] }[]; unrelated: string[]; ambiguous: string[]; unavailableTool: { request: string; allow: string[] }[];
+  /** Requests another skill owns: no pilot skill outside `expect` may take them. */
+  neighbours?: { request: string; expect: string[] }[];
+  /** Questions about the owner's own stored facts: no skill at all may answer them. */
+  storedFacts?: string[];
+}
 
 async function folderFiles(root: string): Promise<{ path: string; content: string }[]> {
   const out: { path: string; content: string }[] = [];
@@ -47,10 +53,16 @@ async function main() {
   const out = at >= 0 ? process.argv[at + 1] : join('artifacts', 'skills-catalogue', 'pilot-validation.json');
   const casesText = await readFile(join(ROOT, 'skills-pilot', 'tests', 'cases.json'), 'utf8');
   const cases = JSON.parse(casesText) as Cases;
-  // Held-out cases: written after the first run, before any revision was measured; never used to edit a skill.
+  // heldout.json was frozen before the first revision was measured. Its seven failures guided the second revision, so it is now a
+  // revision set. heldout-2.json was frozen before the second revision (skills-pilot/tests/FREEZE.md) and is never used to edit a skill.
   const heldoutText = await readFile(join(ROOT, 'skills-pilot', 'tests', 'heldout.json'), 'utf8').catch(() => null);
   const heldout = heldoutText ? JSON.parse(heldoutText) as Cases : null;
-  const suiteHash = sha256(casesText + (heldoutText ?? ''));
+  // heldout-3.json was frozen after heldout-2 was run once, before the third revision of the three skills it still failed.
+  const heldout2Text = await readFile(join(ROOT, 'skills-pilot', 'tests', 'heldout-2.json'), 'utf8').catch(() => null);
+  const heldout2 = heldout2Text ? JSON.parse(heldout2Text) as Cases : null;
+  const heldout3Text = await readFile(join(ROOT, 'skills-pilot', 'tests', 'heldout-3.json'), 'utf8').catch(() => null);
+  const heldout3 = heldout3Text ? JSON.parse(heldout3Text) as Cases : null;
+  const suiteHash = sha256(casesText + (heldoutText ?? '') + (heldout2Text ?? '') + (heldout3Text ?? ''));
   const pilotSlugs = (await readdir(join(ROOT, 'skills-pilot', 'skills'))).sort();
   const pilot = new Set(pilotSlugs);
 
@@ -117,14 +129,18 @@ async function main() {
   };
   const positive = await runPositive(cases.positive);
   const heldoutPositive = heldout ? await runPositive(heldout.positive) : [];
-  const negatives = async (requests: string[], kind: string, allow: (request: string) => string[] = () => []) => {
+  const heldout2Positive = heldout2 ? await runPositive(heldout2.positive) : [];
+  const heldout3Positive = heldout3 ? await runPositive(heldout3.positive) : [];
+  // `noSkill`: any skill is wrong (stored facts). Otherwise only a pilot skill outside `allow` is wrong; `expected` says whether the owner of a neighbour request won.
+  const negatives = async (requests: string[], kind: string, allow: (request: string) => string[] = () => [], noSkill = false) => {
     const rows = [];
     for (const request of requests) {
       const answer = await reader(OWNER, request, { mode: 'advice' });
       const chose = answer?.skill.slug ?? null;
       const context = await skills.context(OWNER, request, { budgetChars: 4000 });
       const routedPilot = context.skills.map(skill => slugOfId.get(skill.id) ?? skill.slug).filter(slug => pilot.has(slug));
-      rows.push({ kind, request, readerChose: chose, ok: chose === null || !pilot.has(chose) || allow(request).includes(chose), routerPilotSkills: routedPilot });
+      rows.push({ kind, request, readerChose: chose, ok: noSkill ? chose === null : chose === null || !pilot.has(chose) || allow(request).includes(chose),
+        ...(kind === 'neighbour' ? { expected: chose !== null && allow(request).includes(chose) } : {}), routerPilotSkills: routedPilot });
     }
     return rows;
   };
@@ -135,16 +151,30 @@ async function main() {
   for (const item of heldout?.unavailableTool ?? []) allowOf.set(item.request, item.allow);
   const heldoutNegatives = heldout ? [...await negatives(heldout.unrelated, 'unrelated'), ...await negatives(heldout.ambiguous, 'ambiguous'),
     ...await negatives(heldout.unavailableTool.map(item => item.request), 'unavailable_tool', request => allowOf.get(request) ?? [])] : [];
+  const freshNegatives = async (set: Cases | null) => {
+    if (!set) return [];
+    for (const item of set.unavailableTool) allowOf.set(item.request, item.allow);
+    const expectOf = new Map((set.neighbours ?? []).map(item => [item.request, item.expect]));
+    return [...await negatives(set.unrelated, 'unrelated'), ...await negatives(set.ambiguous, 'ambiguous'),
+      ...await negatives(set.unavailableTool.map(item => item.request), 'unavailable_tool', request => allowOf.get(request) ?? []),
+      ...await negatives([...expectOf.keys()], 'neighbour', request => expectOf.get(request) ?? []),
+      ...await negatives(set.storedFacts ?? [], 'stored_fact', () => [], true)];
+  };
+  const heldout2Negatives = await freshNegatives(heldout2);
+  const heldout3Negatives = await freshNegatives(heldout3);
 
   // 4. Evidence bound to content, and the catalogue read back.
   const perSkill = new Map<string, { passed: number; total: number }>();
-  for (const row of [...positive, ...heldoutPositive]) { const entry = perSkill.get(row.skill) ?? { passed: 0, total: 0 }; entry.total++; if (row.outputOk) entry.passed++; perSkill.set(row.skill, entry); }
+  for (const row of [...positive, ...heldoutPositive, ...heldout2Positive, ...heldout3Positive]) { const entry = perSkill.get(row.skill) ?? { passed: 0, total: 0 }; entry.total++; if (row.outputOk) entry.passed++; perSkill.set(row.skill, entry); }
+  // A skill that takes a request it does not own fails too, whatever its own cases say.
+  const allNegatives = [...unrelated, ...ambiguous, ...unavailable, ...heldoutNegatives, ...heldout2Negatives, ...heldout3Negatives];
+  const stealing = new Set(allNegatives.filter(row => !row.ok && row.readerChose).map(row => row.readerChose as string));
   let evidence = 0;
   for (const [slug, result] of perSkill) {
     const id = versionOf.get(slug);
     if (!id) continue;
     const detail = await skills.detail(OWNER, id);
-    await skills.catalogue.recordEvidence(OWNER, { versionId: id, contentHash: detail.skill.contentHash, suite: heldout ? 'pilot-2026-11-v2' : 'pilot-2026-11-v1', suiteHash, passed: result.passed, total: result.total, detail: { cases: result.total } });
+    await skills.catalogue.recordEvidence(OWNER, { versionId: id, contentHash: detail.skill.contentHash, suite: heldout3 ? 'pilot-2026-11-v4' : heldout2 ? 'pilot-2026-11-v3' : heldout ? 'pilot-2026-11-v2' : 'pilot-2026-11-v1', suiteHash, passed: result.passed, total: result.total, detail: { cases: result.total } });
     evidence++;
   }
   const catalogue = await skills.catalogue.search(OWNER, { limit: 1 });
@@ -158,7 +188,15 @@ async function main() {
   await store.close();
 
   const sorted = [...latencies].sort((a, b) => a - b);
-  const accepted = pilotSlugs.filter(slug => (structural.find(row => row.slug === slug)?.ok ?? false) && (perSkill.get(slug)?.passed ?? 0) === (perSkill.get(slug)?.total ?? -1));
+  const accepted = pilotSlugs.filter(slug => (structural.find(row => row.slug === slug)?.ok ?? false) && (perSkill.get(slug)?.passed ?? 0) === (perSkill.get(slug)?.total ?? -1) && !stealing.has(slug));
+  const setSummary = (rows: Awaited<ReturnType<typeof runPositive>>, negativeRows: Awaited<ReturnType<typeof negatives>>) => ({
+    positive: { total: rows.length, readerCorrect: rows.filter(row => row.readerOk).length, outputCorrect: rows.filter(row => row.outputOk).length,
+      routerTop3: rows.filter(row => row.routerTop3).length, routerFirst: rows.filter(row => row.routerFirst === row.skill).length },
+    negatives: { total: negativeRows.length, ok: negativeRows.filter(row => row.ok).length },
+    byKind: Object.fromEntries([...new Set(negativeRows.map(row => row.kind))].map(kind => [kind, { total: negativeRows.filter(row => row.kind === kind).length, ok: negativeRows.filter(row => row.kind === kind && row.ok).length,
+      ...(kind === 'neighbour' ? { expected: negativeRows.filter(row => row.kind === kind && 'expected' in row && row.expected).length } : {}) }])),
+    failures: rows.filter(row => !row.outputOk), negativeFailures: negativeRows.filter(row => !row.ok), negativeRows,
+  });
   const report = {
     generatedAt: new Date().toISOString(), suiteHash,
     structural: { total: structural.length, ok: structural.filter(row => row.ok).length, rows: structural },
@@ -173,19 +211,17 @@ async function main() {
       failures: positive.filter(row => !row.outputOk), negativeFailures: [...unrelated, ...ambiguous, ...unavailable].filter(row => !row.ok),
       negatives: [...unrelated, ...ambiguous, ...unavailable],
     },
-    heldout: heldout ? {
-      positive: { total: heldoutPositive.length, readerCorrect: heldoutPositive.filter(row => row.readerOk).length, outputCorrect: heldoutPositive.filter(row => row.outputOk).length,
-        routerTop3: heldoutPositive.filter(row => row.routerTop3).length, routerFirst: heldoutPositive.filter(row => row.routerFirst === row.skill).length },
-      negatives: { total: heldoutNegatives.length, ok: heldoutNegatives.filter(row => row.ok).length },
-      failures: heldoutPositive.filter(row => !row.outputOk), negativeFailures: heldoutNegatives.filter(row => !row.ok), negativeRows: heldoutNegatives,
-    } : null,
+    heldout: heldout ? { role: heldout2 ? 'revision set (guided the second revision)' : 'held-out', ...setSummary(heldoutPositive, heldoutNegatives) } : null,
+    heldout2: heldout2 ? { role: heldout3 ? 'held-out for four skills; revision set for the three revised again' : 'held-out (frozen before the second revision)', ...setSummary(heldout2Positive, heldout2Negatives) } : null,
+    heldout3: heldout3 ? { role: 'held-out (frozen before the third revision)', ...setSummary(heldout3Positive, heldout3Negatives) } : null,
     evidenceRecorded: evidence,
-    pilot: { candidates: pilotSlugs.length, accepted: accepted.length, rejected: pilotSlugs.filter(slug => !accepted.includes(slug)) },
+    pilot: { candidates: pilotSlugs.length, accepted: accepted.length, rejected: pilotSlugs.filter(slug => !accepted.includes(slug)), stealing: [...stealing] },
     catalogue: { counts: catalogue.counts, pendingFacts: catalogue.pendingFacts, pilotBehaviourallyTested: pilotTested.total, searches },
   };
   await mkdir(dirname(out), { recursive: true });
   await writeFile(out, JSON.stringify(report, null, 1), 'utf8');
   const { failures, negatives: _all, ...summary } = report.behaviour;
-  console.log(JSON.stringify({ structural: { total: report.structural.total, ok: report.structural.ok }, imports, reimportPilot: report.reimportPilot, activated, activationErrors, behaviour: { ...summary, failures: failures.map(row => `${row.skill} <- ${row.request} => ${row.readerChose} missing ${row.missing.join('|')}`) }, heldout: report.heldout ? { positive: report.heldout.positive, negatives: report.heldout.negatives, failures: report.heldout.failures.map(row => `${row.skill} <- ${row.request} => ${row.readerChose} missing ${row.missing.join('|')}`), negativeFailures: report.heldout.negativeFailures } : null, evidenceRecorded: evidence, pilot: report.pilot, catalogue: report.catalogue }, null, 1));
+  console.log(JSON.stringify({ structural: { total: report.structural.total, ok: report.structural.ok }, imports, reimportPilot: report.reimportPilot, activated, activationErrors, behaviour: { ...summary, failures: failures.map(row => `${row.skill} <- ${row.request} => ${row.readerChose} missing ${row.missing.join('|')}`) }, ...Object.fromEntries((['heldout', 'heldout2', 'heldout3'] as const).map(key => { const set = report[key]; return [key, set ? { role: set.role, positive: set.positive, negatives: set.negatives, byKind: set.byKind,
+    failures: set.failures.map(row => `${row.skill} <- ${row.request} => ${row.readerChose} missing ${row.missing.join('|')}`), negativeFailures: set.negativeFailures } : null]; })), evidenceRecorded: evidence, pilot: report.pilot, catalogue: report.catalogue }, null, 1));
 }
 main().catch(error => { console.error(error); process.exit(1); });

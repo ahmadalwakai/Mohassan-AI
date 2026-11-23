@@ -151,7 +151,7 @@
   {
    "slug": "security-incident-response",
    "kind": "original",
-   "bodyChars": 860
+   "bodyChars": 919
   },
   {
    "slug": "shift-scheduling",
@@ -1491,5 +1491,55 @@
   "twilio-developer-kit": 55,
   "vercel": 54,
   "zotero": 1
+ },
+ "validation": {
+  "suite": "pilot-2026-11-v4",
+  "suiteHash": "a8fe93cfb7478ab3c39652a44233e51f75fc4b19b3c2be15bb933a719ad85ab0",
+  "report": "artifacts/skills-catalogue/pilot-validation.json",
+  "frozenSets": "skills-pilot/tests/FREEZE.md",
+  "rule": "A skill is accepted when it passes structural checks, every positive case in every set, and takes no request it does not own.",
+  "accepted": 32,
+  "candidates": 35,
+  "notAccepted": [
+   {
+    "slug": "job-interview-prep",
+    "heldout3": "2/5",
+    "reason": "New phrasings of interview preparation share no words with the description, or match hiring-interview, which also covers the candidate side."
+   },
+   {
+    "slug": "security-incident-response",
+    "heldout3": "0/5",
+    "reason": "Incidents are described in open wording (a clicked link, a strange page, a leaked database) that a word-matching reader cannot cover with keywords."
+   },
+   {
+    "slug": "verify-before-done",
+    "heldout3": "4/5",
+    "reason": "One new phrasing shares too few words with the description."
+   }
+  ],
+  "history": [
+   {
+    "run": "pilot-validation-run1.json",
+    "accepted": 31,
+    "note": "Development set only, before the first revision."
+   },
+   {
+    "run": "pilot-validation-run2.json",
+    "suite": "pilot-2026-11-v2",
+    "accepted": 28
+   },
+   {
+    "run": "pilot-validation-run3.json",
+    "suite": "pilot-2026-11-v3",
+    "accepted": 32,
+    "note": "Second revision of the seven: four accepted on heldout-2."
+   },
+   {
+    "run": "pilot-validation.json",
+    "suite": "pilot-2026-11-v4",
+    "accepted": 32,
+    "note": "Third revision of the remaining three: none accepted on heldout-3."
+   }
+  ]
  }
 }

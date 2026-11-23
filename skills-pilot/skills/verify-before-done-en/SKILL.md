@@ -1,6 +1,6 @@
 ---
 name: Verify before you say done
-description: Check real evidence before claiming work is complete, a bug is fixed or tests pass: name the command that proves the claim, run it in full, read the output, then report with evidence. Keywords: verify before done, verification before completion, evidence before claims, run tests before commit, is it really fixed
+description: Check real evidence before claiming work is complete, a bug is fixed or tests pass: name the command that proves the claim, run it in full, read the output, then report with evidence. Keywords: verify before done, verification before completion, evidence before claims, run tests before commit, is it really fixed, make sure it works, confirm the fix, before you tell the team, before handing over, tests pass, build passes
 category: coding
 version: 1.0.0
 language: en
