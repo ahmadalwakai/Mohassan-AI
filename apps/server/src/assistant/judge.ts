@@ -504,7 +504,12 @@ export function judge(input: JudgeInput): JudgeVerdict {
     // question, or neither stating the question's words in order nor answering in their pronoun form. A clean lead that states
     // the question («يبلغ عدد سكان اليابان 123 مليون نسمة») is never demoted, and the line promoted must pass the line checks.
     // The three promotions the owner judged correct on 2026-11-22 (rq010, rq016, rq028) all had a meta or cut lead.
-    const defectiveLead = first.relevance.fragment || first.relevance.meta || first.relevance.topicHits === 0 || !first.relevance.phrase && !first.relevance.answerForm;
+    // A lead that already states a count of people for a population question answers it however it is worded: «تُعدُّ ألمانيا
+    // أكثر دول الاتحاد الأوروبي سكانا بأزيد من 83 مليون نسمة» was demoted for «توجد في ألمانيا 82 مدينة يزيد عدد سكانها عن
+    // 100,000 نسمة», whose «سكانها» is the answer form, and the fix went out on the owner's account (live 2026-11-22 23:53,
+    // artifacts/agent-gaps-2026-11-22/audit-head-3959084/wiring-probe-after-1.json).
+    const countedLead = figureKind(asked) === 'people' && first.relevance.topicHits > 0 && hasFigureOf('people', first.text);
+    const defectiveLead = first.relevance.fragment || first.relevance.meta || first.relevance.topicHits === 0 || !first.relevance.phrase && !first.relevance.answerForm && !countedLead;
     if (defectiveLead && top.line !== first.line && top.relevance.score - first.relevance.score >= JUDGE_THRESHOLDS.leadNotBestMargin
       && checkAnswerLine(asked, top.text).ok) {
       dropOldLead = first.relevance.meta;

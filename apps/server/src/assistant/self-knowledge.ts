@@ -45,7 +45,7 @@ export interface SelfFacts {
 export type SelfTopic = 'creator' | 'model' | 'compare' | 'improve' | 'capabilities' | 'can_do';
 export type SelfAbility = 'image_generation' | 'media_generation' | 'free_writing' | 'translation' | 'website' | 'pdf' | 'image_reading' | 'web' | 'ads';
 /** `brief`: the answer was asked for in one or two sentences («اذكر في جملتين …», «tell me briefly …»). */
-export interface SelfQuestion { topic: SelfTopic; lang: 'ar' | 'en'; ability?: SelfAbility; asked?: 'ai' | 'human' | 'product'; brief?: 1 | 2 }
+export interface SelfQuestion { topic: SelfTopic; lang: 'ar' | 'en'; ability?: SelfAbility; asked?: 'ai' | 'human' | 'product' | 'which'; brief?: 1 | 2 }
 
 const MAX_REQUEST = 600;
 const MAX_WORDS = 40;
@@ -71,15 +71,22 @@ const COMPARE: RegExp[] = [
 ];
 
 const MODEL_WORDS_EN = '(?:ai|an ai|a ?i|artificial intelligence|(?:a )?bot|(?:a )?chat ?bot|(?:a )?robot|(?:a )?human|(?:a )?real person|(?:a )?person|(?:a )?(?:large )?language model|(?:an? )?llm|(?:an? )?(?:ai )?model)';
+// «نموذج», «النموذج اللغوي», «نموذج الذكاء الاصطناعي»: the noun with the qualifier people add to it. Without the qualifier
+// «على أي نموذج لغوي تعمل؟» was not recognised and an instruction skill about machine learning answered it (2026-11-22).
+const MODEL_NOUN_AR = '(?:ال)?(?:نموذج|موديل)(?: (?:ال)?لغوي(?: (?:ال)?كبير)?| (?:ال)?لغه| (?:ال)?ذكاء (?:ال)?(?:اصطناعي|صناعي))?';
+/** Which model the assistant runs on: answered directly, with no «نعم» or «لا» in front. */
+const MODEL_WHICH: RegExp[] = [
+  /\b(?:what|which) (?:ai|model|llm|language model|engine|brain|ai model)(?: are you| do you use| do you run on| are you using| are you based on| are you built on| powers you| runs you| is behind you)\b/u,
+  new RegExp(`${B}(?:اي|ايش|شو|ما|ما هو|ماهو|وش) ${MODEL_NOUN_AR}(?: الذي| اللي)? (?:تستخدمه|تستخدم|تعمل عليه|تعمل به|تشتغل عليه|تشتغل به|يشغلك|وراك|خلفك|انت)${E}`, 'u'),
+  new RegExp(`${B}(?:على|علي|ب) ?(?:اي|ايش|شو|وش) ${MODEL_NOUN_AR} (?:تعمل|تشتغل|مبني|انت)${E}`, 'u'),
+];
 const MODEL: RegExp[] = [
   new RegExp(`\\b(?:are|r) (?:you|u) (?:an? |the |actually |really )?(?:${PRODUCT}|${MODEL_WORDS_EN})\\b`, 'u'),
-  /\b(?:what|which) (?:ai|model|llm|language model|engine|brain|ai model)(?: are you| do you use| do you run on| are you using| are you based on| are you built on| powers you| runs you| is behind you)\b/u,
+  ...MODEL_WHICH,
   new RegExp(`\\bdo (?:you|u) (?:use|run on|work with) ${PRODUCT}\\b`, 'u'),
   new RegExp(`\\b(?:are|r) (?:you|u) (?:based|built|running|made|powered|trained) (?:on|by|with) ${PRODUCT}\\b`, 'u'),
   new RegExp(`\\bis this ${PRODUCT}\\b`, 'u'),
   new RegExp(`${B}(?:هل )?(?:انت|انتا|انتي) (?:${PRODUCT}|ذكاء (?:اصطناعي|صناعي)|بوت|روبوت|انسان|بشر|شخص حقيقي|نموذج لغوي|نموذج)${E}`, 'u'),
-  new RegExp(`${B}(?:اي|ايش|شو|ما|ما هو|ماهو|وش) (?:ال)?(?:نموذج|موديل)(?: الذي| اللي)? (?:تستخدمه|تستخدم|تعمل عليه|تشتغل عليه|يشغلك|وراك|خلفك|انت)${E}`, 'u'),
-  new RegExp(`${B}(?:على|علي|ب) ?(?:اي|ايش|شو|وش) (?:نموذج|موديل) (?:تعمل|تشتغل|مبني|انت)${E}`, 'u'),
   new RegExp(`${B}هل (?:تستخدم|تعمل (?:على|علي|ب)|مبني (?:على|علي)) ${PRODUCT}${E}`, 'u'),
 ];
 
@@ -239,7 +246,8 @@ export function recognizeSelfQuestion(request: string): SelfQuestion | null {
   if (CREATOR.some(pattern => pattern.test(text))) return question('creator');
   if (MODEL.some(pattern => pattern.test(text))) {
     const asked = new RegExp(PRODUCT, 'u').test(text) ? 'product'
-      : /\b(?:human|person)\b|(?:^| )(?:انسان|بشر|شخص حقيقي)(?= |$)/u.test(text) ? 'human' : 'ai';
+      : /\b(?:human|person)\b|(?:^| )(?:انسان|بشر|شخص حقيقي)(?= |$)/u.test(text) ? 'human'
+        : MODEL_WHICH.some(pattern => pattern.test(text)) ? 'which' : 'ai';
     return question('model', { asked });
   }
   if (IMPROVE.some(pattern => pattern.test(text))) return question('improve');
@@ -413,7 +421,9 @@ export function answerSelfQuestion(question: SelfQuestion, facts: SelfFacts): Lo
           ? ar ? 'نعم، أنا موحسن، مساعد برمجي يعمل بقواعد التطبيق وأدواته.' : 'Yes, I’m Mohassan, a software assistant that works with the application’s rules and tools.'
           : facts.chatModel
             ? ar ? 'أنا موحسن.' : 'I’m Mohassan.'
-            : ar ? 'لا. أنا موحسن، ولا أعمل على أي منصة ذكاء اصطناعي خارجية.' : 'No. I’m Mohassan, and I do not run on any external AI platform.';
+            : question.asked === 'which'
+              ? ar ? 'أنا موحسن، ولا أعمل على أي منصة ذكاء اصطناعي خارجية.' : 'I’m Mohassan, and I do not run on any external AI platform.'
+              : ar ? 'لا. أنا موحسن، ولا أعمل على أي منصة ذكاء اصطناعي خارجية.' : 'No. I’m Mohassan, and I do not run on any external AI platform.';
       return fixedReply(`${lead} ${model}\n\n${creatorLine(lang)}`);
     }
     case 'compare':

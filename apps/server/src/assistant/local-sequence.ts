@@ -65,6 +65,10 @@ function parts(request: string): string[] | null {
   const found = split(request, 0);
   return found && found.length >= 2 && found.length <= MAX_SEQUENCE_PARTS && found.every(part => part.trim()) ? found : null;
 }
+/** The same split for a planner whose parts are not all local (web-sequence.ts): two to four parts in order, or null. */
+export const sequenceParts = (request: string): string[] | null => typeof request === 'string' && request.trim() ? parts(request) : null;
+/** One part answered by the host itself (the calculator, then the questions about Mohassan), or null when it needs anything else. */
+export const answerLocalPart = (request: string, deps: LocalSequenceDeps): LocalSequencePart | null => answer(request, deps);
 
 function answer(request: string, deps: LocalSequenceDeps): LocalSequencePart | null {
   const computation = evaluateLocalComputation(request, deps.now);

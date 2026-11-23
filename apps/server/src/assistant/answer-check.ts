@@ -25,6 +25,9 @@ export function textLanguage(text: string): AnswerLanguage {
 const META_LINE = new RegExp([
   'قد يُ?قصد (?:من|ب)', 'يمكن أن يشير (?:إلى|الى)', 'قد يشير (?:إلى|الى)', 'هذه صفحة توضيح', 'توضيح\\)', 'هذه المقالة عن', 'لمقالة عن', 'للاستخدامات الأخرى',
   'من ويكيبيديا، الموسوعة الحرة', 'اذهب إلى التنقل', 'انتقل إلى',
+  // A hatnote that points to other articles: «المقالات الرئيسة: أسباب الحرب العالمية الثانية و…» led the answer to «ما أسباب
+  // الحرب العالمية الثانية؟» (live 2026-11-23).
+  '^(?:المقال(?:ة|ه|ات) الرئيسي?[ةه]|مقال(?:ة|ه|ات) مفصل[ةه]|طالع [أا]يض[اًا]+|انظر [أا]يض[اًا]+)\\s*:', '^(?:main articles?|further information|see also)\\s*:',
   '\\bmay refer to\\b', '\\bmay also refer to\\b', '\\bfor other uses\\b', '\\bthis article is about\\b', '\\bnot to be confused with\\b', '\\bsee also\\b.*\\(disambiguation\\)',
   '\\bfrom wikipedia, the free encyclopedia\\b', '\\bjump to (?:navigation|content|search)\\b',
   '^by [A-Z][\\w.-]+(?: [A-Z][\\w.-]+){0,3}\\b', '\\blast updated\\b', '\\bupdated (?:on )?\\d', '\\bpublished(?: on)?:? ', '\\bposted (?:on|by)\\b', '\\bmin(?:ute)?s? read\\b', 'آخر تحديث', 'تاريخ النشر', 'نُ?شر في \\d', 'بقلم ',
@@ -75,22 +78,59 @@ const FIGURE_UNITS: Record<Exclude<FigureKind, 'any'>, RegExp> = {
   // «123 مليون نسمة», «68,605,616 نسمة», «10,577 people».
   people: new RegExp(`${DIGIT}+(?:[.,،٬]${DIGIT}+)*\\s*(?:ألف|الف|آلاف|الاف|مليون|ملايين|مليار|thousand|million|billion)?\\s*(?:نسمة|نسمه|نسمات|شخص|أشخاص|اشخاص|مواطن|مواطنا|مواطنين|ساكن|people|persons|inhabitants|residents)(?![\\p{L}])`, 'iu'),
 };
-const PEOPLE_WORD = /سكان|population|inhabitants|residents/iu;
+const PEOPLE_WORD = /سكان|population|inhabitants|residents/giu;
 const NUMBER_TOKEN = /[\d٠-٩]+(?:[.,،٬][\d٠-٩]+)*/gu;
+/** A line that states a population, not only a number of some people: «10,033,480 نسمة يعملون» counts a workforce. */
+const POPULATION_STATEMENT = /سكان|تعداد|population|populous|populated|inhabitants|residents|\bliv(?:e|es|ed|ing)\b|يعيش|تعيش|يسكن|يقطن/iu;
+/** A density measures land, not people: «2.8 نسمة لكل كيلومتر مربع», "337 people per km²". */
+const PER_AREA = /^\s*(?:\/|لكل|في كل|للكيلومتر|في الكيلومتر|per\b)/iu;
+/** A magnitude or a unit of people right after a number. */
+const COUNT_WORD = /^\s*(?:ألف|الف|آلاف|الاف|مليون|ملايين|مليار|thousand|million|billion|نسمة|نسمه|نسمات|شخص|أشخاص|اشخاص|مواطن|مواطنا|مواطنين|ساكن|people|persons|inhabitants|residents)(?![\p{L}])/iu;
+/** Where a clause ends. A comma or a dot inside a number («68,605,616», «68.6») ends nothing. */
+const CLAUSE_END = /[،,؛;](?![\d٠-٩])|\.(?![\d٠-٩])/u;
 /**
- * A count beside the population word («عدد سكانها 125,416,877», "a population of 123 million"): a number that is not a share
- * («70%», «65 في المئة») and not a bare year («تعداد 1999»).
+ * A count in the population word's own clause, after the word («عدد سكانها 125,416,877», "a population of 123 million"): not a
+ * share («70%», «65 في المئة»), not a bare year («تعداد 1999»), not a density, and large or carrying its unit. Until
+ * 2026-11-22 any number anywhere in a line that held the word passed, so «عدد سكان أستراليا يبلغ 0.3% فقط من سكان العالم، …
+ * واحدة من أفضل 10 مساهمين» counted as a population through its «10» and led the answer to «كم عدد سكان أستراليا؟»
+ * (artifacts/agent-gaps-2026-11-22/audit-head-3959084/wiring-probe.json); «18 لغة لسكان أستراليا» and «في الساعة 00:00» passed too.
  */
 function countOfPeople(text: string): boolean {
-  if (!PEOPLE_WORD.test(text)) return false;
-  for (const found of text.matchAll(NUMBER_TOKEN)) {
-    const after = text.slice(found.index! + found[0].length);
-    if (/^\s*(?:%|٪|في\s*الم[ئا]ئ[ةه]|بالم[ئا]ئ[ةه]|percent)/iu.test(after)) continue;
-    const digits = found[0].replace(/[٠-٩]/gu, digit => String(digit.charCodeAt(0) - 0x0660));
-    if (/^\d{4}$/u.test(digits) && Number(digits) >= 1000 && Number(digits) <= 2099) continue;
-    return true;
+  for (const word of text.matchAll(PEOPLE_WORD)) {
+    const rest = text.slice(word.index! + word[0].length);
+    const end = rest.search(CLAUSE_END);
+    const clause = (end < 0 ? rest : rest.slice(0, end)).slice(0, 90);
+    for (const found of clause.matchAll(NUMBER_TOKEN)) {
+      const after = clause.slice(found.index! + found[0].length);
+      if (/^\s*(?:%|٪|في\s*الم[ئا]ئ[ةه]|بالم[ئا]ئ[ةه]|percent)/iu.test(after)) continue;
+      const digits = found[0].replace(/[٠-٩]/gu, digit => String(digit.charCodeAt(0) - 0x0660));
+      if (/^\d{4}$/u.test(digits) && Number(digits) >= 1000 && Number(digits) <= 2099) continue;
+      const unit = COUNT_WORD.exec(after);
+      if (unit && PER_AREA.test(after.slice(unit[0].length))) continue;
+      if (otherPeople(text, word.index! + word[0].length + found.index!)) continue;
+      if (unit || digits.replace(/[^\d]/gu, '').length >= 5) return true;
+    }
   }
   return false;
+}
+/** «82 مدينة يزيد عدد سكانها عن 100,000 نسمة»: the people are those of the counted towns, not of the page's subject. */
+const COUNTED_PLACES = /[\d٠-٩]+\s+(?:مدينة|مدينه|مدن|قرية|قريه|قرى|بلدة|بلده|ولاية|ولايه|ولايات|مقاطعة|مقاطعه|مقاطعات|محافظة|محافظه|محافظات|دولة|دوله|دول|بلد|بلدان|منطقة|منطقه|مناطق|جزيرة|جزيره|جزر|cities|towns|villages|states|provinces|countries|regions|municipalities|districts|islands)(?![\p{L}])/iu;
+/**
+ * A clause about a change: «ازداد تعداد سكان كندا بين 1990-2008 بنحو 5.6 مليون», «نما تعداد سكان العالم … بنسبة 27% أي 1,423
+ * مليون», "grew by 5.6 million". Its count is how much the population changed, unless the clause says what it reached:
+ * «ارتفع عدد السكان إلى 105 ملايين», "rose to 105 million".
+ */
+const CHANGE_VERB = /(?<![\p{L}])(?:ازداد|ازدادت|زاد|زادت|ارتفع|ارتفعت|انخفض|انخفضت|تراجع|تراجعت|نما|نمت|تزايد|تناقص|تضاعف|increased?|increases|grew|grown|rose|risen|declined?|decreased?|fell|fallen|dropped|doubled)(?![\p{L}])/iu;
+const REACHED = /\s(?:الى|إلى|ليصل الى|ليصل إلى|ليبلغ|عن|على|to|reaching|reach(?:ed|es)?)\s+(?:(?:نحو|حوالي|قرابة|اكثر من|أكثر من|about|around|nearly|almost|over|some|roughly|more than)\s+)?$/iu;
+/**
+ * True when the number at `index` counts someone else's people: those of a counted class of places, or the size of a
+ * change. Both passed as the population of the page's subject on 2026-11-22 (wiring-probe-after-1.json: Germany, Canada).
+ */
+function otherPeople(text: string, index: number): boolean {
+  const head = text.slice(0, index);
+  const cut = [...head.matchAll(new RegExp(CLAUSE_END.source, 'gu'))].at(-1);
+  const lead = cut ? head.slice(cut.index! + cut[0].length) : head;
+  return COUNTED_PLACES.test(lead) || CHANGE_VERB.test(lead) && !REACHED.test(lead);
 }
 /** True when a line carries the kind of figure the question wants; a question of kind «any» needs only a number. */
 export function hasFigureOf(kind: FigureKind, line: string): boolean {
@@ -99,7 +139,10 @@ export function hasFigureOf(kind: FigureKind, line: string): boolean {
   // Wikipedia leads carry vowel marks: «قُدِّر عدد سكانها بأكثرَ من 120 مليون نسَمة». Marks and tatweel only: the range
   // U+064B–U+0670 written as one span would also take the digits ٠–٩ and the percent sign ٪.
   const text = line.replace(/[ً-ٰٟـ]/gu, '');
-  return FIGURE_UNITS.people.test(text) || countOfPeople(text);
+  // «123 مليون نسمة» with its unit is a population only in a line that speaks of one, and never as a density.
+  const withUnit = POPULATION_STATEMENT.test(text) && [...text.matchAll(new RegExp(FIGURE_UNITS.people.source, 'giu'))]
+    .some(found => !PER_AREA.test(text.slice(found.index! + found[0].length)) && !otherPeople(text, found.index!));
+  return withUnit || countOfPeople(text);
 }
 
 /**
@@ -117,18 +160,35 @@ const ASPECT_ASKED: [AspectKind, RegExp][] = [
   ['types', /(?:^|\s)(?:أنواع|انواع)(?=\s|$)|\btypes of\b/iu],
   ['stages', /(?:^|\s)مراحل(?=\s|$)|\bstages of\b/iu],
 ];
+/**
+ * A question that asks for a reason: «لماذا تهاجر الطيور؟», «ليش…», «ما سبب زرقة السماء؟», "Why is the sky blue?". Its answer
+ * is a sentence that states a cause. Live on 2026-11-23 (artifacts/agent-gaps-2026-11-22/after-cycle-fixes/why-probe-after.json)
+ * such questions were answered by whatever sentence shared their words: the film «السماء الزرقاء» for «ليش السماء زرقاء؟»,
+ * «Color "Sky Blue" redirects here» for "Why is the sky blue?", «مقياس الزرقة» for «ما سبب زرقة السماء؟».
+ */
+const REASON_QUESTION = /^(?:و|ف)?(?:لماذا|ليش|ليه)\s+\S|^(?:ما|ماهو|ما هو|ما هي|وش|شو|ايش)\s+(?:ال)?(?:سبب|أسباب|اسباب)(?=\s|$)|^why\b|^what (?:is|are|was|were) the (?:reasons?|causes?)\b|^what cause[sd]?\b/iu;
+export const isReasonQuestion = (question: string): boolean => REASON_QUESTION.test(question.trim());
+/**
+ * How a sentence states a cause, beyond the word «سبب» itself: «لأنه», «لأن الضوء», «نتيجةً لـ», «يعود ذلك إلى», «نسبةً إلى»,
+ * "because". «لأن» before a verb is «to», not «because» («تميل البروق الموجبة لأن تتشكّل…», shown for a why-question on 2026-11-23).
+ */
+const REASON_LINE = /(?:^|[\s،(])(?:و|ف)?ل[أإا]ن(?:ه|ها|هم|هما|نا|ك)(?=[\s،.]|$)|(?:^|[\s،(])(?:و|ف)?ل[أإا]ن\s+ال|نتيج[ةه]ً?\s+(?:ل|عن)|كنتيج[ةه]|(?:يعود|تعود|يرجع|ترجع|يعزى|يُعزى|تعزى)\s+(?:(?:ذلك|هذا|السبب)\s+)?(?:[إا]لى|الي)|(?:^|\s)نسب[ةه]ً?\s+(?:[إا]لى|الي|ل)|\bbecause\b|\bcaused by\b|\bas a result of\b|\bresult(?:s|ing|ed)? from\b|\bowing to\b|\breasons?\b|\bis why\b/iu;
 const ASPECT_LINE: Record<AspectKind, RegExp> = {
   benefits: /فوائد|فائد|مفيد|يفيد|تفيد|منافع|benefit|beneficial/iu,
   symptoms: /أعراض|اعراض|عوارض|علامات|يعاني|يشعر|تشوش|ضبابي|symptom|signs?\b/iu,
-  causes: /أسباب|اسباب|سبب|يسبب|تسبب|ينتج عن|ناتج عن|يحدث نتيجة|cause|due to|results? from/iu,
+  causes: new RegExp(`أسباب|اسباب|سبب|يسبب|تسبب|ينتج عن|ناتج عن|يحدث نتيجة|cause|due to|results? from|${REASON_LINE.source}`, 'iu'),
   treatment: /علاج|يعالج|تعالج|معالجة|دواء|أدوية|ادوية|جراح|treat|therap|medication|surgery/iu,
   risks: /أضرار|اضرار|ضرر|مخاطر|خطر|أخطار|آثار جانبية|الآثار الجانبية|مضاعفات|risk|harm|side effect|danger/iu,
   types: /أنواع|انواع|نوع|أصناف|اصناف|ينقسم|تنقسم|types?\b|kinds?\b/iu,
   stages: /مراحل|مرحلة|stages?\b|phases?\b/iu,
 };
 export function aspectKind(question: string): AspectKind | null {
+  // A reason is asked whatever else the question names: «لماذا تظهر أعراض الحساسية في الربيع؟» wants a cause, not a list of symptoms.
+  if (isReasonQuestion(question)) return 'causes';
   return ASPECT_ASKED.find(([, pattern]) => pattern.test(question))?.[0] ?? null;
 }
+/** True when a sentence states a cause, by the same words the answer check of a reason question accepts. */
+export const statesReason = (line: string): boolean => ASPECT_LINE.causes.test(line);
 const NAME_QUESTION = /^(?:من هو|من هي|من الذي|من التي|من (?:اخترع|كتب|ألف|أسس|اكتشف|بنى|صمم|رسم|أنشأ)|who (?:is|was|were|wrote|invented|founded|discovered|built|designed|painted|created|directed|composed))\b/iu;
 const ENGLISH_NAME = /(?:^|[\s(,:;])[A-Z][a-z]+(?:[\s-][A-Z][a-z]+)+/u;
 

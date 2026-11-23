@@ -67,7 +67,12 @@ const LOCAL_ACT = /^(?:افتح|شغل|اغلق|كبر|صغر|اضغط|انقر|
 const REFERENCE = /(?:^|\s)(?:عنه|عنها|فيه|فيها|له|لها|(?:هذا|هذه|ذلك|تلك)(?!\s+(?:الاسبوع|الشهر|العام|الصباح|المساء|اليوم))|نفسه|نفسها|المقصود|اقصده|اقصدها|الذي اعنيه|التي اعنيها)(?=\s|[\p{P}]|$)|\b(?:it|its|(?:this|that)(?!\s+(?:week|month|year|morning|evening|afternoon|day))|them|there|the same|the (?:one|document|file|item) i mean)\b/iu;
 const FOLLOW = /^(?:(?:طيب|طب|تمام|حسنا)[،,\s]+|(?:what|how) about\b|and\s+|(?:اجعلها|اجعله|خليها|خليه|خلها|خله|بدلها|بدله)(?=\s|[\p{P}]|$))/iu;
 const CLITIC_REFERENCE = /^(?:افتح|اغلق|احذف|ارسل|احفظ|غير|بدل|كبر|صغر|اقرا|اعرض|انقل|اختصر|لخص|ترجم|صحح|اعد صياغت)(?:ه|ها|هم|هن)(?:لي|لنا)?(?=\s|[\p{P}]|$)/iu;
-const FACT_QUESTION = /^(?:ما|ماذا|كم|كيف|متي|اين|وين|من|مين|هل|اي|وش|شو|ايش)(?=\s|[\p{P}]|$)|^(?:what|who|when|where|why|how|which|is|are|does|do|can|will)\b/iu;
+// «لماذا» and its spoken forms open a question as "why" does. They were missing from the Arabic words, so «لماذا السماء
+// زرقاء؟» matched nothing, ended as `missing_target`, and the search guard refused it before any search, while "Why is the
+// sky blue?" and «ما سبب زرقة السماء؟» were searched (reproduced 2026-11-23). They count only with words after them: a
+// bare «لماذا؟» names nothing to look up and stays unresolved, as it was. «لمَ» is left out: folded it is «لم», the
+// particle of «لم أجد الملف».
+const FACT_QUESTION = /^(?:(?:ما|ماذا|كم|كيف|متي|اين|وين|من|مين|هل|اي|وش|شو|ايش)(?=\s|[\p{P}]|$)|(?:لماذا|ليش|ليه)(?=\s+[\p{L}\p{N}]))|^(?:what|who|when|where|why|how|which|is|are|does|do|can|will)\b/iu;
 const NEWS = /(?:^|\s)(?:اخبار|الاخبار|طقس|الطقس|سعر الصرف|صرف العملات)(?=\s|[\p{P}]|$)|\b(?:news|headlines|weather|exchange rate)\b/iu;
 const CONVERSE = /^(?:مرحبا|اهلا|هلا|شكرا|تسلم|السلام عليكم|hi|hello|hey|thanks|thank you|good morning|good evening)(?=\s|[\p{P}]|$)/iu;
 const SOCIAL_QUESTION = /^(?:كيف حالك|كيفك|كيف الحال|how are you|how do you do|how are you doing)[.!?؟]*$/iu;

@@ -21,7 +21,7 @@ import {
   SEARCH_REPEATED, SEARCH_UNUSABLE, asksToRemember, needsReview, noteAttempt, reviewRequest, searchKey, sensitiveAction, siteOf, situation, skillContextBudget, stepLabel, systemPrompt, type BrainState, type Decision, type ModelTier, type WorkTool,
 } from './assistant/brain.js';
 import { ADS_DRAFT_NOTE, ADS_SKILL_SLUG } from './assistant/ads-check.js';
-import { LIVE, isFollowUp, notWebReason, parseHands, plainTitle, refersBack, runHands, tidy, topicWords, webQuestion, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
+import { LIVE, PROVIDER_SPACING_MS, isFollowUp, notWebReason, parseHands, plainTitle, refersBack, runHands, tidy, topicWords, webQuestion, type HandsIO, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
 import { liveLabel } from './assistant/activity.js';
 import type { DesktopCommand, DesktopOutcome, ParsedDesktopCommand } from '@mohassan/desktop';
 import { searchRefusedReply, unsupportedReply, unsupportedRequest } from './assistant/unsupported-request.js';
@@ -29,6 +29,8 @@ import { decideBrowserVisibility, deriveBrowserVisibility } from './assistant/br
 import type { ShadowRouter } from './assistant/router.js';
 import type { ConversationShadow } from './assistant/conversation-state-shadow.js';
 import type { JudgeShadow } from './assistant/judge-shadow.js';
+import { judge as judgeAnswer } from './assistant/judge.js';
+import { continueWebSequence, joinSequence, planWebSequence, startWebSequence } from './assistant/web-sequence.js';
 import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
 import { composePlan, planningQuestion, planningTask } from './assistant/planner.js';
 import type { SkillReader, SkillReadMode } from './assistant/skill-reader.js';
@@ -38,6 +40,7 @@ import { PdfError, parsePageSelection } from '@mohassan/pdf';
 import type { DocumentControl, DocumentEdit, DocumentInput } from './documents.js';
 import { evaluateLocalComputation } from './assistant/local-computation.js';
 import { evaluateLocalRecall } from './assistant/local-recall.js';
+import { ownFactQuestion } from './assistant/own-fact-question.js';
 import { evaluateLocalConversation } from './assistant/local-conversation.js';
 import { evaluateCapabilityReply } from './assistant/capability-reply.js';
 import { answerRuntimeStatus } from './assistant/runtime-status.js';
@@ -242,6 +245,19 @@ const memoryVerificationRow = (row: { id: string; owner_id: string; conversation
 });
 function assertRequestCapability(request: string, capability: ForbiddenRequestCapability) {
   if (!requestCapabilityAllowed(parseUserRequestConstraints(request), capability)) throw new BrowserError('ASSISTANT_REQUEST_FORBIDS_TOOL', 'هذا الإجراء ممنوع في طلبك الحالي. لم أنفّذه.', 403);
+}
+/**
+ * The reply when the request's own words forbid the step its answer needs («لا تبحث في الويب. ما عاصمة فرنسا؟»). The gate
+ * held before this too, but the run ended as failed with no reply (measured 2026-11-22).
+ */
+function forbiddenByRequestReply(request: string, step: 'search' | 'other'): string {
+  const ar = /\p{Script=Arabic}/u.test(request);
+  if (step === 'search') return ar
+    ? 'لم أبحث في الويب لأن طلبك يمنع ذلك، ولا أجيب عن هذا السؤال دون بحث. أرسل السؤال من غير المنع فأبحث وأذكر المصدر.'
+    : 'I did not search the web because your request forbids it, and I cannot answer this question without searching. Send the question without that restriction and I will search and cite the source.';
+  return ar
+    ? 'لم أنفّذ هذه الخطوة لأن طلبك نفسه يمنعها. أعد كتابة الطلب وحدّد ما تسمح به.'
+    : 'I did not carry out this step because your own request forbids it. Rewrite the request and say what you allow.';
 }
 function assertComputerRequestScope(request: string, action: ComputerRequestAction) {
   if (!reviewComputerRequestScope(request, action).allowed) throw new BrowserError('COMPUTER_REQUEST_SCOPE', /\p{Script=Arabic}/u.test(request)
@@ -1095,32 +1111,51 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
    * `judgeWithholdForOwner` its `withhold` decision replaces the reply with a fixed sentence and the link to the page read.
    * Returns the text to send and whether it was withheld. Never a reason to fail a run.
    */
-  function judgeReply(id: string, runId: string, reply: string, status: string, allowChange = false): { text: string; withheld: boolean } {
+  /** What this run read: pages fetched over HTTP, and the browser page it ended on. Texts stay in memory; the log keeps only their count. */
+  function judgeEvidence(current: Execution) {
+    const seen = new Set<string>();
+    return [...(current.readPages ?? []), ...(current.page ? [current.page] : [])]
+      .filter(page => page.text?.trim() && !seen.has(page.url) && seen.add(page.url))
+      .map(page => ({ kind: 'page' as const, url: page.url, title: page.title, text: page.text.slice(0, 200_000) }));
+  }
+  /** `asked`: one part of a message of several questions is judged on its own question, with the part before it as the previous turn. */
+  function judgeReply(id: string, runId: string, reply: string, status: string, allowChange = false, asked?: { question: string; previous: string | null }): { text: string; withheld: boolean } {
     const unchanged = { text: reply, withheld: false };
     if (!config.judgeShadow) return unchanged;
     const current = execution.getStore();
     if (!current?.request) return unchanged;
     try {
-      // What this run read: pages fetched over HTTP, and the browser page it ended on. Texts stay in memory; the log keeps only their count.
-      const seen = new Set<string>();
-      const evidence = [...(current.readPages ?? []), ...(current.page ? [current.page] : [])]
-        .filter(page => page.text?.trim() && !seen.has(page.url) && seen.add(page.url))
-        .map(page => ({ kind: 'page' as const, url: page.url, title: page.title, text: page.text.slice(0, 200_000) }));
+      const evidence = judgeEvidence(current);
       const applyFix = Boolean(allowChange && config.judgeFixForOwner && current.full);
       const applyWithhold = Boolean(allowChange && config.judgeWithholdForOwner && current.full);
-      const verdict = config.judgeShadow.observe({ conversationId: id, runId, question: current.request, previous: current.previousRequest ?? null, reply, status,
+      const verdict = config.judgeShadow.observe({ conversationId: id, runId, question: asked?.question ?? current.request, previous: asked ? asked.previous : current.previousRequest ?? null, reply, status,
         applyFix, applyWithhold, keepText: config.judgeLogText !== 'owner' || Boolean(current.full), ...(evidence.length ? { evidence } : {}) });
       if (applyWithhold && verdict?.decision === 'withhold' && verdict.withholdText?.trim()) return { text: verdict.withholdText, withheld: true };
       if (applyFix && verdict?.decision === 'fix' && verdict.fixedReply?.trim()) return { text: verdict.fixedReply, withheld: false };
     } catch { /* The judge never stops a run. */ }
     return unchanged;
   }
+  /**
+   * Whether the judge would withhold this answer when it is sent, asked before sending and without a log line: the
+   * correction step of the task cycle reads another page instead of sending a refusal. Only where a withhold would be
+   * applied (the owner's own account, by the owner's word of 2026-11-22); elsewhere the judge only observes, so nothing is corrected.
+   */
+  function judgeWouldWithhold(reply: string, status: string, asked?: { question: string; previous: string | null }): string[] | null {
+    const current = execution.getStore();
+    if (!config.judgeShadow || !config.judgeWithholdForOwner || !current?.request || !current.full) return null;
+    try {
+      const evidence = judgeEvidence(current);
+      const verdict = judgeAnswer({ question: asked?.question ?? current.request, previous: asked ? asked.previous : current.previousRequest ?? null, reply, status, ...(evidence.length ? { evidence } : {}) });
+      return verdict.decision === 'withhold' ? verdict.codes : null;
+    } catch { return null; }
+  }
 
+  /** `prejudged`: the text is a message of several answers, each already judged on its own question (web-sequence.ts). */
   async function finish(id: string, runId: string, state: BrainState, text: string, status: 'completed' | 'partial' | 'blocked',
-      proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall') {
+      proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall', prejudged = false) {
     // The judge sees the reply first: logged in shadow for everyone; for the owner's account its fix, or its fixed withhold
     // sentence, is what goes on. Memory publications keep their own stricter checks and are never changed here.
-    const judged = judgeReply(id, runId, text, status, !memoryPublication);
+    const judged = prejudged ? { text, withheld: false } : judgeReply(id, runId, text, status, !memoryPublication);
     text = judged.text;
     // A withheld answer is not a completed task.
     if (judged.withheld && status === 'completed') status = 'partial';
@@ -2174,6 +2209,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // اذكر ما الأدوات التي تستطيع استخدامها» once ended in «لم أنفّذ هذا الطلب» (rq039). Null unless every part is a local answer.
       const intrinsicSequence = intrinsicAllowed && !intrinsicRuntime && !intrinsicConversation && !intrinsicComputation
         ? evaluateLocalSequence(actionRequest, { now: new Date(effectiveSource.evaluatedAt), self: selfFacts }) : null;
+      // A question about a fact of the owner's own («ما هي لغتي المفضلة؟», «ما هو رقم جوالي؟») is read from memory and never
+      // becomes a public web query, whichever nouns the two closed lists know (assistant/own-fact-question.ts).
+      const ownFact = freshRequest ? ownFactQuestion(actionRequest) : null;
       const mindReady = Boolean(config.mind && config.mindDeps && fullReach());
       // Without a chat model the owner's active instruction skills answer directly (assistant/skill-reader.ts): only a
       // skill that clearly fits, only after the specialised paths had their turn, and the skill is named as the source.
@@ -2367,7 +2405,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         if (localReadAllowed && tools?.memory && (noChatModel || nativeUnformattedPreference) && requestCapabilityAllowed(constraints, 'memory_read')) {
           const resolution = state.requestResolution;
           const recallContext = resolution?.scope === 'private' && resolution.intent === 'memory' && resolution.topic
-            ? { intent: 'memory' as const, topic: resolution.topic } : undefined;
+            ? { intent: 'memory' as const, topic: resolution.topic }
+            : ownFact ? { intent: 'memory' as const, topic: ownFact.topic } : undefined;
           let memoryReadStartedAt = 0, memoryReadFinishedAt = 0;
           const remembered = await evaluateLocalRecall(actionRequest, {
             async memory(query) {
@@ -2395,13 +2434,15 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // A PDF request (create, merge, pages, watermark…) is code work: it never becomes a browser search.
       const documentWork = config.documents ? (state.document ?? (freshRequest
         ? documentTask(request, { hasDocuments: history.some(entry => entry.role === 'assistant' && entry.text.includes('/api/documents/')) }) : null)) : null;
+      // A message of several questions waiting behind the Ads model or the mind: its first search sits in state.webFallback.
+      let pendingSequence: HandsPlan | null = null;
       if (!handsPlan && freshRequest && !hasChatModel() && !documentWork) {
         const desktopRequest = state.routing?.route === 'pc' || state.requestResolution?.sourceAssessment?.source === 'local_state';
         let steps = desktopRequest ? null : parseHands(actionRequest);
         // A question that needs the web goes to the browser without the owner naming it, unless memory or the project list answers it.
         const earlierAsks = history.filter(entry => entry.role === 'user').map(entry => entry.text).slice(-4);
         const understanding = state.requestResolution;
-        const privateRequest = understanding?.scope === 'private';
+        const privateRequest = understanding?.scope === 'private' || Boolean(ownFact);
         if (privateRequest && steps?.length === 1 && steps[0].kind === 'search' && !steps[0].site && !page) steps = null;
         // An honest limit comes before any search: drawing, playing media, booking, buying, calling or sending is
         // not a web question, and the router's «unsupported» verdict used to be ignored here («ارسم لي صورة قطة»
@@ -2435,10 +2476,24 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const resolved = asked?.[0]?.kind === 'search' ? asked[0].query : null;
         if (resolved && isFollowUp(tidy(request))) state.resolvedRequest = resolved;
         const lookup = steps?.length === 1 && steps[0].kind === 'search' && !steps[0].site && !page ? steps : asked;
+        // The request itself forbids the web search and nothing local answered it: say so, instead of starting a search the
+        // gate then stops as a failed run with no reply.
+        if (lookup && !requestCapabilityAllowed(constraints, 'public_search')) {
+          await addStep(id, runId, /[؀-ۿ]/u.test(request) ? 'لم يُجرَ بحث: الطلب يمنعه' : 'No search: the request forbids it');
+          await finish(id, runId, state, forbiddenByRequestReply(request, 'search'), 'blocked');
+          return;
+        }
+        // Several questions in one message («ما عاصمة فرنسا؟ ثم كم عدد سكانها؟») are asked one after another, each with its own
+        // search and its own verdict, instead of one search for the whole sentence (assistant/web-sequence.ts).
+        const sequence = asked && !steps && !entityAsk && !contextualQuery
+          ? planWebSequence(actionRequest, { now: new Date(effectiveSource.evaluatedAt), self: selfFacts }) : null;
+        const sequencePlan = sequence ? startWebSequence(sequence, /\p{Script=Arabic}/u.test(request) ? 'ar' : 'en') : null;
         // The mind answers first from what it knows and its own sources; the visible browser is the fallback.
         // Search by default is the last resort: the Ads model and the mind see the request first.
         const adsFirst = Boolean(config.adsModel && fullReach());
-        if (lookup && (mindReady || (adsFirst && !steps))) state.webFallback = lookup;
+        if (sequencePlan && (mindReady || adsFirst)) { state.webFallback = sequencePlan.steps; pendingSequence = sequencePlan; }
+        else if (sequencePlan) handsPlan = sequencePlan;
+        else if (lookup && (mindReady || (adsFirst && !steps))) state.webFallback = lookup;
         else if (steps ?? asked) handsPlan = { steps: (steps ?? asked)!, next: 0, lang: /\p{Script=Arabic}/u.test(request) ? 'ar' : 'en' };
       }
       if (handsPlan) {
@@ -2476,9 +2531,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           currentExecution.readPages = [...(currentExecution.readPages ?? []).filter(item => item.url !== readPageObject.url).slice(-4), readPageObject];
           return { kind: 'page', page: readPageObject };
         } : undefined;
-        let outcome: HandsOutcome;
-        try {
-          outcome = await runHands(plan, {
+        const io: HandsIO = {
           ...(read ? { read } : {}),
           page: async () => {
             assertBrowserRequestScope(request, 'browser_action', state);
@@ -2506,7 +2559,33 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           progress: async label => { await active(); await setProgress(id, `${label}…`); },
           approve: async (action, permit, label) => { await pauseBrowserAction(id, runId, state, { action, permit, label }); },
           hold: async (held, label) => { await pauseHeld(id, runId, state, held, label); },
-          });
+        };
+        // One part of a message of several questions is judged on its own question (web-sequence.ts).
+        const judgedAs = plan.sequel ? { question: plan.sequel.asked, previous: plan.sequel.previous } : undefined;
+        let outcome: HandsOutcome;
+        try {
+          outcome = await runHands(plan, io);
+          // Correction, the return arrow of the task cycle («تصحيح أو خطوة تالية»): when the pre-send judge would refuse this
+          // answer, the page it was read from is set aside and the same question is searched and read once more, before
+          // anything is sent. One retry only; when the second reading is not accepted either, the first stands and the
+          // judge withholds it with its reason, as before.
+          const asking = plan.steps.at(-1);
+          const refusal = outcome.kind === 'done' && asking?.kind === 'search' && asking.ask && plan.found?.url && !plan.found.official && !plan.rejected?.length
+            ? judgeWouldWithhold(vault.scrub(id, outcome.text), outcome.status, judgedAs) : null;
+          if (refusal && plan.found) {
+            const firstFound = plan.found, firstResults = plan.results;
+            plan.rejected = [firstFound.url];
+            plan.next = plan.steps.length - 1;
+            await addStep(id, runId, plan.lang === 'en' ? 'Correction: the first source does not answer; reading another' : 'تصحيح: المصدر الأول لا يجيب عن السؤال؛ قراءة مصدر آخر');
+            state.trail.push({ step: ++state.steps, action: 'correction', result: clean(`judge refused ${firstFound.url}: ${refusal.join(', ')}`).slice(0, 400), changed: false });
+            // The search engine answers a second call to one provider within a second with no hits (hands.ts, PROVIDER_SPACING_MS).
+            await new Promise(resolve => setTimeout(resolve, PROVIDER_SPACING_MS));
+            await active();
+            const again = await runHands(plan, io);
+            if (again.kind === 'paused') return;
+            if (again.status === 'completed' && plan.found && !judgeWouldWithhold(vault.scrub(id, again.text), again.status, judgedAs)) outcome = again;
+            else { plan.found = firstFound; plan.results = firstResults; }
+          }
         } catch (error) {
           // The source guard refused to turn the request into a public search: an honest reply, not a failed run.
           // Eight of 107 real requests ended as «تعذّر» with no reply this way on 2026-11-22 (0-baseline §8.2).
@@ -2517,12 +2596,38 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             await finish(id, runId, state, vault.scrub(id, searchRefusedReply(request, query, error.code, error.message)), 'blocked');
             return;
           }
+          // The request's own prohibition stopped a step of the plan: an honest reply, not a failed run.
+          if (error instanceof BrowserError && error.code === 'ASSISTANT_REQUEST_FORBIDS_TOOL') {
+            state.hands = null;
+            await addStep(id, runId, /[؀-ۿ]/u.test(request) ? 'لم تُنفَّذ الخطوة: الطلب يمنعها' : 'Step not carried out: the request forbids it');
+            await finish(id, runId, state, forbiddenByRequestReply(request, plan.steps.every(step => step.kind === 'search') ? 'search' : 'other'), 'blocked');
+            return;
+          }
           throw error;
         }
         // Every pause path saves the run state, plan included, before it stops.
         if (outcome.kind === 'paused') return;
         state.handsResults = plan.results;
         state.handsFound = plan.found;
+        if (plan.sequel) {
+          // This answer is one part of several: judged on its own question, then the next part is asked about the page it
+          // was read from, and the reply goes out once with every part in the order asked.
+          const lang = plan.lang ?? (/\p{Script=Arabic}/u.test(request) ? 'ar' : 'en');
+          const judged = judgeReply(id, runId, vault.scrub(id, outcome.text), outcome.status, true, judgedAs);
+          const next = continueWebSequence(plan.sequel, { request: plan.sequel.asked, text: judged.text, status: judged.withheld && outcome.status === 'completed' ? 'partial' : outcome.status },
+            plan.found?.title ? plainTitle(plan.found.title) : '', lang);
+          if ('plan' in next) {
+            // The next part is a new search: wait out the engine's one second between two calls to a provider.
+            await new Promise(resolve => setTimeout(resolve, PROVIDER_SPACING_MS));
+            await active();
+            await runHandsPlan(next.plan);
+            return;
+          }
+          state.hands = null;
+          const joined = joinSequence(next.answers);
+          await finish(id, runId, state, joined.text, joined.status, undefined, undefined, true);
+          return;
+        }
         state.hands = null;
         await finish(id, runId, state, vault.scrub(id, outcome.text), outcome.status);
       }
@@ -2875,7 +2980,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           const steps = state.webFallback;
           state.webFallback = null;
           state.trail.push({ step: ++state.steps, action: 'mind', result: `no proven answer (${reply.status}); browser search next`, changed: false });
-          await runHandsPlan({ steps, next: 0, lang: /\p{Script=Arabic}/u.test(request) ? 'ar' : 'en' });
+          await runHandsPlan(pendingSequence ?? { steps, next: 0, lang: /\p{Script=Arabic}/u.test(request) ? 'ar' : 'en' });
         } else {
           delete mindState.mindFrame;
           state.webFallback = null;
@@ -2887,12 +2992,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         // Nothing before this claimed the request (not Ads, no mind): search the web instead of stopping.
         const steps = state.webFallback;
         state.webFallback = null;
-        await runHandsPlan({ steps, next: 0, lang: /\p{Script=Arabic}/u.test(request) ? 'ar' : 'en' });
+        await runHandsPlan(pendingSequence ?? { steps, next: 0, lang: /\p{Script=Arabic}/u.test(request) ? 'ar' : 'en' });
         return;
       }
       if (!hasChatModel()) {
         // Every other path passed on this request: a skill that clearly fits is better than «not completed».
-        if (await trySkill('fallback')) return;
+        // A fact of the owner's own that memory could not be asked for is not a how-to: no skill stands in for it.
+        if (!ownFact && await trySkill('fallback')) return;
         const unavailable = evaluateCapabilityReply(actionRequest, state.routing, {
           handlersExhausted: true, purpose: 'capability_question',
           execution: !state.steps && !state.trail.length ? 'not_started' : 'unconfirmed',
