@@ -1,0 +1,103 @@
+import Fastify from 'fastify';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { AgentBrowser } from '@mohassan/browser';
+import { createDatabase, migrate } from '@mohassan/database';
+import { createCommandChatControl, registerCommandChatRoutes } from '../apps/server/src/command-chat.js';
+
+/**
+ * An optional Idempotency-Key on the chat's changing routes (2026-11-23), so a phone can resend after a lost reply without
+ * the server running the request twice. The controller is the real one on an embedded database with no model; arithmetic
+ * is answered locally.
+ */
+describe('chat requests with an Idempotency-Key', () => {
+  const OWNER = 'isolated-chat-idempotency-owner';
+  let database: Awaited<ReturnType<typeof createDatabase>>;
+  let control: Awaited<ReturnType<typeof createCommandChatControl>>;
+  let app: ReturnType<typeof Fastify>;
+
+  beforeAll(async () => {
+    database = await createDatabase();
+    await migrate(database.db);
+    const browser = { setCheckpointStore() {}, async bindAccount() {}, async hasPage() { return false; }, async close() {} } as unknown as AgentBrowser;
+    control = await createCommandChatControl(database.db, { browser, models: { fast: [], deep: [], vision: '' }, recordExperiences: false });
+    app = Fastify();
+    await registerCommandChatRoutes(app, { control, owner: async () => ({ id: OWNER }) });
+  });
+  afterAll(async () => { await app?.close(); await control?.shutdown(); await database?.close(); });
+
+  const post = (url: string, payload: unknown, key?: string) =>
+    app.inject({ method: 'POST', url, payload: payload as object, headers: key ? { 'idempotency-key': key } : {} });
+  const conversations = async () => (await control.list(OWNER)).conversations.length;
+  const userMessages = async (id: string) => (await control.detail(OWNER, id)).messages.filter(message => message.role === 'user').length;
+
+  it('creates one conversation for two calls with the same key and returns the same answer', async () => {
+    const before = await conversations();
+    const first = await post('/api/chat/conversations', { goal: 'احسب 2 + 3' }, 'phone-create-0001');
+    const second = await post('/api/chat/conversations', { goal: 'احسب 2 + 3' }, 'phone-create-0001');
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(200);
+    expect(second.json()).toEqual(first.json());
+    expect(await conversations()).toBe(before + 1);
+    await control.settled(first.json().id);
+  });
+
+  it('adds one message for two sends with the same key', async () => {
+    const { id } = (await post('/api/chat/conversations', { goal: 'احسب 4 + 4' })).json();
+    await control.settled(id);
+    const before = await userMessages(id);
+    const first = await post(`/api/chat/conversations/${id}/messages`, { text: 'احسب 6 + 7' }, 'phone-send-00001');
+    await control.settled(id);
+    const second = await post(`/api/chat/conversations/${id}/messages`, { text: 'احسب 6 + 7' }, 'phone-send-00001');
+    await control.settled(id);
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(200);
+    expect(await userMessages(id)).toBe(before + 1);
+  });
+
+  it('refuses the same key for a different body', async () => {
+    await post('/api/chat/conversations', { goal: 'احسب 1 + 1' }, 'phone-create-0002');
+    const reused = await post('/api/chat/conversations', { goal: 'احسب 9 + 9' }, 'phone-create-0002');
+    expect(reused.statusCode).toBe(409);
+    expect(reused.json().code).toBe('CHAT_REQUEST_KEY_REUSED');
+  });
+
+  it('tells a repeat to wait while the first call still runs', async () => {
+    await database.db.insertInto('chat_request_keys').values({ owner_id: OWNER, request_key: 'phone-running-001', scope: 'create',
+      body_hash: 'x'.repeat(64), status: 'running' }).execute();
+    const waiting = await post('/api/chat/conversations', { goal: 'احسب 3 + 3' }, 'phone-running-001');
+    expect(waiting.statusCode).toBe(409);
+    expect(['CHAT_REQUEST_IN_PROGRESS', 'CHAT_REQUEST_KEY_REUSED']).toContain(waiting.json().code);
+  });
+
+  it('frees the key of a call that failed, so the corrected call runs', async () => {
+    const { id } = (await post('/api/chat/conversations', { goal: 'احسب 5 + 5' })).json();
+    await control.settled(id);
+    const invalid = await post(`/api/chat/conversations/${id}/messages`, { text: 'x', unexpected: true }, 'phone-send-00002');
+    expect(invalid.statusCode).toBeGreaterThanOrEqual(400);
+    const keyRows = await database.db.selectFrom('chat_request_keys').select('request_key').where('request_key', '=', 'phone-send-00002').execute();
+    expect(keyRows).toHaveLength(0);
+  });
+
+  it('keeps calls without a key exactly as before', async () => {
+    const before = await conversations();
+    const first = await post('/api/chat/conversations', { goal: 'احسب 8 + 1' });
+    const second = await post('/api/chat/conversations', { goal: 'احسب 8 + 1' });
+    expect(first.json().id).not.toBe(second.json().id);
+    expect(await conversations()).toBe(before + 2);
+    await control.settled(first.json().id);
+    await control.settled(second.json().id);
+  });
+
+  it('refuses a malformed key before running anything', async () => {
+    const before = await conversations();
+    const bad = await post('/api/chat/conversations', { goal: 'احسب 2 + 2' }, 'bad key!');
+    expect(bad.statusCode).toBeGreaterThanOrEqual(400);
+    expect(await conversations()).toBe(before);
+  });
+
+  it('tells clients in the list that keyed resends are honoured', async () => {
+    const list = await app.inject({ method: 'GET', url: '/api/chat/conversations' });
+    expect(list.statusCode).toBe(200);
+    expect(list.json().requestKeys).toBe(true);
+  });
+});

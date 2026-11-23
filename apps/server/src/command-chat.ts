@@ -405,6 +405,12 @@ export async function commandChatMigration(db: Kysely<any>) {
       await sql`ALTER TABLE chat_messages ADD COLUMN images jsonb`.execute(tx);
       await tx.insertInto('schema_migrations').values({version:'029_chat_images'}).execute();
     }
+    // One answer per (account, Idempotency-Key) on the chat's changing routes, so a client may resend safely (2026-11-23).
+    if (!await tx.selectFrom('schema_migrations').select('version').where('version','=','033_chat_request_keys').executeTakeFirst()) {
+      await sql`CREATE TABLE chat_request_keys(owner_id text NOT NULL,request_key text NOT NULL,scope text NOT NULL,body_hash text NOT NULL,status text NOT NULL CHECK(status IN ('running','done')),response jsonb,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(owner_id,request_key))`.execute(tx);
+      await sql`CREATE INDEX chat_request_keys_created_idx ON chat_request_keys(created_at)`.execute(tx);
+      await tx.insertInto('schema_migrations').values({version:'033_chat_request_keys'}).execute();
+    }
     await campaignEventsMigration(tx);
   });
 }
@@ -1068,7 +1074,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   async function list(ownerId: string) {
     await recoverExpired();
     const rows = await db.selectFrom('chat_conversations').select(['id', 'title', 'status', 'updated_at','browser_account']).where('owner_id', '=', ownerId).orderBy('updated_at', 'desc').limit(60).execute();
-    return { configured: hasChatModel(), capabilities: await capabilitiesFor(ownerId),
+    // `requestKeys` tells a client that the changing routes honour an Idempotency-Key, so a resend after a lost reply runs once.
+    return { configured: hasChatModel(), capabilities: await capabilitiesFor(ownerId), requestKeys: true as const,
       conversations: rows.map((row) => ({ id: row.id, title: row.title, status: row.status, browserAccount:row.browser_account??null, updatedAt: iso(row.updated_at) })) };
   }
 
@@ -4342,8 +4349,39 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     await browser.close();
   }
 
+  /**
+   * One change per (account, Idempotency-Key). A repeat with the same route and body returns the first answer instead of
+   * running again; the same key on another route or body is refused; a repeat while the first still runs is told to wait.
+   * A failed first call frees its key. Keys live 24 hours. Callers without a key run as before.
+   */
+  async function once<T>(ownerId: string, scope: string, key: string, body: unknown, run: () => Promise<T>): Promise<T> {
+    const bodyHash = createHash('sha256').update(`${scope}\n${JSON.stringify(body ?? null)}`).digest('hex');
+    await db.deleteFrom('chat_request_keys').where('created_at', '<', new Date(Date.now() - 24 * 3_600_000)).execute();
+    const claimed = await db.insertInto('chat_request_keys')
+      .values({ owner_id: ownerId, request_key: key, scope, body_hash: bodyHash, status: 'running' })
+      .onConflict(conflict => conflict.columns(['owner_id', 'request_key']).doNothing())
+      .returning('request_key').executeTakeFirst();
+    if (!claimed) {
+      const row = await db.selectFrom('chat_request_keys').select(['body_hash', 'status', 'response'])
+        .where('owner_id', '=', ownerId).where('request_key', '=', key).executeTakeFirst();
+      if (!row) throw new BrowserError('CHAT_REQUEST_IN_PROGRESS', 'ما زال الطلب نفسه قيد التنفيذ. تحقّق بعد لحظة.', 409);
+      if (row.body_hash !== bodyHash) throw new BrowserError('CHAT_REQUEST_KEY_REUSED', 'استُخدم مفتاح الطلب نفسه لطلب مختلف.', 409);
+      if (row.status !== 'done') throw new BrowserError('CHAT_REQUEST_IN_PROGRESS', 'ما زال الطلب نفسه قيد التنفيذ. تحقّق بعد لحظة.', 409);
+      return (typeof row.response === 'string' ? JSON.parse(row.response) : row.response) as T;
+    }
+    try {
+      const result = await run();
+      await db.updateTable('chat_request_keys').set({ status: 'done', response: JSON.stringify(result ?? null) })
+        .where('owner_id', '=', ownerId).where('request_key', '=', key).execute();
+      return result;
+    } catch (error) {
+      await db.deleteFrom('chat_request_keys').where('owner_id', '=', ownerId).where('request_key', '=', key).execute();
+      throw error;
+    }
+  }
+
   return {
-    create, list, detail, send, respond, approve, secureSubmit, cancel, remove, screen, browserActivity, shutdown,restoreBrowser,reviewBrowser, uploadImage, image: imageBytes, feedback,
+    create, list, detail, send, respond, approve, secureSubmit, cancel, remove, screen, browserActivity, shutdown,restoreBrowser,reviewBrowser, uploadImage, image: imageBytes, feedback, once,
     imagesAvailable: () => Boolean(config.imageReader?.available),
     pointer: (ownerId: string, id: string, raw: unknown) => { const input = ChatPointerSchema.parse(raw); return handsOn(ownerId, id, () => browser.pointer(ownerId, id, input.x, input.y)); },
     keyboard: (ownerId: string, id: string, raw: unknown) => { const input = ChatKeyboardSchema.parse(raw); return handsOn(ownerId, id, () => browser.keyboard(ownerId, id, input)); },
@@ -4361,8 +4399,16 @@ export async function registerCommandChatRoutes(app: FastifyInstance, { control,
   const live = { config: { rateLimit: { max: 400, timeWindow: '1 minute' } } };
   const secure = { config: { rateLimit: { max: 12, timeWindow: '1 minute' } } };
   type Conversation = { Params: { id: string } };
+  // An optional Idempotency-Key makes a changing call safe to resend: the phone resends with the same key after a lost reply.
+  const keyed = async <T>(request: { headers: Record<string, unknown>; body?: unknown }, scope: string, run: (ownerId: string) => Promise<T>) => {
+    const ownerId = (await owner(request)).id;
+    const header = request.headers['idempotency-key'];
+    if (header === undefined) return run(ownerId);
+    const key = z.string().min(8).max(128).regex(/^[a-zA-Z0-9_-]+$/).parse(header);
+    return control.once(ownerId, scope, key, request.body ?? null, () => run(ownerId));
+  };
   app.get('/api/chat/conversations', async (request) => control.list((await owner(request)).id));
-  app.post('/api/chat/conversations', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request) => control.create((await owner(request)).id, request.body ?? {}));
+  app.post('/api/chat/conversations', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request) => keyed(request, 'create', ownerId => control.create(ownerId, request.body ?? {})));
   // Images the owner attaches to a message. The bytes stay in this database and are read by the own model only.
   app.post('/api/chat/images', { bodyLimit: 7_500_000, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request) => control.uploadImage((await owner(request)).id, request.body));
   app.get<{ Params: { imageId: string } }>('/api/chat/images/:imageId', live, async (request, reply) => { const image = await control.image((await owner(request)).id, id(request.params.imageId)); return reply.type(image.mimeType).header('Cache-Control', 'private, max-age=3600').header('Content-Disposition', 'inline').header('X-Content-Type-Options', 'nosniff').send(image.bytes); });
@@ -4375,9 +4421,9 @@ export async function registerCommandChatRoutes(app: FastifyInstance, { control,
     return control.detail(ownerId, conversationId);
   });
   app.get<Conversation & { Querystring: { after?: string } }>('/api/chat/conversations/:id/campaign-events', live, async (request) => control.campaignEvents((await owner(request)).id, id(request.params.id), z.coerce.number().int().min(0).max(100000).default(0).parse(request.query.after)));
-  app.post<Conversation>('/api/chat/conversations/:id/messages', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request) => control.send((await owner(request)).id, id(request.params.id), request.body));
-  app.post<Conversation>('/api/chat/conversations/:id/respond', async (request) => control.respond((await owner(request)).id, id(request.params.id), request.body));
-  app.post<Conversation>('/api/chat/conversations/:id/approve', async (request) => control.approve((await owner(request)).id, id(request.params.id), request.body));
+  app.post<Conversation>('/api/chat/conversations/:id/messages', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request) => { const target = id(request.params.id); return keyed(request, `messages:${target}`, ownerId => control.send(ownerId, target, request.body)); });
+  app.post<Conversation>('/api/chat/conversations/:id/respond', async (request) => { const target = id(request.params.id); return keyed(request, `respond:${target}`, ownerId => control.respond(ownerId, target, request.body)); });
+  app.post<Conversation>('/api/chat/conversations/:id/approve', async (request) => { const target = id(request.params.id); return keyed(request, `approve:${target}`, ownerId => control.approve(ownerId, target, request.body)); });
   app.post<Conversation>('/api/chat/conversations/:id/feedback', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (request) => control.feedback((await owner(request)).id, id(request.params.id), request.body));
   app.post<Conversation>('/api/chat/conversations/:id/secure', secure, async (request) => control.secureSubmit((await owner(request)).id, id(request.params.id), request.body));
   app.post<Conversation>('/api/chat/conversations/:id/cancel', async (request) => { z.object({}).strict().parse(request.body ?? {}); return control.cancel((await owner(request)).id, id(request.params.id)); });
