@@ -1,26 +1,28 @@
 import Foundation
 import Security
 
+// The phone is a client of the cloud server, like the web: it signs in with the owner's account and calls the
+// same /api routes through the web site's origin. Field names follow packages/contracts/src/command-chat.ts and
+// packages/windows/src/index.ts; unknown fields are ignored, so newer servers stay readable.
+
 enum WaslaError: LocalizedError {
-    case invalidAddress, invalidFingerprint, invalidPairingCode, invalidResponse
-    /// `code` is the computer's or Mohassan's error code (`CHAT_BUSY`, `CLIENT_REQUEST_UNKNOWN`…), when it sent one.
-    case notPaired, certificate, storage(OSStatus), server(Int, String, code: String? = nil), message(String)
+    case invalidAddress, invalidResponse, signedOut, invalidCredentials
+    /// `code` is the server's error code (`CHAT_REQUEST_IN_PROGRESS`, `WINDOWS_LOCAL_CONSENT_REQUIRED`…), when it sent one.
+    case storage(OSStatus), server(Int, String, code: String? = nil), message(String)
     var errorDescription: String? {
         switch self {
-        case .invalidAddress: return "أدخل عنوان HTTPS فقط، دون اسم مستخدم أو مسار أو معاملات إضافية."
-        case .invalidFingerprint: return "بصمة الشهادة يجب أن تتكون من 64 حرفًا من الأرقام والحروف a–f. انسخها من شاشة الكمبيوتر الموثوقة."
-        case .invalidPairingCode: return "أدخل رمز الربط من ٨ أرقام كما يظهر على الكمبيوتر."
-        case .invalidResponse: return "وصل رد غير متوقع من الكمبيوتر."
-        case .notPaired: return "اربط الكمبيوتر أولًا."
-        case .certificate: return "تعذّر التحقق من هوية الكمبيوتر أو صلاحية شهادته. راجع العنوان والبصمة والوقت على الجهازين."
-        case .storage(let code): return "تعذّر حفظ بيانات الاقتران في سلسلة المفاتيح (\(code))."
+        case .invalidAddress: return "عنوان الخادم في هذه النسخة غير صالح."
+        case .invalidResponse: return "وصل رد غير متوقع من الخادم."
+        case .signedOut: return "انتهت جلستك. سجّل الدخول من جديد."
+        case .invalidCredentials: return "البريد أو كلمة المرور غير صحيحة."
+        case .storage(let code): return "تعذّر حفظ الجلسة في سلسلة المفاتيح (\(code))."
         case .server(_, let message, _), .message(let message): return message
         }
     }
 }
 
 /// An https address that is safe to open: no credentials, backslashes or control characters.
-/// Search results and the links in Mohassan's replies open only through this check.
+/// The links in Mohassan's replies open only through this check.
 enum SafeLink {
     static func https(_ value: String) -> URL? {
         guard let components = URLComponents(string: value), components.scheme?.lowercased() == "https",
@@ -30,213 +32,95 @@ enum SafeLink {
     }
 }
 
-struct ServerIdentity: Codable, Sendable {
-    let baseURL: URL
-    let fingerprint: String
-    let deviceID: String
-    let name: String
+/// The web site's origin, bundled in ConnectionDefaults.json. The phone calls `<origin>/api/...` with this Origin header.
+enum CloudDefaults {
+    static let fallback = "https://www.mohassansy.com"
+    private struct File: Decodable { let web_origin: String }
 
-    static func validate(address: String, fingerprint: String, deviceID: String = "", name: String = "الكمبيوتر") throws -> ServerIdentity {
-        let clean = address.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// https, a host, nothing else: no port, path, query, credentials or escapes.
+    static func origin(_ value: String) throws -> URL {
+        let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let parts = URLComponents(string: clean), parts.scheme?.lowercased() == "https",
-              let host = parts.host, !host.isEmpty, parts.user == nil, parts.password == nil,
+              let host = parts.host, !host.isEmpty, parts.user == nil, parts.password == nil, parts.port == nil,
               parts.query == nil, parts.fragment == nil, parts.path.isEmpty || parts.path == "/",
               !clean.contains("\\"), !clean.contains("%"),
-              !clean.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) }),
-              parts.port == nil || (1...65535).contains(parts.port!), let url = parts.url else { throw WaslaError.invalidAddress }
-        let pin = fingerprint.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard pin.utf8.count == 64, pin.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { throw WaslaError.invalidFingerprint }
-        var normalized = parts
+              !clean.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) }) else { throw WaslaError.invalidAddress }
+        var normalized = URLComponents()
         normalized.scheme = "https"
-        normalized.path = ""
-        return ServerIdentity(baseURL: normalized.url ?? url, fingerprint: pin, deviceID: deviceID, name: name)
+        normalized.host = host.lowercased()
+        guard let url = normalized.url else { throw WaslaError.invalidAddress }
+        return url
     }
+    static func decode(_ data: Data) throws -> URL { try origin(JSONDecoder().decode(File.self, from: data).web_origin) }
+    static func load(from bundle: Bundle = .main) -> URL {
+        if let url = bundle.url(forResource: "ConnectionDefaults", withExtension: "json"), let data = try? Data(contentsOf: url),
+           let origin = try? decode(data) { return origin }
+        return URL(string: fallback)!
+    }
+    /// The Origin header the server accepts for changing calls: scheme and host, no trailing slash.
+    static func header(_ origin: URL) -> String { "https://" + (origin.host ?? "") }
 }
 
-struct BundledConnection: Decodable {
-    let server_url: String
-    let certificate_sha256: String
-    let computer_name: String
-
-    static func load(from bundle: Bundle = .main) -> ServerIdentity? {
-        guard let url = bundle.url(forResource: "ConnectionDefaults", withExtension: "json"),
-              let data = try? Data(contentsOf: url) else { return nil }
-        return try? decodeIdentity(from: data)
-    }
-
-    static func decodeIdentity(from data: Data) throws -> ServerIdentity {
-        let settings = try JSONDecoder().decode(Self.self, from: data)
-        return try ServerIdentity.validate(address: settings.server_url, fingerprint: settings.certificate_sha256, name: settings.computer_name)
-    }
-}
-
-enum PairingCode {
-    private static let localizedDigits = Dictionary(uniqueKeysWithValues: zip("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789"))
-
-    static func normalized(_ value: String) -> String {
-        String(value.trimmingCharacters(in: .whitespacesAndNewlines).map { localizedDigits[$0] ?? $0 })
-    }
-
-    static func isValid(_ value: String) -> Bool {
-        let code = normalized(value)
-        if code.utf8.count == 8, code.utf8.allSatisfy({ (48...57).contains($0) }) { return true }
-        return (16...512).contains(code.utf8.count) && code.utf8.allSatisfy { (33...126).contains($0) }
-    }
-}
-
-struct PairRequest: Encodable { let code: String; let device_name: String }
-struct PairResponse: Decodable { let token: String; let device_id: String; let name: String }
-struct EmptyBody: Encodable {}
-struct EmptyResponse: Decodable {}
-struct ServerFault: Decodable { struct Detail: Decodable { let code: String; let message: String }; let error: Detail }
-
-enum BusyState: Decodable {
-    case idle, working(String)
-    init(from decoder: Decoder) throws {
-        let value = try decoder.singleValueContainer()
-        if value.decodeNil() { self = .idle }
-        else if let flag = try? value.decode(Bool.self) { self = flag ? .working("الجهاز مشغول") : .idle }
-        else if let name = try? value.decode(String.self) { self = name.isEmpty ? .idle : .working(name) }
-        else { self = .working("الجهاز مشغول") }
-    }
-    var isBusy: Bool { if case .idle = self { return false }; return true }
-    var label: String { if case .working(let name) = self { return name }; return "جاهز" }
-}
-struct DesktopInfo: Decodable { let width: Int; let height: Int; let monitor: String?; let error: String? }
-/// One function the computer can or cannot offer right now, with the reason when it cannot.
-struct CapabilityState: Decodable {
-    let ready: Bool
-    let reason: String?
-    let code: String?
-}
-/// Absent on older computer services; each key is absent when the service does not know.
-struct ServerCapabilities: Decodable {
-    let chat: CapabilityState?
-    let search: CapabilityState?
-    let images: CapabilityState?
-    let desktop: CapabilityState?
-}
-struct ServerStatus: Decodable {
+/// The owner's web session: the cookie better-auth sets at sign-in, sent unchanged on every call.
+/// The server ties Windows grants to this exact cookie, so it is never rewritten or re-encoded.
+struct SessionCookie: Codable, Equatable {
     let name: String
-    let model: String
-    let busy: BusyState
-    let desktop_enabled: Bool
-    let desktop: DesktopInfo?
-    let app_actions_enabled: Bool?
-    let capabilities: ServerCapabilities?
-    /// The reason a function is not ready, or nil when it is ready or unknown.
-    func unavailableReason(_ pick: (ServerCapabilities) -> CapabilityState?) -> String? {
-        guard let capabilities, let state = pick(capabilities), !state.ready else { return nil }
-        return state.reason ?? "غير متاح الآن."
-    }
-}
+    let value: String
+    var header: String { name + "=" + value }
 
-// MARK: - Where the phone stands with the computer and with Mohassan (plan phase 2, seven states).
+    static let names: Set<String> = ["__Secure-better-auth.session_token", "better-auth.session_token"]
+    private static let finder = try! NSRegularExpression(pattern: #"(?:^|[\s,;])((?:__Secure-)?better-auth\.session_token)=([A-Za-z0-9._~%+/=-]+)"#)
+    private static let allowed = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~%+/=-".utf8)
 
-enum ConnectionState: Equatable {
-    /// The saved pairing is being checked; nothing is known yet.
-    case checking
-    /// 1. The computer does not answer: network, Tailscale, the service or sleep.
-    case unreachable
-    /// 2. The computer answered with a certificate that is not the pinned one.
-    case certificateMismatch
-    /// 3. The computer no longer trusts this phone: the pairing was revoked or expired.
-    case trustRevoked
-    /// 4. The service runs, but it is not linked to Mohassan.
-    case notLinked
-    /// 5. The service is linked, but Mohassan is not running on the computer.
-    case mohassanDown
-    /// 6. Mohassan refused the link: it was revoked there.
-    case linkRevoked(String)
-    /// 7. Everything answers.
-    case ready
+    var valid: Bool { Self.names.contains(name) && (16...4096).contains(value.utf8.count) && value.utf8.allSatisfy { Self.allowed.contains($0) } }
 
-    var canSend: Bool { self == .ready }
-
-    var title: String {
-        switch self {
-        case .checking: return "جارٍ التحقق من الكمبيوتر…"
-        case .unreachable: return "تعذّر الوصول إلى الكمبيوتر"
-        case .certificateMismatch: return "هوية الكمبيوتر لا تطابق"
-        case .trustRevoked: return "أُلغيت ثقة هذا الهاتف"
-        case .notLinked: return "وصلة غير مربوط بموحسن"
-        case .mohassanDown: return "موحسن متوقف على الكمبيوتر"
-        case .linkRevoked: return "أُلغي ربط وصلة من موحسن"
-        case .ready: return "متصل بموحسن"
+    /// Finds the session cookie in a Set-Cookie value. Several cookies may arrive joined by ", "; a cleared cookie
+    /// (`name=; Max-Age=0`) is not a session.
+    static func from(setCookie header: String) -> SessionCookie? {
+        let source = header as NSString
+        for match in finder.matches(in: header, range: NSRange(location: 0, length: source.length)) {
+            let cookie = SessionCookie(name: source.substring(with: match.range(at: 1)), value: source.substring(with: match.range(at: 2)))
+            if cookie.valid { return cookie }
         }
-    }
-
-    /// What to do about it, in the owner's words.
-    var advice: String {
-        switch self {
-        case .checking: return "لحظة من فضلك."
-        case .unreachable: return "شغّل Tailscale على الهاتف والكمبيوتر، وتأكد أن خدمة موحسن تعمل على الكمبيوتر وأنه غير نائم."
-        case .certificateMismatch: return "تغيّرت شهادة الكمبيوتر. أعد الاقتران بالبصمة الظاهرة على شاشة الكمبيوتر."
-        case .trustRevoked: return "أعد اقتران الهاتف برمز جديد من الكمبيوتر."
-        case .notLinked: return "من ويب موحسن على الكمبيوتر: «الاتصالات» ← «ربط الآيفون»، ثم نفّذ أمر الربط على الكمبيوتر."
-        case .mohassanDown: return "شغّل موحسن على الكمبيوتر، ثم اسحب للتحديث."
-        case .linkRevoked(let code): return "أنشئ ربطًا جديدًا من ويب موحسن (\(code))."
-        case .ready: return ""
-        }
-    }
-
-    /// Derives the state from the last status read and the last Mohassan link read.
-    static func derive(status: ServerStatus?, statusError: WaslaError?, link: MohassanLink?) -> ConnectionState {
-        if let statusError {
-            switch statusError {
-            case .certificate: return .certificateMismatch
-            case .server(401, _, _): return .trustRevoked
-            default: return .unreachable
-            }
-        }
-        guard status != nil else { return .checking }
-        guard let link else { return .notLinked }
-        if !link.linked { return .notLinked }
-        if !link.reachable { return .mohassanDown }
-        if let error = link.error, !error.isEmpty { return error == "mohassan_unavailable" ? .mohassanDown : .linkRevoked(error) }
-        return .ready
+        return nil
     }
 }
-struct ImagePreparation: Encodable { let description: String; let style: String }
-struct PreparedImage: Codable, Identifiable {
-    var id = UUID()
-    var prompt: String
-    var negative_prompt: String
-    var seed: Int64
-    enum CodingKeys: String, CodingKey { case prompt, negative_prompt, seed }
-}
-struct ImageRequest: Codable { let prompt: String; let negative_prompt: String; let seed: Int64; let request_id: String }
-struct ImageJob: Decodable {
-    let request_id: String?
-    let status: String
-    let image_url: String?
-    let error: String?
-}
-struct SearchRequest: Encodable { let query: String }
-struct SearchResult: Decodable, Identifiable {
-    var id = UUID()
-    let title: String
-    let url: String
-    let snippet: String
-    enum CodingKeys: String, CodingKey { case title, url, snippet }
-    var safeURL: URL? { SafeLink.https(url) }
-}
-/// Mohassan's search engine through the computer. `notice` explains an empty result; `limitations`
-/// says what these sources cannot prove. Both are absent on older computer services.
-struct SearchResponse: Decodable {
-    let query: String
-    let results: [SearchResult]
-    let provider: String
-    let notice: String?
-    let limitations: [String]?
-}
-// MARK: - Mohassan, through the Wasla service on the computer (/v1/mohassan/*)
-// Field names follow Mohassan's contract (packages/contracts/src/command-chat.ts).
-// Unknown fields are ignored, so newer servers stay readable.
 
-struct MohassanLink: Decodable { let linked: Bool; let reachable: Bool; let error: String? }
+struct SignInBody: Encodable { let email: String; let password: String; let rememberMe: Bool }
+struct SignInReply: Decodable {
+    struct User: Decodable { let email: String?; let name: String? }
+    let user: User?
+}
+struct EmptyBody: Encodable {}
+struct OkReply: Decodable { let ok: Bool? }
 
-enum MohassanStatus {
+/// The server's error body: `{"error":{"code","message"}}`, or better-auth's own `{"code","message"}`.
+struct ServerFault: Decodable {
+    private struct Detail: Decodable { let code: String?; let message: String? }
+    private enum Keys: String, CodingKey { case error, code, message }
+    let code: String?
+    let message: String?
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: Keys.self)
+        let detail = try? container.decodeIfPresent(Detail.self, forKey: .error)
+        let flatCode = try? container.decodeIfPresent(String.self, forKey: .code)
+        let flatMessage = try? container.decodeIfPresent(String.self, forKey: .message)
+        code = detail?.code ?? flatCode
+        message = detail?.message ?? flatMessage
+    }
+    static func error(status: Int, data: Data) -> WaslaError {
+        let fault = try? JSONDecoder().decode(ServerFault.self, from: data)
+        let fallback = (300...399).contains(status) ? "رفض التطبيق إعادة توجيه الاتصال." : status == 429 ? "طلبات كثيرة في وقت قصير. انتظر قليلًا ثم أعد المحاولة." : "تعذّر إكمال الطلب (\(status))."
+        let sent = fault?.message ?? ""
+        let message = sent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : sent
+        return .server(status, message, code: fault?.code)
+    }
+}
+
+// MARK: - The chat (/api/chat/*)
+
+enum ChatStatus {
+    static let idle = "idle"
     static let running = "running"
     static let waitingUser = "waiting_user"
     static let waitingInput = "waiting_input"
@@ -255,15 +139,14 @@ enum MohassanStatus {
         }
     }
 }
-struct MohassanOption: Decodable, Identifiable, Hashable { let id: String; let label: String }
-struct MohassanClarification: Decodable { let reason: String; let recommendedOptionId: String?; let allowText: Bool }
+struct ChatOption: Codable, Identifiable, Hashable { let id: String; let label: String }
 /// One suggested answer, taken by the brain from the owner's own site or sentence.
-struct MohassanSuggestion: Decodable, Hashable { let label: String; let reason: String? }
-/// One of several questions asked together (ChatQuestionFieldSchema in packages/contracts).
-struct MohassanField: Decodable, Identifiable {
+struct ChatSuggestion: Decodable, Hashable { let label: String; let reason: String? }
+/// One of several questions asked together (ChatQuestionFieldSchema).
+struct ChatField: Decodable, Identifiable {
     let id: String
     let prompt: String
-    let suggestions: [MohassanSuggestion]
+    let suggestions: [ChatSuggestion]
     let multiple: Bool?
     let multiline: Bool?
     let initialValue: String?
@@ -274,73 +157,138 @@ struct MohassanField: Decodable, Identifiable {
     /// The suggestions the brain is confident in, chosen in advance; indexes out of range are ignored.
     var preselected: Set<Int> { Set((selected ?? []).filter { suggestions.indices.contains($0) }) }
 }
-struct MohassanQuestion: Decodable {
+struct ChatQuestion: Decodable {
     let id: String
     let prompt: String
-    let options: [MohassanOption]
+    let options: [ChatOption]
     let action: String?
-    let clarification: MohassanClarification?
     /// Several questions in one card; the answers go back together, with this question's id.
-    let fields: [MohassanField]?
-    /// Google's consent page cannot open from the phone; that option stays on the web.
-    var phoneOptions: [MohassanOption] { action == "google_ads_connect" ? options.filter { $0.id != "connect" } : options }
-    var phoneFields: [MohassanField] { fields ?? [] }
+    let fields: [ChatField]?
+    /// Google's consent page opens on the web; that one option stays there.
+    var phoneOptions: [ChatOption] { action == "google_ads_connect" ? options.filter { $0.id != "connect" } : options }
+    var phoneFields: [ChatField] { fields ?? [] }
     /// The «stop» option a field card offers beside its questions.
-    var stopOption: MohassanOption? { options.first { $0.id == "stop" } }
-    /// A typed answer is taken when the question asks for words: no choices, or only «stop».
-    /// Older servers state it in `clarification`.
-    var acceptsText: Bool { clarification?.allowText ?? options.allSatisfy { $0.id == "stop" } }
+    var stopOption: ChatOption? { options.first { $0.id == "stop" } }
 }
-struct MohassanApproval: Decodable { let id: String; let prompt: String; let detail: String }
-struct MohassanSecure: Decodable { let id: String; let kind: String; let site: String; let prompt: String }
-struct MohassanMessage: Decodable, Identifiable { let id: String; let role: String; let text: String }
-struct MohassanStep: Decodable, Identifiable { let id: String; let text: String }
-struct MohassanSummary: Decodable, Identifiable { let id: String; let title: String; let status: String; let updatedAt: String }
-/// Mohassan wraps the list: `{"conversations": [...]}`.
-struct MohassanList: Decodable { let conversations: [MohassanSummary] }
-struct MohassanConversation: Decodable, Identifiable {
+struct ChatApproval: Decodable {
+    let id: String
+    let prompt: String
+    let detail: String
+    /// What the server's permission gate bound this approval to; absent from older servers.
+    let target: String?
+    let consequence: String?
+    let reversible: Bool?
+}
+struct ChatSecureField: Decodable, Identifiable { let id: String; let label: String; let type: String }
+/// A credential or a step for the owner's own hands. Values go straight to the page; the model never sees them.
+struct ChatSecure: Decodable {
+    let id: String
+    let kind: String
+    let site: String
+    let prompt: String
+    let note: String?
+    let fields: [ChatSecureField]
+    var handsOn: Bool { kind == "hands_on" }
+}
+struct ChatImageRef: Decodable, Identifiable, Hashable { let id: String; let width: Int; let height: Int }
+struct ChatMessage: Decodable, Identifiable {
+    let id: String
+    let role: String
+    let text: String
+    let createdAt: String?
+    let images: [ChatImageRef]?
+    var mine: Bool { role == "user" }
+}
+struct ChatStep: Decodable, Identifiable { let id: String; let text: String }
+/// The browser the brain works in, on the server. `screenUrl` is a path on this site.
+struct ChatBrowser: Decodable {
+    let url: String
+    let title: String
+    let live: Bool
+    let screenUrl: String
+    /// The screenshot's path and query, only when it is this conversation's own screen route.
+    func screen(conversation: String) -> (path: String, query: [URLQueryItem])? {
+        guard let parts = URLComponents(string: screenUrl), parts.scheme == nil, parts.host == nil,
+              parts.path == "/api/chat/conversations/\(conversation)/screen" else { return nil }
+        return (parts.path, (parts.queryItems ?? []).filter { $0.name == "v" })
+    }
+    var host: String { URLComponents(string: url)?.host ?? url }
+}
+/// What this account can do without a language model (ChatCapabilitiesSchema).
+struct ChatCapabilities: Decodable, Equatable {
+    let chatModel: Bool
+    let available: [String]
+    static let labels: [String: String] = [
+        "computation": "الحساب", "web": "البحث في الويب", "browser": "فتح الصفحات وقراءتها", "memory": "الذاكرة", "knowledge": "مستنداتك المحفوظة",
+        "documents": "ملفات PDF", "sites": "بناء المواقع", "skills": "المهارات المفعّلة", "planner": "تخطيط الأسبوع", "letters": "قوالب الرسائل",
+        "imageReading": "قراءة النص في الصور", "ads": "إعلانات Google", "pc": "التحكم بالكمبيوتر",
+    ]
+    /// The web's banner when no language model is connected; nil when one is.
+    var localModeText: String? {
+        guard !chatModel else { return nil }
+        let names = available.compactMap { Self.labels[$0] }
+        let head = "لا يتصل بهذه الجلسة نموذج لغوي، فالردود الحرة غير متاحة."
+        return names.isEmpty ? head : head + " ما يعمل الآن دون نموذج: " + names.joined(separator: "، ") + "."
+    }
+}
+struct ChatSummary: Decodable, Identifiable { let id: String; let title: String; let status: String; let updatedAt: String }
+struct ChatList: Decodable {
+    let conversations: [ChatSummary]
+    let capabilities: ChatCapabilities?
+    /// The server honours an Idempotency-Key on its changing routes, so a resend with the same key runs once.
+    let requestKeys: Bool?
+}
+struct ChatConversation: Decodable, Identifiable {
     let id: String
     let title: String
     let status: String
-    let messages: [MohassanMessage]
-    let question: MohassanQuestion?
-    let approval: MohassanApproval?
-    let secure: MohassanSecure?
+    let updatedAt: String
+    let messages: [ChatMessage]
+    let question: ChatQuestion?
+    let approval: ChatApproval?
+    let secure: ChatSecure?
+    let browser: ChatBrowser?
     let progress: String?
-    let steps: [MohassanStep]
+    let steps: [ChatStep]
     let error: String?
-    var working: Bool { status == MohassanStatus.running }
+    let capabilities: ChatCapabilities?
+    /// A mark of this view; `?since=<version>&wait=<ms>` answers once it changes. Absent from older servers.
+    let version: String?
+    let olderMessages: Int?
+    var working: Bool { status == ChatStatus.running }
+    /// A card answers the assistant now: a question, an approval or a secure step.
+    var waiting: Bool { [ChatStatus.waitingUser, ChatStatus.waitingApproval, ChatStatus.waitingInput].contains(status) }
+    /// The several-questions card, when the assistant waits for it.
+    var fieldsQuestion: ChatQuestion? {
+        guard status == ChatStatus.waitingUser, let question, !question.phoneFields.isEmpty else { return nil }
+        return question
+    }
 }
-struct MohassanCreated: Decodable { let id: String }
+struct ChatCreate: Encodable { let goal: String?; let images: [String]? }
+struct ChatFieldAnswer: Codable, Equatable { let fieldId: String; let value: String }
+struct ChatSend: Encodable { let text: String; let questionId: String?; let answers: [ChatFieldAnswer]?; let images: [String]? }
+struct ChatRespond: Encodable { let questionId: String; let optionId: String }
+struct ChatApprove: Encodable { let approvalId: String; let approved: Bool }
+struct ChatSecureSubmit: Encodable { let requestId: String; let action: String; let values: [String: String]? }
+struct ChatFeedback: Encodable { let messageId: String; let verdict: String }
+struct ChatImageUpload: Encodable { let mimeType: String; let data: String }
+struct ChatImageAvailability: Decodable { let available: Bool }
+struct ChatImageUploaded: Decodable { let id: String; let width: Int; let height: Int }
+/// A photo the owner attached, uploaded and waiting to go with the next message.
+struct ChatAttachment: Codable, Equatable, Identifiable { let id: String; let preview: Data }
 
-// MARK: - Phone requests with keys (plan phase 3)
-// Every create, message, answer and approval carries a fresh `clientRequestId`. Mohassan's gateway
-// runs at most one effect per key: a double tap, or a resend after a lost reply, returns the first
-// result instead of starting the work twice. Nothing is ever sent again without the owner's tap.
+// MARK: - Requests with keys
+// Every create, message, answer and approval carries a fresh Idempotency-Key. The server runs at most one effect per
+// key: a resend after a lost reply returns the first result instead of running the work twice.
 
-struct MohassanCreate: Encodable { let goal: String; let clientRequestId: String }
-/// A message from the composer.
-struct MohassanSend: Encodable { let text: String; let clientRequestId: String }
-/// A typed answer to the pending question: a message that names the question, so a stale answer is refused.
-struct MohassanReply: Encodable { let text: String; let questionId: String; let clientRequestId: String }
-struct MohassanFieldAnswer: Codable, Equatable { let fieldId: String; let value: String }
-/// The answers of a several-questions card, in the card's order.
-struct MohassanFieldsReply: Encodable { let questionId: String; let answers: [MohassanFieldAnswer]; let clientRequestId: String }
-/// One option of the pending question (Mohassan's `respond` takes an option only).
-struct MohassanRespond: Encodable { let questionId: String; let optionId: String; let clientRequestId: String }
-struct MohassanApprove: Encodable { let approvalId: String; let approved: Bool; let clientRequestId: String }
-
-/// One phone request as it was sent: its key, where it went and its exact body, so the screen can say
-/// what is still unconfirmed and the owner can send the very same request again.
-struct MohassanRequest: Codable, Equatable {
-    enum Kind: String, Codable { case create, message, reply, fields, option, approve }
+/// One changing request as it was sent: its key, where it went and its exact body, so the very same request can go again.
+struct PendingRequest: Codable, Equatable {
+    enum Kind: String, Codable { case create, message, fields, option, approve }
     enum Phase: String, Codable {
-        /// On its way; no reply yet.
+        /// On its way, or being sent again with the same key.
         case sending
-        /// The reply was lost, or the work failed midway: it may or may not have happened.
-        case unknown
-        /// A check found that Mohassan never received it.
-        case notReceived
+        /// The reply was lost and the phone stopped trying: it may or may not have happened.
+        case unconfirmed
     }
     let key: String
     let kind: Kind
@@ -348,82 +296,65 @@ struct MohassanRequest: Codable, Equatable {
     let conversationId: String?
     /// What the owner sent, as the screen shows it.
     let text: String
-    /// The JSON body, key included, exactly as first sent.
+    /// The JSON body exactly as first sent.
     let body: Data
+    var attachments: [ChatAttachment]
     var phase: Phase
+    var attempts: Int
     var note: String?
+    /// When it was first sent. The server keeps keys for a day, so only a younger request may go again by itself.
+    let createdAt: Date
 
-    static func make<Body: Encodable>(_ kind: Kind, conversationId: String?, text: String, body: (String) -> Body) throws -> MohassanRequest {
-        let key = UUID().uuidString.lowercased()
-        return MohassanRequest(key: key, kind: kind, conversationId: conversationId, text: text, body: try JSONEncoder().encode(body(key)), phase: .sending, note: nil)
+    static func make<Body: Encodable>(_ kind: Kind, conversationId: String?, text: String, attachments: [ChatAttachment] = [], body: Body) throws -> PendingRequest {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return PendingRequest(key: UUID().uuidString.lowercased(), kind: kind, conversationId: conversationId, text: text,
+                              body: try encoder.encode(body), attachments: attachments, phase: .sending, attempts: 0, note: nil, createdAt: Date())
     }
-
     var path: String {
-        let conversation = "/v1/mohassan/conversations/\(conversationId ?? "")"
+        let conversation = "/api/chat/conversations/" + (conversationId ?? "")
         switch kind {
-        case .create: return "/v1/mohassan/conversations"
-        case .message, .reply, .fields: return conversation + "/messages"
+        case .create: return "/api/chat/conversations"
+        case .message, .fields: return conversation + "/messages"
         case .option: return conversation + "/respond"
         case .approve: return conversation + "/approve"
         }
     }
-    /// The composer's own text. A card's answer or approval is never resent: the owner answers the fresh card.
+    /// The composer's own text, which comes back to the box when the server refuses it.
     var fromComposer: Bool { kind == .create || kind == .message }
     /// Whether it belongs to what the screen shows: the new-chat screen, or that conversation.
     func belongs(to current: String?) -> Bool { kind == .create ? current == nil : conversationId == current }
-}
-
-/// What Mohassan's gateway knows about one key (GET /v1/mohassan/requests/{key}).
-struct MohassanRequestStatus: Decodable {
-    let known: Bool
-    let kind: String?
-    let state: String?
-    let conversationId: String?
-
-    enum Verdict: Equatable {
-        /// It happened; the conversation it went to, when the gateway recorded one.
-        case done(String?)
-        /// Mohassan never received it (or refused it, which changed nothing).
-        case notReceived
-        /// Mohassan is still taking it in.
-        case inProgress
-        /// It failed midway on the computer; only the conversation can show what happened.
-        case undetermined
-    }
-    var verdict: Verdict {
-        guard known else { return .notReceived }
-        switch state {
-        case "done": return .done(conversationId)
-        case "pending": return .inProgress
-        default: return .undetermined
-        }
+    /// Young enough to go again by itself: well inside the day the server keeps its key.
+    func resendable(now: Date = Date()) -> Bool { now.timeIntervalSince(createdAt) < 12 * 3600 }
+    /// Seconds before the next automatic resend with the same key: 1, 2, 4, 8.
+    static func backoff(_ attempt: Int) -> Int { 1 << min(max(attempt - 1, 0), 3) }
+    /// The Idempotency-Key the server accepts: 8–128 of a–z, A–Z, 0–9, '-' and '_'.
+    static func validKey(_ key: String) -> Bool {
+        (8...128).contains(key.utf8.count) && key.utf8.allSatisfy { (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95 }
     }
 }
 
-/// What a failed send means for the request. Only a refusal, or a call that never left the phone,
-/// proves that nothing happened; anything else may have reached Mohassan.
+/// What a failed call means for its request. Only a refusal, or a call that never left the phone, proves that
+/// nothing happened; anything else may have reached the server, and only the same key can be sent again.
 enum SendOutcome: Equatable {
+    case signedOut
     /// Refused, or never sent: nothing happened. The reason is the owner's to read.
     case notDone(String)
-    /// It may have reached Mohassan; a check can tell.
-    case unknown(String)
-    /// The first request with this key is still running on the computer.
+    /// The first call with this key is still running on the server.
     case inProgress(String)
-    /// The first request with this key failed midway on the computer.
-    case undetermined(String)
+    /// It may have reached the server.
+    case unknown(String)
 
     static func of(_ error: Error) -> SendOutcome {
         if let failure = error as? WaslaError {
             switch failure {
+            case .signedOut: return .signedOut
             case .server(let status, let message, let code):
-                if status == 409, code == "CLIENT_REQUEST_IN_PROGRESS" { return .inProgress(message) }
-                if status == 409, code == "CLIENT_REQUEST_UNKNOWN" { return .undetermined(message) }
-                if (400...499).contains(status) { return .notDone(message) }
+                if status == 409, code == "CHAT_REQUEST_IN_PROGRESS" { return .inProgress(message) }
+                if (400...499).contains(status), status != 408, status != 499 { return .notDone(message) }
                 return .unknown(message)
-            case .certificate, .invalidAddress, .notPaired, .invalidFingerprint, .invalidPairingCode, .storage:
-                return .notDone(failure.localizedDescription)
-            case .invalidResponse, .message:
-                return .unknown(failure.localizedDescription)
+            case .invalidAddress, .invalidCredentials, .storage: return .notDone(failure.localizedDescription)
+            case .invalidResponse, .message: return .unknown(failure.localizedDescription)
             }
         }
         if let failure = error as? URLError {
@@ -431,8 +362,8 @@ enum SendOutcome: Equatable {
             let neverSent: [URLError.Code] = [.cannotConnectToHost, .cannotFindHost, .notConnectedToInternet, .dnsLookupFailed,
                                               .internationalRoamingOff, .dataNotAllowed, .callIsActive, .secureConnectionFailed,
                                               .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid,
-                                              .serverCertificateHasUnknownRoot, .clientCertificateRejected, .badURL, .unsupportedURL]
-            if neverSent.contains(failure.code) { return .notDone("تعذّر الوصول إلى الكمبيوتر، فلم يُرسل الطلب.") }
+                                              .serverCertificateHasUnknownRoot, .clientCertificateRejected, .badURL, .unsupportedURL, .appTransportSecurityRequiresSecureConnection]
+            if neverSent.contains(failure.code) { return .notDone("تعذّر الوصول إلى الخادم، فلم يُرسل الطلب.") }
             return .unknown("انقطع الاتصال قبل وصول الرد.")
         }
         return .unknown("وصل رد غير متوقع.")
@@ -443,14 +374,14 @@ enum SendOutcome: Equatable {
 enum FieldAnswers {
     /// One field's answer: the chosen suggestions in their order, and the typed text. In a
     /// single-answer field a typed answer replaces the choice; a multi-line answer keeps its lines.
-    static func answer(_ field: MohassanField, chosen: Set<Int>, typed supplied: String) -> String {
+    static func answer(_ field: ChatField, chosen: Set<Int>, typed supplied: String) -> String {
         let picked = chosen.sorted().compactMap { field.suggestions.indices.contains($0) ? field.suggestions[$0].label : nil }
         let typed = field.keepsLines ? supplied : supplied.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasTyped = !typed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let parts = field.allowsSeveral ? picked + (hasTyped ? [typed] : []) : (hasTyped ? [typed] : picked)
         return parts.joined(separator: ", ")
     }
-    /// The length Mohassan counts: the answers, and for several the «1. » numbers and line breaks.
+    /// The length the server counts: the answers, and for several the «1. » numbers and line breaks.
     static func length(_ answers: [String]) -> Int {
         answers.reduce(0) { $0 + $1.utf16.count } + (answers.count > 1 ? answers.count * 4 - 1 : 0)
     }
@@ -620,13 +551,168 @@ enum ReplyMarkdown {
     }
 }
 
-struct DesktopSession: Decodable { let session_id: String; let expires_at: Double }
-struct DesktopCommand: Encodable {
-    let action: String
-    var x: Double? = nil
-    var y: Double? = nil
-    var button: String? = nil
-    var dy: Int? = nil
-    var key: String? = nil
-    var text: String? = nil
+// MARK: - Windows remote control (/api/windows/*)
+// The Windows companion on the PC sends its live state; a short grant from this session lets the owner (and
+// Mohassan, when the owner chats from this phone) see and control the one window the owner allowed on the PC.
+
+struct WindowsTarget: Decodable, Equatable { let key: String; let mode: String; let title: String; let width: Int; let height: Int }
+struct WindowsState: Decodable, Equatable {
+    let approvalNonce: String
+    let safeDesktop: Bool
+    let localView: Bool
+    let localControl: Bool
+    let target: WindowsTarget?
+    let status: String
+}
+struct WindowsGrant: Decodable, Equatable {
+    let id: String
+    let scope: String
+    let targetKey: String
+    let approvalNonce: String
+    let expiresAt: String
+    var controls: Bool { scope == "control" }
+    var expiry: Date? { WindowsClock.date(expiresAt) }
+}
+struct WindowsDevice: Decodable, Identifiable, Equatable {
+    let id: String
+    let name: String
+    let revoked: Bool
+    let online: Bool
+    let lastSeenAt: String?
+    let state: WindowsState?
+    /// This session's grant, when it is valid now.
+    let grant: WindowsGrant?
+}
+struct WindowsOverview: Decodable, Equatable { let enabled: Bool; let devices: [WindowsDevice] }
+struct WindowsPairing: Decodable, Equatable { let id: String; let code: String; let expiresAt: String }
+struct WindowsGrantRequest: Encodable { let scope: String; let durationSeconds: Int; let targetKey: String; let approvalNonce: String }
+struct WindowsFrame: Decodable {
+    let id: String
+    let targetKey: String
+    let capturedAt: String
+    let width: Int
+    let height: Int
+    let jpeg: String
+    /// The JPEG bytes, only when they start and end like a JPEG.
+    var imageData: Data? {
+        guard let data = Data(base64Encoded: jpeg), data.count >= 4 else { return nil }
+        let bytes = [UInt8](data)
+        guard bytes[0] == 0xFF, bytes[1] == 0xD8, bytes[bytes.count - 2] == 0xFF, bytes[bytes.count - 1] == 0xD9 else { return nil }
+        return data
+    }
+}
+struct WindowsFrameReply: Decodable { let frame: WindowsFrame; let grant: WindowsGrant }
+/// One input on the allowed window. Coordinates are 0…1 of the frame.
+enum WindowsAction: Encodable, Equatable {
+    case click(x: Double, y: Double, right: Bool)
+    case text(String)
+    case key(String)
+    case scroll(Int)
+    private enum Keys: String, CodingKey { case type, x, y, button, text, key, delta }
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: Keys.self)
+        switch self {
+        case .click(let x, let y, let right):
+            try container.encode("click", forKey: .type)
+            try container.encode(min(1, max(0, x)), forKey: .x)
+            try container.encode(min(1, max(0, y)), forKey: .y)
+            try container.encode(right ? "right" : "left", forKey: .button)
+        case .text(let value):
+            try container.encode("text", forKey: .type)
+            try container.encode(value, forKey: .text)
+        case .key(let value):
+            try container.encode("key", forKey: .type)
+            try container.encode(value, forKey: .key)
+        case .scroll(let delta):
+            try container.encode("scroll", forKey: .type)
+            try container.encode(min(3, max(-3, delta)), forKey: .delta)
+        }
+    }
+    /// The server takes 1–120 characters with no control characters per text input.
+    static func textFits(_ value: String) -> Bool {
+        (1...120).contains(value.count) && !value.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F }
+    }
+    static let keys = ["Enter", "Tab", "Escape", "Backspace", "Delete", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", "Space"]
+}
+struct WindowsActionRequest: Encodable { let grantId: String; let nonce: String; let frameId: String; let action: WindowsAction }
+struct WindowsActionReply: Decodable { let id: String; let status: String }
+
+enum WindowsClock {
+    static func date(_ value: String) -> Date? {
+        let precise = ISO8601DateFormatter()
+        precise.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = precise.date(from: value) { return date }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: value)
+    }
+}
+
+/// Where remote control of the PC stands for this session, from one GET /api/windows. The toggle shows it.
+enum RemoteReadiness: Equatable {
+    /// The server has Windows control switched off.
+    case disabled
+    /// No PC is linked to this account.
+    case noDevice
+    /// The PC's companion is not connected now.
+    case offline(String)
+    /// The PC is locked or on a protected screen.
+    case unsafe(String)
+    /// The owner has not allowed viewing a window on the PC.
+    case needsLocalView(String)
+    /// Viewing is allowed on the PC, control is not.
+    case needsLocalControl(String)
+    /// Everything is allowed on the PC; this session holds no control grant.
+    case ready(WindowsDevice)
+    /// This session controls the PC now.
+    case active(WindowsDevice, WindowsGrant)
+
+    /// The device the phone works with: the one it used last when still linked, else the first one online.
+    static func device(in overview: WindowsOverview, preferred: String?) -> WindowsDevice? {
+        let linked = overview.devices.filter { !$0.revoked }
+        if let preferred, let match = linked.first(where: { $0.id == preferred }) { return match }
+        return linked.first(where: { $0.online }) ?? linked.first
+    }
+
+    static func of(_ overview: WindowsOverview, preferred: String? = nil) -> RemoteReadiness {
+        guard overview.enabled else { return .disabled }
+        guard let device = device(in: overview, preferred: preferred) else { return .noDevice }
+        guard device.online else { return .offline(device.name) }
+        guard let state = device.state, state.safeDesktop else { return .unsafe(device.name) }
+        guard state.localView, state.target != nil else { return .needsLocalView(device.name) }
+        guard state.localControl else { return .needsLocalControl(device.name) }
+        if let grant = device.grant, grant.controls { return .active(device, grant) }
+        return .ready(device)
+    }
+
+    var on: Bool { if case .active = self { return true }; return false }
+    var canTurnOn: Bool {
+        switch self {
+        case .ready, .active: return true
+        default: return false
+        }
+    }
+    var title: String {
+        switch self {
+        case .disabled: return "التحكم بـ Windows متوقف على الخادم"
+        case .noDevice: return "لا يوجد كمبيوتر مرتبط"
+        case .offline(let name): return "\(name) غير متصل الآن"
+        case .unsafe(let name): return "\(name) مقفل أو على شاشة محمية"
+        case .needsLocalView(let name), .needsLocalControl(let name): return "يلزم السماح على \(name)"
+        case .ready(let device): return "جاهز: \(device.name)"
+        case .active(let device, _): return "التحكم مفعّل: \(device.name)"
+        }
+    }
+    var advice: String {
+        switch self {
+        case .disabled: return "يُفعَّل من إعدادات الخادم (WINDOWS_REMOTE_ENABLED=true)."
+        case .noDevice: return "اضغط «ربط كمبيوتر»، ثم ألصق الرمز في برنامج Mohassan Companion على الكمبيوتر خلال دقيقتين."
+        case .offline: return "شغّل Mohassan Companion على الكمبيوتر وتأكد من اتصاله بالإنترنت."
+        case .unsafe: return "افتح قفل الكمبيوتر. يتوقف التحكم تلقائيًا عند القفل، ويلزم السماح من جديد بعده."
+        case .needsLocalView: return "في Mohassan Companion على الكمبيوتر اختر النافذة، ثم فعّل «أوافق محليًا على مشاهدة النطاق المحدد» و«أوافق محليًا على الإدخال ضمن هذا النطاق»."
+        case .needsLocalControl: return "في Mohassan Companion فعّل «أوافق محليًا على الإدخال ضمن هذا النطاق»."
+        case .ready: return "شغّل المفتاح ليتحكم هذا الهاتف وموحسن بالنافذة المسموحة على الكمبيوتر."
+        case .active: return "يتجدد الإذن كل دقيقتين ما دام المفتاح مشغّلًا والتطبيق مفتوحًا. الإيقاف يلغي التحكم فورًا."
+        }
+    }
 }

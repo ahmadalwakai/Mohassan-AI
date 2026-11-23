@@ -1,403 +1,431 @@
 import SwiftUI
 import UIKit
 
+/// The phone's whole state. It is a client of the cloud server, like the web: the server owns the conversations,
+/// the brain, the request keys and the Windows grants; the phone shows them and sends the owner's taps.
 @MainActor
 final class WaslaStore: ObservableObject {
-    @Published private(set) var identity: ServerIdentity?
-    @Published private(set) var status: ServerStatus?
+    enum Account: Equatable { case loading, signedOut, signedIn }
+
+    // The account.
+    @Published private(set) var account: Account = .loading
+    @Published private(set) var email: String?
+    @Published var signingIn = false
     @Published var errorMessage: String?
-    @Published var isLoading = true
-    @Published var isPairing = false
-    @Published var isRefreshing = false
-    @Published var selectedTab = 0
-    /// Where the phone stands with the computer and with Mohassan (seven states).
-    @Published private(set) var connection: ConnectionState = .checking
-    @Published private(set) var lastStatusAt: Date?
-    private var statusError: WaslaError?
-    @Published var imagePreparing = false
-    @Published var preparedImage: PreparedImage?
-    @Published var imageBusy = false
-    @Published private(set) var imageSubmitting = false
-    @Published var imageStatus = "صف الصورة، ثم راجع الوصف قبل بدء الإنشاء."
-    @Published var pendingImageID: String?
-    @Published var lastImage: UIImage?
-    @Published var searchBusy = false
-    @Published var searchResponse: SearchResponse?
-    @Published var desktopStarting = false
-    @Published var desktopSession: DesktopSession?
-    @Published var desktopFrame: UIImage?
-    @Published var frameTime: Date?
-    @Published var pointer = CGPoint(x: 0.5, y: 0.5)
-    @Published var desktopMessage = "ابدأ جلسة لعرض الشاشة والتحكم بها."
     @Published var foreground = true
-    // Mohassan, through the computer service. Logic lives in Mohassan.swift.
-    @Published var mohassanLink: MohassanLink?
-    @Published var mohassanList: [MohassanSummary] = []
-    @Published var mohassanConversation: MohassanConversation?
-    @Published var mohassanSending = false
-    /// The one request whose outcome is not settled yet (plan phase 3); nothing new is sent until it is.
-    @Published var mohassanRequest: MohassanRequest?
-    @Published var mohassanChecking = false
-    /// The composer's text and a question card's typed answer. They stay until Mohassan has the request,
-    /// and come back when a send is refused.
-    @Published var mohassanDraft = ""
-    @Published var mohassanAnswerDraft = ""
-    var mohassanPollTask: Task<Void, Never>?
-    var mohassanPollID = 0
-    var mohassanEpoch = 0
-
-    private(set) var client: APIClient?
-    private var frameTask: Task<Void, Never>?
-    private var inputTask: Task<Void, Never>?
-    private var imageTask: Task<Void, Never>?
-    private var inputQueue: [DesktopCommand] = []
-    private var desktopEpoch = 0
+    let origin = CloudDefaults.load()
+    private(set) var client: CloudClient?
+    /// Bumped whenever the session changes; answers that belong to an older session are dropped.
     private(set) var sessionEpoch = 0
-    private let defaults = UserDefaults.standard
-    private let identityKey = "wasla.server.identity"
-    private let pendingKey = "wasla.pending.image"
-    private let lastImageKey = "wasla.last.image"
-    let bundledIdentity = BundledConnection.load()
 
-    var paired: Bool { identity != nil && client != nil }
-    var computerBusy: Bool { imagePreparing || imageBusy || imageSubmitting || mohassanBusy || status?.busy.isBusy == true }
-    var connected: Bool { paired && status != nil }
+    // The chat. Logic in Mohassan.swift.
+    @Published var chatList: [ChatSummary] = []
+    @Published var conversation: ChatConversation?
+    @Published var capabilities: ChatCapabilities?
+    /// The server runs a resent request once when it carries the same key (`requestKeys` in the list).
+    @Published var requestKeys = false
+    @Published var draft = ""
+    @Published var sending = false
+    /// The one changing request whose outcome is not settled yet; nothing new is sent until it is.
+    @Published var pending: PendingRequest?
+    @Published var attachments: [ChatAttachment] = []
+    @Published var uploading = false
+    @Published var imagesAvailable = false
+    @Published var secureBusy = false
+    @Published var images: [String: UIImage] = [:]
+    var watchTask: Task<Void, Never>?
+    var watchID = 0
+    var chatEpoch = 0
+
+    // Windows remote control. Logic below.
+    @Published private(set) var windows: WindowsOverview?
+    @Published private(set) var windowsProblem: String?
+    @Published private(set) var remoteDeviceID: String?
+    /// The owner's switch: while on and the app is open, this session keeps a control grant.
+    @Published private(set) var remoteWanted = false
+    @Published private(set) var remoteBusy = false
+    @Published private(set) var remoteFrame: UIImage?
+    @Published private(set) var remoteFrameAt: Date?
+    @Published var remoteNote: String?
+    @Published private(set) var pairing: WindowsPairing?
+    private var remoteFrameID: String?
+    private var remoteGrantID: String?
+    private var remoteScreenShown = false
+    private var renewTask: Task<Void, Never>?
+    private var frameTask: Task<Void, Never>?
+    private var pairingTask: Task<Void, Never>?
+
+    private let defaults = UserDefaults.standard
+    private let emailKey = "mohassan.account.email"
+
+    var signedIn: Bool { account == .signedIn }
 
     func start() async {
-        defer { isLoading = false }
+        // The app's earlier version talked to the PC directly; its pairing and saved requests mean nothing now.
+        await SessionVault.shared.forgetLegacyPairing()
+        for key in ["wasla.server.identity", "wasla.pending.image", "wasla.last.image", "wasla.mohassan.request"] { defaults.removeObject(forKey: key) }
         do {
-            guard let data = defaults.data(forKey: identityKey), let saved = try? JSONDecoder().decode(ServerIdentity.self, from: data) else { return }
-            let checked = try ServerIdentity.validate(address: saved.baseURL.absoluteString, fingerprint: saved.fingerprint, deviceID: saved.deviceID, name: saved.name)
-            guard let token = try await TokenVault.shared.read(), Self.validToken(token) else { return }
-            identity = checked
-            client = APIClient(identity: checked, token: token)
-            if let id = defaults.string(forKey: pendingKey), UUID(uuidString: id) != nil {
-                pendingImageID = id
-                imageStatus = "يوجد طلب سابق. استعد حالته دون إعادة إرساله."
-            }
-            restoreMohassanRequest()
-            // The app opens at once from what the phone already knows; the computer is
-            // checked in the background. Before this, an unreachable computer kept the
-            // launch screen spinning for the full network timeout.
-            isLoading = false
-            await refreshStatus()
-            // A request left unconfirmed by the last session is checked (a read), never sent again.
-            if mohassanRequest != nil { Task { await checkMohassanRequest(automatic: true) } }
-            if pendingImageID != nil { resumeImage() }
-            else if let id = defaults.string(forKey: lastImageKey), UUID(uuidString: id) != nil, let client {
-                do { lastImage = try await loadImage(id: id, client: client) }
-                catch { imageStatus = "تعذّر تحميل الصورة السابقة. يمكنك إنشاء طلب جديد." }
-            }
-        } catch { show(error) }
-    }
-    static func validToken(_ token: String) -> Bool {
-        token.utf8.count >= 32 && token.utf8.count <= 4096 && !token.unicodeScalars.contains { CharacterSet.whitespacesAndNewlines.union(.controlCharacters).contains($0) }
-    }
-    func pair(address: String, fingerprint: String, code: String) async {
-        guard !isPairing else { return }
-        isPairing = true
-        defer { isPairing = false }
-        do {
-            let checked = try ServerIdentity.validate(address: address, fingerprint: fingerprint)
-            let pairingCode = PairingCode.normalized(code)
-            guard PairingCode.isValid(pairingCode) else { throw WaslaError.invalidPairingCode }
-            let deviceName = String(UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
-            let pairing = APIClient(identity: checked)
-            let response: PairResponse = try await pairing.post("/v1/pair", body: PairRequest(code: pairingCode, device_name: deviceName.isEmpty ? "iPhone" : deviceName))
-            guard Self.validToken(response.token) else { throw WaslaError.invalidResponse }
-            let saved = ServerIdentity(baseURL: checked.baseURL, fingerprint: checked.fingerprint, deviceID: response.device_id, name: response.name)
-            let authenticated = APIClient(identity: saved, token: response.token)
-            do { try await TokenVault.shared.save(response.token) }
-            catch { try? await authenticated.delete("/v1/session"); throw error }
-            defaults.set(try JSONEncoder().encode(saved), forKey: identityKey)
-            identity = saved; client = authenticated
-            await refreshStatus()
-        } catch { show(error) }
-    }
-    func refreshStatus() async {
-        guard let client, !isRefreshing else { return }
-        let epoch = sessionEpoch
-        isRefreshing = true
-        defer { isRefreshing = false }
-        do {
-            // A status read is short; a computer that does not answer in 15 s is shown as unreachable.
-            let fresh: ServerStatus = try await client.get("/v1/status", timeout: 15)
-            guard epoch == sessionEpoch else { return }
-            status = fresh
-            statusError = nil
-            lastStatusAt = Date()
-            await refreshMohassanLink()
-            updateConnection()
+            guard let cookie = try await SessionVault.shared.read() else { account = .signedOut; return }
+            client = CloudClient(origin: origin, cookie: cookie)
+            email = defaults.string(forKey: emailKey)
+            account = .signedIn
+            restorePending()
+            await loadChatList()
+            guard signedIn else { return }
+            resumePending()
+            Task { await self.loadWindows() }
+            Task { await self.checkImages() }
         } catch {
-            guard epoch == sessionEpoch else { return }
-            status = nil
-            statusError = Self.classify(error)
-            updateConnection()
-            // The state banner already says what happened; an alert would only repeat it.
-            if case .trustRevoked = connection { return }
-            if case .unreachable = connection { return }
+            account = .signedOut
             show(error)
         }
     }
-    /// The seven-state summary the screens show, from the last two reads.
-    func updateConnection() {
-        connection = ConnectionState.derive(status: status, statusError: statusError, link: mohassanLink)
+
+    func signIn(email typed: String, password: String) async {
+        let address = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !signingIn, !address.isEmpty, !password.isEmpty else { return }
+        signingIn = true
+        defer { signingIn = false }
+        do {
+            let (cookie, reply) = try await CloudClient(origin: origin, cookie: nil).signIn(email: address, password: password)
+            try await SessionVault.shared.save(cookie)
+            sessionEpoch += 1
+            client = CloudClient(origin: origin, cookie: cookie)
+            let shown = reply.user?.email ?? address
+            email = shown
+            defaults.set(shown, forKey: emailKey)
+            account = .signedIn
+            await loadChatList()
+            guard signedIn else { return }
+            Task { await self.loadWindows() }
+            Task { await self.checkImages() }
+        } catch { show(error) }
     }
-    /// Names the failure the way the state needs it: certificate, revoked trust, or the network.
-    nonisolated static func classify(_ error: Error) -> WaslaError {
-        if let failure = error as? WaslaError { return failure }
-        if let urlError = error as? URLError {
-            if [.serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .secureConnectionFailed].contains(urlError.code) { return .certificate }
-            return .message(urlError.localizedDescription)
-        }
-        return .message(error.localizedDescription)
+
+    /// Ends the session here and on the server; the server also ends this session's Windows grants.
+    func signOut() async {
+        let old = client
+        endSession()
+        await old?.signOut()
     }
-    func revokePairing() async {
-        guard let client else { return }
-        stopDesktop()
-        do { try await client.delete("/v1/session"); try await clearPairing() }
-        catch { show(error) }
+
+    /// The server no longer knows this session (it expired, or was ended elsewhere).
+    func signedOutByServer() {
+        guard account == .signedIn else { return }
+        endSession()
+        errorMessage = WaslaError.signedOut.localizedDescription
     }
-    func forgetPairing() async {
-        do { try await clearPairing() } catch { show(error) }
-    }
-    private func clearPairing() async throws {
-        stopDesktop()
-        imageTask?.cancel()
+
+    private func endSession() {
         sessionEpoch += 1
-        try await TokenVault.shared.delete()
-        defaults.removeObject(forKey: identityKey)
-        defaults.removeObject(forKey: pendingKey)
-        defaults.removeObject(forKey: lastImageKey)
-        client = nil; identity = nil; status = nil; statusError = nil; lastStatusAt = nil; connection = .checking
-        pendingImageID = nil; lastImage = nil; preparedImage = nil; searchResponse = nil
-        imageBusy = false; imageSubmitting = false; imagePreparing = false; selectedTab = 0
-        resetMohassan()
+        chatEpoch += 1
+        stopWatching()
+        stopRemoteTasks()
+        pairingTask?.cancel(); pairingTask = nil
+        client = nil
+        account = .signedOut
+        conversation = nil; chatList = []; capabilities = nil; requestKeys = false
+        pending = nil; savePending(); sending = false; secureBusy = false
+        attachments = []; uploading = false; images = [:]; draft = ""
+        windows = nil; windowsProblem = nil; remoteWanted = false; remoteBusy = false; remoteDeviceID = nil
+        remoteFrame = nil; remoteFrameAt = nil; remoteFrameID = nil; remoteGrantID = nil; remoteNote = nil; pairing = nil
+        defaults.removeObject(forKey: emailKey)
+        email = nil
+        Task { try? await SessionVault.shared.delete() }
     }
-    func prepareImage(description: String, style: String) async {
-        guard let client, !computerBusy, pendingImageID == nil else { return }
-        let clean = description.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !clean.isEmpty else { return }
-        imagePreparing = true
-        let epoch = sessionEpoch
-        defer { imagePreparing = false }
-        do {
-            let prepared: PreparedImage = try await client.post("/v1/images/prepare", body: ImagePreparation(description: clean, style: style), timeout: 210)
-            guard epoch == sessionEpoch else { return }
-            preparedImage = prepared
-        } catch { if epoch == sessionEpoch { show(error) } }
-    }
-    func generateImage(_ prepared: PreparedImage) async {
-        guard let client, !imageBusy, pendingImageID == nil else { return }
-        preparedImage = nil
-        let id = UUID().uuidString.lowercased()
-        let request = ImageRequest(prompt: prepared.prompt, negative_prompt: prepared.negative_prompt, seed: prepared.seed, request_id: id)
-        pendingImageID = id
-        defaults.set(id, forKey: pendingKey)
-        imageBusy = true
-        imageSubmitting = true
-        imageStatus = "جارٍ إرسال الطلب…"
-        let epoch = sessionEpoch
-        do {
-            let _: ImageJob = try await client.post("/v1/images", body: request)
-            guard epoch == sessionEpoch else { return }
-            imageSubmitting = false
-            resumeImage()
-        } catch {
-            guard epoch == sessionEpoch else { return }
-            imageSubmitting = false
-            imageBusy = false
-            // A lost response is not proof that generation never started. Do not POST again.
-            imageStatus = "لم يتأكد استلام الطلب. تحقّق من حالته؛ لن يُعاد إرساله تلقائيًا."
-            show(error)
-        }
-    }
-    func resumeImage() {
-        guard !imageSubmitting, let id = pendingImageID, UUID(uuidString: id) != nil, let client, foreground else { return }
-        imageTask?.cancel()
-        imageBusy = true
-        let epoch = sessionEpoch
-        imageTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                while !Task.isCancelled {
-                    let job: ImageJob = try await client.get("/v1/images/\(id)")
-                    guard !Task.isCancelled, epoch == self.sessionEpoch else { return }
-                    switch job.status {
-                    case "queued": self.imageStatus = "الطلب في الانتظار."
-                    case "running": self.imageStatus = "الجهاز ينشئ الصورة. ستعود المحادثة بعد اكتمالها."
-                    case "completed":
-                        let image = try await self.loadImage(id: id, client: client)
-                        guard !Task.isCancelled, epoch == self.sessionEpoch else { return }
-                        self.lastImage = image
-                        self.defaults.set(id, forKey: self.lastImageKey)
-                        self.finishImage("اكتمل إنشاء الصورة على الكمبيوتر.")
-                        await self.refreshStatus()
-                        return
-                    case "failed":
-                        self.finishImage("فشل الطلب. لم تتم إعادة المحاولة تلقائيًا.")
-                        self.errorMessage = job.error ?? "تعذّر إنشاء الصورة."
-                        await self.refreshStatus()
-                        return
-                    default: throw WaslaError.invalidResponse
-                    }
-                    try await Task.sleep(for: .seconds(2))
-                }
-            } catch {
-                guard !Task.isCancelled, epoch == self.sessionEpoch else { return }
-                self.imageBusy = false
-                if let failure = error as? WaslaError, case .server(404, _, _) = failure {
-                    self.finishImage("الكمبيوتر لا يعرف هذا الطلب. لم نُعِد إرساله. يمكنك إنشاء طلب جديد.")
-                } else {
-                    self.imageStatus = "توقفت متابعة الطلب. تحقّق من حالته عند عودة الاتصال."
-                    self.show(error)
-                }
-            }
-        }
-    }
-    private func finishImage(_ message: String) {
-        imageBusy = false; pendingImageID = nil; imageStatus = message
-        defaults.removeObject(forKey: pendingKey)
-    }
-    private func loadImage(id: String, client: APIClient) async throws -> UIImage {
-        guard UUID(uuidString: id) != nil else { throw WaslaError.invalidResponse }
-        let data = try await client.data(path: "/v1/images/\(id)/content")
-        guard let image = UIImage(data: data) else { throw WaslaError.invalidResponse }
-        return image
-    }
-    func search(_ text: String) async {
-        guard let client, !searchBusy else { return }
-        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return }
-        let epoch = sessionEpoch
-        searchBusy = true
-        defer { searchBusy = false }
-        do {
-            let result: SearchResponse = try await client.post("/v1/search", body: SearchRequest(query: query))
-            guard epoch == sessionEpoch else { return }
-            searchResponse = result
-        } catch { if epoch == sessionEpoch { show(error) } }
-    }
-    func startDesktop() async {
-        guard let client, foreground, !desktopStarting, desktopSession == nil else { return }
-        guard status?.desktop_enabled == true else { errorMessage = "فعّل التحكم بسطح المكتب من الكمبيوتر أولًا."; return }
-        desktopStarting = true
-        desktopEpoch += 1
-        let epoch = desktopEpoch
-        defer { desktopStarting = false }
-        do {
-            let opened: DesktopSession = try await client.post("/v1/desktop/session", body: EmptyBody(), timeout: 10)
-            guard foreground, epoch == desktopEpoch else { try? await client.delete("/v1/desktop/session", desktopSession: opened.session_id); return }
-            // Synchronize the real pointer before controls can be displayed or clicked.
-            do {
-                let _: EmptyResponse = try await client.post("/v1/desktop/input", body: DesktopCommand(action: "move", x: Double(pointer.x), y: Double(pointer.y)), desktopSession: opened.session_id, timeout: 10)
-            } catch {
-                try? await client.delete("/v1/desktop/session", desktopSession: opened.session_id)
-                throw error
-            }
-            guard foreground, epoch == desktopEpoch else { try? await client.delete("/v1/desktop/session", desktopSession: opened.session_id); return }
-            desktopSession = opened
-            desktopMessage = "جارٍ تحميل الشاشة…"
-            frameTask = Task { [weak self] in
-                guard let self else { return }
-                var busyRetries = 0
-                do {
-                    while !Task.isCancelled, self.foreground, epoch == self.desktopEpoch {
-                        guard Date().timeIntervalSince1970 < opened.expires_at else { throw WaslaError.message("انتهت جلسة التحكم. ابدأ جلسة جديدة عند الحاجة.") }
-                        let data: Data
-                        do {
-                            data = try await client.data(path: "/v1/desktop/frame", desktopSession: opened.session_id, timeout: 10)
-                            busyRetries = 0
-                        } catch let failure as WaslaError {
-                            if case .server(429, _, _) = failure, busyRetries < 12 {
-                                busyRetries += 1
-                                self.desktopMessage = "عرض الشاشة ينتظر اكتمال الإدخال…"
-                                try await Task.sleep(for: .milliseconds(min(2_000, busyRetries * 250)))
-                                continue
-                            }
-                            throw failure
-                        }
-                        guard !Task.isCancelled, epoch == self.desktopEpoch else { return }
-                        guard let image = UIImage(data: data) else { throw WaslaError.invalidResponse }
-                        self.desktopFrame = image; self.frameTime = Date()
-                        self.desktopMessage = "جلسة تحكم نشطة"
-                        try await Task.sleep(for: .milliseconds(500))
-                    }
-                } catch {
-                    guard !Task.isCancelled, epoch == self.desktopEpoch else { return }
-                    self.stopDesktop()
-                    self.desktopMessage = "توقف عرض الشاشة."
-                    self.show(error)
-                }
-            }
-        } catch { if epoch == desktopEpoch { show(error) } }
-    }
-    func stopDesktop() {
-        desktopEpoch += 1
-        let endingEpoch = desktopEpoch
-        frameTask?.cancel(); frameTask = nil
-        inputTask?.cancel(); inputTask = nil
-        inputQueue.removeAll()
-        let oldSession = desktopSession
-        desktopSession = nil; desktopFrame = nil; frameTime = nil
-        desktopMessage = "انتهت جلسة التحكم."
-        if let oldSession, let client {
-            Task {
-                do { try await client.delete("/v1/desktop/session", desktopSession: oldSession.session_id) }
-                catch {
-                    if endingEpoch == self.desktopEpoch, self.desktopSession == nil {
-                        self.desktopMessage = "توقف التحكم على الهاتف؛ لم يتأكد إنهاء الجلسة على الكمبيوتر. تنتهي الجلسة تلقائيًا."
-                    }
-                }
-            }
-        }
-    }
-    func movePointer(dx: CGFloat, dy: CGFloat) {
-        pointer.x = min(1, max(0, pointer.x + dx))
-        pointer.y = min(1, max(0, pointer.y + dy))
-        enqueue(DesktopCommand(action: "move", x: Double(pointer.x), y: Double(pointer.y)))
-    }
-    func enqueue(_ command: DesktopCommand) {
-        guard foreground, let active = desktopSession, let client else { return }
-        if command.action == "move", inputQueue.last?.action == "move" { inputQueue[inputQueue.count - 1] = command }
-        else if inputQueue.count < 30 { inputQueue.append(command) }
-        guard inputTask == nil else { return }
-        let epoch = desktopEpoch
-        inputTask = Task { [weak self] in
-            guard let self else { return }
-            defer { if epoch == self.desktopEpoch { self.inputTask = nil } }
-            do {
-                while !Task.isCancelled, self.foreground, epoch == self.desktopEpoch, !self.inputQueue.isEmpty {
-                    let item = self.inputQueue.removeFirst()
-                    let _: EmptyResponse = try await client.post("/v1/desktop/input", body: item, desktopSession: active.session_id, timeout: 10)
-                    // Pace the entire command stream to at most ten requests/second.
-                    try await Task.sleep(for: .milliseconds(100))
-                }
-            } catch {
-                guard !Task.isCancelled, epoch == self.desktopEpoch else { return }
-                self.stopDesktop(); self.show(error)
-            }
-        }
-    }
+
     func sceneChanged(active: Bool) {
         foreground = active
-        mohassanSceneChanged(active: active)
-        if !active {
-            stopDesktop()
-            imageTask?.cancel(); imageTask = nil
-            if pendingImageID != nil { imageBusy = false; imageStatus = "سنتابع حالة الطلب عند عودتك؛ لن نعيد إنشاؤه." }
-        } else {
-            Task { await refreshStatus() }
-            if pendingImageID != nil { resumeImage() }
-        }
+        guard signedIn else { return }
+        chatSceneChanged(active: active)
+        remoteSceneChanged(active: active)
     }
+
     func show(_ error: Error) {
         if error is CancellationError { return }
-        if let urlError = error as? URLError, urlError.code == .cancelled { return }
-        if let urlError = error as? URLError, [.serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .secureConnectionFailed].contains(urlError.code) {
-            errorMessage = WaslaError.certificate.localizedDescription
-        } else if let urlError = error as? URLError, [.notConnectedToInternet, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost, .timedOut, .dnsLookupFailed].contains(urlError.code) {
-            errorMessage = "تعذّر الوصول إلى الكمبيوتر. شغّل خدمة موحسن وTailscale على الكمبيوتر، وتأكد من اتصال Tailscale على الهاتف."
-        } else { errorMessage = error.localizedDescription }
+        if let failure = error as? URLError {
+            if failure.code == .cancelled { return }
+            if [.notConnectedToInternet, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost, .timedOut, .dnsLookupFailed].contains(failure.code) {
+                errorMessage = "تعذّر الوصول إلى الخادم. تحقق من اتصال الهاتف بالإنترنت."
+                return
+            }
+        }
+        if let failure = error as? WaslaError, case .signedOut = failure { signedOutByServer(); return }
+        errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+}
+
+// MARK: - Windows remote control
+// The PC's companion decides what may be seen and controlled (its local permission); this session asks the server for
+// a short grant on top of it. On: a 120 s control grant, renewed while the switch is on and the app is open. Off: a
+// 30 s view-only grant replaces it, so control ends at once and the PC's permission stays for next time. STOP ends
+// everything on the PC, which then needs a new local permission.
+
+extension WaslaStore {
+    var remote: RemoteReadiness? { windows.map { RemoteReadiness.of($0, preferred: remoteDeviceID) } }
+
+    func loadWindows() async {
+        guard let client else { return }
+        let epoch = sessionEpoch
+        do {
+            let overview: WindowsOverview = try await client.get("/api/windows", timeout: 15)
+            guard epoch == sessionEpoch else { return }
+            windows = overview
+            windowsProblem = nil
+            if let device = RemoteReadiness.device(in: overview, preferred: remoteDeviceID) { remoteDeviceID = device.id }
+            if pairing != nil, overview.devices.contains(where: { !$0.revoked && $0.online }) { pairing = nil }
+        } catch {
+            guard epoch == sessionEpoch else { return }
+            if let failure = error as? WaslaError {
+                switch failure {
+                case .signedOut: signedOutByServer(); return
+                case .server(403, let message, _):
+                    windows = nil
+                    windowsProblem = message
+                    return
+                case .server(404, _, _):
+                    windows = nil
+                    windowsProblem = "هذا الخادم لا يعرف التحكم بـ Windows."
+                    return
+                default: break
+                }
+            }
+            windowsProblem = (error as? LocalizedError)?.errorDescription ?? "تعذّر قراءة حالة الكمبيوتر."
+        }
+    }
+
+    /// The owner's switch.
+    func setRemote(_ on: Bool) {
+        guard !remoteBusy, signedIn else { return }
+        remoteNote = nil
+        Task { if on { await self.turnRemoteOn() } else { await self.turnRemoteOff() } }
+    }
+
+    private func turnRemoteOn() async {
+        guard let client else { return }
+        remoteBusy = true
+        defer { remoteBusy = false }
+        await loadWindows()
+        guard let overview = windows else { return }
+        let readiness = RemoteReadiness.of(overview, preferred: remoteDeviceID)
+        switch readiness {
+        case .active(let device, _):
+            remoteDeviceID = device.id
+            remoteWanted = true
+            keepRemoteGrant()
+            startFrames()
+        case .ready(let device):
+            do {
+                _ = try await requestGrant(device, scope: "control", seconds: 120, client: client)
+                remoteDeviceID = device.id
+                remoteWanted = true
+                keepRemoteGrant()
+                startFrames()
+                await loadWindows()
+            } catch { remoteFailed(error) }
+        default:
+            remoteWanted = false
+            remoteNote = readiness.title + ". " + readiness.advice
+        }
+    }
+
+    private func turnRemoteOff() async {
+        remoteWanted = false
+        stopRemoteTasks()
+        remoteFrame = nil; remoteFrameID = nil; remoteGrantID = nil
+        guard let client else { return }
+        remoteBusy = true
+        defer { remoteBusy = false }
+        await loadWindows()
+        guard let overview = windows, case .active(let device, _) = RemoteReadiness.of(overview, preferred: remoteDeviceID) else { return }
+        // A short view-only grant replaces this session's control grant: input stops now.
+        do {
+            _ = try await requestGrant(device, scope: "view", seconds: 30, client: client)
+            remoteNote = "أُلغي التحكم. تنتهي المشاهدة أيضًا خلال ٣٠ ثانية."
+        } catch {
+            remoteNote = "تعذّر إلغاء الإذن الآن؛ ينتهي وحده خلال دقيقتين. «إيقاف كامل» يوقفه فورًا."
+        }
+        await loadWindows()
+    }
+
+    /// STOP: ends every grant on the PC at once. The PC needs a new local permission afterwards.
+    func stopRemoteCompletely() async {
+        guard let client, let id = remoteDeviceID, UUID(uuidString: id) != nil else { return }
+        remoteWanted = false
+        stopRemoteTasks()
+        remoteFrame = nil; remoteFrameID = nil; remoteGrantID = nil
+        remoteBusy = true
+        defer { remoteBusy = false }
+        do {
+            let _: OkReply = try await client.post("/api/windows/devices/\(id)/stop", body: EmptyBody(), timeout: 15)
+            remoteNote = "أُوقف كل شيء على الكمبيوتر. للتحكم من جديد اسمح مرة أخرى في Mohassan Companion."
+        } catch { show(error) }
+        await loadWindows()
+    }
+
+    /// A one-use code (two minutes) to paste into Mohassan Companion on the PC.
+    func pairWindows() async {
+        guard let client, !remoteBusy else { return }
+        remoteBusy = true
+        defer { remoteBusy = false }
+        do {
+            let code: WindowsPairing = try await client.post("/api/windows/pairing", body: EmptyBody(), timeout: 15)
+            pairing = code
+            watchPairing()
+        } catch { show(error) }
+    }
+
+    /// While a code is shown, looks every three seconds for the PC that used it.
+    private func watchPairing() {
+        pairingTask?.cancel()
+        let epoch = sessionEpoch
+        pairingTask = Task {
+            while !Task.isCancelled, self.pairing != nil, epoch == self.sessionEpoch {
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                guard !Task.isCancelled, self.foreground else { continue }
+                await self.loadWindows()
+                if let pairing = self.pairing, let expiry = WindowsClock.date(pairing.expiresAt), expiry < Date() { self.pairing = nil }
+            }
+        }
+    }
+
+    private func requestGrant(_ device: WindowsDevice, scope: String, seconds: Int, client: CloudClient) async throws -> WindowsGrant {
+        guard UUID(uuidString: device.id) != nil, let state = device.state, let target = state.target else {
+            throw WaslaError.message("اختر نافذة واسمح بها في Mohassan Companion على الكمبيوتر أولًا.")
+        }
+        let body = WindowsGrantRequest(scope: scope, durationSeconds: seconds, targetKey: target.key, approvalNonce: state.approvalNonce)
+        return try await client.post("/api/windows/devices/\(device.id)/grants", body: body, timeout: 15)
+    }
+
+    private func remoteFailed(_ error: Error) {
+        remoteWanted = false
+        stopRemoteTasks()
+        if let failure = error as? WaslaError, case .signedOut = failure { signedOutByServer(); return }
+        remoteNote = (error as? LocalizedError)?.errorDescription ?? "تعذّر تفعيل التحكم."
+    }
+
+    /// Keeps a control grant while the switch is on and the app is open: renews it when under 35 s remain, takes a
+    /// new one when it lapsed while the app was away, and turns the switch off when the PC no longer allows it.
+    private func keepRemoteGrant() {
+        renewTask?.cancel()
+        guard remoteWanted, foreground else { return }
+        let epoch = sessionEpoch
+        renewTask = Task {
+            var first = true
+            while !Task.isCancelled {
+                if !first { do { try await Task.sleep(for: .seconds(15)) } catch { return } }
+                first = false
+                guard !Task.isCancelled, self.remoteWanted, self.foreground, epoch == self.sessionEpoch, let client = self.client else { return }
+                await self.loadWindows()
+                guard !Task.isCancelled, self.remoteWanted, let overview = self.windows else { continue }
+                let readiness = RemoteReadiness.of(overview, preferred: self.remoteDeviceID)
+                switch readiness {
+                case .active(let device, let grant):
+                    if let expiry = grant.expiry, expiry.timeIntervalSinceNow > 35 { continue }
+                    do { _ = try await self.requestGrant(device, scope: "control", seconds: 120, client: client) } catch { self.remoteNote = (error as? LocalizedError)?.errorDescription }
+                case .ready(let device):
+                    do { _ = try await self.requestGrant(device, scope: "control", seconds: 120, client: client) } catch { self.remoteNote = (error as? LocalizedError)?.errorDescription }
+                default:
+                    self.remoteWanted = false
+                    self.remoteNote = readiness.title + ". " + readiness.advice
+                    self.frameTask?.cancel(); self.frameTask = nil
+                    self.remoteFrame = nil; self.remoteFrameID = nil
+                    return
+                }
+            }
+        }
+    }
+
+    func remoteScreenOpened() {
+        remoteScreenShown = true
+        startFrames()
+    }
+
+    func remoteScreenClosed() {
+        remoteScreenShown = false
+        frameTask?.cancel(); frameTask = nil
+    }
+
+    /// Reads the PC's latest frame about once a second while the remote screen is open.
+    private func startFrames() {
+        frameTask?.cancel()
+        guard remoteScreenShown, remoteWanted, foreground, let client, let id = remoteDeviceID, UUID(uuidString: id) != nil else { return }
+        let epoch = sessionEpoch
+        frameTask = Task {
+            var misses = 0
+            while !Task.isCancelled, self.remoteScreenShown, self.foreground, epoch == self.sessionEpoch {
+                do {
+                    let reply: WindowsFrameReply = try await client.get("/api/windows/devices/\(id)/frame", timeout: 10)
+                    guard !Task.isCancelled, epoch == self.sessionEpoch else { return }
+                    if let data = reply.frame.imageData, let image = UIImage(data: data) {
+                        self.remoteFrame = image
+                        self.remoteFrameID = reply.frame.id
+                        self.remoteGrantID = reply.grant.id
+                        self.remoteFrameAt = Date()
+                        misses = 0
+                    }
+                } catch {
+                    if Task.isCancelled { return }
+                    if let failure = error as? WaslaError, case .signedOut = failure { self.signedOutByServer(); return }
+                    misses += 1
+                    if misses == 3 {
+                        self.remoteFrame = nil
+                        self.remoteFrameID = nil
+                        self.remoteNote = "لا تصل صورة حديثة من الكمبيوتر الآن."
+                    }
+                }
+                do { try await Task.sleep(for: .milliseconds(900)) } catch { return }
+            }
+        }
+    }
+
+    /// One input on the allowed window, tied to the frame on screen. The server refuses it when that frame is stale.
+    func remoteAct(_ action: WindowsAction) {
+        guard remoteWanted, let client, let id = remoteDeviceID, UUID(uuidString: id) != nil,
+              let frameID = remoteFrameID, let grantID = remoteGrantID else {
+            remoteNote = "انتظر صورة حديثة من الكمبيوتر قبل الإدخال."
+            return
+        }
+        if case .text(let value) = action, !WindowsAction.textFits(value) {
+            remoteNote = "النص من حرف إلى ١٢٠ حرفًا، دون أسطر جديدة."
+            return
+        }
+        let epoch = sessionEpoch
+        let request = WindowsActionRequest(grantId: grantID, nonce: UUID().uuidString.lowercased(), frameId: frameID, action: action)
+        Task {
+            do {
+                let _: WindowsActionReply = try await client.post("/api/windows/devices/\(id)/actions", body: request, timeout: 10)
+            } catch {
+                guard epoch == self.sessionEpoch else { return }
+                if let failure = error as? WaslaError, case .server(_, let message, let code) = failure,
+                   code == "WINDOWS_FRESH_SCREEN_REQUIRED" || code == "WINDOWS_CONTROL_DENIED" {
+                    self.remoteNote = message
+                    return
+                }
+                self.show(error)
+            }
+        }
+    }
+
+    func remoteSceneChanged(active: Bool) {
+        if active {
+            Task {
+                await self.loadWindows()
+                if self.remoteWanted {
+                    self.keepRemoteGrant()
+                    self.startFrames()
+                }
+                if self.pairing != nil { self.watchPairing() }
+            }
+        } else {
+            // Away from the app nothing is renewed: the grant lapses within two minutes.
+            stopRemoteTasks()
+            pairingTask?.cancel(); pairingTask = nil
+        }
+    }
+
+    func stopRemoteTasks() {
+        renewTask?.cancel(); renewTask = nil
+        frameTask?.cancel(); frameTask = nil
     }
 }

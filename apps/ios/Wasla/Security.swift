@@ -1,26 +1,31 @@
 import Foundation
 import Security
-import CryptoKit
 
-actor TokenVault {
-    static let shared = TokenVault()
-    private let service = "app.wasla.local-device"
-    private let account = "paired-device-token"
+/// The owner's session cookie, kept in the Keychain on this device only.
+actor SessionVault {
+    static let shared = SessionVault()
+    private let service = "app.mohassan.cloud-session"
+    private let account = "web-session"
     private var query: [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
     }
-    func read() throws -> String? {
+    func read() throws -> SessionCookie? {
         var request = query
         request[kSecReturnData as String] = true
         request[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
         let status = SecItemCopyMatching(request as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data, let token = String(data: data, encoding: .utf8) else { throw WaslaError.storage(status) }
-        return token
+        guard status == errSecSuccess, let data = result as? Data else { throw WaslaError.storage(status) }
+        guard let cookie = try? JSONDecoder().decode(SessionCookie.self, from: data), cookie.valid else {
+            try? delete()
+            return nil
+        }
+        return cookie
     }
-    func save(_ token: String) throws {
-        let attributes: [String: Any] = [kSecValueData as String: Data(token.utf8), kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
+    func save(_ cookie: SessionCookie) throws {
+        let data = try JSONEncoder().encode(cookie)
+        let attributes: [String: Any] = [kSecValueData as String: data, kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
         let updated = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if updated == errSecItemNotFound {
             let added = SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil)
@@ -31,174 +36,112 @@ actor TokenVault {
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw WaslaError.storage(status) }
     }
-}
-
-// Reads only the standard X.509 validity sequence. Unknown or malformed DER fails closed.
-// Explicit dates avoid relying on how a trust anchor's validity is treated by the OS.
-enum CertificateDates {
-    private struct Node { let tag: UInt8; let bytes: [UInt8] }
-    private struct Reader {
-        var bytes: [UInt8]
-        var offset = 0
-        mutating func next() throws -> Node {
-            guard offset + 2 <= bytes.count else { throw WaslaError.certificate }
-            let tag = bytes[offset]; offset += 1
-            let first = bytes[offset]; offset += 1
-            var length = Int(first)
-            if first & 0x80 != 0 {
-                let count = Int(first & 0x7f)
-                guard count > 0, count <= 4, offset + count <= bytes.count, bytes[offset] != 0 else { throw WaslaError.certificate }
-                length = 0
-                for _ in 0..<count { length = (length << 8) | Int(bytes[offset]); offset += 1 }
-                guard length >= 128 else { throw WaslaError.certificate }
-            }
-            guard length <= bytes.count - offset else { throw WaslaError.certificate }
-            let result = Node(tag: tag, bytes: Array(bytes[offset..<(offset + length)]))
-            offset += length
-            return result
-        }
-    }
-    private static func date(_ node: Node) throws -> Date {
-        guard let string = String(bytes: node.bytes, encoding: .ascii), string.last == "Z" else { throw WaslaError.certificate }
-        let isUTC = node.tag == 0x17
-        guard isUTC || node.tag == 0x18, string.count == (isUTC ? 13 : 15) else { throw WaslaError.certificate }
-        let digits = Array(string.dropLast())
-        guard digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { throw WaslaError.certificate }
-        func number(_ start: Int, _ length: Int) -> Int { Int(String(digits[start..<(start + length)])) ?? -1 }
-        let yearWidth = isUTC ? 2 : 4
-        var year = number(0, yearWidth)
-        if isUTC { year += year >= 50 ? 1900 : 2000 }
-        var parts = DateComponents()
-        parts.year = year; parts.month = number(yearWidth, 2); parts.day = number(yearWidth + 2, 2)
-        parts.hour = number(yearWidth + 4, 2); parts.minute = number(yearWidth + 6, 2); parts.second = number(yearWidth + 8, 2)
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        guard let value = calendar.date(from: parts) else { throw WaslaError.certificate }
-        let verified = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: value)
-        guard verified.year == parts.year, verified.month == parts.month, verified.day == parts.day,
-              verified.hour == parts.hour, verified.minute == parts.minute, verified.second == parts.second else { throw WaslaError.certificate }
-        return value
-    }
-    static func validNow(_ data: Data, now: Date = Date()) -> Bool {
-        do {
-            var certificate = Reader(bytes: Array(data))
-            let outer = try certificate.next()
-            guard outer.tag == 0x30, certificate.offset == certificate.bytes.count else { return false }
-            var outerReader = Reader(bytes: outer.bytes)
-            let tbs = try outerReader.next()
-            guard tbs.tag == 0x30 else { return false }
-            var fields = Reader(bytes: tbs.bytes)
-            var serial = try fields.next()
-            if serial.tag == 0xa0 { serial = try fields.next() }
-            guard serial.tag == 0x02, try fields.next().tag == 0x30, try fields.next().tag == 0x30 else { return false }
-            let validity = try fields.next()
-            guard validity.tag == 0x30 else { return false }
-            var dates = Reader(bytes: validity.bytes)
-            let before = try date(dates.next())
-            let after = try date(dates.next())
-            return dates.offset == dates.bytes.count && before <= now && now <= after && before < after
-        } catch { return false }
+    /// The pairing token of the app's earlier version, which talked to the PC directly: of no use now.
+    func forgetLegacyPairing() {
+        let legacy: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "app.wasla.local-device", kSecAttrAccount as String: "paired-device-token"]
+        _ = SecItemDelete(legacy as CFDictionary)
     }
 }
 
-final class PinnedSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate, @unchecked Sendable {
-    private let host: String
-    private let port: Int
-    private let fingerprint: String
-    init(identity: ServerIdentity) {
-        host = identity.baseURL.host!.lowercased()
-        port = identity.baseURL.port ?? 443
-        fingerprint = identity.fingerprint
-    }
-    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        authenticate(challenge, completionHandler: completionHandler)
-    }
-    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        authenticate(challenge, completionHandler: completionHandler)
-    }
-    private func authenticate(_ challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        let space = challenge.protectionSpace
-        guard space.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              space.host.lowercased() == host, space.port == port, challenge.previousFailureCount == 0,
-              let trust = space.serverTrust,
-              SecTrustSetNetworkFetchAllowed(trust, false) == errSecSuccess,
-              let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
-              let leaf = chain.first else { completionHandler(.cancelAuthenticationChallenge, nil); return }
-        let data = SecCertificateCopyData(leaf) as Data
-        let actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        guard actual == fingerprint, CertificateDates.validNow(data),
-              SecTrustSetPolicies(trust, SecPolicyCreateSSL(true, host as CFString)) == errSecSuccess,
-              SecTrustSetAnchorCertificates(trust, [leaf] as CFArray) == errSecSuccess,
-              SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess,
-              SecTrustSetNetworkFetchAllowed(trust, false) == errSecSuccess,
-              SecTrustSetVerifyDate(trust, Date() as CFDate) == errSecSuccess,
-              SecTrustEvaluateWithError(trust, nil) else { completionHandler(.cancelAuthenticationChallenge, nil); return }
-        completionHandler(.useCredential, URLCredential(trust: trust))
-    }
+/// Refuses every redirect: each call goes to the configured origin and nowhere else.
+final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         completionHandler(nil)
     }
 }
 
-final class APIClient: @unchecked Sendable {
-    let identity: ServerIdentity
-    private let token: String?
+/// Calls the cloud server through the web site, exactly as the web does: the site's Origin, the session cookie,
+/// JSON, and an Idempotency-Key on changing calls. The phone keeps no other state about the server.
+final class CloudClient: @unchecked Sendable {
+    let origin: URL
+    let cookie: SessionCookie?
     private let session: URLSession
-    init(identity: ServerIdentity, token: String? = nil) {
-        self.identity = identity; self.token = token
+    private let originHeader: String
+
+    struct Reply { let data: Data; let response: HTTPURLResponse }
+
+    init(origin: URL, cookie: SessionCookie?) {
+        self.origin = origin
+        self.cookie = cookie
+        originHeader = CloudDefaults.header(origin)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.urlCache = nil
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
         configuration.urlCredentialStorage = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.timeoutIntervalForRequest = 90
-        configuration.timeoutIntervalForResource = 240
+        configuration.timeoutIntervalForRequest = 60
+        configuration.timeoutIntervalForResource = 300
         configuration.tlsMinimumSupportedProtocolVersion = .TLSv12
-        session = URLSession(configuration: configuration, delegate: PinnedSessionDelegate(identity: identity), delegateQueue: nil)
+        session = URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
     }
     deinit { session.invalidateAndCancel() }
-    func data(path: String, method: String = "GET", body: Data? = nil, desktopSession: String? = nil, timeout: TimeInterval = 90) async throws -> Data {
-        guard path.hasPrefix("/v1/"), !path.contains(".."), !path.contains("//"), !path.contains("%"),
+
+    /// A path under /api on the configured origin; anything else is refused before a request is made.
+    func url(_ path: String, query: [URLQueryItem] = []) throws -> URL {
+        guard path.hasPrefix("/api/"), !path.contains(".."), !path.contains("//"), !path.contains("%"),
               !path.contains("?"), !path.contains("#"), !path.contains("\\"),
-              var components = URLComponents(url: identity.baseURL, resolvingAgainstBaseURL: false) else { throw WaslaError.invalidAddress }
+              path.unicodeScalars.allSatisfy({ $0.isASCII && !CharacterSet.whitespacesAndNewlines.contains($0) }),
+              var components = URLComponents(url: origin, resolvingAgainstBaseURL: false) else { throw WaslaError.invalidAddress }
         components.path = path
-        guard let url = components.url, url.host?.lowercased() == identity.baseURL.host?.lowercased(), url.scheme == "https", url.port == identity.baseURL.port else { throw WaslaError.invalidAddress }
-        var request = URLRequest(url: url)
+        components.queryItems = query.isEmpty ? nil : query
+        guard let url = components.url, url.scheme == "https", url.host?.lowercased() == origin.host?.lowercased() else { throw WaslaError.invalidAddress }
+        return url
+    }
+
+    func send(_ path: String, query: [URLQueryItem] = [], method: String = "GET", body: Data? = nil, key: String? = nil,
+              timeout: TimeInterval = 30, signedIn: Bool = true) async throws -> Reply {
+        let target = try url(path, query: query)
+        var request = URLRequest(url: target)
         request.httpMethod = method
         request.timeoutInterval = timeout
         request.httpBody = body
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(originHeader, forHTTPHeaderField: "Origin")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        if let desktopSession {
-            guard !desktopSession.isEmpty, desktopSession.utf8.count <= 512,
-                  !desktopSession.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.union(.controlCharacters).contains($0) }) else { throw WaslaError.invalidResponse }
-            request.setValue(desktopSession, forHTTPHeaderField: "X-Wasla-Session")
+        if signedIn, let cookie { request.setValue(cookie.header, forHTTPHeaderField: "Cookie") }
+        if let key {
+            guard PendingRequest.validKey(key) else { throw WaslaError.invalidResponse }
+            request.setValue(key, forHTTPHeaderField: "Idempotency-Key")
         }
-        let result: (Data, URLResponse)
-        do { result = try await session.data(for: request) }
-        catch let error as URLError where error.code == .cancelled && !Task.isCancelled {
-            // Rejecting an authentication challenge can surface as -999 rather than -1202.
-            throw WaslaError.certificate
-        }
-        let (data, response) = result
-        guard let http = response as? HTTPURLResponse, http.url?.host?.lowercased() == url.host?.lowercased(), http.url?.port == url.port, http.url?.scheme == "https", data.count <= 25 * 1024 * 1024 else { throw WaslaError.invalidResponse }
-        guard (200...299).contains(http.statusCode) else {
-            let fault = try? JSONDecoder().decode(ServerFault.self, from: data)
-            let fallback = (300...399).contains(http.statusCode) ? "رفض التطبيق إعادة توجيه الاتصال لحماية بيانات الاقتران." : "تعذّر إكمال الطلب (\(http.statusCode))."
-            throw WaslaError.server(http.statusCode, fault?.error.message ?? fallback, code: fault?.error.code)
-        }
-        return data
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.url?.host?.lowercased() == target.host?.lowercased(),
+              data.count <= 25 * 1024 * 1024 else { throw WaslaError.invalidResponse }
+        if http.statusCode == 401, signedIn, cookie != nil { throw WaslaError.signedOut }
+        guard (200...299).contains(http.statusCode) else { throw ServerFault.error(status: http.statusCode, data: data) }
+        return Reply(data: data, response: http)
     }
-    func get<Response: Decodable>(_ path: String, timeout: TimeInterval = 90) async throws -> Response {
-        try JSONDecoder().decode(Response.self, from: await data(path: path, timeout: timeout))
+
+    func get<Response: Decodable>(_ path: String, query: [URLQueryItem] = [], timeout: TimeInterval = 30) async throws -> Response {
+        let reply = try await send(path, query: query, timeout: timeout)
+        return try JSONDecoder().decode(Response.self, from: reply.data)
     }
-    func post<Body: Encodable, Response: Decodable>(_ path: String, body: Body, desktopSession: String? = nil, timeout: TimeInterval = 90) async throws -> Response {
+    func post<Body: Encodable, Response: Decodable>(_ path: String, body: Body, key: String? = nil, timeout: TimeInterval = 30) async throws -> Response {
         let encoded = try JSONEncoder().encode(body)
-        return try JSONDecoder().decode(Response.self, from: await data(path: path, method: "POST", body: encoded, desktopSession: desktopSession, timeout: timeout))
+        let reply = try await send(path, method: "POST", body: encoded, key: key, timeout: timeout)
+        return try JSONDecoder().decode(Response.self, from: reply.data)
     }
-    func delete(_ path: String, desktopSession: String? = nil) async throws {
-        _ = try await data(path: path, method: "DELETE", desktopSession: desktopSession, timeout: 10)
+    func delete(_ path: String) async throws {
+        _ = try await send(path, method: "DELETE", timeout: 20)
+    }
+
+    /// Signs in with the owner's account, as the web does, and returns the session cookie the server set.
+    func signIn(email: String, password: String) async throws -> (SessionCookie, SignInReply) {
+        let body = try JSONEncoder().encode(SignInBody(email: email, password: password, rememberMe: true))
+        let reply: Reply
+        do { reply = try await send("/api/auth/sign-in/email", method: "POST", body: body, timeout: 30, signedIn: false) }
+        catch let failure as WaslaError {
+            if case .server(401, _, _) = failure { throw WaslaError.invalidCredentials }
+            throw failure
+        }
+        let header = reply.response.value(forHTTPHeaderField: "Set-Cookie") ?? ""
+        guard let cookie = SessionCookie.from(setCookie: header) else { throw WaslaError.message("لم يُرسل الخادم مفتاح الجلسة. أعد المحاولة.") }
+        let user = (try? JSONDecoder().decode(SignInReply.self, from: reply.data)) ?? SignInReply(user: nil)
+        return (cookie, user)
+    }
+
+    /// Ends the session on the server; the server also revokes this session's Windows grants.
+    func signOut() async {
+        _ = try? await send("/api/auth/sign-out", method: "POST", body: Data("{}".utf8), timeout: 15)
     }
 }

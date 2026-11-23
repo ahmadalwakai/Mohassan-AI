@@ -97,10 +97,11 @@ struct ChipFlow: Layout {
         return rows
     }
 }
-// MARK: - The web chat layout, shared by the Mohassan chat and the local fallback chat.
 
-/// A thread that scrolls under a composer pinned above the keyboard. Sending clears
-/// focus, so the keyboard closes; dragging the thread closes it too.
+// MARK: - The web chat layout
+
+/// A thread that scrolls under a composer pinned above the keyboard. Sending clears focus, so the keyboard closes;
+/// dragging the thread closes it too. While Mohassan works, an empty box shows «stop» and a typed one shows «send».
 struct ChatScaffold<Thread: View>: View {
     @Binding var draft: String
     let placeholder: String
@@ -109,20 +110,28 @@ struct ChatScaffold<Thread: View>: View {
     let working: Bool
     let scrollKey: Int
     var showComposer = true
-    /// Why sending is off right now (the connection state); the draft stays in the box.
+    /// Why sending is off or what it does now; the draft stays in the box.
     var notice: String? = nil
+    /// Buttons before the text box (attach a photo).
+    var tools: AnyView? = nil
+    /// A row above the box (the photos waiting to go).
+    var tray: AnyView? = nil
     let onSend: () -> Bool
     var onStop: (() -> Void)? = nil
     let thread: Thread
     @FocusState private var focused: Bool
 
     init(draft: Binding<String>, placeholder: String, tooLong: Bool, canSend: Bool, working: Bool, scrollKey: Int, showComposer: Bool = true,
-         notice: String? = nil, onSend: @escaping () -> Bool, onStop: (() -> Void)? = nil, @ViewBuilder thread: () -> Thread) {
+         notice: String? = nil, tools: AnyView? = nil, tray: AnyView? = nil, onSend: @escaping () -> Bool, onStop: (() -> Void)? = nil,
+         @ViewBuilder thread: () -> Thread) {
         _draft = draft
         self.placeholder = placeholder; self.tooLong = tooLong; self.canSend = canSend; self.working = working
-        self.scrollKey = scrollKey; self.showComposer = showComposer; self.notice = notice; self.onSend = onSend; self.onStop = onStop
+        self.scrollKey = scrollKey; self.showComposer = showComposer; self.notice = notice; self.tools = tools; self.tray = tray
+        self.onSend = onSend; self.onStop = onStop
         self.thread = thread()
     }
+
+    private var empty: Bool { draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -147,17 +156,18 @@ struct ChatScaffold<Thread: View>: View {
     private var composer: some View {
         VStack(spacing: 6) {
             if let notice {
-                Label(notice, systemImage: "bolt.horizontal.circle").font(.footnote).foregroundStyle(Forest.alert)
+                Label(notice, systemImage: "info.circle").font(.footnote).foregroundStyle(Forest.softText)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 6)
-                    .accessibilityLabel("حالة الاتصال: \(notice)")
             }
+            if let tray { tray }
             HStack(alignment: .bottom, spacing: 8) {
+                if let tools { tools }
                 TextField(placeholder, text: $draft, axis: .vertical)
                     .lineLimit(1...6)
                     .focused($focused)
                     .submitLabel(.return)
                     .padding(.vertical, 7).padding(.horizontal, 6)
-                if working, let onStop {
+                if working, empty, let onStop {
                     Button(action: onStop) {
                         Image(systemName: "stop.fill").font(.footnote).frame(width: 36, height: 36)
                             .background(Forest.soft, in: RoundedRectangle(cornerRadius: 12)).foregroundStyle(Forest.ink)
@@ -186,10 +196,11 @@ struct ChatScaffold<Thread: View>: View {
     }
 }
 
-/// The web's welcome: the mark, one question, suggestion chips.
+/// The web's welcome: the mark, one question, suggestion chips, and what works without a language model.
 struct ChatWelcome: View {
     let title: String
     let suggestions: [String]
+    var note: String? = nil
     let pick: (String) -> Void
     var body: some View {
         VStack(spacing: 22) {
@@ -205,16 +216,22 @@ struct ChatWelcome: View {
                     }.buttonStyle(.plain)
                 }
             }
+            if let note {
+                Text(note).font(.footnote).foregroundStyle(Forest.softText).multilineTextAlignment(.center)
+                    .padding(.vertical, 10).padding(.horizontal, 14)
+                    .background(Forest.panel, in: RoundedRectangle(cornerRadius: 12))
+            }
         }
         .frame(maxWidth: .infinity).padding(.top, 72)
     }
 }
 
 /// A user turn: a soft bubble on the reading side. An assistant turn: the reply's Markdown, no bubble,
-/// with a copy button under it, as on the web.
+/// with copy and rating under it, as on the web.
 struct ChatTurn: View {
     let mine: Bool
     let text: String
+    var messageId: String? = nil
     var body: some View {
         if mine {
             HStack {
@@ -226,7 +243,13 @@ struct ChatTurn: View {
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 ReplyText(text: text)
-                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { CopyReplyButton(text: text) }
+                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    HStack(spacing: 16) {
+                        CopyReplyButton(text: text)
+                        if let messageId { FeedbackButtons(messageId: messageId) }
+                        Spacer(minLength: 0)
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -296,12 +319,39 @@ struct CopyReplyButton: View {
     }
 }
 
+/// The owner's judgement of one reply, as on the web: useful, wrong or incomplete.
+struct FeedbackButtons: View {
+    @EnvironmentObject private var store: WaslaStore
+    let messageId: String
+    @State private var sent = false
+    @State private var busy = false
+    var body: some View {
+        Menu {
+            Button("مفيد") { rate("useful") }
+            Button("خطأ") { rate("wrong") }
+            Button("ناقص") { rate("incomplete") }
+        } label: {
+            Label(sent ? "شكرًا" : "قيّم الرد", systemImage: sent ? "checkmark" : "hand.thumbsup").font(.caption)
+        }
+        .foregroundStyle(Forest.softText)
+        .disabled(busy || sent)
+        .accessibilityLabel(sent ? "أُرسل تقييمك" : "قيّم هذا الرد")
+    }
+    private func rate(_ verdict: String) {
+        busy = true
+        Task {
+            sent = await store.feedback(verdict, for: messageId)
+            busy = false
+        }
+    }
+}
+
 /// The web's working pill and its step list.
 struct WorkingSteps: View {
     let progress: String
     let steps: [String]
     @State private var open = false
-    /// When the pill appeared; the phone's messages carry no times, so the counter runs from here.
+    /// When the pill appeared; the counter runs from here.
     @State private var since = Date()
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -419,21 +469,20 @@ struct ShimmerText: View {
             .onAppear { withAnimation(.linear(duration: 2.4).repeatForever(autoreverses: false)) { sweep = true } }
     }
 }
+
+// MARK: - Screens
+
 struct RootView: View {
     @EnvironmentObject private var store: WaslaStore
     var body: some View {
         Group {
-            if store.isLoading { ProgressView("موحسن").frame(maxWidth: .infinity, maxHeight: .infinity).background(Forest.background) }
-            else if !store.paired { PairingView() }
-            else {
-                // Mohassan's chat is the first screen; the computer's other functions follow.
-                TabView(selection: $store.selectedTab) {
-                    AppScreen(scrolls: false) { MohassanChatView() }.tabItem { Label("موحسن", systemImage: "bubble.left.and.bubble.right") }.tag(0)
-                    AppScreen { ControlView() }.tabItem { Label("التحكم", systemImage: "slider.horizontal.3") }.tag(1)
-                    AppScreen { ImagesView() }.tabItem { Label("الصور", systemImage: "photo") }.tag(2)
-                    AppScreen { SearchView() }.tabItem { Label("البحث", systemImage: "globe") }.tag(3)
-                }
-                .onChange(of: store.selectedTab) { _, tab in if tab != 1 { store.stopDesktop() } }
+            switch store.account {
+            case .loading:
+                ProgressView("موحسن").frame(maxWidth: .infinity, maxHeight: .infinity).background(Forest.background)
+            case .signedOut:
+                SignInView()
+            case .signedIn:
+                ChatView()
             }
         }
         .alert("تعذّر إكمال الإجراء", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
@@ -441,348 +490,265 @@ struct RootView: View {
         } message: { Text(store.errorMessage ?? "") }
     }
 }
-struct AppScreen<Content: View>: View {
-    var scrolls = true
-    @ViewBuilder var content: Content
-    @State private var settings = false
-    var body: some View {
-        NavigationStack {
-            Group {
-                if scrolls {
-                    ScrollView { content.padding(20).frame(maxWidth: 700).frame(maxWidth: .infinity) }
-                        .scrollDismissesKeyboard(.interactively)
-                } else { content }
-            }
-            .background(Forest.background)
-            .navigationTitle("موحسن")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Forest.background, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("الإعدادات") }
-                ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("تم") { dismissKeyboard() } }
-            }
-            .sheet(isPresented: $settings) { SettingsView() }
-        }
-    }
-}
-struct PairingView: View {
-    private enum Field: Hashable { case code, address, fingerprint }
+
+/// Signing in with the owner's account on the cloud server, as on the web.
+struct SignInView: View {
+    private enum Field: Hashable { case email, password }
     @EnvironmentObject private var store: WaslaStore
-    @State private var address = ""
-    @State private var fingerprint = ""
-    @State private var code = ""
-    @State private var advanced = false
-    @State private var loadedDefaults = false
-    @FocusState private var focusedField: Field?
+    @State private var email = ""
+    @State private var password = ""
+    @FocusState private var focused: Field?
+    private var ready: Bool { !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !password.isEmpty && !store.signingIn }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    Image(systemName: "link").font(.system(size: 34, weight: .medium)).foregroundStyle(Forest.accent).padding(18).background(Forest.soft, in: RoundedRectangle(cornerRadius: 22))
-                    ScreenTitle(title: "رمز واحد، وتبدأ.", subtitle: "افتح خدمة موحسن على الكمبيوتر وأدخل رمز الربط الظاهر هناك.")
+                    Text("م").font(.system(size: 26, weight: .semibold)).frame(width: 56, height: 56)
+                        .background(Forest.accent, in: RoundedRectangle(cornerRadius: 16)).foregroundStyle(Forest.onAccent)
+                    ScreenTitle(title: "سجّل الدخول إلى موحسن", subtitle: "بحسابك نفسه على الويب. المحادثات والعقل والأسئلة والموافقات على الخادم، والهاتف نافذة إليها.")
                     Card {
-                        Label(store.bundledIdentity?.name ?? "الكمبيوتر", systemImage: "desktopcomputer").font(.headline)
-                        field("رمز الربط") {
-                            TextField("٨ أرقام", text: $code)
-                                .keyboardType(.numberPad).textContentType(.oneTimeCode)
+                        field("البريد الإلكتروني") {
+                            TextField("name@example.com", text: $email)
+                                .keyboardType(.emailAddress).textContentType(.username)
                                 .textInputAutocapitalization(.never).autocorrectionDisabled()
-                                .font(.title2.monospacedDigit()).environment(\.layoutDirection, .leftToRight)
-                                .focused($focusedField, equals: .code)
+                                .environment(\.layoutDirection, .leftToRight)
+                                .focused($focused, equals: .email)
+                                .submitLabel(.next)
+                                .onSubmit { focused = .password }
                         }
-                        Text("الرمز صالح لمرة واحدة. يُحفظ الربط للمرات القادمة.").font(.footnote).foregroundStyle(.secondary)
+                        field("كلمة المرور") {
+                            SecureField("", text: $password)
+                                .textContentType(.password)
+                                .environment(\.layoutDirection, .leftToRight)
+                                .focused($focused, equals: .password)
+                                .submitLabel(.go)
+                                .onSubmit { submit() }
+                        }
                     }
-                    Button {
-                        focusedField = nil
-                        let submittedAddress = address
-                        let submittedFingerprint = fingerprint
-                        let submittedCode = code
-                        Task { await store.pair(address: submittedAddress, fingerprint: submittedFingerprint, code: submittedCode); if store.paired { code = "" } }
-                    } label: {
-                        if store.isPairing { ProgressView().tint(Forest.onAccent) } else { Label("ربط الكمبيوتر", systemImage: "link") }
-                    }.buttonStyle(ForestButton()).disabled(store.isPairing || address.isEmpty || fingerprint.isEmpty || !PairingCode.isValid(code))
-                    Text("شغّل Tailscale على الهاتف والكمبيوتر، واترك خدمة موحسن تعمل على الكمبيوتر.").font(.footnote).foregroundStyle(.secondary)
-                    if store.bundledIdentity == nil {
-                        Text("إعداد الكمبيوتر غير متوفر في هذه النسخة. أدخله من «تغيير الكمبيوتر».").font(.footnote).foregroundStyle(.secondary)
+                    Button { submit() } label: {
+                        if store.signingIn { ProgressView().tint(Forest.onAccent) } else { Label("دخول", systemImage: "person.crop.circle.badge.checkmark") }
                     }
-                    DisclosureGroup("تغيير الكمبيوتر", isExpanded: $advanced) {
-                        VStack(alignment: .leading, spacing: 14) {
-                            Text(store.bundledIdentity == nil ? "انسخ عنوان الكمبيوتر وبصمته من لوحة خدمة موحسن." : "بيانات كمبيوترك مهيأة مسبقًا. غيّرها فقط للاتصال بكمبيوتر آخر أو بعد تغيير شهادته.").font(.footnote).foregroundStyle(.secondary)
-                            field("عنوان الكمبيوتر") { TextField("https://192.168.1.10:47621", text: $address).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled().environment(\.layoutDirection, .leftToRight).focused($focusedField, equals: .address) }
-                            field("بصمة الشهادة · SHA-256") { TextField("64 حرفًا كما تظهر على الكمبيوتر", text: $fingerprint, axis: .vertical).lineLimit(2...3).textInputAutocapitalization(.never).autocorrectionDisabled().font(.system(.caption, design: .monospaced)).environment(\.layoutDirection, .leftToRight).focused($focusedField, equals: .fingerprint) }
-                            Text("انسخ البصمة من شاشة الكمبيوتر الموثوقة. لن يُقبل اتصال بشهادة مختلفة.").font(.footnote).foregroundStyle(.secondary)
-                        }.padding(.top, 14)
-                    }.padding(18).background(Forest.surface, in: RoundedRectangle(cornerRadius: 18))
-                }.padding(24).frame(maxWidth: 620).frame(maxWidth: .infinity)
-                    .disabled(store.isPairing)
-            }.background(Forest.background).navigationTitle("موحسن").navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("تم") { focusedField = nil } }
+                    .buttonStyle(ForestButton()).disabled(!ready)
+                    Text(store.origin.host ?? "").font(.footnote).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center).environment(\.layoutDirection, .leftToRight)
                 }
-                .onAppear {
-                    guard !loadedDefaults else { return }
-                    loadedDefaults = true
-                    if let preset = store.bundledIdentity {
-                        address = preset.baseURL.absoluteString
-                        fingerprint = preset.fingerprint
-                    } else { advanced = true }
-                }
+                .padding(24).frame(maxWidth: 620).frame(maxWidth: .infinity)
+                .disabled(store.signingIn)
+            }
+            .background(Forest.background)
+            .navigationTitle("موحسن").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("تم") { focused = nil } } }
         }
     }
+
+    private func submit() {
+        guard ready else { return }
+        focused = nil
+        let address = email, secret = password
+        Task {
+            await store.signIn(email: address, password: secret)
+            if store.signedIn { password = "" }
+        }
+    }
+
     private func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) { Text(title).font(.subheadline.weight(.semibold)); content().padding(12).background(Forest.background, in: RoundedRectangle(cornerRadius: 12)) }
-    }
-}
-struct ControlView: View {
-    @EnvironmentObject private var store: WaslaStore
-    @State private var mode = 0
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            ScreenTitle(title: "جهازك. بين يديك.", subtitle: "مساعدك وسطح مكتبك، في مكان واحد.")
-            Card {
-                HStack(spacing: 14) {
-                    Image(systemName: "desktopcomputer").font(.title).foregroundStyle(Forest.accent)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(store.status?.name ?? store.identity?.name ?? "الكمبيوتر").font(.headline)
-                        Label(store.connection.title, systemImage: store.connection.canSend ? "checkmark.circle.fill" : "wifi.slash").font(.caption).foregroundStyle(store.connection.canSend ? Forest.accent : Forest.alert)
-                    }
-                    Spacer()
-                    Button { Task { await store.refreshStatus() } } label: { Image(systemName: "arrow.clockwise").frame(width: 44, height: 44) }.disabled(store.isRefreshing).accessibilityLabel("تحديث حالة الكمبيوتر")
-                }
-                if !store.connection.canSend, !store.connection.advice.isEmpty { Text(store.connection.advice).font(.footnote).foregroundStyle(.secondary) }
-                if let at = store.lastStatusAt { Text("آخر تحديث ناجح \(at.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(.secondary) }
-                if let status = store.status {
-                    Text(store.imageBusy ? store.imageStatus : status.busy.isBusy ? "الكمبيوتر ينفذ مهمة حاليًا" : "جاهز لمهمتك التالية").font(.subheadline)
-                }
-            }
-            Picker("وضع التحكم", selection: $mode) { Text("الوظائف").tag(0); Text("سطح المكتب").tag(1) }.pickerStyle(.segmented)
-                .onChange(of: mode) { _, value in if value != 1 { store.stopDesktop() } }
-            if mode == 0 {
-                Text("ماذا تريد أن تفعل؟").font(.headline)
-                shortcut("ابدأ محادثة", detail: store.connection.canSend ? "اطلب من موحسن ما تريد إنجازه" : store.connection.title, icon: "bubble.left.and.bubble.right", tab: 0)
-                shortcut("أنشئ صورة", detail: store.status?.unavailableReason({ $0.images }) ?? "راجع الوصف، ثم ابدأ الإنشاء", icon: "sparkles", tab: 2)
-                shortcut("ابحث في الإنترنت", detail: store.status?.unavailableReason({ $0.search }) ?? "نتائج وروابط المصادر", icon: "globe", tab: 3)
-                Text("المحادثة بعقل موحسن على الكمبيوتر. الصور والبحث والتحكم بسطح المكتب بحسب جاهزية الكمبيوتر، وتظهر هنا بأسبابها.").font(.footnote).foregroundStyle(.secondary)
-            } else { DesktopPanel() }
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.subheadline.weight(.semibold))
+            content().padding(12).background(Forest.background, in: RoundedRectangle(cornerRadius: 12))
         }
     }
-    private func shortcut(_ title: String, detail: String, icon: String, tab: Int) -> some View {
-        Button { store.selectedTab = tab } label: {
-            Card { HStack(spacing: 14) { Image(systemName: icon).font(.title2).foregroundStyle(Forest.accent).frame(width: 30); VStack(alignment: .leading, spacing: 5) { Text(title).font(.headline); Text(detail).font(.caption).foregroundStyle(.secondary) }; Spacer(); Image(systemName: "chevron.left").font(.caption) } }
-        }.buttonStyle(.plain)
-    }
 }
-struct ImagesView: View {
-    @EnvironmentObject private var store: WaslaStore
-    @State private var description = ""
-    @State private var style = "natural"
-    @State private var sharing = false
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            ScreenTitle(title: "من فكرة إلى صورة.", subtitle: "صف ما تتخيله، واترك الباقي لجهازك.")
-            Card {
-                Text("ماذا تريد أن ترى؟").font(.headline)
-                TextField("كوخ هادئ بجانب بحيرة وجبال عند الشروق…", text: $description, axis: .vertical).lineLimit(4...8)
-                Picker("أسلوب الصورة", selection: $style) { Text("طبيعي").tag("natural"); Text("سينمائي").tag("cinematic"); Text("رسم فني").tag("art") }.pickerStyle(.segmented)
-                Label("صورة واحدة · مربعة · 512 × 512", systemImage: "square").font(.caption).foregroundStyle(.secondary)
-            }
-            if let reason = store.status?.unavailableReason({ $0.images }) {
-                Label(reason, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(Forest.alert)
-                    .frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel("الصور غير متاحة: \(reason)")
-            }
-            Button { dismissKeyboard(); Task { await store.prepareImage(description: description, style: style) } } label: {
-                if store.imagePreparing { ProgressView().tint(Forest.onAccent) } else { Label("تحضير الوصف للمراجعة", systemImage: "sparkles") }
-            }.buttonStyle(ForestButton()).disabled(store.computerBusy || store.pendingImageID != nil || store.status?.unavailableReason({ $0.images }) != nil || description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Text(store.imageStatus).font(.footnote).foregroundStyle(.secondary).accessibilityLabel("حالة الصورة: \(store.imageStatus)")
-            if store.imageBusy { ProgressView().frame(maxWidth: .infinity) }
-            if store.pendingImageID != nil && !store.imageBusy { Button("التحقق من الطلب السابق") { store.resumeImage() }.buttonStyle(ForestButton(prominent: false)) }
-            if let image = store.lastImage {
-                Text("أحدث صورة").font(.headline)
-                Image(uiImage: image).resizable().scaledToFit().clipShape(RoundedRectangle(cornerRadius: 22)).accessibilityLabel("الصورة الناتجة من الكمبيوتر")
-                Button { sharing = true } label: { Label("حفظ الصورة أو مشاركتها", systemImage: "square.and.arrow.up") }.buttonStyle(ForestButton(prominent: false))
-            }
-        }
-        .sheet(item: $store.preparedImage) { prepared in ImageReviewView(prepared: prepared) }
-        .sheet(isPresented: $sharing) { if let image = store.lastImage { ShareSheet(items: [image]) } }
-    }
-}
-struct ImageReviewView: View {
-    @EnvironmentObject private var store: WaslaStore
-    @Environment(\.dismiss) private var dismiss
-    @State var prepared: PreparedImage
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text("راجع الوصف المترجم قبل تشغيل إنشاء الصورة. يمكنك تعديل الوصف والكلمات المستبعدة.").foregroundStyle(.secondary)
-                    Card {
-                        Text("الوصف بالإنجليزية").font(.headline)
-                        TextEditor(text: $prepared.prompt).frame(minHeight: 130).environment(\.layoutDirection, .leftToRight)
-                        Text("ما الذي تريد استبعاده؟").font(.headline)
-                        TextEditor(text: $prepared.negative_prompt).frame(minHeight: 85).environment(\.layoutDirection, .leftToRight)
-                    }
-                    Text("تأكد من أن الكلمات المستبعدة لا تتضمن شيئًا طلبته. يتفرغ الجهاز للصورة ثم يعود للمحادثة.").font(.footnote).foregroundStyle(.secondary)
-                    Button { let value = prepared; dismiss(); Task { await store.generateImage(value) } } label: { Label("السماح مرة واحدة وإنشاء الصورة", systemImage: "checkmark.shield") }.buttonStyle(ForestButton()).disabled(prepared.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }.padding(20)
-            }.background(Forest.background).navigationTitle("مراجعة الصورة").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("إلغاء") { dismiss() } } }
-        }.environment(\.layoutDirection, .rightToLeft)
-    }
-}
-struct SearchView: View {
-    @EnvironmentObject private var store: WaslaStore
-    @State private var query = ""
-    @State private var selectedURL: BrowserDestination?
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            ScreenTitle(title: "فضولك، بلا حدود.", subtitle: "ابحث في الإنترنت وارجع إلى المصدر.")
-            Card {
-                TextField("عمّ تريد أن تبحث؟", text: $query).submitLabel(.search).onSubmit { submit() }
-                Button { submit() } label: { if store.searchBusy { ProgressView().tint(Forest.onAccent) } else { Label("ابحث", systemImage: "magnifyingglass") } }.buttonStyle(ForestButton()).disabled(store.searchBusy || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                if let reason = store.status?.unavailableReason({ $0.search }) {
-                    Label(reason, systemImage: "info.circle").font(.footnote).foregroundStyle(.secondary)
-                }
-            }
-            if let response = store.searchResponse {
-                Text(response.query).font(.title3.bold())
-                Text("المصادر: \(response.provider)").font(.caption).foregroundStyle(.secondary)
-                if response.results.isEmpty { Text(response.notice ?? "لم تظهر نتائج لهذا البحث. جرّب عبارة أخرى.").foregroundStyle(.secondary) }
-                ForEach(response.results) { result in
-                    Button { if let url = result.safeURL { selectedURL = BrowserDestination(url: url) } } label: {
-                        Card {
-                            Text(result.title).font(.headline)
-                            Text(result.snippet).font(.subheadline).foregroundStyle(.secondary)
-                            HStack { Text(result.safeURL?.host ?? "رابط غير مدعوم").font(.caption).lineLimit(1).environment(\.layoutDirection, .leftToRight); Spacer(); Image(systemName: "arrow.up.left") }.foregroundStyle(Forest.accent)
-                        }
-                    }.buttonStyle(.plain).disabled(result.safeURL == nil)
-                }
-                // What these sources cannot prove, as Mohassan's engine states it.
-                ForEach(Array((response.limitations ?? []).enumerated()), id: \.offset) { _, limitation in
-                    Label(limitation, systemImage: "info.circle").font(.footnote).foregroundStyle(.secondary)
-                }
-            } else {
-                ContentUnavailableView("ابدأ بسؤال واحد", systemImage: "globe", description: Text("تظهر هنا النتائج وروابط المصادر الفعلية."))
-            }
-        }.sheet(item: $selectedURL) { SafariView(url: $0.url).ignoresSafeArea() }
-    }
-    private func submit() { dismissKeyboard(); Task { await store.search(query) } }
-}
-struct DesktopPanel: View {
-    @EnvironmentObject private var store: WaslaStore
-    @State private var keyboard = ""
-    @State private var previousDrag: CGSize = .zero
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if store.desktopSession == nil {
-                Card {
-                    Label("شاشتك، أقرب إليك", systemImage: "display").font(.headline)
-                    Text("تحكم بالمؤشر ولوحة المفاتيح من الهاتف. يلزم تفعيل هذه الميزة على الكمبيوتر، وتنتهي الجلسة عند مغادرة الشاشة أو انتقال التطبيق للخلفية.").font(.subheadline).foregroundStyle(.secondary)
-                    Button { Task { await store.startDesktop() } } label: {
-                        if store.desktopStarting { ProgressView().tint(Forest.onAccent) } else { Label("بدء التحكم", systemImage: "play.fill") }
-                    }.buttonStyle(ForestButton()).disabled(store.desktopStarting || store.status?.desktop_enabled != true)
-                    if store.status?.desktop_enabled != true { Text("التحكم غير مفعّل على الكمبيوتر.").font(.caption).foregroundStyle(.secondary) }
-                }
-            } else {
-                if let frame = store.desktopFrame {
-                    GeometryReader { geo in
-                        Image(uiImage: frame).resizable().scaledToFit().frame(width: geo.size.width, height: geo.size.height)
-                            .overlay(alignment: .topLeading) { Image(systemName: "cursorarrow").foregroundStyle(.white).shadow(color: .black, radius: 2).offset(x: store.pointer.x * max(0, geo.size.width - 14), y: store.pointer.y * max(0, geo.size.height - 20)).accessibilityHidden(true) }
-                    }.aspectRatio(frame.size.width / max(frame.size.height, 1), contentMode: .fit).background(.black).clipShape(RoundedRectangle(cornerRadius: 16)).environment(\.layoutDirection, .leftToRight).accessibilityLabel("صورة حديثة من سطح مكتب الكمبيوتر")
-                } else { ProgressView("تحميل الشاشة…").frame(maxWidth: .infinity, minHeight: 160) }
-                HStack {
-                    if let date = store.frameTime { Text("آخر تحديث \(date.formatted(date: .omitted, time: .standard))").font(.caption).foregroundStyle(.secondary) }
-                    Spacer()
-                    Button("إنهاء الجلسة", role: .destructive) { store.stopDesktop() }.font(.subheadline).frame(minHeight: 44)
-                }
-                GeometryReader { geometry in
-                    Text("اسحب هنا لتحريك المؤشر")
-                        .font(.subheadline).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Forest.surface, in: RoundedRectangle(cornerRadius: 18))
-                        .contentShape(Rectangle())
-                        .gesture(DragGesture(minimumDistance: 1).onChanged { value in
-                            let dx = (value.translation.width - previousDrag.width) / max(geometry.size.width, 1)
-                            let dy = (value.translation.height - previousDrag.height) / max(geometry.size.height, 1)
-                            previousDrag = value.translation
-                            store.movePointer(dx: dx, dy: dy)
-                        }.onEnded { _ in previousDrag = .zero })
-                        .accessibilityLabel("لوحة اللمس. استخدم أزرار الاتجاهات أدناه عند استخدام قارئ الشاشة.")
-                }.frame(height: 120).environment(\.layoutDirection, .leftToRight)
-                HStack {
-                    Button("نقرة يسرى") { store.enqueue(DesktopCommand(action: "click", button: "left")) }
-                    Button("نقرة يمنى") { store.enqueue(DesktopCommand(action: "click", button: "right")) }
-                }.buttonStyle(ForestButton(prominent: false)).environment(\.layoutDirection, .leftToRight)
-                HStack {
-                    pointerButton("المؤشر إلى اليسار", icon: "arrow.left", dx: -0.03, dy: 0)
-                    pointerButton("المؤشر إلى الأعلى", icon: "arrow.up", dx: 0, dy: -0.03)
-                    pointerButton("المؤشر إلى الأسفل", icon: "arrow.down", dx: 0, dy: 0.03)
-                    pointerButton("المؤشر إلى اليمين", icon: "arrow.right", dx: 0.03, dy: 0)
-                }.environment(\.layoutDirection, .leftToRight)
-                HStack {
-                    Button("تمرير لأعلى") { store.enqueue(DesktopCommand(action: "scroll", dy: 3)) }
-                    Button("تمرير لأسفل") { store.enqueue(DesktopCommand(action: "scroll", dy: -3)) }
-                }.buttonStyle(ForestButton(prominent: false))
-                Card {
-                    Text("لوحة المفاتيح").font(.headline)
-                    TextField("اكتب نصًا لإرساله إلى الكمبيوتر…", text: $keyboard, axis: .vertical).lineLimit(2...5)
-                    Text("\(keyboard.unicodeScalars.count) / 2000 حرف").font(.caption).foregroundStyle(keyboard.unicodeScalars.count > 2_000 ? Color.red : Color.secondary)
-                    if keyboard.unicodeScalars.count > 2_000 { Text("اختصر النص إلى ٢٬٠٠٠ حرف قبل إرساله؛ لن يتم اقتطاعه تلقائيًا.").font(.caption).foregroundStyle(.red) }
-                    Button("إرسال النص") { store.enqueue(DesktopCommand(action: "text", text: keyboard)); keyboard = ""; dismissKeyboard() }.buttonStyle(ForestButton()).disabled(keyboard.isEmpty || keyboard.unicodeScalars.count > 2_000)
-                    HStack {
-                        keyButton("Enter", key: "enter")
-                        keyButton("⌫", key: "backspace", accessible: "حذف الحرف السابق")
-                        keyButton("Tab", key: "tab")
-                        keyButton("Esc", key: "escape")
-                    }.environment(\.layoutDirection, .leftToRight)
-                }
-            }
-            Text(store.desktopMessage).font(.footnote).foregroundStyle(.secondary)
-        }
-    }
-    private func pointerButton(_ name: String, icon: String, dx: CGFloat, dy: CGFloat) -> some View {
-        Button { store.movePointer(dx: dx, dy: dy) } label: { Image(systemName: icon).frame(maxWidth: .infinity, minHeight: 44).background(Forest.soft, in: RoundedRectangle(cornerRadius: 12)) }.accessibilityLabel(name)
-    }
-    private func keyButton(_ title: String, key: String, accessible: String? = nil) -> some View {
-        Button(title) { store.enqueue(DesktopCommand(action: "key", key: key)) }.frame(maxWidth: .infinity, minHeight: 44).background(Forest.soft, in: RoundedRectangle(cornerRadius: 12)).accessibilityLabel(accessible ?? title)
-    }
-}
+
 struct SettingsView: View {
     @EnvironmentObject private var store: WaslaStore
     @Environment(\.dismiss) private var dismiss
-    @State private var revokeConfirm = false
-    @State private var forgetConfirm = false
+    @State private var signOutConfirm = false
     var body: some View {
         NavigationStack {
             List {
-                Section("الكمبيوتر المقترن") {
-                    Text(store.identity?.name ?? "الكمبيوتر")
-                    Text(store.identity?.baseURL.absoluteString ?? "").font(.footnote).textSelection(.enabled).environment(\.layoutDirection, .leftToRight)
-                    LabeledContent("حالة الاتصال", value: store.connection.title)
-                    if let at = store.lastStatusAt { LabeledContent("آخر تحديث ناجح", value: at.formatted(date: .abbreviated, time: .shortened)) }
+                Section("الحساب") {
+                    LabeledContent("البريد", value: store.email ?? "—")
+                    LabeledContent("الخادم", value: store.origin.host ?? "")
+                    Button("تسجيل الخروج", role: .destructive) { signOutConfirm = true }
                 }
-                Section("هوية الاتصال") {
-                    Text("بصمة SHA-256").font(.subheadline)
-                    Text(store.identity?.fingerprint ?? "").font(.system(.caption, design: .monospaced)).textSelection(.enabled).environment(\.layoutDirection, .leftToRight)
-                    Text("تغيير شهادة الكمبيوتر يتطلب اقترانًا جديدًا وبصمة تتحقق منها يدويًا.").font(.footnote).foregroundStyle(.secondary)
+                Section("ما يعمل الآن") {
+                    Text(store.capabilities?.localModeText ?? (store.capabilities == nil ? "لم تُقرأ قدرات هذه الجلسة بعد." : "نموذج لغوي متصل، والردود الحرة متاحة."))
+                        .font(.footnote)
                 }
-                Section {
-                    Button("إلغاء اقتران الهاتف على الكمبيوتر", role: .destructive) { revokeConfirm = true }
-                    Button("حذف بيانات الاقتران من الهاتف فقط", role: .destructive) { forgetConfirm = true }
-                } footer: { Text("الحذف المحلي لا يلغي صلاحية الهاتف على الكمبيوتر. استخدمه فقط عند تعذّر الوصول، ثم ألغِ الجهاز من لوحة الكمبيوتر.") }
-                Section("حول Mohassan AI") { Text("المحادثة وإنشاء الصور والبحث والتحكم بسطح المكتب عبر خدمة الكمبيوتر. لا يعمل التحكم في الخلفية.").font(.footnote) }
-            }.navigationTitle("الإعدادات").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("تم") { dismiss() } } }
-                .confirmationDialog("إلغاء صلاحية هذا الهاتف على الكمبيوتر؟", isPresented: $revokeConfirm, titleVisibility: .visible) { Button("إلغاء الاقتران", role: .destructive) { Task { await store.revokePairing(); if !store.paired { dismiss() } } } }
-                .confirmationDialog("حذف البيانات محليًا فقط؟ يظل الرمز صالحًا على الكمبيوتر حتى تلغيه هناك.", isPresented: $forgetConfirm, titleVisibility: .visible) { Button("حذف من الهاتف فقط", role: .destructive) { Task { await store.forgetPairing(); if !store.paired { dismiss() } } } }
-        }.environment(\.layoutDirection, .rightToLeft)
+                Section("حول") {
+                    Text("التطبيق نافذة إلى موحسن على الخادم السحابي، كما في الويب: المحادثات والعقل والأسئلة والموافقات والتحكم بالكمبيوتر تجري هناك. لا يحتاج الهاتف إلى الكمبيوتر ليحادث موحسن.")
+                        .font(.footnote)
+                }
+            }
+            .navigationTitle("الإعدادات").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("تم") { dismiss() } } }
+            .confirmationDialog("تسجيل الخروج من هذا الهاتف؟", isPresented: $signOutConfirm, titleVisibility: .visible) {
+                Button("تسجيل الخروج", role: .destructive) { Task { await store.signOut() } }
+            } message: { Text("تبقى محادثاتك على الخادم. ويتوقف أي تحكم بالكمبيوتر من هذا الهاتف.") }
+        }
+        .environment(\.layoutDirection, .rightToLeft)
     }
 }
+
+/// Remote control of the Windows app on the owner's PC: one switch, the PC's state in the owner's words, and
+/// while it is on, the allowed window live with taps, typing, keys and scrolling. Mohassan can use the same
+/// grant when the owner asks it in this phone's chat.
+struct RemoteControlView: View {
+    @EnvironmentObject private var store: WaslaStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var stopConfirm = false
+    @State private var typed = ""
+    @State private var rightClick = false
+
+    private var readiness: RemoteReadiness? { store.remote }
+    private var switchEnabled: Bool { !store.remoteBusy && (store.remoteWanted || readiness?.canTurnOn == true) }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Card {
+                        Toggle(isOn: Binding(get: { store.remoteWanted }, set: { store.setRemote($0) })) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("التحكم عن بُعد بتطبيق Windows").font(.headline)
+                                Text(readiness?.title ?? (store.windowsProblem == nil ? "جارٍ قراءة حالة الكمبيوتر…" : "تعذّرت قراءة حالة الكمبيوتر"))
+                                    .font(.caption).foregroundStyle(store.remoteWanted ? Forest.accent : Forest.softText)
+                            }
+                        }
+                        .tint(Forest.accent)
+                        .disabled(!switchEnabled)
+                        if store.remoteBusy { ProgressView().frame(maxWidth: .infinity) }
+                        if let readiness, !readiness.advice.isEmpty { Text(readiness.advice).font(.footnote).foregroundStyle(.secondary) }
+                        if let problem = store.windowsProblem { Label(problem, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(Forest.alert) }
+                        if let note = store.remoteNote { Text(note).font(.footnote).foregroundStyle(Forest.alert) }
+                    }
+                    if readiness == .noDevice { pairingCard }
+                    if store.remoteWanted {
+                        screenCard
+                        controlsCard
+                    }
+                    if store.remoteWanted || readiness?.on == true {
+                        Button("إيقاف كامل (STOP)", role: .destructive) { stopConfirm = true }
+                            .buttonStyle(ForestButton(prominent: false))
+                    }
+                    Text("حين يكون المفتاح مشغّلًا يستطيع موحسن أيضًا رؤية النافذة المسموحة والتحكم بها عندما تطلب ذلك في محادثة هذا الهاتف. السماح نفسه يبقى بيدك على الكمبيوتر في Mohassan Companion، وقفل الكمبيوتر يوقف كل شيء.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                .padding(20).frame(maxWidth: 700).frame(maxWidth: .infinity)
+            }
+            .background(Forest.background)
+            .navigationTitle("الكمبيوتر").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("تم") { dismiss() } }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { Task { await store.loadWindows() } } label: { Image(systemName: "arrow.clockwise") }
+                        .disabled(store.remoteBusy).accessibilityLabel("تحديث حالة الكمبيوتر")
+                }
+                ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("تم") { dismissKeyboard() } }
+            }
+            .refreshable { await store.loadWindows() }
+            .task { await store.loadWindows() }
+            .onAppear { store.remoteScreenOpened() }
+            .onDisappear { store.remoteScreenClosed() }
+            .confirmationDialog("إيقاف كل شيء على الكمبيوتر؟", isPresented: $stopConfirm, titleVisibility: .visible) {
+                Button("أوقف كل شيء", role: .destructive) { Task { await store.stopRemoteCompletely() } }
+            } message: { Text("يتوقف التحكم والمشاهدة فورًا، ويلزم سماح جديد في Mohassan Companion على الكمبيوتر قبل التحكم مرة أخرى.") }
+        }
+        .environment(\.layoutDirection, .rightToLeft)
+    }
+
+    private var pairingCard: some View {
+        Card {
+            Label("ربط كمبيوتر", systemImage: "link").font(.headline)
+            if let pairing = store.pairing {
+                Text(pairing.code).font(.system(.title2, design: .monospaced)).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .center).environment(\.layoutDirection, .leftToRight)
+                Button { UIPasteboard.general.string = pairing.code } label: { Label("نسخ الرمز", systemImage: "doc.on.doc") }
+                    .buttonStyle(ForestButton(prominent: false))
+                Text("في Mohassan Companion على الكمبيوتر ألصق الرمز في «رمز الربط من مساحة العمل (دقيقتان)» ثم اضغط «ربط الجهاز محليًا». ينتهي الرمز خلال دقيقتين.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            } else {
+                Text("يلزم برنامج Mohassan Companion على الكمبيوتر. أنشئ رمزًا هنا، ثم ألصقه فيه.").font(.footnote).foregroundStyle(.secondary)
+                Button { Task { await store.pairWindows() } } label: { Label("أنشئ رمز ربط", systemImage: "key") }
+                    .buttonStyle(ForestButton()).disabled(store.remoteBusy)
+            }
+        }
+    }
+
+    private var screenCard: some View {
+        Card {
+            if let frame = store.remoteFrame {
+                GeometryReader { geometry in
+                    Image(uiImage: frame).resizable().scaledToFit()
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .contentShape(Rectangle())
+                        .onTapGesture(coordinateSpace: .local) { location in
+                            let width = max(geometry.size.width, 1), height = max(geometry.size.height, 1)
+                            store.remoteAct(.click(x: Double(location.x / width), y: Double(location.y / height), right: rightClick))
+                        }
+                }
+                .aspectRatio(frame.size.width / max(frame.size.height, 1), contentMode: .fit)
+                .background(Color.black)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .environment(\.layoutDirection, .leftToRight)
+                .accessibilityLabel("صورة حديثة من النافذة المسموحة على الكمبيوتر. المس مكانًا للنقر عليه.")
+                if let at = store.remoteFrameAt {
+                    Text("آخر صورة \(at.formatted(date: .omitted, time: .standard))").font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                ProgressView("تحميل الشاشة…").frame(maxWidth: .infinity, minHeight: 160)
+            }
+        }
+    }
+
+    private var controlsCard: some View {
+        Card {
+            Picker("نوع النقرة", selection: $rightClick) {
+                Text("نقرة يسرى").tag(false)
+                Text("نقرة يمنى").tag(true)
+            }
+            .pickerStyle(.segmented)
+            HStack(spacing: 12) {
+                Button("تمرير لأعلى") { store.remoteAct(.scroll(3)) }
+                Button("تمرير لأسفل") { store.remoteAct(.scroll(-3)) }
+            }
+            .buttonStyle(ForestButton(prominent: false))
+            TextField("نص يُكتب على الكمبيوتر (حتى ١٢٠ حرفًا)", text: $typed)
+                .padding(10).background(Forest.background, in: RoundedRectangle(cornerRadius: 12))
+            Button("اكتب على الكمبيوتر") {
+                store.remoteAct(.text(typed))
+                typed = ""
+            }
+            .buttonStyle(ForestButton()).disabled(!WindowsAction.textFits(typed))
+            HStack(spacing: 8) {
+                key("Enter", "Enter")
+                key("⌫", "Backspace", spoken: "حذف الحرف السابق")
+                key("Tab", "Tab")
+                key("Esc", "Escape")
+            }
+            .environment(\.layoutDirection, .leftToRight)
+            HStack(spacing: 8) {
+                key("←", "ArrowLeft", spoken: "السهم الأيسر")
+                key("↑", "ArrowUp", spoken: "السهم الأعلى")
+                key("↓", "ArrowDown", spoken: "السهم الأسفل")
+                key("→", "ArrowRight", spoken: "السهم الأيمن")
+            }
+            .environment(\.layoutDirection, .leftToRight)
+        }
+    }
+
+    private func key(_ title: String, _ name: String, spoken: String? = nil) -> some View {
+        Button(title) { store.remoteAct(.key(name)) }
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(Forest.soft, in: RoundedRectangle(cornerRadius: 12))
+            .accessibilityLabel(spoken ?? title)
+    }
+}
+
 struct BrowserDestination: Identifiable { let id = UUID(); let url: URL }
 struct SafariView: UIViewControllerRepresentable {
     let url: URL
     func makeUIViewController(context: Context) -> SFSafariViewController { SFSafariViewController(url: url) }
     func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}
-}
-struct ShareSheet: UIViewControllerRepresentable {
-    let items: [Any]
-    func makeUIViewController(context: Context) -> UIActivityViewController { UIActivityViewController(activityItems: items, applicationActivities: nil) }
-    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }

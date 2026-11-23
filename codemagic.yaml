@@ -12,21 +12,22 @@ workflows:
         XCODE_PROJECT: apps/ios/Wasla.xcodeproj
         XCODE_SCHEME: Wasla
     scripts:
-      - name: Verify pairing codes and bundled computer identity
+      - name: Verify the cloud models against recorded server replies
         script: |
           set -euo pipefail
           mkdir -p "$CM_BUILD_DIR/build/checks"
           xcrun --sdk macosx swiftc \
             -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
             "$CM_BUILD_DIR/apps/ios/Wasla/Models.swift" \
-            "$CM_BUILD_DIR/apps/ios/Tools/PairingChecks.swift" \
-            -o "$CM_BUILD_DIR/build/checks/pairing-checks"
-          "$CM_BUILD_DIR/build/checks/pairing-checks" "$CM_BUILD_DIR/apps/ios/Wasla/ConnectionDefaults.json" "$CM_BUILD_DIR/tests/fixtures/phone"
-      - name: The app never calls the removed phone chat
+            "$CM_BUILD_DIR/apps/ios/Tools/CloudChecks.swift" \
+            -o "$CM_BUILD_DIR/build/checks/cloud-checks"
+          "$CM_BUILD_DIR/build/checks/cloud-checks" "$CM_BUILD_DIR/apps/ios/Wasla/ConnectionDefaults.json" "$CM_BUILD_DIR/tests/fixtures/cloud-phone"
+      - name: The app calls only the cloud server's /api routes
         script: |
           set -euo pipefail
-          if grep -rn '"/v1/chat"' "$CM_BUILD_DIR/apps/ios/Wasla"; then echo "The phone's own chat is gone: no /v1/chat call may remain."; exit 1; fi
-          echo "No /v1/chat call in the app."
+          if grep -rn '"/v1/' "$CM_BUILD_DIR/apps/ios/Wasla"; then echo "The PC gateway (/v1/...) is gone: the app calls the cloud server's /api routes only."; exit 1; fi
+          if grep -n 'NSAllowsLocalNetworking\|NSLocalNetworkUsageDescription' "$CM_BUILD_DIR/apps/ios/Wasla/Info.plist"; then echo "No local-network access is needed any more."; exit 1; fi
+          echo "No /v1/ call and no local-network exception in the app."
       - name: Inspect Xcode project and shared scheme
         script: |
           set -euo pipefail
@@ -81,16 +82,16 @@ workflows:
         XCODE_PROJECT: apps/ios/Wasla.xcodeproj
         XCODE_SCHEME: Wasla
     scripts:
-      - name: Verify pairing codes and bundled computer identity
+      - name: Verify the cloud models against recorded server replies
         script: |
           set -euo pipefail
           mkdir -p "$CM_BUILD_DIR/build/checks"
           xcrun --sdk macosx swiftc \
             -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
             "$CM_BUILD_DIR/apps/ios/Wasla/Models.swift" \
-            "$CM_BUILD_DIR/apps/ios/Tools/PairingChecks.swift" \
-            -o "$CM_BUILD_DIR/build/checks/pairing-checks"
-          "$CM_BUILD_DIR/build/checks/pairing-checks" "$CM_BUILD_DIR/apps/ios/Wasla/ConnectionDefaults.json" "$CM_BUILD_DIR/tests/fixtures/phone"
+            "$CM_BUILD_DIR/apps/ios/Tools/CloudChecks.swift" \
+            -o "$CM_BUILD_DIR/build/checks/cloud-checks"
+          "$CM_BUILD_DIR/build/checks/cloud-checks" "$CM_BUILD_DIR/apps/ios/Wasla/ConnectionDefaults.json" "$CM_BUILD_DIR/tests/fixtures/cloud-phone"
       - name: Prepare the matching Wasla App Store provisioning profile
         script: |
           set -euo pipefail
@@ -132,7 +133,7 @@ workflows:
       # Pinned 2026-11-22 to the version that built 1.0 (7) on 2026-11-11 (Codemagic build 6af3bb2a6f37641a00179485: "Xcode 26.6, Build version 17F113").
       xcode: "26.6"
       vars:
-        WASLA_BUILD_NUMBER: "12"
+        WASLA_BUILD_NUMBER: "13"
     scripts:
       - name: Verify and assign the build (WASLA_BUILD_NUMBER) to the existing internal group
         script: |

@@ -1,0 +1,32 @@
+{
+  "capturedAt": "2026-11-23T22:00:40.118Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "GET",
+    "url": "/api/chat/conversations"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "imageReading",
+          "pc"
+        ]
+      },
+      "requestKeys": true,
+      "conversations": []
+    }
+  }
+}
