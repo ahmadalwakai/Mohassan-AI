@@ -48,10 +48,27 @@ describe('follow-ups with no subject of their own', () => {
   });
 
   it('the subject of an answer read from a list page is the item it named', () => {
-    expect(answerSubject({ title: 'نهر', lines: ['نهر النيل: أطول أنهار العالم.'] })).toBe('نهر النيل');
-    expect(answerSubject({ title: 'ألبرت أينشتاين - ويكيبيديا', lines: ['ألبرت أينشتاين عالم فيزياء.'] })).toBe('ألبرت أينشتاين');
+    expect(answerSubject({ title: 'نهر', lines: ['نهر النيل: أطول أنهار العالم.'] }).subject).toBe('نهر النيل');
+    expect(answerSubject({ title: 'ألبرت أينشتاين - ويكيبيديا', lines: ['ألبرت أينشتاين عالم فيزياء.'] }).subject).toBe('ألبرت أينشتاين');
     // A label that is not about the page's subject is not taken.
-    expect(answerSubject({ title: 'نهر', lines: ['ملاحظة: هذه الصفحة عن الأنهار.'] })).toBe('نهر');
+    expect(answerSubject({ title: 'نهر', lines: ['ملاحظة: هذه الصفحة عن الأنهار.'] }).subject).toBe('نهر');
+  });
+
+  it.each([
+    'تجدر الإشارة أن بيل غيتس وبول ألين هما المؤسسان والملاك لهذه الشركة قبل أن تصبح من الشركات العامة.',
+    'تأسست شركة مايكروسوفت العملاقة من قبل بيل غيتس وبول ألين في 4 نيسان من عام 1975م.',
+  ])('takes the first founder explicitly named in a source sentence', (line) => {
+    const topic = answerSubject({ title: 'مايكروسوفت - ويكيبيديا', lines: [line] });
+    expect(webQuestion('متى ولد؟', [topic])?.[0]).toMatchObject({ query: 'متى ولد بيل غيتس' });
+  });
+
+  it.each([
+    'بيل غيتس حضر المؤتمر.',
+    'أسسها فريق من المهندسين في عام 1990.',
+    'صاحب هذا المشروع هو المؤسس.',
+  ])('requires a named founder before supplying a biography subject', (line) => {
+    const topic = answerSubject({ title: 'مايكروسوفت', lines: [line] });
+    expect(topic.founder).toBeNull();
   });
 });
 
@@ -91,8 +108,13 @@ describe('a conversation that goes on, through the real chat controller', () => 
     [wiki('هرمان أينشتاين')]: { title: 'هرمان أينشتاين - ويكيبيديا', text: 'هرمان أينشتاين (1847 – 1902) رائد أعمال ألماني ولد في باد بوخاو، وهو والد ألبرت أينشتاين.\n' },
     [wiki('نهر')]: { title: 'نهر - ويكيبيديا', text: 'النهر مجرى مائي عذب يجري على سطح الأرض.\nنهر النيل: أطول أنهار العالم.\nنهر الدانوب: أطول نهر في أوروبا طوله 2860 كم.\n' },
     [wiki('نهر النيل')]: { title: 'نهر النيل - ويكيبيديا', text: 'نهر النيل أطول أنهار العالم ويجري في شمال شرق أفريقيا.\nيبلغ طول نهر النيل نحو 6650 كم من منابعه إلى مصبه في البحر المتوسط.\n' },
+    [wiki('مايكروسوفت')]: { title: 'مايكروسوفت - ويكيبيديا', text: 'تجدر الإشارة أن بيل غيتس وبول ألين هما المؤسسان والملاك لهذه الشركة قبل أن تصبح من الشركات العامة.\nتأسست شركة مايكروسوفت العملاقة من قبل بيل غيتس وبول ألين في 4 أبريل 1975 لتطوير برمجيات الحاسوب.\n' },
+    [wiki('بيل غيتس')]: { title: 'بيل غيتس - ويكيبيديا', text: 'وُلد بيل غيتس في 28 أكتوبر 1955 في سياتل بولاية واشنطن.\n' },
   };
-  const hitsFor = (query: string): SearchHit[] => /البرت|ألبرت/u.test(query)
+  const hitsFor = (query: string): SearchHit[] => /بيل غيتس/u.test(query)
+    ? [{ title: 'بيل غيتس', url: wiki('بيل غيتس'), snippet: 'وُلد بيل غيتس عام 1955' }]
+    : /مايكروسوفت/u.test(query) ? [{ title: 'مايكروسوفت', url: wiki('مايكروسوفت'), snippet: 'أسسها بيل غيتس وبول ألين' }]
+    : /البرت|ألبرت/u.test(query)
     ? [{ title: 'ألبرت أينشتاين', url: wiki('ألبرت أينشتاين'), snippet: 'عالم فيزياء' }]
     : /اينشتاين|أينشتاين/u.test(query)
     ? [{ title: 'هرمان أينشتاين', url: wiki('هرمان أينشتاين'), snippet: 'رائد أعمال' }, { title: 'ألبرت أينشتاين', url: wiki('ألبرت أينشتاين'), snippet: 'عالم فيزياء' }]
@@ -134,6 +156,25 @@ describe('a conversation that goes on, through the real chat controller', () => 
     const next = await turn('متى توفي؟', first.id);
     expect(queries.some(query => query.includes('أينشتاين'))).toBe(true);
     expect(next.reply).toContain('1955');
+  });
+
+  it('asks when the first named founder was born after the Microsoft founder answer', async () => {
+    const first = await turn('من هو مؤسس شركة مايكروسوفت؟');
+    expect(first.reply).toContain('بيل غيتس');
+    expect(first.reply).toContain('بول ألين');
+    queries.length = 0;
+    const next = await turn('متى ولد؟', first.id);
+    expect(queries).toContain('متى ولد بيل غيتس');
+    expect(next.reply).toContain('28 أكتوبر 1955');
+  });
+
+  it('keeps the company as the subject when asked when it was founded', async () => {
+    const first = await turn('من هو مؤسس شركة مايكروسوفت؟');
+    expect(first.reply).toContain('بيل غيتس');
+    queries.length = 0;
+    const next = await turn('متى تأسست؟', first.id);
+    expect(queries).toContain('متى تأسست مايكروسوفت');
+    expect(next.reply).toContain('4 أبريل 1975');
   });
 
   it('«وكم طوله؟» after the longest river asks about the Nile, not about rivers', async () => {

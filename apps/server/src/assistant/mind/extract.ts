@@ -171,7 +171,7 @@ function dateKey(yearText: string, month: number, day?: number): string | undefi
   return `${first}-${String(day).padStart(2, '0')}`;
 }
 
-function dates(sentence: string): ParsedValue[] {
+export function dates(sentence: string): ParsedValue[] {
   const values: ParsedValue[] = [];
   for (const match of sentence.matchAll(iso)) {
     const key = dateKey(match[1], numberValue(match[2]), numberValue(match[3]));

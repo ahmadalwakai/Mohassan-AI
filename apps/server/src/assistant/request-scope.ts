@@ -72,7 +72,7 @@ const CLITIC_REFERENCE = /^(?:افتح|اغلق|احذف|ارسل|احفظ|غي�
 // sky blue?" and «ما سبب زرقة السماء؟» were searched (reproduced 2026-11-23). They count only with words after them: a
 // bare «لماذا؟» names nothing to look up and stays unresolved, as it was. «لمَ» is left out: folded it is «لم», the
 // particle of «لم أجد الملف».
-const FACT_QUESTION = /^(?:(?:ما|ماذا|كم|كيف|متي|اين|وين|من|مين|هل|اي|وش|شو|ايش)(?=\s|[\p{P}]|$)|(?:لماذا|ليش|ليه)(?=\s+[\p{L}\p{N}]))|^(?:what|who|when|where|why|how|which|is|are|does|do|can|will)\b/iu;
+const FACT_QUESTION = /^(?:(?:ما|ماذا|كم|كيف|متي|اين|وين|من|مين|هل|اي|وش|شو|ايش)(?=\s|[\p{P}]|$)|(?:لماذا|ليش|ليه)(?=\s+[\p{L}\p{N}])|ايهما(?=[\s،,]+[\p{L}\p{N}]))|^(?:what|who|when|where|why|how|which|is|are|does|do|can|will)\b/iu;
 // «Explain why rain falls», «describe how vaccines work», «اشرح لماذا تسقط الأمطار»: a question about the world asked as
 // an instruction to explain. Until 2026-11-23 it matched no question form, ended as `missing_target`, and the search
 // guard refused «Explain why rain falls in two short Arabic sentences.» as possibly private (live test). A reference or an

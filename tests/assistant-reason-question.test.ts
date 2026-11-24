@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { aspectKind, checkAnswerLine, isMetaLine, isReasonQuestion, statesReason } from '../apps/server/src/assistant/answer-check.js';
-import { reasonAnswers, reasonSubject } from '../apps/server/src/assistant/hands.js';
+import { fold, reasonAnswers, reasonSubject } from '../apps/server/src/assistant/hands.js';
 import { assessRequestScope } from '../apps/server/src/assistant/request-scope.js';
+import { superlativeEvidence } from '../apps/server/src/assistant/source-superlative.js';
 
 // «لماذا السماء زرقاء؟» was refused before any search until 2026-11-23: the Arabic question words of request-scope.ts had no
 // «لماذا». Searched as it was, it quoted whatever shared its words (artifacts/agent-gaps-2026-11-22/after-cycle-fixes/
@@ -54,14 +55,16 @@ describe('a question that asks for a reason', () => {
 describe('a sentence that states the cause of what was asked', () => {
   it.each([
     ['لماذا السماء زرقاء؟', 'تبدو السماء زرقاء بسبب تبعثر ضوء الشمس في الغلاف الجوي.'],
+    ['لماذا تكون السماء زرقاء؟', 'تشتت جزيئات الهواء ضوء الشمس الأزرق أكثر من الأحمر، ولذلك تبدو السماء زرقاء.'],
     ['لماذا السماء زرقاء؟', 'السماء جميلة في النهار، وتبدو زرقاء بسبب تبعثر الضوء.'],
-    ['ما سبب زرقة السماء؟', 'إن سبب ظهور السماء بألوان مختلفة ليس سوى انعكاس وانكسار الضوء القادم من الشمس.'],
+    ['ما سبب زرقة السماء؟', 'إن سبب زرقة السماء هو تبعثر الضوء القادم من الشمس.'],
     ['لماذا سميت القاهرة بهذا الاسم؟', 'سُميت القاهرة بهذا الاسم نسبةً إلى النجم القاهر.'],
     ['لماذا سميت القاهرة بهذا الاسم؟', 'وسُميت بهذا الاسم نسبةً إلى النجم القاهر الذي ظهر وقت بنائها.'],
     ['لماذا انقرضت الديناصورات؟', 'انقرضت الديناصورات غير الطيرية قبل 66 مليون سنة نتيجةً لاصطدام كويكب بالأرض.'],
     ['لماذا تحدث الزلازل؟', 'تحدث الزلازل بسبب عوامل عدة، أهمها: الانفجار البركاني الذي يرافقه زلزال.'],
     ['ما أسباب الحرب العالمية الأولى؟', 'من أسباب الحرب العالمية الأولى اغتيال ولي عهد النمسا.'],
     ['Why is the sky blue?', 'The sky appears blue because air molecules scatter blue light more than red.'],
+    ['Why is the sky blue?', 'Air molecules scatter blue light more strongly than red light, which is why the sky looks blue.'],
     ['Why is the sky blue?', 'For the example of the Sun at zenith, in broad daylight, the sky is blue due to Rayleigh scattering.'],
     ['Why did the Roman Empire fall?', 'The main reason the Roman Empire fell was pressure on its borders.'],
     ['What causes earthquakes?', 'Earthquakes result from a sudden release of energy in the lithosphere.'],
@@ -70,11 +73,21 @@ describe('a sentence that states the cause of what was asked', () => {
     expect(checkAnswerLine(question, line).ok).toBe(true);
   });
 
+  it('reads the explanation from a page about the cause when that sentence names both cause and effect', () => {
+    const line = 'يتسبب تبعثر رايلي لضوء الشمس في الغلاف الجوي ظاهرة النشر الإشعاعي للسماء، وهو السبب الرئيسي للون الأزرق للسماء واللون المصفر للشمس.';
+    expect(reasonAnswers('لماذا تكون السماء زرقاء؟', line, false)).toBe(true);
+  });
+
   // Every line below was shown as the answer to its question in the live runs of 2026-11-23, before the rule or between its versions.
   it.each([
     ['Why is the sky blue?', 'In addition, the Argentina national football team is known as the albicelestes due to the sky blue and white of its shirt.'],
     ['Why is the sky blue?', 'Color "Sky Blue" redirects here.'],
+    ['Why is the sky blue?', 'The reason the sky is blue is often discussed in science classrooms.'],
+    ['Why is the sky blue?', 'The sky is blue because scientists are still studying why.'],
+    ['Why is the sky blue?', 'The sky is not blue because of Rayleigh scattering.'],
     ['ليش السماء زرقاء؟', 'السماء الزرقاء (الإنجليزية: Blue Sky) هو فيلم دراما تم إنتاجه في الولايات المتحدة.'],
+    ['لماذا تكون السماء زرقاء؟', 'تكون السماء مظلمة بسبب غياب ضوء الشمس.'],
+    ['لماذا تكون السماء زرقاء؟', 'إن سبب ظهور السماء بألوان مختلفة ليس سوى انعكاس وانكسار الضوء القادم من الشمس.'],
     ['لماذا نرى البرق قبل أن نسمع الرعد؟', 'تميل البروق الموجبة لأن تتشكّل بشكلٍ أكبر في العواصف الثلجية، كما هو الحال في العواصف.'],
     ['ليه القمر بيتغير شكله؟', 'مع ملاحظة أن المسافة المدارية الحالية للقمر، والتي تقدر بثلاثين مرة قدر قطر الأرض، نتيجة لقوى المد.'],
     ['لماذا سميت القاهرة بهذا الاسم؟', 'حافة الفول سُميت بهذا الاسم نسبةً إلى زهرة عطرية، قد تكون الياسمين العربي.'],
@@ -103,5 +116,28 @@ describe('a sentence that states the cause of what was asked', () => {
     expect(isMetaLine('المقالة الرئيسية: تاريخ مصر')).toBe(true);
     expect(isMetaLine('Main article: Causes of World War II')).toBe(true);
     expect(isMetaLine('من أسباب الحرب العالمية الأولى اغتيال ولي عهد النمسا.')).toBe(false);
+  });
+});
+
+describe('a sentence that states the requested extreme', () => {
+  it.each([
+    ['ما هي أكبر دولة عربية من حيث المساحة؟', 'الجزائر أكبر دولة عربية مساحةً.'],
+    ['ما أكبر الدول العربية مساحةً؟', 'الجزائر هي أكبر بلد في العالم العربي من حيث المساحة.'],
+    ['ما هو أطول نهر في العالم؟', 'نهر النيل أطول أنهار العالم.'],
+    ['Which country is largest in the world by area?', "Russia is the world's largest country by area."],
+    ['Which mountain is the highest in Africa?', "Kilimanjaro is Africa's highest mountain."],
+  ])('%s ← %s', (question, line) => {
+    expect(superlativeEvidence(fold(question))?.(fold(line))).toBe(true);
+  });
+
+  it.each([
+    ['ما هي أكبر دولة عربية من حيث المساحة؟', 'مصر هي أكبر دولة عربية من حيث عدد السكان، وتبلغ مساحتها نحو مليون كيلومتر مربع.'],
+    ['ما هي أكبر دولة عربية من حيث المساحة؟', 'ليست مصر أكبر دولة عربية من حيث المساحة.'],
+    ['ما هي أكبر دولة عربية من حيث المساحة؟', 'بمساحة تبلغ 1 000 000 كيلومتر مربع، مصر هي ثالث أكبر بلد في العالم، والثالثة عربياً.'],
+    ['ما هي أكبر دولة عربية من حيث المساحة؟', 'بعدد سكان يبلغ 110 ملايين نسمة، مصر هي عاشر أكبر بلد في العالم، والأولى عربياً.'],
+    ['What is the largest country in the world by area?', 'This does not show which is the largest country in the world by area.'],
+    ['What is the highest mountain in the world?', 'The highest mountain in the world is unknown.'],
+  ])('not %s ← %s', (question, line) => {
+    expect(superlativeEvidence(fold(question))?.(fold(line))).toBe(false);
   });
 });

@@ -98,7 +98,25 @@ function arithmetic(input: string): { value: number; expression: string } | null
   throw new CalculationError(result.error === 'division_by_zero' ? 'division' : result.error === 'syntax' ? 'expression' : result.error);
 }
 
-type Unit = { dim: string; factor: number; offset?: number; names: string; pluralNames?: string; abbreviations?: string };
+type Unit = { dim: string; factor: number; offset?: number; divisor?: number; absoluteZero?: number; names: string; pluralNames?: string; abbreviations?: string };
+// Convert to a Celsius base with (value × factor + offset) / divisor.
+const TEMPERATURE_UNITS = [
+  { dim: 'temperature', factor: 1, absoluteZero: -273.15, names: 'c|°c|celsius|centigrade|مئوي|مئوية|مئويه|سيليسيوس|سيلسيوس|سلسيوس' },
+  { dim: 'temperature', factor: 5, offset: -160, divisor: 9, absoluteZero: -459.67, names: 'f|°f|fahrenheit|فهرنهايت|فهرنهيت|فاهرنهايت' },
+  { dim: 'temperature', factor: 1, offset: -273.15, absoluteZero: 0, names: 'k|kelvin|كلفن|كيلفن' },
+] as const;
+const DEGREE_WORDS = String.raw`(?:degrees?|(?:ال)?درج(?:ة|ه|ات))\s+`;
+const DEGREES = new RegExp(`^${DEGREE_WORDS}`, 'iu');
+const TEMPERATURE_UNIT = String.raw`(?:${DEGREE_WORDS})?(?:ال(?=\p{Script=Arabic}))?(?:${TEMPERATURE_UNITS.map(scale => scale.names.replaceAll('°', String.raw`°\s*`)).join('|')})`;
+
+const TEMPERATURE_CONVERSION = new RegExp(String.raw`^(?:(?:convert|what is|what['’]s|how much is|حول|تحويل|كم(?: (?:يساوي|تساوي|يعادل|تعادل))?)[\s:،]+)?(${NUMBER})\s*(${TEMPERATURE_UNIT})(?:\s+(?:to|into|in|الي)\s+|\s+(?:كم(?:\s+(?:يساوي|تساوي|يعادل|تعادل))?\s+)?ب\s*|\s*(?:→|⇒|->)\s*)(${TEMPERATURE_UNIT})$`, 'iu');
+const WATER_TEMPERATURE = new RegExp(String.raw`^(?:(?:what is|what['’]s) (?:the )?(boiling|freezing) point of water in\s+|(?:ما (?:هي )?|كم )درج(?:ة|ه) (غليان|تجمد) الماء (?:ب\s*|في\s+))(${TEMPERATURE_UNIT})$`, 'iu');
+
+/** Both scales or a standard water reference point are explicit in these question forms. */
+export function isTemperatureQuestion(text: string): boolean {
+  return TEMPERATURE_CONVERSION.test(text) || WATER_TEMPERATURE.test(text);
+}
+
 // SI, IEC, common imperial units, and affine temperature scales.
 const UNITS: readonly Unit[] = [
   { dim: 'length', factor: 1, names: 'm|meter|metre|م|متر|امتار', pluralNames: 'امتار' },
@@ -115,9 +133,7 @@ const UNITS: readonly Unit[] = [
   { dim: 'mass', factor: 1e3, names: 't|tonne|metric ton|طن|اطنان', pluralNames: 'اطنان' },
   { dim: 'mass', factor: 0.45359237, names: 'lb|pound|رطل|ارطال', pluralNames: 'ارطال' },
   { dim: 'mass', factor: 0.45359237 / 16, names: 'oz|ounce|اونصة|اونصه' },
-  { dim: 'temperature', factor: 1, offset: 273.15, names: 'c|°c|celsius|centigrade|مئوي|مئوية|مئويه|سيليسيوس|سيلسيوس|سلسيوس' },
-  { dim: 'temperature', factor: 5 / 9, offset: 273.15 - 32 * 5 / 9, names: 'f|°f|fahrenheit|فهرنهايت' },
-  { dim: 'temperature', factor: 1, names: 'k|kelvin|كلفن|كيلفن' },
+  ...TEMPERATURE_UNITS,
   { dim: 'area', factor: 1, names: 'm2|m^2|square metre|square meter|sq m|متر مربع|م2' },
   { dim: 'area', factor: 1e6, names: 'km2|km^2|square kilometre|square kilometer|sq km|كيلومتر مربع' },
   { dim: 'area', factor: 1e-4, names: 'cm2|cm^2|square centimetre|square centimeter|سنتيمتر مربع' },
@@ -152,7 +168,7 @@ const UNITS: readonly Unit[] = [
 ];
 
 function unit(raw: string) {
-  const label = raw.trim().replace(/^(?:degrees?\s+|درج(?:ة|ه|ات)\s+)/iu, '');
+  const label = raw.trim().replace(DEGREES, '').replace(/^°\s*/u, '°');
   const words = label.toLowerCase().replace(/\s+/gu, ' ');
   const singular = words.replace(/\b([a-z]{2,})s\b/gu, '$1');
   const arabicUninflected = words.replace(/^ال(?=\p{Script=Arabic})/u, '').replace(/(?<=\p{Script=Arabic})ا(?=\s|$)/gu, '');
@@ -227,9 +243,16 @@ function unitQuantity(raw: string, original: string, rawUnit: string): { value: 
   return { value: count / word.denominator, fraction: true };
 }
 
-function conversion(input: string, frame: Frame, requested: boolean, source: PreparedComputationSource): LocalReply | null {
-  const phrase = CONVERSION.exec(input);
-  if (!phrase) return null;
+function convertedValue(quantity: number, from: Unit, target: Unit): string {
+  if (from.dim !== target.dim) throw new CalculationError('units');
+  if (from.absoluteZero !== undefined && quantity < from.absoluteZero) throw new CalculationError('range');
+  if (from === target) return formatNumber(quantity);
+  if (target.absoluteZero !== undefined && quantity === from.absoluteZero) return formatNumber(target.absoluteZero);
+  const base = (quantity * from.factor + (from.offset ?? 0)) / (from.divisor ?? 1);
+  return formatNumber(safeNumber((base * (target.divisor ?? 1) - (target.offset ?? 0)) / target.factor));
+}
+
+function conversion(phrase: RegExpExecArray, frame: Frame, requested: boolean, source: PreparedComputationSource): LocalReply | null {
   const [, sourceNumber, rawSource, rawTarget] = phrase;
   const numberStart = phrase.index + phrase[0].indexOf(sourceNumber);
   const originalNumber = source.span(numberStart, numberStart + sourceNumber.length);
@@ -243,11 +266,21 @@ function conversion(input: string, frame: Frame, requested: boolean, source: Pre
     if (requested) throw new CalculationError('units');
     return null;
   }
-  if (from.dim !== target.dim) throw new CalculationError('units');
-  const base = quantity.value * from.factor + (from.offset ?? 0);
-  if (from.dim === 'temperature' && base < 0) throw new CalculationError('range');
-  const result = formatNumber(safeNumber((base - (target.offset ?? 0)) / target.factor));
+  const result = convertedValue(quantity.value, from, target);
   return calculated(frame, result, `${sourceNumber} ${sourceLabel} = ${result} ${targetLabel}`);
+}
+
+function waterTemperature(phrase: RegExpExecArray, frame: Frame): LocalReply | null {
+  const boiling = phrase[1]?.toLowerCase() === 'boiling' || phrase[2] === 'غليان';
+  const celsius = boiling ? 100 : 0;
+  const targetLabel = phrase[3]!;
+  const target = unit(targetLabel);
+  if (!target) return null;
+  const value = convertedValue(celsius, TEMPERATURE_UNITS[0], target);
+  const condition = frame.lang === 'ar'
+    ? `درجة ${boiling ? 'غليان' : 'تجمد'} الماء عند ضغط جوي واحد`
+    : `water’s ${boiling ? 'boiling' : 'freezing'} point at 1 atm`;
+  return calculated(frame, value, `${celsius} °C = ${value} ${targetLabel} (${condition})`);
 }
 
 const MONTHS = [
@@ -442,6 +475,7 @@ function inspectPreparedComputation(source: PreparedComputationSource): Computat
     if (match) return raised ? finishComputationConsumption(source, 'unsupported') : finishComputationConsumption(source, kind, { start: 0, end: match[0].length });
   }
   if (arithmeticExpression(source.input) !== null) return raised ? finishComputationConsumption(source, 'unsupported') : finishComputationConsumption(source, 'arithmetic', { start: 0, end: source.input.length });
+  if (isTemperatureQuestion(source.input)) return raised ? finishComputationConsumption(source, 'unsupported') : finishComputationConsumption(source, 'conversion', { start: 0, end: source.input.length });
   const intro = /^(?:(?:convert|conversion|حول|تحويل)[\s:،]+)/iu.exec(source.input);
   const offset = intro?.[0].length ?? 0;
   const phrase = CONVERSION.exec(source.input.slice(offset));
@@ -470,7 +504,11 @@ export function inspectComputationRequest(original: string): ComputationConsumpt
   return inspectPreparedComputation(prepareComputationSource(original, SHORT_ANSWER_TAIL));
 }
 
-export interface ComputedReply extends LocalReply { consumption: ComputationConsumption }
+export interface ComputedReply extends LocalReply {
+  consumption: ComputationConsumption;
+  /** A dependent calculation uses the numeric result before display rounding. */
+  arithmeticValue?: number;
+}
 
 export function compute(frame: Frame, now: Date, options: { originalText?: string } = {}): ComputedReply | null {
   const source = prepareComputationSource(options.originalText ?? frame.text, SHORT_ANSWER_TAIL);
@@ -492,9 +530,15 @@ export function compute(frame: Frame, now: Date, options: { originalText?: strin
     const operation = consumption.kind === 'arithmetic' ? arithmetic(input) : null;
     if (operation) {
       const value = formatNumber(operation.value);
-      return covered(calculated(display, value, `${operation.expression} = ${value}`));
+      return { ...covered(calculated(display, value, `${operation.expression} = ${value}`)), arithmeticValue: operation.value };
     }
-    const converted = consumption.kind === 'conversion' ? conversion(input, display, conversionRequest, source) : null;
+    const water = consumption.kind === 'conversion' ? WATER_TEMPERATURE.exec(input) : null;
+    if (water) {
+      const result = waterTemperature(water, display);
+      if (result) return covered(result);
+    }
+    const phrase = consumption.kind === 'conversion' ? TEMPERATURE_CONVERSION.exec(input) ?? CONVERSION.exec(input) : null;
+    const converted = phrase ? conversion(phrase, display, conversionRequest, source) : null;
     return converted ? covered(converted) : conversionRequest ? covered(fixedReply(MESSAGES.units[frame.lang], 'blocked')) : null;
   } catch (error) {
     if (error instanceof CalculationError) return covered(fixedReply(MESSAGES[error.kind][frame.lang], 'blocked'));

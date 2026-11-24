@@ -100,6 +100,10 @@ describe('public conversation follow-up query refinement', () => {
     expect(publicConversationFollowup(inputFor([earlier], request))).toBeNull();
   });
 
+  it('lets the sourced result of a superlative identify the subject of a property follow-up', () => {
+    expect(publicConversationFollowup(inputFor(['ما هو أطول نهر في العالم؟'], 'وكم طوله؟'))).toBeNull();
+  });
+
   it.each([
     { earlier: 'من ذاكرتي، ما مدينتي المفضلة؟', request: 'وما عدد سكانها؟' },
     { earlier: 'What is my saved city?', request: 'And its population?' },

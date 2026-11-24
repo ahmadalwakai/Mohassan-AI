@@ -15,9 +15,11 @@
  */
 import { performance } from 'node:perf_hooks';
 import { checkAnswerLine, figureKind, hasFigureOf, isMetaLine } from './answer-check.js';
+import { comparePages, comparisonQuestion } from './comparison.js';
 import { entityWords, fold, isFollowUp, refersBack, topicWords } from './hands.js';
 import { buildFrame } from './mind/frame.js';
 import { applyReplyFixes, checkReply, questionLanguage, type ReplyFindingCode } from './reply-check.js';
+import { splitReplyDirective } from './reply-directive.js';
 
 export type ReplyKind = 'answer' | 'quote' | 'list' | 'computed' | 'memory' | 'question' | 'abstain' | 'action' | 'composed' | 'fixed';
 export type JudgeCode = ReplyFindingCode
@@ -459,6 +461,13 @@ export function judge(input: JudgeInput): JudgeVerdict {
   }
 
   const own = ownLines(reply);
+  const sources = sourceUrls(reply);
+  const framing = splitReplyDirective(asked);
+  const comparison = sourced ? comparisonQuestion(framing.body) : null;
+  const derived = comparison ? comparePages(comparison, (input.evidence ?? []).flatMap(item =>
+    item.kind === 'page' && item.url && item.title && sources.includes(pageKey(item.url))
+      ? [{ text: item.text, title: item.title, url: item.url }] : []), framing.directive?.lang ?? lang) : null;
+  const comparedLead = derived && own[0]?.text === derived.result ? derived.result : null;
   const cues = cueWords(asked, topic);
   const titleWords = sourceTitleWords(reply);
   let lead: ScoredLine | null = null, best: ScoredLine | null = null, dropOldLead = false;
@@ -511,7 +520,7 @@ export function judge(input: JudgeInput): JudgeVerdict {
     // artifacts/agent-gaps-2026-11-22/audit-head-3959084/wiring-probe-after-1.json).
     const countedLead = figureKind(asked) === 'people' && first.relevance.topicHits > 0 && hasFigureOf('people', first.text);
     const defectiveLead = first.relevance.fragment || first.relevance.meta || first.relevance.topicHits === 0 || !first.relevance.phrase && !first.relevance.answerForm && !countedLead;
-    if (defectiveLead && top.line !== first.line && top.relevance.score - first.relevance.score >= JUDGE_THRESHOLDS.leadNotBestMargin
+    if (!comparedLead && defectiveLead && top.line !== first.line && top.relevance.score - first.relevance.score >= JUDGE_THRESHOLDS.leadNotBestMargin
       && checkAnswerLine(asked, top.text).ok) {
       dropOldLead = first.relevance.meta;
       add('lead_not_best', first.line, first.text, lang === 'ar'
@@ -532,7 +541,6 @@ export function judge(input: JudgeInput): JudgeVerdict {
   // source is among those texts. A source page the host did not capture is «not measured», never «unsupported».
   let support: JudgeVerdict['support'] = null;
   // Evidence without addresses (bare texts) is measured as given; addressed evidence must include the reply's source page.
-  const sources = sourceUrls(reply);
   const addressed = input.evidence?.filter(item => item.url) ?? [];
   const sourceRead = !sources.length || !addressed.length || addressed.some(item => sources.includes(pageKey(item.url!)));
   // Page text only: a desktop, template or local reply has no page to be found in, whatever the run read before it.
@@ -551,7 +559,7 @@ export function judge(input: JudgeInput): JudgeVerdict {
           const parts = sentence.split(/…|\.\.\./u).map(comparable).filter(part => part.length >= JUDGE_THRESHOLDS.supportMinChars);
           if (!parts.length) continue;
           sentences++;
-          const found = parts.every(part => corpus.some(text => supportedBy(part, text)));
+          const found = sentence === comparedLead || parts.every(part => corpus.some(text => supportedBy(part, text)));
           if (found) supported++;
           else add('unsupported_sentence', item.line, sentence, lang === 'ar' ? 'جملة ليست من الأدلة ولا من النصوص الثابتة' : 'A sentence found in no evidence text and no fixed text');
         }
