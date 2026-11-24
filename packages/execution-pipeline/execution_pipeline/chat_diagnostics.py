@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import gc
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -22,6 +23,9 @@ from . import ads_finetune as training
 
 DEDICATED_LIMIT_MIB = 3700
 SHARED_GROWTH_LIMIT_BYTES = 256 * 1024**2
+GPU_SAMPLE_INTERVAL_SECONDS = 5
+GPU_SAMPLE_FAILURE_LIMIT = 3
+GPU_SAMPLE_MAX_AGE_SECONDS = 90
 SPEED_BASELINE_SECONDS = 60
 SPEED_SAMPLE_SECONDS = 5
 SLOW_SPEED_FRACTION = 0.70
@@ -89,18 +93,23 @@ class GpuJob:
     def start_monitor(self):
         # Establish once after CUDA initialization and before model allocation.
         self._sample(establish_baseline=True)
+        sampled_at = time.perf_counter()
         self.check()
-        self.thread = threading.Thread(target=self._monitor, daemon=True)
+        self.thread = threading.Thread(target=self._monitor, args=(sampled_at,), daemon=True)
         self.thread.start()
 
-    def _sample(self, establish_baseline=False):
+    def _sample(self, establish_baseline=False, *, deadline=None):
         command = (
             f"$s=Get-Counter '\\GPU Process Memory(pid_{os.getpid()}*)\\Shared Usage',"
             f"'\\GPU Process Memory(pid_{os.getpid()}*)\\Dedicated Usage' -ErrorAction Stop; "
             "$s.CounterSamples | Select-Object Path,CookedValue | ConvertTo-Json -Compress"
         )
+        # A monitor query must fit within the remaining time for a good sample.
+        counter_timeout = 20
+        if deadline is not None:
+            counter_timeout = min(counter_timeout, max(0, deadline - time.perf_counter()))
         raw = subprocess.check_output(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
-                                      text=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=20)
+                                      text=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=counter_timeout)
         cells = json.loads(raw)
         if isinstance(cells, dict):
             cells = [cells]
@@ -111,8 +120,9 @@ class GpuJob:
             raise RuntimeError("Both dedicated and shared process counters are required.")
         shared = sum(item["CookedValue"] for item in cells if item["Path"].lower().endswith("shared usage"))
         dedicated = sum(item["CookedValue"] for item in cells if item["Path"].lower().endswith("dedicated usage"))
+        smi_timeout = None if deadline is None else max(0, deadline - time.perf_counter())
         smi = subprocess.check_output(["nvidia-smi", "--query-gpu=memory.used,memory.total,temperature.gpu,utilization.gpu",
-                                       "--format=csv,noheader,nounits"], text=True).strip()
+                                       "--format=csv,noheader,nounits"], text=True, timeout=smi_timeout).strip()
         used, total, temperature, utilization = map(int, smi.split(","))
         if establish_baseline:
             if self.shared_baseline_bytes is not None or self.samples:
@@ -126,13 +136,16 @@ class GpuJob:
                   "process_counter_paths": [item["Path"] for item in cells],
                   "gpu_used_mib": used, "gpu_total_mib": total, "temperature_c": temperature, "utilization": utilization}
         self.samples.append(record)
-        with (self.output / "gpu-memory.jsonl").open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(record) + "\n")
         if used >= DEDICATED_LIMIT_MIB and delta > SHARED_GROWTH_LIMIT_BYTES:
             self.problem = self.problem or (
                 f"GPU memory stop: shared_bytes={shared}, baseline={self.shared_baseline_bytes}, "
                 f"delta={delta}, dedicated={used}/{total} MiB"
             )
+        self._log_memory_sample(record)
+
+    def _log_memory_sample(self, record):
+        with (self.output / "gpu-memory.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(record) + "\n")
 
     def start_training(self, name):
         """Start a fresh speed baseline for an independent training run."""
@@ -185,14 +198,40 @@ class GpuJob:
             self.speed_window_seconds = 0
             self.speed_window_tokens = 0
 
-    def _monitor(self):
-        while not self.stop.wait(5):
-            try:
-                self._sample()
-            except Exception as error:
-                self.problem = self.problem or f"GPU memory monitor failed: {error}"
-            if self.problem:
+    def _monitor(self, sampled_at):
+        failures = 0
+        deadline = sampled_at + GPU_SAMPLE_MAX_AGE_SECONDS
+        while not self.problem:
+            remaining = max(0, deadline - time.perf_counter())
+            if self.stop.wait(min(GPU_SAMPLE_INTERVAL_SECONDS, remaining)) or self.problem:
                 return
+
+            sample_error = None
+            if time.perf_counter() < deadline:
+                try:
+                    self._sample(deadline=deadline)
+                except Exception as error:
+                    failures += 1
+                    sample_error = f"{type(error).__name__}: {error}"
+                else:
+                    sampled_at = time.perf_counter()
+                    if sampled_at < deadline:
+                        failures = 0
+                        deadline = sampled_at + GPU_SAMPLE_MAX_AGE_SECONDS
+
+            if time.perf_counter() >= deadline:
+                self.problem = self.problem or (
+                    f"GPU memory monitor failed: no good sample for {GPU_SAMPLE_MAX_AGE_SECONDS} seconds"
+                )
+            elif failures >= GPU_SAMPLE_FAILURE_LIMIT:
+                self.problem = self.problem or (
+                    f"GPU memory monitor failed: {failures} consecutive sample failures. Last error: {sample_error}"
+                )
+            if sample_error is not None:
+                try:
+                    self._log_memory_sample({"time": now(), "pid": os.getpid(), "sample_error": sample_error})
+                except OSError:
+                    logging.getLogger(__name__).exception("Could not log GPU memory sample failure: %s", sample_error)
 
     def check(self):
         if not self.problem and time.perf_counter() - self.started >= self.max_seconds:
