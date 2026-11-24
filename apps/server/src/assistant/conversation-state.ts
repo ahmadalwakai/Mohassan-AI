@@ -2,8 +2,9 @@ import { analyzeCompoundRequest } from './compound-request.js';
 import { resolveRequestContext, type RequestContextState, type RequestResolution, type RequestSlotKind } from './request-context.js';
 
 /**
- * Conversation state v2 (docs/RESPONSE-QUALITY-PLAN-2026-11-22.md, phase 1). Shadow only:
- * no chat path reads it yet, so it cannot change a reply.
+ * Conversation state v2 (docs/RESPONSE-QUALITY-PLAN-2026-11-22.md, phase 1).
+ * Full-state integration remains in shadow. public-conversation-followup.ts uses bounded user-only replay
+ * to refine already-authorized public follow-up queries under additional source and action guards.
  *
  * It wraps the v1 request context and keeps v1's boundary:
  * - only user turns are instructions;

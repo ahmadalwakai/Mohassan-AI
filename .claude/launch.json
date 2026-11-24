@@ -115,6 +115,16 @@
       ],
       "port": 3700,
       "url": "http://127.0.0.1:3700"
+    },
+    {
+      "name": "mohassan-agent-exec-lab",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set MOHASSAN_LAB_DIR=.data/agent-exec-lab&& set SERVER_PORT=4800&& set PORT=3800&& set WEB_ORIGIN=http://127.0.0.1:3800&& npm run dev:lab"
+      ],
+      "port": 3800,
+      "url": "http://127.0.0.1:3800"
     }
   ]
 }

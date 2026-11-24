@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { PlanStep, RunPath } from '@mohassan/contracts';
 import type { DesktopCommand } from '@mohassan/desktop';
-import { appendStep, planStep, setPlan, settleStep, startStep, tryEnterPhase, type RunCapability, type RunLedger } from './agent-run.js';
-import type { HandsPlan, HandsStep } from './hands.js';
+import { RunLedgerError, appendStep, planStep, setPlan, settleStep, startStep, tryEnterPhase, validatePlan, type RunCapability, type RunLedger } from './agent-run.js';
+import { normalizeHandsPlan, type HandsPlan, type HandsStep } from './hands.js';
 import type { ForbiddenRequestCapability } from './request-constraints.js';
 import type { RoutingHandler } from './routing-decision.js';
 import type { GateDecision } from './permission-gate.js';
@@ -43,7 +43,7 @@ function handsOutcome(step: HandsStep, lang: Lang): { outcome: string; input: st
 /** The hands plan as typed steps, each depending on the one before it, in the order the executor runs them. */
 export function planFromHands(plan: HandsPlan, prefix: string): PlanStep[] {
   const lang: Lang = plan.lang ?? 'ar';
-  return plan.steps.slice(0, 16).map((step, index) => {
+  return plan.steps.map((step, index) => {
     const described = handsOutcome(step, lang);
     return planStep({ id: handsStepId(prefix, index), capability: HANDS_CAPABILITY[step.kind], dependsOn: index ? [handsStepId(prefix, index - 1)] : [],
       outcome: described.outcome, input: described.input, acceptance: described.acceptance,
@@ -53,47 +53,148 @@ export function planFromHands(plan: HandsPlan, prefix: string): PlanStep[] {
 }
 
 /**
- * Records a hands plan in the run ledger once and returns the id prefix of its steps. The prefix comes from the plan's
- * own steps, so a run resumed after an approval, or the same plan read again as a correction, finds its steps instead of
- * adding them twice; each part of a multi-question message is a plan of its own. Parts past the 16-step bound are not
- * recorded (the executor still runs them).
+ * Records the complete normalized plan atomically. Its 128-bit namespace is stable across persistence and progress;
+ * a matching namespace must contain exactly this plan, never just one matching step or a truncated prefix.
  */
 export function recordHandsPlan(ledger: RunLedger, plan: HandsPlan, at: number): string {
-  const prefix = `h${createHash('sha256').update(JSON.stringify(plan.steps)).digest('hex').slice(0, 6)}-`;
-  if (ledger.plan?.steps.some(step => step.id.startsWith(prefix))) return prefix;
+  normalizeHandsPlan(plan);
+  const prefix = handsPlanPrefix(plan);
   const steps = planFromHands(plan, prefix);
-  if (!ledger.plan) setPlan(ledger, { version: 1, steps }, at);
-  else for (const step of steps) if (!appendStep(ledger, step, at)) break;
-  tryEnterPhase(ledger, 'planning', at);
+  if (ledger.plan?.steps.some(step => step.id.startsWith(prefix))) {
+    checkedHandsSteps(ledger, plan, prefix);
+    assertPriorHandsSteps(ledger, prefix, plan.next);
+    return prefix;
+  }
+  if (plan.next !== 0 || ledger.plan?.steps.some(step => /^h[0-9a-f]{6}-\d+$/u.test(step.id))) {
+    throw new RunLedgerError('RUN_PLAN_INVALID', 'The saved browser plan needs explicit reconciliation before it can resume.');
+  }
+  const combined = { version: 1 as const, steps: [...(ledger.plan?.steps ?? []), ...steps] };
+  const checked = validatePlan(combined);
+  if (!checked.ok) throw new RunLedgerError('RUN_PLAN_INVALID', 'The complete browser plan was rejected before execution.', checked.errors);
+  // Apply to a clone so even an unexpected append failure leaves the live ledger unchanged.
+  const draft = structuredClone(ledger);
+  if (!draft.plan) setPlan(draft, { version: 1, steps }, at);
+  else for (const step of steps) if (!appendStep(draft, step, at)) {
+    throw new RunLedgerError('RUN_PLAN_INVALID', 'The complete browser plan exceeds the run ledger capacity.');
+  }
+  tryEnterPhase(draft, 'planning', at);
+  Object.assign(ledger, draft);
   return prefix;
 }
 
-/**
- * The hands executor is about to run the step at `plan.next`: the steps it has moved past are settled as verified (it
- * returns early, as partial or blocked, from any step whose own check fails), and this step starts. A label the
- * executor shows inside a step (its pages being read) changes nothing.
- */
-export function advanceHandsStep(ledger: RunLedger, plan: HandsPlan, prefix: string, at: number) {
-  if (plan.next >= plan.steps.length) return;
-  const id = handsStepId(prefix, plan.next);
-  const steps = ledger.plan?.steps ?? [];
-  const current = steps.find(step => step.id === id);
-  if (!current || current.state === 'running') return;
-  for (let index = 0; index < plan.next; index++) {
-    const earlier = steps.find(step => step.id === handsStepId(prefix, index));
-    if (earlier?.state === 'pending') startStep(ledger, earlier.id, at);
-    if (earlier && (earlier.state === 'running' || earlier.state === 'awaiting_approval')) settleStep(ledger, earlier.id, 'verified', at);
+const handsPlanPrefix = (plan: HandsPlan) => {
+  const canonical = JSON.stringify([plan.lang ?? 'ar', plan.steps], (_key, value) => value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, value[key]])) : value);
+  return `h${createHash('sha256').update(canonical).digest('hex').slice(0, 32)}-`;
+};
+const handsDescription = (step: PlanStep) => JSON.stringify({ id: step.id, capability: step.capability, outcome: step.outcome, input: step.input,
+  acceptance: step.acceptance, dependsOn: step.dependsOn, required: step.required, risk: step.risk, verification: step.verification });
+
+function checkedHandsSteps(ledger: RunLedger, plan: HandsPlan, prefix: string): PlanStep[] {
+  if (prefix !== handsPlanPrefix(plan)) throw new RunLedgerError('RUN_PLAN_INVALID', 'The browser plan changed after admission.');
+  const expected = planFromHands(plan, prefix);
+  const recorded = ledger.plan?.steps.filter(step => step.id.startsWith(prefix)) ?? [];
+  if (expected.length !== recorded.length || expected.some((step, index) => handsDescription(step) !== handsDescription(recorded[index]!))) {
+    throw new RunLedgerError('RUN_PLAN_INVALID', 'The recorded browser steps do not match the complete admitted plan.');
   }
-  startStep(ledger, id, at);
+  return recorded;
+}
+
+function assertPriorHandsSteps(ledger: RunLedger, prefix: string, index: number) {
+  for (let earlier = 0; earlier < index; earlier++) {
+    if (ledger.plan?.steps.find(step => step.id === handsStepId(prefix, earlier))?.state !== 'verified') {
+      throw new RunLedgerError('RUN_STEP_DEPENDENCY', 'A browser step has no explicit completion receipt; reconcile it before continuing.');
+    }
+  }
+}
+
+/** Admit one exact execution, never inferring success from the cursor, labels, or a prior incomplete attempt. */
+export function beginHandsStep(ledger: RunLedger, plan: HandsPlan, prefix: string, index: number, at: number) {
+  const steps = checkedHandsSteps(ledger, plan, prefix);
+  if (!Number.isSafeInteger(index) || index < 0 || index >= steps.length || plan.next !== index + 1) {
+    throw new RunLedgerError('RUN_STEP_STATE', 'The browser execution cursor does not match the step being started.');
+  }
+  assertPriorHandsSteps(ledger, prefix, index);
+  const current = steps[index]!;
+  if (current.state !== 'pending' && current.state !== 'failed') {
+    throw new RunLedgerError('RUN_STEP_STATE', 'A started or unresolved browser step cannot be replayed automatically.');
+  }
+  startStep(ledger, current.id, at);
   tryEnterPhase(ledger, 'executing', at);
 }
 
-/** One part of a multi-question message ended: its steps settle with the part's own judged status before the next part starts. */
-export function settleHandsPart(ledger: RunLedger, prefix: string, status: 'completed' | 'partial' | 'blocked', at: number) {
+/** Compatibility wrapper for callers with a pre-effect cursor; display/progress callbacks must not use it. */
+export function advanceHandsStep(ledger: RunLedger, plan: HandsPlan, prefix: string, at: number) {
+  const index = plan.next;
+  if (index >= plan.steps.length) return;
+  beginHandsStep(ledger, { ...plan, next: index + 1 }, prefix, index, at);
+}
+
+/** A host completion receipt applies to one started step only, after that exact step returns its result. */
+export function completeHandsStep(ledger: RunLedger, plan: HandsPlan, prefix: string, index: number, status: 'completed' | 'partial', at: number) {
+  const steps = checkedHandsSteps(ledger, plan, prefix);
+  if (!Number.isSafeInteger(index) || index < 0 || index >= steps.length || plan.next !== index + 1) {
+    throw new RunLedgerError('RUN_STEP_STATE', 'The browser completion receipt does not match the execution cursor.');
+  }
+  assertPriorHandsSteps(ledger, prefix, index);
+  const step = steps[index]!;
+  if (step.state !== 'running') throw new RunLedgerError('RUN_STEP_STATE', 'Only the exact running browser step can receive a completion receipt.');
+  settleStep(ledger, step.id, status === 'completed' ? 'verified' : 'failed', at);
+}
+
+/** A later host judgment can reject a read without granting permission for another attempt. */
+export function rejectHandsReadResult(ledger: RunLedger, plan: HandsPlan, prefix: string, index: number, at: number) {
+  const steps = checkedHandsSteps(ledger, plan, prefix);
+  const step = steps[index], operation = plan.steps[index];
+  if (!step || !operation || !['search', 'ask_page', 'read'].includes(operation.kind) || step.risk !== 'read'
+    || !['verified', 'failed', 'running'].includes(step.state)) {
+    throw new RunLedgerError('RUN_STEP_STATE', 'Only an observed read result may be rejected by the host judge.');
+  }
+  if (step.state === 'failed') return;
+  // Finding text was an observation; the later host judge can still reject its relevance to the requested answer.
+  step.state = 'failed';
+  ledger.sequence = Math.min(1_000_000, ledger.sequence + 1);
+  ledger.updatedAt = new Date(at).toISOString();
+}
+
+/** Reopen only a read whose answer the host rejected under an already-admitted bounded repair. */
+export function reopenHandsReadStep(ledger: RunLedger, plan: HandsPlan, prefix: string, index: number, at: number) {
+  const steps = checkedHandsSteps(ledger, plan, prefix);
+  const step = steps[index], operation = plan.steps[index];
+  if (!Number.isSafeInteger(index) || !step || !operation || !['search', 'ask_page', 'read'].includes(operation.kind)
+    || step.risk !== 'read' || ledger.phase !== 'repairing' || ledger.repairs.used < 1
+    || !ledger.failures.some(failure => failure.stepId === step.id)
+    || !['verified', 'failed'].includes(step.state)) {
+    throw new RunLedgerError('RUN_STEP_STATE', 'Only a rejected read with a bounded repair may be reopened; unresolved effects cannot be replayed.');
+  }
+  assertPriorHandsSteps(ledger, prefix, index);
+  // A judge has rejected this read's answer. It is no longer a valid completion receipt, while its attempt count stays.
+  step.state = 'failed';
+  ledger.sequence = Math.min(1_000_000, ledger.sequence + 1);
+  ledger.updatedAt = new Date(at).toISOString();
+}
+
+/** The host calls this only after observing the return of the exact action admitted by its consumed permission. */
+export function completeApprovedHandsStep(ledger: RunLedger, plan: HandsPlan | null | undefined, stepId: string | null | undefined, at: number) {
+  if (!plan || !stepId || !/^h[0-9a-f]{32}-\d+$/u.test(stepId)) return;
+  const prefix = handsPlanPrefix(plan), steps = checkedHandsSteps(ledger, plan, prefix);
+  const index = steps.findIndex(step => step.id === stepId), step = steps[index];
+  const consumed = ledger.permissions.findLast(permission => permission.stepId === stepId && permission.runId === ledger.runId && permission.decision === 'consumed');
+  if (!step || index !== plan.next - 1 || step.state !== 'running' || step.authorization !== 'granted' || !consumed) {
+    throw new RunLedgerError('RUN_STEP_STATE', 'The observed approval result does not match the exact running browser step and consumed grant.');
+  }
+  // Returning from an approved dispatch proves only that dispatch. A search/news/read
+  // may still need extraction or source reading after its form submits; the advanced
+  // cursor must not turn that unfinished work into an answer receipt.
+  const primitive = ['open', 'click', 'type', 'scroll', 'back'].includes(plan.steps[index]!.kind);
+  completeHandsStep(ledger, plan, prefix, index, primitive ? 'completed' : 'partial', at);
+}
+
+/** Finishing a part cannot substitute for a missing execution receipt or turn unexecuted work into success. */
+export function settleHandsPart(ledger: RunLedger, prefix: string, _status: 'completed' | 'partial' | 'blocked', at: number) {
   for (const step of ledger.plan?.steps ?? []) {
     if (!step.id.startsWith(prefix)) continue;
-    if (step.state === 'running') settleStep(ledger, step.id, status === 'completed' ? 'verified' : 'failed', at);
-    else if (step.state === 'pending') settleStep(ledger, step.id, 'skipped', at);
+    if (step.state === 'running') settleStep(ledger, step.id, 'unknown', at);
   }
 }
 

@@ -40,8 +40,8 @@ Two findings drive this plan:
 | # | Decision | Approved |
 | --- | --- | --- |
 | D1 | GPU time on the laptop for one full run | up to 72 hours, resumable, laptop kept awake and on power |
-| D2 | Use public datasets that were machine-generated (for example TinyStories-style) | **No.** Human-written public data, templates and agent-authored rows only |
-| D3 | Rent a cloud GPU (compute only, own code and weights) | **No.** Only raise it if Gate 3 fails |
+| D2 | Use public datasets that were machine-generated (for example TinyStories-style) | **No.** Human-written public data, templates and agent-authored rows only. **Changed 2026-11-23: Yes**, as downloaded files only (section 8) |
+| D3 | Rent a cloud GPU (compute only, own code and weights) | **No.** Only raise it if Gate 3 fails. **Raised 2026-11-23 after Gate 3 failed: no paid GPU; the free Kaggle tier only** (section 8) |
 | D4 | Pass marks for phone activation (section 6) | as written in section 6 |
 
 Fixed rules, not open for agents to change: no external AI APIs, no pretrained weights, tokenizers
@@ -184,3 +184,139 @@ About two to three days of GPU time in total at the current size. One job on the
   Stage 3.
 - Gate 3 or Gate 5 fails: report the numbers and the three remaining options to the owner: narrow
   the scope further, allow D2, or allow D3. No further fine-tuning rounds on the same foundation.
+
+## 8. Version 5 (2026-11-23): a conversation-first foundation
+
+**ملخص للمالك:** فشل v4 لأن 99.6% مما تعلّمه كان ويكيبيديا (3.7 مليون رمز محادثة فقط). في v5 يصبح
+نصف ما يتعلّمه على الأقل محادثات، من بيانات مولَّدة سمحتَ بها، على نموذج أكبر (85 مليون معامل)
+يتسع لكرتك. التوقع الواقعي: ردود قصيرة سليمة في نطاق v1، لا مساعد عام.
+
+### 8.1 What failed in v4 (measured)
+
+Stage 3 trained 38M parameters on 1B positions. The training text was 99.6% prose (Wikipedia and
+SimpleWiki); human dialogue was 3.7M tokens (ar 0.71M, en 3.0M). The loss gate passed, and Gate 3
+failed at 0/20 per language: all 40 continuations looped, none ended with EOS
+(`artifacts/chat-training/v4/autopilot/STOPPED.json`).
+
+### 8.2 Owner decisions (in chat, 2026-11-23)
+
+- D2: yes. Public machine-generated conversation datasets, downloaded as files. Still no external
+  AI API calls and no pretrained weights, tokenizers or embeddings.
+- D3: no paid cloud GPU. The free Kaggle tier is allowed if a larger run is needed later; it needs
+  the owner's own Kaggle account.
+- Downloads approved, all Apache-2.0 on their dataset cards, into
+  `artifacts/corpora/conversational-d2-20261123/`:
+
+| Source | Part | Rows | Parquet |
+| --- | --- | --- | --- |
+| `AdaMLLab/smolkalam-arabic-conversational-sft` (Arabic translation of SmolTalk2) | 8 conversational `no_think` subsets: everyday conversations, system chats, magpie-ultra, rewrite, summarize, explore-instruct rewriting, Tulu personas, OpenHermes 2.5 | 1,037,684 | 2.46 GB |
+| `HuggingFaceTB/smol-smoltalk` (English, built for models under 1B) | all | 484,570 | 0.97 GB |
+| `arbml/CIDAR` (Arabic) | all | 10,000 | 3.6 MB |
+
+Not audited: the terms of the models that originally generated or translated these rows.
+
+### 8.3 Design
+
+- **Corpus `artifacts/corpora/foundation-v5/`:** per language, at least half the tokens are
+  conversations rendered exactly as at inference (`conversation_prompt(messages)` + reply + EOS,
+  one document per assistant turn, prompt and reply within 512 tokens). The rest is the existing
+  Wikipedia prose. Excluded: reasoning traces, tool calls, code-heavy and long-context subsets.
+  Validation is split by conversation, 1% per language. Same pinned tokenizer and `uint16` layout.
+- **Model:** the 85M shape, fresh weights. Measured at 100M positions it beat 38M by 0.11 (ar) and
+  0.13 (en) in loss, below v4's 0.15 rule; v5 takes it anyway because v4 failed on coherence at
+  38M. Measured speed 5,833 positions/s, so 1.0B positions is about 48 hours, inside D1.
+- **Trainer:** the existing `language_adaptation.adapt()` pilot path (balanced languages, fresh
+  initialization, checkpoints, resume, plateau stop) and the `GpuJob` guard. A new stage script
+  calls it; no trainer copy.
+
+### 8.4 Stages and gates
+
+- **V5-1 Data (CPU).** Build the corpus. **Gate A:** measured tokens per language and source,
+  conversation share at least 50% per language, and an independent read of 200 random rows per
+  source and language with at most 3% wrong or unnatural. A source over 3% is dropped or fixed.
+  No reading of `development-v4` or the holdout.
+- **Gate A result (2026-11-23): failed.** Independent reads of 200 rows per source
+  (`artifacts/chat-training/v5/gate-a-20261123/assessment.json`): SmolKalam Arabic 107/200 wrong or
+  unnatural (53.5%), CIDAR Arabic 111/200 (55.5%), smol-smoltalk English 45/200 (22.5%); the limit
+  is 3%. No subset with a real sample passes (best: English smol-magpie-ultra-short 26/158, 16%).
+  Main faults: tasks broken by machine translation, grammar and wrong terms, maths errors, persona
+  and web-search claims left from removed system prompts. SmolKalam's own scores do not predict the
+  verdicts (its top 10% by `rank_score` is still 11/20 bad). No GPU time was spent; the owner decides.
+- **Owner decision (in chat, 2026-11-23, «تجربة محدودة»):** use this data for the foundation stage
+  only, as a bounded experiment; the V5-3 fine-tuning data must pass the 3% limit on its own read;
+  Gate B stops the run early as pre-registered. Receipt:
+  `artifacts/chat-training/v5/gate-a-20261123/owner-override.json`, bound to the corpus
+  `artifacts/corpora/foundation-v5/corpus-20261123b` (conversation 51.0% ar, 50.9% en; its quality
+  samples are byte-identical to the judged ones). Known risk accepted: broken Arabic from translated rows.
+- **V5-2 Foundation (GPU, about 48 h).** Resume test first. 1.0B positions, checkpoint and
+  evaluation every 100M (one full 85M checkpoint is about 1 GB and the disk had 31 GB free on
+  2026-11-23), plateau stop after two evaluations without a better validation loss.
+- **Gate B (pre-registered before any v5 checkpoint, after the owner's review on 2026-11-23):**
+  `artifacts/chat-training/v5/probes/gate-b-preregistration-20261123.json`
+  (SHA-256 `5f12aed84db7ae27d33ccefffa804d709bb9fadfa83e0d5fcb6c887c3e46150b`).
+  - Known-hard probes are reported apart and are in no stop rule before V5-3: the name
+    (`chat-ar-03`, `chat-en-03`) and the out-of-scope refusals (`chat-ar-20` translation,
+    `chat-en-20` code). The downloaded data never names the assistant and does translate and code.
+  - The name spelling is not tested: `chat-ar-03` is also judged spelling-tolerant (محسن or موحسن).
+  - At 100M positions, objective: stop if 4 or fewer of 20 chat replies end with EOS in either
+    language (v4 ended 0 of 40). The 18 core chat probes and 20 prose probes per language are
+    judged and reported.
+  - At 300M positions: stop if core chat passes are 3 or fewer of 18 in either language.
+  - Every probe generation, during and after training: CPU, float32, greedy, 192 new tokens,
+    512 context, the same pinned code, so the numbers compare. Baseline: v4's own 38M candidate
+    on the same probes.
+  - **Baseline measured 2026-11-23** (`artifacts/chat-training/v5/probes/baseline-v4-chat-20261123`):
+    replies ending with EOS ar 5/20, en 2/20; a four-word phrase repeated three or more times in
+    ar 15/20, en 18/20; 40 probes in 7.2 minutes. Measured inside the process: 1.1 GB peak working
+    set (2.0 GB private) for the 38M model; a random-weight 85M model took 46 s and 1.2 GB (2.1 GB
+    private) for 192 new tokens on 4 CPU threads, so one Gate B snapshot needs up to about an hour of
+    CPU next to the training.
+- **Gate 3 (unchanged criteria)** on the selected checkpoint: at least 16 of 20 per language on
+  topic, no repetition loop, finished with EOS.
+- **V5-3 Chat fine-tuning.** Answer-only fine-tuning on in-scope rows, then Gate 5 as in Stage 5.
+  Prepared on 2026-11-23 while the foundation trains:
+  - Data: v4's in-house set `artifacts/chat-training/v4/dataset/stage5-candidate-20261118-v5`
+    (26,400 training rows per language, 30% multi-turn, 10% limit replies, the name «موحسن»), already
+    eligible through `stage5-handoff-20261118/eligibility.json` with independent reads of 200/200 per
+    language, so it meets the 3% limit the owner kept for this stage.
+  - Runner: `packages/execution-pipeline/execution_pipeline/v5_finetune.py` with
+    `scripts/v5_finetune.py` (prepare, check, run, smoke). It reuses Stage 5's trainer, Gate 0
+    parameters, data and QA validators; the base must be the exact checkpoint that passed Gate 3
+    (v5 has no Stage 4); it holds both GPU locks; runtime ceiling 8 hours for 85M. Tests:
+    `tests/test_v5_finetune.py`, 7 cases.
+  - Gate 5: replies on the CPU with `scripts/chat_model.py predict --device cpu --max-tokens 192` over
+    `development-v4` (200 cases), an independent reader writes `{id, verdict: pass|fail, reason}`,
+    then `artifacts/chat-training/v5/gate5/tally.py` applies the marks (at least 120/200, 55/100 per
+    language, no category at zero) and refuses a pass on an unfinished reply.
+  - Still to do: a CPU smoke run of two updates on the 100M snapshot after Gate B; `prepare` only
+    after Gate 3 passes, because it pins that checkpoint.
+- **Stages 6 and 7** unchanged: holdout once and activation only with the owner's approval.
+- **Serving speed (prepared 2026-11-23, for Stage 7 only).** The reference decoder
+  (`execution_model/generation.py`) recomputes the whole sequence for every token: 46 to 73 seconds
+  for a 192-token reply from the 85M shape on 4 CPU threads. A new module,
+  `execution_model/cached_generation.py`, keeps each block's rotated keys and values and runs only the
+  new token through the model's own layers. Pinned files were not edited, so the running v5 job can
+  still resume. Measured: v4's 38M weights on 8 chat probes, 8/8 identical token sequences, 105.7 s
+  to 17.1 s (6.2×); the 85M shape, identical 192 tokens, 73.1 s to 6.3 s (11.5×, 30 tokens/s).
+  Tests: `tests/test_cached_generation.py` (same tokens, per-step logits within 1e-4 of a full
+  recompute, same EOS stop, same context refusal). Every gate evaluation keeps the reference decoder,
+  as pre-registered; the cached path is for serving after activation.
+
+### 8.5 Premortem
+
+| Failure | Prevention (requirement) | Check (acceptance) |
+| --- | --- | --- |
+| The Arabic rows are machine-translated and read unnaturally, so the model learns broken Arabic | Independent quality read per source; drop sources over 3%; keep the human Aya rows | Gate A report with denominators before any GPU time |
+| The model still loops or drifts as v4 did | Conversation-first corpus and the larger shape; semantic check early, not only loss | Gate B at 100M positions decides whether the remaining ~40 GPU hours run |
+| The 48-hour run dies (sleep, heat, memory spill, a full disk) or another job takes the GPU | Resume test before the real run; checkpoint every 100M (about 10 GB in all); `GpuJob` lock, `.data/gpu.lock` and Rule 4 guard; laptop on power and awake | Resume receipt; tokens/s logged; lock files present while running; free disk checked before start |
+
+### 8.6 Gate B result (2026-11-23, 100M positions)
+
+- Stop rule (objective): **passed**. Chat replies ending with EOS: Arabic 10/20, English 10/20 (stop at 4 or fewer; v4 was 5/20 and
+  2/20). The run continues. Validation loss at 100M: Arabic 2.885, English 3.162.
+- Independent reader (reported only): core chat 0/18 Arabic, 0/18 English; prose 0/20 and 0/20; the four known-hard probes fail.
+  The finished replies are in the right language and conversational form but do not answer what was asked; most others loop.
+- Incident: the speed guard stopped the run at 101.07M because the CPU probe jobs ran beside it; resumed from 100M at 23:30 UTC.
+  Rule for the next gates: pause training, run the probes alone, resume.
+- Next stop rule at 300M: core chat passes 3 or fewer of 18 in either language stop the run.
+- Report: `artifacts/chat-training/v5/probes/gate-b-report-20261123.md`.

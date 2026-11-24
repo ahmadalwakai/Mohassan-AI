@@ -182,17 +182,36 @@ const ASKS = String.raw`(?:what|which)(?:\s+[\p{L}'’]+){0,2}\s+(?:should|shall
 const ADVICE_QUESTION = new RegExp(String.raw`^(?:${ASKS})(?![\p{L}\p{N}])`, 'u');
 const ASKS_HOW = new RegExp(String.raw`(?:^|[^\p{L}])(?:${ASKS})(?![\p{L}\p{N}])`, 'u');
 
+// Timing a recommended action and sizing a future requirement are methods too. Keep the exception at the start of the
+// question: an unrelated how-to later in a stored-fact question must not turn that fact into advice. Bare Arabic timing
+// is restricted to present-tense maintenance, care and usage actions; a date, appointment or past action still needs evidence.
+const TIMING_ADVICE = /^(?:(?:متي|امتي)\s+(?:(?:يجب|ينبغي|يفضل|لازم)(?:\s+ان)?\s+(?:ا(?!ل)|ن)\p{L}{2,}|(?:ا|ن)(?:غير|ستبدل|جدد|فحص|صلح|سقي|زرع|راجع|صون|ستخدم))|when\s+(?:should|shall|must)\s+(?:i|we)\s+\p{L}+)(?![\p{L}\p{N}])/u;
+const EN_SIZING_ADVICE = /^how\s+(?:many|much)(?:\s+[\p{L}\p{N}'’]+)*?\s+(?:(?:should|shall|must)\s+(?:i|we)\s+\p{L}+|(?:do|will|would)\s+(?:i|we)\s+need)(?![\p{L}\p{N}])/u;
+const AR_SIZING_ADVICE = /^كم((?:\s+[\p{L}\p{N}]+)*?)\s+س?(?:احتاج|نحتاج)(?:ه|ها|هم|هن)?(?![\p{L}\p{N}])/u;
+const PAST_OR_REPORTED_NEED = /(?:^|\s)(?:كنت|كنا|كان|كانت|قال|قالت|ذكر|ذكرت|اخبر|اخبرت|سجل|سجلت)(?=\s|$)/u;
+// A future-tense question can still ask for a fact from a particular record. Require its evidence rather than substitute
+// a playbook. The source connector must lead to a record noun within one short phrase, without crossing punctuation;
+// merely mentioning an owned policy as the thing to update does not establish a source.
+const GROUNDED_ADVICE_SOURCE = /\b(?:according to|based on|per|from|in|using|as (?:stated|specified|written) in)\s+(?:[\p{L}\p{N}'’-]+\s+){0,4}(?:emails?|e-mails?|messages?|letters?|notes?|records?|contracts?|prescriptions?|documents?|reports?|files?|polic(?:y|ies)|manuals?|instructions?|confirmations?|schedules?|calendars?)\b|(?:^|[^\p{L}])(?:حسب|بحسب|وفقا|طبقا|بناءا?\s+علي|استنادا\s+الي|من|في)\s+(?:[\p{L}\p{N}]+\s+){0,4}(?:ال|لل|[بل])?(?:رساله|رسالت|رسائل|بريد|ايميل|ملاحظه|ملاحظت|ملاحظات|سجل|سجلات|عقد|عقود|وصفه|وصفت|وصفات|تقرير|تقارير|مستند|مستندات|وثيقه|وثيقت|وثائق|ملف|ملفات|تعليمات|جدول|سياسه|سياست|سياسات|دليل)(?:ي|نا)?(?![\p{L}\p{N}])/u;
+function asksTimingOrSizingAdvice(text: string): boolean {
+  if (TIMING_ADVICE.test(text) || EN_SIZING_ADVICE.test(text)) return true;
+  const sizing = AR_SIZING_ADVICE.exec(text);
+  return sizing !== null && !PAST_OR_REPORTED_NEED.test(sizing[1]!);
+}
+
 /** Whether a request in the given mode may be answered from a skill at all, before any skill is read. */
 export function skillReadable(request: string, mode: SkillReadMode): boolean {
   if (typeof request !== 'string') return false;
   const text = matchText(request).trim();
   if (!text || text.length > MAX_REQUEST_CHARS) return false;
-  const doing = DOING.test(text) || ASKS_HOW.test(text);
+  const decision = asksTimingOrSizingAdvice(text);
+  const doing = DOING.test(text) || ASKS_HOW.test(text) || decision;
   if (LIVE.test(text) || (LIVE_TIME.test(text) && (LIVE_VALUE.test(text) || !doing))) return false;
   if (mode === 'writing') return !REWORK.test(text);
-  if ((FACT_START.test(text) || WH_START.test(text)) && !ADVICE_QUESTION.test(text) && buildFrame(request).personal) return false;
-  if (mode === 'advice') return ADVICE.test(text) || ASKS_HOW.test(text) || !FACT_START.test(text);
-  if (mode === 'personal') return (ADVICE.test(text) || doing) && (ADVICE_QUESTION.test(text) || (!FACT_START.test(text) && !WH_START.test(text)));
+  if (decision && GROUNDED_ADVICE_SOURCE.test(text)) return false;
+  if ((FACT_START.test(text) || WH_START.test(text)) && !ADVICE_QUESTION.test(text) && !decision && buildFrame(request).personal) return false;
+  if (mode === 'advice') return ADVICE.test(text) || ASKS_HOW.test(text) || decision || !FACT_START.test(text);
+  if (mode === 'personal') return (ADVICE.test(text) || doing) && (ADVICE_QUESTION.test(text) || decision || (!FACT_START.test(text) && !WH_START.test(text)));
   return true;
 }
 

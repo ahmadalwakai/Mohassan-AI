@@ -255,13 +255,16 @@ function stepOf(ledger: RunLedger, id: string): PlanStep {
   return step;
 }
 
-const RESTARTABLE: ReadonlySet<PlanStepState> = new Set(['pending', 'failed', 'unknown', 'awaiting_approval']);
-/** Starts a step whose dependencies are done. A failed or unknown step starts again only as a repair, counted in attempts. */
+const RESTARTABLE: ReadonlySet<PlanStepState> = new Set(['pending', 'failed', 'awaiting_approval']);
+/** Starts a step whose required dependencies are verified. Unknown effects require reconciliation, never an automatic retry. */
 export function startStep(ledger: RunLedger, id: string, at: number): PlanStep {
   const step = stepOf(ledger, id);
   if (step.state === 'running') return step;
   if (!RESTARTABLE.has(step.state)) throw new RunLedgerError('RUN_STEP_STATE', `Step ${id} is ${step.state}; it cannot start.`);
-  const waiting = step.dependsOn.filter(dependency => !['verified', 'skipped'].includes(stepOf(ledger, dependency).state));
+  const waiting = step.dependsOn.filter(dependency => {
+    const prior = stepOf(ledger, dependency);
+    return prior.state !== 'verified' && !(prior.state === 'skipped' && !prior.required);
+  });
   if (waiting.length) throw new RunLedgerError('RUN_STEP_DEPENDENCY', `Step ${id} waits for ${waiting.join(', ')}.`, waiting);
   if (step.attempts >= MAX_STEP_ATTEMPTS) throw new RunLedgerError('RUN_STEP_STATE', `Step ${id} reached its attempt limit.`);
   step.state = 'running';
@@ -355,7 +358,7 @@ export function decideVerdict(ledger: RunLedger, input: { hostStatus: 'completed
   const steps = ledger.plan?.steps ?? [];
   const required = steps.filter(step => step.required);
   const failedStep = required.find(step => ['failed', 'invalidated'].includes(step.state));
-  const openStep = required.find(step => ['pending', 'running', 'awaiting_approval', 'unknown'].includes(step.state));
+  const openStep = required.find(step => ['pending', 'running', 'awaiting_approval', 'unknown', 'skipped'].includes(step.state));
   const reviewBlocks = Boolean(input.review?.shouldBlockCompletion);
   let status = input.hostStatus;
   // The reason names what the runtime recorded: a refusal by the owner is never reported as a missing capability.
@@ -365,13 +368,17 @@ export function decideVerdict(ledger: RunLedger, input: { hostStatus: 'completed
   if (status === 'completed' && failedStep) { status = 'partial'; reason = failedStep.authorization === 'refused' ? 'owner_refused' : 'step_failed'; }
   else if (status === 'completed' && openStep) { status = 'partial'; reason = openStep.state === 'unknown' ? 'step_unverified' : 'steps_outstanding'; }
   else if (status === 'completed' && reviewBlocks) { status = 'partial'; reason = 'criteria_unmet'; }
-  const criteria: VerificationResult['criteria'] = [
+  const allCriteria: VerificationResult['criteria'] = [
     ...steps.map(step => ({ id: `step:${step.id}`, label: step.outcome, required: step.required,
-      status: step.state === 'verified' || step.state === 'skipped' ? 'verified' as const : step.state === 'failed' || step.state === 'invalidated' ? 'failed' as const
+      status: step.state === 'verified' ? 'verified' as const : step.state === 'failed' || step.state === 'invalidated' ? 'failed' as const
         : step.state === 'unknown' ? 'unverified' as const : 'missing' as const })),
     ...(input.review?.criteria ?? []).map(item => ({ id: item.id, label: clip(input.criterionLabels?.[item.id] ?? item.id, 200), required: item.required && Boolean(input.enforced), status: CRITERION_STATUS[item.status] })),
-  ].slice(0, 24);
-  const counted = criteria.filter(item => item.required);
+  ];
+  // The view is bounded, but every requirement contributes to the aggregate check.
+  // When the view fills, keep unmet required criteria visible before guidance.
+  const priority = (item: VerificationResult['criteria'][number]) => item.required ? item.status === 'verified' ? 1 : 0 : 2;
+  const criteria = (allCriteria.length > 24 ? [...allCriteria].sort((left, right) => priority(left) - priority(right)) : allCriteria).slice(0, 24);
+  const counted = allCriteria.filter(item => item.required);
   const verificationStatus: VerificationResult['status'] = !counted.length ? 'not_applicable'
     : counted.every(item => item.status === 'verified') ? 'verified' : counted.some(item => item.status === 'failed') ? 'failed'
       : counted.some(item => item.status === 'verified') ? 'partial' : 'unverified';

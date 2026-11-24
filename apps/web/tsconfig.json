@@ -42,7 +42,9 @@
     ".next-vision-lab/types/**/*.ts",
     ".next-vision-lab/dev/types/**/*.ts",
     ".next-wiring-lab/types/**/*.ts",
-    ".next-wiring-lab/dev/types/**/*.ts"
+    ".next-wiring-lab/dev/types/**/*.ts",
+    ".next-agent-exec-lab/types/**/*.ts",
+    ".next-agent-exec-lab/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

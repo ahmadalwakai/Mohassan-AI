@@ -184,13 +184,24 @@ export function createMemoryControl(db:Kysely<any>,options:{now?:()=>Date}={}){
     const request=MemorySearchSchema.parse(input);
     if(request.taskId)await ownedTask(ownerId,request.taskId);
     if(!options.readOnly)await sync(ownerId);
-    let query=db.selectFrom('memory_items').selectAll().where('owner_id','=',ownerId).where('status','=','active').where('expires_at','>',now());
+    const lookupAt=now(),terms=[...new Set(normalize(request.query).split(/[^\p{L}\p{N}]+/u).filter(word=>word.length>1))].slice(0,20);
+    let query=db.selectFrom('memory_items').selectAll().where('owner_id','=',ownerId).where('status','=','active').where('expires_at','>',lookupAt);
     if(request.layers?.length)query=query.where('layer','in',request.layers);
     query=query.where(eb=>eb.or([eb('layer','!=','working'),request.taskId?eb('task_id','=',request.taskId):eb('task_id','is',null)]));
-    const rows=await query.orderBy('updated_at','desc').limit(300).execute(),items=await provenance(rows);
-    const terms=[...new Set(normalize(request.query).split(/[^\p{L}\p{N}]+/u).filter(word=>word.length>1))].slice(0,20);
+    // Reject unavailable or foreign provenance before ranking and limiting; it must not crowd out valid matches.
+    query=query.where(sql<boolean>`EXISTS (SELECT 1 FROM memory_provenance p WHERE p.memory_id=memory_items.id)
+      AND NOT EXISTS (SELECT 1 FROM memory_provenance p LEFT JOIN memory_evidence e ON e.id=p.evidence_id
+        WHERE p.memory_id=memory_items.id AND (e.id IS NULL OR e.owner_id<>${ownerId} OR e.status<>'active' OR e.expires_at<=${lookupAt}))`);
+    if(terms.length){
+      // Match the existing lexical policy in PostgreSQL, over all of this owner's eligible items, before LIMIT.
+      const normalizedTitle=sql<string>`regexp_replace(lower(normalize(title,NFKC)),${'[\u064b-\u065f\u0670]'},'','g')`;
+      const normalizedContent=sql<string>`regexp_replace(lower(normalize(content,NFKC)),${'[\u064b-\u065f\u0670]'},'','g')`;
+      const score=sql<number>`(${sql.join(terms.map(term=>sql<number>`(CASE WHEN position(${term} IN ${normalizedTitle})>0 THEN 3 ELSE 0 END + CASE WHEN position(${term} IN ${normalizedContent})>0 THEN 1 ELSE 0 END)`),sql` + `)})`;
+      query=query.where(score,'>',0).orderBy(score,'desc');
+    }
+    const rows=await query.orderBy('updated_at','desc').orderBy('id','asc').limit(request.limit).execute(),items=await provenance(rows);
     const available=items.filter(item=>item.provenance.length&&item.provenance.every(ref=>ref.status==='active'&&(!ref.expiresAt||new Date(ref.expiresAt)>now())));
-    const ranked=available.map(item=>({item,score:terms.reduce((score,term)=>score+(normalize(item.title).includes(term)?3:0)+(normalize(item.content).includes(term)?1:0),0)})).filter(item=>!terms.length||item.score>0).sort((left,right)=>right.score-left.score||right.item.updatedAt.localeCompare(left.item.updatedAt)).slice(0,request.limit).map(row=>row.item);
+    const ranked=available;
     const expired=await db.selectFrom('memory_items').select(eb=>eb.fn.countAll().as('n')).where('owner_id','=',ownerId).where('status','=','active').where('expires_at','<=',now()).executeTakeFirstOrThrow();
     return {items:ranked,citations:ranked.flatMap(item=>item.provenance.map(ref=>({memoryId:item.id,evidenceId:ref.id,taskId:ref.taskId,kind:ref.kind}))),method:'lexical-v1' as const,expiredExcluded:Number(expired.n)};
   }

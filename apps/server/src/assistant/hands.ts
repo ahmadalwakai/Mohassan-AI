@@ -1284,6 +1284,25 @@ function templateFor(siteUrl: string, query: string): string | null {
   return found ? found[1](query) : null;
 }
 
+/** Expand deterministic site navigation before the host admits and persists the whole plan. */
+export function normalizeHandsPlan(plan: HandsPlan): HandsPlan {
+  if (!Array.isArray(plan.steps) || !plan.steps.length || !Number.isSafeInteger(plan.next) || plan.next < 0 || plan.next > plan.steps.length) {
+    throw new BrowserError('ASSISTANT_HANDS_PLAN_INVALID', 'تعذر التحقق من خطة المتصفح المحفوظة؛ اطلب المهمة من جديد.', 409);
+  }
+  const expanded: HandsStep[] = [];
+  let next = 0;
+  for (const [index, step] of plan.steps.entries()) {
+    if (index === plan.next) next = expanded.length;
+    if (step.kind === 'search' && step.site && !templateFor(step.site.url, step.query)) {
+      expanded.push({ kind: 'open', url: step.site.url, name: step.site.name }, { ...step, site: null, here: true });
+    } else expanded.push(step);
+  }
+  if (plan.next === plan.steps.length) next = expanded.length;
+  plan.steps = expanded;
+  plan.next = next;
+  return plan;
+}
+
 /** A public page read over HTTP without the browser; `unreadable` (no text, not HTML, timeout) falls back to the browser, `disallowed` (robots) is skipped. */
 export type HandsRead = { kind: 'page'; page: AgentPage } | { kind: 'unreadable' } | { kind: 'disallowed' };
 
@@ -1298,6 +1317,10 @@ export interface HandsIO {
   prepare(action: AgentAction): Promise<AgentRequestPermit | null>;
   /** Cookie banners, sign-in and human checks; null when the run paused or ended there. */
   settle(page: AgentPage): Promise<AgentPage | null>;
+  /** Durable execution admission, separate from display labels; rejection prevents this step's effects. */
+  begin?(index: number): Promise<void>;
+  /** Called only after this exact step returns its observation, never from a progress label or cursor move. */
+  complete?(index: number, status: 'completed' | 'partial'): Promise<void>;
   step(label: string): Promise<void>;
   /** The live line only («ينتظر ظهور نتائج البحث»); nothing is recorded as a step. */
   progress?(label: string): Promise<void>;
@@ -1369,6 +1392,7 @@ const NO_PAGE = 'لا توجد صفحة مفتوحة في هذه المحادث�
 
 /** Runs the plan from `plan.next`. The caller persists `plan` in the run state before any pause. */
 export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutcome> {
+  normalizeHandsPlan(plan);
   let page = await io.page();
   const go = async (action: AgentAction, label: string): Promise<AgentPage | null> => {
     let next: AgentPage;
@@ -1493,6 +1517,11 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
 
   while (plan.next < plan.steps.length) {
     const index = plan.next, step = plan.steps[index];
+    if (io.begin) {
+      // Persist the advanced cursor with the started ledger step before any effect. A crash cannot replay it by guessing.
+      plan.next = index + 1;
+      await io.begin(index);
+    }
     switch (step.kind) {
       case 'open': {
         await io.step(`فتح ${step.name}`);
@@ -1504,11 +1533,6 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
       }
       case 'search': {
         const template = step.site ? templateFor(step.site.url, step.query) : null;
-        if (step.site && !template) {
-          // Two effects become two steps, so a pause after opening the site never repeats or skips one.
-          plan.steps.splice(index, 1, { kind: 'open', url: step.site.url, name: step.site.name }, { kind: 'search', query: step.query, site: null, here: true });
-          continue;
-        }
         await io.step(`البحث عن «${step.query.slice(0, 60)}»`);
         plan.next = index + 1;
         delete plan.results;
@@ -1756,6 +1780,13 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         plan.next = index + 1;
         break;
       }
+    }
+    if (io.complete) {
+      const answer = step.kind === 'ask_page' && page ? pageAnswer(page, step.question, plan.lang ?? 'ar') : null;
+      const missing = step.kind === 'search' && (step.ask ? !plan.found?.lines.length
+        : !plan.results?.length && (!page || !resultLinks(page, 1, step.query).length))
+        || answer !== null && (!answer.parts.length || answer.missing.length > 0);
+      await io.complete(index, missing ? 'partial' : 'completed');
     }
   }
   return { kind: 'done', ...describe(plan, page) };

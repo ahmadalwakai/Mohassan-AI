@@ -21,13 +21,14 @@ import {
   SEARCH_REPEATED, SEARCH_UNUSABLE, asksToRemember, needsReview, noteAttempt, reviewRequest, searchKey, sensitiveAction, siteOf, situation, skillContextBudget, stepLabel, systemPrompt, type BrainState, type Decision, type ModelTier, type WorkTool,
 } from './assistant/brain.js';
 import { ADS_DRAFT_NOTE, ADS_SKILL_SLUG } from './assistant/ads-check.js';
-import { LIVE, PROVIDER_SPACING_MS, answerSubject, isBareAddress, isFollowUp, notWebReason, parseHands, plainTitle, refersBack, runHands, siteQuestion, siteToOpen, tidy, topicWords, unnamedSite, webQuestion, type HandsIO, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
+import { LIVE, PROVIDER_SPACING_MS, answerSubject, isBareAddress, isFollowUp, normalizeHandsPlan, notWebReason, parseHands, plainTitle, refersBack, runHands, siteQuestion, siteToOpen, tidy, topicWords, unnamedSite, webQuestion, type HandsIO, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
 import { liveLabel } from './assistant/activity.js';
 import type { DesktopCommand, DesktopOutcome, ParsedDesktopCommand } from '@mohassan/desktop';
 import { searchRefusedReply, unsupportedReply, unsupportedRequest } from './assistant/unsupported-request.js';
 import { decideBrowserVisibility, deriveBrowserVisibility } from './assistant/browser-visibility.js';
 import type { ShadowRouter } from './assistant/router.js';
 import type { ConversationShadow } from './assistant/conversation-state-shadow.js';
+import { publicConversationFollowup } from './assistant/public-conversation-followup.js';
 import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { judge as judgeAnswer } from './assistant/judge.js';
 import { continueWebSequence, joinSequence, planWebSequence, startWebSequence } from './assistant/web-sequence.js';
@@ -102,8 +103,8 @@ import { fullerName, returnParts } from './assistant/return-to.js';
 import { RunLedgerError, addEvidence, appendStep, beginRepair, cancelLedger, classifySteering, collectStateEvidence, countModelCall, createRunLedger, criterionLabel, decideVerdict, planStep,
   projectRunView, restoreRunLedger, setStepAuthorization, settleOpenSteps, settleStep, startStep, tryEnterPhase, type RunLedger } from './assistant/agent-run.js';
 import { PermissionGateError, checkPermission, consumePermission, pendingActionMaterial, recordDecision, requestPermission } from './assistant/permission-gate.js';
-import { TOOL_ACTION, advanceHandsStep, desktopPlanStep, documentPlanStep, gateRefusalText, handsStepId, pathOfHandler, platformCapabilityOf, recordHandsPlan, recordModelStep,
-  settleHandsPart, verifyStoredPdf } from './assistant/run-plans.js';
+import { TOOL_ACTION, beginHandsStep, completeApprovedHandsStep, completeHandsStep, desktopPlanStep, documentPlanStep, gateRefusalText, handsStepId, pathOfHandler, platformCapabilityOf, recordHandsPlan, recordModelStep,
+  rejectHandsReadResult, reopenHandsReadStep, settleHandsPart, verifyStoredPdf } from './assistant/run-plans.js';
 
 export interface DesktopChatPort {
   parse(request: string): ParsedDesktopCommand | null;
@@ -836,7 +837,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const stepId = asked?.stepId ?? null;
     if (decision.decision === 'allow') {
       consumePermission(ledger, decision.record.id, at);
-      if (stepId) ledgerSafe(state, runId, run => startStep(run, stepId, at));
+      if (stepId) startStep(ledger, stepId, at);
       tryEnterPhase(ledger, 'executing', at);
       await saveState(runId, state);
       return true;
@@ -2374,6 +2375,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // approve route, a retry, a reconnect), a pending action runs only when the owner's recorded yes covers its exact
       // details, for this account, conversation and run. Otherwise nothing runs and the run ends blocked.
       if ((state.pendingAction || state.pendingHeld || state.pendingTask || state.pendingComputer || state.pendingDesktop) && !await admitPending(id, runId, state, request)) return;
+      const admittedBrowserStep = state.pendingAction || state.pendingHeld
+        ? restoreRunLedger(state.agentRun, runId)?.permissions.findLast(item => item.decision === 'consumed')?.stepId : null;
       if (state.pendingAction) {
         const pending=state.pendingAction;
         state.pendingAction=null;
@@ -2383,6 +2386,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const result=await actBrowser(ownerId,id,pending.action,authority(),pending.permit);
         page=result.page; await keepPage(id,page);
         state.trail.push({step:state.steps,action:pending.label,result:'request sent after exact user approval; verify the page outcome',changed:result.changed});
+        if (state.hands && admittedBrowserStep) completeApprovedHandsStep(ledgerOf(state, runId), state.hands, admittedBrowserStep, Date.now());
+        await saveState(runId, state);
       }
       if (state.pendingHeld) {
         assertBrowserRequestScope(request, 'browser_action', state);
@@ -2393,6 +2398,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const result=await browser.releaseHeld(ownerId,id,pending.id,authority());
         page=result.page; await keepPage(id,page);
         state.trail.push({step:state.steps,action:pending.label,result:'the held request was sent once after exact user approval; verify the page outcome',changed:result.changed});
+        if (state.hands && admittedBrowserStep) completeApprovedHandsStep(ledgerOf(state, runId), state.hands, admittedBrowserStep, Date.now());
+        await saveState(runId, state);
       }
       if (state.pendingTask) {
         const pending = state.pendingTask;
@@ -2830,10 +2837,18 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const ownWords = new Set(topicWords(actionRequest));
         const contextualQuery = parsedQuery && topicWords(parsedQuery).some(word => !ownWords.has(word)) ? parsedQuery : null;
         const ambiguousReference = understanding?.kind === 'ambiguous' && understanding.ambiguities.some(reason => reason === 'missing_reference' || reason === 'missing_question' || reason === 'unclear_replacement');
+        // A country-only property (currency/capital) stays with the user's country, even when the last page named its
+        // capital or president. Refine public questions only; pending cards, actions and guesses retain their handlers.
+        const conversationQuery = understanding && !steps && !privateRequest && !ambiguousReference ? publicConversationFollowup({
+          request, resolution: understanding, previousSource: state.previousSource,
+          earlierUserTurns: history.filter(entry => entry.role === 'user').map(entry => entry.text),
+          pending: Boolean(conversation.question || conversation.secure) || conversation.status === 'waiting_approval',
+        }) : null;
+        const conversationAsk = conversationQuery ? webQuestion(conversationQuery) : null;
         // A pronoun follow-up («وكم عدد سكانها؟» after an answer read from the Tokyo article) asks about the thing the last answer
         // named, not about the words of the last question: «كم عدد سكانها طوكيو», where «كم عدد سكانها عاصمة اليابان» read Hokkaido (2026-11-22).
         // The item the answer named stands for its page when narrower («نهر النيل» read from «نهر»): answerSubject in hands.ts.
-        const foundBefore = freshRequest && !steps && isFollowUp(tidy(actionRequest)) && refersBack(tidy(actionRequest))
+        const foundBefore = freshRequest && !steps && !conversationAsk && isFollowUp(tidy(actionRequest)) && refersBack(tidy(actionRequest))
           ? (await db.selectFrom('chat_runs').select('state').where('conversation_id', '=', id).where('owner_id', '=', ownerId).where('id', '!=', runId)
             .orderBy('created_at', 'desc').limit(1).executeTakeFirst())?.state?.handsFound : null;
         const namedBefore = foundBefore && typeof foundBefore.title === 'string'
@@ -2841,14 +2856,14 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const entityAsk = namedBefore ? webQuestion(actionRequest, [namedBefore]) : null;
         // «ارجع إلى أينشتاين: أين ولد؟» asks about the subject by the fuller name an earlier answer was read under («ألبرت
         // أينشتاين»): searched as the one word, it was answered from his father's page (long-final turn 11, 2026-11-23).
-        const returning = freshRequest && !steps && !entityAsk ? returnParts(clean(request)) : null;
+        const returning = freshRequest && !steps && !conversationAsk && !entityAsk ? returnParts(clean(request)) : null;
         const earlierTitles = returning ? (await db.selectFrom('chat_runs').select('state').where('conversation_id', '=', id).where('owner_id', '=', ownerId)
           .where('id', '!=', runId).orderBy('created_at', 'desc').limit(12).execute())
           .map(row => row.state?.handsFound?.title).filter((title): title is string => typeof title === 'string').map(title => plainTitle(title)) : [];
         returnName = returning ? fullerName(returning.subject, earlierTitles) : null;
         const returnAsk = returning && returnName ? webQuestion(`${returning.question} ${returnName}`) : null;
         const asked = !ambiguousReference && !privateRequest && !steps && !(tools?.memory && memoryRecallFormat(request)) && !projectInventoryFormat(request)
-          ? entityAsk ?? returnAsk ?? webQuestion(contextualQuery ?? actionRequest, contextualQuery ? [] : earlierAsks) : null;
+          ? conversationAsk ?? entityAsk ?? returnAsk ?? webQuestion(contextualQuery ?? actionRequest, contextualQuery ? [] : earlierAsks) : null;
         // A follow-up reaches the mind with the previous question's topic, as the browser search does.
         const resolved = asked?.[0]?.kind === 'search' ? asked[0].query : null;
         if (resolved && isFollowUp(tidy(request))) state.resolvedRequest = resolved;
@@ -2899,7 +2914,19 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         state.hands = plan;
         // The run ledger: the hands plan as typed steps, recorded once per plan (a resumed run finds its own steps).
         let handsPrefix = '';
-        ledgerSafe(state, runId, ledger => { handsPrefix = recordHandsPlan(ledger, plan, Date.now()); });
+        const planRefusal = () => /\p{Script=Arabic}/u.test(request)
+          ? 'تعذر قبول خطة التنفيذ كاملة أو التحقق من نتيجة خطوة سابقة. لم أنفّذ خطوات إضافية؛ راجع النتائج المسجلة أو قسّم الطلب إلى مهمة أصغر.'
+          : 'I could not admit the complete execution plan or verify an earlier step. No additional steps were dispatched; review the recorded results or split the request into a smaller task.';
+        try {
+          normalizeHandsPlan(plan);
+          handsPrefix = recordHandsPlan(ledgerOf(state, runId), plan, Date.now());
+          await saveState(runId, state);
+        } catch (error) {
+          if (!(error instanceof RunLedgerError) && !(error instanceof BrowserError && error.code === 'ASSISTANT_HANDS_PLAN_INVALID')) throw error;
+          state.hands = null;
+          await finish(id, runId, state, planRefusal(), 'partial');
+          return;
+        }
         const readPage = config.readPage;
         // A live question (a price, the weather, a score) reads its pages afresh; anything else may come from the page cache.
         const liveQuestion = plan.steps.some(step => step.kind === 'search' && LIVE.test(step.query));
@@ -2954,7 +2981,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           act: async action => { await active(); const result = await actBrowser(ownerId, id, action, authority()); page = result.page; await keepPage(id, page); state.trail.push({ step: ++state.steps, action: `${action.kind} ${action.text ?? action.ref ?? ''}`.trim().slice(0, 300), result: `now at ${page.url}`, changed: result.changed }); return page; },
           prepare: action => prepareBrowserAction(ownerId, id, action),
           settle: async next => { const settled = await instincts(ownerId, id, runId, state, next, signal, personalSignIn); if (settled) { page = settled; await keepPage(id, settled); } return settled; },
-          step: async label => { await active(); if (handsPrefix) ledgerSafe(state, runId, ledger => advanceHandsStep(ledger, plan, handsPrefix, Date.now())); await addStep(id, runId, label); await setProgress(id, `${liveLabel(label)}…`); },
+          begin: async index => { await active(); beginHandsStep(ledgerOf(state, runId), plan, handsPrefix, index, Date.now()); await saveState(runId, state); },
+          complete: async (index, status) => { await active(); completeHandsStep(ledgerOf(state, runId), plan, handsPrefix, index, status, Date.now()); await saveState(runId, state); },
+          step: async label => { await active(); await addStep(id, runId, label); await setProgress(id, `${liveLabel(label)}…`); },
           progress: async label => { await active(); await setProgress(id, `${label}…`); },
           approve: async (action, permit, label) => { await pauseBrowserAction(id, runId, state, { action, permit, label }); },
           hold: async (held, label) => { await pauseHeld(id, runId, state, held, label); },
@@ -2979,12 +3008,15 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             ? judgeWouldWithhold(vault.scrub(id, outcome.text), outcome.status, judgedAs) : null;
           // The run ledger counts the correction against the run's repair limit (CommandChatConfig.limits.repairsPerRun);
           // the same refusal twice on one step is not corrected a third time (agent-run.ts beginRepair).
-          let repairAllowed = true;
-          if (refusal && plan.found) ledgerSafe(state, runId, ledger => {
-            repairAllowed = beginRepair(ledger, { stepId: handsPrefix ? handsStepId(handsPrefix, plan.steps.length - 1) : null, signature: `judge:${refusal.join(',')}` }, Date.now()).allowed;
-          });
+          let repairAllowed = false;
+          if (refusal && plan.found) {
+            const ledger = ledgerOf(state, runId);
+            rejectHandsReadResult(ledger, plan, handsPrefix, plan.steps.length - 1, Date.now());
+            repairAllowed = beginRepair(ledger, { stepId: handsStepId(handsPrefix, plan.steps.length - 1), signature: `judge:${refusal.join(',')}` }, Date.now()).allowed;
+          }
           if (refusal && plan.found && repairAllowed) {
             const firstFound = plan.found, firstResults = plan.results;
+            reopenHandsReadStep(ledgerOf(state, runId), plan, handsPrefix, plan.steps.length - 1, Date.now());
             plan.rejected = [firstFound.url];
             plan.next = plan.steps.length - 1;
             await addStep(id, runId, plan.lang === 'en' ? 'Correction: the first source does not answer; reading another' : 'تصحيح: المصدر الأول لا يجيب عن السؤال؛ قراءة مصدر آخر');
@@ -2995,9 +3027,18 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             const again = await runHands(plan, io);
             if (again.kind === 'paused') return;
             if (again.status === 'completed' && plan.found && !judgeWouldWithhold(vault.scrub(id, again.text), again.status, judgedAs)) outcome = again;
-            else { plan.found = firstFound; plan.results = firstResults; }
+            else {
+              rejectHandsReadResult(ledgerOf(state, runId), plan, handsPrefix, plan.steps.length - 1, Date.now());
+              plan.found = firstFound; plan.results = firstResults;
+            }
           }
         } catch (error) {
+          if (error instanceof RunLedgerError || error instanceof BrowserError && error.code === 'ASSISTANT_HANDS_PLAN_INVALID') {
+            settleHandsPart(ledgerOf(state, runId), handsPrefix, 'partial', Date.now());
+            state.hands = null;
+            await finish(id, runId, state, planRefusal(), 'partial');
+            return;
+          }
           // The source guard refused to turn the request into a public search: an honest reply, not a failed run.
           // Eight of 107 real requests ended as «تعذّر» with no reply this way on 2026-11-22 (0-baseline §8.2).
           if (error instanceof BrowserError && ['ASSISTANT_SEARCH_SOURCE', 'ASSISTANT_SEARCH_PROVENANCE', 'RESEARCH_QUERY_INVALID', 'RESEARCH_QUERY_SECRET'].includes(error.code)) {
@@ -3018,6 +3059,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         // Every pause path saves the run state, plan included, before it stops.
         if (outcome.kind === 'paused') return;
+        settleHandsPart(ledgerOf(state, runId), handsPrefix, outcome.status, Date.now());
         state.handsResults = plan.results;
         state.handsFound = plan.found;
         if (plan.sequel) {
