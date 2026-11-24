@@ -172,11 +172,12 @@ export const isReasonQuestion = (question: string): boolean => REASON_QUESTION.t
  * How a sentence states a cause, beyond the word «سبب» itself: «لأنه», «لأن الضوء», «نتيجةً لـ», «يعود ذلك إلى», «نسبةً إلى»,
  * "because". «لأن» before a verb is «to», not «because» («تميل البروق الموجبة لأن تتشكّل…», shown for a why-question on 2026-11-23).
  */
+export const REASON_EFFECT_LINK = /(?<!\p{L})(?:و?لذلك|و?لهذا|نتيج[ةه]\s+لذلك|مما\s+(?:يجعل|يؤدي\s+[إا]ل[ىي])|و(?:هو|هي)\s+السبب(?:\s+(?:الرئيسي|[اأ]لاساسي))?(?=\s+ل)|which is why|therefore|as a result|thus)(?!\p{L})/iu;
 const REASON_LINE = /(?:^|[\s،(])(?:و|ف)?ل[أإا]ن(?:ه|ها|هم|هما|نا|ك)(?=[\s،.]|$)|(?:^|[\s،(])(?:و|ف)?ل[أإا]ن\s+ال|نتيج[ةه]ً?\s+(?:ل|عن)|كنتيج[ةه]|(?:يعود|تعود|يرجع|ترجع|يعزى|يُعزى|تعزى)\s+(?:(?:ذلك|هذا|السبب)\s+)?(?:[إا]لى|الي)|(?:^|\s)نسب[ةه]ً?\s+(?:[إا]لى|الي|ل)|\bbecause\b|\bcaused by\b|\bas a result of\b|\bresult(?:s|ing|ed)? from\b|\bowing to\b|\breasons?\b|\bis why\b/iu;
 const ASPECT_LINE: Record<AspectKind, RegExp> = {
   benefits: /فوائد|فائد|مفيد|يفيد|تفيد|منافع|benefit|beneficial/iu,
   symptoms: /أعراض|اعراض|عوارض|علامات|يعاني|يشعر|تشوش|ضبابي|symptom|signs?\b/iu,
-  causes: new RegExp(`أسباب|اسباب|سبب|يسبب|تسبب|ينتج عن|ناتج عن|يحدث نتيجة|cause|due to|results? from|${REASON_LINE.source}`, 'iu'),
+  causes: new RegExp(`أسباب|اسباب|سبب|يسبب|تسبب|ينتج عن|ناتج عن|يحدث نتيجة|cause|due to|results? from|${REASON_LINE.source}|${REASON_EFFECT_LINK.source}`, 'iu'),
   treatment: /علاج|يعالج|تعالج|معالجة|دواء|أدوية|ادوية|جراح|treat|therap|medication|surgery/iu,
   risks: /أضرار|اضرار|ضرر|مخاطر|خطر|أخطار|آثار جانبية|الآثار الجانبية|مضاعفات|risk|harm|side effect|danger/iu,
   types: /أنواع|انواع|نوع|أصناف|اصناف|ينقسم|تنقسم|types?\b|kinds?\b/iu,

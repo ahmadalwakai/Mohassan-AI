@@ -4,6 +4,7 @@ import { requestedSites } from '../goal-integrity.js';
 import { memoryRecallFormat } from '../memory-recall.js';
 import { requestsPausedCampaign } from '../tools.js';
 import type { AnswerType, Frame, Intent } from './contract.js';
+import { isTemperatureQuestion } from './compute.js';
 import { matchText, normalizeRequest, stripCourtesyTail } from './normalize.js';
 
 const ADDRESS = /https?:\/\/[^\s<>«»"'`]+|(?<![\p{L}\p{N}_@/.-])(?:[a-z\d](?:[a-z\d-]*[a-z\d])?\.)+[a-z]{2,}(?::\d+)?(?:[/?#][^\s<>«»"'`]*)?(?![\p{L}\p{N}_@-]|\.[\p{L}\p{N}])/giu;
@@ -162,7 +163,7 @@ const RULES: readonly Rule[] = [
   { intent: 'open_site', rule: 'direct-open', applies: input => Boolean(input.direct?.finishes) || ADDRESS_OPEN.test(input.match) || OPEN_REQUEST.test(input.match) && !input.hasUrls },
   { intent: 'site_question', rule: 'question-with-address', applies: input => input.hasUrls && (QUESTION.test(input.match) || ASK_FACT.test(input.match) || Boolean(input.direct)) },
   { intent: 'site_question', rule: 'field-with-address', applies: input => input.hasUrls && (input.report || Boolean(input.field)) },
-  { intent: 'compute', rule: 'local-calculation', applies: input => !input.exchange && (MATH_VERB.test(input.match) || CLOCK.test(input.match) || DATE_MATH.test(input.match) || MATH_FORMAT.test(input.match) || SPOKEN_MATH.test(input.match) || QUANTITY.test(input.match) && UNIT_EXPRESSION.test(input.match)) },
+  { intent: 'compute', rule: 'local-calculation', applies: input => !input.exchange && (MATH_VERB.test(input.match) || CLOCK.test(input.match) || DATE_MATH.test(input.match) || MATH_FORMAT.test(input.match) || SPOKEN_MATH.test(input.match) || QUANTITY.test(input.match) && UNIT_EXPRESSION.test(input.match) || isTemperatureQuestion(input.match.replace(/[\s,.!?؟،؛;:]+$/u, ''))) },
   { intent: 'compare', rule: 'comparison', applies: input => input.comparison },
   { intent: 'explain', rule: 'free-explanation', applies: input => EXPLAIN.test(input.match) },
   { intent: 'write', rule: 'free-writing', applies: input => WRITE.test(input.match) || PRODUCE_TEXT.test(input.match) },

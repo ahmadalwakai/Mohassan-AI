@@ -1,7 +1,8 @@
 import { buildFrame } from './mind/frame.js';
-import { compute, type ComputationConsumption } from './mind/compute.js';
+import { compute, type ComputedReply, type ComputationConsumption } from './mind/compute.js';
 import type { Claim, Evidence } from './mind/contract.js';
 import { analyzeCompoundRequest, type CompoundRequestAnalysis, type PendingActionKind } from './compound-request.js';
+import { calculatorForm, computationReference, withReferencedValue } from './computation-reference-language.js';
 import { splitReplyDirective, type ReplyDirective, type ReplyLanguage } from './reply-directive.js';
 
 /** A local calculation is a reusable capability, independent of the experimental Mind route. */
@@ -44,7 +45,7 @@ export function evaluateLocalComputation(request: string, now = new Date()): Loc
 /** «37 * 24 = 888» as the reply the owner asked for: one sentence in the requested language. Code writes it, not a model. */
 function shapedReply(result: LocalComputation, directive: ReplyDirective): LocalComputation {
   const lang: ReplyLanguage = directive.lang ?? result.lang;
-  if (result.status !== 'completed' || result.compound?.pendingActions.length || (lang === result.lang && !directive.sentences)) return result;
+  if (result.status !== 'completed' || result.evidence.length !== 1 || result.compound?.pendingActions.length || (lang === result.lang && !directive.sentences)) return result;
   const evidence = result.evidence.find(item => item.id === 'calculation' && item.value !== undefined);
   if (!evidence?.value) return result;
   const equation = /^(.+?)\s=\s(.+)$/u.exec(evidence.quote);
@@ -60,14 +61,21 @@ function shapedReply(result: LocalComputation, directive: ReplyDirective): Local
 function evaluateComputationText(request: string, now: Date): LocalComputation | null {
   const compound = analyzeCompoundRequest(request);
   if (compound.kind === 'invalid' || compound.kind === 'unsupported_tail') return null;
-  const frame = buildFrame(compound.kind === 'compound' ? compound.primary.text : request);
+  const text = compound.kind === 'compound' ? compound.primary.text : request;
+  const frame = buildFrame(text);
   if (frame.intent !== 'compute' || frame.missing.length) return null;
   // Formatting is an outer instruction too; quoted/body data cannot invent it.
   if (compound.kind === 'compound') frame.valueOnly ||= buildFrame(compound.outerText).valueOnly;
-  const result = compute(frame, now, { originalText: compound.kind === 'compound' ? compound.primary.text : request });
-  if (!result || (result.status !== 'completed' && result.status !== 'blocked')) return null;
-  if (compound.kind !== 'compound') return { ...result, status: result.status, lang: frame.lang };
-  if (!compound.pendingActions.length) return { ...result, status: result.status, lang: frame.lang, compound };
+  const primary = compute(frame, now, { originalText: text });
+  if (!primary || (primary.status !== 'completed' && primary.status !== 'blocked')) return null;
+  const result: LocalComputation = { status: primary.status, lang: frame.lang, text: primary.text,
+    claims: primary.claims, evidence: primary.evidence, consumption: primary.consumption };
+  if (compound.kind !== 'compound') return result;
+  if (!compound.pendingActions.length) return { ...result, compound };
+  if (!compound.forbiddenActions.some(action => action.kind === 'compute') && compound.pendingActions.every(action => action.kind === 'compute')) {
+    const sequence = completeCalculations(primary, compound, now, frame.lang, frame.valueOnly);
+    if (sequence) return sequence;
+  }
   const labels: Record<PendingActionKind, readonly [string, string]> = {
     compute: ['الحساب التالي', 'the next calculation'], save: ['الحفظ', 'saving'], send: ['الإرسال', 'sending'],
     publish: ['النشر', 'publishing'], schedule: ['التذكير أو الجدولة', 'the reminder or schedule'],
@@ -80,4 +88,35 @@ function evaluateComputationText(request: string, now: Date): LocalComputation |
   return { ...result, status: result.status === 'completed' ? 'partial' : 'blocked', lang: frame.lang,
     text: `${result.text}\n${note}`, claims: [...result.claims, { text: note, support: [], status: 'fixed' }], compound,
     primaryText: result.text, pendingNote: note };
+}
+
+function completeCalculations(primary: ComputedReply, compound: CompoundRequestAnalysis, now: Date,
+  lang: ReplyLanguage, valueOnly: boolean): LocalComputation | null {
+  const steps = [primary];
+  for (const action of compound.pendingActions) {
+    const reference = computationReference(action.text, true);
+    const previous = steps.at(-1)!.arithmeticValue;
+    if (reference && previous === undefined) return null;
+    const request = reference ? withReferencedValue(action.text, reference, String(previous)) : action.text;
+    const text = calculatorForm(request) ?? request;
+    const frame = buildFrame(text);
+    const step = frame.intent === 'compute' && !frame.missing.length ? compute(frame, now, { originalText: text }) : null;
+    if (!step || (step.status !== 'completed' && step.status !== 'blocked')) return null;
+    steps.push(step);
+  }
+  const last = steps.at(-1)!;
+  const completed = steps.filter(step => step.status === 'completed').length;
+  const status = completed === steps.length ? 'completed' : completed ? 'partial' : 'blocked';
+  const evidence: Evidence[] = [];
+  const claims: Claim[] = [];
+  for (const [index, step] of steps.entries()) {
+    const evidenceId = (id: string) => step === last ? id : `${id}-${index + 1}`;
+    evidence.push(...step.evidence.map(item => ({ ...item, id: evidenceId(item.id) })));
+    if (status === 'completed' && valueOnly) continue;
+    claims.push(...step.claims.map(claim => ({ ...claim, support: claim.support.map(evidenceId) })));
+  }
+  if (status === 'completed' && valueOnly) {
+    claims.push({ ...last.claims[0], text: last.evidence[0].value ?? last.text });
+  }
+  return { status, lang, claims, evidence, text: claims.map(claim => claim.text).join('\n') };
 }

@@ -1,7 +1,9 @@
 import { emptyConversationState, understandTurn } from './conversation-state.js';
 import { analyzeCompoundRequest } from './compound-request.js';
+import { fold } from './hands.js';
 import { MAX_CONTEXT_REQUEST, type RequestResolution } from './request-context.js';
 import { splitReplyDirective } from './reply-directive.js';
+import { superlativeEvidence } from './source-superlative.js';
 import {
   parseRequestScopeAssessment, parseUserRequestConstraints, requestCapabilityAllowed, reviewPublicProjection,
   type RequestScopeAssessment,
@@ -66,6 +68,8 @@ export function publicConversationFollowup(input: PublicConversationFollowupInpu
   let state = emptyConversationState();
   for (const [index, text] of turns.entries()) state = understandTurn(state, text, `public-context-${index}`).next;
   const understanding = understandTurn(state, request, 'public-followup');
+  // The class in a superlative question cannot identify its result. Let the sourced answer supply the name.
+  if (understanding.type === 'follow_up_property' && superlativeEvidence(fold(turns.at(-1)!))) return null;
   const topic = understanding.next.topics.at(-1);
   if (!acceptedTypes.has(understanding.type) || !understanding.property || !understanding.entity
     || !understanding.query || understanding.query.length > MAX_QUERY_LENGTH

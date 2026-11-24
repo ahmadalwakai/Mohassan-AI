@@ -32,7 +32,7 @@ const ACTION_HEADS: ReadonlyArray<readonly [PendingActionKind, RegExp]> = [
   ['delete', /^(?:delete|remove|erase|احذف|ازل|امسح|تحذف)(?:ها|ه|هم)?(?!\p{L})/iu],
   ['change', /^(?:change|update|edit|replace|غير|عدل|حدث|بدل|تغير|تعدل)(?:ها|ه|هم)?(?!\p{L})/iu],
   ['run', /^(?:run|execute|launch|شغل|نفذ|تشغل|تنفذ)(?:ها|ه|هم)?(?!\p{L})/iu],
-  ['compute', /^(?:calculate|compute|convert|multiply|divide|add|subtract|احسب|حول|اضرب|اقسم|اجمع|اطرح)(?!\p{L})/iu],
+  ['compute', /^(?:calculate|compute|convert|multiply|divide|add|subtract|احسب|حول|اضف|زد|زود|(?:اضرب|اقسم|اجمع|اطرح)(?:ها|ه)?)(?!\p{L})/iu],
 ];
 const FORMAT = /^(?:(?:please|kindly|thanks|thank you|شكرا|من فضلك|لو سمحت)|(?:(?:give|return|show|output|answer)(?: me)?(?: with)?\s+)?(?:(?:only|just)\s+)?(?:the\s+)?(?:answer|result|value|number|calculation)(?:\s+(?:only|alone))?|(?:(?:اعطني|اعطيني|اكتب|اجب)\s+)?(?:ال)?(?:نتيجه|ناتج|جواب|اجابه|قيمه|رقم)(?:\s+(?:فقط|بس|وحدها))?|(?:only|just)\s+the\s+(?:answer|result|value|number)|(?:no|without(?: any)?)\s+(?:explanation|steps|working)|(?:بدون|بلا|دون|من دون)\s+(?:شرح|تفصيل|خطوات))[\s.!?؟،,;؛]*$/iu;
 const CLAUSE_LEAD = /^(?:(?:please|kindly|من فضلك|لو سمحت)[,،:\s]+)+/iu;

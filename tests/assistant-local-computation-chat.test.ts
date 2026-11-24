@@ -29,6 +29,11 @@ describe('local calculations through the real chat controller', () => {
     ['Convert 3.5 kilometres to metres. Only the result.', '3500'],
     ['How many days between 2024-02-28 and 2024-03-01?', '2'],
     ['Calculate -3^2.', '-9'],
+    ['كم تساوي ٩٨٫٦ درجة فهرنهايت بالمئوية؟', '98.6 درجة فهرنهايت = 37'],
+    ['How much is 0 degrees Celsius in Fahrenheit?', '0 degrees Celsius = 32 Fahrenheit'],
+    ['Convert 32° F to ° C.', '32 ° F = 0 ° C'],
+    ['Convert 33.8 F to Celsius.', '33.8 F = 1 Celsius'],
+    ['What is the boiling point of water in Fahrenheit?', '212 Fahrenheit'],
   ])('answers %s without a model or web request', async (goal, expected) => {
     const { id } = await control.create('isolated-local-computation-owner', { goal });
     await control.settled(id);
@@ -39,6 +44,28 @@ describe('local calculations through the real chat controller', () => {
     const run = await database.db.selectFrom('chat_runs').select(['id', 'status', 'state']).where('conversation_id', '=', id).executeTakeFirstOrThrow();
     expect(run.status).toBe('completed');
     expect(run.state.trail).toMatchObject([{ action: 'calculate' }]);
+    expect(await database.db.selectFrom('chat_model_receipts').select('id').where('run_id', '=', run.id).execute()).toEqual([]);
+    expect(search).not.toHaveBeenCalled();
+    expect(act).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['احسب 15% من 2450 ثم اقسم الناتج على 7', ['15% * 2450 = 367.5', '= 52.5']],
+    ['Calculate 8 + 2, then multiply it by 3.', ['8 + 2 = 10', '= 30']],
+    ['Calculate 8 + 2, then divide by 2.', ['8 + 2 = 10', '= 5']],
+    ['Calculate 1e-8 + 1e-8, then multiply it by 5e7.', ['1e-8 + 1e-8 = 0.00000002', '= 1']],
+    ['احسب ٦ × ٧ ثم أضف ٨ إليه ثم اقسمه على ٢', ['6 * 7 = 42', '= 50', '= 25']],
+    ['Calculate 14 + 3, then calculate 7 * 6.', ['14 + 3 = 17', '7 * 6 = 42']],
+  ])('completes each local calculation in order for %s', async (goal, equations) => {
+    const owner = 'isolated-local-computation-owner';
+    const { id } = await control.create(owner, { goal });
+    await control.settled(id);
+    const detail = await control.detail(owner, id);
+    const run = await database.db.selectFrom('chat_runs').select(['id', 'status']).where('conversation_id', '=', id).executeTakeFirstOrThrow();
+    expect(run.status, detail.messages.at(-1)?.text).toBe('completed');
+    const lines = detail.messages.at(-1)!.text.split('\n').filter(Boolean);
+    expect(lines).toHaveLength(equations.length);
+    equations.forEach((equation, index) => expect(lines[index]).toContain(equation));
     expect(await database.db.selectFrom('chat_model_receipts').select('id').where('run_id', '=', run.id).execute()).toEqual([]);
     expect(search).not.toHaveBeenCalled();
     expect(act).not.toHaveBeenCalled();
