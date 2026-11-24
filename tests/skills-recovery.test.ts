@@ -24,7 +24,10 @@ afterEach(async()=>{
 });
 function worker(mode:string,phase:string,browserOrigin?:string){
   const args=browserOrigin?[resolve('tests/fixtures/skill-browser-crash-worker.ts'),directory!,phase,browserOrigin]:[resolve('tests/fixtures/skill-crash-worker.ts'),directory!,mode,phase];
-  const child=spawn(process.execPath,['--import','tsx',...args],{cwd:resolve('.'),windowsHide:true,stdio:['ignore','pipe','pipe','ipc'],env:{SystemRoot:process.env.SystemRoot,PATH:process.env.PATH,TEMP:process.env.TEMP,TMP:process.env.TMP,NODE_ENV:'test'}});
+  const child=spawn(process.execPath,['--import','tsx',...args],{
+    cwd:resolve('.'),windowsHide:true,stdio:['ignore','pipe','pipe','ipc'],
+    env:{SystemRoot:process.env.SystemRoot,PATH:process.env.PATH,TEMP:process.env.TEMP,TMP:process.env.TMP,PLAYWRIGHT_BROWSERS_PATH:process.env.PLAYWRIGHT_BROWSERS_PATH,NODE_ENV:'test'},
+  });
   children.add(child);let errors='';child.stderr!.on('data',data=>{errors+=String(data).slice(0,4000);});
   if(browserOrigin)browserChildren.add(child);
   const message=new Promise<any>((resolveMessage,reject)=>{

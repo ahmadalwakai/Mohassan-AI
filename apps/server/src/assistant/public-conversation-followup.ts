@@ -66,6 +66,8 @@ export function publicConversationFollowup(input: PublicConversationFollowupInpu
   let state = emptyConversationState();
   for (const [index, text] of turns.entries()) state = understandTurn(state, text, `public-context-${index}`).next;
   const understanding = understandTurn(state, request, 'public-followup');
+  // Without a recognized property, the earlier question may only describe an entity the answer names.
+  if (understanding.type === 'follow_up_property' && !state.topics.at(-1)?.property) return null;
   const topic = understanding.next.topics.at(-1);
   if (!acceptedTypes.has(understanding.type) || !understanding.property || !understanding.entity
     || !understanding.query || understanding.query.length > MAX_QUERY_LENGTH
