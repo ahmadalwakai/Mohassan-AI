@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { sql, type Kysely } from 'kysely';
@@ -30,8 +31,11 @@ const hash = (value:string) => createHash('sha256').update(value).digest('hex');
 const equal = (left:string,right:string) => {const a=Buffer.from(left),b=Buffer.from(right);return a.length===b.length&&timingSafeEqual(a,b);};
 function fault(code:string,message:string,statusCode=409){return Object.assign(new Error(message),{code,statusCode});}
 const instant = (value:unknown) => new Date(value as string|Date).getTime();
-const active = (grant:any) => Boolean(grant && !grant.revoked_at && instant(grant.expires_at)>Date.now());
-function binding(request:FastifyRequest){return hash(String(request.headers.cookie??''));}
+// Older raw-header bindings cannot be matched reliably to a signed-out auth session.
+const sessionBindingPrefix = 'session:';
+const binding = (sessionId:string) => `${sessionBindingPrefix}${hash(sessionId)}`;
+const active = (grant:any) => Boolean(grant && grant.session_binding.startsWith(sessionBindingPrefix) && !grant.revoked_at && instant(grant.expires_at)>Date.now());
+const validPair = (pair:any) => Boolean(pair && pair.session_binding.startsWith(sessionBindingPrefix) && !pair.consumed_at && instant(pair.expires_at)>Date.now());
 function decode(value:any){return typeof value==='string'?JSON.parse(value):value;}
 
 export async function windowsMigration(db:Kysely<any>) {
@@ -46,15 +50,15 @@ export async function windowsMigration(db:Kysely<any>) {
   await sql`CREATE INDEX IF NOT EXISTS windows_audit_owner_idx ON windows_audit(owner_id,created_at DESC)`.execute(db);
 }
 
+interface WindowsSession {id:string;sessionId:string}
 export interface WindowsRouteContext {
   db:Kysely<any>;
-  owner(request:any):Promise<{id:string}>;
+  owner(request:FastifyRequest):Promise<WindowsSession>;
   config:{webOrigin:string;production:boolean;windowsEnabled?:boolean};
 }
 /** Called by the shared auth sign-out route; no credential is retained in these rows. */
-export async function revokeWindowsSession(db:Kysely<any>,cookie:string) {
-  if(!cookie)return;
-  const sessionBinding=hash(cookie);
+export async function revokeWindowsSession(db:Kysely<any>,sessionId:string) {
+  const sessionBinding=binding(sessionId);
   await db.transaction().execute(async transaction=>{
     await transaction.updateTable('windows_pairings').set({expires_at:new Date()}).where('session_binding','=',sessionBinding).where('consumed_at','is',null).execute();
     const candidates=await transaction.selectFrom('windows_grants').select(['device_id']).where('session_binding','=',sessionBinding).where('revoked_at','is',null).execute();
@@ -74,9 +78,22 @@ export async function revokeWindowsSession(db:Kysely<any>,cookie:string) {
 }
 export async function registerWindowsRoutes(app:FastifyInstance,{db,owner,config}:WindowsRouteContext) {
   const enabled=config.windowsEnabled??!config.production;
-  const sessions=new Map<string,string>();
+  const sessions=new AsyncLocalStorage<{ownerId:string;binding:string}|undefined>();
   const audit=async(connection:Kysely<any>,ownerId:string,deviceId:string|null,type:string,detail:Record<string,unknown>={})=>connection.insertInto('windows_audit').values({id:randomUUID(),owner_id:ownerId,device_id:deviceId,type,detail:JSON.stringify(detail)}).execute();
   const requireEnabled=()=>{if(!enabled)throw fault('WINDOWS_DISABLED','ربط Windows غير مفعّل في إعدادات الخدمة.',503);};
+  async function requireLiveSession(connection:Kysely<any>,user:WindowsSession) {
+    // Serialize creation with auth's session deletion. Sign-out revokes these rows after deletion.
+    const session=await connection.selectFrom('session').select('id').where('id','=',user.sessionId)
+      .where('userId','=',user.id).where('expiresAt','>',new Date()).forShare().executeTakeFirst();
+    if(!session)throw fault('UNAUTHORIZED','سجل الدخول للمتابعة.',401);
+  }
+  async function boundSessionIsLive(connection:Kysely<any>,ownerId:string,sessionBinding:string) {
+    // A shared row lock serializes companion use with deletion of the underlying auth session.
+    return Boolean(await connection.selectFrom('session').select('id').where('userId','=',ownerId)
+      .where('expiresAt','>',new Date())
+      .where(sql<string>`(${sessionBindingPrefix}::text || encode(sha256(convert_to(id, 'UTF8')), 'hex'))`,'=',sessionBinding)
+      .forShare().executeTakeFirst());
+  }
   async function deviceFor(ownerId:string,id:string,connection:Kysely<any>=db,lock=false) {
     let query=connection.selectFrom('windows_devices').selectAll().where('id','=',id).where('owner_id','=',ownerId);
     if(lock)query=query.forUpdate();
@@ -107,7 +124,8 @@ export async function registerWindowsRoutes(app:FastifyInstance,{db,owner,config
     const grant=await connection.selectFrom('windows_grants').selectAll().where('device_id','=',device.id).where('owner_id','=',ownerId).where('session_binding','=',sessionBinding).where('revoked_at','is',null).orderBy('created_at','desc').executeTakeFirst();
     if(!grant)return null;
     const state=device.state?decode(device.state):null;
-    return active(grant)&&!device.revoked_at&&state?.safeDesktop&&state.localView&&state.approvalNonce===grant.approval_nonce&&state.target?.key===grant.target_key&&(grant.scope!=='control'||state.localControl)?grant:null;
+    if(!active(grant)||device.revoked_at||!state?.safeDesktop||!state.localView||state.approvalNonce!==grant.approval_nonce||state.target?.key!==grant.target_key||grant.scope==='control'&&!state.localControl)return null;
+    return await boundSessionIsLive(connection,ownerId,sessionBinding)?grant:null;
   }
   /** The single path for input: routes and the assistant meet the same grant, frame and pending checks. */
   async function queueAction(ownerId:string,sessionBinding:string,deviceId:string,input:z.infer<typeof ActionRequest>,origin:'owner'|'assistant'='owner',expectedOrigin?:WindowsOrigin,inputOptions?:WindowsInputOptions) {
@@ -133,12 +151,15 @@ export async function registerWindowsRoutes(app:FastifyInstance,{db,owner,config
       await transaction.updateTable('windows_grants').set({next_sequence:sequence+1}).where('id','=',grant.id).execute();await transaction.insertInto('windows_commands').values({id,grant_id:grant.id,device_id:device.id,owner_id:ownerId,nonce:input.nonce,sequence,frame_id:input.frameId,input_hash:inputHash,payload:JSON.stringify(input.action),status:'queued',expires_at:new Date(Date.now()+2000)}).execute();await audit(transaction,ownerId,device.id,'input_requested',{id,sequence,type:input.action.type,...(origin==='assistant'?{origin}:{}),...(input.action.type==='text'?{characters:input.action.text.length}:{})});await checkExecution(transaction);return {id,status:'queued'};
     });
   }
-  /** Only the session the owner is using now can reach a device, and only through a grant it already holds. */
+  /** The chat worker may use only a grant held by the session that dispatched it. */
   async function assistantTarget(ownerId:string) {
     requireEnabled();
-    const sessionBinding=sessions.get(ownerId);
-    const devices=await db.selectFrom('windows_devices').selectAll().where('owner_id','=',ownerId).where('revoked_at','is',null).orderBy('created_at','desc').execute();
-    if(sessionBinding)for(const device of devices){const grant=await sessionGrant(sessionBinding,ownerId,device);if(grant)return {device,grant,sessionBinding};}
+    const session=sessions.getStore();
+    if(session?.ownerId===ownerId) {
+      const sessionBinding=session.binding;
+      const devices=await db.selectFrom('windows_devices').selectAll().where('owner_id','=',ownerId).where('revoked_at','is',null).orderBy('created_at','desc').execute();
+      for(const device of devices){const grant=await sessionGrant(sessionBinding,ownerId,device);if(grant)return {device,grant,sessionBinding};}
+    }
     throw fault('WINDOWS_GRANT_REQUIRED','لا يوجد إذن مشاهدة حالي لجهاز مرتبط في هذه الجلسة.',409);
   }
   const timer=setInterval(()=>{void (async()=>{
@@ -153,22 +174,27 @@ export async function registerWindowsRoutes(app:FastifyInstance,{db,owner,config
   app.get('/api/windows',async request=>{
     const user=await owner(request);const devices=await db.selectFrom('windows_devices').select(['id','name','revoked_at','last_seen_at','state','created_at']).where('owner_id','=',user.id).orderBy('created_at','desc').execute();
     const list=[];
-    for(const device of devices){const grant=await sessionGrant(binding(request),user.id,device);list.push({id:device.id,name:device.name,revoked:Boolean(device.revoked_at),online:!device.revoked_at&&Boolean(device.last_seen_at)&&Date.now()-instant(device.last_seen_at)<3500,lastSeenAt:device.last_seen_at?new Date(device.last_seen_at).toISOString():null,state:device.state?decode(device.state):null,grant:grant?grantDto(grant):null});}
+    for(const device of devices){const grant=await sessionGrant(binding(user.sessionId),user.id,device);list.push({id:device.id,name:device.name,revoked:Boolean(device.revoked_at),online:!device.revoked_at&&Boolean(device.last_seen_at)&&Date.now()-instant(device.last_seen_at)<3500,lastSeenAt:device.last_seen_at?new Date(device.last_seen_at).toISOString():null,state:device.state?decode(device.state):null,grant:grant?grantDto(grant):null});}
     const events=await db.selectFrom('windows_audit').select(['id','device_id','type','detail','created_at']).where('owner_id','=',user.id).orderBy('created_at','desc').limit(50).execute();
     return {enabled,devices:list,events:events.map(row=>({id:row.id,deviceId:row.device_id,type:row.type,detail:decode(row.detail),createdAt:new Date(row.created_at).toISOString()}))};
   });
   app.post('/api/windows/pairing',{config:{rateLimit:{max:3,timeWindow:'1 minute'}}},async request=>{
     requireEnabled();const user=await owner(request);z.object({}).strict().parse(request.body??{});
     const code=randomBytes(12).toString('base64url'),id=randomUUID(),expiresAt=new Date(Date.now()+120000);
-    await db.transaction().execute(async transaction=>{await transaction.updateTable('windows_pairings').set({expires_at:new Date()}).where('owner_id','=',user.id).where('consumed_at','is',null).execute();await transaction.insertInto('windows_pairings').values({id,owner_id:user.id,session_binding:binding(request),code_hash:hash(code),expires_at:expiresAt}).execute();await audit(transaction,user.id,null,'pairing_created');});
+    await db.transaction().execute(async transaction=>{await requireLiveSession(transaction,user);await transaction.updateTable('windows_pairings').set({expires_at:new Date()}).where('owner_id','=',user.id).where('consumed_at','is',null).execute();await transaction.insertInto('windows_pairings').values({id,owner_id:user.id,session_binding:binding(user.sessionId),code_hash:hash(code),expires_at:expiresAt}).execute();await audit(transaction,user.id,null,'pairing_created');});
     return {id,code,expiresAt:expiresAt.toISOString()};
   });
   app.post('/api/windows/companion/pair',{config:{rateLimit:{max:5,timeWindow:'1 minute'}}},async request=>{
     await companion(request);const input=z.object({code:z.string().regex(/^[A-Za-z0-9_-]{16}$/),name:z.string().trim().min(1).max(80)}).strict().parse(request.body);
     const key=randomBytes(32).toString('base64url'),id=randomUUID();
     return db.transaction().execute(async transaction=>{
-      const pair=await transaction.selectFrom('windows_pairings').selectAll().where('code_hash','=',hash(input.code)).forUpdate().executeTakeFirst();
-      if(!pair||pair.consumed_at||instant(pair.expires_at)<=Date.now())throw fault('WINDOWS_PAIRING_INVALID','رمز الربط غير صالح أو انتهت مدته.',401);
+      const query=transaction.selectFrom('windows_pairings').selectAll().where('code_hash','=',hash(input.code));
+      const candidate=await query.executeTakeFirst();
+      const invalid=()=>fault('WINDOWS_PAIRING_INVALID','رمز الربط غير صالح أو انتهت مدته.',401);
+      if(!candidate||!validPair(candidate)||!await boundSessionIsLive(transaction,candidate.owner_id,candidate.session_binding))throw invalid();
+      // Lock the session before the pairing row, as creation does. Recheck single use after locking.
+      const pair=await query.forUpdate().executeTakeFirst();
+      if(!pair||!validPair(pair))throw invalid();
       await transaction.selectFrom('user').select('id').where('id','=',pair.owner_id).forUpdate().executeTakeFirstOrThrow();
       const count=await transaction.selectFrom('windows_devices').select(eb=>eb.fn.countAll().as('count')).where('owner_id','=',pair.owner_id).where('revoked_at','is',null).executeTakeFirstOrThrow();
       if(Number(count.count)>=3)throw fault('WINDOWS_DEVICE_LIMIT','الحد ثلاثة أجهزة مرتبطة. ألغ ربط جهاز قبل إضافة غيره.');
@@ -188,6 +214,10 @@ export async function registerWindowsRoutes(app:FastifyInstance,{db,owner,config
       if(!state.safeDesktop||!state.localView||!state.target||state.approvalNonce===device.stopped_nonce)await revokeGrants(transaction,device,'LOCAL_STOP_OR_UNSAFE_DESKTOP');
       let grant:any=await transaction.selectFrom('windows_grants').selectAll().where('device_id','=',device.id).where('revoked_at','is',null).orderBy('created_at','desc').executeTakeFirst();
       if(!active(grant)||grant.approval_nonce!==state.approvalNonce||grant.target_key!==state.target?.key||grant.scope==='control'&&!state.localControl)grant=null;
+      if(grant&&!await boundSessionIsLive(transaction,device.owner_id,grant.session_binding)) {
+        await revokeGrants(transaction,device,'SESSION_REVOKED');
+        grant=null;
+      }
       if(input.ack){const ack=await transaction.updateTable('windows_commands').set({status:input.ack.status,result_code:input.ack.code,payload:'{}',finished_at:sql`CURRENT_TIMESTAMP`}).where('id','=',input.ack.id).where('device_id','=',device.id).where('status','=','dispatched').returning('id').executeTakeFirst();if(ack)await audit(transaction,device.owner_id,device.id,'input_'+input.ack.status,{id:input.ack.id,code:input.ack.code});}
       let frame:any=null;
       if(grant&&input.frame&&input.frame.targetKey===grant.target_key&&Math.abs(Date.now()-instant(input.frame.capturedAt))<5000){const bytes=Buffer.from(input.frame.jpeg,'base64');if(bytes.length>200000||bytes[0]!==255||bytes[1]!==216||bytes[bytes.length-2]!==255||bytes[bytes.length-1]!==217)throw fault('WINDOWS_FRAME_INVALID','صورة المرافق غير صالحة.',400);frame={...input.frame,receivedAt:new Date().toISOString()};}
@@ -199,24 +229,25 @@ export async function registerWindowsRoutes(app:FastifyInstance,{db,owner,config
   });
   app.post<{Params:{id:string}}>('/api/windows/devices/:id/grants',async request=>{
     requireEnabled();const user=await owner(request);const input=z.object({scope:z.enum(['view','control']),durationSeconds:z.union([z.literal(30),z.literal(60),z.literal(120)]),targetKey:z.string().regex(/^[a-f0-9]{64}$/),approvalNonce:uuid}).strict().parse(request.body);
-    return db.transaction().execute(async transaction=>{const device=await deviceFor(user.id,uuid.parse(request.params.id),transaction,true);const state=device.state?State.parse(decode(device.state)):null;
+    return db.transaction().execute(async transaction=>{const device=await deviceFor(user.id,uuid.parse(request.params.id),transaction,true);await requireLiveSession(transaction,user);const state=device.state?State.parse(decode(device.state)):null;
       if(device.revoked_at||!device.last_seen_at||Date.now()-instant(device.last_seen_at)>3500||!state?.safeDesktop||!state.localView||state.target?.key!==input.targetKey||state.approvalNonce!==input.approvalNonce||device.stopped_nonce===state.approvalNonce||input.scope==='control'&&!state.localControl)throw fault('WINDOWS_LOCAL_CONSENT_REQUIRED','يحتاج الجهاز اتصالًا حيًا وموافقة محلية حديثة على النطاق المحدد.');
       await revokeGrants(transaction,device,'GRANT_REPLACED');const id=randomUUID(),expiresAt=new Date(Date.now()+input.durationSeconds*1000);
-      await transaction.insertInto('windows_grants').values({id,owner_id:user.id,device_id:device.id,session_binding:binding(request),scope:input.scope,target_key:input.targetKey,approval_nonce:input.approvalNonce,expires_at:expiresAt}).execute();await audit(transaction,user.id,device.id,'grant_created',{id,scope:input.scope,durationSeconds:input.durationSeconds,targetMode:state.target.mode});
+      await transaction.insertInto('windows_grants').values({id,owner_id:user.id,device_id:device.id,session_binding:binding(user.sessionId),scope:input.scope,target_key:input.targetKey,approval_nonce:input.approvalNonce,expires_at:expiresAt}).execute();await audit(transaction,user.id,device.id,'grant_created',{id,scope:input.scope,durationSeconds:input.durationSeconds,targetMode:state.target.mode});
       return {id,scope:input.scope,targetKey:input.targetKey,approvalNonce:input.approvalNonce,expiresAt:expiresAt.toISOString()};
     });
   });
-  app.get<{Params:{id:string}}>('/api/windows/devices/:id/frame',async request=>{const user=await owner(request);const device=await deviceFor(user.id,uuid.parse(request.params.id));const grant=await sessionGrant(binding(request),user.id,device);const frame=device.last_frame?decode(device.last_frame):null;if(!grant||!frame||Date.now()-instant(frame.capturedAt)>3500||frame.targetKey!==grant.target_key)throw fault('WINDOWS_FRAME_UNAVAILABLE','لا توجد صورة حديثة ضمن إذن مشاهدة صالح.');return {frame,grant:grantDto(grant)};});
+  app.get<{Params:{id:string}}>('/api/windows/devices/:id/frame',async request=>{const user=await owner(request);const device=await deviceFor(user.id,uuid.parse(request.params.id));const grant=await sessionGrant(binding(user.sessionId),user.id,device);const frame=device.last_frame?decode(device.last_frame):null;if(!grant||!frame||Date.now()-instant(frame.capturedAt)>3500||frame.targetKey!==grant.target_key)throw fault('WINDOWS_FRAME_UNAVAILABLE','لا توجد صورة حديثة ضمن إذن مشاهدة صالح.');return {frame,grant:grantDto(grant)};});
   app.post<{Params:{id:string}}>('/api/windows/devices/:id/actions',async request=>{
     requireEnabled();const user=await owner(request);const input=ActionRequest.parse(request.body);
-    return queueAction(user.id,binding(request),uuid.parse(request.params.id),input);
+    return queueAction(user.id,binding(user.sessionId),uuid.parse(request.params.id),input);
   });
   app.post<{Params:{id:string}}>('/api/windows/devices/:id/stop',async request=>{const user=await owner(request);z.object({}).strict().parse(request.body??{});return db.transaction().execute(async transaction=>{const device=await deviceFor(user.id,uuid.parse(request.params.id),transaction,true);await revokeGrants(transaction,device,'OWNER_STOP');await transaction.updateTable('windows_devices').set({last_frame:null,stopped_nonce:device.state?decode(device.state).approvalNonce:null}).where('id','=',device.id).execute();await audit(transaction,user.id,device.id,'owner_stop');return {ok:true};});});
   app.post<{Params:{id:string}}>('/api/windows/devices/:id/revoke',async request=>{const user=await owner(request);z.object({}).strict().parse(request.body??{});return db.transaction().execute(async transaction=>{const device=await deviceFor(user.id,uuid.parse(request.params.id),transaction,true);await revokeGrants(transaction,device,'DEVICE_REVOKED');await transaction.updateTable('windows_devices').set({revoked_at:sql`CURRENT_TIMESTAMP`,last_frame:null}).where('id','=',device.id).execute();await audit(transaction,user.id,device.id,'device_revoked');return {ok:true};});});
   return {
     enabled,
-    /** Keeps only the hash, so grants stay tied to the session the owner is actively using. */
-    noteSession(ownerId:string,request:FastifyRequest){if(request.headers.cookie)sessions.set(ownerId,binding(request));},
+    runInSession<T>(ownerId:string,sessionId:string|undefined,run:()=>T):T {
+      return sessions.run(sessionId?{ownerId,binding:binding(sessionId)}:undefined,run);
+    },
     requiresViewOrigin:true as const,
     async view(ownerId:string):Promise<WindowsView>{
       const {device,grant}=await assistantTarget(ownerId);const state=State.parse(decode(device.state));const frame=device.last_frame?Frame.parse(stored(decode(device.last_frame))):null;

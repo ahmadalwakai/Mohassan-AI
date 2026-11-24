@@ -10,9 +10,9 @@ import { createDatabase, migrate } from '@mohassan/database';
 import { Runtime } from '@mohassan/runtime';
 import { CreateTaskSchema, SetupSchema, WorkspaceSnapshotSchema, SkillBenchmarkSuiteSchema, type Integration } from '@mohassan/contracts';
 import { createAuth, createOwner, migrateAuth, recoverLocalSetupClaim } from './auth.js';
-import { MEMBER_QUOTA_ROUTES, MEMBER_ROUTES, PUBLIC_ROUTES, memberRunsToday, migrateMembers, registerMemberRoutes, roleOf, routeKey, type WorkspaceRole } from './members.js';
+import { MEMBER_ROUTES, PUBLIC_ROUTES, migrateMemberQuota, migrateMembers, registerMemberRoutes, reserveMemberRun, roleOf, routeKey, type WorkspaceRole } from './members.js';
 import { lockOwnerToolAccess } from './owner-tool-authorization.js';
-import { createRequestRateLimitKey } from './request-rate-limit.js';
+import { createRequestRateLimitKey, verifiedClientIp } from './request-rate-limit.js';
 import { createAIControl } from './ai.js';
 import { ProviderError, GroqProvider } from '@mohassan/providers';
 import { createCodingControl } from './coding.js';
@@ -169,7 +169,7 @@ export async function createApplication(config: AppConfig) {
   // Every registered route, so tests can prove each one sits behind the member gate.
   const routes = new Set<string>();
   app.addHook('onRoute', route => { for (const method of [route.method].flat()) { const key = routeKey(method, route.url); if (key) routes.add(key); } });
-  type SessionUser = {id: string; name: string; email: string};
+  type SessionUser = {id: string; name: string; email: string; sessionId: string};
   const sessions = new WeakMap<object, Promise<SessionUser | null>>();
   const roles = new WeakMap<object, Promise<WorkspaceRole | null>>();
   const sessionUser = (request: {headers: Record<string, unknown>}) => {
@@ -177,15 +177,16 @@ export async function createApplication(config: AppConfig) {
     if (!found) {
       const headers = new Headers();
       if (typeof request.headers.cookie === 'string') headers.set('cookie', request.headers.cookie);
-      found = auth.api.getSession({headers}).then(session => session ? {id: session.user.id, name: session.user.name, email: session.user.email} : null);
+      found = auth.api.getSession({headers}).then(session => session ? {id: session.user.id, name: session.user.name, email: session.user.email, sessionId: session.session.id} : null);
       sessions.set(request, found);
     }
     return found;
   };
+  const internalRequest = (request: {headers: Record<string, unknown>}) => typeof request.headers['x-mohassan-internal'] === 'string'
+    && secretEqual(request.headers['x-mohassan-internal'], config.internalSecret);
   await app.register(rateLimit, {max: config.testRequestLimit??120, timeWindow: '1 minute',
     keyGenerator: createRequestRateLimitKey({
-      trusted: request => typeof request.headers['x-mohassan-internal'] === 'string'
-        && secretEqual(request.headers['x-mohassan-internal'], config.internalSecret),
+      trusted: internalRequest,
       userId: async request => (await sessionUser(request))?.id ?? null,
     }),
   });
@@ -228,9 +229,6 @@ export async function createApplication(config: AppConfig) {
     const role = await roleFor(request, user.id);
     if (role === 'owner') return;
     if (role !== 'member' || !MEMBER_ROUTES.has(key)) return reply.code(403).send({error: {code: 'MEMBER_FORBIDDEN', message: 'هذه الخدمة غير متاحة لحسابك.'}});
-    if (MEMBER_QUOTA_ROUTES.has(key) && await memberRunsToday(database.db, user.id) >= memberDailyRuns) {
-      return reply.code(429).send({error: {code: 'MEMBER_DAILY_LIMIT', message: `وصلت إلى حد ${memberDailyRuns} طلبًا خلال 24 ساعة. حاول لاحقًا.`}});
-    }
   });
   app.setErrorHandler((error: any, _request, reply) => {
     if (error instanceof z.ZodError) return reply.code(400).send({error: {code: 'VALIDATION_ERROR', message: 'تحقق من الحقول المطلوبة وطول المدخلات.'}});
@@ -259,16 +257,19 @@ export async function createApplication(config: AppConfig) {
     const path = request.url.split('?')[0];
     const allowed = new Set(['POST /api/auth/sign-in/email', 'GET /api/auth/get-session', 'POST /api/auth/sign-out']);
     if (!allowed.has(`${request.method} ${path}`)) return reply.code(403).send({error: {code: 'AUTH_ACTION_DISABLED', message: 'هذه العملية غير متاحة.'}});
-    if(request.method==='POST'&&path==='/api/auth/sign-out')await revokeWindowsSession(database.db,typeof request.headers.cookie==='string'?request.headers.cookie:'');
+    const signingOut=request.method==='POST'&&path==='/api/auth/sign-out'?await sessionUser(request):null;
     const headers = new Headers();
     for (const key of ['cookie', 'origin', 'user-agent', 'content-type']) {
       const value = request.headers[key];
       if (typeof value === 'string') headers.set(key, value);
     }
+    const clientIp = verifiedClientIp(request.headers, internalRequest(request));
+    if (clientIp) headers.set('x-forwarded-for', clientIp);
     const response = await auth.handler(new Request(new URL(request.url, config.webOrigin), {
       method: request.method, headers,
       ...(request.method !== 'GET' ? {body: JSON.stringify(request.body ?? {})} : {}),
     }));
+    if(signingOut&&response.ok)await revokeWindowsSession(database.db,signingOut.sessionId);
     for (const [key, value] of response.headers) if (!['set-cookie', 'content-length', 'transfer-encoding'].includes(key)) reply.header(key, value);
     const cookies = response.headers.getSetCookie();
     if (cookies.length) reply.header('set-cookie', cookies);
@@ -462,7 +463,7 @@ export async function createApplication(config: AppConfig) {
   const documentLink=(id:string)=>`${config.webOrigin}/api/documents/${id}/content`;
   // The own image reader (packages/vision): exported weights in artifacts/vision/ocr-v1 unless MOHASSAN_OCR_MODEL_DIR points elsewhere.
   const imageReader=await createImageReader({modelDir:process.env.MOHASSAN_OCR_MODEL_DIR??join(process.cwd(),'artifacts','vision','ocr-v1'),workers:Number(process.env.MOHASSAN_OCR_WORKERS??3)});
-  const chat=await createCommandChatControl(database.db,{...(shadowRouter?{shadowRouter}:{}),...(conversationShadow?{conversationShadow}:{}),...(judgeShadow?{judgeShadow,judgeFixForOwner:judgeConfig.fixForOwner,judgeWithholdForOwner:judgeConfig.withholdForOwner,judgeLogText:judgeConfig.logText}:{}),...(imageReader.available?{imageReader}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),sites:{createFromBrief:(ownerId,brief,options)=>sites.create(ownerId,{brief,conversationId:options.conversationId,role:options.role}),command:(ownerId,siteId,input)=>sites.command(ownerId,siteId,input),detail:(ownerId,siteId)=>sites.detail(ownerId,siteId),roleOf:ownerId=>roleOf(database.db,ownerId),link:siteId=>`${new URL(config.webOrigin).origin}/#sites=${siteId}`},...(desktop?{desktop:{parse:(text:string)=>desktop.parse(text),describe:(command,lang)=>desktop.describe(command,lang),execute:(command,options)=>desktop.execute(command,options)}}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,documents:{control:documents,link:documentLink},inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,readPage,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',accountFullAccess:(ownerId,tx)=>lockOwnerToolAccess(tx,ownerId),accountActive:async(ownerId,tx)=>{const role=await roleOf(tx,ownerId);if(role!=='member')return role!==null;return Boolean(await tx.selectFrom('workspace_members').select('user_id').where('user_id','=',ownerId).where('role','=','member').where('disabled_at','is',null).forShare().executeTakeFirst());},memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
+  const chat=await createCommandChatControl(database.db,{...(shadowRouter?{shadowRouter}:{}),...(conversationShadow?{conversationShadow}:{}),...(judgeShadow?{judgeShadow,judgeFixForOwner:judgeConfig.fixForOwner,judgeWithholdForOwner:judgeConfig.withholdForOwner,judgeLogText:judgeConfig.logText}:{}),...(imageReader.available?{imageReader}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),sites:{createFromBrief:(ownerId,brief,options)=>sites.create(ownerId,{brief,conversationId:options.conversationId,role:options.role}),command:(ownerId,siteId,input)=>sites.command(ownerId,siteId,input),detail:(ownerId,siteId)=>sites.detail(ownerId,siteId),roleOf:ownerId=>roleOf(database.db,ownerId),link:siteId=>`${new URL(config.webOrigin).origin}/#sites=${siteId}`},...(desktop?{desktop:{parse:(text:string)=>desktop.parse(text),describe:(command,lang)=>desktop.describe(command,lang),execute:(command,options)=>desktop.execute(command,options)}}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,documents:{control:documents,link:documentLink},inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,readPage,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',accountFullAccess:(ownerId,tx)=>lockOwnerToolAccess(tx,ownerId),authorizeRun:(ownerId,runId,tx)=>reserveMemberRun(tx,ownerId,runId,memberDailyRuns),accountActive:async(ownerId,tx)=>{const role=await roleOf(tx,ownerId);if(role!=='member')return role!==null;return Boolean(await tx.selectFrom('workspace_members').select('user_id').where('user_id','=',ownerId).where('role','=','member').where('disabled_at','is',null).forShare().executeTakeFirst());},memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
     learningContext:learning.context,chromeExtension,
     knowledgeSearch:async(ownerId,query)=>(await learning.knowledge.retrieve(ownerId,query)).map(({title,text,source})=>({title,text,source})),
     ...(config.skillEngineEnabled?{recordSkillGap,skillContext:skills.context,loadSkill:skills.loadInstruction,
@@ -473,7 +474,8 @@ export async function createApplication(config: AppConfig) {
       return runtime.createTask(ownerId,{title:'تشغيل مهارة من المحادثة',goal:context.goal.slice(0,4000),capabilityId:'skill.run',autonomy:'assisted',skillInput:input},context.idempotencyKey,context.runId);
     }}:{}),
   });
-  await registerCommandChatRoutes(app,{control:chat,owner:async request=>{const user=await owner(request);windows.noteSession(user.id,request);return user;}});
+  await migrateMemberQuota(database.db);
+  await registerCommandChatRoutes(app,{control:chat,owner,runInSession:windows.runInSession});
   await registerBrowserFileRoutes(app,{db:database.db,browser:agentBrowser,owner});
   await registerDocumentRoutes(app,{control:documents,owner,link:documentLink});
   await registerStudioAiRoutes(app,{control:studioAi,owner});

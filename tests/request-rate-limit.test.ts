@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDatabase } from '@mohassan/database';
+import { createApplication } from '../apps/server/src/app.js';
 import { createAuth, migrateAuth } from '../apps/server/src/auth.js';
 import { createRequestRateLimitKey } from '../apps/server/src/request-rate-limit.js';
 
@@ -99,13 +100,28 @@ describe('verified account rate limits behind a shared service proxy', () => {
     expect((await request('', '/ordinary-a', { 'x-forwarded-for': '192.0.2.3' })).statusCode).toBe(429);
   });
 
+  it('keeps anonymous proxy clients on separate allowances and bounds malformed addresses', async () => {
+    const { request } = await fixture();
+    const firstClient = { 'x-vercel-forwarded-for': '192.0.2.1' };
+    const secondClient = { 'x-vercel-forwarded-for': '2001:db8::2' };
+    expect((await request('', '/ordinary-a', firstClient)).statusCode).toBe(200);
+    expect((await request('', '/ordinary-b', firstClient)).statusCode).toBe(200);
+    expect((await request('', '/ordinary-a', firstClient)).statusCode).toBe(429);
+    expect((await request('', '/ordinary-a', secondClient)).statusCode).toBe(200);
+    expect((await request('', '/ordinary-b', { 'x-vercel-forwarded-for': '2001:0db8:0:0:0:0:0:2' })).statusCode).toBe(200);
+    expect((await request('', '/ordinary-a', secondClient)).statusCode).toBe(429);
+    expect((await request('', '/ordinary-a')).statusCode).toBe(200);
+    expect((await request('', '/ordinary-a', { 'x-vercel-forwarded-for': '192.0.2.3, 192.0.2.4' })).statusCode).toBe(200);
+    expect((await request('', '/ordinary-a', { 'x-vercel-forwarded-for': 'malformed' })).statusCode).toBe(429);
+  });
+
   it('rejects missing/incorrect service credentials without resolving a supplied session', async () => {
     const { app, request, userId, keyGenerator } = await fixture();
     for (const marker of ['', 'incorrect']) {
       const response = await app.inject({ url: '/ordinary-a', remoteAddress: proxyIp,
-        headers: { cookie: aliceCookie, ...(marker ? { 'x-mohassan-internal': marker } : {}) } });
+        headers: { cookie: aliceCookie, 'x-vercel-forwarded-for': '192.0.2.1', ...(marker ? { 'x-mohassan-internal': marker } : {}) } });
       expect(response.statusCode).toBe(401);
-      expect(await keyGenerator({ ip: proxyIp, headers: { cookie: aliceCookie, 'x-mohassan-internal': marker } })).toBe(`ip:${proxyIp}`);
+      expect(await keyGenerator({ ip: proxyIp, headers: { cookie: aliceCookie, 'x-mohassan-internal': marker, 'x-vercel-forwarded-for': '192.0.2.1' } })).toBe(`ip:${proxyIp}`);
     }
     expect(userId).not.toHaveBeenCalled();
     expect((await request(aliceCookie)).statusCode).toBe(200);
@@ -117,6 +133,30 @@ describe('verified account rate limits behind a shared service proxy', () => {
     expect(accountKey).toMatch(/^account:/u);
     expect(accountKey).not.toContain(aliceCookie);
     expect(accountKey).not.toContain(serviceMarker);
-    expect(await keyGenerator({ ip: proxyIp, headers: { cookie: aliceOtherSession, 'x-mohassan-internal': serviceMarker } })).toBe(accountKey);
+    expect(await keyGenerator({ ip: proxyIp, headers: { cookie: aliceOtherSession, 'x-mohassan-internal': serviceMarker, 'x-vercel-forwarded-for': '192.0.2.1' } })).toBe(accountKey);
+  });
+
+  it('preserves distinct client IPs when forwarding sign-in to Better Auth', async () => {
+    const internalSecret = 'rate-limit-internal-local-fixture-000001';
+    const setupToken = 'rate-limit-setup-local-fixture-00000001';
+    const application = await createApplication({ authSecret: 'rate-limit-auth-local-fixture-00000001', internalSecret, setupToken, webOrigin: origin,
+      production: false, runWorker: false });
+    try {
+      const headers = { origin, 'x-mohassan-internal': internalSecret };
+      const credentials = { email: 'owner@rate.example.test', password: 'Local-rate-fixture-owner-password-42' };
+      const setup = await application.app.inject({ method: 'POST', url: '/api/setup', headers,
+        payload: { ...credentials, name: 'Rate fixture owner', setupToken } });
+      expect(setup.statusCode).toBe(200);
+      const addresses = ['192.0.2.1', '192.0.2.2'];
+      for (const address of addresses) {
+        const result = await application.app.inject({ method: 'POST', url: '/api/auth/sign-in/email', remoteAddress: proxyIp,
+          headers: { ...headers, 'x-vercel-forwarded-for': address, 'x-forwarded-for': '198.51.100.1' }, payload: credentials });
+        expect(result.statusCode).toBe(200);
+      }
+      const keys = await application.database.db.selectFrom('rateLimit').select('key').orderBy('key').execute();
+      expect(keys.map(row => row.key)).toEqual(addresses.map(address => `${address}|/sign-in/email`));
+    } finally {
+      await application.app.close();
+    }
   });
 });

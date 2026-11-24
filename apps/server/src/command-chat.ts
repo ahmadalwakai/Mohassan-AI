@@ -117,6 +117,8 @@ export interface CommandChatConfig {
   fullAccess?: (ownerId: string) => Promise<boolean>;
   /** Current account access, checked using the same fenced transaction. Must not open a nested transaction. */
   accountActive?: (ownerId: string, connection: Kysely<any>) => Promise<boolean>;
+  /** Reserves allowance for a new run in the same transaction as its creation. */
+  authorizeRun?: (ownerId: string, runId: string, connection: Kysely<any>) => Promise<void>;
   /** Native input admission only: lock the granting owner row in this transaction. Never open a nested/outer transaction here. */
   accountFullAccess?: (ownerId: string, connection: Kysely<any>) => Promise<boolean>;
   apiKey?: string;
@@ -454,6 +456,18 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   const fullReach = () => execution.getStore()?.full !== false;
   const reachable = (offered: WorkTool[]) => fullReach() ? offered : offered.filter(tool => !OWNER_ONLY.has(tool));
   const execution = new AsyncLocalStorage<Execution>();
+  type RequestClaim = { ownerId: string; key: string; createdAt: Date };
+  const requestClaim = new AsyncLocalStorage<RequestClaim>();
+
+  /** Keep proof of the mutation even if dispatch or building the reply later fails. */
+  async function commitRequestClaim(tx: Kysely<any>, ownerId: string, conversationId: string) {
+    const claim = requestClaim.getStore();
+    if (claim?.ownerId !== ownerId) return;
+    const result = await tx.updateTable('chat_request_keys').set({ status: 'done', response: JSON.stringify({ replayConversationId: conversationId }) })
+      .where('owner_id', '=', ownerId).where('request_key', '=', claim.key).where('created_at', '=', claim.createdAt).where('status', '=', 'running').executeTakeFirst();
+    if (!result.numUpdatedRows) throw new BrowserError('CHAT_REQUEST_IN_PROGRESS', 'تغيرت حالة الطلب. تحقّق بعد لحظة.', 409);
+  }
+
   /** Routing hints cannot authorize an owner tool after an awaited model call. */
   async function requireCurrentOwnerAccess() {
     await assertActive();
@@ -3898,6 +3912,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       await tx.updateTable('chat_runs').set({ status:expected.stop?'cancelled':'running', state: JSON.stringify(state),lease_token:token,attempt:run.attempt+1,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, updated_at: new Date() }).where('id', '=', runId).execute();
       await tx.updateTable('chat_conversations').set({ status:expected.stop?'idle':'running',active_run_id:expected.stop?null:runId, question: null, approval: null, secure: null, error: null, progress:expected.stop?null:'يتابع العمل…', updated_at: new Date() }).where('id', '=', id).execute();
       if (expected.stop) await recordTerminalRun(tx, runId, 'cancelled');
+      await commitRequestClaim(tx, ownerId, id);
     });
     if(expected.stop){if(previousToken)forgetVault(id,previousToken);return detail(ownerId,id);}
     expected.afterClaim?.();
@@ -3988,6 +4003,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if(intent==='review_browser'&&(!expectedCheckpointToken||checkpointToken(locked.browser_checkpoint)!==expectedCheckpointToken))throw new BrowserError('CHAT_REVIEW_CHANGED','تغيرت حالة الجلسة بعد عرضها. حدّث الصفحة وراجع النتيجة الحالية.',409);
       const steeredHere = steering !== null && locked.active_run_id === steering && steerableRow(locked.status, locked.secure);
       if (!steeredHere && (locked.status === 'running' || WAITING_STATUSES.includes(locked.status))) throw new BrowserError('CHAT_BUSY', 'أكمل ما ينتظر ردك، أو أوقف العمل قبل إرسال طلب جديد.', 409);
+      await config.authorizeRun?.(ownerId, runId, tx);
       if (steeredHere) superseded = await supersedeRun(tx, ownerId, id, steering!, runId);
       const previousTurns = Number((await tx.selectFrom('chat_messages').select(eb => eb.fn.countAll<string | number>().as('n'))
         .where('conversation_id', '=', id).where('role', '=', 'user').executeTakeFirstOrThrow()).n);
@@ -4062,6 +4078,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const visibility = decideBrowserVisibility({ request: clean(input.text), route: routing.route, role: fullForRouting ? 'owner' : 'member' });
       await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId, kind: 'visibility', message: visibility.reason,
         data: JSON.stringify({ level: visibility.level, code: visibility.code, route: routing.route }) }).execute();
+      await commitRequestClaim(tx, ownerId, id);
     });
     // The corrected run is committed; the old worker stops at once (its lease token already changed, so it can no longer
     // write), and a prepared task nobody approved is withdrawn.
@@ -4161,6 +4178,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       await tx.updateTable('chat_images').set({ conversation_id: id, expires_at: null }).where('id', 'in', unique).where('owner_id', '=', ownerId).execute();
       const title = current.title === 'محادثة جديدة' || current.title === 'قراءة صورة' ? { title: (shown || (reply.language === 'ar' ? 'قراءة صورة' : 'Image reading')).slice(0, 100) } : {};
       await tx.updateTable('chat_conversations').set({ status: 'idle', error: null, progress: null, updated_at: new Date(), ...title }).where('id', '=', id).execute();
+      await commitRequestClaim(tx, ownerId, id);
     });
     return detail(ownerId, id);
   }
@@ -4172,12 +4190,25 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     await db.transaction().execute(async tx => {
       if (config.accountActive && !await config.accountActive(ownerId, tx)) throw new BrowserError('CHAT_ACCOUNT_INACTIVE', 'هذا الحساب غير نشط.', 403);
       await tx.insertInto('chat_conversations').values({ id, owner_id: ownerId, title: clean(input.goal ?? (input.images?.length ? 'قراءة صورة' : 'محادثة جديدة')).slice(0, 100), status: 'idle',browser_account:input.browserAccount??null }).execute();
+      if (!input.goal && !input.images?.length) await commitRequestClaim(tx, ownerId, id);
     });
+    if (!input.goal && !input.images?.length) return detail(ownerId, id);
     // Preserve the actual caller's bytes until send captures their digest. The
     // public schema still supplies the same trimmed display/routing goal.
     const originalGoal = raw && typeof raw === 'object' && !Array.isArray(raw) ? Object.getOwnPropertyDescriptor(raw, 'goal') : undefined;
-    if (input.images?.length) return send(ownerId, id, { ...(input.goal ? { text: originalGoal && 'value' in originalGoal ? originalGoal.value : input.goal } : {}), images: input.images });
-    return input.goal ? send(ownerId, id, { text: originalGoal && 'value' in originalGoal ? originalGoal.value : input.goal }) : detail(ownerId, id);
+    const text = originalGoal && 'value' in originalGoal ? originalGoal.value : input.goal;
+    try {
+      return await send(ownerId, id, { ...(input.goal ? { text } : {}), ...(input.images?.length ? { images: input.images } : {}) });
+    } catch (error) {
+      // A rejected first turn must not leave an empty conversation. Keep any committed turn, including one whose reply failed.
+      await db.transaction().execute(async tx => {
+        const created = await tx.selectFrom('chat_conversations').select('id').where('id', '=', id).where('owner_id', '=', ownerId).forUpdate().executeTakeFirst();
+        if (!created) return;
+        const started = await tx.selectFrom('chat_messages').select('id').where('conversation_id', '=', id).limit(1).executeTakeFirst();
+        if (!started) await tx.deleteFrom('chat_conversations').where('id', '=', id).execute();
+      }).catch(() => {});
+      throw error;
+    }
   }
 
   async function restoreBrowser(ownerId:string,id:string) {
@@ -4318,6 +4349,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await recordTerminalRun(tx, row.active_run_id, 'cancelled');
         await closeOpenCampaignTasks(tx, id, row.active_run_id, unresolved => campaignCancelEvent('owner_cancelled', unresolved));
       }
+      await commitRequestClaim(tx, ownerId, id);
     });
     cancelledController?.abort(new Error('CHAT_CANCELLED'));
     if(cancelledToken)forgetVault(id,cancelledToken);
@@ -4392,15 +4424,16 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   /**
-   * One change per (account, Idempotency-Key). A repeat with the same route and body returns the first answer instead of
-   * running again; the same key on another route or body is refused; a repeat while the first still runs is told to wait.
-   * A failed first call frees its key. Keys live 24 hours. Callers without a key run as before.
+   * One change per (account, Idempotency-Key). A repeat with the same route and body replays the result.
+   * A different route or body is refused, and a repeat before a commit is told to wait.
+   * An uncommitted failure frees its key. Once committed, a lost reply can be rebuilt. Keys live 24 hours.
    */
-  async function once<T>(ownerId: string, scope: string, key: string, body: unknown, run: () => Promise<T>): Promise<T> {
+  async function once(ownerId: string, scope: string, key: string, body: unknown, run: () => Promise<ChatConversation>): Promise<ChatConversation> {
     const bodyHash = createHash('sha256').update(`${scope}\n${JSON.stringify(body ?? null)}`).digest('hex');
-    await db.deleteFrom('chat_request_keys').where('created_at', '<', new Date(Date.now() - 24 * 3_600_000)).execute();
+    const createdAt = new Date();
+    await db.deleteFrom('chat_request_keys').where('created_at', '<', sql<Date>`now() - interval '24 hours'`).execute();
     const claimed = await db.insertInto('chat_request_keys')
-      .values({ owner_id: ownerId, request_key: key, scope, body_hash: bodyHash, status: 'running' })
+      .values({ owner_id: ownerId, request_key: key, scope, body_hash: bodyHash, status: 'running', created_at: createdAt })
       .onConflict(conflict => conflict.columns(['owner_id', 'request_key']).doNothing())
       .returning('request_key').executeTakeFirst();
     if (!claimed) {
@@ -4409,15 +4442,17 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (!row) throw new BrowserError('CHAT_REQUEST_IN_PROGRESS', 'ما زال الطلب نفسه قيد التنفيذ. تحقّق بعد لحظة.', 409);
       if (row.body_hash !== bodyHash) throw new BrowserError('CHAT_REQUEST_KEY_REUSED', 'استُخدم مفتاح الطلب نفسه لطلب مختلف.', 409);
       if (row.status !== 'done') throw new BrowserError('CHAT_REQUEST_IN_PROGRESS', 'ما زال الطلب نفسه قيد التنفيذ. تحقّق بعد لحظة.', 409);
-      return (typeof row.response === 'string' ? JSON.parse(row.response) : row.response) as T;
+      const response = typeof row.response === 'string' ? JSON.parse(row.response) : row.response;
+      if (typeof response?.replayConversationId === 'string') return detail(ownerId, response.replayConversationId);
+      return response as ChatConversation;
     }
     try {
-      const result = await run();
-      await db.updateTable('chat_request_keys').set({ status: 'done', response: JSON.stringify(result ?? null) })
-        .where('owner_id', '=', ownerId).where('request_key', '=', key).execute();
+      const result = await requestClaim.run({ ownerId, key, createdAt }, run);
+      await db.updateTable('chat_request_keys').set({ response: JSON.stringify(result) })
+        .where('owner_id', '=', ownerId).where('request_key', '=', key).where('created_at', '=', createdAt).where('status', '=', 'done').execute();
       return result;
     } catch (error) {
-      await db.deleteFrom('chat_request_keys').where('owner_id', '=', ownerId).where('request_key', '=', key).execute();
+      await db.deleteFrom('chat_request_keys').where('owner_id', '=', ownerId).where('request_key', '=', key).where('created_at', '=', createdAt).where('status', '=', 'running').execute();
       throw error;
     }
   }
@@ -4436,18 +4471,25 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   };
 }
 
-export async function registerCommandChatRoutes(app: FastifyInstance, { control, owner }: { control: Awaited<ReturnType<typeof createCommandChatControl>>; owner: (request: any) => Promise<{ id: string }> }) {
+type ChatActor = { id: string; sessionId?: string };
+export async function registerCommandChatRoutes(app: FastifyInstance, { control, owner, runInSession }: {
+  control: Awaited<ReturnType<typeof createCommandChatControl>>;
+  owner: (request: any) => Promise<ChatActor>;
+  runInSession?: <T>(ownerId: string, sessionId: string | undefined, run: () => T) => T;
+}) {
   const id = (value: string) => z.uuid().parse(value);
   const live = { config: { rateLimit: { max: 400, timeWindow: '1 minute' } } };
   const secure = { config: { rateLimit: { max: 12, timeWindow: '1 minute' } } };
   type Conversation = { Params: { id: string } };
+  const inSession = <T>(actor: ChatActor, run: (ownerId: string) => T) =>
+    runInSession ? runInSession(actor.id, actor.sessionId, () => run(actor.id)) : run(actor.id);
   // An optional Idempotency-Key makes a changing call safe to resend: the phone resends with the same key after a lost reply.
-  const keyed = async <T>(request: { headers: Record<string, unknown>; body?: unknown }, scope: string, run: (ownerId: string) => Promise<T>) => {
-    const ownerId = (await owner(request)).id;
+  const keyed = async (request: { headers: Record<string, unknown>; body?: unknown }, scope: string, run: (ownerId: string) => Promise<ChatConversation>) => {
+    const actor = await owner(request);
     const header = request.headers['idempotency-key'];
-    if (header === undefined) return run(ownerId);
+    if (header === undefined) return inSession(actor, run);
     const key = z.string().min(8).max(128).regex(/^[a-zA-Z0-9_-]+$/).parse(header);
-    return control.once(ownerId, scope, key, request.body ?? null, () => run(ownerId));
+    return control.once(actor.id, scope, key, request.body ?? null, () => inSession(actor, run));
   };
   app.get('/api/chat/conversations', async (request) => control.list((await owner(request)).id));
   app.post('/api/chat/conversations', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request) => keyed(request, 'create', ownerId => control.create(ownerId, request.body ?? {})));
@@ -4467,13 +4509,13 @@ export async function registerCommandChatRoutes(app: FastifyInstance, { control,
   app.post<Conversation>('/api/chat/conversations/:id/respond', async (request) => { const target = id(request.params.id); return keyed(request, `respond:${target}`, ownerId => control.respond(ownerId, target, request.body)); });
   app.post<Conversation>('/api/chat/conversations/:id/approve', async (request) => { const target = id(request.params.id); return keyed(request, `approve:${target}`, ownerId => control.approve(ownerId, target, request.body)); });
   app.post<Conversation>('/api/chat/conversations/:id/feedback', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (request) => control.feedback((await owner(request)).id, id(request.params.id), request.body));
-  app.post<Conversation>('/api/chat/conversations/:id/secure', secure, async (request) => control.secureSubmit((await owner(request)).id, id(request.params.id), request.body));
+  app.post<Conversation>('/api/chat/conversations/:id/secure', secure, async (request) => inSession(await owner(request), ownerId => control.secureSubmit(ownerId, id(request.params.id), request.body)));
   app.post<Conversation>('/api/chat/conversations/:id/cancel', async (request) => { z.object({}).strict().parse(request.body ?? {}); return control.cancel((await owner(request)).id, id(request.params.id)); });
   app.delete<Conversation>('/api/chat/conversations/:id', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request) => control.remove((await owner(request)).id, id(request.params.id)));
   app.get<Conversation>('/api/chat/conversations/:id/screen', live, async (request, reply) => reply.type('image/jpeg').header('Content-Disposition', 'inline').send(await control.screen((await owner(request)).id, id(request.params.id))));
   app.get<Conversation>('/api/chat/conversations/:id/browser/activity', live, async (request, reply) => reply.header('Cache-Control', 'no-store').send(await control.browserActivity((await owner(request)).id, id(request.params.id))));
   app.post<Conversation>('/api/chat/conversations/:id/browser/pointer', live, async (request) => control.pointer((await owner(request)).id, id(request.params.id), request.body));
   app.post<Conversation>('/api/chat/conversations/:id/browser/keyboard', live, async (request) => control.keyboard((await owner(request)).id, id(request.params.id), request.body));
-  app.post<Conversation>('/api/chat/conversations/:id/browser/restore', secure, async(request)=>{z.object({}).strict().parse(request.body??{});return control.restoreBrowser((await owner(request)).id,id(request.params.id));});
-  app.post<Conversation>('/api/chat/conversations/:id/browser/review',secure,async request=>control.reviewBrowser((await owner(request)).id,id(request.params.id),request.body));
+  app.post<Conversation>('/api/chat/conversations/:id/browser/restore', secure, async(request)=>{z.object({}).strict().parse(request.body??{});return inSession(await owner(request), ownerId => control.restoreBrowser(ownerId,id(request.params.id)));});
+  app.post<Conversation>('/api/chat/conversations/:id/browser/review',secure,async request=>inSession(await owner(request), ownerId => control.reviewBrowser(ownerId,id(request.params.id),request.body)));
 }

@@ -51,9 +51,6 @@ export const MEMBER_ROUTES: ReadonlySet<string> = new Set([
   'POST /api/sites/:id/images', 'DELETE /api/sites/:id/images/:imageId', 'GET /api/sites/:id/export', 'DELETE /api/sites/:id',
 ]);
 
-/** Requests that start chat work, counted against a member's daily allowance. */
-export const MEMBER_QUOTA_ROUTES: ReadonlySet<string> = new Set([`POST ${chat}`, `POST ${chat}/:id/messages`]);
-
 export function routeKey(method: string, url: string | undefined) {
   return url ? `${method === 'HEAD' ? 'GET' : method} ${url}` : null;
 }
@@ -99,11 +96,48 @@ export async function roleOf(db: Kysely<any>, userId: string): Promise<Workspace
   return found.role === 'owner' ? 'owner' : 'member';
 }
 
+const memberRunScope = 'member-run';
+// The colon reserves this receipt namespace for the server. Client keys only allow letters, numbers, '_' and '-'.
+const memberRunKeyPrefix = `${memberRunScope}:`;
+
+/** Backfill member receipts into the existing 24-hour request store. */
+export async function migrateMemberQuota(database: Kysely<any>) {
+  await database.transaction().execute(async (tx) => {
+    await sql`SELECT pg_advisory_xact_lock(1846021106)`.execute(tx);
+    const version = '003_member_run_quota';
+    const applied = await tx.selectFrom('auth_schema_migrations').select('version').where('version', '=', version).executeTakeFirst();
+    if (!applied) {
+      await sql`INSERT INTO chat_request_keys (owner_id, request_key, scope, body_hash, status, created_at)
+        SELECT r.owner_id, ${memberRunKeyPrefix} || r.id, ${memberRunScope}, encode(sha256(convert_to(r.id, 'UTF8')), 'hex'), 'done', r.created_at FROM chat_runs r
+        JOIN workspace_members m ON m.user_id = r.owner_id AND m.role = 'member'
+        WHERE r.created_at > now() - interval '24 hours'`.execute(tx);
+      await tx.insertInto('auth_schema_migrations').values({ version }).execute();
+    }
+    await tx.deleteFrom('chat_request_keys').where('scope', '=', memberRunScope)
+      .where('created_at', '<=', sql<Date>`now() - interval '24 hours'`).execute();
+  });
+}
+
 /** Chat work a member started in the last 24 hours. */
 export async function memberRunsToday(db: Kysely<any>, userId: string) {
-  const row = await db.selectFrom('chat_runs').select(eb => eb.fn.countAll<string>().as('count'))
-    .where('owner_id', '=', userId).where('created_at', '>', sql<Date>`now() - interval '24 hours'`).executeTakeFirst();
+  const row = await db.selectFrom('chat_request_keys').select(eb => eb.fn.countAll<string>().as('count'))
+    .where('owner_id', '=', userId).where('scope', '=', memberRunScope)
+    .where('created_at', '>', sql<Date>`now() - interval '24 hours'`).executeTakeFirst();
   return Number(row?.count ?? 0);
+}
+
+/** Called inside the transaction that starts a chat run. */
+export async function reserveMemberRun(tx: Kysely<any>, userId: string, runId: string, limit: number) {
+  if (await roleOf(tx, userId) !== 'member') return;
+  await sql`SELECT pg_advisory_xact_lock(1846021110, hashtext(${userId}))`.execute(tx);
+  if (await memberRunsToday(tx, userId) >= limit) {
+    throw failure(429, 'MEMBER_DAILY_LIMIT', `وصلت إلى حد ${limit} طلبًا خلال 24 ساعة. حاول لاحقًا.`);
+  }
+  await tx.deleteFrom('chat_request_keys').where('owner_id', '=', userId).where('scope', '=', memberRunScope)
+    .where('created_at', '<=', sql<Date>`now() - interval '24 hours'`).execute();
+  await tx.insertInto('chat_request_keys').values({
+    owner_id: userId, request_key: memberRunKeyPrefix + runId, scope: memberRunScope, body_hash: hashToken(runId), status: 'done',
+  }).execute();
 }
 
 type User = { id: string; name: string; email: string };
