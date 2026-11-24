@@ -4372,6 +4372,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     closing = true;
     for (const {controller} of controllers.values()) controller.abort(new Error('CHAT_SHUTDOWN'));
     await Promise.allSettled([...workers.values()]);
+    await config.judgeShadow?.close();
     const abandoned:{ownerId:string;state:unknown}[]=[];
     await db.transaction().execute(async tx=>{
       const rows=await tx.selectFrom('chat_conversations as c').innerJoin('chat_runs as r','r.id','c.active_run_id').select(['c.id','r.id as run_id','r.owner_id','r.state']).where('r.worker_id','=',instanceId).where('c.status','in',['running',...WAITING_STATUSES]).forUpdate('c').execute();

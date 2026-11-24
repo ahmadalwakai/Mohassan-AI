@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentAction, AgentPage } from '@mohassan/browser';
 import { aspectSubject, entityWords, firstFigure, isOwnArticle, namesEntity, runHands, sameFigure, webQuestion, type HandsIO } from '../apps/server/src/assistant/hands.js';
+import { judge } from '../apps/server/src/assistant/judge.js';
 
 /** Plan §7.4: a figure comes with a second source when one was read; both are shown when they differ. */
 // The engine normalizes result URLs (`new URL(...).href`), so pages are keyed by that form.
@@ -97,6 +98,44 @@ describe('two sources for a figure', () => {
     const fromDemography = await runHands({ steps: webQuestion('كم عدد سكان مصر؟')!, next: 0, lang: 'ar' }, io(by(town, demography), [{ title: town.title, url: town.url }, { title: demography.title, url: demography.url }]));
     expect(fromDemography).toMatchObject({ kind: 'done', status: 'completed' });
     expect(text(fromDemography).split('\n')[0]).toContain('105 ملايين');
+  });
+
+  it('answers Australia’s population from the dated national estimate in its article', async () => {
+    const question = 'كم عدد سكان أستراليا؟';
+    const australia = pageOf('https://ar.wikipedia.org/wiki/أستراليا', 'أستراليا - ويكيبيديا', [
+      'من ويكيبيديا، الموسوعة الحرة أستراليا الأرض والسكان تسمية السكان أستراليون',
+      'توقع ( 2025 ) 27,707,100 [ 10 ] نسمة (54) التعداد السكاني (2021) 25,890,773 [11] 2021 نسمة',
+      'الكثافة السكانية 3.6 ن/كم² (244) عدد سكان الحضر 23600172 (2024) تعديل مصدري - تعديل',
+      'أستراليا دولة ذات سيادة تضم البر الرئيسي للقارة الأسترالية وجزيرة تسمانية.',
+      'يعدّ التعداد السكاني لأستراليا حوالي 24,899,100 مليون نسمة.',
+      'ويخطط أن في 2050 ستكون أستراليا عدد سكانها 42 مليون نسمة.',
+      'كان عدد سكان أستراليا الأصليون يساوي 410,003 نسمة في 2001.',
+    ].join(' '));
+    const outcome = await runHands({ steps: webQuestion(question)!, next: 0, lang: 'ar' },
+      io(by(australia), [{ title: australia.title, url: australia.url }]));
+    const reply = text(outcome);
+
+    expect(outcome).toMatchObject({ kind: 'done', status: 'completed' });
+    expect(reply.split('\n')[0]).toBe('توقع ( 2025 ) 27,707,100 نسمة');
+    expect(reply).toContain(`](${australia.url})`);
+    expect(reply).not.toMatch(/24,899,100|25,890,773|410,003|42 مليون/u);
+    expect(judge({ question, reply, status: 'completed',
+      evidence: [{ kind: 'page', url: australia.url, text: australia.text }] })).toMatchObject({
+      decision: 'send', support: { sentences: 1, supported: 1 },
+    });
+
+    const statistics = pageOf('https://stats.example/australia', 'عدد سكان أستراليا - stats.example',
+      'سيبلغ عدد سكان أستراليا 42 مليون نسمة في 2050. في عام 2025 بلغ عدد سكان أستراليا 27,707,100 نسمة بحسب التقدير الوطني.');
+    const verified = await runHands({ steps: webQuestion(question)!, next: 0, lang: 'ar' },
+      io(by(australia, statistics), [{ title: australia.title, url: australia.url }, { title: statistics.title, url: statistics.url }]));
+    expect(text(verified)).toContain(`**مصدر ثانٍ يؤكد:** [stats.example — ${statistics.title}](${statistics.url})`);
+    expect(text(verified)).not.toContain('42 مليون');
+
+    const updatedLine = 'يبلغ عدد سكان أستراليا 28,100,000 نسمة بحسب تقديرات 2026.';
+    const updated = { ...australia, text: `${australia.text} ${updatedLine}` };
+    const recent = await runHands({ steps: webQuestion(question)!, next: 0, lang: 'ar' },
+      io(by(updated), [{ title: updated.title, url: updated.url }]));
+    expect(text(recent).split('\n')[0]).toBe(updatedLine);
   });
 
   it('looks the person up when the search returned only relatives: «من هو ألبرت أينشتاين» is not his son', async () => {

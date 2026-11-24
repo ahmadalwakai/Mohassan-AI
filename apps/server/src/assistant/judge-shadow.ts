@@ -58,8 +58,10 @@ export interface JudgeShadow {
   readonly logFile: string;
   /** Judges one reply in shadow and logs the verdict. Returns null when judging itself failed. */
   observe(input: JudgeShadowInput): JudgeVerdict | null;
-  /** Resolves once every line queued so far is on disk (for tests and shutdown). */
+  /** Waits for the writes queued so far. */
   flush(): Promise<void>;
+  /** Stops accepting new log entries and waits for the queued writes. */
+  close(): Promise<void>;
 }
 
 const MAX_TEXT = 2000;
@@ -84,7 +86,9 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
   const now = options.now ?? (() => new Date());
   let queue: Promise<void> = Promise.resolve();
   let directoryReady = false, warned = false;
+  let closed = false;
   const write = (line: JudgeShadowLine) => {
+    if (closed) return;
     queue = queue.then(async () => {
       if (!directoryReady) { await mkdir(dirname(options.logFile), { recursive: true }); directoryReady = true; }
       await appendFile(options.logFile, `${JSON.stringify(line)}\n`, 'utf8');
@@ -116,5 +120,9 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
       }
     },
     flush: () => queue,
+    close() {
+      closed = true;
+      return queue;
+    },
   };
 }

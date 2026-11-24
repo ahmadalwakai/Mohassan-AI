@@ -1,7 +1,11 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { AgentAction, AgentBrowser, AgentPage, SearchHit, SearchOutcome, SearchProvider } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
+import { createJudgeShadow } from '../apps/server/src/assistant/judge-shadow.js';
 import { createSkillReader, type SkillReaderCandidate } from '../apps/server/src/assistant/skill-reader.js';
 
 /**
@@ -32,6 +36,7 @@ const softwareTesting: SkillReaderCandidate = {
 describe('the live functional test of 2026-11-23, through the real chat controller', () => {
   let database: Awaited<ReturnType<typeof createDatabase>>;
   let control: Awaited<ReturnType<typeof createCommandChatControl>>;
+  let directory: string;
   const current = new Map<string, AgentPage>();
   const actions: AgentAction[] = [];
   const queries: string[] = [];
@@ -39,6 +44,8 @@ describe('the live functional test of 2026-11-23, through the real chat controll
   let searchMode: 'pages' | 'failed' | 'empty' = 'pages';
 
   beforeAll(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'mohassan-live-repairs-'));
+    const judgeShadow = createJudgeShadow({ logFile: join(directory, 'judge.jsonl') });
     database = await createDatabase();
     await migrate(database.db);
     const browser = {
@@ -75,10 +82,11 @@ describe('the live functional test of 2026-11-23, through the real chat controll
     });
     control = await createCommandChatControl(database.db, {
       browser, models: { fast: [], deep: [], vision: '' }, searchProvider, skillAnswer, recordExperiences: false,
+      judgeShadow, judgeFixForOwner: true, judgeWithholdForOwner: true,
       readPage: async url => { reads.push(url); const page = pages[url]; return page ? { url, title: page.title, text: page.text, status: 200 } : null; },
     });
   });
-  afterAll(async () => { await control?.shutdown(); await database?.close(); });
+  afterAll(async () => { await control?.shutdown(); await database?.close(); if (directory) await rm(directory, { recursive: true, force: true }); });
   beforeEach(() => { actions.length = 0; queries.length = 0; reads.length = 0; searchMode = 'pages'; });
 
   async function ask(goal: string, owner = OWNER) {
@@ -195,8 +203,34 @@ describe('the live functional test of 2026-11-23, through the real chat controll
   it('H: the search is for the subject only, and the reply names the read page’s title and link', async () => {
     const { reply, status } = await ask('Search the web for the official IANA documentation about example domains. Return the page title and source link.');
     expect(queries[0]).toBe('the official IANA documentation about example domains');
-    expect(reply).toMatch(/^\*\*Page title:\*\* Example Domains\n\*\*Source link:\*\* https:\/\/www\.iana\.org\/help\/example-domains\n/u);
+    expect(reply).toBe('**Page title:** Example Domains\n**Source link:** https://www.iana.org/help/example-domains');
     expect(reads).toContain('https://www.iana.org/help/example-domains');
+    expect(status).toBe('completed');
+  });
+
+  it('searches only the subject when asked to return its source link', async () => {
+    const subject = 'the official IANA documentation about example domains';
+    const url = 'https://www.iana.org/help/example-domains';
+    const { reply, status } = await ask(`Search the web for ${subject}. Return its source link.`);
+    expect(queries).toEqual([subject]);
+    expect(reads).toContain(url);
+    expect(reply).toBe(`**Source link:** ${url}`);
+    expect(status).toBe('completed');
+  });
+
+  it('keeps the final number in the query and returns the requested page fields', async () => {
+    const subject = 'IANA example domains RFC 2606';
+    const { reply, status } = await ask(`Search the web for ${subject}. Return the main heading and first sentence.`);
+    expect(queries).toEqual([subject]);
+    expect(reply).toBe('**Main heading:** Example Domains\n**First sentence:** As described in RFC 2606 and RFC 6761, a number of example domains such as example.com and example.org are maintained by IANA for documentation purposes.');
+    expect(status).toBe('completed');
+  });
+
+  it.each(['Return the answer in one sentence.', 'Return one sentence.'])('uses the requested sentence format: %s', async directive => {
+    const { reply, status } = await ask(`Search the web for why rain falls. ${directive}`);
+    expect(queries).toEqual(['why rain falls']);
+    expect(reply.split('\n\n')[0]).toBe('Rain falls because the water droplets in a cloud grow too heavy for the rising air to hold them up.');
+    expect(reply).not.toContain('More from the same source');
     expect(status).toBe('completed');
   });
 
