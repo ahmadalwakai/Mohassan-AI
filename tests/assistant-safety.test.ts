@@ -152,7 +152,9 @@ describe('actual browser request authorization',()=>{
     let page=(await browser.act(owner,id,{kind:'open',text:origin+'/script'},auth)).page;
     await expect(browser.act(owner,id,{kind:'click',ref:ref(page,'Do action')},auth)).rejects.toMatchObject({code:'AGENT_EFFECT_DENIED'});
     expect(requests).toHaveLength(0);
-    await expect(browser.act(owner,id,{kind:'open',text:origin+'/automatic'},auth)).rejects.toBeDefined();
+    // The automatic form can still be navigating when the rejected action returns.
+    const automaticId=randomUUID();
+    await expect(browser.act(owner,automaticId,{kind:'open',text:origin+'/automatic'},auth)).rejects.toBeDefined();
     expect(requests).toHaveLength(0);
     page=(await browser.act(owner,id,{kind:'open',text:origin+'/iframe'},auth)).page;
     await expect(browser.act(owner,id,{kind:'click',ref:ref(page,'Programmatic')},auth)).rejects.toMatchObject({code:'AGENT_EFFECT_DENIED'});
