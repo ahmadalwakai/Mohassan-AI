@@ -44,4 +44,16 @@ describe('judge shadow', () => {
     expect(shadow.observe({ conversationId: 'c2', runId: 'r1', question: undefined as unknown as string, reply: undefined as unknown as string })).not.toBeUndefined();
     await shadow.flush();
   });
+
+  it('drains the queued log and refuses new observations from the start of close', async () => {
+    const shadow = createJudgeShadow({ logFile: join(directory, 'closing', 'judge.jsonl') });
+    const input = { conversationId: 'c3', question: 'What is 3 + 4?', reply: '3 + 4 = 7' };
+    shadow.observe({ ...input, runId: 'queued' });
+    const closed = shadow.close();
+    expect(shadow.observe({ ...input, runId: 'during-close' })).toBeNull();
+    await closed;
+    const lines = (await readFile(shadow.logFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as JudgeShadowLine);
+    expect(lines.map(line => line.runId)).toEqual(['queued']);
+    expect(shadow.observe({ ...input, runId: 'after-close' })).toBeNull();
+  });
 });

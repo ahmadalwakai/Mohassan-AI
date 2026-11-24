@@ -151,6 +151,15 @@ describe('an instruction to explain is a question about the world', () => {
 });
 
 describe('browser and search commands with a reply instruction', () => {
+  it('separates an instruction after a version number and recognizes Return as a sentence directive', () => {
+    expect(parseHands('Search the web for Python 3.12. Return the source link.')).toEqual([
+      { kind: 'search', query: 'Python 3.12', site: null, ask: true, reply: { fields: ['link'] } },
+    ]);
+    expect(parseHands('Search the web for rain. Return the answer in one sentence.')).toEqual([
+      { kind: 'search', query: 'rain', site: null, ask: true, reply: { sentences: 1 } },
+    ]);
+  });
+
   it('searches what follows «search the web for», and the named fields ask for a page that was read', () => {
     expect(parseHands('Search the web for the official IANA documentation about example domains. Return the page title and source link.')).toEqual([
       { kind: 'search', query: 'the official IANA documentation about example domains', site: null, ask: true, reply: { fields: ['title', 'link'] } },

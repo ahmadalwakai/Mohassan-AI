@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentAction, AgentPage } from '@mohassan/browser';
 import { articleUrl, entityWords, projectedFigure, relevantLines, runHands, webQuestion, type HandsIO } from '../apps/server/src/assistant/hands.js';
+import { judge } from '../apps/server/src/assistant/judge.js';
 
 // Date questions («متى سقط جدار برلين؟») and English population questions, measured live on 2026-11-22: the frozen set in
 // scripts/quality/date-questions.ts answered 0 of 12 correctly at 13:44 (artifacts/plan-2026-11-22/date-questions-2026-11-22T13-44-22.json).
@@ -147,5 +148,39 @@ describe('an English population question', () => {
     ].join(' '));
     const { first } = await answerOf('How many people live in Egypt?', { [url]: egypt }, [{ title: 'Egypt', url, snippet: 'Egypt is a country in North Africa' }]);
     expect(first).toContain('With over 107 million inhabitants');
+  });
+});
+
+describe('the current population of Australia', () => {
+  const release = 'https://www.abs.gov.au/statistics/people/population/national-state-and-territory-population/latest-release';
+  const evidence = 'Australia’s population was 27,921,150 people at 31 March 2026.';
+  const title = 'National, state and territory population | Australian Bureau of Statistics';
+  const article = articleUrl('أستراليا', 'ar');
+  const wiki = pageOf(article, 'أستراليا - ويكيبيديا', [
+    'يعدّ التعداد السكاني لأستراليا حوالي 24,899,100 مليون نسمة.',
+    'ويخطط أن في 2050 ستكون أستراليا عدد سكانها 42 مليون نسمة.',
+  ].join(' '));
+  const hits = [{ title: 'أستراليا', url: article, snippet: 'أستراليا دولة ذات سيادة' }];
+
+  it.each(['كم عدد سكان أستراليا؟', 'What is the population of Australia?'])('answers %s with the official estimate and reference date', async question => {
+    const { outcome, first, log } = await answerOf(question, {
+      [article]: wiki,
+      [release]: pageOf(release, title, ['Key statistics', evidence, 'The annual growth was 392,700 people (1.4%).'].join(' ')),
+    }, hits);
+
+    expect(outcome).toMatchObject({ kind: 'done', status: 'completed' });
+    expect(first).toContain('27,921,150');
+    expect(first).toMatch(/31 (?:March|مارس) 2026/u);
+    expect(log).toContain(`read:${release}`);
+    expect(log.some(entry => entry.startsWith('search:'))).toBe(false);
+    if (outcome.kind !== 'done') throw new Error('Expected a completed sourced answer');
+    expect(outcome.text).toContain(release);
+    expect(outcome.text).toContain(`> ${evidence}`);
+    expect(judge({ question, reply: outcome.text, status: 'completed', evidence: [{ kind: 'page', text: evidence, url: release, title }] }).decision).toBe('send');
+  });
+
+  it('does not answer with a malformed count or a projection when the release cannot be read', async () => {
+    const { outcome } = await answerOf('كم عدد سكان أستراليا؟', { [article]: wiki }, hits);
+    expect(outcome).toMatchObject({ kind: 'done', status: 'partial' });
   });
 });

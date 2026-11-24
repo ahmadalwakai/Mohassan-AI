@@ -58,8 +58,10 @@ export interface JudgeShadow {
   readonly logFile: string;
   /** Judges one reply in shadow and logs the verdict. Returns null when judging itself failed. */
   observe(input: JudgeShadowInput): JudgeVerdict | null;
-  /** Resolves once every line queued so far is on disk (for tests and shutdown). */
+  /** Resolves once every line queued so far is on disk. */
   flush(): Promise<void>;
+  /** Stops new observations and waits for the writes already queued. */
+  close(): Promise<void>;
 }
 
 const MAX_TEXT = 2000;
@@ -83,6 +85,7 @@ export function judgeSettings(production: boolean, env: NodeJS.ProcessEnv, cwd: 
 export function createJudgeShadow(options: { logFile: string; now?: () => Date }): JudgeShadow {
   const now = options.now ?? (() => new Date());
   let queue: Promise<void> = Promise.resolve();
+  let closed = false;
   let directoryReady = false, warned = false;
   const write = (line: JudgeShadowLine) => {
     queue = queue.then(async () => {
@@ -97,6 +100,7 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
   return {
     logFile: options.logFile,
     observe(input) {
+      if (closed) return null;
       try {
         const verdict = judge(input);
         const applied = Boolean(input.applyFix && verdict.decision === 'fix' && verdict.fixedReply?.trim())
@@ -116,5 +120,9 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
       }
     },
     flush: () => queue,
+    close() {
+      closed = true;
+      return queue;
+    },
   };
 }
