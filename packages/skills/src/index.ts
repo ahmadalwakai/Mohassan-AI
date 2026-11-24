@@ -27,7 +27,8 @@ export { parseSkillManifest } from './frontmatter.ts';
 export { composeSkillGraph } from './composer.ts';
 export { detectSkillConflicts } from './conflicts.ts';
 export { buildPermissionSnapshot, type PermissionSnapshot, type SkillEnvironment } from './permissions.ts';
-export { routeInstructionSkills, type SkillContextMetadata } from './router.ts';
+export { routeInstructionSkills, rarityWeights, routerTermsOf, type RouterOptions, type RouterTermWeight, type SkillContextMetadata } from './router.ts';
+export { arabicBase, arabicStem, englishStem, foldText, requestTerms, skillStems, STEM_STOP_WORDS, type RequestTerm } from './stems.ts';
 export { compileInstructionContext, DEFAULT_SKILL_CONTEXT_CHARS, MAX_SKILL_CONTEXT_CHARS, type CompiledSkillContext, type SkillContextSource } from './compiler.ts';
 export { preloadInstructionMetadata } from './preload.ts';
 export { createTermIndex, routerIndex, createInstructionCatalogue, deriveCatalogueFacts, licenceKind, searchCatalogue, backfillCatalogue, recordCatalogueEvidence, recordSimilaritySignals,

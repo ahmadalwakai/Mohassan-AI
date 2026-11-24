@@ -16,16 +16,44 @@ describe('instruction metadata routing', () => {
     expect(routeInstructionSkills('شركة', business)).toEqual([]);
     expect(rankInstructionCandidates('شركة', business)).toEqual([]);
   });
+  // Two skills that share every word weigh each word little, so these mechanism tests turn the minimum score off.
+  const uncut = { minScore: 0 };
   it('still lets a category word break a tie between skills that already match', () => {
     const first = skill('alpha-guide', 'research', 'Checklist for quarterly planning'), second = skill('beta-guide', 'business', 'Checklist for quarterly planning');
-    expect(routeInstructionSkills('quarterly checklist', [first, second]).map(item => item.id)).toEqual([first.id, second.id]);
-    expect(routeInstructionSkills('quarterly checklist business', [first, second]).map(item => item.id)).toEqual([second.id, first.id]);
+    expect(routeInstructionSkills('quarterly checklist', [first, second], 6, {}, uncut).map(item => item.id)).toEqual([first.id, second.id]);
+    expect(routeInstructionSkills('quarterly checklist business', [first, second], 6, {}, uncut).map(item => item.id)).toEqual([second.id, first.id]);
     expect(rankInstructionCandidates('quarterly checklist business', [first, second]).map(item => item.id)).toEqual([second.id, first.id]);
   });
   it('orders tied candidates deterministically independent of database row order', () => {
     const a = skill('alpha', 'research', 'Research guidance for a bounded task'), b = skill('beta', 'research', 'Research guidance for a bounded task');
-    expect(routeInstructionSkills('research', [b, a])).toEqual(routeInstructionSkills('research', [a, b]));
-    expect(routeInstructionSkills('research', [b, a])[0].id).toBe('alpha');
+    expect(routeInstructionSkills('research', [b, a], 6, {}, uncut)).toEqual(routeInstructionSkills('research', [a, b], 6, {}, uncut));
+    expect(routeInstructionSkills('research', [b, a], 6, {}, uncut)[0].id).toBe('alpha');
+  });
+  it('weighs a word by how few skills hold it, so a rare word outranks a common one', () => {
+    // «جدول» is in four skills, «مناوبات» in one: before the weights, the name word «جدول» put the shift skill first for an Excel request.
+    const shifts = skill('shift-scheduling', 'business', 'جدول مناوبات للموظفين'), excel = skill('spreadsheets-excel', 'analytics', 'معادلات اكسل وجدول بيانات');
+    const others = ['study-plan', 'drivers-plan'].map(slug => skill(slug, 'reasoning', 'جدول يومي'));
+    expect(routeInstructionSkills('معادلة في إكسل تجيب السعر من جدول ثاني', [shifts, excel, ...others])[0]!.id).toBe(excel.id);
+    expect(routeInstructionSkills('جدول مناوبات الموظفين', [shifts, excel, ...others])[0]!.id).toBe(shifts.id);
+  });
+  it('reads words as the reader does: folded, without the article, stemmed', () => {
+    const excel = skill('spreadsheets', 'analytics', 'الإكسل والمعادلات والجداول المحورية');
+    expect(routeInstructionSkills('أبغى معادلة في اكسل', [excel, skill('notes-guide')]).map(item => item.id)).toEqual([excel.id]);
+  });
+  it('leaves out weak matches: below the minimum, or far below the best match', () => {
+    const strong = skill('invoice-reminders', 'business', 'تذكير العميل بالفاتورة المتأخرة وتحصيل المستحقات');
+    const weak = skill('customer-care', 'business', 'الرد على العميل الغاضب');
+    const fillers = Array.from({ length: 8 }, (_, index) => skill(`filler-${index}`, 'reasoning', 'العميل والطلب'));
+    // «العميل» is in ten skills; «الفاتورة» and «المتأخرة» only in one.
+    expect(routeInstructionSkills('رسالة للعميل عن الفاتورة المتأخرة', [strong, weak, ...fillers]).map(item => item.id)).toEqual([strong.id]);
+    expect(routeInstructionSkills('رسالة للعميل', [strong, weak, ...fillers])).toEqual([]);
+    expect(routeInstructionSkills('رسالة للعميل', [strong, weak, ...fillers], 6, {}, { minScore: 0, relative: 0 }).length).toBeGreaterThan(0);
+  });
+  it('uses the weights it is given, so a shortlist ranks as the full catalogue would', () => {
+    const a = skill('alpha-notes', 'reasoning', 'ملاحظات المشروع'), b = skill('beta-notes', 'reasoning', 'ملاحظات الاجتماع');
+    const heavy = (term: string) => (term === 'اجتماع' ? 1 : 0.1), light = (term: string) => (term === 'اجتماع' ? 0.1 : 1);
+    expect(routeInstructionSkills('ملاحظات المشروع والاجتماع', [a, b], 6, {}, { weight: heavy, minScore: 0, relative: 0 })[0]!.id).toBe(b.id);
+    expect(routeInstructionSkills('ملاحظات المشروع والاجتماع', [a, b], 6, {}, { weight: light, minScore: 0, relative: 0 })[0]!.id).toBe(a.id);
   });
   it('returns no unrelated guidance or stop-word-only matches', () => {
     expect(routeInstructionSkills('astronomy', [skill('planning-guide')])).toEqual([]);
@@ -33,9 +61,11 @@ describe('instruction metadata routing', () => {
   });
   it('bounds the candidate scan and selected set', () => {
     const candidates = Array.from({ length: 201 }, (_, index) => skill(`guide-${index}`, 'coding', 'Coding guidance for a bounded task'));
-    expect(routeInstructionSkills('coding', candidates, 500)).toHaveLength(6);
+    // A word every candidate holds weighs little; the cut is turned off to test the bounds alone.
+    expect(routeInstructionSkills('coding', candidates, 500, {}, { minScore: 0 })).toHaveLength(6);
+    expect(routeInstructionSkills('coding', candidates, 500)).toEqual([]);
     expect(routeInstructionSkills('specialneedle', [...candidates.slice(0, 200), skill('specialneedle')])).toEqual([]);
-    expect(routeInstructionSkills('coding', candidates, 0)).toEqual([]);
+    expect(routeInstructionSkills('coding', candidates, 0, {}, { minScore: 0 })).toEqual([]);
   });
   it('ranks every candidate first, so routing past the 200-candidate window finds a late match and keeps the same order', () => {
     const fillers = Array.from({ length: 300 }, (_, index) => skill(`guide-${String(index).padStart(3, '0')}`, 'coding', 'Coding guidance for a bounded task'));

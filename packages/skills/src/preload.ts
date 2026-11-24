@@ -55,7 +55,9 @@ export function createInstructionContext(db: Kysely<any>, enabled = false, catal
     // Every active instruction skill is a candidate (the catalogue snapshot has no alphabetical window); the router then reads the
     // highest-scoring ones. Skills that share no term with the goal score 0 and are never read.
     const candidates = await catalogue.routerCandidates(ownerId, goal);
-    const lexical = routeInstructionSkills(goal, candidates);
+    // The candidates are a shortlist; the weights come from every active skill, so a word many skills share counts little here too.
+    const weight = await catalogue.routerWeights(ownerId);
+    const lexical = routeInstructionSkills(goal, candidates, 6, {}, { weight });
     const loadedIds = [...new Set(options.loadedIds ?? [])].filter(id => z.uuid().safeParse(id).success);
     const loadedMetadata = loadedIds.length ? metadataRows(await instructionMetadataQuery(db, ownerId)
       .where('v.id', 'in', loadedIds).orderBy('f.slug').orderBy('v.id').limit(12).execute()) : [];
@@ -73,7 +75,7 @@ export function createInstructionContext(db: Kysely<any>, enabled = false, catal
       .where('v.id', 'in', related.skillIds).orderBy('f.slug').orderBy('v.id').limit(12).execute()) : [];
     // Explicitly requested IDs have their own bounded, verified path; a metadata
     // discovery limit must not silently forget a skill loaded by the owner.
-    const ids = [...new Set([...(options.loadedIds ?? []), ...routeInstructionSkills(goal, candidates, 6, { relatedCandidates }).map(skill => skill.id)])];
+    const ids = [...new Set([...(options.loadedIds ?? []), ...routeInstructionSkills(goal, candidates, 6, { relatedCandidates }, { weight }).map(skill => skill.id)])];
     const documents: InstructionDocument[] = [];
     for (const id of ids) {
       if (documents.length >= 6) break;

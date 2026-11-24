@@ -24,6 +24,7 @@ import { buildSkillReaderIndex, createSkillReader, matchSkills, skillReadable, s
 import { buildSkillSource } from '../../packages/skills/src/importer.ts';
 import { inspectSkill } from '../../packages/skills/src/inspector.ts';
 import { parseSkillManifest } from '../../packages/skills/src/frontmatter.ts';
+import { routeInstructionSkills, scoreInstructionSkills, type SkillContextMetadata } from '../../packages/skills/src/router.ts';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const arg = (name: string) => { const at = process.argv.indexOf(name); return at >= 0 ? process.argv[at + 1] ?? null : null; };
@@ -97,7 +98,7 @@ async function loadLibrary(): Promise<{ skills: Skill[]; excluded: Excluded[] }>
 }
 
 type Kind = 'positive' | 'none' | 'unrelated' | 'ambiguous' | 'unavailable_tool' | 'neighbour' | 'stored_fact' | 'real';
-interface Row { set: string; key: string; kind: Kind; request: string; expected: string[]; chosen: string | null; score: number | null; ok: boolean; owner?: boolean; missing?: string[]; reviewed?: string; guard?: true }
+interface Row { set: string; key: string; kind: Kind; request: string; expected: string[]; chosen: string | null; score: number | null; ok: boolean; owner?: boolean; missing?: string[]; reviewed?: string; guard?: true; routed?: string[] }
 interface Cases { positive?: { skill: string; request: string; mustContain?: string[] }[]; unrelated?: string[]; ambiguous?: string[]; unavailableTool?: { request: string; allow: string[] }[]; neighbours?: { request: string; expect: string[] }[]; storedFacts?: string[] }
 
 async function main() {
@@ -222,6 +223,55 @@ async function main() {
     await negative('stored_fact', cases.storedFacts ?? [], () => [], true);
   }
 
+  // The model path's router (routeInstructionSkills) over the same skills: what would reach a language model's prompt.
+  const metadata = candidates as unknown as SkillContextMetadata[];
+  const right = (row: Row, slug: string | undefined) => slug !== undefined && (row.expected.includes(slug) || REVIEWED_OK[`${row.set}/${row.key}`]?.skill === slug);
+
+  // `--router-grid`: the router's cut (minimum score × share of the best score) over a grid, on the sets read in this run. Use it on
+  // development sets only (`--exclude` the held-out sets), then set ROUTER_MIN_SCORE and ROUTER_RELATIVE in packages/skills/src/router.ts.
+  if (process.argv.includes('--router-grid')) {
+    // `--sets a,b` limits the grid to those sets (the development sets: library-agent-dev, library-none-dev, new-dev, pilot-cases).
+    const only = arg('--sets')?.split(',');
+    if (only) rows.splice(0, rows.length, ...rows.filter(row => only.includes(row.set)));
+    const scoredOf = new Map(rows.map(row => [row, scoreInstructionSkills(row.request, metadata)]));
+    // `lone`: the best match alone may pass from this lower score (one distinctive description word).
+    const lone = Number(arg('--lone') ?? 'NaN');
+    const routedWith = (row: Row, min: number, relative: number) => {
+      const list = scoredOf.get(row)!, best = list[0]?.score ?? 0, floor = Math.max(min, relative * best);
+      const kept = list.filter(entry => entry.score >= floor);
+      if (!kept.length && best > 0 && best >= lone) kept.push(list[0]!);
+      return kept.slice(0, 6).map(entry => entry.skill.slug);
+    };
+    const wants = rows.filter(row => row.kind === 'positive' || row.set === 'real-need');
+    const none = rows.filter(row => ['none', 'unrelated', 'ambiguous', 'unavailable_tool', 'stored_fact'].includes(row.kind) || row.set === 'real-no-need');
+    const neighbours = rows.filter(row => row.kind === 'neighbour');
+    console.log(`sets: ${[...new Set(rows.map(row => row.set))].join(', ')} | wants ${wants.length}, none ${none.length}, neighbours ${neighbours.length}`);
+    console.log('min  rel   first  top3   noise/q  clean  owner-first');
+    for (const min of [0, 1, 1.5, 2, 2.5, 3, 4]) for (const relative of [0, 0.3, 0.4, 0.5, 0.6, 0.7]) {
+      let first = 0, top3 = 0, noise = 0, clean = 0, owner = 0;
+      for (const row of wants) { const routed = routedWith(row, min, relative); if (right(row, routed[0])) first++; if (routed.slice(0, 3).some(slug => right(row, slug))) top3++; noise += routed.filter(slug => !right(row, slug)).length; }
+      for (const row of none) if (routedWith(row, min, relative).every(slug => row.expected.includes(slug))) clean++;
+      for (const row of neighbours) { const routed = routedWith(row, min, relative); if (!routed.length || row.expected.includes(routed[0]!)) owner++; }
+      console.log(`${String(min).padEnd(4)} ${String(relative).padEnd(4)}  ${String(first).padStart(4)}  ${String(top3).padStart(4)}   ${(noise / wants.length).toFixed(2).padStart(5)}   ${String(clean).padStart(4)}   ${String(owner).padStart(4)}`);
+    }
+    return;
+  }
+  for (const row of rows) row.routed = routeInstructionSkills(row.request, metadata).map(skill => skill.slug);
+  const router: Record<string, string> = {};
+  for (const set of [...new Set(rows.map(row => row.set))]) {
+    const mine = rows.filter(row => row.set === set), parts: string[] = [];
+    const wants = mine.filter(row => row.kind === 'positive' || row.set === 'real-need');
+    const none = mine.filter(row => ['none', 'unrelated', 'ambiguous', 'unavailable_tool', 'stored_fact'].includes(row.kind) || row.set === 'real-no-need');
+    const neighbours = mine.filter(row => row.kind === 'neighbour');
+    if (wants.length) {
+      const noise = wants.reduce((sum, row) => sum + row.routed!.filter(slug => !right(row, slug)).length, 0) / wants.length;
+      parts.push(`first ${wants.filter(row => right(row, row.routed![0])).length}/${wants.length}, top3 ${wants.filter(row => row.routed!.slice(0, 3).some(slug => right(row, slug))).length}/${wants.length}, noise/q ${noise.toFixed(2)}`);
+    }
+    if (none.length) parts.push(`clean ${none.filter(row => row.routed!.every(slug => row.expected.includes(slug))).length}/${none.length}`);
+    if (neighbours.length) parts.push(`owner or nothing first ${neighbours.filter(row => !row.routed!.length || row.expected.includes(row.routed![0]!)).length}/${neighbours.length}`);
+    router[set] = parts.join('; ');
+  }
+
   const summary: Record<string, Record<string, unknown>> = {};
   for (const set of [...new Set(rows.map(row => row.set))]) {
     const mine = rows.filter(row => row.set === set);
@@ -264,10 +314,10 @@ async function main() {
 
   const report = {
     generatedAt: new Date().toISOString(), library: LIBRARY.slice(ROOT.length + 1).replace(/\\/g, '/'), skills: skills.length, excluded, added: added.size,
-    setHashes: hashes, summary, addedSkills: addedReport, changes, rows,
+    setHashes: hashes, summary, router, addedSkills: addedReport, changes, rows,
   };
   if (OUT) { await mkdir(dirname(resolve(OUT)), { recursive: true }); await writeFile(resolve(OUT), JSON.stringify(report, null, 1), 'utf8'); }
-  console.log(JSON.stringify({ skills: skills.length, excluded, added: added.size, summary }, null, 1));
+  console.log(JSON.stringify({ skills: skills.length, excluded, added: added.size, summary, router }, null, 1));
   const failedAdded = addedReport.filter(item => item.failed.length || item.takes.length);
   if (failedAdded.length) console.log(`added skills with a failure or a taken request: ${failedAdded.length}\n${failedAdded.map(item => `- ${item.slug} ${item.positives}${item.failed.length ? `\n    fail: ${item.failed.join('\n    fail: ')}` : ''}${item.takes.length ? `\n    takes: ${item.takes.join('\n    takes: ')}` : ''}`).join('\n')}`);
   if (changes) console.log(`changed choices: ${changes.length}\n${changes.join('\n')}`);

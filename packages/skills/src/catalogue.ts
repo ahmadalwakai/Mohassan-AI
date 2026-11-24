@@ -10,7 +10,7 @@ import { parseSkillManifest } from './frontmatter.ts';
 import { sha256 } from './hash.ts';
 import { INSPECTOR_VERSION, type InspectableFile } from './inspector.ts';
 import { instructionMetadataQuery, metadataRows } from './metadata.ts';
-import { rankInstructionCandidates, skillTerms, type SkillContextMetadata } from './router.ts';
+import { rankInstructionCandidates, rarityWeights, routerRequestTerms, routerTermsOf, skillTerms, type RouterTermWeight, type SkillContextMetadata } from './router.ts';
 
 /* ------------------------------------------------------------------ term index (pure) */
 
@@ -34,8 +34,7 @@ export function createTermIndex(documents: readonly (readonly string[])[]): Term
 }
 
 /** The router's own terms per skill (slug, name and description, each read as the router reads it). */
-export const routerIndex = (entries: readonly SkillContextMetadata[]): TermIndex =>
-  createTermIndex(entries.map(entry => [...skillTerms(entry.slug.replace(/-/g, ' ')), ...skillTerms(entry.name), ...skillTerms(entry.description)]));
+export const routerIndex = (entries: readonly SkillContextMetadata[]): TermIndex => createTermIndex(entries.map(routerTermsOf));
 
 /* ------------------------------------------------------------------ active instruction snapshot */
 
@@ -93,15 +92,21 @@ export function createInstructionCatalogue(db: Kysely<any>) {
     while (cache.size > MAX_CACHED_OWNERS) cache.delete(cache.keys().next().value!);
     return fresh;
   }
+  /** The router's term weights over every active instruction skill of the owner, built once per snapshot. */
+  const weightsOf = (current: InstructionSnapshot): RouterTermWeight => current.memo('router-weight', () => rarityWeights(current.memo('router', routerIndex)));
   /** What the router would rank over every active skill, scored only where a term is shared (a skill sharing none scores 0). */
   async function routerCandidates(ownerId: string, goal: string, limit?: number): Promise<SkillContextMetadata[]> {
-    const terms = skillTerms(goal.slice(0, 16000));
-    if (!terms.length) return [];
+    const stems = routerRequestTerms(goal).flatMap(term => term.variants);
+    if (!stems.length) return [];
     const current = await snapshot(ownerId);
     const index = current.memo('router', routerIndex);
-    return rankInstructionCandidates(goal, index.shortlist(terms).map(position => current.entries[position]), limit);
+    return rankInstructionCandidates(goal, index.shortlist(stems).map(position => current.entries[position]), limit, { weight: weightsOf(current) });
   }
-  return { snapshot, routerCandidates, forget: (ownerId?: string) => { if (ownerId) cache.delete(ownerId); else cache.clear(); } };
+  /** The weights routerCandidates ranked with: pass them to routeInstructionSkills so both read every active skill's frequencies. */
+  async function routerWeights(ownerId: string): Promise<RouterTermWeight> {
+    return weightsOf(await snapshot(ownerId));
+  }
+  return { snapshot, routerCandidates, routerWeights, forget: (ownerId?: string) => { if (ownerId) cache.delete(ownerId); else cache.clear(); } };
 }
 export type InstructionCatalogue = ReturnType<typeof createInstructionCatalogue>;
 

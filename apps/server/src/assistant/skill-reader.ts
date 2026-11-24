@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { requestTerms, skillStems } from '../../../../packages/skills/src/stems.js';
 import { buildFrame } from './mind/frame.js';
 import { matchText } from './mind/normalize.js';
 
@@ -47,82 +48,11 @@ const MAX_SECTION_CHARS = 2800;
 const MAX_CANDIDATES = 1300;
 const LOAD_TIMEOUT_MS = 4000;
 
-// Folded forms (see matchText): أ/إ/آ → ا, ى → ي, ة → ه. These words say how something is asked, not what it is about.
-const STOP_WORDS = new Set(`
-من في فى على علي الى إلى عن ما ماذا هل كيف كيفيه لماذا ليش متى متي اين وين لي لك له لها لنا لكم هذا هذه هذي ذلك تلك هناك هنا مع او ام و ثم ان كان
-يكون تكون هو هي انا نحن انت انتي انتم اريد ابغى ابغي ابي بدي عايز عاوز ممكن لو سمحت فضلك رجاء الرجاء شي شيء اي ايش وش شو كل بعض جدا عند عندي حتى قد
-لقد لم لن لا نعم مثل غير بين بعد قبل ساعدني ساعدنا اعطني اعطيني عطني قل قولي افضل احسن طريقه طرق خطوات خطوه نصائح نصيحه دليل ارشدني علمني كيفيه
-اعمل سوي سويلي اعملي جهز جهزلي ضع حتي ايضا كذلك اكثر اقل يعني بس فقط لكن ولكن اذا إذا لانه لان التي الذي الذين اللي يا ياريت عشان علشان
-يوجه يبدا يبدأ يساعد يجعل يحقق يعطي يقدم يشرح يمكن يمكنك تبدا يتم كان كانت صار يصير متي
-the a an and or to of in for on with by at from this that these those is are was were be been am do does did i me my we our us you your it its
-how what why when where which who whom can could would should will shall may might must please help tell give show want need get make about into
-over best way ways step steps tip tips guide some any all very just also than then there here
-`.trim().split(/\s+/u));
-const ARTICLES = ['وبال', 'فبال', 'وكال', 'وال', 'فال', 'بال', 'كال', 'لل', 'ال'];
-const CLITICS = ['و', 'ف', 'ب', 'ل', 'ك'];
-const SUFFIXES = ['يات', 'ات', 'ون', 'ين', 'ان', 'ها', 'هم', 'هن', 'كم', 'نا', 'يه', 'ي', 'ه'];
 const ARABIC = /\p{Script=Arabic}/u;
 
-function arabicStem(word: string): string {
-  let stem = word;
-  for (const article of ARTICLES) if (stem.startsWith(article) && stem.length - article.length >= 3) { stem = stem.slice(article.length); break; }
-  for (const suffix of SUFFIXES) if (stem.endsWith(suffix) && stem.length - suffix.length >= 3) { stem = stem.slice(0, -suffix.length); break; }
-  return stem;
-}
-function englishStem(word: string): string {
-  let stem = word.replace(/'s$/u, '');
-  if (stem.length > 4 && stem.endsWith('ies')) stem = `${stem.slice(0, -3)}y`;
-  else if (stem.length > 4 && /(?:ss|sh|ch|x)es$/u.test(stem)) stem = stem.slice(0, -2);
-  else if (stem.length > 3 && stem.endsWith('s') && !stem.endsWith('ss')) stem = stem.slice(0, -1);
-  if (stem.length > 5 && stem.endsWith('ing')) stem = stem.slice(0, -3);
-  else if (stem.length > 4 && stem.endsWith('ed')) stem = stem.slice(0, -2);
-  if (stem.length > 3 && /([bcdfghjklmnpqrstvwxz])\1$/u.test(stem)) stem = stem.slice(0, -1);
-  if (stem.length > 4 && stem.endsWith('e')) stem = stem.slice(0, -1);
-  return stem;
-}
-const stemOf = (word: string) => ARABIC.test(word) ? arabicStem(word) : englishStem(word);
-const words = (text: string) => matchText(text).replace(/[_-]+/gu, ' ').match(/[\p{L}\p{N}]+/gu) ?? [];
-
-/**
- * A function word, bare or behind a clitic: «وكل», «لكل», «فما», «وبعد» name no topic. «وكل كم» in the backup skill's description
- * matched «وكل الملفات» in a ransomware request and took it (skills-pilot/tests/heldout-2.json, 2026-11-22). «واي» stays: «واي فاي».
- */
-function functionWord(word: string): boolean {
-  if (STOP_WORDS.has(word)) return true;
-  if (!ARABIC.test(word)) return false;
-  return CLITICS.some(clitic => {
-    const rest = word.slice(clitic.length);
-    return word.startsWith(clitic) && rest.length >= 2 && rest !== 'اي' && STOP_WORDS.has(rest);
-  });
-}
-
-/** Stems a skill is indexed by. The same folding and stemming runs on both sides, so they meet even when the stem is imperfect. */
-export function skillStems(text: string): string[] {
-  const stems = new Set<string>();
-  for (const word of words(text)) {
-    if (functionWord(word)) continue;
-    const stem = stemOf(word);
-    if (stem.length >= 2 && !STOP_WORDS.has(stem)) stems.add(stem);
-  }
-  return [...stems];
-}
-
-/** Each request word with its variants: «ومقال» may be «و» + «مقال», but «وصف» is a word of its own, so both are tried. */
-export function requestTerms(request: string): { word: string; variants: string[] }[] {
-  const seen = new Set<string>(), terms: { word: string; variants: string[] }[] = [];
-  for (const word of words(request.slice(0, MAX_REQUEST_CHARS))) {
-    if (functionWord(word) || seen.has(word)) continue;
-    seen.add(word);
-    const variants = new Set([stemOf(word)]);
-    if (ARABIC.test(word)) for (const clitic of CLITICS) if (word.startsWith(clitic) && word.length - clitic.length >= 3) {
-      const rest = word.slice(clitic.length);
-      if (!STOP_WORDS.has(rest)) variants.add(arabicStem(rest));
-    }
-    const kept = [...variants].filter(stem => stem.length >= 2 && !STOP_WORDS.has(stem));
-    if (kept.length) terms.push({ word, variants: kept });
-  }
-  return terms;
-}
+// The folding, stop words and stemming moved unchanged to packages/skills/src/stems.ts (2026-11-24), so the model path's router reads a
+// request on the same terms as this reader. They stay exported from here for the reader's callers and tests.
+export { skillStems, requestTerms };
 
 /**
  * Ranks skills by the request's words found in their name and id (weight 3) or description (1.5), each word weighted

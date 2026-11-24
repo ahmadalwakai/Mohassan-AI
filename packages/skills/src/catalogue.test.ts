@@ -10,7 +10,7 @@ import { buildSkillSource } from './importer.ts';
 import {
   createSkillControl, createTermIndex, deriveCatalogueFacts, licenceKind, preloadInstructionMetadata, routerIndex, sha256, skillsMigration, type SkillControl,
 } from './index.ts';
-import { rankInstructionCandidates, skillTerms, type SkillContextMetadata } from './router.ts';
+import { rankInstructionCandidates, rarityWeights, routerRequestTerms, type SkillContextMetadata } from './router.ts';
 
 const manifest = (fields: Record<string, string>, body: string) => `---\n${Object.entries(fields).map(([key, value]) => `${key}: ${value}`).join('\n')}\n---\n\n${body}\n`;
 const source = (slug: string, files: Record<string, string>) => buildSkillSource(Object.entries(files).map(([path, content]) => ({ path, content })), { root: `/fixture/${slug}`, defaultSlug: slug });
@@ -42,7 +42,8 @@ describe('catalogue index (pure)', () => {
       'ما الطقس اليوم', 'أريد كتابة بريد احترافي لعميل غاضب', 'sql query to count orders', 'plan', 'xyzzy nothing matches here'];
     for (const goal of goals) {
       const full = rankInstructionCandidates(goal, entries).map(skill => skill.id);
-      const shortlisted = rankInstructionCandidates(goal, index.shortlist(skillTerms(goal)).map(position => entries[position])).map(skill => skill.id);
+      // As routerCandidates does: shortlist by the router's stems, then rank with the weights of every entry.
+      const shortlisted = rankInstructionCandidates(goal, index.shortlist(routerRequestTerms(goal).flatMap(term => term.variants)).map(position => entries[position]), undefined, { weight: rarityWeights(index) }).map(skill => skill.id);
       expect(shortlisted).toEqual(full);
     }
   });

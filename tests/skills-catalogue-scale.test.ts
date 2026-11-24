@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { describe, expect, it } from 'vitest';
 import { parseSkillManifest, routerIndex, sha256 } from '@mohassan/skills';
-import { rankInstructionCandidates, skillTerms } from '../packages/skills/src/router.ts';
+import { rankInstructionCandidates, rarityWeights, routerRequestTerms } from '../packages/skills/src/router.ts';
 import { buildSkillReaderIndex, matchSkills, type SkillReaderCandidate } from '../apps/server/src/assistant/skill-reader.js';
 import { syntheticCatalogue, SYNTHETIC_PREFIX } from './fixtures/skills/catalogue-scale.js';
 
@@ -33,7 +33,7 @@ describe('catalogue selection at scale (fixtures only)', () => {
     const index = routerIndex(all as never);
     for (const goal of ['كيف أكتب خطة عمل لمشروع مقهى', 'write a cover letter for a job', 'محضر اجتماع بالقرارات والمهام', 'sql query for monthly sales']) {
       const full = rankInstructionCandidates(goal, all as never).map(skill => skill.id);
-      const fast = rankInstructionCandidates(goal, index.shortlist(skillTerms(goal)).map(position => all[position]) as never).map(skill => skill.id);
+      const fast = rankInstructionCandidates(goal, index.shortlist(routerRequestTerms(goal).flatMap(term => term.variants)).map(position => all[position]) as never, undefined, { weight: rarityWeights(index) }).map(skill => skill.id);
       expect(fast).toEqual(full);
     }
   });
