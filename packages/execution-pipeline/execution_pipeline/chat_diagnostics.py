@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import gc
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -22,6 +23,8 @@ from . import ads_finetune as training
 
 DEDICATED_LIMIT_MIB = 3700
 SHARED_GROWTH_LIMIT_BYTES = 256 * 1024**2
+MEMORY_SAMPLE_FAILURE_LIMIT = 3
+MEMORY_SAMPLE_STALE_SECONDS = 90
 SPEED_BASELINE_SECONDS = 60
 SPEED_SAMPLE_SECONDS = 5
 SLOW_SPEED_FRACTION = 0.70
@@ -62,6 +65,7 @@ class GpuJob:
         self.samples = []
         self.thread = None
         self.shared_baseline_bytes = None
+        self._last_good_memory_sample = None
         self.speed_run = None
         self.started = time.perf_counter()
         self.max_seconds = max_seconds
@@ -90,6 +94,7 @@ class GpuJob:
         # Establish once after CUDA initialization and before model allocation.
         self._sample(establish_baseline=True)
         self.check()
+        self._last_good_memory_sample = time.perf_counter()
         self.thread = threading.Thread(target=self._monitor, daemon=True)
         self.thread.start()
 
@@ -100,7 +105,7 @@ class GpuJob:
             "$s.CounterSamples | Select-Object Path,CookedValue | ConvertTo-Json -Compress"
         )
         raw = subprocess.check_output(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
-                                      text=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=20)
+                                      text=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), timeout=20)
         cells = json.loads(raw)
         if isinstance(cells, dict):
             cells = [cells]
@@ -126,13 +131,16 @@ class GpuJob:
                   "process_counter_paths": [item["Path"] for item in cells],
                   "gpu_used_mib": used, "gpu_total_mib": total, "temperature_c": temperature, "utilization": utilization}
         self.samples.append(record)
-        with (self.output / "gpu-memory.jsonl").open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(record) + "\n")
         if used >= DEDICATED_LIMIT_MIB and delta > SHARED_GROWTH_LIMIT_BYTES:
             self.problem = self.problem or (
                 f"GPU memory stop: shared_bytes={shared}, baseline={self.shared_baseline_bytes}, "
                 f"delta={delta}, dedicated={used}/{total} MiB"
             )
+        self._append_memory_log(record)
+
+    def _append_memory_log(self, record):
+        with (self.output / "gpu-memory.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(record) + "\n")
 
     def start_training(self, name):
         """Start a fresh speed baseline for an independent training run."""
@@ -186,16 +194,43 @@ class GpuJob:
             self.speed_window_tokens = 0
 
     def _monitor(self):
+        consecutive_failures = 0
         while not self.stop.wait(5):
+            self._check_memory_sample_age(time.perf_counter())
+            if self.problem:
+                return
             try:
                 self._sample()
             except Exception as error:
-                self.problem = self.problem or f"GPU memory monitor failed: {error}"
+                consecutive_failures += 1
+                try:
+                    self._append_memory_log({"time": now(), "pid": os.getpid(), "sample_error": str(error)})
+                except OSError as log_error:
+                    logging.getLogger(__name__).warning("Could not log GPU sample error %s: %s", error, log_error)
+                self._check_memory_sample_age(time.perf_counter())
+                if consecutive_failures >= MEMORY_SAMPLE_FAILURE_LIMIT:
+                    self.problem = self.problem or (
+                        f"GPU memory monitor failed {consecutive_failures} consecutive samples: {error}"
+                    )
+            else:
+                sampled_at = time.perf_counter()
+                self._check_memory_sample_age(sampled_at)
+                self._last_good_memory_sample = sampled_at
+                consecutive_failures = 0
             if self.problem:
                 return
 
+    def _check_memory_sample_age(self, timestamp):
+        last_good = self._last_good_memory_sample
+        if last_good is not None and timestamp - last_good >= MEMORY_SAMPLE_STALE_SECONDS:
+            self.problem = self.problem or (
+                f"GPU memory monitor failed: no successful sample for {MEMORY_SAMPLE_STALE_SECONDS} seconds"
+            )
+
     def check(self):
-        if not self.problem and time.perf_counter() - self.started >= self.max_seconds:
+        timestamp = time.perf_counter()
+        self._check_memory_sample_age(timestamp)
+        if not self.problem and timestamp - self.started >= self.max_seconds:
             self.problem = f"GPU Stage {self.token['stage']} bounded runtime reached {self.max_seconds} seconds."
         if self.problem:
             raise RuntimeError(self.problem)
