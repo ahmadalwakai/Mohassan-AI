@@ -1,0 +1,144 @@
+{
+  "capturedAt": "2026-11-23T22:00:42.180Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "GET",
+    "url": "/api/chat/conversations/84b6d275-9256-4a19-a3e3-52d56e18a39b"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "84b6d275-9256-4a19-a3e3-52d56e18a39b",
+      "title": "اكتب لي رسالة اعتذار لعميل",
+      "status": "idle",
+      "updatedAt": "2026-11-23T22:00:42.118Z",
+      "browserAccount": null,
+      "messages": [
+        {
+          "id": "cafb2897-5453-4dd2-9c30-f6d174b2496b",
+          "role": "user",
+          "text": "اكتب لي رسالة اعتذار لعميل",
+          "createdAt": "2026-11-23T22:00:41.680Z"
+        },
+        {
+          "id": "7a06ce95-bead-4a27-9686-cff552e18f0a",
+          "role": "assistant",
+          "text": "أكتب لك الرسالة من قالب رسمي، والتفاصيل تبقى بكلماتك. أجب عن هذه الأسئلة:",
+          "createdAt": "2026-11-23T22:00:41.907Z"
+        },
+        {
+          "id": "82544c84-431f-4ac5-98a9-c0cb99d397f1",
+          "role": "user",
+          "text": "1. الأستاذ خالد\n2. اعتذار\n3. تأخر التسليم يومين بسبب الشحن، وسيصل الطلب يوم الأحد\n4. موحسن",
+          "createdAt": "2026-11-23T22:00:42.014Z"
+        },
+        {
+          "id": "5726fb92-fea0-42eb-bbd0-fe8ac5079d2d",
+          "role": "assistant",
+          "text": "**الموضوع:** اعتذار\n\nالأستاذ خالد المحترم،\nالسلام عليكم ورحمة الله وبركاته، وبعد:\n\nأود أن أعتذر لكم بصدق عما يلي:\nتأخر التسليم يومين بسبب الشحن، وسيصل الطلب يوم الأحد\n\nنقدّر تفهمكم، ونعمل على ألا يتكرر ذلك.\n\nمع التحية،\nموحسن\n\n---\nهذه مسودة من قالب: الإطار ثابت والتفاصيل بكلماتك كما كتبتها. لم يكتبها نموذج.",
+          "createdAt": "2026-11-23T22:00:42.111Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "browser": null,
+      "progress": null,
+      "steps": [
+        {
+          "id": "47203146-8ee1-492c-8eb6-ab8f1da7367c",
+          "text": "أسئلة الرسالة",
+          "createdAt": "2026-11-23T22:00:41.889Z"
+        }
+      ],
+      "error": null,
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "imageReading",
+          "pc"
+        ]
+      },
+      "visibility": {
+        "version": 1,
+        "level": 0,
+        "code": "local_card",
+        "reason": "بطاقة أسئلة ثم نص من قالب؛ لا يحتاج متصفحًا",
+        "lang": "ar",
+        "decidedAt": "2026-11-23T22:00:42.118Z",
+        "requested": 0,
+        "canView": true,
+        "history": [
+          {
+            "level": 0,
+            "code": "local_card",
+            "at": "2026-11-23T22:00:42.118Z"
+          }
+        ]
+      },
+      "campaign": null,
+      "version": "0321184ed8790a23919dd093",
+      "run": {
+        "id": "1f73e96b-c65f-4abb-b511-ae4b6864bd5d",
+        "phase": "completed",
+        "path": "action",
+        "engine": {
+          "kind": "rules",
+          "modelCalls": 0
+        },
+        "context": {
+          "objective": "اكتب لي رسالة اعتذار لعميل",
+          "previousTurns": 0,
+          "constraints": [],
+          "corrections": [],
+          "capabilities": [
+            "computation",
+            "web",
+            "browser",
+            "memory",
+            "knowledge",
+            "documents",
+            "sites",
+            "planner",
+            "letters",
+            "imageReading",
+            "pc"
+          ],
+          "limitations": [
+            "chatModel"
+          ]
+        },
+        "plan": null,
+        "evidence": [],
+        "permissions": [],
+        "verification": {
+          "status": "not_applicable",
+          "criteria": [],
+          "checkedAt": "2026-11-23T22:00:42.115Z"
+        },
+        "verdict": {
+          "status": "completed",
+          "reason": "answered",
+          "decidedAt": "2026-11-23T22:00:42.115Z"
+        },
+        "repairs": {
+          "used": 0,
+          "limit": 1
+        },
+        "steeredFrom": null,
+        "sequence": 5,
+        "updatedAt": "2026-11-23T22:00:42.120Z"
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "capturedAt": "2026-11-23T22:00:48.896Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "GET",
+    "url": "/api/windows"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "enabled": true,
+      "devices": [],
+      "events": []
+    }
+  }
+}

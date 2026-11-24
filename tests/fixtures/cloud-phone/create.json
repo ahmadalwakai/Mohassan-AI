@@ -1,0 +1,116 @@
+{
+  "capturedAt": "2026-11-23T22:00:40.909Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "POST",
+    "url": "/api/chat/conversations",
+    "idempotencyKey": "phone-create-0001",
+    "body": {
+      "goal": "كم يساوي 15 ضرب 23؟"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "dfca8751-1963-43cf-a439-e9650fbe5a8e",
+      "title": "كم يساوي 15 ضرب 23؟",
+      "status": "running",
+      "updatedAt": "2026-11-23T22:00:40.571Z",
+      "browserAccount": null,
+      "messages": [
+        {
+          "id": "9a20e251-a16f-4e92-8c14-853f065f3403",
+          "role": "user",
+          "text": "كم يساوي 15 ضرب 23؟",
+          "createdAt": "2026-11-23T22:00:40.165Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "browser": null,
+      "progress": "يفهم طلبك…",
+      "steps": [],
+      "error": null,
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "imageReading",
+          "pc"
+        ]
+      },
+      "visibility": {
+        "version": 1,
+        "level": 0,
+        "code": "local_compute",
+        "reason": "حساب محلي؛ لا يحتاج متصفحًا",
+        "lang": "ar",
+        "decidedAt": "2026-11-23T22:00:40.571Z",
+        "requested": 0,
+        "canView": true,
+        "history": [
+          {
+            "level": 0,
+            "code": "local_compute",
+            "at": "2026-11-23T22:00:40.571Z"
+          }
+        ]
+      },
+      "campaign": null,
+      "version": "8609ace98f0f240ec037f053",
+      "run": {
+        "id": "fb1eb676-13f7-4c11-8647-a4f0dd3a805e",
+        "phase": "received",
+        "path": "direct",
+        "engine": {
+          "kind": "rules",
+          "modelCalls": 0
+        },
+        "context": {
+          "objective": "كم يساوي 15 ضرب 23؟",
+          "previousTurns": 0,
+          "constraints": [],
+          "corrections": [],
+          "capabilities": [
+            "computation",
+            "web",
+            "browser",
+            "memory",
+            "knowledge",
+            "documents",
+            "sites",
+            "planner",
+            "letters",
+            "imageReading",
+            "pc"
+          ],
+          "limitations": [
+            "chatModel"
+          ]
+        },
+        "plan": null,
+        "evidence": [],
+        "permissions": [],
+        "verification": null,
+        "verdict": null,
+        "repairs": {
+          "used": 0,
+          "limit": 1
+        },
+        "steeredFrom": null,
+        "sequence": 0,
+        "updatedAt": "2026-11-23T22:00:40.529Z"
+      }
+    }
+  }
+}
