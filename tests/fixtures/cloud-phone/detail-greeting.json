@@ -1,0 +1,126 @@
+{
+  "capturedAt": "2026-11-23T22:00:48.784Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "GET",
+    "url": "/api/chat/conversations/9c15c994-f938-480e-a323-b27eea3e0e4e"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "9c15c994-f938-480e-a323-b27eea3e0e4e",
+      "title": "مرحبا، كيف حالك اليوم؟",
+      "status": "idle",
+      "updatedAt": "2026-11-23T22:00:48.724Z",
+      "browserAccount": null,
+      "messages": [
+        {
+          "id": "488068fa-0156-4c5c-a4c3-b8bb92ca910d",
+          "role": "user",
+          "text": "مرحبا، كيف حالك اليوم؟",
+          "createdAt": "2026-11-23T22:00:48.636Z"
+        },
+        {
+          "id": "558358b9-cc79-44c4-9411-eec626f426fe",
+          "role": "assistant",
+          "text": "مرحبًا! كيف أساعدك؟",
+          "createdAt": "2026-11-23T22:00:48.715Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "browser": null,
+      "progress": null,
+      "steps": [],
+      "error": null,
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "imageReading",
+          "pc"
+        ]
+      },
+      "visibility": {
+        "version": 1,
+        "level": 0,
+        "code": "local_chat",
+        "reason": "رد مباشر؛ لا يحتاج متصفحًا",
+        "lang": "ar",
+        "decidedAt": "2026-11-23T22:00:48.724Z",
+        "requested": 0,
+        "canView": true,
+        "history": [
+          {
+            "level": 0,
+            "code": "local_chat",
+            "at": "2026-11-23T22:00:48.724Z"
+          }
+        ]
+      },
+      "campaign": null,
+      "version": "47e34a789f0f0e243edc3c5d",
+      "run": {
+        "id": "d8a99885-d7cc-4f0f-ac91-09a99359aba9",
+        "phase": "completed",
+        "path": "direct",
+        "engine": {
+          "kind": "rules",
+          "modelCalls": 0
+        },
+        "context": {
+          "objective": "مرحبا، كيف حالك اليوم؟",
+          "previousTurns": 0,
+          "constraints": [],
+          "corrections": [],
+          "capabilities": [
+            "computation",
+            "web",
+            "browser",
+            "memory",
+            "knowledge",
+            "documents",
+            "sites",
+            "planner",
+            "letters",
+            "imageReading",
+            "pc"
+          ],
+          "limitations": [
+            "chatModel"
+          ]
+        },
+        "plan": null,
+        "evidence": [],
+        "permissions": [],
+        "verification": {
+          "status": "not_applicable",
+          "criteria": [],
+          "checkedAt": "2026-11-23T22:00:48.721Z"
+        },
+        "verdict": {
+          "status": "completed",
+          "reason": "answered",
+          "decidedAt": "2026-11-23T22:00:48.721Z"
+        },
+        "repairs": {
+          "used": 0,
+          "limit": 1
+        },
+        "steeredFrom": null,
+        "sequence": 4,
+        "updatedAt": "2026-11-23T22:00:48.726Z"
+      }
+    }
+  }
+}

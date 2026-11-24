@@ -1,0 +1,30 @@
+{
+  "capturedAt": "2026-11-23T22:00:49.054Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "GET",
+    "url": "/api/windows/devices/969573fc-e965-4417-a96c-50cdb87f6c88/frame"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "frame": {
+        "id": "6aa29c82-b125-4de3-803e-765573a10be8",
+        "jpeg": "/9j/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/9k=",
+        "width": 400,
+        "height": 200,
+        "elements": [],
+        "targetKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "capturedAt": "2026-11-23T22:00:49.023Z",
+        "receivedAt": "2026-11-23T22:00:49.029Z"
+      },
+      "grant": {
+        "id": "829378e0-a07c-4a49-9ee3-bb06cdbda5dd",
+        "scope": "control",
+        "targetKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "approvalNonce": "adee0d17-a433-49fc-bf02-33cf0532d02b",
+        "expiresAt": "2026-11-23T22:02:49.016Z"
+      }
+    }
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "capturedAt": "2026-11-23T22:00:48.616Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "GET",
+    "url": "/api/chat/conversations/76abf12f-d745-4a15-9595-546a25e6b19f"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "76abf12f-d745-4a15-9595-546a25e6b19f",
+      "title": "افتح http://10.0.0.9/",
+      "status": "failed",
+      "updatedAt": "2026-11-23T22:00:48.563Z",
+      "browserAccount": null,
+      "messages": [
+        {
+          "id": "b4ea520d-478e-4fe8-85e1-1756590f5c05",
+          "role": "user",
+          "text": "افتح http://10.0.0.9/",
+          "createdAt": "2026-11-23T22:00:48.385Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "browser": {
+        "url": "about:blank",
+        "title": "جلسة محفوظة",
+        "observedAt": "2026-11-23T22:00:48.550Z",
+        "live": false,
+        "screenUrl": "/api/chat/conversations/76abf12f-d745-4a15-9595-546a25e6b19f/screen?v=saved",
+        "recovery": "review_required",
+        "recoveryToken": "2e5a1fe22944f63255df7a1c737b1a5a95173637cc58bd6652bec514e0d74508"
+      },
+      "progress": null,
+      "steps": [
+        {
+          "id": "74eee680-1e88-4200-b6b4-44a04237fc11",
+          "text": "فتح 10.0.0.9",
+          "createdAt": "2026-11-23T22:00:48.423Z"
+        }
+      ],
+      "error": "هذا العنوان داخلي أو غير موجود، ولا يمكن فتحه.",
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "imageReading",
+          "pc"
+        ]
+      },
+      "visibility": {
+        "version": 1,
+        "level": 3,
+        "code": "open_only",
+        "reason": "طلبت فتح الموقع لعرضه",
+        "lang": "ar",
+        "decidedAt": "2026-11-23T22:00:48.563Z",
+        "requested": 3,
+        "canView": true,
+        "history": [
+          {
+            "level": 3,
+            "code": "open_only",
+            "at": "2026-11-23T22:00:48.563Z"
+          }
+        ]
+      },
+      "campaign": null,
+      "version": "48b7fab1cbaad504a33415f0",
+      "run": {
+        "id": "78e56136-fa72-44e7-84b2-db4a7f67cd4f",
+        "phase": "blocked",
+        "path": "action",
+        "engine": {
+          "kind": "rules",
+          "modelCalls": 0
+        },
+        "context": {
+          "objective": "افتح http://10.0.0.9/",
+          "previousTurns": 0,
+          "constraints": [],
+          "corrections": [],
+          "capabilities": [
+            "computation",
+            "web",
+            "browser",
+            "memory",
+            "knowledge",
+            "documents",
+            "sites",
+            "planner",
+            "letters",
+            "imageReading",
+            "pc"
+          ],
+          "limitations": [
+            "chatModel"
+          ]
+        },
+        "plan": null,
+        "evidence": [],
+        "permissions": [],
+        "verification": null,
+        "verdict": {
+          "status": "blocked",
+          "reason": "error",
+          "decidedAt": "2026-11-23T22:00:48.564Z"
+        },
+        "repairs": {
+          "used": 0,
+          "limit": 1
+        },
+        "steeredFrom": null,
+        "sequence": 0,
+        "updatedAt": "2026-11-23T22:00:48.564Z"
+      }
+    }
+  }
+}
