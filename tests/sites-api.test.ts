@@ -6,7 +6,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { listZip } from '@mohassan/sites';
 import { createApplication } from '../apps/server/src/app.js';
 
@@ -34,7 +34,7 @@ describe('sites API', () => {
   const draft = { lang: 'ar', kind: 'restaurant', name: 'بيت الشام', request: 'موقع لمطعم فيه الأسئلة الشائعة وخريطة', answers: { items: 'شاورما لحم - 25\nفتوش - 12\nكنافة - 15', contact: '0933123456 واتساب', city: 'دمشق', faq: 'هل يوجد توصيل؟\nنعم داخل المدينة.', hours: 'يومياً ١١ صباحاً - ١٢ منتصف الليل' } };
 
   it('builds a site from answers, previews it without a cookie, edits it by sentence and exports a ZIP', async () => {
-    const { app, headers, base } = await boot();
+    const { app, application, headers, base } = await boot();
     const created = await app.inject({ method: 'POST', url: '/api/sites/draft', headers, payload: draft });
     expect(created.statusCode, created.body).toBe(200);
     const site = created.json();
@@ -58,8 +58,16 @@ describe('sites API', () => {
     const missing = await app.inject({ method: 'GET', url: `${site.previewPath}nope.html`, headers: base });
     expect(missing.statusCode).toBe(404);
     expect(missing.body).toContain('<!DOCTYPE html>');
-    const wrongToken = await app.inject({ method: 'GET', url: `/api/sites/${site.id}/p/${'x'.repeat(32)}/index.html`, headers: base });
-    expect(wrongToken.statusCode).toBe(404);
+    const query = vi.spyOn(application.database.db.getExecutor(), 'executeQuery');
+    try {
+      const wrongToken = await app.inject({ method: 'GET', url: `/api/sites/${site.id}/p/${'x'.repeat(32)}/index.html`, headers: base });
+      expect(wrongToken.statusCode).toBe(404);
+      expect(query.mock.calls.map(([statement]) => statement.sql)).toEqual([
+        'select "revision" from "sites" where "id" = $1',
+      ]);
+    } finally {
+      query.mockRestore();
+    }
     const traversal = await app.inject({ method: 'GET', url: `${site.previewPath}..%2F..%2Fpackage.json`, headers: base });
     expect([400, 404]).toContain(traversal.statusCode);
     const anonymous = await app.inject({ method: 'GET', url: `/api/sites/${site.id}`, headers: base });

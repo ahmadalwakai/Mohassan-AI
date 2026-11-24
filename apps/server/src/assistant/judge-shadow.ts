@@ -1,5 +1,7 @@
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { redactCredentialText } from '@mohassan/cognitive';
+import { redactSecrets } from '@mohassan/providers';
 import { judge, type JudgeCode, type JudgeDecision, type JudgeInput, type JudgeVerdict, type ReplyKind } from './judge.js';
 
 /**
@@ -51,7 +53,7 @@ export interface JudgeShadowLine {
   /** How many evidence texts the host passed; 0 when none (support not measured). */
   evidence: number;
   ms: number;
-  /** False when the line was written without the conversation's text (JudgeShadowInput.keepText). Absent in lines from before this field existed, which all kept it. */
+  /** False when the line was written without the conversation's text. Absent in lines from before this field existed, which all kept it. */
   textKept?: boolean;
 }
 export interface JudgeShadow {
@@ -64,6 +66,14 @@ export interface JudgeShadow {
 
 const MAX_TEXT = 2000;
 const MAX_REPLY = 4000;
+
+function containsCredential(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return /\b(?:authorization|proxy-authorization|x-mohassan-internal)["'`]?\s*[:=]/i.test(value)
+    || /\b(?:cookie|set-cookie)["'`]?\s*[:=]\s*["'`]?[^\s"'`=;,:]+=/i.test(value)
+    || /\b(?:__Secure-)?better-auth\.session_token["'`]?\s*(?:=|%3d|:)/i.test(value)
+    || redactCredentialText(redactSecrets(value)) !== value;
+}
 
 export interface JudgeSettings { enabled: boolean; logFile: string; fixForOwner: boolean; withholdForOwner: boolean; logText: 'all' | 'owner' }
 /**
@@ -101,7 +111,12 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
         const verdict = judge(input);
         const applied = Boolean(input.applyFix && verdict.decision === 'fix' && verdict.fixedReply?.trim())
           || Boolean(input.applyWithhold && verdict.decision === 'withhold' && verdict.withholdText?.trim());
-        const keep = input.keepText !== false;
+        // Decide before clipping excerpts or dropping the header from a derived line.
+        const keep = input.keepText !== false && ![
+          input.question, input.previous, input.reply, verdict.withholdText, verdict.fixedReply,
+          verdict.lead?.text, verdict.best?.text,
+          ...verdict.findings.flatMap(finding => [finding.excerpt, finding.detail]),
+        ].some(containsCredential);
         const quoted = (line: JudgeVerdict['lead']) => keep || !line ? line : { ...line, text: '' };
         write({
           at: now().toISOString(), conversationId: input.conversationId, runId: input.runId,

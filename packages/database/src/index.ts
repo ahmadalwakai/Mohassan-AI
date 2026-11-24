@@ -77,7 +77,13 @@ async function acquireDirectoryLock(dataDir: string): Promise<() => Promise<void
 
 export async function createDatabase(options: DatabaseOptions = {}): Promise<DatabaseHandle> {
   if (options.connectionString) {
-    const target=new URL(options.connectionString);
+    let target: URL;
+    try {
+      target = new URL(options.connectionString);
+    } catch {
+      // Node's URL error retains the input, including any database credentials.
+      throw new Error("DATABASE_URL is not a valid URL.");
+    }
     if(target.searchParams.get('sslmode')==='require')target.searchParams.set('sslmode','verify-full');
     const pool = new pg.Pool({
       connectionString: target.toString(),

@@ -13,7 +13,8 @@ import { z } from 'zod';
 
 describe('Windows device permissions with synthetic transport fixtures',()=>{
   let database:Awaited<ReturnType<typeof createDatabase>>,app:ReturnType<typeof Fastify>,deviceId='',deviceKey='',grant:any;
-  const owner='windows-fixture-owner',other='windows-fixture-other',cookie='owner-session-a',key='a'.repeat(64);let epoch=randomUUID();
+  const owner='windows-fixture-owner',other='windows-fixture-other',cookie='owner-session-a',key='a'.repeat(64);
+  const ownerSession=randomUUID(),secondSession=randomUUID(),otherSession=randomUUID();let epoch=randomUUID();
   const headers=(ownerId=owner,session=cookie)=>({'x-fixture-owner':ownerId,cookie:session});
   const deviceHeaders=()=>({authorization:`Bearer ${deviceId}.${deviceKey}`});
   const state=()=>({approvalNonce:epoch,sessionId:1,safeDesktop:true,localView:true,localControl:true,target:{key,mode:'window',title:'Synthetic fixture target',width:400,height:200},status:'test transport fixture'});
@@ -23,8 +24,11 @@ describe('Windows device permissions with synthetic transport fixtures',()=>{
   beforeAll(async()=>{
     database=await createDatabase();await migrateAuth(database.db);await windowsMigration(database.db);
     for(const id of [owner,other])await database.db.insertInto('user').values({id,name:id,email:id+'@example.test'}).execute();
+    for(const [id,userId] of [[ownerSession,owner],[secondSession,owner],[otherSession,other]]) {
+      await database.db.insertInto('session').values({id,userId,token:randomUUID(),expiresAt:new Date(Date.now()+60000)}).execute();
+    }
     app=Fastify({logger:false});app.setErrorHandler((error:any,_request:any,reply:any)=>{reply.code(error instanceof z.ZodError?400:error.statusCode??500).send({error:{code:error.code??'ERROR',message:error.message}});});
-    await registerWindowsRoutes(app,{db:database.db,owner:async request=>{const id=request.headers['x-fixture-owner'];if(id!==owner&&id!==other)throw Object.assign(new Error('unauthorized'),{statusCode:401});return {id};},config:{webOrigin:'http://127.0.0.1:3000',production:false}});await app.ready();
+    await registerWindowsRoutes(app,{db:database.db,owner:async request=>{const id=request.headers['x-fixture-owner'];if(id!==owner&&id!==other)throw Object.assign(new Error('unauthorized'),{statusCode:401});return {id,sessionId:id===other?otherSession:request.headers.cookie===cookie?ownerSession:secondSession};},config:{webOrigin:'http://127.0.0.1:3000',production:false}});await app.ready();
   });
   afterAll(async()=>{await app?.close();await database?.close();});
 
@@ -49,9 +53,26 @@ describe('Windows device permissions with synthetic transport fixtures',()=>{
     expect((await app.inject({url:`/api/windows/devices/${deviceId}/frame`,headers:headers(owner,'different-session')})).statusCode).toBe(409);
     expect((await app.inject({url:`/api/windows/devices/${deviceId}/frame`,headers:headers(other)})).statusCode).toBe(404);
     const response=await app.inject({method:'POST',url:`/api/windows/devices/${deviceId}/actions`,headers:headers(),payload:{grantId:grant.id,nonce:randomUUID(),frameId:image.id,action:{type:'text',text:'must not execute'}}});expect(response.statusCode).toBe(403);
-    await revokeWindowsSession(database.db,cookie);
+    await revokeWindowsSession(database.db,ownerSession);
     expect((await app.inject({url:`/api/windows/devices/${deviceId}/frame`,headers:headers()})).statusCode).toBe(409);
     expect((await database.db.selectFrom('windows_grants').select('revoked_at').where('id','=',grant.id).executeTakeFirstOrThrow()).revoked_at).toBeTruthy();
+  });
+  it('requires a live session at pairing consumption and command dispatch',async()=>{
+    const sessionHeaders=headers(owner,'different-session');
+    const pairing=await app.inject({method:'POST',url:'/api/windows/pairing',headers:sessionHeaders,payload:{}});
+    expect(pairing.statusCode).toBe(200);
+    const control=await allow('control','different-session'),image=frame();
+    await poll({frame:image});
+    const queued=await app.inject({method:'POST',url:`/api/windows/devices/${deviceId}/actions`,headers:sessionHeaders,payload:{grantId:control.id,nonce:randomUUID(),frameId:image.id,action:{type:'key',key:'Escape'}}});
+    expect(queued.statusCode).toBe(200);
+
+    // Model auth's completed session deletion before Windows cleanup has run.
+    await database.db.deleteFrom('session').where('id','=',secondSession).execute();
+    expect((await poll()).json()).toMatchObject({grant:null,command:null});
+    const command=await database.db.selectFrom('windows_commands').select(['status','result_code']).where('id','=',queued.json().id).executeTakeFirst();
+    expect(command).toEqual({status:'rejected',result_code:'SESSION_REVOKED'});
+    const paired=await app.inject({method:'POST',url:'/api/windows/companion/pair',payload:{code:pairing.json().code,name:'Unconsumed fixture pairing'}});
+    expect(paired.statusCode).toBe(401);
   });
   it('delivers one sequence once, audits results and removes typed content after acknowledgment',async()=>{
     await allow('control');const image=frame();await poll({frame:image});const payload={grantId:grant.id,nonce:randomUUID(),frameId:image.id,action:{type:'text',text:'ephemeral fixture text'}};

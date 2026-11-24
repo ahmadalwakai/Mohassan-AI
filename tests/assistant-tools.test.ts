@@ -56,12 +56,16 @@ describe('the assistant reaching the real modules', () => {
   let script: Record<string, unknown>[] = [];
   let prompts: string[] = [];
   let holdSandbox: Promise<void> | null = null;
+  let decisionGate: { entered: () => void; release: Promise<void> } | undefined;
   const secret = 'assistant-tools-fixture-internal-secret-01', origin = 'http://127.0.0.1:3000';
   const headers = { 'x-mohassan-internal': secret, origin };
   const mock = createMockGroq();
   const scripted: typeof fetch = async (input, init) => {
     const body = init?.body ? JSON.parse(String(init.body)) : {};
     if (body.response_format?.json_schema?.name !== 'decision') return mock.fetch(input, init);
+    const gate = decisionGate;
+    decisionGate = undefined;
+    if (gate) { gate.entered(); await gate.release; }
     prompts.push(`${body.messages[0].content}\n${body.messages.at(-1).content}`);
     const decision = { ...blank, ...(script.shift() ?? { tool: 'answer', text: 'انتهيت.', outcome: 'done' }) };
     return Response.json({ model: body.model, choices: [{ message: { content: JSON.stringify(decision) }, finish_reason: 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 20 } });
@@ -77,10 +81,8 @@ describe('the assistant reaching the real modules', () => {
     }
     throw new Error('the conversation never settled');
   }
-  async function ask(goal: string, session = cookie) {
-    // Any chat request names the active session; the route's own limit is not under test here.
-    await api('GET', '/api/chat/conversations', undefined, session);
-    return settled((await application.chat.create(owner(), { goal })).id, session);
+  async function ask(goal: string) {
+    return settled((await application.chat.create(owner(), { goal })).id);
   }
   const approve = async (conversation: any, approved: boolean) => {
     const response = await api('POST', `/api/chat/conversations/${conversation.id}/approve`, { approvalId: conversation.approval.id, approved });
@@ -301,6 +303,7 @@ describe('the assistant reaching the real modules', () => {
   describe('the owner\'s PC through a session grant', () => {
     const key = 'b'.repeat(64);
     let nonce = randomUUID(), localControl = true, password = false;
+    let secondSession = '';
     let acks: { id: string; status: string; code: string }[] = [], commands: any[] = [], running = false, loop: Promise<void> | undefined;
     const frameFor = () => ({
       id: randomUUID(), targetKey: key, capturedAt: new Date().toISOString(), width: 400, height: 200,
@@ -329,17 +332,30 @@ describe('the assistant reaching the real modules', () => {
       expect(response.statusCode).toBe(200);
       await poll();
     };
+    const startChat = async (goal: string) => {
+      const created = await api('POST', '/api/chat/conversations', { goal });
+      expect(created.statusCode).toBe(200);
+      return created.json().id as string;
+    };
+    const askFromSession = async (goal: string) => settled(await startChat(goal));
+    const signInAgain = async () => {
+      const second = await application.app.inject({ method: 'POST', url: '/api/auth/sign-in/email', headers, payload: { email: 'assistant-tools@example.test', password: 'Assistant-Fixture-Password-42' } });
+      expect(second.statusCode).toBe(200);
+      const cookies = second.headers['set-cookie'];
+      return (Array.isArray(cookies) ? cookies : [cookies]).filter(Boolean).map(value => String(value).split(';')[0]).join('; ');
+    };
 
     beforeAll(async () => {
       const pair = await api('POST', '/api/windows/pairing', {});
       const paired = await application.app.inject({ method: 'POST', url: '/api/windows/companion/pair', payload: { code: pair.json().code, name: 'Fixture device' } });
       deviceId = paired.json().deviceId; deviceKey = paired.json().deviceKey;
+      secondSession = await signInAgain();
     });
     beforeEach(() => { nonce = randomUUID(); localControl = true; password = false; commands = []; acks = []; });
 
     it('asks the owner for a grant instead of reaching for the device', async () => {
       script = [{ tool: 'computer_view' }];
-      const result = await ask('ماذا يظهر على كمبيوتري؟');
+      const result = await askFromSession('ماذا يظهر على كمبيوتري؟');
       expect(result.status).toBe('waiting_input');
       expect(result.secure.kind).toBe('hands_on');
       expect(result.secure.prompt).toContain('وقد تُرسل العناصر أو الصورة');
@@ -347,21 +363,62 @@ describe('the assistant reaching the real modules', () => {
       await api('POST', `/api/chat/conversations/${result.id}/cancel`, {});
     });
     it('honours a grant only for the session that holds it', async () => {
-      const second = await application.app.inject({ method: 'POST', url: '/api/auth/sign-in/email', headers, payload: { email: 'assistant-tools@example.test', password: 'Assistant-Fixture-Password-42' } });
-      const otherSession = (Array.isArray(second.headers['set-cookie']) ? second.headers['set-cookie'] : [second.headers['set-cookie']]).filter(Boolean).map(value => String(value).split(';')[0]).join('; ');
-      expect(otherSession).not.toBe(cookie);
-      await grant('view', otherSession);
+      expect(secondSession).not.toBe(cookie);
+      await grant('view', secondSession);
       script = [{ tool: 'computer_view' }];
-      const result = await ask('ماذا يظهر على كمبيوتري؟');
+      const result = await askFromSession('ماذا يظهر على كمبيوتري؟');
       expect(result.status).toBe('waiting_input');
       await api('POST', `/api/chat/conversations/${result.id}/cancel`, {});
+    });
+    it('keeps a dispatched chat worker bound to its own session during concurrent reads', async () => {
+      await grant('view', secondSession);
+      let notifyEntered = () => {}, releaseDecision = () => {};
+      const entered = new Promise<void>(resolve => { notifyEntered = resolve; });
+      const release = new Promise<void>(resolve => { releaseDecision = resolve; });
+      script = [{ tool: 'computer_view' }];
+      decisionGate = { entered: notifyEntered, release };
+      let id: string;
+      try {
+        id = await startChat('ماذا يظهر على كمبيوتري؟');
+        await entered;
+        const unrelated = await api('GET', '/api/chat/conversations', undefined, secondSession);
+        expect(unrelated.statusCode).toBe(200);
+        await poll();
+      } finally {
+        decisionGate = undefined;
+        releaseDecision();
+      }
+      expect((await settled(id)).status).toBe('waiting_input');
+      await api('POST', `/api/chat/conversations/${id}/cancel`, {});
+    });
+    it('retires pairing and queued input at sign-out with unrelated cookies present', async () => {
+      const pairing = await api('POST', '/api/windows/pairing', {}, secondSession);
+      expect(pairing.statusCode).toBe(200);
+      await grant('control', secondSession);
+      const device = `/api/windows/devices/${deviceId}`;
+      const changedCookies = `fixturePreference=compact; ${secondSession}`;
+      const screen = await api('GET', `${device}/frame`, undefined, changedCookies);
+      expect(screen.statusCode).toBe(200);
+      const { frame, grant: current } = screen.json();
+      const queued = await api('POST', `${device}/actions`, { grantId: current.id, frameId: frame.id, nonce: randomUUID(), action: { type: 'key', key: 'Escape' } }, secondSession);
+      expect(queued.statusCode).toBe(200);
+
+      expect((await api('POST', '/api/auth/sign-out', {}, changedCookies)).statusCode).toBe(200);
+      await poll();
+      expect(commands).toEqual([]);
+      const receipt = await application.database.db.selectFrom('windows_commands').select(['status', 'result_code']).where('id', '=', queued.json().id).executeTakeFirst();
+      expect(receipt).toEqual({ status: 'rejected', result_code: 'SESSION_REVOKED' });
+      const paired = await application.app.inject({ method: 'POST', url: '/api/windows/companion/pair', payload: { code: pairing.json().code, name: 'Fixture device' } });
+      expect(paired.statusCode).toBe(401);
+      expect((await api('GET', '/api/windows', undefined, secondSession)).statusCode).toBe(401);
+      expect((await api('GET', '/api/windows')).statusCode).toBe(200);
     });
     it('reads the elements but never a password field', async () => {
       password = true;
       await grant('view');
       script = [{ tool: 'computer_view', text: 'ماذا ترى؟' }];
       startCompanion();
-      await ask('ماذا يظهر على كمبيوتري؟');
+      await askFromSession('ماذا يظهر على كمبيوتري؟');
       await stopCompanion();
       const prompt = prompts.at(-1)!;
       expect(prompt).toContain('"Open file"');
@@ -373,7 +430,7 @@ describe('the assistant reaching the real modules', () => {
       await grant('view');
       script = [{ tool: 'computer_view' }, { tool: 'computer_click', ref: 'w1' }];
       startCompanion();
-      await ask('افتح الملف على كمبيوتري');
+      await askFromSession('افتح الملف على كمبيوتري');
       await stopCompanion();
       expect(commands).toEqual([]);
       expect(prompts.at(-1)).toContain('هذا الإذن لا يسمح بالإدخال');
@@ -382,7 +439,7 @@ describe('the assistant reaching the real modules', () => {
       await grant('control');
       script = [{ tool: 'computer_view' }, { tool: 'computer_click', ref: 'w1' }];
       startCompanion();
-      await ask('افتح الملف على كمبيوتري');
+      await askFromSession('افتح الملف على كمبيوتري');
       await stopCompanion();
       expect(commands).toHaveLength(1);
       expect(commands[0].action).toMatchObject({ type: 'click', x: 0.375, y: 0.25 });
@@ -394,7 +451,7 @@ describe('the assistant reaching the real modules', () => {
       await grant('control');
       script = [{ tool: 'computer_view' }, { tool: 'computer_click', ref: 'w2' }];
       startCompanion();
-      const waiting = await ask('احذف الحساب من البرنامج');
+      const waiting = await askFromSession('احذف الحساب من البرنامج');
       expect(waiting.status).toBe('waiting_approval');
       expect(commands).toEqual([]);
       await approve(waiting, true);
@@ -405,7 +462,7 @@ describe('the assistant reaching the real modules', () => {
       await grant('control');
       script = [{ tool: 'computer_view' }, { tool: 'computer_click', ref: 'w2' }];
       startCompanion();
-      const waiting = await ask('احذف الحساب من البرنامج');
+      const waiting = await askFromSession('احذف الحساب من البرنامج');
       await approve(waiting, false);
       await stopCompanion();
       expect(commands).toEqual([]);
@@ -414,7 +471,7 @@ describe('the assistant reaching the real modules', () => {
       await grant('control');
       script = [{ tool: 'computer_view' }, { tool: 'computer_key', text: 'Enter' }];
       startCompanion();
-      const waiting = await ask('اضغط إدخال على كمبيوتري');
+      const waiting = await askFromSession('اضغط إدخال على كمبيوتري');
       expect(waiting.status).toBe('waiting_approval');
       await api('POST', `/api/chat/conversations/${waiting.id}/cancel`, {});
       await stopCompanion();
@@ -425,7 +482,7 @@ describe('the assistant reaching the real modules', () => {
       await grant('control');
       script = [{ tool: 'computer_view' }, { tool: 'computer_type', text: 'نص تجريبي' }];
       startCompanion();
-      await ask('اكتب "نص تجريبي" في نافذة الكمبيوتر');
+      await askFromSession('اكتب "نص تجريبي" في نافذة الكمبيوتر');
       await stopCompanion();
       expect(commands).toEqual([]);
       expect(prompts.at(-1)).toContain('كلمة مرور');

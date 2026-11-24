@@ -249,21 +249,29 @@ export async function createSitesControl(db: Kysely<any>, config: SitesConfig) {
       return detailOf(await saveRevision(tx, row, brief, build(brief, await imagesOf(id, tx)), false), tx);
     });
   }
-  /** A file of the previewed revision, by its token: text from the stored snapshot, images from their table. */
-  async function previewFile(id: string, candidate: string, path: string): Promise<{ bytes: Buffer; contentType: string; status: number } | null> {
+  /** Authorize a specific revision before loading its generated pages or images. */
+  async function authorizePreview(id: string, candidate: string) {
     if (!/^[A-Za-z0-9_-]{32}$/.test(candidate) || !z.uuid().safeParse(id).success) return null;
-    const row = await db.selectFrom('sites').select(['id', 'revision', 'files']).where('id', '=', id).executeTakeFirst() as Pick<SiteRow, 'id' | 'revision' | 'files'> | undefined;
+    const row = await db.selectFrom('sites').select('revision').where('id', '=', id).executeTakeFirst() as Pick<SiteRow, 'revision'> | undefined;
     if (!row || !tokenValid(id, row.revision, candidate)) return null;
-    const files = z.array(z.object({ path: z.string(), content: z.string(), contentType: z.string() })).parse(row.files);
+    return { read: (path: string) => previewFile(id, row.revision, path) };
+  }
+  async function previewFile(id: string, revision: number, path: string): Promise<{ bytes: Buffer; contentType: string; status: number } | null> {
     const wanted = path === '' ? 'index.html' : path;
     if (!FILE_PATH.test(wanted)) return null;
-    const text = files.find(file => file.path === wanted);
-    if (text) return { bytes: Buffer.from(text.content, 'utf8'), contentType: text.contentType, status: 200 };
     const asset = wanted.match(/^assets\/([0-9a-f-]{36})(-small)?\.(png|jpg|webp)$/);
     if (asset) {
-      const image = await db.selectFrom('site_images').select(['data_base64', 'small_base64', 'mime_type']).where('id', '=', asset[1]!).where('site_id', '=', id).executeTakeFirst() as Pick<ImageRow, 'data_base64' | 'small_base64' | 'mime_type'> | undefined;
+      const image = await db.selectFrom('site_images').innerJoin('sites', 'sites.id', 'site_images.site_id')
+        .select(['site_images.data_base64', 'site_images.small_base64', 'site_images.mime_type'])
+        .where('site_images.id', '=', asset[1]!).where('sites.id', '=', id).where('sites.revision', '=', revision)
+        .executeTakeFirst() as Pick<ImageRow, 'data_base64' | 'small_base64' | 'mime_type'> | undefined;
       if (image) return { bytes: Buffer.from(asset[2] && image.small_base64 ? image.small_base64 : image.data_base64, 'base64'), contentType: image.mime_type, status: 200 };
     }
+    const row = await db.selectFrom('sites').select('files').where('id', '=', id).where('revision', '=', revision).executeTakeFirst() as Pick<SiteRow, 'files'> | undefined;
+    if (!row) return null;
+    const files = z.array(z.object({ path: z.string(), content: z.string(), contentType: z.string() })).parse(row.files);
+    const text = files.find(file => file.path === wanted);
+    if (text) return { bytes: Buffer.from(text.content, 'utf8'), contentType: text.contentType, status: 200 };
     const notFound = files.find(file => file.path === '404.html');
     return notFound ? { bytes: Buffer.from(notFound.content, 'utf8'), contentType: notFound.contentType, status: 404 } : null;
   }
@@ -294,7 +302,7 @@ export async function createSitesControl(db: Kysely<any>, config: SitesConfig) {
     const deleted = await db.deleteFrom('sites').where('id', '=', id).where('owner_id', '=', ownerId).executeTakeFirst();
     if (!Number(deleted.numDeletedRows)) throw new SiteError('SITE_NOT_FOUND', 'لم يُعثر على الموقع.', 404);
   }
-  return { list, create, createFromAnswers, detail, updateBrief, command, undo, uploadImage, deleteImage, exportZip, regenerate, previewFile, publish, remove, previewPath, publisherKind: publisher.kind, publishAvailable: () => publisher.available(), limits };
+  return { list, create, createFromAnswers, detail, updateBrief, command, undo, uploadImage, deleteImage, exportZip, regenerate, authorizePreview, publish, remove, previewPath, publisherKind: publisher.kind, publishAvailable: () => publisher.available(), limits };
 }
 export type SitesControl = Awaited<ReturnType<typeof createSitesControl>>;
 
@@ -327,9 +335,17 @@ export async function registerSiteRoutes(app: FastifyInstance, { control, owner,
   });
   app.delete<{ Params: { id: string } }>('/api/sites/:id', async request => { await control.remove((await owner(request)).id, id(request.params.id)); return { ok: true }; });
   // Public by token (PUBLIC_ROUTES): a sandboxed preview iframe has an opaque origin and sends no cookie.
-  app.get<{ Params: { id: string; token: string; '*': string } }>('/api/sites/:id/p/:token/*', { config: { rateLimit: { max: 600, timeWindow: '1 minute', keyGenerator: (request: any) => `site-preview:${request.params?.token ?? ''}` } } }, async (request, reply) => {
-    const file = await control.previewFile(request.params.id, request.params.token, request.params['*'] ?? '');
-    if (!file) return reply.code(404).send({ error: { code: 'SITE_PREVIEW_NOT_FOUND', message: 'لم يُعثر على ملف المعاينة.' } });
+  const previewRateLimit = app.createRateLimit({ max: 600, timeWindow: '1 minute', keyGenerator: request => `site-preview:${sha256((request.params as { token: string }).token)}` });
+  app.get<{ Params: { id: string; token: string; '*': string } }>('/api/sites/:id/p/:token/*', { config: { rateLimit: false } }, async (request, reply) => {
+    const notFound = () => reply.code(404).send({ error: { code: 'SITE_PREVIEW_NOT_FOUND', message: 'لم يُعثر على ملف المعاينة.' } });
+    const preview = await control.authorizePreview(request.params.id, request.params.token);
+    if (!preview) return notFound();
+    const limit = await previewRateLimit(request);
+    if (!limit.isAllowed && limit.isExceeded) {
+      return reply.code(429).header('Retry-After', String(limit.ttlInSeconds)).send({ error: { code: 'SITE_PREVIEW_RATE_LIMIT', message: 'تكررت الطلبات بسرعة. حاول لاحقاً.' } });
+    }
+    const file = await preview.read(request.params['*'] ?? '');
+    if (!file) return notFound();
     return reply.code(file.status).type(file.contentType).header('Content-Security-Policy', "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox").header('X-Frame-Options', 'SAMEORIGIN').header('Referrer-Policy', 'no-referrer').send(file.bytes);
   });
   return control;
