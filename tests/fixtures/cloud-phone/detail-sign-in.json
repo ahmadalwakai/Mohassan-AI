@@ -1,0 +1,140 @@
+{
+  "capturedAt": "2026-11-23T22:00:48.362Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "GET",
+    "url": "/api/chat/conversations/efd37924-6650-4a91-b29e-2f769aca6b69"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "efd37924-6650-4a91-b29e-2f769aca6b69",
+      "title": "افتح http://fixture-site.test/account وسجّل الدخول",
+      "status": "idle",
+      "updatedAt": "2026-11-23T22:00:48.292Z",
+      "browserAccount": null,
+      "messages": [
+        {
+          "id": "f28f1bd6-b8ec-40a4-8512-5270e5ee570d",
+          "role": "user",
+          "text": "افتح http://fixture-site.test/account وسجّل الدخول",
+          "createdAt": "2026-11-23T22:00:47.164Z"
+        },
+        {
+          "id": "d6861d85-211c-48f0-a559-0b8e9705087f",
+          "role": "assistant",
+          "text": "لم أؤكد إتمام هذا الطلب. لم يتحقق مسار البحث أو التصفح من النتيجة المطلوبة. لم أؤكد فتح الصفحة أو صحة معلومة حديثة.",
+          "createdAt": "2026-11-23T22:00:48.281Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "browser": {
+        "url": "http://fixture-site.test/login",
+        "title": "Sign in",
+        "observedAt": "2026-11-23T22:00:48.219Z",
+        "live": true,
+        "screenUrl": "/api/chat/conversations/efd37924-6650-4a91-b29e-2f769aca6b69/screen?v=abade61e-0234-4c4f-9fe2-9e4b31346f15",
+        "recovery": "available",
+        "recoveryToken": "afb4d65d785c55afcc3a30f0fb082b4e553ea60e0036b0e811ae3a704e942422"
+      },
+      "progress": null,
+      "steps": [
+        {
+          "id": "03b6a120-dbc0-4ad3-a3fc-1cfcfcab8e16",
+          "text": "فتح fixture-site.test",
+          "createdAt": "2026-11-23T22:00:47.250Z"
+        }
+      ],
+      "error": null,
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "imageReading",
+          "pc"
+        ]
+      },
+      "visibility": {
+        "version": 1,
+        "level": 2,
+        "code": "browser_steps",
+        "reason": "خطوات داخل موقع في متصفح مخفي",
+        "lang": "ar",
+        "decidedAt": "2026-11-23T22:00:48.292Z",
+        "requested": 2,
+        "canView": true,
+        "history": [
+          {
+            "level": 2,
+            "code": "browser_steps",
+            "at": "2026-11-23T22:00:48.292Z"
+          }
+        ]
+      },
+      "campaign": null,
+      "version": "ee15267309380e9b862971f1",
+      "run": {
+        "id": "7a8ac2b9-b2a2-4d98-b6bf-0c4bb70ffa57",
+        "phase": "blocked",
+        "path": "action",
+        "engine": {
+          "kind": "rules",
+          "modelCalls": 0
+        },
+        "context": {
+          "objective": "افتح http://fixture-site.test/account وسجّل الدخول",
+          "previousTurns": 0,
+          "constraints": [],
+          "corrections": [],
+          "capabilities": [
+            "computation",
+            "web",
+            "browser",
+            "memory",
+            "knowledge",
+            "documents",
+            "sites",
+            "planner",
+            "letters",
+            "imageReading",
+            "pc"
+          ],
+          "limitations": [
+            "chatModel"
+          ]
+        },
+        "plan": null,
+        "evidence": [],
+        "permissions": [],
+        "verification": {
+          "status": "not_applicable",
+          "criteria": [],
+          "checkedAt": "2026-11-23T22:00:48.289Z"
+        },
+        "verdict": {
+          "status": "blocked",
+          "reason": "not_possible",
+          "decidedAt": "2026-11-23T22:00:48.289Z"
+        },
+        "repairs": {
+          "used": 0,
+          "limit": 1
+        },
+        "steeredFrom": null,
+        "sequence": 3,
+        "updatedAt": "2026-11-23T22:00:48.295Z"
+      }
+    }
+  }
+}

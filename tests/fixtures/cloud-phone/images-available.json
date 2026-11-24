@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-11-23T22:00:40.127Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "GET",
+    "url": "/api/chat/images"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "available": true
+    }
+  }
+}

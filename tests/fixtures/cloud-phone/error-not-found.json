@@ -1,0 +1,17 @@
+{
+  "capturedAt": "2026-11-23T22:00:48.814Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "GET",
+    "url": "/api/chat/conversations/00000000-0000-4000-8000-000000000000"
+  },
+  "response": {
+    "status": 404,
+    "body": {
+      "error": {
+        "code": "CHAT_NOT_FOUND",
+        "message": "لم يُعثر على المحادثة."
+      }
+    }
+  }
+}

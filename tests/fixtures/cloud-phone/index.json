@@ -1,0 +1,239 @@
+{
+  "capturedAt": "2026-11-23T22:00:49.173Z",
+  "sourceCommit": "41956ba",
+  "generator": "scripts/cloud-phone-fixtures.ts",
+  "fixtures": [
+    {
+      "file": "auth-sign-in-wrong-password",
+      "status": 401
+    },
+    {
+      "file": "auth-sign-in",
+      "status": 200
+    },
+    {
+      "file": "error-signed-out",
+      "status": 401
+    },
+    {
+      "file": "auth-session",
+      "status": 200
+    },
+    {
+      "file": "list-empty",
+      "status": 200
+    },
+    {
+      "file": "images-available",
+      "status": 200
+    },
+    {
+      "file": "create",
+      "status": 200,
+      "conversationStatus": "running"
+    },
+    {
+      "file": "detail-completed",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "detail-held-unchanged",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "create-replayed",
+      "status": 200,
+      "conversationStatus": "running"
+    },
+    {
+      "file": "error-request-reused",
+      "status": 409
+    },
+    {
+      "file": "messages-text",
+      "status": 200,
+      "conversationStatus": "running"
+    },
+    {
+      "file": "detail-completed-follow-up",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "feedback",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "detail-question-fields",
+      "status": 200,
+      "conversationStatus": "waiting_user"
+    },
+    {
+      "file": "messages-field-answers",
+      "status": 200,
+      "conversationStatus": "running"
+    },
+    {
+      "file": "detail-completed-letter",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "error-question-changed",
+      "status": 409
+    },
+    {
+      "file": "detail-question-before-stop",
+      "status": 200,
+      "conversationStatus": "waiting_user"
+    },
+    {
+      "file": "respond-stop",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "detail-stopped",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "detail-approval",
+      "status": 200,
+      "conversationStatus": "waiting_approval"
+    },
+    {
+      "file": "approve-refused",
+      "status": 200,
+      "conversationStatus": "running"
+    },
+    {
+      "file": "detail-approval-refused",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "error-approval-changed",
+      "status": 409
+    },
+    {
+      "file": "detail-approval-before-cancel",
+      "status": 200,
+      "conversationStatus": "waiting_approval"
+    },
+    {
+      "file": "cancel",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "detail-cancelled",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "detail-sign-in",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "detail-failed-blocked-address",
+      "status": 200,
+      "conversationStatus": "failed"
+    },
+    {
+      "file": "create-greeting",
+      "status": 200,
+      "conversationStatus": "running"
+    },
+    {
+      "file": "detail-greeting",
+      "status": 200,
+      "conversationStatus": "idle"
+    },
+    {
+      "file": "list",
+      "status": 200
+    },
+    {
+      "file": "error-not-found",
+      "status": 404
+    },
+    {
+      "file": "error-invalid-id",
+      "status": 400
+    },
+    {
+      "file": "error-invalid-body",
+      "status": 400
+    },
+    {
+      "file": "delete",
+      "status": 200
+    },
+    {
+      "file": "error-deleted",
+      "status": 404
+    },
+    {
+      "file": "windows-empty",
+      "status": 200
+    },
+    {
+      "file": "windows-pairing",
+      "status": 200
+    },
+    {
+      "file": "windows-view-only",
+      "status": 200
+    },
+    {
+      "file": "error-windows-control-not-allowed",
+      "status": 409
+    },
+    {
+      "file": "windows-ready",
+      "status": 200
+    },
+    {
+      "file": "windows-grant",
+      "status": 200
+    },
+    {
+      "file": "windows-active",
+      "status": 200
+    },
+    {
+      "file": "windows-frame",
+      "status": 200
+    },
+    {
+      "file": "windows-action",
+      "status": 200,
+      "conversationStatus": "queued"
+    },
+    {
+      "file": "windows-stop",
+      "status": 200
+    },
+    {
+      "file": "windows-stopped",
+      "status": 200
+    },
+    {
+      "file": "error-windows-frame",
+      "status": 409
+    },
+    {
+      "file": "auth-sign-out",
+      "status": 200
+    },
+    {
+      "file": "error-after-sign-out",
+      "status": 401
+    }
+  ]
+}

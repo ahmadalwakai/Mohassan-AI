@@ -1,0 +1,116 @@
+{
+  "capturedAt": "2026-11-23T22:00:48.741Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "POST",
+    "url": "/api/chat/conversations",
+    "idempotencyKey": "phone-create-0008",
+    "body": {
+      "goal": "مرحبا، كيف حالك اليوم؟"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "9c15c994-f938-480e-a323-b27eea3e0e4e",
+      "title": "مرحبا، كيف حالك اليوم؟",
+      "status": "running",
+      "updatedAt": "2026-11-23T22:00:48.658Z",
+      "browserAccount": null,
+      "messages": [
+        {
+          "id": "488068fa-0156-4c5c-a4c3-b8bb92ca910d",
+          "role": "user",
+          "text": "مرحبا، كيف حالك اليوم؟",
+          "createdAt": "2026-11-23T22:00:48.636Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "browser": null,
+      "progress": "يفهم طلبك…",
+      "steps": [],
+      "error": null,
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "imageReading",
+          "pc"
+        ]
+      },
+      "visibility": {
+        "version": 1,
+        "level": 0,
+        "code": "local_chat",
+        "reason": "رد مباشر؛ لا يحتاج متصفحًا",
+        "lang": "ar",
+        "decidedAt": "2026-11-23T22:00:48.658Z",
+        "requested": 0,
+        "canView": true,
+        "history": [
+          {
+            "level": 0,
+            "code": "local_chat",
+            "at": "2026-11-23T22:00:48.658Z"
+          }
+        ]
+      },
+      "campaign": null,
+      "version": "98cdbe28c9f14d9698428cd8",
+      "run": {
+        "id": "d8a99885-d7cc-4f0f-ac91-09a99359aba9",
+        "phase": "received",
+        "path": "direct",
+        "engine": {
+          "kind": "rules",
+          "modelCalls": 0
+        },
+        "context": {
+          "objective": "مرحبا، كيف حالك اليوم؟",
+          "previousTurns": 0,
+          "constraints": [],
+          "corrections": [],
+          "capabilities": [
+            "computation",
+            "web",
+            "browser",
+            "memory",
+            "knowledge",
+            "documents",
+            "sites",
+            "planner",
+            "letters",
+            "imageReading",
+            "pc"
+          ],
+          "limitations": [
+            "chatModel"
+          ]
+        },
+        "plan": null,
+        "evidence": [],
+        "permissions": [],
+        "verification": null,
+        "verdict": null,
+        "repairs": {
+          "used": 0,
+          "limit": 1
+        },
+        "steeredFrom": null,
+        "sequence": 0,
+        "updatedAt": "2026-11-23T22:00:48.651Z"
+      }
+    }
+  }
+}

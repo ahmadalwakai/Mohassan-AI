@@ -1,0 +1,17 @@
+{
+  "capturedAt": "2026-11-23T22:00:49.171Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "GET",
+    "url": "/api/chat/conversations"
+  },
+  "response": {
+    "status": 401,
+    "body": {
+      "error": {
+        "code": "UNAUTHORIZED",
+        "message": "سجل الدخول للمتابعة."
+      }
+    }
+  }
+}

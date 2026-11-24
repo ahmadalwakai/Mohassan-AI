@@ -1,0 +1,85 @@
+{
+  "capturedAt": "2026-11-23T22:00:49.120Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "GET",
+    "url": "/api/windows"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "enabled": true,
+      "devices": [
+        {
+          "id": "969573fc-e965-4417-a96c-50cdb87f6c88",
+          "name": "Office PC",
+          "revoked": false,
+          "online": true,
+          "lastSeenAt": "2026-11-23T22:00:49.025Z",
+          "state": {
+            "status": "جلسة تفاعلية",
+            "target": {
+              "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "mode": "window",
+              "title": "Mohassan Companion",
+              "width": 400,
+              "height": 200
+            },
+            "localView": true,
+            "sessionId": 1,
+            "safeDesktop": true,
+            "localControl": true,
+            "approvalNonce": "adee0d17-a433-49fc-bf02-33cf0532d02b"
+          },
+          "grant": null
+        }
+      ],
+      "events": [
+        {
+          "id": "5855d499-3b6b-4566-a60b-6635df978918",
+          "deviceId": "969573fc-e965-4417-a96c-50cdb87f6c88",
+          "type": "owner_stop",
+          "detail": {},
+          "createdAt": "2026-11-23T22:00:49.095Z"
+        },
+        {
+          "id": "735178a1-6e62-4b9d-a2ba-2841909a12a1",
+          "deviceId": "969573fc-e965-4417-a96c-50cdb87f6c88",
+          "type": "input_requested",
+          "detail": {
+            "id": "d9708df2-8ae6-4432-967e-2356e1367fbe",
+            "type": "click",
+            "sequence": 1
+          },
+          "createdAt": "2026-11-23T22:00:49.068Z"
+        },
+        {
+          "id": "4ce292b2-da16-46e7-aade-8e72a82d9351",
+          "deviceId": "969573fc-e965-4417-a96c-50cdb87f6c88",
+          "type": "grant_created",
+          "detail": {
+            "id": "829378e0-a07c-4a49-9ee3-bb06cdbda5dd",
+            "scope": "control",
+            "targetMode": "window",
+            "durationSeconds": 120
+          },
+          "createdAt": "2026-11-23T22:00:49.009Z"
+        },
+        {
+          "id": "a329d92e-461a-4bde-a9cf-c255f280e2b7",
+          "deviceId": "969573fc-e965-4417-a96c-50cdb87f6c88",
+          "type": "device_paired",
+          "detail": {},
+          "createdAt": "2026-11-23T22:00:48.918Z"
+        },
+        {
+          "id": "facf2ac2-50fc-4bef-9d73-a5fe04f7b279",
+          "deviceId": null,
+          "type": "pairing_created",
+          "detail": {},
+          "createdAt": "2026-11-23T22:00:48.909Z"
+        }
+      ]
+    }
+  }
+}
