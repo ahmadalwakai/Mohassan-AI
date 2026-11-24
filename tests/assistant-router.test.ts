@@ -4,7 +4,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { ROUTES, createShadowRouter, foldForRouter, loadRouterModel, ngramIds, routeWithModel, routerLogits, rulesRoute } from '../apps/server/src/assistant/router.js';
+import { ROUTES, createShadowRouter, foldForRouter, loadRouterB2Model, loadRouterModel, ngramIds, routeWithModel, routerLogits, rulesRoute } from '../apps/server/src/assistant/router.js';
 
 /** A tiny model whose bias alone picks `route`; written in the exported format with its sha256 header. */
 async function tinyModel(route: string, tamper = false) {
@@ -37,6 +37,24 @@ describe('router model in TypeScript', () => {
     const model = await loadRouterModel(await tinyModel('ads'));
     expect(routeWithModel(model, 'anything').route).toBe('ads');
     await expect(loadRouterModel(await tinyModel('ads', true))).rejects.toThrow('ROUTER_MODEL_HASH_MISMATCH');
+  });
+
+  it('loads B2 explicitly when B0 and B2 share an artifact directory', async () => {
+    const dir = await tinyModel('ads');
+    const buckets = 16;
+    const floats = new Float32Array((buckets + 1) * ROUTES.length);
+    floats[buckets * ROUTES.length + ROUTES.indexOf('image')] = 5;
+    const bytes = Buffer.from(floats.buffer);
+    const header = { kind: 'b2', featureVersion: 'extended', buckets, routes: ROUTES,
+      sha256: createHash('sha256').update(bytes).digest('hex') };
+    const file = path.join(dir, 'router-b2.json');
+    await writeFile(path.join(dir, 'router-b2.bin'), bytes);
+    await writeFile(file, JSON.stringify(header));
+
+    expect(routeWithModel(await loadRouterModel(dir), 'draw a picture').route).toBe('ads');
+    expect(routeWithModel(await loadRouterB2Model(dir), 'draw a picture').route).toBe('image');
+    await writeFile(file, JSON.stringify({ ...header, featureVersion: 'unknown' }));
+    await expect(loadRouterB2Model(dir)).rejects.toThrow('ROUTER_MODEL_HEADER_INVALID');
   });
 
   it.each([
