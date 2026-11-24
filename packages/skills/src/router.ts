@@ -1,5 +1,6 @@
 import type { SkillCategory } from '@mohassan/contracts';
-import { arabicBase, requestTerms, skillStems, STEM_STOP_WORDS, type RequestTerm } from './stems.ts';
+import { AD_GUIDANCE_SLUGS, wantsAdGuidance } from './ad-guidance.ts';
+import { arabicBase, foldText, functionWord, requestTerms, skillStems, STEM_STOP_WORDS, type RequestTerm } from './stems.ts';
 
 export interface SkillContextMetadata {
   id: string;
@@ -60,6 +61,8 @@ export function rarityWeights(index: { readonly size: number; frequency(term: st
 /** Arabic words are stemmed as the reader stems them; English words stay whole (see StemOptions in stems.ts). */
 const ROUTER_STEMS = { english: 'exact' } as const;
 const routerStems = (text: string) => skillStems(text, ROUTER_STEMS);
+// Restore the original router's stops as a requirement for topical overlap.
+const ROUTER_STOP_WORDS = new Set([...STOP_WORDS].map(foldText));
 /**
  * The terms the router reads in a skill: its id, its name and its description, folded as the reader folds them, with Arabic words
  * stemmed (stems.ts), so «الإكسل» meets «اكسل» and «جوالي» meets «الجوال». catalogue.ts indexes the same terms (routerIndex).
@@ -79,6 +82,16 @@ export function routerRequestTerms(goal: string): RequestTerm[] {
     const extra = whole.filter(form => form.length >= 3 && !STEM_STOP_WORDS.has(form) && !term.variants.includes(form));
     return extra.length ? { word: term.word, variants: [...term.variants, ...new Set(extra)] } : term;
   });
+}
+
+function topicalTerms(terms: readonly RequestTerm[]): string[] {
+  return terms.flatMap(term => functionWord(term.word, ROUTER_STOP_WORDS) ? [] : term.variants.filter(variant => !ROUTER_STOP_WORDS.has(variant)));
+}
+
+/** The catalogue also looks up the slug terms for ad guidance, including briefs with zero lexical overlap. */
+export function routerCandidateTerms(goal: string): string[] {
+  const terms = topicalTerms(routerRequestTerms(goal));
+  return wantsAdGuidance(goal) ? [...terms, 'google', 'copywriting'] : terms;
 }
 /** Weights computed over the candidates themselves: right when they are every active skill, as in tests and offline checks. */
 function candidateWeights(candidates: readonly SkillContextMetadata[]): RouterTermWeight {
@@ -114,8 +127,11 @@ const CATEGORY_TIE = 0.001;
  * match: on their own, «شركة» would pull in every business skill.
  */
 function scorer(terms: readonly RequestTerm[], weight: RouterTermWeight): (skill: SkillContextMetadata) => number {
+  const topical = topicalTerms(terms);
   return skill => {
     const slug = new Set(routerStems(skill.slug)), name = new Set(routerStems(skill.name)), description = new Set(routerStems(skill.description));
+    // A generic match can contribute to the established order, but cannot qualify a skill on its own.
+    if (!topical.some(term => slug.has(term) || name.has(term) || description.has(term))) return 0;
     let content = 0;
     const used = new Set<string>();
     for (const term of terms) {
@@ -134,6 +150,18 @@ function scorer(terms: readonly RequestTerm[], weight: RouterTermWeight): (skill
 }
 const byScore = (a: Scored, b: Scored) => b.score - a.score || a.skill.slug.localeCompare(b.skill.slug, 'en') || a.skill.id.localeCompare(b.skill.id, 'en');
 
+/** Reserve room for the active ad guides after the strongest admitted match. */
+function withAdGuidance(goal: string, ranked: SkillContextMetadata[], active: readonly SkillContextMetadata[]): SkillContextMetadata[] {
+  if (!wantsAdGuidance(goal)) return ranked;
+  const first = ranked[0];
+  const guidance = AD_GUIDANCE_SLUGS.flatMap(slug => {
+    const skill = active.find(item => item.slug === slug && item.category === 'marketing');
+    return skill && skill.id !== first?.id ? [skill] : [];
+  });
+  const guidanceIds = new Set(guidance.map(skill => skill.id));
+  return [...ranked.slice(0, 1), ...guidance, ...ranked.slice(1).filter(skill => !guidanceIds.has(skill.id))];
+}
+
 /** Deterministic metadata-only ranking. A match is guidance, never a tool grant. */
 export function routeInstructionSkills(goal: string, candidates: readonly SkillContextMetadata[], limit = 6, relations: SkillRoutingRelations = {}, options: RouterOptions = {}): SkillContextMetadata[] {
   const terms = routerRequestTerms(goal);
@@ -147,11 +175,11 @@ export function routeInstructionSkills(goal: string, candidates: readonly SkillC
   // Weak direct matches are left out: below the minimum, or far below the best match. Graph relations keep their place after them.
   const best = Math.max(0, ...scored.filter(entry => !relatedIds.has(entry.skill.id)).map(entry => entry.score));
   const floor = Math.max(options.minScore ?? ROUTER_MIN_SCORE, (options.relative ?? ROUTER_RELATIVE) * best);
-  return scored
+  const ranked = scored
     .filter(entry => (entry.score > 0 && entry.score >= floor) || relatedIds.has(entry.skill.id))
     .sort(byScore)
-    .slice(0, Math.min(6, Math.max(0, Math.floor(limit))))
     .map(entry => entry.skill);
+  return withAdGuidance(goal, ranked, scanned).slice(0, Math.min(6, Math.max(0, Math.floor(limit))));
 }
 
 /** Every direct match with its score, best first, before any cut or limit: for measuring where to cut (scripts/skills-library). */
@@ -165,11 +193,11 @@ export function scoreInstructionSkills(goal: string, candidates: readonly SkillC
 
 /** With more active skills than the router reads, this picks the ones that score highest, with the same score and the same order,
  * so routing over its result returns exactly what routing over every candidate would, given the same weights (pass the catalogue's
- * to both). Skills that share no term are left out. */
+ * to both). Ad guidance is also retained for ad briefs with zero lexical overlap. */
 export function rankInstructionCandidates(goal: string, candidates: readonly SkillContextMetadata[], limit = ROUTER_WINDOW, options: RouterOptions = {}): SkillContextMetadata[] {
   const terms = routerRequestTerms(goal);
   if (!terms.length) return [];
   const score = scorer(terms, options.weight ?? candidateWeights(candidates));
-  return candidates.map(skill => ({ skill, score: score(skill) })).filter(entry => entry.score > 0).sort(byScore)
-    .slice(0, Math.max(0, Math.floor(limit))).map(entry => entry.skill);
+  const ranked = candidates.map(skill => ({ skill, score: score(skill) })).filter(entry => entry.score > 0).sort(byScore).map(entry => entry.skill);
+  return withAdGuidance(goal, ranked, candidates).slice(0, Math.max(0, Math.floor(limit)));
 }

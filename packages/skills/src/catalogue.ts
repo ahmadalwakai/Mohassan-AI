@@ -10,7 +10,7 @@ import { parseSkillManifest } from './frontmatter.ts';
 import { sha256 } from './hash.ts';
 import { INSPECTOR_VERSION, type InspectableFile } from './inspector.ts';
 import { instructionMetadataQuery, metadataRows } from './metadata.ts';
-import { rankInstructionCandidates, rarityWeights, routerRequestTerms, routerTermsOf, skillTerms, type RouterTermWeight, type SkillContextMetadata } from './router.ts';
+import { rankInstructionCandidates, rarityWeights, routerCandidateTerms, routerTermsOf, skillTerms, type RouterTermWeight, type SkillContextMetadata } from './router.ts';
 
 /* ------------------------------------------------------------------ term index (pure) */
 
@@ -94,9 +94,9 @@ export function createInstructionCatalogue(db: Kysely<any>) {
   }
   /** The router's term weights over every active instruction skill of the owner, built once per snapshot. */
   const weightsOf = (current: InstructionSnapshot): RouterTermWeight => current.memo('router-weight', () => rarityWeights(current.memo('router', routerIndex)));
-  /** What the router would rank over every active skill, scored only where a term is shared (a skill sharing none scores 0). */
+  /** What the router would rank over every active skill, using indexed terms to narrow the candidate list. */
   async function routerCandidates(ownerId: string, goal: string, limit?: number): Promise<SkillContextMetadata[]> {
-    const stems = routerRequestTerms(goal).flatMap(term => term.variants);
+    const stems = routerCandidateTerms(goal);
     if (!stems.length) return [];
     const current = await snapshot(ownerId);
     const index = current.memo('router', routerIndex);

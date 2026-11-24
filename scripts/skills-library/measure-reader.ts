@@ -10,7 +10,12 @@
  * Sets (each file's sha256 is printed; the frozen ones are checked against the hashes below):
  *   - artifacts/skills-library-2026-11-22: the library's agent questions (dev and sealed), its none-dev set and the real questions;
  *   - skills-pilot/tests: the pilot's cases and its three held-out sets;
- *   - artifacts/skills-library-2026-11-24: the expansion's own development and held-out sets, when present.
+ *   - artifacts/skills-library-2026-11-24: the expansion's two held-out sets and its development set, when present.
+ * Full measurement requires the frozen files. `--exclude <name>` (repeatable) skips an expansion case set.
+ * `--pilot-only` reports router results for the four tracked pilot sets.
+ * `--explain <request>` works without the question sets and shows both the reader's and the router's scores.
+ * The router report measures library-only routing, real requests with all built-ins active, and the
+ * 4,000-character compiler on library-only none-dev requests with no loaded skills or graph relations.
  * "Added" skills are those outside the original 100 (the skills named by the library's agent questions): only an added skill
  * that takes a request it does not own counts against the expansion.
  *
@@ -19,12 +24,16 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { buildSkillReaderIndex, createSkillReader, matchSkills, skillReadable, skillStems, type SkillReaderCandidate } from '../../apps/server/src/assistant/skill-reader.ts';
+import { builtinSkills } from '../../packages/skills/src/builtin/index.ts';
+import { routerIndex } from '../../packages/skills/src/catalogue.ts';
+import { compileInstructionContext, type InstructionDocument } from '../../packages/skills/src/compiler.ts';
+import { skillContentHash } from '../../packages/skills/src/hash.ts';
 import { buildSkillSource } from '../../packages/skills/src/importer.ts';
 import { inspectSkill } from '../../packages/skills/src/inspector.ts';
 import { parseSkillManifest } from '../../packages/skills/src/frontmatter.ts';
-import { routeInstructionSkills, scoreInstructionSkills, type SkillContextMetadata } from '../../packages/skills/src/router.ts';
+import { rankInstructionCandidates, rarityWeights, routeInstructionSkills, routerCandidateTerms, scoreInstructionSkills, type SkillContextMetadata } from '../../packages/skills/src/router.ts';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const arg = (name: string) => { const at = process.argv.indexOf(name); return at >= 0 ? process.argv[at + 1] ?? null : null; };
@@ -34,6 +43,8 @@ const COMPARE = arg('--compare');
 const LIB_EVAL = join(ROOT, 'artifacts', 'skills-library-2026-11-22');
 const PILOT_TESTS = join(ROOT, 'skills-pilot', 'tests');
 const NEW_TESTS = join(ROOT, 'artifacts', 'skills-library-2026-11-24');
+const excludedSets = new Set(process.argv.flatMap((value, at) => value === '--exclude' && process.argv[at + 1] ? [process.argv[at + 1]!] : []));
+const expansionSet = (filename: string) => `new-${filename.replace(/^cases-|\.json$/gu, '')}`;
 const FROZEN: Record<string, string> = {
   [join(LIB_EVAL, 'questions-agent-v1.jsonl')]: '8445fcb76fff14c507f548535cd44cf8373fac7550b9ee97d1ca8ebb8501f9a6',
   [join(LIB_EVAL, 'questions-agent-none-dev-v1.jsonl')]: '4c05faa7338ca3119a43becf53648b2de158d563e87f62c4ad3a0268a782a8eb',
@@ -75,7 +86,7 @@ async function readSet(path: string): Promise<string | null> {
 }
 const jsonl = (text: string) => text.split('\n').filter(line => line.trim()).map(line => JSON.parse(line));
 
-interface Skill { slug: string; candidate: SkillReaderCandidate; body: string }
+interface Skill { slug: string; document: InstructionDocument; body: string }
 interface Excluded { slug: string; reason: string }
 async function loadLibrary(): Promise<{ skills: Skill[]; excluded: Excluded[] }> {
   const skills: Skill[] = [], excluded: Excluded[] = [];
@@ -91,31 +102,73 @@ async function loadLibrary(): Promise<{ skills: Skill[]; excluded: Excluded[] }>
       excluded.push({ slug, reason: `inspector ${inspection.verdict}: ${inspection.findings.map(finding => finding.code).join(', ')}` });
       continue;
     }
-    const { contract } = source;
-    skills.push({ slug, body: parseSkillManifest(text).body, candidate: { id: randomUUID(), slug: contract.slug, name: contract.name, description: contract.description, category: contract.category, version: contract.version, contentHash: sha256(text) } });
+    const { slug: contractSlug, name, description, category, version } = source.contract;
+    const metadata = { id: randomUUID(), slug: contractSlug, name, description, category, version, contentHash: skillContentHash(source.contract, source.files) };
+    const files = source.files.map(file => ({ ...file, contentHash: sha256(file.content) }));
+    skills.push({ slug, body: parseSkillManifest(text).body, document: { metadata, files } });
   }
   return { skills, excluded };
 }
 
 type Kind = 'positive' | 'none' | 'unrelated' | 'ambiguous' | 'unavailable_tool' | 'neighbour' | 'stored_fact' | 'real';
-interface Row { set: string; key: string; kind: Kind; request: string; expected: string[]; chosen: string | null; score: number | null; ok: boolean; owner?: boolean; missing?: string[]; reviewed?: string; guard?: true; routed?: string[] }
+interface Row { set: string; key: string; kind: Kind; request: string; expected: string[]; chosen: string | null; score: number | null; ok: boolean; owner?: boolean; missing?: string[]; reviewed?: string; guard?: true; routed?: string[]; routedWithBuiltins?: string[]; compiled?: string[] }
 interface Cases { positive?: { skill: string; request: string; mustContain?: string[] }[]; unrelated?: string[]; ambiguous?: string[]; unavailableTool?: { request: string; allow: string[] }[]; neighbours?: { request: string; expect: string[] }[]; storedFacts?: string[] }
+
+const right = (row: Row, slug: string | undefined) => slug !== undefined && (row.expected.includes(slug) || REVIEWED_OK[`${row.set}/${row.key}`]?.skill === slug);
+
+function measureRouter(candidates: readonly SkillContextMetadata[]) {
+  // As in the production catalogue, weight against all active skills and shortlist by the same indexed terms.
+  const index = routerIndex(candidates);
+  const options = { weight: rarityWeights(index) };
+  const shortlist = (request: string) => rankInstructionCandidates(request,
+    index.shortlist(routerCandidateTerms(request)).map(position => candidates[position]!), undefined, options);
+  return {
+    route: (request: string) => routeInstructionSkills(request, shortlist(request), undefined, {}, options),
+    scores: (request: string) => scoreInstructionSkills(request, shortlist(request), options),
+  };
+}
+
+function summarizeRouter(rows: readonly Row[], field: 'routed' | 'routedWithBuiltins' | 'compiled'): Record<string, string> {
+  const summary: Record<string, string> = {};
+  for (const set of new Set(rows.map(row => row.set))) {
+    const mine = rows.filter(row => row.set === set), parts: string[] = [];
+    const wants = mine.filter(row => row.kind === 'positive' || row.set === 'real-need');
+    const none = mine.filter(row => ['none', 'unrelated', 'ambiguous', 'unavailable_tool', 'stored_fact'].includes(row.kind) || row.set === 'real-no-need');
+    const neighbours = mine.filter(row => row.kind === 'neighbour');
+    if (wants.length) {
+      const noise = wants.reduce((sum, row) => sum + row[field]!.filter(slug => !right(row, slug)).length, 0) / wants.length;
+      parts.push(`first ${wants.filter(row => right(row, row[field]![0])).length}/${wants.length}, top3 ${wants.filter(row => row[field]!.slice(0, 3).some(slug => right(row, slug))).length}/${wants.length}, noise/q ${noise.toFixed(2)}`);
+    }
+    if (none.length) parts.push(`clean ${none.filter(row => row[field]!.every(slug => row.expected.includes(slug))).length}/${none.length}`);
+    if (neighbours.length) parts.push(`owner or nothing first ${neighbours.filter(row => !row[field]!.length || row.expected.includes(row[field]![0]!)).length}/${neighbours.length}`);
+    summary[set] = parts.join('; ');
+  }
+  return summary;
+}
 
 async function main() {
   const { skills, excluded } = await loadLibrary();
-  const candidates = skills.map(skill => skill.candidate);
+  const candidates = skills.map(skill => skill.document.metadata);
   const index = buildSkillReaderIndex(candidates);
-  const bodies = new Map(skills.map(skill => [skill.candidate.id, skill.body]));
+  const bodies = new Map(skills.map(skill => [skill.document.metadata.id, skill.body]));
+  const documents = new Map(skills.map(skill => [skill.document.metadata.id, skill.document]));
   const reader = createSkillReader({ candidates: async () => candidates, index: async () => index, instructions: async (_owner, id) => bodies.get(id) ?? null });
   const ask = async (request: string) => { const answer = await reader(OWNER, request, { mode: 'advice' }); return { chosen: answer?.skill.slug ?? null, score: answer?.score ?? null, text: answer?.text ?? '' }; };
+  const slugs = new Set(candidates.map(skill => skill.slug));
+  const builtinCandidates = builtinSkills.filter(({ contract }) => !slugs.has(contract.slug)).map(({ contract, instructions }): SkillContextMetadata => {
+    const { slug, name, description, category, version } = contract;
+    return { id: randomUUID(), slug, name, description, category, version, contentHash: skillContentHash(contract, [{ path: 'SKILL.md', content: instructions }]) };
+  });
+  const libraryRouter = measureRouter(candidates);
+  const builtinRouter = measureRouter([...candidates, ...builtinCandidates]);
 
   // `--df "<words>"`: how many skills hold each word's stem, in their title (name and id) or description, and which.
   const dfWords = arg('--df');
   if (dfWords) {
     for (const word of dfWords.split(/\s+/u).filter(Boolean)) {
       for (const stem of skillStems(word)) {
-        const inTitle = skills.filter(skill => skillStems(`${skill.candidate.name} ${skill.candidate.slug}`).includes(stem)).map(skill => skill.slug);
-        const inBody = skills.filter(skill => !inTitle.includes(skill.slug) && skillStems(skill.candidate.description).includes(stem)).map(skill => skill.slug);
+        const inTitle = skills.filter(({ document: { metadata } }) => skillStems(`${metadata.name} ${metadata.slug}`).includes(stem)).map(skill => skill.slug);
+        const inBody = skills.filter(skill => !inTitle.includes(skill.slug) && skillStems(skill.document.metadata.description).includes(stem)).map(skill => skill.slug);
         console.log(`${word} -> ${stem}: title ${inTitle.length} [${inTitle.slice(0, 6).join(' ')}${inTitle.length > 6 ? ' …' : ''}], description ${inBody.length} [${inBody.slice(0, 6).join(' ')}${inBody.length > 6 ? ' …' : ''}]`);
       }
     }
@@ -128,13 +181,23 @@ async function main() {
       const { chosen, score } = await ask(request);
       console.log(`\n${request}\n  readable(advice)=${skillReadable(request, 'advice')} chosen=${chosen} score=${score}`);
       for (const match of matchSkills(request, candidates, index).slice(0, 5)) console.log(`  ${match.score.toFixed(3)} ${match.skill.slug} [${match.terms.join(' ')}]`);
+      for (const [label, router] of [['library', libraryRouter], ['library+builtins', builtinRouter]] as const) {
+        console.log(`  router (${label}): ${router.route(request).map(skill => skill.slug).join(', ') || 'none'}`);
+        for (const match of router.scores(request).slice(0, 5)) console.log(`    ${match.score.toFixed(3)} ${match.skill.slug}`);
+      }
     }
     return;
   }
 
-  const agentText = await readSet(join(LIB_EVAL, 'questions-agent-v1.jsonl'));
-  if (!agentText) throw new Error('the library agent questions are missing');
-  const agent = jsonl(agentText) as { id: string; set: string; skill: string; text: string; ok: string[] }[];
+  const agentPath = join(LIB_EVAL, 'questions-agent-v1.jsonl');
+  const overlap = process.argv.includes('--overlap');
+  const pilotOnly = !overlap && process.argv.includes('--pilot-only');
+  const required = overlap ? [agentPath] : Object.keys(FROZEN)
+    .filter(path => pilotOnly ? dirname(path) === PILOT_TESTS : dirname(path) !== NEW_TESTS || !excludedSets.has(expansionSet(basename(path))));
+  const missingFrozen = required.filter(path => !existsSync(path));
+  if (missingFrozen.length) throw new Error(`Missing frozen inputs:\n${missingFrozen.join('\n')}`);
+  const agentText = pilotOnly ? null : await readSet(agentPath);
+  const agent = agentText === null ? [] : jsonl(agentText) as { id: string; set: string; skill: string; text: string; ok: string[] }[];
   const base = new Set(agent.map(item => item.skill));
   const present = new Set(skills.map(skill => skill.slug));
   const added = new Set([...present].filter(slug => !base.has(slug)));
@@ -142,15 +205,15 @@ async function main() {
 
   // `--overlap`: for each added skill, the stems of its name, id and description that original skills also hold. Each shared
   // stem lowers that stem's weight for the original skills (the reader weighs a stem by how few skills hold it).
-  if (process.argv.includes('--overlap')) {
+  if (overlap) {
     const stemsOf = (skill: SkillReaderCandidate) => ({ title: new Set(skillStems(`${skill.name} ${skill.slug}`)), body: new Set(skillStems(skill.description)) });
     const holders = new Map<string, string[]>();
     for (const skill of skills.filter(item => base.has(item.slug))) {
-      const { title, body } = stemsOf(skill.candidate);
+      const { title, body } = stemsOf(skill.document.metadata);
       for (const stem of new Set([...title, ...body])) holders.set(stem, [...holders.get(stem) ?? [], `${skill.slug}${title.has(stem) ? '*' : ''}`]);
     }
     for (const skill of skills.filter(item => added.has(item.slug))) {
-      const { title, body } = stemsOf(skill.candidate);
+      const { title, body } = stemsOf(skill.document.metadata);
       const shared = [...new Set([...title, ...body])].filter(stem => holders.has(stem)).sort((a, b) => holders.get(b)!.length - holders.get(a)!.length);
       console.log(`${skill.slug}: ${shared.map(stem => `${title.has(stem) ? '*' : ''}${stem}(${holders.get(stem)!.length}: ${holders.get(stem)!.slice(0, 4).join(',')}${holders.get(stem)!.length > 4 ? ',…' : ''})`).join('  ')}`);
     }
@@ -163,13 +226,13 @@ async function main() {
     rows.push({ set, key: item.id, kind: 'positive', request: item.text, expected: item.ok, chosen, score,
       ok: chosen !== null && (item.ok.includes(chosen) || reviewed?.skill === chosen), ...(reviewed?.skill === chosen && chosen !== null ? { reviewed: reviewed.why } : {}) });
   }
-  const noneText = await readSet(join(LIB_EVAL, 'questions-agent-none-dev-v1.jsonl'));
+  const noneText = pilotOnly ? null : await readSet(join(LIB_EVAL, 'questions-agent-none-dev-v1.jsonl'));
   for (const item of noneText ? jsonl(noneText) as { id: string; text: string }[] : []) {
     const { chosen, score } = await ask(item.text);
     rows.push({ set: 'library-none-dev', key: item.id, kind: 'none', request: item.text, expected: [], chosen, score, ok: chosen === null });
   }
-  const labelsText = await readSet(join(LIB_EVAL, 'real-labels-v1.json'));
-  const realText = await readSet(join(ROOT, 'artifacts', 'plan-2026-11-22', 'real-questions-v1.jsonl'));
+  const labelsText = pilotOnly ? null : await readSet(join(LIB_EVAL, 'real-labels-v1.json'));
+  const realText = pilotOnly ? null : await readSet(join(ROOT, 'artifacts', 'plan-2026-11-22', 'real-questions-v1.jsonl'));
   if (labelsText && realText) {
     const labels = JSON.parse(labelsText).labels as Record<string, { need: boolean; ok: string[] }> | [string, { need: boolean; ok: string[] }][];
     const labelOf = new Map(Array.isArray(labels) ? labels : Object.entries(labels));
@@ -188,9 +251,8 @@ async function main() {
     ['pilot-heldout-2', join(PILOT_TESTS, 'heldout-2.json')], ['pilot-heldout-3', join(PILOT_TESTS, 'heldout-3.json')],
   ];
   // `--exclude <name>` (repeatable) leaves a frozen set unread, so a revision can be checked on the other sets before its one run.
-  const excludedSets = new Set(process.argv.flatMap((value, at) => value === '--exclude' && process.argv[at + 1] ? [process.argv[at + 1]!] : []));
-  if (existsSync(NEW_TESTS)) for (const name of (await readdir(NEW_TESTS)).filter(file => /^cases-.*\.json$/u.test(file)).sort()) {
-    const set = `new-${name.replace(/^cases-|\.json$/gu, '')}`;
+  if (!pilotOnly && existsSync(NEW_TESTS)) for (const name of (await readdir(NEW_TESTS)).filter(file => /^cases-.*\.json$/u.test(file)).sort()) {
+    const set = expansionSet(name);
     if (!excludedSets.has(set)) caseSets.push([set, join(NEW_TESTS, name)]);
   }
   for (const [set, path] of caseSets) {
@@ -223,17 +285,13 @@ async function main() {
     await negative('stored_fact', cases.storedFacts ?? [], () => [], true);
   }
 
-  // The model path's router (routeInstructionSkills) over the same skills: what would reach a language model's prompt.
-  const metadata = candidates as unknown as SkillContextMetadata[];
-  const right = (row: Row, slug: string | undefined) => slug !== undefined && (row.expected.includes(slug) || REVIEWED_OK[`${row.set}/${row.key}`]?.skill === slug);
-
   // `--router-grid`: the router's cut (minimum score × share of the best score) over a grid, on the sets read in this run. Use it on
   // development sets only (`--exclude` the held-out sets), then set ROUTER_MIN_SCORE and ROUTER_RELATIVE in packages/skills/src/router.ts.
   if (process.argv.includes('--router-grid')) {
     // `--sets a,b` limits the grid to those sets (the development sets: library-agent-dev, library-none-dev, new-dev, pilot-cases).
     const only = arg('--sets')?.split(',');
     if (only) rows.splice(0, rows.length, ...rows.filter(row => only.includes(row.set)));
-    const scoredOf = new Map(rows.map(row => [row, scoreInstructionSkills(row.request, metadata)]));
+    const scoredOf = new Map(rows.map(row => [row, libraryRouter.scores(row.request)]));
     // `lone`: the best match alone may pass from this lower score (one distinctive description word).
     const lone = Number(arg('--lone') ?? 'NaN');
     const routedWith = (row: Row, min: number, relative: number) => {
@@ -256,21 +314,23 @@ async function main() {
     }
     return;
   }
-  for (const row of rows) row.routed = routeInstructionSkills(row.request, metadata).map(skill => skill.slug);
-  const router: Record<string, string> = {};
-  for (const set of [...new Set(rows.map(row => row.set))]) {
-    const mine = rows.filter(row => row.set === set), parts: string[] = [];
-    const wants = mine.filter(row => row.kind === 'positive' || row.set === 'real-need');
-    const none = mine.filter(row => ['none', 'unrelated', 'ambiguous', 'unavailable_tool', 'stored_fact'].includes(row.kind) || row.set === 'real-no-need');
-    const neighbours = mine.filter(row => row.kind === 'neighbour');
-    if (wants.length) {
-      const noise = wants.reduce((sum, row) => sum + row.routed!.filter(slug => !right(row, slug)).length, 0) / wants.length;
-      parts.push(`first ${wants.filter(row => right(row, row.routed![0])).length}/${wants.length}, top3 ${wants.filter(row => row.routed!.slice(0, 3).some(slug => right(row, slug))).length}/${wants.length}, noise/q ${noise.toFixed(2)}`);
+  for (const row of rows) {
+    const selected = libraryRouter.route(row.request);
+    row.routed = selected.map(skill => skill.slug);
+    if (row.kind === 'real') row.routedWithBuiltins = builtinRouter.route(row.request).map(skill => skill.slug);
+    if (row.set === 'library-none-dev') {
+      row.compiled = compileInstructionContext(selected.map(skill => documents.get(skill.id)!), row.request).skills.map(skill => skill.slug);
     }
-    if (none.length) parts.push(`clean ${none.filter(row => row.routed!.every(slug => row.expected.includes(slug))).length}/${none.length}`);
-    if (neighbours.length) parts.push(`owner or nothing first ${neighbours.filter(row => !row.routed!.length || row.expected.includes(row.routed![0]!)).length}/${neighbours.length}`);
-    router[set] = parts.join('; ');
   }
+  const router = summarizeRouter(rows, 'routed');
+  if (pilotOnly) {
+    const report = { skills: skills.length, excluded, setHashes: hashes, router };
+    if (OUT) { await mkdir(dirname(resolve(OUT)), { recursive: true }); await writeFile(resolve(OUT), JSON.stringify(report, null, 1), 'utf8'); }
+    console.log(JSON.stringify(report, null, 1));
+    return;
+  }
+  const routerWithBuiltins = summarizeRouter(rows.filter(row => row.kind === 'real'), 'routedWithBuiltins');
+  const compiledLexicalContext = summarizeRouter(rows.filter(row => row.set === 'library-none-dev'), 'compiled');
 
   const summary: Record<string, Record<string, unknown>> = {};
   for (const set of [...new Set(rows.map(row => row.set))]) {
@@ -314,10 +374,10 @@ async function main() {
 
   const report = {
     generatedAt: new Date().toISOString(), library: LIBRARY.slice(ROOT.length + 1).replace(/\\/g, '/'), skills: skills.length, excluded, added: added.size,
-    setHashes: hashes, summary, router, addedSkills: addedReport, changes, rows,
+    setHashes: hashes, summary, router, routerWithBuiltins, compiledLexicalContext, addedSkills: addedReport, changes, rows,
   };
   if (OUT) { await mkdir(dirname(resolve(OUT)), { recursive: true }); await writeFile(resolve(OUT), JSON.stringify(report, null, 1), 'utf8'); }
-  console.log(JSON.stringify({ skills: skills.length, excluded, added: added.size, summary, router }, null, 1));
+  console.log(JSON.stringify({ skills: skills.length, excluded, added: added.size, summary, router, routerWithBuiltins, compiledLexicalContext }, null, 1));
   const failedAdded = addedReport.filter(item => item.failed.length || item.takes.length);
   if (failedAdded.length) console.log(`added skills with a failure or a taken request: ${failedAdded.length}\n${failedAdded.map(item => `- ${item.slug} ${item.positives}${item.failed.length ? `\n    fail: ${item.failed.join('\n    fail: ')}` : ''}${item.takes.length ? `\n    takes: ${item.takes.join('\n    takes: ')}` : ''}`).join('\n')}`);
   if (changes) console.log(`changed choices: ${changes.length}\n${changes.join('\n')}`);
