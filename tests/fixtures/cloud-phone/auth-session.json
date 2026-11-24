@@ -1,0 +1,32 @@
+{
+  "capturedAt": "2026-11-23T22:00:40.101Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "GET",
+    "url": "/api/auth/get-session"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "session": {
+        "expiresAt": "2026-11-30T22:00:40.055Z",
+        "token": "oZSp0aLSDuLpbv7VUGMB4Xikbfmo45wU",
+        "createdAt": "2026-11-23T22:00:40.055Z",
+        "updatedAt": "2026-11-23T22:00:40.055Z",
+        "ipAddress": "",
+        "userAgent": "lightMyRequest",
+        "userId": "L143o7Ui7OcnuuwEJAKGHe2HTEXBydE5",
+        "id": "N4vxzrV8zI42gWqFSP8WL2h3rJwgrEew"
+      },
+      "user": {
+        "name": "Phone fixture owner",
+        "email": "phone-owner@example.test",
+        "emailVerified": false,
+        "image": null,
+        "createdAt": "2026-11-23T22:00:39.454Z",
+        "updatedAt": "2026-11-23T22:00:39.454Z",
+        "id": "L143o7Ui7OcnuuwEJAKGHe2HTEXBydE5"
+      }
+    }
+  }
+}

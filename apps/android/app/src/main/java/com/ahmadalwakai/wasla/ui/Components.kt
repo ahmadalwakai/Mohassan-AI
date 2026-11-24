@@ -171,8 +171,7 @@ fun ChipFlow(items: List<String>, onPick: (String) -> Unit) {
 }
 
 /**
- * A thread that scrolls under a composer pinned above the keyboard, shared by Mohassan's
- * chat and the local fallback chat. Sending clears focus, so the keyboard closes.
+ * A thread that scrolls under a composer pinned above the keyboard. Sending clears focus.
  */
 @Composable
 fun ChatScaffold(
@@ -186,6 +185,9 @@ fun ChatScaffold(
     showComposer: Boolean = true,
     onSend: () -> Boolean,
     onStop: (() -> Unit)? = null,
+    notice: String? = null,
+    tools: (@Composable () -> Unit)? = null,
+    tray: (@Composable () -> Unit)? = null,
     thread: LazyListScope.() -> Unit,
 ) {
     val forest = Forest
@@ -214,6 +216,8 @@ fun ChatScaffold(
                 Modifier.fillMaxWidth().background(forest.background).padding(horizontal = 12.dp, vertical = 8.dp).widthIn(max = 740.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                notice?.let { Footnote(it) }
+                tray?.invoke()
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -223,6 +227,7 @@ fun ChatScaffold(
                         .padding(start = 6.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.Bottom,
                 ) {
+                    tools?.invoke()
                     TextField(
                         value = draft,
                         onValueChange = onDraftChange,
@@ -236,7 +241,7 @@ fun ChatScaffold(
                             cursorColor = forest.accent, focusedTextColor = forest.ink, unfocusedTextColor = forest.ink,
                         ),
                     )
-                    if (working && onStop != null) {
+                    if (working && !canSend && onStop != null) {
                         IconButton(onClick = onStop, modifier = Modifier.padding(bottom = 6.dp).size(36.dp).background(forest.soft, RoundedCornerShape(12.dp))) {
                             Icon(Icons.Filled.Stop, contentDescription = "إيقاف", tint = forest.ink, modifier = Modifier.size(18.dp))
                         }
@@ -247,6 +252,11 @@ fun ChatScaffold(
                             modifier = Modifier.padding(bottom = 6.dp).size(36.dp).background(if (canSend) forest.accent else forest.soft, RoundedCornerShape(12.dp)),
                         ) {
                             Icon(Icons.Filled.ArrowUpward, contentDescription = "إرسال الرسالة", tint = if (canSend) forest.onAccent else forest.faint, modifier = Modifier.size(20.dp))
+                        }
+                        if (working && onStop != null) {
+                            IconButton(onClick = onStop, modifier = Modifier.padding(bottom = 6.dp).size(36.dp)) {
+                                Icon(Icons.Filled.Stop, contentDescription = "إيقاف", tint = forest.ink, modifier = Modifier.size(18.dp))
+                            }
                         }
                     }
                 }
