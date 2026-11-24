@@ -16,6 +16,7 @@ import { BENCHMARK_ASCII, BENCHMARK_BEFORE, BENCHMARK_UNICODE, getSkillBenchmark
 
 describe('trusted isolated candidate benchmark runner', () => {
   let store: Awaited<ReturnType<typeof createBenchmarkDatabase>>, owner: string;
+  let tempRoot: string | undefined;
   let instruction: SkillBenchmarkSnapshot, reader: SkillBenchmarkSnapshot, writer: SkillBenchmarkSnapshot;
   const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => { throw new Error('Live services are forbidden in the benchmark fixture.'); });
   const field = (name: string, type: string) => ({ name, type, description: `Fixture ${name}` });
@@ -30,6 +31,8 @@ describe('trusted isolated candidate benchmark runner', () => {
     return { pin: { versionId: id, revision: inspected.revision, contentHash: hash, inspectionId: inspection.id, inspectorVersion: inspection.inspector_version }, contract, files: [{ path: 'SKILL.md', kind: 'instructions' as const, content, contentHash: sha256(content), sizeBytes: Buffer.byteLength(content) }] } satisfies SkillBenchmarkSnapshot;
   }
   beforeAll(async () => {
+    tempRoot = await mkdtemp(join(await realpath(tmpdir()), 'mohassan-benchmark-tests-'));
+    vi.stubEnv(process.platform === 'win32' ? 'TEMP' : 'TMPDIR', tempRoot);
     store = await createBenchmarkDatabase(); await migrateAuth(store.db); await migrate(store.db); await skillsMigration(store.db); owner = randomUUID();
     await store.db.insertInto('user').values({ id: owner, name: 'Independent benchmark source owner', email: 'benchmark-source@example.test' }).execute();
     instruction = await source(SkillContractSchema.parse({ slug: 'benchmark-guidance', name: 'Benchmark guidance', description: 'Explain observed evidence with its original source identifiers.', category: 'documents', version: '1.0.0', level: 'instruction' }));
@@ -39,7 +42,14 @@ describe('trusted isolated candidate benchmark runner', () => {
       if (mode === 'read') reader = await source(contract, 'file-read'); else writer = await source(contract, 'file-write');
     }
   }, 60000);
-  afterAll(async () => { await store?.close(); fetch.mockRestore(); });
+  afterAll(async () => {
+    try { await store?.close(); }
+    finally {
+      fetch.mockRestore();
+      vi.unstubAllEnvs();
+      if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
   async function run(snapshot: SkillBenchmarkSnapshot, suiteId: string, arm: 'baseline' | 'candidate' = 'candidate', signal = new AbortController().signal) {
     const results: SkillBenchmarkCaseResult[] = [], suite = SkillBenchmarkSuiteSchema.parse(getSkillBenchmarkSuite(suiteId));
     await createSkillBenchmarkRunner().execute({ benchmarkRunId: randomUUID(), arm, snapshot, suite, signal }, async result => { results.push(result); });
