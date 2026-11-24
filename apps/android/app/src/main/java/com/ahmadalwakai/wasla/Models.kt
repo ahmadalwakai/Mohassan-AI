@@ -1,270 +1,72 @@
 package com.ahmadalwakai.wasla
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.Transient
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import java.net.URI
+import java.net.URLDecoder
+import java.time.Instant
+import java.time.format.DateTimeParseException
+import java.util.Base64
 import java.util.UUID
 
-// The wire shapes of the Wasla service on the computer (apps/wasla-service/wasla/server.py)
-// and of Mohassan's chat behind it (packages/contracts/src/command-chat.ts). Unknown
-// fields are ignored, so newer servers stay readable; absent optional fields are left out
-// of requests, as the service checks the exact field set.
-
-/** One JSON configuration for every request and response. */
+/** Cloud responses can acquire new fields without changing what this app can display. */
 val WaslaJson: Json = Json {
     ignoreUnknownKeys = true
     explicitNulls = false
-    coerceInputValues = true
+    classDiscriminator = "type"
+}
+
+object CloudJson {
+    inline fun <reified T> encode(value: T): ByteArray =
+        WaslaJson.encodeToString(value).encodeToByteArray()
+
+    inline fun <reified T> decode(body: ByteArray): T =
+        WaslaJson.decodeFromString(body.decodeToString(throwOnInvalidSequence = true))
 }
 
 private val UUID_PATTERN = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 fun isUuid(value: String?): Boolean = value != null && UUID_PATTERN.matches(value)
 
-fun newRequestId(): String = UUID.randomUUID().toString().lowercase()
+fun newRequestId(): String = UUID.randomUUID().toString()
 
-/** Counts what the computer counts: Unicode code points, as Python does. */
 fun String.codePointLength(): Int = codePointCount(0, length)
 
-class WaslaException(val kind: Kind, message: String, val status: Int = 0) : Exception(message) {
-    enum class Kind { INVALID_ADDRESS, INVALID_FINGERPRINT, INVALID_PAIRING_CODE, INVALID_RESPONSE, NOT_PAIRED, CERTIFICATE, STORAGE, SERVER, MESSAGE, NETWORK }
+/** The chat contract limits messages to 4,000 UTF-16 units. */
+fun mohassanTextFits(text: String): Boolean = text.length <= 4_000
 
-    val isServer404: Boolean get() = kind == Kind.SERVER && status == 404
-
-    companion object {
-        fun invalidAddress() = WaslaException(Kind.INVALID_ADDRESS, "أدخل عنوان HTTPS فقط، دون اسم مستخدم أو مسار أو معاملات إضافية.")
-        fun invalidFingerprint() = WaslaException(Kind.INVALID_FINGERPRINT, "بصمة الشهادة يجب أن تتكون من 64 حرفًا من الأرقام والحروف a–f. انسخها من شاشة الكمبيوتر الموثوقة.")
-        fun invalidPairingCode() = WaslaException(Kind.INVALID_PAIRING_CODE, "أدخل رمز الربط من ٨ أرقام كما يظهر على الكمبيوتر.")
-        fun invalidResponse() = WaslaException(Kind.INVALID_RESPONSE, "وصل رد غير متوقع من الكمبيوتر.")
-        fun notPaired() = WaslaException(Kind.NOT_PAIRED, "اربط الكمبيوتر أولًا.")
-        fun certificate() = WaslaException(Kind.CERTIFICATE, "تعذّر التحقق من هوية الكمبيوتر أو صلاحية شهادته. راجع العنوان والبصمة والوقت على الجهازين.")
-        fun storage(detail: String) = WaslaException(Kind.STORAGE, "تعذّر حفظ بيانات الاقتران في المخزن الآمن ($detail).")
-        fun server(status: Int, message: String) = WaslaException(Kind.SERVER, message, status)
-        fun message(text: String) = WaslaException(Kind.MESSAGE, text)
-        fun network() = WaslaException(Kind.NETWORK, "تعذّر الوصول إلى الكمبيوتر. شغّل خدمة موحسن وTailscale على الكمبيوتر، وتأكد من اتصال Tailscale على الهاتف.")
-    }
-}
-
-/** The paired computer: its HTTPS address, the SHA-256 of its certificate, and the device id it gave this phone. */
-@Serializable
-data class ServerIdentity(val baseUrl: String, val fingerprint: String, val deviceId: String = "", val name: String = "الكمبيوتر") {
-    /** The host as the certificate names it: lowercase, an IPv6 address without brackets. */
-    val host: String get() = URI(baseUrl).host.orEmpty().trim('[', ']').lowercase()
-    val port: Int get() = URI(baseUrl).port.let { if (it == -1) 443 else it }
-
-    companion object {
-        fun validate(address: String, fingerprint: String, deviceId: String = "", name: String = "الكمبيوتر"): ServerIdentity {
-            val clean = address.trim()
-            if (clean.isEmpty() || '\\' in clean || '%' in clean || clean.any { it.isWhitespace() || it.code < 32 }) throw WaslaException.invalidAddress()
-            val uri = try { URI(clean) } catch (ignored: Exception) { throw WaslaException.invalidAddress() }
-            val host = uri.host
-            if (!"https".equals(uri.scheme, ignoreCase = true) || host.isNullOrEmpty() || uri.rawUserInfo != null
-                || uri.rawQuery != null || uri.rawFragment != null || !(uri.rawPath.isNullOrEmpty() || uri.rawPath == "/")
-                || (uri.port != -1 && uri.port !in 1..65535)) throw WaslaException.invalidAddress()
-            val pin = fingerprint.trim().lowercase()
-            if (pin.length != 64 || !pin.all { it in '0'..'9' || it in 'a'..'f' }) throw WaslaException.invalidFingerprint()
-            val normalized = "https://" + host.lowercase() + if (uri.port == -1) "" else ":${uri.port}"
-            return ServerIdentity(normalized, pin, deviceId, name)
-        }
-    }
-}
-
-/** The computer shipped inside this build (assets/ConnectionDefaults.json), the same file as the iOS app. */
-@Serializable
-data class BundledConnection(val server_url: String, val certificate_sha256: String, val computer_name: String) {
-    companion object {
-        fun decode(json: String): ServerIdentity {
-            val settings = WaslaJson.decodeFromString(serializer(), json)
-            return ServerIdentity.validate(settings.server_url, settings.certificate_sha256, name = settings.computer_name)
-        }
-    }
-}
-
-object PairingCode {
-    private const val LOCALIZED_DIGITS = "٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹"
-
-    /** Arabic-Indic and Persian digits become ASCII; leading zeros stay. */
-    fun normalized(value: String): String = value.trim().map { char ->
-        val index = LOCALIZED_DIGITS.indexOf(char)
-        if (index >= 0) '0' + (index % 10) else char
-    }.joinToString("")
-
-    /** Eight digits from the Windows panel, or a longer token from an older computer service. */
-    fun isValid(value: String): Boolean {
-        val bytes = normalized(value).toByteArray(Charsets.UTF_8)
-        if (bytes.size == 8 && bytes.all { it.toInt() in 48..57 }) return true
-        return bytes.size in 16..512 && bytes.all { it.toInt() in 33..126 }
-    }
-}
-
-/** An https URL with a host and no credentials, control characters or backslashes; anything else is not opened. */
+/** An HTTPS URL with a host and no credentials, control characters or backslashes. */
 fun safeHttpsUrl(value: String?): String? {
-    if (value.isNullOrBlank() || '\\' in value || value.any { it.code < 32 || it.code == 127 }) return null
-    val uri = try { URI(value) } catch (ignored: Exception) { return null }
+    if (value.isNullOrBlank() || '\\' in value || value.any { it.isWhitespace() || it.isISOControl() }) return null
+    val uri = runCatching { URI(value) }.getOrNull() ?: return null
     if (!"https".equals(uri.scheme, ignoreCase = true) || uri.host.isNullOrEmpty() || uri.rawUserInfo != null) return null
     return uri.toString()
 }
 
-fun hostOf(url: String?): String = try { URI(url ?: "").host ?: "" } catch (ignored: Exception) { "" }
+fun hostOf(url: String?): String = runCatching { URI(url.orEmpty()).host }.getOrNull().orEmpty()
 
-// MARK: - Pairing and status
-
-@Serializable data class PairRequest(val code: String, val device_name: String)
-@Serializable data class PairResponse(val token: String, val device_id: String, val name: String = "الكمبيوتر")
-@Serializable data class ServerFault(val error: Detail = Detail()) {
-    @Serializable data class Detail(val code: String = "", val message: String = "")
-}
-/** `{}` on the wire; also reads any acknowledgement whose fields do not matter. */
-@Serializable class EmptyBody
-
-sealed class BusyState {
-    data object Idle : BusyState()
-    data class Working(val name: String) : BusyState()
-
-    val isBusy: Boolean get() = this !is Idle
-    val label: String get() = (this as? Working)?.name ?: "جاهز"
-
-    companion object {
-        /** The service sends null, a boolean or the name of the running task. */
-        fun from(element: JsonElement?): BusyState {
-            if (element == null || element is JsonNull) return Idle
-            val primitive = element as? JsonPrimitive ?: return Working("الجهاز مشغول")
-            if (primitive.isString) return if (primitive.content.isEmpty()) Idle else Working(primitive.content)
-            primitive.booleanOrNull?.let { return if (it) Working("الجهاز مشغول") else Idle }
-            return Working("الجهاز مشغول")
-        }
-    }
-}
-
-@Serializable data class DesktopInfo(val width: Int = 0, val height: Int = 0, val monitor: String? = null, val error: String? = null)
+@Serializable data class SignInBody(val email: String, val password: String)
 @Serializable
-data class ServerStatus(
-    val name: String = "Wasla Windows",
-    val model: String = "",
-    val busy: JsonElement? = null,
-    val desktop_enabled: Boolean = false,
-    val desktop: DesktopInfo? = null,
-    val app_actions_enabled: Boolean? = null,
-) {
-    val busyState: BusyState get() = BusyState.from(busy)
+data class SignInReply(val user: User? = null) {
+    @Serializable data class User(val email: String? = null, val name: String? = null)
 }
+@Serializable data object EmptyBody
+@Serializable data class OkReply(val ok: Boolean? = null)
 
-// MARK: - The local fallback chat (/v1/chat), used only while Mohassan is not linked
-
-@Serializable
-data class ChatMessage(val role: String, val content: String) {
-    @Transient val id: String = UUID.randomUUID().toString()
-}
-
-enum class ChatMode(val wire: String, val title: String) {
-    AUTOMATIC("auto", "تلقائي"), LIVE_WEB("live_web", "بحث مباشر"), LOCAL("local", "محلي")
-}
-
-@Serializable
-data class ChatRequest(
-    val messages: List<ChatMessage>,
-    val request_id: String,
-    val mode: String,
-    val remember: Boolean,
-    val use_memory: Boolean,
-    val conversation_id: String? = null,
-)
-
-@Serializable
-data class ChatSource(val id: String = "", val title: String = "", val url: String? = null, val snippet: String? = null) {
-    val safeUrl: String? get() = safeHttpsUrl(url)
-}
-
-@Serializable
-data class ChatEvidence(val level: String = "", val note: String? = null) {
-    val title: String get() = when (level) {
-        "grounded" -> "مستندة إلى أدلة"
-        "limited" -> "أدلة محدودة"
-        "unverified" -> "تحتاج تحققًا"
-        else -> "حالة الأدلة غير محددة"
-    }
-}
-
-@Serializable
-data class ChatResponse(
-    val content: String = "",
-    val model: String = "",
-    val route: String? = null,
-    val sources: List<ChatSource>? = null,
-    val evidence: ChatEvidence? = null,
-    val warnings: List<String>? = null,
-    val timing_ms: Double? = null,
-    val cache_hit: Boolean? = null,
-    val memory_saved: Boolean? = null,
-    val conversation_id: String? = null,
-) {
-    val routeTitle: String? get() = when (route) {
-        null -> null
-        "calculator" -> "حساب مباشر"
-        "unit_conversion" -> "تحويل وحدات"
-        "knowledge" -> "المعرفة المحفوظة"
-        "research", "live_web" -> "بحث بمصادر"
-        "local" -> "النموذج المحلي"
-        "actions" -> "إجراء في التطبيق"
-        "cloud" -> "محرك سحابي"
-        else -> route
-    }
-
-    companion object {
-        fun warningMessage(code: String): String = when (code) {
-            "source_instructions_ignored" -> "استُبعدت تعليمات غير مرتبطة بسؤالك وردت داخل بعض المصادر."
-            "duplicate_or_similar_sources_omitted" -> "استُبعدت المصادر المكررة أو شديدة التشابه."
-            "knowledge_version_unavailable" -> "تعذّر التأكد من آخر تحديث للمعرفة المحفوظة."
-            "invalid_conversion" -> "تعذّر تحويل هذه الوحدات. راجع الوحدات والقيمة."
-            "invalid_calculation" -> "تعذّر حساب هذا التعبير. راجع الأرقام والعمليات المطلوبة."
-            "knowledge_unavailable" -> "تعذّر الوصول إلى معرفتك المحفوظة لهذه الإجابة."
-            "knowledge_not_configured" -> "استخدام المعرفة المحفوظة غير مهيأ في اتصالك الحالي."
-            "search_query_truncated_to_400_characters" -> "استخدم البحث الجزء الأول من سؤالك الطويل."
-            "search_query_simplified" -> "بُسّطت صياغة البحث للتركيز على موضوع سؤالك."
-            "search_unavailable" -> "تعذّر البحث في الإنترنت الآن. لم يتأكد الحصول على معلومات حديثة."
-            "possible_source_conflict" -> "قد توجد أرقام غير متفقة في المقتطفات؛ لم يتأكد سبب الاختلاف."
-            "summary_unavailable" -> "تعذّر إعداد ملخص. يمكنك مراجعة مقتطفات المصادر المعروضة."
-            "draft_rejected_or_insufficient_evidence" -> "تعذّر تقديم خلاصة مدعومة بما يكفي، لذا عُرضت مقتطفات المصادر."
-            "search_total_cost_not_determined_from_usage" -> "التكلفة الإجمالية للبحث السحابي غير متاحة في بيانات الاستخدام."
-            "unsupported_links_rejected" -> "لم تُعرض إجابة احتوت على روابط لم تُرجعها خدمة البحث."
-            "insufficient_web_citations" -> "لم تتوفر استشهادات ويب كافية لدعم الإجابة."
-            "memory_save_failed" -> "وصلت الإجابة، لكن لم يتأكد حفظ المحادثة."
-            "usage_record_failed" -> "لم يتأكد تحديث إحصاءات الاستخدام لهذه الإجابة."
-            else -> "تفاصيل الأدلة محدودة. راجع المصادر قبل الاعتماد على الإجابة."
-        }
-    }
-}
-
-// MARK: - Images and search
-
-@Serializable data class ImagePreparation(val description: String, val style: String)
-@Serializable data class PreparedImage(val prompt: String, val negative_prompt: String, val seed: Long)
-@Serializable data class ImageRequest(val prompt: String, val negative_prompt: String, val seed: Long, val request_id: String)
-@Serializable data class ImageJob(val request_id: String? = null, val status: String = "", val image_url: String? = null, val error: String? = null)
-@Serializable data class SearchRequest(val query: String)
-@Serializable
-data class SearchResult(val title: String = "", val url: String = "", val snippet: String = "") {
-    val safeUrl: String? get() = safeHttpsUrl(url)
-}
-@Serializable data class SearchResponse(val query: String = "", val results: List<SearchResult> = emptyList(), val provider: String = "")
-
-// MARK: - Mohassan, through the Wasla service on the computer (/v1/mohassan/*)
-
-@Serializable data class MohassanLink(val linked: Boolean = false, val reachable: Boolean = false, val error: String? = null)
-
-object MohassanStatus {
+object ChatStatus {
+    const val IDLE = "idle"
     const val RUNNING = "running"
     const val WAITING_USER = "waiting_user"
     const val WAITING_INPUT = "waiting_input"
     const val WAITING_APPROVAL = "waiting_approval"
     const val FAILED = "failed"
     const val CANCELLED = "cancelled"
-    val WAITING = setOf(WAITING_USER, WAITING_INPUT, WAITING_APPROVAL)
+    private val waiting = setOf(WAITING_USER, WAITING_INPUT, WAITING_APPROVAL)
+
+    fun isWaiting(status: String): Boolean = status in waiting
 
     fun title(status: String): String = when (status) {
         RUNNING -> "موحسن يعمل…"
@@ -277,47 +79,51 @@ object MohassanStatus {
     }
 }
 
-@Serializable data class MohassanOption(val id: String, val label: String)
-@Serializable data class MohassanClarification(val reason: String = "", val recommendedOptionId: String? = null, val allowText: Boolean = false)
-/** One suggested answer, taken by the brain from the owner's own site or sentence. */
-@Serializable data class MohassanSuggestion(val label: String, val reason: String? = null)
-/** One of several questions asked together; the owner picks suggestions or writes another answer. */
+@Serializable data class ChatOption(val id: String, val label: String)
+@Serializable data class ChatSuggestion(val label: String, val reason: String? = null)
 @Serializable
-data class MohassanField(
+data class ChatField(
     val id: String,
     val prompt: String,
-    val suggestions: List<MohassanSuggestion> = emptyList(),
+    val suggestions: List<ChatSuggestion> = emptyList(),
     val multiple: Boolean? = null,
     val multiline: Boolean? = null,
     val initialValue: String? = null,
     val selected: List<Int>? = null,
     val placeholder: String? = null,
+) {
+    val allowsSeveral: Boolean get() = multiple == true
+    val keepsLines: Boolean get() = multiline == true
+    val preselected: Set<Int> get() = selected.orEmpty().filterTo(mutableSetOf()) { it in suggestions.indices }
+}
+
+/** Older conversations can still carry a clarification. */
+@Serializable
+data class ChatClarification(
+    val reason: String = "",
+    val recommendedOptionId: String? = null,
+    val allowText: Boolean = false,
 )
 
 @Serializable
-data class MohassanQuestion(
+data class ChatQuestion(
     val id: String,
     val prompt: String,
-    val options: List<MohassanOption> = emptyList(),
+    val options: List<ChatOption> = emptyList(),
     val action: String? = null,
-    /** Older servers explain a clarification and may allow a typed answer through `respond`. */
-    val clarification: MohassanClarification? = null,
-    /** Newer servers ask several questions in one card; the answers go together as one numbered reply. */
-    val fields: List<MohassanField>? = null,
+    val fields: List<ChatField>? = null,
+    val clarification: ChatClarification? = null,
 ) {
-    /** Google's consent page cannot open from the phone; that option stays on the web. */
-    val phoneOptions: List<MohassanOption> get() = if (action == "google_ads_connect") options.filter { it.id != "connect" } else options
-    val hasFields: Boolean get() = !fields.isNullOrEmpty()
+    val phoneOptions: List<ChatOption>
+        get() = if (action == "google_ads_connect") options.filter { it.id != "connect" } else options
+    val phoneFields: List<ChatField> get() = fields.orEmpty()
+    val hasFields: Boolean get() = phoneFields.isNotEmpty()
     val acceptsText: Boolean get() = !hasFields && (clarification?.allowText ?: options.isEmpty())
-    val stopOption: MohassanOption? get() = options.firstOrNull { it.id == "stop" }
+    val stopOption: ChatOption? get() = options.firstOrNull { it.id == "stop" }
 }
 
-/**
- * An approval card. `target`, `consequence` and `reversible` are what the server's permission gate bound the approval to
- * (2026-11-23): the exact thing the action touches, what follows, and whether it can be undone (null: the server cannot tell).
- */
 @Serializable
-data class MohassanApproval(
+data class ChatApproval(
     val id: String,
     val prompt: String,
     val detail: String = "",
@@ -325,54 +131,218 @@ data class MohassanApproval(
     val consequence: String? = null,
     val reversible: Boolean? = null,
 ) {
-    /** The card's lines about the bound action, in the order the web shows them; empty for an older server. */
     val bindingLines: List<String> get() = listOfNotNull(
         target?.takeIf { it.isNotBlank() }?.let { "الهدف: $it" },
         consequence?.takeIf { it.isNotBlank() }?.let { "ما سيحدث: $it" },
         reversible?.let { if (it) "يمكن التراجع عنه." else "لا يمكن التراجع عنه." },
     )
 }
-@Serializable data class MohassanSecure(val id: String, val kind: String = "", val site: String = "", val prompt: String = "")
-@Serializable data class MohassanMessage(val id: String, val role: String, val text: String)
-@Serializable data class MohassanStep(val id: String, val text: String)
-@Serializable data class MohassanSummary(val id: String, val title: String = "", val status: String = "", val updatedAt: String = "")
-/** Mohassan wraps the list: `{"conversations": [...]}`. */
-@Serializable data class MohassanList(val conversations: List<MohassanSummary> = emptyList())
+
+@Serializable data class ChatSecureField(val id: String, val label: String, val type: String)
 @Serializable
-data class MohassanConversation(
+data class ChatSecure(
+    val id: String,
+    val kind: String,
+    val site: String,
+    val prompt: String,
+    val note: String? = null,
+    val fields: List<ChatSecureField> = emptyList(),
+) {
+    val handsOn: Boolean get() = kind == "hands_on"
+}
+
+@Serializable data class ChatImageRef(val id: String, val width: Int, val height: Int)
+@Serializable
+data class ChatMessage(
+    val id: String,
+    val role: String,
+    val text: String,
+    val createdAt: String? = null,
+    val images: List<ChatImageRef>? = null,
+) {
+    val mine: Boolean get() = role == "user"
+}
+
+@Serializable data class ChatStep(val id: String, val text: String)
+
+@Serializable
+data class ChatBrowser(val url: String, val title: String, val live: Boolean, val screenUrl: String) {
+    val host: String get() = hostOf(url).ifEmpty { url }
+
+    /** Accept only this conversation's own relative screenshot path. */
+    fun screenQuery(conversationId: String): Map<String, String>? {
+        val uri = runCatching { URI(screenUrl) }.getOrNull() ?: return null
+        if (uri.scheme != null || uri.rawAuthority != null || uri.rawFragment != null ||
+            uri.rawPath != "/api/chat/conversations/$conversationId/screen"
+        ) return null
+        val version = uri.rawQuery.orEmpty().split('&').firstOrNull { it.startsWith("v=") }
+            ?.substringAfter('=')?.let { URLDecoder.decode(it, "UTF-8") }
+        return if (version == null) emptyMap() else mapOf("v" to version)
+    }
+
+    fun screenVersion(conversationId: String): String? = screenQuery(conversationId)?.get("v")
+}
+
+@Serializable
+data class ChatCapabilities(val chatModel: Boolean, val available: List<String>) {
+    val localModeText: String?
+        get() {
+            if (chatModel) return null
+            val supported = available.mapNotNull(labels::get)
+            val header = "لا يتصل بهذه الجلسة نموذج لغوي، فالردود الحرة غير متاحة."
+            return if (supported.isEmpty()) header else "$header ما يعمل الآن دون نموذج: ${supported.joinToString("، ")}."
+        }
+
+    private companion object {
+        val labels = mapOf(
+            "computation" to "الحساب", "web" to "البحث في الويب", "browser" to "فتح الصفحات وقراءتها",
+            "memory" to "الذاكرة", "knowledge" to "مستنداتك المحفوظة", "documents" to "ملفات PDF",
+            "sites" to "بناء المواقع", "skills" to "المهارات المفعّلة", "planner" to "تخطيط الأسبوع",
+            "letters" to "قوالب الرسائل", "imageReading" to "قراءة النص في الصور", "ads" to "إعلانات Google",
+            "pc" to "التحكم بالكمبيوتر",
+        )
+    }
+}
+
+@Serializable data class ChatSummary(val id: String, val title: String, val status: String, val updatedAt: String)
+@Serializable
+data class ChatList(
+    val conversations: List<ChatSummary>,
+    val capabilities: ChatCapabilities? = null,
+    val requestKeys: Boolean? = null,
+)
+
+@Serializable
+data class ChatConversation(
     val id: String,
     val title: String = "",
-    val status: String = "",
-    val messages: List<MohassanMessage> = emptyList(),
-    val question: MohassanQuestion? = null,
-    val approval: MohassanApproval? = null,
-    val secure: MohassanSecure? = null,
+    val status: String,
+    val updatedAt: String = "",
+    val messages: List<ChatMessage> = emptyList(),
+    val question: ChatQuestion? = null,
+    val approval: ChatApproval? = null,
+    val secure: ChatSecure? = null,
+    val browser: ChatBrowser? = null,
     val progress: String? = null,
-    val steps: List<MohassanStep> = emptyList(),
+    val steps: List<ChatStep> = emptyList(),
     val error: String? = null,
+    val capabilities: ChatCapabilities? = null,
+    val version: String? = null,
+    val olderMessages: Int? = null,
 ) {
-    val working: Boolean get() = status == MohassanStatus.RUNNING
+    val working: Boolean get() = status == ChatStatus.RUNNING
+    val waiting: Boolean get() = ChatStatus.isWaiting(status)
+    val fieldsQuestion: ChatQuestion? get() = question?.takeIf { status == ChatStatus.WAITING_USER && it.hasFields }
 }
-@Serializable data class MohassanCreated(val id: String)
-@Serializable data class MohassanCreate(val goal: String)
-@Serializable data class MohassanSend(val text: String)
-/** Absent values are left out, as Mohassan expects either an option or a typed answer. */
-@Serializable data class MohassanRespond(val questionId: String, val optionId: String? = null, val text: String? = null)
-@Serializable data class MohassanApprove(val approvalId: String, val approved: Boolean)
 
-/** Mohassan accepts up to 4,000 UTF-16 units per message. */
-fun mohassanTextFits(text: String): Boolean = text.length <= 4_000
-
-// MARK: - Desktop control
-
-@Serializable data class DesktopSession(val session_id: String, val expires_at: Double)
+@Serializable data class ChatCreate(val goal: String? = null, val images: List<String>? = null)
+@Serializable data class ChatFieldAnswer(val fieldId: String, val value: String)
 @Serializable
-data class DesktopCommand(
-    val action: String,
-    val x: Double? = null,
-    val y: Double? = null,
-    val button: String? = null,
-    val dy: Int? = null,
-    val key: String? = null,
-    val text: String? = null,
+data class ChatSend(
+    val text: String,
+    val questionId: String? = null,
+    val answers: List<ChatFieldAnswer>? = null,
+    val images: List<String>? = null,
 )
+@Serializable data class ChatRespond(val questionId: String, val optionId: String)
+@Serializable data class ChatApprove(val approvalId: String, val approved: Boolean)
+@Serializable data class ChatFeedback(val messageId: String, val verdict: String, val note: String? = null)
+@Serializable data class ChatSecureSubmit(val requestId: String, val action: String, val values: Map<String, String>? = null)
+@Serializable data class ChatImageUpload(val mimeType: String, val data: String)
+@Serializable data class ChatImageAvailability(val available: Boolean)
+@Serializable data class ChatImageUploaded(val id: String, val width: Int, val height: Int)
+
+@Serializable data class WindowsTarget(val key: String, val mode: String, val title: String, val width: Int, val height: Int)
+@Serializable
+data class WindowsState(
+    val approvalNonce: String,
+    val safeDesktop: Boolean,
+    val localView: Boolean,
+    val localControl: Boolean,
+    val target: WindowsTarget? = null,
+    val status: String,
+)
+
+@Serializable
+data class WindowsGrant(val id: String, val scope: String, val targetKey: String, val approvalNonce: String, val expiresAt: String) {
+    val controls: Boolean get() = scope == "control"
+    val expiry: Instant? get() = try {
+        Instant.parse(expiresAt)
+    } catch (_: DateTimeParseException) {
+        null
+    }
+}
+
+@Serializable
+data class WindowsDevice(
+    val id: String,
+    val name: String,
+    val revoked: Boolean,
+    val online: Boolean,
+    val lastSeenAt: String? = null,
+    val state: WindowsState? = null,
+    val grant: WindowsGrant? = null,
+)
+
+@Serializable data class WindowsOverview(val enabled: Boolean, val devices: List<WindowsDevice>)
+@Serializable data class WindowsPairing(val id: String, val code: String, val expiresAt: String)
+@Serializable data class WindowsGrantRequest(val scope: String, val durationSeconds: Int, val targetKey: String, val approvalNonce: String)
+@Serializable
+data class WindowsFrame(
+    val id: String,
+    val targetKey: String,
+    val capturedAt: String,
+    val width: Int,
+    val height: Int,
+    val jpeg: String,
+) {
+    val imageData: ByteArray?
+        get() = runCatching { Base64.getDecoder().decode(jpeg) }.getOrNull()?.takeIf(ByteArray::isJpeg)
+}
+
+internal fun ByteArray.isJpeg(): Boolean = size >= 4 &&
+    this[0] == 0xff.toByte() && this[1] == 0xd8.toByte() &&
+    this[size - 2] == 0xff.toByte() && this[size - 1] == 0xd9.toByte()
+
+@Serializable data class WindowsFrameReply(val frame: WindowsFrame, val grant: WindowsGrant)
+
+@Serializable
+sealed interface WindowsAction {
+    @Serializable
+    @SerialName("click")
+    @ConsistentCopyVisibility
+    data class Click private constructor(val x: Double, val y: Double, val button: String) : WindowsAction {
+        constructor(x: Double, y: Double, right: Boolean = false) : this(
+            x.coerceIn(0.0, 1.0), y.coerceIn(0.0, 1.0), if (right) "right" else "left",
+        )
+    }
+
+    @Serializable
+    @SerialName("text")
+    data class Text(@SerialName("text") val value: String) : WindowsAction
+
+    @Serializable
+    @SerialName("key")
+    data class Key(@SerialName("key") val value: String) : WindowsAction
+
+    @Serializable
+    @SerialName("scroll")
+    @ConsistentCopyVisibility
+    data class Scroll private constructor(val delta: Int) : WindowsAction {
+        companion object {
+            operator fun invoke(delta: Int): Scroll = Scroll(delta.coerceIn(-3, 3))
+        }
+    }
+
+    companion object {
+        val keys = listOf(
+            "Enter", "Tab", "Escape", "Backspace", "Delete", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown",
+            "Home", "End", "PageUp", "PageDown", "Space",
+        )
+
+        fun textFits(value: String): Boolean = value.length in 1..120 && value.none { it.code < 0x20 || it.code == 0x7f }
+    }
+}
+
+@Serializable data class WindowsActionRequest(val grantId: String, val nonce: String, val frameId: String, val action: WindowsAction)
+@Serializable data class WindowsActionReply(val id: String, val status: String)

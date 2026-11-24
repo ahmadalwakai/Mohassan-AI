@@ -1,0 +1,139 @@
+{
+  "capturedAt": "2026-11-23T22:00:42.428Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "POST",
+    "url": "/api/chat/conversations/5489eb1a-d279-40b7-92ec-c59aac8215fb/respond",
+    "idempotencyKey": "phone-respond-0005",
+    "body": {
+      "questionId": "694719ce-7ff7-47f7-aca4-deeb1c60b119",
+      "optionId": "stop"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "5489eb1a-d279-40b7-92ec-c59aac8215fb",
+      "title": "اكتب رسالة شكر لفريق العمل",
+      "status": "idle",
+      "updatedAt": "2026-11-23T22:00:42.404Z",
+      "browserAccount": null,
+      "messages": [
+        {
+          "id": "f752683d-0bc4-4c7b-84a5-a350ce5f6d70",
+          "role": "user",
+          "text": "اكتب رسالة شكر لفريق العمل",
+          "createdAt": "2026-11-23T22:00:42.225Z"
+        },
+        {
+          "id": "7002c385-0b76-498b-8f28-6bcdfe0ae71f",
+          "role": "assistant",
+          "text": "أكتب لك الرسالة من قالب رسمي، والتفاصيل تبقى بكلماتك. أجب عن هذه الأسئلة:",
+          "createdAt": "2026-11-23T22:00:42.314Z"
+        },
+        {
+          "id": "9107aec3-12f1-4548-a7de-5192954e9d38",
+          "role": "user",
+          "text": "توقف هنا",
+          "createdAt": "2026-11-23T22:00:42.400Z"
+        }
+      ],
+      "question": null,
+      "approval": null,
+      "secure": null,
+      "browser": null,
+      "progress": null,
+      "steps": [
+        {
+          "id": "40b93922-e986-4a5a-8389-0f4ebab513b0",
+          "text": "أسئلة الرسالة",
+          "createdAt": "2026-11-23T22:00:42.302Z"
+        }
+      ],
+      "error": null,
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "imageReading",
+          "pc"
+        ]
+      },
+      "visibility": {
+        "version": 1,
+        "level": 0,
+        "code": "local_card",
+        "reason": "بطاقة أسئلة ثم نص من قالب؛ لا يحتاج متصفحًا",
+        "lang": "ar",
+        "decidedAt": "2026-11-23T22:00:42.404Z",
+        "requested": 0,
+        "canView": true,
+        "history": [
+          {
+            "level": 0,
+            "code": "local_card",
+            "at": "2026-11-23T22:00:42.404Z"
+          }
+        ]
+      },
+      "campaign": null,
+      "version": "2903a8a076015a86199b74c8",
+      "run": {
+        "id": "222a5212-5365-4ec8-a117-6e4b5f93a40a",
+        "phase": "cancelled",
+        "path": "action",
+        "engine": {
+          "kind": "rules",
+          "modelCalls": 0
+        },
+        "context": {
+          "objective": "اكتب رسالة شكر لفريق العمل",
+          "previousTurns": 0,
+          "constraints": [],
+          "corrections": [],
+          "capabilities": [
+            "computation",
+            "web",
+            "browser",
+            "memory",
+            "knowledge",
+            "documents",
+            "sites",
+            "planner",
+            "letters",
+            "imageReading",
+            "pc"
+          ],
+          "limitations": [
+            "chatModel"
+          ]
+        },
+        "plan": null,
+        "evidence": [],
+        "permissions": [],
+        "verification": null,
+        "verdict": {
+          "status": "cancelled",
+          "reason": "owner_cancelled",
+          "decidedAt": "2026-11-23T22:00:42.402Z"
+        },
+        "repairs": {
+          "used": 0,
+          "limit": 1
+        },
+        "steeredFrom": null,
+        "sequence": 2,
+        "updatedAt": "2026-11-23T22:00:42.402Z"
+      }
+    }
+  }
+}

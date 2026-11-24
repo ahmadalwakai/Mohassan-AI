@@ -1,0 +1,21 @@
+{
+  "capturedAt": "2026-11-23T22:00:48.841Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "POST",
+    "url": "/api/chat/conversations/dfca8751-1963-43cf-a439-e9650fbe5a8e/messages",
+    "idempotencyKey": "phone-message-0009",
+    "body": {
+      "text": ""
+    }
+  },
+  "response": {
+    "status": 400,
+    "body": {
+      "error": {
+        "code": "VALIDATION_ERROR",
+        "message": "تحقق من الحقول المطلوبة وطول المدخلات."
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-11-23T22:00:48.875Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "DELETE",
+    "url": "/api/chat/conversations/dfca8751-1963-43cf-a439-e9650fbe5a8e"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "ok": true
+    }
+  }
+}

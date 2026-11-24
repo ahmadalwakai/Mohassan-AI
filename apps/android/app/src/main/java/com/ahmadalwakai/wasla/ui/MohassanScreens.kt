@@ -1,5 +1,9 @@
 package com.ahmadalwakai.wasla.ui
 
+import android.graphics.Bitmap
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,18 +19,23 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Image as ImageIcon
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -38,93 +47,272 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.ahmadalwakai.wasla.MohassanApproval
-import com.ahmadalwakai.wasla.MohassanConversation
-import com.ahmadalwakai.wasla.MohassanQuestion
-import com.ahmadalwakai.wasla.MohassanSecure
-import com.ahmadalwakai.wasla.MohassanStatus
-import com.ahmadalwakai.wasla.MohassanSuggestion
-import com.ahmadalwakai.wasla.MohassanSummary
+import com.ahmadalwakai.wasla.ChatApproval
+import com.ahmadalwakai.wasla.ChatConversation
+import com.ahmadalwakai.wasla.ChatFieldAnswer
+import com.ahmadalwakai.wasla.ChatQuestion
+import com.ahmadalwakai.wasla.ChatSecure
+import com.ahmadalwakai.wasla.ChatStatus
+import com.ahmadalwakai.wasla.ChatSuggestion
+import com.ahmadalwakai.wasla.ChatSummary
+import com.ahmadalwakai.wasla.MAX_CHAT_PHOTOS
+import com.ahmadalwakai.wasla.PendingRequest
 import com.ahmadalwakai.wasla.WaslaStore
-import com.ahmadalwakai.wasla.answerMohassan
-import com.ahmadalwakai.wasla.answerMohassanFields
-import com.ahmadalwakai.wasla.approveMohassan
-import com.ahmadalwakai.wasla.cancelMohassan
-import com.ahmadalwakai.wasla.deleteMohassan
-import com.ahmadalwakai.wasla.loadMohassanList
-import com.ahmadalwakai.wasla.mohassanBusy
+import com.ahmadalwakai.wasla.answerApproval
+import com.ahmadalwakai.wasla.answerFields
+import com.ahmadalwakai.wasla.answerOption
+import com.ahmadalwakai.wasla.attachPhoto
+import com.ahmadalwakai.wasla.cancelConversation
+import com.ahmadalwakai.wasla.checkPending
+import com.ahmadalwakai.wasla.deleteConversation
+import com.ahmadalwakai.wasla.dropPending
+import com.ahmadalwakai.wasla.loadConversations
+import com.ahmadalwakai.wasla.loadImage
 import com.ahmadalwakai.wasla.mohassanTextFits
-import com.ahmadalwakai.wasla.mohassanWaiting
-import com.ahmadalwakai.wasla.openMohassan
-import com.ahmadalwakai.wasla.sendMohassan
+import com.ahmadalwakai.wasla.openConversation
+import com.ahmadalwakai.wasla.rateMessage
+import com.ahmadalwakai.wasla.readBrowserScreen
+import com.ahmadalwakai.wasla.removeAttachment
+import com.ahmadalwakai.wasla.retryPending
+import com.ahmadalwakai.wasla.secureAction
+import com.ahmadalwakai.wasla.sendMessage
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
-/** Mohassan's chat: the thread, the working pill, and the cards that answer its questions and approvals. */
 @Composable
-fun MohassanChatView(store: WaslaStore) {
-    val draft = store.mohassanDraft
-    val clean = draft.trim()
-    val conversation = store.mohassanConversation
-    val pending = store.mohassanPendingText
-    val waiting = store.mohassanWaiting
-    val scrollKey = (conversation?.messages?.size ?: 0) * 1_000 + (conversation?.steps?.size ?: 0) * 2 + (if (waiting) 1 else 0) + (if (pending == null) 0 else 500_000)
+fun MohassanChatView(store: WaslaStore, onList: () -> Unit) {
+    val conversation = store.conversation
+    val pending = store.pending
+    var browser by remember(conversation?.id) { mutableStateOf(false) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) store.attachPhoto(uri)
+    }
+    val scrollKey = listOf(conversation?.messages?.lastOrNull()?.id, conversation?.steps?.size, conversation?.status,
+        pending?.key, store.sending).hashCode()
     ChatScaffold(
-        draft = draft,
-        onDraftChange = { store.mohassanDraft = it },
+        draft = store.draft,
+        onDraftChange = { store.draft = it },
         placeholder = if (conversation == null) "ماذا تريد أن ينجز موحسن؟" else "اكتب رسالتك…",
-        tooLong = !mohassanTextFits(draft),
-        canSend = !store.mohassanBusy && clean.isNotEmpty() && mohassanTextFits(draft),
-        working = store.mohassanBusy,
+        tooLong = !mohassanTextFits(store.draft.trim()),
+        canSend = !store.busy && !store.secureBusy && !store.uploading && !store.opening &&
+            (store.draft.isNotBlank() || store.attachments.isNotEmpty()) && mohassanTextFits(store.draft.trim()),
+        working = conversation?.working == true,
         scrollKey = scrollKey,
-        showComposer = !waiting,
-        onSend = { if (store.sendMohassan(draft)) { store.mohassanDraft = ""; true } else false },
-        onStop = { store.cancelMohassan() },
+        showComposer = conversation?.fieldsQuestion == null,
+        onSend = store::sendMessage,
+        onStop = store::cancelConversation,
+        tools = if (store.imagesAvailable) {
+            {
+                IconButton(
+                    onClick = { picker.launch("image/*") },
+                    enabled = !store.busy && !store.uploading && store.attachments.size < MAX_CHAT_PHOTOS,
+                ) { Icon(Icons.Outlined.AddPhotoAlternate, contentDescription = "إرفاق صورة") }
+            }
+        } else null,
+        tray = if (store.attachments.isNotEmpty() || store.uploading) {
+            {
+                PhotoRow(store, store.attachments, removable = true)
+                if (store.uploading) Footnote("جارٍ إرفاق الصورة…")
+            }
+        } else null,
+        notice = when {
+            pending != null && !store.sending -> "راجع الطلب السابق قبل إرسال رسالة جديدة."
+            conversation?.working == true && store.draft.isNotBlank() -> "تصل رسالتك باعتبارها تصحيحًا للمهمة الجارية."
+            else -> null
+        },
     ) {
         when {
-            conversation != null -> conversationItems(store, conversation)
-            pending != null -> {
-                item(key = "pending") { ChatTurn(true, pending) }
-                item(key = "sending") { WorkingSteps("يُرسل الطلب إلى موحسن…", emptyList()) }
+            store.opening -> item(key = "opening") { WorkingSteps("جارٍ فتح المحادثة…", emptyList()) }
+            conversation != null -> conversationItems(store, conversation) { browser = true }
+            pending == null -> item(key = "welcome") {
+                ChatWelcome("بمَ أساعدك اليوم؟", listOf("خطّط لحملة إعلانية", "لخّص لي موضوعًا", "نظّم مهامي")) { store.draft = it }
+                store.capabilities?.localModeText?.let { Footnote(it) }
             }
-            else -> item(key = "welcome") {
-                ChatWelcome("بمَ أساعدك اليوم؟", listOf("خطّط لحملة إعلانية", "لخّص لي موضوعًا", "نظّم مهامي")) { store.mohassanDraft = it }
+        }
+        if (pending != null) item(key = "pending-${pending.key}") { PendingCard(store, pending, onList) }
+    }
+    if (browser && conversation != null) BrowserScreen(store, conversation) { browser = false }
+}
+
+private fun LazyListScope.conversationItems(store: WaslaStore, conversation: ChatConversation, onBrowser: () -> Unit) {
+    conversation.olderMessages?.takeIf { it > 0 }?.let {
+        item(key = "older") { Footnote("المعروض آخر ${conversation.messages.size} رسالة. سبقها $it رسائل.") }
+    }
+    items(conversation.messages, key = { "message-${it.id}" }) { message ->
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val photos = message.images.orEmpty()
+            if (photos.isNotEmpty()) PhotoRow(store, photos.map { it.id })
+            if (message.text.isNotEmpty()) ChatTurn(message.role == "user", message.text)
+            if (message.role == "assistant" && message.text.isNotEmpty()) MessageFeedback(store, conversation.id, message.id)
+        }
+    }
+    conversation.browser?.let { browser ->
+        item(key = "browser") {
+            ForestCard {
+                Text(browser.title.ifBlank { browser.host.ifBlank { "متصفح موحسن" } }, style = MaterialTheme.typography.titleMedium)
+                if (browser.host.isNotBlank()) Ltr { Footnote(browser.host) }
+                if (browser.screenQuery(conversation.id) != null) {
+                    ForestButton(onClick = onBrowser, prominent = false) { Text("عرض شاشة المتصفح") }
+                }
+            }
+        }
+    }
+    if (conversation.working) item(key = "working") { WorkingSteps(conversation.progress ?: "موحسن يعمل…", conversation.steps.map { it.text }) }
+    val question = conversation.question
+    if (conversation.status == ChatStatus.WAITING_USER && question != null) {
+        item(key = "question-${question.id}") {
+            if (question.hasFields) FieldsQuestionCard(store, question) else QuestionCard(store, question)
+        }
+    }
+    val approval = conversation.approval
+    if (conversation.status == ChatStatus.WAITING_APPROVAL && approval != null) item(key = "approval-${approval.id}") { ApprovalCard(store, approval) }
+    val secure = conversation.secure
+    if (conversation.status == ChatStatus.WAITING_INPUT && secure != null) item(key = "secure-${secure.id}") { SecureCard(store, secure) }
+    val error = conversation.error
+    if (!conversation.working && !error.isNullOrEmpty()) item(key = "error") { ErrorNote(error) }
+    if (conversation.waiting) {
+        item(key = "stop") {
+            ForestButton(onClick = store::cancelConversation, prominent = false) {
+                Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("إيقاف")
             }
         }
     }
 }
 
-private fun LazyListScope.conversationItems(store: WaslaStore, conversation: MohassanConversation) {
-    items(conversation.messages, key = { "message-${it.id}" }) { message -> ChatTurn(message.role == "user", message.text) }
-    if (conversation.working) item(key = "working") { WorkingSteps(conversation.progress ?: "موحسن يعمل…", conversation.steps.map { it.text }) }
-    val question = conversation.question
-    if (conversation.status == MohassanStatus.WAITING_USER && question != null) {
-        item(key = "question-${question.id}") { if (question.hasFields) FieldsQuestionCard(store, question) else QuestionCard(store, question) }
+@Composable
+private fun PendingCard(store: WaslaStore, request: PendingRequest, onList: () -> Unit) {
+    var confirm by remember { mutableStateOf(false) }
+    if (store.sending) {
+        if (request.fromComposer && request.text.isNotEmpty()) ChatTurn(true, request.text)
+        if (request.imageIds.isNotEmpty()) PhotoRow(store, request.imageIds)
+        WorkingSteps("يُرسل الطلب إلى موحسن…", emptyList())
+        return
     }
-    val approval = conversation.approval
-    if (conversation.status == MohassanStatus.WAITING_APPROVAL && approval != null) item(key = "approval-${approval.id}") { ApprovalCard(store, approval) }
-    val secure = conversation.secure
-    if (conversation.status == MohassanStatus.WAITING_INPUT && secure != null) item(key = "secure-${secure.id}") { SecureCard(secure) }
-    val error = conversation.error
-    if (!conversation.working && !error.isNullOrEmpty()) item(key = "error") { ErrorNote(error) }
-    if (conversation.status in MohassanStatus.WAITING) {
-        item(key = "stop") {
-            ForestButton(onClick = { store.cancelMohassan() }, prominent = false) {
-                Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)); Text("إيقاف")
+    val canRetry = request.canResend(store.requestKeys)
+    ForestCard {
+        Text("لم يتأكد وصول الطلب", style = MaterialTheme.typography.titleMedium, color = Forest.alert)
+        if (request.text.isNotEmpty()) Text(request.text, maxLines = 4)
+        if (canRetry) Footnote("تستخدم إعادة الإرسال المفتاح نفسه.")
+        else Footnote("راجع المحادثة للتحقق مما إذا كان الطلب قد وصل.")
+        if (canRetry) ForestButton(onClick = store::retryPending) { Text("أرسل مرة أخرى") }
+        ForestButton(onClick = {
+            if (request.conversationId == null) onList() else store.checkPending()
+        }, prominent = false) {
+            Text(if (request.conversationId == null) "راجع قائمة المحادثات" else "راجع المحادثة")
+        }
+        TextButton(onClick = { confirm = true }) { Text("اترك الطلب", color = Forest.alert) }
+    }
+    if (confirm) AlertDialog(
+        onDismissRequest = { confirm = false },
+        title = { Text("ترك هذا الطلب؟") },
+        text = { Text("قد يكون الطلب وصل إلى الخادم. راجع المحادثة قبل إرساله من جديد.") },
+        confirmButton = { TextButton(onClick = { confirm = false; store.dropPending() }) { Text("اتركه") } },
+        dismissButton = { TextButton(onClick = { confirm = false }) { Text("تراجع") } },
+    )
+}
+
+@Composable
+private fun MessageFeedback(store: WaslaStore, conversationId: String, messageId: String) {
+    var verdict by rememberSaveable(messageId) { mutableStateOf<String?>(null) }
+    var sending by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        listOf("useful" to "مفيد", "wrong" to "خطأ", "incomplete" to "ناقص").forEach { (value, label) ->
+            TextButton(
+                onClick = {
+                    sending = true
+                    scope.launch {
+                        try { if (store.rateMessage(conversationId, messageId, value)) verdict = value }
+                        finally { sending = false }
+                    }
+                },
+                enabled = !sending,
+            ) {
+                Text(label, color = if (verdict == value) Forest.accent else Forest.softText,
+                    fontWeight = if (verdict == value) FontWeight.Bold else FontWeight.Normal)
             }
         }
     }
+}
+
+@Composable
+private fun PhotoRow(store: WaslaStore, ids: List<String>, removable: Boolean = false) {
+    var selected by remember { mutableStateOf<String?>(null) }
+    LazyRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(ids, key = { it }) { id ->
+            LaunchedEffect(id) { store.loadImage(id) }
+            val photo = store.loadedImages[id]
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(Modifier.size(68.dp).background(Forest.soft, RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                    if (photo == null) Icon(Icons.Outlined.ImageIcon, contentDescription = "صورة")
+                    else Image(photo.asImageBitmap(), contentDescription = "عرض الصورة", contentScale = ContentScale.Crop,
+                        modifier = Modifier.matchParentSize().clip(RoundedCornerShape(8.dp)).clickable { selected = id })
+                }
+                if (removable) TextButton(onClick = { store.removeAttachment(id) }) { Text("إزالة") }
+            }
+        }
+    }
+    selected?.let { store.loadedImages[it] }?.let { photo ->
+        AlertDialog(
+            onDismissRequest = { selected = null },
+            text = { Image(photo.asImageBitmap(), contentDescription = "الصورة المرفقة", modifier = Modifier.fillMaxWidth()) },
+            confirmButton = { TextButton(onClick = { selected = null }) { Text("تم") } },
+        )
+    }
+}
+
+@Composable
+private fun BrowserScreen(store: WaslaStore, conversation: ChatConversation, onDismiss: () -> Unit) {
+    var image by remember { mutableStateOf<Bitmap?>(null) }
+    var refresh by remember { mutableIntStateOf(0) }
+    var loading by remember { mutableStateOf(true) }
+    LaunchedEffect(conversation.browser?.screenUrl, conversation.working, store.foreground, refresh) {
+        if (!store.foreground) return@LaunchedEffect
+        loading = true
+        do {
+            store.readBrowserScreen(conversation)?.let { image = it }
+            loading = false
+            if (conversation.working) delay(2_000)
+        } while (conversation.working)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("شاشة المتصفح") },
+        text = {
+            val frame = image
+            when {
+                frame != null -> Ltr { Image(frame.asImageBitmap(), contentDescription = "شاشة متصفح موحسن", modifier = Modifier.fillMaxWidth()) }
+                loading -> CircularProgressIndicator()
+                else -> Footnote("تعذّر عرض لقطة الشاشة.")
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("تم") } },
+        dismissButton = { TextButton(onClick = { refresh++ }, enabled = !loading) { Text("تحديث") } },
+    )
 }
 
 @Composable
@@ -136,46 +324,38 @@ private fun ErrorNote(text: String) {
     )
 }
 
-/** A question with options, a clarification, or a typed answer. */
 @Composable
-private fun QuestionCard(store: WaslaStore, question: MohassanQuestion) {
-    val forest = Forest
-    val keyboard = LocalSoftwareKeyboardController.current
-    var answer by rememberSaveable(question.id) { mutableStateOf("") }
-    val busy = store.mohassanSending
+private fun QuestionCard(store: WaslaStore, question: ChatQuestion) {
     ForestCard {
         LabelRow(Icons.AutoMirrored.Outlined.HelpOutline, "سؤال من موحسن")
-        Text(question.prompt, style = MaterialTheme.typography.bodyLarge, color = forest.ink)
-        question.clarification?.reason?.takeIf { it.isNotEmpty() }?.let { Footnote(it) }
+        Text(question.prompt, style = MaterialTheme.typography.bodyLarge, color = Forest.ink)
+        question.clarification?.reason?.takeIf { it.isNotBlank() }?.let { Footnote(it) }
         question.phoneOptions.forEach { option ->
             val recommended = option.id == question.clarification?.recommendedOptionId
-            ForestButton(onClick = { store.answerMohassan(option, null) }, prominent = recommended, enabled = !busy) {
-                Text(if (recommended) option.label + " · مقترح" else option.label, Modifier.fillMaxWidth(), textAlign = TextAlign.Start)
+            ForestButton(onClick = { store.answerOption(question.id, option) }, prominent = recommended, enabled = !store.busy) {
+                Text(option.label, Modifier.fillMaxWidth(), textAlign = TextAlign.Start)
             }
         }
         if (question.action == "google_ads_connect") Footnote("ربط حساب Google Ads يتم من واجهة موحسن على الويب.")
-        if (question.acceptsText) {
-            OutlinedTextField(value = answer, onValueChange = { answer = it }, modifier = Modifier.fillMaxWidth(), placeholder = { Text("أو اكتب إجابتك…") }, maxLines = 4, enabled = !busy, colors = fieldColors())
-            ForestButton(onClick = { store.answerMohassan(null, answer); answer = ""; keyboard?.hide() }, enabled = !busy && answer.isNotBlank() && answer.length <= 2_000) { Text("إرسال الإجابة") }
-        }
+        else if (question.phoneOptions.isNotEmpty()) Footnote("يمكنك كتابة إجابتك في صندوق الرسائل.")
     }
 }
 
 /**
  * Several questions in one card, as the web's question panel: each lists the brain's
  * suggestions with the confident one chosen in advance and a box for another answer; the
- * answers go together as one numbered reply, read by the brain in the order it asked.
+ * answers go back with the field IDs in the order they were asked.
  */
 @Composable
-private fun FieldsQuestionCard(store: WaslaStore, question: MohassanQuestion) {
+private fun FieldsQuestionCard(store: WaslaStore, question: ChatQuestion) {
     val forest = Forest
     val keyboard = LocalSoftwareKeyboardController.current
-    val fields = question.fields.orEmpty()
+    val fields = question.phoneFields
     val several = fields.size > 1
-    val busy = store.mohassanSending
+    val busy = store.busy
     var step by rememberSaveable(question.id) { mutableIntStateOf(0) }
     val chosen = remember(question.id) {
-        mutableStateListOf<Set<Int>>().also { list -> fields.forEach { field -> list.add(field.selected.orEmpty().filter { it in field.suggestions.indices }.toSet()) } }
+        mutableStateListOf<Set<Int>>().also { list -> fields.forEach { field -> list.add(field.preselected) } }
     }
     val other = remember(question.id) { mutableStateListOf<String>().also { list -> fields.forEach { field -> list.add(field.initialValue ?: "") } } }
 
@@ -183,10 +363,10 @@ private fun FieldsQuestionCard(store: WaslaStore, question: MohassanQuestion) {
         val field = fields[index]
         val picked = chosen[index].sorted().mapNotNull { field.suggestions.getOrNull(it)?.label }
         val supplied = other[index]
-        val typed = if (field.multiline == true) supplied else supplied.trim()
+        val typed = if (field.keepsLines) supplied else supplied.trim()
         // In a single-answer question a typed answer replaces the chosen suggestion.
         val parts = when {
-            field.multiple == true -> picked + (if (typed.isNotBlank()) listOf(typed) else emptyList())
+            field.allowsSeveral -> picked + (if (typed.isNotBlank()) listOf(typed) else emptyList())
             typed.isNotBlank() -> listOf(typed)
             else -> picked
         }
@@ -204,7 +384,7 @@ private fun FieldsQuestionCard(store: WaslaStore, question: MohassanQuestion) {
         val now = currentAnswers()
         val text = replyOf(now)
         if (busy || now.any { it.isBlank() } || text.length > 4_000) return
-        store.answerMohassanFields(text)
+        store.answerFields(question.id, fields.mapIndexed { index, field -> ChatFieldAnswer(field.id, now[index]) })
         keyboard?.hide()
     }
     fun next() {
@@ -217,7 +397,7 @@ private fun FieldsQuestionCard(store: WaslaStore, question: MohassanQuestion) {
     }
     fun pick(fieldIndex: Int, suggestion: Int) {
         val field = fields[fieldIndex]
-        if (field.multiple == true) {
+        if (field.allowsSeveral) {
             chosen[fieldIndex] = chosen[fieldIndex].toMutableSet().apply { if (!add(suggestion)) remove(suggestion) }
             return
         }
@@ -241,15 +421,15 @@ private fun FieldsQuestionCard(store: WaslaStore, question: MohassanQuestion) {
             val field = fields[step]
             val typedHere = other[step].trim()
             Text(field.prompt, style = MaterialTheme.typography.bodyLarge, color = forest.ink)
-            if (field.multiple == true) Footnote("يمكنك اختيار أكثر من واحد، ثم اضغط «التالي».")
+            if (field.allowsSeveral) Footnote("يمكنك اختيار أكثر من واحد، ثم اضغط «التالي».")
             field.suggestions.forEachIndexed { index, suggestion ->
-                val on = chosen[step].contains(index) && !(typedHere.isNotEmpty() && field.multiple != true)
+                val on = chosen[step].contains(index) && !(typedHere.isNotEmpty() && !field.allowsSeveral)
                 SuggestionRow(index + 1, suggestion, on, enabled = !busy) { pick(step, index) }
             }
             OutlinedTextField(
                 value = other[step], onValueChange = { other[step] = it }, modifier = Modifier.fillMaxWidth(), enabled = !busy,
                 placeholder = { Text(field.placeholder ?: if (field.suggestions.isNotEmpty()) "إجابة أخرى…" else "اكتب إجابتك…") },
-                minLines = if (field.multiline == true) 3 else 1, maxLines = if (field.multiline == true) 6 else 3, colors = fieldColors(),
+                minLines = if (field.keepsLines) 3 else 1, maxLines = if (field.keepsLines) 6 else 3, colors = fieldColors(),
             )
         } else {
             fields.forEachIndexed { index, field ->
@@ -266,10 +446,10 @@ private fun FieldsQuestionCard(store: WaslaStore, question: MohassanQuestion) {
             else ForestButton(onClick = { next() }, Modifier.weight(1f), enabled = !busy && answers[step].isNotBlank()) { Text(if (several) "التالي" else "أرسل") }
         }
         question.phoneOptions.filter { it.id != "stop" }.forEach { option ->
-            ForestButton(onClick = { store.answerMohassan(option, null) }, prominent = false, enabled = !busy) { Text(option.label) }
+            ForestButton(onClick = { store.answerOption(question.id, option) }, prominent = false, enabled = !busy) { Text(option.label) }
         }
         question.stopOption?.let { stop ->
-            TextButton(onClick = { store.answerMohassan(stop, null) }, enabled = !busy) { Text(stop.label, color = forest.softText) }
+            TextButton(onClick = { store.answerOption(question.id, stop) }, enabled = !busy) { Text(stop.label, color = forest.softText) }
         }
     }
 }
@@ -287,7 +467,7 @@ private fun StepDot(number: Int, done: Boolean, active: Boolean, enabled: Boolea
 }
 
 @Composable
-private fun SuggestionRow(number: Int, suggestion: MohassanSuggestion, on: Boolean, enabled: Boolean, onClick: () -> Unit) {
+private fun SuggestionRow(number: Int, suggestion: ChatSuggestion, on: Boolean, enabled: Boolean, onClick: () -> Unit) {
     val forest = Forest
     val shape = RoundedCornerShape(12.dp)
     Row(
@@ -305,10 +485,10 @@ private fun SuggestionRow(number: Int, suggestion: MohassanSuggestion, on: Boole
 }
 
 @Composable
-private fun ApprovalCard(store: WaslaStore, approval: MohassanApproval) {
+private fun ApprovalCard(store: WaslaStore, approval: ChatApproval) {
     val forest = Forest
     var confirm by remember(approval.id) { mutableStateOf(false) }
-    val busy = store.mohassanSending
+    val busy = store.busy || store.secureBusy
     ForestCard {
         LabelRow(Icons.Outlined.VerifiedUser, "يحتاج موافقتك")
         Text(approval.prompt, style = MaterialTheme.typography.bodyLarge, color = forest.ink)
@@ -316,7 +496,7 @@ private fun ApprovalCard(store: WaslaStore, approval: MohassanApproval) {
         approval.bindingLines.forEach { Footnote(it) }
         if (approval.detail.isNotEmpty()) Footnote(approval.detail)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            ForestButton(onClick = { store.approveMohassan(false) }, Modifier.weight(1f), prominent = false, enabled = !busy) { Text("رفض") }
+            ForestButton(onClick = { store.answerApproval(approval.id, false) }, Modifier.weight(1f), prominent = false, enabled = !busy) { Text("رفض") }
             ForestButton(onClick = { confirm = true }, Modifier.weight(1f), enabled = !busy) { Text("موافق") }
         }
     }
@@ -325,20 +505,60 @@ private fun ApprovalCard(store: WaslaStore, approval: MohassanApproval) {
             onDismissRequest = { confirm = false },
             title = { Text("تنفيذ هذا الإجراء؟") },
             text = { Text(approval.prompt) },
-            confirmButton = { TextButton(onClick = { confirm = false; store.approveMohassan(true) }) { Text("موافق، نفّذ") } },
+            confirmButton = { TextButton(onClick = { confirm = false; store.answerApproval(approval.id, true) }) { Text("موافق، نفّذ") } },
             dismissButton = { TextButton(onClick = { confirm = false }) { Text("تراجع") } },
         )
     }
 }
 
 @Composable
-private fun SecureCard(secure: MohassanSecure) {
-    val forest = Forest
+private fun SecureCard(store: WaslaStore, secure: ChatSecure) {
+    val busy = store.busy || store.secureBusy
+    val values = remember(secure.id) { mutableStateMapOf<String, String>() }
+    val handsOn = secure.handsOn
+    val filled = secure.fields.all { field ->
+        (field.id == "username" && secure.fields.size > 1) || !values[field.id].isNullOrBlank()
+    }
     ForestCard {
-        LabelRow(Icons.Outlined.Lock, when (secure.kind) { "code" -> "يحتاج رمز تحقق"; "login" -> "يحتاج تسجيل دخول"; else -> "يحتاج خطوة منك" })
-        Text(secure.prompt, style = MaterialTheme.typography.bodyLarge, color = forest.ink)
-        if (secure.site.isNotEmpty()) Ltr { Text(secure.site, style = MaterialTheme.typography.labelSmall, color = forest.softText) }
-        Footnote("أكمل هذه الخطوة من واجهة موحسن على الويب، ثم يتابع موحسن من حيث توقف. لا تُرسل كلمات المرور ورموز التحقق عبر الهاتف في هذه النسخة.")
+        LabelRow(Icons.Outlined.Lock, when (secure.kind) {
+            "code" -> "رمز التحقق"
+            "login" -> "تسجيل الدخول"
+            else -> "هذه الخطوة تحتاجك"
+        })
+        if (secure.prompt.isNotBlank()) Text(secure.prompt, style = MaterialTheme.typography.bodyLarge)
+        if (secure.site.isNotBlank()) Ltr { Footnote(secure.site) }
+        secure.note?.takeIf { it.isNotBlank() }?.let { Footnote(it, Forest.alert) }
+        secure.fields.forEach { field ->
+            val password = field.type == "password"
+            Ltr {
+                OutlinedTextField(
+                    value = values[field.id].orEmpty(), onValueChange = { values[field.id] = it },
+                    modifier = Modifier.fillMaxWidth(), label = { Text(field.label) }, singleLine = true, enabled = !busy,
+                    keyboardOptions = KeyboardOptions(keyboardType = when (field.type) {
+                        "password" -> KeyboardType.Password
+                        "code" -> KeyboardType.Number
+                        else -> KeyboardType.Email
+                    }),
+                    visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
+                    colors = fieldColors(),
+                )
+            }
+        }
+        if (!handsOn) Footnote("تذهب هذه البيانات إلى الموقع مباشرة.")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ForestButton(onClick = {
+                if (handsOn) store.secureAction(secure.id, "done")
+                else {
+                    val input = values.toMap()
+                    values.clear()
+                    store.secureAction(secure.id, "submit", input)
+                }
+            }, modifier = Modifier.weight(1f), enabled = !busy && (handsOn || filled)) {
+                Text(if (handsOn) "أكملت" else "متابعة")
+            }
+            ForestButton(onClick = { values.clear(); store.secureAction(secure.id, "skip") }, modifier = Modifier.weight(1f), prominent = false,
+                enabled = !busy) { Text("تخطي") }
+        }
     }
 }
 
@@ -346,23 +566,23 @@ private fun SecureCard(secure: MohassanSecure) {
 @Composable
 fun MohassanListSheet(store: WaslaStore, onDismiss: () -> Unit) {
     val forest = Forest
-    var deleting by remember { mutableStateOf<MohassanSummary?>(null) }
+    var deleting by remember { mutableStateOf<ChatSummary?>(null) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = forest.background) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("محادثات موحسن", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, color = forest.ink)
-                IconButton(onClick = { store.loadMohassanList() }) { Icon(Icons.Outlined.Refresh, contentDescription = "تحديث", tint = forest.ink) }
+                IconButton(onClick = { store.loadConversations() }) { Icon(Icons.Outlined.Refresh, contentDescription = "تحديث", tint = forest.ink) }
                 TextButton(onClick = onDismiss) { Text("تم") }
             }
-            if (store.mohassanList.isEmpty()) Text("لا توجد محادثات بعد.", Modifier.padding(vertical = 24.dp), color = forest.softText)
+            if (store.chatList.isEmpty()) Text("لا توجد محادثات بعد.", Modifier.padding(vertical = 24.dp), color = forest.softText)
             LazyColumn(Modifier.fillMaxWidth().heightIn(max = 480.dp)) {
-                items(store.mohassanList, key = { it.id }) { item ->
-                    Row(Modifier.fillMaxWidth().clickable { onDismiss(); store.openMohassan(item.id) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                items(store.chatList, key = { it.id }) { item ->
+                    Row(Modifier.fillMaxWidth().clickable(enabled = !store.sending) { onDismiss(); store.openConversation(item.id) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(item.title.ifEmpty { "محادثة" }, style = MaterialTheme.typography.bodyLarge, color = forest.ink, maxLines = 2)
-                            Text(MohassanStatus.title(item.status), style = MaterialTheme.typography.bodySmall, color = forest.softText)
+                            Text(ChatStatus.title(item.status), style = MaterialTheme.typography.bodySmall, color = forest.softText)
                         }
-                        IconButton(onClick = { deleting = item }) { Icon(Icons.Outlined.Delete, contentDescription = "حذف", tint = forest.softText) }
+                        IconButton(onClick = { deleting = item }, enabled = !store.sending) { Icon(Icons.Outlined.Delete, contentDescription = "حذف", tint = forest.softText) }
                     }
                     HorizontalDivider(color = forest.line)
                 }
@@ -374,7 +594,7 @@ fun MohassanListSheet(store: WaslaStore, onDismiss: () -> Unit) {
             onDismissRequest = { deleting = null },
             title = { Text("حذف هذه المحادثة؟") },
             text = { Text(item.title.ifEmpty { "محادثة" }, fontWeight = FontWeight.Medium) },
-            confirmButton = { TextButton(onClick = { store.deleteMohassan(item.id); deleting = null }) { Text("حذف", color = forest.alert) } },
+            confirmButton = { TextButton(onClick = { store.deleteConversation(item.id); deleting = null }) { Text("حذف", color = forest.alert) } },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text("تراجع") } },
         )
     }

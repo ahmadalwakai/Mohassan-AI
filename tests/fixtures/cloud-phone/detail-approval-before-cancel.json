@@ -1,0 +1,187 @@
+{
+  "capturedAt": "2026-11-23T22:00:47.052Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "GET",
+    "url": "/api/chat/conversations/81b2b757-a16a-475b-ad81-d6a1823b617e"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "81b2b757-a16a-475b-ad81-d6a1823b617e",
+      "title": "افتح http://fixture-site.test/ads",
+      "status": "waiting_approval",
+      "updatedAt": "2026-11-23T22:00:46.991Z",
+      "browserAccount": null,
+      "messages": [
+        {
+          "id": "080b12b7-3870-4bdc-9e42-8bc382955697",
+          "role": "user",
+          "text": "افتح http://fixture-site.test/ads",
+          "createdAt": "2026-11-23T22:00:46.031Z"
+        },
+        {
+          "id": "bd71e104-4a08-410d-8734-75cbf247fc2d",
+          "role": "assistant",
+          "text": "أريد إرسال «رفض ملفات الارتباط غير الضرورية» إلى fixture-site.test. هل أتابع؟",
+          "createdAt": "2026-11-23T22:00:46.984Z"
+        }
+      ],
+      "question": null,
+      "approval": {
+        "id": "d09630f5-e4e2-4364-b05d-6365a50a1b98",
+        "prompt": "أريد إرسال «رفض ملفات الارتباط غير الضرورية» إلى fixture-site.test. هل أتابع؟",
+        "detail": "POST /consent. الموافقة محددة بالصفحة والقيم وتنتهي خلال خمس دقائق.",
+        "target": "POST http://fixture-site.test/consent",
+        "consequence": "يُرسَل طلب POST إلى fixture-site.test بالقيم المعروضة، مرة واحدة.",
+        "reversible": null
+      },
+      "secure": null,
+      "browser": {
+        "url": "http://fixture-site.test/consent",
+        "title": "Cookie consent",
+        "observedAt": "2026-11-23T22:00:46.945Z",
+        "live": true,
+        "screenUrl": "/api/chat/conversations/81b2b757-a16a-475b-ad81-d6a1823b617e/screen?v=ecd08cf6-4889-4217-9775-420b7446594f",
+        "recovery": "available",
+        "recoveryToken": "bcd2e9c5edb57b1f17a6a1efb1219b27e319c32b62ec1485fa4b440eb8195339"
+      },
+      "progress": null,
+      "steps": [
+        {
+          "id": "cbb15b2c-c060-4716-b1c8-d597f8c9b3a3",
+          "text": "فتح fixture-site.test",
+          "createdAt": "2026-11-23T22:00:46.081Z"
+        }
+      ],
+      "error": null,
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "imageReading",
+          "pc"
+        ]
+      },
+      "visibility": {
+        "version": 1,
+        "level": 3,
+        "code": "needs_approval",
+        "reason": "مراجعة قبل الإرسال إلى الموقع",
+        "lang": "ar",
+        "decidedAt": "2026-11-23T22:00:46.991Z",
+        "requested": 3,
+        "canView": true,
+        "history": [
+          {
+            "level": 3,
+            "code": "open_only",
+            "at": "2026-11-23T22:00:46.991Z"
+          },
+          {
+            "level": 3,
+            "code": "needs_approval",
+            "at": "2026-11-23T22:00:46.991Z"
+          }
+        ]
+      },
+      "campaign": null,
+      "version": "6810aec678da206eed6d1798",
+      "run": {
+        "id": "2ffadb0c-0ccf-45cd-a1c2-318aafa93d6f",
+        "phase": "awaiting_approval",
+        "path": "action",
+        "engine": {
+          "kind": "rules",
+          "modelCalls": 0
+        },
+        "context": {
+          "objective": "افتح http://fixture-site.test/ads",
+          "previousTurns": 0,
+          "constraints": [],
+          "corrections": [],
+          "capabilities": [
+            "computation",
+            "web",
+            "browser",
+            "memory",
+            "knowledge",
+            "documents",
+            "sites",
+            "planner",
+            "letters",
+            "imageReading",
+            "pc"
+          ],
+          "limitations": [
+            "chatModel"
+          ]
+        },
+        "plan": {
+          "version": 1,
+          "steps": [
+            {
+              "id": "approve-1",
+              "outcome": "رفض ملفات الارتباط غير الضرورية",
+              "dependsOn": [],
+              "capability": "browser.submit",
+              "input": "POST http://fixture-site.test/consent",
+              "acceptance": [
+                "نُفّذ الإجراء الموافَق عليه بتفاصيله نفسها مرة واحدة"
+              ],
+              "verification": "observation",
+              "required": true,
+              "risk": "irreversible_write",
+              "authorization": "required",
+              "state": "awaiting_approval",
+              "attempts": 0
+            }
+          ]
+        },
+        "evidence": [
+          {
+            "id": "f26346b6e75c1a75",
+            "stepId": null,
+            "kind": "observation",
+            "label": "HTTP 200",
+            "reference": "http://fixture-site.test/consent",
+            "observedAt": "2026-11-23T22:00:46.945Z",
+            "independent": true
+          }
+        ],
+        "permissions": [
+          {
+            "id": "d09630f5-e4e2-4364-b05d-6365a50a1b98",
+            "stepId": "approve-1",
+            "action": "رفض ملفات الارتباط غير الضرورية",
+            "target": "POST http://fixture-site.test/consent",
+            "consequence": "يُرسَل طلب POST إلى fixture-site.test بالقيم المعروضة، مرة واحدة.",
+            "reversible": null,
+            "fingerprint": "c1055c739515c6c1788698c386297c14dce78527b2caefca5b81051c6ad3c01d",
+            "decision": "asked",
+            "reason": "approval_required",
+            "decidedAt": "2026-11-23T22:00:46.972Z"
+          }
+        ],
+        "verification": null,
+        "verdict": null,
+        "repairs": {
+          "used": 0,
+          "limit": 1
+        },
+        "steeredFrom": null,
+        "sequence": 6,
+        "updatedAt": "2026-11-23T22:00:46.993Z"
+      }
+    }
+  }
+}
