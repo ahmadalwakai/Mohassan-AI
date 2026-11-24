@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { rankInstructionCandidates, routeInstructionSkills, skillTerms, type SkillContextMetadata } from './router.ts';
+import { rankInstructionCandidates, routeInstructionSkills, routerRequestTerms, routerTermsOf, skillTerms, type SkillContextMetadata } from './router.ts';
 
 const skill = (slug: string, category: SkillContextMetadata['category'] = 'reasoning', description = 'Helpful guidance for a bounded task'): SkillContextMetadata => ({ id: slug, slug, name: slug, description, category, version: '1.0.0', contentHash: 'a'.repeat(64) });
 describe('instruction metadata routing', () => {
@@ -48,6 +48,44 @@ describe('instruction metadata routing', () => {
     expect(routeInstructionSkills('رسالة للعميل عن الفاتورة المتأخرة', [strong, weak, ...fillers]).map(item => item.id)).toEqual([strong.id]);
     expect(routeInstructionSkills('رسالة للعميل', [strong, weak, ...fillers])).toEqual([]);
     expect(routeInstructionSkills('رسالة للعميل', [strong, weak, ...fillers], 6, {}, { minScore: 0, relative: 0 }).length).toBeGreaterThan(0);
+  });
+  it.each([
+    'Set up ads for a bike repair shop in Bristol',
+    'Advertise my home cleaning business in Cardiff',
+    'Create a campaign for a bakery, selling cakes with a budget of £20 a day',
+    'I run a salon and want more bookings. I can spend £15 per day',
+  ])('finds eligible advertising guidance for an English brief: %s', goal => {
+    const copy = skill('copywriting', 'marketing', 'كتابة النصوص الإعلانية copywriter copy ads headlines');
+    const google = skill('google-ads-campaign', 'marketing', 'حملات Google Ads');
+    const meta = skill('meta-ads', 'marketing', 'Meta ads Facebook ads Instagram ads');
+    expect(routeInstructionSkills(goal, [meta, copy])[0]).toBe(copy);
+    expect(routeInstructionSkills(goal, [meta, copy, google])[0]).toBe(google);
+    const terms = routerRequestTerms(goal).flatMap(term => term.variants);
+    const indexed = [meta, copy, google].filter(candidate => routerTermsOf(candidate).some(term => terms.includes(term)));
+    expect(rankInstructionCandidates(goal, indexed, 3)[0]).toBe(google);
+  });
+  it('leaves a different platform and non-commercial campaigns to lexical matching', () => {
+    const copy = skill('copywriting', 'marketing', 'كتابة النصوص الإعلانية copywriter copy ads headlines');
+    const google = skill('google-ads-campaign', 'marketing', 'حملات Google Ads');
+    const meta = skill('meta-ads', 'marketing', 'Meta ads Facebook ads Instagram ads');
+    expect(routeInstructionSkills('Set up Facebook ads for my bakery', [copy, google, meta])[0]).toBe(meta);
+    expect(routeInstructionSkills('Set up ads for Instagram', [copy, google, meta])[0]).toBe(meta);
+    expect(routeInstructionSkills('Plan a campaign to plant trees in the park', [copy])).toEqual([]);
+  });
+  it('routes generic ad copy to the writing skill and search-ad copy to Google Ads', () => {
+    const copy = skill('copywriting', 'marketing', 'كتابة النصوص الإعلانية copywriter copy ads headlines');
+    const google = skill('google-ads-campaign', 'marketing', 'حملات Google Ads');
+    expect(routeInstructionSkills('Write 10 ad headlines and descriptions for a landing page', [google, copy])[0]).toBe(copy);
+    expect(routeInstructionSkills('Draft responsive search ad headlines for a landing page', [google, copy])[0]).toBe(google);
+  });
+  it('leaves single requests for a past personal fact or public statistic out of skill guidance', () => {
+    const tests = skill('software-testing', 'coding', 'Software tests and testing');
+    const stats = skill('population-statistics', 'analytics');
+    expect(routeInstructionSkills('Which tests did I run on my branch last Tuesday?', [tests])).toEqual([]);
+    expect(routeInstructionSkills('What is the population of Canada?', [stats])).toEqual([]);
+    expect(routeInstructionSkills('What tests should I run before releasing?', [tests])).toEqual([tests]);
+    expect(routeInstructionSkills('Explain how to estimate a population from statistics', [stats])).toEqual([stats]);
+    expect(routeInstructionSkills('What is the population of Canada? Explain how to estimate populations.', [stats])).toEqual([stats]);
   });
   it('uses the weights it is given, so a shortlist ranks as the full catalogue would', () => {
     const a = skill('alpha-notes', 'reasoning', 'ملاحظات المشروع'), b = skill('beta-notes', 'reasoning', 'ملاحظات الاجتماع');

@@ -6,6 +6,8 @@
  * No database, no network, no model, so it is light enough to run next to a training job.
  *
  *   npx tsx scripts/skills-library/measure-reader.ts [--library <skills dir>] [--out <file.json>] [--compare <before.json>]
+ *   --with-builtins adds the built-in skills to router scoring.
+ *   --pilot-only measures the checked-in pilot sets when the original evaluation artifacts are unavailable.
  *
  * Sets (each file's sha256 is printed; the frozen ones are checked against the hashes below):
  *   - artifacts/skills-library-2026-11-22: the library's agent questions (dev and sealed), its none-dev set and the real questions;
@@ -21,6 +23,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { buildSkillReaderIndex, createSkillReader, matchSkills, skillReadable, skillStems, type SkillReaderCandidate } from '../../apps/server/src/assistant/skill-reader.ts';
+import { builtinSkills } from '../../packages/skills/src/builtin/index.ts';
 import { buildSkillSource } from '../../packages/skills/src/importer.ts';
 import { inspectSkill } from '../../packages/skills/src/inspector.ts';
 import { parseSkillManifest } from '../../packages/skills/src/frontmatter.ts';
@@ -31,6 +34,8 @@ const arg = (name: string) => { const at = process.argv.indexOf(name); return at
 const LIBRARY = resolve(arg('--library') ?? join(ROOT, 'skills-library', 'skills'));
 const OUT = arg('--out');
 const COMPARE = arg('--compare');
+const PILOT_ONLY = process.argv.includes('--pilot-only');
+const WITH_BUILTINS = process.argv.includes('--with-builtins');
 const LIB_EVAL = join(ROOT, 'artifacts', 'skills-library-2026-11-22');
 const PILOT_TESTS = join(ROOT, 'skills-pilot', 'tests');
 const NEW_TESTS = join(ROOT, 'artifacts', 'skills-library-2026-11-24');
@@ -75,7 +80,7 @@ async function readSet(path: string): Promise<string | null> {
 }
 const jsonl = (text: string) => text.split('\n').filter(line => line.trim()).map(line => JSON.parse(line));
 
-interface Skill { slug: string; candidate: SkillReaderCandidate; body: string }
+interface Skill { slug: string; candidate: SkillReaderCandidate & SkillContextMetadata; body: string }
 interface Excluded { slug: string; reason: string }
 async function loadLibrary(): Promise<{ skills: Skill[]; excluded: Excluded[] }> {
   const skills: Skill[] = [], excluded: Excluded[] = [];
@@ -132,17 +137,18 @@ async function main() {
     return;
   }
 
-  const agentText = await readSet(join(LIB_EVAL, 'questions-agent-v1.jsonl'));
-  if (!agentText) throw new Error('the library agent questions are missing');
-  const agent = jsonl(agentText) as { id: string; set: string; skill: string; text: string; ok: string[] }[];
+  const agentText = PILOT_ONLY ? null : await readSet(join(LIB_EVAL, 'questions-agent-v1.jsonl'));
+  if (!agentText && !PILOT_ONLY) throw new Error('the library agent questions are missing');
+  const agent = (agentText ? jsonl(agentText) : []) as { id: string; set: string; skill: string; text: string; ok: string[] }[];
   const base = new Set(agent.map(item => item.skill));
   const present = new Set(skills.map(skill => skill.slug));
-  const added = new Set([...present].filter(slug => !base.has(slug)));
+  const added = new Set(PILOT_ONLY ? [] : [...present].filter(slug => !base.has(slug)));
   const rows: Row[] = [];
 
   // `--overlap`: for each added skill, the stems of its name, id and description that original skills also hold. Each shared
   // stem lowers that stem's weight for the original skills (the reader weighs a stem by how few skills hold it).
   if (process.argv.includes('--overlap')) {
+    if (PILOT_ONLY) throw new Error('--overlap requires the library agent questions');
     const stemsOf = (skill: SkillReaderCandidate) => ({ title: new Set(skillStems(`${skill.name} ${skill.slug}`)), body: new Set(skillStems(skill.description)) });
     const holders = new Map<string, string[]>();
     for (const skill of skills.filter(item => base.has(item.slug))) {
@@ -163,13 +169,13 @@ async function main() {
     rows.push({ set, key: item.id, kind: 'positive', request: item.text, expected: item.ok, chosen, score,
       ok: chosen !== null && (item.ok.includes(chosen) || reviewed?.skill === chosen), ...(reviewed?.skill === chosen && chosen !== null ? { reviewed: reviewed.why } : {}) });
   }
-  const noneText = await readSet(join(LIB_EVAL, 'questions-agent-none-dev-v1.jsonl'));
+  const noneText = PILOT_ONLY ? null : await readSet(join(LIB_EVAL, 'questions-agent-none-dev-v1.jsonl'));
   for (const item of noneText ? jsonl(noneText) as { id: string; text: string }[] : []) {
     const { chosen, score } = await ask(item.text);
     rows.push({ set: 'library-none-dev', key: item.id, kind: 'none', request: item.text, expected: [], chosen, score, ok: chosen === null });
   }
-  const labelsText = await readSet(join(LIB_EVAL, 'real-labels-v1.json'));
-  const realText = await readSet(join(ROOT, 'artifacts', 'plan-2026-11-22', 'real-questions-v1.jsonl'));
+  const labelsText = PILOT_ONLY ? null : await readSet(join(LIB_EVAL, 'real-labels-v1.json'));
+  const realText = PILOT_ONLY ? null : await readSet(join(ROOT, 'artifacts', 'plan-2026-11-22', 'real-questions-v1.jsonl'));
   if (labelsText && realText) {
     const labels = JSON.parse(labelsText).labels as Record<string, { need: boolean; ok: string[] }> | [string, { need: boolean; ok: string[] }][];
     const labelOf = new Map(Array.isArray(labels) ? labels : Object.entries(labels));
@@ -189,7 +195,7 @@ async function main() {
   ];
   // `--exclude <name>` (repeatable) leaves a frozen set unread, so a revision can be checked on the other sets before its one run.
   const excludedSets = new Set(process.argv.flatMap((value, at) => value === '--exclude' && process.argv[at + 1] ? [process.argv[at + 1]!] : []));
-  if (existsSync(NEW_TESTS)) for (const name of (await readdir(NEW_TESTS)).filter(file => /^cases-.*\.json$/u.test(file)).sort()) {
+  if (!PILOT_ONLY && existsSync(NEW_TESTS)) for (const name of (await readdir(NEW_TESTS)).filter(file => /^cases-.*\.json$/u.test(file)).sort()) {
     const set = `new-${name.replace(/^cases-|\.json$/gu, '')}`;
     if (!excludedSets.has(set)) caseSets.push([set, join(NEW_TESTS, name)]);
   }
@@ -210,7 +216,7 @@ async function main() {
       for (const [n, request] of requests.entries()) {
         const { chosen, score } = await ask(request);
         const allow = allowed(request).map(current);
-        const ok = anySkillWrong ? chosen === null : chosen === null || !added.has(chosen) || allow.includes(chosen);
+        const ok = chosen === null || (!anySkillWrong && (allow.includes(chosen) || (!PILOT_ONLY && !added.has(chosen))));
         rows.push({ set, key: `${kind}${n}`, kind, request, expected: allow, chosen, score, ok, ...(kind === 'neighbour' ? { owner: chosen !== null && allow.includes(chosen) } : {}) });
       }
     };
@@ -224,7 +230,12 @@ async function main() {
   }
 
   // The model path's router (routeInstructionSkills) over the same skills: what would reach a language model's prompt.
-  const metadata = candidates as unknown as SkillContextMetadata[];
+  const metadata: SkillContextMetadata[] = [...candidates];
+  if (WITH_BUILTINS) for (const { contract, instructions } of builtinSkills) {
+    if (present.has(contract.slug)) continue;
+    const { slug, name, description, category, version } = contract;
+    metadata.push({ id: `builtin:${slug}`, slug, name, description, category, version, contentHash: sha256(instructions) });
+  }
   const right = (row: Row, slug: string | undefined) => slug !== undefined && (row.expected.includes(slug) || REVIEWED_OK[`${row.set}/${row.key}`]?.skill === slug);
 
   // `--router-grid`: the router's cut (minimum score × share of the best score) over a grid, on the sets read in this run. Use it on
@@ -313,11 +324,12 @@ async function main() {
   }
 
   const report = {
-    generatedAt: new Date().toISOString(), library: LIBRARY.slice(ROOT.length + 1).replace(/\\/g, '/'), skills: skills.length, excluded, added: added.size,
+    generatedAt: new Date().toISOString(), library: LIBRARY.slice(ROOT.length + 1).replace(/\\/g, '/'), skills: skills.length, excluded,
+    added: PILOT_ONLY ? null : added.size, pilotOnly: PILOT_ONLY, routerWithBuiltins: WITH_BUILTINS,
     setHashes: hashes, summary, router, addedSkills: addedReport, changes, rows,
   };
   if (OUT) { await mkdir(dirname(resolve(OUT)), { recursive: true }); await writeFile(resolve(OUT), JSON.stringify(report, null, 1), 'utf8'); }
-  console.log(JSON.stringify({ skills: skills.length, excluded, added: added.size, summary, router }, null, 1));
+  console.log(JSON.stringify({ skills: skills.length, excluded, added: report.added, pilotOnly: PILOT_ONLY, routerWithBuiltins: WITH_BUILTINS, summary, router }, null, 1));
   const failedAdded = addedReport.filter(item => item.failed.length || item.takes.length);
   if (failedAdded.length) console.log(`added skills with a failure or a taken request: ${failedAdded.length}\n${failedAdded.map(item => `- ${item.slug} ${item.positives}${item.failed.length ? `\n    fail: ${item.failed.join('\n    fail: ')}` : ''}${item.takes.length ? `\n    takes: ${item.takes.join('\n    takes: ')}` : ''}`).join('\n')}`);
   if (changes) console.log(`changed choices: ${changes.length}\n${changes.join('\n')}`);
