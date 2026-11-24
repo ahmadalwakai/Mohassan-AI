@@ -3,6 +3,7 @@ import { parseUserRequestConstraints, isEntireLiteralRequest, maskRequestLiteral
 export { parseUserRequestConstraints, isEntireLiteralRequest, requestCapabilityAllowed, requestConstraintReply, maskRequestLiteralData, UserRequestConstraintsSchema, type UserRequestConstraints, type ForbiddenRequestCapability } from './request-constraints.js';
 import { publicSearchScan, publicSearchText } from '@mohassan/browser';
 import { isCurrentComputerReadRequest } from './computer-request-language.js';
+import { splitReplyDirective } from './reply-directive.js';
 
 /** Source classification is independent of tool availability and model output. */
 export const requestSources = ['public_lookup', 'prior_conversation', 'local_state', 'supplied_content', 'unresolved'] as const;
@@ -93,6 +94,12 @@ const CURRENT_CODE_ACTION = /^(?:(?:اصلح|اعد هيكله)\s+(?:مشروع�
 const NAVIGATE = /^(?:افتح|اذهب|ادخل|open|visit|navigate|go to)(?!\p{L})/iu;
 const FIND_PUBLIC_FACT = /^find\s+(?:the\s+)?(?:(?:latest|current|official|public)\s+)?(?:opening hours|working hours|timetables?|prices?|fees?|dates?|address|location|news|headlines|documentation|website|reports?|articles?|papers?)\b/iu;
 
+/** A reference in a recognized reply field ("return its first sentence") points to this search's result. */
+export function searchRequestText(value: string): string {
+  const framing = splitReplyDirective(value);
+  return framing.directive && PUBLIC_ACTION.test(requestOperationText(framing.body)) ? framing.body : value;
+}
+
 /** Remove a greeting clause only when a complete task follows its delimiter. */
 export function requestScopeActionText(value: string): string {
   value = parseUserRequestConstraints(value)?.safeActionText ?? value;
@@ -137,7 +144,8 @@ export function assessRequestScope(value: string, options: RequestScopeOptions =
   if (typeof value !== 'string' || !value.trim() || value.length > 8000) return make('unresolved', 'unknown', 'unknown', ['invalid_input']);
   if (isEntireLiteralRequest(value)) return make('supplied_content', 'unknown', 'unknown', ['missing_target']);
   if (constraints?.standalone || constraints?.ambiguous) return make('unresolved', constraints.standalone && !constraints.ambiguous ? 'converse' : 'unknown', 'unknown', ['explicit_prohibition']);
-  const original = value.trim(), actionText = requestScopeActionText(original), text = requestOperationText(actionText);
+  const original = value.trim(), actionText = searchRequestText(requestScopeActionText(original));
+  const text = requestOperationText(actionText);
   if (SOCIAL_QUESTION.test(text)) return make('unresolved', 'converse', 'unknown', ['non_lookup_operation']);
   const credentialScan = publicSearchScan(original);
   if (publicSearchText(credentialScan) !== credentialScan) return make('supplied_content', 'unknown', 'unknown', ['credential_material']);

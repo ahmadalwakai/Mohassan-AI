@@ -18,6 +18,7 @@ describe('a population question is answered by a statement of the population', (
     'Its population of almost 29 million is highly urbanised and heavily concentrated on the eastern seaboard.',
     'About 123 million people live in Japan.',
     'The population rose to 40 million in 2023.',
+    'The population is about 1,234.567 million people.',
   ])('accepts: %s', line => {
     expect(hasFigureOf('people', line)).toBe(true);
   });
