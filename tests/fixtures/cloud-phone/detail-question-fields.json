@@ -1,0 +1,182 @@
+{
+  "capturedAt": "2026-11-23T22:00:41.988Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "GET",
+    "url": "/api/chat/conversations/84b6d275-9256-4a19-a3e3-52d56e18a39b"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "84b6d275-9256-4a19-a3e3-52d56e18a39b",
+      "title": "اكتب لي رسالة اعتذار لعميل",
+      "status": "waiting_user",
+      "updatedAt": "2026-11-23T22:00:41.914Z",
+      "browserAccount": null,
+      "messages": [
+        {
+          "id": "cafb2897-5453-4dd2-9c30-f6d174b2496b",
+          "role": "user",
+          "text": "اكتب لي رسالة اعتذار لعميل",
+          "createdAt": "2026-11-23T22:00:41.680Z"
+        },
+        {
+          "id": "7a06ce95-bead-4a27-9686-cff552e18f0a",
+          "role": "assistant",
+          "text": "أكتب لك الرسالة من قالب رسمي، والتفاصيل تبقى بكلماتك. أجب عن هذه الأسئلة:",
+          "createdAt": "2026-11-23T22:00:41.907Z"
+        }
+      ],
+      "question": {
+        "id": "b68382e4-361b-4aee-8807-d1896c51294e",
+        "prompt": "أكتب لك الرسالة من قالب رسمي، والتفاصيل تبقى بكلماتك. أجب عن هذه الأسئلة:",
+        "options": [
+          {
+            "id": "stop",
+            "label": "توقف هنا"
+          }
+        ],
+        "fields": [
+          {
+            "id": "to",
+            "prompt": "لمن الرسالة؟ (الاسم والصفة)",
+            "suggestions": [],
+            "placeholder": "مثلاً: الأستاذ خالد، مدير المشتريات"
+          },
+          {
+            "id": "kind",
+            "prompt": "ما نوعها؟",
+            "suggestions": [
+              {
+                "label": "اعتذار"
+              },
+              {
+                "label": "طلب"
+              },
+              {
+                "label": "شكر"
+              },
+              {
+                "label": "متابعة"
+              },
+              {
+                "label": "تهنئة"
+              },
+              {
+                "label": "شكوى"
+              }
+            ],
+            "selected": [
+              0
+            ]
+          },
+          {
+            "id": "details",
+            "prompt": "ماذا تريد أن تقول؟ اكتب الأهم في سطر أو سطرين.",
+            "suggestions": [],
+            "multiline": true,
+            "placeholder": "مثلاً: تأخر التسليم يومين بسبب الشحن"
+          },
+          {
+            "id": "from",
+            "prompt": "من يوقّعها؟",
+            "suggestions": [],
+            "multiline": true,
+            "placeholder": "اسمك وصفتك"
+          }
+        ]
+      },
+      "approval": null,
+      "secure": null,
+      "browser": null,
+      "progress": null,
+      "steps": [
+        {
+          "id": "47203146-8ee1-492c-8eb6-ab8f1da7367c",
+          "text": "أسئلة الرسالة",
+          "createdAt": "2026-11-23T22:00:41.889Z"
+        }
+      ],
+      "error": null,
+      "configured": false,
+      "capabilities": {
+        "chatModel": false,
+        "available": [
+          "computation",
+          "web",
+          "browser",
+          "memory",
+          "knowledge",
+          "documents",
+          "sites",
+          "planner",
+          "letters",
+          "imageReading",
+          "pc"
+        ]
+      },
+      "visibility": {
+        "version": 1,
+        "level": 0,
+        "code": "local_card",
+        "reason": "بطاقة أسئلة ثم نص من قالب؛ لا يحتاج متصفحًا",
+        "lang": "ar",
+        "decidedAt": "2026-11-23T22:00:41.914Z",
+        "requested": 0,
+        "canView": true,
+        "history": [
+          {
+            "level": 0,
+            "code": "local_card",
+            "at": "2026-11-23T22:00:41.914Z"
+          }
+        ]
+      },
+      "campaign": null,
+      "version": "f1a0a176ea84d1a1ce65e5b1",
+      "run": {
+        "id": "1f73e96b-c65f-4abb-b511-ae4b6864bd5d",
+        "phase": "awaiting_input",
+        "path": "action",
+        "engine": {
+          "kind": "rules",
+          "modelCalls": 0
+        },
+        "context": {
+          "objective": "اكتب لي رسالة اعتذار لعميل",
+          "previousTurns": 0,
+          "constraints": [],
+          "corrections": [],
+          "capabilities": [
+            "computation",
+            "web",
+            "browser",
+            "memory",
+            "knowledge",
+            "documents",
+            "sites",
+            "planner",
+            "letters",
+            "imageReading",
+            "pc"
+          ],
+          "limitations": [
+            "chatModel"
+          ]
+        },
+        "plan": null,
+        "evidence": [],
+        "permissions": [],
+        "verification": null,
+        "verdict": null,
+        "repairs": {
+          "used": 0,
+          "limit": 1
+        },
+        "steeredFrom": null,
+        "sequence": 2,
+        "updatedAt": "2026-11-23T22:00:41.915Z"
+      }
+    }
+  }
+}

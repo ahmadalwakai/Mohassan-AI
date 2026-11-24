@@ -1,0 +1,17 @@
+{
+  "capturedAt": "2026-11-23T22:00:48.913Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "POST",
+    "url": "/api/windows/pairing",
+    "body": {}
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "972fcb1c-981c-4fcc-bfdb-cc3a6ac137e5",
+      "code": "RdnSA2g6l99-SFBz",
+      "expiresAt": "2026-11-23T22:02:48.909Z"
+    }
+  }
+}

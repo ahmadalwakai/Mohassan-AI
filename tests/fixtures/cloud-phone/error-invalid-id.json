@@ -1,0 +1,17 @@
+{
+  "capturedAt": "2026-11-23T22:00:48.826Z",
+  "sourceCommit": "41956ba",
+  "request": {
+    "method": "GET",
+    "url": "/api/chat/conversations/not-a-uuid"
+  },
+  "response": {
+    "status": 400,
+    "body": {
+      "error": {
+        "code": "VALIDATION_ERROR",
+        "message": "تحقق من الحقول المطلوبة وطول المدخلات."
+      }
+    }
+  }
+}
