@@ -19,13 +19,15 @@ import { compileInstructionContext, type InstructionDocument } from '../../packa
 import { parseSkillManifest } from '../../packages/skills/src/frontmatter.ts';
 import { builtinSkills } from '../../packages/skills/src/builtin/index.ts';
 import { SkillCategorySchema, SkillContractSchema } from '../../packages/contracts/src/skills.ts';
+import { MAX_GITHUB_SKILLS } from '../../packages/skills/src/import-store.ts';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const LIBRARY = join(ROOT, 'skills-library', 'skills');
 const EVAL = join(ROOT, 'artifacts', 'skills-library-2026-11-22');
 const FINAL = process.argv.includes('--final');
 const BUDGET = 4000; // the chat's upper bound for skill context (brain.ts skillContextBudget)
-const LIMITS = { skills: 100, files: 40, fileBytes: 64000, totalBytes: 256000, body: 1800 } as const;
+// `skills` is the sync's own ceiling: above it the whole GitHub sync stops (SKILL_REMOTE_TOO_MANY), it does not skip the extra folders.
+const LIMITS = { skills: MAX_GITHUB_SKILLS, files: 40, fileBytes: 64000, totalBytes: 256000, body: 1800 } as const;
 const VERSION = /^\d{1,4}\.\d{1,4}\.\d{1,5}$/;
 const CATEGORIES = new Set(['reasoning', 'coding', 'browser', 'computer', 'design', 'creativity', 'documents', 'languages', 'business', 'marketing', 'research', 'security', 'analytics', 'media']);
 // Words that appear in almost any message. In a name or description they make a skill fire on chit-chat.

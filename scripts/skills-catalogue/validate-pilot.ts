@@ -65,6 +65,13 @@ async function main() {
   const suiteHash = sha256(casesText + (heldoutText ?? '') + (heldout2Text ?? '') + (heldout3Text ?? ''));
   const pilotSlugs = (await readdir(join(ROOT, 'skills-pilot', 'skills'))).sort();
   const pilot = new Set(pilotSlugs);
+  // The accepted pilot skills were published in skills-library on 2026-11-24 (three under new ids). Importing both folders now
+  // collides on slugs and passes the local import quota, so this validation of the pre-publication package stops here.
+  const published = new Set(await readdir(join(ROOT, 'skills-library', 'skills')).catch(() => [] as string[]));
+  if (pilotSlugs.some(slug => published.has(slug))) {
+    console.log('The pilot is published in skills-library (2026-11-24); measure the published library with scripts/skills-library/measure-reader.ts.');
+    return;
+  }
 
   // 1. Structural, without a database.
   const structural: Record<string, unknown>[] = [];

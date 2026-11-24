@@ -32,8 +32,12 @@ interface Cases { positive: { skill: string; request: string; mustContain: strin
 
 async function realSkills(): Promise<{ candidates: SkillReaderCandidate[]; bodies: Map<string, string>; folders: { slug: string; dir: string }[] }> {
   const candidates: SkillReaderCandidate[] = [], bodies = new Map<string, string>(), folders: { slug: string; dir: string }[] = [];
+  // Since 2026-11-24 the accepted pilot skills are published in skills-library too: a slug is read once, the first folder wins.
+  const seen = new Set<string>();
   for (const base of ['skills', join('skills-library', 'skills'), join('skills-pilot', 'skills')]) {
     for (const slug of (await readdir(join(ROOT, base))).sort()) {
+      if (seen.has(slug)) continue;
+      seen.add(slug);
       const text = await readFile(join(ROOT, base, slug, 'SKILL.md'), 'utf8');
       const built = buildSkillSource([{ path: 'SKILL.md', content: text }], { root: base, defaultSlug: slug });
       const id = randomUUID();
