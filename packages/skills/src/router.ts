@@ -1,5 +1,5 @@
 import type { SkillCategory } from '@mohassan/contracts';
-import { arabicBase, requestTerms, skillStems, STEM_STOP_WORDS, type RequestTerm } from './stems.ts';
+import { arabicBase, foldText, requestTerms, skillStems, STEM_STOP_WORDS, type RequestTerm } from './stems.ts';
 
 export interface SkillContextMetadata {
   id: string;
@@ -60,12 +60,64 @@ export function rarityWeights(index: { readonly size: number; frequency(term: st
 /** Arabic words are stemmed as the reader stems them; English words stay whole (see StemOptions in stems.ts). */
 const ROUTER_STEMS = { english: 'exact' } as const;
 const routerStems = (text: string) => skillStems(text, ROUTER_STEMS);
+
+// Internal index terms keep the matching skills discoverable even if the brief shares no literal metadata words.
+const AD_CAMPAIGN = ':ad-campaign';
+const AD_COPY = ':ad-copy';
+// A recognized brief is stronger evidence than one coincidental title match (6).
+const AD_INTENT_SCORES = new Map([
+  ['google-ads-campaign', new Map([[AD_CAMPAIGN, 12]])],
+  ['copywriting', new Map([[AD_CAMPAIGN, 8], [AD_COPY, 12]])],
+]);
+const GOOGLE_ADS = /\b(?:google\s+ads|adwords)\b/u;
+const OTHER_PLATFORMS = '(?:meta|facebook|instagram|tiktok|bing|microsoft|linkedin|snapchat|youtube)';
+const OTHER_AD_PLATFORM = new RegExp(String.raw`\b` + OTHER_PLATFORMS + String.raw`\s+(?:ads|advertising|campaign)\b|\b(?:on|for)\s+` + OTHER_PLATFORMS + String.raw`\b`, 'u');
+const AD_TOPIC = '(?:ads?|adverts?|advertisements?|advertising|adwords|ppc|paid search)';
+const REQUEST_START = String.raw`^(?:please\s+)?(?:(?:can|could|would) you\s+|help me\s+)?`;
+const AD_ACTION = REQUEST_START + String.raw`(?:set up|create|run|launch|build|plan|prepare|make)\b`;
+const AD_COPY_ACTION = new RegExp(REQUEST_START + String.raw`(?:write|rewrite|draft|generate|design|edit)\b[^.!?]{0,60}\b` + AD_TOPIC + String.raw`\b`, 'u');
+const SEARCH_ADS = /\b(?:ppc|paid search|search ads?|responsive search|search campaign)\b/u;
+const DIRECT_AD_BRIEF = new RegExp(AD_ACTION + String.raw`[^.!?]{0,60}\b` + AD_TOPIC + String.raw`\b|^(?:(?:google|an?)\s+)?` + AD_TOPIC
+  + String.raw`\s+for\b|^(?:please\s+)?advertise\s+(?:my|our|the|a|an|this)\b|^(?:i|we)\s+(?:want|need|would like)\s+(?:(?:some|an?|google)\s+){0,2}`
+  + AD_TOPIC + String.raw`\b`, 'u');
+const CAMPAIGN_ACTION = new RegExp(AD_ACTION + String.raw`[^.!?]{0,45}\bcampaign\b`, 'u');
+const COPY_OUTPUT = /\b(?:headlines?|taglines?|ad copy|ad descriptions?)\b/u;
+const BUSINESS_GOAL = /\b(?:more|new|additional|increase|attract|get)\b[^.!?]{0,28}\b(?:customers|clients|bookings|leads|sales|orders|enquiries|inquiries)\b/u;
+const BUSINESS_OWNER = /\b(?:(?:i|we)\s+(?:run|own|operate|have)\b[^.!?]{0,36}|(?:my|our)\s+)\b(?:business|company|shop|clinic|practice|services?|store|studio|salon|barbershop|restaurant|caf[eé]|hotel|bakery|garage|gym)\b/u;
+const SPEND = /[£$€]\s*\d|\b(?:budget|spend|pay|pounds?|dollars?|euros?|gbp|usd|eur)\b/u;
+const SPEND_PERIOD = /\b(?:per|each|every|a)\s+(?:day|week|month)\b|\b(?:daily|weekly|monthly)\b/u;
+
+function advertisingIntent(text: string): string | undefined {
+  const googleAds = GOOGLE_ADS.test(text);
+  if (!googleAds && OTHER_AD_PLATFORM.test(text)) return undefined;
+  const direct = DIRECT_AD_BRIEF.test(text), campaign = CAMPAIGN_ACTION.test(text);
+  if (AD_COPY_ACTION.test(text) || direct && !campaign && COPY_OUTPUT.test(text)) {
+    return googleAds || SEARCH_ADS.test(text) ? AD_CAMPAIGN : AD_COPY;
+  }
+  const business = BUSINESS_OWNER.test(text), growth = BUSINESS_GOAL.test(text);
+  if (direct
+    || campaign && (growth || /\b(?:selling|sell)\b/u.test(text) || business && SPEND.test(text))
+    || business && growth && SPEND.test(text) && SPEND_PERIOD.test(text)) return AD_CAMPAIGN;
+  return undefined;
+}
+
+// A past personal event or a specific public value calls for evidence. Match whole questions so a follow-up instruction
+// in the same turn still has access to guidance.
+const EN_PAST_FACT = /^(?:what|which(?:\s+[\p{L}-]+){0,3})\s+did\s+(?:(?:i|we)\s+(?:run|send|write|record|assign|receive|say)\b|(?:my|our)\s+[\p{L}-]+(?:\s+[\p{L}-]+)?\s+(?:say|send|write|ship|record|decide)\b)|^(?:what time|when)\s+(?:is|was)\s+(?:my|our)\b/u;
+const EN_PUBLIC_FACT = /^(?:what is|what's|tell me)\s+the\s+(?:capital|population|current (?:price|exchange rate|score))\s+(?:of|for)\b|^who (?:invented|founded|discovered)\b/u;
+const AR_FACT = /^(?:كم\s+(?:عدد سكان|الساعه)(?![\p{L}\p{N}])|كم سعر (?:[^؟?!]+ )?(?:اليوم|الان)(?![\p{L}\p{N}])|ما\s+(?:هي\s+)?عاصمه\s+|(?:متي|امتي)\s+موعد\s+|(?:ماذا|وش|ايش)\s+(?:كتبت|ارسلت|سجلت)\s+)/u;
+function isFactQuestion(text: string): boolean {
+  const question = text.replace(/[.!?؟]+$/u, '');
+  return !/[.!?؟\n]/u.test(question) && (EN_PAST_FACT.test(question) || EN_PUBLIC_FACT.test(question) || AR_FACT.test(question));
+}
 /**
  * The terms the router reads in a skill: its id, its name and its description, folded as the reader folds them, with Arabic words
  * stemmed (stems.ts), so «الإكسل» meets «اكسل» and «جوالي» meets «الجوال». catalogue.ts indexes the same terms (routerIndex).
  */
 export function routerTermsOf(skill: SkillContextMetadata): string[] {
-  return [...new Set([...routerStems(skill.slug), ...routerStems(skill.name), ...routerStems(skill.description)])];
+  const terms = new Set([...routerStems(skill.slug), ...routerStems(skill.name), ...routerStems(skill.description)]);
+  if (skill.category === 'marketing') for (const intent of AD_INTENT_SCORES.get(skill.slug)?.keys() ?? []) terms.add(intent);
+  return [...terms];
 }
 /**
  * A request's words with their stem variants, as the reader reads them, from the first 16,000 characters and at most 100 words.
@@ -73,12 +125,17 @@ export function routerTermsOf(skill: SkillContextMetadata): string[] {
  * otherwise stem apart (request «إعلان» → «اعل», skill «إعلانات» → «اعلان»), and «اكتب إعلان لخدمة النقل» then reached no Ads skill.
  */
 export function routerRequestTerms(goal: string): RequestTerm[] {
-  return requestTerms(goal, 16000, ROUTER_STEMS).slice(0, 100).map(term => {
+  const text = foldText(goal.slice(0, 16000)).trim();
+  if (isFactQuestion(text)) return [];
+  const terms = requestTerms(goal, 16000, ROUTER_STEMS).slice(0, 100).map(term => {
     if (!/\p{Script=Arabic}/u.test(term.word)) return term;
     const whole = [arabicBase(term.word), ...['و', 'ف', 'ب', 'ل', 'ك'].filter(clitic => term.word.startsWith(clitic) && term.word.length > 3).map(clitic => arabicBase(term.word.slice(1)))];
     const extra = whole.filter(form => form.length >= 3 && !STEM_STOP_WORDS.has(form) && !term.variants.includes(form));
     return extra.length ? { word: term.word, variants: [...term.variants, ...new Set(extra)] } : term;
   });
+  const adIntent = advertisingIntent(text);
+  if (adIntent) terms.push({ word: adIntent, variants: [adIntent] });
+  return terms;
 }
 /** Weights computed over the candidates themselves: right when they are every active skill, as in tests and offline checks. */
 function candidateWeights(candidates: readonly SkillContextMetadata[]): RouterTermWeight {
@@ -114,6 +171,7 @@ const CATEGORY_TIE = 0.001;
  * match: on their own, «شركة» would pull in every business skill.
  */
 function scorer(terms: readonly RequestTerm[], weight: RouterTermWeight): (skill: SkillContextMetadata) => number {
+  const adIntent = terms.find(term => term.word === AD_CAMPAIGN || term.word === AD_COPY)?.word;
   return skill => {
     const slug = new Set(routerStems(skill.slug)), name = new Set(routerStems(skill.name)), description = new Set(routerStems(skill.description));
     let content = 0;
@@ -127,6 +185,7 @@ function scorer(terms: readonly RequestTerm[], weight: RouterTermWeight): (skill
       }
       if (best > 0) { content += best; used.add(stem); }
     }
+    if (adIntent && skill.category === 'marketing') content = Math.max(content, AD_INTENT_SCORES.get(skill.slug)?.get(adIntent) ?? 0);
     if (content === 0) return 0;
     const category = new Set(routerStems(CATEGORY_WORDS[skill.category]));
     return content + CATEGORY_TIE * terms.filter(term => term.variants.some(variant => category.has(variant))).length;
