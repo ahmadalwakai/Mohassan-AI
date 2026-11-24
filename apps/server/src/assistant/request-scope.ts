@@ -3,6 +3,7 @@ import { parseUserRequestConstraints, isEntireLiteralRequest, maskRequestLiteral
 export { parseUserRequestConstraints, isEntireLiteralRequest, requestCapabilityAllowed, requestConstraintReply, maskRequestLiteralData, UserRequestConstraintsSchema, type UserRequestConstraints, type ForbiddenRequestCapability } from './request-constraints.js';
 import { publicSearchScan, publicSearchText } from '@mohassan/browser';
 import { isCurrentComputerReadRequest } from './computer-request-language.js';
+import { splitReplyDirective } from './reply-directive.js';
 
 /** Source classification is independent of tool availability and model output. */
 export const requestSources = ['public_lookup', 'prior_conversation', 'local_state', 'supplied_content', 'unresolved'] as const;
@@ -110,6 +111,14 @@ export function requestScopeActionText(value: string): string {
   return text;
 }
 
+/** A recognized reply directive cannot supply a reference for the lookup itself. */
+export function lookupRequestBody(value: string): string {
+  const { body, directive } = splitReplyDirective(value);
+  if (!directive) return value;
+  const text = requestOperationText(requestScopeActionText(body));
+  return isQuestion(text) || PUBLIC_ACTION.test(text) || FIND_PUBLIC_FACT.test(text) ? body : value;
+}
+
 function transformationDelimiter(value: string): number | null {
   for (const found of value.matchAll(/[:：]/gu)) {
     if (!/https?$/iu.test(value.slice(Math.max(0, found.index - 5), found.index))) return found.index;
@@ -137,7 +146,7 @@ export function assessRequestScope(value: string, options: RequestScopeOptions =
   if (typeof value !== 'string' || !value.trim() || value.length > 8000) return make('unresolved', 'unknown', 'unknown', ['invalid_input']);
   if (isEntireLiteralRequest(value)) return make('supplied_content', 'unknown', 'unknown', ['missing_target']);
   if (constraints?.standalone || constraints?.ambiguous) return make('unresolved', constraints.standalone && !constraints.ambiguous ? 'converse' : 'unknown', 'unknown', ['explicit_prohibition']);
-  const original = value.trim(), actionText = requestScopeActionText(original), text = requestOperationText(actionText);
+  const original = value.trim(), actionText = lookupRequestBody(requestScopeActionText(original)), text = requestOperationText(actionText);
   if (SOCIAL_QUESTION.test(text)) return make('unresolved', 'converse', 'unknown', ['non_lookup_operation']);
   const credentialScan = publicSearchScan(original);
   if (publicSearchText(credentialScan) !== credentialScan) return make('supplied_content', 'unknown', 'unknown', ['credential_material']);

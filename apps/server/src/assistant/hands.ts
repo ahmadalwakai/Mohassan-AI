@@ -1,7 +1,7 @@
 import { AgentEffectHeld, BrowserError, compileQuery, publicSearchScan, publicSearchText, safeResumeUrl, type AgentAction, type AgentElement, type AgentPage, type AgentRequestPermit, type SearchHit } from '@mohassan/browser';
 import { directRoute, namedSite, sensitiveAction } from './brain.js';
 import { hostOf, readingLabel, siteName } from './activity.js';
-import { checkAnswerLine, figureKind, isDisambiguationPage, isDisambiguationTitle, isMetaLine, isReasonQuestion, questionLanguage } from './answer-check.js';
+import { checkAnswerLine, figureKind, isDisambiguationPage, isDisambiguationTitle, isMetaLine, isReasonQuestion, POPULATION_ESTIMATE_ROW, questionLanguage } from './answer-check.js';
 import { releaseLines, releaseQuestion } from './releases.js';
 import { isCampaignRequest } from './campaign-request.js';
 import { isSiteRequest } from '@mohassan/sites';
@@ -26,7 +26,7 @@ export interface HandsReply { lang?: 'ar' | 'en'; sentences?: number; fields?: R
 export type HandsStep =
   | { kind: 'open'; url: string; name: string }
   /** `ask`: the owner asked a question, so the run opens the top results and quotes the sentences that answer it. */
-  | { kind: 'search'; query: string; site: { url: string; name: string } | null; here?: boolean; ask?: boolean; reply?: HandsReply }
+  | { kind: 'search'; query: string; site: { url: string; name: string } | null; here?: boolean; ask?: boolean; exactQuery?: boolean; reply?: HandsReply }
   | { kind: 'click'; target: string; ordinal: number | null }
   | { kind: 'type'; text: string; field: string }
   | { kind: 'read'; more: boolean }
@@ -76,7 +76,7 @@ export interface HandsPlan {
    *  `second`: for a figure, another page's sentence on the same question, and whether its figure agrees (plan §7.4).
    *  `official`: the product's own release page (releases.ts), so no second source is asked of it; `quote` is that page's
    *  own entry, shown under the answer line. */
-  found?: { url: string; title: string; lines: string[]; readAt?: string; second?: { url: string; title: string; line: string; agrees: boolean }; official?: boolean; quote?: string };
+  found?: { url: string; title: string; lines: string[]; heading?: string; firstSentence?: string; readAt?: string; second?: { url: string; title: string; line: string; agrees: boolean }; official?: boolean; quote?: string };
   /** The language of the owner's request; replies that are not quotes follow it, not the query's script («ابحث عن Python docs» is Arabic). */
   lang?: 'ar' | 'en';
   /** Pages the pre-send judge refused as this question's source: the search is read again past them (the chat's correction step). */
@@ -300,9 +300,11 @@ export function parseHands(request: string): HandsStep[] | null {
     if (steps) {
       const directive = framing.directive;
       if (directive) for (const step of steps) if (step.kind === 'search') {
-        step.reply = { ...(directive.lang ? { lang: directive.lang } : {}), ...(directive.sentences ? { sentences: directive.sentences } : {}), ...(directive.fields?.length ? { fields: directive.fields } : {}) };
-        // Naming a page's title and link asks for a page that was read and found about the subject, not a bare list.
-        if (directive.fields?.some(field => field === 'title' || field === 'link')) step.ask = true;
+        const sentences = directive.sentences ?? (directive.brief ? 1 : undefined);
+        step.reply = { ...(directive.lang ? { lang: directive.lang } : {}), ...(sentences ? { sentences } : {}), ...(directive.fields?.length ? { fields: directive.fields } : {}) };
+        // A standalone search with a reply directive supplies the exact query and the desired output.
+        if (steps.length === 1 && !step.site) step.exactQuery = true;
+        if (directive.fields?.length || sentences) step.ask = true;
       }
       return steps;
     }
@@ -772,6 +774,11 @@ export function projectedFigure(line: string): boolean {
   const western = line.replace(/[٠-٩]/gu, digit => String(digit.charCodeAt(0) - 0x0660));
   return [...western.matchAll(/(?<!\d)(20\d\d|21\d\d)(?!\d)/gu)].some(found => Number(found[1]) > THIS_YEAR);
 }
+/** Latest year in a count, ignoring digit groups that could be part of the count itself. */
+function populationYear(line: string): number {
+  const western = line.replace(/[٠-٩]/gu, digit => String(digit.charCodeAt(0) - 0x0660));
+  return Math.max(0, ...[...western.matchAll(/(?<!\d)(?<!\d[.,،٬])(?:19[5-9]\d|20\d\d)(?!\d)(?![.,،٬]\d)/gu)].map(match => Number(match[0])));
+}
 /** A page whose title is the subject itself («مصر», «المغرب - ويكيبيديا»), so its sentences may name it by a pronoun. */
 export function isOwnArticle(title: string, entity: readonly string[]): boolean {
   if (!entity.length) return false;
@@ -821,6 +828,7 @@ const ARABIC_DEFINITION_LEAD = /^(?:(?:ما معنى|ماذا يعني)\s+|ما 
 const ERROR_QUESTION =/\b(?:traceback|stack\s*trace|exception|debug|error)\b|خطأ|اخطاء|أخطاء|تتبع/iu;
 const TRACEBACK_FRAGMENT = /\bTraceback\s*\(|\bFile\s+["'][^"']+["'],?\s+line\s+\d+\b/iu;
 const WIKI_INFOBOX = /معلومات عامة|تعديل مصدري|Edit this at Wikidata|edit on Wikidata/u;
+const WIKI_INFOBOX_END = /تعديل مصدري\s*-\s*تعديل|Edit this at Wikidata/u;
 const WIKI_APPEARANCE = /(?:تلقائي فاتح داكن|Automatic Light Dark)/u;
 /** Redirect notes and maintenance banners: about the article, never part of an answer. */
 const WIKI_BANNERS = /\((?:بالتحويل من|Redirected from)[^)]*\)|هذه المقالة (?:بحاجة|تحتاج|يتيمة|لا تحتوي|قد تحتوي)[^.]*\.|This article (?:needs|may|has multiple|relies)[^.]*\./gu;
@@ -840,12 +848,29 @@ export function readableText(text: string): string {
   // The infobox ends in its edit links, glued to the article's first sentence on a folded page.
   // Near the top, everything before them is the infobox (photo caption, cells): drop it whole,
   // so the definition sentence is the article's first; later ones still become a sentence break.
-  const infoboxEnd = body.match(/تعديل مصدري\s*-\s*تعديل|Edit this at Wikidata/u);
+  const infoboxEnd = body.match(WIKI_INFOBOX_END);
   if (infoboxEnd?.index !== undefined && infoboxEnd.index < 8000) body = body.slice(infoboxEnd.index + infoboxEnd[0].length);
   body = body.replace(/(تعديل مصدري)\s*-\s*تعديل|(Edit this at Wikidata)/gu, (_, ar, en) => `${ar ?? en}.\n`);
   const foot = body.search(WIKI_FOOT);
   if (foot > 0) body = body.slice(0, foot);
   return body.replace(EDIT_MARK, '. ');
+}
+
+/** The country infobox can carry a dated national estimate even when its prose has none. */
+function infoboxPopulation(page: AgentPage, entity: readonly string[]): { line: string; year: number } | undefined {
+  if (URL.parse(page.url)?.hostname !== 'ar.wikipedia.org' || !isOwnArticle(page.title, entity)) return;
+
+  const lead = page.text.slice(0, 8000);
+  const start = lead.indexOf('الأرض والسكان');
+  const end = lead.search(WIKI_INFOBOX_END);
+  if (start < 0 || end <= start) return;
+
+  const infobox = tidy(lead.slice(start, end).replace(/\[\s*[\d٠-٩]+\s*\]|[\u200e\u200f]/gu, ' '));
+  const estimates = [...infobox.matchAll(new RegExp(POPULATION_ESTIMATE_ROW.source, 'gu'))].map(([line, date]) => ({
+    line,
+    year: Number(date.replace(/[٠-٩]/gu, digit => String(digit.charCodeAt(0) - 0x0660))),
+  }));
+  return estimates.filter(({ year }) => year >= 1950 && year <= THIS_YEAR).sort((a, b) => b.year - a.year)[0];
 }
 
 /** The page's own sentences that share the question's words, best first by page order; quoted, never rewritten. */
@@ -1424,7 +1449,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
   /** Articles opened by the subject's own name (Wikipedia resolves its redirects): the subject's article whatever its title. */
   const ownUrls = new Set<string>();
   const ownPage = (page: { url: string; title: string }, entity: readonly string[]) => ownUrls.has(withoutHash(page.url)) || isOwnArticle(page.title, entity);
-  const engine = async (query: string): Promise<{ results: { title: string; url: string }[] } | { failed: string } | 'unavailable'> => {
+  const engine = async (query: string, exactQuery = false): Promise<{ results: { title: string; url: string }[] } | { failed: string } | 'unavailable'> => {
     const publicQuery = query.normalize('NFKC').replace(/\p{Cf}/gu, '');
     const decoded = publicSearchScan(publicQuery);
     if (publicSearchText(publicQuery) !== publicQuery || publicSearchText(decoded) !== decoded || (decoded.match(/https?:\/\/\S+/gi) ?? []).some(url => safeResumeUrl(url) === null)) {
@@ -1476,7 +1501,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     // Wikipedia opens a subject's article by its name and follows its redirects («المياه البيضاء» → «الساد», «الشاي الأخضر»
     // → «شاي أخضر», measured 2026-11-22), so the article is read while the search runs, not searched for after it: the search
     // lookup cost 1.1 to 1.9 s a question (the engine's one-second spacing, then the search). The page reader caches it.
-    const direct = subject.length && !live && surface.trim() && io.read
+    const direct = !exactQuery && subject.length && !live && surface.trim() && io.read
       ? io.read(articleUrl(surface, questionLanguage(query))).catch((): HandsRead => ({ kind: 'unreadable' })) : null;
     let results = await lookup(query);
     const openedByName = direct ? await direct : null;
@@ -1497,14 +1522,14 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     // Words already searched in this round are not searched again: the same words return the same results.
     const looked = new Set([fold(query)]);
     const narrower = wikiTerms(query);
-    if (!results.length && !live && fold(narrower) !== fold(query) && topicWords(narrower).length) {
+    if (!exactQuery && !results.length && !live && fold(narrower) !== fold(query) && topicWords(narrower).length) {
       await io.step(`لم يُجب البحث الأول؛ البحث عن «${narrower.slice(0, 60)}»`);
       await pause(PROVIDER_SPACING_MS);
       results = await lookup(narrower);
       looked.add(fold(narrower));
     }
     // When the article could not be opened by name, one more search by the subject's name finds it (looked up only when missing).
-    if (!named && searchable.length && !live && !results.some(hit => isOwnArticle(hit.title, searchable))) {
+    if (!exactQuery && !named && searchable.length && !live && !results.some(hit => isOwnArticle(hit.title, searchable))) {
       if (surface && !looked.has(fold(surface))) {
         await io.step(`البحث عن مقالة «${surface.slice(0, 60)}»`);
         await pause(PROVIDER_SPACING_MS);
@@ -1545,7 +1570,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         // «What is the latest version of Node.js?» is read from the product's own release page first (releases.ts): the
         // search only finds old forum threads for it. When that page cannot be read or no longer states a version, the
         // general search runs as before.
-        const release = !template && !box && step.ask && io.read ? releaseQuestion(step.query) : null;
+        const release = !template && !box && step.ask && !step.exactQuery && io.read ? releaseQuestion(step.query) : null;
         if (release) {
           await io.step(readingLabel([release.page]));
           const read = await io.read!(release.page).catch((): HandsRead => ({ kind: 'unreadable' }));
@@ -1560,7 +1585,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         }
         if (!template && !box) {
           // The shared engine over HTTP: a results list and no browser page.
-          const found = await engine(step.query);
+          const found = await engine(step.query, step.exactQuery);
           if (found === 'unavailable') return { kind: 'done', status: 'blocked', text: noSearchSource(step.query, plan.lang) };
           if ('failed' in found) return { kind: 'done', status: 'blocked', text: searchFailed(step.query, found.failed, plan.lang) };
           searched = found.results;
@@ -1652,6 +1677,8 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             // census list and «حول 1340، كانت فرنسا يبلغ عدد سكانها حوالي 17 مليون نسمة» above «68.6 مليون نسمة في يناير 2025» (live
             // 2026-11-22 08:15, artifacts/plan-2026-11-22/wrong-answers-fix/). Every other question reads its top three lines as before.
             const people = figureKind(step.query) === 'people';
+            const estimate = people && !/[\d٠-٩]/u.test(step.query) ? infoboxPopulation(opened, entity) : undefined;
+            const datedEstimate = estimate && checkAnswerLine(step.query, estimate.line).ok ? estimate : undefined;
             // A reason sits further down its page too: the sentence that states the cause is rarely among the first three that share the question's words.
             const ranked = relevantLines(opened, step.query, people || reasonWords.length ? 6 : 3, true);
             // A reason is quoted only from a sentence that states the cause of what was asked (reasonAnswers), not from any sentence with a causal word in it.
@@ -1659,8 +1686,12 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             const passing = ranked.flatMap((line, at) => checkAnswerLine(step.query, line).ok && namesEntity(line, entity, ownPage(opened, entity)) && (!reasoned || reasonAnswers(step.query, line)) ? [at] : []);
             // A population is today's count or nothing. When the page states only a forecast («ستكون … 42 مليون نسمة في 2050»,
             // the answer to «كم عدد سكان أستراليا؟» in the 13:50 audit of 2026-11-22) or an old census, the next page is tried.
-            const answerAt = people ? passing.find(at => !pastFigure(ranked[at]!) && !projectedFigure(ranked[at]!)) ?? -1 : passing[0] ?? -1;
-            const lines = answerAt < 0 ? [] : [ranked[answerAt]!, ...ranked.filter((_, at) => at !== answerAt)].slice(0, 3);
+            const currentPopulation = (line: string) => !pastFigure(line) && !projectedFigure(line);
+            const answerAt = people ? passing.find(at => currentPopulation(ranked[at]!)
+              && (!datedEstimate || populationYear(ranked[at]!) > datedEstimate.year)) ?? -1 : passing[0] ?? -1;
+            const answer = ranked[answerAt];
+            const lines = answer ? [answer, ...ranked.filter((_, at) => at !== answerAt)].slice(0, 3)
+              : datedEstimate ? [datedEstimate.line] : [];
             // A page whose title names none of the question's words answers only with a sentence that carries nearly all of them:
             // «The trio visit Misumi again, this time…» from the film «The Third Murder» shares only «visit» and «time» with «What is
             // the best time to visit Japan?» (live 2026-11-22 06:13 and 07:44). Measured on the 208 sourced answers of the eight full
@@ -1671,6 +1702,10 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
               && topicCoverage(lines[0]!, topic) < Math.max(2, topic.length - 1)) continue;
             if (lines.length) {
               plan.found = { url: opened.url, title: tidy(opened.title) || hostOf(opened.url), lines, readAt: opened.observedAt };
+              if (step.reply?.fields?.includes('heading')) plan.found.heading = pageHeading(opened);
+              if (step.reply?.fields?.includes('first_sentence')) {
+                plan.found.firstSentence = firstSentence(opened.text, plainTitle(opened.title) || null) ?? undefined;
+              }
               // A figure is shown with a second page's figure when another fitting page was already read (plan §7.4): the
               // reply says whether the two agree, and shows both when they differ. No extra fetch: the pages came together.
               // The other page must be about the same subject: its title holds every topic word, or is the subject itself.
@@ -1679,8 +1714,9 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
                   if (other === index || otherRead?.kind !== 'page' || !readableOverHttp(otherRead.page.text) || isDisambiguationPage(otherRead.page)) continue;
                   const ownArticle = ownPage(otherRead.page, entity);
                   if (!ownArticle && topic.length && titleScore(otherRead.page.title, topic) < topic.length) continue;
-                  const [line] = relevantLines(otherRead.page, step.query, 1, true)
-                    .filter(candidate => checkAnswerLine(step.query, candidate).ok && namesEntity(candidate, entity, ownArticle));
+                  const line = relevantLines(otherRead.page, step.query, people ? 6 : 1, true)
+                    .find(candidate => checkAnswerLine(step.query, candidate).ok && namesEntity(candidate, entity, ownArticle)
+                      && (!people || currentPopulation(candidate)));
                   if (line) { plan.found.second = { url: otherRead.page.url, title: tidy(otherRead.page.title) || hostOf(otherRead.page.url), line, agrees: sameFigure(lines[0], line) }; break; }
                 }
               }
@@ -1796,6 +1832,18 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
 const HEADING_ASK = /(?:^|\s)(?:ب|و)?(?:ال)?(?:عنوان|عناوين)(?=\s|$)|\b(?:main heading|heading|headline|title|h1)\b/iu;
 /** «the first sentence», «the opening paragraph», «أول جملة», «الجملة الأولى» (folded). */
 const FIRST_SENTENCE_ASK = /\b(?:first|opening|1st) (?:sentence|line|paragraph)\b|(?:^|\s)(?:ب|و)?اول (?:جمله|سطر|فقره)(?=\s|$)|(?:^|\s)(?:ب|و)?(?:ال)?(?:جمله|فقره) (?:ال)?اولي(?=\s|$)/iu;
+
+/** Look for the title in the page text, including pages the browser joined into a single line. */
+function pageHeading(page: AgentPage): string | undefined {
+  const plain = plainTitle(page.title);
+  const title = fold(plain);
+  if (!title) return undefined;
+  const heading = page.text.split('\n').map(tidy).find(line => line.length <= 120 && fold(line) === title);
+  if (heading || plain.length < 3) return heading;
+  const at = page.text.toLowerCase().indexOf(plain.toLowerCase());
+  if (at >= 0 && at <= 300) return page.text.slice(at, at + plain.length);
+}
+
 /**
  * The first sentence of the page's own text after its heading: the browser joins a page into one line, so the sentence is
  * found by its end mark. Navigation runs and lines of fewer than four words are not sentences.
@@ -1832,18 +1880,9 @@ export function pageAnswer(page: AgentPage, question: string, lang: 'ar' | 'en')
   const asked = fold(question);
   const ar = lang === 'ar';
   const text = page.text;
-  const lines = text.split('\n').map(line => tidy(line)).filter(Boolean);
   const parts: PageAnswerPart[] = [], missing: string[] = [];
   if (HEADING_ASK.test(asked)) {
-    // The main heading is the page's title where the page's own text shows it: a line of its own, or the opening words of the
-    // text when the browser joined the page into one line. A title the text never shows is not quoted.
-    const plain = plainTitle(page.title);
-    const title = fold(plain);
-    let heading = title ? lines.find(line => line.length <= 120 && fold(line) === title) : undefined;
-    if (!heading && plain.length >= 3) {
-      const at = text.toLowerCase().indexOf(plain.toLowerCase());
-      if (at >= 0 && at <= 300) heading = text.slice(at, at + plain.length);
-    }
+    const heading = pageHeading(page);
     if (heading) parts.push({ label: ar ? 'العنوان الرئيسي:' : 'Main heading:', quotes: [heading] });
     else missing.push(ar ? 'العنوان الرئيسي' : 'the main heading');
   }
@@ -1906,12 +1945,20 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
         && topic.length > 0 && titleScore(plainTitle(item.title), topic) >= (topic.length >= 3 ? 2 : 1)).slice(0, 3);
       // «in two sentences»: no more of the page's sentences than were asked for.
       const shownLines = reply?.sentences ? plan.found.lines.slice(0, Math.max(1, reply.sentences)) : plan.found.lines;
-      // «Return the page title and source link»: the page that was read and found about the question, named first.
-      const named = reply?.fields?.some(field => field === 'title' || field === 'link')
-        ? `**${en ? 'Page title:' : 'عنوان الصفحة:'}** ${plainTitle(plan.found.title)}\n**${en ? 'Source link:' : 'رابط المصدر:'}** ${plan.found.url}\n\n` : '';
+      const fieldsEn = reply?.lang ? reply.lang === 'en' : en;
+      const availableFields = {
+        title: { label: fieldsEn ? 'Page title' : 'عنوان الصفحة', value: plainTitle(plan.found.title) },
+        link: { label: fieldsEn ? 'Source link' : 'رابط المصدر', value: plan.found.url },
+        heading: { label: fieldsEn ? 'Main heading' : 'العنوان الرئيسي', value: plan.found.heading },
+        first_sentence: { label: fieldsEn ? 'First sentence' : 'أول جملة في الصفحة', value: plan.found.firstSentence },
+      };
+      const fields = reply?.fields?.length ? reply.fields.map(field => availableFields[field]) : null;
       // A reply asked in a language the page is not written in: the page's own sentences, and that said plainly.
-      const quotedArabic = /\p{Script=Arabic}/u.test(shownLines.join(' '));
-      const otherLanguage = reply?.lang && (reply.lang === 'ar') !== quotedArabic;
+      const displayedText = fields && last.exactQuery
+        ? fields.filter(field => field !== availableFields.link).map(field => field.value).join(' ')
+        : shownLines.join(' ');
+      const quotedArabic = /\p{Script=Arabic}/u.test(displayedText);
+      const otherLanguage = reply?.lang && displayedText.trim() && (reply.lang === 'ar') !== quotedArabic;
       const asked = reply?.lang === 'ar' ? en ? 'Arabic' : 'العربية' : en ? 'English' : 'الإنجليزية';
       const written = quotedArabic ? en ? 'Arabic' : 'العربية' : en ? 'English' : 'الإنجليزية';
       const languageNote = otherLanguage ? `\n\n${en
@@ -1924,6 +1971,13 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
       const officialNote = notOfficial ? `\n\n${en
         ? 'This is not the organisation’s own page: the search sources available to me (Wikipedia and documented APIs, with no general web index) returned no page from its own site. Send the official page’s link and I will read it.'
         : 'هذه ليست صفحة الجهة نفسها: مصادر البحث المتاحة لي (ويكيبيديا والواجهات الموثقة، بلا فهرس عام للويب) لم تُرجع صفحة من موقعها. أرسل رابط الصفحة الرسمية وأقرأها لك.'}` : '';
+      const values = fields?.flatMap(({ label, value }) => value ? [`**${label}:** ${value}`] : []) ?? [];
+      const missing = fields?.filter(field => !field.value).map(field => field.label) ?? [];
+      const gap = missing.length ? `${fieldsEn ? 'Not found on the page' : 'لم أجد في الصفحة'}: ${missing.join(fieldsEn ? ', ' : '، ')}.` : '';
+      const requestedFields = [values.join('\n'), gap].filter(Boolean).join('\n\n');
+      const status = missing.length || otherLanguage || notOfficial ? 'partial' : 'completed';
+      if (fields && last.exactQuery) return { status, text: `${requestedFields}${languageNote}${officialNote}` };
+      const named = requestedFields ? `${requestedFields}\n\n` : '';
       const [first, ...lines] = shownLines;
       // A detail is a whole sentence: a run cut at both ends («… ست ولايات ومقاطعتين…») or a heading that reads as a sentence
       // («الذكاء الاصطناعي القائم على المعرفة.») is left out (6 of 44 details on the 107 real requests of 2026-11-23).
@@ -1941,8 +1995,8 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
         : `\n\n**${en ? 'A second source differs:' : 'مصدر ثانٍ يختلف:'}** ${en ? `“${plan.found.second.line}”` : `«${plan.found.second.line}»`} — [${siteName(plan.found.second.url)} — ${plainTitle(plan.found.second.title)}](${plan.found.second.url})`
         : wantsFigure && !plan.found.official ? `\n\n${en ? 'I did not check this figure against a second source.' : 'لم أتحقق من هذا الرقم في مصدر ثانٍ.'}` : '';
       // A line composed from a page's data shows the page's own words under it («> node-v26.13.1-… 11-Nov-2026 16:41»).
-      const quoted = plan.found.quote ? `\n\n> ${plan.found.quote}` : '';
-      return { status: otherLanguage || notOfficial ? 'partial' : 'completed', text: `${named}${first}${quoted}${more}\n\n${source}${second}${also}${note}${languageNote}${officialNote}` };
+      const sourceQuote = plan.found.quote ? `\n\n> ${plan.found.quote}` : '';
+      return { status, text: `${named}${first}${sourceQuote}${more}\n\n${source}${second}${also}${note}${languageNote}${officialNote}` };
     }
     if (plan.results.length) return { status: 'partial', text: en
       ? `I found no page that answers “${last.query}” directly, and I will not pass you an answer from a page that is not about your question. These pages came up in the search:\n\n${list(plan.results)}\n\nSay “open result 2”, for example, and I will read it for you.${note}`

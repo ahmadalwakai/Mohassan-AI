@@ -80,6 +80,8 @@ const FIGURE_UNITS: Record<Exclude<FigureKind, 'any'>, RegExp> = {
 };
 const PEOPLE_WORD = /سكان|population|inhabitants|residents/giu;
 const NUMBER_TOKEN = /[\d٠-٩]+(?:[.,،٬][\d٠-٩]+)*/gu;
+/** A dated population estimate as labeled in Arabic Wikipedia infoboxes. */
+export const POPULATION_ESTIMATE_ROW = /(?<!\S)(?:توقع|تقدير)\s+\(\s*([\d٠-٩]{4})\s*\)\s+[\d٠-٩]+(?:[,٬][\d٠-٩]{3})*\s+نسم[ةه](?!\p{L})/u;
 /** A line that states a population, not only a number of some people: «10,033,480 نسمة يعملون» counts a workforce. */
 const POPULATION_STATEMENT = /سكان|تعداد|population|populous|populated|inhabitants|residents|\bliv(?:e|es|ed|ing)\b|يعيش|تعيش|يسكن|يقطن/iu;
 /** A density measures land, not people: «2.8 نسمة لكل كيلومتر مربع», "337 people per km²". */
@@ -139,6 +141,7 @@ export function hasFigureOf(kind: FigureKind, line: string): boolean {
   // Wikipedia leads carry vowel marks: «قُدِّر عدد سكانها بأكثرَ من 120 مليون نسَمة». Marks and tatweel only: the range
   // U+064B–U+0670 written as one span would also take the digits ٠–٩ and the percent sign ٪.
   const text = line.replace(/[ً-ٰٟـ]/gu, '');
+  if (POPULATION_ESTIMATE_ROW.exec(text)?.[0] === text.trim()) return true;
   // «123 مليون نسمة» with its unit is a population only in a line that speaks of one, and never as a density.
   const withUnit = POPULATION_STATEMENT.test(text) && [...text.matchAll(new RegExp(FIGURE_UNITS.people.source, 'giu'))]
     .some(found => !PER_AREA.test(text.slice(found.index! + found[0].length)) && !otherPeople(text, found.index!));

@@ -1,11 +1,11 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AgentBrowser, SearchProvider } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
-import { createJudgeShadow } from '../apps/server/src/assistant/judge-shadow.js';
+import { createJudgeShadow, type JudgeShadowLine } from '../apps/server/src/assistant/judge-shadow.js';
 
 const owner = 'isolated-local-sequence-owner';
 const member = 'isolated-local-sequence-member';
@@ -17,10 +17,12 @@ describe('local answers in order through the real chat controller', () => {
   let database: Awaited<ReturnType<typeof createDatabase>>;
   let control: Awaited<ReturnType<typeof createCommandChatControl>>;
   let directory: string;
+  let shadow: ReturnType<typeof createJudgeShadow>;
   const searched: string[] = [];
 
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), 'mohassan-local-sequence-chat-'));
+    shadow = createJudgeShadow({ logFile: join(directory, 'judge.jsonl') });
     database = await createDatabase();
     await migrate(database.db);
     const browser = {
@@ -35,7 +37,7 @@ describe('local answers in order through the real chat controller', () => {
       async search(query) { searched.push(query); return []; },
     };
     control = await createCommandChatControl(database.db, { browser, models: { fast: [], deep: [], vision: '' }, searchProvider,
-      fullAccess: async ownerId => ownerId !== member, judgeShadow: createJudgeShadow({ logFile: join(directory, 'judge.jsonl') }),
+      fullAccess: async ownerId => ownerId !== member, judgeShadow: shadow,
       judgeFixForOwner: true, judgeWithholdForOwner: true });
   });
   afterAll(async () => { await control?.shutdown(); await database?.close(); await rm(directory, { recursive: true, force: true }); });
@@ -79,5 +81,21 @@ describe('local answers in order through the real chat controller', () => {
     expect(can).toMatch(/^The tools I can use now in this conversation: /u);
     expect(can).not.toContain('Google Ads');
     expect(can).not.toContain('computer');
+  });
+
+  it('drains the judge log on shutdown and leaves it closed to late replies', async () => {
+    const reply = { conversationId: 'shutdown', question: 'What is 6 * 7?', reply: '6 * 7 = 42' };
+    const runIds = async () => (await readFile(shadow.logFile, 'utf8')).trim().split('\n')
+      .map(line => JSON.parse(line) as JudgeShadowLine)
+      .filter(line => line.conversationId === reply.conversationId)
+      .map(line => line.runId);
+
+    shadow.observe({ ...reply, runId: 'before-shutdown' });
+    await control.shutdown();
+    expect(await runIds()).toEqual(['before-shutdown']);
+
+    shadow.observe({ ...reply, runId: 'after-shutdown' });
+    await shadow.flush();
+    expect(await runIds()).toEqual(['before-shutdown']);
   });
 });
