@@ -59,6 +59,32 @@ describe('instruction metadata routing', () => {
     expect(routeInstructionSkills('astronomy', [skill('planning-guide')])).toEqual([]);
     expect(routeInstructionSkills('the and من في', [skill('planning-guide')])).toEqual([]);
   });
+  it('ignores the original router stop words after folding and clitic handling', () => {
+    const guide = skill('guide', 'reasoning', 'today task الآن كم إلى طلب مهمة');
+    expect(routeInstructionSkills('Today: task وإلى الآن وكم وطلب مهمة؟', [guide])).toEqual([]);
+    expect(rankInstructionCandidates('Today: task وإلى الآن وكم وطلب مهمة؟', [guide])).toEqual([]);
+  });
+  it('keeps English ad guidance available even without shared metadata words', () => {
+    const copy = skill('copywriting', 'marketing', 'ad copy and product descriptions');
+    const ads = skill('google-ads-campaign', 'marketing');
+    const goal = 'I run a bakery and want more bookings. I can spend £25 per day.';
+    expect(routeInstructionSkills(goal, [copy])).toEqual([copy]);
+    expect(routeInstructionSkills(goal, [copy, ads])).toEqual([ads, copy]);
+    expect(routeInstructionSkills(goal, [])).toEqual([]);
+  });
+  it('reserves top-three ad guidance without displacing the first lexical match', () => {
+    const repair = skill('appliance-repair', 'business');
+    const copy = skill('copywriting', 'marketing', 'ad copy and product descriptions');
+    const ads = skill('google-ads-campaign', 'marketing');
+    const goal = 'Create ads for my appliance repair service';
+    expect(routeInstructionSkills(goal, [copy, repair, ads], 3)).toEqual([repair, ads, copy]);
+  });
+  it('does not infer an ad brief from generic ad mentions or another campaign type', () => {
+    const copy = skill('copywriting', 'marketing', 'ad copy and product descriptions');
+    for (const goal of ['I want to block ads in my browser', 'Launch a fundraising campaign for our charity', 'Create Instagram ads for my bakery']) {
+      expect(routeInstructionSkills(goal, [copy])).toEqual([]);
+    }
+  });
   it('bounds the candidate scan and selected set', () => {
     const candidates = Array.from({ length: 201 }, (_, index) => skill(`guide-${index}`, 'coding', 'Coding guidance for a bounded task'));
     // A word every candidate holds weighs little; the cut is turned off to test the bounds alone.

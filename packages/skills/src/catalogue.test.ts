@@ -10,7 +10,7 @@ import { buildSkillSource } from './importer.ts';
 import {
   createSkillControl, createTermIndex, deriveCatalogueFacts, licenceKind, preloadInstructionMetadata, routerIndex, sha256, skillsMigration, type SkillControl,
 } from './index.ts';
-import { rankInstructionCandidates, rarityWeights, routerRequestTerms, type SkillContextMetadata } from './router.ts';
+import { rankInstructionCandidates, rarityWeights, routerCandidateTerms, type SkillContextMetadata } from './router.ts';
 
 const manifest = (fields: Record<string, string>, body: string) => `---\n${Object.entries(fields).map(([key, value]) => `${key}: ${value}`).join('\n')}\n---\n\n${body}\n`;
 const source = (slug: string, files: Record<string, string>) => buildSkillSource(Object.entries(files).map(([path, content]) => ({ path, content })), { root: `/fixture/${slug}`, defaultSlug: slug });
@@ -36,16 +36,18 @@ describe('catalogue index (pure)', () => {
   it('gives the router exactly what a full scan gives, for Arabic, English and unrelated goals', async () => {
     const real = await repoMetadata();
     const filler = Array.from({ length: 400 }, (_, n) => ({ id: randomUUID(), slug: `filler-${n}`, name: `Filler skill ${n}`, description: `Synthetic entry ${n} about topic${n % 37} and area${n % 11}.`, category: 'research' as const, version: '1.0.0', contentHash: sha256(`f${n}`) }));
-    const entries = [...real, ...filler].sort((a, b) => a.slug.localeCompare(b.slug, 'en'));
+    const copywriting: SkillContextMetadata = { id: randomUUID(), slug: 'copywriting', name: 'Copywriting', description: 'Ad copy and product descriptions', category: 'marketing', version: '1.0.0', contentHash: sha256('copywriting') };
+    const entries = [...real.filter(skill => skill.slug !== copywriting.slug), ...filler, copywriting].sort((a, b) => a.slug.localeCompare(b.slug, 'en'));
     const index = routerIndex(entries);
     const goals = ['كيف أكتب خطة عمل لمشروعي', 'help me write a cover letter for a job', 'حلل البيانات وأعطني مؤشرات الأداء', 'swot analysis for my cafe', 'topic3 area4 synthetic',
-      'ما الطقس اليوم', 'أريد كتابة بريد احترافي لعميل غاضب', 'sql query to count orders', 'plan', 'xyzzy nothing matches here'];
+      'ما الطقس اليوم', 'أريد كتابة بريد احترافي لعميل غاضب', 'sql query to count orders', 'plan', 'xyzzy nothing matches here', 'Advertise my pottery studio'];
     for (const goal of goals) {
       const full = rankInstructionCandidates(goal, entries).map(skill => skill.id);
-      // As routerCandidates does: shortlist by the router's stems, then rank with the weights of every entry.
-      const shortlisted = rankInstructionCandidates(goal, index.shortlist(routerRequestTerms(goal).flatMap(term => term.variants)).map(position => entries[position]), undefined, { weight: rarityWeights(index) }).map(skill => skill.id);
+      // As routerCandidates does: shortlist by the router's terms, then rank with the weights of every entry.
+      const shortlisted = rankInstructionCandidates(goal, index.shortlist(routerCandidateTerms(goal)).map(position => entries[position]), undefined, { weight: rarityWeights(index) }).map(skill => skill.id);
       expect(shortlisted).toEqual(full);
     }
+    expect(rankInstructionCandidates('Advertise my pottery studio', entries)).toContain(copywriting);
   });
 });
 
