@@ -203,15 +203,15 @@ class GpuJob:
                 self._sample()
             except Exception as error:
                 consecutive_failures += 1
-                try:
-                    self._append_memory_log({"time": now(), "pid": os.getpid(), "sample_error": str(error)})
-                except OSError as log_error:
-                    logging.getLogger(__name__).warning("Could not log GPU sample error %s: %s", error, log_error)
                 self._check_memory_sample_age(time.perf_counter())
                 if consecutive_failures >= MEMORY_SAMPLE_FAILURE_LIMIT:
                     self.problem = self.problem or (
                         f"GPU memory monitor failed {consecutive_failures} consecutive samples: {error}"
                     )
+                try:
+                    self._append_memory_log({"time": now(), "pid": os.getpid(), "sample_error": str(error)})
+                except OSError as log_error:
+                    logging.getLogger(__name__).warning("Could not log GPU sample error %s: %s", error, log_error)
             else:
                 sampled_at = time.perf_counter()
                 self._check_memory_sample_age(sampled_at)
