@@ -112,3 +112,119 @@ default.
 The model runs in shadow first: rules still decide, and the model's choice is logged next to them.
 It takes over only after R2 and R3 pass, with the rules kept as the fallback when its confidence is
 low.
+
+## 9. CPU B2 comparison (2026-11-24)
+
+Retrained B0 with its existing trainer and compared three classifiers initialized from scratch.
+Every run used the same route mapping, seed 7, and one PyTorch CPU thread. The training split
+contained 27,094 MASSIVE ar-SA and en-US rows from the official train and dev partitions, plus
+410 frozen written rows repeated ten times, for 31,194 training rows. The SHA-256 split in
+`train.py` assigned 100 written rows to dev. MASSIVE's official test partitions provided 5,948
+test rows. The written file retains its historical Claude Code authorship from §8. This run
+generated no examples and used no context rows or seed additions.
+
+Each B2 candidate assigns 14 learned route coefficients to each hash bucket. It averages the
+vectors for the message's n-grams and adds a per-route bias. The candidates use the same
+262,144 buckets and train with sparse Adagrad and weighted
+cross-entropy. Each model's checkpoint was chosen by dev accuracy, with ties going to the
+earliest epoch. Models were ranked by dev accuracy, then fewer dev never-web errors, then
+experiment order. MASSIVE test predictions were computed after that ranking was fixed.
+
+| Model | Training change | Epoch selected | Dev | MASSIVE test | Dev never-web → web_search |
+|---|---|---:|---:|---:|---:|
+| B0 | Existing character 2–4-grams, word unigrams, and class weights | 7 | 59/100 (59.0%) | 5,176/5,948 (87.02%) | 1/33 |
+| B2 direct | Direct route coefficients with B0 features and class weights | 1 | 65/100 (65.0%) | 4,893/5,948 (82.26%) | 2/33 |
+| B2 extended | Adds character 5-grams and word bigrams | 2 | 62/100 (62.0%) | 5,078/5,948 (85.37%) | 2/33 |
+| B2 source-balanced | Extended features and equal total loss weight for each source and each observed route within it | 2 | 67/100 (67.0%) | 5,061/5,948 (85.09%) | 2/33 |
+
+B2 source-balanced led on dev by 8 percentage points. It trailed B0 by 1.93 points on
+MASSIVE and sent one additional never-web request to `web_search` on dev. Keep B0 as the
+reference. The owner-message accuracy and safety gates in §5 remain unmeasured for B2.
+The existing split contains 1 written dev row and 318 MASSIVE test rows whose folded text
+occurs in training. These overlaps were preserved for the fixed-split comparison.
+
+### Per-route dev accuracy
+
+Values are correct / total. A dash indicates zero examples for that route.
+
+| Route | B0 | B2 direct | B2 extended | B2 source-balanced |
+|---|---:|---:|---:|---:|
+| web_search | 3/4 | 3/4 | 3/4 | 3/4 |
+| browser_command | 14/21 | 13/21 | 13/21 | 13/21 |
+| news | 1/1 | 1/1 | 1/1 | 1/1 |
+| memory | 2/5 | 2/5 | 2/5 | 4/5 |
+| reminder | — | — | — | — |
+| compute | — | — | — | — |
+| ads | 10/11 | 10/11 | 10/11 | 10/11 |
+| pc | 7/17 | 9/17 | 7/17 | 10/17 |
+| writing | 4/7 | 4/7 | 4/7 | 5/7 |
+| chat | 2/3 | 2/3 | 2/3 | 2/3 |
+| reply | 7/15 | 10/15 | 10/15 | 10/15 |
+| image | 9/16 | 11/16 | 10/16 | 9/16 |
+| media | — | — | — | — |
+| unsupported | — | — | — | — |
+
+### Per-route MASSIVE test accuracy
+
+| Route | B0 | B2 direct | B2 extended | B2 source-balanced |
+|---|---:|---:|---:|---:|
+| web_search | 1280/1512 | 1087/1512 | 1230/1512 | 1241/1512 |
+| browser_command | — | — | — | — |
+| news | 209/248 | 224/248 | 211/248 | 210/248 |
+| memory | 256/284 | 249/284 | 254/284 | 257/284 |
+| reminder | 910/996 | 891/996 | 904/996 | 899/996 |
+| compute | 243/256 | 240/256 | 243/256 | 236/256 |
+| ads | — | — | — | — |
+| pc | 108/124 | 99/124 | 100/124 | 105/124 |
+| writing | 356/390 | 345/390 | 355/390 | 360/390 |
+| chat | 224/378 | 214/378 | 229/378 | 232/378 |
+| reply | — | — | — | — |
+| image | — | — | — | — |
+| media | 785/866 | 778/866 | 788/866 | 776/866 |
+| unsupported | 805/894 | 766/894 | 764/894 | 745/894 |
+
+### CPU inference and parity
+
+On a cloud AMD EPYC 9V74, the Python harness timed one request at a time over 20 warmed
+passes of the 100 dev texts, including hashing and the forward pass.
+
+| Model | Parameters | Mean (ms) | p95 (ms) |
+|---|---:|---:|---:|
+| B0 | 16,778,126 | 0.139 | 0.264 |
+| B2 direct | 3,670,030 | 0.111 | 0.212 |
+| B2 extended | 3,670,030 | 0.141 | 0.286 |
+| B2 source-balanced | 3,670,030 | 0.134 | 0.252 |
+
+The exported B2 source-balanced model took 0.224 ms mean and 0.300 ms p95 in Node 24.22.3
+over 4,000 warmed dev requests, including hashing, logits, and confidence. The maximum
+absolute difference between PyTorch and TypeScript logits on the trained export fixture
+was `1.74689711e-06`. `loadRouterB2Model` provides explicit offline loading.
+
+### Reproduce
+
+Run from the repository root with Python 3.12.14 and Node 24. The archive comes from the
+[official Amazon MASSIVE release](https://github.com/alexa/massive#accessing-and-processing-the-data)
+under CC BY 4.0.
+
+```sh
+python -m venv .data/router/venv
+. .data/router/venv/bin/activate
+python -m pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu
+python -m pip install numpy==2.2.6
+
+archive=.data/router/massive-1.1.tar.gz
+mkdir -p .data/router/download
+curl -fL https://amazon-massive-nlu-dataset.s3.amazonaws.com/amazon-massive-dataset-1.1.tar.gz -o "$archive"
+printf '%s  %s\n' 4cba5faa11c71437928e17cb1b9b3d8b8e727e7ea363a3a9a8045e19c0491577 "$archive" | sha256sum -c -
+tar -xzf "$archive" -C .data/router/download 1.1/LICENSE 1.1/data/ar-SA.jsonl 1.1/data/en-US.jsonl
+
+python scripts/router/train_b2.py
+npm ci --ignore-scripts
+ROUTER_B2_PARITY_DIR=artifacts/router-b2 python -m unittest discover -s scripts/router -p 'test_*b2.py'
+npm test -- tests/assistant-router.test.ts
+```
+
+The runner writes the exact scores to `artifacts/router-b2/report.json` and exports the
+dev-selected B2 weights and parity fixture in the same ignored directory. Use `--repo-only`
+to run with the written rows when MASSIVE is unavailable. The report then leaves MASSIVE
+accuracy undefined.
