@@ -166,3 +166,26 @@ A partial rewrite that still needed an entity, event, or relation was counted as
 | `human-f1dcc28719c4a334ecf589ed` | answer | lost topic or omitted relation |
 | `human-f7fa47cfe9d3298e9be73e59` | answer | lost topic or omitted relation |
 | `human-fa9cc30535694b334f69f4ca` | answer | different wording |
+
+## Rollout
+
+`MOHASSAN_FOLLOWUP_V2=1` enables two deterministic English modules. The referent resolver uses the previous answer's actor, a named group in the same grammatical role, or an explicitly typed topic to resolve references. The ellipsis resolver restores question frames and named subjects when the transcript supplies them. Supplied transcripts use the existing writing route. Live use requires `MOHASSAN_QUESTION_REWRITER=1`, an eligible previous public lookup and the existing scope, refusal and provenance checks. If the new candidate fails those checks, the live path tries the legacy rewrite and original route in order. No corpus is loaded at runtime.
+
+The flag defaults to off. For rollback, set it to `0` or remove it. The Arabic branch still uses the legacy grammar. The focused Arabic tests exercise both the local rewriter and authorized public follow-up projection with the new flag on.
+
+### Merge notes
+
+There are zero hooks in the held files. The two assistant hooks are `question-rewriter.ts` and `question-rewrite-chat.ts`. The launcher adds the flag to its override allowlist and keeps its default profile. No migrations are required.
+
+## Focused checks
+
+The product commit measured by the coordinator is `8237ef54f84d1013e0929df5f16bb24ca3761269`.
+
+```bash
+npm run typecheck
+npm test -- --maxWorkers=2 --reporter=dot tests/followup-english-ellipsis.test.ts tests/followup-english-referents.test.ts tests/followup-v2-arabic.test.ts tests/followup-v2-chat.test.ts tests/question-rewriter.test.ts tests/question-rewrite-chat.test.ts tests/public-conversation-followup.test.ts tests/assistant-follow-up.test.ts tests/assistant-conversation-follow-up.test.ts
+```
+
+Typecheck exited 0 for the root and web projects. The focused suite exited 0 with 110 tests across nine files, including four Arabic rollout-on tests. An initial run identified a capitalized preposition in the date reconstruction and the final run verified the fix.
+
+The separate CANARD run scored 685 exact and 787 normalized substring matches at base and with the feature flag off. With the feature flag on it scored 684 exact and 786 normalized substring matches. The commands, context-dependent subset and input hashes are in the evaluation data card. [CANARD evaluation](QUESTION-REWRITER-CANARD.md#follow-up-v2-measurement)
