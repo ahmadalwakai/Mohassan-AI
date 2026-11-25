@@ -8,6 +8,7 @@ import { recognizeRuntimeStatusRequest } from './runtime-status.js';
 import type { LocalReply } from './mind/limits.js';
 import { buildFrame } from './mind/frame.js';
 import { planningTask } from './planner.js';
+import { parseQuestionRewriteRequest } from './question-rewrite-request.js';
 import {
   REQUEST_CONTEXT_VERSION, requestActionText, requestContextIntents, requestSlotKinds, resolveRequestContext,
   parseRequestContextState, type RequestContextIntent, type RequestContextOptions, type RequestResolution,
@@ -27,7 +28,7 @@ export const routedIntents = [...requestContextIntents.filter(intent => intent !
 export type RoutedIntent = Exclude<RequestContextIntent, 'unknown'> | 'image' | 'media';
 export type RequestRoute = RoutedIntent | 'reply' | 'clarify';
 export type RoutingHandler = 'resume' | 'clarify' | 'local_conversation' | 'local_computation' | 'local_status' | 'memory' | 'ads' | 'computer' | 'browser' | 'search' | 'writing' | 'planning' | 'coding' | 'reminder' | 'image' | 'media' | 'model' | 'unsupported';
-export type RoutingReason = 'pending_answer' | 'missing_reference' | 'invalid_request' | 'local_conversation' | 'local_computation' | 'host_runtime_status' | 'explicit_handler' | 'context_destination' | 'deterministic_browser_plan' | 'public_lookup' | 'local_model_fallback' | 'missing_capability' | 'account_restriction' | 'unresolved_intent';
+export type RoutingReason = 'pending_answer' | 'missing_reference' | 'invalid_request' | 'local_conversation' | 'local_computation' | 'host_runtime_status' | 'explicit_handler' | 'context_destination' | 'rewritten_question' | 'deterministic_browser_plan' | 'public_lookup' | 'local_model_fallback' | 'missing_capability' | 'account_restriction' | 'unresolved_intent';
 
 const PendingQuestionSchema = z.object({
   id: z.string().min(1).max(80),
@@ -87,7 +88,6 @@ export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDe
   } : null;
   const previousScope = input.previousScope ?? retainedScope ?? legacyPrivateScope ?? inferredScope ?? undefined;
   const scopeOptions = { contextKind: resolution.kind, previous: previousScope };
-  const scopeRequest = resolution.resolved === null ? input.text : requestActionText(requestScopeActionText(resolution.resolved));
   const sourceAssessment = assessRequestScope(input.text, scopeOptions);
   const explicitPublicSource = sourceAssessment.source === 'public_lookup'
     && sourceAssessment.reasons.some(reason => reason === 'explicit_public_lookup' || reason === 'public_document_reference');
@@ -107,6 +107,8 @@ export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDe
   });
   const clarify = (reason: RoutingReason): RequestRoutingDecision => ({ ...base('clarify', resolution.intent, 'clarify', reason), availability: 'needs_context' });
   if (resolution.resolved === null || input.pendingQuestion !== undefined && !pending.success) return clarify('invalid_request');
+  if (!pending.success && parseQuestionRewriteRequest(input.text)) return base('writing', 'writing', 'writing', 'explicit_handler');
+  const scopeRequest = requestActionText(requestScopeActionText(resolution.resolved));
   if (resolution.constraints?.ambiguous) return clarify('unresolved_intent');
   if (resolution.constraints?.standalone) {
     const reply = requestConstraintReply(resolution.constraints, /\p{Script=Arabic}/u.test(input.text) ? 'ar' : 'en');

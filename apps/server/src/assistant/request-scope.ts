@@ -3,6 +3,7 @@ import { parseUserRequestConstraints, isEntireLiteralRequest, maskRequestLiteral
 export { parseUserRequestConstraints, isEntireLiteralRequest, requestCapabilityAllowed, requestConstraintReply, maskRequestLiteralData, UserRequestConstraintsSchema, type UserRequestConstraints, type ForbiddenRequestCapability } from './request-constraints.js';
 import { publicSearchScan, publicSearchText } from '@mohassan/browser';
 import { isCurrentComputerReadRequest } from './computer-request-language.js';
+import { parseQuestionRewriteRequest } from './question-rewrite-request.js';
 
 /** Source classification is independent of tool availability and model output. */
 export const requestSources = ['public_lookup', 'prior_conversation', 'local_state', 'supplied_content', 'unresolved'] as const;
@@ -128,6 +129,10 @@ export function parseRequestScopeAssessment(value: unknown): RequestScopeAssessm
  * quoted public title does not become a private document merely because quoted.
  */
 export function assessRequestScope(value: string, options: RequestScopeOptions = {}): RequestScopeAssessment {
+  if (typeof value === 'string' && parseQuestionRewriteRequest(value)) {
+    return { version: 1, source: 'supplied_content', scope: 'private', operation: 'transform', destination: 'writing',
+      publicQueryEligible: false, reasons: ['supplied_transformation'] };
+  }
   const constraints: UserRequestConstraints | null = typeof value === 'string' ? parseUserRequestConstraints(value) : null;
   const make = (source: RequestSource, operation: RequestOperation, destination: RequestScopeDestination, reasons: RequestScopeAssessment['reasons']): RequestScopeAssessment => ({
     version: 1, source, operation, destination,
