@@ -209,3 +209,132 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges -
 ```
 
 For future builds, `scripts/dev-bench/` is the equivalent committed Docker build context.
+
+The three-arm command exited 0. The coordinated summary SHA-256 is `09db49e3decca632f6439d3224a1ad944425ab554922cbb85cb11c72505855c7`.
+
+| Arm | V1 | V2 | Coordinated case receipt SHA-256 |
+| --- | ---: | ---: | --- |
+| A · Release candidate | 176/240 | 1,588/2,400 | `4fafc814950b2502cb53fb31b0dce02cf2bcf0e956e5ccb580bd5800e2689a53` |
+| B · Merged, flags off | 176/240 | 1,588/2,400 | `1bf9f95e687eacdfb3582886a6d50b02286f0f500d8fb33c485301ceb7705c48` |
+| C · Merged, flags on, shadow | 176/240 | 1,588/2,400 | `9625d42043e0a115be439a5d13b500350eb1b5483574cb8ebbdf866780bbe82a` |
+
+C held every area, language and area/language count. The comparison covered 45 V1 groups and 23 V2 groups, including the two overall scores. B matched A for all 2,640 verdicts and scored check signatures. The unmasked comparator exited 1 because independently generated reply values and stock phrase variants produced byte differences in 31 V1 and 1,053 V2 cases.
+
+```bash
+python3 -B scripts/dev-bench/compare.py \
+  --baseline /workspace/work/wave5-three-arms/a/receipt.json \
+  --flags-off /workspace/work/wave5-three-arms/b/receipt.json \
+  --flags-on /workspace/work/wave5-three-arms/c/receipt.json \
+  --output /workspace/work/wave5-three-arms/unmasked-comparison.json
+```
+
+### Arbiter publication latency
+
+The Arm C journals contain the production publication hook's `schedulingMs` measurements. The extraction uses the same nearest-rank percentile as the #91 replay. Each command exited 0 against the 1 ms p95 budget. The asynchronous arbitration times describe background work outside that budget. [PR #91 verification](ARBITER-BRAIN-VERIFICATION.md)
+
+```bash
+python3 -B /workspace/work/wave5-shadow-latency.py /workspace/work/wave5-three-arms/c/v1-shadow.jsonl
+python3 -B /workspace/work/wave5-shadow-latency.py /workspace/work/wave5-three-arms/c/v2-shadow.jsonl
+```
+
+| Split | Publication samples | Publication p95 | Background arbitration samples | Background p95 | Journal SHA-256 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| V1 | 279 | 0.135219 ms | 19 | 0.453226 ms | `c40e6c5597008a4990ff4dcbc17dd0c015f9f541172185b3f449c3aaa41551ea` |
+| V2 | 2,400 | 0.095481 ms | 30 | 3.571057 ms | `3b9ea65b2fc99627e48a24a2db7f49d4b520191b1dcfc9678555e821966ecfb0` |
+
+The same extractor is available at `scripts/dev-bench/forensics/shadow-latency.py`.
+
+The shadow journal recorded 49 choices, with zero selections departing from existing precedence. The command below exited 0 and returned `{"decisions":49,"changed":0}`.
+
+```bash
+jq -s '[.[].arbiter[]?] | {decisions:length, changed:(map(select(.selected != .precedence))|length)}' /workspace/work/wave5-three-arms/c/v1-shadow.jsonl /workspace/work/wave5-three-arms/c/v2-shadow.jsonl
+```
+
+### Flags-off reply parity
+
+The separate release repeat exited 0 at 176/240 and 1,588/2,400. Its commit, toolchain, settings and input hashes matched Arm A. All 2,640 repeat verdicts matched. The repeated case receipt SHA-256 is `f16c166381f9d0996ce7c6d3a9c27799a059c7d26d376facece6d9eb74f89b58`.
+
+```bash
+export PLAYWRIGHT_BROWSERS_PATH=/workspace/work/chromium
+export npm_config_cache=/workspace/work/npm-cache
+docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+  --mount type=bind,source=/workspace/work,target=/workspace/work \
+  --workdir /workspace/work/mohassan-wave5 \
+  --env PLAYWRIGHT_BROWSERS_PATH --env npm_config_cache \
+  mohassan-wave5-bench:2026-11-25 python3 -B scripts/dev-bench/run.py --workers 2 --offline \
+  --output /workspace/work/wave5-baseline-repeat \
+  --arm a-repeat=d3ebd9223f44445627b9d3d0bdea08d5f9b0550a \
+  --set a-repeat:MOHASSAN_ARITHMETIC_SEARCH=1 --set a-repeat:MOHASSAN_MODEL_RELATIONS=off \
+  --set a-repeat:TEST_DRIVEN_CODING_PYTHON=/usr/local/bin/python3.12
+```
+
+The repeat independently proved 1,044 citation timestamp changes and nine generated document URL UUID changes. The mask generator exited 0. Each validated mask identifies the exact case, turn and changing literal, and the comparator verifies identical text around it. The mask SHA-256 is `ef1cfb25f7f6a530b854c5df93f66d662fcc97059d9e06eae6c8afdb671bfcb8`.
+
+```bash
+python3 -B scripts/dev-bench/forensics/reply-masks.py \
+  --baseline /workspace/work/wave5-three-arms/a/receipt.json \
+  --flags-off /workspace/work/wave5-three-arms/b/receipt.json \
+  --baseline-repeat /workspace/work/wave5-baseline-repeat/a-repeat/receipt.json \
+  --masks-output /workspace/work/wave5-three-arms/proven-masks.json \
+  --residual-output /workspace/work/wave5-three-arms/residual-wording.json
+
+python3 -B scripts/dev-bench/compare.py \
+  --baseline /workspace/work/wave5-three-arms/a/receipt.json \
+  --flags-off /workspace/work/wave5-three-arms/b/receipt.json \
+  --flags-on /workspace/work/wave5-three-arms/c/receipt.json \
+  --baseline-repeat /workspace/work/wave5-baseline-repeat/a-repeat/receipt.json \
+  --reply-masks /workspace/work/wave5-three-arms/proven-masks.json \
+  --output /workspace/work/wave5-three-arms/masked-comparison.json
+```
+
+The literal-masked comparator exited 1. The only remaining reply differences were eight V1 and 25 V2 small-talk cases. The existing manners code varies stock phrases by hashing generated run IDs. Its template source is the same on the release candidate and merged head. No phrases or whole replies were masked. The comparison SHA-256 is `e162cea109c7204fdde6840b7a2b40efd3ed248156b9299b13abdc19b1a1d996`.
+
+The release repeat chose different wording in six of the eight affected V1 cases and 18 of the 25 affected V2 cases. An additional exact replay covered all 33. In isolated A and B worktrees it supplied the same case-scoped UUID stream to the existing handlers. The replay verified the original product, fixture, lockfile, scorer and adapted observer hashes. It compared full reply hashes, native verdicts and UUID call counts, and exited 0. Both arms produced byte-identical replay receipts in each split.
+
+```bash
+export PLAYWRIGHT_BROWSERS_PATH=/workspace/work/chromium
+export npm_config_cache=/workspace/work/npm-cache
+docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+  --mount type=bind,source=/workspace/work,target=/workspace/work \
+  --workdir /workspace/work/mohassan-wave5 \
+  --env PLAYWRIGHT_BROWSERS_PATH --env npm_config_cache \
+  mohassan-wave5-bench:2026-11-25 python3 -B /workspace/work/wave5-entropy-replay/replay.py \
+  /workspace/work/mohassan-wave5 \
+  /workspace/work/wave5-three-arms/a/receipt.json \
+  /workspace/work/wave5-three-arms/b/receipt.json \
+  /workspace/work/wave5-reply-residual.json /workspace/work/wave5-controlled-manners
+```
+
+The committed equivalent is `scripts/dev-bench/forensics/replay.py` with its sibling `replay.mjs`. Pass `residual-wording.json` from the literal-mask command above as the selection. `cmp` confirmed it was byte-identical to the selection used in the replay.
+
+| Split | Exact full reply and verdict matches | Replay receipt SHA-256 on each arm |
+| --- | ---: | --- |
+| V1 | 8/8 | `9588d753d0866c04ac5aabceda3ba1bd9bf22d0e5888c18ac4842b3bc8840c1d` |
+| V2 | 25/25 | `6a8566c912762bfb38fc63f957934b392aa197b2e38b1296b9770175f93cf313` |
+
+The replay summary SHA-256 is `d8c7a5adbf0c7d745457193b066dde5e8c5061f8781f9aadc7569c921b2a4961`. The final coverage cross-check exited 0 after validating the original A and B receipt hashes and checking that the 33 replayed IDs exactly covered the literal comparator's differences:
+
+```bash
+python3 -B - /workspace/work/wave5-three-arms/masked-comparison.json /workspace/work/wave5-controlled-manners/summary.json <<'PY'
+import json
+from pathlib import Path
+import sys
+
+comparison, replay = [json.loads(Path(path).read_bytes()) for path in sys.argv[1:]]
+for side, label in (("a", "baseline"), ("b", "flagsOff")):
+    assert replay["arms"][side]["armReceiptSha256"] == comparison["inputs"][label]["receiptSha256"]
+for version, group in comparison["versions"].items():
+    assert not (group["flagsOnRegressions"] or group["flagsOffVerdictDifferences"] or group["repeatVerdictDifferences"])
+    residual = [row["caseId"] for row in group["flagsOffReplyDifferences"]]
+    proof = replay["versions"][version]
+    assert residual == [row["id"] for row in proof]
+    assert all(row["exactReplyMatch"] and row["verdictsMatchNative"] and row["uuidCallCountsMatch"] for row in proof)
+    print(version, group["casesCompared"], "cases covered by literal comparison or exact fixture replay,", len(proof), "replayed")
+PY
+```
+
+### Premortem requirements
+
+- The flags-off comparison covers every case with exact replies, repeat-proven literal masks or exact matched-input replay. The focused background suites exercise the restart and stop paths where its projection and the interactive arbiter hook meet.
+- The disposable PostgreSQL upgrade applied only 041 and 042. Existing rows in the release database matched on every original column.
+- The committed launcher retrieved fixed development inputs, reproduced Wave 4 and ran all three Wave 5 arms in one invocation with case and receipt validation. All evaluation runs used the development splits.
