@@ -2,13 +2,14 @@
 
 import argparse
 import base64
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from hashlib import sha256
 import json
 import os
 from pathlib import Path
 import re
+from runpy import run_path
 import tarfile
 import unicodedata
 from urllib.request import urlopen
@@ -24,6 +25,9 @@ from scipy.special import softmax
 
 CLASSES = ("allow", "out_of_scope", "unsafe")
 SPLITS = ("train", "development", "calibration", "test")
+REPO_ROOT = Path(__file__).resolve().parents[2]
+EXCLUSION_LIBRARY = Path("scripts/agent-capability-bench/v2/exclusion.py")
+EXCLUSION_MANIFEST = Path("tests/fixtures/agent-capability-bench/v2/exclusion/manifest.json")
 BUCKETS = 32768
 SEED = 20261125
 SOURCES = {
@@ -72,6 +76,8 @@ class Example:
     text: str
     label: str
     source: str = ""
+    native_partition: str = ""
+    native_id: str = ""
 
 
 def normalize(text):
@@ -132,19 +138,38 @@ def source_split(dataset, split, group):
     return split
 
 
-def public_rows(cache):
+def load_exclusions(root):
+    library = run_path(str(root / EXCLUSION_LIBRARY))
+    manifest = root / EXCLUSION_MANIFEST
+    exclusions = library["Exclusions"].load(manifest)
+    return exclusions, sha256(manifest.read_bytes()).hexdigest()
+
+
+def public_rows(cache, exclusions, dropped):
+    def excluded(dataset, native_partition, native_id, text):
+        if not exclusions.matches(text, source_id=native_id):
+            return False
+        dropped[dataset, native_partition] += 1
+        return True
+
     clinc = json.loads(pinned_source(cache, "clinc150.json").read_text(encoding="utf-8"))
     for partition in ("train", "val", "test"):
-        for text, intent in clinc[partition] + clinc["oos_" + partition]:
-            if intent in CLINC_ALLOWED or intent in CLINC_UNSUPPORTED:
+        for native_partition in (partition, "oos_" + partition):
+            for index, (text, intent) in enumerate(clinc[native_partition]):
+                if intent not in CLINC_ALLOWED and intent not in CLINC_UNSUPPORTED:
+                    continue
+                native_id = f"clinc150:{native_partition}:{index}"
+                if excluded("clinc150", native_partition, native_id, text):
+                    continue
                 split = source_split("clinc150", partition, normalize(text))
                 label = "allow" if intent in CLINC_ALLOWED else "out_of_scope"
-                yield Example("clinc150", split, text, label, intent)
+                yield Example("clinc150", split, text, label, intent, native_partition, native_id)
 
     for locale in ("eng", "arb"):
+        dataset = f"aya-{locale}"
         path = pinned_source(cache, f"aya-{locale}.jsonl")
         with path.open(encoding="utf-8") as stream:
-            for line in stream:
+            for index, line in enumerate(stream):
                 row = json.loads(line)
                 categories = set(json.loads(row["harm_category"]))
                 if (row["global_or_local"] != "global"
@@ -152,9 +177,12 @@ def public_rows(cache):
                         or not categories & AYA_HARMS):
                     continue
                 text = row["prompt"]
-                index = bucket("aya-redteaming", normalize(text))
-                split = SPLITS[(index >= 70) + (index >= 80) + (index >= 90)]
-                yield Example("aya-" + locale, split, text, "unsafe")
+                native_id = f"aya-redteaming:{locale}:{index}"
+                if excluded(dataset, locale, native_id, text):
+                    continue
+                split_bucket = bucket("aya-redteaming", normalize(text))
+                split = SPLITS[(split_bucket >= 70) + (split_bucket >= 80) + (split_bucket >= 90)]
+                yield Example(dataset, split, text, "unsafe", native_partition=locale, native_id=native_id)
 
     path = pinned_source(cache, "massive.tar.gz")
     with tarfile.open(path, "r:gz") as archive:
@@ -162,8 +190,12 @@ def public_rows(cache):
             for line in stream:
                 row = json.loads(line)
                 if row["intent"] in MASSIVE_ALLOWED and row["id"] not in {"1957", "2942"}:
-                    split = source_split("massive", row["partition"], row["id"])
-                    yield Example("massive-ar", split, row["utt"], "allow", row["intent"])
+                    native_partition = row["partition"]
+                    native_id = f"massive:ar-SA:{row['id']}"
+                    if excluded("massive-ar", native_partition, native_id, row["utt"]):
+                        continue
+                    split = source_split("massive", native_partition, row["id"])
+                    yield Example("massive-ar", split, row["utt"], "allow", row["intent"], native_partition, native_id)
 
 
 def deduplicate(rows):
@@ -290,11 +322,15 @@ def main():
     parser.add_argument("--cache", required=True, type=Path)
     parser.add_argument("--model", required=True, type=Path)
     parser.add_argument("--metrics", required=True, type=Path)
+    parser.add_argument("--exclusion-root", type=Path, default=REPO_ROOT,
+                        help="Checkout or export containing the published v2 exclusion library and complete registry")
     parser.add_argument("--test-rows", type=Path, help="Optional ignored scratch file for running independent policy evaluation")
     args = parser.parse_args()
+    exclusions, manifest_hash = load_exclusions(args.exclusion_root)
     args.cache.mkdir(parents=True, exist_ok=True)
 
-    rows = list(deduplicate(public_rows(args.cache)))
+    dropped = Counter()
+    rows = list(deduplicate(public_rows(args.cache, exclusions, dropped)))
     groups = {split: [row for row in rows if row.split == split] for split in SPLITS}
     train, dev, calibrate, test = (groups[split] for split in SPLITS)
     x_train, x_dev = matrix(train), matrix(dev)
@@ -320,6 +356,13 @@ def main():
     args.model.write_text(json.dumps(model, indent=2) + "\n", encoding="utf-8")
     probs = softmax((matrix(test) @ quantized.T + bias) / temperature, axis=1)
     metrics = {
+        "exclusion": {
+            "manifestSha256": manifest_hash,
+            "droppedInputRows": sum(dropped.values()),
+            "droppedBySourceAndNativeSplit": {
+                f"{dataset}/{partition}": count for (dataset, partition), count in sorted(dropped.items())
+            },
+        },
         "counts": {split: {label: sum(row.label == label for row in groups[split]) for label in CLASSES} for split in SPLITS},
         "penalty": penalty, "devMacroF1": dev_f1, "thresholds": thresholds,
         "test": evaluate(test, probs, thresholds),

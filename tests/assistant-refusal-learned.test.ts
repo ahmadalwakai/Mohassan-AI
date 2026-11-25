@@ -20,7 +20,7 @@ describe('scratch-trained refusal score', () => {
   it('matches the Python score for a confident out-of-scope prediction', () => {
     const score = classifyLearnedRefusal("i need you to text mickey saying 'can we reschedule");
     expect(score?.code).toBe('out_of_scope');
-    expect(score?.confidence).toBeCloseTo(0.9770671114, 8);
+    expect(score?.confidence).toBeCloseTo(0.9771091651, 8);
   });
 
   it('abstains from a low-confidence refusal prediction', () => {
