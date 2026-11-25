@@ -1,4 +1,4 @@
-import { MonitorSpecSchema } from '@mohassan/contracts';
+import { MonitorSourceSchema, MonitorSpecSchema } from '@mohassan/contracts';
 import { describe, expect, it } from 'vitest';
 import { detectMonitorNeed, monitorHistoryMayMatter, type MonitorNeed } from '../apps/server/src/monitors/detection.js';
 import { generateMonitorSpec, monitorNeedReply } from '../apps/server/src/monitors/spec.js';
@@ -144,4 +144,13 @@ describe('monitor specifications', () => {
   it('does not substitute a generic page change for an unsupported condition', () => {
     expect(generateMonitorSpec(need(`Watch ${url} and tell me if the article is convincing.`), now)).toBeNull();
   });
+});
+
+
+describe('public monitor source contract', () => {
+  it.each(['not a URL', 'http://example.org/', 'https://fixture:password@example.org/', 'https://example.org/#fragment'])(
+    'rejects an invalid page URL through schema validation (%s)', url => {
+      expect(MonitorSourceSchema.safeParse({ kind: 'page', url }).success).toBe(false);
+    },
+  );
 });

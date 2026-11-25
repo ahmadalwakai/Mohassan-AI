@@ -3,6 +3,7 @@ import { z } from 'zod';
 const label = z.string().trim().min(1).max(180);
 const currency = z.string().regex(/^[A-Z]{3}$/u);
 const httpsUrl = z.string().max(2048).url().refine(value => {
+  if (!URL.canParse(value)) return false;
   const url = new URL(value);
   return url.protocol === 'https:' && !url.username && !url.password && !url.hash;
 }, 'Use a public HTTPS address without credentials or a fragment.');
