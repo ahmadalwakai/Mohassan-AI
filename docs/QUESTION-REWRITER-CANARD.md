@@ -65,3 +65,5 @@ The input checksum matched the data card, the exclusion filter dropped 831 rows,
 | Feature flag on | 408 | 486 |
 
 Enabling the feature reduced each match count by one. These measures compare each standalone rewrite with one human reference on filtered English CANARD rows. The capability benchmark measures chat outcomes on its own development partitions.
+
+The candidate was removed from the branch after the held-back capability split stayed at 25/120. [Coordinated development results](FOLLOWUP-V2-DEVELOPMENT.md#v2-follow-up-by-split)

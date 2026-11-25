@@ -1,5 +1,7 @@
 # Follow-up understanding development evaluation
 
+The candidate improved V2 follow-up from 46/240 to 55/240. All nine gains were in D. H stayed at 25/120, so commit `22725948c66a4c9bfd47b9dca5a6540af46788d4` removed the candidate, including its flag and tests. This draft retains the diagnosis and the measured results. [V2 follow-up by split](#v2-follow-up-by-split)
+
 ## Diagnosis and held-back split
 
 The split uses only `id` and `area` from the pinned V2 development payload published in [PR #62](https://github.com/ahmadalwakai/Mohassan-AI/pull/62) at `12cedfe592aab40cdd47ee00d05ea86a6d2bae89`. Select the 240 unique IDs whose area is `follow-up`. Sort the IDs by the ascending SHA-256 digest of their UTF-8 bytes, using the ID itself as a tie-breaker. The first 120 form D and the next 120 form H. Hash each ordered list as one UTF-8 ID per line with a final LF.
@@ -167,11 +169,11 @@ A partial rewrite that still needed an entity, event, or relation was counted as
 | `human-f7fa47cfe9d3298e9be73e59` | answer | lost topic or omitted relation |
 | `human-fa9cc30535694b334f69f4ca` | answer | different wording |
 
-## Rollout
+## Measured candidate
 
-`MOHASSAN_FOLLOWUP_V2=1` enables two deterministic English modules. The referent resolver uses the previous answer's actor, a named group in the same grammatical role, or an explicitly typed topic to resolve references. The ellipsis resolver restores question frames and named subjects when the transcript supplies them. Supplied transcripts use the existing writing route. Live use requires `MOHASSAN_QUESTION_REWRITER=1`, an eligible previous public lookup and the existing scope, refusal and provenance checks. If the new candidate fails those checks, the live path tries the legacy rewrite and original route in order. No corpus is loaded at runtime.
+`MOHASSAN_FOLLOWUP_V2=1` enabled two deterministic English modules in the measured candidate. The referent resolver uses the previous answer's actor, a named group in the same grammatical role, or an explicitly typed topic to resolve references. The ellipsis resolver restores question frames and named subjects when the transcript supplies them. Supplied transcripts use the existing writing route. Live use requires `MOHASSAN_QUESTION_REWRITER=1`, an eligible previous public lookup and the existing scope, refusal and provenance checks. If the new candidate fails those checks, the live path tries the legacy rewrite and original route in order. No corpus is loaded at runtime.
 
-The flag defaults to off. For rollback, set it to `0` or remove it. The Arabic branch still uses the legacy grammar. The focused Arabic tests exercise both the local rewriter and authorized public follow-up projection with the new flag on.
+The candidate flag defaulted to off. The Arabic branch still uses the legacy grammar. The focused Arabic tests exercise both the local rewriter and authorized public follow-up projection with the new flag on.
 
 ### Merge notes
 
@@ -223,7 +225,7 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges -
 
 Review found that a pronoun match could start inside another word and that the nominal rule could rewrite a quoted literal. The initial launcher invocation was stopped during arm A and returned 137. The corrected product was measured in a fresh output directory with all three arms.
 
-The coordinated run uses one launcher invocation with the same Wave 5 flags on all arms and the arbiter in shadow. The launcher inherits the Wave 4 flags, including `MOHASSAN_QUESTION_REWRITER=1`, from its base profile. The command used this wrapper.
+The coordinated run used one launcher invocation with the same Wave 5 flags on all arms and the arbiter in shadow. The launcher inherits the Wave 4 flags, including `MOHASSAN_QUESTION_REWRITER=1`, from its base profile. The wrapper below ran from the measured checkout. To reproduce after the rollback, use a detached checkout at `e30a31b265bca6b50ee8a82284b5f992b925a72b` and substitute its path in `repository`.
 
 ```bash
 #!/usr/bin/env bash
@@ -290,3 +292,189 @@ python3 -B -c 'import runpy, sys; guard=runpy.run_path("tests/no-v2-case-text.te
 ```
 
 The scratch guard input directory contains `scripts/agent-capability-bench/v2/exclusion.py` from the measured source and only `manifest.json` and `payload.json` under `tests/fixtures/agent-capability-bench/v2/dev/` from the published development commit `12cedfe592aab40cdd47ee00d05ea86a6d2bae89`. The development payload SHA-256 is `6eda0e7052611d10fc87da4e3e8f3f30cfb64452c198eab20041b5da577508d1`.
+
+## Coordinated development run
+
+| Arm | Commit | Coordinated receipt SHA-256 |
+| --- | --- | --- |
+| A | `201321031293999003bb0ae55a29dbd250ac96ce` | `4b9143307841be0ad224cd8844c1a1e993bee7e5e46b9a27077ac2527a92ca89` |
+| B | `e30a31b265bca6b50ee8a82284b5f992b925a72b` | `626890b835dec81c4850ee352d8c2b10a7e7e4b85da3df3f3a5c601b4bc06e93` |
+| C | `e30a31b265bca6b50ee8a82284b5f992b925a72b` | `da4b2a25ef563f57df82dada57656e4cea6cf52251118f4baed2c878eb2d9e76` |
+
+### V1 results
+
+| Group | Value | A | B | C | C − A |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Overall | Overall | 176/240 | 176/240 | 176/240 | +0 |
+| Area | calculation | 18/18 | 18/18 | 18/18 | +0 |
+| Area | clarification | 16/16 | 16/16 | 16/16 | +0 |
+| Area | coding | 0/16 | 0/16 | 0/16 | +0 |
+| Area | comparison | 11/18 | 11/18 | 11/18 | +0 |
+| Area | desktop | 11/16 | 11/16 | 11/16 | +0 |
+| Area | document-file | 16/18 | 16/18 | 16/18 | +0 |
+| Area | explanation | 8/18 | 8/18 | 8/18 | +0 |
+| Area | factual | 10/18 | 10/18 | 10/18 | +0 |
+| Area | follow-up | 18/18 | 18/18 | 18/18 | +0 |
+| Area | google-ads | 0/16 | 0/16 | 0/16 | +0 |
+| Area | memory | 16/16 | 16/16 | 16/16 | +0 |
+| Area | multi-step | 18/18 | 18/18 | 18/18 | +0 |
+| Area | refusal | 16/16 | 16/16 | 16/16 | +0 |
+| Area | small-talk | 18/18 | 18/18 | 18/18 | +0 |
+| Language | ar | 85/120 | 85/120 | 85/120 | +0 |
+| Language | en | 91/120 | 91/120 | 91/120 | +0 |
+| Area and language | calculation/ar | 9/9 | 9/9 | 9/9 | +0 |
+| Area and language | calculation/en | 9/9 | 9/9 | 9/9 | +0 |
+| Area and language | clarification/ar | 8/8 | 8/8 | 8/8 | +0 |
+| Area and language | clarification/en | 8/8 | 8/8 | 8/8 | +0 |
+| Area and language | coding/ar | 0/8 | 0/8 | 0/8 | +0 |
+| Area and language | coding/en | 0/8 | 0/8 | 0/8 | +0 |
+| Area and language | comparison/ar | 5/9 | 5/9 | 5/9 | +0 |
+| Area and language | comparison/en | 6/9 | 6/9 | 6/9 | +0 |
+| Area and language | desktop/ar | 5/8 | 5/8 | 5/8 | +0 |
+| Area and language | desktop/en | 6/8 | 6/8 | 6/8 | +0 |
+| Area and language | document-file/ar | 8/9 | 8/9 | 8/9 | +0 |
+| Area and language | document-file/en | 8/9 | 8/9 | 8/9 | +0 |
+| Area and language | explanation/ar | 4/9 | 4/9 | 4/9 | +0 |
+| Area and language | explanation/en | 4/9 | 4/9 | 4/9 | +0 |
+| Area and language | factual/ar | 3/9 | 3/9 | 3/9 | +0 |
+| Area and language | factual/en | 7/9 | 7/9 | 7/9 | +0 |
+| Area and language | follow-up/ar | 9/9 | 9/9 | 9/9 | +0 |
+| Area and language | follow-up/en | 9/9 | 9/9 | 9/9 | +0 |
+| Area and language | google-ads/ar | 0/8 | 0/8 | 0/8 | +0 |
+| Area and language | google-ads/en | 0/8 | 0/8 | 0/8 | +0 |
+| Area and language | memory/ar | 8/8 | 8/8 | 8/8 | +0 |
+| Area and language | memory/en | 8/8 | 8/8 | 8/8 | +0 |
+| Area and language | multi-step/ar | 9/9 | 9/9 | 9/9 | +0 |
+| Area and language | multi-step/en | 9/9 | 9/9 | 9/9 | +0 |
+| Area and language | refusal/ar | 8/8 | 8/8 | 8/8 | +0 |
+| Area and language | refusal/en | 8/8 | 8/8 | 8/8 | +0 |
+| Area and language | small-talk/ar | 9/9 | 9/9 | 9/9 | +0 |
+| Area and language | small-talk/en | 9/9 | 9/9 | 9/9 | +0 |
+
+#### V1 case changes by area
+
+Compared 240 cases in release order. A scored failure signature contains each failed check's turn, stage and name.
+
+| Area | A → C newly pass | A → C newly fail | A → B verdict differences | A → B failed check differences |
+| --- | --- | --- | --- | --- |
+| calculation | None | None | None | None |
+| clarification | None | None | None | None |
+| coding | None | None | None | None |
+| comparison | None | None | None | None |
+| desktop | None | None | None | None |
+| document-file | None | None | None | None |
+| explanation | None | None | None | None |
+| factual | None | None | None | None |
+| follow-up | None | None | None | None |
+| google-ads | None | None | None | None |
+| memory | None | None | None | None |
+| multi-step | None | None | None | None |
+| refusal | None | None | None | None |
+| small-talk | None | None | None | None |
+
+### V2 results
+
+| Group | Value | A | B | C | C − A |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Overall | Overall | 1588/2400 | 1588/2400 | 1597/2400 | +9 |
+| Area | calculation | 7/277 | 7/277 | 7/277 | +0 |
+| Area | clarification | 9/9 | 9/9 | 9/9 | +0 |
+| Area | coding | 108/155 | 108/155 | 108/155 | +0 |
+| Area | comparison | 28/32 | 28/32 | 28/32 | +0 |
+| Area | factual | 976/1244 | 976/1244 | 976/1244 | +0 |
+| Area | follow-up | 46/240 | 46/240 | 55/240 | +9 |
+| Area | refusal | 348/375 | 348/375 | 348/375 | +0 |
+| Area | small-talk | 66/68 | 66/68 | 66/68 | +0 |
+| Language | ar | 982/1200 | 982/1200 | 982/1200 | +0 |
+| Language | en | 606/1200 | 606/1200 | 615/1200 | +9 |
+| Area and language | calculation/en | 7/277 | 7/277 | 7/277 | +0 |
+| Area and language | clarification/ar | 2/2 | 2/2 | 2/2 | +0 |
+| Area and language | clarification/en | 7/7 | 7/7 | 7/7 | +0 |
+| Area and language | coding/en | 108/155 | 108/155 | 108/155 | +0 |
+| Area and language | comparison/ar | 22/26 | 22/26 | 22/26 | +0 |
+| Area and language | comparison/en | 6/6 | 6/6 | 6/6 | +0 |
+| Area and language | factual/ar | 818/1017 | 818/1017 | 818/1017 | +0 |
+| Area and language | factual/en | 158/227 | 158/227 | 158/227 | +0 |
+| Area and language | follow-up/en | 46/240 | 46/240 | 55/240 | +9 |
+| Area and language | refusal/ar | 140/155 | 140/155 | 140/155 | +0 |
+| Area and language | refusal/en | 208/220 | 208/220 | 208/220 | +0 |
+| Area and language | small-talk/en | 66/68 | 66/68 | 66/68 | +0 |
+
+#### V2 case changes by area
+
+Compared 2,400 cases in release order. A scored failure signature contains each failed check's turn, stage and name.
+
+| Area | A → C newly pass | A → C newly fail | A → B verdict differences | A → B failed check differences |
+| --- | --- | --- | --- | --- |
+| calculation | None | None | None | None |
+| clarification | None | None | None | None |
+| coding | None | None | None | None |
+| comparison | None | None | None | None |
+| factual | None | None | None | None |
+| follow-up | `human-3d1ab445054d99b25b6e7f0a`, `human-735319c937442b94a963e33e`, `human-649fc1baa882b661e3952c46`, `human-d34d95da33d1a31b8a3ddf8a`, `human-aa6c6d304df48869d795437a`, `human-59c99bf6b3605ed03f266295`, `human-6f7e622ecde353c590790f7b`, `human-dffc1441eac061dec06dde66`, `human-30dcf80c4350ba0bff6815f8` | None | None | None |
+| refusal | None | None | None | None |
+| small-talk | None | None | None | None |
+
+### V2 follow-up by split
+
+| Split | A | B | C | C − A | Newly pass | Newly fail |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| D | 21/120 | 21/120 | 30/120 | +9 | 9 | 0 |
+| H | 25/120 | 25/120 | 25/120 | +0 | 0 | 0 |
+
+### Turn latency
+
+Percentiles use nearest rank over recorded turn latencies. Each row pools turns across that arm and version.
+
+| Arm | Version | Measured turns | p50 (ms) | p95 (ms) |
+| --- | --- | ---: | ---: | ---: |
+| A | V1 | 279 | 73.058 | 578.111 |
+| A | V2 | 2,400 | 114.116 | 1214.328 |
+| A | Combined | 2,679 | 110.862 | 1189.185 |
+| B | V1 | 279 | 67.867 | 510.126 |
+| B | V2 | 2,400 | 113.696 | 1195.333 |
+| B | Combined | 2,679 | 110.348 | 1178.753 |
+| C | V1 | 279 | 66.717 | 567.861 |
+| C | V2 | 2,400 | 109.534 | 1199.518 |
+| C | Combined | 2,679 | 106.761 | 1160.016 |
+
+### Acceptance checks from the coordinated receipts
+
+- V1 follow-up remains 18/18 in all arms — PASS
+- V1 has no group regression in C — PASS
+- V1 A and B match every verdict — PASS
+- V1 A and B match every scored failure signature — PASS
+- V2 has no group regression in C — PASS
+- V2 A and B match every verdict — PASS
+- V2 A and B match every scored failure signature — PASS
+- V2 held-back follow-up improved in C — FAIL
+
+The coordinator exited 0 and wrote summary SHA-256 `1993cad7cb635963af452efc950a7b55ab8ee42d919197db3336c4993237c052`. The split and subgroup report exited 1 because H gained zero passes. All 68 overall or subgroup comparisons were at or above base. A and B matched all 2,640 scored verdicts and failure signatures. The metadata comparison also found zero structured routing differences. H was used for scored IDs and counts. The sealed benchmark sets stayed closed.
+
+```bash
+python3 -B /workspace/work/followup-v2/report-receipts.py /workspace/work/followup-bench/final-reviewed --expect-head e30a31b265bca6b50ee8a82284b5f992b925a72b > /workspace/work/followup-v2/receipt-report.md
+python3 -B /workspace/work/followup-v2/compare-completed.py /workspace/work/followup-bench/final-reviewed/a/receipt.json /workspace/work/followup-bench/final-reviewed/b/receipt.json
+python3 -B /workspace/work/followup-v2/compare-receipt-metadata.py /workspace/work/followup-bench/final-reviewed /workspace/work/followup-bench/diagnosis/a/receipt.json
+sha256sum /workspace/work/followup-bench/final-reviewed/summary.json
+```
+
+Both metadata checks exited 0. The unmasked launcher comparator exited 1. It recorded A/B reply-byte differences in 30 V1 cases and 1,047 V2 cases, zero verdict differences and zero group regressions. The diagnosis and final base runs used the same product, inputs, settings and toolchain and differed in reply bytes on 31 V1 and 1,051 V2 cases. The base-run and A/B differences overlapped on 27 V1 and 1,041 V2 IDs. This establishes repeat variability for most of the differing IDs. Full byte parity was unverified. [PR #95 reply comparison](INTEGRATION-WAVE-5-2026-11-25.md#three-arm-development-run)
+
+```bash
+python3 -B scripts/dev-bench/compare.py \
+  --baseline /workspace/work/followup-bench/final-reviewed/a/receipt.json \
+  --flags-off /workspace/work/followup-bench/final-reviewed/b/receipt.json \
+  --flags-on /workspace/work/followup-bench/final-reviewed/c/receipt.json \
+  --output /workspace/work/followup-bench/final-reviewed/unmasked-comparison.json
+```
+
+## Final branch checks
+
+The final diff contains the two report files. The application, packages, launcher and tests match the requested base byte for byte. Both source-delta checks examined the two changed files and found zero added or removed matching strings. Each command exited 0.
+
+```bash
+python3 -B /workspace/work/canard-followup/compare-hash-guards.py /workspace/work/canard-followup/base-guard /workspace/Mohassan-AI
+python3 -B /workspace/work/canard-followup/compare-dev-raw-guard.py /workspace/work/canard-followup/base-guard /workspace/Mohassan-AI /workspace/work/canard-followup/dev-guard
+git diff --exit-code 201321031293999003bb0ae55a29dbd250ac96ce HEAD -- apps packages scripts tests
+git diff --check 201321031293999003bb0ae55a29dbd250ac96ce
+```
