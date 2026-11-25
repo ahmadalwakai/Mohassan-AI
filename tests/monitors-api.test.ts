@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { MonitorCardSchema, MonitorListSchema } from '@mohassan/contracts';
+import { MonitorCardSchema, MonitorListSchema, MonitorV2ControlSchema } from '@mohassan/contracts';
 import { SafeNetwork } from '@mohassan/browser';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApplication } from '../apps/server/src/app.js';
 import { monitorChat } from '../apps/server/src/monitors/chat.js';
+import { monitorTiming } from '../apps/server/src/monitors/schedule.js';
 
 const origin = 'http://127.0.0.1:3000';
 const authSecret = 'monitor-fixture-authentication-secret';
@@ -168,5 +169,190 @@ describe('rollout disabled by default', () => {
       expect(reply.capabilities.smartMonitors).toBeUndefined();
       expect(reply.monitorProposal).toBeUndefined();
     } finally { await app.app.close(); }
+  });
+});
+
+describe('version 2 conversational management and offer settings', () => {
+  let application: App;
+  let owner: string;
+  let member: string;
+  let ownerId: string;
+  let conversationId: string;
+
+  const send = (method: 'GET' | 'POST', url: string, cookie: string, payload?: object) =>
+    application.app.inject({ method, url, headers: headers(cookie), ...(payload && { payload }) });
+  const draft = async () => (await send('POST', '/api/chat/conversations', owner, {})).json().id as string;
+  const controlState = async (id: string, cookie = owner) => MonitorV2ControlSchema.parse((await send('GET', `${path}?control=v2&conversationId=${id}`, cookie)).json());
+  async function talk(id: string, text: string) {
+    const response = await send('POST', `/api/chat/conversations/${id}/messages`, owner, { text });
+    expect(response.statusCode, response.body).toBe(200);
+    return settle(application, id, owner);
+  }
+
+  beforeAll(async () => {
+    vi.stubEnv('MOHASSAN_MONITORS_ENABLED', '1');
+    vi.stubEnv('MOHASSAN_MONITORS_V2', '1');
+    vi.stubEnv('MOHASSAN_MONITORS_GITHUB', '1');
+    application = await createApplication({ ...configuration, browser: { searchProvider: { name: 'monitor fixture', search } } });
+    owner = await register(application, 'MonitorV2Owner', 'owner');
+    member = await register(application, 'MonitorV2Member', 'member');
+    ownerId = (await send('GET', '/api/access', owner)).json().user.id;
+    conversationId = await draft();
+  });
+  afterAll(async () => { await application?.app.close(); vi.unstubAllEnvs(); });
+
+  it('lists monitors in Arabic and fences a threshold edit and a stop behind separate confirmations', async () => {
+    const controls = monitorChat(application.database.db)!;
+    const now = new Date();
+    const proposal = await controls.store.propose(ownerId, { conversationId, observation: { value: 3.75, excerpt: 'USD/SAR', observedAt: now.toISOString() },
+      spec: { title: 'USD/SAR', message: 'The exchange rate fell.', language: 'en', source: { kind: 'currency', base: 'USD', quote: 'SAR' },
+        read: { kind: 'number' }, condition: { kind: 'crossing', direction: 'below', value: 3.7, hysteresis: 0.01 },
+        timing: monitorTiming('currency', 'normal', { now }) } });
+    await controls.store.approve(ownerId, proposal.id);
+    const listed = await talk(conversationId, 'ماذا تراقب لي؟');
+    expect(listed.capabilities.smartMonitorsV2).toBe(true);
+    expect(listed.messages.at(-1)?.text).toContain('USD/SAR (نشطة)');
+    expect((await controlState(conversationId)).action).toBeUndefined();
+
+    await talk(conversationId, 'غيّر الحد إلى ۳٫۶۵');
+    const edit = (await controlState(conversationId)).action!;
+    expect(edit.question).toContain('3.65');
+    expect((await controls.store.list(ownerId, conversationId))[0].spec.condition).toMatchObject({ value: 3.7 });
+    expect((await controlState(conversationId, member)).action).toBeUndefined();
+    expect((await send('POST', path, member, { actionId: edit.id, approved: true })).statusCode).toBe(404);
+    const updated = await send('POST', path, owner, { actionId: edit.id, approved: true });
+    expect(updated.json()).toMatchObject({ monitor: { id: proposal.id, status: 'active', spec: { condition: { value: 3.65 } } } });
+    expect((await send('POST', path, owner, { actionId: edit.id, approved: true })).json()).toEqual({});
+
+    await talk(conversationId, 'أوقف مراقبة الدولار');
+    const stop = (await controlState(conversationId)).action!;
+    expect(stop.question).toContain('USD/SAR');
+    expect((await controls.store.list(ownerId, conversationId))[0].status).toBe('active');
+    expect((await send('POST', path, owner, { actionId: stop.id, approved: true })).json()).toMatchObject({ monitor: { status: 'stopped' } });
+  });
+
+  it('changes item delivery to a daily digest only after confirmation', async () => {
+    const result = await ask(application, owner, 'Notify me every time a new item appears in public search results for park permits');
+    const proposal = MonitorCardSchema.parse(result.monitorProposal);
+    expect((await send('POST', path, owner, { proposalId: proposal.id })).json()).toMatchObject({ status: 'active' });
+    await talk(result.id, 'أرسل لي ملخصًا يوميًا بدل كل تنبيه');
+    const pending = (await controlState(result.id)).action!;
+    expect(pending.question).toContain('ملخصًا يوميًا');
+    const saved = await send('POST', path, owner, { actionId: pending.id, approved: true });
+    expect(saved.json()).toMatchObject({ monitor: { spec: { v2: { delivery: 'daily' } } } });
+  });
+
+  it('offers a GitHub watch only for the grounded topic and writes one proposal', async () => {
+    const db = application.database.db;
+    const controls = monitorChat(db)!;
+    const id = await draft();
+    const url = 'https://github.com/owner/repo/pull/42';
+    const offer = (answer: string, pages = [{ url, text: 'PR 42 is still open.', documentStatus: 200 }]) =>
+      db.transaction().execute(tx => controls.publishAnswerOffer(tx, {
+        ownerId, conversationId: id, runId: randomUUID(), text: 'Has PR 42 in owner/repo merged?', pages,
+      }, answer));
+    expect(await offer('I could not verify PR 42.', [])).toBe('');
+    expect(await offer('PR 43 is open.')).toBe('');
+    expect(await offer('PR 42 is still open.')).toContain('Would you like');
+    expect(await offer('PR 42 is still open.')).toBe('');
+    expect((await controls.view(ownerId, id)).monitorProposal).toMatchObject({
+      status: 'proposed', offer: 'agent-initiated',
+      spec: { source: { kind: 'github', owner: 'owner', repo: 'repo', watch: { kind: 'pull-request', number: 42 } },
+        condition: { kind: 'equals', value: 'merged' } },
+    });
+  });
+
+  it('publishes one offer per topic and obeys the account setting across conversations', async () => {
+    const controls = monitorChat(application.database.db)!;
+    const db = application.database.db;
+    const id = await draft();
+    const another = await draft();
+    const url = 'https://products.example.org/workshop-kit';
+    const offer = (conversationId: string) => db.transaction().execute(tx => controls.publishAnswerOffer(tx, {
+      ownerId, conversationId, runId: randomUUID(), text: `Is the product in stock at ${url}?`,
+      pages: [{ url, text: 'Workshop kit sold out.', documentStatus: 200 }],
+    }, 'The workshop kit is sold out.'));
+    expect(await offer(id)).toContain('Would you like');
+    expect((await controls.view(ownerId, id)).monitorProposal).toMatchObject({ status: 'proposed', offer: 'agent-initiated', current: { value: 'out of stock' } });
+    expect(await offer(id)).toBe('');
+    expect((await send('POST', path, owner, { proactiveOffers: false })).json()).toEqual({ proactiveOffers: false });
+    expect((await controlState(another)).proactiveOffers).toBe(false);
+    expect((await controlState(another, member)).proactiveOffers).toBe(true);
+    expect(await offer(another)).toBe('');
+    expect((await controls.view(ownerId, another)).monitorProposal).toBeUndefined();
+  });
+});
+
+describe('monitor context through chat and reminders', () => {
+  let application: App;
+  let owner: string;
+  let ownerId: string;
+
+  beforeAll(async () => {
+    vi.stubEnv('MOHASSAN_MONITORS_ENABLED', '1');
+    vi.stubEnv('MOHASSAN_MONITORS_V2', '1');
+    vi.stubEnv('MOHASSAN_MONITOR_CONTEXT', '1');
+    application = await createApplication(configuration);
+    owner = await register(application, 'MonitorContextOwner', 'owner');
+    ownerId = (await application.app.inject({ url: '/api/access', headers: headers(owner) })).json().user.id;
+  });
+  afterAll(async () => { await application?.app.close(); vi.unstubAllEnvs(); });
+
+  function fixturePage(text: string) {
+    return vi.spyOn(SafeNetwork.prototype, 'request').mockImplementation(async (address, options) => {
+      await options?.beforeDispatch?.();
+      const robots = new URL(address).pathname === '/robots.txt';
+      return { status: 200, url: address, headers: { 'content-type': 'text/plain' },
+        body: Buffer.from(robots ? 'User-agent: *\nAllow: /' : text) };
+    });
+  }
+
+  it('routes scheduled notifications to the reminder handler and public conditions to a proposal', async () => {
+    const notification = await ask(application, owner, 'Notify me in two hours to review the workshop application.');
+    expect(notification.question?.prompt).toContain('IANA');
+    expect(notification.monitorProposal).toBeUndefined();
+    const clock = await ask(application, owner, 'ذكّرني غدًا الساعة 9 بالاجتماع');
+    expect(clock.question?.prompt).toContain('IANA');
+    expect(clock.monitorProposal).toBeUndefined();
+
+    const source = 'https://workshop.example.org/enrolment';
+    const request = fixturePage('Registration is closed.');
+    try {
+      const conditional = await ask(application, owner, `نبهني عندما يفتح التسجيل في ${source}`);
+      expect(conditional.question).toBeNull();
+      expect(MonitorCardSchema.parse(conditional.monitorProposal)).toMatchObject({
+        status: 'proposed', offer: 'explicit', nextCheckAt: null, spec: { source: { kind: 'page', url: source } },
+      });
+    } finally { request.mockRestore(); }
+  });
+
+  it('offers a monitor from the earlier observed topic and respects a declined proposal', async () => {
+    const db = application.database.db;
+    const control = monitorChat(db)!;
+    const url = 'https://workshop-context.example.org/enrolment';
+    const draft = await application.app.inject({ method: 'POST', url: '/api/chat/conversations', headers: headers(owner), payload: {} });
+    const conversationId = draft.json().id as string;
+    const now = Date.now();
+    await db.insertInto('chat_messages').values([
+      { id: randomUUID(), conversation_id: conversationId, role: 'user', text: `Is registration open at ${url}?`, created_at: new Date(now - 2) },
+      { id: randomUUID(), conversation_id: conversationId, role: 'assistant', text: 'Registration is currently closed.', created_at: new Date(now - 1) },
+    ]).execute();
+    const request = fixturePage('Registration is closed.');
+    try {
+      const sent = await application.app.inject({ method: 'POST', url: `/api/chat/conversations/${conversationId}/messages`,
+        headers: headers(owner), payload: { text: 'Okay, I am waiting for it to open.' } });
+      expect(sent.statusCode, sent.body).toBe(200);
+      const detail = await settle(application, conversationId, owner);
+      expect(detail.messages.at(-1)?.text).toContain('Would you like me to watch this page');
+      const card = MonitorCardSchema.parse(detail.monitorProposal);
+      expect(card).toMatchObject({ status: 'proposed', offer: 'implicit', spec: { source: { kind: 'page', url },
+        read: { kind: 'status', label: 'registration' }, condition: { kind: 'contains', value: 'registration open' } } });
+      const declined = await application.app.inject({ method: 'POST', url: `${path}/${card.id}/stop`, headers: headers(owner) });
+      expect(declined.statusCode, declined.body).toBe(200);
+      request.mockClear();
+      expect(await control.forTurn({ ownerId, conversationId, runId: randomUUID(), text: 'I am still waiting for it to open.' })).toBeNull();
+      expect(request).not.toHaveBeenCalled();
+      expect((await control.view(ownerId, conversationId)).monitorProposal).toBeUndefined();
+    } finally { request.mockRestore(); }
   });
 });

@@ -1108,7 +1108,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       documents: Boolean(config.documents), sites: Boolean(config.sites), skills: Boolean(config.skillAnswer), planner: true, letters: true,
       imageReading: Boolean(config.imageReader?.available), ads: Boolean(config.adsModel) && full, pc: Boolean(tools?.computer) && full,
     };
-    return { chatModel: hasChatModel(), available: chatCapabilityIds.filter(capability => facts[capability]), ...(monitor && await monitor.availableTo(ownerId) ? { smartMonitors: true } : {}) };
+    return { chatModel: hasChatModel(), available: chatCapabilityIds.filter(capability => facts[capability]),
+      ...(monitor && await monitor.availableTo(ownerId) ? { smartMonitors: true, ...(monitor.v2 ? { smartMonitorsV2: true as const } : {}) } : {}),
+    };
   }
 
   async function list(ownerId: string) {
@@ -1485,6 +1487,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           criterionLabels: Object.fromEntries((state.supervision?.contract.criteria ?? []).map(item => [item.id, criterionLabel(ledger, item.id, item.description)])) }).status;
       });
       if (blockedMonitor && !monitorError) finalText += `\n\n${blockedMonitor.text}`;
+      if (monitor?.v2 && !preparedMonitor && finalStatus === 'completed' && !judged.withheld && !memoryPublication && !state.questionAnswer && source?.request) finalText += await monitor.publishAnswerOffer(tx, { ownerId: source.ownerId, conversationId: id, runId, text: source.request, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }, finalText);
       await addMessage(tx, id, 'assistant', finalText);
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',
@@ -2055,8 +2058,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const refusal = run.intent === 'task' && reviewWorkRefusal(request, state, currentExecution.full,
         { computer: Boolean(tools?.computer || config.desktop), memory: Boolean(tools?.memory) });
       if (refusal) { await finish(id, runId, state, refusal.text, 'blocked', undefined, undefined, true); return; }
-      const monitorTurn = monitor && run.intent === 'task' && !state.questionAnswer ? await monitor.forTurn({ ownerId, conversationId: id, runId, text: request, signal }) : null;
-      if (monitorTurn) { await finish(id, runId, state, monitorTurn.text, monitorTurn.proposal ? 'completed' : 'partial', undefined, undefined, true, monitorTurn); return; }
+      const monitorTurn = monitor && run.intent === 'task' && !state.questionAnswer ? await monitor.forTurn({ ownerId, conversationId: id, runId, text: request, signal, state }) : null;
+      if (monitorTurn) { await finish(id, runId, state, monitorTurn.text, monitorTurn.status ?? (monitorTurn.proposal ? 'completed' : 'partial'), undefined, undefined, true, monitorTurn); return; }
       if (await completeQuestionRewrite(request, state, () => browser.dropHeld(ownerId, id),
         question => finish(id, runId, state, vault.scrub(id, clean(question)), 'completed'))) return;
       // Level 4 (plan §6.1): a member asked for the computer's browser. One line with the reason and the alternative; no browser starts.

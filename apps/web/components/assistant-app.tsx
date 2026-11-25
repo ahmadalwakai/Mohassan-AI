@@ -36,6 +36,7 @@ import { RemindersSettings } from "./reminders-settings";
 import { BackgroundRunCard } from "./background-run-card";
 import { ConversationMonitors, MonitorSettings } from "./smart-monitors";
 import { ConversationMessageFeedback } from "../lib/monitor-feedback/alert-feedback";
+import { MonitorConversationControls } from "./smart-monitors-v2";
 import styles from "./assistant-app.module.css";
 
 /** Plan §5.2 P5: the first useful progress line should show within half a second; a local answer is ready in ~30 ms. */
@@ -697,7 +698,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
           </label>
           {onOpenTool ? <button onClick={() => { setMenuOpen(false); onOpenTool("desktop"); }}><Laptop size={15} />سطح المكتب</button> : null}
           {onOpenTool ? <TrainingMonitorMenuItem /> : null}
-          {chatCapabilities?.smartMonitors || conversation?.capabilities?.smartMonitors ? <MonitorSettings onOpenConversation={(id) => { setMenuOpen(false); open(id); }} /> : null}
+          {chatCapabilities?.smartMonitors || conversation?.capabilities?.smartMonitors ? <MonitorSettings v2={conversation?.capabilities?.smartMonitorsV2 ?? chatCapabilities?.smartMonitorsV2} onOpenConversation={(id) => { setMenuOpen(false); open(id); }} /> : null}
           <button onClick={() => { setMenuOpen(false); onAdvanced(); }}><Settings2 size={15} />الأدوات المتقدمة</button>
           <button onClick={onSignOut}><LogOut size={15} />تسجيل الخروج</button>
         </div> : null}
@@ -746,6 +747,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
             {conversation!.messages.at(-1)?.role === "assistant" && (running || conversation!.steps.length > 0 || unfinishedVerdict(conversation!)) && !answering && !blocked ? <Steps conversation={conversation!} /> : null}
             {conversation?.backgroundRun ? <BackgroundRunCard run={conversation.backgroundRun} busy={busy} onStop={() => void act(() => post("cancel", {}))} /> : null}
             {conversation?.monitorProposal || conversation?.monitors?.length ? <ConversationMonitors key={conversation.id} conversationId={conversation.id} proposal={conversation.monitorProposal} monitors={conversation.monitors} /> : null}
+            {conversation?.capabilities?.smartMonitorsV2 ? <MonitorConversationControls key={`monitor-controls-${conversation.id}`} conversationId={conversation.id} revision={conversation.messages.at(-1)?.id} /> : null}
             {conversation!.campaign?.events.length ? <CampaignCard stream={conversation!.campaign} running={running} /> : null}
             {conversation!.question?.fields?.length ? null
             : conversation!.question ? <div className={styles.choices}>{conversation!.question.options.map((option) => <button key={option.id} disabled={busy} onClick={() => conversation!.question!.action === "google_ads_connect" && option.id === "connect" ? void connectGoogleAds() : void act(() => post("respond", { questionId: conversation!.question!.id, optionId: option.id }))}>{option.label}</button>)}</div> : null}

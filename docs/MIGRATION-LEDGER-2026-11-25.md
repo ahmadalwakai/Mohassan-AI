@@ -15,9 +15,15 @@
 | 5 | #89 | `041_long_run_checkpoints` | — |
 | 6 | #92 | `042_background_results` | — |
 | 7 | `feat/smart-monitors` | `043_smart_monitors` | — |
-| 8 | `feat/monitors-phase1` | `044_monitor_alert_feedback` | — |
+| 8 | #100 | `044_smart_monitors_v2` | — |
+| 9 | #100 | `045_smart_monitor_conversation_controls` | — |
+| 10 | #104 | `046_smart_monitor_visual_budget` | — |
+| 11 | #102 | `047_monitor_alert_feedback` | `044_monitor_alert_feedback` |
+| 12 | #105 | `048_smart_monitor_decisions` | `046_smart_monitor_decisions` |
 
 Startup recognizes each full legacy ID and changes the existing ledger row to its recorded ID inside the migration transaction, preserving the original application timestamp. The notifications upgrade also widens the existing notification kind constraint for reminder delivery. Fresh databases run each migration once. The platform branch starts at `c2a0ff7` and leaves the agent migrations to the agent wave.
+
+The branch IDs `044_smart_monitors_v2`, `045_smart_monitor_conversation_controls`, and `046_smart_monitor_visual_budget` remain the recorded IDs.
 
 Wave 5 runs `041_long_run_checkpoints` through the `042_background_results` startup migrator, after the release candidate's `037`–`040`. The two migrations add durable-run indexes, extend the notification kind constraint and add background-outcome and APNs storage. The previously recorded ledger IDs stay in place. [Wave 5 report](INTEGRATION-WAVE-5-2026-11-25.md#migrations)
 
@@ -25,13 +31,22 @@ Wave 5 runs `041_long_run_checkpoints` through the `042_background_results` star
 
 `043_smart_monitors` follows `042_background_results`. It adds `smart_monitors`, `smart_monitor_budgets`, `smart_monitor_hosts`, and a nullable `chat_notifications.monitor_id` for monitor outcomes carried by the existing delivery queues. The rollout flag controls monitor admission, routes, and scheduling.
 
-`044_monitor_alert_feedback` follows `043_smart_monitors`. It adds one optional feedback record per account and monitor alert. Startup applies it with monitors off, and deletion of the account or alert cascades to its feedback.
+`044_smart_monitors_v2` follows `043_smart_monitors`. It adds nullable per-monitor state and a digest due time to `smart_monitors`.
+
+`045_smart_monitor_conversation_controls` follows `044_smart_monitors_v2` and creates `smart_monitor_v2_preferences`, `smart_monitor_v2_offers`, and `smart_monitor_v2_actions`.
+
+`046_smart_monitor_visual_budget` follows `045_smart_monitor_conversation_controls` and creates `smart_monitor_visual_budget` for daily render admission shared across accounts and workers.
+
+`047_monitor_alert_feedback` adds one optional feedback record per account and monitor alert. Startup applies it with monitors off, and deletion of the account or alert cascades to its feedback.
+
+`048_smart_monitor_decisions` adds the recording preference and proposal outcomes. The training export joins those outcomes with `047` alert feedback. The startup transaction applies `044` through `048` in order under the monitor schema lock.
 
 ## Collisions
 
 - Prefix `035` was claimed by notifications (#20), conversation review (#28, retained in #61), feedback (#30), standalone structured memory (#31, recognized as legacy in #61), and the activation console (#43).
 - Prefix `036` was claimed by reminders (#65) and agent wave 1 structured memory (#61).
 - Prefix `037` moves from member data rights to notifications. Prefix `038` moves from conversation shares to reminders. Each legacy check uses the entire ID to distinguish these entries.
+- Prefix `044` was claimed by alert feedback and v2 state. Prefix `046` was claimed by the visual budget and decision recording. The full legacy IDs identify the feedback and decision entries independently of the recorded v2 and visual IDs.
 - The base already uses prefixes `007`, `029`, and `033` for more than one distinct full ID in `schema_migrations`. The quota migration proposed by #9 uses `auth_schema_migrations`, a separate ledger. Platform integration makes no number assignments for the excluded feedback, activation, or quota migrations. [Base tree](https://github.com/ahmadalwakai/Mohassan-AI/tree/c2a0ff765071657cf200b5ee7d12fabaad738c0b)
 
 ## Open pull requests #1–#70

@@ -10,6 +10,15 @@ describe('bounded PDF text extraction in a terminable worker', () => {
     expect(text).toContain('Second page delivery 09:30');
     expect(text).not.toContain('PDF_SCRIPT_EXECUTED');
   });
+  it('reassembles shaped Arabic runs emitted in visual order while preserving the number', async () => {
+    const workerModule = new URL('./pdf-monitor-layout.mjs', import.meta.url).href;
+    const { pdfMonitorLine } = await import(/* @vite-ignore */ workerModule);
+    const fragments = ['٤٢', ' ', ':', ' ', 'ﺔ', 'ﻌ', 'ﺴ', 'ﻟ', 'ا'];
+    const items = fragments.map((str, x) => ({ str, transform: [1, 0, 0, 1, x, 0] }));
+    expect(pdfMonitorLine(items).normalize('NFKC')).toBe('السعة : ٤٢');
+    const wrappedPhrase = ['ح', 'ﺎ', 'ﺘ', 'ﻣ', ' ', 'ﻞ', 'ﻤ', 'ﻌ', 'ﻟ', 'ا'];
+    expect(pdfMonitorLine(wrappedPhrase.map((str, x) => ({ str, transform: [1, 0, 0, 1, x, 0] }))).normalize('NFKC')).toBe('العمل متاح');
+  });
   it('rejects malformed and encrypted PDFs with bounded public errors', async () => {
     await expect(extractPdfText(Buffer.from('invalid private-source'))).rejects.toMatchObject({ code: 'KNOWLEDGE_PDF_INVALID' });
     await expect(extractPdfText(Buffer.from('%PDF-1.7\nprivate-source\n%%EOF'))).rejects.toMatchObject({ code: 'KNOWLEDGE_PDF_INVALID' });

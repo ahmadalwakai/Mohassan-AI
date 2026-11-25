@@ -1,9 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import { monitorMetricTransaction, observeMonitorCheck } from '../ops/metrics/monitor-events.js';
 import { monitorOwnerIds, type EnabledMonitorRollout } from '../monitors-phase1/rollout.js';
-import { monitorHealth, monitorTrigger, publishMonitorNotice } from './delivery.js';
+import { monitorHealth, monitorTrigger, monitorV2Trigger, publishMonitorNotice } from './delivery.js';
 import { evaluateMonitor } from './evaluation.js';
+import { evaluateMonitorV2, monitorV2DigestDueAt } from './evaluation-v2.js';
+import { monitorSourceFlags, smartMonitorsV2Enabled } from './flag.js';
+import { GITHUB_API_HOST } from './sources/github-network.js';
+import { monitorDisabledSourcePredicates } from './sources/rollout.js';
+import { finishV2Check, monitorSourceSpec, v2ReadState } from './v2-runtime.js';
 import { MONITOR_LIMITS, nextMonitorBudgetDay, nextMonitorCheck } from './schedule.js';
 import { createMonitorStore, spendMonitorBudget, type MonitorRow, type MonitorStore } from './store.js';
 import type { createMonitorReader } from './sources.js';
@@ -30,12 +35,16 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
   read: ReadMonitor;
   store?: MonitorStore;
   rollout?: EnabledMonitorRollout;
-}, { now = () => new Date(), onError = () => console.error('[monitors] Poll failed; retrying.') }: {
+}, { now = () => new Date(), v2 = smartMonitorsV2Enabled(), onError = () => console.error('[monitors] Poll failed; retrying.') }: {
   now?: () => Date;
+  v2?: boolean;
   onError?: () => void;
 } = {}) {
-  const store = ports.store ?? createMonitorStore(db, { now, rollout: ports.rollout });
+  const store = ports.store ?? createMonitorStore(db, { now, rollout: ports.rollout, v2 });
   const ownersOnly = ports.rollout === 'owner';
+  const sourceFlags = monitorSourceFlags();
+  const disabled = monitorDisabledSourcePredicates('spec', sourceFlags);
+  const disabledAliased = monitorDisabledSourcePredicates('m.spec', sourceFlags);
   let timer: NodeJS.Timeout | undefined;
   let running: Promise<void> | undefined;
   let controller = new AbortController();
@@ -43,11 +52,14 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
   async function claim(): Promise<Claim | 'deferred' | undefined> {
     return db.transaction().execute(async tx => {
       const at = now();
-      const row = await tx.selectFrom('smart_monitors').selectAll().where('status', '=', 'active')
+      let due = tx.selectFrom('smart_monitors').selectAll().where('status', '=', 'active')
         .$if(ownersOnly, query => query.where('user_id', 'in', monitorOwnerIds(tx)))
         .where('expires_at', '>', at).where('next_check_at', '<=', at)
         .where(eb => eb.or([eb('lease_until', 'is', null), eb('lease_until', '<=', at)]))
-        .orderBy('next_check_at').orderBy('id').limit(1).forUpdate().skipLocked().executeTakeFirst() as MonitorRow | undefined;
+      if (!v2) due = due.where(sql<boolean>`spec->'v2' IS NULL`);
+      else for (const predicate of disabled) due = due.where(predicate);
+      if (v2 && !sourceFlags.visual) due = due.where(sql<boolean>`NOT coalesce(v2_state->'caches' @> '[{"anchor":{"origin":"visual"}}]'::jsonb, false)`);
+      const row = await due.orderBy('next_check_at').orderBy('id').limit(1).forUpdate().skipLocked().executeTakeFirst() as MonitorRow | undefined;
       if (!row) return;
       const update = tx.updateTable('smart_monitors').where('id', '=', row.id);
       if (row.checks >= row.spec.timing.maxChecks) {
@@ -101,6 +113,11 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
           next_check_at: new Date(Math.max(result.at, at.getTime() + MONITOR_LIMITS.pollMs)) }).execute();
         return;
       }
+      if (v2 && row.spec.v2) {
+        await update.set(await finishV2Check(tx, row, role, result, at, expiry, observe)).execute();
+        return;
+      }
+      if (result.kind === 'clarify' || result.kind === 'unsafe-target') throw new Error('Unexpected v2 monitor read result.');
       const last = { ...clearLease, last_checked_at: at };
       const exhausted = row.checks >= row.spec.timing.maxChecks;
       if (result.kind === 'unreachable' || result.kind === 'missing') {
@@ -139,10 +156,12 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
 
   async function publishDueNotice(at: Date): Promise<boolean> {
     return monitorMetricTransaction(db, async (tx, observe) => {
-      const candidate = await tx.selectFrom('smart_monitors as m').innerJoin('chat_conversations as c', 'c.id', 'm.conversation_id')
+      let due = tx.selectFrom('smart_monitors as m').innerJoin('chat_conversations as c', 'c.id', 'm.conversation_id')
         .select(['m.id']).where('m.pending_notice', 'is not', null).where('m.notice_due_at', '<=', at)
-        .$if(ownersOnly, query => query.where('m.user_id', 'in', monitorOwnerIds(tx)))
-        .orderBy('m.notice_due_at').orderBy('m.id').limit(1).forNoKeyUpdate('c').skipLocked().executeTakeFirst();
+        .$if(ownersOnly, query => query.where('m.user_id', 'in', monitorOwnerIds(tx)));
+      if (!v2) due = due.where(sql<boolean>`m.spec->'v2' IS NULL`);
+      else for (const predicate of disabledAliased) due = due.where(predicate);
+      const candidate = await due.orderBy('m.notice_due_at').orderBy('m.id').limit(1).forNoKeyUpdate('c').skipLocked().executeTakeFirst();
       if (!candidate) return false;
       const row = await tx.selectFrom('smart_monitors').selectAll().where('id', '=', candidate.id)
         .where('pending_notice', 'is not', null).where('notice_due_at', '<=', at).forUpdate().skipLocked().executeTakeFirst() as MonitorRow | undefined;
@@ -155,12 +174,51 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
     });
   }
 
+  async function publishDueDigest(at: Date): Promise<boolean> {
+    return monitorMetricTransaction(db, async (tx, observe) => {
+      let due = tx.selectFrom('smart_monitors as m').innerJoin('chat_conversations as c', 'c.id', 'm.conversation_id')
+        .select(['m.id']).where('m.v2_digest_due_at', '<=', at)
+        .$if(ownersOnly, query => query.where('m.user_id', 'in', monitorOwnerIds(tx)));
+      for (const predicate of disabledAliased) due = due.where(predicate);
+      const candidate = await due.orderBy('m.v2_digest_due_at').orderBy('m.id')
+        .limit(1).forNoKeyUpdate('c').skipLocked().executeTakeFirst();
+      if (!candidate) return false;
+      const row = await tx.selectFrom('smart_monitors').selectAll().where('id', '=', candidate.id)
+        .where('v2_digest_due_at', '<=', at).forUpdate().skipLocked().executeTakeFirst() as MonitorRow | undefined;
+      if (!row) return false;
+      const update = tx.updateTable('smart_monitors').where('id', '=', row.id);
+      const state = row.v2_state;
+      if (!state || row.status === 'stopped' || row.notifications >= row.spec.timing.maxNotifications) {
+        await update.set({ v2_digest_due_at: null }).execute();
+        return true;
+      }
+      const role = await store.accountRole(row.user_id, tx);
+      if (!role || row.pending_notice) {
+        const retry = row.notice_due_at ? Math.max(at.getTime() + MONITOR_LIMITS.pollMs, new Date(row.notice_due_at).getTime())
+          : nextMonitorBudgetDay(at).getTime();
+        await update.set({ v2_digest_due_at: new Date(retry) }).execute();
+        return true;
+      }
+      const result = evaluateMonitorV2(row.spec, state.evaluation, [], at);
+      state.evaluation = result.state;
+      const receipt = result.notice && await publishMonitorNotice(tx, row, role, monitorV2Trigger(row, result.notice, at), at, observe);
+      const notifications = row.notifications + Number(Boolean(receipt));
+      const exhausted = notifications >= row.spec.timing.maxNotifications;
+      await update.set({ ...receipt, notifications, v2_state: JSON.stringify(state),
+        v2_digest_due_at: exhausted ? null : monitorV2DigestDueAt(row.spec, state.evaluation) ?? null,
+        ...(exhausted && row.status === 'active' && { status: 'completed', next_check_at: null }),
+      }).execute();
+      return true;
+    });
+  }
+
   async function cleanExpired(at: Date) {
     const pendingExpiry = db.selectFrom('smart_monitors').select('id').where('status', 'in', ['proposed', 'active', 'paused'])
       .$if(ownersOnly, query => query.where('user_id', 'in', monitorOwnerIds(db)))
       .where('expires_at', '<=', at).orderBy('expires_at').limit(MONITOR_LIMITS.workPerPoll).forUpdate().skipLocked();
     await db.updateTable('smart_monitors').set(expire).where('id', 'in', pendingExpiry).execute();
-    const staleHosts = db.selectFrom('smart_monitor_hosts').select('host_key').where('eligible_at', '<=', at)
+    const hostCleanupAt = sourceFlags.github ? sql<Date>`least(${at}::timestamptz, CURRENT_TIMESTAMP)` : at;
+    const staleHosts = db.selectFrom('smart_monitor_hosts').select('host_key').where('eligible_at', '<=', hostCleanupAt)
       .orderBy('eligible_at').limit(MONITOR_LIMITS.workPerPoll).forUpdate().skipLocked();
     await db.deleteFrom('smart_monitor_hosts').where('host_key', 'in', staleHosts).execute();
   }
@@ -169,6 +227,11 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
     await cleanExpired(now());
     for (let i = 0; i < MONITOR_LIMITS.workPerPoll && !shutdown.aborted; i++) {
       if (!await publishDueNotice(now())) break;
+    }
+    if (v2) {
+      for (let i = 0; i < MONITOR_LIMITS.workPerPoll && !shutdown.aborted; i++) {
+        if (!await publishDueDigest(now())) break;
+      }
     }
     let claims = 0;
     const worker = async () => {
@@ -180,15 +243,18 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
         const signal = AbortSignal.any([shutdown, AbortSignal.timeout(MONITOR_LIMITS.readTimeoutMs)]);
         let result: ReadResult;
         let hostAdmitted = false;
-        const reserveHost = async (host: string) => {
-          const retryAt = await store.reserveHost(host);
+        const reserveHost = async (host: string, minimumMs?: number) => {
+          const retryAt = await store.reserveHost(host, sourceFlags.github && host === GITHUB_API_HOST ? minimumMs : undefined);
           hostAdmitted ||= retryAt === null;
           return retryAt;
         };
         const startedAt = now().getTime();
         try {
-          result = await withinSignal(signal, () => ports.read(checked.row.spec, { ownerId: checked.row.user_id, signal,
-            cache: checked.row.source_cache ?? undefined, reserveHost, extendHost: store.extendHost }));
+          const state = v2 && checked.row.spec.v2 ? v2ReadState(checked.row) : undefined;
+          result = await withinSignal(signal, () => ports.read(state ? monitorSourceSpec(checked.row.spec, state.cursor) : checked.row.spec,
+            { ownerId: checked.row.user_id, signal, ...(state && { v2: true }),
+              cache: (state ? state.caches[state.cursor] : checked.row.source_cache) ?? undefined, reserveHost, extendHost: store.extendHost,
+            }));
         } catch {
           result = { kind: 'unreachable' };
         }

@@ -34,7 +34,7 @@ export class BrowserEngine {
   private browser?:Promise<Browser>;
   private denialProxy?:Server;
   private sessions=new Map<string,LiveSession>();
-  constructor(policy:NetworkPolicy={}){this.network=new SafeNetwork(policy);}
+  constructor(policy:NetworkPolicy={},network=new SafeNetwork(policy)){this.network=network;}
   has(id:string){return this.sessions.has(id);}
   private async launch():Promise<Browser>{
     if(!this.browser)this.browser=(async()=>{
@@ -135,6 +135,9 @@ export class BrowserEngine {
     const live=this.live(id);this.network.validate(url,live.allowedOrigins);live.denials=[];
     try{await this.followNavigation(live,url);}catch(error){if(error instanceof BrowserError)throw error;throw new BrowserError('BROWSER_NAVIGATION_FAILED',live.denials[0]??'تعذر فتح الصفحة ضمن الوقت والنطاق المسموح.',502);}
     this.network.validate(live.page.url(),live.allowedOrigins);return this.observe(id);
+  }
+  async inspect<T>(id:string,url:string,read:(page:Page,documentStatus:number|undefined)=>Promise<T>):Promise<T>{
+    const live=this.live(id);await this.followNavigation(live,url,live.expiresAt);return this.bounded(id,read(live.page,live.documentResponse?.status),Math.max(1,live.expiresAt-Date.now()));
   }
   async scroll(id:string,direction:'up'|'down'):Promise<BrowserObservation>{const live=this.live(id);await live.page.evaluate(delta=>window.scrollBy(0,delta),direction==='down'?600:-600);return this.observe(id);}
   async observe(id:string):Promise<BrowserObservation>{

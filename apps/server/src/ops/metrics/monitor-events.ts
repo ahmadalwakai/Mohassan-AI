@@ -18,7 +18,7 @@ export function registerMonitorMetrics(db: Kysely<any>, observe: Observe) {
 }
 
 export function observeMonitorCheck(db: Kysely<any>, dueAt: Date | null, startedAt: number,
-  result: 'value' | 'unchanged' | 'missing' | 'unreachable' | 'deferred') {
+  result: 'value' | 'unchanged' | 'missing' | 'unreachable' | 'deferred' | 'clarify' | 'unsafe-target') {
   const observe = observers.get(db);
   if (!observe || !dueAt || result === 'deferred') return;
   observe({ kind: 'check', latenessMs: Math.max(0, startedAt - new Date(dueAt).getTime()),

@@ -27,6 +27,9 @@ export const MONITOR_LIMITS = {
 
 const intervals = {
   page: { normal: 15 * minute, urgent: 5 * minute },
+  github: { normal: 15 * minute, urgent: 6 * minute },
+  pdf: { normal: 30 * minute, urgent: 10 * minute },
+  visual: { normal: 30 * minute, urgent: 15 * minute },
   currency: { normal: hour, urgent: 15 * minute },
   weather: { normal: 30 * minute, urgent: 10 * minute },
   search: { normal: hour, urgent: 30 * minute },
@@ -61,7 +64,7 @@ export function initialMonitorCheck(spec: MonitorSpec, at: Date, expiry: Date) {
   return nextMonitorCheck(spec, at, spec.timing.initialIntervalMs, { changed: true, expiry });
 }
 
-export function nextMonitorCheck(spec: MonitorSpec, at: Date, priorIntervalMs: number, {
+export function nextMonitorCheck(spec: Pick<MonitorSpec, 'source' | 'timing'>, at: Date, priorIntervalMs: number, {
   changed, expiry,
 }: { changed: boolean; expiry: Date }) {
   const earliest = intervals[spec.source.kind].urgent;

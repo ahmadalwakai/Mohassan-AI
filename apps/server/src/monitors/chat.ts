@@ -1,34 +1,44 @@
 import { BrowserError, SafeNetwork, SearchEngine } from '@mohassan/browser';
-import type { MonitorOffer, MonitorSpec } from '@mohassan/contracts';
+import { MONITOR_V2_DEFAULT_FRESHNESS_MS, monitorV2Targets, type MonitorOffer, type MonitorSpec } from '@mohassan/contracts';
 import type { Kysely } from 'kysely';
 import { assessRequestScope, requestCapabilityAllowed, reviewPublicProjection } from '../assistant/request-scope.js';
 import { monitoringRequest } from '../assistant/response-policy-signals.js';
 import { matchText } from '../assistant/mind/normalize.js';
 import { migrateBackgroundResults } from '../background-results-migration.js';
 import type { CommandChatConfig } from '../command-chat.js';
-import { migrateMonitorAlertFeedback } from '../monitors-phase1/feedback-migration.js';
 import { addMonitorCardAlerts, conversationMonitorAlerts } from '../monitors-phase1/feedback.js';
-import { detectMonitorNeed, monitorHistoryMayMatter, safeMonitorRequest, type MonitorNeed } from './detection.js';
 import { monitorAccountAllowed, type EnabledMonitorRollout } from '../monitors-phase1/rollout.js';
-import { monitorRollout } from './flag.js';
+import { monitorContainsCredentials } from './credential-privacy.js';
+import { createMonitorDecisionContext, type MonitorContextTurn } from './decision/chat-context.js';
+import type { MonitorDecisionSnapshot } from './decision/features.js';
+import { monitorOfferTopic } from './decision/offer-topic.js';
+import { detectMonitorNeed, monitorHistoryMayMatter, safeMonitorRequest, type MonitorNeed } from './detection.js';
+import { monitorTextConditionMatches } from './evaluation.js';
+import { monitorRollout, monitorSourceFlags, smartMonitorsV2Enabled } from './flag.js';
 import { migrateMonitors } from './migration.js';
 import { observePage } from './page.js';
 import { createMonitorRuntime } from './runtime.js';
+import { monitorTiming } from './schedule.js';
+import { detectGithubAnswerOffer, detectGithubMonitorNeed, githubIntentMayMatter } from './sources/github-intent.js';
 import { createMonitorReader, type MonitorReadResult } from './sources.js';
 import { generateMonitorSpec, monitorNeedReply } from './spec.js';
 import { createMonitorStore, MonitorError } from './store.js';
+import { detectMonitorAnswerOffer, parseMonitorManagement, type MonitorAnswerPage } from './v2-chat-intents.js';
+import { createMonitorChatV2Store, prepareMonitorManagement } from './v2-chat-store.js';
+import type { MonitorV2Preview } from './v2-runtime-types.js';
+import { prepareMonitorV2Preview } from './v2-runtime.js';
+import { generateMonitorV2Spec } from './v2-spec.js';
 
-type Configuration = Pick<CommandChatConfig, 'networkPolicy' | 'searchProvider'>;
+type Configuration = Pick<CommandChatConfig, 'networkPolicy' | 'searchProvider' | 'imageReader'>;
 type SourceValue = Extract<MonitorReadResult, { kind: 'value' }>;
 export interface PreparedMonitorTurn {
   text: string;
-  proposal?: { spec: MonitorSpec; observation: SourceValue['observation']; cache?: SourceValue['cache']; offer: MonitorOffer; note: string };
+  status?: 'completed' | 'partial';
+  management?: NonNullable<Awaited<ReturnType<typeof prepareMonitorManagement>>['management']>;
+  proposal?: { spec: MonitorSpec; observation: SourceValue['observation'] | null; cache?: SourceValue['cache']; offer: MonitorOffer; note: string; v2Preview?: MonitorV2Preview; decisionFeatures?: MonitorDecisionSnapshot };
+  offerTopic?: string;
 }
-interface Turn {
-  ownerId: string;
-  conversationId: string;
-  runId: string;
-  text: string;
+interface Turn extends MonitorContextTurn {
   signal?: AbortSignal;
 }
 interface BlockedTurn extends Turn {
@@ -36,8 +46,11 @@ interface BlockedTurn extends Turn {
   pages: readonly { url: string; documentStatus?: number; text?: string }[];
   error?: unknown;
 }
+type AnswerTurn = Turn & { pages: readonly MonitorAnswerPage[] };
 
 const localized = (language: MonitorNeed['language'], ar: string, en: string) => language === 'ar' ? ar : en;
+const offerPrompt = (language: MonitorNeed['language']) => localized(language,
+  'أتريد أن أراقب هذه الصفحة وأنبّهك عندما تتغيّر الحالة؟', 'Would you like me to watch this page and let you know when the status changes?');
 const address = /https:\/\/[^\s<>"'«»]+/iu;
 const controls = new WeakMap<Kysely<any>, ReturnType<typeof createMonitorChat>>();
 
@@ -54,9 +67,11 @@ function eligible(text: string) {
   return Boolean(safeMonitorRequest(text));
 }
 
-function scopedSource(need: MonitorNeed, spec: MonitorSpec) {
+function scopedSource(need: MonitorNeed, spec: Pick<MonitorSpec, 'source'>) {
   const scope = assessRequestScope(need.text);
-  if (spec.source.kind === 'page') return requestCapabilityAllowed(scope.constraints ?? null, 'browser_navigation');
+  if (spec.source.kind === 'page' || spec.source.kind === 'pdf' || spec.source.kind === 'visual' || spec.source.kind === 'github') {
+    return requestCapabilityAllowed(scope.constraints ?? null, 'browser_navigation');
+  }
   if (spec.source.kind === 'search') {
     return requestCapabilityAllowed(scope.constraints ?? null, 'public_search')
       && reviewPublicProjection(`Search for ${spec.source.query}`, spec.source.query).eligible;
@@ -67,7 +82,9 @@ function scopedSource(need: MonitorNeed, spec: MonitorSpec) {
 export async function legacyMonitorHandledBySmartChat(db: Kysely<any>, ownerId: string, text: string) {
   const control = monitorChat(db);
   if (!control || !await control.availableTo(ownerId)) return false;
-  return monitoringRequest(matchText(text)) || detectMonitorNeed({ text })?.kind === 'explicit';
+  return monitoringRequest(matchText(text)) || detectMonitorNeed({ text })?.kind === 'explicit'
+    || control.v2 && Boolean(parseMonitorManagement(text))
+    || monitorSourceFlags().github && detectGithubMonitorNeed(text)?.kind === 'explicit';
 }
 
 function blockedSource(turn: BlockedTurn) {
@@ -90,10 +107,13 @@ function blockedSource(turn: BlockedTurn) {
 function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: EnabledMonitorRollout) {
   const network = new SafeNetwork({ resolver: config.networkPolicy?.resolver, userAgent: config.networkPolicy?.userAgent });
   const searchProvider = config.searchProvider instanceof SearchEngine ? undefined : config.searchProvider;
-  const reader = createMonitorReader({ db, network, searchProvider });
+  const flags = monitorSourceFlags();
+  const reader = createMonitorReader({ db, network, searchProvider, flags, visual: { imageReader: config.imageReader } });
   const store = createMonitorStore(db, { rollout });
   const runtime = createMonitorRuntime(db, { read: reader.read, store, rollout });
-  const availableTo = (ownerId: string) => monitorAccountAllowed(db, ownerId, rollout);
+  const availableTo = (ownerId: string, tx = db) => monitorAccountAllowed(tx, ownerId, rollout);
+  const v2 = smartMonitorsV2Enabled();
+  const chatV2 = createMonitorChatV2Store(db, store);
   let initializing: Promise<void> | undefined;
   let ready = false;
   const initialize = (schemaReady = false) => {
@@ -102,18 +122,23 @@ function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: Enab
     return initializing ??= (async () => {
       await migrateBackgroundResults(db);
       await migrateMonitors(db);
-      await migrateMonitorAlertFeedback(db);
       ready = true;
     })().finally(() => { initializing = undefined; });
   };
+  const context = createMonitorDecisionContext(db, store, initialize, flags.github);
 
   async function prepare(need: MonitorNeed, turn: Turn, blocked = false): Promise<PreparedMonitorTurn | null> {
-    const spec = generateMonitorSpec(need);
-    if (!spec || !scopedSource(need, spec)) {
+    const spec = v2 ? generateMonitorV2Spec(need, new Date(), flags) : generateMonitorSpec(need);
+    const sources = spec && (v2 ? monitorV2Targets(spec) : [spec]);
+    if (!spec || !sources?.every(source => scopedSource(need, source))) {
+      if (!blocked && flags.github && githubIntentMayMatter(need.text)) {
+        return { text: localized(need.language, 'حدّد مستودع GitHub العام بصيغة owner/repo ورقم الطلب أو اسم الفرع عند الحاجة.',
+          'Specify the public GitHub repository as owner/repo and include the pull request number or branch if needed.') };
+      }
       return blocked ? null : { text: monitorNeedReply(need) };
     }
-    if (spec.source.kind === 'page') {
-      try { network.validate(spec.source.url); }
+    for (const { source } of sources) if ('url' in source) {
+      try { network.validate(source.url); }
       catch {
         return need.kind === 'explicit' ? { text: localized(need.language, 'أرسل رابط HTTPS عامًّا يمكن قراءته.', 'Send a readable public HTTPS address.') } : null;
       }
@@ -122,7 +147,20 @@ function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: Enab
     let preview: MonitorReadResult;
     try {
       await store.reservePreview(turn.ownerId, turn.conversationId);
-      preview = await reader.read(spec, { ownerId: turn.ownerId, signal: turn.signal, reserveHost: store.reserveHost, extendHost: store.extendHost, preview: true });
+      const options = { ownerId: turn.ownerId, signal: turn.signal, reserveHost: store.reserveHost, extendHost: store.extendHost, preview: true };
+      if (v2) {
+        const prepared = await prepareMonitorV2Preview(reader.read, spec, options);
+        if ('preview' in prepared) {
+          const v2Preview = prepared.preview;
+          const note = v2Preview.clarification
+            ? localized(need.language, 'اختر القيمة التي تريد مراقبتها.', 'Choose the value you want to watch.') : monitorNeedReply(need, spec);
+          return { text: note, proposal: { spec, observation: v2Preview.samples.find(sample => sample.index === 0)?.observation ?? null,
+            offer: need.kind, note, v2Preview } };
+        }
+        preview = prepared.result;
+      } else {
+        preview = await reader.read(spec, options);
+      }
     } catch (error) {
       turn.signal?.throwIfAborted();
       if (!(error instanceof BrowserError || error instanceof MonitorError)) throw error;
@@ -131,15 +169,38 @@ function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: Enab
     if (preview.kind !== 'value') {
       return !blocked ? { text: preview.kind === 'deferred'
         ? localized(need.language, 'للمصدر فترة انتظار بين الفحوص. أعد طلب المراقبة بعد قليل لمراجعة القيمة الحالية.', 'This source has a minimum interval between reads. Ask again shortly so I can show you its current value.')
-        : localized(need.language, 'تعذّرت قراءة القيمة الحالية. تحقّق من الرابط العام أو حدّد الجزء المطلوب مراقبته.', 'I couldn’t read the current value. Check the public address or specify the part you want watched.') } : null;
+        : preview.kind === 'unsafe-target' && preview.reason === 'visual-unreadable'
+          ? localized(need.language, 'تعذّرت قراءة الصورة بثقة كافية. حدّد الجزء الذي يظهر فيه الرقم بوضوح.', 'I couldn’t read the image with enough confidence. Specify the region where the number is clearly visible.')
+          : localized(need.language, 'تعذّرت قراءة القيمة الحالية. تحقّق من الرابط العام أو حدّد الجزء المطلوب مراقبته.', 'I couldn’t read the current value. Check the public address or specify the part you want watched.') } : null;
     }
     if (blocked && (preview.observation.value === 'reachable' || preview.observation.value === 'published')) return null;
     const note = monitorNeedReply(need, spec);
     return { text: note, proposal: { spec, observation: preview.observation, cache: preview.cache, offer: need.kind, note } };
   }
 
+  async function contextTurn(turn: Turn, assessment: NonNullable<Awaited<ReturnType<typeof context.assess>>>) {
+    const { action, reason } = assessment;
+    if (action === 'manage' && reason.decision === 'manage' && !monitorContainsCredentials(turn.text)) {
+      return prepareMonitorManagement(store, turn.ownerId, turn.conversationId, reason.management);
+    }
+    if ((action !== 'propose' && action !== 'offer') || action !== reason.decision || !reason.need || !eligible(turn.text)) return null;
+    const offerTopic = action === 'offer' && reason.need.sourceUrl ? monitorOfferTopic(reason.need.sourceUrl) : undefined;
+    if (offerTopic && !await chatV2.canOffer(turn.ownerId, turn.conversationId, offerTopic)) return null;
+    const prepared = await prepare(reason.need, turn, action === 'offer' && Boolean(offerTopic));
+    if (!prepared?.proposal) return prepared;
+    const { proposal } = prepared;
+    // A new proactive card needs a currently observed status and a still-pending condition.
+    if (offerTopic && (proposal.spec.read.kind !== 'status' || !proposal.observation || proposal.v2Preview?.clarification
+      || monitorTextConditionMatches(proposal.spec.condition, proposal.observation.value))) return null;
+    proposal.decisionFeatures = await context.snapshot(turn, db, action, assessment);
+    if (!offerTopic) return prepared;
+    const note = offerPrompt(proposal.spec.language);
+    return { ...prepared, text: note, proposal: { ...proposal, note }, offerTopic };
+  }
+
   return {
-    initialize, runtime, store, availableTo,
+    initialize, runtime, store, availableTo, v2,
+    v2State: chatV2.state, confirmAction: chatV2.confirm, setProactiveOffers: chatV2.setProactiveOffers,
     async view(ownerId: string, conversationId: string) {
       if (!ready || !await availableTo(ownerId)) return {};
       const [listed, alerts] = await Promise.all([store.list(ownerId, conversationId), conversationMonitorAlerts(db, ownerId, conversationId)]);
@@ -149,31 +210,95 @@ function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: Enab
       return { ...(monitorProposal ? { monitorProposal } : {}), ...(monitors.length ? { monitors } : {}),
         ...(alerts.length ? { monitorAlerts: alerts.map(({ alert }) => alert) } : {}) };
     },
+    async beforeReminder(turn: Turn) {
+      if (!context.observing || !await availableTo(turn.ownerId)) return undefined;
+      const assessment = await context.assess(turn);
+      if (!context.active) return undefined;
+      if (assessment?.action === 'reminder') return 'reminder';
+      if (assessment?.action === 'propose' && assessment.reason.decision === 'propose' && eligible(turn.text)) return 'propose';
+    },
     async forTurn(turn: Turn) {
-      if (!monitorHistoryMayMatter(turn.text) || !await availableTo(turn.ownerId) || !eligible(turn.text)) return null;
+      if (!(v2 || monitorHistoryMayMatter(turn.text)) || !await availableTo(turn.ownerId)) return null;
+      if (context.active) {
+        const assessment = await context.assess(turn);
+        return assessment ? contextTurn(turn, assessment) : null;
+      }
+      if (v2) {
+        const management = parseMonitorManagement(turn.text);
+        if (management && !monitorContainsCredentials(turn.text)) {
+          await initialize();
+          return prepareMonitorManagement(store, turn.ownerId, turn.conversationId, management);
+        }
+      }
+      const github = flags.github && githubIntentMayMatter(turn.text);
+      const githubReply = flags.github && /^(?:https:\/\/github\.com\/\S+|[a-z\d-]+\/[a-z\d_.-]+)$/iu.test(turn.text.trim());
+      if ((!github && !githubReply && !monitorHistoryMayMatter(turn.text)) || !eligible(turn.text)) return null;
       const messages = await db.selectFrom('chat_messages as m').innerJoin('chat_conversations as c', 'c.id', 'm.conversation_id')
         .select(['m.role', 'm.text']).where('c.id', '=', turn.conversationId).where('c.owner_id', '=', turn.ownerId)
         .orderBy('m.created_at', 'desc').orderBy('m.id', 'desc').limit(13).execute();
       const latest = messages.findIndex(message => message.role === 'user' && message.text === turn.text);
       if (latest >= 0) messages.splice(latest, 1);
-      const need = detectMonitorNeed({ text: turn.text, history: messages.reverse() });
-      return need ? prepare(need, turn) : null;
+      const history = messages.reverse();
+      const need = ((github || githubReply) && detectGithubMonitorNeed(turn.text, history)) || detectMonitorNeed({ text: turn.text, history });
+      if (!need || v2 && need.kind !== 'explicit') return null;
+      const prepared = await prepare(need, turn);
+      if (v2 && prepared?.proposal) prepared.proposal.decisionFeatures = await context.snapshot(turn, db, 'propose');
+      return prepared;
     },
     async forBlockedTurn(turn: BlockedTurn) {
-      if (!address.test(turn.text) || !await availableTo(turn.ownerId) || !eligible(turn.text)) return null;
+      if (v2 || !address.test(turn.text) || !await availableTo(turn.ownerId) || !eligible(turn.text)) return null;
       const blocked = blockedSource(turn);
       if (!blocked) return null;
       const need = detectMonitorNeed({ text: turn.text, blocked });
       return need ? prepare(need, turn, true) : null;
     },
+    async publishAnswerOffer(tx: Kysely<any>, turn: AnswerTurn, answer: string) {
+      if (!v2 || !ready || !await availableTo(turn.ownerId, tx)) return '';
+      const offer = (flags.github && detectGithubAnswerOffer(turn.text, answer, turn.pages))
+        || detectMonitorAnswerOffer(turn.text, answer, turn.pages);
+      if (!offer || monitorContainsCredentials(turn.text) || monitorContainsCredentials(offer.excerpt)) return '';
+      const assessment = context.observing ? await context.answer(turn, tx, offer, answer) : undefined;
+      if (context.active && assessment?.action !== 'offer') return '';
+      const { ownerId, conversationId } = turn;
+      const { language, url, title } = offer;
+      const note = 'source' in offer
+        ? localized(language, 'أتريد أن أراقب هذا المصدر على GitHub وأنبّهك عند تغيّر الحالة؟', 'Would you like me to watch this GitHub source and let you know when the condition is met?')
+        : offerPrompt(language);
+      const now = new Date();
+      const watch = 'source' in offer ? { source: offer.source, read: offer.read, condition: offer.condition }
+        : { source: { kind: 'page', url }, read: { kind: 'status', label: offer.label },
+          condition: { kind: 'equals', value: offer.after } } as const;
+      const spec: MonitorSpec = { ...watch, language, title, message: note,
+        timing: monitorTiming(watch.source.kind, 'normal', { now }), v2: { freshnessMs: MONITOR_V2_DEFAULT_FRESHNESS_MS } };
+      const observation = { value: offer.before, excerpt: offer.excerpt, url, observedAt: offer.observedAt ?? now.toISOString() };
+      const didOffer = await chatV2.offerOnce(tx, ownerId, conversationId, offer.topic, async () => {
+        try {
+          const decisionFeatures = await context.snapshot(turn, tx, 'offer', assessment, offer, answer);
+          const card = await store.propose(ownerId, { conversationId, spec, observation, offer: 'agent-initiated', note,
+            v2Preview: { samples: [{ index: 0, observation }], caches: [null] }, decisionFeatures }, tx);
+          return card.status === 'proposed';
+        } catch (error) {
+          if (!(error instanceof MonitorError)) throw error;
+          return false;
+        }
+      });
+      return didOffer ? `\n\n${note}` : '';
+    },
     async publish(tx: Kysely<any>, ownerId: string, conversationId: string, turn: PreparedMonitorTurn) {
-      if (!turn.proposal) return null;
+      if (!await availableTo(ownerId, tx)) return null;
+      if (v2 && turn.management) await chatV2.publishAction(tx, ownerId, conversationId, turn.management);
+      const proposal = turn.proposal;
+      if (!proposal) return null;
       try {
-        await store.propose(ownerId, { conversationId, ...turn.proposal }, tx);
+        if (turn.offerTopic) {
+          const published = await chatV2.offerOnce(tx, ownerId, conversationId, turn.offerTopic, async () =>
+            (await store.propose(ownerId, { conversationId, ...proposal }, tx)).status === 'proposed');
+          if (!published) return localized(proposal.spec.language, 'لم أضف عرض مراقبة لهذه الصفحة.', 'I left the page without adding a monitor offer.');
+        } else await store.propose(ownerId, { conversationId, ...proposal }, tx);
         return null;
       } catch (error) {
         if (!(error instanceof MonitorError)) throw error;
-        return localized(turn.proposal.spec.language, 'تعذّر حفظ عرض المراقبة. راجع عدد المراقبات النشطة والموعد النهائي.', error.message);
+        return localized(proposal.spec.language, 'تعذّر حفظ عرض المراقبة. راجع عدد المراقبات النشطة والموعد النهائي.', error.message);
       }
     },
   };

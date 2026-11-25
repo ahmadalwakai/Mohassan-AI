@@ -36,6 +36,7 @@ export function isolatedE2EEnvironment(directory: string, ambient: NodeJS.Proces
     // Installed browser binaries are read-only dependencies, never profiles or credentials.
     PLAYWRIGHT_BROWSERS_PATH: process.platform === 'win32' ? path.join(homedir(), 'AppData', 'Local', 'ms-playwright') : path.join(homedir(), '.cache', 'ms-playwright'),
     NEXT_TELEMETRY_DISABLED: '1', DO_NOT_TRACK: '1', CI: '1',
+    NEXT_FONT_GOOGLE_MOCKED_RESPONSES: path.join(repository, 'tests', 'e2e', 'offline-google-fonts.cjs'),
     MOHASSAN_ISOLATED_TEST: 'true', MOHASSAN_E2E_ROOT: directory,
     DATA_DIR: path.join(directory, 'database'), DATABASE_URL: '',
     CODING_DATA_DIR: path.join(directory, 'coding'), CODING_ALLOWED_ROOTS: path.join(directory, 'approved-root'),
@@ -131,11 +132,12 @@ export async function stopOwnedChildren(children: OwnedChild[]): Promise<void> {
   }));
 }
 
-export async function startIsolatedE2E(options: { localBrain?: boolean } = {}): Promise<{ directory: string; stop(): Promise<void> }> {
+export async function startIsolatedE2E(options: { localBrain?: boolean; githubMonitor?: boolean } = {}): Promise<{ directory: string; stop(): Promise<void> }> {
   // Never reuse, kill, or contact an existing local server on these fixture ports.
   await requireFreePort(E2E_SERVER_PORT); await requireFreePort(E2E_WEB_PORT);
   const fixture = await createE2EFixture();
   if (options.localBrain) fixture.environment.MOHASSAN_E2E_LOCAL_BRAIN = '1';
+  if (options.githubMonitor) fixture.environment.MOHASSAN_E2E_GITHUB_MONITOR = '1';
   const children: OwnedChild[] = [];
   let stopping: Promise<void> | undefined;
   const stop = () => stopping ??= (async () => { await stopOwnedChildren(children); await fixture.cleanup(); })();

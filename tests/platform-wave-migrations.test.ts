@@ -45,13 +45,20 @@ vi.mock('@mohassan/database', async importOriginal => {
   };
 });
 
-const platformIds = [
+const legacyIds = [
   ['037_notifications', '035_notifications'],
   ['038_reminders', '036_reminders'],
   ['039_conversation_shares', '038_conversation_shares'],
   ['040_member_data_rights', '037_member_data_rights'],
+  ['047_monitor_alert_feedback', '044_monitor_alert_feedback'],
+  ['048_smart_monitor_decisions', '046_smart_monitor_decisions'],
 ] as const;
-const currentIds = [...platformIds.map(([current]) => current), '041_long_run_checkpoints', '042_background_results', '043_smart_monitors', '044_monitor_alert_feedback'];
+const currentIds = [
+  '037_notifications', '038_reminders', '039_conversation_shares', '040_member_data_rights',
+  '041_long_run_checkpoints', '042_background_results', '043_smart_monitors',
+  '044_smart_monitors_v2', '045_smart_monitor_conversation_controls', '046_smart_monitor_visual_budget',
+  '047_monitor_alert_feedback', '048_smart_monitor_decisions',
+];
 const agentIds = ['035_chat_conversation_review', '036_structured_memory'];
 
 // Ledger registrations in the base startup migrators, retrieved 2026-11-25.
@@ -123,7 +130,7 @@ it('records platform migrations in startup order, restarts unchanged, and adopts
 
     const second = await boot(async db => {
       await db.transaction().execute(async tx => {
-        for (const [version, legacy] of platformIds) {
+        for (const [version, legacy] of legacyIds) {
           await tx.updateTable('schema_migrations').set({ version: legacy }).where('version', '=', version).execute();
         }
         // Recreate the standalone push schema before checking the legacy upgrade.

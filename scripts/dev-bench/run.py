@@ -151,7 +151,7 @@ def combine(output, source):
 
 def tool_hashes():
     directory = Path(__file__).resolve().parent
-    files = {path.name: digest(path.read_bytes()) for path in sorted(directory.glob('*.py'))}
+    files = {path.name: digest(path.read_bytes()) for path in sorted([*directory.glob('*.py'), *directory.glob('*.mjs')])}
     listing = json.dumps(files, separators=(',', ':'), sort_keys=True).encode()
     return {'sha256': digest(listing), 'files': files}
 
@@ -164,6 +164,8 @@ def arguments():
     parser.add_argument('--workers', type=int, choices=range(1, LANES + 1), default=LANES,
                         help='concurrent V2 workers; all eight lanes always run')
     parser.add_argument('--offline', action='store_true', help='install from the local npm cache without network access')
+    parser.add_argument('--audit-monitors', action='store_true',
+                        help='control fixture IDs and citation time, and record monitor checks against recorded pages only')
     args = parser.parse_args()
     arms = {}
     for spec in args.arm:
@@ -192,7 +194,8 @@ def main():
         arm_output = output / name
         arm_output.mkdir(mode=0o700)
         print(f'{name}: measuring {commit}', flush=True)
-        source = run_arm(repo, arm_output, commit, settings, workers=args.workers, offline=args.offline)
+        source = run_arm(repo, arm_output, commit, settings, workers=args.workers, offline=args.offline,
+                         monitor_audit=args.audit_monitors)
         require(source['commit'] == commit, f'{name}: launcher measured a different commit')
         versions = combine(arm_output, source)
         receipt = {'schemaVersion': 1, 'name': name, 'commit': commit, 'tool': tool, 'source': source, 'versions': versions}

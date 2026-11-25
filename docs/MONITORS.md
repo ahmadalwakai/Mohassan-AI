@@ -2,6 +2,10 @@
 
 تلتقط المراقبة الذكية طلبات المتابعة بالعربية والإنجليزية وتقترح خطة تعرض المصدر والقيمة الحالية وشرط التنبيه. تبدأ الفحوص بعد موافقتك، وتتباعد عند استقرار المصدر. عند تحقق الشرط يصلك تنبيه واحد وتجد الدليل في المحادثة. إذا تكرر تعذّر الوصول إلى المصدر أو اختفى الجزء المراد متابعته، تتوقف المراقبة مؤقتًا وتخبرك بالسبب. يمكنك إدارة المراقبات من المحادثة أو من «المراقبات» في الإعدادات. تفعيل الميزة بيد صاحب الخدمة.
 
+في الإصدار الثاني تقرأ المراقبات البيانات المنظّمة وموجزات النشر، وتطلب منك تحديد القيمة عند الالتباس. يمكنك جمع عدة شروط ومتابعة الاتجاهات وطلب ملخّص يومي. تتعلّم كل مراقبة توقيت تغيّر مصدرها، وتعرض التنبيهات القيمة قبل التغيّر وبعده. الإصدار الثاني اختياري ومطفأ افتراضيًا.
+
+تضيف المرحلة الثانية مراقبة المستودعات العامة على GitHub وملفات PDF العامة والأرقام المرسومة داخل الصور أو لوحات الرسم. لكل مصدر مفتاح تفعيل مستقل ومطفأ افتراضيًا. يبدأ فحص الصور بعد تعذّر قراءة النص والبيانات المنظّمة، وتتوقّف المراقبة أو تطلب منك اختيار الجزء عند ضعف الثقة. دقة التعرّف الضوئي الفعلية تنتظر الاختبار بأوزان النموذج.
+
 ## From chat to notification
 
 1. The detector evaluates Arabic and English requests with deterministic rules. An explicit request gets a proposal for approval. A user who says they are waiting for a public change, or repeats the same public status question in the conversation, gets an offer. A run that cannot finish because a verified public page is unavailable or its publication status is pending can offer to watch for availability or publication and to continue the task when the user asks. The detector uses recent user turns to resolve references such as “this page” and asks for details when the target or condition is ambiguous.
@@ -93,6 +97,285 @@ When a trigger or health pause is committed, the same database transaction recor
 
 The server accepts up to 12 calls per minute on each mutation route, matching the secure chat route limit for interactive actions. Each route requires a session and enforces account ownership. [Member permissions](../apps/server/src/members.ts) · [Routes](../apps/server/src/monitors/routes.ts)
 
+## Smart monitors v2
+
+`MOHASSAN_MONITORS_V2=1` enables v2 for accounts allowed by `MOHASSAN_MONITORS_ENABLED`. New v2 monitors have an explicit v2 specification. Existing v1 monitors keep their original check path. Turning v2 off takes those monitors out of the scheduler and the v1 UI. Their original expiry still applies.
+
+### Extraction and confirmation
+
+A public page is parsed with parse5. Schema.org JSON-LD and microdata supply Offer price, currency and availability, Event start date and status, and Product name. Visible-text extraction supplies a fallback. A user-selected visible anchor retains its identity when the page also contains structured data. Price summaries show the currency and whether a value is an old price, when the page supplies that evidence. Arabic and Persian digits and Arabic thousands and decimal separators are normalized before numeric comparisons. Hijri conversion uses the runtime's ICU Umm al-Qura calendar via `Intl.DateTimeFormat` and a search of its Gregorian days. Status mappings preserve distinctions between open, closed, out of stock and coming soon. [Schema.org Offer](https://schema.org/Offer) · [Schema.org Event](https://schema.org/Event) · [Schema.org Product](https://schema.org/Product) · [ECMA-402](https://tc39.es/ecma402/#datetimeformat-objects)
+
+A saved anchor records the label, value type, unit, currency, old-price marker, surrounding text and location. A type, currency, unit or old-price mismatch receives zero. Otherwise the score starts at 0.35 for the matching value pattern, adds 0.25 for a matching label, up to 0.30 for word-set overlap, and 0.10 for an unchanged location and extraction method. An exact unique match or a score of at least 0.84 with a lead of at least 0.16 resumes automatically and records the relocation. A score of at least 0.55 with two or more candidates produces one question with two to four source-backed choices. A composite preview with several ambiguous sources asks one question at a time. Lower confidence, or a single weak candidate, pauses the monitor and records one health notice within the existing allowance. These weights require corroborating label and surrounding text before automatic relocation. [Page reader](../apps/server/src/monitors/page-v2.ts) · [Choice rules](CLARIFICATION-CHOICES.md)
+
+New-item watches look for RSS and Atom autodiscovery links and a sitemap in HTML or robots.txt, falling back to `/sitemap.xml`. Discovery goes through the same HTTPS, robots, host reservation, redirect and conditional-request path as the watched page. It reads up to two child maps from an index. The XML tokenizer caps each document at 512 KiB, 24 levels, 12,000 tokens and 100 items. It accepts standard and numeric XML entities and rejects declarations and custom entities. The limits bound processing and stored validators per check. Feed captions take precedence for duplicate links and sitemap links are limited to descendants of the watched path. Minute-precision or finer publication timestamps can inform scheduling. [RSS](https://www.rssboard.org/rss-specification) · [Atom](https://www.rfc-editor.org/rfc/rfc4287) · [Sitemaps](https://www.sitemaps.org/protocol.html) · [XML](https://www.w3.org/TR/xml/)
+
+### Conditions, evidence and conversation
+
+Up to three sources can form an AND or OR. A sequence has exactly two sources and requires a later confirmed B after a confirmed A within the specified window. Each source has a freshness limit. The default is six hours plus one scheduler poll so a normal quiet check can confirm a sample before it ages out. Sources are checked in order and each scheduled source read uses one check. A conditional 304 can revalidate a prior read. A broad HTML edit requires three agreeing observations at least an hour apart to reduce alerts from rotating content. Anchored and structured reads can confirm sooner. Trends use either a previous confirmed value inside a time window, or consecutive directional readings. [Conditions and limits](../packages/contracts/src/monitors.ts) · [Evaluation](../apps/server/src/monitors/evaluation-v2.ts)
+
+New-item watches can run once, alert on successive checks that find new items, or combine notices at the next UTC day boundary. Item identity is tracked even if the source changes order. Digests are durable and can be published without another source fetch. The existing budgets cap checks and notices across normal operation, digests and health pauses. A recurring monitor completes when its last allowed trigger or digest is committed. Trigger evidence shows before and after, signed absolute and percent change where defined, the observation time in UTC, an excerpt and a link. It uses the conversation's language. The notification outbox retains the existing APNs envelope and generic lock-screen default. [Evidence](../apps/server/src/monitors/delivery-v2.ts) · [Runtime](../apps/server/src/monitors/runtime.ts)
+
+Examples include “What are you monitoring for me?”, «أوقف مراقبة الدولار», «غيّر الحد إلى 3.65» and «أرسل لي ملخصًا يوميًا بدل كل تنبيه». Changes require separate confirmation. An ambiguous name can prompt a choice before the confirmation card. Answer-based offers require a verified public source and agreement between the answer and its evidence on the pending state. Offers are capped at one per topic in each conversation and do not appear during refusals, small talk or clarification. The account's monitoring settings can turn them off. [Conversation controls](../apps/server/src/monitors/chat.ts)
+
+### Predictive scheduling
+
+Consider a change at time $t$ between checks at $a$ and $b$. Its detection delay is $b-t$. If $\lambda(t)$ is the expected change rate over time, the interval's expected sum of delays is $\int_a^b \lambda(t)(b-t)\,dt$. With the prefix integrals $M(t)=\int^t\lambda(s)\,ds$ and $S(t)=\int^t s\lambda(s)\,ds$, this is $b[M(b)-M(a)]-[S(b)-S(a)]$. With a uniform rate, the total is proportional to the sum of squared gaps. Even spacing minimizes that sum for a fixed number of checks and total time.
+
+The scheduler uses the prefix integrals in a fixed-count dynamic program on a grid no wider than 15 minutes. It plans about one day ahead, executes the first slot, and replans after each observation. It uses the source's existing urgent floor and six-hour quiet cap. The final hour before an explicit deadline receives reserved checks. Failure and confirmation retries share the same allowance. An untimestamped change can use one normal-interval follow-up probe when the remaining budget covers the quiet slots. A novel broad-text edit can use an early confirmation slot from the same hard budget. Repeated values that reverted before confirmation use the normal schedule. Brief weather threshold conditions retain the responsive v1 cadence until there are enough publication timestamps to forecast them. Own background runs retain the v1 initial backoff until a state transition is observed. A new-item watch with at least three dated releases, a concentrated weekly phase and a quiet next day can use the six-hour gap. Those gates limit sparse-history predictions and preserve coverage for unexpected releases.
+
+The rate estimate divides the observed changes, including distinct feed or sitemap timestamps, by elapsed observation time plus one prior day. This regularization limits early spending. Timestamped releases contribute directly to 15-minute UTC daily and weekly bins. An undated change contributes across the bracket between the last confirmed sample and its observation, capped at six hours. Each contribution puts half its weight in its bin and a quarter in each neighboring bin to tolerate small timing shifts. Separate days or weeks are required before using their respective patterns. At most 75% of the baseline density comes from periodic patterns, preserving coverage at other times. Nearby changes add a short burst term with a six-hour half-life. The state lives on the individual monitor row owned by its account. [Scheduler](../apps/server/src/monitors/schedule-v2.ts)
+
+## Verification
+
+### Measurement protocol
+
+The simulator checks the pinned v1 checkout at `a453dc17a78f55c0cd3e5bf23f347843893bc3d2` against the candidate's production source adapters, evaluator and scheduler. It uses a virtual clock and in-process source fixtures. SHA-256 counter streams provide deterministic draws. The fixtures generate Poisson arrivals by inverse exponential sampling, jittered daily and weekly releases, and bursts with explicit spacings. They also generate rotating blocks, A/B changes, time stamps, threshold flaps, layout moves, price decoys, outage windows and redirects. The oracle records actual events independently of extraction and scheduling. [Generator](../scripts/monitor-simulation/fixtures.ts) · [Runner](../scripts/monitor-simulation/run.ts)
+
+Each trial covers one monitor-week. Checks count logical scheduled source reads. A feed check can issue conditional reads for several resources. Precision counts matched alerts over all condition alerts. Recall counts detected ground-truth opportunities. False alarms and checks are divided by enrolled monitor-weeks, including trials that ended early. Latency uses the event time and alert observation time. The table shows raw latency over detected events. The paired comparison uses only events both arms detect. The restricted comparison assigns each miss its time to expiry, accounting for changes in the detected population. Relocation success means reading the right value after a known layout move. An explicit relocation record is counted separately. The one-shot aggregate contains the eight classes with the same notification semantics. The recurring feed is reported separately because v1 stops after its first trigger.
+
+The first candidate was tuned on 32 seeds per source class. Its 64 held-out seeds per class were opened after freeze. A separate agent then worked on the scheduler in a fresh context using the code and the original tuning bank. The independent replication uses 128 fresh trials per class under the same generator, parameters, oracle and gates. Its 256-bit salt is generated after the second freeze and recorded with the results.
+
+### Held-out results
+
+The first snapshot `4415845` exited **1**. It improved both paired delay measures and overall recall, but run-source recall fell from 48/48 to 47/48 and one-shot checks increased from 12,463 to 12,641. Its per-class results are recorded below.
+
+```bash
+/workspace/scratch/monitor-bench-offline ./node_modules/.bin/tsx scripts/monitor-simulation/run.ts --baseline /workspace/scratch/monitor-baseline --bank held-out > /workspace/scratch/monitor-held-out.json
+```
+
+| Source | Matched opportunities | Precision | Recall | False alarms/week | Mean / p95 minutes | Checks/week | Relocation success |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| plain-page | 0 / 50 → 50 / 50 | 0.0% → 100.0% | 0.0% → 100.0% | 1.00 → 0.00 | — / — → 289.8 / 434.9 | 4.00 → 26.45 | — → — |
+| structured-offer | 32 / 64 → 50 / 64 | 65.3% → 100.0% | 50.0% → 78.1% | 0.27 → 0.00 | 160.3 / 345.0 → 104.2 / 250.0 | 30.72 → 27.02 | 16/35 → 35/35 |
+| arabic-page | 40 / 64 → 54 / 64 | 100.0% → 100.0% | 62.5% → 84.4% | 0.00 → 0.00 | 18.4 / 89.0 → 116.6 / 317.0 | 33.13 → 30.81 | 23/34 → 28/34 |
+| weekly-feed | 47 / 48 → 47 / 48 | 100.0% → 100.0% | 97.9% → 97.9% | 0.00 → 0.00 | 176.0 / 331.0 → 63.3 / 168.0 | 20.13 → 17.84 | — → — |
+| recurring-feed | 46 / 141 → 141 / 141 | 100.0% → 100.0% | 32.6% → 100.0% | 0.00 → 0.00 | 186.1 / 340.0 → 25.4 / 46.0 | 19.36 → 25.48 | — → — |
+| currency | 48 / 52 → 52 / 52 | 100.0% → 100.0% | 92.3% → 100.0% | 0.00 → 0.00 | 198.9 / 348.0 → 130.8 / 281.0 | 29.88 → 25.64 | — → — |
+| weather | 52 / 64 → 52 / 64 | 100.0% → 100.0% | 81.3% → 81.3% | 0.00 → 0.00 | 78.8 / 229.0 → 78.8 / 229.0 | 23.73 → 23.73 | — → — |
+| search | 48 / 48 → 48 / 48 | 100.0% → 100.0% | 100.0% → 100.0% | 0.00 → 0.00 | 178.8 / 345.0 → 171.9 / 331.0 | 20.63 → 19.81 | — → — |
+| run | 48 / 48 → 47 / 48 | 100.0% → 100.0% | 100.0% → 97.9% | 0.00 → 0.00 | 177.0 / 327.0 → 144.6 / 294.5 | 32.53 → 26.20 | — → — |
+| Shared one-shot total | 315 / 438 → 400 / 438 | 79.5% → 100.0% | 71.9% → 91.3% | 0.16 → 0.00 | 142.4 / 333.0 → 137.3 / 331.0 | 24.34 → 24.69 | 39/69 → 63/69 |
+
+For 271 events both arms detected, mean and p95 delay went from 161.65 / 336.00 to 115.04 / 292.00 minutes. Restricted mean and p95 went from 2,517.85 / 9,344.00 to 2,197.88 / 8,529.00 minutes. The candidate recorded 28 relocations.
+
+The independent replication at `ae662ed` exited **0**. Each source class matched or improved recall, and the one-shot total used 273 fewer checks. The scheduler used 5,897 versus 6,156 checks in the tuning bank before the replication salt was generated.
+
+```bash
+/workspace/scratch/monitor-bench-offline ./node_modules/.bin/tsx scripts/monitor-simulation/run.ts --baseline /workspace/scratch/monitor-baseline --bank held-out --replication 4df4e5fd7666511ada67cbd164b43a29587fa95657ce4302e13a0f7c414a1173 > /workspace/scratch/monitor-held-out-replication.json
+```
+
+| Source | Matched opportunities | Precision | Recall | False alarms/week | Mean / p95 minutes | Checks/week | Relocation success |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| plain-page | 0 / 102 → 99 / 102 | 0.0% → 100.0% | 0.0% → 97.1% | 1.00 → 0.00 | — / — → 306.8 / 463.5 | 4.00 → 24.17 | — → — |
+| structured-offer | 66 / 128 → 106 / 128 | 64.1% → 100.0% | 51.6% → 82.8% | 0.29 → 0.00 | 181.9 / 346.0 → 106.8 / 246.0 | 31.86 → 26.44 | 36/73 → 68/73 |
+| arabic-page | 80 / 128 → 113 / 128 | 100.0% → 100.0% | 62.5% → 88.3% | 0.00 → 0.00 | 28.9 / 109.0 → 115.9 / 303.0 | 32.68 → 28.95 | 41/61 → 51/61 |
+| weekly-feed | 97 / 98 → 98 / 98 | 100.0% → 100.0% | 99.0% → 100.0% | 0.00 → 0.00 | 158.1 / 335.0 → 72.6 / 211.0 | 22.41 → 19.26 | — → — |
+| recurring-feed | 99 / 300 → 294 / 300 | 100.0% → 100.0% | 33.0% → 98.0% | 0.00 → 0.00 | 197.0 / 349.0 → 23.2 / 43.0 | 18.94 → 23.09 | — → — |
+| currency | 107 / 109 → 109 / 109 | 100.0% → 100.0% | 98.2% → 100.0% | 0.00 → 0.00 | 189.1 / 351.0 → 143.4 / 292.0 | 29.24 → 25.13 | — → — |
+| weather | 113 / 128 → 113 / 128 | 100.0% → 100.0% | 88.3% → 88.3% | 0.00 → 0.00 | 88.0 / 295.0 → 88.0 / 295.0 | 23.45 → 23.45 | — → — |
+| search | 104 / 109 → 108 / 109 | 100.0% → 100.0% | 95.4% → 99.1% | 0.00 → 0.00 | 154.7 / 321.0 → 176.4 / 346.0 | 19.05 → 18.29 | — → — |
+| run | 101 / 106 → 106 / 106 | 100.0% → 100.0% | 95.3% → 100.0% | 0.00 → 0.00 | 169.3 / 340.0 → 191.2 / 347.6 | 32.54 → 27.41 | — → — |
+| Shared one-shot total | 668 / 908 → 852 / 908 | 80.2% → 100.0% | 73.6% → 93.8% | 0.16 → 0.00 | 139.3 / 330.0 → 148.8 / 352.5 | 24.40 → 24.14 | 77/134 → 119/134 |
+
+For the 597 events both arms detected, mean and p95 fell from 152.51 / 332.00 to 132.71 / 320.73 minutes. Restricted mean and p95 fell from 2,465.89 / 9,013.00 to 2,009.96 / 8,203.00 minutes. Raw mean and p95 rose across each arm's own set of detected events, which included 184 more detections in v2. The candidate recorded 51 relocations. The recurring watch detected 195 additional publication events and used 4.15 more checks per monitor-week.
+
+### Three-arm development benchmark
+
+The coordinator ran the pinned baseline and the same release candidate with v2 off and on. All arms used PR #95’s arm C settings with v1 monitoring enabled, the same development inputs, two workers and a network-disabled container. The case comparison includes reply text and scored turn details. Timing-only receipt fields do not enter the equality check. [Development launcher](../scripts/dev-bench/README.md) · [PR #95 settings](INTEGRATION-WAVE-5-2026-11-25.md#three-arm-development-run)
+
+| Development set | Cases | Baseline | Head, v2 off | Head, v2 on | Flag-off verdict / check / reply differences | Enabled subgroup regressions |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| V1 | 240 | 176 | 176 | 176 | 0 / 0 / 0 | 0 |
+| V2 | 2,400 | 1,588 | 1,588 | 1,588 | 0 / 0 / 0 | 0 |
+
+- V1 compared 14 area, 2 language and 28 area/language groups.
+- V2 compared 8 area, 2 language and 12 area/language groups.
+
+| Arm | Detection matches | Management matches | Proactive matches | Displayed offers | False offers |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Baseline | 0 | 0 | 0 | 0 | 0 |
+| Head, v2 off | 0 | 0 | 0 | 0 | 0 |
+| Head, v2 on | 0 | 0 | 0 | 0 | 0 |
+
+No development case matched detection, management or proactive offering. The reviewed monitoring-request allowlist is empty for these development sets. The functional suites exercise positive monitoring and offer cases.
+
+The timings are nearest-rank values in milliseconds. Each sampled turn sums its calls to the relevant check.
+
+| Arm | Detection turns | Detection p50 / p95 ms | Proactive turns | Proactive p50 / p95 ms |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline | 2,247 | 0.0304 / 0.2023 | 0 | — / — |
+| Head, v2 off | 2,247 | 0.0300 / 0.1746 | 0 | — / — |
+| Head, v2 on | 2,247 | 0.0224 / 0.1644 | 1,635 | 0.1071 / 0.2763 |
+
+The launcher exited **0** and the release comparator exited **0**. No sealed set was used. The exploratory invocation on `4415845` was stopped after its baseline arm completed when that snapshot was superseded.
+
+```bash
+/workspace/scratch/monitor-dev-bench ae662ed9ad2872bc68154e8b8c1e5a75028763ec /workspace/scratch/monitor-dev-three-arms-release
+/workspace/scratch/monitor-bench-offline python3 -B scripts/dev-bench/compare.py \
+  --baseline /workspace/scratch/monitor-dev-three-arms-release/a/receipt.json \
+  --flags-off /workspace/scratch/monitor-dev-three-arms-release/b/receipt.json \
+  --flags-on /workspace/scratch/monitor-dev-three-arms-release/c/receipt.json \
+  --monitor-requests /workspace/scratch/monitor-dev-bench-requests.json \
+  --output /workspace/scratch/monitor-dev-three-arms-release/monitor-comparison.json
+```
+
+### Offline tests
+
+Node `24.22.3` and Playwright Chromium build `1248` were used. Setup downloaded locked packages from the npm registry and the pinned browser from Playwright. The verification commands ran with Docker networking disabled and loopback available to the web and API fixtures.
+
+```bash
+npm run typecheck
+npm run test -- tests/monitors-api.test.ts tests/monitors-detection.test.ts \
+  tests/monitors-web.test.ts tests/smart-monitor-runtime.test.ts tests/smart-monitor-sources.test.ts \
+  tests/smart-monitor-sources-v2.test.ts tests/smart-monitor-reasoning-v2.test.ts \
+  tests/smart-monitor-schedule-v2.test.ts tests/smart-monitor-chat-v2.test.ts
+env MOHASSAN_E2E_WEB_PORT=3114 MOHASSAN_E2E_SERVER_PORT=4114 npm_config_offline=true \
+  npm run test:e2e -- tests/e2e/smart-monitors.spec.ts tests/e2e/smart-monitors-v2.spec.ts
+```
+
+On the release snapshot, `npm run typecheck` exited **0**, and the nine affected Vitest suites passed **162/162**, including the Arabic fixtures, DTD and external-entity rejection, budget isolation and the existing build 15 APNs envelope. Both Playwright scenarios passed in the same offline environment, including price choice before activation and confirmation of a conversational stop. The release browser rerun took 1.1 minutes using local fixtures.
+
+## Phase 2 sources
+
+Each source has an independent rollout flag and uses v2 proposals, choices, scheduling, evidence and delivery. Sources require `MOHASSAN_MONITORS_V2=1` and an account admitted by `MOHASSAN_MONITORS_ENABLED=owner` or `1`. The source flags default to off. Turning one off suspends its checks and new approvals. The original expiry still applies.
+
+| Flag | Watches | Normal / urgent starting interval |
+| --- | --- | --- |
+| `MOHASSAN_MONITORS_GITHUB=1` | Public repository releases and tags, latest stable release or first API-listed tag, pull request state or head SHA, branch head SHA, pull request or branch CI | 15 / 6 minutes |
+| `MOHASSAN_MONITORS_PDF=1` | Public PDF text revisions, a number near a label, a phrase appearing and new marked list items | 30 / 10 minutes |
+| `MOHASSAN_MONITORS_VISUAL=1` | Numeric values in an anchored image or canvas from a public page, with source-backed choices when several regions qualify | 30 / 15 minutes for explicit visual monitors |
+
+For example, “tell me when PR 42 in owner/repo is merged” and «نبّهني لما يُدمج الطلب 42 في owner/repo» select the same pull request condition. “Watch the CI on branch main” uses an established repository from the conversation or asks for it. A grounded answer about a pending pull request, CI run or release can offer a watch through the existing one-off-per-topic and opt-out controls. A refusal, small talk, or a clarification does not offer a watch.
+
+### GitHub limits and evidence
+
+The adapter uses only anonymous GET requests to `https://api.github.com` through SafeNetwork. It validates same-origin redirects and sends an ETag per endpoint when it has a cached response. GitHub allows 60 unauthenticated REST requests per hour per originating IP. The shared SQL host slot admits a serial batch of up to five requests over 25 seconds. The spacing is `5 × 60 minutes / 60 + 25 seconds = 325 seconds`. A rolling hour can overlap at most 12 batches even if a request leaves at the end of its batch. This counts conditional requests and redirect hops. A `403` or `429` defers the batch using `Retry-After`, or `X-RateLimit-Reset` at exhausted `X-RateLimit-Remaining`, with a one-minute minimum wait. The same backoff applies across accounts and workers. The adapter sends and stores no token. Adding a token would be a separate owner decision. [GitHub REST rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api) · [GitHub REST best practices](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api)
+
+CI uses the same head SHA for the combined commit status and check runs. Failure takes precedence over pending and success. An empty result stays pending. The adapter bounds the check-run listing at three pages and withholds the observation if the response cannot account for all reported runs. Release and tag lists use the first 30 API entries. A repository with no eligible release can serve as a baseline. A proposal preview can admit one GitHub target. Additional GitHub targets in the same preview encounter the shared host slot and defer. [GitHub source reader](../apps/server/src/monitors/sources/github.ts)
+
+| Primary source | Retrieved | SHA-256 |
+| --- | --- | --- |
+| [REST API rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api) | 2026-11-25 | `de0b9cfb42e53b9ff14128ec6fe37376e6fba54dec13ac0026b0b8dbc5625fec` |
+| [REST API best practices](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api) | 2026-11-25 | `31eb742eec6dc1f2a2bad54820c82f46bfe89cdb9e94c3ce7bb3f0000656db1e` |
+| [GitHub REST OpenAPI description archive](https://codeload.github.com/github/rest-api-description/zip/refs/heads/main), release 1.1.4, API 2022-11-28 | 2026-11-25 | `1726204dfb4810d071301f3f89d8b862a83429a22179fd5e3b6fd9df09af992c` for `descriptions/api.github.com/api.github.com.2022-11-28.json` |
+
+Each source was requested once. The OpenAPI archive transfer timed out after the complete member arrived. The partial archive was 528,331,742 bytes with SHA-256 `d9e3c596400227e69ea3fde3c54e1da2f2103aed9ae8294ad4f788c7f330a2e6`. The member matched its archive CRC and length, and the extracted README identifies release 1.1.4. The offline fixture validator pins the extracted member's SHA-256. [Fixture validation](../scripts/monitor-simulation/github-openapi.ts)
+
+### PDF and visual limits
+
+PDF extraction reuses the project's bounded PDF.js worker. The input limit is 10,000,000 bytes, the page limit is 100, the extracted text limit is 256,000 bytes and the read deadline is 15 seconds. Each extractor process admits at most two workers with limited heaps and terminates a worker after cancellation or timeout. Encrypted and malformed documents fail safely. The same limits apply on every redirect through SafeNetwork. PDF text changes use v2 confirmation and the displayed evidence remains bounded. List entries use bullets or numbering for identity. [PDF reader](../apps/server/src/monitors/sources/pdf.ts)
+
+Visual reading starts when structured and visible-text reads cannot identify the numeric target. Chromium uses a fresh, same-origin session with GET-only SafeNetwork traffic and a 12-second render limit within a 20-second fallback deadline. A render can fetch at most 20 resources and 8 MB in aggregate. HTML is capped at 2 MB and other resources at 512 kB. Up to four regions may be captured, each at most 960 × 640 pixels and 500 kB. The separate shared budget allows 120 render attempts per UTC day across accounts and workers. Exhausting it defers the read until the next UTC day. This bounds Chromium work and limits one attempt to four OCR reads. [Visual reader](../apps/server/src/monitors/sources/visual.ts) · [Browser capture](../apps/server/src/monitors/sources/visual-browser.ts)
+
+The own reader must report at least 0.90 confidence for the line that supplies a single value. The value must agree with required currency or unit and any saved reading pattern. An ambiguous high-confidence read asks which region to watch. A low-confidence read asks for clarification during preview or pauses an active monitor, with no condition alert. The OCR weights live in `artifacts/vision/ocr-v1` or `MOHASSAN_OCR_MODEL_DIR`. Verification uses a deterministic reader double. **Real OCR accuracy is unverified until the monitor runs with the weights.** [Own image reader](IMAGE-READING-2026-11-22.md)
+
+### Phase 2 held-out simulation
+
+The criteria were committed at `ab9dd04`. The candidate at `82f3bdfb9a6fbfd9e913d300fbbbc00e73a85e5e` ran 64 held-out seeds per class, with 320 enrolled monitor-weeks. [Pre-declared criteria](MONITOR-SOURCES-PHASE2-CRITERIA.md)
+
+| Source | Detected / qualifying | Recall | Precision | False alarms/week | Mean / p95 delay (min) | Checks/week |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Pull request states | 52 / 52 | 100% | 100% | 0 | 186.78 / 344.82 | 18.27 |
+| Flapping CI | 49 / 49 | 100% | 100% | 0 | 67.11 / 267.00 | 15.63 |
+| Releases | 49 / 49 | 100% | 100% | 0 | 158.55 / 348.14 | 18.41 |
+| PDF revisions | 49 / 49 | 100% | 100% | 0 | 187.16 / 322.75 | 18.59 |
+| Noisy visual values | 37 / 49 | 75.5% | 100% | 0 | 165.32 / 299.69 | 11.22 |
+| All classes | 236 / 248 | 95.2% | 100% | 0 | 152.79 / 328.37 | 16.42 |
+
+The held-out command exited **1** because the visual class missed its 90% recall gate. All other gates passed. All 27 low-confidence reads paused their monitors and produced zero condition alerts. Twelve qualifying visual changes later went undetected. The tuning bank had also missed the visual recall gate at 17/24. The noise scenarios and confidence rule were kept for held-out evaluation.
+
+The shared GitHub budget simulation ran 3,600 attempts across 80 accounts and eight workers. It deferred 3,555 attempts and admitted 45 batches. Of 225 dispatched requests, 220 used ETags. The measured peak was 60 requests per rolling hour with zero budget violations.
+
+```bash
+docker run --pull=never --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+  --user 1000:1000 --mount type=bind,source=/workspace,target=/workspace \
+  --workdir /workspace/Mohassan-AI --env npm_config_offline=true mohassan-phase2-offline:local \
+  ./node_modules/.bin/tsx scripts/monitor-simulation/run.ts --phase2 --bank held-out \
+  > /workspace/scratch/monitor-phase2-simulation/held-out.json
+```
+
+The held-out receipt has SHA-256 `8b9f4c322ab0b3abb7e28265c5079c2b64a6328f8f54b1d830450d99858959c0`.
+
+### Phase 2 three-arm development benchmark
+
+One offline coordinator invocation ran PR #95's arm C settings and smart monitors v2 in all arms. The base was `c88a38a3bb5f07186885af31cdc8c18174af12f1`. Both candidate arms used `82f3bdfb9a6fbfd9e913d300fbbbc00e73a85e5e`, first with the three source flags off and then with all three on. The coordinator and its separate comparator both exited **0**. The run used only the development sets. [PR #95 settings](INTEGRATION-WAVE-5-2026-11-25.md#three-arm-development-run) · [Development launcher](../scripts/dev-bench/README.md)
+
+| Set | Cases | Base | Candidate flags off | Candidate flags on | Flags-off verdict / scored-check / reply differences | Areas / languages / area-language groups | Flags-on group regressions |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| V1 | 240 | 176 | 176 | 176 | 0 / 0 / 0 | 14 / 2 / 28 | 0 |
+| V2 | 2,400 | 1,588 | 1,588 | 1,588 | 0 / 0 / 0 | 8 / 2 / 12 | 0 |
+
+The base, flags-off and flags-on arms each recorded zero detection matches, management matches, proactive matches, displayed offers and false offers. The development fixture review produced an empty monitoring-request allowlist. The functional tests cover positive intent, approval and offer cases.
+
+```bash
+/workspace/scratch/monitor-phase2-bench/three-arms \
+  82f3bdfb9a6fbfd9e913d300fbbbc00e73a85e5e \
+  /workspace/scratch/monitor-phase2-bench/receipts
+
+docker run --pull=never --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+  --user 1000:1000 --mount type=bind,source=/workspace,target=/workspace \
+  --workdir /workspace/Mohassan-AI mohassan-phase2-offline:local \
+  python3 -B scripts/dev-bench/compare.py \
+  --baseline /workspace/scratch/monitor-phase2-bench/receipts/a/receipt.json \
+  --flags-off /workspace/scratch/monitor-phase2-bench/receipts/b/receipt.json \
+  --flags-on /workspace/scratch/monitor-phase2-bench/receipts/c/receipt.json \
+  --monitor-requests /workspace/scratch/monitor-phase2-bench/reviewed-ids.json \
+  --output /workspace/scratch/monitor-phase2-bench/receipts/comparison.json
+```
+
+The coordinator summary has SHA-256 `94a11ea14b36d968cd724c46edb6c27781b943a3ece838bf98afe133e4a3ca74`. The comparison has SHA-256 `4ec965d891c504f3b52a0e6551768ba2ca6909f582a1295fc9e3452443a5898d`.
+
+### Phase 2 offline verification
+
+Setup used Node 24.22.3 and the locked dependencies. The browser installer selected Chromium build 1248. Both setup commands exited **0**. The checks used local fixtures and mocks. The browser, typecheck and suite commands below ran in a Docker runtime assembled from the workspace's installed tools and libraries, with external networking disabled.
+
+```bash
+npm ci --no-audit --no-fund --cache /tmp/mohassan-phase2-npm-cache
+PLAYWRIGHT_BROWSERS_PATH=/tmp/mohassan-phase2-playwright npm exec --offline -- playwright install chromium
+
+offline=(docker run --pull=never --rm --network none --cap-drop ALL --security-opt no-new-privileges
+  --user 1000:1000 --mount type=bind,source=/workspace,target=/workspace
+  --mount type=bind,source=/tmp/mohassan-phase2-playwright,target=/tmp/mohassan-phase2-playwright,readonly
+  --workdir /workspace/Mohassan-AI --env PLAYWRIGHT_BROWSERS_PATH=/tmp/mohassan-phase2-playwright
+  --env npm_config_offline=true)
+
+"${offline[@]}" mohassan-phase2-offline:local npm test -- --maxWorkers 2 \
+  tests/monitors-api.test.ts tests/monitors-detection.test.ts tests/monitors-web.test.ts \
+  tests/smart-monitor-runtime.test.ts tests/smart-monitor-sources.test.ts tests/smart-monitor-sources-v2.test.ts \
+  tests/smart-monitor-reasoning-v2.test.ts tests/smart-monitor-schedule-v2.test.ts tests/smart-monitor-chat-v2.test.ts \
+  tests/smart-monitor-pdf.test.ts tests/smart-monitor-source-visual.test.ts tests/e2e-isolation.test.ts \
+  packages/learning/src/pdf.test.ts packages/pdf/src/edit.test.ts tests/assistant-live-test-pdf-chat.test.ts
+
+"${offline[@]}" --env npm_config_update_notifier=false mohassan-phase2-offline:local bash -c \
+  'npm run typecheck && npm test -- --maxWorkers 1 tests/monitors-api.test.ts tests/smart-monitor-runtime.test.ts tests/smart-monitor-github.test.ts tests/smart-monitor-source-visual.test.ts tests/smart-monitor-pdf.test.ts packages/learning/src/pdf.test.ts'
+
+"${offline[@]}" --env npm_config_update_notifier=false mohassan-phase2-offline:local npm run test:e2e -- \
+  --config=playwright.github-monitor.config.ts
+"${offline[@]}" --env npm_config_update_notifier=false mohassan-phase2-offline:local npm run test:e2e -- \
+  --timeout=120000 tests/e2e/smart-monitors.spec.ts tests/e2e/smart-monitors-v2.spec.ts
+
+./node_modules/.bin/tsx scripts/monitor-simulation/github-openapi.ts \
+  /workspace/scratch/monitor-github-sources/api.github.com.2022-11-28.json
+```
+
+All commands in this block exited **0**. The broad suite passed 202 tests across 15 files during development. On the frozen candidate, both typecheck projects and the focused six-suite rerun passed, including 57 tests. The browser runs passed 1/1 for GitHub approval and 2/2 for the existing monitor workflows. The GitHub command passed again on the frozen source after benchmarking in 56.7 seconds. Earlier cold browser runs hit the inherited 45-second timeout. The passing runs used 120 seconds. The OpenAPI validator checked 17 unit and 14 simulation fixtures across seven GitHub REST operations.
+
+## Feature flags and proposed owner trial
+
+| Flag | Default | Effect | Proposed trial value and reason |
+| --- | --- | --- | --- |
+| `MOHASSAN_MONITORS_ENABLED` | `0` | `0` disables admission, routes and checks. `owner` allows owner-role accounts. `1` allows all active workspace accounts. | `owner` limits v2, source checks and context decisions to owner-role accounts. |
+| `MOHASSAN_MONITORS_V2` | `0` | Enables v2 specifications, conversation management and answer-based offers for allowed accounts. | `1` exercises the v2 workflow and unlocks the source and context flags. |
+| `MOHASSAN_MONITORS_GITHUB` | `0` | Enables v2 watches for public GitHub releases, tags, pull requests and check status. | `1` exercises the source that reached 100% recall in PR #104’s held-out run. |
+| `MOHASSAN_MONITORS_PDF` | `0` | Enables v2 watches for selected content in public PDFs. | `1` exercises the source that reached 100% recall in the same run. |
+| `MOHASSAN_MONITORS_VISUAL` | `0` | Enables v2 visual reading on supported public pages and PDFs under a separate render budget. | `0` keeps visual reading out of the trial. PR #104 measured 75.5% recall against a 90% gate. |
+| `MOHASSAN_MONITOR_CONTEXT` | `0` | Selects the deterministic v2 reasoner for proposals, management, verified offers and reminder routing. | `1` exercises the reasoner in owner conversations. |
+| `MOHASSAN_MONITOR_CONTEXT_SHADOW` | `0` | Observes v2 context decisions through model relations with the local learned head when approved weights are installed. | `1` collects shadow observations without granting the head authority. |
+| `MOHASSAN_ARBITER_MONITOR_CONTEXT` | `0` | Allows arbiter influence after promotion when the other arbiter gates pass. | `0` keeps the deterministic reasoner in control. |
+| `MOHASSAN_ARBITER_MONITOR_CONTEXT_KILL` | `0` | Cancels arbiter authority when set to `1`. | `0` uses the default with monitor promotion disabled. |
+
+Use `MOHASSAN_MODEL_RELATIONS=shadow` for shadow observations, as in the development benchmark. Setting it to `off` suppresses model-relations observations. Learned-head scores require an approved local weights artifact and manifest. The owner decides whether to use this configuration. [Head setup](MONITOR-CONTEXT-DECISION-MODEL.md)
+
 ## Enable the rollout
 
 1. Deploy the server and web changes with `MOHASSAN_MONITORS_ENABLED=0`. For the trial, set `MOHASSAN_MONITORS_ENABLED=owner` in `/etc/mohassan/server.env` on each API replica and run `sudo systemctl restart mohassan.service`. In this mode, owner-role accounts get monitor detection, proposals, routes and scheduled checks. [Wave 6 deployment runbook](DEPLOY-WAVE-6-2026-11-25.md)
@@ -102,7 +385,46 @@ The server accepts up to 12 calls per minute on each mutation route, matching th
 
 Set `MOHASSAN_MONITORS_ENABLED=1` on each API replica to enable monitoring for all active workspace accounts.
 
+Set `MOHASSAN_MONITORS_V2=1` alongside the original flag to try the v2 controls and new-monitor workflow. Set only the v2 flag to `0` to return to v1 chat behavior.
+
 ## Merge notes
+
+### Wave 6.1 integration
+
+The merge parents are #100, #104 and #105 in that order, on top of #102. Startup applies the full migration IDs below under the monitor schema lock. A legacy ID is updated in place with its original application timestamp. [Migration ledger](MIGRATION-LEDGER-2026-11-25.md)
+
+| Branch ID | Recorded ID |
+| --- | --- |
+| `044_smart_monitors_v2` | `044_smart_monitors_v2` |
+| `045_smart_monitor_conversation_controls` | `045_smart_monitor_conversation_controls` |
+| `046_smart_monitor_visual_budget` | `046_smart_monitor_visual_budget` |
+| `044_monitor_alert_feedback` | `047_monitor_alert_feedback` |
+| `046_smart_monitor_decisions` | `048_smart_monitor_decisions` |
+
+- #100 conflicts in `command-chat.ts` and `assistant-app.tsx` retain gated capabilities and alert controls alongside v2 status, verified answer offers and conversation controls. `monitors/chat.ts`, `flag.ts` and `routes.ts` apply account access to v2 and retain feedback and approval quotas. `monitors/delivery.ts`, `runtime.ts`, `sources.ts` and `store.ts` preserve credential filtering, owner scheduling and metrics for v2 checks, pauses and digests. `monitors/page.ts` exports the v2 reader helper with Phase 1 redaction. The contracts `index.ts` and `monitors.ts` retain alert fields and add v2 management and choices. The migration ledger and this guide retain both branches’ entries. `smart-monitor-runtime.test.ts` covers v2 metrics and owner-only digest admission.
+- #104 conflicts in `monitors/chat.ts`, `runtime.ts` and `store.ts` combine owner checks and health metrics with GitHub, PDF and visual source admission. The ledger adds the visual budget before feedback.
+- #105 conflicts in `monitors/chat.ts` and `flag.ts` apply the owner gate before context evaluation and publication. The context frame recognizes GitHub requests and verified GitHub answer evidence. `monitors/migration-v2.ts` applies source, feedback and decision schema in order. `monitors/route-keys.ts` and `routes.ts` keep the Phase 1 vote endpoint and add the consent preference. `monitors/store.ts` retains source predicates and records proposal outcomes inside the account-scoped transaction. The benchmark `compare.py`, `monitor_audit.py` and `runner.py` retain source and context instrumentation and accept the owner trial.
+
+The held-file hooks use the existing startup call in `apps/server/src/app.ts` for the migration chain. In `apps/server/src/command-chat.ts`, the gated v2 capability, management status, current conversation state and verified answer check use the existing monitor integration points. `packages/contracts/src/command-chat.ts` adds the optional v2 capability. `packages/browser/src/engine.ts` accepts an injected safe network and adds bounded inspection for visual reads.
+
+`apps/web/components/assistant-app.tsx` mounts conversation controls and passes the v2 capability to settings. `monitors-client.ts` shares the monitor-update event. `smart-monitors.tsx` displays choices, offer settings and Phase 2 source labels. The new `smart-monitors-v2.tsx` contains v2 conversation controls and labels Phase 2 targets.
+
+The Arabic alert buttons write `monitor_alert_feedback` through `POST /api/chat/monitors/alerts/:alertId/feedback`. The export reads votes from that table and joins them with proposal features and outcomes. The vote contains the account and alert identifiers, rating, an optional enumerated reason and a timestamp. Recording is enabled for the workspace owner by default. Members can opt in through `decision-recording` when their account has monitor access. Opting out deletes their votes and recorded decisions. Account deletion also removes these records.
+
+### Phase 2, stacked on PR #100
+
+- `046_smart_monitor_visual_budget` adds `smart_monitor_visual_budget` after `045`. Its single row records the UTC day's shared render admission. [Migration ledger](MIGRATION-LEDGER-2026-11-25.md)
+- `packages/browser/src/engine.ts` accepts an injected SafeNetwork and exposes the existing bounded browser page to monitor capture.
+- `apps/web/components/smart-monitors.tsx` and `apps/web/components/smart-monitors-v2.tsx` display the three new source labels.
+
+### V2, stacked on PR #98
+
+- `044_smart_monitors_v2` adds `v2_state` and `v2_digest_due_at` to `smart_monitors`. `045_smart_monitor_conversation_controls` adds the account preference, per-topic offer receipt and confirmation action tables. The existing startup hook applies both after `043`. [Migration ledger](MIGRATION-LEDGER-2026-11-25.md)
+- `apps/server/src/command-chat.ts` projects the optional capability, accepts the management result status and calls the answer-offer check after the final verdict. This is the only v2 change in a server file that overlaps PR #97's areas.
+- `packages/contracts/src/command-chat.ts` adds the optional v2 capability.
+- `apps/web/components/assistant-app.tsx` mounts the conversation controls and passes the capability to monitor settings. `apps/web/components/smart-monitors.tsx` mounts candidate choices and offer settings. `apps/web/components/monitors-client.ts` shares the existing monitor endpoint and change events with the new controls.
+
+### V1, in PR #98
 
 - `043_smart_monitors` applies after `042_background_results`. It adds `smart_monitors`, per-account budget and shared host-slot tables, and the optional monitor link in the existing notification outbox. The additive migration can stay applied when the rollout is off. [Migration ledger](MIGRATION-LEDGER-2026-11-25.md)
 - `apps/server/src/app.ts` handles monitor errors, applies the migration and registers the flag-gated routes and scheduler.

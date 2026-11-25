@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { MonitorCardSchema, MonitorSpecSchema } from '@mohassan/contracts';
+import { SafeNetwork } from '@mohassan/browser';
+import { MonitorCardSchema, MonitorSpecSchema, MonitorV2ControlSchema } from '@mohassan/contracts';
 import { createDatabase, migrate } from '@mohassan/database';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApplication } from '../apps/server/src/app.js';
@@ -8,6 +9,8 @@ import { monitorRollout, smartMonitorsEnabled } from '../apps/server/src/monitor
 import { monitorPaths } from '../apps/server/src/monitors/route-keys.js';
 import { monitorTiming } from '../apps/server/src/monitors/schedule.js';
 import { createMonitorStore } from '../apps/server/src/monitors/store.js';
+import pull from './fixtures/monitors/github-pull.json' with { type: 'json' };
+import { writeMonitorPdfFixture } from './fixtures/monitors/pdf.js';
 
 const origin = 'http://127.0.0.1:3000';
 const setupToken = 'owner-rollout-test-setup-secret-value';
@@ -96,6 +99,11 @@ describe('owner-only monitor rollout', () => {
 
   beforeAll(async () => {
     vi.stubEnv('MOHASSAN_MONITORS_ENABLED', 'owner');
+    vi.stubEnv('MOHASSAN_MONITORS_V2', '1');
+    vi.stubEnv('MOHASSAN_MONITORS_GITHUB', '1');
+    vi.stubEnv('MOHASSAN_MONITORS_PDF', '1');
+    vi.stubEnv('MOHASSAN_MONITORS_VISUAL', '0');
+    vi.stubEnv('MOHASSAN_MONITOR_CONTEXT', '1');
     vi.stubEnv('MOHASSAN_LONG_RUN_ENABLED', '0');
     application = await createApplication({ ...config, browser: { searchProvider: { name: 'owner rollout fixture', search } } });
     owner = await signIn('RolloutOwner', 'owner');
@@ -173,5 +181,98 @@ describe('owner-only monitor rollout', () => {
     expect(await memberRows()).toEqual(before);
     expect(await db.selectFrom('chat_notifications').select('task_id').where('task_id', '=', eventId).executeTakeFirst()).toBeUndefined();
     expect((await detail(member, memberChat.id)).monitors).toBeUndefined();
+  });
+
+  it('allows only an owner session to request and confirm v2 monitor management', async () => {
+    const goal = 'Turn off proactive monitoring offers';
+    const ownerChat = await conversation(owner, { goal });
+    const memberChat = await conversation(member, { goal });
+    expect(ownerChat.capabilities.smartMonitorsV2).toBe(true);
+    expect(memberChat.capabilities.smartMonitorsV2).toBeUndefined();
+
+    const controls = `${monitorPaths.base}?control=v2&conversationId=${ownerChat.id}`;
+    const response = await request('GET', controls, owner);
+    expect(response.statusCode, response.body).toBe(200);
+    const { action } = MonitorV2ControlSchema.parse(response.json());
+    expect(action?.question).toBe('Turn off proactive monitor offers for this account?');
+    const confirmation = { actionId: action!.id, approved: true };
+    expect((await request('GET', `${monitorPaths.base}?control=v2&conversationId=${memberChat.id}`, member)).statusCode).toBe(403);
+    expect((await request('POST', monitorPaths.base, member, confirmation)).statusCode).toBe(403);
+    expect(await application.database.db.selectFrom('smart_monitor_v2_actions').select('id')
+      .where('user_id', '=', member.id).executeTakeFirst()).toBeUndefined();
+    expect((await request('POST', monitorPaths.base, owner, confirmation)).json()).toEqual({ proactiveOffers: false });
+    expect((await request('POST', monitorPaths.base, owner, { proactiveOffers: true })).json()).toEqual({ proactiveOffers: true });
+  });
+
+  it('previews GitHub and PDF monitors only for the owner session with the context reasoner enabled', async () => {
+    const github = 'https://api.github.com/repos/owner/repo/pulls/42';
+    const pdf = 'https://publisher.example/report.pdf';
+    const pdfBytes = await writeMonitorPdfFixture(['Release notes']);
+    const monitorReads = vi.fn<(address: string) => void>();
+    const transport = vi.spyOn(SafeNetwork.prototype, 'request').mockImplementation(async (address, options) => {
+      await options?.beforeDispatch?.();
+      const headers = new Headers(options?.headers);
+      if (new URL(address).pathname === '/robots.txt') return { status: 200, url: address,
+        headers: { 'content-type': 'text/plain' }, body: Buffer.from('User-agent: *\nAllow: /') };
+      if (address === github && headers.get('accept')?.includes('application/vnd.github+json')) {
+        monitorReads(address);
+        return { status: 200, url: address, headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify(pull)) };
+      }
+      if (address === pdf && headers.get('accept')?.startsWith('application/pdf')) {
+        monitorReads(address);
+        return { status: 200, url: address, headers: { 'content-type': 'application/pdf' }, body: pdfBytes };
+      }
+      throw new Error('No offline response for this request');
+    });
+    try {
+      const scenarios = [
+        { goal: 'Tell me when PR 42 in owner/repo is merged', source: { kind: 'github', owner: 'owner', repo: 'repo' }, address: github },
+        { goal: `Tell me when the PDF changes at ${pdf}`, source: { kind: 'pdf', url: pdf }, address: pdf },
+      ];
+      for (const scenario of scenarios) {
+        monitorReads.mockClear();
+        const memberChat = await conversation(member, { goal: scenario.goal });
+        expect(memberChat.monitorProposal).toBeUndefined();
+        expect(monitorReads).not.toHaveBeenCalled();
+        const ownerChat = await conversation(owner, { goal: scenario.goal });
+        expect(MonitorCardSchema.parse(ownerChat.monitorProposal)).toMatchObject({ status: 'proposed', spec: { source: scenario.source } });
+        expect(monitorReads).toHaveBeenCalledExactlyOnceWith(scenario.address);
+      }
+    } finally {
+      transport.mockRestore();
+    }
+  });
+
+  it('publishes a context offer from earlier turns for the owner session only', async () => {
+    const url = 'https://events.example.org/registration';
+    const db = application.database.db;
+    const transport = vi.spyOn(SafeNetwork.prototype, 'request').mockImplementation(async (address, options) => {
+      await options?.beforeDispatch?.();
+      if (new URL(address).pathname === '/robots.txt') return { status: 200, url: address,
+        headers: { 'content-type': 'text/plain' }, body: Buffer.from('User-agent: *\nAllow: /') };
+      if (address !== url) throw new Error('No offline response for this request');
+      return { status: 200, url: address, headers: { 'content-type': 'text/plain' }, body: Buffer.from('Registration is closed now.') };
+    });
+    async function replyWithPriorStatus(session: Session) {
+      const chat = await conversation(session);
+      await db.insertInto('chat_messages').values([
+        { id: randomUUID(), conversation_id: chat.id, role: 'user', text: `Is registration open at ${url}?`, created_at: new Date(Date.now() - 2_000) },
+        { id: randomUUID(), conversation_id: chat.id, role: 'assistant', text: 'Registration is closed now.', created_at: new Date(Date.now() - 1_000) },
+      ]).execute();
+      const response = await request('POST', `/api/chat/conversations/${chat.id}/messages`, session, { text: "Okay, I'm waiting for them to open it." });
+      expect(response.statusCode, response.body).toBe(200);
+      return detail(session, chat.id);
+    }
+    try {
+      const memberChat = await replyWithPriorStatus(member);
+      expect(memberChat.monitorProposal).toBeUndefined();
+      expect(transport.mock.calls.filter(([address]) => address === url)).toHaveLength(0);
+      const ownerChat = await replyWithPriorStatus(owner);
+      expect(MonitorCardSchema.parse(ownerChat.monitorProposal)).toMatchObject({ spec: { source: { kind: 'page', url } } });
+      expect(ownerChat.messages.at(-1)?.text).toContain('Would you like me to watch this page');
+      expect(transport.mock.calls.filter(([address]) => address === url)).toHaveLength(1);
+    } finally {
+      transport.mockRestore();
+    }
   });
 });
