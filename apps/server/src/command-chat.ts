@@ -99,6 +99,7 @@ import { stopChromeJobsForRun, type ChromeExtensionControl } from './chrome-exte
 import { assessBrowserVerification } from './assistant/verification.js';
 import { newGoalState, observeFailure, observeOutcome, reviewOpen, reviewStop, stagnationWarning, type BrainVersion } from './assistant/goal-integrity.js';
 import { ChatWaitQuerySchema, abortWhenClosed, conversationVersion, waitForChange } from './chat-wait.js';
+import { finalizeChatFailure, recordChatNotification } from './chat-notification-lifecycle.js';
 import { noPreviousAnswer, shorterAnswer, shorterRequest } from './assistant/answer-reshape.js';
 import { initialProgressMarker } from './ops/metrics/chat-progress.js';
 import { fullerName, returnParts } from './assistant/return-to.js';
@@ -622,6 +623,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   async function recordTerminalRun(tx: Kysely<any>, runId: string, status: ChatTerminalStatus, proof?: ChatExperienceProof) {
+    await recordChatNotification(tx, runId, status);
     if (config.recordExperiences === false) return;
     const run = await tx.selectFrom('chat_runs').select(['owner_id', 'goal', 'state', 'attempt', 'conversation_id'])
       .where('id', '=', runId).executeTakeFirstOrThrow();
@@ -1295,6 +1297,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       await tx.updateTable('chat_conversations').set({ status, progress: null, updated_at: new Date(), ...fields }).where('id', '=', id).execute();
       await tx.updateTable('chat_runs').set({ status, lease_expires_at:sql`CURRENT_TIMESTAMP + interval '10 minutes'`, updated_at: new Date() }).where('id', '=', runId).execute();
       if (say) await addMessage(tx, id, 'assistant', say);
+      await recordChatNotification(tx, runId, status);
     });
     if (say) judgeReply(id, runId, say, status);
   }
@@ -3843,7 +3846,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         : error instanceof BrowserError ? error.message
           : error instanceof ProviderError ? chatModelFailure(error).message
             : 'حدث خطأ أثناء العمل. أرسل «تابع» وسأحاول مجددًا.';
-      await runTransaction(id,runId,async tx=>{
+      await finalizeChatFailure(execution, limit, runTransaction, id,runId,async tx=>{
         await tx.updateTable('chat_conversations').set({ status: 'failed', active_run_id: null, progress: null, error: message, updated_at: new Date() }).where('id', '=', id).execute();
         await tx.updateTable('chat_runs').set({ status: 'failed', updated_at: new Date() }).where('id', '=', runId).execute();
         await recordTerminalRun(tx, runId, 'failed');
@@ -4429,7 +4432,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   return {
-    create, list, detail, send, respond, approve, secureSubmit, cancel, remove, screen, browserActivity, shutdown,restoreBrowser,reviewBrowser, uploadImage, image: imageBytes, feedback, once,
+    create, list, detail, send, respond, approve, secureSubmit, cancel, remove, screen, browserActivity, shutdown,restoreBrowser,reviewBrowser, uploadImage, image: imageBytes, feedback, once, recoverExpired,
     imagesAvailable: () => Boolean(config.imageReader?.available),
     pointer: (ownerId: string, id: string, raw: unknown) => { const input = ChatPointerSchema.parse(raw); return handsOn(ownerId, id, () => browser.pointer(ownerId, id, input.x, input.y)); },
     keyboard: (ownerId: string, id: string, raw: unknown) => { const input = ChatKeyboardSchema.parse(raw); return handsOn(ownerId, id, () => browser.keyboard(ownerId, id, input)); },

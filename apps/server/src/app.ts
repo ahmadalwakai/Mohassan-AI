@@ -79,6 +79,7 @@ import { buildSkillReaderIndex, createSkillReader, skillInstructionText } from '
 import { createSkillRemoteScheduler, registerSkillRemoteRoutes, type SkillRemoteSettings } from './skill-remote.js';
 import { registerBackupStatusRoute } from './backup-status.js';
 import { registerProductionMetrics } from './ops/metrics/index.js';
+import { registerNotificationRoutes } from './notifications-routes.js';
 
 /** Fallback window for the reader when no catalogue index is given (tests). The chat passes the catalogue index, which has no window. */
 const SKILL_READER_DISCOVERY = MAX_GITHUB_SKILLS + MAX_IMPORTED_VERSIONS_PER_OWNER + 50;
@@ -483,6 +484,7 @@ export async function createApplication(config: AppConfig) {
     }}:{}),
   });
   await registerCommandChatRoutes(app,{control:chat,owner:async request=>{const user=await owner(request);windows.noteSession(user.id,request);return user;}});
+  registerNotificationRoutes(app, { db: database.db, owner, isActive: async id => Boolean(await roleOf(database.db, id)), recoverChatRuns: chat.recoverExpired });
   await registerBrowserFileRoutes(app,{db:database.db,browser:agentBrowser,owner});
   await registerDocumentRoutes(app,{control:documents,owner,link:documentLink});
   await registerStudioAiRoutes(app,{control:studioAi,owner});

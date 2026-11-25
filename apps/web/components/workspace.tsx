@@ -20,6 +20,7 @@ import { AiProviders } from "./ai-providers";
 import { CodingProjects } from "./coding-projects";
 import { CodingResultView } from "./coding-result";
 import { BrowserOpenResult } from "./browser-open-result";
+import { releaseThisBrowser, useTaskNotifications } from "./notification-client";
 import browserStyles from "./browser-open-result.module.css";
 
 const StudioAiResult = dynamic(() => import("./studio-ai-panel").then(module => module.StudioAiResult));
@@ -292,6 +293,7 @@ function TaskDialog({ id, onClose, offline, onChanged, onOpenBrowser }: { id: st
 export function Workspace() {
   const [boot, setBoot] = useState<"loading" | "setup" | "signin" | "ready" | "error" | "unconfigured">("loading");
   const [session, setSession] = useState<Session | null>(null);
+  const notifications = useTaskNotifications(boot === "ready" ? session?.user.id : undefined);
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
   const [view, setView] = useState<View>("overview");
   const [advanced, setAdvancedView] = useState(false);
@@ -382,6 +384,7 @@ export function Workspace() {
   }
   async function signOut() {
     try {
+      await releaseThisBrowser(session?.user.id);
       await request("/api/auth/sign-out", { method: "POST", body: "{}" });
       setSnapshot(null); setSession(null); setAccess(null); setView("overview"); setAdvanced(false);
       setMobileMenu(false); setSelectedTask(null); setCreateOpen(false);
@@ -398,7 +401,7 @@ export function Workspace() {
   if (boot === "setup" || boot === "signin") return <AuthScreen needsSetup={boot === "setup"} onAuthenticated={(value) => { setSession(value); setBoot("ready"); }} onRetry={() => { void request<{ needsSetup: boolean; setupAvailable?: boolean }>("/api/setup").then((value) => { if (!value.needsSetup) setBoot("signin"); }).catch(() => {}); }} />;
 
   if (access?.role === "member" && advanced) return <MemberTools access={access} onChat={() => setAdvanced(false)} onSignOut={() => { void signOut(); }} />;
-  if (!advanced || !owner) return <AssistantApp name={session?.user.name ?? "بك"} onAdvanced={() => setAdvanced(true)} onOpenTool={owner ? (target) => { setView(target); setAdvanced(true); } : undefined} onSignOut={() => { void signOut(); }} />;
+  if (!advanced || !owner) return <AssistantApp name={session?.user.name ?? "بك"} onAdvanced={() => setAdvanced(true)} onOpenTool={owner ? (target) => { setView(target); setAdvanced(true); } : undefined} onSignOut={() => { void signOut(); }} notifications={notifications} />;
 
   const tasks = snapshot?.tasks ?? [];
   const capabilities = snapshot?.capabilities ?? [];

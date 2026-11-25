@@ -30,7 +30,7 @@ import { isNewerSnapshot, steerable } from "./run-view";
 import { QuestionPanel, withoutQuestionList } from "./question-card";
 import { ChromeExtensionPanel } from "./chrome-extension-panel";
 import { adsConnectProblems, pendingAdsConnect } from "./ads-connect";
-import { NOTICE_AFTER_MS, declineNoticeOffer, noticeKindFor, noticeOfferOpen, requestNoticePermission, showTaskNotice } from "./task-notices";
+import { AssistantNotifications, NOTICE_AFTER_MS, declineNoticeOffer, noticeKindFor, noticeOfferOpen, requestNoticePermission, showTaskNotice, type NotificationControls } from "./assistant-notifications";
 import styles from "./assistant-app.module.css";
 
 /** Plan §5.2 P5: the first useful progress line should show within half a second; a local answer is ready in ~30 ms. */
@@ -233,7 +233,7 @@ function DeleteDialog({ target, busy, error, onCancel, onConfirm }: { target: Su
 /** Owner-only views a failed turn can point to. The executor is a separate local experiment, never a stand-in for the chat model. */
 export type AssistantToolView = "integrations" | "executor" | "desktop";
 
-export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name: string; onAdvanced: () => void; onOpenTool?: (view: AssistantToolView) => void; onSignOut: () => void }) {
+export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifications }: { name: string; onAdvanced: () => void; onOpenTool?: (view: AssistantToolView) => void; onSignOut: () => void; notifications: NotificationControls }) {
   const [history, setHistory] = useState<Summary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -699,6 +699,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
     </nav>
 
     <main className={`${styles.main} ${showBrowser ? styles.withBrowser : ""}`}>
+      <AssistantNotifications controls={notifications} menuOpen={menuOpen} historyReady={chatConfigured !== null} selectConversation={setSelectedId} />
       <header className={styles.topbar}>
         <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="فتح القائمة" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
         <span dir="auto">{conversation?.title !== "محادثة جديدة" ? conversation?.title : ""}</span>
