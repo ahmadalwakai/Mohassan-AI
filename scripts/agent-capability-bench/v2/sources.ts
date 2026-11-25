@@ -46,6 +46,51 @@ export const sourcePins = {
   },
 } as const satisfies Record<string, SourcePin>;
 
+export const upstreamNoticePins = {
+  'CANARD-RELEASE-NOTICE.txt': {
+    url: 'https://raw.githubusercontent.com/aagohary/canard/da8639cee97a50b3c62dc4d7e800c93675731186/data/release/readme.txt',
+    sha256: '938936c5c5ba5adf58296249dd9b44c311e3870a1ffeee263f38b1b675c9f51b',
+  },
+  'CC-BY-SA-3.0-LICENSE.txt': {
+    url: 'https://creativecommons.org/licenses/by-sa/3.0/legalcode.txt',
+    sha256: '3f941b3b89cf7b8370ceb83cc76d2120d471b58735d8ca60238a751a48d7f72f',
+  },
+  'CC-BY-SA-4.0-LICENSE.txt': {
+    url: 'https://creativecommons.org/licenses/by-sa/4.0/legalcode.txt',
+    sha256: '28a9529c7d0bb4dc51f4bf5c116a3d16ef247a052f7591466768ddf563fd1cf5',
+  },
+  'CLINC150-LICENSE.txt': {
+    url: 'https://raw.githubusercontent.com/clinc/oos-eval/828f8093932c8fe6ca7936c3d2e52903b1c523de/LICENSE',
+    sha256: 'e6bc9e9c474700b708f568bac9e5a8a9bcb2b1dad53442f5ba449fcb848b8e76',
+  },
+  'GSM8K-LICENSE.txt': {
+    url: 'https://raw.githubusercontent.com/openai/grade-school-math/3101c7d5072418e28b9008a6636bde82a006892c/LICENSE',
+    sha256: '86bbb73e855821d7c401912fd4bf82e34313e6e3b6fd6f909f2b6cc9e209a53b',
+  },
+  'MBPP-APACHE-LICENSE.txt': {
+    url: 'https://raw.githubusercontent.com/google-research/google-research/f46ca8374b4cddef97ca4208ad986049d74d296a/LICENSE',
+    sha256: 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30',
+  },
+  'MBPP-DATASET-CARD.md': {
+    url: 'https://huggingface.co/datasets/google-research-datasets/mbpp/raw/4bb6404fdc6cacfda99d4ac4205087b89d32030c/README.md',
+    sha256: '6377d5c76ba46b9e650daa6d5eb592e671c9b15586e39f23f50ed9bf2ac54cf6',
+  },
+  'MINTAKA-LICENSE.md': {
+    url: 'https://raw.githubusercontent.com/amazon-science/mintaka/b6146ffb41562803c45df3c028b4cdad8c09dd4d/LICENSE.md',
+    sha256: '67e2204631e48323a0ca003d5788a36b18c0691133baa87e7d37978106f5a1f7',
+  },
+  'MINTAKA-RELEASE-NOTICE.md': {
+    url: 'https://raw.githubusercontent.com/amazon-science/mintaka/b6146ffb41562803c45df3c028b4cdad8c09dd4d/README.md',
+    sha256: '0b1695c01a6916780a51e47f6c8eebcd4aad033f7ea441814fdefd04de3a44d8',
+  },
+  'TYDIQA-APACHE-LICENSE.txt': {
+    url: 'https://raw.githubusercontent.com/google-research-datasets/tydiqa/43cde6d598c1cf88c1a8b9ed32e89263ffb5e03b/LICENSE',
+    sha256: 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30',
+  },
+} as const satisfies Record<string, SourcePin>;
+
+const pins = { ...sourcePins, ...upstreamNoticePins };
+
 export function sha256(bytes: Buffer | string): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
@@ -55,8 +100,8 @@ export function verifiedBytes(name: string, bytes: Buffer, expected: string): Bu
   return bytes;
 }
 
-export async function downloadSource(cache: string, name: keyof typeof sourcePins): Promise<Buffer> {
-  const pin = sourcePins[name];
+export async function downloadSource(cache: string, name: keyof typeof pins): Promise<Buffer> {
+  const pin = pins[name];
   const path = join(cache, name);
   try {
     return verifiedBytes(name, await readFile(path), pin.sha256);
@@ -83,9 +128,21 @@ export function sourceText(bytes: Buffer): string {
   return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
 }
 
-export function massiveLocale(archive: Buffer, locale: 'ar-SA' | 'en-US'): string {
-  const entry = `1.1/data/${locale}.jsonl`;
+function massiveEntry(archive: Buffer, entry: string): Buffer {
   const result = spawnSync('tar', ['-xzOf', '-', '--', entry], { input: archive, maxBuffer: 24 * 1024 * 1024 });
-  if (result.status !== 0 || !result.stdout.length) throw new Error(`Could not extract MASSIVE ${locale}.`);
-  return sourceText(result.stdout);
+  if (result.status !== 0 || !result.stdout.length) throw new Error('Could not extract a pinned MASSIVE archive entry.');
+  return result.stdout;
+}
+
+export function massiveLocale(archive: Buffer, locale: 'ar-SA' | 'en-US'): string {
+  return sourceText(massiveEntry(archive, `1.1/data/${locale}.jsonl`));
+}
+
+export function massiveNotices(archive: Buffer): Record<string, Buffer> {
+  const license = 'MASSIVE-LICENSE.txt';
+  const notice = 'MASSIVE-NOTICE.md';
+  return {
+    [license]: verifiedBytes(license, massiveEntry(archive, '1.1/LICENSE'), 'c2e6ea015269147de02117ebdd91f30ef09831251f5345fa8365273b1db1d435'),
+    [notice]: verifiedBytes(notice, massiveEntry(archive, '1.1/NOTICE.md'), 'b90534ccd20c6f0e1e5239567af0d150496339542b75a15bfbc3e1e737593ddb'),
+  };
 }

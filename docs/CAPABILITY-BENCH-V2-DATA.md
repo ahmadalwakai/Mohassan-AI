@@ -1,6 +1,6 @@
 # Capability benchmark v2 data cards and mapping
 
-Mapping version `1` admits human-written material from the releases below. The public corpus code contains upstream links, filtering rules, quotas, and the sealed payload's SHA-256. The selected rows, their source identifiers, and the custodian seed stay in private storage. The import commands only fetch data and operate on it locally. The benchmark evaluates the product offline.
+Mapping version `1` admits human-written material from the releases below. The corpus code contains upstream links, filtering rules, quotas, and a SHA-256 manifest for the committed sealed release. The release includes the selected rows, original binary seed, and attribution bundle. The import commands only fetch data and operate on it locally. The benchmark evaluates the product offline.
 
 ## Data cards
 
@@ -38,24 +38,26 @@ The adaptations were checked against the source labels, release structure, and M
 
 The source accounting includes each test row or language variant examined in the release-specific split. `admitted` is the count before the sampling filter and deduplication. `dropped` reports why candidates could not be scored faithfully. Fixed quotas by source, area and language are in the versioned sampling policy. [Source pins](../scripts/agent-capability-bench/v2/sources.ts) · [Mapping implementation](../scripts/agent-capability-bench/v2/) · [Quotas](../scripts/agent-capability-bench/v2/policy.ts) · [Aggregate accounting](CAPABILITY-BENCH-V2-2026-11-25.md)
 
-## Custodian procedure
+## Reproducing and running the seal
 
-Use an access-controlled directory outside the checkout. Keep the 32-byte release seed separate from the payload, with both limited to the benchmark custodian. Once mapping and quotas are frozen, run the importer with the same source revisions, mapping tree, and seed to reproduce the exact release. `--inventory true` can inspect counts before a new seal without a seed. Run the development benchmark directly from the public checkout with its ordinary v1 command. A release evaluation uses only the v2 runner and the external payload. Keep raw logs alongside the private audit receipt and publish aggregate results.
+The committed seal follows the honor rule beside the payload. Keep v2 closed during development. Freeze the candidate commit and settings, run v2 once, and keep the aggregate receipt. The v1 development runner rejects paths into the v2 seal directory. The v2 runner requires the complete release and verifies every pinned file before evaluation. [Honor rule and run command](../tests/fixtures/agent-capability-bench/v2/sealed/README.md) · [Manifest](../scripts/agent-capability-bench/v2/manifest.json)
+
+All seven sources in the original 1,200-case release permit redistribution with the included credits and license terms. Zero sources and zero cases were excluded for redistribution. The collection retains the source-specific licenses, the applicable ShareAlike terms for CANARD and QuAC adaptations and Wikipedia excerpts, and article-level contributor attribution. The upstream data files are retrieved on demand. [Release attribution](../tests/fixtures/agent-capability-bench/v2/sealed/attribution/ATTRIBUTION.md)
+
+Use the original seed when verifying this release. The sampler ranks rows with keyed SHA-256 and fixed quotas. It samples one row per source family across parallel translations, conversation IDs or TyDi articles, and excludes normalized input sequences already present in either v1 partition. Each sampled stratum retains at least one alternative after exclusions. The public seed makes exact membership reproducible. SHA-256 pins the bytes, and the honor rule protects the holdout during iteration.
+
+A custodian can rebuild the release from a fresh checkout with Node 24, the lockfile dependencies, `curl` and `tar`. The output parent must exist outside the checkout. The builder independently retrieves and verifies the upstream data and notices, regenerates the cases, accounting and article-attribution index, and takes the authored release README and attribution summary from the frozen checkout.
 
 ```bash
-# Run the first three commands only when creating a new seal.
-umask 077
-install -d -m 700 "$CUSTODY"
-openssl rand -out "$CUSTODY/sampling-v2.seed" 32
+set -euo pipefail
+seal=tests/fixtures/agent-capability-bench/v2/sealed
+scratch=$(mktemp -d)
 node --import tsx scripts/agent-capability-bench/v2/import.ts \
-  --cache "$CUSTODY/source-cache" --seed "$CUSTODY/sampling-v2.seed" \
-  --out "$CUSTODY/release"
-sha256sum "$CUSTODY/release/payload.json"
-cmp "$CUSTODY/release/manifest.json" scripts/agent-capability-bench/v2/manifest.json
-npm run assistant:capability-bench -- --version 2 \
-  --sealed "$CUSTODY/release/payload.json" --output "$CUSTODY/new-receipt.json"
+  --cache "$scratch/source-cache" --seed "$seal/sampling-v2.seed" --out "$scratch/rebuilt"
+cmp "$scratch/rebuilt/manifest.json" scripts/agent-capability-bench/v2/manifest.json
+while IFS= read -r -d '' file; do
+  cmp "$file" "$scratch/rebuilt/release/${file#"$seal"/}"
+done < <(git ls-files -z -- "$seal")
 ```
 
-Keep a copy of these data cards with the private release. Preserve MASSIVE's `1.1/LICENSE` and `1.1/NOTICE.md`, the CLINC150 and GSM8K license files, the MBPP and TyDi upstream Apache notices, and the Mintaka and CANARD release notices linked above. Any transfer of the private adapted payload retains attribution, applicable license terms, and share-alike obligations. Keep the source archive and the holdout out of training and tuning inputs.
-
-The sampler ranks each row with a private keyed SHA-256 and fills fixed quotas in rounds. It samples one row per source family across parallel translations, conversation IDs or TyDi articles, and excludes normalized input sequences already present in either v1 partition. Every sampled stratum must have an independent alternative left after exclusions. Public source material and mapping are discoverable. The seal controls exact membership and prevents fixture or expectation changes under a pinned receipt. Rebuilds and receipt completion can be tracked by SHA-256 without exposing case identifiers.
+`--inventory true` reports source counts without rebuilding a seal. The audit records the two verified rebuilds and the baseline rerun from the committed bundle. [Baseline audit](CAPABILITY-BENCH-V2-2026-11-25.md)

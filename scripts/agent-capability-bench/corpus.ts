@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { routedIntents } from '../../apps/server/src/assistant/routing-decision.js';
 import { requestSources, requestOperations } from '../../apps/server/src/assistant/request-scope.js';
@@ -110,14 +112,41 @@ export type CapabilityCase = z.infer<typeof capabilityCaseSchema>;
 export type CapabilityManifest = z.infer<typeof capabilityManifestSchema>;
 type Partition = z.infer<typeof partitionSchema>;
 type CorpusFile = 'manifest' | 'development' | 'sealed';
+type CorpusPaths = { manifest: string; development: string; sealed?: string };
+
+const v2SealDirectory = fileURLToPath(new URL('../../tests/fixtures/agent-capability-bench/v2/sealed', import.meta.url));
 
 export class CapabilityCorpusError extends Error {}
 
-async function readBytes(path: string, label: CorpusFile): Promise<Buffer> {
+function isWithin(directory: string, path: string): boolean {
+  const subpath = relative(directory, path);
+  return subpath !== '..' && !subpath.startsWith(`..${sep}`) && !isAbsolute(subpath);
+}
+
+async function resolveV1Paths(paths: CorpusPaths): Promise<Map<CorpusFile, string>> {
+  const inputs: [CorpusFile, string][] = [['manifest', paths.manifest], ['development', paths.development]];
+  if (paths.sealed !== undefined) inputs.push(['sealed', paths.sealed]);
+  const reject = () => new CapabilityCorpusError('The v1 capability runner cannot read the v2 sealed release directory.');
+  if (inputs.some(([, path]) => isWithin(v2SealDirectory, resolve(path)))) throw reject();
+
+  const canonicalSeal = await realpath(v2SealDirectory).catch(() => v2SealDirectory);
+  const canonicalInputs = new Map<CorpusFile, string>();
+  for (const [label, path] of inputs) {
+    const canonicalPath = await realpath(path).catch(() => undefined);
+    if (canonicalPath === undefined) continue;
+    if (isWithin(v2SealDirectory, canonicalPath) || isWithin(canonicalSeal, canonicalPath)) throw reject();
+    canonicalInputs.set(label, canonicalPath);
+  }
+  return canonicalInputs;
+}
+
+async function readBytes(path: string | undefined, label: CorpusFile): Promise<Buffer> {
+  const unreadable = () => new CapabilityCorpusError(`Could not read the capability ${label} file.`);
+  if (path === undefined) throw unreadable();
   try {
     return await readFile(path);
   } catch {
-    throw new CapabilityCorpusError(`Could not read the capability ${label} file.`);
+    throw unreadable();
   }
 }
 
@@ -147,7 +176,7 @@ function validateBalance({ development, sealed }: CapabilityManifest): void {
   }
 }
 
-async function loadPartition(path: string, label: 'development' | 'sealed', partition: Partition): Promise<CapabilityCase[]> {
+async function loadPartition(path: string | undefined, label: 'development' | 'sealed', partition: Partition): Promise<CapabilityCase[]> {
   const bytes = await readBytes(path, label);
   if (createHash('sha256').update(bytes).digest('hex') !== partition.sha256) {
     throw new CapabilityCorpusError(`SHA-256 mismatch for the capability ${label} file.`);
@@ -179,14 +208,11 @@ export function validateDistinct(cases: readonly CapabilityCase[]): void {
   }
 }
 
-export async function loadCapabilityCorpus(paths: {
-  manifest: string;
-  development: string;
-  sealed?: string;
-}): Promise<{ manifest: CapabilityManifest; development: CapabilityCase[]; sealed?: CapabilityCase[] }> {
-  const manifest = parseJson(await readBytes(paths.manifest, 'manifest'), capabilityManifestSchema, 'manifest');
+export async function loadCapabilityCorpus(paths: CorpusPaths): Promise<{ manifest: CapabilityManifest; development: CapabilityCase[]; sealed?: CapabilityCase[] }> {
+  const canonicalPaths = await resolveV1Paths(paths);
+  const manifest = parseJson(await readBytes(canonicalPaths.get('manifest'), 'manifest'), capabilityManifestSchema, 'manifest');
   validateBalance(manifest);
-  const development = await loadPartition(paths.development, 'development', manifest.development);
+  const development = await loadPartition(canonicalPaths.get('development'), 'development', manifest.development);
   const missingAreas = capabilityAreas.filter(area => !development.some(item => item.area === area));
   const missingVarieties = developmentVarieties.filter(variety => !development.some(item => item.variety === variety));
   if (missingAreas.length || missingVarieties.length) {
@@ -196,7 +222,7 @@ export async function loadCapabilityCorpus(paths: {
     validateDistinct(development);
     return { manifest, development };
   }
-  const sealed = await loadPartition(paths.sealed, 'sealed', manifest.sealed);
+  const sealed = await loadPartition(canonicalPaths.get('sealed'), 'sealed', manifest.sealed);
   validateDistinct([...development, ...sealed]);
   return { manifest, development, sealed };
 }

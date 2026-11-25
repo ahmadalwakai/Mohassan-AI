@@ -1,14 +1,14 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { capabilityBaselineCommit, loadCapabilityCorpus, type CapabilityCase } from '../scripts/agent-capability-bench/corpus.js';
 import {
-  capabilityV2MappingVersion, loadSealedCapabilityCorpus, type CapabilityV2Manifest,
+  capabilityV2MappingVersion, capabilityV2PayloadFile, loadSealedCapabilityCorpus, type CapabilityV2Manifest,
 } from '../scripts/agent-capability-bench/v2/sealed.js';
 
 // Parser-only sentinels. They are never sent to the controller or included in the benchmark.
@@ -27,20 +27,29 @@ function parserCase(index: number, language: CapabilityCase['language']): Capabi
 const payloadBytes = (cases: CapabilityCase[]) => Buffer.from(JSON.stringify({
   schemaVersion: 2, mappingVersion: capabilityV2MappingVersion, cases,
 }));
+const attributionPath = 'licenses/ATTRIBUTION.md';
+const attribution = 'Attribution parser sentinel.';
+const digest = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
 
 async function withFiles(
   check: (paths: { manifest: string; sealed: string }, manifest: CapabilityV2Manifest) => Promise<void>,
   payload = payloadBytes([parserCase(1, 'en'), parserCase(2, 'ar')]),
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'agent-capability-v2-sealed-'));
-  const paths = { manifest: join(directory, 'manifest.json'), sealed: join(directory, 'payload.json') };
+  const release = join(directory, 'release');
+  const attributionFile = join(release, attributionPath);
+  const paths = { manifest: join(directory, 'manifest.json'), sealed: join(release, capabilityV2PayloadFile) };
   const manifest: CapabilityV2Manifest = {
     schemaVersion: 2, mappingVersion: capabilityV2MappingVersion, baselineCommit: capabilityBaselineCommit,
-    sealed: { sha256: createHash('sha256').update(payload).digest('hex'), caseCount: 2, arabicCount: 1 },
+    sealed: { sha256: digest(payload), caseCount: 2, arabicCount: 1 },
     strata: [{ area: 'calculation', language: 'en', count: 1 }, { area: 'calculation', language: 'ar', count: 1 }],
+    files: { [capabilityV2PayloadFile]: digest(payload), [attributionPath]: digest(attribution) },
   };
   try {
-    await Promise.all([writeFile(paths.manifest, JSON.stringify(manifest)), writeFile(paths.sealed, payload)]);
+    await mkdir(dirname(attributionFile), { recursive: true });
+    await Promise.all([
+      writeFile(paths.manifest, JSON.stringify(manifest)), writeFile(paths.sealed, payload), writeFile(attributionFile, attribution),
+    ]);
     await check(paths, manifest);
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -72,6 +81,37 @@ describe('v2 seal', () => {
     await withFiles(async paths => {
       await expect(loadSealedCapabilityCorpus(paths)).rejects.toThrow(/^The capability v2 payload file is not valid UTF-8 JSON\.$/u);
     }, Buffer.from('SEALED-SENTINEL'));
+  });
+
+  it('verifies every declared release file before parsing the payload and rejects an incomplete or augmented bundle', async () => {
+    await withFiles(async paths => {
+      const metadata = join(dirname(paths.sealed), attributionPath);
+      await writeFile(metadata, 'Tampered attribution sentinel.');
+      await expect(loadSealedCapabilityCorpus(paths)).rejects.toThrow('SHA-256 mismatch for a capability v2 release file.');
+      await rm(metadata);
+      await expect(loadSealedCapabilityCorpus(paths)).rejects.toThrow('release file inventory');
+      await writeFile(metadata, attribution);
+      await writeFile(join(dirname(paths.sealed), 'extra.txt'), 'Unexpected extra sentinel.');
+      await expect(loadSealedCapabilityCorpus(paths)).rejects.toThrow('release file inventory');
+    }, Buffer.from('Unparsed payload sentinel.'));
+  });
+
+  it('rejects substituted symlink entries, noncanonical payload paths, unsafe release names and conflicting payload digests', async () => {
+    await withFiles(async (paths, manifest) => {
+      await expect(loadSealedCapabilityCorpus({ ...paths, sealed: join(dirname(paths.sealed), 'other.json') }))
+        .rejects.toThrow('requires the release bundle payload.json');
+      const metadata = join(dirname(paths.sealed), attributionPath);
+      await rm(metadata);
+      await symlink(paths.manifest, metadata, 'file');
+      await expect(loadSealedCapabilityCorpus(paths)).rejects.toThrow('must contain regular files only');
+      manifest.files['../outside'] = digest('Outside sentinel.');
+      await writeFile(paths.manifest, JSON.stringify(manifest));
+      await expect(loadSealedCapabilityCorpus(paths)).rejects.toThrow('Invalid capability v2 manifest schema.');
+      delete manifest.files['../outside'];
+      manifest.files[capabilityV2PayloadFile] = digest('Conflicting payload sentinel.');
+      await writeFile(paths.manifest, JSON.stringify(manifest));
+      await expect(loadSealedCapabilityCorpus(paths)).rejects.toThrow('payload fingerprint does not match');
+    });
   });
 
   it('rejects duplicate declarations and compares per-area language strata to the rows', async () => {

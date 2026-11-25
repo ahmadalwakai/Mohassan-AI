@@ -7,9 +7,12 @@ import { importGsm8k, importMbpp } from './math-code.js';
 import { quotas } from './policy.js';
 import { importCanard, importMintaka, importTyDiQA } from './qa.js';
 import { availableStrata, buildSealedSet } from './sample.js';
-import { downloadSource, massiveLocale, sourcePins, sourceText } from './sources.js';
+import { downloadSource, massiveLocale, massiveNotices, sha256, sourcePins, sourceText, upstreamNoticePins } from './sources.js';
+import { wikiAttribution } from './wiki-attribution.js';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
+const releasePath = 'tests/fixtures/agent-capability-bench/v2/sealed';
+const seedName = 'sampling-v2.seed';
 const usage = 'Use --cache PATH and either --inventory true or --seed PATH --out NEW_DIRECTORY.';
 
 function parseArgs(args: string[]) {
@@ -45,6 +48,39 @@ async function privateLocation(input: string, mustExist: boolean): Promise<strin
   }
 }
 
+async function readSeed(input: string): Promise<Buffer> {
+  const path = resolve(input);
+  const publicSeed = path === join(root, releasePath, seedName);
+  const seedPath = publicSeed ? path : await privateLocation(path, true);
+  if (publicSeed && await realpath(seedPath) !== join(await realpath(root), releasePath, seedName)) {
+    throw new Error('The public release seed must be a regular file at its canonical path.');
+  }
+  const seedInfo = await lstat(seedPath);
+  const forbiddenMode = publicSeed ? 0o033 : 0o077;
+  if (!seedInfo.isFile() || (seedInfo.mode & forbiddenMode) !== 0 || seedInfo.size !== 32) {
+    throw new Error('Expected a regular 32-byte release seed with safe permissions.');
+  }
+  const seed = await readFile(seedPath);
+  if (seed.length !== 32) throw new Error('Expected a regular 32-byte release seed with safe permissions.');
+  return seed;
+}
+
+async function releaseFiles(cache: string, massive: Buffer, seed: Buffer, built: ReturnType<typeof buildSealedSet>) {
+  const documents = ['README.md', 'attribution/ATTRIBUTION.md'];
+  const entries = new Map<string, Buffer | string>([
+    [seedName, seed],
+    ['payload.json', built.payload],
+    ['accounting.json', built.accounting],
+    ['attribution/wikipedia-articles.json', wikiAttribution(built.payload)],
+  ]);
+  for (const name of documents) entries.set(name, await readFile(join(root, releasePath, name)));
+  for (const [name, bytes] of Object.entries(massiveNotices(massive))) entries.set(`attribution/${name}`, bytes);
+  for (const name of Object.keys(upstreamNoticePins) as (keyof typeof upstreamNoticePins)[]) {
+    entries.set(`attribution/${name}`, await downloadSource(cache, name));
+  }
+  return entries;
+}
+
 async function main() {
   let args: ReturnType<typeof parseArgs>;
   try { args = parseArgs(process.argv.slice(2)); }
@@ -53,12 +89,7 @@ async function main() {
   try {
     const cache = await privateLocation(args.cache, false);
     const out = args.out && await privateLocation(args.out, false);
-    const seedPath = args.seed && await privateLocation(args.seed, true);
-    const seedInfo = seedPath && await lstat(seedPath);
-    if (seedInfo && (!seedInfo.isFile() || (seedInfo.mode & 0o077) !== 0 || seedInfo.size !== 32)) {
-      throw new Error('Expected a private 32-byte custodian seed file.');
-    }
-    const seed = seedPath ? await readFile(seedPath) : undefined;
+    const seed = args.seed ? await readSeed(args.seed) : undefined;
     await mkdir(cache, { recursive: true, mode: 0o700 });
     if (((await lstat(cache)).mode & 0o077) !== 0) throw new Error('Expected a private source cache.');
     step = 'download and verify the pinned source artifacts';
@@ -90,12 +121,19 @@ async function main() {
     const previous = await loadCapabilityCorpus({ manifest: join(v1, 'manifest.json'),
       development: join(v1, 'development.json'), sealed: join(v1, 'holdout/sealed.json') });
     const built = buildSealedSet(results, quotas, seed, [...previous.development, ...previous.sealed!]);
-    step = 'write a fresh private release directory';
+    step = 'assemble and verify the release attribution';
+    const entries = await releaseFiles(cache, massive, seed, built);
+    const files = Object.fromEntries([...entries.keys()].sort().map(name => [name, sha256(entries.get(name)!)]));
+    const manifest = JSON.stringify({ ...JSON.parse(built.manifest), files }) + '\n';
+    step = 'write a fresh release directory';
     await mkdir(out, { mode: 0o700 });
-    for (const name of ['payload', 'manifest', 'accounting'] as const) {
-      await writeFile(join(out, `${name}.json`), built[name], { mode: 0o600, flag: 'wx' });
+    const release = join(out, 'release');
+    await mkdir(join(release, 'attribution'), { recursive: true, mode: 0o700 });
+    for (const [name, bytes] of entries) {
+      await writeFile(join(release, name), bytes, { mode: 0o600, flag: 'wx' });
     }
-    console.log(built.manifest.trimEnd());
+    await writeFile(join(out, 'manifest.json'), manifest, { mode: 0o600, flag: 'wx' });
+    console.log(manifest.trimEnd());
     return 0;
   } catch (error) {
     // Filesystem, parse and tool errors can include source text or private paths.
