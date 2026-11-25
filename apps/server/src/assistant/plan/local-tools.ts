@@ -1,6 +1,7 @@
 import { evaluateReferencedComputation } from '../computation-reference.js';
 import { matchText } from '../mind/normalize.js';
 import type { PlanToolResult } from './executor.js';
+import { normalizePlanConversion, parseSourceComputation, sourceComputationExpression, type SourceComputation } from './source-computation.js';
 import type { PlanStep, PlanValue, ResolvedStepInputs } from './types.js';
 
 const NUMBER = /^([+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?)(?:\s*([^\d\r\n\s][^\r\n]*))?$/iu;
@@ -39,13 +40,42 @@ function budgetComputation(step: PlanStep, inputs: ResolvedStepInputs): { expres
   return { expression: `Calculate ${amount} / (${price.value} / ${grams})`, unit: ARABIC.test(step.text) ? 'غرام' : 'g' };
 }
 
+function runSourceComputation(operation: SourceComputation, source: Extract<PlanValue, { type: 'number' }>, now: Date): PlanToolResult {
+  const expression = sourceComputationExpression(operation, source);
+  if (!expression) return { ok: false, reason: 'missing_input' };
+  const calculation = evaluateReferencedComputation(`Calculate ${expression}`, now);
+  if (!calculation || calculation.status !== 'completed') return { ok: false, reason: 'invalid_result' };
+  const computed = calculation.evidence.find(item => item.id === 'calculation')?.value;
+  if (!computed || !NUMBER.test(computed)) return { ok: false, reason: 'invalid_result' };
+  const evidence = { kind: 'computation', label: 'Local calculation' } as const;
+  if ('unit' in operation && operation.unit) {
+    if (!source.unit || !/^\p{L}{1,24}$/u.test(source.unit)) return { ok: false, reason: 'missing_input' };
+    const conversion = evaluateReferencedComputation(`Convert ${computed} ${source.unit} to ${operation.unit}`, now);
+    if (conversion?.status !== 'completed' || conversion.consumption?.kind !== 'conversion' || !conversion.consumption.complete) {
+      return { ok: false, reason: 'invalid_result' };
+    }
+    const shown = conversion.evidence.find(item => item.id === 'calculation')?.value;
+    if (!shown || !Number.isFinite(Number(shown))) return { ok: false, reason: 'invalid_result' };
+    return { ok: true, value: { type: 'number', value: Number(shown), unit: operation.unit }, text: conversion.text, evidence };
+  }
+  const value = Number(computed);
+  if (!Number.isFinite(value)) return { ok: false, reason: 'invalid_result' };
+  return { ok: true, value: { type: 'number', value, ...(source.unit ? { unit: source.unit } : {}) },
+    text: [calculation.text, source.unit].filter(Boolean).join(' '), evidence };
+}
+
 export function runPlanComputation(step: PlanStep, inputs: ResolvedStepInputs, now: Date): PlanToolResult {
   const budget = budgetComputation(step, inputs);
   if (BUDGET.test(matchText(step.text)) && !budget) return {
     ok: false, reason: 'missing_input',
     question: ARABIC.test(step.text) ? 'ما السعر لكل غرام وبأي عملة؟' : 'What is the price per gram and in which currency?',
   };
-  const calculation = evaluateReferencedComputation(budget?.expression ?? inputs.text, now);
+  const source = inputs.references.length === 1 ? inputs.references[0]?.value : undefined;
+  const operation = source?.type === 'number' ? parseSourceComputation(step.text) : null;
+  if (!budget && operation && source?.type === 'number') return runSourceComputation(operation, source, now);
+  const text = budget?.expression ?? inputs.text;
+  const normalized = normalizePlanConversion(text);
+  const calculation = evaluateReferencedComputation(text, now) ?? (normalized ? evaluateReferencedComputation(normalized, now) : null);
   if (!calculation) return { ok: false, reason: 'missing_input' };
   if (calculation.status !== 'completed') return { ok: false, reason: 'invalid_result', text: calculation.text };
   const shown = calculation.evidence.find(item => item.id === 'calculation')?.value;

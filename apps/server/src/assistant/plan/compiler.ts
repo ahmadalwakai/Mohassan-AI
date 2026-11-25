@@ -10,8 +10,10 @@ import { siteTask } from '../site-builder.js';
 import { writingTask } from '../writer.js';
 import { actionHead, clauseMatchingText, splitPlanClauses } from './clauses.js';
 import { planReferences } from './references.js';
+import { parseSourceComputation } from './source-computation.js';
 import type { CompiledPlan, PlanOutputType, PlanReference, PlanStep, PlanTool } from './types.js';
-import { planReadTarget } from './web-target.js';
+import { webMeasureKind } from './web-figures.js';
+import { planReadMeasure, planReadTarget } from './web-target.js';
 
 // The shared run ledger's execution-plan contract caps the graph at 16 nodes.
 export const MAX_PLAN_STEPS = 16;
@@ -32,6 +34,7 @@ const PRIVATE_OPERAND = /\b(?:my|our|private|confidential|personal|password|secr
 const PAIRED_MEASURE = /^(?<prefix>(?:search for|find|look up|check)\s+(?:the\s+)?(?:population|price|cost|height|temperature|area|size)\s+(?:of|in|for)\s+)(?<left>[\p{L}\p{N}][\p{L}\p{M}\p{N} .'’-]*?)\s+and\s+(?<right>[\p{L}\p{N}][\p{L}\p{M}\p{N} .'’-]*)$/iu;
 const ARABIC_PAIRED_MEASURE = /^(?<prefix>(?:[اأإ]بحث\s+عن|دوّ?ر\s+على)\s+(?:سعر|عدد\s+سكان|ارتفاع|مساحة)\s+)(?<left>[\p{L}\p{M}\p{N} -]+?)\s+و\s*(?<right>[\p{L}\p{M}\p{N} -]+)$/u;
 const COMPARE_PAIR = /^(?:(?:compare|contrast)\s+(?:them|both|the (?:two|results))|قارن(?:هما|هم|\s+(?:بينهما|بين\s+النتيجتين|النتيجتين)))[.!?؟]*$/u;
+const PAGE_SELECTOR = /^(?:read|find|check|اقرا|اعرف|شوف|خذ)(?![\p{L}\p{N}])/u;
 
 function expandComparisonClauses(clauses: string[]): string[] {
   return clauses.flatMap((clause, index) => {
@@ -41,6 +44,23 @@ function expandComparisonClauses(clauses: string[]): string[] {
     if (!pair?.prefix || !pair.left || !pair.right || /\band\b|\sو\S/u.test(pair.right)) return [clause];
     return [pair.prefix + pair.left, pair.prefix + pair.right];
   });
+}
+
+/** A measurement requested immediately after opening its page belongs to that read. */
+function attachPageSelectors(clauses: string[]): string[] {
+  const joined: string[] = [];
+  for (const [index, clause] of clauses.entries()) {
+    const prior = joined.at(-1);
+    const following = clauses[index + 1];
+    const combined = prior && `${prior}, ${clause}`;
+    if (prior && combined && following && planReadTarget(prior) && !planReadMeasure(prior)
+      && PAGE_SELECTOR.test(actionHead(clause)) && planReadMeasure(combined) && parseSourceComputation(following)) {
+      joined[joined.length - 1] = combined;
+    } else {
+      joined.push(clause);
+    }
+  }
+  return joined;
 }
 
 function classify(text: string, route: RequestRoutingDecision): PlanTool {
@@ -74,9 +94,10 @@ function outputType(tool: PlanTool, text: string, route: RequestRoutingDecision)
     return task?.kind === 'edit' && task.operation === 'info' ? 'text' : 'file';
   }
   if (tool === 'site') return 'entity';
+  if (tool === 'read' && planReadMeasure(text)) return 'number';
   if (tool === 'search') {
     if (LIST_SEARCH.test(normalized)) return 'list';
-    if (NUMERIC_SEARCH.test(normalized)) return 'number';
+    if (NUMERIC_SEARCH.test(normalized) || webMeasureKind(normalized)) return 'number';
     if (ENTITY_SEARCH.test(normalized)) return 'entity';
   }
   return 'text';
@@ -133,7 +154,7 @@ function canProject(text: string, tool: PlanTool, route: RequestRoutingDecision,
 /** Classify each original clause using the existing deterministic routing contract. */
 export function compilePlan(text: string, options: RouteOptions = {}): CompiledPlan {
   const lang = normalizeRequest(text).lang;
-  const clauses = expandComparisonClauses(splitPlanClauses(text));
+  const clauses = expandComparisonClauses(attachPageSelectors(splitPlanClauses(text)));
   const steps: PlanStep[] = [];
   const constraints = parseUserRequestConstraints(text);
   const { context, previousScope, pendingQuestion, ...sharedOptions } = options;
@@ -141,8 +162,18 @@ export function compilePlan(text: string, options: RouteOptions = {}): CompiledP
   for (const clause of clauses) {
     const routeOptions = { ...sharedOptions, capabilities, ...(!steps.length ? { context, previousScope, pendingQuestion } : {}) };
     const initial = decideRequestRoute({ ...routeOptions, text: clause });
-    const tool = allowedTool(classify(clause, initial), constraints);
-    const references = planReferences(clause, tool, steps);
+    const classified = classify(clause, initial);
+    const prior = steps.at(-1);
+    const measuredSource = prior?.tool === 'search' && prior.output === 'number'
+      || prior?.tool === 'read' && prior.output === 'number';
+    const sourceComputation = measuredSource && (classified === 'compute' || classified === 'unsupported')
+      && initial.availability !== 'restricted' && !initial.resolution.constraints?.ambiguous
+      && !initial.resolution.constraints?.standalone && !PRIVATE_OPERAND.test(actionHead(clause))
+      && parseSourceComputation(clause);
+    const tool = allowedTool(sourceComputation ? 'compute' : classified, constraints);
+    const explicit = planReferences(clause, tool, steps);
+    const references: PlanReference[] = sourceComputation && prior && explicit.every(reference => reference.stepId === prior.id)
+      ? [{ stepId: prior.id, kind: 'number' }] : explicit;
     for (const reference of references) {
       const source = steps.find(step => step.id === reference.stepId);
       if (source?.tool === 'search' && source.output === 'text' && (reference.kind === 'number' || reference.kind === 'entity')) {
@@ -165,7 +196,7 @@ export function compilePlan(text: string, options: RouteOptions = {}): CompiledP
     }
     const publicInput = canProject(clause, tool, route, references, steps);
     steps.push({
-      id: `step-${steps.length + 1}`, text: clause, route: route.route, tool, inputs: { text: clause, references }, output,
+      id: `step-${steps.length + 1}`, text: clause, route: sourceComputation ? 'compute' : route.route, tool, inputs: { text: clause, references }, output,
       success: output, dependsOn: [...dependsOn], publicInput,
       ...(tool === 'search' && publicInput && !references.length && route.publicQuery ? { publicQuery: route.publicQuery } : {}),
     });
