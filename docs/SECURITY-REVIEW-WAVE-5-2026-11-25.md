@@ -139,7 +139,7 @@ The VAPID public key is returned by `GET /api/notifications/settings` and is use
 
 ## Public shares, data rights and diagnostic records
 
-Finding locations in this section refer to PR #95's parent snapshot, `2013210`.
+Finding locations in this section refer to PR #95's head, `2013210`.
 
 | Severity | Location | Scenario | Evidence | Disposition |
 |---|---|---|---|---|
@@ -228,7 +228,7 @@ Held-file hooks are listed by their PR #95 lines. Each hook changes at most five
 | `packages/browser/src/network.ts` | Line 85 includes origin cache directives among the response headers available to the reader. |
 | `apps/web/components/conversation-actions.tsx` | Line 17 adds the label for the existing privacy review's credential finding. |
 
-The new browser redirect test is a new file. The locked manifests, deployment files and prohibited source trees are unchanged.
+The new browser redirect test is a new file. The locked manifests, deployment files and prohibited source trees are unchanged. Inspection with `git diff --unified=0` counted 42 held-file hunks. The largest changes five lines.
 
 ## Verification
 
@@ -237,3 +237,124 @@ The new browser redirect test is a new file. The locked manifests, deployment fi
 - `gh pr view 95 --repo ahmadalwakai/Mohassan-AI --json headRefOid,headRefName,baseRefName,isDraft` confirmed the requested commit and integration branch as the draft PR head.
 - `git fetch --no-tags origin refs/heads/security/review-2026-11-24:refs/remotes/origin/security/review-2026-11-24` completed. The review read `docs/SECURITY-REVIEW-2026-11-24.md` from that ref.
 - `npm ci --offline --ignore-scripts --no-audit --no-fund` exited 1 with `ENOTCACHED` for a locked package. The verification environment needs the lockfile cache and the pinned Playwright Chromium build.
+### Runtime and setup
+
+The owner authorized registry and CDN access for the pinned setup. The setup left the npm manifests and benchmark recipe unchanged. The isolated test and benchmark containers used `--network none`, dropped all capabilities and ran as UID 1000.
+
+| Setup command | Result |
+| --- | --- |
+| `ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm_config_cache=/workspace/scratch/wave5-npm-cache npm ci --no-audit --no-fund --registry=https://registry.npmjs.org` | Exit 0, installed 866 locked packages using Node 24.22.3 and npm 11.19.1. npm's registry integrity verification remained enabled. |
+| `PLAYWRIGHT_BROWSERS_PATH=/workspace/scratch/wave5-chromium ./node_modules/.bin/playwright install chromium` | Exit 0. Playwright 1.64.1 selected Chromium and headless shell build 1248, Chrome for Testing 156.0.8078.4, and its pinned FFmpeg build 1013. Both browser binaries reported 156.0.8078.4 in the offline runtime. |
+| `docker build --pull -t mohassan-wave5-security-bench:2026-11-25 scripts/dev-bench` | Exit 0. Used the Dockerfile's digest-pinned Node and Python images and Debian dependencies. Image ID `sha256:df75e4aa50b0a67f9777706ac269cde256f18ae50a7349485b4952d38cf22409`. The runtime reported Node 24.22.3, npm 11.19.1, Python 3.12.14 and Git 2.39.5. This Git listed `http.curloptResolve`. |
+| `git fetch --no-tags origin <full-sha>` for each of the four pins in `scripts/dev-bench/README.md` | All four fetches exited 0. Inputs used for execution were selected by the developer-only launcher. |
+
+### High-severity before and after
+
+The following command ran once with `checkout=/workspace/wave5-high-base` at PR #95 with the two regression files copied in and once with `checkout=/workspace/Mohassan-AI` on the fix. Both commands used mocked DNS, browser routing and HTTPS. The base command exited 1 with both regressions failing. The review command exited 0 with both passing. The name filter skipped 19 unrelated test cases on each run.
+
+```sh
+docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+  --mount type=bind,source=/workspace,target=/workspace --workdir "$checkout" \
+  -e NO_COLOR=1 mohassan-wave5-security-bench:2026-11-25 npm test -- \
+  packages/browser/src/agent-browser-redirect-headers.test.ts tests/web-push-delivery.test.ts \
+  -t 'forwards only passive headers|rejects a subscription whose provider'
+```
+
+Additional directed checks ran independently before integration. The durable deadline, draft stop and quota regressions all failed on PR #95 in Docker, and the draft and deadline checks passed in the first patched run of `tests/response-policy-long-run.test.ts tests/sites-api.test.ts tests/chat-notification-lifecycle.test.ts` (32 passed). The integrated run includes all three.
+
+### Affected suites and typecheck
+
+```sh
+docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+  --mount type=bind,source=/workspace,target=/workspace --workdir /workspace/Mohassan-AI \
+  mohassan-wave5-security-bench:2026-11-25 npm run typecheck
+```
+
+Exit 0 for the root and web projects. An earlier check identified type errors in the two regression fixtures for DNS and cache response headers. Both were corrected with fixture types and the command above passed after correction.
+
+The affected suite command uses the following arguments. It ran through `bash /workspace/scratch/wave5-suites.sh /workspace/Mohassan-AI`.
+
+```sh
+docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+  --mount type=bind,source=/workspace,target=/workspace --workdir "$checkout" \
+  -e MOHASSAN_ISOLATED_TEST=true -e PLAYWRIGHT_BROWSERS_PATH=/workspace/scratch/wave5-chromium \
+  -e NO_COLOR=1 mohassan-wave5-security-bench:2026-11-25 npm test -- \
+  packages/browser/src/agent-browser-redirect-headers.test.ts \
+  packages/coding/src/git-remote-network.test.ts packages/coding/src/git-remote.test.ts packages/windows/src/windows.test.ts \
+  tests/api-security.test.ts tests/auth-rate.test.ts tests/request-rate-limit.test.ts tests/web-api-proxy.test.ts \
+  tests/member-data-routes.test.ts tests/members-access.test.ts tests/member-data-export.test.ts \
+  tests/member-data-registry.test.ts tests/member-deletion.test.ts tests/member-sessions-audit.test.ts \
+  tests/conversation-share.test.ts tests/conversation-share-privacy.test.ts tests/conversation-share-storage.test.ts tests/conversation-share-web.test.ts \
+  tests/postgres-connection-recovery.test.ts tests/sites-api.test.ts tests/chat-idempotency.test.ts \
+  tests/response-policy-long-run.test.ts tests/long-run-credential-privacy.test.ts tests/chat-notification-lifecycle.test.ts \
+  tests/notifications.test.ts tests/ios-push.test.ts tests/web-push-delivery.test.ts tests/reminders-scheduler.test.ts \
+  tests/web-background-notifications.test.ts tests/web-notifications.test.ts \
+  tests/assistant-tools.test.ts tests/windows-assistant-scope.test.ts tests/assistant-computer-cancel-queue-audit.test.ts \
+  tests/assistant-computer-native-completion-audit.test.ts tests/assistant-native-queue-owner-access-audit.test.ts \
+  tests/assistant-judge-shadow.test.ts tests/assistant-judge-production.test.ts tests/judge-shadow-rotation.test.ts \
+  tests/agent-run-ledger.test.ts tests/model-relations-shadow.test.ts tests/conversation-state-shadow.test.ts tests/assistant-router.test.ts \
+  tests/page-cache.test.ts tests/browser-security.test.ts tests/live-data-service.test.ts tests/skills-remote-api.test.ts
+```
+
+Exit 0 with 46 files, 443 tests passed and two skipped. The skips are the platform-dependent Windows test and an optional router model fixture. The run includes every changed or new test file.
+
+### Paired development benchmark
+
+The launcher uses PR #95's inherited Wave 4 profile and sets the following overrides for both arms. The emergency kill switches and promotion list retain their Arm C defaults.
+
+```sh
+flags=(
+  MOHASSAN_ARITHMETIC_SEARCH=1
+  TEST_DRIVEN_CODING_PYTHON=/usr/local/bin/python3.12
+  MOHASSAN_MODEL_RELATIONS=shadow
+  MOHASSAN_REPLY_POLICY_ENABLED=1
+  MOHASSAN_CONTEXT_POLICY_ENABLED=1
+  MOHASSAN_LONG_RUN_ENABLED=1
+  MOHASSAN_BACKGROUND_RESULTS_ENABLED=1
+  MOHASSAN_ARBITER_ROUTING=1
+  MOHASSAN_ARBITER_QUESTION_REWRITE=1
+  MOHASSAN_ARBITER_LOCAL_COMPUTATION=1
+  MOHASSAN_ARBITER_COMPOUND_PLAN=1
+)
+settings=()
+for arm in base head; do
+  for flag in "${flags[@]}"; do
+    settings+=(--set "$arm:$flag")
+  done
+done
+docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+  --mount type=bind,source=/workspace,target=/workspace --workdir /workspace/Mohassan-AI \
+  -e PLAYWRIGHT_BROWSERS_PATH=/workspace/scratch/wave5-chromium \
+  -e npm_config_cache=/workspace/scratch/wave5-npm-cache \
+  mohassan-wave5-security-bench:2026-11-25 python3 -B scripts/dev-bench/run.py --workers 2 --offline \
+  --output "$output" --arm base=201321031293999003bb0ae55a29dbd250ac96ce --arm "head=$head_sha" "${settings[@]}"
+```
+
+The check compares the version totals plus every area, language and area/language group in the coordinator's summary. The base and review code run in one invocation. Only the published development splits are selected.
+
+`bash /workspace/scratch/wave5-paired-bench.sh 257b27b0cc8bdf8fb1a48ce48c7a78ef3bc054ac /workspace/scratch/wave5-paired-development` exited 0. The review hash identifies the measured code. The later report commit changes only this document.
+
+| Split | PR #95 base | Review | Groups checked, including overall | Groups that fell |
+| --- | ---: | ---: | ---: | ---: |
+| v1 development | 176/240 | 176/240 | 45 | 0 |
+| v2 development | 1,588/2,400 | 1,588/2,400 | 23 | 0 |
+
+`python3 -B /workspace/scratch/wave5-compare-groups.py /workspace/scratch/wave5-paired-development/summary.json` exited 0. It checks that both arms used the same settings, pinned input refs and toolchain. It checks identical group keys and coverage, then compares each `passed` count in `overall`, `byArea`, `byLanguage` and `byAreaAndLanguage`. All 68 counts held. The shipped three-arm `compare.py` requires both feature-flag arms to share a commit SHA. The following attempt exited 2 for that reason, so the paired check used the coordinator's summaries.
+
+```sh
+python3 -B scripts/dev-bench/compare.py \
+  --baseline /workspace/scratch/wave5-paired-development/base/receipt.json \
+  --flags-off /workspace/scratch/wave5-paired-development/base/receipt.json \
+  --flags-on /workspace/scratch/wave5-paired-development/head/receipt.json \
+  --output /workspace/scratch/wave5-paired-development/comparison.json
+```
+
+`sha256sum /workspace/scratch/wave5-paired-development/{summary.json,base/receipt.json,head/receipt.json}` returned:
+
+| Receipt | SHA-256 |
+| --- | --- |
+| Coordinator summary | `2082d9289b808fca60a3a81c10276c75b1f7bc1b5a5de22e0e750dd840a5feed` |
+| Base | `2b17af28e3a15f4496ac06a1da29a5b41fc6acbe4b214b95f5eab5511fe71bbe` |
+| Review | `b9ecd26b8e3037a3f095042d5b7e0ddb1508239fe0c9818fd471ee120f32786e` |
+
+`sha256sum scripts/dev-bench/Dockerfile` returned `03417f8e64d499bbda87143555e090af9463ca72afccdb16b9a888ef8768a761`. The image's `dpkg-query -W` check exited 0 for all 26 Debian packages named in the Dockerfile. It reported libseccomp `2.5.4-1+deb12u1`, Git `1:2.39.5-0+deb12u3`, and NSS `2:3.87.1-1+deb12u4`.
