@@ -16,6 +16,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+from data_guard import ContaminationGuard, receipt_path
 from training.features import normalize
 
 DATA_DIR = Path(__file__).resolve().with_name("data")
@@ -89,56 +90,72 @@ def source_mapping(raw_mapping: dict, name: str) -> dict[str, dict[str, str]]:
     return result
 
 
-def clinc_rows(path: Path, mapping: dict, seed: int):
+def clinc_rows(path: Path, mapping: dict, seed: int, guard: ContaminationGuard):
     data = json.loads(path.read_text(encoding="utf-8"))
     labels_by_intent = source_mapping(mapping, "clinc150")
     for name in ("train", "val", "test"):
-        for text, intent in data[name] + data[f"oos_{name}"]:
-            if intent in labels_by_intent:
-                key = " ".join(text_tokens(text))
-                split = official_split("dev" if name == "val" else name, seed, "clinc150", key)
-                yield Example("clinc150", split, text, labels_by_intent[intent])
+        for partition in (name, f"oos_{name}"):
+            for index, (text, intent) in enumerate(data[partition]):
+                if guard.blocks("clinc150", partition, text, f"clinc150:{partition}:{index}"):
+                    continue
+                if intent in labels_by_intent:
+                    key = " ".join(text_tokens(text))
+                    split = official_split("dev" if name == "val" else name, seed, "clinc150", key)
+                    yield Example("clinc150", split, text, labels_by_intent[intent])
 
 
-def massive_rows(path: Path, mapping: dict, seed: int):
+def massive_rows(path: Path, mapping: dict, seed: int, guard: ContaminationGuard):
     labels_by_intent = source_mapping(mapping, "massive")
     excluded = set(mapping["massiveExcludedIds"])
+    accepted = {}
+    dev_groups = defaultdict(set)
     with tarfile.open(path, "r:gz") as archive:
-        # Stream the archive once because the release includes 49 unused locales.
         for member in archive:
             locale = Path(member.name).stem
             if member.name not in ("1.0/data/ar-SA.jsonl", "1.0/data/en-US.jsonl"):
                 continue
+            dataset = f"massive-{locale}"
+            accepted[dataset] = []
             with archive.extractfile(member) as lines:
-                rows = [json.loads(line) for line in lines]
-            dev_groups = defaultdict(set)
-            for row in rows:
-                if row["partition"] == "dev" and row["id"] not in excluded:
-                    dev_groups[row["intent"]].add(row["id"])
-            # Stratify by upstream intent so even the two greeting groups represent both folds.
-            calibration_ids = set()
-            for groups in dev_groups.values():
-                ordered = sorted(groups, key=lambda group: (bucket(seed, "massive", group), group))
-                calibration_ids.update(ordered[1::2])
-            for row in rows:
-                intent = row["intent"]
-                if intent in labels_by_intent and row["id"] not in excluded:
-                    split = "calibration" if row["id"] in calibration_ids else row["partition"]
-                    yield Example(f"massive-{locale}", split, row["utt"], labels_by_intent[intent])
+                for line in lines:
+                    row = json.loads(line)
+                    native_id, partition, text = row["id"], row["partition"], row["utt"]
+                    if guard.blocks(dataset, partition, text, f"massive:{locale}:{native_id}") or native_id in excluded:
+                        continue
+                    intent = row["intent"]
+                    if partition == "dev":
+                        dev_groups[intent].add(native_id)
+                    if intent in labels_by_intent:
+                        accepted[dataset].append((native_id, partition, text, labels_by_intent[intent]))
+
+    # Assign surviving parallel IDs to the same fold, even if only one locale's text matched the guard.
+    calibration_ids = set()
+    for groups in dev_groups.values():
+        ordered = sorted(groups, key=lambda group: (bucket(seed, "massive", group), group))
+        calibration_ids.update(ordered[1::2])
+    for dataset, rows in accepted.items():
+        for native_id, partition, text, labels in rows:
+            split = "calibration" if partition == "dev" and native_id in calibration_ids else partition
+            yield Example(dataset, split, text, labels)
 
 
-def canard_rows(path: Path, seed: int):
+def canard_rows(path: Path, seed: int, guard: ContaminationGuard):
     with zipfile.ZipFile(path) as archive:
         for name in ("train", "dev", "test"):
             with archive.open(f"CANARD_Release/{name}.json") as stream:
                 for row in json.load(stream):
                     history = row["History"]
+                    current = row["Question"]
+                    source_id = f"canard:{row['QuAC_dialog_id']}:{row['Question_no']}"
+                    inputs = (current, history[-2]) if len(history) >= 4 else (current,)
+                    if guard.blocks("canard", name, inputs, source_id):
+                        continue
                     if len(history) < 4:
                         continue
                     # CANARD prepends document and section titles, then alternates question and answer.
                     # Use the last available question as the input, and the rewrite only to derive the label.
                     previous = history[-2]
-                    original = text_tokens(row["Question"])
+                    original = text_tokens(current)
                     rewrite = text_tokens(row["Rewrite"])
                     if original == rewrite:
                         label = "new"
@@ -149,10 +166,10 @@ def canard_rows(path: Path, seed: int):
                             continue
                         label = "follow_up"
                     split = official_split(name, seed, "canard", row["QuAC_dialog_id"])
-                    yield Example("canard", split, row["Question"], {"followUp": label}, previous)
+                    yield Example("canard", split, current, {"followUp": label}, previous)
 
 
-def dialect_rows(path: Path, mapping: dict, seed: int):
+def dialect_rows(path: Path, mapping: dict, seed: int, guard: ContaminationGuard):
     labels_by_intent = source_mapping(mapping, "arbanking77")
     partitions = {"Tr": "train", "D": "dev", "Te": "test"}
     with path.open(encoding="utf-8-sig", newline="") as stream:
@@ -167,16 +184,18 @@ def dialect_rows(path: Path, mapping: dict, seed: int):
                 if identifier and identifier != "NULL" and text and text != "NULL":
                     prefix = identifier.rstrip("0123456789")
                     if prefix in partitions and prefix != identifier:
-                        variants.append((partitions[prefix], text))
+                        partition = partitions[prefix]
+                        blocked = guard.blocks("arbanking77-pal", partition, text, f"arbanking77:{row['QID']}")
+                        variants.append((partition, text, blocked))
             if variants:
-                strongest = max((name for name, _ in variants), key=SPLIT_PRIORITY.__getitem__)
+                strongest = max((name for name, _, _ in variants), key=SPLIT_PRIORITY.__getitem__)
                 split = official_split(strongest, seed, "arbanking77", row["QID"])
-                for name, text in variants:
-                    if name == strongest:
+                for name, text, blocked in variants:
+                    if name == strongest and not blocked:
                         yield Example("arbanking77-pal", split, text, labels_by_intent[intent])
 
 
-def red_teaming_rows(path: Path, mapping: dict, seed: int, locale: str):
+def red_teaming_rows(path: Path, mapping: dict, seed: int, locale: str, guard: ContaminationGuard):
     harms = set(mapping["ayaGlobalHarm"])
     with path.open(encoding="utf-8") as stream:
         for line in stream:
@@ -185,9 +204,12 @@ def red_teaming_rows(path: Path, mapping: dict, seed: int, locale: str):
             if row["global_or_local"] != "global" or "Self-Harm" in categories or not categories & harms:
                 continue
             text = row["prompt"]
+            dataset = f"aya-{locale}"
+            if guard.blocks(dataset, "unsplit", text):
+                continue
             index = bucket(seed, "aya-redteaming", " ".join(text_tokens(text)))
             split = "train" if index < 70 else "dev" if index < 80 else "calibration" if index < 90 else "test"
-            yield Example(f"aya-{locale}", split, text, {"refusal": "refuse"})
+            yield Example(dataset, split, text, {"refusal": "refuse"})
 
 
 def example_key(example: Example) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -225,6 +247,7 @@ def main():
     parser.add_argument("--cache", type=Path, help="Download cache (default: sources beside the output)")
     parser.add_argument("--seed", type=int, default=SEED)
     args = parser.parse_args()
+    guard = ContaminationGuard.load()
     cache = args.cache or args.output.parent / "sources"
     cache.mkdir(parents=True, exist_ok=True)
     with (DATA_DIR / "sources.json").open(encoding="utf-8") as stream:
@@ -232,12 +255,12 @@ def main():
     with (DATA_DIR / "label-map.json").open(encoding="utf-8") as stream:
         mapping = json.load(stream)
 
-    rows = list(clinc_rows(sources["clinc150.json"], mapping, args.seed))
-    rows.extend(massive_rows(sources["massive.tar.gz"], mapping, args.seed))
-    rows.extend(canard_rows(sources["canard.zip"], args.seed))
-    rows.extend(dialect_rows(sources["arbanking77.csv"], mapping, args.seed))
-    rows.extend(red_teaming_rows(sources["aya-arb.jsonl"], mapping, args.seed, "arb"))
-    rows.extend(red_teaming_rows(sources["aya-eng.jsonl"], mapping, args.seed, "eng"))
+    rows = list(clinc_rows(sources["clinc150.json"], mapping, args.seed, guard))
+    rows.extend(massive_rows(sources["massive.tar.gz"], mapping, args.seed, guard))
+    rows.extend(canard_rows(sources["canard.zip"], args.seed, guard))
+    rows.extend(dialect_rows(sources["arbanking77.csv"], mapping, args.seed, guard))
+    rows.extend(red_teaming_rows(sources["aya-arb.jsonl"], mapping, args.seed, "arb", guard))
+    rows.extend(red_teaming_rows(sources["aya-eng.jsonl"], mapping, args.seed, "eng", guard))
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=args.output.parent, encoding="utf-8", mode="w", newline="\n", delete=False) as stream:
@@ -252,6 +275,10 @@ def main():
             temporary.unlink(missing_ok=True)
             raise
     temporary.replace(args.output)
+    with args.output.open("rb") as prepared:
+        receipt = guard.receipt(hashlib.file_digest(prepared, "sha256").hexdigest(), args.seed)
+    receipt_path(args.output).write_text(json.dumps(receipt, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"Capability v2 exclusions rejected {receipt['droppedRows']['total']} native rows.")
     for dataset in sorted({dataset for dataset, _ in counts}):
         counts_text = " ".join(f"{split}={counts[dataset, split]}" for split in SPLIT_PRIORITY)
         print(f"{dataset} {counts_text}")

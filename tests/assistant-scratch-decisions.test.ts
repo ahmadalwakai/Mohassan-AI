@@ -91,6 +91,28 @@ describe('scratch classifier request decisions', () => {
     expect(decideRequestRoute(input, policy({ route: 'news' }))).toEqual(rule);
   });
 
+  it.each([
+    'Who designed the Sydney Opera House?',
+    'متى افتُتح متحف الفن الإسلامي في الدوحة؟',
+    'Which is longer, the Seine or the Loire?',
+    'Height of Mount Taranaki',
+  ])('preserves the supported lookup for %s despite confident incompatible predictions', text => {
+    const input = { text, capabilities };
+    const baseline = decideRequestRoute(input, null);
+    expect(baseline).toMatchObject({ route: 'web_search', handler: 'search', publicQuery: text });
+    for (const labels of [{ refusal: 'refuse' }, { refusal: 'out_of_scope' }, { route: 'news' }, { speechAct: 'smalltalk' }]) {
+      expect(decideRequestRoute(input, policy(labels))).toEqual(baseline);
+    }
+  });
+
+  it('can refuse an unsupported action when its only rule match is the nominal search fallback', () => {
+    const input = { text: 'Reroute the office phone', capabilities };
+    expect(decideRequestRoute(input, null)).toMatchObject({ sourceAssessment: { reasons: ['nominal_public_subject'] }, route: 'web_search' });
+    expect(decideRequestRoute(input, policy({ refusal: 'out_of_scope' }))).toMatchObject({
+      route: 'unsupported', reason: 'scratch_out_of_scope', publicQuery: null,
+    });
+  });
+
   it('lets a learned continuation use the existing public topic and slot resolver', () => {
     const context = bootstrapRequestContext([{ text: 'What is the weather in London today?', id: 'first' }]);
     const input = { text: 'Brighton instead?', context, capabilities };
@@ -98,6 +120,14 @@ describe('scratch classifier request decisions', () => {
     const decision = decideRequestRoute(input, policy({ followUp: 'follow_up' }));
     expect(decision.resolution).toMatchObject({ kind: 'follow_up', scope: 'public' });
     expect(decision.resolution.query).toContain('Brighton');
+  });
+
+  it('keeps a self-contained lookup independent of the preceding public topic', () => {
+    const context = bootstrapRequestContext([{ text: 'What will the weather be in Valparaíso tomorrow?' }]);
+    const input = { text: 'Who restored the old observatory in Greenwich?', context, capabilities };
+    const baseline = decideRequestRoute(input, null);
+    expect(baseline).toMatchObject({ resolution: { kind: 'new', query: input.text }, publicQuery: input.text });
+    expect(decideRequestRoute(input, policy({ followUp: 'follow_up' }))).toEqual(baseline);
   });
 
   it('keeps the resolved source of a follow-up when a learned label proposes a new request', () => {

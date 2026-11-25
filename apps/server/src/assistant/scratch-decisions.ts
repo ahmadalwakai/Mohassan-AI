@@ -1,5 +1,8 @@
 import { loadScratchClassifiers, type ScratchClassifiers, type ScratchHead, type ScratchPrediction } from '@mohassan/scratch-classifiers';
-import { parseRequestContextState } from './request-context.js';
+import { webQuestion } from './hands.js';
+import { buildFrame } from './mind/frame.js';
+import { parseRequestContextState, requestActionText } from './request-context.js';
+import { requestScopeActionText } from './request-scope.js';
 import type { RequestRoutingDecision, RequestRoutingInput, RoutedIntent } from './routing-decision.js';
 import { unsupportedRequest } from './unsupported-request.js';
 
@@ -60,7 +63,8 @@ function choose(input: RequestRoutingInput, rule: RequestRoutingDecision, predic
   const followUp = predictions.followUp.label;
   const publicRoute = rule.intent === 'unknown' || PUBLIC_ROUTES.has(rule.intent);
   if (hasPublicHistory && publicRoute && source.scope !== 'private'
-      && (followUp === 'follow_up' && resolution.kind !== 'follow_up' || followUp === 'new' && resolution.kind === 'follow_up')) {
+      && (followUp === 'follow_up' && resolution.kind !== 'follow_up' && !source.reasons.includes('explicit_new_task')
+        || followUp === 'new' && resolution.kind === 'follow_up')) {
     choices.followUp = followUp;
   }
 
@@ -69,15 +73,24 @@ function choose(input: RequestRoutingInput, rule: RequestRoutingDecision, predic
     || rule.reason === 'local_model_fallback' && (rule.route === 'chat' || publicRoute));
   const explicitLookup = source.reasons.some(reason => reason === 'explicit_public_lookup' || reason === 'public_document_reference');
   const defaultLookup = rule.route === 'web_search' && source.publicQueryEligible && !explicitLookup && !rule.browserSteps;
+  // The scope classifier also offers search for otherwise unrecognized short noun phrases.
+  // Only that fallback may be reassigned by the learned refusal and news labels.
+  const nominalLookup = defaultLookup && source.reasons.includes('nominal_public_subject');
+  const action = defaultLookup ? requestActionText(requestScopeActionText(resolution.resolved)) : '';
+  const nominalFrame = nominalLookup ? buildFrame(action) : null;
+  const nominalFallback = nominalFrame !== null && nominalFrame.intent !== 'compare'
+    && !nominalFrame.matched.some(({ rule }) => rule === 'property-and-topic' || rule === 'factual-report');
   const refusal = predictions.refusal.label;
-  if (!ruleRefusal && resolution.kind === 'new' && (fallback || defaultLookup && (refusal === 'refuse' || source.reasons.includes('nominal_public_subject')))
+  if (!ruleRefusal && resolution.kind === 'new' && (fallback || nominalFallback)
       && (refusal === 'refuse' || refusal === 'out_of_scope')) return { refusal };
 
-  if (!ruleRefusal && resolution.kind === 'new' && predictions.speechAct.label === 'smalltalk'
-      && (defaultLookup || fallback && source.operation === 'unknown')) return { smalltalk: true };
+  if (!ruleRefusal && resolution.kind === 'new' && predictions.speechAct.label === 'smalltalk') {
+    if (fallback && source.operation === 'unknown') return { smalltalk: true };
+    if (nominalFallback || defaultLookup && !nominalLookup && !webQuestion(action)) return { smalltalk: true };
+  }
   const route = predictions.route.label as RoutedIntent | undefined;
   if (!ruleRefusal && resolution.kind === 'new' && route !== undefined && route !== rule.route) {
-    if (route === 'news' && defaultLookup || FALLBACK_ROUTES.has(route) && fallback) choices.route = route;
+    if (route === 'news' && nominalFallback || FALLBACK_ROUTES.has(route) && fallback) choices.route = route;
   }
   return choices;
 }
