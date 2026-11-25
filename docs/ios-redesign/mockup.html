@@ -168,6 +168,32 @@
     .compose-card .send { background: var(--accent); color: var(--on-accent); border-radius: 16px; }
     .draft { display: flex; flex: 1; align-items: center; min-height: 44px; color: var(--ink); font-size: 16px; padding-inline: 4px; }
     .caret { height: 20px; width: 1.7px; margin-inline-start: 1px; background: var(--accent); }
+    .phone[data-screen="notification-banner"] .thread { padding-block-start: 46px; }
+    .phone[data-screen="notification-banner"] .composer { margin-block-end: 24px; }
+    .phone[data-screen="notification-banner"] .compose-card { border-color: var(--line); }
+    .phone[data-screen="notification-banner"] .send { background: var(--soft); color: var(--muted); }
+    .phone[data-screen="notification-banner"] .draft { color: var(--muted); }
+    .notification-banner {
+      position: absolute;
+      inset: 56px 10px auto;
+      z-index: 3;
+      display: grid;
+      grid-template-columns: 36px 1fr auto;
+      gap: 10px;
+      align-items: start;
+      min-height: 78px;
+      padding: 13px;
+      border: 1px solid color-mix(in srgb, var(--system-ink) 14%, transparent);
+      border-radius: 26px;
+      background: color-mix(in srgb, var(--surface) 92%, transparent);
+      color: var(--system-ink);
+      backdrop-filter: blur(20px);
+      box-shadow: 0 4px 18px #0003;
+    }
+    .notification-banner img { width: 36px; height: 36px; border-radius: 9px; }
+    .notification-banner h4 { font-size: 14px; font-weight: 700; }
+    .notification-banner p { margin-block-start: 3px; font-size: 13px; line-height: 1.6; }
+    .notification-banner small { color: var(--muted); font-size: 11px; }
     .keyboard { flex: 0 0 auto; height: 276px; padding: 9px 5px 0; border-block-start: 1px solid var(--line); background: var(--keyboard); color: var(--system-ink); }
     .keyrow { display: flex; gap: 4px; direction: ltr; margin-block-end: 9px; }
     .key { flex: 1; display: grid; place-items: center; height: 41px; border-radius: 5px; background: var(--key); box-shadow: 0 1px 0 #0005; font: 400 21px/1 system-ui, sans-serif; }
@@ -175,7 +201,7 @@
     .key.space { flex: 5; font: 400 14px/1.2 Alexandria, sans-serif; color: var(--system-ink); }
     .keyboard-footer { direction: ltr; display: flex; justify-content: space-between; padding: 2px 23px; }
     .keyboard-footer .icon { width: 20px; height: 20px; }
-    .phone[data-screen="conversations"], .phone[data-screen="settings"] { background: var(--system-shelf); }
+    .phone[data-screen="conversations"], .phone[data-screen="settings"], .phone[data-screen="notification-settings"] { background: var(--system-shelf); }
     .sheet { flex: 1 1 auto; min-height: 0; overflow: hidden; border-radius: 26px 26px 0 0; background: var(--background); }
     .sheet .bar { min-height: 56px; }
     .done { min-width: 52px; min-height: 36px; margin-inline-end: 5px; padding: 5px 13px; border: 0; border-radius: 20px; background: var(--accent-soft); color: var(--accent); font-size: 14px; font-weight: 600; }
@@ -218,6 +244,40 @@
     .segments { display: flex; padding: 3px; gap: 3px; background: var(--background); border-radius: 13px; }
     .segments span { display: grid; flex: 1; place-items: center; min-height: 44px; padding-inline: 4px; border: 1px solid transparent; border-radius: 10px; text-align: center; color: var(--muted); font-size: 12px; font-weight: 600; }
     .segments [aria-current="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+    .phone[data-screen="notification-settings"] .sheet { display: flex; flex-direction: column; }
+    .phone[data-screen="notification-settings"] .settings { overflow-y: auto; scrollbar-width: none; }
+    .notification-settings-card .settings-row { justify-content: space-between; min-height: 50px; }
+    .notification-settings-card p { margin-block-start: 12px; }
+    .notification-switch {
+      position: relative;
+      flex: none;
+      width: 51px;
+      min-height: 44px;
+      padding: 0;
+      border: 0;
+      background: none;
+    }
+    .notification-switch::before {
+      content: "";
+      position: absolute;
+      inset: 6px 0;
+      border: 1px solid var(--control-line);
+      border-radius: 20px;
+      background: var(--soft);
+    }
+    .notification-switch::after {
+      content: "";
+      position: absolute;
+      inset-block-start: 9px;
+      inset-inline-end: 3px;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: white;
+      box-shadow: 0 1px 4px #0003;
+    }
+    .notification-switch[aria-checked="true"]::before { border-color: var(--accent); background: var(--accent); }
+    .notification-switch[aria-checked="true"]::after { inset-inline-end: 22px; }
     @media (max-width: 1260px) { .devices { justify-content: center; } }
     @media (max-width: 450px) { .gallery { padding-block-start: 28px; } }
   </style>
@@ -364,10 +424,50 @@
     </div>
   </template>
 
+  <template id="notification-banner">
+    <article class="notification-banner" aria-label="إشعار موحسن">
+      <img src="../../apps/ios/Wasla/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png" alt="">
+      <div>
+        <h4>اكتمل تلخيص التقرير</h4>
+        <p>اضغط لعرض النتيجة في المحادثة.</p>
+      </div>
+      <small>الآن</small>
+    </article>
+  </template>
+
+  <template id="notification-settings">
+    <section class="settings-section" aria-label="الإشعارات">
+      <h4>الإشعارات</h4>
+      <div class="settings-card notification-settings-card">
+        <div class="settings-row">
+          <span class="title">إشعارات المهام</span>
+          <button class="notification-switch" type="button" role="switch" aria-label="إشعارات المهام" aria-checked="true"></button>
+        </div>
+        <div class="account-divider" aria-hidden="true"></div>
+        <div class="settings-row">
+          <span><span class="title">الصوت</span><span class="subtitle">مفعّل</span></span>
+          <svg class="icon chevron" aria-hidden="true"><use href="#chevron"/></svg>
+        </div>
+        <div class="account-divider" aria-hidden="true"></div>
+        <div class="settings-row">
+          <span><span class="title">عرض أول سطر على شاشة القفل</span><span class="subtitle">بعد فتح القفل</span></span>
+          <svg class="icon chevron" aria-hidden="true"><use href="#chevron"/></svg>
+        </div>
+        <p>يصلك إشعار عند اكتمال المهمة أو عند الحاجة إلى تدخّلك. يضبط iOS الصوت ومعاينات شاشة القفل.</p>
+      </div>
+    </section>
+  </template>
+
   <script>
-    const screens = Object.entries({ chat: 'المحادثة', conversations: 'المحادثات', settings: 'الإعدادات' });
+    const screens = [
+      ['chat', 'المحادثة', 'chat'],
+      ['conversations', 'المحادثات', 'conversations'],
+      ['settings', 'الإعدادات', 'settings'],
+      ['notification-banner', 'إشعار اكتمال المهمة', 'chat'],
+      ['notification-settings', 'إعدادات الإشعارات', 'settings']
+    ];
     for (const theme of document.querySelectorAll('[data-theme]')) {
-      for (const [screen, label] of screens) {
+      for (const [screen, label, template] of screens) {
         const figure = document.createElement('figure');
         const phone = document.createElement('div');
         const home = document.createElement('div');
@@ -376,7 +476,22 @@
         phone.dataset.screen = screen;
         home.className = 'home';
         home.setAttribute('aria-hidden', 'true');
-        phone.append(document.getElementById('status').content.cloneNode(true), document.getElementById(screen).content.cloneNode(true), home);
+        phone.append(document.getElementById('status').content.cloneNode(true), document.getElementById(template).content.cloneNode(true), home);
+        if (screen === 'notification-banner') {
+          phone.querySelector('.keyboard').remove();
+          phone.querySelector('.draft').textContent = 'اكتب رسالتك…';
+          phone.querySelector('.send').disabled = true;
+          phone.append(document.getElementById(screen).content.cloneNode(true));
+        }
+        if (screen === 'notification-settings') {
+          const settings = phone.querySelector('.settings');
+          settings.children[1].after(document.getElementById(screen).content.cloneNode(true));
+          const notificationSwitch = settings.querySelector('.notification-switch');
+          notificationSwitch.addEventListener('click', () => {
+            const enabled = notificationSwitch.getAttribute('aria-checked') === 'false';
+            notificationSwitch.setAttribute('aria-checked', String(enabled));
+          });
+        }
         caption.textContent = label;
         figure.append(phone, caption);
         theme.querySelector('.devices').append(figure);
