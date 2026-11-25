@@ -156,7 +156,13 @@ function canProject(text: string, tool: PlanTool, route: RequestRoutingDecision,
 /** Classify each original clause using the existing deterministic routing contract. */
 export function compilePlan(text: string, options: RouteOptions = {}): CompiledPlan {
   const lang = normalizeRequest(text).lang;
-  const split = splitPlanClauses(text);
+  const { context, previousScope, pendingQuestion, ...sharedOptions } = options;
+  const capabilities = { browser: true, search: true, memory: true, ...options.capabilities, chatModel: false, writerModel: false };
+  const split = splitPlanClauses(text, clause => {
+    const route = decideRequestRoute({ ...sharedOptions, capabilities, text: clause });
+    const tool = classify(clause, route);
+    return tool !== 'unsupported' && (tool !== 'search' || SEARCH.test(actionHead(clause)));
+  });
   const writing = split.length === 2 && extractiveWritingEnabled() ? writingTask(text, 'extractive') : null;
   const writesFromOnePage = writing?.opensSource && writing.source.kind === 'urls' && writing.source.urls.length === 1;
   // Opening one named page to answer a question or compare its contents is a
@@ -165,8 +171,6 @@ export function compilePlan(text: string, options: RouteOptions = {}): CompiledP
     ? [text] : expandComparisonClauses(attachPageSelectors(split));
   const steps: PlanStep[] = [];
   const constraints = parseUserRequestConstraints(text);
-  const { context, previousScope, pendingQuestion, ...sharedOptions } = options;
-  const capabilities = { browser: true, search: true, memory: true, ...options.capabilities, chatModel: false, writerModel: false };
   for (const clause of clauses) {
     const routeOptions = { ...sharedOptions, capabilities, ...(!steps.length ? { context, previousScope, pendingQuestion } : {}) };
     const initial = decideRequestRoute({ ...routeOptions, text: clause });

@@ -6,6 +6,7 @@ import { maskRequestLiteralData } from '../request-constraints.js';
 
 const LEAD = /^(?:(?:please|kindly|first(?: of all)?|can you|could you|would you|من فضلك|لو سمحت|ممكن|هل يمكنك|اولا|بدي|بدنا|اريد|ابغي|ابي|ابغا|عايز|عاوز)(?:\s+ان)?[,:،\s]+)*/u;
 const ACTION = /^(?:calculate|compute|multiply|divide|add|subtract|convert|find|search|look up|google|check|read|open|visit|remember|save|recall|retrieve|compare|contrast|create|make|generate|prepare|build|design|turn|export|write|draft|compose|show|give|list|tell|what|which|who|where|when|why|how|send|publish|translate|summari[sz]e|delete|update|edit|run|schedule|do not|don['’]t|never|احسب|حسب|اضرب(?:ه|ها)?|اقسم(?:ه|ها)?|اجمع(?:ه|ها)?|اطرح(?:ه|ها)?|اضف|زد|زود|ضاعف(?:ه|ها)?|حول(?:ه|ها)?|ابحث(?:لي)?|بحث|دور(?:لي)?|قلب|فتش|شوف(?:لي)?|جيب(?:لي)?|لق(?:ي|يني)|اقرا(?:ه|ها|هم)?|افتح(?:ه|ها|هم)?|تصفح|تذكر|احفظ(?:ها|ه)?|خزن|سجل|استرجع(?:ها|ه)?|اذكر(?:ها|ه)?|ذكرني|قارن(?:هما|هم|ها|ه)?|وازن|انش[ئي]|اصنع|اعمل|سوي|سو|سولي|جهز|حضر|ولد|صمم|اطبع|صدر|اكتب(?:لي|ه|ها)?|صغ|اعرض|اعطني|اعطيني|هات|شو|ايش|وش|كم|ما|ماذا|كيف|من|وين|اين|متي|ارسل|ابعت|انشر|ترجم|لخص|احذف|عدل|شغل|نفذ|جدول|لا)(?![\p{L}\p{N}])/u;
+const QUESTION_HEAD = /^(?:what|which|who|whom|whose|where|when|why|how|is|are|was|were|does|did|do|has|have|شو|ايش|وش|شنو|كم|ما|ماذا|كيف|من|مين|وين|اين|متي|هل|لماذا|ليش|اي)(?![\p{L}\p{N}])/u;
 const ARITHMETIC = /^\(?-?\d+(?:[.٫]\d+)?\s*(?:[+*/÷×^-]|plus\b|minus\b|times\b|زائد|ناقص|ضرب|قسمة)\s*[-(]?\d/u;
 const PUNCTUATION = /^[\p{Z}\s،,:؛;]+|[\p{Z}\s،,؛;]+$/gu;
 const INTRO = /^(?:please|kindly|please do (?:these|the following)(?: (?:steps|tasks))?|do the following|here are the steps|الرجاء|من فضلك|لو سمحت|قم بالتالي|نفذ التالي|المطلوب|الخطوات)[\s:：.]*$/u;
@@ -94,7 +95,7 @@ function beginsLiteralBody(text: string): boolean {
 }
 
 /** Weak conjunctions split only before an action, so names and joined nouns stay together. */
-export function splitPlanClauses(request: string): string[] {
+export function splitPlanClauses(request: string, isIndependentAction?: (text: string) => boolean): string[] {
   const original = request.trim();
   if (!original || original.length > MAX_COMPOUND_REQUEST) return [];
   const compound = analyzeCompoundRequest(original);
@@ -120,6 +121,11 @@ export function splitPlanClauses(request: string): string[] {
         && !masked.slice(point.end, format.start).trim()) continue;
       const tail = masked.slice(point.end);
       if (!current || !looksLikeAction(tail) || beginsLiteralBody(current)) continue;
+      // A weak separator inside a question can join predicates or qualifiers.
+      // Split here only when the compiler can identify another action.
+      const weak = point.kind === 'and' || point.kind === 'separator' && /[,،]/u.test(original[point.start]!);
+      if (weak && isIndependentAction && QUESTION_HEAD.test(actionHead(current))
+        && !isIndependentAction(analyzeCompoundRequest(original.slice(point.end)).primary.text)) continue;
       if (point.kind === 'separator' && original[point.end - 1] === '\n') {
         const document = documentTask(current);
         if (document?.kind === 'create' && !document.suppliedText) continue;

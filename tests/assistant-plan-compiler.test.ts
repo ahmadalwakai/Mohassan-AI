@@ -23,6 +23,31 @@ describe('plan compiler source and reference contracts', () => {
     expect(plan.steps[1]?.text).toContain('search for the key');
   });
 
+  it.each([
+    'Who designed the bell tower and where was the bell cast?',
+    'مَن اقترح تصميم المسرح وشغل وظيفة المشرف على البناء؟',
+  ])('keeps weakly joined parts of a factual question in the same lookup for %s', text => {
+    expect(compilePlan(text).steps).toMatchObject([{ tool: 'search', text }]);
+  });
+
+  it.each([
+    ['Who authored the handbook and calculate 13 * 9.', 'Who authored the handbook'],
+    ['مَن اقترح تصميم المسرح وشغل وظيفة المشرف على البناء؟ ثم احسب ١٣ ضرب ٩.',
+      'مَن اقترح تصميم المسرح وشغل وظيفة المشرف على البناء؟'],
+  ])('keeps an independent calculation after a factual question for %s', (text, question) => {
+    expect(compilePlan(text).steps).toMatchObject([
+      { tool: 'search', text: question }, { tool: 'compute', dependsOn: [] },
+    ]);
+  });
+
+  it('keeps an explicitly requested second lookup independent', () => {
+    const first = 'Who composed the concert overture';
+    const second = 'look up the published date of the first recording.';
+    expect(compilePlan(`${first} and ${second}`).steps).toMatchObject([
+      { tool: 'search', text: first }, { tool: 'search', text: second, dependsOn: [] },
+    ]);
+  });
+
   it('binds a dialect clitic through the existing arithmetic grammar', () => {
     const plan = compilePlan('احسب ٣ + ٢ وبعدين اضربها في ٢');
     expect(plan.steps.map(step => step.tool)).toEqual(['compute', 'compute']);
