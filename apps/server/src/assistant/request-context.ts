@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { returnedTo } from './return-to.js';
+import { parseQuestionRewriteRequest } from './question-rewrite-request.js';
 import { assessRequestScope, parseRequestScopeAssessment, requestOperationText, RequestScopeAssessmentSchema, reviewPublicProjection, parseUserRequestConstraints, maskRequestLiteralData, isEntireLiteralRequest, type UserRequestConstraints, type RequestScopeAssessment } from './request-scope.js';
 
 /**
@@ -527,6 +528,16 @@ function previousSource(state: RequestContextState | null): RequestScopeAssessme
 
 /** Apply the shared source boundary after reference resolution, before exposing a public query. */
 export function resolveRequestContext(request: string, previousValue?: unknown, options: RequestContextOptions = {}): RequestResolution {
+  if (!options.pendingQuestion && typeof request === 'string' && parseQuestionRewriteRequest(request)) {
+    const previous = parseRequestContextState(previousValue);
+    const revision = previous && previous.revision < 1_000_000_000 ? previous.revision + 1 : 1;
+    const sourceAssessment = assessRequestScope(request);
+    const nextState: RequestContextState = { version: REQUEST_CONTEXT_VERSION, revision, intent: 'writing', scope: 'private',
+      topic: null, topicSourceTurnId: null, slots: [], sourceAssessment };
+    return { version: REQUEST_CONTEXT_VERSION, kind: 'new', original: clean(request), resolved: request,
+      intent: 'writing', scope: 'private', query: null, topic: null, slots: [], ambiguities: [], provenance: [], nextState,
+      pendingQuestionId: null, sourceAssessment };
+  }
   const constraints = parseUserRequestConstraints(request);
   const result = resolveRequestContextBase(constraints?.safeActionText ?? request, previousValue, options);
   const previous = parseRequestContextState(previousValue);
