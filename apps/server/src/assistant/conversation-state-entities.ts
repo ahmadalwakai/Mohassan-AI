@@ -10,6 +10,7 @@ export interface ConversationEntity {
   role: 'user' | 'assistant';
   salience: number;
   gender?: Gender;
+  aliasOf?: string;
   publicLookup?: boolean;
 }
 
@@ -37,7 +38,11 @@ const NON_WORD = String.raw`(?<![\p{L}\p{N}])`;
 const END_WORD = String.raw`(?![\p{L}\p{N}])`;
 const LATIN_NAME_WORD = String.raw`(?=\p{Script=Latin})\p{Lu}[\p{Script=Latin}\p{M}'’\-]+`;
 const LATIN_NAME = new RegExp(String.raw`${NON_WORD}(?:The\s+)?${LATIN_NAME_WORD}(?:(?:\s+(?:of|the|de|van|von))?\s+${LATIN_NAME_WORD}){1,4}${END_WORD}`, 'gu');
+const LATIN_LABEL = String.raw`(?=[\p{Script=Latin}\p{N}])[\p{Script=Latin}\p{M}\p{N} .,’'&()°\-]{1,90}`;
+const EN_ARTICLE_NAME = String.raw`(?:[Tt]he\s+)?${LATIN_NAME_WORD}(?:(?:\s+(?:of|the|de|van|von))?\s+${LATIN_NAME_WORD}){0,4}`;
+const ACRONYM = new RegExp(String.raw`${NON_WORD}[A-Z]{2,6}${END_WORD}`, 'gu');
 const NON_NAME_TITLE = /^(?:answer|assistant|click|detail|details|hello|next|notes|official|okay|overview|page|please|question|references?|related|result|results|search|see|sources?|summary|thank|thanks|title|website|welcome|yes)(?:\s|$)/u;
+const EN_NON_NAME_LEAD = /^(?:are|as|at|because|can|could|despite|did|do|does|during|for|had|has|have|how|if|in|is|may|might|should|since|was|were|what|when|where|which|who|why|will|would)$/u;
 const NAME_STOP = new Set(['a', 'after', 'an', 'and', 'are', 'as', 'before', 'for', 'from', 'he', 'in', 'is', 'it', 'of', 'or', 'she', 'that', 'the', 'then', 'there', 'they', 'to', 'was', 'were', 'what', 'when', 'which', 'who', 'with',
   'اشهر', 'اصغر', 'اكبر', 'الذين', 'الذي', 'التي', 'ان', 'انها', 'انه', 'او', 'اي', 'اين', 'باسم', 'بعد', 'بين', 'تاسس', 'تاسست', 'تقع', 'تلك', 'توفي', 'توفيت', 'ثم', 'ذلك', 'سنه', 'عام', 'عاصمه', 'عاصمتها', 'علي', 'عن', 'في', 'فيها', 'فيه', 'قبل', 'كانت', 'كل', 'كم', 'كيف', 'لا', 'لعائله', 'لم', 'لماذا', 'ما', 'ماذا', 'متي', 'مع', 'من', 'هذا', 'هذه', 'هل', 'هم', 'هما', 'هو', 'هي', 'و', 'ولد', 'ولدت', 'يقع', 'يوم']);
 const NON_NAME = /^(?:(?:ال)?(?:شركه|مجموعه|موسسه|فريق|شخص|اشخاص|صاحب|احد|عده|عدد|اسم|مؤسس(?:ه|ان|ون)?|مدينه|دوله|عاصمه)|some|people|someone|anyone|team|group|company|organization|capital|city|country|founders?)(?:\s|$)/u;
@@ -49,6 +54,22 @@ const EN_PERSON_ROLE = String.raw`(?:inventor|writer|doctor|physician|engineer|p
 const AR_ORG_CUE = String.raw`(?:شركة|شركه|مؤسسة|جامعة|منظمة|جمعية|وزارة|حزب|نادي|مصرف|بنك)`;
 const AR_PLACE_CUE = String.raw`(?:مدينة|مدينه|قرية|دولة|محافظة|ولاية|مقاطعة|قارة|جزيرة)`;
 const AR_FEATURE_CUE = String.raw`(?:نهر|بحر|جبل|وادي|بحيرة|محيط)`;
+const AR_VENUE_CUE = String.raw`(?:مطعم|فندق|مقهى|متحف|متجر|حديقة|مكتبة|ملعب|موقع|مكان|عيادة)`;
+const AR_VENUE_TOPIC = new RegExp(String.raw`${NON_WORD}(?:ال)?(?:${AR_VENUE_CUE}ا?|مطاعم|فنادق|مواقع|أماكن|اماكن|متاحف|حدائق)${END_WORD}`, 'u');
+const AR_QUOTED_VENUE = new RegExp(String.raw`${NON_WORD}(?:[بولف])?(?:ال)?${AR_VENUE_CUE}\s+(?:(?:اسمه|اسمها|باسم)\s+)?[«"“](?<name>[^»"”\r\n]{2,90})[»"”]`, 'gu');
+const AR_NAMED_VENUE = [
+  new RegExp(String.raw`${NON_WORD}(?:[بولف])?(?:ال)?${AR_VENUE_CUE}\s+(?:(?:اسمه|اسمها|باسم)\s+)?[«"“]?(?<name>${LATIN_LABEL})`, 'gu'),
+  new RegExp(String.raw`${NON_WORD}(?:ال)?${AR_VENUE_CUE}(?:\s+\p{Script=Arabic}+){0,3}\s+(?:هو|هي|يدعى|يسمى|اسمه|اسمها)\s+[«"“]?(?<name>${LATIN_LABEL})`, 'gu'),
+  new RegExp(String.raw`${NON_WORD}(?:و?(?:[أا]قترح(?:\s+(?:عليك|لك))?|[أا]وصي(?:ك)?)(?:\s+(?:بـ?|بِ))?|ما\s*ر[أا]يك(?:\s+(?:بـ?|بِ))?)\s*(?<destination>زيارة\s+|الذهاب\s+(?:إلى|الى)\s+)?(?<venue>${AR_VENUE_CUE}\s+)?[«"“]?(?<name>${LATIN_LABEL})`, 'gu'),
+];
+const EN_NAMED_CONTEXT = [
+  { pattern: new RegExp(String.raw`\b(?:hotel|restaurant|caf[eé]|museum|stadium|theatre|park)\s+(?:(?:called|named)\s+)?["“]?(?<name>${EN_ARTICLE_NAME})${END_WORD}`, 'gu'), kind: 'place' },
+  { pattern: new RegExp(String.raw`\b(?:band|team|club|association|committee|company|agency)\s+(?:(?:called|named)\s+)?["“]?(?<name>${EN_ARTICLE_NAME})${END_WORD}`, 'gu'), kind: 'organization' },
+  { pattern: new RegExp(String.raw`\b(?:actor|actress|dancer|drummer|guitarist|bassist|journalist|musician|physicist|scientist|vocalist|writer)\s+(?<name>${CAPITALIZED})${END_WORD}`, 'gu'), kind: 'person' },
+  { pattern: new RegExp(String.raw`\b(?:born|starring)\s+(?<name>${CAPITALIZED})${END_WORD}`, 'gu'), kind: 'person' },
+  { pattern: new RegExp(String.raw`\b(?:called|named|titled|known as)\s+["“]?(?<name>${EN_ARTICLE_NAME})${END_WORD}`, 'gu'), kind: 'other' },
+] as const;
+const LANGUAGE_ALIAS = /^(?<primary>[^()]{2,90}?)\s*\(\s*(?:(?:بال|ال)?(?:[إا]نجليزي[ةه]|عربي[ةه]|[أا]لماني[ةه]|فرنسي[ةه]|[إا]سباني[ةه])|English|Arabic|German|French|Spanish)\s*:\s*(?<alternate>[\p{L}\p{M}\p{N}.'’ -]{2,90})\s*\)/iu;
 const PLACE_RELATIONS = [
   new RegExp(String.raw`^(?<city>${LEADING_NAME})\s+(?:(?:هي|هو)\s+)?(?:العاصمة|عاصمة)(?:\s+(?<country>${NAME}))?${END_WORD}`, 'u'),
   new RegExp(String.raw`^(?:العاصمة|عاصمة)\s+(?<country>${LEADING_NAME})\s+(?:هي|هو)\s+(?<city>${NAME})${END_WORD}`, 'u'),
@@ -97,8 +118,9 @@ const MONTH = '(?:January|February|March|April|May|June|July|August|September|Oc
 const DATE = new RegExp(String.raw`${NON_WORD}(?:${YEAR}-${DAY}-${DAY}|${DAY}[/-]${DAY}[/-](?:${YEAR}|${DAY})|${DAY}\s+${MONTH}(?:\s+(?:(?:من\s+)?(?:عام|سنة)\s+)?${YEAR})?|${MONTH}\s+${DAY}(?:,?\s+${YEAR})?|(?:في|عام|سنة|in|since)\s+${YEAR}|${YEAR}(?=\s*[-–—]\s*${YEAR})|(?<=[-–—] )${YEAR}|today|tomorrow|yesterday|next week|last week|اليوم|غدا|[أا]مس|بكر[هةا]|بعد غد|[اأ]ل[أا]سبوع (?:الماضي|القادم))(?=م${END_WORD}|${END_WORD})`, 'giu');
 const NUMBER = new RegExp(String.raw`${NON_WORD}[+−-]?${DIGIT}+(?:[.,٫٬]${DIGIT}+)*(?:\s*[%٪]|\s+(?:hundred|thousand|million|billion|trillion|[أا]لف|[آا]لاف|مليون|ملايين|مليار|مليارات|تريليون))?${END_WORD}`, 'giu');
 const SOURCE_LINE = /^(?:المصدر|المصادر|مصدر|رابط المصدر|قُرئت|قرئت|source|sources|source link|read at|retrieved|related links|للمزيد)(?:\s*[:：]|$)/iu;
+const TOPIC_CLAUSE_WORD = /^(?:are|can|could|did|do|does|had|has|have|he|how|is|she|should|that|there|they|was|were|what|when|where|who|why|will|would|you|ان|انه|انها|اريد|اين|ايش|توجد|شكرا|كيف|لا|لماذا|ليه|ماهو|متي|نعم|هل|وين|يوجد)$/u;
 
-type Mention = Pick<ConversationEntity, 'text' | 'kind' | 'salience' | 'gender'>;
+type Mention = Pick<ConversationEntity, 'text' | 'kind' | 'salience' | 'gender' | 'aliasOf'>;
 
 function nameFrom(raw: string | undefined, requireWhole = false): string {
   const text = raw?.trim().replace(/^[«»"“”'’]+|[«»"“”'’]+$/gu, '') ?? '';
@@ -146,16 +168,48 @@ function inferredKind(text: string, stack: readonly ConversationEntity[]): Conve
   return 'other';
 }
 
-function latinNameFrom(raw: string): string {
+function latinNameFrom(raw: string, minimumWords = 2): string {
   const words = raw.replace(/['’]s$/u, '').split(/\s+/u);
+  while (words.length && EN_NON_NAME_LEAD.test(fold(words[0]!))) words.shift();
   const significant = words.filter(word => /^\p{Lu}/u.test(word) && word !== 'The');
-  if (significant.length < 2 || significant.some(word => NAME_STOP.has(fold(word))) || NON_NAME_TITLE.test(fold(significant.join(' ')))) return '';
+  if (significant.length < minimumWords || significant.some(word => NAME_STOP.has(fold(word)))
+    || NON_NAME_TITLE.test(fold(significant.join(' ')))) return '';
   return words.join(' ');
+}
+
+function mixedNameFrom(raw: string | undefined): string {
+  const name = raw?.trim().replace(/[.,-]+$/u, '').replace(/\s+/gu, ' ').trim() ?? '';
+  if (!name || NON_NAME_TITLE.test(fold(name)) || !/[\p{Lu}\p{N}]/u.test(name)) return '';
+  return name;
+}
+
+function isUsableTopic(text: string, kind: ConversationEntityKind, mentions: ReadonlyMap<string, Mention>): boolean {
+  const key = fold(text);
+  if (mentions.has(key) || kind !== 'other') return true;
+  const words = key.split(/\s+/u);
+  if (words.length > 6 || words.some(word => TOPIC_CLAUSE_WORD.test(word))) return false;
+  const padded = ` ${key} `;
+  return ![...mentions.values()].some(mention => mention.kind !== 'date' && mention.kind !== 'number'
+    && padded.includes(` ${fold(mention.text)} `));
+}
+
+function linkObservedAlias(groups: Record<string, string>, mentions: Map<string, Mention>): void {
+  const primary = ` ${fold(groups.primary!)} `;
+  const alternate = groups.alternate!.trim();
+  const key = fold(alternate);
+  const known = [...mentions].filter(([name, mention]) => name !== key && primary.endsWith(` ${name} `)
+    && ['person', 'organization', 'place'].includes(mention.kind)).sort(([left], [right]) => right.length - left.length)[0]?.[1];
+  if (!known) return;
+  const prior = mentions.get(key);
+  if (prior && prior.kind !== 'other' && prior.kind !== known.kind) return;
+  mentions.set(key, { text: alternate, kind: known.kind, aliasOf: known.aliasOf ?? known.text,
+    salience: Math.max(prior?.salience ?? 0, known.salience * 0.88), ...(known.gender ? { gender: known.gender } : {}) });
 }
 
 /** Keeps source text and provenance for each occurrence, with a recency-weighted rank. */
 export function extendConversationEntities(stack: readonly ConversationEntity[], turn: ConversationEntityTurn): ConversationEntity[] {
   const mentions = new Map<string, Mention>();
+  const aliases: Record<string, string>[] = [];
   const add = (text: string | null | undefined, kind: ConversationEntityKind, salience: number, gender?: Gender) => {
     const label = text?.trim();
     if (!label || label.length > 90 || /[:/<>@`\[\]\r\n]/u.test(label) && kind !== 'date') return;
@@ -173,6 +227,8 @@ export function extendConversationEntities(stack: readonly ConversationEntity[],
   for (const [lineIndex, line] of visibleLines(turn).entries()) {
     const weight = Math.max(0.28, 1 - lineIndex * 0.12);
     for (const clause of line.split(/[!?؟؛]|(?<!\b(?:Mr|Ms|Mrs|Dr))\.(?=\s|$)/u).map(tidy).filter(Boolean)) {
+      const alias = LANGUAGE_ALIAS.exec(clause)?.groups;
+      if (alias) aliases.push(alias);
       for (const [index, person] of foundingPeople(clause).entries()) add(person.name, 'person', (1 - index * 0.08) * weight, person.gender);
       for (const pattern of PLACE_RELATIONS) {
         const relation = pattern.exec(clause)?.groups;
@@ -204,9 +260,26 @@ export function extendConversationEntities(stack: readonly ConversationEntity[],
           add(nameFrom(match[2] ?? match[1]), kind, 0.79 * weight, gender);
         }
       }
+      for (const [index, pattern] of AR_NAMED_VENUE.entries()) {
+        for (const match of clause.matchAll(pattern)) {
+          const kind = index < 2 || match.groups?.destination || match.groups?.venue || AR_VENUE_TOPIC.test(clause) ? 'place' : 'other';
+          add(mixedNameFrom(match.groups?.name), kind, (turn.role === 'assistant' ? 0.91 : 0.78) * weight);
+        }
+      }
+      for (const match of clause.matchAll(AR_QUOTED_VENUE)) add(nameFrom(match.groups?.name), 'place', 0.91 * weight);
+      for (const { pattern, kind } of EN_NAMED_CONTEXT) {
+        for (const match of clause.matchAll(pattern)) {
+          const name = latinNameFrom(match.groups?.name ?? '', 1);
+          add(name, kind === 'other' ? inferredKind(name, stack) : kind, 0.84 * weight);
+        }
+      }
       for (const match of clause.matchAll(LATIN_NAME)) {
         const name = latinNameFrom(match[0]);
         if (name) add(name, inferredKind(name, stack), (turn.role === 'assistant' ? 0.73 : 0.69) * weight);
+      }
+      for (const match of clause.matchAll(ACRONYM)) {
+        const name = match[0];
+        add(name, inferredKind(name, stack), 0.48 * weight);
       }
     }
     const dates = [...line.matchAll(DATE)];
@@ -217,9 +290,13 @@ export function extendConversationEntities(stack: readonly ConversationEntity[],
       add(number[0], 'number', (result ? 0.75 : 0.47) * weight);
     }
   }
-  if (turn.topic) add(turn.topic.text, turn.topic.kind ?? inferredKind(turn.topic.text, stack), turn.role === 'assistant' ? 0.89 : 0.86);
+  if (turn.topic) {
+    const kind = turn.topic.kind ?? inferredKind(turn.topic.text, stack);
+    if (isUsableTopic(turn.topic.text, kind, mentions)) add(turn.topic.text, kind, turn.role === 'assistant' ? 0.89 : 0.86);
+  }
   add(turn.place, 'place', 0.67);
   add(turn.time, 'date', 0.61);
+  for (const alias of aliases) linkObservedAlias(alias, mentions);
   const incoming = [...mentions.values()].sort((left, right) => right.salience - left.salience).slice(0, MAX_MENTIONS_PER_TURN)
     .map(mention => ({ ...mention, turnId: turn.turnId, role: turn.role, ...(turn.publicLookup ? { publicLookup: true } : {}) }));
   const older = stack.filter(entity => entity.turnId !== turn.turnId || entity.role !== turn.role)

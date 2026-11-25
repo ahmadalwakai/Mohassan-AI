@@ -99,6 +99,20 @@ describe('conversation state turn decisions', () => {
     });
   });
 
+  it.each([
+    ['ما عنوان ورقم هاتف هذا المطعم ؟', 'Mono', 'ما عنوان ورقم هاتف Mono؟', 'what'],
+    ['كم تكلفة الليلة الواحدة ؟', 'Pandora After 80s', 'كم تكلفة الليلة الواحدة في Pandora After 80s؟', 'how_much'],
+    ['ماعنوانه ورقم الهاتف ؟', 'Bun Cha Vietnamese', 'ما عنوان Bun Cha Vietnamese ورقم الهاتف؟', 'what'],
+    ['What was this show about?', 'Blunt Talk', 'What was Blunt Talk about?', 'what'],
+  ] as const)('projects the observed nominal reference in %s', (question, name, standalone, questionType) => {
+    // Frozen development excerpts from Arabic-TOD and CANARD; each name appeared in the previous visible answer.
+    const state = { ...emptyConversationState(),
+      entities: [{ text: name, kind: 'other' as const, salience: 0.9, turnId: 'assistant-1', role: 'assistant' as const }] };
+    expect(understandTurn(state, question, 'user-2').decision).toMatchObject({
+      type: 'follow_up', questionType, reference: { text: name, role: 'assistant' }, standalone,
+    });
+  });
+
   it('matches a previously named person for an explicit return', () => {
     const state = withAssistantAnswer(after('من هو ألبرت أينشتاين؟'), 'ألبرت أينشتاين عالم فيزياء.', 'assistant-1');
     expect(understandTurn(state, 'ارجع إلى أينشتاين: أين ولد؟', 'user-2').decision).toMatchObject({
@@ -128,6 +142,19 @@ describe('conversation state turn decisions', () => {
     expect(understandTurn(state, 'How did they target her email?', 'user-2').decision).toMatchObject({
       standalone: "How did FSB target Anna Politkovskaya's email?", reference: state.entities[0],
       references: state.entities, questionType: 'how',
+    });
+  });
+
+  it('uses distinct people for a plural reference even when the answer contains an alias', () => {
+    // CANARD test dialogue C_e6af1e489b6d4cc7962abc787e42f116_0.
+    const earlier = { kind: 'person' as const, turnId: 'assistant-1', role: 'assistant' as const };
+    const state = { ...emptyConversationState(), entities: [
+      { ...earlier, text: 'Lillie Langtry', salience: 0.95 },
+      { ...earlier, text: 'Lillie', aliasOf: 'Lillie Langtry', salience: 0.91 },
+      { ...earlier, text: 'Prince', salience: 0.89 },
+    ] };
+    expect(understandTurn(state, 'How did they meet?', 'user-2').decision).toMatchObject({
+      standalone: 'How did Lillie Langtry and Prince meet?', references: [state.entities[0], state.entities[2]],
     });
   });
 

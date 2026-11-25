@@ -2,16 +2,21 @@
  * Offline development evaluation. Source files are human-authored and stay outside
  * the repository. See docs/CONVERSATION-STATE-DECISION-EVALUATION.md for provenance.
  */
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import {
-  emptyConversationState, understandTurn, withAssistantAnswer, withPending,
-  type TurnUnderstanding,
-} from '../../apps/server/src/assistant/conversation-state.js';
+import type { ConversationStateV2, TurnUnderstanding } from '../../apps/server/src/assistant/conversation-state.js';
 import type { ConversationTurnType } from '../../apps/server/src/assistant/conversation-state-decisions.js';
 
-interface Score { total: number; before: number; after: number }
+interface Score { total: number; legacy: number; correct: number }
+type Resolver = typeof import('../../apps/server/src/assistant/conversation-state.js');
+type Split = 'development' | 'held-out';
+const baselineCommit = 'fb8e45289dd3a7b607d9c7c7b7188bf08c2c70f0';
+const splitSeed = 'mohassan-conversation-decides-split-v1';
+const heldOutShare = 0.30;
 interface Action { act: string; slot: string; values: string[] }
 interface CodTurn { speaker: 'USER' | 'SYSTEM'; utterance: string; frames: { service: string; actions: Action[] }[] }
 interface CodDialogue { dialogue_id: string; turns: CodTurn[] }
@@ -20,12 +25,27 @@ interface TodEvent { Agent: string; Text?: string; Actions?: TodAction[] | strin
 interface TodDialogue { Dialogue_id: string; Events: TodEvent[] }
 interface CanardRow { History: string[]; QuAC_dialog_id: string; Question: string; Question_no: number; Rewrite: string }
 
-const score = (): Score => ({ total: 0, before: 0, after: 0 });
-function add(score: Score, before: boolean, after: boolean): void {
+const score = (): Score => ({ total: 0, legacy: 0, correct: 0 });
+function add(score: Score, legacy: boolean, correct: boolean): void {
   score.total++;
-  score.before += Number(before);
-  score.after += Number(after);
+  score.legacy += Number(legacy);
+  score.correct += Number(correct);
 }
+
+interface Failure {
+  source: 'canard' | 'arabic-tod' | 'cod-ar' | 'cod-en' | 'multi3woz';
+  dialogue: string;
+  turn: number;
+  kind: string;
+  request: string;
+  prior?: string;
+  expected: string;
+  actual: string | null;
+  reason?: string[];
+  candidates?: { text: string; kind: string; turnId: string; role: string; salience: number }[];
+}
+type Diagnose = (failure: Failure) => void;
+
 
 function legacyType(turn: TurnUnderstanding): ConversationTurnType | null {
   switch (turn.type) {
@@ -69,7 +89,8 @@ function categoryScore(byType: Map<string, Score>, label: string): Score {
   return item;
 }
 
-function evalCod(dialogues: readonly CodDialogue[]) {
+function evalCod(resolver: Resolver, dialogues: readonly CodDialogue[], source: Failure['source'], diagnose?: Diagnose) {
+  const { emptyConversationState, understandTurn, withAssistantAnswer, withPending } = resolver;
   let turns = 0;
   const total = score();
   const byType = new Map<string, Score>();
@@ -93,6 +114,9 @@ function evalCod(dialogues: readonly CodDialogue[]) {
       const after = result.decision.type === expected;
       add(total, before, after);
       add(categoryScore(byType, expected), before, after);
+      if (!after) diagnose?.({ source, dialogue: dialogue.dialogue_id, turn: index,
+        kind: 'turn_type', request: turn.utterance, prior: previous?.utterance, expected, actual: result.decision.type,
+        reason: result.decision.reasons });
     }
   }
   return { dialogues: dialogues.length, userTurns: turns, turnType: total, byType: Object.fromEntries(byType) };
@@ -120,7 +144,8 @@ function suppliedName(row: CanardRow): string | null {
   return candidates.length === 1 ? candidates[0]! : null;
 }
 
-function evalCanard(rows: readonly CanardRow[]) {
+function evalCanard(resolver: Resolver, rows: readonly CanardRow[], diagnose?: Diagnose) {
+  const { emptyConversationState, understandTurn, withAssistantAnswer } = resolver;
   const dialogueIds = new Set<string>();
   const type = score();
   const reference = score();
@@ -139,16 +164,25 @@ function evalCanard(rows: readonly CanardRow[]) {
     const result = understandTurn(state, row.Question, row.QuAC_dialog_id + '-q' + row.Question_no);
     const beforeType = legacyType(result);
     add(type, beforeType === 'follow_up', result.decision.type === 'follow_up');
-    add(reference, beforeType === 'follow_up' && comparable(result.entity) === comparable(name),
-      comparable(result.decision.reference?.text) === comparable(name));
-    add(rewrite, beforeType === 'follow_up' && comparable(result.query) === comparable(row.Rewrite),
-      comparable(result.decision.standalone) === comparable(row.Rewrite));
+    const referenceCorrect = comparable(result.decision.reference?.text) === comparable(name);
+    const rewriteCorrect = comparable(result.decision.standalone) === comparable(row.Rewrite);
+    add(reference, beforeType === 'follow_up' && comparable(result.entity) === comparable(name), referenceCorrect);
+    add(rewrite, beforeType === 'follow_up' && comparable(result.query) === comparable(row.Rewrite), rewriteCorrect);
+    if (diagnose) {
+      const details = { source: 'canard' as const, dialogue: row.QuAC_dialog_id, turn: row.Question_no,
+        request: row.Question, prior: row.History.at(-1), reason: result.decision.reasons };
+      if (result.decision.type !== 'follow_up') diagnose({ ...details, kind: 'turn_type', expected: 'follow_up', actual: result.decision.type });
+      if (!referenceCorrect) diagnoseReference(diagnose, details, state, result, name);
+      if (!rewriteCorrect) diagnose({ ...details, kind: rewriteFailure(result, referenceCorrect), expected: row.Rewrite,
+        actual: result.decision.standalone });
+    }
   }
   return { dialogues: dialogueIds.size, turnType: type, referenceResolution: reference, standaloneRewrite: rewrite };
 }
 
 /** Use the translator's original words and embedded Latin-script entities without switching source turns. */
-function evalArabicTod(dialogues: readonly TodDialogue[]) {
+function evalArabicTod(resolver: Resolver, dialogues: readonly TodDialogue[], diagnose?: Diagnose) {
+  const { emptyConversationState, understandTurn, withAssistantAnswer } = resolver;
   const mixed: CodDialogue[] = [];
   const references = score();
   for (const dialogue of dialogues) {
@@ -172,6 +206,7 @@ function evalArabicTod(dialogues: readonly TodDialogue[]) {
         continue;
       }
       const result = understandTurn(state, turn.utterance, turnId);
+      const previousState = state;
       state = result.next;
       const offered = actions(turns[index - 1]).find(action => action.act === 'OFFER' && action.slot === 'name');
       const name = offered?.values.length === 1 ? offered.values[0] : undefined;
@@ -181,11 +216,14 @@ function evalArabicTod(dialogues: readonly TodDialogue[]) {
       if (!name || following?.PrimaryItem?.name !== name || !user.length
         || !user.every(action => action.act === 'REQUEST' && action.slot !== 'name')
         || !containsPhrase(turns[index - 1]!.utterance, name) || containsPhrase(turn.utterance, name)) continue;
-      add(references, legacyType(result) === 'follow_up' && comparable(result.entity) === comparable(name),
-        comparable(result.decision.reference?.text) === comparable(name));
+      const referenceCorrect = comparable(result.decision.reference?.text) === comparable(name);
+      add(references, legacyType(result) === 'follow_up' && comparable(result.entity) === comparable(name), referenceCorrect);
+      if (diagnose && !referenceCorrect) diagnoseReference(diagnose, { source: 'arabic-tod', dialogue: dialogue.Dialogue_id,
+        turn: index, request: turn.utterance, prior: turns[index - 1]!.utterance, reason: result.decision.reasons },
+      previousState, result, name);
     }
   }
-  return { ...evalCod(mixed), referenceResolution: references };
+  return { ...evalCod(resolver, mixed, 'arabic-tod', diagnose), referenceResolution: references };
 }
 
 interface Multi3wozTurn {
@@ -206,7 +244,7 @@ const multi3wozActs: Readonly<Record<string, string>> = {
   AFFIRM: 'AFFIRM', BYE: 'GOODBYE', THANK: 'THANK_YOU',
 };
 
-function evalMulti3woz(dialogues: Record<string, Multi3wozDialogue>) {
+function evalMulti3woz(resolver: Resolver, dialogues: Record<string, Multi3wozDialogue>, diagnose?: Diagnose) {
   const selected: CodDialogue[] = [];
   const byMarker: Record<string, number> = {};
   for (const [id, dialogue] of Object.entries(dialogues)) {
@@ -227,33 +265,160 @@ function evalMulti3woz(dialogues: Record<string, Multi3wozDialogue>) {
     }));
     selected.push({ dialogue_id: id, turns });
   }
-  return { ...evalCod(selected), byMarker };
+  return { ...evalCod(resolver, selected, 'multi3woz', diagnose), byMarker };
 }
 
-async function readCod(directory: string, locale: 'ar' | 'en'): Promise<CodDialogue[]> {
-  const splits = await Promise.all(['dev', 'test'].map(async split =>
-    JSON.parse(await readFile(join(directory, locale + '_' + split + '.json'), 'utf8')) as CodDialogue[]));
-  return splits.flat().filter(dialogue => dialogue.turns.filter(turn => turn.speaker === 'USER').length > 1);
+function diagnoseReference(diagnose: Diagnose, details: Omit<Failure, 'kind' | 'expected' | 'actual'>,
+    state: ConversationStateV2, result: TurnUnderstanding, expected: string): void {
+  const candidates = state.entities.slice(0, 12);
+  const found = state.entities.some(entity => comparable(entity.text) === comparable(expected));
+  const selected = result.decision.reference?.text ?? null;
+  const kind = !found ? 'reference_missing_entity' : selected ? 'reference_wrong_selection' : 'reference_no_selection';
+  diagnose({ ...details, kind, expected, actual: selected, candidates });
+}
+
+function rewriteFailure(result: TurnUnderstanding, referenceCorrect: boolean): string {
+  if (!referenceCorrect) return 'rewrite_wrong_reference';
+  return result.decision.standalone ? 'rewrite_wording_mismatch' : 'rewrite_missing';
+}
+
+interface RawSources {
+  codAr: CodDialogue[];
+  codEn: CodDialogue[];
+  canard: CanardRow[];
+  arabicTod: TodDialogue[];
+  multi3woz: [string, Multi3wozDialogue][];
+}
+
+interface PartitionDigest { groups: number; rows: number; sha256: string }
+type Freeze = Record<string, { development: PartitionDigest; 'held-out': PartitionDigest }>;
+const hashText = (text: string | Buffer) => createHash('sha256').update(text).digest('hex');
+
+function partition<T>(entries: readonly T[], groupOf: (entry: T) => string, name: string, freeze: Freeze, split: Split): T[] {
+  const groups = new Map<string, T[]>();
+  for (const entry of entries) {
+    const id = groupOf(entry);
+    const prior = groups.get(id);
+    if (prior) prior.push(entry);
+    else groups.set(id, [entry]);
+  }
+  const ranked = [...groups].map(([id, rows]) => ({ id, rows, rank: hashText(splitSeed + '\0' + name + '\0' + id) }))
+    .sort((a, b) => a.rank.localeCompare(b.rank) || a.id.localeCompare(b.id));
+  const cutoff = Math.floor(ranked.length * heldOutShare);
+  const partitions = { development: ranked.slice(cutoff), 'held-out': ranked.slice(0, cutoff) };
+  const digest = (part: typeof ranked) => {
+    const hash = createHash('sha256');
+    let rows = 0;
+    for (const group of part) {
+      hash.update(JSON.stringify([group.id, group.rows]) + '\n');
+      rows += group.rows.length;
+    }
+    return { groups: part.length, rows, sha256: hash.digest('hex') };
+  };
+  freeze[name] = { development: digest(partitions.development), 'held-out': digest(partitions['held-out']) };
+  return partitions[split].flatMap(group => group.rows);
+}
+
+function makeSplit(raw: RawSources, freeze: Freeze, split: Split): RawSources {
+  const cod = partition([
+    ...raw.codAr.map(row => ({ locale: 'ar', row })),
+    ...raw.codEn.map(row => ({ locale: 'en', row })),
+  ], item => item.row.dialogue_id, 'cod', freeze, split);
+  return {
+    codAr: cod.filter(item => item.locale === 'ar').map(item => item.row),
+    codEn: cod.filter(item => item.locale === 'en').map(item => item.row),
+    // Article titles group all the CANARD section dialogues from one article together.
+    canard: partition(raw.canard, row => comparable(row.History[0]) || row.QuAC_dialog_id, 'canard', freeze, split),
+    arabicTod: partition(raw.arabicTod, row => row.Dialogue_id, 'arabic-tod', freeze, split),
+    multi3woz: partition(raw.multi3woz, ([key]) => key, 'multi3woz', freeze, split),
+  };
+}
+
+function evaluate(resolver: Resolver, sources: RawSources, diagnose?: Diagnose) {
+  return {
+    codArabic: evalCod(resolver, sources.codAr, 'cod-ar', diagnose),
+    codEnglish: evalCod(resolver, sources.codEn, 'cod-en', diagnose),
+    arabicTodMixed: evalArabicTod(resolver, sources.arabicTod, diagnose),
+    canardEnglish: evalCanard(resolver, sources.canard, diagnose),
+    multi3wozDialect: evalMulti3woz(resolver, Object.fromEntries(sources.multi3woz), diagnose),
+  };
+}
+
+function turnTypeTotal(results: ReturnType<typeof evaluate>): Score {
+  return Object.values(results).reduce((total, { turnType }) => ({
+    total: total.total + turnType.total, legacy: total.legacy + turnType.legacy, correct: total.correct + turnType.correct,
+  }), score());
 }
 
 const { values } = parseArgs({ options: {
   cod: { type: 'string' }, canard: { type: 'string' }, 'arabic-tod': { type: 'string' }, 'dialect-dialogues': { type: 'string' },
+  split: { type: 'string', default: 'development' }, 'write-freeze': { type: 'boolean' }, diagnostics: { type: 'string' },
+  'baseline-dir': { type: 'string' }, 'frozen-commit': { type: 'string' },
 } });
 if (!values.cod || !values.canard || !values['arabic-tod'] || !values['dialect-dialogues']) {
   throw new Error('Supply --cod, --canard, --arabic-tod and --dialect-dialogues. See docs/CONVERSATION-STATE-DECISION-EVALUATION.md.');
 }
+if (values.split !== 'development' && values.split !== 'held-out') throw new Error('Use development or held-out for --split.');
+const split = values.split;
+const currentRoot = fileURLToPath(new URL('../../', import.meta.url));
+const manifestPath = fileURLToPath(new URL('./decision-eval-freeze.json', import.meta.url));
 
-async function readJson<T>(file: string): Promise<T> {
-  return JSON.parse(await readFile(file, 'utf8')) as T;
+function assertFrozen(root: string, expected: string): void {
+  const git = (args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim();
+  if (!/^[0-9a-f]{40}$/u.test(expected) || git(['rev-parse', 'HEAD']) !== expected
+    || git(['status', '--porcelain', '--untracked-files=all', '--', 'apps/server/src', 'packages',
+      'scripts/conversation-state/decision-eval.ts', 'scripts/conversation-state/decision-eval-freeze.json'])) {
+    throw new Error('Scoring requires a clean resolver checked out at commit ' + expected);
+  }
 }
-const [ar, en, canard, arabicTod, dialectDialogues] = await Promise.all([
-  readCod(values.cod, 'ar'), readCod(values.cod, 'en'), readJson<CanardRow[]>(values.canard),
-  readJson<Record<string, TodDialogue>>(values['arabic-tod']), readJson<Record<string, Multi3wozDialogue>>(values['dialect-dialogues']),
+if (split === 'held-out') {
+  if (values.diagnostics || values['write-freeze'] || !values['baseline-dir'] || !values['frozen-commit']) {
+    throw new Error('Held-out scoring requires --baseline-dir and --frozen-commit, without diagnostics.');
+  }
+  assertFrozen(currentRoot, values['frozen-commit']);
+}
+if (values['baseline-dir']) assertFrozen(values['baseline-dir'], baselineCommit);
+
+const sourceHashes: Record<string, string> = {};
+async function readJson<T>(file: string, label: string): Promise<T> {
+  const bytes = await readFile(file);
+  sourceHashes[label] = hashText(bytes);
+  return JSON.parse(bytes.toString('utf8')) as T;
+}
+async function readCod(directory: string, locale: 'ar' | 'en'): Promise<CodDialogue[]> {
+  const splits = await Promise.all(['dev', 'test'].map(split => {
+    const file = locale + '_' + split + '.json';
+    return readJson<CodDialogue[]>(join(directory, file), 'cod/' + file);
+  }));
+  return splits.flat();
+}
+const [codAr, codEn, canard, arabicTod, multi3woz] = await Promise.all([
+  readCod(values.cod, 'ar'), readCod(values.cod, 'en'), readJson<CanardRow[]>(values.canard, 'canard/test.json'),
+  readJson<Record<string, TodDialogue>>(values['arabic-tod'], 'arabic-tod/ar_test.json'),
+  readJson<Record<string, Multi3wozDialogue>>(values['dialect-dialogues'], 'multi3woz/Arabic/data.json'),
 ]);
-console.log(JSON.stringify({
-  codArabic: evalCod(ar),
-  codEnglish: evalCod(en),
-  arabicTodMixed: evalArabicTod(Object.values(arabicTod)),
-  canardEnglish: evalCanard(canard),
-  multi3wozDialect: evalMulti3woz(dialectDialogues),
-}, null, 2));
+const freeze: Freeze = {};
+const sources = makeSplit({ codAr, codEn, canard, arabicTod: Object.values(arabicTod), multi3woz: Object.entries(multi3woz) }, freeze, split);
+const manifest = {
+  version: 1, baselineCommit, splitSeed, heldOutShare,
+  sourceSha256: Object.fromEntries(Object.entries(sourceHashes).sort()), partitions: freeze,
+};
+if (values['write-freeze']) {
+  await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx' });
+  console.log('Wrote source data hashes and split counts without running a resolver.');
+} else {
+  const expected = JSON.parse(await readFile(manifestPath, 'utf8'));
+  if (JSON.stringify(manifest) !== JSON.stringify(expected)) throw new Error('Evaluation data or split failed its frozen SHA-256 check.');
+  const resolver = (root: string): Promise<Resolver> =>
+    import(pathToFileURL(resolve(root, 'apps/server/src/assistant/conversation-state.ts')).href);
+  const failures: Failure[] = [];
+  const candidate = evaluate(await resolver(currentRoot), sources, values.diagnostics ? failure => failures.push(failure) : undefined);
+  if (values.diagnostics) await writeFile(values.diagnostics, failures.map(failure => JSON.stringify(failure)).join('\n') + '\n', { mode: 0o600 });
+  const baseline = values['baseline-dir'] ? evaluate(await resolver(values['baseline-dir']), sources) : undefined;
+  const candidateType = turnTypeTotal(candidate);
+  const baselineType = baseline && turnTypeTotal(baseline);
+  const turnTypeGuard = baselineType && { total: candidateType.total, before: baselineType.correct, after: candidateType.correct,
+    passed: candidateType.total > 0 && candidateType.total === baselineType.total && candidateType.correct >= baselineType.correct };
+  console.log(JSON.stringify({ split, baseline, candidate, turnTypeGuard }, null, 2));
+  if (turnTypeGuard && !turnTypeGuard.passed) process.exitCode = 1;
+}

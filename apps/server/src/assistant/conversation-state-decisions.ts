@@ -56,8 +56,9 @@ interface PropertyFragment {
   pattern: RegExp;
   kinds: readonly ConversationEntityKind[];
   questionType: ConversationQuestionType;
-  render(entity: string, firstWord: string): string;
+  render(entity: string, firstWord: string, original: string): string;
 }
+const VENUE_KINDS: readonly ConversationEntityKind[] = ['place', 'organization', 'other'];
 const PROPERTY_FRAGMENTS: readonly PropertyFragment[] = [
   { pattern: /^(?:ما )?(?:ال)?عنوان$/u, kinds: ['place', 'organization', 'other'], questionType: 'what',
     render: name => `ما عنوان ${name}` },
@@ -73,6 +74,12 @@ const PROPERTY_FRAGMENTS: readonly PropertyFragment[] = [
     render: name => `What are the opening hours of ${name}` },
   { pattern: /^(?:what(?: is|'s) (?:the )?|the )?(?:price|cost)$/u, kinds: ['other', 'organization'], questionType: 'what',
     render: name => `What is the price of ${name}` },
+  { pattern: /^(?:(?:كم|كام|قديش|ما) ?(?:ال)?|هل (?:يمكنني|يمكنك) (?:معرفه|اخباري ب?) ?)(?:تكلفه|سعر|ثمن) (?:الليله|المبيت|الاقامه)(?: الواحده)?$/u,
+    kinds: VENUE_KINDS, questionType: 'how_much',
+    render: (name, _firstWord, original) => `${original.replace(/[.؟?\s]+$/u, '')} في ${name}` },
+  { pattern: /^(?:ما ?|هل (?:يمكنني|يمكنك) (?:معرفه|الحصول علي|اخباري ب?) ?)(?:ال)?(?:عنوان|رقم (?:ال)?هاتف|عنوان ورقم (?:ال)?هاتف)$/u,
+    kinds: VENUE_KINDS, questionType: 'what',
+    render: (name, _firstWord, original) => `${original.replace(/[.؟?\s]+$/u, '')} ${name}` },
 ];
 
 const AR_QUESTION: Readonly<Record<string, ConversationQuestionType>> = {
@@ -107,7 +114,18 @@ const AR_POSSESSIVE_STEMS: Readonly<Record<string, string>> = {
   مؤسس: 'مؤسس', رئيس: 'رئيس', سكان: 'سكان', معالم: 'معالم', عدد: 'عدد', تاريخ: 'تاريخ', مصدر: 'مصدر',
   سبب: 'سبب', عنوان: 'عنوان', سعر: 'سعر', ثمن: 'ثمن', وزن: 'وزن', حجم: 'حجم', انجازات: 'إنجازات',
   اب: 'أب', اخ: 'أخ', زوج: 'زوج', مقر: 'مقر', اصل: 'أصل', انتاج: 'إنتاج', منتجات: 'منتجات', درجات: 'درجات',
+  مكان: 'مكان', هاتف: 'هاتف', تليفون: 'تليفون', جوال: 'جوال', غرفات: 'غرفات', غرف: 'غرف', خدمات: 'خدمات',
 };
+const AR_VENUE_NOUNS = /^(?:المطعم|الفندق|الموقع|المكان|المعلم|المتحف|المقهي|الملهي|المسرح|المتجر|المركز|الحديقه)$/u;
+const AR_VENUE_QUESTION = /(?<!\p{L})(?:عنوان|رقم|هاتف|سعر|تكلفه|مواعيد|ساعات|يقع|تقع|يفتح|تفتح)(?!\p{L})/u;
+const EN_DESCRIPTIONS: ReadonlyArray<readonly [RegExp, readonly ConversationEntityKind[]]> = [
+  [/^(?:city|country|place)$/u, ['place']],
+  [/^(?:hotel|restaurant|venue|location|museum|park|theat(?:er|re))$/u, VENUE_KINDS],
+  [/^(?:company|organization|band|group)$/u, ['organization', 'other']],
+  [/^(?:movie|film|book|novel|show|series|album|record|comic|song|product)$/u, ['other']],
+];
+const EN_DEICTIC = /^(?:that|this)$/u;
+const EN_CLAUSE_LINK = /^(?:after|when|while|before|where|because|if|which|that|who|rather|or|and)$/u;
 
 interface Word { written: string; key: string; start: number; end: number }
 interface Pointer {
@@ -134,6 +152,7 @@ function questionType(words: readonly Word[]): ConversationQuestionType | null {
   if (first === 'how' && second === 'much') return 'how_much';
   if (/^(?:كم|كام)$/u.test(first) && /^(?:ال)?(?:سعر|ثمن|تكلفه|وزن|طول|مساحه|عمر)/u.test(second ?? '')) return 'how_much';
   if (first === 'what' && /^(?:date|year|time)$/u.test(second ?? '')) return 'when';
+  if (/^و?ما(?:عنوان|سعر|رقم|زمن|مده|موقع)/u.test(first)) return 'what';
   if (first === 'في' && second === 'اي' && /^(?:عام|سنه|تاريخ|وقت)$/u.test(words[2]?.key ?? '')) return 'when';
   const leading = listed(AR_QUESTION, first) ?? listed(EN_QUESTION, first);
   if (leading) return leading;
@@ -149,7 +168,7 @@ function stripFollowLead(text: string): string {
   return questionType(wordsOf(politeQuestion)) ? politeQuestion : stripped;
 }
 
-function pointerAt(words: readonly Word[], index: number): Pointer | null {
+function pointerAt(words: readonly Word[], index: number, value: string): Pointer | null {
   const word = words[index]!;
   const prior = words[index - 1]?.key;
   const next = words[index + 1]?.key;
@@ -164,6 +183,15 @@ function pointerAt(words: readonly Word[], index: number): Pointer | null {
     return { ...base, prefix: connector, gender: key === 'هو' ? 'masculine' : 'feminine' };
   }
   if (key === 'هم') return { ...base, prefix: connector, plural: true };
+  const arDemonstrative = /^(?<prefix>[بلفو]?)(?:ذلك|تلك|هذا|هذه)$/u.exec(key);
+  if (arDemonstrative && AR_VENUE_NOUNS.test(next ?? '')) {
+    const prefix = arDemonstrative.groups?.prefix;
+    return { ...base, prefix: prefix ? prefix + (prefix === 'ل' || prefix === 'ب' ? 'ـ' : '') : '',
+      end: words[index + 1]!.end, kinds: VENUE_KINDS };
+  }
+  if (AR_VENUE_NOUNS.test(key) && AR_VENUE_QUESTION.test(value)
+      && !/^(?:[بلوف]?(?:ذلك|تلك|هذا|هذه))$/u.test(prior ?? '')
+      && (!next || /^(?:او|و|يقع|تقع|يفتح|تفتح|بالضبط|من|ما|متي)$/u.test(next))) return { ...base, kinds: VENUE_KINDS };
   if (/^(?:ذلك|تلك|هذا|هذه)$/u.test(key) && /^(?:التاريخ|السنه|العام|الرقم|القيمه|المبلغ)$/u.test(next ?? '')) {
     return { ...base, end: words[index + 1]!.end };
   }
@@ -171,27 +199,37 @@ function pointerAt(words: readonly Word[], index: number): Pointer | null {
     return { ...base, start: words[index - 1]!.start };
   }
   if (key === 'ذلك' || key === 'تلك' || key === 'ده' || key === 'دي') return base;
-  const suffix = /^(.{2,}?)(ها|ه|هم|هن)$/u.exec(key);
+  const gluedQuestion = /^(?:ما|وما)(?=.{3,}$)/u.exec(key);
+  const suffix = /^(.{2,}?)(ها|ه|هم|هن)$/u.exec(gluedQuestion ? key.slice(gluedQuestion[0].length) : key);
   const stem = suffix ? listed(AR_POSSESSIVE_STEMS, suffix[1]!) : undefined;
-  if (stem) return { ...base, prefix: stem + ' ', ...(suffix![2]!.length === 2 && suffix![2] !== 'ها' ? { plural: true } : {}) };
+  if (stem) return { ...base, prefix: (gluedQuestion ? gluedQuestion[0] + ' ' : '') + stem + ' ',
+    ...(suffix![2]!.length === 2 && suffix![2] !== 'ها' ? { plural: true } : {}) };
   if (key === 'he' || key === 'him' || key === 'his') {
     return { ...base, kinds: ['person'], gender: 'masculine', possessive: key === 'his' };
   }
   if (key === 'she' || key === 'her') {
-    const possessive = key === 'her' && Boolean(next && !/^(?:to|in|at|on|for|from|by|with|and|or|before|after|about)$/u.test(next));
+    const possessive = key === 'her' && Boolean(next && !EN_CLAUSE_LINK.test(next)
+      && !/^(?:to|in|at|on|for|from|by|with|about|of)$/u.test(next));
     return { ...base, kinds: ['person'], gender: 'feminine', possessive };
   }
   if (key === 'there' && !(prior && EN_AUX.has(prior) && next && next !== 'to')
       && !(index === 0 && next && EN_AUX.has(next))) {
-    return { ...base, prefix: 'in ', kinds: ['place'] };
+    const precededByPreposition = /^(?:from|around|near|to|through|outside|inside|within|towards?)$/u.test(prior ?? '');
+    return { ...base, prefix: precededByPreposition ? '' : 'in ', kinds: ['place'] };
   }
-  if (key === 'its' || key === 'their') return { ...base, possessive: true, plural: key === 'their' };
+  if (key === 'its' || key === 'their') return { ...base, possessive: true, plural: key === 'their', token: key };
   if (key === 'they' || key === 'them' || key === 'it') return { ...base, plural: key !== 'it', token: key };
-  if (key === 'that' && !/^(?:say|said|think|thought|know|believe|believed|mean|meant|show|shows)$/u.test(prior ?? '')) {
-    if (next === 'city' || next === 'country' || next === 'place') return { ...base, end: words[index + 1]!.end, kinds: ['place'] };
-    if (next === 'company' || next === 'organization') return { ...base, end: words[index + 1]!.end, kinds: ['organization'] };
-    if (next === 'person' || next === 'man' || next === 'woman') return { ...base, end: words[index + 1]!.end, kinds: ['person'] };
-    if (/^(?:movie|film|book|novel|song|product)$/u.test(next ?? '')) return { ...base, end: words[index + 1]!.end, kinds: ['other'] };
+  if ((EN_DEICTIC.test(key) || key === 'the') && next) {
+    const descriptor = { ...base, end: words[index + 1]!.end };
+    const following = words[index + 2];
+    const namesItsSubject = following && (/^\p{Lu}/u.test(following.written) || /^(?:of|called|named)$/u.test(following.key));
+    const kinds = EN_DESCRIPTIONS.find(([noun]) => noun.test(next))?.[1]
+      ?? (EN_DEICTIC.test(key) && /^(?:person|man|woman)$/u.test(next) ? ['person'] as const : null);
+    if (kinds) return namesItsSubject ? null : { ...descriptor, kinds };
+  }
+  if (EN_DEICTIC.test(key) && !/^(?:say|said|think|thought|know|believe|believed|mean|meant|show|shows)$/u.test(prior ?? '')) {
+    if (key === 'that' && next && /^(?:i|you|he|she|they|we|it|is|are|was|were|has|have|had)$/u.test(next)
+      && prior && !EN_AUX.has(prior) && !/^(?:about|on|from|for|in|with|and|or)$/u.test(prior)) return null;
     if (/^(?:date|year|day|number|amount|value|figure)$/u.test(next ?? '')) return { ...base, end: words[index + 1]!.end };
     return base;
   }
@@ -204,7 +242,7 @@ const LOCATION = /(?<!\p{L})(?:سكانها|سكانه|مساحتها|مساحت
 const COUNTRY_PROPERTY = /(?<!\p{L})(?:عاصمتها|عاصمته|عملتها|عملته|رئيسها|رئيسه|لغتها|لغته)(?!\p{L})|\b(?:its|their) (?:capital|currency|official language|president)\b/u;
 const DATE_REFERENCE = /(?<!\p{L})(?:التاريخ ده|هذا التاريخ|ذلك التاريخ|السنه دي|تلك السنه|هذا العام|ذلك العام)(?!\p{L})|\bthat (?:date|year|day)\b/u;
 const NUMBER_REFERENCE = /(?<!\p{L})(?:الرقم ده|هذا الرقم|ذلك الرقم|تلك القيمه|هذه القيمه|ذلك المبلغ)(?!\p{L})|\bthat (?:number|amount|value|figure)\b/u;
-const AR_ELLIPSIS = /^(?:ولد|ولدت|توفي|توفيت|مات|ماتت|يعيش|تعيش|يسكن|تسكن|تاسس|تاسست|انشي|انشئ|انشات|افتتح|افتتحت|بني|بنيت|تقع|يقع|تبعد|يبعد|نشر|نشرت|حدث|صار|حصل|انتهي|انتهت|بدا|بدات)(?:\s+(?:بالضبط|اول مره|اول|اخر مره|الحين|الان|دلوقتي))?$/u;
+const AR_ELLIPSIS = /^(?:ولد|ولدت|توفي|توفيت|مات|ماتت|يعيش|تعيش|يسكن|تسكن|تاسس|تاسست|اتاسس|اتاسست|انشي|انشئ|انشات|افتتح|افتتحت|يفتح|تفتح|يغلق|تغلق|يسكر|تسكر|بني|بنيت|تقع|يقع|تبعد|يبعد|نشر|نشرت|حدث|صار|حصل|انتهي|انتهت|بدا|بدات)(?:\s+(?:بالضبط|اول مره|اول|اخر مره|الحين|الان|دلوقتي))?$/u;
 const EN_ELLIPSIS = /^(?:born|founded|built|opened|closed|established|incorporated|published|located|started|ended)(?:\s+exactly)?$/u;
 const INHERITED_QUESTION = /^(?:what about|how about|what of|وماذا عن|ماذا عن|وش عن|شو عن|ايش عن|وماذا عنهم|ما عنه|ما عنها)(?:\s+|$)/u;
 const CLAIM_REFERENCE = /^(?:why|how|لماذا|ليش|ليه|ازاي|كيف)(?: (?:is|was) (?:it|that)| (?:هذا|ذلك|كده|كذا))?$|^(?:is (?:it|that) true|هل ذلك صحيح)$/u;
@@ -220,7 +258,7 @@ function questionKinds(value: string, pointer: Pointer | null, question: Convers
   if (LOCATION.test(value)) return ['place'];
   if (ORGANIZATION.test(value)) return ['organization', 'place'];
   if (property === 'age') return ['person', 'other'];
-  if (/(?:^|\s)(?:تقع|يقع|located)(?:\s|$)/u.test(value)) return ['place', 'organization', 'other'];
+  if (/(?:^|\s)(?:تقع|يقع|يفتح|تفتح|يغلق|تغلق|يسكر|تسكر|located)(?:\s|$)/u.test(value)) return VENUE_KINDS;
   if (question === 'where' && /(?:^|\s)(?:ه[وي]|it|that|there)(?:\s|$)/u.test(value)) return ['place', 'organization', 'other'];
   return null;
 }
@@ -234,6 +272,8 @@ function selectReference(entities: readonly ConversationEntity[], kinds: readonl
   const score = (entity: ConversationEntity) => entity.salience
     + (pointer?.gender && entity.gender === pointer.gender ? 0.16 : 0)
     + (kinds?.[0] === entity.kind ? 0.12 : 0)
+    + ((pointer?.token === 'they' || pointer?.token === 'them' || pointer?.token === 'their')
+      && (entity.kind === 'person' || entity.kind === 'organization') ? 0.14 : 0)
     + (preferUser && entity.role === 'user' ? 0.18 : 0)
     + (preferred && fold(entity.text) === fold(preferred) ? 0.18 : 0);
   return candidates.sort((left, right) => score(right) - score(left))[0] ?? null;
@@ -244,7 +284,7 @@ function referenceName(reference: ConversationEntity, pointer: Pointer, entities
   used.add(reference);
   const companion = pointer.plural && reference.kind === 'person' && reference.role === 'assistant'
     ? entities.find(entity => entity.kind === 'person' && entity.turnId === reference.turnId && entity.role === reference.role
-      && fold(entity.text) !== fold(reference.text) && SAFE_ENTITY.test(entity.text)
+      && fold(entity.aliasOf ?? entity.text) !== fold(reference.aliasOf ?? reference.text) && SAFE_ENTITY.test(entity.text)
       && Math.abs(reference.salience - entity.salience) <= 0.2)
     : null;
   if (companion) used.add(companion);
@@ -253,7 +293,7 @@ function referenceName(reference: ConversationEntity, pointer: Pointer, entities
 }
 
 function addQuestionMark(question: string, source: string): string {
-  const raw = question.trim().replace(/[.؟?]+$/u, '');
+  const raw = question.trim().replace(/[.؟?]+$/u, '').trimEnd();
   const ending = /[؟?]\s*$/u.exec(source)?.[0]?.trim();
   return raw + (ending ?? (/^\p{Script=Arabic}/u.test(source) ? '؟' : '?'));
 }
@@ -301,8 +341,8 @@ export function decideConversationTurn(input: ConversationTurnInput): Conversati
   const returning = returnParts(input.text);
   const text = stripFollowLead(returning?.question ?? input.text);
   const words = wordsOf(text);
-  const value = bare(text);
-  const whole = bare(input.text);
+  const value = bare(text).replace(/\s+/gu, ' ');
+  const whole = bare(input.text).replace(/\s+/gu, ' ');
   const fragment = PROPERTY_FRAGMENTS.find(rule => rule.pattern.test(value));
   const question = questionType(words) ?? fragment?.questionType ?? null;
   const decision = (type: ConversationTurnType, confidence: number, reasons: ConversationDecisionReason[],
@@ -340,14 +380,14 @@ export function decideConversationTurn(input: ConversationTurnInput): Conversati
   }
   if (legacy.type === 'compound' || EXPLICIT_REQUEST.test(value) && !returning) return decision('new_request', 0.96, ['new_request']);
 
-  const pointers = words.map((_, index) => pointerAt(words, index)).filter((pointer): pointer is Pointer => pointer !== null);
+  const pointers = words.map((_, index) => pointerAt(words, index, value)).filter((pointer): pointer is Pointer => pointer !== null);
   const pointer = pointers[0] ?? null;
   const tail = words.slice(1).map(word => word.key).join(' ');
   const englishTail = words.slice(1).filter(word => !EN_AUX.has(word.key)).map(word => word.key).join(' ');
   const ellipsis = Boolean(fragment) || question !== null && (AR_ELLIPSIS.test(tail) || EN_ELLIPSIS.test(englishTail))
     || CLAIM_REFERENCE.test(value);
   const same = SAME.test(value);
-  const asksPrevious = same || INHERITED_QUESTION.test(value);
+  const asksPrevious = same || !pointer && INHERITED_QUESTION.test(value);
   const continuing = LEGACY_FOLLOW_UPS.has(legacy.type) && (!question || legacy.type !== 'follow_up_entity' || asksPrevious)
     || legacy.type === 'field_edit' && Boolean(legacy.query);
   if (!returning && !pointer && !ellipsis && !same && !continuing) {
@@ -379,7 +419,7 @@ export function decideConversationTurn(input: ConversationTurnInput): Conversati
     ? legacy.entity : reference?.text ?? previousTopic?.entity ?? null) : null;
   // The legacy projection may omit the interrogative. Only use it for a fragment that does not contain one.
   const projected = (!question && continuing && !pointer || asksPrevious) ? legacy.query : null;
-  const fragmentQuestion = fragment && reference ? addQuestionMark(fragment.render(reference.text, words[0]?.written ?? ''), text) : null;
+  const fragmentQuestion = fragment && reference ? addQuestionMark(fragment.render(reference.text, words[0]?.written ?? '', text), text) : null;
   const used = new Set(reference ? [reference] : []);
   const standalone = !allowed ? null : inheritedQuestion
     ?? fragmentQuestion ?? (reference && !asksPrevious ? rewriteQuestion(text, words, pointers, resolve, possible, used, question, ellipsis) : null) ?? projected;

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { extendConversationEntities } from '../apps/server/src/assistant/conversation-state-entities.js';
 
-// Verbatim dialogue fragments from the 2026-11-23 quality report and existing tests at the pinned base or origin PR #13.
+// Verbatim fragments from the 2026-11-23 quality report, existing tests at the pinned base or origin PR #13,
+// and the frozen development split where noted.
 // These unit inputs are not a corpus for evaluation or training.
 const MICROSOFT_QUESTION = 'من هو مؤسس شركة مايكروسوفت؟';
 const MICROSOFT_ANSWER = 'تجدر الإشارة أن بيل غيتس وبول ألين هما المؤسسان والملاك لهذه الشركة قبل أن تصبح من الشركات العامة.\n'
@@ -53,6 +54,29 @@ describe('conversation entity stack', () => {
     const interfaceLabel = record([], { role: 'user', turnId: 'u1',
       text: 'افتح https://www.wikipedia.org ثم اكتب الطاقة الشمسية في خانة Search Wikipedia ثم اضغط زر Search ثم مرر للأسفل ثم اقرأ الصفحة' });
     expect(interfaceLabel).toEqual([]);
+  });
+
+  it('keeps names after offer and title cues and ignores an overlong topic clause', () => {
+    // The Arabic-TOD and CANARD excerpts and question below are verbatim from the frozen development split.
+    const destination = record([], { text: 'اقترح عليك زيارة D2 Place', turnId: 'a1', role: 'assistant', publicLookup: true });
+    expect(destination[0]).toMatchObject({ text: 'D2 Place', kind: 'place', role: 'assistant', turnId: 'a1', publicLookup: true });
+    // The title phrase is from tests/sites-plan.test.ts at c2a0ff7.
+    const venue = record([], { text: 'أريد موقعاً لمطعم «بيت الشام» في دمشق', turnId: 'u1', role: 'user' });
+    expect(venue[0]).toMatchObject({ text: 'بيت الشام', kind: 'place', turnId: 'u1' });
+    const film = record([], { text: 'series called Blunt Talk for Starz', turnId: 'a2', role: 'assistant' });
+    expect(film[0]).toMatchObject({ text: 'Blunt Talk', kind: 'other' });
+    const clause = 'What happened after he was locked up for the night?';
+    expect(record([], { text: clause, topic: { text: clause }, turnId: 'u2', role: 'user' })).toEqual([]);
+  });
+
+  it('links an explicitly annotated alternate spelling to its typed mention in the same answer', () => {
+    // Verbatim lead from tests/assistant-hands.test.ts at c2a0ff7.
+    const stack = record([], { role: 'assistant', turnId: 'a1', publicLookup: true,
+      text: 'ألْبِرْت أينْشتاين (الألمانية: Albert Einstein) (1879 – 1955) عالم فيزياء نظرية ألماني المولد' });
+    expect(stack[0]).toMatchObject({ text: 'ألبرت أينشتاين', kind: 'person' });
+    expect(stack.find(entity => entity.text === 'Albert Einstein')).toMatchObject({
+      text: 'Albert Einstein', kind: 'person', aliasOf: 'ألبرت أينشتاين', role: 'assistant', turnId: 'a1', publicLookup: true,
+    });
   });
 
   it('decays earlier salience and bounds the retained stack without mutating its input', () => {
