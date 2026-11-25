@@ -169,6 +169,7 @@ export interface DerivedVisibilityInput {
   status: string;
   secure: { kind: 'login' | 'code' | 'hands_on'; site: string } | null;
   approval: { prompt?: string } | null;
+  handsOn?: VisibilityChoice;
   /** The first step the run logged, for the reason of a hidden browser that the table did not expect. */
   firstStep?: string | null;
   decidedAt: string;
@@ -186,7 +187,7 @@ export function deriveBrowserVisibility(input: DerivedVisibilityInput): ChatBrow
   const lang = requestLanguage(input.request);
   const requested = decideBrowserVisibility({ request: input.request, route: input.route ?? null, role: input.role });
   let current = requested;
-  if (input.status === 'waiting_input' && input.secure) current = userStepChoice(input.secure, lang);
+  if (input.status === 'waiting_input' && input.secure) current = input.handsOn ?? userStepChoice(input.secure, lang);
   else if (input.status === 'waiting_approval' && input.approval) current = approvalChoice(APPROVAL_HOST.exec(input.approval.prompt ?? '')?.[1] ?? (lang === 'ar' ? 'الموقع' : 'the site'), lang);
   else if (input.hasPage && requested.level < 2) current = browserStartedChoice(input.firstStep ?? null, lang);
   const history = current === requested ? [{ level: requested.level, code: requested.code, at: input.decidedAt }]
