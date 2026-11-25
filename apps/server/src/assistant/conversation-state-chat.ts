@@ -5,6 +5,8 @@ import {
   type ConversationStateV2, type TurnUnderstanding,
 } from './conversation-state.js';
 import type { BrainState } from './brain.js';
+import { planConversationPageRead, type ConversationPageSelection } from './conversation-state-page.js';
+import { planPublicConversationRead } from './conversation-state-public-read.js';
 import type { ConversationShadow, ConversationShadowInput } from './conversation-state-shadow.js';
 import { answerSubject, fold, isFollowUp, notWebReason, parseHands, refersBack, tidy, topicWords, webQuestion, type HandsPlan } from './hands.js';
 import { projectInventoryFormat } from './inventory.js';
@@ -17,6 +19,7 @@ import {
   reviewPublicProjection, type RequestScopeAssessment,
 } from './request-scope.js';
 import { returnParts } from './return-to.js';
+import { pathOfHandler } from './run-plans.js';
 import { unsupportedRequest } from './unsupported-request.js';
 
 const HISTORY_LIMIT = 16;
@@ -62,6 +65,7 @@ interface ConversationChatSelection {
   plan: HandsPlan | null;
   resolution?: RequestResolution;
   previousSource?: RequestScopeAssessment;
+  pageRead?: true;
 }
 
 interface ConversationTurnEntry {
@@ -75,6 +79,7 @@ interface ConversationTurnEntry {
   active: () => Promise<void>;
   shadow?: ConversationShadow;
   chatModel: boolean;
+  canReadPublicPage?: boolean;
 }
 
 interface PriorPublicAnswer {
@@ -92,9 +97,63 @@ function hasObservedName(reference: NonNullable<TurnUnderstanding['decision']['r
 
 const comparableRequest = (text: string) => text.normalize('NFC').trim().replace(/\s+/gu, ' ');
 
+async function selectConversationPage(input: ConversationTurnEntry, history: readonly StoredConversationEntry[],
+    state: ConversationStateV2, understanding: TurnUnderstanding): Promise<ConversationChatSelection | null> {
+  const resolution = input.state.requestResolution;
+  const source = resolution?.sourceAssessment;
+  if (!resolution || !source || resolution.pendingQuestionId || resolution.kind === 'answer' || resolution.scope === 'private'
+    || source.scope === 'private' || source.source === 'supplied_content' || source.source === 'local_state'
+    || comparableRequest(input.text) !== resolution.original || input.state.routing?.route === 'pc'
+    || resolution.ambiguities.some(reason => !REFERENCE_AMBIGUITIES.has(reason))) return null;
+
+  const constraints = parseUserRequestConstraints(input.text);
+  const { decision } = understanding;
+  const pageSelection = (page: ConversationPageSelection, intent: 'browser_command' | 'web_search',
+      assessment: RequestScopeAssessment, previous?: RequestScopeAssessment): ConversationChatSelection => ({
+    decision, pageRead: true, plan: page.plan, previousSource: previous,
+    resolution: { ...resolution, kind: page.previous ? 'follow_up' : resolution.kind, intent, scope: 'public',
+      query: null, ambiguities: [], sourceAssessment: assessment },
+  });
+
+  const browserAllowed = requestCapabilityAllowed(constraints, 'browser_navigation') && requestCapabilityAllowed(constraints, 'browser_action');
+  if (browserAllowed && source.scope === 'public' && source.destination === 'browser_command') {
+    const page = planConversationPageRead(input.text);
+    if (page) return pageSelection(page, 'browser_command', source);
+  }
+
+  const previousAnswer = history.at(-1);
+  const previousAsk = history.at(-2);
+  if (previousAnswer?.role !== 'assistant' || previousAsk?.role !== 'user' || returnParts(input.text)) return null;
+  const origin = requestActionText(requestScopeActionText(input.text));
+  const compound = analyzeCompoundRequest(input.text);
+  if (compound.kind !== 'single' || compound.literalRanges.length || ownFactQuestion(origin) || projectInventoryFormat(input.text)
+    || parseHands(origin) || unsupportedRequest(origin)) return null;
+  const previous = await input.db.selectFrom('chat_runs').select(['state', 'status', 'goal']).where('owner_id', '=', input.ownerId)
+    .where('conversation_id', '=', input.conversationId).where('id', '!=', input.turnId).where('created_at', '<=', previousAnswer.created_at)
+    .orderBy('created_at', 'desc').limit(1).executeTakeFirst();
+  if (previous?.status !== 'completed' || comparableRequest(previous.goal) !== comparableRequest(previousAsk.text)) return null;
+  const observed = previous.state?.handsFound;
+  const previousSource = parseRequestScopeAssessment(previous.state?.requestResolution?.sourceAssessment);
+  if (!observed || !previousSource) return null;
+
+  if (browserAllowed && previousSource.source === 'public_lookup' && previousSource.scope === 'public'
+    && previousSource.destination === 'browser_command') {
+    const page = planConversationPageRead(input.text, { goal: previous.goal, status: previous.status, openedUrl: observed.url });
+    if (page) return pageSelection(page, 'browser_command', previousSource, previousSource);
+  }
+  if (!input.canReadPublicPage || !isPublicLookup(previousSource) || !requestCapabilityAllowed(constraints, 'public_search')
+    || !['lookup', 'unknown'].includes(source.operation)) return null;
+  const page = planPublicConversationRead({ text: input.text, previous: previousAsk.text, topic: state.topics.at(-1), understanding, found: observed });
+  return page ? pageSelection(page, 'web_search', previousSource, previousSource) : null;
+}
+
 async function selectConversationTurn(input: ConversationTurnEntry, latest: StoredConversationEntry,
     history: readonly StoredConversationEntry[]): Promise<ConversationChatSelection> {
-  const decision = understandTurn(replayConversationTranscript(history), input.text, latest.id).decision;
+  const state = replayConversationTranscript(history);
+  const understanding = understandTurn(state, input.text, latest.id);
+  const page = await selectConversationPage(input, history, state, understanding);
+  if (page) return page;
+  const { decision } = understanding;
   const { reference, references, standalone } = decision;
   const explicitReturn = returnParts(input.text);
   const originalResolution = input.state.requestResolution;
@@ -184,6 +243,12 @@ export async function enterConversationTurn(input: ConversationTurnEntry): Promi
     state.requestResolution = selection.resolution;
     if (selection.previousSource) state.previousSource = selection.previousSource;
     if (selection.resolution.nextState) state.requestContext = selection.resolution.nextState;
+    if (selection.pageRead) {
+      const route = selection.resolution.intent === 'browser_command' ? 'browser_command' : 'web_search';
+      const handler = route === 'browser_command' ? 'browser' : 'search';
+      state.routing = { route, intent: route, handler, availability: 'ready', missingCapabilities: [], reason: 'context_destination' };
+      if (state.agentRun) state.agentRun.path = pathOfHandler(handler);
+    }
   }
   return selection;
 }
