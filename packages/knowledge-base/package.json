@@ -1,0 +1,10 @@
+{
+  "name": "@mohassan/knowledge-base",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "sax": "1.6.1"
+  }
+}
