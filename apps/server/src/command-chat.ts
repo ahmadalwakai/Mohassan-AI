@@ -3,6 +3,7 @@ import sharp from 'sharp';
 import type { ImageReading } from '@mohassan/vision';
 import { composeImageReply, readingForTrail } from './assistant/image-reading.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { beginChatDeliberation, observeFinalDeliberation } from './assistant/deliberation/chat-dispatch.js';
 import type { FastifyInstance } from 'fastify';
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
@@ -1427,6 +1428,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // The runtime's verdict (assistant/agent-run.ts), committed with the reply in this transaction: it can lower the
       // status the path concluded (a required plan step failed, never ran or has an unknown effect; an enforced criterion
       // is unmet), never raise it. The path is direct when the run used no tool.
+      observeFinalDeliberation(state, finalText, finalStatus, judgeEvidence(execution.getStore()!));
       const verdictAt = Date.now();
       ledgerSafe(state, runId, ledger => {
         collectStateEvidence(ledger, state, verdictAt);
@@ -1997,6 +1999,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       currentExecution.request = request; currentExecution.constraints = constraints; currentExecution.state = state;
       // The run ledger: the worker starts (or resumes, after a card or an approval) by understanding the request.
       ledgerSafe(state, runId, ledger => tryEnterPhase(ledger, 'understanding', Date.now()));
+      if (await beginChatDeliberation({ db, config, ownerId, conversationId: id, runId, runIntent: run.intent, source: effectiveSource, state,
+        fullAccess: currentExecution.full, chatModel: hasChatModel(), historyLimit: HISTORY_MESSAGES }, { ledger: change => ledgerSafe(state, runId, change), save: () => saveState(runId, state),
+        reply: (text, question) => question ? pause(id, runId, state, 'waiting_user', { question: JSON.stringify(question) }, text) : finish(id, runId, state, text, 'blocked') })) return;
       // Level 4 (plan §6.1): a member asked for the computer's browser. One line with the reason and the alternative; no browser starts.
       if (!currentExecution.full) {
         const level = decideBrowserVisibility({ request, route: state.routing?.route ?? null, role: 'member' });

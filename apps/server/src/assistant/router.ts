@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { appendFile, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
+import { topRouterCandidates } from './deliberation/router-evidence.js';
+import type { RouterCandidate } from './deliberation/types.js';
 import { directRoute } from './brain.js';
 import { notWebReason, parseHands, tidy, webQuestion } from './hands.js';
 
@@ -115,7 +117,10 @@ export function rulesRoute(text: string, previous: string | null): string {
   return ({ reminder: 'reminder', arithmetic: 'compute', writing: 'writing', chat: 'chat', address: 'browser_command', memory_ads_pc: 'memory_ads_pc', empty: 'none' } as Record<string, string>)[reason ?? ''] ?? 'none';
 }
 
-export interface ShadowRouter { observe(entry: { conversationId: string; text: string; previous: string | null; pendingQuestion: boolean }): void }
+export interface ShadowRouter {
+  observe(entry: { conversationId: string; text: string; previous: string | null; pendingQuestion: boolean }): void;
+  topCandidates?(text: string): readonly RouterCandidate[];
+}
 
 /**
  * Shadow mode: never changes what the chat does. The model loads once in the background; until then, or if it
@@ -127,6 +132,7 @@ export function createShadowRouter(options: { modelDir: string; logFile: string;
   const loading = loadRouterModel(options.modelDir).then(loaded => { model = loaded; }).catch(() => { failed = true; });
   let writing: Promise<unknown> = mkdir(path.dirname(options.logFile), { recursive: true }).catch(() => undefined);
   return {
+    topCandidates: text => model ? topRouterCandidates(model.routes, routerLogits(model, text)) : [],
     observe(entry) {
       if (failed) return;
       writing = writing.then(async () => {

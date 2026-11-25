@@ -40,6 +40,7 @@ import { createSitesControl, registerSiteRoutes } from './sites.js';
 import { createVercelPublisher, noPublisher } from './sites-publish.js';
 import { createStudioLiveControl } from './studio-live.js';
 import { createBrowserTaskControl } from './browser-task.js';
+import { installChatDeliberation } from './assistant/deliberation/application.js';
 import { createCommandChatControl, registerCommandChatRoutes } from './command-chat.js';
 import { createImageReader } from './image-reader.js';
 import { createInferenceControl, registerInferenceRoutes, type InferenceConfig } from './inference.js';
@@ -87,6 +88,7 @@ export interface AppConfig {
   browser?:BrowserConfig;windowsEnabled?:boolean;browserProfileDir?:string;browserChannel?:'chrome'|null;
   studioAiDataDir?:string;groqVisionModel?:string;studioGatewayUrl?:string;studioGatewaySecret?:string;studioPreviewPort?:number;
   skillEngineEnabled?: boolean;
+  deliberationEnabled?: boolean;
   /** The GitHub skills source from SKILL_REMOTE_*. Absent, or `config: null`: the library panel reports it as not configured. */
   skillRemote?: SkillRemoteSettings;
   /** Injected by isolated tests only; otherwise the restricted Git transport is built from `skillRemote`. */
@@ -473,6 +475,7 @@ export async function createApplication(config: AppConfig) {
       return runtime.createTask(ownerId,{title:'تشغيل مهارة من المحادثة',goal:context.goal.slice(0,4000),capabilityId:'skill.run',autonomy:'assisted',skillInput:input},context.idempotencyKey,context.runId);
     }}:{}),
   });
+  installChatDeliberation(app, database.db, owner, memory, config.deliberationEnabled);
   await registerCommandChatRoutes(app,{control:chat,owner:async request=>{const user=await owner(request);windows.noteSession(user.id,request);return user;}});
   await registerBrowserFileRoutes(app,{db:database.db,browser:agentBrowser,owner});
   await registerDocumentRoutes(app,{control:documents,owner,link:documentLink});
