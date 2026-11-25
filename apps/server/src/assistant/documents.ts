@@ -26,7 +26,10 @@ export interface DocumentEditTask {
   /** The owner's page words, read against the real page count when the file is open. */
   pages?: string; angle?: 90 | 180 | 270; text?: string; title?: string; author?: string;
 }
-export type DocumentTask = DocumentCreateTask | DocumentEditTask;
+export interface DocumentReadTask {
+  kind: 'read'; lang: Lang; summary: boolean; paths: string[];
+}
+export type DocumentTask = DocumentCreateTask | DocumentEditTask | DocumentReadTask;
 export type DocumentDecision = DocumentTask | { kind: 'unsupported'; lang: Lang; reason: 'convert_format' | 'missing_pages' | 'missing_text' };
 
 const MAX_REQUEST = 6000;
@@ -45,6 +48,10 @@ const INFO = /كم صفح|عدد الصفحات|عدد صفحات|معلومات
 const METADATA = /(?:(?<![\p{L}])(?:غير|عدل|اجعل|ضع|حدث|سم|set|change|update|rename)(?![\p{L}]).{0,40}?(?:العنوان|عنوان|المؤلف|الكاتب|اسم الملف|title|author))|(?:(?<![\p{L}])(?:العنوان|عنوان|المؤلف|title|author)(?![\p{L}])\s*[:：=])/iu;
 const CREATE = /(?<![\p{L}])(?:انشئ|انشاء|اصنع|صنع|اعمل|عمل|سوي|سو|سولي|جهز|تجهيز|حضر|كون|ولد|توليد|اكتب|اكتبلي|كتابه|صمم|تصميم|حول|حولي|تحويل|صدر|تصدير|اطبع|احفظ|اعطني|اعطيني|هات|اريد|ابغي|ابغا|بدي|نزل|create|make|generate|build|design|convert|export|turn|produce|write|draft|prepare|save|download|give me|i want|i need|get me)(?![\p{L}])/iu;
 const QUESTION = /^(?:ما ?هو|ما ?هي|ما معني|ماذا يعني|كيف|لماذا|هل يمكن فتح|what is|what are|what does|how do i|how to|why)(?![\p{L}])/iu;
+const READ_LEAD = /^(?:read|(?:show|quote|transcribe|extract)\s+(?:me\s+)?(?:the\s+)?(?:text|content|contents)\s+of|what(?:'s| is)\s+(?:in|inside)|اقرا|اعرض\s+(?:ال)?(?:نص|محتوي)|استخرج\s+(?:ال)?نص|انسخ\s+(?:ال)?نص|ماذا يوجد في|ما محتوي)(?!\p{L})/iu;
+const SUMMARY_LEAD = /^(?:summari[sz]e|(?:give|show)\s+me\s+(?:a\s+)?summary\s+of|لخص|اختصر|اعطني\s+(?:ملخص|خلاصه))(?!\p{L})/iu;
+const REFERRED_FILE = /\b(?:this|that|the\s+(?:last|latest|previous|attached|uploaded))\s+(?:file|document)\b|(?:هذا|ذلك)\s+(?:الملف|المستند)|(?:الملف|المستند)\s+(?:ال)?(?:اخير|سابق|مرفق|مرفوع)/iu;
+const COURTESY_OR_MODAL = /^(?:(?:please|kindly|من فضلك|لو سمحت)\s+|(?:can|could|would) you\s+(?:please\s+)?|(?:هل يمكنك|هل تستطيع|ممكن)\s+(?:ان\s+)?)+/iu;
 const EDIT_FILLER = /(?<![\p{L}])(?:ال)?(?:ملف|الملف|ملفات|الملفات|مستند|المستند|وثيق[هة]|الوثيق[هة]|pdf|file|files|document|documents|the|this|that|it|هذا|هذه|ذلك|تلك|على|في|من|الى|إلى|ل|لي|له|لها|to|on|for|in|of|at|with|please|من فضلك|لو سمحت)(?![\p{L}])/giu;
 const LATEST = /(?<![\p{L}])(?:اخر|آخر|السابق|السابقه|الاخير|الاخيره|هذا الملف|الملف ده|نفس الملف|the last|latest|previous|this file|that file|the file|it)(?![\p{L}])/iu;
 const ALL_FILES = /(?<![\p{L}])(?:كل|جميع|all|every|both|الملفين|الملفات)(?![\p{L}])/iu;
@@ -57,7 +64,9 @@ const THEME_WORDS: [RegExp, DocumentTheme][] = [
 ];
 const TITLE = /(?:بعنوان|عنوانه|عنوانها|اسمه|اسمها|سمه|سمها|titled|called|named|with the title|title)\s*[:：]?\s*(«[^»\n]+»|"[^"\n]+"|“[^”\n]+”|'[^'\n]+'|[^،,.:\n]+)/iu;
 const TOPIC = /(?<![\p{L}])(?:عن|حول|بخصوص|about|regarding|on the subject of)\s+(.+?)(?=\s+(?:بعنوان|بالنص|نصه|محتواه|بتصميم|بشكل|بتنسيق|with|titled|containing|in the style)|[،,.:\n]|$)/iu;
-const BODY_MARKER = /(?:بالنص|نصه|نصها|محتواه|محتواها|محتواه هو|يحتوي على|فيه|containing|with (?:this|the following|the) (?:text|content|body)|saying|that says)\s*[:：]?\s*/iu;
+const BODY_MARKER = /(?<![\p{L}\p{M}])(?:و?(?:بالنص|نصه|نصها|(?:ال)?محتو[ىي]|محتواه(?:ا)?(?:\s+هو)?|يحتوي\s+على|فيه|(?:[اأ]كتب|ضع)\s+(?:فيه|فيها|به|بيها?))|containing|with\s+(?:(?:this|the)\s+)?(?:(?:following|exact)\s+)*(?:text|content|body|sentence)|saying|that\s+says)(?![\p{L}\p{M}])\s*[:：]?\s*/giu;
+const QUOTED_VALUE = /«[^»\n]*»|“[^”\n]*”|"[^"\n]*"|(?<!\p{L})'[^'\n]*'(?!\p{L})|‘[^’\n]*’/gu;
+const PDF_FORMAT_TAIL = /(?<=[.!?؟])\s+(?:(?:as\s+)?pdf\s+(?:file\s+)?only|only\s+(?:as\s+)?(?:a\s+)?pdf|pdf\s+فقط|فقط\s+pdf)\s*[.!?؟]?$/iu;
 const QUOTES: Record<string, string> = { '«': '»', '“': '”', '"': '"', "'": "'", '‘': '’' };
 
 const lang = (text: string): Lang => /[\u0600-\u06FF]/u.test(text) ? 'ar' : 'en';
@@ -70,34 +79,41 @@ function quotedAfter(request: string, start: number): { text: string; end: numbe
   return end > start + 1 ? { text: request.slice(start + 1, end), end: end + 1 } : null;
 }
 
-/** Paths in the owner's own characters, quoted ones first; the Windows backslashes are kept. */
+/** Paths in the owner's own characters and order; the Windows backslashes are kept. */
 export function pdfPaths(request: string): string[] {
-  const found: string[] = [];
-  const rest = request.replace(QUOTED_PATH, (_, path: string) => { found.push(path.trim()); return ' '; });
-  for (const match of rest.matchAll(BARE_PATH)) if (match[0].length > 4) found.push(match[0]);
-  return [...new Set(found)];
+  const found = [...request.matchAll(QUOTED_PATH)].map(match => ({ value: match[1]!.trim(), offset: match.index }));
+  const rest = request.replace(QUOTED_PATH, match => ' '.repeat(match.length));
+  for (const match of rest.matchAll(BARE_PATH)) if (match[0].length > 4) found.push({ value: match[0], offset: match.index });
+  return [...new Set(found.sort((left, right) => left.offset - right.offset).map(({ value }) => value))];
 }
 
 /** Everything after the first line, or after a body marker, or the first long quotation: literal content, never summarised. */
-function suppliedContent(request: string): { text: string; instruction: string } {
+function suppliedContent(request: string): { text: string; instruction: string; inlineLead?: string } {
   const newline = request.indexOf('\n');
-  if (newline > 0 && request.slice(newline + 1).trim()) {
-    const first = request.slice(0, newline);
-    if (PDF_WORD.test(matchText(first)) || CREATE.test(matchText(first))) return { text: request.slice(newline + 1).replace(/^\n+/u, '').trimEnd(), instruction: first };
-  }
-  const marker = BODY_MARKER.exec(request);
+  const first = newline > 0 ? request.slice(0, newline) : request;
+  const quotes = [...first.matchAll(QUOTED_VALUE)];
+  const marker = [...first.matchAll(BODY_MARKER)].find(match => !quotes.some(quote => match.index > quote.index && match.index < quote.index + quote[0].length));
   if (marker) {
     const start = marker.index + marker[0].length;
     const quoted = quotedAfter(request, start);
-    const text = quoted ? quoted.text : request.slice(start);
-    if (text.trim()) return { text, instruction: request.slice(0, marker.index) + (quoted ? request.slice(quoted.end) : '') };
+    const tail = quoted ? null : PDF_FORMAT_TAIL.exec(request);
+    const text = quoted ? quoted.text : request.slice(start, tail?.index);
+    if (text.trim()) {
+      const lead = request.slice(0, marker.index);
+      const rest = quoted ? request.slice(quoted.end) : '';
+      return { text, instruction: `${lead} ${rest}`.trim(), inlineLead: lead };
+    }
+  }
+  if (newline > 0 && request.slice(newline + 1).trim()) {
+    if (PDF_WORD.test(matchText(first)) || CREATE.test(matchText(first))) return { text: request.slice(newline + 1).replace(/^\n+/u, '').trimEnd(), instruction: first };
   }
   const colon = /[:：]\s*(?=\S)/u.exec(request);
   if (colon && !TITLE.test(request.slice(0, colon.index + 1)) && request.slice(colon.index + 1).trim().length >= 12 && !/https?$/iu.test(request.slice(0, colon.index))) {
     return { text: request.slice(colon.index + 1).trim(), instruction: request.slice(0, colon.index) };
   }
-  const quote = /[«"“]([^»"”]{24,})[»"”]/u.exec(request);
-  if (quote) return { text: quote[1]!, instruction: request.replace(quote[0], ' ') };
+  const title = TITLE.exec(first);
+  const quote = quotes.find(match => match[0].length >= 26 && (!title || match.index >= title.index + title[0].length));
+  if (quote) return { text: quote[0].slice(1, -1), instruction: request.replace(quote[0], ' ') };
   return { text: '', instruction: request };
 }
 
@@ -181,16 +197,16 @@ const FIELD_LABEL = /(?<![\p{L}])((?:arabic|english|french|main|body|extra)\s+te
  * («Use a plain white background…», «generate the file now…»), or a statement about the request («The content is complete»).
  */
 const INSTRUCTION_SENTENCE = /^(?:(?:please|من فضلك)\s+)?(?:(?:use|make|set|keep|apply|choose|add|include|generate|create|provide|give|send|save|export|render|format|put|ensure|print|اجعل|استخدم|اعتمد|اضف|ضع|انشئ|ولد|اعطني|ارسل|احفظ|صدر|نسق)(?![\p{L}])[\s\S]*(?:background|colou?r|black|white|font|theme|design|layout|style|file|pdf|download|link|page|margin|خلفي|لون|اسود|ابيض|خط|تصميم|ملف|رابط|تنزيل|صفح)|(?:the\s+)?(?:content|text|information|request)\s+is\s+(?:complete|final|all)|that(?:'s| is) all|this is (?:all|everything)|(?:ال)?(?:محتوي|نص|معلومات)\s+(?:كامل|مكتمل|نهائي)|هذا كل)/iu;
-const FILE_NAME = /(?:\b(?:named|called|file\s?name(?:d)?|save(?:d)?\s+(?:it\s+)?as|as\s+a\s+file\s+named)|(?<![\p{L}])(?:باسم|اسمه|اسم الملف))\s*[:：]?\s*[«"“']?([^\s«»"“”'/\\:*?<>|]{1,80}\.pdf)\b/iu;
+const FILE_NAME = /(?:\b(?:named|called|file\s?name(?:d)?|save(?:d)?\s+(?:it\s+)?as|as\s+a\s+file\s+named)|(?<![\p{L}])(?:باسم|اسمه|اسم الملف))\s*[:：]?\s*(?:[«"“']([^«»"“”'/\\:*?<>|\n]{1,80}\.pdf)[»"”']|([^\s«»"“”'/\\:*?<>|]{1,80}\.pdf)\b)/iu;
 const ONE_PAGE = /\b(?:one|single|1)[- ]page\b|(?<![\p{L}])صفح[ةه] واحد[ةه](?![\p{L}])|من صفح[ةه] واحد[ةه]/iu;
 const BLACK_TEXT = /\bblack\s+(?:text|font|ink|letters|writing|headings?|titles?)\b|(?:نص|النص|خط|الخط|كتاب[ةه]|الكتاب[ةه]|حروف)\s+(?:اسود|أسود|سوداء|باللون الأسود|باللون الاسود)/iu;
 const BACKGROUND = /\b(?!(?:white|plain|clean|simple|blank|light|default|a|the)\b)([a-z]+)\s+background\b|(?:خلفي[ةه])\s+(?!(?:بيضاء|بيضا|ساده|عاديه|بسيطه|فاتحه)(?![\p{L}]))(\S+)/iu;
 
 /** The owner's written fields and the instructions after them. Values are kept exactly as typed. */
-function labelledFields(request: string): { fields: { label: string; value: string }[]; instructions: string } | null {
+function labelledFields(request: string): { fields: { label: string; value: string; at: number }[]; instructions: string } | null {
   const matches = [...request.matchAll(FIELD_LABEL)];
   if (!matches.length) return null;
-  const fields: { label: string; value: string }[] = [];
+  const fields: { label: string; value: string; at: number }[] = [];
   let instructions = request.slice(0, matches[0]!.index);
   for (let at = 0; at < matches.length; at++) {
     const match = matches[at]!;
@@ -205,7 +221,7 @@ function labelledFields(request: string): { fields: { label: string; value: stri
     const label = matchText(match[1]!);
     value = value.trim().replace(/[\s,،;؛]+$/u, '');
     if (/^(?:sub-?title|title|heading|footer|author|(?:ال)?(?:عنوان(?:\s+(?:ال)?فرعي)?|تذييل|مؤلف|كاتب))$/u.test(label)) value = value.replace(/[.。]+$/u, '').trim();
-    if (value) fields.push({ label, value });
+    if (value) fields.push({ label, value, at: match.index });
   }
   return { fields, instructions };
 }
@@ -218,10 +234,24 @@ export interface DocumentTaskContext {
 /** What a PDF request is, or null when it is not one. Questions about PDF as a topic stay a web question. */
 export function documentTask(request: string, context: DocumentTaskContext = {}): DocumentDecision | null {
   if (typeof request !== 'string' || !request.trim() || request.length > MAX_REQUEST) return null;
-  const paths = pdfPaths(request);
-  const folded = matchText(request.trim());
-  const firstLine = folded.split('\n', 1)[0]!;
+  const trimmed = request.trim();
+  const firstLine = matchText(trimmed.split('\n', 1)[0]!);
+  const body = suppliedContent(trimmed);
+  // A name or format mentioned inside a supplied body is content, not the request's PDF target.
+  const envelope = CREATE_LEAD.test(firstLine) && body.text ? body.instruction : trimmed;
+  const paths = pdfPaths(envelope);
+  const folded = matchText(envelope);
   const named = PDF_WORD.test(folded) || paths.length > 0;
+  const action = firstLine.replace(COURTESY_OR_MODAL, '');
+  const summary = SUMMARY_LEAD.test(action);
+  const reading = summary || READ_LEAD.test(action);
+  const readTarget = paths.length > 0 || PDF_WORD.test(action) || (context.hasDocuments && REFERRED_FILE.test(action));
+  const readScope = action.replace(QUOTED_PATH, ' ').replace(BARE_PATH, ' ');
+  const otherOperation = WATERMARK.test(readScope) || NUMBER.test(readScope) || MERGE.test(readScope)
+    || ROTATE.test(readScope) || METADATA.test(readScope) || (DELETE.test(readScope) && PAGE_WORD.test(readScope));
+  if (reading && readTarget && !otherOperation && !/https?:\/\//iu.test(firstLine)) {
+    return { kind: 'read', lang: lang(firstLine), summary, paths };
+  }
   const implied = !named && context.hasDocuments === true && (FILE_WORD.test(firstLine) || PAGE_WORD.test(firstLine))
     && (MERGE.test(firstLine) || DELETE.test(firstLine) || EXTRACT.test(firstLine) || ROTATE.test(firstLine) || WATERMARK.test(firstLine) || NUMBER.test(firstLine) || INFO.test(firstLine) || METADATA.test(firstLine));
   if (!named && !implied) return null;
@@ -230,7 +260,7 @@ export function documentTask(request: string, context: DocumentTaskContext = {})
   // «Create … PDF … Title: … Body: …» makes a new file: its «Title:» is a field of that file, not an edit of an old one.
   // In such a request «named sample.pdf» names the file to make, so it is not a path to read (it was, in the live test of
   // 2026-11-23's wording, as soon as the clarifier no longer stopped it). An edit keeps every named file as its input.
-  const outputOnly = CREATE_LEAD.test(firstLine) || BODY_FIELD.test(request) ? pdfPaths(request.replace(FILE_NAME, ' ')) : null;
+  const outputOnly = CREATE_LEAD.test(firstLine) || BODY_FIELD.test(request) ? pdfPaths(envelope.replace(FILE_NAME, ' ')) : null;
   const createsNew = outputOnly !== null && !outputOnly.length && !EXISTING_FILE.test(folded);
   const editOperation: DocumentOperation | null = createsNew ? null
     : WATERMARK.test(firstLine) ? 'watermark'
@@ -266,26 +296,29 @@ export function documentTask(request: string, context: DocumentTaskContext = {})
   }
   if (implied) return null;
   if (!createsNew && !CREATE.test(firstLine) && !/\n/u.test(request.trim())) return null;
-  if (OTHER_FILE.test(request.replace(FILE_NAME, ' ')) && !paths.length) return { kind: 'unsupported', lang: language, reason: 'convert_format' };
-  const trimmed = request.trim();
-  const fileName = FILE_NAME.exec(trimmed)?.[1];
+  if (OTHER_FILE.test(envelope.replace(FILE_NAME, ' ')) && !paths.length) return { kind: 'unsupported', lang: language, reason: 'convert_format' };
+  const namedFile = FILE_NAME.exec(envelope);
+  const fileName = namedFile?.[1] ?? namedFile?.[2];
   // The fields the owner wrote out are the file's content, word for word; what follows them is instructions (design, delivery).
   const written = createsNew ? labelledFields(trimmed) : null;
   const contentFields = written?.fields.filter(field => !/^(?:sub-?title|title|heading|footer|author|(?:ال)?(?:عنوان(?:\s+(?:ال)?فرعي)?|تذييل|مؤلف|كاتب))$/u.test(field.label)) ?? [];
-  const { text, instruction } = written && contentFields.length
+  const titleField = written?.fields.find(field => /^(?:title|heading|(?:ال)?عنوان)$/u.test(field.label)
+    && (body.inlineLead === undefined || field.at < body.inlineLead.length));
+  const usesFields = written && contentFields.length && (titleField || body.inlineLead === undefined);
+  const { text, instruction } = usesFields
     ? { text: contentFields.map(field => field.value).join('\n\n'), instruction: written.instructions }
-    : suppliedContent(trimmed);
+    : body;
+  const lead = !usesFields && body.inlineLead !== undefined ? body.inlineLead : instruction;
   // The reply speaks the language of the instructions, not of the content: «Arabic text: مرحباً…» inside an English request
   // is the file's words, and the live test's reply came back in Arabic for it.
-  const task: DocumentCreateTask = { kind: 'create', lang: written && contentFields.length ? lang(written.instructions) : language };
-  const titleField = written?.fields.find(field => /^(?:title|heading|(?:ال)?عنوان)$/u.test(field.label));
-  const title = titleField ? null : TITLE.exec(instruction.replace(FILE_NAME, ' '));
+  const task: DocumentCreateTask = { kind: 'create', lang: text ? lang(lead) : language };
+  const title = titleField ? null : TITLE.exec(lead.replace(FILE_NAME, ' '));
   if (titleField) task.title = unquote(titleField.value).slice(0, 200);
   else if (title && !/\.pdf$/iu.test(unquote(title[1]!))) task.title = unquote(title[1]!).slice(0, 200);
   if (fileName) task.fileName = fileName;
   const topic = TOPIC.exec(instruction.replace(TITLE, ' '));
   if (topic) task.topic = topic[1]!.trim().slice(0, 200);
-  const design = `${instruction} ${firstLine}`;
+  const design = instruction;
   const theme = themeOf(design);
   if (theme) task.theme = theme;
   if (BLACK_TEXT.test(design)) task.accent = '#000000';

@@ -24,6 +24,28 @@ describe('documentTask: creating', () => {
     expect(documentTask('Convert this to a pdf: Delivery is late by two days because of shipping.')).toMatchObject({ kind: 'create', lang: 'en', suppliedText: 'Delivery is late by two days because of shipping.' });
   });
 
+  it.each([
+    ['Generate a PDF titled Packing list with the following text: Gloves and spare cables.', 'Packing list', 'Gloves and spare cables.', 'en'],
+    ['Prepare a PDF titled Staff notice with the exact sentence: The office reopens on Monday. PDF only.', 'Staff notice', 'The office reopens on Monday.', 'en'],
+    ['اصنع PDF بعنوان كشف الاستلام ومحتواه وصلت الشحنة قبل الظهر.', 'كشف الاستلام', 'وصلت الشحنة قبل الظهر.', 'ar'],
+    ['أريد PDF عنوانه مواد الصيانة والمحتوى نفدت البطاريات.', 'مواد الصيانة', 'نفدت البطاريات.', 'ar'],
+    ['سوّي PDF اسمه دوام الفريق واكتب فيه دوامنا يبدأ بكرا.', 'دوام الفريق', 'دوامنا يبدأ بكرا.', 'ar'],
+  ])('separates inline title and literal body in %s', (request, title, suppliedText, lang) => {
+    expect(documentTask(request)).toMatchObject({ kind: 'create', title, suppliedText, lang });
+  });
+
+  it('does not mistake quoted titles or words in the body for document instructions', () => {
+    const title = 'Working with the text in older documents';
+    expect(documentTask(`Make a PDF titled "${title}"`)).toEqual({ kind: 'create', lang: 'en', title });
+    expect(documentTask(`Make a PDF titled "${title}" with the text: "Paint the red background white."`)).toEqual({
+      kind: 'create', lang: 'en', title, suppliedText: 'Paint the red background white.',
+    });
+    expect(documentTask('Create a file named notes.txt with the text: Open review.pdf.')).toBeNull();
+    expect(documentTask('Create a PDF named "Shift Notes.pdf" with the text: The title: Evening shift.')).toMatchObject({
+      kind: 'create', fileName: 'Shift Notes.pdf', suppliedText: 'The title: Evening shift.',
+    });
+  });
+
   it('leaves questions about PDF, other formats and unrelated requests alone', () => {
     expect(documentTask('ما هو ملف pdf؟')).toBeNull();
     expect(documentTask('How do I open a PDF on my phone?')).toBeNull();
@@ -68,7 +90,22 @@ describe('documentTask: editing', () => {
 
   it('extracts quoted and bare paths without changing their characters', () => {
     expect(pdfPaths('افتح «D:\\ملفات العمل\\تقرير 2026.pdf» و C:/tmp/x.pdf')).toEqual(['D:\\ملفات العمل\\تقرير 2026.pdf', 'C:/tmp/x.pdf']);
+    expect(pdfPaths('Merge main.pdf with "two words.pdf"')).toEqual(['main.pdf', 'two words.pdf']);
     expect(pdfPaths('no files here')).toEqual([]);
+  });
+});
+
+describe('documentTask: reading', () => {
+  it('reads an explicit PDF reference without capturing web or page-edit work', () => {
+    expect(documentTask('Could you read "Operations handbook.pdf"?')).toEqual({
+      kind: 'read', lang: 'en', summary: false, paths: ['Operations handbook.pdf'],
+    });
+    expect(documentTask('لخّص الملف المرفق', { hasDocuments: true })).toEqual({
+      kind: 'read', lang: 'ar', summary: true, paths: [],
+    });
+    expect(documentTask('Read https://example.com/report.pdf')).toBeNull();
+    expect(documentTask('Read the PDF and delete page 2.')).toMatchObject({ kind: 'edit', operation: 'delete' });
+    expect(documentTask('Read the files on my desktop')).toBeNull();
   });
 });
 
