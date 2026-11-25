@@ -251,7 +251,7 @@ For example, “tell me when PR 42 in owner/repo is merged” and «نبّهني
 
 The adapter uses only anonymous GET requests to `https://api.github.com` through SafeNetwork. It validates same-origin redirects and sends an ETag per endpoint when it has a cached response. GitHub allows 60 unauthenticated REST requests per hour per originating IP. The shared SQL host slot admits a serial batch of up to five requests over 25 seconds. The spacing is `5 × 60 minutes / 60 + 25 seconds = 325 seconds`. A rolling hour can overlap at most 12 batches even if a request leaves at the end of its batch. This counts conditional requests and redirect hops. A `403` or `429` defers the batch using `Retry-After`, or `X-RateLimit-Reset` at exhausted `X-RateLimit-Remaining`, with a one-minute minimum wait. The same backoff applies across accounts and workers. The adapter sends and stores no token. Adding a token would be a separate owner decision. [GitHub REST rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api) · [GitHub REST best practices](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api)
 
-CI uses the same head SHA for the combined commit status and check runs. Failure takes precedence over pending and success. An empty result stays pending. The adapter bounds the check-run listing at three pages and withholds the observation if the response cannot account for all reported runs. Release and tag lists use the first 30 API entries. A repository with no eligible release can serve as a baseline. [GitHub source reader](../apps/server/src/monitors/sources/github.ts)
+CI uses the same head SHA for the combined commit status and check runs. Failure takes precedence over pending and success. An empty result stays pending. The adapter bounds the check-run listing at three pages and withholds the observation if the response cannot account for all reported runs. Release and tag lists use the first 30 API entries. A repository with no eligible release can serve as a baseline. A proposal preview can admit one GitHub target. Additional GitHub targets in the same preview encounter the shared host slot and defer. [GitHub source reader](../apps/server/src/monitors/sources/github.ts)
 
 | Primary source | Retrieved | SHA-256 |
 | --- | --- | --- |
@@ -268,6 +268,68 @@ PDF extraction reuses the project's bounded PDF.js worker. The input limit is 10
 Visual reading starts when structured and visible-text reads cannot identify the numeric target. Chromium uses a fresh, same-origin session with GET-only SafeNetwork traffic and a 12-second render limit within a 20-second fallback deadline. A render can fetch at most 20 resources and 8 MB in aggregate. HTML is capped at 2 MB and other resources at 512 kB. Up to four regions may be captured, each at most 960 × 640 pixels and 500 kB. The separate shared budget allows 120 render attempts per UTC day across accounts and workers. Exhausting it defers the read until the next UTC day. This bounds Chromium work and limits one attempt to four OCR reads. [Visual reader](../apps/server/src/monitors/sources/visual.ts) · [Browser capture](../apps/server/src/monitors/sources/visual-browser.ts)
 
 The own reader must report at least 0.90 confidence for the line that supplies a single value. The value must agree with required currency or unit and any saved reading pattern. An ambiguous high-confidence read asks which region to watch. A low-confidence read asks for clarification during preview or pauses an active monitor, with no condition alert. The OCR weights live in `artifacts/vision/ocr-v1` or `MOHASSAN_OCR_MODEL_DIR`. Verification uses a deterministic reader double. **Real OCR accuracy is unverified until the monitor runs with the weights.** [Own image reader](IMAGE-READING-2026-11-22.md)
+
+### Phase 2 held-out simulation
+
+The criteria were committed at `ab9dd04`. The candidate at `82f3bdfb9a6fbfd9e913d300fbbbc00e73a85e5e` ran 64 held-out seeds per class, with 320 enrolled monitor-weeks. [Pre-declared criteria](MONITOR-SOURCES-PHASE2-CRITERIA.md)
+
+| Source | Detected / qualifying | Recall | Precision | False alarms/week | Mean / p95 delay (min) | Checks/week |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Pull request states | 52 / 52 | 100% | 100% | 0 | 186.78 / 344.82 | 18.27 |
+| Flapping CI | 49 / 49 | 100% | 100% | 0 | 67.11 / 267.00 | 15.63 |
+| Releases | 49 / 49 | 100% | 100% | 0 | 158.55 / 348.14 | 18.41 |
+| PDF revisions | 49 / 49 | 100% | 100% | 0 | 187.16 / 322.75 | 18.59 |
+| Noisy visual values | 37 / 49 | 75.5% | 100% | 0 | 165.32 / 299.69 | 11.22 |
+| All classes | 236 / 248 | 95.2% | 100% | 0 | 152.79 / 328.37 | 16.42 |
+
+The held-out command exited **1** because the visual class missed its 90% recall gate. All other gates passed. All 27 low-confidence reads paused their monitors and produced zero condition alerts. Twelve qualifying visual changes later went undetected. The tuning bank had also missed the visual recall gate at 17/24. The noise scenarios and confidence rule were kept for held-out evaluation.
+
+The shared GitHub budget simulation ran 3,600 attempts across 80 accounts and eight workers. It deferred 3,555 attempts and admitted 45 batches. Of 225 dispatched requests, 220 used ETags. The measured peak was 60 requests per rolling hour with zero budget violations.
+
+```bash
+docker run --pull=never --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+  --user 1000:1000 --mount type=bind,source=/workspace,target=/workspace \
+  --workdir /workspace/Mohassan-AI --env npm_config_offline=true mohassan-phase2-offline:local \
+  ./node_modules/.bin/tsx scripts/monitor-simulation/run.ts --phase2 --bank held-out \
+  > /workspace/scratch/monitor-phase2-simulation/held-out.json
+```
+
+The held-out receipt has SHA-256 `8b9f4c322ab0b3abb7e28265c5079c2b64a6328f8f54b1d830450d99858959c0`.
+
+### Phase 2 offline verification
+
+Setup used Node 24.22.3 and the locked dependencies. The browser installer selected Chromium build 1248. Both setup commands exited **0**. The checks used local fixtures and mocks. The browser, typecheck and suite commands below ran in a Docker runtime assembled from the workspace's installed tools and libraries, with external networking disabled.
+
+```bash
+npm ci --no-audit --no-fund --cache /tmp/mohassan-phase2-npm-cache
+PLAYWRIGHT_BROWSERS_PATH=/tmp/mohassan-phase2-playwright npm exec --offline -- playwright install chromium
+
+offline=(docker run --pull=never --rm --network none --cap-drop ALL --security-opt no-new-privileges
+  --user 1000:1000 --mount type=bind,source=/workspace,target=/workspace
+  --mount type=bind,source=/tmp/mohassan-phase2-playwright,target=/tmp/mohassan-phase2-playwright,readonly
+  --workdir /workspace/Mohassan-AI --env PLAYWRIGHT_BROWSERS_PATH=/tmp/mohassan-phase2-playwright
+  --env npm_config_offline=true)
+
+"${offline[@]}" mohassan-phase2-offline:local npm test -- --maxWorkers 2 \
+  tests/monitors-api.test.ts tests/monitors-detection.test.ts tests/monitors-web.test.ts \
+  tests/smart-monitor-runtime.test.ts tests/smart-monitor-sources.test.ts tests/smart-monitor-sources-v2.test.ts \
+  tests/smart-monitor-reasoning-v2.test.ts tests/smart-monitor-schedule-v2.test.ts tests/smart-monitor-chat-v2.test.ts \
+  tests/smart-monitor-pdf.test.ts tests/smart-monitor-source-visual.test.ts tests/e2e-isolation.test.ts \
+  packages/learning/src/pdf.test.ts packages/pdf/src/edit.test.ts tests/assistant-live-test-pdf-chat.test.ts
+
+"${offline[@]}" --env npm_config_update_notifier=false mohassan-phase2-offline:local bash -c \
+  'npm run typecheck && npm test -- --maxWorkers 1 tests/monitors-api.test.ts tests/smart-monitor-runtime.test.ts tests/smart-monitor-github.test.ts tests/smart-monitor-source-visual.test.ts tests/smart-monitor-pdf.test.ts packages/learning/src/pdf.test.ts'
+
+"${offline[@]}" --env npm_config_update_notifier=false mohassan-phase2-offline:local npm run test:e2e -- \
+  --config=playwright.github-monitor.config.ts
+"${offline[@]}" --env npm_config_update_notifier=false mohassan-phase2-offline:local npm run test:e2e -- \
+  --timeout=120000 tests/e2e/smart-monitors.spec.ts tests/e2e/smart-monitors-v2.spec.ts
+
+./node_modules/.bin/tsx scripts/monitor-simulation/github-openapi.ts \
+  /workspace/scratch/monitor-github-sources/api.github.com.2022-11-28.json
+```
+
+All commands in this block exited **0**. The broad suite passed 202 tests across 15 files during development. On the frozen candidate, both typecheck projects and the focused six-suite rerun passed, including 57 tests. The browser runs passed 1/1 for GitHub approval and 2/2 for the existing monitor workflows. Earlier cold browser runs hit the inherited 45-second timeout. The passing runs used 120 seconds. The OpenAPI validator checked 17 unit and 14 simulation fixtures across seven GitHub REST operations.
 
 ## Enable the rollout
 
