@@ -122,14 +122,16 @@ test('a hidden tab keeps following its task and gets one system notice when it f
   await page.evaluate(() => { (window as unknown as { __hidden: boolean }).__hidden = true; document.dispatchEvent(new Event('visibilitychange')); });
   expect((await hiddenSync).ok()).toBe(true);
   // A local calculation settles quickly, even though the tab is already hidden.
-  const id = await send(page, 'كم 15 ضرب 23؟');
+  const goal = 'كم 17 ضرب 29؟';
+  const id = await send(page, goal);
   await settled(page, id);
-  await expect.poll(() => page.evaluate(() => (window as unknown as { __notices: { title: string }[] }).__notices.map(notice => notice.title)), { timeout: 40_000 })
-    .toEqual(['اكتملت المهمة']);
+  const taskNotices = () => page.evaluate(title => (window as unknown as { __notices: { title: string; body: string }[] }).__notices
+    .filter(notice => notice.body === title).map(notice => notice.title), goal);
+  await expect.poll(taskNotices, { timeout: 40_000 }).toEqual(['اكتملت المهمة']);
   // Back to the tab: the title counted the finished task while it was hidden, and clears once the owner looks.
   await page.evaluate(() => { (window as unknown as { __hidden: boolean }).__hidden = false; document.dispatchEvent(new Event('visibilitychange')); });
   await expect.poll(() => page.title()).toBe('موحسن');
-  expect(await page.evaluate(() => (window as unknown as { __notices: unknown[] }).__notices.length)).toBe(1);
+  expect(await taskNotices()).toEqual(['اكتملت المهمة']);
 });
 
 test('notification permission is offered after an eligible background task and a denial stays in settings', async ({ page }) => {

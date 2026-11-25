@@ -200,6 +200,16 @@ describe('authenticated notifications', () => {
     await syncNotifications(db(), ownerId, { tabId, state: 'closed' }, later);
   });
 
+  it('does not permanently suppress a fast hidden result because of an older visible heartbeat', async () => {
+    const id = await conversation(ownerId), tabId = randomUUID();
+    await syncNotifications(db(), ownerId, { tabId: randomUUID(), state: 'visible' }, new Date(now.getTime() - 5_000));
+    await syncNotifications(db(), ownerId, { tabId, state: 'hidden' }, now);
+    const taskId = await outcome(ownerId, id, 'task_completed', 2_000);
+    expect((await syncNotifications(db(), ownerId, { tabId, state: 'hidden' }, later)).pending).toEqual([]);
+    const expiredOldTab = new Date(now.getTime() + 20_001);
+    expect((await syncNotifications(db(), ownerId, { tabId, state: 'hidden' }, expiredOldTab)).pending[0]?.taskId).toBe(taskId);
+  });
+
   it('keeps notifications within the conversation account, excludes messages, and omits a hidden title', async () => {
     const own = await conversation(ownerId), other = await conversation(memberId);
     const time = new Date(Date.now() - 3_000);

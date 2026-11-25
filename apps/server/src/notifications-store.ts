@@ -124,9 +124,11 @@ export async function recordNotificationOutcome(db: Database, outcome: {
 }, now = new Date()) {
   const { taskId, userId, conversationId, startedAt, kind } = outcome;
   const quickAnswer = kind === 'task_completed' && now.getTime() - startedAt.getTime() < NOTIFICATION_AFTER_MS;
-  const visible = quickAnswer && await activeTabs(db, now).where('user_id', '=', userId).where('visible', '=', true).executeTakeFirst();
+  // An older tab may have closed without delivering its last heartbeat. Use the most recent view for this one-way decision.
+  const tab = quickAnswer ? await activeTabs(db, now).select('visible').where('user_id', '=', userId)
+    .orderBy('expires_at', 'desc').orderBy('visible').limit(1).executeTakeFirst() : undefined;
   const { quietHours } = await notificationPreferences(db, userId);
-  const delivery = visible || isQuietHours(quietHours, now) ? 'suppressed' : 'pending';
+  const delivery = tab?.visible || isQuietHours(quietHours, now) ? 'suppressed' : 'pending';
   const status = { kind, delivery, happened_at: now, available_at: new Date(now.getTime() + PRIORITY_WINDOW_MS) } as const;
   await db.insertInto('chat_notifications').values({ task_id: taskId, user_id: userId,
     conversation_id: conversationId, started_at: startedAt, ...status })
