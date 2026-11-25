@@ -11,6 +11,7 @@ export * from './skill-catalogue';
 import { SkillRunInputSchema, SkillNodeBindingSchema, isBoundedSkillJson } from './skills';
 export * from './command-chat';
 export * from './browser-live-view';
+export * from './browser-premium-brief';
 export * from './agent-run';
 export * from './skills';
 export * from './google-ads';

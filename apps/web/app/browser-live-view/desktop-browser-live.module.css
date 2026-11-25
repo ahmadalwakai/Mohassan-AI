@@ -1,0 +1,4 @@
+.shell {
+  min-height: 100dvh;
+  background: var(--bp-surface);
+}

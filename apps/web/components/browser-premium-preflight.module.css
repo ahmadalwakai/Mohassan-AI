@@ -1,0 +1,20 @@
+.dialog {
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: var(--bp-space-1);
+  width: min(calc(var(--bp-medium) + 2 * var(--bp-space-1)), calc(100% - 2 * var(--bp-corner-gap) + 2 * var(--bp-space-1)));
+  max-height: calc(100dvh - 2 * var(--bp-corner-gap));
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.dialog::backdrop {
+  background: var(--bp-backdrop);
+}
+
+@supports (backdrop-filter: blur(4px)) {
+  .dialog::backdrop {
+    backdrop-filter: blur(var(--bp-backdrop-blur));
+  }
+}

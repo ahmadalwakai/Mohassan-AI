@@ -72,7 +72,7 @@ beforeEach(() => {
 
 describe('desktop browser live view', () => {
   it('opens the sandboxed same-origin mini window only when enabled and informs the main view', () => {
-    expectTypeOf<BrowserLiveViewWindowState>().toEqualTypeOf<{ corner: BrowserLiveCorner; mode: BrowserLiveMode }>();
+    expectTypeOf<BrowserLiveViewWindowState>().toEqualTypeOf<{ corner: BrowserLiveCorner; mode: BrowserLiveMode; expanded?: boolean }>();
     const view = fixture();
     view.controller.sync();
     expect(view.mini).toBeUndefined();
@@ -135,6 +135,7 @@ describe('desktop browser live view', () => {
     send('update', { ...event, senderFrame: { url: event.senderFrame.url } }, state);
     send('update', event, { ...state, corner: 'center' });
     send('update', event, { ...state, mode: 'constructor' });
+    send('update', event, { ...state, expanded: 'yes' });
     expect(send('corner-at', event, { x: Infinity, y: 1 })).toBeNull();
     view.mini.webContents.mainFrame.url = `${webUrl}/`;
     send('update', event, state);
@@ -142,6 +143,20 @@ describe('desktop browser live view', () => {
     send('update', event, state);
     expect(send('corner-at', event, { x: 0, y: 0 })).toBeNull();
     expect(view.mini.setBounds).not.toHaveBeenCalled();
+  });
+
+  it('centers the modal within the active work area and restores the selected corner on close', () => {
+    const view = fixture();
+    electron.display.mockReturnValue({ workArea: { x: -1400, y: 30, width: 1400, height: 1000 } });
+    view.setEnabled(true);
+    const event = eventFor(view.mini);
+    const corner = 'bottom-right';
+    send('update', event, { corner, mode: 'small', expanded: true });
+    expect(view.mini.getBounds()).toEqual({ x: -1260, y: 100, width: 1120, height: 860 });
+    send('update', event, { corner, mode: 'small', expanded: false });
+    expect(view.mini.getBounds()).toEqual({ x: -352, y: 678, width: 340, height: 340 });
+    send('update', event, { corner, mode: 'pill', expanded: true });
+    expect(view.mini.getBounds()).toEqual({ x: -332, y: 954, width: 320, height: 64 });
   });
 
   it('repositions and fits the active view after a display work area changes', () => {

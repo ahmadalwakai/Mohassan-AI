@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type { ChatBrowserVisibility, ChatConversation } from './command-chat';
+import type { BrowserPremiumMetadata } from './browser-premium';
+export * from './browser-premium';
 
 export const browserLiveCorners = ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const;
 export type BrowserLiveCorner = typeof browserLiveCorners[number];
@@ -27,6 +29,7 @@ export interface BrowserLiveSnapshot extends BrowserLiveCaption {
   title: string;
   secure: ChatConversation['secure'];
   approval: ChatConversation['approval'];
+  premium?: BrowserPremiumMetadata;
 }
 
 export interface BrowserLiveAttention {
