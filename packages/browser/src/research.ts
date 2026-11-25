@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { parse,parseFragment } from 'parse5';
+import { parse,parseFragment, type DefaultTreeAdapterTypes } from 'parse5';
 import { BrowserError, SafeNetwork } from './network.js';
 import { RobotsPolicy } from './search/robots.js';
 
@@ -12,8 +12,9 @@ function domText(node:any):string {if(node.nodeName==='#text')return node.value?
 function find(node:any,predicate:(node:any)=>boolean,result:any[]=[]):any[]{if(predicate(node))result.push(node);for(const child of node.childNodes??[])find(child,predicate,result);return result;}
 const attr=(node:any,name:string)=>node.attrs?.find((item:any)=>item.name===name)?.value??'';
 const clean=(value:string)=>value.replace(/\s+/g,' ').trim();
-export function readableSource(html:string,url:string):{title:string;text:string;links:string[]} {
+export function readableSource(html:string,url:string,onBody?:(body:DefaultTreeAdapterTypes.ParentNode)=>void):{title:string;text:string;links:string[]} {
   const tree=parse(html),title=find(tree,node=>node.tagName==='title')[0],body=find(tree,node=>node.tagName==='body')[0]??tree;
+  onBody?.(body);
   return {title:clean(title?domText(title):new URL(url).hostname).slice(0,240),text:clean(domText(body)).slice(0,60000),links:find(body,node=>node.tagName==='a'&&attr(node,'href')).slice(0,100).flatMap(node=>{try{return [new URL(attr(node,'href'),url).href];}catch{return [];}})};
 }
 

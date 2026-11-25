@@ -8,6 +8,8 @@ import { isSiteRequest } from '@mohassan/sites';
 import type { WebSequel } from './web-sequence.js';
 import { splitReplyDirective, type ReplyField } from './reply-directive.js';
 import { returnedTo } from './return-to.js';
+import { selectOpenPageLines, selectSearchAnswer } from './selection/hands-selection.js';
+import { RESTRICTED_CASE } from './selection/reason-scope.js';
 
 export { returnedTo };
 export { siteName };
@@ -594,12 +596,6 @@ export const aspectSubject = (question: string): string[] => ASPECT_QUESTION.tes
 const AFTER_CAUSE = /بسبب|(?:^|\s)(?:و|ف)?لان(?:ه|ها|هم|هما|نا|ك)(?=[\s،.]|$)|(?:^|\s)(?:و|ف)?لان\s+ال|نتيجه\s+(?:ل|عن)|وذلك\s+ل|(?:يعود|تعود|يرجع|ترجع|يعزي|تعزي)\s+(?:(?:ذلك|هذا|السبب)\s+)?الي|(?:^|\s)نسبه\s+(?:الي|ل)|\bbecause\b|\bdue to\b|\bcaused by\b|\bas a result of\b|\bresult(?:s|ing|ed)? from\b|\bowing to\b/u;
 const CAUSE_NOUN = /(?:^|\s)(?:و|ف)?(?:ال)?(?:سبب|اسباب)(?=\s)|\bthe (?:main |primary |chief |real )?(?:reason|cause)s?\b/gu;
 const REASON_FILLER = new Set(['ليه', 'بهذا', 'هذا', 'هذه', 'قبل', 'بعد', 'ان', 'جدا', 'كثيرا', 'دائما', 'so', 'very', 'always', 'often', 'much', 'reason', 'reasons', 'cause', 'causes', 'caused']);
-/**
- * What is asked, narrowed to one place, season or case before the cause: «… وتسقط به الأمطار في فصل الشتاء … بسبب هبوب
- * الرياح الغربية» gives the cause of winter rain in one climate, not why rain falls. It was shown as the answer to «اشرح
- * لماذا تسقط الأمطار» in the live check of 2026-11-23. A question that names such a case itself is not narrowed by it.
- */
-const RESTRICTED_CASE = /(?:^|\s)(?:في|خلال)\s+(?:فصل|موسم|فصول|الشتاء|الصيف|الربيع|الخريف|المناطق|منطقه|مناطق|غرب|شرق|شمال|جنوب|بعض|هذه|تلك|اغلب|معظم)(?=\s|$)|(?:^|\s)(?:به|بها|فيه|فيها)(?=\s|$)|\b(?:in|during)\s+(?:winter|summer|spring|autumn|(?:the\s+)?(?:tropics|monsoon|north|south|east|west)|some|these|those|this\s+region|that\s+region|parts\s+of|most\s+of)\b|\b(?:within|across|throughout)\s+\S/u;
 /**
  * Where a word of the question is found in a sentence word. Arabic words carry their clitics («وتسقط», «بالأمطار»), so the
  * stem may sit inside the word. An English word starts with it («falls», «falling»): inside a word, «rainfall» held both
@@ -1617,6 +1613,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           const reads: (HandsRead | null)[] = searched && io.read && fitting.length
             ? (await io.step(readingLabel(fitting.map(item => item.url))), await Promise.all(fitting.map(item => io.read!(item.url).catch((): HandsRead => ({ kind: 'unreadable' })))))
             : fitting.map(() => null);
+          let browserRead: AgentPage | null = null;
           for (const [index, item] of fitting.entries()) {
             const read = reads[index];
             if (read?.kind === 'disallowed') continue;
@@ -1629,6 +1626,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
               if (!shown) return { kind: 'paused' };
               page = shown;
               opened = shown;
+              browserRead = shown;
             }
             if (isDisambiguationPage(opened)) continue;
             // The answer line must carry what the question asks for (a number, a name, the question's language), or the next page is tried.
@@ -1687,6 +1685,10 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
               break;
             }
           }
+          // The judge retains every HTTP read and the final browser observation.
+          plan.found = selectSearchAnswer(step.query, plan.found, reads, browserRead === page ? browserRead : null, {
+            readableOverHttp, rejected: url => refused.has(withoutHash(url)), live: LIVE.test(step.query),
+          });
         }
         break;
       }
@@ -1828,7 +1830,7 @@ export interface PageAnswer { parts: PageAnswerPart[]; /** What the question ask
  * links or a version are read from the page's structure, so an Arabic question about an English page still finds them; any
  * other question takes the page's sentences that share its words (relevantLines). What was asked and not found is named.
  */
-export function pageAnswer(page: AgentPage, question: string, lang: 'ar' | 'en'): PageAnswer {
+export function pageAnswer(page: AgentPage, question: string, lang: 'ar' | 'en', observe = false): PageAnswer {
   const asked = fold(question);
   const ar = lang === 'ar';
   const text = page.text;
@@ -1866,7 +1868,7 @@ export function pageAnswer(page: AgentPage, question: string, lang: 'ar' | 'en')
     else missing.push(ar ? 'رقم الإصدار' : 'a version number');
   }
   if (!parts.length && !missing.length) {
-    const sentences = relevantLines(page, question, 3, true);
+    const sentences = selectOpenPageLines(page, question, relevantLines(page, question, 3, true), observe, LIVE.test(question));
     if (sentences.length) parts.push({ label: null, quotes: sentences });
   }
   return { parts, missing };
@@ -1960,7 +1962,7 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
     // The page's own words as quotes under the host's labels: the judge checks every quote against the page (kind «quote»).
     const en = (plan.lang ?? (/[؀-ۿ]/u.test(last.question) ? 'ar' : 'en')) === 'en';
     const name = `**${plainTitle(page.title) || hostOf(page.url)}** (${hostOf(page.url)})`;
-    const { parts, missing } = pageAnswer(page, last.question, en ? 'en' : 'ar');
+    const { parts, missing } = pageAnswer(page, last.question, en ? 'en' : 'ar', true);
     if (!parts.length) return { status: 'partial', text: en
       ? `I opened ${name}, but found nothing on the page that answers “${last.question}”. The page is in the browser panel; say “read the page” and I will show its text.`
       : `فتحت ${name}، ولم أجد في نص الصفحة ما يجيب عن «${last.question}». الصفحة ظاهرة في لوحة المتصفح؛ قل «اقرأ الصفحة» لأعرض نصها.` };
