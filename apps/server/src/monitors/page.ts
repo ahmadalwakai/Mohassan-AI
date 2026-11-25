@@ -3,7 +3,7 @@ import type { MonitorSpec } from '@mohassan/contracts';
 import { parse, type DefaultTreeAdapterTypes as Html } from 'parse5';
 import type { MonitorObservation, WatchedBlock } from './evaluation.js';
 
-const OMIT = new Set(['aside', 'footer', 'header', 'iframe', 'nav', 'noscript', 'script', 'style', 'svg', 'template']);
+const OMIT = new Set(['aside', 'footer', 'iframe', 'nav', 'noscript', 'script', 'style', 'svg', 'template']);
 const BLOCK = new Set(['article', 'blockquote', 'body', 'button', 'dd', 'div', 'dt', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'main', 'p', 'pre', 'section', 'tr']);
 const MOVING_ELEMENT = /(?:^|[\s_-])(?:ad|ads|advertisement|analytics|banner-rotation|carousel|cookie-banner|countdown|counter|current-time|live-clock|pageviews|ticker)(?:$|[\s_-])/iu;
 const MARKER = /^(?:(?:last (?:updated|refreshed)|generated (?:at|on)|server time|current time|page\s*views?|views?|visitors?|updated \d+ (?:seconds?|minutes?) ago|آخر تحديث|وقت الخادم|عدد المشاهدات|عدد الزوار)[:\s\-–—]|\d{1,2}:\d{2}:\d{2}(?:\s|$))/iu;
@@ -140,14 +140,36 @@ function numberFrom(text: string): number | undefined {
   return Number.isFinite(value) ? value : undefined;
 }
 
+const MONTHS = [
+  ['january', 'jan', 'يناير', 'كانون الثاني'], ['february', 'feb', 'فبراير', 'شباط'],
+  ['march', 'mar', 'مارس', 'اذار'], ['april', 'apr', 'ابريل', 'نيسان'],
+  ['may', 'مايو', 'ايار'], ['june', 'jun', 'يونيو', 'حزيران'],
+  ['july', 'jul', 'يوليو', 'تموز'], ['august', 'aug', 'اغسطس', 'اب'],
+  ['september', 'sep', 'sept', 'سبتمبر', 'ايلول'], ['october', 'oct', 'اكتوبر', 'تشرين الاول'],
+  ['november', 'nov', 'نوفمبر', 'تشرين الثاني'], ['december', 'dec', 'ديسمبر', 'كانون الاول'],
+];
+const monthNames = MONTHS.flat().join('|');
+const dayFirst = new RegExp(String.raw`(?<![\p{L}\p{N}])(\d{1,2})\s+(${monthNames})\.?\s+(\d{4})(?!\d)`, 'u');
+const monthFirst = new RegExp(String.raw`(?<![\p{L}\p{N}])(${monthNames})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})(?!\d)`, 'u');
+
 function dateFrom(text: string): string | undefined {
-  const date = /\b(\d{4}-\d{2}-\d{2})\b/u.exec(arabicDigits(text))?.[1];
-  if (!date) return undefined;
+  const normalized = matchMonitorText(text);
+  let date = /\b(\d{4}-\d{2}-\d{2})\b/u.exec(normalized)?.[1];
+  if (!date) {
+    const leadingDay = dayFirst.exec(normalized);
+    const leadingMonth = monthFirst.exec(normalized);
+    if (!leadingDay && !leadingMonth) return undefined;
+    const day = leadingDay?.[1] ?? leadingMonth![2];
+    const monthName = leadingDay?.[2] ?? leadingMonth![1];
+    const year = leadingDay?.[3] ?? leadingMonth![3];
+    const month = MONTHS.findIndex(names => names.includes(monthName)) + 1;
+    date = `${year}-${String(month).padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
   const at = new Date(`${date}T00:00:00Z`);
   return Number.isFinite(at.getTime()) && at.toISOString().slice(0, 10) === date ? date : undefined;
 }
 
-const CLOSED = /(?:\b(?:not|no longer|coming soon|closed|unavailable|sold out|out of stock|opens? on|opens? soon|will open|will be|scheduled|unpublished|ended)\b|(?:غير متاح|لم يعد|لم يفتح|لم يبدا|لم ينشر|لم تعلن|سيفتح|ستفتح|قريبا|نفد|نفذت|مغلق|اغلق|انتهي))/iu;
+const CLOSED = /(?:\b(?:not|no longer|coming soon|closed|unavailable|sold out|out of stock|no tickets?|opens? on|will open|will be|begins? on|scheduled|unpublished|ended|soon|later)\b|(?:غير متاح|غير متوفر|لم يعد|لم يفتح|لم يبدا|لم ينشر|لم تعلن|سيفتح|ستفتح|قريبا|نفد|نفذت|مغلق|اغلق|انتهي))/iu;
 
 const statusRules = {
   registration: { subject: /\b(?:registration|applications?|enrol(?:l)?ment|sign[ -]?ups?)\b|تسجيل|تقديم الطلبات|الالتحاق/u,
@@ -186,7 +208,7 @@ function statusFrom(candidates: Candidate[], label: string | undefined, anchored
 function hasPhrase(text: string, phrase: string): boolean {
   let index = phraseIndex(text, phrase);
   if (index < 0) return false;
-  const prefix = /(?:\b(?:not|never|no longer|will be)\b|(?:^|\s)(?:غير|ليس|لم|لن)(?=\s|$))\s*$/iu;
+  const prefix = /(?:\b(?:not(?: yet| currently)?|never|no longer|will be)\b|(?:^|\s)(?:غير|ليس|لم|لن)(?=\s|$))\s*$/iu;
   const suffix = /^\s*(?:\b(?:soon|later|next|yet)\b|قريبا|لاحقا)/iu;
   while (index >= 0) {
     const after = index + phrase.length;

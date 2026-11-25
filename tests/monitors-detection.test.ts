@@ -70,6 +70,12 @@ describe('smart monitor need detection', () => {
     expect(detectMonitorNeed({ text: `Read the instructions at ${url}`, blocked: { url: 'https://192.168.1.1', reason } })).toBeNull();
   });
 
+  it('watches publication status when a reachable page specifically says it is unpublished', () => {
+    const detected = detectMonitorNeed({ text: `Read the instructions at ${url}`, blocked: { url, reason: 'not-published', publicationStatus: true } });
+    expect(generateMonitorSpec(detected!, now)).toMatchObject({ source: { kind: 'page', url },
+      read: { kind: 'status', label: 'publication' }, condition: { kind: 'equals', value: 'published' } });
+  });
+
   it('keeps buying and booking with the user', () => {
     const english = need(`Watch ${url} and, when tickets are available, buy two.`);
     const arabic = need(`راقب هذه الصفحة ${url} وإذا فتحوا التسجيل فسجلني`);
@@ -117,12 +123,16 @@ describe('monitor specifications', () => {
   it('generates dry readings for search and an owned background run reference', () => {
     const search = generateMonitorSpec(need('Watch new listings for London pottery classes and notify me when they appear.'), now);
     expect(search).toMatchObject({ source: { kind: 'search', query: 'London pottery classes' }, read: { kind: 'items' }, condition: { kind: 'new-item' } });
+    const weatherQuery = generateMonitorSpec(need('Watch new listings for Austin weather stations.'), now);
+    expect(weatherQuery).toMatchObject({ source: { kind: 'search', query: 'Austin weather stations' } });
     const runId = '88dff4a4-ef76-4f98-b1d1-e3ef8dddee39';
     const run = generateMonitorSpec(need(`Let me know when my background run ${runId} completes.`), now);
     expect(run).toMatchObject({ source: { kind: 'run', runId }, read: { kind: 'status' }, condition: { kind: 'equals', value: 'completed' } });
   });
 
   it.each([
+    [`Watch this page ${url} until it loads.`, { kind: 'status' }, { kind: 'equals', value: 'reachable' }],
+    [`I'm waiting for this page to load at ${url}.`, { kind: 'status' }, { kind: 'equals', value: 'reachable' }],
     [`Watch ${url} and notify me when the phrase «Coming soon» disappears.`, { kind: 'phrase', phrase: 'Coming soon' }, { kind: 'disappears' }],
     [`Watch ${url} and let me know when the price drops by 5%.`, { kind: 'number', label: 'price' }, { kind: 'percent', direction: 'below', value: 5 }],
     [`Watch the release date on ${url} for 3 days.`, { kind: 'date', label: 'release date' }, { kind: 'change' }],

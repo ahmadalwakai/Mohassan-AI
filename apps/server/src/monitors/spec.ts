@@ -38,6 +38,7 @@ const TEMP = /\btemperature(?:s)?\b|(?<!\p{L})(?:درجه )?(?:الحراره|ح
 const RAIN = /\b(?:rain(?:s|fall)?|precipitation)\b|(?<!\p{L})(?:المطر|يمطر|ستمطر|امطار|الامطار|هطول)(?!\p{L})/u;
 const WIND = /\bwind(?: speed)?\b|(?<!\p{L})(?:سرعه )?(?:الرياح|رياح)(?!\p{L})/u;
 const MAIN_CHANGE = /\b(?:content|text|page|website|site|link)\b|(?<!\p{L})(?:ال)?(?:محتوي|نص|صفحه|موقع|رابط)(?!\p{L})/u;
+const PAGE_REACHABILITY = /\b(?:page|website|site|link|it)\s+(?:(?:to|is|becomes?)\s+)?(?:loads?|opens?|(?:comes? )?(?:back )?online|back up|reachable|go(?:es)? live)\b|(?<!\p{L})(?:(?:الصفحه|الموقع|الرابط)\s+(?:تفتح|يفتح|تشتغل|يشتغل|تعمل|يعمل)|(?:تفتح|يفتح|تشتغل|يشتغل|تعمل|يعمل)\s+(?:الصفحه|الموقع|الرابط))(?!\p{L})/u;
 const PERFECT_STATUS = /\b(?:if|when|once|until|as soon as)\b|(?<!\p{L})(?:اذا|لما|عندما|حتي|بمجرد)(?!\p{L})/u;
 const ANCHOR = /(?:\b(?:under|near|in)\s+(?:(?:the\s+)?(?:section|heading|block)(?:\s+(?:called|titled|labelled|labeled))?\s*[: ]+)?|(?:تحت|بالقرب من|في قسم|عند عنوان)\s*)["«“`]([^"»”`\r\n]{1,120})["»”`]/iu;
 const LITERAL = /(?:["«“`]([^"»”`\r\n]{1,180})["»”`]|(?<![\p{L}\p{N}])['‘]([^'’\r\n]{1,180})['’](?![\p{L}\p{N}]))/u;
@@ -69,6 +70,9 @@ function pageWatch(need: MonitorNeed, body: string, url: string): Watch | null {
   const source = { kind: 'page', url, ...(anchor && { anchor }) } as const;
   const page = new URL(url).hostname;
   const watched = (read: Read, condition: Condition, subject: string): Watch => ({ source, read, condition, title: `${page} · ${subject}` });
+  if (need.blocked?.publicationStatus) {
+    return watched({ kind: 'status', label: 'publication' }, { kind: 'equals', value: 'published' }, say(language, 'حالة النشر', 'Publication status'));
+  }
   if (need.blocked) return watched({ kind: 'status' }, { kind: 'equals', value: 'reachable' }, say(language, 'توفر الصفحة', 'Page availability'));
   const numeric = numericCondition(body);
   const price = PRICE.test(body) || Boolean(need.sourceText && PRICE.test(monitorMatchText(need.sourceText)));
@@ -96,6 +100,9 @@ function pageWatch(need: MonitorNeed, body: string, url: string): Watch | null {
   }
   if (TICKETS.test(body) && (OPEN.test(body) || AVAILABILITY.test(body) || close)) {
     return watched({ kind: 'status', label: 'tickets' }, { kind: 'contains', value: close ? 'tickets unavailable' : 'tickets available' }, say(language, 'توفر التذاكر', 'Ticket availability'));
+  }
+  if (PAGE_REACHABILITY.test(body)) {
+    return watched({ kind: 'status' }, { kind: 'equals', value: 'reachable' }, say(language, 'توفر الصفحة', 'Page availability'));
   }
   if (AVAILABILITY.test(body)) {
     return watched({ kind: 'status', label: 'availability' }, { kind: 'contains', value: close ? 'out of stock' : 'in stock' }, say(language, 'حالة التوفر', 'Stock availability'));
@@ -140,7 +147,7 @@ function currencyWatch(need: MonitorNeed, body: string): Watch | null {
     : previous && previous.kind === 'exchange' && (!current || current.kind === 'exchange-quote' && current.from === previous.from) ? previous : null;
   if (!rate || rate.from === rate.to) return null;
   const condition = numericCondition(body);
-  if (!condition && PERFECT_STATUS.test(body) && !CHANGE.test(body)) return null;
+  if (!condition && (UP.test(body) || DOWN.test(body) || PERFECT_STATUS.test(body) && !CHANGE.test(body))) return null;
   return {
     source: { kind: 'currency', base: rate.from, quote: rate.to },
     read: { kind: 'number' }, condition: condition ?? { kind: 'change' }, title: `${rate.from}/${rate.to}`,
@@ -210,8 +217,8 @@ function deadline(text: string): string | undefined {
 
 export function generateMonitorSpec(need: MonitorNeed, now = new Date()): MonitorSpec | null {
   const body = monitorMatchText(need.text.replace(ADDRESS, ' '));
-  const watch = need.sourceUrl ? pageWatch(need, body, need.sourceUrl) : RUN.test(body) ? runWatch(need, body)
-    : WEATHER_TOPIC.test(body) ? weatherWatch(need, body) : CURRENCY_TOPIC.test(body) || monitorCurrencyPair(body) ? currencyWatch(need, body) : searchWatch(need);
+  const watch = need.sourceUrl ? pageWatch(need, body, need.sourceUrl) : searchWatch(need) ?? (RUN.test(body) ? runWatch(need, body)
+    : WEATHER_TOPIC.test(body) ? weatherWatch(need, body) : CURRENCY_TOPIC.test(body) || monitorCurrencyPair(body) ? currencyWatch(need, body) : null);
   if (!watch) return null;
   const deadlineAt = deadline(body);
   if (deadlineAt && Date.parse(deadlineAt) <= now.getTime()) return null;

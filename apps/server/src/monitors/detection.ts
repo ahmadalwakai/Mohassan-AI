@@ -8,6 +8,7 @@ export interface MonitorBlock {
   url: string;
   reason: 'unreachable' | 'not-published';
   runId?: string;
+  publicationStatus?: true;
 }
 
 export interface MonitorNeed {
@@ -27,7 +28,7 @@ const ALERT = /^(?:(?:notify|alert|ping|tell) (?:me|us)|let (?:me|us) know|نب�
 const WAIT = /^(?:i(?: am|'m| have been|'ve been) |we (?:are|have been|'ve been) )?(?:still )?(?:waiting (?:for|until)|wait(?:ing)? to see (?:if|whether))\b|^(?:انا |نحن )?(?:ما زلت |لسه )?(?:انتظر|بانتظار|في انتظار|منتظر(?:ه)?|ناطر(?:ه)?|مستني(?:ه)?)(?!\p{L})/u;
 const STATUS_QUESTION = /^(?:check (?:if|whether)|any updates? (?:on|for)|(?:has|have|is|are|did|does|what(?: is|'s)|how much is)\b|(?:هل|كم|ما هو|ماهي|ما هي|في تحديث|اي تحديث)(?!\p{L}))/u;
 const FUTURE = /\b(?:if|when|once|as soon as|whenever|until|every|for (?:the next )?\d+|periodically|daily|hourly)\b|(?<!\p{L})(?:و?(?:اذا|لما|عندما|حينما|متي|عند|حتي|بمجرد ما|بمجرد ان|لمده|كل|يوميا|دوريا))(?!\p{L})/u;
-const STATE = /\b(?:open(?:s|ed|ing)?|go(?:es|ing)? live|available|availability|sold out|on sale|in stock|restock(?:ed|s)?|appear(?:s|ed)?|disappear(?:s|ed)?|publish(?:es|ed|ing)?|post(?:s|ed)?|release(?:s|d)?|change(?:s|d)?|drop(?:s|ped)?|fall(?:s|en)?|rise(?:s|n)?|exceed(?:s|ed)?|hit(?:s)?|complete(?:s|d)?|finish(?:es|ed)?|new|below|above|reachable|unreachable)\b|(?<!\p{L})(?:يفتح(?:ون|وا)?|تفتح|فتح(?:وا|ت)?|مفتوح(?:ه)?|متاح(?:ه)?|يتاح|تتوفر|يتوفر|توفر|تنزل|ينزل|نزلت?|ينخفض|تنخفض|يرتفع|ترتفع|تحت|فوق|يتغير|تتغير|تغير|يظهر|تظهر|يختفي|تختفي|نشر|منشور|ينشر|يصدر|تصدر|جديد(?:ه)?|يكتمل|ينتهي|تشتغل|يعمل)(?!\p{L})/u;
+const STATE = /\b(?:open(?:s|ed|ing)?|go(?:es|ing)? (?:live|online|up|down)|load(?:s|ed)?|back (?:online|up)|available|availability|sold out|on sale|in stock|restock(?:ed|s)?|appear(?:s|ed)?|disappear(?:s|ed)?|publish(?:es|ed|ing)?|post(?:s|ed)?|release(?:s|d)?|change(?:s|d)?|drop(?:s|ped)?|fall(?:s|en)?|rise(?:s|n)?|exceed(?:s|ed)?|hit(?:s)?|complete(?:s|d)?|finish(?:es|ed)?|new|below|above|reachable|unreachable)\b|(?<!\p{L})(?:يفتح(?:ون|وا)?|تفتح|فتح(?:وا|ت)?|مفتوح(?:ه)?|متاح(?:ه)?|يتاح|تتوفر|يتوفر|توفر|تنزل|ينزل|نزلت?|ينخفض|تنخفض|يرتفع|ترتفع|تحت|فوق|يتغير|تتغير|تغير|يظهر|تظهر|يختفي|تختفي|نشر|منشور|ينشر|يصدر|تصدر|جديد(?:ه)?|يكتمل|ينتهي|تشتغل|يشتغل|يعمل|تعمل)(?!\p{L})/u;
 const PRICE = /\b(?:prices?|stock status|availability|in stock|out of stock)\b|(?<!\p{L})(?:ال)?(?:سعر|اسعار|مخزون|توفر)(?!\p{L})/u;
 export const CURRENCY_TOPIC = /\b(?:exchange rates?|forex|fx rates?|rate|dollars?|euros?|sterling|yen|usd|sar|jpy|eur|gbp|aed|egp|cad)\b|(?<!\p{L})(?:سعر الصرف|الدولار|دولار|اليورو|يورو|الاسترليني|ريال|درهم|الين)(?!\p{L})/u;
 export const WEATHER_TOPIC = /\b(?:weather|temperatures?|rain(?:fall)?|precipitation|wind(?: speed)?)\b|(?<!\p{L})(?:الطقس|الجو|حراره|الحراره|درجه الحراره|المطر|امطار|الامطار|هطول|الرياح|رياح)(?!\p{L})/u;
