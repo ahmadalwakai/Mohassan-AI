@@ -1,4 +1,3 @@
-import type { RequestUnderstandingView } from './understanding/index.js';
 import { z } from 'zod';
 import { returnedTo } from './return-to.js';
 import { explicitKnowledgeDocumentRequest } from './knowledge-document-request.js';
@@ -91,11 +90,9 @@ export interface RequestResolution {
   pendingQuestionId: string | null;
   sourceAssessment?: RequestScopeAssessment;
   constraints?: UserRequestConstraints;
-  understanding?: RequestUnderstandingView;
 }
 export interface RequestContextOptions {
   turnId?: string;
-  understanding?: RequestUnderstandingView;
   pendingQuestion?: { id: string; fields?: readonly RequestSlotKind[] };
   learnedFollowUp?: 'follow_up' | 'new';
 }
@@ -397,7 +394,7 @@ function resolveRequestContextBase(request: string, previousValue?: unknown, opt
   const found = explicitSlots(correction.text, intent === 'ads' || previous?.intent === 'ads');
   const follow = correction.correction || FOLLOW_LEAD.test(original) || CORRECTION.test(fold(original)) || pointsBack(fold(trimPunctuation(original)))
     || /^(?:بكرة|غدا|غدًا|tomorrow|tonight)(?:[؟?!.])?$/iu.test(original);
-  const bareAnswer = !options.understanding?.question && intent !== 'compute' && !startsNewAction(requestActionText(original)) && !BROWSER.test(fold(original)) && !WRITING.test(fold(original)) && !REMINDER.test(fold(original))
+  const bareAnswer = intent !== 'compute' && !startsNewAction(requestActionText(original)) && !BROWSER.test(fold(original)) && !WRITING.test(fold(original)) && !REMINDER.test(fold(original))
     && !MEMORY.test(fold(original)) && !CODING.test(fold(original)) && !/^(?:ابحث|search|look up|ما |ماذا |كم |كيف |هل |what |when |where |how )/iu.test(fold(original));
   const pendingId = TurnId.safeParse(options.pendingQuestion?.id);
   if (pendingId.success && bareAnswer && (ACK.test(fold(original)) || found.length > 0 || original.split(' ').length <= 8)) {
@@ -540,17 +537,7 @@ function previousSource(state: RequestContextState | null): RequestScopeAssessme
 /** Apply the shared source boundary after reference resolution, before exposing a public query. */
 export function resolveRequestContext(request: string, previousValue?: unknown, options: RequestContextOptions = {}): RequestResolution {
   const constraints = parseUserRequestConstraints(request);
-  const understanding = constraints ? undefined : options.understanding;
-  const matched = resolveRequestContextBase(constraints?.safeActionText ?? understanding?.parserText ?? request, previousValue, { ...options, understanding });
-  // A host-owned card consumes the submitted value, including its original spelling.
-  const result = understanding && matched.kind === 'answer' ? resolveRequestContextBase(request, previousValue, { ...options, understanding: undefined }) : matched;
-  if (understanding && matched.kind !== 'answer') {
-    result.original = clean(request).slice(0, MAX_CONTEXT_REQUEST);
-    if (result.resolved !== null) {
-      result.resolved = clean(request);
-      result.understanding = understanding;
-    }
-  }
+  const result = resolveRequestContextBase(constraints?.safeActionText ?? request, previousValue, options);
   const previous = parseRequestContextState(previousValue);
   if (isEntireLiteralRequest(request) && result.kind !== 'answer') {
     result.kind = 'ambiguous'; result.intent = 'unknown'; result.scope = 'private'; result.query = null;
@@ -569,8 +556,7 @@ export function resolveRequestContext(request: string, previousValue?: unknown, 
     }
   }
   const priorSource = previousSource(previous);
-  const scopeOptions = { contextKind: result.kind, previous: priorSource, understanding: result.understanding };
-  let source = assessRequestScope(requestActionText(result.resolved ?? ''), scopeOptions);
+  let source = assessRequestScope(requestActionText(result.resolved ?? ''), { contextKind: result.kind, previous: priorSource });
   const retainedAcknowledgement = result.intent === 'chat' && result.nextState !== null && result.nextState.intent !== 'chat';
   if (source.scope === 'private') {
     if (source.operation === 'transform' && source.destination === 'writing') result.intent = 'writing';
@@ -587,7 +573,7 @@ export function resolveRequestContext(request: string, previousValue?: unknown, 
     result.kind = 'ambiguous'; result.scope = 'unknown'; result.query = null; result.nextState = null;
     if (!result.ambiguities.includes('missing_reference')) result.ambiguities.push('missing_reference');
   }
-  if (result.query && !reviewPublicProjection(requestActionText(result.original), result.query, scopeOptions).eligible) {
+  if (result.query && !reviewPublicProjection(requestActionText(result.original), result.query, { contextKind: result.kind, previous: priorSource }).eligible) {
     result.query = null;
     // A search projection being unavailable does not make a self-contained
     // instruction ambiguous. Local capabilities or a model may still handle it.

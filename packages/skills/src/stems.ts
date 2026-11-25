@@ -25,17 +25,7 @@ over best way ways step steps tip tips guide some any all very just also than th
 const STOP_WORDS = STEM_STOP_WORDS;
 const ARTICLES = ['وبال', 'فبال', 'وكال', 'وال', 'فال', 'بال', 'كال', 'لل', 'ال'];
 const CLITICS = ['و', 'ف', 'ب', 'ل', 'ك'];
-const NUMBER_SUFFIXES = ['يات', 'ات', 'ون', 'ين', 'ان'];
-const SUFFIXES = [...NUMBER_SUFFIXES, 'ها', 'هم', 'هن', 'كم', 'نا', 'يه', 'ي', 'ه'];
-const POSSESSIVES = ['هما', 'كما', 'ها', 'هم', 'هن', 'كم', 'كن', 'نا', 'ه', 'ك', 'ي'];
-// These word families need more than affix removal. Match whole words to preserve unrelated roots.
-const LEMMA_FAMILIES = [
-  [/^(?:استقلال|استقل(?:ت|تم|تن|نا|وا)?|[تني]ستقل(?:ان|ون|ن|ين)?)$/u, 'استقلال'],
-  [/^(?:استخدام|استخدم(?:ت|تم|تن|نا|وا)?|[تني]ستخدم(?:ان|ون|ن|ين)?)$/u, 'استخدام'],
-  [/^(?:اعلان|اعلن(?:ت|تم|تن|نا|وا)?|[تني]علن(?:ان|ون|ن|ين)?)$/u, 'اعلان'],
-  [/^(?:لغه|لغت|لغات)$/u, 'لغه'],
-  [/^(?:عاصمه|عاصمت|عواصم)$/u, 'عاصمه'],
-] as const;
+const SUFFIXES = ['يات', 'ات', 'ون', 'ين', 'ان', 'ها', 'هم', 'هن', 'كم', 'نا', 'يه', 'ي', 'ه'];
 const ARABIC = /\p{Script=Arabic}/u;
 /** The reader reads the first 800 characters of a request. */
 const MAX_REQUEST_CHARS = 800;
@@ -45,23 +35,11 @@ export function arabicBase(word: string): string {
   for (const article of ARTICLES) if (word.startsWith(article) && word.length - article.length >= 3) return word.slice(article.length);
   return word;
 }
-function withoutSuffix(word: string, suffixes: readonly string[]): string {
-  for (const suffix of suffixes) if (word.endsWith(suffix) && word.length - suffix.length >= 3) return word.slice(0, -suffix.length);
-  return word;
-}
 export function arabicStem(word: string): string {
-  return withoutSuffix(arabicBase(word), SUFFIXES);
-}
-
-function arabicLemma(word: string): string {
-  const base = arabicBase(word);
-  const unpossessed = withoutSuffix(base, POSSESSIVES);
-  const stem = withoutSuffix(unpossessed, unpossessed === base ? SUFFIXES : NUMBER_SUFFIXES);
-  const forms = [base, unpossessed, stem].flatMap(form => {
-    const unjoined = form.replace(/^[وف]/u, '');
-    return [form, unjoined, arabicBase(unjoined).replace(/^[بلك]/u, '')];
-  });
-  return LEMMA_FAMILIES.find(([pattern]) => forms.some(form => pattern.test(form)))?.[1] ?? stem;
+  let stem = word;
+  for (const article of ARTICLES) if (stem.startsWith(article) && stem.length - article.length >= 3) { stem = stem.slice(article.length); break; }
+  for (const suffix of SUFFIXES) if (stem.endsWith(suffix) && stem.length - suffix.length >= 3) { stem = stem.slice(0, -suffix.length); break; }
+  return stem;
 }
 export function englishStem(word: string): string {
   let stem = word.replace(/'s$/u, '');
@@ -97,19 +75,10 @@ function functionWord(word: string): boolean {
 
 /** Stems a skill is indexed by. The same folding and stemming runs on both sides, so they meet even when the stem is imperfect. */
 export function skillStems(text: string, options: StemOptions = {}): string[] {
-  return collectKeys(text, word => stemOf(word, options));
-}
-
-/** Content keys for matching Arabic word forms. Non-Arabic words are folded and kept whole. */
-export function lemmaKeys(text: string): string[] {
-  return collectKeys(text, word => ARABIC.test(word) ? arabicLemma(word) : word);
-}
-
-function collectKeys(text: string, keyOf: (word: string) => string): string[] {
   const stems = new Set<string>();
   for (const word of words(text)) {
     if (functionWord(word)) continue;
-    const stem = keyOf(word);
+    const stem = stemOf(word, options);
     if (stem.length >= 2 && !STOP_WORDS.has(stem)) stems.add(stem);
   }
   return [...stems];

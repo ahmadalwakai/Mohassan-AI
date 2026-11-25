@@ -57,7 +57,7 @@ import { evaluateLocalSequence } from './assistant/local-sequence.js';
 import { isCampaignRequest } from './assistant/campaign-request.js';
 import { armProgressPause, createProgressRecovery, restoreProgressRecovery, resumeBrowserProgressAutomatically, resumeProgressAfterRetry, reviewProgressRecovery, type ProgressRecoveryContext } from './assistant/progress-recovery.js';
 import { rebindBrowserAction, reserveBrowserRecovery, transientBrowserFailure, type BrowserRecoveryEntry } from './assistant/browser-recovery.js';
-import { bootstrapRequestContext, parseRequestContextState, requestActionText } from './assistant/request-context.js';
+import { bootstrapRequestContext, parseRequestContextState, requestActionText, resolveRequestContext } from './assistant/request-context.js';
 import { createChatSupervisor, observeChatCapture, observeChatLocalAnswer, observeChatTool, resumeChatSupervisor, reviewChatAnswer } from './assistant/chat-supervision.js';
 import { createComputationMemoryReceipt, restoreComputationMemoryReceipt } from './assistant/computation-memory-receipt.js';
 import { runComputationMemoryFlow } from './assistant/computation-memory-flow.js';
@@ -83,9 +83,9 @@ import { actionOperandHash, actionRequestHash, compileActionCompletionContract, 
   restoreActionCompletionLedger, reviewActionCompletion, type ActionCompletionEventInput, type ActionCompletionKind } from './assistant/action-completion.js';
 import { isEntireLiteralRequest, parseUserRequestConstraints, requestCapabilityAllowed, requestConstraintReply, requestScopeActionText, reviewPublicProjection, type ForbiddenRequestCapability, type RequestScopeAssessment, type UserRequestConstraints } from './assistant/request-scope.js';
 import { evaluateLocalKnowledge, isKnowledgeDocumentRequest, type LocalKnowledgeDocument } from './assistant/local-knowledge.js';
+import { decideRequestRoute } from './assistant/routing-decision.js';
 import { observePlanMessage, runCompiledChatPlan } from './assistant/plan/chat.js';
 import { clarificationAnswers, clarifyCommand } from './assistant/clarify/host.js';
-import { boundUnderstanding, resolveWithArabicUnderstanding, routeWithArabicUnderstanding } from './assistant/understanding/rollout.js';
 import { describeSearchDestination, extractPublicSearchQueries, isSearchEntryElement, mergePublicQueryTerms, reviewGeneratedPublicQuery } from './assistant/public-query-provenance.js';
 import { reviewExplicitPublicBrowserQuery } from './assistant/browser-public-query.js';
 import { ADS_REWRITE_JSON_SCHEMA, ADS_REWRITE_SCHEMA_NAME, ADS_REWRITE_SYSTEM, buildRewritePrompt, type RewriteRequest } from '@mohassan/google-ads';
@@ -308,7 +308,7 @@ function assertPublicSearch(request: string, query: string, state: BrainState, g
   assertRequestCapability(request, 'public_search');
   if (query.length > 500) throw new BrowserError('RESEARCH_QUERY_INVALID', 'موضوع البحث طويل. حدّد الموضوع الأساسي للبحث.', 400);
   const projection = reviewPublicProjection(requestActionText(request), query, {
-    contextKind: state.requestResolution?.kind, previous: state.previousSource ?? undefined, understanding: boundUnderstanding(request, state.requestResolution),
+    contextKind: state.requestResolution?.kind, previous: state.previousSource ?? undefined,
   });
   const provenance = generated ? reviewGeneratedPublicQuery(request, query, state.publicQueryTerms ?? []) : null;
   const explicitBrowserQuery = projection.reason === 'source_not_public' ? reviewExplicitPublicBrowserQuery(requestActionText(request), query) : null;
@@ -2015,7 +2015,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         if (level.level === 4) { await finish(id, runId, state, level.reason, 'blocked'); return; }
       }
       if (await handleStructuredMemoryTurn({ db, ownerId, conversationId: id, runId, state, source: effectiveSource, constraints, task: run.intent === 'task', memoryAvailable: Boolean(tools?.memory), quota: MAX_MEMORY_SAVES, scrub: text => vault.scrub(id, clean(text)), lockedExecution, finish })) return;
-      const actionRequest = requestActionText(requestScopeActionText(request, boundUnderstanding(request, state.requestResolution)));
+      const actionRequest = requestActionText(requestScopeActionText(request));
       const conversationTurn = await enterConversationTurn({ db, ownerId, conversationId: id, turnId: runId, text: request, intent: run.intent, state, active, shadow: config.conversationShadow, chatModel: hasChatModel(), canReadPublicPage: Boolean(config.readPage) });
       const computationMemoryBinding = { ownerId, conversationId: id, runId, evaluatedAt: effectiveSource.evaluatedAt };
       const computationMemoryReceipt = createComputationMemoryReceipt(request, computationMemoryBinding);
@@ -3967,7 +3967,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       return resume(ownerId, id, row.active_run_id, (state, _tx, message) => {
         if (state.progressRecovery?.pendingPause) throw new BrowserError('CHAT_PROGRESS_CHOICE_REQUIRED', 'اختر «حاول بطريقة أخرى» أو «توقف هنا» من بطاقة المتابعة.', 409);
         const clarifying = Boolean(state.requestClarification);
-        const resolution = resolveWithArabicUnderstanding(clean(input.text), clarifying ? null : state.requestContext, {
+        const resolution = resolveRequestContext(clean(input.text), clarifying ? null : state.requestContext, {
           turnId: randomUUID(), pendingQuestion: !clarifying && row.question?.id ? { id: row.question.id } : undefined,
         });
         if (clarifying) {
@@ -4032,7 +4032,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         previousContext = bootstrapRequestContext(previousMessages.reverse().map(message => ({ id: message.id, text: clean(message.text) })));
       }
       const chatModel = hasChatModel();
-      const routing = routeWithArabicUnderstanding({ text: clean(input.text), context: previousContext, turnId: runId, fullAccess: fullForRouting,
+      const routing = decideRequestRoute({ text: clean(input.text), context: previousContext, turnId: runId, fullAccess: fullForRouting,
         previousUserTurn: previousRun?.goal,
         capabilities: { browser: true, search: true, memory: Boolean(tools?.memory), adsModel: Boolean(config.adsModel),
           computer: Boolean(tools?.computer), coding: Boolean(tools?.work?.code), chatModel, writerModel: chatModel, planner: true } });
