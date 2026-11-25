@@ -75,6 +75,7 @@ import { recordSkillGap, createSkillBenchmarkControl, createSkillForgeControl, c
 import { MAX_GITHUB_SKILLS, MAX_IMPORTED_VERSIONS_PER_OWNER } from '../../../packages/skills/src/import-store.js';
 import { buildSkillReaderIndex, createSkillReader, skillInstructionText } from './assistant/skill-reader.js';
 import { createSkillRemoteScheduler, registerSkillRemoteRoutes, type SkillRemoteSettings } from './skill-remote.js';
+import { registerProductionMetrics } from './ops/metrics/index.js';
 
 /** Fallback window for the reader when no catalogue index is given (tests). The chat passes the catalogue index, which has no window. */
 const SKILL_READER_DISCOVERY = MAX_GITHUB_SKILLS + MAX_IMPORTED_VERSIONS_PER_OWNER + 50;
@@ -172,6 +173,7 @@ export async function createApplication(config: AppConfig) {
   type SessionUser = {id: string; name: string; email: string};
   const sessions = new WeakMap<object, Promise<SessionUser | null>>();
   const roles = new WeakMap<object, Promise<WorkspaceRole | null>>();
+  const metrics = await registerProductionMetrics(app, config.production, request => roles.get(request), database.db);
   const sessionUser = (request: {headers: Record<string, unknown>}) => {
     let found = sessions.get(request);
     if (!found) {
@@ -243,6 +245,7 @@ export async function createApplication(config: AppConfig) {
     const code = typeof error.statusCode === 'number' && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500;
     return reply.code(code).send({error: {code: typeof error.code === 'string' && code < 500 ? error.code : 'INTERNAL_ERROR', message: code < 500 ? error.message : 'تعذر إكمال الطلب. أعد المحاولة.'}});
   });
+  metrics.registerRoutes();
   app.get('/health', async () => ({status: 'ok'}));
   app.get('/api/setup', async () => {
     const user = await database.db.selectFrom('user').select('id').limit(1).executeTakeFirst();

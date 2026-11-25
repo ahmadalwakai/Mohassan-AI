@@ -1,0 +1,224 @@
+.page {
+  width: min(100% - 2rem, 74rem);
+  margin-inline: auto;
+  padding-block: 2.5rem;
+  font-family: var(--font-chat), "Segoe UI", Tahoma, Arial, sans-serif;
+  line-height: 1.6;
+}
+
+.header {
+  margin-block-end: 1rem;
+}
+
+.header a {
+  color: var(--green);
+  text-underline-offset: 0.2em;
+}
+
+.header h1 {
+  margin-block-start: 0.65rem;
+  font-size: clamp(1.6rem, 4vw, 2.45rem);
+}
+
+.toolbar, .actions, .filters, .state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.toolbar {
+  justify-content: space-between;
+}
+
+.actions button, .state button, .filters select {
+  min-height: 2.5rem;
+  padding: 0.4rem 0.7rem;
+  color: var(--green-dark);
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  background: var(--surface);
+}
+
+.actions button, .state button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.actions button:hover, .state button:hover {
+  background-color: var(--mint);
+}
+
+.filters {
+  margin-block: 1.25rem;
+}
+
+.filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 9rem;
+  color: var(--text);
+}
+
+.window, .note {
+  color: var(--text);
+  font-size: 0.84rem;
+}
+
+.notice {
+  border-inline-start: 0.2rem solid var(--green);
+  padding: 0.65rem 0.8rem;
+  margin-block-start: 0.75rem;
+  background: var(--mint);
+}
+
+.section {
+  margin-block-start: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  padding: clamp(0.75rem, 3vw, 1.35rem);
+  background-color: var(--surface);
+}
+
+.section > .window {
+  margin-block-end: 0.75rem;
+}
+
+.section h2 {
+  font-size: 1.17rem;
+}
+
+.section h3 {
+  margin-block-start: 0.65rem;
+  font-size: 1rem;
+}
+
+.cards, .values {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 0.75rem;
+}
+
+.card, .chart {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  background: var(--background);
+  padding: 0.8rem;
+}
+
+.card h3 {
+  margin-block-start: 0;
+}
+
+.values {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 7rem), 1fr));
+  margin-block: 0.4rem 0;
+}
+
+.values dt {
+  color: var(--text);
+}
+
+.values dd {
+  font-size: 1.2rem;
+  font-weight: 650;
+  margin: 0.1rem 0 0;
+}
+
+.tableScroll {
+  overflow-x: auto;
+  margin-block: 0.55rem;
+}
+
+.tableScroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.tableScroll caption, .tableScroll th, .tableScroll td {
+  padding: 0.5rem 0.6rem;
+  text-align: start;
+}
+
+.tableScroll caption {
+  color: var(--text);
+}
+
+.tableScroll th, .tableScroll td {
+  border-block-end: 1px solid var(--line);
+}
+
+.tableScroll thead, .tableScroll th[scope="rowgroup"] {
+  background-color: var(--background);
+}
+
+.tableScroll bdi, .chart figcaption bdi {
+  overflow-wrap: anywhere;
+}
+
+.chart {
+  margin: 0.65rem 0 0;
+}
+
+.chart figcaption {
+  font-weight: 650;
+  margin-block-end: 0.6rem;
+}
+
+.plot {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.2rem 0.35rem;
+  direction: ltr;
+}
+
+.axisValues, .axisTimes {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text);
+  font-size: 0.7rem;
+}
+
+.axisValues {
+  flex-direction: column;
+  text-align: right;
+}
+
+.axisTimes {
+  grid-column: 2;
+}
+
+.bars {
+  height: 7rem;
+  display: grid;
+  align-items: stretch;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  column-gap: 1px;
+  border-block: 1px solid var(--line);
+}
+
+.barTrack {
+  display: flex;
+  align-items: end;
+  background: var(--surface);
+}
+
+.bar {
+  width: 100%;
+  min-height: 2px;
+  background: var(--green);
+}
+
+.chartData {
+  margin-block-start: 0.65rem;
+}
+
+.chartData summary {
+  color: var(--green);
+  cursor: pointer;
+}

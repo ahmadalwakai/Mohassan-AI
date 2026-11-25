@@ -99,6 +99,7 @@ import { assessBrowserVerification } from './assistant/verification.js';
 import { newGoalState, observeFailure, observeOutcome, reviewOpen, reviewStop, stagnationWarning, type BrainVersion } from './assistant/goal-integrity.js';
 import { ChatWaitQuerySchema, abortWhenClosed, conversationVersion, waitForChange } from './chat-wait.js';
 import { noPreviousAnswer, shorterAnswer, shorterRequest } from './assistant/answer-reshape.js';
+import { initialProgressMarker } from './ops/metrics/chat-progress.js';
 import { fullerName, returnParts } from './assistant/return-to.js';
 import { RunLedgerError, addEvidence, appendStep, beginRepair, cancelLedger, classifySteering, collectStateEvidence, countModelCall, createRunLedger, criterionLabel, decideVerdict, planStep,
   projectRunView, restoreRunLedger, setStepAuthorization, settleOpenSteps, settleStep, startStep, tryEnterPhase, type RunLedger } from './assistant/agent-run.js';
@@ -4061,7 +4062,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // The browser level the request asks for (plan §6.1), logged with its reason and time after the run row it refers to. detail() re-derives the current level from the rows.
       const visibility = decideBrowserVisibility({ request: clean(input.text), route: routing.route, role: fullForRouting ? 'owner' : 'member' });
       await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId, kind: 'visibility', message: visibility.reason,
-        data: JSON.stringify({ level: visibility.level, code: visibility.code, route: routing.route }) }).execute();
+        data: JSON.stringify({ level: visibility.level, code: visibility.code, route: routing.route, ...initialProgressMarker(db) }) }).execute();
     });
     // The corrected run is committed; the old worker stops at once (its lease token already changed, so it can no longer
     // write), and a prepared task nobody approved is withdrawn.
