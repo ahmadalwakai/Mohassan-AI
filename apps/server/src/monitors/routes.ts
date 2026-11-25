@@ -40,7 +40,12 @@ export async function registerMonitorRuntime(app: FastifyInstance, db: Kysely<an
   app.post(monitorPaths.base, mutation, async request => {
     const body = (control.v2 ? v2Mutation : MonitorApproveSchema).parse(request.body);
     const ownerId = (await owner(request)).id;
-    if ('actionId' in body) return control.confirmAction(ownerId, body.actionId, body.approved ?? true, body.targetId);
+    if ('actionId' in body) {
+      const result = await control.confirmAction(ownerId, body.actionId, body.approved ?? true, body.targetId);
+      if (!result.monitor) return result;
+      const [monitor] = await withMonitorCardAlerts(db, ownerId, [result.monitor]);
+      return { ...result, monitor };
+    }
     if ('proactiveOffers' in body) return control.setProactiveOffers(ownerId, body.proactiveOffers);
     const result = 'candidateId' in body && typeof body.candidateId === 'string'
       ? await control.store.choose(ownerId, body.proposalId, body.candidateId)

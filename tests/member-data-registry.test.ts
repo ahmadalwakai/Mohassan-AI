@@ -16,6 +16,7 @@ const nonAccountTables = {
   search_provider_queries: 'Shared provider query-hash throttling, which expires independently of an account.',
   skill_benchmarks: 'Shared administrator-configured benchmark suite definitions. Runs are scoped by account.',
   smart_monitor_hosts: 'Shared, expiring public host limits keyed by host hash.',
+  smart_monitor_visual_budget: 'Shared daily visual read budget with one global key.',
 } as const;
 
 const createTableDeclaration = /\bCREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:(?:"[^"]+"|\w+)\s*\.\s*)?(?:"([^"]+)"|(\w+))\s*\(|\.createTable\(\s*['"]([^'"]+)['"]/giu;

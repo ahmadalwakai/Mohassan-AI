@@ -50,7 +50,8 @@ describe('web reminder proxy', () => {
     const [target, forwarded] = outbound.mock.calls[0]!;
     expect(target.pathname).toBe(`/api/reminders/${id}`);
     expect(forwarded.method).toBe('PATCH');
-    expect(new TextDecoder().decode(forwarded.body as Uint8Array)).toBe(body);
+    expect(forwarded.body).toBeInstanceOf(ReadableStream);
+    expect(await new Response(forwarded.body).text()).toBe(body);
 
     const denied = await PATCH(request, { params: Promise.resolve({ path: ['chat', id] }) });
     expect(denied.status).toBe(405);

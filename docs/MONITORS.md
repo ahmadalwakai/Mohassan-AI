@@ -360,6 +360,22 @@ offline=(docker run --pull=never --rm --network none --cap-drop ALL --security-o
 
 All commands in this block exited **0**. The broad suite passed 202 tests across 15 files during development. On the frozen candidate, both typecheck projects and the focused six-suite rerun passed, including 57 tests. The browser runs passed 1/1 for GitHub approval and 2/2 for the existing monitor workflows. The GitHub command passed again on the frozen source after benchmarking in 56.7 seconds. Earlier cold browser runs hit the inherited 45-second timeout. The passing runs used 120 seconds. The OpenAPI validator checked 17 unit and 14 simulation fixtures across seven GitHub REST operations.
 
+## Feature flags and proposed owner trial
+
+| Flag | Default | Effect | Proposed trial value and reason |
+| --- | --- | --- | --- |
+| `MOHASSAN_MONITORS_ENABLED` | `0` | `0` disables admission, routes and checks. `owner` allows owner-role accounts. `1` allows all active workspace accounts. | `owner` limits v2, source checks and context decisions to owner-role accounts. |
+| `MOHASSAN_MONITORS_V2` | `0` | Enables v2 specifications, conversation management and answer-based offers for allowed accounts. | `1` exercises the v2 workflow and unlocks the source and context flags. |
+| `MOHASSAN_MONITORS_GITHUB` | `0` | Enables v2 watches for public GitHub releases, tags, pull requests and check status. | `1` exercises the source that reached 100% recall in PR #104’s held-out run. |
+| `MOHASSAN_MONITORS_PDF` | `0` | Enables v2 watches for selected content in public PDFs. | `1` exercises the source that reached 100% recall in the same run. |
+| `MOHASSAN_MONITORS_VISUAL` | `0` | Enables v2 visual reading on supported public pages and PDFs under a separate render budget. | `0` keeps visual reading out of the trial. PR #104 measured 75.5% recall against a 90% gate. |
+| `MOHASSAN_MONITOR_CONTEXT` | `0` | Selects the deterministic v2 reasoner for proposals, management, verified offers and reminder routing. | `1` exercises the reasoner in owner conversations. |
+| `MOHASSAN_MONITOR_CONTEXT_SHADOW` | `0` | Observes v2 context decisions through model relations with the local learned head when approved weights are installed. | `1` collects shadow observations without granting the head authority. |
+| `MOHASSAN_ARBITER_MONITOR_CONTEXT` | `0` | Allows arbiter influence after promotion when the other arbiter gates pass. | `0` keeps the deterministic reasoner in control. |
+| `MOHASSAN_ARBITER_MONITOR_CONTEXT_KILL` | `0` | Cancels arbiter authority when set to `1`. | `0` uses the default with monitor promotion disabled. |
+
+Use `MOHASSAN_MODEL_RELATIONS=shadow` for shadow observations, as in the development benchmark. Setting it to `off` suppresses model-relations observations. Learned-head scores require an approved local weights artifact and manifest. The owner decides whether to use this configuration. [Head setup](MONITOR-CONTEXT-DECISION-MODEL.md)
+
 ## Enable the rollout
 
 1. Deploy the server and web changes with `MOHASSAN_MONITORS_ENABLED=0`. For the trial, set `MOHASSAN_MONITORS_ENABLED=owner` in `/etc/mohassan/server.env` on each API replica and run `sudo systemctl restart mohassan.service`. In this mode, owner-role accounts get monitor detection, proposals, routes and scheduled checks. [Wave 6 deployment runbook](DEPLOY-WAVE-6-2026-11-25.md)
@@ -372,6 +388,28 @@ Set `MOHASSAN_MONITORS_ENABLED=1` on each API replica to enable monitoring for a
 Set `MOHASSAN_MONITORS_V2=1` alongside the original flag to try the v2 controls and new-monitor workflow. Set only the v2 flag to `0` to return to v1 chat behavior.
 
 ## Merge notes
+
+### Wave 6.1 integration
+
+The merge parents are #100, #104 and #105 in that order, on top of #102. Startup applies the full migration IDs below under the monitor schema lock. A legacy ID is updated in place with its original application timestamp. [Migration ledger](MIGRATION-LEDGER-2026-11-25.md)
+
+| Branch ID | Recorded ID |
+| --- | --- |
+| `044_smart_monitors_v2` | `044_smart_monitors_v2` |
+| `045_smart_monitor_conversation_controls` | `045_smart_monitor_conversation_controls` |
+| `046_smart_monitor_visual_budget` | `046_smart_monitor_visual_budget` |
+| `044_monitor_alert_feedback` | `047_monitor_alert_feedback` |
+| `046_smart_monitor_decisions` | `048_smart_monitor_decisions` |
+
+- #100 conflicts in `command-chat.ts` and `assistant-app.tsx` retain gated capabilities and alert controls alongside v2 status, verified answer offers and conversation controls. `monitors/chat.ts`, `flag.ts` and `routes.ts` apply account access to v2 and retain feedback and approval quotas. `monitors/delivery.ts`, `runtime.ts`, `sources.ts` and `store.ts` preserve credential filtering, owner scheduling and metrics for v2 checks, pauses and digests. `monitors/page.ts` exports the v2 reader helper with Phase 1 redaction. The contracts `index.ts` and `monitors.ts` retain alert fields and add v2 management and choices. The migration ledger and this guide retain both branches’ entries. `smart-monitor-runtime.test.ts` covers v2 metrics and owner-only digest admission.
+- #104 conflicts in `monitors/chat.ts`, `runtime.ts` and `store.ts` combine owner checks and health metrics with GitHub, PDF and visual source admission. The ledger adds the visual budget before feedback.
+- #105 conflicts in `monitors/chat.ts` and `flag.ts` apply the owner gate before context evaluation and publication. The context frame recognizes GitHub requests and verified GitHub answer evidence. `monitors/migration-v2.ts` applies source, feedback and decision schema in order. `monitors/route-keys.ts` and `routes.ts` keep the Phase 1 vote endpoint and add the consent preference. `monitors/store.ts` retains source predicates and records proposal outcomes inside the account-scoped transaction. The benchmark `compare.py`, `monitor_audit.py` and `runner.py` retain source and context instrumentation and accept the owner trial.
+
+The held-file hooks use the existing startup call in `apps/server/src/app.ts` for the migration chain. In `apps/server/src/command-chat.ts`, the gated v2 capability, management status, current conversation state and verified answer check use the existing monitor integration points. `packages/contracts/src/command-chat.ts` adds the optional v2 capability. `packages/browser/src/engine.ts` accepts an injected safe network and adds bounded inspection for visual reads.
+
+`apps/web/components/assistant-app.tsx` mounts conversation controls and passes the v2 capability to settings. `monitors-client.ts` shares the monitor-update event. `smart-monitors.tsx` displays choices, offer settings and Phase 2 source labels. The new `smart-monitors-v2.tsx` contains v2 conversation controls and labels Phase 2 targets.
+
+The Arabic alert buttons write `monitor_alert_feedback` through `POST /api/chat/monitors/alerts/:alertId/feedback`. The export reads votes from that table and joins them with proposal features and outcomes. The vote contains the account and alert identifiers, rating, an optional enumerated reason and a timestamp. Recording is enabled for the workspace owner by default. Members can opt in through `decision-recording` when their account has monitor access. Opting out deletes their votes and recorded decisions. Account deletion also removes these records.
 
 ### Phase 2, stacked on PR #100
 

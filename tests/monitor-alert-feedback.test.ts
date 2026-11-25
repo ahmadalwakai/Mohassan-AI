@@ -91,10 +91,9 @@ describe('authenticated monitor alert feedback', () => {
       outcome: 'completed', language: 'en' }, at);
     const input = { rating: 'helpful' };
     expect((await feedback(alertId, undefined, input)).statusCode).toBe(401);
-    for (const response of [await feedback(alertId, owner, input), await feedback(runId, member, input)]) {
-      expect(response.statusCode, response.body).toBe(404);
-      expect(response.json()).toMatchObject({ error: { code: 'MONITOR_ALERT_NOT_FOUND' } });
-    }
+    const foreign = await feedback(alertId, owner, input);
+    expect(foreign.statusCode, foreign.body).toBe(404);
+    expect(foreign.json()).toMatchObject({ error: { code: 'MONITOR_ALERT_NOT_FOUND' } });
     expect((await feedback(alertId, member, { rating: 'helpful', reason: 'late' })).statusCode).toBe(400);
     expect((await feedback(alertId, member, { rating: 'not_helpful', reason: 'free text' })).statusCode).toBe(400);
     const excluded = await feedback(alertId, member, input);
@@ -104,7 +103,11 @@ describe('authenticated monitor alert feedback', () => {
     const recording = await request('POST', `${monitors}/decision-recording`, member, { decisionRecording: true });
     expect(recording.statusCode, recording.body).toBe(200);
     expect(recording.json()).toEqual({ included: true, canChange: true });
+    const ordinary = await feedback(runId, member, input);
+    expect(ordinary.statusCode, ordinary.body).toBe(404);
+    expect(ordinary.json()).toMatchObject({ error: { code: 'MONITOR_ALERT_NOT_FOUND' } });
     expect((await feedback(alertId, member, input)).statusCode).toBe(200);
+    expect((await request('POST', `${monitors}/alert-feedback`, owner, { noticeId: alertId, helpful: true })).statusCode).toBe(404);
     expect((await feedback(alertId, owner, { rating: 'not_helpful' })).statusCode).toBe(404);
     expect(await db.selectFrom('monitor_alert_feedback').select(['user_id', 'rating']).where('alert_id', '=', alertId).execute())
       .toEqual([{ user_id: member.id, rating: 'helpful' }]);
