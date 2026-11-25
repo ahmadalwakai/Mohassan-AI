@@ -1,4 +1,5 @@
-import { appliesInYear, formatAmount, orderAmounts, quantityInUnit, unitId, validateYear } from './query-values.ts';
+import { appliesInYear, formatAmount, orderAmounts, orderedStatementDate, quantityInUnit, unitId, validateYear } from './query-values.ts';
+import { prepareEntityLinker } from './entity-linking.ts';
 import { normalizeLookupKey, openKnowledgeStore } from './store.ts';
 import { ENTITY_CATEGORIES, type DataCard, type EntityCategory, type Language, type StoredClaim, type StoredEntity } from './types.ts';
 
@@ -36,6 +37,10 @@ export interface EntityLookupOptions {
 export interface FactLookupOptions {
   /** Gregorian calendar year. Undated statements cannot substantiate a dated answer. */
   year?: number;
+  /** Keep the earliest or latest dated values, observations or interval starts. */
+  order?: 'earliest' | 'latest';
+  /** Keep normal as well as preferred statements. Deprecated statements are always excluded. */
+  allRanks?: boolean;
 }
 
 interface QuantityQuery extends FactLookupOptions {
@@ -115,22 +120,46 @@ function sourceFor(card: DataCard, entityId: string, revision: number | null): W
   };
 }
 
-function bestFacts(rows: readonly ClaimRow[], card: DataCard, year: number | undefined, snapshotDay: number): Fact[] {
+type DatedFact = { fact: Fact; earliest: number; latest: number };
+
+function chronologicalFacts(facts: DatedFact[], order: NonNullable<FactLookupOptions['order']>, allRanks: boolean): Fact[] {
+  const pivot = order === 'latest'
+    ? facts.reduce((latestStart, date) => Math.max(latestStart, date.earliest), -Infinity)
+    : facts.reduce((earliestEnd, date) => Math.min(earliestEnd, date.latest), Infinity);
+  // Every interval that can still be the extreme is needed to expose uncertain order.
+  const candidates = facts.filter(date => order === 'latest' ? date.latest >= pivot : date.earliest <= pivot);
+  if (allRanks) return candidates.map(({ fact }) => fact);
+  const interval = (date: DatedFact) => `${date.earliest}:${date.latest}`;
+  const preferred = new Set(candidates.filter(({ fact }) => fact.statement.rank === 'preferred').map(interval));
+  return candidates.filter(date => date.fact.statement.rank === 'preferred' || !preferred.has(interval(date)))
+    .map(({ fact }) => fact);
+}
+
+function bestFacts(rows: readonly ClaimRow[], card: DataCard, options: FactLookupOptions, snapshotDay: number): Fact[] {
+  const { year, order, allRanks = false } = options;
+  const byRank = !allRanks && !order;
   let facts: Fact[] = [];
+  const dated: DatedFact[] = [];
   for (const row of rows) {
-    if (facts[0]?.statement.rank === 'preferred' && row.rank === 'normal') continue;
+    if (byRank && facts[0]?.statement.rank === 'preferred' && row.rank === 'normal') continue;
     const statement: StoredClaim = {
       property: row.property, id: row.statement_id, rank: row.rank, snak: JSON.parse(row.snak),
       qualifiers: JSON.parse(row.qualifiers), references: JSON.parse(row.refs),
     };
     if (year !== undefined && !appliesInYear(statement, year, snapshotDay)) continue;
-    if (facts[0]?.statement.rank === 'normal' && row.rank === 'preferred') facts = [];
-    facts.push({
+    const fact = {
       entityId: row.entity_id, property: row.property, statement,
       source: sourceFor(card, row.entity_id, row.revision),
-    });
+    };
+    if (order) {
+      const date = orderedStatementDate(statement);
+      if (date) dated.push({ fact, ...date });
+    } else {
+      if (byRank && facts[0]?.statement.rank === 'normal' && row.rank === 'preferred') facts = [];
+      facts.push(fact);
+    }
   }
-  return facts;
+  return order ? chronologicalFacts(dated, order, allRanks) : facts;
 }
 
 function uniqueAmount(facts: readonly Fact[], unit: string) {
@@ -217,7 +246,7 @@ export function openKnowledgeBase(databasePath: string) {
 
   function lookupFacts(entityId: string, property: string, options: FactLookupOptions = {}): Fact[] {
     validateYear(options.year);
-    return bestFacts(factsByEntity.all(entityId, property) as unknown as ClaimRow[], card, options.year, snapshotDay);
+    return bestFacts(factsByEntity.all(entityId, property) as unknown as ClaimRow[], card, options, snapshotDay);
   }
 
   function superlative(options: SuperlativeQuery): SuperlativeResult {
@@ -233,7 +262,7 @@ export function openKnowledgeBase(databasePath: string) {
 
     function consider(rows: ClaimRow[]) {
       if (!rows.length) return;
-      const candidates = bestFacts(rows, card, options.year, snapshotDay);
+      const candidates = bestFacts(rows, card, options, snapshotDay);
       const amount = uniqueAmount(candidates, unit);
       if (!amount) return;
       comparableEntities++;
@@ -282,5 +311,6 @@ export function openKnowledgeBase(databasePath: string) {
     };
   }
 
-  return { card, lookupEntity, lookupFacts, superlative, compare, close };
+  const linkEntity = prepareEntityLinker(db, lookupEntity);
+  return { card, lookupEntity, linkEntity, lookupFacts, superlative, compare, close };
 }

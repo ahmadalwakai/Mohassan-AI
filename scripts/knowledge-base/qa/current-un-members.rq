@@ -1,0 +1,9 @@
+SELECT DISTINCT ?country WHERE {
+  ?country p:P463 ?membership;
+           wdt:P31 wd:Q3624078.
+  ?membership ps:P463 wd:Q1065;
+              wikibase:rank ?rank.
+  FILTER(?rank != wikibase:DeprecatedRank)
+  FILTER NOT EXISTS { ?membership pq:P582 ?end. }
+}
+ORDER BY ?country

@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { ENTITY_LINK_SCHEMA, prepareEntityLinkWriter } from './entity-linking.ts';
 import { normalizeLookupKey } from './normalize.ts';
 import { ENTITY_CATEGORIES, type BuildInput, type DataCard, type StoredEntity } from './types.ts';
 
@@ -48,6 +49,7 @@ const SCHEMA = `
     PRIMARY KEY (entity_id, property, ordinal)
   ) WITHOUT ROWID;
   CREATE INDEX claims_by_property ON claims (property, entity_id);
+  ${ENTITY_LINK_SCHEMA}
 `;
 
 export interface Checkpoint {
@@ -137,6 +139,7 @@ export function openBuild(path: string, input: BuildInput): Build {
     const insertName = db.prepare('INSERT INTO names VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING');
     const insertCategory = db.prepare('INSERT INTO categories VALUES (?, ?)');
     const insertClaim = db.prepare('INSERT INTO claims VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    const linkIndex = prepareEntityLinkWriter(db);
     const advance = db.prepare('UPDATE build SET phase = ?, offset = ?, generation = generation + 1 WHERE id = 1');
 
     function assertCurrent(): void {
@@ -172,14 +175,21 @@ export function openBuild(path: string, input: BuildInput): Build {
         commit(checkpoint, () => {
           for (const entity of entities) {
             insertEntity.run(entity.id, entity.revision, JSON.stringify(entity.labels), JSON.stringify(entity.descriptions), JSON.stringify(entity.aliases));
+            linkIndex.popularity(entity.id, entity.sitelinkCount);
             for (const category of entity.categories) insertCategory.run(category, entity.id);
             for (const language of ['ar', 'en'] as const) {
               const label = entity.labels[language];
               const key = label && normalizeLookupKey(label);
-              if (key) insertName.run(key, entity.id, language, 'label', label);
+              if (key) {
+                insertName.run(key, entity.id, language, 'label', label);
+                linkIndex.name(entity.id, 'label', language, label);
+              }
               for (const alias of entity.aliases[language] ?? []) {
                 const aliasKey = normalizeLookupKey(alias);
-                if (aliasKey) insertName.run(aliasKey, entity.id, language, 'alias', alias);
+                if (aliasKey) {
+                  insertName.run(aliasKey, entity.id, language, 'alias', alias);
+                  linkIndex.name(entity.id, 'alias', language, alias);
+                }
               }
             }
             for (const [ordinal, claim] of entity.claims.entries()) {
