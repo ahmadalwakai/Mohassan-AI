@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "baselineCommit": "fb8e45289dd3a7b607d9c7c7b7188bf08c2c70f0",
+  "splitSeed": "mohassan-conversation-decides-split-v1",
+  "heldOutShare": 0.3,
+  "sourceSha256": {
+    "arabic-tod/ar_test.json": "16327f50a6a267af1f624114894047af25c59718789e46b44e3605f1e37fbe76",
+    "canard/test.json": "7b01df7301734d7e76a14970965f0bf71b68f91d2ffd90eed16fef83bbd6a11f",
+    "cod/ar_dev.json": "acc62b1eac476b382f73d806839ac553953706cbd9520a206ba9413473b1bd49",
+    "cod/ar_test.json": "9084e591edddb1d01123eeef7f267f3d1173d41a15f0c95648827d68170e97ad",
+    "cod/en_dev.json": "da4c5c8e1f62b1c782e512f7cb3a66268b09f7f614f292d26bb3681cc7d8fc49",
+    "cod/en_test.json": "f27afa3dc68e0116190afadeb848c1f67e2fa5d165675e31ad2005c634a003cb",
+    "multi3woz/Arabic/data.json": "57058ec4db35aad25386f2dd533e9ee336592fc0b983361c2208818e0495fea4"
+  },
+  "partitions": {
+    "cod": {
+      "development": {
+        "groups": 134,
+        "rows": 274,
+        "sha256": "e1b4b962406333a78187113be13908b7dee6757619a650381b920d2841683732"
+      },
+      "held-out": {
+        "groups": 57,
+        "rows": 114,
+        "sha256": "50aa33c16b4b745980ecbcd3d961b4779f6214e75e1a3a87255acc28cc72384f"
+      }
+    },
+    "canard": {
+      "development": {
+        "groups": 426,
+        "rows": 3985,
+        "sha256": "351a85378a890272fa4c605009ad04751f1eb58403e0003f40aa8cdff4dce546"
+      },
+      "held-out": {
+        "groups": 182,
+        "rows": 1586,
+        "sha256": "33c4110d7549c41dc51b87e4908cf2196f51f134514a11a3baaa85910e93c01b"
+      }
+    },
+    "arabic-tod": {
+      "development": {
+        "groups": 301,
+        "rows": 301,
+        "sha256": "63f63e5e778b9729826de7ea6c79d781f73450f277f63706409d0d1eebbc7716"
+      },
+      "held-out": {
+        "groups": 129,
+        "rows": 129,
+        "sha256": "b6e3b4bdce8bc391cabc673438556e3fc268e2919e29a6b8bf8415ad81a2a8cd"
+      }
+    },
+    "multi3woz": {
+      "development": {
+        "groups": 6412,
+        "rows": 6412,
+        "sha256": "71ac20a30d8a6a6bdd44cae7052515c3a39fadbcedb6f27265124082dce8924d"
+      },
+      "held-out": {
+        "groups": 2748,
+        "rows": 2748,
+        "sha256": "863c9a218bde272515048e3ca3dd3cffe5dcc75f7358d789fa86ecc77c301120"
+      }
+    }
+  }
+}
