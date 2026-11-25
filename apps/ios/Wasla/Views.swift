@@ -2,23 +2,52 @@ import SwiftUI
 import UIKit
 import SafariServices
 
-// The web workspace's palette (apps/web/components/assistant-app.module.css), light and dark.
+// Forest pairs use the same teal hue in both appearances.
 enum Forest {
     private static func pair(_ light: UInt32, _ dark: UInt32) -> Color {
         Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light) })
     }
-    static let background = pair(0xFAF9F6, 0x1E1D1B)   // --page
-    static let panel = pair(0xF4F2ED, 0x181715)        // --panel
-    static let surface = pair(0xFFFFFF, 0x292825)      // --raised
-    static let ink = pair(0x22201C, 0xEDEBE5)          // --ink
-    static let softText = pair(0x6B675F, 0xA6A298)     // --soft
-    static let faint = pair(0x9A968C, 0x77746C)        // --faint
-    static let line = pair(0xE7E4DC, 0x34322D)         // --line
-    static let soft = pair(0xEFECE4, 0x2E2C28)         // --user / --hover
-    static let accent = pair(0x1F6F5C, 0x4FB596)       // --accent
-    static let accentSoft = pair(0xE3EFE9, 0x1F3A31)   // --accent-soft
-    static let onAccent = pair(0xFFFFFF, 0x0F1F1A)     // --accent-ink
-    static let alert = pair(0xA33A2C, 0xEE9383)        // --alert
+    static let background = pair(0xF7F6F2, 0x141816)
+    static let panel = pair(0xEEEFE9, 0x1A201D)
+    static let surface = pair(0xFFFFFF, 0x212925)
+    static let ink = pair(0x202823, 0xF2F4F0)
+    static let softText = pair(0x53625B, 0xACB9B1)
+    static let faint = softText
+    static let line = pair(0xD2DCD5, 0x3A4A42)
+    static let controlBorder = pair(0x78877F, 0x718379)
+    static let soft = pair(0xE8EEE8, 0x26332D)
+    static let accent = pair(0x216852, 0x72CBB0)
+    static let accentSoft = pair(0xDFEEE6, 0x23453A)
+    static let onAccent = pair(0xFFFFFF, 0x10291F)
+    static let alert = pair(0xA33A2C, 0xEE9383)
+
+    static func font(_ style: Font.TextStyle = .body, weight: Font.Weight = .regular) -> Font {
+        let name: String
+        switch weight {
+        case .bold, .heavy, .black: name = "Alexandria-Bold"
+        case .semibold: name = "Alexandria-SemiBold"
+        case .medium: name = "Alexandria-Medium"
+        default: name = "Alexandria-Regular"
+        }
+
+        let size: CGFloat
+        switch style {
+        case .largeTitle: size = 32
+        case .title: size = 27
+        case .title2: size = 22
+        case .title3: size = 19
+        case .headline, .body: size = 16
+        case .callout: size = 15
+        case .subheadline: size = 14
+        case .footnote: size = 13
+        case .caption: size = 12
+        case .caption2: size = 11
+        default: size = 16
+        }
+
+        guard UIFont(name: name, size: size) != nil else { return .system(style, weight: weight) }
+        return .custom(name, size: size, relativeTo: style)
+    }
 }
 extension UIColor {
     convenience init(hex: UInt32) {
@@ -27,87 +56,59 @@ extension UIColor {
 }
 func dismissKeyboard() { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
 
-/// The web's .primary / .secondary buttons.
 struct ForestButton: ButtonStyle {
     var prominent = true
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.body.weight(.medium))
-            .frame(maxWidth: .infinity, minHeight: 24)
-            .padding(.vertical, 10).padding(.horizontal, 14)
-            .background(prominent ? (enabled ? Forest.accent : Forest.soft) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
-            .overlay { if !prominent { RoundedRectangle(cornerRadius: 10).stroke(Forest.line) } }
-            .foregroundStyle(prominent ? (enabled ? Forest.onAccent : Forest.faint) : (enabled ? Forest.ink : Forest.faint))
-            .opacity(configuration.isPressed ? 0.75 : 1)
+        let labelColor = configuration.role == .destructive ? Forest.alert : Forest.ink
+        return configuration.label
+            .font(Forest.font(.body, weight: .semibold))
+            .padding(.vertical, 11).padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .background(prominent ? (enabled ? Forest.accent : Forest.soft) : Forest.surface, in: RoundedRectangle(cornerRadius: 15))
+            .overlay {
+                if !prominent {
+                    RoundedRectangle(cornerRadius: 15).strokeBorder(Forest.controlBorder)
+                        .allowsHitTesting(false)
+                }
+            }
+            .foregroundStyle(enabled ? (prominent ? Forest.onAccent : labelColor) : Forest.faint)
+            .opacity(configuration.isPressed ? 0.84 : 1)
     }
 }
-/// The web's .card: raised, a hairline border, a soft shadow.
 struct Card<Content: View>: View {
     @ViewBuilder var content: Content
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) { content }
-            .padding(.vertical, 16).padding(.horizontal, 18)
+        VStack(alignment: .leading, spacing: 14) { content }
+            .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Forest.surface, in: RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(Forest.line))
-            .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
+            .background(Forest.surface, in: RoundedRectangle(cornerRadius: 20))
+            .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Forest.line).allowsHitTesting(false))
     }
 }
 struct ScreenTitle: View {
     let title: String
     let subtitle: String
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 28, weight: .medium))
-            Text(subtitle).font(.subheadline).foregroundStyle(Forest.softText)
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(Forest.font(.title, weight: .semibold)).accessibilityAddTraits(.isHeader)
+            Text(subtitle).font(Forest.font(.subheadline)).foregroundStyle(Forest.softText).lineSpacing(4)
         }.frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 4)
     }
 }
-/// Wraps chips onto new lines, centred, like the web's suggestions row.
-struct ChipFlow: Layout {
-    var spacing: CGFloat = 8
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews)
-        let height = rows.map(\.height).reduce(0, +) + spacing * CGFloat(max(rows.count - 1, 0))
-        return CGSize(width: proposal.width ?? rows.map(\.width).max() ?? 0, height: height)
-    }
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var y = bounds.minY
-        for row in arrange(width: bounds.width, subviews: subviews) {
-            var x = bounds.minX + (bounds.width - row.width) / 2
-            for index in row.items {
-                let size = subviews[index].sizeThatFits(.unspecified)
-                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-                x += size.width + spacing
-            }
-            y += row.height + spacing
-        }
-    }
-    private func arrange(width: CGFloat, subviews: Subviews) -> [(items: [Int], width: CGFloat, height: CGFloat)] {
-        var rows: [(items: [Int], width: CGFloat, height: CGFloat)] = []
-        var current: (items: [Int], width: CGFloat, height: CGFloat) = ([], 0, 0)
-        for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(.unspecified)
-            let next = current.items.isEmpty ? size.width : current.width + spacing + size.width
-            if next > width, !current.items.isEmpty { rows.append(current); current = ([index], size.width, size.height) }
-            else { current = (current.items + [index], next, max(current.height, size.height)) }
-        }
-        if !current.items.isEmpty { rows.append(current) }
-        return rows
-    }
-}
-
-// MARK: - The web chat layout
+// MARK: - Chat layout
 
 /// A thread that scrolls under a composer pinned above the keyboard. Sending clears focus, so the keyboard closes;
 /// dragging the thread closes it too. While Mohassan works, an empty box shows «stop» and a typed one shows «send».
 struct ChatScaffold<Thread: View>: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @FocusState private var focused: Bool
     @Binding var draft: String
     let placeholder: String
     let tooLong: Bool
     let canSend: Bool
     let working: Bool
+    let sending: Bool
     let scrollKey: Int
     var showComposer = true
     /// Why sending is off or what it does now; the draft stays in the box.
@@ -119,13 +120,13 @@ struct ChatScaffold<Thread: View>: View {
     let onSend: () -> Bool
     var onStop: (() -> Void)? = nil
     let thread: Thread
-    @FocusState private var focused: Bool
 
-    init(draft: Binding<String>, placeholder: String, tooLong: Bool, canSend: Bool, working: Bool, scrollKey: Int, showComposer: Bool = true,
+    init(draft: Binding<String>, placeholder: String, tooLong: Bool, canSend: Bool, working: Bool, sending: Bool, scrollKey: Int, showComposer: Bool = true,
          notice: String? = nil, tools: AnyView? = nil, tray: AnyView? = nil, onSend: @escaping () -> Bool, onStop: (() -> Void)? = nil,
          @ViewBuilder thread: () -> Thread) {
         _draft = draft
         self.placeholder = placeholder; self.tooLong = tooLong; self.canSend = canSend; self.working = working
+        self.sending = sending
         self.scrollKey = scrollKey; self.showComposer = showComposer; self.notice = notice; self.tools = tools; self.tray = tray
         self.onSend = onSend; self.onStop = onStop
         self.thread = thread()
@@ -136,208 +137,405 @@ struct ChatScaffold<Thread: View>: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 24) {
                     thread
-                    Color.clear.frame(height: 1).id("bottom")
+                    Color.clear.frame(height: 1).id("bottom").accessibilityHidden(true)
                 }
-                .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 12)
-                .frame(maxWidth: 740).frame(maxWidth: .infinity)
+                .padding(.horizontal, 22).padding(.top, 20).padding(.bottom, 8)
+                .frame(maxWidth: 620).frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
-            .onChange(of: scrollKey) { _, _ in withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) } }
-            .onChange(of: focused) { _, on in
-                guard on else { return }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) } }
+            .contentShape(Rectangle())
+            .simultaneousGesture(TapGesture().onEnded {
+                if focused { focused = false; dismissKeyboard() }
+            })
+            .onChange(of: scrollKey) { _, _ in scrollToBottom(proxy) }
+            .task(id: focused) {
+                guard focused else { return }
+                do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+                scrollToBottom(proxy)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { if showComposer { composer } }
         }
     }
 
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
+            proxy.scrollTo("bottom", anchor: .bottom)
+        }
+    }
+
     private var composer: some View {
-        VStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             if let notice {
-                Label(notice, systemImage: "info.circle").font(.footnote).foregroundStyle(Forest.softText)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 6)
+                Label(notice, systemImage: "info.circle")
+                    .font(Forest.font(.footnote)).foregroundStyle(Forest.softText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 8)
             }
             if let tray { tray }
-            HStack(alignment: .bottom, spacing: 8) {
+            HStack(alignment: .bottom, spacing: 6) {
                 if let tools { tools }
-                TextField(placeholder, text: $draft, axis: .vertical)
-                    .lineLimit(1...6)
+                TextField(placeholder, text: $draft, prompt: Text(placeholder).foregroundColor(Forest.softText), axis: .vertical)
+                    .font(Forest.font(.body))
+                    .foregroundStyle(Forest.ink)
+                    .lineLimit(1...4)
                     .focused($focused)
                     .submitLabel(.return)
-                    .padding(.vertical, 7).padding(.horizontal, 6)
+                    .padding(.vertical, 5)
+                    .padding(.horizontal, 4)
+                    .frame(minHeight: 44)
+                    .accessibilityLabel("نص الرسالة")
                 if working, empty, let onStop {
                     Button(action: onStop) {
-                        Image(systemName: "stop.fill").font(.footnote).frame(width: 36, height: 36)
-                            .background(Forest.soft, in: RoundedRectangle(cornerRadius: 12)).foregroundStyle(Forest.ink)
-                    }.accessibilityLabel("إيقاف")
+                        composerIcon("stop.fill", foreground: Forest.ink, background: Forest.soft)
+                    }
+                    .accessibilityLabel("إيقاف")
+                    .accessibilityHint("يوقف المهمة الجارية")
                 } else {
                     Button {
                         if onSend() { focused = false; dismissKeyboard() }
                     } label: {
-                        Image(systemName: "arrow.up").font(.body.weight(.semibold)).frame(width: 36, height: 36)
-                            .background(canSend ? Forest.accent : Forest.soft, in: RoundedRectangle(cornerRadius: 12))
-                            .foregroundStyle(canSend ? Forest.onAccent : Forest.faint)
+                        if sending, !reduceMotion {
+                            ProgressView()
+                                .tint(Forest.onAccent)
+                                .frame(width: 44, height: 44)
+                                .background(Forest.accent, in: RoundedRectangle(cornerRadius: 16))
+                        } else {
+                            let active = canSend || sending
+                            composerIcon(sending ? "ellipsis" : "arrow.up",
+                                         foreground: active ? Forest.onAccent : Forest.softText,
+                                         background: active ? Forest.accent : Forest.soft)
+                        }
                     }
                     .disabled(!canSend)
-                    .accessibilityLabel("إرسال الرسالة")
+                    .accessibilityLabel(sending ? "جارٍ إرسال الرسالة" : "إرسال الرسالة")
                 }
             }
-            .padding(.vertical, 8).padding(.leading, 10).padding(.trailing, 8)
-            .background(Forest.surface, in: RoundedRectangle(cornerRadius: 20))
-            .overlay(RoundedRectangle(cornerRadius: 20).stroke(focused ? Forest.faint : Forest.line))
-            .shadow(color: .black.opacity(0.05), radius: 6, y: 2)
-            if tooLong { Text("الرسالة أطول من المسموح. اختصرها قبل الإرسال.").font(.caption).foregroundStyle(Forest.alert) }
+            .buttonStyle(.plain)
+            .padding(7)
+            .background(Forest.surface.opacity(0.92), in: RoundedRectangle(cornerRadius: 24))
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
+            .overlay(RoundedRectangle(cornerRadius: 24).strokeBorder(focused ? Forest.accent : Forest.controlBorder).allowsHitTesting(false))
+            .shadow(color: .black.opacity(0.14), radius: 12, y: 5)
+            if tooLong {
+                Text("الرسالة أطول من المسموح. اختصرها قبل الإرسال.")
+                    .font(Forest.font(.caption)).foregroundStyle(Forest.alert)
+                    .padding(.horizontal, 8)
+            }
         }
-        .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 8)
-        .frame(maxWidth: 740).frame(maxWidth: .infinity)
-        .background(Forest.background)
+        .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 9)
+        .frame(maxWidth: 620).frame(maxWidth: .infinity)
+    }
+
+    private func composerIcon(_ symbol: String, foreground: Color, background: Color) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(foreground)
+            .frame(width: 44, height: 44)
+            .background(background, in: RoundedRectangle(cornerRadius: 16))
     }
 }
 
-/// The web's welcome: the mark, one question, suggestion chips, and what works without a language model.
+/// The welcome starts a draft from a suggestion and shows the server's local mode note when present.
 struct ChatWelcome: View {
     let title: String
     let suggestions: [String]
     var note: String? = nil
     let pick: (String) -> Void
     var body: some View {
-        VStack(spacing: 22) {
-            Text("م").font(.system(size: 22, weight: .semibold)).frame(width: 46, height: 46)
-                .background(Forest.accent, in: RoundedRectangle(cornerRadius: 14)).foregroundStyle(Forest.onAccent)
-                .shadow(color: .black.opacity(0.06), radius: 4, y: 1)
-            Text(title).font(.system(size: 26, weight: .medium)).multilineTextAlignment(.center)
-            ChipFlow {
+        VStack(spacing: 20) {
+            Text("م").font(Forest.font(.title2, weight: .semibold))
+                .padding(15).frame(minWidth: 56, minHeight: 56)
+                .background(Forest.accentSoft, in: RoundedRectangle(cornerRadius: 19))
+                .foregroundStyle(Forest.accent)
+                .accessibilityHidden(true)
+            Text(title).font(Forest.font(.title2, weight: .semibold))
+                .multilineTextAlignment(.center)
+                .accessibilityAddTraits(.isHeader)
+            VStack(alignment: .leading, spacing: 7) {
                 ForEach(suggestions, id: \.self) { item in
                     Button { pick(item) } label: {
-                        Text(item).font(.subheadline).padding(.vertical, 7).padding(.horizontal, 14)
-                            .overlay(Capsule().stroke(Forest.line)).foregroundStyle(Forest.softText)
+                        Text(item).font(Forest.font(.subheadline))
+                            .foregroundStyle(Forest.ink)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 3)
+                            .background(Forest.surface, in: RoundedRectangle(cornerRadius: 14))
+                            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Forest.line).allowsHitTesting(false))
                     }.buttonStyle(.plain)
                 }
             }
             if let note {
-                Text(note).font(.footnote).foregroundStyle(Forest.softText).multilineTextAlignment(.center)
+                Text(note).font(Forest.font(.footnote)).foregroundStyle(Forest.softText).multilineTextAlignment(.center)
                     .padding(.vertical, 10).padding(.horizontal, 14)
                     .background(Forest.panel, in: RoundedRectangle(cornerRadius: 12))
             }
         }
-        .frame(maxWidth: .infinity).padding(.top, 72)
+        .frame(maxWidth: 380).frame(maxWidth: .infinity).padding(.top, 48)
     }
 }
 
-/// A user turn: a soft bubble on the reading side. An assistant turn: the reply's Markdown, no bubble,
-/// with copy and rating under it, as on the web.
+/// The user reads their own messages in a bubble on the leading side of the thread.
 struct ChatTurn: View {
     let mine: Bool
     let text: String
     var messageId: String? = nil
+    var showsActions = true
+    @State private var revealedActions = false
+
     var body: some View {
         if mine {
             HStack {
-                Text(text).textSelection(.enabled).lineSpacing(4)
-                    .padding(.vertical, 10).padding(.horizontal, 16)
-                    .background(Forest.soft, in: UnevenRoundedRectangle(topLeadingRadius: 6, bottomLeadingRadius: 18, bottomTrailingRadius: 18, topTrailingRadius: 18))
-                Spacer(minLength: 48)
+                let bubble = UnevenRoundedRectangle(
+                    topLeadingRadius: 7, bottomLeadingRadius: 19,
+                    bottomTrailingRadius: 19, topTrailingRadius: 19
+                )
+                Text(text)
+                    .font(Forest.font())
+                    .foregroundStyle(Forest.ink)
+                    .lineSpacing(5)
+                    .textSelection(.enabled)
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 14)
+                    .background(Forest.soft, in: bubble)
+                    .overlay { bubble.strokeBorder(Forest.line) }
+                    .accessibilityLabel(Text("أنت، \(text)"))
+                Spacer(minLength: 40)
             }
         } else {
-            VStack(alignment: .leading, spacing: 8) {
-                ReplyText(text: text)
+            VStack(alignment: .leading, spacing: 0) {
+                ReplyText(text: text) { revealedActions = true }
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(LongPressGesture().onEnded { _ in revealedActions = true })
                 if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    HStack(spacing: 16) {
+                    let visible = showsActions || revealedActions
+                    HStack(spacing: 2) {
                         CopyReplyButton(text: text)
                         if let messageId { FeedbackButtons(messageId: messageId) }
-                        Spacer(minLength: 0)
                     }
+                    .padding(.top, 5)
+                    // Keep the rating state when a newer reply arrives.
+                    .frame(height: visible ? nil : 0)
+                    .opacity(visible ? 1 : 0)
+                    .allowsHitTesting(visible)
+                    .accessibilityHidden(!visible)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("رد موحسن")
         }
     }
 }
 
-/// A reply in the web's Markdown subset: headings, lists, quotes, code, **bold**, `code` and links.
-/// Links open through the screen's openURL action, which takes https only.
+/// Reply links open through the screen's https-only openURL action.
 struct ReplyText: View {
+    private struct Focus: Hashable {
+        let block: Int
+        var row = 0
+        var column = 0
+    }
+
     let text: String
+    let onFocus: () -> Void
+    @AccessibilityFocusState private var focusedPart: Focus?
+    @ScaledMetric(relativeTo: .subheadline) private var columnWidth: CGFloat = 128
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(ReplyMarkdown.blocks(text).enumerated()), id: \.offset) { _, block in
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(Array(ReplyMarkdown.blocks(text).enumerated()), id: \.offset) { index, block in
                 switch block {
-                case .paragraph(let line):
-                    Text(ReplyMarkdown.inline(line)).lineSpacing(6)
-                case .heading(let line):
-                    Text(ReplyMarkdown.inline(line)).font(.headline)
+                case .paragraph(let paragraph):
+                    markdownText(paragraph)
+                        .lineSpacing(6)
+                        .accessibilityFocused($focusedPart, equals: Focus(block: index))
+                case .heading(let heading):
+                    markdownText(heading, style: .headline, weight: .semibold)
+                        .lineSpacing(5)
+                        .accessibilityAddTraits(.isHeader)
+                        .accessibilityFocused($focusedPart, equals: Focus(block: index))
                 case .quote(let parts):
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(Array(parts.enumerated()), id: \.offset) { _, part in Text(ReplyMarkdown.inline(part)).lineSpacing(4) }
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(parts.enumerated()), id: \.offset) { row, part in
+                            markdownText(part)
+                                .lineSpacing(6)
+                                .accessibilityFocused($focusedPart, equals: Focus(block: index, row: row))
+                        }
                     }
                     .foregroundStyle(Forest.softText)
                     .padding(.leading, 12)
-                    .overlay(alignment: .leading) { Rectangle().fill(Forest.line).frame(width: 3) }
+                    .overlay(alignment: .leading) {
+                        Rectangle().fill(Forest.accent).frame(width: 2).accessibilityHidden(true)
+                    }
                 case .list(let ordered, let items):
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(Array(items.enumerated()), id: \.offset) { position, item in
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text(ordered ? "\(position + 1)." : "•").monospacedDigit().foregroundStyle(Forest.softText)
-                                Text(ReplyMarkdown.inline(item)).lineSpacing(4)
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { row, item in
+                            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                                Text(ordered ? "\((row + 1).formatted(.number.locale(Locale(identifier: "ar"))))." : "•")
+                                    .font(Forest.font(.subheadline, weight: .semibold))
+                                    .foregroundStyle(Forest.accent)
+                                    .accessibilityHidden(true)
+                                markdownText(item)
+                                    .lineSpacing(6)
+                                    .accessibilityValue(ordered ? Text("البند \(row + 1)") : Text(""))
+                                    .accessibilityFocused($focusedPart, equals: Focus(block: index, row: row))
                             }
                         }
                     }
                 case .code(let code):
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        Text(code).font(.system(.footnote, design: .monospaced)).padding(12)
+                    ScrollView(.horizontal) {
+                        Text(code)
+                            .font(.system(.footnote, design: .monospaced))
+                            .lineSpacing(4)
+                            .padding(12)
+                            .accessibilityLabel(Text("مقطع برمجي، \(code)"))
+                            .accessibilityFocused($focusedPart, equals: Focus(block: index))
                     }
-                    .background(Forest.soft, in: RoundedRectangle(cornerRadius: 10))
+                    .background(Forest.soft, in: RoundedRectangle(cornerRadius: 12))
                     .environment(\.layoutDirection, .leftToRight)
+                case .table(let headers, let rows):
+                    table(headers: headers, rows: rows, block: index)
                 }
             }
         }
+        .foregroundStyle(Forest.ink)
+        .multilineTextAlignment(.leading)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onChange(of: focusedPart) { _, focused in
+            if focused != nil { onFocus() }
+        }
+    }
+
+    private func table(headers: [String], rows: [[String]], block: Int) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 14)
+        return ScrollView(.horizontal) {
+            Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
+                tableRow(headers, headers: headers, block: block, row: 0, lastRow: rows.count)
+                ForEach(Array(rows.enumerated()), id: \.offset) { index, values in
+                    tableRow(values, headers: headers, block: block, row: index + 1, lastRow: rows.count)
+                }
+            }
+        }
+        .background(Forest.surface)
+        .clipShape(shape)
+        .overlay { shape.strokeBorder(Forest.line).allowsHitTesting(false).accessibilityHidden(true) }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("جدول الرد")
+        .accessibilityHint("مرّر أفقيًا لعرض بقية الأعمدة")
+    }
+
+    private func tableRow(_ cells: [String], headers: [String], block: Int, row: Int, lastRow: Int) -> some View {
+        GridRow {
+            ForEach(Array(cells.enumerated()), id: \.offset) { column, cell in
+                markdownText(cell.isEmpty ? "—" : cell, style: .subheadline, weight: row == 0 ? .semibold : .regular)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(width: columnWidth, alignment: .leading)
+                    .frame(minHeight: 44, maxHeight: .infinity, alignment: .topLeading)
+                    .background(row == 0 ? Forest.accentSoft : Forest.surface)
+                    .overlay(alignment: .trailing) {
+                        if column < cells.count - 1 { Rectangle().fill(Forest.line).frame(width: 1) }
+                    }
+                    .overlay(alignment: .bottom) {
+                        if row < lastRow { Rectangle().fill(Forest.line).frame(height: 1) }
+                    }
+                    .accessibilityAddTraits(row == 0 ? .isHeader : [])
+                    .accessibilityValue(row == 0 ? Text("") : Text(ReplyMarkdown.plainText(headers[column])))
+                    .accessibilityFocused($focusedPart, equals: Focus(block: block, row: row, column: column))
+            }
+        }
+    }
+
+    private func markdownText(_ source: String, style: Font.TextStyle = .body, weight: Font.Weight = .regular) -> Text {
+        var content = ReplyMarkdown.inline(source)
+        let runs = content.runs.map { (range: $0.range, intent: $0.inlinePresentationIntent, linked: $0.link != nil) }
+        for run in runs {
+            if run.intent?.contains(.code) == true {
+                content[run.range].swiftUI.font = .system(style, design: .monospaced)
+            } else if run.intent?.contains(.stronglyEmphasized) == true {
+                content[run.range].swiftUI.font = Forest.font(style, weight: .bold)
+            }
+            if run.linked {
+                content[run.range].swiftUI.foregroundColor = Forest.accent
+                content[run.range].swiftUI.underlineStyle = .single
+            }
+        }
+        return Text(content).font(Forest.font(style, weight: weight))
     }
 }
 
-/// Copies one reply as plain text, without ** or > marks, so it pastes cleanly anywhere.
+/// Copies one reply using the same plain-text representation as the web.
 struct CopyReplyButton: View {
     let text: String
-    @State private var copied = false
+    @State private var copiedAt: Date?
+
     var body: some View {
         Button {
             UIPasteboard.general.string = ReplyMarkdown.plainText(text)
-            copied = true
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(1.8))
-                copied = false
-            }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            copiedAt = Date()
+            UIAccessibility.post(notification: .announcement, argument: "تم النسخ")
         } label: {
-            Label(copied ? "تم النسخ" : "نسخ", systemImage: copied ? "checkmark" : "doc.on.doc").font(.caption)
+            HStack(spacing: 4) {
+                Image(systemName: copiedAt == nil ? "doc.on.doc" : "checkmark")
+                    .font(.callout.weight(.semibold))
+                if copiedAt != nil {
+                    Text("تم النسخ").font(Forest.font(.caption, weight: .medium))
+                }
+            }
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(Forest.softText)
-        .accessibilityLabel(copied ? "تم نسخ الرد" : "نسخ الرد")
+        .foregroundStyle(copiedAt == nil ? Forest.softText : Forest.accent)
+        .accessibilityLabel(copiedAt == nil ? "نسخ الرد" : "تم نسخ الرد")
+        .task(id: copiedAt) {
+            guard copiedAt != nil else { return }
+            do { try await Task.sleep(for: .seconds(1.8)) } catch { return }
+            copiedAt = nil
+        }
     }
 }
 
-/// The owner's judgement of one reply, as on the web: useful, wrong or incomplete.
+/// The same rating choices and request as on the web.
 struct FeedbackButtons: View {
     @EnvironmentObject private var store: WaslaStore
     let messageId: String
     @State private var sent = false
     @State private var busy = false
+
     var body: some View {
         Menu {
             Button("مفيد") { rate("useful") }
             Button("خطأ") { rate("wrong") }
             Button("ناقص") { rate("incomplete") }
         } label: {
-            Label(sent ? "شكرًا" : "قيّم الرد", systemImage: sent ? "checkmark" : "hand.thumbsup").font(.caption)
+            Group {
+                if busy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: sent ? "checkmark" : "hand.thumbsup")
+                        .font(.callout.weight(.semibold))
+                }
+            }
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
         }
-        .foregroundStyle(Forest.softText)
+        .foregroundStyle(sent ? Forest.accent : Forest.softText)
         .disabled(busy || sent)
-        .accessibilityLabel(sent ? "أُرسل تقييمك" : "قيّم هذا الرد")
+        .accessibilityLabel(sent ? "أُرسل تقييمك" : busy ? "جارٍ إرسال التقييم" : "قيّم هذا الرد")
+        .simultaneousGesture(TapGesture().onEnded {
+            if !busy && !sent { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+        })
     }
+
     private func rate(_ verdict: String) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         busy = true
         Task {
             sent = await store.feedback(verdict, for: messageId)
@@ -346,32 +544,57 @@ struct FeedbackButtons: View {
     }
 }
 
-/// The web's working pill and its step list.
+/// Shows the current phase and, when provided, the server's recent steps.
 struct WorkingSteps: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let progress: String
     let steps: [String]
+    var typing = false
     @State private var open = false
     /// When the pill appeared; the counter runs from here.
     @State private var since = Date()
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button { withAnimation(.easeOut(duration: 0.2)) { open.toggle() } } label: {
-                HStack(spacing: 8) {
-                    ActivityLine(text: progress, since: since)
-                    if !steps.isEmpty { Image(systemName: "chevron.down").font(.caption2).rotationEffect(.degrees(open ? 180 : 0)) }
+        VStack(alignment: .leading, spacing: 9) {
+            if steps.isEmpty {
+                status
+            } else {
+                Button {
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { open.toggle() }
+                } label: {
+                    status
                 }
-                .padding(.vertical, 5).padding(.horizontal, 11)
-                .background(Forest.surface, in: Capsule()).overlay(Capsule().stroke(Forest.line))
-                .foregroundStyle(Forest.softText)
-            }.buttonStyle(.plain).disabled(steps.isEmpty)
-            if open {
-                VStack(alignment: .leading, spacing: 6) { ForEach(Array(steps.enumerated()), id: \.offset) { _, step in Text(step).font(.subheadline) } }
-                    .foregroundStyle(Forest.softText)
-                    .padding(.leading, 14)
-                    .overlay(alignment: .leading) { Rectangle().fill(Forest.line).frame(width: 2) }
-                    .padding(.leading, 12)
+                .buttonStyle(.plain)
+                .accessibilityHint(open ? "إخفاء خطوات العمل" : "عرض خطوات العمل")
             }
-        }.accessibilityElement(children: .combine)
+            if open {
+                VStack(alignment: .leading, spacing: 9) {
+                    ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
+                        Text(step).font(Forest.font(.subheadline)).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .foregroundStyle(Forest.softText)
+                .padding(.leading, 14)
+                .overlay(alignment: .leading) { Rectangle().fill(Forest.line).frame(width: 2) }
+                .padding(.leading, 12)
+            }
+        }
+    }
+
+    private var status: some View {
+        HStack(spacing: 12) {
+            ActivityLine(text: progress, since: since, typing: typing)
+            if !steps.isEmpty {
+                Image(systemName: open ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .accessibilityHidden(true)
+            }
+        }
+        .frame(minHeight: 44)
+        .padding(.horizontal, 13)
+        .padding(.vertical, 3)
+        .foregroundStyle(Forest.softText)
+        .background(Forest.surface, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Forest.line).allowsHitTesting(false))
     }
 }
 
@@ -417,56 +640,37 @@ func elapsedLabel(seconds: Int) -> String? {
     return seconds < 60 ? "\(seconds) ث" : "\(seconds / 60) د \(seconds % 60) ث"
 }
 
-/// The live line: a symbol for the kind of work, the server's own words for what is happening now, and how
-/// long it has taken. Only the server names the phase; the symbol and its motion follow the words.
+/// Uses the server's own progress text and adds elapsed time for longer runs.
 struct ActivityLine: View {
     let text: String
     let since: Date
+    let typing: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         let kind = ActivityKind.from(text)
-        HStack(spacing: 8) {
-            Image(systemName: kind.symbol)
-                .font(.footnote.weight(.semibold))
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            Image(systemName: typing ? "ellipsis" : kind.symbol)
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Forest.accent)
                 .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
                 .frame(width: 16, height: 16)
-            ShimmerText(text: text, still: reduceMotion)
-                .id(text)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
-            TimelineView(.periodic(from: since, by: 1)) { context in
-                if let label = elapsedLabel(seconds: Int(context.date.timeIntervalSince(since))) {
-                    Text(label).font(.caption2.monospacedDigit()).foregroundStyle(Forest.faint)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(text).font(Forest.font(.subheadline))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .id(text)
+                    .transition(reduceMotion ? .identity : .opacity)
+                TimelineView(.periodic(from: since, by: 1)) { context in
+                    let seconds = Int(context.date.timeIntervalSince(since))
+                    if let label = elapsedLabel(seconds: seconds) {
+                        Text(label).font(.caption.monospacedDigit())
+                            .accessibilityLabel("الوقت المنقضي \(seconds) ثانية")
+                    }
                 }
             }
         }
-        .animation(.easeOut(duration: 0.25), value: text)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: text)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(text)
-    }
-}
-
-/// Words with a band of light sweeping across them while the work goes on.
-struct ShimmerText: View {
-    let text: String
-    let still: Bool
-    @State private var sweep = false
-    var body: some View {
-        Text(text).font(.subheadline).lineLimit(2)
-            .foregroundStyle(Forest.softText)
-            .overlay {
-                if !still {
-                    GeometryReader { geometry in
-                        let band = max(geometry.size.width / 2, 40)
-                        LinearGradient(colors: [.clear, Forest.ink, .clear], startPoint: .leading, endPoint: .trailing)
-                            .frame(width: band)
-                            .offset(x: sweep ? geometry.size.width : -band)
-                    }
-                    .mask { Text(text).font(.subheadline).lineLimit(2) }
-                    .allowsHitTesting(false)
-                }
-            }
-            .onAppear { withAnimation(.linear(duration: 2.4).repeatForever(autoreverses: false)) { sweep = true } }
     }
 }
 
@@ -474,20 +678,76 @@ struct ShimmerText: View {
 
 struct RootView: View {
     @EnvironmentObject private var store: WaslaStore
+    private var errorTitle: String {
+        if store.errorMessage?.hasPrefix("تعذّر الوصول إلى الخادم") == true { return "تعذّر الاتصال" }
+        return "تعذّر إكمال الإجراء"
+    }
+
     var body: some View {
         Group {
             switch store.account {
             case .loading:
-                ProgressView("موحسن").frame(maxWidth: .infinity, maxHeight: .infinity).background(Forest.background)
+                VStack(spacing: 18) {
+                    ForestMark()
+                    ProgressView("جارٍ تحميل موحسن…")
+                        .font(Forest.font(.footnote)).tint(Forest.accent).foregroundStyle(Forest.softText)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity).background(Forest.background)
             case .signedOut:
                 SignInView()
             case .signedIn:
                 ChatView()
             }
         }
-        .alert("تعذّر إكمال الإجراء", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
+        .alert(errorTitle, isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
             Button("حسنًا", role: .cancel) { store.errorMessage = nil }
         } message: { Text(store.errorMessage ?? "") }
+    }
+}
+
+private struct ForestMark: View {
+    var body: some View {
+        Text("م").font(Forest.font(.title2, weight: .semibold))
+            .padding(12).frame(minWidth: 52, minHeight: 52)
+            .foregroundStyle(Forest.onAccent)
+            .background(Forest.accent, in: RoundedRectangle(cornerRadius: 16))
+            .accessibilityHidden(true)
+    }
+}
+
+extension View {
+    func forestSheetChrome(_ title: String, done: @escaping () -> Void) -> some View {
+        navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Forest.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(title).font(Forest.font(.headline, weight: .semibold))
+                        .foregroundStyle(Forest.ink).accessibilityAddTraits(.isHeader)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(action: done) {
+                        Text("تم").font(Forest.font(.subheadline, weight: .semibold))
+                            .foregroundStyle(Forest.accent).padding(.horizontal, 12).padding(.vertical, 5)
+                            .background(Forest.accentSoft, in: Capsule())
+                            .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("تم، إغلاق \(title)")
+                }
+            }
+    }
+
+    func forestInput(focused: Bool = false) -> some View {
+        font(Forest.font())
+            .foregroundStyle(Forest.ink)
+            .padding(.horizontal, 13).padding(.vertical, 10).frame(minHeight: 44)
+            .background(Forest.background, in: RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12).strokeBorder(focused ? Forest.accent : Forest.controlBorder)
+                    .allowsHitTesting(false)
+            }
     }
 }
 
@@ -504,18 +764,19 @@ struct SignInView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    Text("م").font(.system(size: 26, weight: .semibold)).frame(width: 56, height: 56)
-                        .background(Forest.accent, in: RoundedRectangle(cornerRadius: 16)).foregroundStyle(Forest.onAccent)
-                    ScreenTitle(title: "سجّل الدخول إلى موحسن", subtitle: "بحسابك نفسه على الويب. المحادثات والعقل والأسئلة والموافقات على الخادم، والهاتف نافذة إليها.")
+                    ForestMark()
+                    ScreenTitle(title: "سجّل الدخول إلى موحسن", subtitle: "استخدم حسابك على الويب للوصول إلى محادثاتك.")
                     Card {
                         field("البريد الإلكتروني") {
-                            TextField("name@example.com", text: $email)
+                            TextField("البريد الإلكتروني", text: $email, prompt: Text("name@example.com").foregroundColor(Forest.softText))
                                 .keyboardType(.emailAddress).textContentType(.username)
                                 .textInputAutocapitalization(.never).autocorrectionDisabled()
                                 .environment(\.layoutDirection, .leftToRight)
                                 .focused($focused, equals: .email)
                                 .submitLabel(.next)
                                 .onSubmit { focused = .password }
+                                .forestInput(focused: focused == .email)
+                                .accessibilityLabel("البريد الإلكتروني")
                         }
                         field("كلمة المرور") {
                             SecureField("", text: $password)
@@ -524,21 +785,29 @@ struct SignInView: View {
                                 .focused($focused, equals: .password)
                                 .submitLabel(.go)
                                 .onSubmit { submit() }
+                                .forestInput(focused: focused == .password)
+                                .accessibilityLabel("كلمة المرور")
                         }
                     }
                     Button { submit() } label: {
-                        if store.signingIn { ProgressView().tint(Forest.onAccent) } else { Label("دخول", systemImage: "person.crop.circle.badge.checkmark") }
+                        if store.signingIn {
+                            ProgressView("جارٍ تسجيل الدخول…").tint(Forest.accent)
+                        } else {
+                            Label("دخول", systemImage: "arrow.left")
+                        }
                     }
                     .buttonStyle(ForestButton()).disabled(!ready)
-                    Text(store.origin.host ?? "").font(.footnote).foregroundStyle(.secondary)
+                    Text(store.origin.host ?? "").font(Forest.font(.footnote)).foregroundStyle(Forest.softText)
                         .frame(maxWidth: .infinity, alignment: .center).environment(\.layoutDirection, .leftToRight)
                 }
                 .padding(24).frame(maxWidth: 620).frame(maxWidth: .infinity)
                 .disabled(store.signingIn)
             }
+            .scrollDismissesKeyboard(.interactively)
             .background(Forest.background)
             .navigationTitle("موحسن").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("تم") { focused = nil } } }
+            .toolbarBackground(Forest.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
         }
     }
 
@@ -554,8 +823,8 @@ struct SignInView: View {
 
     private func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.subheadline.weight(.semibold))
-            content().padding(12).background(Forest.background, in: RoundedRectangle(cornerRadius: 12))
+            Text(title).font(Forest.font(.subheadline, weight: .semibold)).accessibilityHidden(true)
+            content()
         }
     }
 }
@@ -563,31 +832,123 @@ struct SignInView: View {
 struct SettingsView: View {
     @EnvironmentObject private var store: WaslaStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @AppStorage(AppAppearance.storageKey) private var appearance: AppAppearance = .dark
     @State private var signOutConfirm = false
+
     var body: some View {
         NavigationStack {
-            List {
-                Section("الحساب") {
-                    LabeledContent("البريد", value: store.email ?? "—")
-                    LabeledContent("الخادم", value: store.origin.host ?? "")
-                    Button("تسجيل الخروج", role: .destructive) { signOutConfirm = true }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    settingsSection("الحساب") {
+                        Card {
+                            accountRow("البريد", value: store.email ?? "—", icon: "person.crop.circle")
+                            Rectangle().fill(Forest.line).frame(height: 1).accessibilityHidden(true)
+                            accountRow("الخادم", value: store.origin.host ?? "", icon: "server.rack")
+                            Rectangle().fill(Forest.line).frame(height: 1).accessibilityHidden(true)
+                            Button(role: .destructive) { signOutConfirm = true } label: {
+                                HStack(spacing: 12) {
+                                    rowIcon("rectangle.portrait.and.arrow.right", alert: true)
+                                    Text("تسجيل الخروج").font(Forest.font(.subheadline, weight: .medium))
+                                    Spacer(minLength: 0)
+                                }
+                                .frame(minHeight: 44).contentShape(Rectangle())
+                                .foregroundStyle(Forest.alert)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    settingsSection("المظهر") {
+                        Card {
+                            if dynamicTypeSize.isAccessibilitySize {
+                                appearancePicker.pickerStyle(.menu)
+                            } else {
+                                appearanceSegments
+                            }
+                        }
+                    }
+                    settingsSection("ما يعمل الآن") {
+                        settingsNote(store.capabilities?.localModeText ?? (store.capabilities == nil ? "لم تُقرأ قدرات هذه الجلسة بعد." : "نموذج لغوي متصل، والردود الحرة متاحة."))
+                    }
+                    settingsSection("حول") {
+                        settingsNote("التطبيق نافذة إلى موحسن على الخادم السحابي، كما في الويب: المحادثات والعقل والأسئلة والموافقات والتحكم بالكمبيوتر تجري هناك. لا يحتاج الهاتف إلى الكمبيوتر ليحادث موحسن.")
+                    }
                 }
-                Section("ما يعمل الآن") {
-                    Text(store.capabilities?.localModeText ?? (store.capabilities == nil ? "لم تُقرأ قدرات هذه الجلسة بعد." : "نموذج لغوي متصل، والردود الحرة متاحة."))
-                        .font(.footnote)
-                }
-                Section("حول") {
-                    Text("التطبيق نافذة إلى موحسن على الخادم السحابي، كما في الويب: المحادثات والعقل والأسئلة والموافقات والتحكم بالكمبيوتر تجري هناك. لا يحتاج الهاتف إلى الكمبيوتر ليحادث موحسن.")
-                        .font(.footnote)
-                }
+                .padding(.horizontal, 22).padding(.vertical, 18)
+                .frame(maxWidth: 620).frame(maxWidth: .infinity)
             }
-            .navigationTitle("الإعدادات").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("تم") { dismiss() } } }
+            .background(Forest.background)
+            .forestSheetChrome("الإعدادات") { dismiss() }
             .confirmationDialog("تسجيل الخروج من هذا الهاتف؟", isPresented: $signOutConfirm, titleVisibility: .visible) {
                 Button("تسجيل الخروج", role: .destructive) { Task { await store.signOut() } }
             } message: { Text("تبقى محادثاتك على الخادم. ويتوقف أي تحكم بالكمبيوتر من هذا الهاتف.") }
         }
         .environment(\.layoutDirection, .rightToLeft)
+    }
+
+    private var appearancePicker: some View {
+        Picker("مظهر التطبيق", selection: $appearance) {
+            ForEach(AppAppearance.allCases) { option in
+                Text(option.title).tag(option)
+            }
+        }
+        .font(Forest.font(.subheadline)).frame(minHeight: 44)
+    }
+
+    private var appearanceSegments: some View {
+        HStack(spacing: 3) {
+            ForEach(AppAppearance.allCases) { option in
+                let selected = appearance == option
+                Button { appearance = option } label: {
+                    Text(option.title).font(Forest.font(.caption, weight: .semibold))
+                        .multilineTextAlignment(.center).padding(.horizontal, 4)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .foregroundStyle(selected ? Forest.accent : Forest.softText)
+                        .background(selected ? Forest.accentSoft : Color.clear, in: RoundedRectangle(cornerRadius: 10))
+                        .overlay {
+                            if selected {
+                                RoundedRectangle(cornerRadius: 10).strokeBorder(Forest.accent)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+        .padding(3).background(Forest.background, in: RoundedRectangle(cornerRadius: 13))
+        .accessibilityElement(children: .contain).accessibilityLabel("مظهر التطبيق")
+    }
+
+    private func settingsSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(Forest.font(.footnote, weight: .semibold)).foregroundStyle(Forest.softText)
+                .padding(.horizontal, 2).accessibilityAddTraits(.isHeader)
+            content()
+        }
+    }
+
+    private func settingsNote(_ message: String) -> some View {
+        Card { Text(message).font(Forest.font(.footnote)).foregroundStyle(Forest.softText).lineSpacing(5) }
+    }
+
+    private func accountRow(_ title: String, value: String, icon: String) -> some View {
+        HStack(spacing: 12) {
+            rowIcon(icon)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(Forest.font(.subheadline, weight: .medium)).foregroundStyle(Forest.ink)
+                Text(value).font(Forest.font(.footnote)).foregroundStyle(Forest.softText)
+                    .environment(\.layoutDirection, .leftToRight)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func rowIcon(_ icon: String, alert: Bool = false) -> some View {
+        Image(systemName: icon).font(.system(size: 16, weight: .medium))
+            .frame(width: 36, height: 36).foregroundStyle(alert ? Forest.alert : Forest.accent)
+            .background(alert ? Forest.alert.opacity(0.1) : Forest.accentSoft, in: RoundedRectangle(cornerRadius: 10))
+            .accessibilityHidden(true)
     }
 }
 
@@ -600,6 +961,7 @@ struct RemoteControlView: View {
     @State private var stopConfirm = false
     @State private var typed = ""
     @State private var rightClick = false
+    @FocusState private var typing: Bool
 
     private var readiness: RemoteReadiness? { store.remote }
     private var switchEnabled: Bool { !store.remoteBusy && (store.remoteWanted || readiness?.canTurnOn == true) }
@@ -611,18 +973,22 @@ struct RemoteControlView: View {
                     Card {
                         Toggle(isOn: Binding(get: { store.remoteWanted }, set: { store.setRemote($0) })) {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("التحكم عن بُعد بتطبيق Windows").font(.headline)
+                                Text("التحكم عن بُعد بتطبيق Windows").font(Forest.font(.headline, weight: .semibold))
                                 Text(readiness?.title ?? (store.windowsProblem == nil ? "جارٍ قراءة حالة الكمبيوتر…" : "تعذّرت قراءة حالة الكمبيوتر"))
-                                    .font(.caption).foregroundStyle(store.remoteWanted ? Forest.accent : Forest.softText)
+                                    .font(Forest.font(.footnote)).foregroundStyle(store.remoteWanted ? Forest.accent : Forest.softText)
                             }
                         }
                         .tint(Forest.accent)
                         .disabled(!switchEnabled)
-                        if store.remoteBusy { ProgressView().frame(maxWidth: .infinity) }
-                        if let readiness, !readiness.advice.isEmpty { Text(readiness.advice).font(.footnote).foregroundStyle(.secondary) }
-                        if let problem = store.windowsProblem { Label(problem, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(Forest.alert) }
-                        if let note = store.remoteNote { Text(note).font(.footnote).foregroundStyle(Forest.alert) }
+                        if store.remoteBusy {
+                            ProgressView().tint(Forest.accent).frame(maxWidth: .infinity)
+                                .accessibilityLabel("جارٍ تحديث حالة التحكم بالكمبيوتر")
+                        }
+                        if let readiness, !readiness.advice.isEmpty { Text(readiness.advice).foregroundStyle(Forest.softText) }
+                        if let problem = store.windowsProblem { Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(Forest.alert) }
+                        if let note = store.remoteNote { Text(note).foregroundStyle(Forest.alert) }
                     }
+                    .font(Forest.font(.footnote)).lineSpacing(5)
                     if readiness == .noDevice { pairingCard }
                     if store.remoteWanted {
                         screenCard
@@ -633,19 +999,22 @@ struct RemoteControlView: View {
                             .buttonStyle(ForestButton(prominent: false))
                     }
                     Text("حين يكون المفتاح مشغّلًا يستطيع موحسن أيضًا رؤية النافذة المسموحة والتحكم بها عندما تطلب ذلك في محادثة هذا الهاتف. السماح نفسه يبقى بيدك على الكمبيوتر في Mohassan Companion، وقفل الكمبيوتر يوقف كل شيء.")
-                        .font(.footnote).foregroundStyle(.secondary)
+                        .font(Forest.font(.footnote)).foregroundStyle(Forest.softText).lineSpacing(5)
                 }
-                .padding(20).frame(maxWidth: 700).frame(maxWidth: .infinity)
+                .padding(.horizontal, 22).padding(.vertical, 18)
+                .frame(maxWidth: 620).frame(maxWidth: .infinity)
             }
+            .scrollDismissesKeyboard(.interactively)
             .background(Forest.background)
-            .navigationTitle("الكمبيوتر").navigationBarTitleDisplayMode(.inline)
+            .forestSheetChrome("الكمبيوتر") { dismiss() }
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("تم") { dismiss() } }
                 ToolbarItem(placement: .topBarLeading) {
-                    Button { Task { await store.loadWindows() } } label: { Image(systemName: "arrow.clockwise") }
-                        .disabled(store.remoteBusy).accessibilityLabel("تحديث حالة الكمبيوتر")
+                    Button { Task { await store.loadWindows() } } label: {
+                        Image(systemName: "arrow.clockwise").font(.system(size: 16, weight: .medium))
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                    }
+                    .disabled(store.remoteBusy).accessibilityLabel("تحديث حالة الكمبيوتر")
                 }
-                ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("تم") { dismissKeyboard() } }
             }
             .refreshable { await store.loadWindows() }
             .task { await store.loadWindows() }
@@ -660,20 +1029,22 @@ struct RemoteControlView: View {
 
     private var pairingCard: some View {
         Card {
-            Label("ربط كمبيوتر", systemImage: "link").font(.headline)
+            Label("ربط كمبيوتر", systemImage: "link").font(Forest.font(.headline, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
             if let pairing = store.pairing {
-                Text(pairing.code).font(.system(.title2, design: .monospaced)).textSelection(.enabled)
+                Text(pairing.code).font(.system(.title3, design: .monospaced)).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .center).environment(\.layoutDirection, .leftToRight)
                 Button { UIPasteboard.general.string = pairing.code } label: { Label("نسخ الرمز", systemImage: "doc.on.doc") }
                     .buttonStyle(ForestButton(prominent: false))
                 Text("في Mohassan Companion على الكمبيوتر ألصق الرمز في «رمز الربط من مساحة العمل (دقيقتان)» ثم اضغط «ربط الجهاز محليًا». ينتهي الرمز خلال دقيقتين.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .foregroundStyle(Forest.softText)
             } else {
-                Text("يلزم برنامج Mohassan Companion على الكمبيوتر. أنشئ رمزًا هنا، ثم ألصقه فيه.").font(.footnote).foregroundStyle(.secondary)
+                Text("يلزم برنامج Mohassan Companion على الكمبيوتر. أنشئ رمزًا هنا، ثم ألصقه فيه.").foregroundStyle(Forest.softText)
                 Button { Task { await store.pairWindows() } } label: { Label("أنشئ رمز ربط", systemImage: "key") }
                     .buttonStyle(ForestButton()).disabled(store.remoteBusy)
             }
         }
+        .font(Forest.font(.footnote)).lineSpacing(5)
     }
 
     private var screenCard: some View {
@@ -694,10 +1065,12 @@ struct RemoteControlView: View {
                 .environment(\.layoutDirection, .leftToRight)
                 .accessibilityLabel("صورة حديثة من النافذة المسموحة على الكمبيوتر. المس مكانًا للنقر عليه.")
                 if let at = store.remoteFrameAt {
-                    Text("آخر صورة \(at.formatted(date: .omitted, time: .standard))").font(.caption).foregroundStyle(.secondary)
+                    Text("آخر صورة \(at.formatted(date: .omitted, time: .standard))")
+                        .font(Forest.font(.caption)).foregroundStyle(Forest.softText)
                 }
             } else {
                 ProgressView("تحميل الشاشة…").frame(maxWidth: .infinity, minHeight: 160)
+                    .font(Forest.font(.footnote)).tint(Forest.accent).foregroundStyle(Forest.softText)
             }
         }
     }
@@ -709,23 +1082,24 @@ struct RemoteControlView: View {
                 Text("نقرة يمنى").tag(true)
             }
             .pickerStyle(.segmented)
-            HStack(spacing: 12) {
-                Button("تمرير لأعلى") { store.remoteAct(.scroll(3)) }
-                Button("تمرير لأسفل") { store.remoteAct(.scroll(-3)) }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { scrollButtons }
+                VStack(spacing: 8) { scrollButtons }
             }
             .buttonStyle(ForestButton(prominent: false))
-            TextField("نص يُكتب على الكمبيوتر (حتى ١٢٠ حرفًا)", text: $typed)
-                .padding(10).background(Forest.background, in: RoundedRectangle(cornerRadius: 12))
-            Button("اكتب على الكمبيوتر") {
-                store.remoteAct(.text(typed))
-                typed = ""
-            }
+            Text("نص يُكتب على الكمبيوتر (حتى ١٢٠ حرفًا)").font(Forest.font(.footnote)).foregroundStyle(Forest.softText)
+                .accessibilityHidden(true)
+            TextField("", text: $typed)
+                .focused($typing).submitLabel(.send).onSubmit { sendTyped() }
+                .forestInput(focused: typing)
+                .accessibilityLabel("نص يُكتب على الكمبيوتر، حتى مئة وعشرين حرفًا")
+            Button("اكتب على الكمبيوتر") { sendTyped() }
             .buttonStyle(ForestButton()).disabled(!WindowsAction.textFits(typed))
             HStack(spacing: 8) {
-                key("Enter", "Enter")
+                key("Enter", "Enter", spoken: "مفتاح الإدخال")
                 key("⌫", "Backspace", spoken: "حذف الحرف السابق")
-                key("Tab", "Tab")
-                key("Esc", "Escape")
+                key("Tab", "Tab", spoken: "مفتاح الجدولة")
+                key("Esc", "Escape", spoken: "مفتاح الهروب")
             }
             .environment(\.layoutDirection, .leftToRight)
             HStack(spacing: 8) {
@@ -738,11 +1112,25 @@ struct RemoteControlView: View {
         }
     }
 
-    private func key(_ title: String, _ name: String, spoken: String? = nil) -> some View {
-        Button(title) { store.remoteAct(.key(name)) }
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .background(Forest.soft, in: RoundedRectangle(cornerRadius: 12))
-            .accessibilityLabel(spoken ?? title)
+    @ViewBuilder private var scrollButtons: some View {
+        Button("تمرير لأعلى") { store.remoteAct(.scroll(3)) }
+        Button("تمرير لأسفل") { store.remoteAct(.scroll(-3)) }
+    }
+
+    private func sendTyped() {
+        guard WindowsAction.textFits(typed) else { return }
+        typing = false
+        store.remoteAct(.text(typed))
+        typed = ""
+    }
+
+    private func key(_ title: String, _ name: String, spoken: String) -> some View {
+        Button { store.remoteAct(.key(name)) } label: {
+            Text(title).font(.system(.footnote, design: .monospaced)).foregroundStyle(Forest.ink)
+                .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                .background(Forest.soft, in: RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain).accessibilityLabel(spoken)
     }
 }
 

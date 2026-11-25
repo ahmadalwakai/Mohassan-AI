@@ -448,6 +448,8 @@ extension WaslaStore {
 
 struct ChatView: View {
     @EnvironmentObject private var store: WaslaStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var listShown = false
     @State private var settingsShown = false
     @State private var remoteShown = false
@@ -456,6 +458,7 @@ struct ChatView: View {
     @State private var dropConfirm = false
     @State private var browsing: BrowserDestination?
     @State private var picks: [PhotosPickerItem] = []
+    @State private var openingConversation: UUID?
     private var clean: String { store.draft.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var scrollKey: Int {
         let conversation = store.conversation
@@ -476,54 +479,19 @@ struct ChatView: View {
         return nil
     }
     private var cardsLocked: Bool { store.busy }
+    private var decisionLayout: AnyLayout {
+        typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 10)) : AnyLayout(HStackLayout(spacing: 12))
+    }
 
     var body: some View {
         NavigationStack {
-            ChatScaffold(
-                draft: $store.draft,
-                placeholder: store.conversation == nil ? "ماذا تريد أن ينجز موحسن؟" : "اكتب رسالتك…",
-                tooLong: !WaslaStore.textFits(store.draft),
-                canSend: canSend,
-                working: store.conversation?.working == true,
-                scrollKey: scrollKey,
-                showComposer: !store.asking,
-                notice: notice,
-                tools: store.imagesAvailable ? AnyView(photoButton) : nil,
-                tray: store.attachments.isEmpty && !store.uploading ? nil : AnyView(AttachmentTray()),
-                onSend: { store.send() },
-                onStop: { store.cancelRun() }
-            ) {
-                if let conversation = store.conversation {
-                    conversationView(conversation)
-                } else if store.pending == nil {
-                    ChatWelcome(title: "بمَ أساعدك اليوم؟", suggestions: ["خطّط لحملة إعلانية", "لخّص لي موضوعًا", "نظّم مهامي"], note: store.capabilities?.localModeText) { store.draft = $0 }
-                }
-                if let request = store.pending { pendingView(request) }
+            VStack(spacing: 0) {
+                chatBar
+                chatContent
             }
-            .background(Forest.background)
-            .navigationTitle("موحسن")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(Forest.background, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { listShown = true; Task { await store.loadChatList() } } label: { Image(systemName: "sidebar.right") }.accessibilityLabel("المحادثات")
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { store.newChat(); store.draft = "" } label: { Image(systemName: "square.and.pencil") }
-                        .disabled(store.sending).accessibilityLabel("محادثة جديدة")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { remoteShown = true } label: {
-                        Image(systemName: store.remoteWanted ? "desktopcomputer.and.arrow.down" : "desktopcomputer")
-                            .foregroundStyle(store.remoteWanted ? Forest.accent : Forest.ink)
-                    }
-                    .accessibilityLabel(store.remoteWanted ? "التحكم بالكمبيوتر مفعّل" : "التحكم بالكمبيوتر")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { settingsShown = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("الإعدادات")
-                }
-                ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("تم") { dismissKeyboard() } }
-            }
+            .foregroundStyle(Forest.ink)
+            .background(Forest.background.ignoresSafeArea())
+            .toolbar(.hidden, for: .navigationBar)
         }
         // Links in replies open here, in Safari inside the app, and only when they are https.
         .environment(\.openURL, OpenURLAction { url in
@@ -531,7 +499,7 @@ struct ChatView: View {
             browsing = BrowserDestination(url: safe)
             return .handled
         })
-        .sheet(isPresented: $listShown) { ConversationListView() }
+        .sheet(isPresented: $listShown) { ConversationListView(onOpen: openConversation) }
         .sheet(isPresented: $settingsShown) { SettingsView() }
         .sheet(isPresented: $remoteShown) { RemoteControlView() }
         .sheet(isPresented: $screenShown) { BrowserScreenView() }
@@ -552,33 +520,137 @@ struct ChatView: View {
         }
     }
 
+    private var chatBar: some View {
+        VStack(spacing: 0) {
+            if typeSize.isAccessibilitySize { chatTitle.padding(.top, 6) }
+            HStack(spacing: 2) {
+                barButton("sidebar.right", label: "المحادثات") {
+                    listShown = true
+                    Task { await store.loadChatList() }
+                }
+                barButton("square.and.pencil", label: "محادثة جديدة", highlighted: !store.sending) {
+                    openingConversation = nil
+                    store.newChat()
+                    store.draft = ""
+                }
+                .disabled(store.sending)
+
+                if typeSize.isAccessibilitySize { Spacer(minLength: 0) }
+                else { chatTitle.frame(maxWidth: .infinity) }
+
+                barButton(store.remoteWanted ? "desktopcomputer.and.arrow.down" : "desktopcomputer",
+                          label: store.remoteWanted ? "التحكم بالكمبيوتر مفعّل" : "التحكم بالكمبيوتر",
+                          highlighted: store.remoteWanted) { remoteShown = true }
+                barButton("gearshape", label: "الإعدادات") { settingsShown = true }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+        }
+        .background(Forest.background)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Forest.line).frame(height: 1).allowsHitTesting(false).accessibilityHidden(true)
+        }
+    }
+
+    private var chatTitle: some View {
+        Text("موحسن")
+            .font(Forest.font(.headline, weight: .semibold))
+            .foregroundStyle(Forest.ink)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private func barButton(_ symbol: String, label: String, highlighted: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(highlighted ? Forest.accent : Forest.softText)
+                .frame(width: 36, height: 36)
+                .background(highlighted ? Forest.accentSoft : .clear, in: Circle())
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    private var chatContent: some View {
+        ChatScaffold(
+            draft: $store.draft,
+            placeholder: store.conversation == nil ? "ماذا تريد أن ينجز موحسن؟" : "اكتب رسالتك…",
+            tooLong: !WaslaStore.textFits(store.draft),
+            canSend: canSend,
+            working: store.conversation?.working == true,
+            sending: store.sending,
+            scrollKey: scrollKey,
+            showComposer: !store.asking,
+            notice: notice,
+            tools: store.imagesAvailable ? AnyView(photoButton) : nil,
+            tray: store.attachments.isEmpty && !store.uploading ? nil : AnyView(AttachmentTray()),
+            onSend: { store.send() },
+            onStop: { store.cancelRun() }
+        ) {
+            if let conversation = store.conversation {
+                conversationView(conversation)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: conversation.messages.map(\.id))
+            } else if openingConversation != nil {
+                WorkingSteps(progress: "جارٍ تحميل المحادثة…", steps: [], typing: true)
+                    .frame(maxWidth: .infinity).padding(.top, 40)
+            } else if store.pending == nil {
+                ChatWelcome(title: "بمَ أساعدك اليوم؟", suggestions: ["خطّط لحملة إعلانية", "لخّص لي موضوعًا", "نظّم مهامي"], note: store.capabilities?.localModeText) { store.draft = $0 }
+            }
+            if let request = store.pending { pendingView(request) }
+        }
+    }
+
+    private func openConversation(_ id: String) {
+        let loadingID = UUID()
+        openingConversation = loadingID
+        Task {
+            await store.openConversation(id)
+            if openingConversation == loadingID { openingConversation = nil }
+        }
+    }
+
     private var photoButton: some View {
         PhotosPicker(selection: $picks, maxSelectionCount: max(1, WaslaStore.maxImages - store.attachments.count), matching: .images) {
-            Image(systemName: "photo.badge.plus").font(.body).frame(width: 36, height: 36)
-                .foregroundStyle(store.attachments.count < WaslaStore.maxImages ? Forest.softText : Forest.faint)
+            Image(systemName: "paperclip").font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(Forest.softText)
+                .frame(width: 36, height: 36)
+                .background(Forest.soft, in: Circle())
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
         .disabled(store.uploading || store.attachments.count >= WaslaStore.maxImages || store.busy)
+        .opacity(store.uploading || store.attachments.count >= WaslaStore.maxImages || store.busy ? 0.62 : 1)
         .accessibilityLabel("إرفاق صورة")
     }
 
     @ViewBuilder private func conversationView(_ conversation: ChatConversation) -> some View {
         let fieldsQuestion = conversation.fieldsQuestion
+        // The last assistant turn can omit questions that the visible field card already presents.
+        let questionReply = fieldsQuestion != nil && conversation.messages.last?.mine == false ? conversation.messages.last : nil
+        let questionReplyText = questionReply.map { ReplyMarkdown.withoutQuestionList($0.text) }
+        let latestReplyID = conversation.messages.last(where: { message in
+            let text = questionReply?.id == message.id ? questionReplyText ?? message.text : message.text
+            return !message.mine && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        })?.id
         if let older = conversation.olderMessages {
-            Text("رسائل أقدم غير معروضة هنا (\(older))، والمعروض آخر \(conversation.messages.count) رسالة.").font(.footnote).foregroundStyle(.secondary)
+            Text("رسائل أقدم غير معروضة هنا (\(older))، والمعروض آخر \(conversation.messages.count) رسالة.")
+                .font(Forest.font(.footnote)).foregroundStyle(Forest.softText)
         }
-        ForEach(Array(conversation.messages.enumerated()), id: \.element.id) { index, message in
-            // While a field card holds the questions, the last reply need not list them again (as on the web).
-            let listed = fieldsQuestion != nil && index == conversation.messages.count - 1 && !message.mine
+        ForEach(conversation.messages) { message in
             VStack(alignment: .leading, spacing: 8) {
                 if message.mine, let refs = message.images, !refs.isEmpty { MessageImages(refs: refs) }
                 if !(message.mine && message.text.isEmpty) {
-                    ChatTurn(mine: message.mine, text: listed ? ReplyMarkdown.withoutQuestionList(message.text) : message.text, messageId: message.mine ? nil : message.id)
+                    ChatTurn(mine: message.mine, text: questionReply?.id == message.id ? questionReplyText ?? message.text : message.text,
+                             messageId: message.mine ? nil : message.id, showsActions: message.id == latestReplyID)
                 }
             }
+            .transition(reduceMotion ? .identity : .opacity)
         }
         if let browser = conversation.browser { BrowserLine(browser: browser) { screenShown = true } }
         if conversation.working {
-            WorkingSteps(progress: conversation.progress ?? "موحسن يعمل…", steps: conversation.steps.map(\.text))
+            WorkingSteps(progress: conversation.progress ?? "موحسن يعمل…", steps: conversation.steps.map(\.text), typing: conversation.progress == nil)
         }
         if conversation.status == ChatStatus.waitingUser, let question = conversation.question {
             if let fieldsQuestion {
@@ -595,9 +667,13 @@ struct ChatView: View {
                 .id(secure.id)
         }
         if !conversation.working, let error = conversation.error, !error.isEmpty {
-            Text(error).font(.subheadline).foregroundStyle(Forest.alert)
-                .padding(.vertical, 9).padding(.horizontal, 12).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Forest.alert.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+            Card {
+                Label("تعذّر إكمال الرد", systemImage: "exclamationmark.circle")
+                    .font(Forest.font(.subheadline, weight: .semibold))
+                    .foregroundStyle(Forest.alert)
+                    .accessibilityAddTraits(.isHeader)
+                Text(error).font(Forest.font(.subheadline)).foregroundStyle(Forest.ink)
+            }
         }
         if conversation.waiting {
             Button(role: .destructive) { store.cancelRun() } label: { Label("إيقاف", systemImage: "stop.fill") }
@@ -618,52 +694,59 @@ struct ChatView: View {
             }
         } else {
             Card {
-                Label("لم يتأكد وصول الطلب", systemImage: "exclamationmark.triangle").font(.headline).foregroundStyle(Forest.alert)
+                Label("لم يتأكد وصول الطلب", systemImage: "exclamationmark.triangle")
+                    .font(Forest.font(.headline, weight: .semibold)).foregroundStyle(Forest.alert).accessibilityAddTraits(.isHeader)
                 if !(here && request.fromComposer), !request.text.isEmpty {
-                    Text(request.text).font(.subheadline).lineLimit(3)
-                        .padding(.vertical, 6).padding(.horizontal, 10).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(request.text).font(Forest.font(.subheadline)).lineLimit(3)
+                        .padding(.vertical, 9).padding(.horizontal, 12).frame(maxWidth: .infinity, alignment: .leading)
                         .background(Forest.soft, in: RoundedRectangle(cornerRadius: 10))
                 }
-                if !here { Text(request.kind == .create ? "في محادثة جديدة." : "في محادثة أخرى.").font(.caption).foregroundStyle(.secondary) }
-                if let note = request.note, !note.isEmpty { Text(note).font(.footnote).foregroundStyle(.secondary) }
+                if !here { Text(request.kind == .create ? "في محادثة جديدة." : "في محادثة أخرى.").font(Forest.font(.caption)).foregroundStyle(Forest.softText) }
+                if let note = request.note, !note.isEmpty { Text(note).font(Forest.font(.footnote)).foregroundStyle(Forest.softText) }
                 Text(store.requestKeys || !request.fromComposer
                      ? "«أرسل مرة أخرى» آمن: يحمل المفتاح نفسه، فإن كان قد وصل فلن يتكرر."
                      : "هذا الخادم لا يمنع التكرار بعد. راجع المحادثة قبل أن ترسل مرة أخرى.")
-                    .font(.footnote).foregroundStyle(.secondary)
-                HStack(spacing: 12) {
+                    .font(Forest.font(.footnote)).foregroundStyle(Forest.softText)
+                decisionLayout {
                     Button("أرسل مرة أخرى") { store.resendPending() }.buttonStyle(ForestButton())
                     Button("راجع المحادثة") { Task { await store.checkPending() } }.buttonStyle(ForestButton(prominent: false))
                 }
                 .disabled(store.sending)
-                Button("اتركه", role: .destructive) { dropConfirm = true }.font(.footnote).disabled(store.sending)
+                Button(role: .destructive) { dropConfirm = true } label: {
+                    Text("اتركه").font(Forest.font(.footnote, weight: .semibold)).frame(minHeight: 44)
+                }
+                .foregroundStyle(Forest.alert).buttonStyle(.plain).disabled(store.sending)
             }
         }
     }
 
     private func optionsCard(_ question: ChatQuestion) -> some View {
         Card {
-            Label("اختر إجابة", systemImage: "questionmark.bubble").font(.headline)
+            Label("اختر إجابة", systemImage: "questionmark.bubble")
+                .font(Forest.font(.headline, weight: .semibold)).accessibilityAddTraits(.isHeader)
             ForEach(question.phoneOptions) { option in
                 Button { store.answer(option: option) } label: { Text(option.label).frame(maxWidth: .infinity, alignment: .leading) }
                     .buttonStyle(ForestButton(prominent: false)).disabled(cardsLocked)
             }
             if question.action == "google_ads_connect" {
-                Text("ربط حساب Google Ads يتم من واجهة موحسن على الويب.").font(.footnote).foregroundStyle(.secondary)
+                Text("ربط حساب Google Ads يتم من واجهة موحسن على الويب.").font(Forest.font(.footnote)).foregroundStyle(Forest.softText)
             }
-            Text("أو اكتب إجابتك في الصندوق أدناه.").font(.footnote).foregroundStyle(.secondary)
+            Text("أو اكتب إجابتك في الصندوق أدناه.").font(Forest.font(.footnote)).foregroundStyle(Forest.softText)
         }
     }
 
     private func approvalCard(_ approval: ChatApproval) -> some View {
         Card {
-            Label("يحتاج موافقتك", systemImage: "checkmark.shield").font(.headline)
-            Text(approval.prompt)
-            if let target = approval.target, !target.isEmpty { Text("الهدف: \(target)").font(.footnote) }
-            if let consequence = approval.consequence, !consequence.isEmpty { Text("ما سيحدث: \(consequence)").font(.footnote) }
-            if let reversible = approval.reversible { Text(reversible ? "يمكن التراجع عنه." : "لا يمكن التراجع عنه.").font(.footnote) }
-            if !approval.detail.isEmpty { Text(approval.detail).font(.footnote).foregroundStyle(.secondary) }
-            Text("تنطبق الموافقة على هذا الإجراء بتفاصيله هذه فقط. وإن كتبت تصحيحًا بدلها، يُلغى هذا الإجراء ولا يُنفَّذ.").font(.footnote).foregroundStyle(.secondary)
-            HStack(spacing: 12) {
+            Label("يحتاج موافقتك", systemImage: "checkmark.shield")
+                .font(Forest.font(.headline, weight: .semibold)).accessibilityAddTraits(.isHeader)
+            Text(approval.prompt).font(Forest.font(.body))
+            if let target = approval.target, !target.isEmpty { Text("الهدف: \(target)").font(Forest.font(.footnote)) }
+            if let consequence = approval.consequence, !consequence.isEmpty { Text("ما سيحدث: \(consequence)").font(Forest.font(.footnote)) }
+            if let reversible = approval.reversible { Text(reversible ? "يمكن التراجع عنه." : "لا يمكن التراجع عنه.").font(Forest.font(.footnote)) }
+            if !approval.detail.isEmpty { Text(approval.detail).font(Forest.font(.footnote)).foregroundStyle(Forest.softText) }
+            Text("تنطبق الموافقة على هذا الإجراء بتفاصيله هذه فقط. وإن كتبت تصحيحًا بدلها، يُلغى هذا الإجراء ولا يُنفَّذ.")
+                .font(Forest.font(.footnote)).foregroundStyle(Forest.softText)
+            decisionLayout {
                 Button("لا تفعل") { store.approve(false) }.buttonStyle(ForestButton(prominent: false))
                 Button("موافق") { approveConfirm = true }.buttonStyle(ForestButton())
             }.disabled(cardsLocked)
@@ -679,6 +762,8 @@ struct SecureCard: View {
     let request: ChatSecure
     let busy: Bool
     let onSubmit: (String, [String: String]?) -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @FocusState private var focused: String?
     @State private var values: [String: String] = [:]
 
     private var filled: Bool {
@@ -693,39 +778,57 @@ struct SecureCard: View {
 
     var body: some View {
         Card {
-            Label(title, systemImage: "key").font(.headline)
-            if !request.prompt.isEmpty { Text(request.prompt) }
-            if let note = request.note, !note.isEmpty { Text(note).font(.footnote).foregroundStyle(Forest.alert) }
+            Label(title, systemImage: "key").font(Forest.font(.headline, weight: .semibold))
+                .labelStyle(.titleAndIcon).accessibilityAddTraits(.isHeader)
+            if !request.prompt.isEmpty { Text(request.prompt).font(Forest.font()).lineSpacing(5) }
+            if let note = request.note, !note.isEmpty { Text(note).font(Forest.font(.footnote)).foregroundStyle(Forest.alert) }
             ForEach(request.fields) { field in
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(field.label).font(.subheadline.weight(.semibold))
+                    Text(field.label).font(Forest.font(.subheadline, weight: .semibold)).accessibilityHidden(true)
                     input(field)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                        .padding(10)
-                        .background(Forest.background, in: RoundedRectangle(cornerRadius: 12))
                         .environment(\.layoutDirection, .leftToRight)
+                        .focused($focused, equals: field.id)
+                        .submitLabel(field.id == request.fields.last?.id ? .go : .next)
+                        .onSubmit { advance(after: field.id) }
+                        .forestInput(focused: focused == field.id)
                         .disabled(busy)
+                        .accessibilityLabel(field.label)
                 }
             }
             if !request.handsOn {
-                Text("تذهب هذه البيانات إلى الموقع مباشرة. لا يراها النموذج ولا تُحفظ.").font(.footnote).foregroundStyle(.secondary)
+                Text("تذهب هذه البيانات إلى الموقع مباشرة. لا يراها النموذج ولا تُحفظ.")
+                    .font(Forest.font(.footnote)).foregroundStyle(Forest.softText).lineSpacing(5)
             }
-            HStack(spacing: 12) {
+            let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 12))
+            layout {
                 if request.handsOn {
-                    Button("أكملت") { onSubmit("done", nil) }.buttonStyle(ForestButton())
+                    Button("أكملت") { focused = nil; onSubmit("done", nil) }.buttonStyle(ForestButton())
                 } else {
-                    Button("متابعة") {
-                        let sent = values
-                        values = [:]
-                        onSubmit("submit", sent)
-                    }
-                    .buttonStyle(ForestButton()).disabled(!filled)
+                    Button("متابعة") { submit() }.buttonStyle(ForestButton()).disabled(!filled)
                 }
-                Button("تخطي") { onSubmit("skip", nil) }.buttonStyle(ForestButton(prominent: false))
+                Button("تخطي") { focused = nil; onSubmit("skip", nil) }.buttonStyle(ForestButton(prominent: false))
             }
             .disabled(busy)
         }
+    }
+
+    private func advance(after field: String) {
+        guard !busy else { return }
+        if let index = request.fields.firstIndex(where: { $0.id == field }), index + 1 < request.fields.count {
+            focused = request.fields[index + 1].id
+        } else if !request.handsOn {
+            submit()
+        }
+    }
+
+    private func submit() {
+        guard filled, !busy else { return }
+        focused = nil
+        let sent = values
+        values = [:]
+        onSubmit("submit", sent)
     }
 
     @ViewBuilder private func input(_ field: ChatSecureField) -> some View {
@@ -751,9 +854,12 @@ struct FieldQuestionCard: View {
     let onSubmit: ([ChatFieldAnswer]) -> Void
     let onStop: (() -> Void)?
     private let fields: [ChatField]
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @FocusState private var focusedQuestion: Int?
     @State private var chosen: [Set<Int>]
     @State private var other: [String]
     @State private var step = 0
+    @State private var focusNextInput = false
 
     init(question: ChatQuestion, busy: Bool, onSubmit: @escaping ([ChatFieldAnswer]) -> Void, onStop: (() -> Void)?) {
         self.question = question
@@ -773,40 +879,54 @@ struct FieldQuestionCard: View {
     var body: some View {
         let total = FieldAnswers.length(answers)
         Card {
-            HStack(spacing: 8) {
-                Label(several ? "أسئلة من موحسن" : "سؤال من موحسن", systemImage: "questionmark.bubble").font(.headline)
-                Spacer(minLength: 4)
-                Text(reviewing ? "راجع إجاباتك" : several ? "\(step + 1) من \(fields.count)" : "سؤال واحد").font(.caption).foregroundStyle(.secondary)
+            let layout = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+                : AnyLayout(HStackLayout(spacing: 8))
+            layout {
+                Label(several ? "أسئلة من موحسن" : "سؤال من موحسن", systemImage: "questionmark.bubble")
+                    .font(Forest.font(.headline, weight: .semibold)).accessibilityAddTraits(.isHeader)
+                if several {
+                    if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 4) }
+                    Text(reviewing ? "راجع إجاباتك" : "السؤال \(step + 1) من \(fields.count)")
+                        .font(Forest.font(.caption)).foregroundStyle(Forest.softText)
+                }
             }
             if several { tabs }
             if reviewing { review } else if fields.indices.contains(step) { fieldView(step).id(step) }
             if total > FieldAnswers.limit {
-                Text("الإجابات \(total) من \(FieldAnswers.limit) حرف. اختصر بعض النص قبل الإرسال.").font(.footnote).foregroundStyle(Forest.alert)
+                Text("الإجابات \(total) من \(FieldAnswers.limit) حرف. اختصر بعض النص قبل الإرسال.")
+                    .font(Forest.font(.footnote)).foregroundStyle(Forest.alert)
             }
             actions
         }
     }
 
     private var tabs: some View {
-        HStack(spacing: 8) {
-            ForEach(fields.indices, id: \.self) { index in
-                let answered = !answers[index].isEmpty
-                Button { step = index } label: {
-                    Group { if answered { Image(systemName: "checkmark") } else { Text("\(index + 1)") } }
-                        .font(.caption.weight(.semibold)).frame(width: 30, height: 30)
-                        .background(step == index ? Forest.accent : Forest.soft, in: Circle())
-                        .foregroundStyle(step == index ? Forest.onAccent : Forest.ink)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(fields.indices, id: \.self) { index in
+                    let answered = !answers[index].isEmpty
+                    Button { step = index } label: {
+                        Group { if answered { Image(systemName: "checkmark") } else { Text("\(index + 1)") } }
+                            .font(Forest.font(.caption, weight: .semibold)).frame(minWidth: 32, minHeight: 32)
+                            .background(step == index ? Forest.accent : Forest.soft, in: Circle())
+                            .foregroundStyle(step == index ? Forest.onAccent : Forest.ink)
+                            .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(busy)
+                    .accessibilityLabel("السؤال \(index + 1)\(answered ? "، أُجيب" : "")")
+                    .accessibilityAddTraits(step == index ? .isSelected : [])
                 }
-                .buttonStyle(.plain).disabled(busy)
-                .accessibilityLabel("السؤال \(index + 1)\(answered ? "، أُجيب" : "")")
+                Button { step = fields.count } label: {
+                    Text("مراجعة").font(Forest.font(.caption, weight: .semibold)).padding(.horizontal, 12).frame(minHeight: 32)
+                        .background(reviewing ? Forest.accent : Forest.soft, in: Capsule())
+                        .foregroundStyle(reviewing ? Forest.onAccent : Forest.ink)
+                        .frame(minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(busy || !FieldAnswers.ready(answers))
+                .accessibilityLabel("مراجعة الإجابات قبل الإرسال")
+                .accessibilityAddTraits(reviewing ? .isSelected : [])
             }
-            Button { step = fields.count } label: {
-                Text("إرسال").font(.caption.weight(.semibold)).padding(.horizontal, 12).frame(height: 30)
-                    .background(reviewing ? Forest.accent : Forest.soft, in: Capsule())
-                    .foregroundStyle(reviewing ? Forest.onAccent : Forest.ink)
-            }
-            .buttonStyle(.plain).disabled(busy || !FieldAnswers.ready(answers))
-            Spacer(minLength: 0)
         }
     }
 
@@ -814,36 +934,63 @@ struct FieldQuestionCard: View {
         let field = fields[index]
         let typedHere = !other[index].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return VStack(alignment: .leading, spacing: 10) {
-            Text(field.prompt).font(.body.weight(.medium))
-            if field.allowsSeveral { Text("يمكنك اختيار أكثر من واحد، ثم اضغط «التالي».").font(.footnote).foregroundStyle(.secondary) }
+            Text(field.prompt).font(Forest.font(.body, weight: .medium)).lineSpacing(5)
+            if field.allowsSeveral {
+                Text("يمكنك اختيار أكثر من واحد، ثم اضغط «التالي».").font(Forest.font(.footnote)).foregroundStyle(Forest.softText)
+            }
             ForEach(Array(field.suggestions.enumerated()), id: \.offset) { position, suggestion in
                 // In a single-answer question a typed answer replaces the chosen suggestion.
                 let on = chosen[index].contains(position) && !(typedHere && !field.allowsSeveral)
                 Button { pick(index, position) } label: {
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: on ? (field.allowsSeveral ? "checkmark.square.fill" : "largecircle.fill.circle") : (field.allowsSeveral ? "square" : "circle"))
-                            .foregroundStyle(on ? Forest.accent : Forest.faint)
+                            .foregroundStyle(on ? Forest.accent : Forest.softText).accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(suggestion.label).foregroundStyle(Forest.ink)
-                            if let reason = suggestion.reason, !reason.isEmpty { Text(reason).font(.caption).foregroundStyle(.secondary) }
+                            Text(suggestion.label).font(Forest.font()).foregroundStyle(Forest.ink)
+                            if let reason = suggestion.reason, !reason.isEmpty {
+                                Text(reason).font(Forest.font(.caption)).foregroundStyle(Forest.softText).lineSpacing(3)
+                            }
                         }
                         Spacer(minLength: 0)
                     }
-                    .padding(.vertical, 10).padding(.horizontal, 12)
+                    .padding(.vertical, 10).padding(.horizontal, 12).frame(minHeight: 44)
                     .background(on ? Forest.accentSoft : Forest.surface, in: RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(on ? Forest.accent : Forest.line))
+                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(on ? Forest.accent : Forest.controlBorder).allowsHitTesting(false))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).disabled(busy)
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
-            TextField(field.placeholder ?? (field.suggestions.isEmpty ? "اكتب إجابتك…" : "إجابة أخرى…"), text: $other[index], axis: .vertical)
-                .lineLimit(field.keepsLines ? 3...8 : 1...4)
-                .padding(10)
-                .background(Forest.background, in: RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(typedHere ? Forest.accent : Forest.line))
+            fieldInput(field, at: index)
+                .focused($focusedQuestion, equals: index)
+                .forestInput(focused: focusedQuestion == index)
                 .disabled(busy)
-                .accessibilityLabel("\(field.prompt): \(field.suggestions.isEmpty ? "إجابتك" : "إجابة أخرى")")
+                .accessibilityLabel("\(field.prompt)؛ \(field.suggestions.isEmpty ? "إجابتك" : "إجابة أخرى")")
+        }
+        .task {
+            if focusNextInput {
+                focusNextInput = false
+                focusedQuestion = index
+            }
+        }
+    }
+
+    @ViewBuilder private func fieldInput(_ field: ChatField, at index: Int) -> some View {
+        let placeholder = field.placeholder ?? (field.suggestions.isEmpty ? "اكتب إجابتك…" : "إجابة أخرى…")
+        let prompt = Text(placeholder).foregroundColor(Forest.softText)
+        if field.keepsLines {
+            TextField(placeholder, text: $other[index], prompt: prompt, axis: .vertical).lineLimit(3...8)
+        } else {
+            TextField(placeholder, text: $other[index], prompt: prompt)
+                .submitLabel(several ? .next : .send)
+                .onSubmit {
+                    let previous = step
+                    next()
+                    if step != previous {
+                        focusNextInput = fields.indices.contains(step)
+                        focusedQuestion = nil
+                    }
+                }
         }
     }
 
@@ -852,22 +999,23 @@ struct FieldQuestionCard: View {
             ForEach(fields.indices, id: \.self) { index in
                 Button { step = index } label: {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(fields[index].prompt).font(.caption).foregroundStyle(.secondary)
-                        Text(answers[index].isEmpty ? "—" : answers[index]).foregroundStyle(Forest.ink)
+                        Text(fields[index].prompt).font(Forest.font(.caption)).foregroundStyle(Forest.softText)
+                        Text(answers[index].isEmpty ? "—" : answers[index]).font(Forest.font()).foregroundStyle(Forest.ink)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 8).padding(.horizontal, 12)
+                    .padding(.vertical, 8).padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     .background(Forest.background, in: RoundedRectangle(cornerRadius: 12))
                 }
                 .buttonStyle(.plain).disabled(busy)
+                .accessibilityHint("تعديل الإجابة")
             }
-            Text("اضغط سؤالًا لتعديل إجابته.").font(.caption).foregroundStyle(.secondary)
+            Text("اضغط سؤالًا لتعديل إجابته.").font(Forest.font(.caption)).foregroundStyle(Forest.softText)
         }
     }
 
     private var actions: some View {
         VStack(spacing: 8) {
-            HStack(spacing: 12) {
+            let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 12))
+            layout {
                 if several && step > 0 { Button("رجوع") { step -= 1 }.buttonStyle(ForestButton(prominent: false)).disabled(busy) }
                 if reviewing {
                     Button("أرسل الإجابات") { submit() }.buttonStyle(ForestButton()).disabled(busy || !FieldAnswers.ready(answers))
@@ -876,7 +1024,13 @@ struct FieldQuestionCard: View {
                         .disabled(busy || !fields.indices.contains(step) || answers[step].isEmpty)
                 }
             }
-            if let onStop { Button("توقف هنا", role: .destructive) { onStop() }.font(.subheadline).disabled(busy) }
+            if let onStop {
+                Button(role: .destructive) { onStop() } label: {
+                    Text("توقف هنا").font(Forest.font(.subheadline, weight: .medium))
+                        .frame(minHeight: 44).contentShape(Rectangle())
+                }
+                .tint(Forest.alert).disabled(busy)
+            }
         }
     }
 
@@ -910,6 +1064,7 @@ struct FieldQuestionCard: View {
     private func submit() {
         let current = answers
         guard !busy, FieldAnswers.ready(current) else { return }
+        focusedQuestion = nil
         onSubmit(fields.indices.map { ChatFieldAnswer(fieldId: fields[$0].id, value: current[$0]) })
     }
 }
@@ -922,15 +1077,22 @@ struct AttachmentTray: View {
             HStack(spacing: 8) {
                 ForEach(store.attachments) { item in
                     ZStack(alignment: .topLeading) {
-                        PhotoThumb(data: item.preview).frame(width: 56, height: 56).clipShape(RoundedRectangle(cornerRadius: 10))
+                        PhotoThumb(data: item.preview).frame(width: 60, height: 60).clipShape(RoundedRectangle(cornerRadius: 12))
+                            .accessibilityHidden(true)
                         Button { store.removeAttachment(item.id) } label: {
-                            Image(systemName: "xmark.circle.fill").font(.body).foregroundStyle(Color.white, Color.black.opacity(0.6))
+                            Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Forest.ink).frame(width: 22, height: 22)
+                                .background(Forest.surface, in: Circle())
+                                .frame(width: 44, height: 44, alignment: .topLeading).contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain).padding(2)
+                        .buttonStyle(.plain).padding(3)
                         .accessibilityLabel("إزالة الصورة")
                     }
                 }
-                if store.uploading { ProgressView().frame(width: 56, height: 56) }
+                if store.uploading {
+                    ProgressView().tint(Forest.accent).frame(width: 60, height: 60)
+                        .accessibilityLabel("جارٍ رفع الصورة")
+                }
             }
             .padding(.horizontal, 4)
         }
@@ -942,7 +1104,10 @@ struct AttachmentPreviews: View {
     let items: [ChatAttachment]
     var body: some View {
         HStack(spacing: 8) {
-            ForEach(items) { item in PhotoThumb(data: item.preview).frame(width: 72, height: 72).clipShape(RoundedRectangle(cornerRadius: 12)) }
+            ForEach(items) { item in
+                PhotoThumb(data: item.preview).frame(width: 72, height: 72).clipShape(RoundedRectangle(cornerRadius: 12))
+                    .accessibilityLabel("صورة مرفقة في انتظار الإرسال")
+            }
             Spacer(minLength: 0)
         }
     }
@@ -990,24 +1155,26 @@ struct BrowserLine: View {
     var body: some View {
         Button(action: open) {
             HStack(spacing: 10) {
-                Image(systemName: "globe").foregroundStyle(Forest.accent)
+                Image(systemName: "globe").foregroundStyle(Forest.accent).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(browser.title.isEmpty ? browser.host : browser.title).font(.subheadline).lineLimit(1)
-                    Text(browser.host).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(browser.title.isEmpty ? browser.host : browser.title).font(Forest.font(.subheadline, weight: .medium))
+                        .foregroundStyle(Forest.ink)
+                    Text(browser.host).font(Forest.font(.caption)).foregroundStyle(Forest.softText)
                 }
                 Spacer(minLength: 4)
                 if browser.live {
-                    Text("مباشر").font(.caption2.weight(.semibold)).padding(.horizontal, 8).padding(.vertical, 3)
+                    Text("مباشر").font(Forest.font(.caption2, weight: .semibold)).padding(.horizontal, 8).padding(.vertical, 3)
                         .background(Forest.accentSoft, in: Capsule()).foregroundStyle(Forest.accent)
                 }
-                Image(systemName: "chevron.left").font(.caption).foregroundStyle(Forest.faint)
+                Image(systemName: "chevron.left").font(.caption).foregroundStyle(Forest.softText).accessibilityHidden(true)
             }
-            .padding(.vertical, 9).padding(.horizontal, 12)
-            .background(Forest.surface, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Forest.line))
+            .padding(.vertical, 9).padding(.horizontal, 12).frame(minHeight: 44)
+            .background(Forest.surface, in: RoundedRectangle(cornerRadius: 15))
+            .overlay(RoundedRectangle(cornerRadius: 15).strokeBorder(Forest.line).allowsHitTesting(false))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("شاشة المتصفح: \(browser.title)")
+        .accessibilityLabel("شاشة المتصفح، \(browser.title.isEmpty ? browser.host : browser.title)")
+        .accessibilityValue(browser.live ? "مباشر" : "")
     }
 }
 
@@ -1021,22 +1188,25 @@ struct BrowserScreenView: View {
             ScrollView {
                 VStack(spacing: 12) {
                     if let image {
-                        Image(uiImage: image).resizable().scaledToFit().clipShape(RoundedRectangle(cornerRadius: 12))
+                        Image(uiImage: image).resizable().scaledToFit().clipShape(RoundedRectangle(cornerRadius: 16))
                             .accessibilityLabel("صورة من متصفح موحسن")
                     } else if loading {
-                        ProgressView().frame(maxWidth: .infinity, minHeight: 200)
+                        ProgressView("جارٍ تحميل شاشة المتصفح…").font(Forest.font(.footnote)).tint(Forest.accent)
+                            .foregroundStyle(Forest.softText).frame(maxWidth: .infinity, minHeight: 200)
                     } else {
-                        ContentUnavailableView("لا توجد صورة الآن", systemImage: "globe", description: Text("تظهر هنا شاشة المتصفح حين يعمل موحسن على صفحة."))
+                        ForestEmptyState(title: "لا توجد صورة الآن", icon: "globe",
+                                         description: "تظهر هنا شاشة المتصفح حين يعمل موحسن على صفحة.")
                     }
                     if let browser = store.conversation?.browser {
-                        Text(browser.url).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).environment(\.layoutDirection, .leftToRight)
+                        Text(browser.url).font(Forest.font(.caption)).foregroundStyle(Forest.softText)
+                            .textSelection(.enabled).environment(\.layoutDirection, .leftToRight)
                     }
                 }
-                .padding(16)
+                .padding(.horizontal, 22).padding(.vertical, 18)
+                .frame(maxWidth: 620).frame(maxWidth: .infinity)
             }
             .background(Forest.background)
-            .navigationTitle("شاشة المتصفح").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("تم") { dismiss() } } }
+            .forestSheetChrome("شاشة المتصفح") { dismiss() }
             .task {
                 while !Task.isCancelled {
                     if let fresh = await store.browserScreen() { image = fresh }
@@ -1051,32 +1221,45 @@ struct BrowserScreenView: View {
 }
 
 struct ConversationListView: View {
+    let onOpen: (String) -> Void
     @EnvironmentObject private var store: WaslaStore
     @Environment(\.dismiss) private var dismiss
     @State private var deleting: ChatSummary?
+
     var body: some View {
         NavigationStack {
             List {
-                if store.chatList.isEmpty { Text("لا توجد محادثات بعد.").foregroundStyle(.secondary) }
+                if store.chatList.isEmpty {
+                    ForestEmptyState(title: "لا توجد محادثات بعد", icon: "bubble.left.and.bubble.right",
+                                     description: "ابدأ محادثة جديدة من شاشة موحسن.")
+                        .listRowBackground(Color.clear).listRowSeparator(.hidden)
+                }
                 ForEach(store.chatList) { item in
+                    let title = item.title.isEmpty ? "محادثة" : item.title
+                    let status = ChatStatus.title(item.status)
+                    let selected = store.conversation?.id == item.id
                     Button {
-                        let id = item.id
                         dismiss()
-                        Task { await store.openConversation(id) }
+                        onOpen(item.id)
                     } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(item.title.isEmpty ? "محادثة" : item.title).foregroundStyle(Forest.ink)
-                            Text(ChatStatus.title(item.status)).font(.caption).foregroundStyle(.secondary)
-                        }
+                        row(title: title, status: status, selected: selected)
                     }
+                    .buttonStyle(.plain)
                     .disabled(store.sending)
+                    .accessibilityLabel(title).accessibilityValue(status).accessibilityHint("فتح المحادثة")
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                    .listRowInsets(EdgeInsets(top: 5, leading: 22, bottom: 5, trailing: 22))
+                    .listRowBackground(Color.clear).listRowSeparator(.hidden)
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button { deleting = item } label: { Label("حذف", systemImage: "trash") }.tint(Forest.alert)
                     }
                 }
             }
-            .navigationTitle("محادثاتك").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("تم") { dismiss() } } }
+            .listStyle(.plain)
+            .contentMargins(.top, 12, for: .scrollContent)
+            .scrollContentBackground(.hidden)
+            .background(Forest.background)
+            .forestSheetChrome("محادثاتك") { dismiss() }
             .refreshable { await store.loadChatList() }
             .confirmationDialog("حذف هذه المحادثة؟", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
                                 titleVisibility: .visible, presenting: deleting) { item in
@@ -1086,5 +1269,45 @@ struct ConversationListView: View {
             }
         }
         .environment(\.layoutDirection, .rightToLeft)
+    }
+
+    private func row(title: String, status: String, selected: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: selected ? "bubble.left.and.bubble.right" : "text.bubble")
+                .font(.system(size: 16, weight: .medium)).frame(width: 40, height: 40)
+                .foregroundStyle(selected ? Forest.accent : Forest.softText)
+                .background(selected ? Forest.accentSoft : Forest.soft, in: RoundedRectangle(cornerRadius: 11))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(Forest.font(.subheadline, weight: .semibold)).foregroundStyle(Forest.ink)
+                Text(status).font(Forest.font(.footnote)).foregroundStyle(selected ? Forest.accent : Forest.softText)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold)).foregroundStyle(Forest.softText)
+                .accessibilityHidden(true)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12).frame(minHeight: 72)
+        .background(Forest.surface, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(selected ? Forest.accent : Forest.line).allowsHitTesting(false))
+        .contentShape(Rectangle())
+        .frame(maxWidth: 620).frame(maxWidth: .infinity)
+    }
+}
+
+private struct ForestEmptyState: View {
+    let title: String
+    let icon: String
+    let description: String
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: icon).font(.system(size: 23, weight: .medium))
+                .foregroundStyle(Forest.accent).frame(width: 52, height: 52)
+                .background(Forest.accentSoft, in: RoundedRectangle(cornerRadius: 15)).accessibilityHidden(true)
+            Text(title).font(Forest.font(.headline, weight: .semibold)).foregroundStyle(Forest.ink).accessibilityAddTraits(.isHeader)
+            Text(description).font(Forest.font(.footnote)).foregroundStyle(Forest.softText).lineSpacing(5)
+        }
+        .multilineTextAlignment(.center).padding(28)
+        .frame(maxWidth: .infinity)
     }
 }
