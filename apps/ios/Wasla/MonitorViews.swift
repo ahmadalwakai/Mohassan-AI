@@ -62,6 +62,68 @@ struct ConversationMonitorCard: View {
     }
 }
 
+struct MonitorSettingsList: View {
+    @EnvironmentObject private var store: WaslaStore
+    let onOpenConversation: (String) -> Void
+
+    var body: some View {
+        LazyVStack(alignment: .leading, spacing: 10) {
+            if let problem = store.monitorListProblem {
+                Card {
+                    MonitorProblem(message: problem)
+                    Button("إعادة المحاولة") { Task { await store.loadMonitors() } }
+                        .buttonStyle(ForestButton(prominent: false))
+                        .disabled(store.monitorListLoading)
+                }
+            }
+            if store.monitorListLoading || (store.accountMonitors == nil && store.monitorListProblem == nil) {
+                Card {
+                    ProgressView("جارٍ تحميل المراقبات…")
+                        .font(Forest.font(.footnote))
+                        .tint(Forest.accent)
+                        .foregroundStyle(Forest.softText)
+                }
+            }
+            if let monitors = store.accountMonitors {
+                if monitors.isEmpty && !store.monitorListLoading && store.monitorListProblem == nil {
+                    Card {
+                        Text("لا توجد مراقبات بعد.")
+                            .font(Forest.font(.footnote))
+                            .foregroundStyle(Forest.softText)
+                    }
+                }
+                ForEach(monitors) { monitor in
+                    row(monitor)
+                }
+            }
+        }
+        .onAppear { Task { await store.loadMonitors() } }
+    }
+
+    private func row(_ monitor: MonitorCard) -> some View {
+        Card {
+            Button { onOpenConversation(monitor.conversationId) } label: {
+                HStack(spacing: 12) {
+                    MonitorHeading(monitor: monitor)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.forward")
+                        .foregroundStyle(Forest.softText)
+                        .accessibilityHidden(true)
+                }
+                .frame(minHeight: 44).contentShape(Rectangle())
+                .foregroundStyle(Forest.ink)
+            }
+            .buttonStyle(.plain)
+            .disabled(store.sending)
+            .accessibilityHint("يفتح المحادثة")
+            MonitorControls(monitor: monitor, busy: store.monitorActionIDs.contains(monitor.id),
+                            problem: store.monitorActionProblems[monitor.id]) { action in
+                store.changeMonitor(monitor, action: action)
+            }
+        }
+    }
+}
+
 private struct MonitorHeading: View {
     let monitor: MonitorCard
 
@@ -315,14 +377,9 @@ private enum MonitorCopy {
     }
 
     static func duration(_ milliseconds: Int) -> String {
-        var calendar = Calendar.current
-        calendar.locale = arabic
-        let formatter = DateComponentsFormatter()
-        formatter.calendar = calendar
-        formatter.allowedUnits = [.day, .hour, .minute, .second]
-        formatter.unitsStyle = .full
-        formatter.maximumUnitCount = 2
-        return formatter.string(from: Double(milliseconds) / 1_000) ?? unavailable
+        Duration.milliseconds(milliseconds)
+            .formatted(.units(allowed: [.days, .hours, .minutes, .seconds], width: .wide, maximumUnitCount: 2)
+                .locale(arabic))
     }
 
     private static func number(_ number: Double) -> String {

@@ -844,6 +844,7 @@ struct SignInView: View {
 }
 
 struct SettingsView: View {
+    let onOpenConversation: (String) -> Void
     @EnvironmentObject private var store: WaslaStore
     @EnvironmentObject private var pushNotifications: PushNotifications
     @Environment(\.openURL) private var openURL
@@ -885,6 +886,11 @@ struct SettingsView: View {
                     }
                     settingsSection("الإشعارات") {
                         notificationSettings
+                    }
+                    if store.smartMonitorsAvailable {
+                        settingsSection("المراقبات") {
+                            MonitorSettingsList(onOpenConversation: onOpenConversation)
+                        }
                     }
                     settingsSection("ما يعمل الآن") {
                         settingsNote(store.capabilities?.localModeText ?? (store.capabilities == nil ? "لم تُقرأ قدرات هذه الجلسة بعد." : "نموذج لغوي متصل، والردود الحرة متاحة."))

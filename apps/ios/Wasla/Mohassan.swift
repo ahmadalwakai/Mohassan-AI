@@ -534,7 +534,12 @@ struct ChatView: View {
             return .handled
         })
         .sheet(isPresented: $listShown) { ConversationListView(onOpen: openConversation) }
-        .sheet(isPresented: $settingsShown) { SettingsView() }
+        .sheet(isPresented: $settingsShown) {
+            SettingsView { id in
+                settingsShown = false
+                openConversation(id)
+            }
+        }
         .sheet(isPresented: $remoteShown) { RemoteControlView() }
         .sheet(isPresented: $screenShown) { BrowserScreenView() }
         .sheet(item: $browsing) { SafariView(url: $0.url).ignoresSafeArea() }
