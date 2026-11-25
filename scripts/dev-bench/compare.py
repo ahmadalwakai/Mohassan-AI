@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 import re
 
+from monitor_audit import SOURCE_FLAGS
+
 
 VERSIONS = {"v1": 240, "v2": 2400}
 
@@ -92,6 +94,20 @@ def groups(cases: list[Case]) -> dict[tuple[str, ...], dict[str, int]]:
 
 def coverage(cases: list[Case]) -> list[tuple[str, str, str]]:
     return [(case.id, case.area, case.language) for case in cases]
+
+
+def validate_monitor_profiles(settings):
+    version_flag = "MOHASSAN_MONITORS_V2"
+    toggled = {version_flag, *SOURCE_FLAGS}
+    profiles = [{key: value for key, value in arm.items() if key not in toggled} for arm in settings]
+    if profiles[0] != profiles[1] or profiles[0] != profiles[2] or profiles[0].get("MOHASSAN_MONITORS_ENABLED") != "1":
+        raise ValueError("Monitor audit requires a common settings profile with v1 enabled")
+    if any(flag in arm for arm in settings for flag in SOURCE_FLAGS):
+        if ([arm.get(version_flag) for arm in settings] != ["1", "1", "1"]
+                or any([arm.get(flag) for arm in settings] != ["0", "0", "1"] for flag in SOURCE_FLAGS)):
+            raise ValueError("Source audit requires v2 enabled in every arm and every source flag on only for flagsOn")
+    elif [arm.get(version_flag, "0") for arm in settings] != ["0", "0", "1"]:
+        raise ValueError("Version audit requires v2 on only for flagsOn")
 
 
 def summarize_monitor_audit(versions, requested_cases):
@@ -209,12 +225,7 @@ def compare(
         raise ValueError("Reply masks require a baseline repeat")
     comparison_inputs = {"baseline": baseline, "flagsOff": flags_off, "flagsOn": flags_on}
     if monitor_requests is not None:
-        settings = [receipt.source["settings"] for receipt in comparison_inputs.values()]
-        profiles = [{key: value for key, value in arm.items() if key != "MOHASSAN_MONITORS_V2"} for arm in settings]
-        if (profiles[0] != profiles[1] or profiles[0] != profiles[2]
-                or profiles[0].get("MOHASSAN_MONITORS_ENABLED") != "1"
-                or [arm.get("MOHASSAN_MONITORS_V2", "0") for arm in settings] != ["0", "0", "1"]):
-            raise ValueError("Monitor audit requires the same profile with v1 enabled and v2 on only for flagsOn")
+        validate_monitor_profiles([receipt.source["settings"] for receipt in comparison_inputs.values()])
         known_cases = {(version, case.id) for version, cases in baseline.versions.items() for case in cases}
         if not monitor_requests <= known_cases:
             raise ValueError("Monitor request labels must refer to published development case IDs")
@@ -314,7 +325,7 @@ def compare(
         "versions": versions,
         **({"monitorAudit": audits} if audits else {}),
         "passed": all(version["passed"] for version in versions.values())
-        and (not audits or audits["flagsOn"]["counts"]["falseOffers"] == 0),
+        and all(audit["counts"]["falseOffers"] == 0 for audit in audits.values()),
     }
 
 
