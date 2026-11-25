@@ -11,7 +11,7 @@ test('selects a price before approval and confirms a spoken monitor change', asy
   const management: MonitorManagementCard = { id: actionId, language: 'ar', question: 'أوقف مراقبة «سعر الورشة»؟' };
   const capabilities = { chatModel: false, available: [], smartMonitors: true, smartMonitorsV2: true };
   let conversation: ChatConversation;
-  let monitor: MonitorCard;
+  let monitor!: MonitorCard;
   let action: MonitorManagementCard | undefined;
   const writes: object[] = [];
 
