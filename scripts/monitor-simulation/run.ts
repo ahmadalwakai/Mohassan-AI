@@ -11,11 +11,17 @@ import { classes, createScenario, matchesEvent, minute, parameters, seedCounts, 
 const baselineCommit = 'a453dc17a78f55c0cd3e5bf23f347843893bc3d2';
 const ownerId = 'simulation-account';
 const baselinePath = 'apps/server/src/monitors';
-const { values } = parseArgs({ options: { baseline: { type: 'string' }, bank: { type: 'string' }, 'v1-only': { type: 'boolean' } } });
+const { values } = parseArgs({ options: { baseline: { type: 'string' }, bank: { type: 'string' }, 'v1-only': { type: 'boolean' }, replication: { type: 'string' } } });
 if (!values.baseline || (values.bank !== 'tuning' && values.bank !== 'held-out') || (values['v1-only'] && values.bank !== 'tuning')) {
   throw new Error('Use --baseline <pinned-worktree> --bank tuning|held-out. --v1-only is available for the tuning bank.');
 }
 const bank: SeedBank = values.bank;
+const replication = values.replication;
+if (replication !== undefined && (bank !== 'held-out' || !/^[a-f\d]{64}$/u.test(replication))) {
+  throw new Error('A held-out replication requires a 256-bit hex salt generated after freezing the candidate.');
+}
+// Double the initial held-out bank to reduce sampling error in the independent replication.
+const trialsPerClass = replication ? 2 * seedCounts['held-out'] : seedCounts[bank];
 const baseline = resolve(values.baseline);
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 if (git(baseline, 'rev-parse', 'HEAD') !== baselineCommit || git(baseline, 'status', '--porcelain', '--untracked-files=no')) {
@@ -257,8 +263,8 @@ for (const sourceClass of classes) {
   const second = new Scores();
   const paired: PairedDelays = { v1: [], v2: [] };
   const recurring = sourceClass === 'recurring-feed';
-  for (let trial = 0; trial < seedCounts[bank]; trial++) {
-    const fixture = createScenario(bank, trial, sourceClass);
+  for (let trial = 0; trial < trialsPerClass; trial++) {
+    const fixture = createScenario(bank, trial, sourceClass, replication);
     const old = await simulate(fixture, undefined);
     const oldDelays = first.record(fixture, old);
     if (!recurring) totals.v1.record(fixture, old);
@@ -288,6 +294,6 @@ const gates = v2 && {
   lowerPairedP95Delay: paired.v2.p95DelayMinutes !== null && paired.v1.p95DelayMinutes !== null && paired.v2.p95DelayMinutes < paired.v1.p95DelayMinutes,
   equalOrFewerChecks: shared.v2!.checks <= shared.v1.checks,
 };
-console.log(JSON.stringify({ baseline: baselineCommit, head: git(process.cwd(), 'rev-parse', 'HEAD'), bank, seeds: seedCounts[bank], parameters,
+console.log(JSON.stringify({ baseline: baselineCommit, head: git(process.cwd(), 'rev-parse', 'HEAD'), bank, ...(replication && { replication }), seeds: trialsPerClass, parameters,
   comparison, sharedOneShot: shared, ...(gates && { gates }) }, null, 2));
 if (bank === 'held-out' && gates && Object.values(gates).some(passed => !passed)) process.exitCode = 1;

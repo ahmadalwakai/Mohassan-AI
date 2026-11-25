@@ -41,12 +41,13 @@ export const parameters = {
   moveProbability: 0.5,
 } as const;
 
-function random(bank: SeedBank, trial: number, source: SourceClass) {
+function random(bank: SeedBank, trial: number, source: SourceClass, replication?: string) {
+  const domain = replication ? `${bank}/replication/${replication}` : bank;
   let counter = 0;
   return () => {
     // Counter-mode SHA-256 from FIPS 180-4. Map uint32 samples to open interval (0, 1).
     // https://csrc.nist.gov/pubs/fips/180-4/upd1/final
-    const hash = createHash('sha256').update(`mohassan-monitors-simulation/v1/${bank}/${trial}/${source}/${counter++}`).digest();
+    const hash = createHash('sha256').update(`mohassan-monitors-simulation/v1/${domain}/${trial}/${source}/${counter++}`).digest();
     return (hash.readUInt32BE() + 0.5) / 2 ** 32;
   };
 }
@@ -150,8 +151,8 @@ function forecast(at: number, temperature: number) {
   });
 }
 
-export function createScenario(bank: SeedBank, trial: number, sourceClass: SourceClass): Scenario {
-  const rand = random(bank, trial, sourceClass);
+export function createScenario(bank: SeedBank, trial: number, sourceClass: SourceClass, replication?: string): Scenario {
+  const rand = random(bank, trial, sourceClass, replication);
   const start = epoch + pick(rand, 0, week / minute - 1) * minute;
   const end = start + week;
   const sustainedChange = !chance(rand, parameters.noSustainedChangeProbability);
