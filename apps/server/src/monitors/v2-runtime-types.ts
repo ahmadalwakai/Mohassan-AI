@@ -15,6 +15,7 @@ export interface MonitorV2Preview {
   caches: (MonitorSourceCache | null)[];
   publicationTimes?: string[];
   clarification?: MonitorV2Clarification;
+  additionalClarifications?: MonitorV2Clarification[];
 }
 
 export interface MonitorV2State {
@@ -25,5 +26,6 @@ export interface MonitorV2State {
   failures?: number[];
   lastReads?: (number | null)[];
   clarification?: MonitorV2Clarification & { resume: 'proposed' | 'active' };
+  additionalClarifications?: MonitorV2Clarification[];
   relocations?: (MonitorPageRelocation & { index: number })[];
 }

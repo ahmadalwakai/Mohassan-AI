@@ -194,6 +194,7 @@ export function createMonitorStore(db: Kysely<any>, {
         schedule: learnMonitorSchedule(undefined, at, { changed: false, publicationTimes: preview.publicationTimes }),
         ...(preview.samples.length && { evaluation: evaluateMonitorV2(spec, undefined, preview.samples, at, { canDeliver: false }).state }),
         ...(preview.clarification && { clarification: { ...preview.clarification, resume: 'proposed' } }),
+        ...(preview.additionalClarifications?.length && { additionalClarifications: preview.additionalClarifications }),
       };
       const execute = async (trx: Kysely<any>) => {
         await requireConversation(trx, userId, input.conversationId);
@@ -292,7 +293,12 @@ export function createMonitorStore(db: Kysely<any>, {
         state.cursor = 0;
         if (state.failures) state.failures[index] = 0;
         state.schedule ??= learnMonitorSchedule(undefined, at, { changed: false });
-        delete state.clarification;
+        const following = state.additionalClarifications?.shift();
+        if (following) state.clarification = { ...following, resume: 'proposed' };
+        else {
+          delete state.clarification;
+          delete state.additionalClarifications;
+        }
         const expiry = new Date(row.expires_at);
         const { dueAt, intervalMs } = nextPredictiveMonitorCheck(row.spec, at, { state: state.schedule, expiry, checksUsed: row.checks });
         return updateMonitor(tx, id, {

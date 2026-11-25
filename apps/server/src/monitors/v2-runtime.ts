@@ -33,8 +33,9 @@ export async function prepareMonitorV2Preview(read: Read, spec: MonitorSpec,
   for (let index = 0; index < sources.length; index++) {
     const result = await read(monitorSourceSpec(spec, index), { ...options, reserveHost: reserve, v2: true });
     if (result.kind === 'clarify') {
-      if (preview.clarification) return { result };
-      preview.clarification = { index, candidates: result.candidates, cache: result.cache };
+      const clarification = { index, candidates: result.candidates, cache: result.cache };
+      if (preview.clarification) (preview.additionalClarifications ??= []).push(clarification);
+      else preview.clarification = clarification;
     } else if (result.kind !== 'value') {
       return { result };
     } else {

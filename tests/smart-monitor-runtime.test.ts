@@ -17,6 +17,7 @@ import { createMonitorRuntime } from '../apps/server/src/monitors/runtime.js';
 import { MONITOR_LIMITS, monitorExpiry, monitorTiming, nextMonitorCheck } from '../apps/server/src/monitors/schedule.js';
 import type { MonitorReadResult } from '../apps/server/src/monitors/sources.js';
 import { createMonitorStore } from '../apps/server/src/monitors/store.js';
+import { prepareMonitorV2Preview } from '../apps/server/src/monitors/v2-runtime.js';
 import { claimNotification, dispatchBackgroundWebPush, subscribePushDevice, syncNotifications } from '../apps/server/src/notifications-store.js';
 import { migrateRemindersInTransaction } from '../apps/server/src/reminders/migration.js';
 import type { ApnsSender } from '../apps/server/src/apns.js';
@@ -392,6 +393,35 @@ describe('durable smart monitor runtime', () => {
     expect(await card(proposed.id)).toMatchObject({ status: 'paused', nextCheckAt: null,
       note: expect.stringContaining('couldn’t safely identify') });
     expect(await events()).toHaveLength(1);
+  });
+
+  it('resolves ambiguous composite previews one source at a time', async () => {
+    const first = pageSpec(now());
+    const second = { ...source, url: 'https://second.example.org/shop' };
+    const freshnessMs = 6 * hour;
+    const spec = MonitorSpecSchema.parse({ ...first, v2: { freshnessMs, combine: { kind: 'and' },
+      additional: [{ source: second, read: first.read, condition: first.condition, freshnessMs }] } });
+    const read = async (target: MonitorSpec): Promise<MonitorReadResult> => {
+      if (target.source.kind !== 'page') throw new Error('Expected a page');
+      const url = target.source.url;
+      const label = new URL(url).hostname;
+      return { kind: 'clarify', url, confidence: 0.55, candidates: [3.75, 3.90].map((number, index) => ({
+        id: `${label}-${index}`, label, observation: { ...observe(number), url },
+        anchor: { key: `key-${index}`, label, context: label, pattern: { kind: 'number' }, origin: 'visible' },
+      })) };
+    };
+    const prepared = await prepareMonitorV2Preview(read, spec, { ownerId: member });
+    if (!('preview' in prepared)) throw new Error('Expected a preview');
+    const { v2Store } = runtimeV2(read);
+    const { id, clarification } = await v2Store.propose(member, { conversationId: memberConversation, spec,
+      observation: null, v2Preview: prepared.preview });
+    expect(clarification?.choices[0]?.label).toBe('stock.example.org');
+    const next = await v2Store.choose(member, id, clarification!.choices[0].id);
+    expect(next.clarification?.choices[0]?.label).toBe('second.example.org');
+    await expect(v2Store.approve(member, id)).rejects.toMatchObject({ code: 'MONITOR_PREVIEW_REQUIRED' });
+    const selected = await v2Store.choose(member, id, next.clarification!.choices[1].id);
+    expect(selected.clarification).toBeUndefined();
+    await expect(v2Store.approve(member, id)).resolves.toMatchObject({ status: 'active' });
   });
 
   it('publishes a durable daily digest at rollover with no source check due', async () => {
