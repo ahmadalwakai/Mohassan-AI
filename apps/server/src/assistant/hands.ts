@@ -8,7 +8,7 @@ import { isSiteRequest } from '@mohassan/sites';
 import type { WebSequel } from './web-sequence.js';
 import { splitReplyDirective, type ReplyField } from './reply-directive.js';
 import { returnedTo } from './return-to.js';
-import { evaluatePageReasoning, isPageReasoningRequest } from './reasoning/index.js';
+import { evaluatePageReasoning, isPageReasoningRequest, planComparisonPage } from './reasoning/index.js';
 
 export { returnedTo };
 export { siteName };
@@ -328,7 +328,7 @@ function parseCommand(request: string): HandsStep[] | null {
   // وأقرأه لك»). In production on 2026-11-23 a bare link was answered «The required search or browsing route is not fully available».
   const address = tidy(request);
   if (BARE_ADDRESS.test(address)) return [{ kind: 'open', url: address, name: address.replace(/^https?:\/\//iu, '').split(/[/?#]/u)[0] }, { kind: 'read', more: false }];
-  const openAsk = parseOpenAndAsk(request);
+  const openAsk = planComparisonPage(request, SPLIT) ?? parseOpenAndAsk(request);
   if (openAsk) return openAsk;
   if (isPageReasoningRequest(request)) return [{ kind: 'ask_page', question: request.trim() }];
   const openRead = parseOpenAndRead(request);
