@@ -127,7 +127,7 @@ export async function answerTestDrivenCoding(
     cwd = await mkdtemp(join(tmpdir(), 'mohassan-python-'));
     result = await runWorker(request, cwd, options.signal);
   } catch {
-    return unavailableReply('workspace-unavailable');
+    return unavailableReply(options.signal.aborted ? 'cancelled' : cwd ? 'worker-start-failed' : 'workspace-unavailable');
   } finally {
     activeWorkers--;
     if (cwd) await rm(cwd, { recursive: true, force: true }).catch(() => {});

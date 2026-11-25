@@ -127,7 +127,7 @@ describe.skipIf(process.platform !== 'linux')('verified code through the command
     const request = prompt.replace('assert combine_amounts(13, -4)', 'assert False\nassert combine_amounts(13, -4)');
     const result = await ask(request);
     expect(result.status).toBe('blocked');
-    expect(result.verification).toEqual({ reason: 'assertion-failed' });
+    expect(result.verification).toEqual({ reason: 'unsupported-assertion' });
     expect(result.text).toContain('assertion 1');
     expect(result.text).not.toMatch(/\bdef\s+\w+/u);
   });
