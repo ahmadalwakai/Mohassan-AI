@@ -1,6 +1,10 @@
 import { appendFile, mkdir, open } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { legacyShadowDecision, replayConversationTranscript, type ConversationTranscriptEntry } from './conversation-state-chat.js';
+import type { HandsPlan } from './hands.js';
+import type { RequestResolution } from './request-context.js';
+import type { RequestScopeAssessment } from './request-scope.js';
 import {
   emptyConversationState, understandTurn, withHostResults, withPending,
   type ConversationStateV2, type HostResult, type PendingStep, type TurnUnderstanding,
@@ -10,7 +14,8 @@ import {
  * Conversation state v2 in shadow (docs/RESPONSE-QUALITY-PLAN-2026-11-22.md, phase 1). The chat still decides by v1 and
  * the rules; this records what v2 would have understood, one JSON line per user turn, for the owner's review and the
  * E1.1 report (`npx tsx scripts/conversation-state/shadow-report.ts`). Like the router shadow it changes nothing: it
- * never throws into the chat, and a failed write is dropped.
+ * never throws into the chat, and a failed write is dropped. It compares the seven-way decision with the
+ * legacy router and its public refinement when the controller supplies the accepted turn and history.
  *
  * v2 state lives in memory per conversation. A conversation the process forgot (a server restart, an evicted entry, or a
  * second lab process on the same log) is rebuilt from the user turns this log already holds, user text only, never replies
@@ -28,6 +33,12 @@ export interface ConversationShadowInput {
   pending?: PendingStep | null;
   /** Items the host displayed in its last reply (answer entity, list items): data, never instructions. */
   shown?: readonly { label: string; kind: HostResult['kind'] }[];
+  history?: readonly ConversationTranscriptEntry[];
+  legacy?: RequestResolution;
+  previousSource?: RequestScopeAssessment | null;
+  previousFound?: HandsPlan['found'];
+  mode?: 'active' | 'shadow';
+  boundAnswer?: boolean;
 }
 export interface ConversationShadowLine {
   at: string;
@@ -46,6 +57,14 @@ export interface ConversationShadowLine {
   reference?: TurnUnderstanding['reference'];
   against?: string;
   v1: { kind: string; intent: string; scope: string; query: string | null };
+  mode?: ConversationShadowInput['mode'];
+  legacyDecision?: ReturnType<typeof legacyShadowDecision>;
+  agreement?: { type: boolean; standalone: boolean | null };
+  decision?: Pick<TurnUnderstanding['decision'], 'type' | 'confidence' | 'reasons' | 'questionType'> & {
+    reference: { turnId: string; role: 'user' | 'assistant'; kind: string } | null;
+    hasStandalone: boolean;
+    referenceCount: number;
+  };
   /** How many earlier user turns were replayed from this log to rebuild a conversation the process had forgotten. */
   seeded?: number;
   ms: number;
@@ -55,7 +74,7 @@ export interface ConversationShadow {
   /** Understands one user turn in shadow and logs it. Returns null when understanding itself failed. */
   observe(input: ConversationShadowInput): TurnUnderstanding | null;
   /** The same as observe, after the caller's request has gone on, in call order; returns at once and never throws. */
-  observeLater(input: ConversationShadowInput): void;
+  observeLater(input: ConversationShadowInput, history?: () => Promise<ConversationTranscriptEntry[]>): void;
   /** Rebuilds a forgotten conversation from its stored user turns, oldest first. */
   seed(conversationId: string, turns: readonly { id: string; text: string }[]): void;
   state(conversationId: string): ConversationStateV2 | undefined;
@@ -138,7 +157,7 @@ export function createConversationShadow(options: { logFile: string; maxConversa
 
   const observe = (input: ConversationShadowInput): TurnUnderstanding | null => {
     try {
-      let state = states.get(input.conversationId);
+      let state = input.history ? replayConversationTranscript(input.history) : states.get(input.conversationId);
       let seeded = 0;
       if (!state) {
         const turns = earlier.get(input.conversationId) ?? [];
@@ -148,18 +167,33 @@ export function createConversationShadow(options: { logFile: string; maxConversa
       if (input.shown?.length) state = withHostResults(state, input.shown, `${input.turnId}-shown`);
       state = withPending(state, input.pending ?? null);
       const started = performance.now();
-      const understanding = understandTurn(state, input.text, input.turnId);
+      const understanding = understandTurn(state, input.text, input.turnId, { boundAnswer: input.boundAnswer });
       const ms = Number((performance.now() - started).toFixed(3));
-      const text = input.text.slice(0, MAX_TEXT);
+      const text = input.boundAnswer ? '' : input.text.slice(0, MAX_TEXT);
+      const { type, confidence, reasons, reference, references, standalone, questionType } = understanding.decision;
+      const mode = input.mode ?? 'shadow';
+      const comparison = mode === 'shadow' ? legacyShadowDecision(input, understanding) : null;
+      const legacyType = comparison?.kind === 'answer' ? 'card_answer' : comparison?.kind === 'follow_up' ? 'follow_up'
+        : comparison?.intent === 'chat' ? 'small_talk' : comparison?.kind === 'new' ? 'new_request' : null;
+      const compare = (text: string) => text.normalize('NFKC').toLowerCase().replace(/[؟?]+$/u, '').replace(/\s+/gu, ' ').trim();
       remember(input.conversationId, withPending(understanding.next, null));
-      keep(input.conversationId, [...(earlier.get(input.conversationId) ?? []), { id: input.turnId, text }]);
+      if (text) keep(input.conversationId, [...(earlier.get(input.conversationId) ?? []), { id: input.turnId, text }]);
       write({
         at: now().toISOString(), conversationId: input.conversationId, turnId: input.turnId, text,
-        type: understanding.type, entity: understanding.entity, property: understanding.property, place: understanding.place, time: understanding.time,
-        query: understanding.query, needs: understanding.needs, assumption: understanding.assumption,
-        ...(understanding.edit ? { edit: understanding.edit } : {}), ...(understanding.reference ? { reference: understanding.reference } : {}),
-        ...(understanding.against ? { against: understanding.against } : {}),
-        v1: { kind: understanding.v1.kind, intent: understanding.v1.intent, scope: understanding.v1.scope, query: understanding.v1.query },
+        type: understanding.type, entity: input.boundAnswer ? null : understanding.entity,
+        property: input.boundAnswer ? null : understanding.property, place: input.boundAnswer ? null : understanding.place,
+        time: input.boundAnswer ? null : understanding.time, query: input.boundAnswer ? null : understanding.query,
+        needs: understanding.needs, assumption: input.boundAnswer ? null : understanding.assumption,
+        ...(!input.boundAnswer && understanding.edit ? { edit: understanding.edit } : {}),
+        ...(!input.boundAnswer && understanding.reference ? { reference: understanding.reference } : {}),
+        ...(!input.boundAnswer && understanding.against ? { against: understanding.against } : {}),
+        v1: { kind: understanding.v1.kind, intent: understanding.v1.intent, scope: understanding.v1.scope,
+          query: input.boundAnswer ? null : understanding.v1.query },
+        mode,
+        ...(comparison ? { legacyDecision: comparison, agreement: { type: legacyType === type,
+          standalone: comparison.query && standalone ? compare(comparison.query) === compare(standalone) : null } } : {}),
+        decision: { type, confidence, reasons, questionType, hasStandalone: Boolean(standalone), referenceCount: references.length,
+          reference: reference ? { turnId: reference.turnId, role: reference.role, kind: reference.kind } : null },
         ...(seeded ? { seeded } : {}), ms,
       });
       return understanding;
@@ -171,16 +205,24 @@ export function createConversationShadow(options: { logFile: string; maxConversa
   return {
     logFile: options.logFile,
     observe,
-    observeLater(input) {
+    observeLater(input, history) {
       try {
         // A copy taken now: the caller may change its own objects after the request goes on.
         const copy: ConversationShadowInput = {
           conversationId: input.conversationId, turnId: input.turnId, text: input.text,
+          ...(input.history ? { history: input.history.map(message => ({ ...message })) } : {}),
+          ...(input.legacy ? { legacy: structuredClone(input.legacy) } : {}),
+          ...(input.previousSource ? { previousSource: structuredClone(input.previousSource) } : {}),
+          ...(input.previousFound ? { previousFound: structuredClone(input.previousFound) } : {}),
+          ...(input.boundAnswer ? { boundAnswer: true } : {}),
+          ...(input.mode ? { mode: input.mode } : {}),
           ...(input.pending !== undefined ? { pending: input.pending ? { ...input.pending, ...(input.pending.fields ? { fields: [...input.pending.fields] } : {}) } : null } : {}),
           ...(input.shown ? { shown: input.shown.map(item => ({ label: item.label, kind: item.kind })) } : {}),
         };
-        later = later.then(() => indexed).then(() => new Promise<void>(resolve => setImmediate(() => { observe(copy); resolve(); })))
-          .catch(() => { /* never reaches the chat */ });
+        later = later.then(() => indexed).then(() => new Promise<void>(resolve => setImmediate(resolve))).then(async () => {
+          if (history) copy.history = await history().catch(() => undefined);
+          observe(copy);
+        }).catch(() => { /* never reaches the chat */ });
       } catch { /* never reaches the chat */ }
     },
     seed(conversationId, turns) {
