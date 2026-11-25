@@ -63,6 +63,7 @@ type Publication = {
   conversationId: string;
   runId: string;
   revalidate(tx: Kysely<any>): Promise<unknown>;
+  afterCommit: Array<() => void>;
 };
 const publicationContext = new AsyncLocalStorage<Publication>();
 
@@ -83,6 +84,13 @@ export function revalidateStructuredMemoryPublication(tx: Kysely<any>): Promise<
   const publication = publicationContext.getStore();
   if (publication?.tx !== tx) throw new Error('STRUCTURED_MEMORY_PUBLICATION_MISSING');
   return publication.revalidate(tx);
+}
+
+export function afterStructuredMemoryPublication(runId: string, observe: () => void): boolean {
+  const publication = publicationContext.getStore();
+  if (publication?.runId !== runId) return false;
+  publication.afterCommit.push(observe);
+  return true;
 }
 
 interface StructuredMemoryTurn {
@@ -177,13 +185,17 @@ export async function handleStructuredMemoryTurn(input: StructuredMemoryTurn): P
   const completed = (arabic: string, english: string): Reply => ({ status: 'completed', text: ar ? arabic : english });
   const publish = async (resolve: (tx: Kysely<any>) => Promise<Reply>, write = false) => {
     const revalidate = (tx: Kysely<any>) => input.lockedExecution(tx, conversationId, runId);
+    const afterCommit: Array<() => void> = [];
     await db.transaction().execute(async tx => {
       if (write) await lockStructuredMemoryOwner(tx, ownerId);
       await revalidate(tx);
       const { text, status } = await resolve(tx);
-      await publicationContext.run({ db, tx, conversationId, runId, revalidate },
+      await publicationContext.run({ db, tx, conversationId, runId, revalidate, afterCommit },
         () => input.finish(conversationId, runId, state, text, status, undefined, undefined, true));
     });
+    for (const observe of afterCommit) {
+      try { observe(); } catch { /* Publication already committed. */ }
+    }
     return true;
   };
   if (intent.kind === 'secret') return publish(async () => ({ status: 'blocked', text: secretRefusal }));

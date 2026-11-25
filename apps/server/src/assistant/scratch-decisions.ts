@@ -1,8 +1,10 @@
 import { loadScratchClassifiers, type ScratchClassifiers, type ScratchHead, type ScratchPrediction } from '@mohassan/scratch-classifiers';
 import { webQuestion } from './hands.js';
 import { buildFrame } from './mind/frame.js';
+import { hasQuantitativeQuestion } from './quantitative-question.js';
+import { arithmeticSearchEnabled } from './arithmetic-search-settings.js';
 import { parseRequestContextState, requestActionText } from './request-context.js';
-import { requestScopeActionText } from './request-scope.js';
+import { maskRequestLiteralData, requestScopeActionText } from './request-scope.js';
 import type { RequestRoutingDecision, RequestRoutingInput, RoutedIntent } from './routing-decision.js';
 import { unsupportedRequest } from './unsupported-request.js';
 
@@ -82,7 +84,10 @@ function choose(input: RequestRoutingInput, rule: RequestRoutingDecision, predic
     && !nominalFrame.matched.some(({ rule }) => rule === 'property-and-topic' || rule === 'factual-report');
   const refusal = predictions.refusal.label;
   if (!ruleRefusal && resolution.kind === 'new' && (fallback || nominalFallback)
-      && (refusal === 'refuse' || refusal === 'out_of_scope')) return { refusal };
+      && (refusal === 'refuse' || refusal === 'out_of_scope')) {
+    if (arithmeticSearchEnabled() && hasQuantitativeQuestion(maskRequestLiteralData(resolution.resolved))) return choices;
+    return { refusal };
+  }
 
   if (!ruleRefusal && resolution.kind === 'new' && predictions.speechAct.label === 'smalltalk') {
     if (fallback && source.operation === 'unknown') return { smalltalk: true };

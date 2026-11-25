@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ScratchHead, ScratchPrediction } from '@mohassan/scratch-classifiers';
 import { evaluateLocalConversation } from '../apps/server/src/assistant/local-conversation.js';
 import { bootstrapRequestContext } from '../apps/server/src/assistant/request-context.js';
 import { decideRequestRoute, type RequestRoutingInput } from '../apps/server/src/assistant/routing-decision.js';
-import type { ScratchDecisionPolicy } from '../apps/server/src/assistant/scratch-decisions.js';
+import { applyScratchRouting, type ScratchDecisionPolicy } from '../apps/server/src/assistant/scratch-decisions.js';
 
 const capabilities = { search: true, browser: true };
 
@@ -20,6 +20,8 @@ function policy(labels: Partial<Record<ScratchHead, string>>, enabled = true): S
 }
 
 describe('scratch classifier request decisions', () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
   it('observes all four predictions once in shadow and emits no request or history text', () => {
     const input: RequestRoutingInput = {
       text: 'What is happening around the world this morning?', capabilities, turnId: 'test-turn',
@@ -69,6 +71,18 @@ describe('scratch classifier request decisions', () => {
     const decision = decideRequestRoute(input, policy({ refusal: label }));
     expect(decision).toMatchObject({ route: 'unsupported', handler: 'unsupported', reason, publicQuery: null, localReply: { status: 'blocked' } });
     expect(evaluateLocalConversation(input.text, decision)).toEqual(decision.localReply);
+  });
+
+  it.each(['refuse', 'out_of_scope'])('keeps an unresolved numeric question local despite a learned %s prediction', refusal => {
+    vi.stubEnv('MOHASSAN_ARITHMETIC_SEARCH', '1');
+    const input = { text: 'Eighteen cubbies fit in each cabinet. The workshop has space for 7 cabinets. What is the total capacity?', capabilities };
+    const fallback = decideRequestRoute({ text: 'A question with missing details.', capabilities }, null);
+    expect(fallback).toMatchObject({ handler: 'clarify', publicQuery: null, sourceAssessment: { source: 'unresolved' } });
+    const rule = { ...fallback, resolution: { ...fallback.resolution, resolved: input.text } };
+    const active = policy({ refusal });
+    const reroute = vi.fn(() => rule);
+    expect(applyScratchRouting(input, rule, active, reroute)).toBe(rule);
+    expect(reroute).not.toHaveBeenCalled();
   });
 
   it('preserves an executable lookup when a learned news label proposes changing its handler', () => {
