@@ -1,5 +1,6 @@
+import { BrowserLiveProvider } from "../components/browser-live-host";
 import { Workspace } from "../components/workspace";
 
 export default function Page() {
-  return <Workspace />;
+  return <BrowserLiveProvider><Workspace /></BrowserLiveProvider>;
 }

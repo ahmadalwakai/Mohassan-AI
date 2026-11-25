@@ -19,6 +19,7 @@ import { Markdown, plainText } from "./markdown";
 import { takeoverInput } from "./takeover-input";
 import { BrowserFilesPanel } from './browser-files-panel';
 import { DocumentsPanel } from './documents-panel';
+import { useBrowserLiveHint } from "./browser-live-host";
 import { BrowserViewport } from './browser-viewport';
 import { CampaignCard } from "./campaign-card";
 
@@ -276,6 +277,8 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
     if (result.capabilities) setChatCapabilities(result.capabilities);
     return result.conversations;
   }, []);
+
+  useBrowserLiveHint(conversation, setConversation, refreshHistory);
 
   // Back from Google's consent page: answer the waiting question so the task continues by itself.
   useEffect(() => {

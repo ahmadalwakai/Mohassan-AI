@@ -20,6 +20,7 @@ import { AiProviders } from "./ai-providers";
 import { CodingProjects } from "./coding-projects";
 import { CodingResultView } from "./coding-result";
 import { BrowserOpenResult } from "./browser-open-result";
+import { useBrowserLiveAccount } from "./browser-live-host";
 import browserStyles from "./browser-open-result.module.css";
 
 const StudioAiResult = dynamic(() => import("./studio-ai-panel").then(module => module.StudioAiResult));
@@ -333,6 +334,7 @@ export function Workspace() {
     return () => { active = false; };
   }, [boot, session]);
   const owner = access?.role === "owner";
+  useBrowserLiveAccount(boot === "ready" && !inviteToken && access ? session?.user.id ?? null : null);
 
   useEffect(() => {
     let active = true;

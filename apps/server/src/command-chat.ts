@@ -26,6 +26,7 @@ import { liveLabel } from './assistant/activity.js';
 import type { DesktopCommand, DesktopOutcome, ParsedDesktopCommand } from '@mohassan/desktop';
 import { searchRefusedReply, unsupportedReply, unsupportedRequest } from './assistant/unsupported-request.js';
 import { decideBrowserVisibility, deriveBrowserVisibility } from './assistant/browser-visibility.js';
+import { completeBrowserLiveInput } from './assistant/browser-live-handoff.js';
 import type { ShadowRouter } from './assistant/router.js';
 import type { ConversationShadow } from './assistant/conversation-state-shadow.js';
 import { publicConversationFollowup } from './assistant/public-conversation-followup.js';
@@ -4286,7 +4287,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         if (url) state.skippedAuthUrls.push(url);
         state.trail.push({ step: state.steps, action: 'requested sign-in', result: 'the user declined. Continue without it or finish.', changed: false });
       }
-      if (input.action === 'done') state.authAttempts = 0;
+      completeBrowserLiveInput(state, input.action);
       // A fresh entry is not the outcome of the previous attempt.
       state.awaitingAuthResult = false;
     }, input.action === 'skip' ? 'تخطَّ هذه الخطوة' : input.action === 'done' ? 'أكملت الخطوة' : secure.kind === 'code' ? 'أدخلت الرمز' : 'أدخلت بيانات الدخول',

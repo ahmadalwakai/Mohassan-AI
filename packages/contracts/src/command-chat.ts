@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { CampaignEventStreamSchema } from './campaign-progress';
 import { ChatRunViewSchema } from './agent-run';
+import { BrowserLiveWheelSchema, browserTakeoverKeys } from './browser-live-view';
 
 export const ChatStatusSchema = z.enum(['idle', 'running', 'waiting_user', 'waiting_input', 'waiting_approval', 'failed', 'cancelled']);
 
@@ -247,5 +248,6 @@ export const ChatSecureSubmitSchema = z.object({
 export const ChatPointerSchema = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict();
 export const ChatKeyboardSchema = z.object({
   text: z.string().max(2000).optional(),
-  key: z.enum(['Enter', 'Tab', 'Backspace', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']).optional(),
+  key: z.enum(browserTakeoverKeys).optional(),
+  wheel: BrowserLiveWheelSchema.optional(),
 }).strict();

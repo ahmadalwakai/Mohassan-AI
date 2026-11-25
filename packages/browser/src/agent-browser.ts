@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { chromium, type BrowserContext, type ElementHandle, type Frame, type JSHandle, type Page, type Route } from 'playwright';
+import { activeBrowserRedactions, applyBrowserTakeoverInput, type BrowserTakeoverInput } from './browser-takeover-input.js';
 import { decideEffect, type EffectActor } from './effect-policy.js';
 import { BrowserError, SafeNetwork } from './network.js';
 import { AgentSessionCheckpointSchema, AgentPostconditionSchema, evidenceHash, safeResumeUrl, pagePostcondition, type AgentSessionCheckpoint, type AgentPostcondition, type AgentVerificationReport, type AgentVerificationCheck } from './session-state.js';
@@ -1124,7 +1125,7 @@ export class AgentBrowser {
     entry.shot = await entry.page.screenshot({ type: 'jpeg', quality: 62, timeout: 5000, mask }).catch(() => null);
   }
 
-  private redactions(entry:ConversationPage):string[]{for(const [secret,expires]of entry.redactions)if(expires<=Date.now())entry.redactions.delete(secret);return [...entry.redactions.keys()];}
+  private redactions(entry: ConversationPage): string[] { return activeBrowserRedactions(entry.redactions); }
 
   private async read(entry: ConversationPage, screenshot: boolean): Promise<AgentPage> {
     const { page } = entry;
@@ -1774,7 +1775,7 @@ export class AgentBrowser {
     });
   }
 
-  async keyboard(ownerId: string, conversationId: string, input: { text?: string; key?: string }): Promise<void> {
+  async keyboard(ownerId: string, conversationId: string, input: BrowserTakeoverInput): Promise<void> {
     if (!await this.hasPage(ownerId, conversationId)) throw new BrowserError('AGENT_NO_PAGE', 'لا توجد صفحة مفتوحة.', 409);
     const entry = await this.conversation(ownerId, conversationId);
     return this.withMutation(entry, async () => {
@@ -1782,8 +1783,7 @@ export class AgentBrowser {
     entry.recovery.status = 'review_required';
     await this.persist(entry);
     this.ownerInput(entry);
-    if (input.text) await entry.page.keyboard.insertText(input.text);
-    if (input.key) await entry.page.keyboard.press(input.key).catch(() => {});
+    await applyBrowserTakeoverInput(entry.page, VIEWPORT, input, entry.redactions);
     });
   }
 
