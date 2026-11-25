@@ -21,4 +21,5 @@ export interface IosPushPayload {
   conversationId: string;
   runId: string;
   kind: BackgroundPushKind;
+  monitorId?: string;
 }

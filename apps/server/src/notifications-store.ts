@@ -25,6 +25,7 @@ interface NotificationEvent {
   available_at: Date;
   delivery: 'pending' | 'tab' | 'push' | 'suppressed';
   run_id: Generated<string | null>;
+  monitor_id?: string | null;
   background_outcome: Generated<BackgroundOutcome | null>;
   background_language: Generated<BackgroundNotificationEvent['background_language'] | null>;
   result_preview: Generated<string | null>;
@@ -182,12 +183,12 @@ export async function recordNotificationOutcome(db: Database, outcome: {
 
 export async function recordBackgroundRunOutcome(db: Database, event: {
   runId: string; userId: string; conversationId: string; startedAt: Date; outcome: BackgroundOutcome;
-  language: BackgroundNotificationEvent['background_language']; preview?: string; step?: number;
+  language: BackgroundNotificationEvent['background_language']; preview?: string; step?: number; monitorId?: string;
 }, now = new Date()) {
-  const { runId, userId, conversationId, startedAt, outcome, language } = event;
+  const { runId, userId, conversationId, startedAt, outcome, language, monitorId } = event;
   const { kind } = backgroundKinds[outcome];
   const key = createHash('sha256').update(`${runId}/notification/${outcome}/${event.step ?? 0}`).digest('hex');
-  const taskId = kind !== 'needs_you' ? runId
+  const taskId = monitorId || kind !== 'needs_you' ? runId
     : `${key.slice(0, 8)}-${key.slice(8, 12)}-4${key.slice(13, 16)}-8${key.slice(17, 20)}-${key.slice(20, 32)}`;
   const preview = outcome === 'completed' && event.preview?.trim().split(/\r?\n/u, 1)[0]?.trim().slice(0, 160) || null;
   const availableAt = new Date(now.getTime() + PRIORITY_WINDOW_MS);
@@ -196,9 +197,9 @@ export async function recordBackgroundRunOutcome(db: Database, event: {
   await sql`WITH event AS (
     INSERT INTO chat_notifications
       (task_id, user_id, conversation_id, kind, started_at, happened_at, available_at, delivery,
-       run_id, background_outcome, background_language, result_preview)
+       run_id, background_outcome, background_language, result_preview${monitorId ? sql`, monitor_id` : sql``})
     VALUES (${taskId}, ${userId}, ${conversationId}, ${kind}, ${startedAt}, ${now}, ${availableAt}, 'pending',
-      ${runId}, ${outcome}, ${language}, ${preview})
+      ${monitorId ? null : runId}, ${outcome}, ${language}, ${preview}${monitorId ? sql`, ${monitorId}` : sql``})
     ON CONFLICT (task_id) DO NOTHING
     RETURNING task_id, user_id
   )
@@ -218,7 +219,7 @@ function events(db: Database) {
 type EventWithTitle = Selectable<NotificationEvent> & { kind: NotificationKind; title: string };
 
 function eventPayload(event: EventWithTitle, preferences: NotificationPreferences): NotificationPayload {
-  if (event.run_id && event.background_outcome && event.background_language && event.conversation_id) {
+  if ((event.run_id || event.monitor_id) && event.background_outcome && event.background_language && event.conversation_id) {
     return backgroundPayload({ ...event, run_id: event.run_id, background_outcome: event.background_outcome,
       background_language: event.background_language, conversation_id: event.conversation_id }, preferences);
   }
@@ -238,12 +239,12 @@ export async function syncNotifications(db: Database, userId: string, input: Not
     .onConflict(conflict => conflict.columns(['user_id', 'tab_id']).doUpdateSet(presence)).execute();
   let recentEvents = events(db).where('n.user_id', '=', userId).where('n.delivery', '=', 'pending')
     .where(eb => eb.or([eb('n.tab_claim_until', 'is', null), eb('n.tab_claim_until', '<=', now), eb('n.tab_claim_id', '=', input.tabId)]))
-    .where(eb => eb.or([eb('n.happened_at', '>', oldestEvent(now)), eb('n.run_id', 'is not', null)]))
+    .where(eb => eb.or([eb('n.happened_at', '>', oldestEvent(now)), eb('n.background_outcome', 'is not', null)]))
     .where(eb => eb.or([
       eb.not(eb.exists(eb.selectFrom('push_subscriptions').select('id').whereRef('push_subscriptions.id', '=', 'n.web_push_device_id'))),
       ...(presence.visible ? [eb('n.web_push_attempts', '>', 0)] : []),
     ]));
-  if (presence.visible) recentEvents = recentEvents.where('n.run_id', 'is not', null);
+  if (presence.visible) recentEvents = recentEvents.where('n.background_outcome', 'is not', null);
   const [preferences, running, recent, hasVisible] = await Promise.all([
     notificationPreferences(db, userId),
     db.selectFrom('chat_runs').select('status').where('owner_id', '=', userId).where('status', '=', 'running')
@@ -261,13 +262,13 @@ export async function claimNotification(db: Database, userId: string, id: string
   return db.transaction().execute(async tx => {
     const event = await events(tx).where('n.task_id', '=', id).where('n.user_id', '=', userId)
       .where('n.delivery', '=', 'pending').where('n.available_at', '<=', now)
-      .where(eb => eb.or([eb('n.happened_at', '>', oldestEvent(now)), eb('n.run_id', 'is not', null)]))
+      .where(eb => eb.or([eb('n.happened_at', '>', oldestEvent(now)), eb('n.background_outcome', 'is not', null)]))
       .forUpdate('n').executeTakeFirst();
     if (!event) return null;
     const preferences = await notificationPreferences(tx, userId);
     const quiet = isQuietHours(preferences.quietHours, now);
     const tabs = activeTabs(tx, now).where('user_id', '=', userId);
-    if (event.run_id) {
+    if (event.run_id || event.monitor_id) {
       if (channel !== 'tab' || !tabId) return null;
       const row = tx.updateTable('chat_notifications').where('task_id', '=', id);
       if (acknowledge) {
@@ -310,7 +311,7 @@ function webPushCandidates(db: Database, now: Date, retryPinned = false) {
 
 export function pendingPushNotifications(db: Database, now: Date, excludeBackground = false) {
   const pending = webPushCandidates(db, now).where('n.happened_at', '>', oldestEvent(now));
-  return (excludeBackground ? pending.where('n.run_id', 'is', null) : pending).execute();
+  return (excludeBackground ? pending.where('n.background_outcome', 'is', null) : pending).execute();
 }
 
 function lockDueWebPush(db: Database, id: string, now: Date) {
@@ -347,7 +348,7 @@ async function reserveBackgroundWebPush(db: Database, userId: string, id: string
 }
 
 export async function dispatchBackgroundWebPush(db: Database, send: PushSender<NotificationPayload>, isActive: (id: string) => Promise<boolean>, now: Date) {
-  const pending = await webPushCandidates(db, now, true).where('n.run_id', 'is not', null)
+  const pending = await webPushCandidates(db, now, true).where('n.background_outcome', 'is not', null)
     .where(eb => eb.or([eb('n.tab_claim_until', 'is', null), eb('n.tab_claim_until', '<=', now)]))
     .where(eb => eb.or([eb('n.web_push_after', 'is', null), eb('n.web_push_after', '<=', now)])).execute();
   await Promise.all(pending.map(async ({ user_id: userId, task_id: id }) => {
@@ -382,13 +383,14 @@ export async function createTestNotification(db: Database, userId: string, now =
 }
 
 export async function ownsPushNotification(db: Database, userId: string, id: string, now = new Date()) {
+  const background = sql<boolean>`COALESCE(to_jsonb(n)->>'run_id', to_jsonb(n)->>'monitor_id') IS NOT NULL`;
   return Boolean(await db.selectFrom('chat_notifications as n').select('n.task_id')
     .where('n.task_id', '=', id).where('n.user_id', '=', userId).where(eb => eb.or([
       eb('n.delivery', '=', 'push'),
       // The worker may check ownership before the provider's response reaches the reminder scheduler.
-      eb.and([eb.or([eb('n.kind', '=', 'reminder_due'), sql<boolean>`to_jsonb(n)->>'run_id' IS NOT NULL`]), eb('n.delivery', '=', 'pending')]),
+      eb.and([eb.or([eb('n.kind', '=', 'reminder_due'), background]), eb('n.delivery', '=', 'pending')]),
     ]))
-    .where(eb => eb.or([eb('n.happened_at', '>', oldestEvent(now)), sql<boolean>`to_jsonb(n)->>'run_id' IS NOT NULL`])).where(eb => eb.or([
+    .where(eb => eb.or([eb('n.happened_at', '>', oldestEvent(now)), background])).where(eb => eb.or([
       eb('n.conversation_id', 'is', null),
       eb.exists(eb.selectFrom('chat_conversations as c').select('c.id').whereRef('c.id', '=', 'n.conversation_id').whereRef('c.owner_id', '=', 'n.user_id')),
     ])).executeTakeFirst());

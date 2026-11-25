@@ -14,14 +14,15 @@
 | 4 | #69 | `040_member_data_rights` | `037_member_data_rights` |
 | 5 | #89 | `041_long_run_checkpoints` | — |
 | 6 | #92 | `042_background_results` | — |
-| 5 | #89 | `041_long_run_checkpoints` | — |
-| 6 | #92 | `042_background_results` | — |
+| 7 | `feat/smart-monitors` | `043_smart_monitors` | — |
 
 Startup recognizes each full legacy ID and changes the existing ledger row to its recorded ID inside the migration transaction, preserving the original application timestamp. The notifications upgrade also widens the existing notification kind constraint for reminder delivery. Fresh databases run each migration once. The platform branch starts at `c2a0ff7` and leaves the agent migrations to the agent wave.
 
 Wave 5 runs `041_long_run_checkpoints` through the `042_background_results` startup migrator, after the release candidate's `037`–`040`. The two migrations add durable-run indexes, extend the notification kind constraint and add background-outcome and APNs storage. The previously recorded ledger IDs stay in place. [Wave 5 report](INTEGRATION-WAVE-5-2026-11-25.md#migrations)
 
 `042_background_results` follows `041_long_run_checkpoints`. It adds per-account iPhone registrations in `ios_push_devices`, per-device APNs delivery state, and background result metadata and preferences in the existing notification tables.
+
+`043_smart_monitors` follows `042_background_results`. It adds `smart_monitors`, `smart_monitor_budgets`, `smart_monitor_hosts`, and a nullable `chat_notifications.monitor_id` for monitor outcomes carried by the existing delivery queues. The rollout flag controls monitor admission, routes, and scheduling.
 
 ## Collisions
 
