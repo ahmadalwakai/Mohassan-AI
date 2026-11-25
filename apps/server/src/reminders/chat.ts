@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely, type Transaction } from 'kysely';
 import { ReminderTimeZoneSchema, type ChatQuestion, type ReminderRecurrence, type ReminderSummary } from '@mohassan/contracts';
 import { evaluateCapabilityReply, type CapabilityReplyRouting } from '../assistant/capability-reply.js';
+import type { BrainState } from '../assistant/brain.js';
 import { analyzeCompoundRequest } from '../assistant/compound-request.js';
 import { ReminderError, type createReminderStore } from './storage.js';
 import { parseReminderDuration, parseReminderTime, shiftReminderTime } from './time.js';
@@ -9,7 +10,6 @@ import { parseReminderDuration, parseReminderTime, shiftReminderTime } from './t
 export type ChatReminderStore = ReturnType<typeof createReminderStore>;
 type Connection = Transaction<any>;
 type Language = 'ar' | 'en';
-type Answer = { questionId: string; text: string };
 type Selection = Pick<ReminderSummary, 'id' | 'dueAt' | 'updatedAt'>;
 type Change = { kind: 'cancel' | 'postpone' | 'edit'; argument: string };
 type Schedule = { dueAt: string; recurrence: ReminderRecurrence | null };
@@ -18,9 +18,9 @@ type Pending = { kind: 'zone'; body: string }
   | { kind: 'time'; body: string; reason: Clarification['reason']; text: string; timeZone: string; target?: Selection }
   | { kind: 'text'; schedule: Schedule; timeZone: string }
   | { kind: 'selection'; candidates: (Selection & { label: string })[]; change: Change; offset: number };
-type State = { questionAnswer?: Answer; reminderChat?: { lastId?: string; questionId?: string; pending?: Pending } };
+type State = BrainState & { reminderChat?: { lastId?: string } & ({ pending: Pending; askedOnAttempt: number } | { pending?: never }) };
 type Reply = { text: string; status: 'completed' | 'blocked' };
-export type ReminderChatPublication = (tx: Connection) => Promise<Reply>;
+type ReminderChatPublication = (tx: Connection) => Promise<Reply>;
 type Handled = { question: ChatQuestion } | { publish: ReminderChatPublication };
 
 const MATCHES_PER_QUESTION = 4;
@@ -35,9 +35,7 @@ const cancelHead = /^(?:(?:please\s+)?(?:cancel|delete|remove)\s+(?:the\s+|my\s+
 const postponeHead = /^(?:(?:please\s+)?(?:postpone|delay|snooze)\s+(?:the\s+)?(?:reminder\b|it\b)|[أا]ج[\u064b-\u065f]*ل(?:ه|ها)(?!\p{L})|[أا]ج[\u064b-\u065f]*ل\s+(?:التذكير|تذكير))/iu;
 const listCommand = /^(?:(?:(?:show|list)\s+(?:me\s+)?(?:my\s+)?(?:upcoming\s+)?reminders|what (?:are|(?:are )?all) my reminders|my reminders)|(?:ما (?:هي )?تذكيراتي|ما التذكيرات|تذكيراتي|(?:اعرض|ارني) (?:تذكيراتي|التذكيرات)))$/iu;
 
-export function hasReminderQuestion(state: object): boolean {
-  return Boolean((state as State).reminderChat?.pending);
-}
+export const reminderRouting = { route: 'reminder', intent: 'reminder', handler: 'reminder', availability: 'ready', missingCapabilities: [], reason: 'explicit_handler' } satisfies CapabilityReplyRouting;
 
 function formatDate(dueAt: string, timeZone: string, lang: Language) {
   return `${new Intl.DateTimeFormat(lang === 'ar' ? 'ar' : 'en-GB', { timeZone, dateStyle: 'full', timeStyle: 'short', calendar: 'gregory' }).format(new Date(dueAt))} (${timeZone})`;
@@ -75,17 +73,17 @@ function digits(text: string) {
 }
 
 export async function handleReminderChat(input: {
-  store: ChatReminderStore; db: Kysely<any>; state: object; userId: string; conversationId: string; runId: string;
+  store: ChatReminderStore; db: Kysely<any>; state: BrainState; userId: string; conversationId: string; runId: string; attempt: number;
   request: string; routing?: CapabilityReplyRouting | null; now: Date; transact: <T>(work: (tx: Connection) => Promise<T>) => Promise<T>;
 }): Promise<Handled | null> {
-  const { store, db, userId, conversationId, runId, request, now } = input;
+  const { store, db, userId, conversationId, runId, attempt, request, now } = input;
   const state = input.state as State;
   const previous = state.reminderChat;
   const lang: Language = ar(request) ? 'ar' : 'en';
   const reply = (text: string, status: Reply['status'] = 'completed'): Handled => ({ publish: async () => ({ text, status }) });
   const ask = (pending: Pending, prompt: string): Handled => {
     const question = { id: randomUUID(), prompt, options: [] };
-    state.reminderChat = { questionId: question.id, pending };
+    state.reminderChat = { askedOnAttempt: attempt, pending };
     return { question };
   };
   const askSelection = (pending: Extract<Pending, { kind: 'selection' }>) => {
@@ -161,9 +159,10 @@ export async function handleReminderChat(input: {
 
   if (previous?.pending) {
     const pending = previous.pending;
-    const answer = state.questionAnswer?.questionId === previous.questionId ? state.questionAnswer?.text : undefined;
-    if (!answer) return null;
-    delete state.questionAnswer;
+    // Chat's existing resume transaction validates the question, saves the full reply in
+    // requestResolution.original and increments this run's attempt together.
+    const answer = attempt === previous.askedOnAttempt + 1 ? state.requestResolution?.original : undefined;
+    if (!answer) return reply(copy(lang, 'تعذر التحقق من إجابة التذكير. أرسل أمر التذكير مرة أخرى.', 'I could not verify the reminder answer. Send the reminder command again.'), 'blocked');
     delete state.reminderChat;
     if (pending.kind === 'zone') {
       const timeZone = asTimeZone(answer);
@@ -190,8 +189,7 @@ export async function handleReminderChat(input: {
   const edit = editHead.exec(text);
   const listing = listCommand.test(fold(text));
   if (!head && !listing && !cancellation && !postponement && !edit) {
-    if (input.routing?.route !== 'reminder') return null;
-    const fallback = evaluateCapabilityReply(request, input.routing, { handlersExhausted: true, purpose: 'capability_question', execution: 'not_started' });
+    const fallback = evaluateCapabilityReply(request, reminderRouting, { handlersExhausted: input.routing?.route === 'reminder', purpose: 'capability_question', execution: 'not_started' });
     return fallback && reply(fallback.text, fallback.status === 'completed' ? 'completed' : 'blocked');
   }
   if (analyzeCompoundRequest(text).kind !== 'single') return reply(copy(lang, 'أرسل أمر التذكير في رسالة منفصلة.', 'Send the reminder command in a separate message.'), 'blocked');

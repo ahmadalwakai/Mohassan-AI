@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import { ChatConversationSchema } from '@mohassan/contracts';
 import { createDatabase, migrate } from '@mohassan/database';
 import type { AgentBrowser } from '@mohassan/browser';
@@ -5,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createAuth, migrateAuth } from '../apps/server/src/auth.js';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
 import { migrateMembers } from '../apps/server/src/members.js';
+import { registerReminderChat } from '../apps/server/src/reminders/chat-turn.js';
 import { migrateReminders } from '../apps/server/src/reminders/migration.js';
 import { createReminderStore } from '../apps/server/src/reminders/storage.js';
 
@@ -26,11 +28,12 @@ beforeAll(async () => {
   auth = createAuth(database.db, { secret: 'fixture-reminders-chat-secret-value', webOrigin: 'http://localhost:3000', production: false });
   store = createReminderStore(database.db);
   chat = await createCommandChatControl(database.db, {
-    reminders: store, fullAccess: async () => false,
+    fullAccess: async () => false,
     browser: { setCheckpointStore() {}, async bindAccount() {}, async hasPage() { return false; }, async close() {} } as unknown as AgentBrowser,
     models: { fast: [], deep: [], vision: '' }, fetch: external,
   });
   await migrateReminders(database.db);
+  registerReminderChat(database.db, store);
 });
 
 afterAll(async () => { await chat?.shutdown(); await database?.close(); });
@@ -145,6 +148,37 @@ describe('reminder commands through real chat runs', () => {
     const cancelled = await send(user, initial.id, '5', second.question?.id);
     expect(cancelled.reply).toContain(fifth.text);
     expect((await store.list(user)).some(({ id }) => id === fifth.id)).toBe(false);
+  });
+
+  it('handles capability questions and keeps the full subject from the accepted run attempt', async () => {
+    const user = await member('subject');
+    await store.setTimeZone(user, timeZone);
+    expect((await start(user, 'Do you support reminders?')).reply).toContain('capability is configured');
+    const initial = await start(user, 'ذكرني شهريًا يوم 25 الساعة 14:30');
+    expect(initial.question?.prompt).toContain('بماذا');
+    expect(await store.list(user)).toEqual([]);
+    const subject = `${'مراجعة محضر اجتماع الفريق '.repeat(22)}واعتماد النسخة النهائية`;
+    const saved = await send(user, initial.id, subject, initial.question?.id);
+    expect(saved.reply).toContain('شهريًا في اليوم 25');
+    expect((await store.list(user))[0]?.text).toBe(subject);
+    expect(saved.run?.verdict?.status).toBe('completed');
+  });
+
+  it('rolls back the reminder when publishing the confirmation fails', async () => {
+    const user = await member('publication');
+    await store.setTimeZone(user, timeZone);
+    await sql`ALTER TABLE chat_messages ADD CONSTRAINT reminders_test_publication
+      CHECK (role <> 'assistant' OR text NOT LIKE '%unique publication fixture%')`.execute(database.db);
+    try {
+      const { id } = await chat.create(user, { goal: 'Remind me in 2 hours to review the unique publication fixture' });
+      await chat.settled(id);
+      const detail = await chat.detail(user, id);
+      expect(detail.status).toBe('failed');
+      expect(detail.messages.map(message => message.role)).toEqual(['user']);
+      expect(await store.list(user)).toEqual([]);
+    } finally {
+      await sql`ALTER TABLE chat_messages DROP CONSTRAINT reminders_test_publication`.execute(database.db);
+    }
   });
 
   it('requests a replacement for a time that already passed and leaves compound requests untouched', async () => {
