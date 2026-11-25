@@ -315,6 +315,7 @@ def output_artifacts(path: Path, source: str, schema: Schema, cache: Path | None
             confidence, label = float(probs.max()), LABELS[int(probs.argmax())]
             replays.append({
                 "caseId": row.case_id,
+                "conversationKey": row.conversation_key,
                 "occurredAt": utc_stamp(row.feedback_at),
                 "language": row.language,
                 "conversationState": row.conversation_state,

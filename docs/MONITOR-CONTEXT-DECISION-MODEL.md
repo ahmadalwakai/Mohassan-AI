@@ -8,14 +8,21 @@ Set `MOHASSAN_MONITOR_CONTEXT_SHADOW=1` to observe the head through the model re
 
 The `monitor-context` decision type compares the context reasoner with the local head. A future promotion can suppress a discretionary offer if the head recommends `none`. Management, explicit requests and reminders keep the normal rules and approval flow. The released manager has no promoted monitor decision.
 
-Use the owner-generated chronological replay from the CPU training script. Its three arbiter pools follow head training and head calibration. The arbiter fits on the first pool and selects an operating threshold on the second. It tests the frozen threshold on the last pool. The held-out gate requires approval and decline examples in Arabic and English, zero paired losses, and a one-sided exact paired sign test at 0.05. The second gate uses full paired v1 and v2 development receipts with overall, area, language and area/language counts. The latter receipts stay out of the model and arbiter fitting loops.
+Use the owner-generated chronological replay from the CPU training script. Its three arbiter pools follow head training and head calibration. The arbiter fits on the first pool and selects an operating threshold on the second. It tests the frozen threshold on the last pool. The held-out gate requires approval and decline examples in Arabic and English, zero paired losses, and a one-sided exact paired sign test at 0.05, counting each improved conversation once. The second gate uses full paired v1 and v2 development receipts with overall, area, language and area/language counts. The latter receipts stay out of the model and arbiter fitting loops.
 
 ```bash
+node --import tsx packages/model-relations/src/arbiter-train-cli.ts monitor-train \
+  --replay .data/monitor-decision/arbiter-replay.json \
+  --weights .data/monitor-decision/weights.json \
+  --report monitor-time-gate.json --artifact monitor-candidate.json
+
 node --import tsx packages/model-relations/src/arbiter-train-cli.ts monitor-gate \
   --replay .data/monitor-decision/arbiter-replay.json \
   --weights .data/monitor-decision/weights.json \
   --before development-reasoner.json --after development-candidate.json \
   --report monitor-gate.json --artifact .data/monitor-decision/promotion.json
 ```
+
+The first command writes a candidate only if the real time gate passes. In the isolated development replay, use its `arbiter` scorer and the `monitorHeadMayOverride` rule. The before file is an array of the arbiter CLI's regular development rows. The after file wraps its array as `{ "candidateSha256": "…", "rows": […] }`, using the hash from `monitor-time-gate.json`. The final gate recomputes the candidate from the replay and verifies its hash.
 
 The promotion artifact binds the decision scorer to the exact head weights and both gate input receipts by SHA-256. After review of both gates, the owner can approve a code change to the manager's promoted decision list. Active use also requires `MOHASSAN_ARBITER_MONITOR_CONTEXT=1` and the shadow flag. `MOHASSAN_ARBITER_MONITOR_CONTEXT_KILL=1` cancels arbiter authority.

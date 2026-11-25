@@ -1,8 +1,8 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { assessArbiterPromotion, parseArbiterReplay, trainArbiter, type DevelopmentResult } from './arbiter-training.js';
-import { assessMonitorArbiterPromotion } from './monitor-arbiter-training.js';
-import { readMonitorArtifact } from './monitor-decision.js';
+import { assessMonitorArbiterPromotion, trainMonitorArbiter } from './monitor-arbiter-training.js';
+import { monitorArtifactSha256, readMonitorArtifact } from './monitor-decision.js';
 
 const readJson = async (path: string): Promise<unknown> => JSON.parse(await readFile(path, 'utf8'));
 const writeJson = async (path: string, data: unknown) => writeFile(path, `${JSON.stringify(data, null, 2)}\n`, { flag: 'wx' });
@@ -27,6 +27,15 @@ async function main() {
     if (!gate.holdsAllGroups) process.exitCode = 1;
     return;
   }
+  if (positionals.length === 1 && mode === 'monitor-train' && values.replay && values.weights && values.report && !values.before && !values.after) {
+    const [replay, weights] = await Promise.all([readFile(values.replay), readMonitorArtifact(values.weights)]);
+    const { candidate, report } = trainMonitorArbiter({ replay, weights });
+    const candidateSha256 = candidate && monitorArtifactSha256(Buffer.from(JSON.stringify(candidate)));
+    await writeJson(values.report, { ...report, candidateSha256 });
+    if (candidate && values.artifact) await writeJson(values.artifact, candidate);
+    if (!report.passed) process.exitCode = 1;
+    return;
+  }
   if (positionals.length === 1 && mode === 'monitor-gate' && values.replay && values.weights && values.before && values.after && values.report) {
     const [replay, weights, developmentBefore, developmentAfter] = await Promise.all([
       readFile(values.replay), readMonitorArtifact(values.weights), readFile(values.before), readFile(values.after),
@@ -37,7 +46,7 @@ async function main() {
     if (!report.passed) process.exitCode = 1;
     return;
   }
-  throw new Error('Usage: train --replay FILE --report FILE [--artifact FILE], gate --before FILE --after FILE --report FILE, or monitor-gate --replay FILE --weights FILE --before FILE --after FILE --report FILE [--artifact FILE].');
+  throw new Error('Usage: train --replay FILE --report FILE [--artifact FILE], gate --before FILE --after FILE --report FILE, monitor-train --replay FILE --weights FILE --report FILE [--artifact FILE], or monitor-gate --replay FILE --weights FILE --before FILE --after FILE --report FILE [--artifact FILE].');
 }
 
 void main().catch(error => {
