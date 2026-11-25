@@ -183,7 +183,9 @@ describe('v2 condition specifications', () => {
     expect(parse(`Monitor ${url} when price falls below 50, then ${second} when registration opens`)).toBeNull();
     expect(parse(`Monitor ${url} when product name changes`)?.v2?.target).toEqual({ property: 'productName' });
     expect(parse(`Monitor ${url} when the event start date changes`)?.v2?.target).toEqual({ property: 'startDate' });
-    expect(parse(`Monitor ${url} when the application deadline changes`)?.v2?.target).toBeUndefined();
+    const plain = parse(`Monitor ${url} when the application deadline changes`);
+    expect(plain?.v2).toMatchObject({ freshnessMs: expect.any(Number) });
+    expect(plain?.v2?.target).toBeUndefined();
   });
 
   it('accepts one clarification with two through four options carrying observed values', () => {

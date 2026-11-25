@@ -141,8 +141,8 @@ export function generateMonitorV2Spec(need: MonitorNeed, now = new Date()): Moni
   const combine = connector === 'sequence' ? { kind: connector, windowMs } : connector ? { kind: connector } : undefined;
   const title = parsed.flatMap(part => part?.spec.title ?? []).join(' · ').slice(0, 180);
   const message = connector ? need.language === 'ar' ? `تحقّق شرط المراقبة لـ «${title}».` : `The monitoring condition was met for ${title}.` : first.spec.message;
-  const v2 = first.spec.v2 || additional.length || delivery ? { freshnessMs: first.target.freshnessMs, ...first.spec.v2,
-    ...(combine && { combine, additional }), ...(delivery && { delivery }) } : undefined;
-  const result = MonitorSpecSchema.safeParse({ ...first.spec, title, message, ...(v2 && { v2 }) });
+  const v2 = { freshnessMs: first.target.freshnessMs, ...first.spec.v2,
+    ...(combine && { combine, additional }), ...(delivery && { delivery }) };
+  const result = MonitorSpecSchema.safeParse({ ...first.spec, title, message, v2 });
   return result.success ? result.data : null;
 }
