@@ -20,7 +20,8 @@ import {
 import { writingTask } from './writer.js';
 import { usesAlignedEvidence } from './writing/multisource/types.js';
 import { extractiveWritingEnabled } from './writing/request.js';
-import { assessRequestScope, maskRequestLiteralData, parseRequestScopeAssessment, requestCapabilityAllowed, requestScopeActionText, reviewPublicProjection, requestConstraintReply, type RequestScopeAssessment } from './request-scope.js';
+import { assessRequestScope, maskRequestLiteralData, parseRequestScopeAssessment, requestCapabilityAllowed, requestOperationText, requestScopeActionText, reviewPublicProjection, requestConstraintReply, type RequestScopeAssessment } from './request-scope.js';
+import { startsFactualQuestion } from './public-question-syntax.js';
 import { applyScratchRouting, runtimeScratchPolicy, type ScratchDecisionPolicy, type ScratchRoutingChoices } from './scratch-decisions.js';
 import { reviewRoutingRefusal } from './refusal/turn.js';
 import { parseTestDrivenCodingRequest, testDrivenCodingEnabled } from './test-driven-coding/request.js';
@@ -291,7 +292,10 @@ function decideRuleRequestRoute(input: RequestRoutingInput, choices: ScratchRout
   const frame = buildFrame(action), parsedSteps = parseHands(action), direct = directRoute(action);
   const steps = parsedSteps && parsedSteps.length <= 40 ? parsedSteps : undefined;
   const writer = writingTask(action), planner = planningTask(action);
-  if (frame.missing.some(field => field === 'expression' || field === 'memory_content')
+  const factualLookup = resolution.kind === 'new' && resolution.intent === 'web_search'
+    && sourceAssessment.publicQueryEligible && sourceAssessment.reasons.includes('public_subject')
+    && startsFactualQuestion(requestOperationText(action));
+  if (frame.missing.some(field => field === 'expression' && !factualLookup || field === 'memory_content')
     || resolution.intent === 'browser_command' && frame.missing.includes('website') && !steps && !direct) return clarify('missing_reference');
   if (!choices.route && resolution.intent === 'web_search' && frame.intent === 'unknown' && frame.missing.includes('question') && sourceAssessment.source === 'unresolved' && !steps) {
     return has('chatModel') ? base('chat', 'chat', 'model', 'local_model_fallback') : clarify('missing_reference');
@@ -317,7 +321,7 @@ function decideRuleRequestRoute(input: RequestRoutingInput, choices: ScratchRout
     else if (steps?.length || direct) {
       const publicSearchOnly = steps?.length === 1 && steps[0]!.kind === 'search' && !steps[0]!.site && !steps[0]!.here;
       intent = publicSearchOnly ? 'web_search' : 'browser_command'; reason = 'deterministic_browser_plan';
-    } else if (framed) intent = framed;
+    } else if (framed && !(factualLookup && framed === 'compute')) intent = framed;
   }
   // Source/operation provenance can recover a private or numeric destination
   // without treating an unavailable solver or writer as a public search task.

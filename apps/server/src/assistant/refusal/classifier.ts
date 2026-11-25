@@ -31,10 +31,13 @@ const priority: readonly RefusalCode[] = [
 
 const negativeLead = head("do not|don't|never|avoid|without|no need to|لا|ممنوع|بلاش|بدون|من غير|دون|تجنب|متعملش");
 const requestLead = /^(?:(?:i (?:want|need|would like) (?:for )?(?:you )?to|i'd like (?:you )?to|let's|help me(?: to)?|try to|go ahead(?: and)?|(?:and )?then|afterwards|you (?:must|should)|اريد(?:ك| منك)?(?: ان)?|احتاج(?:ك| منك)?(?: ان)?|اب(?:ي|يك|غي|غاك)|بدي(?: منك)?|عا(?:يز|وز)(?:ك|ه)?|محتاجك|خل(?:يك|ينا)|ساعدني(?: (?:في|علي|اني|ان))?|ياريت|يا ريت|جرب|ثم|وبعدها|وبعدين|بعدها|من فضلك|لو سمحت(?:ي)?|رجاء|ارجوك|ارجو(?: منك)?(?: ان)?)[,،:\s]+)+/u;
-const delegatedLead = /^(?:(?:i (?:was wondering|wonder) if(?: you (?:can|could|would|will))?|(?:is it|would it be) possible (?:for you )?to|be (?:able|willing) to)[,\s]+)+/u;
+const delegatedLead = /^(?:(?:i (?:was wondering|wonder) if(?: you (?:can|could|would|will))?|(?:is it|would it be) possible (?:for you )?to|(?:are you|be) (?:able|willing) to|will you)[,\s]+)+/u;
+const courtesyLead = /^(?:(?:please|kindly|من فضلك|لو سمحت(?:ي)?|رجاء|تكفي|تكفون|فضلا)[,،:\s]+)+/u;
+const assistantAddress = /^(?:(?:hey |ok(?:ay)? |يا )?(?:mohassan|assistant|google assistant|siri|alexa|cortana|موحسن|مساعدي|المساعد|سيري|اليكسا))[,،:\s]+/u;
+const politeGerund = /^(?:(?:would|do) you )?mind (\p{L}+)ing(?=\s)/u;
 const arabicModal = /^(?:(?:هل )?(?:بامكانك|من الممكن|بتقدر(?:ي)?|تقدري|ممكن(?:ك| انك)|فيك|تقدرون)) (?:ان )?/u;
 const requestedObject = /^(?:i (?:need|want|would like)|i'd like) (?:my|our|the|a|an|your|their|his|her) /u;
-const greeting = /^(?:(?:hello|hey|hi|thanks|good morning|مرحبا|اهلا|هلا|هاي|السلام عليكم)[,،!؟.\s]+)(?=.)/u;
+const greeting = /^(?:(?:hello|hey|hi|thanks|good morning|مرحبا|اهلا|هلا|هاي|سلام|السلام عليكم)[,،!؟.\s]+)(?=.)/u;
 const connectors = /(?<sequence>[؛;\r\n!?؟]+\s*|\s+\b(?:and then|then|afterwards)\b\s+|\s+(?:ثم|وبعدها|وبعدين|بعدها)\s+)|[.،,]\s+(?=\p{L})|\s+\b(?:but|also|and)\b\s+|\s+(?:لكن|ولكن|كمان)\s+|\s+و(?=\p{L})/giu;
 const continuation = head("please|kindly|could you|can you|would you|do not|don't|never|avoid|open|click|press|tap|search|look|read|show|tell|ask|write|draft|delete|remove|erase|share|send|forward|give|run|start|find|edit|approve|publish|export|book|pay|purchase|buy|order|transfer|wire|bypass|skip|ignore|reveal|output|store|remember|enter|paste|type|solve|save|check|log|sign|access|make|steal|hack|build|لا|افتح|اضغط|ابحث|دور|اقرا|اعرض|اكتب|احذف|امسح|افش|اعطني|ابعث|ارسل(?:ه|ها|هم)?|ابعت(?:ه|ها|هم)?|انشر|شارك|ادفع|اشتري|اشتر|حول(?:ه|ها)?|احجز|تجاوز|تجاهل|طلع|احفظ|اكشف|ادخل|حط|املا|حل|وافق|سجل|اعمل|شغل|استخدم|اصنع|اخترق|اسرق");
 const actionHeads = [continuation, accountAction, harmfulAction, paymentAction, humanStepAction, sendAction,
@@ -73,9 +76,16 @@ const asksForExplanation = head('explain|describe|اشرح|فسر|وضح');
 function requestText(value: string): string {
   const normalized = normalizeRefusalText(value);
   const addressed = normalizeRefusalText(normalized.replace(greetingAddress, ''));
-  const text = addressed !== normalized && actionHeads.some(head => head.test(addressed))
-    ? addressed : normalizeRefusalText(normalized.replace(greeting, '').replace(delegatedLead, ''));
-  const action = normalizeRefusalText(text.replace(requestLead, '').replace(delegatedLead, ''));
+  const text = addressed !== normalized && actionHeads.some(head => head.test(addressed)) ? addressed : normalized;
+  const action = normalizeRefusalText(text.replace(greeting, '').replace(assistantAddress, '')
+    .replace(courtesyLead, '').replace(delegatedLead, '').replace(requestLead, '').replace(delegatedLead, '').replace(courtesyLead, ''));
+  const gerund = politeGerund.exec(action);
+  if (gerund) {
+    const stem = gerund[1];
+    const tail = action.slice(gerund[0].length);
+    return [stem, `${stem}e`, stem.replace(/(.)\1$/u, '$1')].map(verb => verb + tail)
+      .find(candidate => actionHeads.some(head => head.test(candidate))) ?? action;
+  }
   const modal = arabicModal.exec(action);
   // Polite Arabic requests may use the second-person present even when
   // requestOperationText, or a lead above, has already removed the modal.
@@ -84,8 +94,10 @@ function requestText(value: string): string {
   // After an explicit modal, the second-person present can carry the same
   // instruction as an imperative. Convert only recognised action heads.
   const stem = operand.slice(1);
+  const singular = stem.replace(/^(\p{L}+?)(?:ون|ين)(?=\s)/u, '$1');
   const recognizedHeads = modal ? actionHeads : unsupportedActionHeads;
-  return [stem, `ا${stem}`].find(candidate => recognizedHeads.some(head => head.test(candidate))) ?? operand;
+  return [stem, `ا${stem}`, singular, `ا${singular}`]
+    .find(candidate => recognizedHeads.some(head => head.test(candidate))) ?? operand;
 }
 
 interface OuterClause {

@@ -124,6 +124,49 @@ class PythonSynthesisTest(unittest.TestCase):
         self.assertTrue(chosen.endswith("return abs(arg1)\n"))
         self.assertEqual(len(attempted), 2)
 
+    def test_equivalent_source_is_not_verified_twice(self):
+        rules = (
+            synthesis.rule("number", "abs($a)", "absolute"),
+            synthesis.rule("number", "abs(($a))", "absolute"),
+            synthesis.rule("number", "-$a", "negative"),
+        )
+        attempted = []
+
+        def verify(source):
+            attempted.append(source)
+            return run_examples("adjust", source, [((-14,), 14), ((5,), -5)])
+
+        with patch.object(synthesis, "RULES", rules):
+            candidate = synthesize("adjust", "Take the negative absolute adjustment.", [((-14,), 14)], verify)
+        self.assertEqual(len(attempted), 2)
+        self.assertIn("return abs(arg1)", attempted[0])
+        self.assertIn("return -arg1", candidate)
+
+    def test_combination_slots_go_to_input_dependent_unique_orders(self):
+        addition = synthesis.rule("number number", "$a + $b", "sum", commutative=True)
+        kinds = frozenset({"number"})
+        terms = [synthesis.Term("arg1", (23,), kinds, 1), synthesis.Term("arg2", (51,), kinds, 2),
+                 synthesis.Term("0", (0,), kinds, 0)]
+        candidates = [
+            (tuple(term.source for term in operands), inputs)
+            for operands, inputs in synthesis._combinations(addition, 3, {(1, "number"): terms}, 2)
+        ]
+        self.assertEqual(candidates, [
+            (("arg1", "arg1"), 1), (("arg1", "arg2"), 3), (("arg2", "arg2"), 2),
+            (("0", "arg1"), 1), (("0", "arg2"), 2),
+        ])
+
+    def test_rule_order_uses_description_kind_and_example_shape(self):
+        repeat = synthesis.rule("text small-integer", "$a * $b", "repeat", result="text")
+        reverse = synthesis.rule("text", "$a[::-1]", "reverse", result="text")
+        convert = synthesis.rule("text", "list($a)", "convert", result="list")
+        rules = (convert, repeat, reverse)
+        examples = [(('drafting',), 'gnitfard'), (('clay',), 'yalc')]
+        hints = synthesis._example_hints(examples)
+        expected_types = synthesis._types_for(expected for _, expected in examples)
+        self.assertEqual(synthesis._rank_rules(rules, set(), expected_types, hints), [reverse, repeat, convert])
+        self.assertEqual(synthesis._rank_rules(rules, {"repeat"}, expected_types, hints), [repeat, reverse, convert])
+
     def test_failed_search_reports_an_assertion_trial_and_returns_no_code(self):
         examples = [((17,), 'blue lamp / green desk'), ((22,), 'white bowl / empty chair')]
         attempted = []

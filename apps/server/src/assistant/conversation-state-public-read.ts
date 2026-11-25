@@ -2,7 +2,7 @@ import { safeResumeUrl } from '@mohassan/browser';
 import type { BrainState } from './brain.js';
 import type { ConversationPageSelection } from './conversation-state-page.js';
 import type { TopicFrame, TurnUnderstanding } from './conversation-state.js';
-import { answerSubject, fold, LIVE, plainTitle, type HandsPlan } from './hands.js';
+import { answerSubject, fold, isLiveWebQuestion, plainTitle, type HandsPlan } from './hands.js';
 
 const words = (text: string) => fold(text).match(/[\p{L}\p{N}]+/gu)?.join(' ') ?? '';
 const contains = (text: string, part: string) => Boolean(part) && ` ${text} `.includes(` ${part} `);
@@ -28,7 +28,7 @@ export function planPublicConversationRead(input: {
   const title = words(pageTitle);
   const request = words(text);
   if (!url || !title || !Array.isArray(found.lines) || !found.lines.some(line => typeof line === 'string' && line.trim())
-    || !contains(words(previous), title) || !request || LIVE.test(text)
+    || !contains(words(previous), title) || !request || isLiveWebQuestion(text)
     || !QUESTION_END.test(text) && !decision.questionType
     || decision.references.some(reference => !reference.publicLookup)) return null;
 
