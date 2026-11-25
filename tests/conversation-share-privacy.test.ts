@@ -29,7 +29,8 @@ describe('conversation share privacy detectors', () => {
       const flagged = result.findings.find(finding => finding.kind === kind);
       expect(flagged).toMatchObject({ location: 'message', messageIndex: 0 });
       expect(result.snapshot.messages[0]!.text).toContain(removable);
-      expect(result.snapshot.messages[0]!.text).not.toContain(flagged!.preview);
+      if (kind === 'token-url') expect(flagged!.preview).toBe(removable);
+      else expect(result.snapshot.messages[0]!.text).not.toContain(flagged!.preview);
     }
     for (const text of [cleanEn, cleanAr]) {
       const input = conversation(text);
@@ -64,6 +65,22 @@ describe('conversation share privacy detectors', () => {
     expect(result.snapshot.messages[0]!.sources).toEqual([input.messages[0]!.sources[0]]);
     expect(result.findings.map(({ kind, location }) => [kind, location])).toEqual([
       ['path', 'title'], ['email', 'source'], ['token-url', 'source'], ['path', 'source'],
+    ]);
+  });
+
+  it('omits credential values from both the public snapshot and the privacy review', () => {
+    const sample = 'fixture-private-content';
+    const input = conversation(`Cookie: application_session=${sample}`, 'user');
+    input.title = `WEB_PUSH_VAPID_PRIVATE_KEY=${sample}`;
+    input.messages.push({ role: 'assistant', text: 'Reference', createdAt: timestamp, sources: [
+      { title: 'Reference', url: `https://example.test/report?access_token=${sample}` },
+    ] });
+    const checked = scanConversationPrivacy(input);
+    expect(JSON.stringify(checked).includes(sample)).toBe(false);
+    expect(checked.snapshot.title).toBe(removable);
+    expect(checked.snapshot.messages[1]!.sources).toEqual([]);
+    expect(checked.findings.map(({ kind, preview }) => [kind, preview])).toEqual([
+      ['credential', removable], ['credential', removable], ['token-url', removable],
     ]);
   });
 

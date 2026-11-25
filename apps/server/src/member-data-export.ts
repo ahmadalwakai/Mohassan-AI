@@ -4,13 +4,12 @@ import { mkdtemp, open, realpath, rm, type FileHandle } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
-import { redactCredentialText } from '@mohassan/cognitive';
 import { GoogleAdsCustomerIdSchema } from '@mohassan/contracts';
-import { redactSecrets } from '@mohassan/providers';
 import { sql, type Kysely, type RawBuilder } from 'kysely';
 import { memberDocumentLocation } from './member-data-document-path.js';
 import { memberDataRegistry } from './member-data-registry.js';
 import { createMemberDataZip } from './member-data-zip.js';
+import { redactSensitiveCredentialText } from './sensitive-credential-text.js';
 
 export const MEMBER_EXPORT_MAX_BYTES = 64 * 1024 * 1024;
 
@@ -37,10 +36,11 @@ const fileChanged = () => new MemberExportError(409, 'MEMBER_EXPORT_FILE_CHANGED
 const secretFields = new Set([
   'token', 'tokenhash', 'authorization', 'proxyauthorization', 'cookie', 'cookies', 'setcookie',
   'credential', 'credentials', 'privatekey', 'codeverifier', 'pkceverifier', 'csrf', 'csrftoken',
+  'apnskeypath', 'apnsprivatekey', 'vapidprivatekey', 'vapidpublickey', 'webpushvapidprivatekey', 'webpushvapidpublickey',
 ]);
 const secretFieldSuffix = /(?:sessiontoken|accesstoken|refreshtoken|oauthtoken|idtoken|invitetoken|bearertoken|leasetoken|workflowtoken|activetoken|password|apikey|clientsecret|cookie)(?:hash)?s?$/u;
 const credentialQuery = /([?&#](?:invite|token|access_token|refresh_token|session_token|api_key|password)=)[^&#\s"'<>]+/giu;
-const cleanText = (value: string) => redactCredentialText(redactSecrets(value)).replace(credentialQuery, '$1[REDACTED]');
+const cleanText = (value: string) => redactSensitiveCredentialText(value).replace(credentialQuery, '$1[REDACTED]');
 const adsIdFields = new Set(['customerid', 'logincustomerid', 'managercustomerid']);
 // Google Ads customer IDs and resource paths used by the real draft and publication code (retrieved 2026-11-25).
 // https://github.com/ahmadalwakai/Mohassan-AI/blob/c2a0ff7/packages/contracts/src/google-ads.ts

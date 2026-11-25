@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { boundedGit } from "./git.ts";
+import { pinnedGitNetworkConfig } from "./git-remote-network.ts";
 import { CodingError, assertNoLinks, safeRelative } from "./security.ts";
 
 /**
@@ -60,7 +61,9 @@ export async function createMirror(dir: string, signal?: AbortSignal): Promise<v
 /** The commit the branch points at on GitHub. One network request, no objects transferred. */
 export async function remoteHead(cwd: string, repo: string, ref: string, signal?: AbortSignal): Promise<string> {
   const target = parseRemoteRepo(repo), branch = validRemoteRef(ref);
-  const { stdout } = await boundedGit(cwd, ["ls-remote", "--heads", "--", remoteUrl(target), `refs/heads/${branch}`], { signal, extraConfig: remoteNetworkConfig(), timeoutMs: NETWORK_TIMEOUT_MS }).catch(mapped);
+  const url = remoteUrl(target);
+  const pinned = await pinnedGitNetworkConfig(cwd, url, signal).catch(mapped);
+  const { stdout } = await boundedGit(cwd, ["ls-remote", "--heads", "--", url, `refs/heads/${branch}`], { signal, extraConfig: [...remoteNetworkConfig(), ...pinned], timeoutMs: NETWORK_TIMEOUT_MS }).catch(mapped);
   const lines = stdout.split("\n").map((line) => line.trimEnd()).filter(Boolean);
   if (!lines.length) throw new CodingError("GIT_REMOTE_REF_MISSING", "الفرع المطلوب غير موجود في المستودع.");
   const match = lines.length === 1 ? /^([a-f0-9]{40})\trefs\/heads\/(.+)$/.exec(lines[0]) : null;
@@ -71,8 +74,10 @@ export async function remoteHead(cwd: string, repo: string, ref: string, signal?
 /** Depth-1 fetch of one branch into the mirror; returns the commit actually stored. */
 export async function remoteFetch(mirror: string, repo: string, ref: string, signal?: AbortSignal): Promise<string> {
   const target = parseRemoteRepo(repo), branch = validRemoteRef(ref);
-  await boundedGit(mirror, ["fetch", "--depth", "1", "--no-tags", "--no-recurse-submodules", "--", remoteUrl(target), `+refs/heads/${branch}:refs/remotes/origin/${branch}`],
-    { signal, extraConfig: remoteNetworkConfig(), timeoutMs: NETWORK_TIMEOUT_MS }).catch(mapped);
+  const url = remoteUrl(target);
+  const pinned = await pinnedGitNetworkConfig(mirror, url, signal).catch(mapped);
+  await boundedGit(mirror, ["fetch", "--depth", "1", "--no-tags", "--no-recurse-submodules", "--", url, `+refs/heads/${branch}:refs/remotes/origin/${branch}`],
+    { signal, extraConfig: [...remoteNetworkConfig(), ...pinned], timeoutMs: NETWORK_TIMEOUT_MS }).catch(mapped);
   const { stdout } = await boundedGit(mirror, ["rev-parse", "--verify", `refs/remotes/origin/${branch}^{commit}`], { signal }).catch(mapped);
   return validRemoteCommit(stdout.trim());
 }

@@ -3,26 +3,30 @@ import Fastify from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createDatabase } from '@mohassan/database';
 import { registerWindowsRoutes, revokeWindowsSession, windowsMigration, type WindowsOrigin } from '@mohassan/windows';
+import { migrateAuth } from '../apps/server/src/auth.js';
 
 const hash = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
 const action = { type: 'key', key: 'Escape' };
 let database: Awaited<ReturnType<typeof createDatabase>>;
-beforeAll(async () => { database = await createDatabase({}); await windowsMigration(database.db); });
+beforeAll(async () => { database = await createDatabase({}); await migrateAuth(database.db); await windowsMigration(database.db); });
 afterAll(async () => { await database?.close(); });
 const apps: ReturnType<typeof Fastify>[] = [];
 afterEach(async () => { for (const app of apps.splice(0)) await app.close(); });
 
 /** Real PGlite authorization/queue domain. No companion is connected, so no desktop command is delivered. */
 async function fixture(pauseNextTransaction = false) {
-  const owner = `windows-scope-owner-${randomUUID()}`, cookie = `synthetic-session=${randomUUID()}`;
+  const owner = `windows-scope-owner-${randomUUID()}`, sessionId = randomUUID();
   const deviceId = randomUUID(), grantId = randomUUID(), targetKey = 'a'.repeat(64), epoch = randomUUID();
+  const sessionBinding = `session:${hash(sessionId)}`;
+  await database.db.insertInto('user').values({ id: owner, name: 'Synthetic owner', email: `${owner}@example.test` }).execute();
+  await database.db.insertInto('session').values({ id: sessionId, userId: owner, token: randomUUID(), expiresAt: new Date(Date.now() + 60000) }).execute();
   const state = { approvalNonce: epoch, sessionId: 1, safeDesktop: true, localView: true, localControl: true,
     target: { key: targetKey, mode: 'window', title: 'Synthetic scope window', width: 800, height: 600 }, status: 'isolated fixture' };
   const frame = { id: randomUUID(), targetKey, capturedAt: new Date().toISOString(), width: 800, height: 600,
     jpeg: Buffer.concat([Buffer.from([255, 216, 255]), Buffer.alloc(150), Buffer.from([255, 217])]).toString('base64'), elements: [] };
   await database.db.insertInto('windows_devices').values({ id: deviceId, owner_id: owner, name: 'Synthetic device A', key_hash: hash('synthetic-device-key'),
     last_seen_at: new Date(), state: JSON.stringify(state), last_frame: JSON.stringify({ ...frame, receivedAt: new Date().toISOString() }) }).execute();
-  await database.db.insertInto('windows_grants').values({ id: grantId, owner_id: owner, device_id: deviceId, session_binding: hash(cookie),
+  await database.db.insertInto('windows_grants').values({ id: grantId, owner_id: owner, device_id: deviceId, session_binding: sessionBinding,
     scope: 'control', target_key: targetKey, approval_nonce: epoch, expires_at: new Date(Date.now() + 30000) }).execute();
   let armed = false, entered = false, release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
@@ -45,17 +49,20 @@ async function fixture(pauseNextTransaction = false) {
   const app = Fastify({ logger: false }); apps.push(app);
   app.setErrorHandler((error, _request, reply) => { const failure = error as { statusCode?: number; code?: string; message?: string };
     reply.code(failure.statusCode ?? 500).send({ error: { code: failure.code ?? 'ERROR', message: failure.message } }); });
-  const control = await registerWindowsRoutes(app, { db: controlledDb, owner: async request => {
-    if (request.headers['x-synthetic-owner'] !== owner) throw Object.assign(new Error('Synthetic unauthorized owner'), { statusCode: 401 }); return { id: owner };
+  const native = await registerWindowsRoutes(app, { db: controlledDb, owner: async request => {
+    if (request.headers['x-synthetic-owner'] !== owner) throw Object.assign(new Error('Synthetic unauthorized owner'), { statusCode: 401 }); return { id: owner, sessionId };
   }, config: { webOrigin: 'http://127.0.0.1:3000', production: false, windowsEnabled: true } });
-  app.get('/fixture/session', request => { control.noteSession(owner, request); return { ok: true }; });
-  await app.ready(); await app.inject({ url: '/fixture/session', headers: { cookie } });
+  const control = { ...native,
+    view: (...args: Parameters<typeof native.view>) => native.runInSession(owner, sessionId, () => native.view(...args)),
+    act: (...args: Parameters<typeof native.act>) => native.runInSession(owner, sessionId, () => native.act(...args)),
+  };
+  await app.ready();
   const replaceGrant = async (key = targetKey, approvalNonce = epoch) => {
     const response = await app.inject({ method: 'POST', url: `/api/windows/devices/${deviceId}/grants`,
-      headers: { cookie, 'x-synthetic-owner': owner }, payload: { scope: 'control', durationSeconds: 30, targetKey: key, approvalNonce } });
+      headers: { 'x-synthetic-owner': owner }, payload: { scope: 'control', durationSeconds: 30, targetKey: key, approvalNonce } });
     expect(response.statusCode, response.body).toBe(200); return response.json() as { id: string };
   };
-  return { owner, cookie, deviceId, grantId, targetKey, epoch, state, frame, control, app, replaceGrant,
+  return { owner, sessionId, sessionBinding, deviceId, grantId, targetKey, epoch, state, frame, control, app, replaceGrant,
     arm() { expect(pauseNextTransaction).toBe(true); armed = true; }, entered: () => entered, release,
     commands: () => database.db.selectFrom('windows_commands').selectAll().where('owner_id', '=', owner).execute() };
 }
@@ -100,14 +107,14 @@ describe('native Windows assistant origin fence with actual PGlite grant state',
     const f = await fixture(), observed = await f.control.view(f.owner), secondDevice = randomUUID(), secondGrant = randomUUID();
     await database.db.insertInto('windows_devices').values({ id: secondDevice, owner_id: f.owner, name: 'Synthetic device B', key_hash: hash('synthetic-device-key-b'),
       created_at: new Date(Date.now() + 10), last_seen_at: new Date(), state: JSON.stringify(f.state), last_frame: JSON.stringify({ ...f.frame, receivedAt: new Date().toISOString() }) }).execute();
-    await database.db.insertInto('windows_grants').values({ id: secondGrant, owner_id: f.owner, device_id: secondDevice, session_binding: hash(f.cookie),
+    await database.db.insertInto('windows_grants').values({ id: secondGrant, owner_id: f.owner, device_id: secondDevice, session_binding: f.sessionBinding,
       scope: 'control', target_key: f.targetKey, approval_nonce: f.epoch, expires_at: new Date(Date.now() + 30000) }).execute();
     await expect(f.control.act(f.owner, f.frame.id, action, observed.origin)).rejects.toMatchObject({ code: 'COMPUTER_SCOPE_CHANGED' });
     expect(await f.commands()).toEqual([]);
   });
   it.each(['session', 'local_consent'] as const)('retains %s revocation fences without creating a command', async revoked => {
     const f = await fixture(), observed = await f.control.view(f.owner);
-    if (revoked === 'session') await revokeWindowsSession(database.db, f.cookie);
+    if (revoked === 'session') await revokeWindowsSession(database.db, f.sessionId);
     else await database.db.updateTable('windows_devices').set({ state: JSON.stringify({ ...f.state, localControl: false }) }).where('id', '=', f.deviceId).execute();
     await expect(f.control.act(f.owner, f.frame.id, action, observed.origin)).rejects.toMatchObject({ code: 'WINDOWS_GRANT_REQUIRED' }); expect(await f.commands()).toEqual([]);
   });

@@ -142,4 +142,17 @@ describe('shadow router', () => {
     await new Promise(resolve => setTimeout(resolve, 50));
     expect(existsSync(logFile)).toBe(false);
   });
+
+  it('keeps route diagnostics without retaining recognized credential text', async () => {
+    const dir = await tinyModel('ads');
+    const logFile = path.join(dir, 'log', 'shadow.jsonl');
+    const shadow = createShadowRouter({ modelDir: dir, logFile });
+    const sample = 'router-journal-fixture-value';
+    shadow.observe({ conversationId: 'fixture-run', text: 'Show my current account',
+      previous: `Cookie: fixture_session=${sample}`, pendingQuestion: false });
+    await vi.waitFor(async () => expect(existsSync(logFile)).toBe(true));
+    const contents = await readFile(logFile, 'utf8');
+    expect(contents.includes(sample)).toBe(false);
+    expect(JSON.parse(contents)).toMatchObject({ text: '', previous: null, model: 'ads' });
+  });
 });

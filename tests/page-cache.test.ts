@@ -1,4 +1,6 @@
+import { createServer } from 'node:http';
 import { describe, expect, it } from 'vitest';
+import { SafeNetwork } from '../packages/browser/src/network.js';
 import { PAGE_TTL_MS, classifyPage, createPageCache, pageCacheKey } from '../apps/server/src/assistant/page-cache.js';
 
 const page = (url: string, text = 'نص الصفحة الذي يُقرأ ويُحفظ للسؤال التالي.') => ({ url, title: 'عنوان', text, status: 200 });
@@ -16,11 +18,27 @@ describe('page cache: evidence read over HTTP is reused by site kind', () => {
     expect(PAGE_TTL_MS.documentation).toBeGreaterThan(PAGE_TTL_MS.news);
   });
 
-  it('keys by address without fragment, credentials or trailing slash', () => {
-    expect(pageCacheKey('https://ar.wikipedia.org/wiki/طوكيو#التاريخ')).toBe(pageCacheKey('https://ar.wikipedia.org/wiki/طوكيو/'));
-    expect(pageCacheKey('https://user:pw@example.com/a?x=1')).toBe('https://example.com/a?x=1');
+  it('ignores fragments and refuses embedded credentials', () => {
+    expect(pageCacheKey('https://ar.wikipedia.org/wiki/طوكيو#التاريخ')).toBe(pageCacheKey('https://ar.wikipedia.org/wiki/طوكيو'));
+    expect(pageCacheKey('https://user:pw@example.com/a?x=1')).toBeNull();
     expect(pageCacheKey('ftp://example.com/a')).toBeNull();
     expect(pageCacheKey('not a url')).toBeNull();
+  });
+
+  it('keeps path and query syntax distinct for cached responses', () => {
+    const cache = createPageCache();
+    cache.put(page('https://example.com/a'));
+    cache.put(page('https://example.com/b?name=example'));
+    expect(cache.get('https://example.com/a/')).toBeNull();
+    expect(cache.get('https://example.com/b?name=example/')).toBeNull();
+    expect(cache.get('https://example.com/a')).not.toBeNull();
+  });
+
+  it('keeps credential-bearing addresses out of the process-wide cache', () => {
+    const cache = createPageCache();
+    const url = 'https://example.com/a?session=fixture';
+    cache.put(page(url));
+    expect(cache.get(url)).toBeNull();
   });
 
   it('serves a page within its lifetime and forgets it afterwards', () => {
@@ -60,6 +78,34 @@ describe('page cache: evidence read over HTTP is reused by site kind', () => {
     expect(cache.get('https://empty.example/')).toBeNull();
     cache.put({ ...page('https://missing.example/'), status: 404 });
     expect(cache.get('https://missing.example/')).toBeNull();
+  });
+
+  const privateResponseHeaders: Record<string, string>[] = [
+    { 'cache-control': 'max-age=600, private' }, { 'cache-control': 'no-store' }, { 'cache-control': 's-maxage=0' },
+    { 'cache-control': 'no-cache="x-fixture"' }, { vary: '*' }, { 'set-cookie': 'fixture=value' },
+  ];
+  it.each(privateResponseHeaders)('does not share a private response %p', responseHeaders => {
+    const cache = createPageCache();
+    const url = 'https://example.com/public-looking';
+    expect(cache.put(page(url), { responseHeaders }).text).toBeTruthy();
+    expect(cache.get(url)).toBeNull();
+  });
+
+  it('keeps cache directives visible to the page reader on a local source', async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'cache-control': 'no-store', vary: '*' });
+      response.end('fixture');
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing fixture address');
+      const origin = `http://127.0.0.1:${address.port}`;
+      const response = await new SafeNetwork({ testOrigins: [origin] }).request(origin);
+      expect(response.headers).toMatchObject({ 'cache-control': 'no-store', vary: '*' });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
   });
 
   it('keeps bounded links only for disambiguation pages', () => {

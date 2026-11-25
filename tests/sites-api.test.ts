@@ -9,6 +9,7 @@ import sharp from 'sharp';
 import { afterEach, describe, expect, it } from 'vitest';
 import { listZip } from '@mohassan/sites';
 import { createApplication } from '../apps/server/src/app.js';
+import { createSitesControl } from '../apps/server/src/sites.js';
 
 const secret = 'sites-api-internal-secret-0000000001', origin = 'http://127.0.0.1:3000', setupToken = 'sites-api-setup-token-00000000001';
 
@@ -32,6 +33,24 @@ describe('sites API', () => {
     return { app, application, base, headers };
   }
   const draft = { lang: 'ar', kind: 'restaurant', name: 'بيت الشام', request: 'موقع لمطعم فيه الأسئلة الشائعة وخريطة', answers: { items: 'شاورما لحم - 25\nفتوش - 12\nكنافة - 15', contact: '0933123456 واتساب', city: 'دمشق', faq: 'هل يوجد توصيل؟\nنعم داخل المدينة.', hours: 'يومياً ١١ صباحاً - ١٢ منتصف الليل' } };
+
+  it('authenticates the preview before selecting its generated snapshot', async () => {
+    const { app, application, headers } = await boot();
+    const site = (await app.inject({ method: 'POST', url: '/api/sites/draft', headers, payload: draft })).json();
+    const queries: string[] = [];
+    const db = application.database.db.withPlugin({
+      transformQuery({ node }) { queries.push(JSON.stringify(node)); return node; },
+      async transformResult({ result }) { return result; },
+    });
+    const control = await createSitesControl(db, { tokenSecret: secret });
+    const token = control.previewPath(site.id, site.revision).split('/').at(-2)!;
+    const unrelated = 'a'.repeat(32);
+    queries.length = 0;
+    expect(await control.previewFile(site.id, unrelated === token ? 'b'.repeat(32) : unrelated, 'index.html')).toBeNull();
+    expect(queries.some(query => query.includes('"name":"files"'))).toBe(false);
+    expect((await control.previewFile(site.id, token, 'index.html'))?.status).toBe(200);
+    expect(queries.some(query => query.includes('"name":"files"'))).toBe(true);
+  });
 
   it('builds a site from answers, previews it without a cookie, edits it by sentence and exports a ZIP', async () => {
     const { app, headers, base } = await boot();

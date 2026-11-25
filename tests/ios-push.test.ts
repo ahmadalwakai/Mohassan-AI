@@ -90,6 +90,25 @@ describe('iOS push devices and APNs transport', () => {
     expect((await remove(memberCookie, other.token)).statusCode).toBe(204);
   });
 
+  it('caps APNs registrations per account while allowing an existing registration to refresh', async () => {
+    const prior = Array.from({ length: 15 }, (_, index) => registration(index.toString(16).padStart(2, '0'), 'sandbox'));
+    await db().insertInto('ios_push_devices').values(prior.map(device => ({
+      registration_id: randomUUID(), registration_generation: randomUUID(), user_id: memberId, token: device.token,
+      environment: device.environment, app_version: device.appVersion,
+    }))).execute();
+    const own = registration('f3', 'sandbox');
+    try {
+      const results = await Promise.all([register(memberCookie, registration('f1', 'sandbox')), register(memberCookie, registration('f2', 'sandbox'))]);
+      expect(results.map(result => result.statusCode).sort()).toEqual([204, 429]);
+      expect((await register(memberCookie, { ...prior[0]!, appVersion: '2.0.0' })).statusCode).toBe(204);
+      expect((await register(ownerCookie, own)).statusCode).toBe(204);
+      expect(await listApnsDevices(db(), memberId)).toHaveLength(16);
+    } finally {
+      await db().deleteFrom('ios_push_devices').where('user_id', '=', memberId).execute();
+      await remove(ownerCookie, own.token);
+    }
+  });
+
   it('sends the exact alert payload and ES256 authentication to the registered environment, and removes invalid tokens', async () => {
     const now = 1_770_000_000_000;
     const keyPair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });

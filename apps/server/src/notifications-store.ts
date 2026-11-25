@@ -8,8 +8,8 @@ import {
 import type { PushSender, WebPushPayload } from './web-push.js';
 import { backgroundKinds, backgroundPayload, type BackgroundNotificationEvent, type BackgroundOutcome } from './background-notification-payload.js';
 import { memberReminderDeliveryAllowed } from './member-deletion.js';
+import { hideNotificationTitleByDefault, notificationPresenceMs, updateNotificationPresence } from './notification-security.js';
 
-const PRESENCE_MS = 25_000;
 const PRIORITY_WINDOW_MS = 2_000;
 const EVENT_TTL_MS = 5 * 60_000;
 export const backgroundRetryAt = (now: Date, attempts = 0) =>
@@ -74,7 +74,7 @@ export async function notificationPreferences(db: Database, userId: string): Pro
   const row = await db.selectFrom('notification_preferences').selectAll().where('user_id', '=', userId).executeTakeFirst();
   const quietHours = row?.quiet_start && row.quiet_end && row.time_zone
     ? { start: row.quiet_start, end: row.quiet_end, timeZone: row.time_zone } : null;
-  return { quietHours, hideTitle: row?.hide_title ?? false,
+  return { quietHours, hideTitle: row?.hide_title ?? hideNotificationTitleByDefault,
     ...(row?.completion_sound === false && { completionSound: false }),
     ...(row?.show_result_preview === true && { showResultPreview: true }) };
 }
@@ -229,21 +229,17 @@ function eventPayload(event: EventWithTitle, preferences: NotificationPreference
 export const oldestEvent = (now: Date) => new Date(now.getTime() - EVENT_TTL_MS);
 
 export async function syncNotifications(db: Database, userId: string, input: NotificationSyncRequest, now = new Date()): Promise<NotificationSyncResponse> {
-  await db.deleteFrom('notification_tabs').where('user_id', '=', userId).where(eb => eb.or([
-    eb('expires_at', '<=', now), ...(input.state === 'closed' ? [eb('tab_id', '=', input.tabId)] : []),
-  ])).execute();
+  await updateNotificationPresence(db, userId, input, now);
   if (input.state === 'closed') return { backgroundTask: false, pending: [] };
-  const presence = { visible: input.state === 'visible', expires_at: new Date(now.getTime() + PRESENCE_MS) };
-  await db.insertInto('notification_tabs').values({ user_id: userId, tab_id: input.tabId, ...presence })
-    .onConflict(conflict => conflict.columns(['user_id', 'tab_id']).doUpdateSet(presence)).execute();
+  const visible = input.state === 'visible';
   let recentEvents = events(db).where('n.user_id', '=', userId).where('n.delivery', '=', 'pending')
     .where(eb => eb.or([eb('n.tab_claim_until', 'is', null), eb('n.tab_claim_until', '<=', now), eb('n.tab_claim_id', '=', input.tabId)]))
     .where(eb => eb.or([eb('n.happened_at', '>', oldestEvent(now)), eb('n.run_id', 'is not', null)]))
     .where(eb => eb.or([
       eb.not(eb.exists(eb.selectFrom('push_subscriptions').select('id').whereRef('push_subscriptions.id', '=', 'n.web_push_device_id'))),
-      ...(presence.visible ? [eb('n.web_push_attempts', '>', 0)] : []),
+      ...(visible ? [eb('n.web_push_attempts', '>', 0)] : []),
     ]));
-  if (presence.visible) recentEvents = recentEvents.where('n.run_id', 'is not', null);
+  if (visible) recentEvents = recentEvents.where('n.run_id', 'is not', null);
   const [preferences, running, recent, hasVisible] = await Promise.all([
     notificationPreferences(db, userId),
     db.selectFrom('chat_runs').select('status').where('owner_id', '=', userId).where('status', '=', 'running')
@@ -252,7 +248,7 @@ export async function syncNotifications(db: Database, userId: string, input: Not
     activeTabs(db, now).where('user_id', '=', userId).where('visible', '=', true).limit(1).executeTakeFirst(),
   ]);
   const backgroundTask = !hasVisible && (Boolean(running) || recent.some(event => event.happened_at.getTime() - event.started_at.getTime() >= NOTIFICATION_AFTER_MS));
-  const pending = (hasVisible && !presence.visible) || isQuietHours(preferences.quietHours, now) ? [] : recent
+  const pending = (hasVisible && !visible) || isQuietHours(preferences.quietHours, now) ? [] : recent
     .filter(event => event.available_at <= now).map(event => eventPayload(event, preferences));
   return { backgroundTask, pending };
 }
@@ -279,7 +275,7 @@ export async function claimNotification(db: Database, userId: string, id: string
       if (!tab || (!tab.visible && await tabs.where('visible', '=', true).executeTakeFirst())) return null;
       if ((!tab.visible || !event.web_push_attempts) && event.web_push_device_id && await tx.selectFrom('push_subscriptions').select('id')
         .where('id', '=', event.web_push_device_id).executeTakeFirst()) return null;
-      await row.set({ tab_claim_id: tabId, tab_claim_until: new Date(now.getTime() + PRESENCE_MS) }).execute();
+      await row.set({ tab_claim_id: tabId, tab_claim_until: new Date(now.getTime() + notificationPresenceMs) }).execute();
       return eventPayload(event, preferences);
     }
     if (acknowledge) return null;

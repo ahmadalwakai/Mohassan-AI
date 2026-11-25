@@ -15,6 +15,7 @@ const findingLabels: Record<ConversationPrivacyFinding["kind"], string> = {
   path: "مسار ملف",
   "google-ads-id": "معرّف عميل Google Ads",
   "token-url": "رابط يتضمّن رمز وصول",
+  credential: "بيانات اعتماد خاصة",
   memory: "محتوى من الذاكرة",
   "tool-output": "محتوى من نتيجة أداة",
 };

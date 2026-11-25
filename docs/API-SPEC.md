@@ -15,8 +15,8 @@
 | GET `/health` | لا جلسة ولا سر خدمة؛ حياة العملية فقط | 200 `{status:'ok'}` | لا يثبت سلامة كل التكاملات |
 | GET `/api/setup` | سر الوكيل؛ لا جلسة | 200 `{needsSetup:boolean,setupAvailable:boolean}` | لا يرجع رمز إعداد أو بيانات مالك |
 | POST `/api/setup` | `{name,email,password,setupToken}`؛ Origin؛ تطوير محلي فقط | 200 `{ok:true}` | 400 schema، 403 رمز خاطئ/إعداد إنتاج معطل، 409 مالك موجود أو إعداد جارٍ |
-| POST `/api/auth/sign-in/email` | `{email,password}` وJSON وOrigin؛ لا جلسة سابقة | 200 عقد Better Auth: `user,token,redirect` وقد يتضمن `url`؛ `Set-Cookie` | رفض بيانات الدخول وفق عقد Better Auth |
-| GET `/api/auth/get-session` | cookie اختيارية | 200 `{session,user}` أو `null` | عقد Better Auth الخام |
+| POST `/api/auth/sign-in/email` | `{email,password}` وJSON وOrigin؛ لا جلسة سابقة | 200 `{user,redirect}` وقد يتضمن `url`؛ بيانات اعتماد الجلسة في `Set-Cookie` | رفض بيانات الدخول وفق عقد Better Auth |
+| GET `/api/auth/get-session` | cookie اختيارية | 200 `{session,user}` أو `null` | معلومات الجلسة دون رمز الاعتماد، ويعاد عنوان IP كبادئة شبكة |
 | POST `/api/auth/sign-out` | cookie وOrigin وجسم `{}` | 200 `{success:true}`، وإبطال الجلسة وإزالة cookie | إعادة استعمال cookie القديمة لا تعيد جلسة |
 | `/api/auth/*` الأخرى | تشمل sign-up وreset/update غير المسموح بها | لا نجاح متاح | 403 `AUTH_ACTION_DISABLED` |
 | GET `/api/workspace` | جلسة مالك | 200 `WorkspaceSnapshot` أدناه | 401 `UNAUTHORIZED`؛ خطأ SQL لا يكشف تفاصيله |
@@ -39,7 +39,7 @@
 
 `Setup`: name مقصوص 2–80، email صحيح، password بطول 12–128، setupToken بطول 32–256؛ الحقول الإضافية مرفوضة. الرمز مولد محليًا وموجود في ملف إعداد محلي مستبعد من Git، ولا يرجعه HTTP. إنشاء المالك محمي بقيد singleton؛ بداية خدمة التخزين المحلي الحصرية تستعيد حجزًا يتيمًا عند عدم وجود مستخدم. لا يسمح ذلك بتسجيل عام.
 
-الجلسة cookie تديرها Better Auth: HttpOnly، وتكون Secure في الإنتاج، وcookieCache معطل، والعمر 7 أيام مع تحديث دوري. اسم cookie وتفاصيل session يتبعان إصدار المكتبة المثبت. لا يستخدم العميل `token` المعاد من المكتبة بوصفه تفويض أدوات أو بديلًا للسر الداخلي؛ الواجهة تعتمد cookie ولا تحفظها في localStorage.
+الجلسة cookie تديرها Better Auth: HttpOnly، وتكون Secure في الإنتاج، وcookieCache معطل، والعمر 7 أيام مع تحديث دوري. اسم cookie وتفاصيل session يتبعان إصدار المكتبة المثبت. تعتمد الواجهة على cookie، وتبقى بيانات اعتماد الجلسة في ترويسات المصادقة.
 
 `CreateTask = {title:string[3..120],goal:string[5..4000],capabilityId:'system.diagnostic'|'plan.draft'|'coding.change',autonomy?:'assisted'|'scoped'|'shadow',projectId?:UUID}`. projectId إلزامي للبرمجة ومرفوض لبقية القدرات؛ الملكية تفحص قبل الحفظ، والمشروع غير المملوك يعيد 404. title/goal يقصان، default autonomy هو assisted، والحقول الإضافية مرفوضة. مفتاح idempotency بطول 8–128 ومحارف `[a-zA-Z0-9_-]`؛ التفرد ضمن المالك، والمقارنة على المدخلات المطَبّعة بما فيها projectId. إعادة المفتاح والمدخلات نفسها تعيد المهمة نفسها بحالتها الحالية؛ اختلافها 409 دون إعادة جدولة.
 

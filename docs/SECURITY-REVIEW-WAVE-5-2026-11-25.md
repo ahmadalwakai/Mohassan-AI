@@ -1,0 +1,366 @@
+# Wave 5 security review | 25 November 2026
+
+Production baseline `f015a1813c700c7cfd2f599a8095dd531a2ed1e4`. Release candidate under review `201321031293999003bb0ae55a29dbd250ac96ce` on `integration/wave-5-2026-11-25` (PR #95). The review covers the full difference between those commits, including integration waves 1–4, the platform wave, the release candidate and wave 5.
+
+PR #9 was reviewed at `1bb51dd998c790db4894d17780585f054dd27384`. The earlier review branch remains outside the release. Relevant fixes are adapted against PR #95.
+
+## Review status
+
+This review uses local fixtures, mocks and disposable state. Release verification results are recorded below. No production service or deployment was accessed.
+
+## HTTP route inventory
+
+The location column refers to PR #95 (`201321031293999003bb0ae55a29dbd250ac96ce`). The inventory compares route registrations and Next.js route files against production (`f015a1813c700c7cfd2f599a8095dd531a2ed1e4`). It has 37 new Fastify method/path registrations. Fastify generates `HEAD` for the `GET` registrations below except member data export, which disables `HEAD` at registration. The member gate maps generated `HEAD` to `GET` with `routeKey`.
+
+Fastify requires the internal proxy credential, then an eligible session for nonpublic routes. It checks the exact configured web origin before every write, with a loopback alias in development. The shared defaults are a 16,384-byte body limit, a request rate limit, and `Cache-Control: no-store`. See `apps/server/src/app.ts:184-252`, `apps/server/src/auth.ts:61-81`, and `apps/server/src/members.ts:21-67`. Member routes below are listed through the notification, reminder, share, and member-data route constants in `MEMBER_ROUTES`. Suspended members retain the listed personal data rights, and members with a pending deletion can read or cancel that account's deletion during the grace period. These paths still require authentication. Owner administration routes require the owner role.
+
+| Method | Path | Registration | Session and authorization | Input and state |
+| --- | --- | --- | --- | --- |
+| POST | `/api/push/devices` | `apps/server/src/ios-push-routes.ts:12` | Member allow-listed. Registers under session account and rejects conflicting ownership. | Strict APNs registration with bounded token and app version. Origin required. |
+| DELETE | `/api/push/devices/:token` | `apps/server/src/ios-push-routes.ts:22` | Member allow-listed. Deletes by session account and token. | Bounded hex token. Origin required. |
+| GET, HEAD | `/api/notifications/settings` | `apps/server/src/notifications-routes.ts:57` | Member allow-listed. Reads own preferences and device summaries. | No input consumed. Read-only. |
+| POST | `/api/notifications/settings` | `apps/server/src/notifications-routes.ts:58` | Member allow-listed. Updates own preferences and returns own summaries. | Strict quiet-hour, time zone and boolean preference schema. Origin required. |
+| POST | `/api/notifications/subscribe` | `apps/server/src/notifications-routes.ts:63` | Member allow-listed. Registers under session account and rejects conflicting ownership. | Strict URL, keys and label with length limits. Delivery-time URL enforcement covered in the network section. Origin required. |
+| DELETE | `/api/notifications/devices/:id` | `apps/server/src/notifications-routes.ts:75` | Member allow-listed. Deletes own device row by ID. | UUID. Origin required. |
+| POST | `/api/notifications/sync` | `apps/server/src/notifications-routes.ts:78` | Member allow-listed. Syncs and reads by session account. | Strict UUID and tab-state enum. Origin required. |
+| POST | `/api/notifications/events/:id/claim` | `apps/server/src/notifications-routes.ts:79` | Member allow-listed. Looks up event and tab under session account. | Event and tab UUIDs with an optional acknowledgement literal. Origin required. |
+| GET, HEAD | `/api/notifications/events/:id` | `apps/server/src/notifications-routes.ts:84` | Member allow-listed. Checks own event and returns status only. | UUID. Read-only. |
+| POST | `/api/notifications/test` | `apps/server/src/notifications-routes.ts:88` | Member allow-listed. Creates a generic test event for own devices. | Ignores body and query. Five requests per minute. Origin required. |
+| GET, HEAD | `/api/reminders` | `apps/server/src/reminders/routes.ts:38` | Member allow-listed. Lists own scheduled reminders. | Empty query. Read-only. |
+| GET, HEAD | `/api/reminders/due` | `apps/server/src/reminders/routes.ts:45` | Member allow-listed. Lists bounded deliveries under session account. | Empty query. Read-only. |
+| POST | `/api/reminders` | `apps/server/src/reminders/routes.ts:52` | Member allow-listed. Verifies that the session account owns the conversation. | Strict reminder schema, future time, valid zone, and validated recurrence. Origin required. |
+| PATCH | `/api/reminders/:id` | `apps/server/src/reminders/routes.ts:60` | Member allow-listed. Selects and updates own reminder. | UUID, empty query, strict changes and optional revision. Origin required. |
+| DELETE | `/api/reminders/:id` | `apps/server/src/reminders/routes.ts:69` | Member allow-listed. Cancels own reminder. | UUID, empty query and body. Origin required. |
+| GET, HEAD | `/api/chat/conversations/:id/export` | `apps/server/src/conversation-share.ts:64` | Member allow-listed. Loads own conversation snapshot. | UUID and strict PDF/Markdown format. 12 requests per minute. |
+| POST | `/api/chat/conversations/:id/share/preview` | `apps/server/src/conversation-share.ts:75` | Member allow-listed, subject to owner sharing setting. Reviews own snapshot. | UUID and empty body. 20 requests per minute. Origin required. |
+| POST | `/api/chat/conversations/:id/share` | `apps/server/src/conversation-share.ts:83` | Member allow-listed, subject to owner sharing setting. Creates link for own snapshot. | UUID, strict expiry and receipt, receipt bound to owner and snapshot. 12 requests per minute. Origin required. |
+| GET, HEAD | `/api/chat/conversation-shares` | `apps/server/src/conversation-share.ts:97` | Member allow-listed. Lists own links. | No input consumed. Read-only. |
+| DELETE | `/api/chat/conversation-shares/:id` | `apps/server/src/conversation-share.ts:98` | Member allow-listed. Revokes own link. | UUID. Origin required. |
+| GET, HEAD | `/api/chat/conversation-shares/public/:token` | `apps/server/src/conversation-share.ts:103` | Public capability, internal proxy credential still required. Browser API relay blocks this path. | 22-character token, expiration and revocation checked on lookup. Read-only. |
+| GET, HEAD | `/api/chat/conversation-share-settings` | `apps/server/src/conversation-share.ts:120` | Owner session. | No input consumed. Read-only. |
+| POST | `/api/chat/conversation-share-settings` | `apps/server/src/conversation-share.ts:124` | Owner session. | Strict boolean. Origin required. |
+| GET | `/api/member-data/export` | `apps/server/src/member-data-routes.ts:31` | Member allow-listed. Export assembled from session account. | Empty query, per-account hourly limit, 64 MiB archive cap. See legacy Fetch Metadata finding. |
+| GET, HEAD | `/api/member-data/sessions` | `apps/server/src/member-data-routes.ts:55` | Member allow-listed. Lists own current and other sessions with masked IPs. | Empty query. Read-only. |
+| DELETE | `/api/member-data/sessions` | `apps/server/src/member-data-routes.ts:60` | Member allow-listed. Revokes own other sessions. | Empty query and body. Origin required. |
+| GET, HEAD | `/api/members/audit` | `apps/server/src/member-data-routes.ts:66` | Owner session. | Strict bounded pagination. Read-only. |
+| DELETE | `/api/members/:userId/sessions` | `apps/server/src/member-data-routes.ts:70` | Owner session. Explicit member administration. Protects the owner account. | Bounded account ID, empty query and body. Origin required. |
+| GET, HEAD | `/api/member-data/deletion` | `apps/server/src/member-deletion.ts:154` | Member allow-listed. Reads own deletion state. | Empty query. Read-only. |
+| POST | `/api/member-data/deletion` | `apps/server/src/member-deletion.ts:158` | Member allow-listed. Starts own deletion and protects the owner account. | Empty query, strict password confirmation against the current session, five requests per minute. Origin required. |
+| DELETE | `/api/member-data/deletion` | `apps/server/src/member-deletion.ts:178` | Member allow-listed. Cancels own pending deletion. | Empty query and body. Origin required. |
+| GET, HEAD | `/api/members/deletions` | `apps/server/src/member-deletion.ts:185` | Owner session. Explicit member administration. | Empty query. Read-only. |
+| DELETE | `/api/members/deletions/:userId` | `apps/server/src/member-deletion.ts:194` | Owner session. Explicit member administration of pending deletions. | Bounded account ID, empty query and body. Origin required. |
+| GET, HEAD | `/api/ops/backup-status` | `apps/server/src/backup-status.ts:41` | Owner session. Workspace backup status. | Reads configured directory and fixed filenames. Output is limited to validated timestamps, verdict and computed age. |
+| GET, HEAD | `/api/ops/metrics` | `apps/server/src/ops/metrics/index.ts:59` | Owner session. Workspace metrics. | No input consumed. Read-only. |
+| GET, HEAD | `/api/ops/metrics.csv` | `apps/server/src/ops/metrics/index.ts:60` | Owner session. Workspace metrics. | No input consumed. Read-only. |
+| GET, HEAD | `/api/training-monitor` | `apps/server/src/training-monitor/route.ts:59` | Owner session. Production binding denies the local reader unless the desktop-shell and loopback requirements apply. | No input consumed. Reads configured local artifacts. |
+
+The web catch-all already served `GET`, `POST` and `DELETE` in production. New application-level Next.js paths and the PATCH handler are listed below. Framework-generated `HEAD` follows `GET` and automatic `OPTIONS` advertises handler methods without forwarding a data request.
+
+| Method | Path | Registration | Authorization and input |
+| --- | --- | --- | --- |
+| PATCH | `/api/reminders/:id` | `apps/web/app/api/[...path]/route.ts:68` | Two path segments with `reminders` first, bounded proxy body. Fastify checks the session, allow-list, ownership, UUID and Origin. |
+| GET, HEAD | `/share/:token` | `apps/web/app/share/[token]/route.ts:83` | Public capability with a fixed-length token. Forwards only the proxy credential to the internal lookup, renders validated data and applies no-store, no-referrer, noindex and CSP. |
+| GET, HEAD | `/ops/metrics` | `apps/web/app/ops/metrics/page.tsx:5` | The page renders sign-in or forbidden UI if the fixed internal metrics route rejects the session. Metrics are fetched with no-store and owner authorization. |
+| GET, HEAD | `/training-monitor` | `apps/web/app/training-monitor/page.tsx:6` | Public page shell. Snapshot fetch at `apps/web/app/training-monitor/monitor.tsx:227` requires an owner session. |
+| GET, HEAD | `/notifications-sw.js` | `apps/web/public/notifications-sw.js:1` | Public static service-worker script. Before displaying a notification, the worker checks event ownership through the authenticated API. |
+| GET, HEAD | `/mohassan-done.wav` | `apps/web/public/mohassan-done.wav` | Public static completion sound. |
+
+Durable run creation, status and stop reuse the existing chat routes. See `apps/server/src/command-chat.ts:4555`, `:4561`, `:4568`, and `:4573` for the session-scoped handlers. Those method/path pairs also exist in production.
+
+## HTTP findings
+
+### Medium | Session credentials in browser-readable auth JSON
+
+- **Location** `apps/server/src/member-data-bootstrap.ts:39-61`, `apps/server/src/member-data-request.ts:28-34`, and `scripts/cloud-phone-fixtures.ts:73-86` at PR #95.
+- **Scenario** Better Auth places credential fields in successful sign-in and session JSON. The HTTP hooks forwarded those fields into application-readable data. The phone fixture recorder sanitizes `Set-Cookie` headers and saves the JSON body, so recording these responses also saved the underlying credentials from those sessions.
+- **Evidence** `node --no-warnings /workspace/scratch/wave5-auth-response-check.mjs /workspace/wave5-http-review base` exited 1 with two credential fields present in the mocked Better Auth responses. The same command ending `head` exited 0 with zero credential fields and preserved account metadata, IP prefixing, invalid-credential response and signed-out null body. The focused integration regression is `tests/member-data-routes.test.ts` under “delivers the session through HttpOnly cookies and omits credentials from auth JSON”.
+- **Fix** `apps/server/src/auth-http-response.ts` strips the top-level sign-in token and nested session token, preserving the HTTP-only cookie flow and existing masked IP metadata. The current web and phone fixture consumers use the cookie and account identity. The API specification reflects the response shape.
+
+### Low | Legacy browser metadata fallback can consume an export slot
+
+- **Location** `apps/web/app/api/[...path]/route.ts:8-13`, `apps/server/src/member-data-export.ts:190-197`, and `apps/server/src/member-data-routes.ts:44-49` at PR #95.
+- **Scenario** An export GET allocates a one-hour per-account slot and records completed downloads. A legacy top-level navigation without Fetch Metadata can reach the authenticated handler under Lax cookie semantics, potentially starting an unwanted download or consuming that account's slot. Export selection remains scoped to the authenticated account. The browser's same-origin policy protects the response body from cross-origin script reads.
+- **Evidence** `node --no-warnings /workspace/scratch/wave5-export-policy-check.mjs /workspace/wave5-http-review` exited 0. The test dispatched five combinations of Fetch Metadata to the actual Next.js handler against a stub authentication gate. The handler rejected cross-site and same-site metadata and forwarded same-origin, none and absent values to that gate.
+- **Owner decision** Preserve current compatibility with API clients that omit browser metadata, or require a same-origin request signal or an Origin-checked POST for export admission.
+
+## Server-side requests
+
+Line numbers in this section refer to PR #95 at `201321031293999003bb0ae55a29dbd250ac96ce`.
+
+| Call site | Destination, DNS and redirect controls |
+| --- | --- |
+| `apps/server/src/assistant/long-run/host.ts:92,103,125` | Durable research queries use the server's `SearchEngine` and its `SafeNetwork` in `apps/server/src/app.ts:170–173`. Search results and stored monitor URLs are checked and then pinned at dispatch. Each followed redirect passes URL validation, robots checks and a fresh pinned request. Draft website construction calls local composition, validation and account-owned storage through `apps/server/src/sites.ts:79–87,125–135`. |
+| `apps/server/src/live-data/request.ts:3–7,28–41` | The fixed Open-Meteo/ECB origins and exact paths are checked before one pinned request. Location, date and coordinates influence query parameters. The default transport does not follow redirects. Hijri and prayer calculations use local code and data. |
+| `apps/server/src/app.ts:450–479` | Page-cache misses and the bounded retry use `SafeNetwork`; robots reads also use the guard. The HTTP reader does not follow redirects. Any fallback browser navigation goes through its own guard. Cache hits perform zero egress. |
+| `packages/browser/src/agent-browser.ts:603–630,815–845,1285–1300` | Browser hands use a denying Chromium proxy, blocked service workers and blocked WebSockets. Routed HTTP requests pin the destination. Redirects are validated and re-enter the guarded path. Approved files use the guarded transport and restrict download redirects to the approved origin. See the cross-origin header finding below. |
+| `packages/browser/src/engine.ts:38–77,79–100` | The isolated browser uses the same denying proxy and pre-dispatch pinning. Every followed redirect stays in the session's origin list and is rechecked. Its non-browser transport allowlist already excludes Authorization and custom headers, and cross-origin resource redirects remove Cookie. |
+| `apps/server/src/app.ts:140–150,170–173`, `packages/browser/src/search/local-index.ts:97–112`, `packages/browser/src/search/robots.ts:57–69` | Documented search providers, public-page research, robots files and stored public-index refreshes use `SafeNetwork`. Tracked redirects are validated and re-pinned before each dispatch. `packages/browser/src/research.ts:25,49,106–150` uses the guarded text reader and applies robots to research reads. |
+| `apps/server/src/google-ads.ts:12–23` | Page/brief data supplies landing URLs. Each follow-up uses a validated destination and a new pinned request. The distinct OAuth and Google Ads API clients use fixed Google hosts, with account data in request paths or bodies (`packages/google-ads/src/client.ts:72–108`). |
+| `packages/skills/src/remote-git.ts:31–44`, `packages/coding/src/git-remote.ts:38–75` | The owner config chooses the public GitHub repository and ref. Repository content cannot pick a host or protocol. Git refuses redirects and submodules. The review adds `SafeNetwork` DNS pinning for the Git process as recorded below. |
+| `apps/server/src/apns.ts:12–15` | The APNs connections use a fixed Apple host selected by the configured sandbox or production mode. The device token is a bounded path input. No redirect handling is present in this HTTP/2 transport. Web Push has a distinct user-selected delivery URL. |
+| `apps/server/src/studio-live.ts:24–50,135` | User page requests influence a path sent as JSON to the configured HTTPS gateway. The connection host is deployment configuration, with redirects refused. The preview listener binds to loopback. `apps/server/src/sites-publish.ts:37–46` uses fixed Vercel API routes for the explicit publish feature, separate from durable draft creation. Configured inference transports and local Ollama likewise take their host from application configuration. |
+
+The production `SafeNetwork` policy requires public HTTPS on the default port and refuses userinfo and other protocols at `packages/browser/src/network.ts:44–51`. It rejects mixed and private DNS results and uses only the checked address at `packages/browser/src/network.ts:53–59,79–81`. HTTP is available only to declared test fixtures. Production rejects enabled fixture origins at `apps/server/src/app.ts:153`.
+
+### High · Browser hands carried private headers into redirected requests
+
+- Location `packages/browser/src/agent-browser.ts:815–845`.
+- Scenario A signed-in website can send a read-only subresource response that changes origin. The host performs the follow-up itself and previously stripped Cookie alone. Authorization and custom credential headers could reach the second origin. The behavior was already present in the production commit.
+- Evidence `packages/browser/src/agent-browser-redirect-headers.test.ts` covers cross-origin and same-origin reads with mocked requests. The dependency-free fixture below used the real `AgentBrowser.forward` and observed the cross-origin assertion fail at PR #95 and pass with the fix. Its same-origin assertion passed in both versions.
+- Fix `packages/browser/src/redirect-headers.ts` supplies a small allowlist for manual cross-origin read hops. The new hook keeps full headers for same-origin reads.
+
+### Medium · The process-wide page cache combined addresses and retained private responses
+
+- Locations `apps/server/src/assistant/page-cache.ts:37–45,67–75`, `apps/server/src/app.ts:453–479`, `packages/browser/src/network.ts:85`.
+- Scenario The cache combined a URL ending in a slash with the same URL without it, including a slash that belonged to a query value. It stripped userinfo before lookup and stored responses without considering explicit origin cache policy, including responses that set a session cookie. A later read can receive the first cached response without a fresh request to the origin. The key and cache-policy behavior was already present in production.
+- Evidence `tests/page-cache.test.ts` now covers exact path and query identity, credential-bearing addresses, origin response policy and a local `SafeNetwork` response. The dependency-free fixture below observed the cache and local response assertions fail at PR #95 and pass with the fix.
+- Fix `apps/server/src/assistant/page-cache-policy.ts` preserves the path and query, rejects known credential-bearing URLs and applies cache eligibility. The server passes response headers to the cache. Private, non-cacheable, session-setting and non-200 responses remain available to the initiating read and are excluded from shared storage.
+
+### Medium · The remote skill mirror used Git's independent DNS resolution
+
+- Locations `packages/coding/src/git-remote.ts:38–45,60–76`, `packages/skills/src/remote-git.ts:31–44`.
+- Scenario The only configured remote host is `github.com`. Before the fix, Git connected using its own DNS lookup with no public-address check. This leaves a defense gap if the environment resolves the fixed hostname to a non-public address. No repository content can choose a hostname. This behavior was already present in production.
+- Evidence `packages/coding/src/git-remote-network.test.ts` mocks DNS and the Git runner for both network operations. The offline Node fixture below reported five failures at PR #95 and passed all five assertions with the fix.
+- Fix `packages/coding/src/git-remote-network.ts` requires a Git binary with `http.curloptResolve`, pins with `SafeNetwork` and passes the checked address to libcurl for the fixed TLS hostname. The bounded Git invocation retains redirect denial. The owner should confirm the release VM's Git supports this option before enabling remote skill sync. No live Git or VM check was performed.
+
+## Notifications, device ownership and credentials
+
+| Severity | PR #95 location | Scenario and evidence | Fix or decision |
+| --- | --- | --- | --- |
+| High | `apps/server/src/web-push.ts:48–61,75–88` | Registration constrained HTTPS destinations to known browser push services, but the provider library opened the HTTPS connection itself. A standard subscribed provider with no usable DNS result reached the mocked sender before the change. `tests/web-push-delivery.test.ts` checks that no request opens without a usable address, that the selected public address is pinned, and that a redirect response ends delivery. The local Node fixture observed the missing DNS guard on the base and passed against the review changes. | Keep the provider host and path checks and the library's encrypted payload and VAPID header generation. Send through `SafeNetwork.request` with a pinned address, a five-second deadline and an 8 KiB response limit. Reject redirects without forwarding payloads or authorization. This covers ordinary, test, durable and reminder Web Push since they share the same sender. |
+| Medium | `apps/server/src/notifications-store.ts:73–79,220–226`, `apps/server/src/reminders/push-delivery.ts:40–49` | With no settings row, ordinary browser notifications and reminder pushes could display a private conversation title. The local fixture observed the old preference default. `tests/notifications.test.ts` and `tests/reminders-scheduler.test.ts` assert generic default delivery and the existing account-specific title preference. | Default to hiding the title for accounts without a stored preference. Continue honoring explicit settings. Background Web Push and APNs already use generic titles and bodies unless the user enables the result preview. |
+| Medium | `apps/server/src/notifications-routes.ts:63–74`, `apps/server/src/ios-push-routes.ts:12–20`, `apps/server/src/notifications-store.ts:194–207,231–238` | Request throttling bounded how quickly accounts could add devices or tabs. There was no per-account count limit. Every iOS registration added a delivery row for each new durable notification. `tests/notifications.test.ts` and `tests/ios-push.test.ts` assert concurrent registrations at capacity, account isolation and refresh behavior. | Serialize capacity checks on the account row. Admit at most 16 Web Push and 16 APNs registrations per account, plus 32 tab presences. Permit existing registrations and tabs to refresh. Expiry and tab close free tab capacity. |
+| Medium | `apps/server/src/background-apns-delivery.ts:7–15,29–45`, `apps/server/src/notifications-store.ts:229–251,349–371` | Background APNs and Web Push can retry indefinitely and let a single account occupy the global delivery batch if many events are overdue. The existing tests in `tests/notifications.test.ts` cover resumable APNs delivery and pinned Web Push retries. The query bounds are 20 candidates per delivery batch and 25 pending items per sync response. A per-account delivery lifetime and fair queue are absent. | Owner decision. Choose a durable push delivery lifetime and account fairness target that preserve quiet-hour delivery and restart recovery. |
+| Low | `apps/server/src/notifications-routes.ts:88–94` | The state-changing test endpoint ignored arbitrary request fields. `tests/notifications.test.ts` checks that an unrelated field gets 400 and the documented empty object gets a normal test push. The service already limits this route to five requests per minute per verified account and caps all request bodies at 16 KiB. | Validate an absent or empty object body. |
+
+Device and notification routes are session-gated and included in the member allowlist via `NOTIFICATION_MEMBER_ROUTES`. Mutations use the shared service-secret and exact-origin check. Browser settings only return the caller's device summaries. iOS registration and removal return an empty response. Delivery and claim queries bind events and device registrations to the account, and event queries that include a conversation also bind its owner. The export registry selects metadata and omits device credentials (`apps/server/src/member-data-registry.ts:110–116`). `tests/notifications.test.ts` and `tests/ios-push.test.ts` cover ownership on the normal routes. APNs uses two fixed Apple origins selected from a validated environment enum, with device tokens used only in the request path. Its signing key material stays in the sender (`apps/server/src/apns.ts:23–53,103–134`). The sender reduces failures to fixed outcomes and the polling code logs fixed messages. Fastify logging and Better Auth logging are disabled (`apps/server/src/app.ts:184`, `apps/server/src/auth.ts:80`).
+
+The VAPID public key is returned by `GET /api/notifications/settings` and is used as `applicationServerKey` for `PushManager.subscribe` (`apps/server/src/notifications-routes.ts:52–55`, `apps/web/components/notification-settings.tsx:87–93`). The private signing key never enters that response. Runtime egress and the reverse proxy's treatment of device-token paths or cookies are outside local verification.
+
+## Public shares, data rights and diagnostic records
+
+Finding locations in this section refer to PR #95's head, `2013210`.
+
+| Severity | Location | Scenario | Evidence | Disposition |
+|---|---|---|---|---|
+| Medium | `apps/server/src/assistant/judge-shadow.ts:105` | The production owner diagnostic mode could persist copied credential material from a question, previous turn or reply. Derived excerpts could drop the identifying header while retaining its value. | `tests/assistant-judge-shadow.test.ts` checks full journal rows for sample cookie and authorization headers, APNs configuration labels and VAPID assignments. The isolated local Node fixture failed on the base and passed on the fix. | Ported PR #9's judge credential omission with shared detection. The full original and derived text is checked before truncation. Credential-bearing rows retain verdict metadata only. Ordinary owner diagnostics and reply decisions retain their existing behavior. |
+| Medium | `apps/server/src/conversation-share-privacy.ts:137` and `:176` | The review API returned the raw text of recognized credential-bearing URLs. Copied header or configuration text could escape the remaining snapshot filters, allowing accidental publication. | `tests/conversation-share-privacy.test.ts` checks both the review and public snapshot for sample credential text, including a source link. The isolated local fixture failed on the base and passed on the fix. | Credential URL previews are opaque. Recognizable credentials in titles, transcripts or sources receive an opaque finding and are removed from the shared copy. The web label uses the existing typed findings map. |
+| Medium | `apps/server/src/member-data-export.ts:36` and `:50` | The archive projection excluded native credential columns, but legacy plaintext diagnostic fields and named VAPID values nested in exported JSON could survive. | `tests/member-data-export.test.ts` checks the complete archive of one of three fixture accounts for credential markers and for the other accounts' rows and files. | Reused the shared text filter and expanded exact credential field exclusion for nested data. Account selection and binary-file boundaries are unchanged. |
+| Low | `apps/server/src/assistant/agent-run.ts:452` and `apps/server/src/command-chat.ts:826` | Private run evidence, plans and context are stored with the conversation and projected to the same account. Former checkpoint cleanup and legacy view projection could retain recognizable pasted credential material. | `tests/agent-run-ledger.test.ts` exercises a legacy ledger containing a copied fixture header and verifies that ordinary public evidence survives. | Extended scrubbing at chat checkpoints and on the client projection, including existing rows. The member archive omits raw ledger state. |
+
+| Medium | `apps/server/src/assistant/long-run/host.ts:24` and `:34`, `apps/server/src/assistant/long-run/view.ts:13` | Durable admission used a narrower credential filter and could accept a bearer share link as a public monitoring source. Legacy active-run summaries could include recognizable credential text. | `tests/long-run-credential-privacy.test.ts` verifies refusal of a synthetic capability URL and redaction of an existing run's goal. Both tests and the existing long-run suite passed in a container without network access. | Reused the shared credential check at durable admission, source selection and evidence cleanup. Redacted the goal before the active-run summary truncates it. |
+| Low | `apps/server/src/assistant/conversation-state-shadow.ts:119` and `apps/server/src/assistant/router.ts:205` | Development journals could retain copied credentials in recorded request or previous-turn text. A recorded conversation-state turn could seed later replay. | `tests/assistant-router.test.ts` verifies that diagnostics remain after credential text is removed. `tests/conversation-state-shadow.test.ts` verifies that the credential-bearing input still produces a live decision and never enters replay storage. | Removed recognized credential text from router diagnostics and skipped credential-bearing conversation-state records or replay inputs. |
+
+The authenticated share handlers bind preview, export, creation, list and revocation to the session account. `apps/server/src/conversation-share-storage.ts:133` selects the owned conversation before it reads associated messages. `:164` checks ownership again under the publication lock. Anonymous `GET /share/:token` deliberately exposes the immutable, redacted title, message roles, timestamps, text and citations to the bearer. The internal lookup checks the hash of a canonical 128-bit token and excludes revoked or expired rows. `apps/web/app/share/[token]/route.ts:31` and `:83` apply `no-store`, restrictive CSP, escaped HTML, `no-referrer` and a fixed internal destination that rejects redirects. `tests/conversation-share.test.ts`, `tests/conversation-share-storage.test.ts` and `tests/conversation-share-web.test.ts` cover ownership, immutable snapshots, expiry, no-store and revocation. Account deletion immediately revokes the requester's active shares. A recipient can still retain an earlier copy.
+
+`apps/server/src/member-data-routes.ts:31` takes the export account from the request's session. `apps/server/src/member-data-export.ts:140` joins transfer owners and site-image parents where applicable. The per-account claim is atomic, the archive has a 64 MiB ceiling, staging is private, and the web proxy protects the claim from cross-site browser fetch metadata. `apps/server/src/member-deletion.ts:99` requires an active session and current password, revokes sessions and shares and suppresses qualifying deliveries. `:234` claims due deletion before purge, scopes every batch by the account registry, and retries interrupted batches. The primary owner is separately protected. `tests/member-data-registry.test.ts`, `tests/member-data-export.test.ts` and `tests/member-deletion.test.ts` exercise the migrated registry, independent account boundaries, cancellation and an interrupted purge.
+
+`apps/server/src/assistant/model-relations-shadow.ts:62` records HMACs, host classifications, model/stage labels, verdict and timing. The model manager hashes request, reply and free-text stage outputs using a per-instance key. `tests/model-relations-shadow.test.ts` exercises the persisted record. The production judge journal retains the permitted owner's ordinary reply text, while a member row retains verdict and run/conversation metadata without the conversation's text. The log writer uses private permissions and rotates its archives. Router and conversation-state replay journals retain ordinary development conversation text after credential filtering. `apps/server/src/app.ts:385` enables them only outside production, and `tests/assistant-router.test.ts` and `tests/conversation-state-shadow.test.ts` exercise their replay/observation behavior. The normal turn ledger holds private objectives, plans, evidence and outcomes under the conversation owner. The public share projection and account export exclude raw run state. Durable checkpoints hold the frozen work plan, sources, bounded excerpts and hashes, deadlines and active lease information. This state stays inside the durable runner.
+
+## Durable background work
+
+The existing `/api/chat/conversations` create, detail, messages, approval, secure and cancel routes use the authenticated account and are listed in `MEMBER_ROUTES`. Admission locks the conversation by account, and the scheduler verifies both the conversation owner and the run owner before each claim. Approval and secure continuation bind the owner and current request or approval ID. Stop checks ownership, locks the conversation, persists cancellation and invalidates the lease before returning. Reads start with the owner-scoped conversation lookup. Background events take the account and conversation from the persisted run, and delivery joins the conversation owner and event account. See `apps/server/src/members.ts:36–45`, `apps/server/src/command-chat.ts:1050–1088,4394–4423,4554–4574`, `apps/server/src/assistant/long-run/runtime.ts:103–121,160–185,272–282,382–431`, and `apps/server/src/notifications-store.ts:183–215,231–265`.
+
+The partial unique index allows one active durable run per account across running, approval and input states, including concurrent admissions. The runtime bounds a plan at 12 steps, 18 resources and three attempts per step, with a 30-second attempt timeout, short persisted claim leases and a three-hour deadline. It records an unknown result when a draft write loses its lease and declines to repeat the write. See `apps/server/src/assistant/long-run/migration.ts:11–14`, `apps/server/src/assistant/long-run/state.ts:5–15,30–45`, and `apps/server/src/assistant/long-run/runtime.ts:205–254,334–348`. Existing coverage includes `admits only one active long run per account across conversations`, `persists an approval pause and consumes the matching account consent exactly once`, `never replays an in-flight site write after restart` and `selects the durable scheduler through the normal chat API and accepts the existing stop endpoint` in `tests/response-policy-long-run.test.ts`.
+
+### Medium · A cancelled durable draft could still be saved
+
+- Location `apps/server/src/assistant/long-run/host.ts:103–111` and `apps/server/src/sites.ts:125–136`.
+- Scenario A user stops a run from another worker while the draft is being prepared. The scheduler fences the result reply, but the separate site transaction can still save a draft for the stopped run. Local abort and timeout likewise race the independent transaction.
+- Evidence `fences a draft persistence attempt after the stop endpoint returns` exercises the existing stop route with a separate chat control, then resumes a held call into the real local site store. On the PR #95 code the save succeeded after the stop returned.
+- Fix The draft write transaction locks the matching current conversation and run, checks the account and lease, and checks abort and expiry immediately before and after insertion so a rejected write rolls back. The draft scheduler passes this guard to the persistence sink through the existing site port.
+
+### Medium · A monitoring checkpoint could stay active past a budget boundary
+
+- Location `apps/server/src/assistant/long-run/runtime.ts:155–158,205–224,315–326`.
+- Scenario A monitoring step near the wall deadline schedules the next check beyond the deadline, delaying the terminal status and occupying the account’s active slot. A monitoring step which used the last resource unit could also schedule an unnecessary sleep before accounting for exhaustion.
+- Evidence `expires sleeping monitoring work at its wall deadline` advances the local clock near the deadline and checks that the scheduler closes the run at the deadline without dispatching the next check. PR #95 left the run in `running`. A local fixture for the actual scheduling function also checked immediate handling of an exhausted resource budget.
+- Fix Cap every next checkpoint at the deadline and make it due immediately after the last resource unit when there are further steps.
+
+### Medium · Durable admission must use the transactional member quota and request receipt
+
+- Location `apps/server/src/app.ts:238–251`, `apps/server/src/members.ts:111–115`, `apps/server/src/assistant/long-run/host.ts:175–217` and `apps/server/src/assistant/long-run/runtime.ts:160–185`.
+- Scenario The quota on create/send was an HTTP pre-check over the current `chat_runs`; it did not reserve a slot at admission and deleting conversations erased those rows. Durable execution inserts its own run outside the ordinary chat transaction, so the PR #9 quota and committed-request receipt must also reach this admission path.
+- Evidence `rolls back durable admission when the account has reached its daily limit` supplies a refusing quota port to the local host and checks that no run, worker call or rejected empty conversation remains. PR #95 accepted the request with that fixture.
+- Fix Use the shared PR #9 member quota reservation and request receipt inside the durable admission transaction. Defer its receipt while creating the private blank conversation and clean up a rejected empty conversation.
+
+## PR #9 applicability
+
+Read `docs/SECURITY-REVIEW-2026-11-24.md` and the changes at `1bb51dd998c790db4894d17780585f054dd27384`. The following references identify the relevant code at PR #95. The review adapted individual changes from source without merging the earlier branch.
+
+| PR #9 finding | Severity | PR #95 location, evidence and disposition |
+| --- | --- | --- |
+| Member chat quota can be exceeded or erased | Medium | `apps/server/src/app.ts:249`, `apps/server/src/members.ts:112`. The admission check and run insert were separate and deletion erased count history. `tests/members-access.test.ts` covers concurrent admission, preservation after deletion and the migration. The shared transaction writes an account-scoped quota marker for ordinary and durable work. |
+| Shared anonymous sign-in throttling | Medium | `apps/server/src/request-rate-limit.ts:16`, `apps/server/src/member-data-bootstrap.ts:50`. Better Auth already received the vetted ingress address. Fastify's outer limit retained a shared socket bucket. `tests/request-rate-limit.test.ts` and `tests/web-api-proxy.test.ts` cover trusted and untrusted headers. Verified ingress addresses now separate anonymous requests after the internal credential check. |
+| Relay buffered uploads before API admission | Medium | `apps/web/app/api/[...path]/route.ts:33–42`. The byte limit already existed, and the web process still awaited full upload before session admission. `tests/web-api-proxy.test.ts` uses a local stub upstream. The relay streams bounded chunks and starts the upstream deadline before reading the body. |
+| Preview loaded generated files before validating the token | Medium | `apps/server/src/sites.ts:253–257,329–333`. An invalid bearer token triggered a generated snapshot read. `tests/sites-api.test.ts` verifies metadata-only lookup on rejection. The preview validates the token first, pins the authorized revision and applies a stable requester rate key. |
+| Retry could repeat committed chat work | Medium | `apps/server/src/command-chat.ts:4498–4520`. A reply failure could discard the key after a committed run or approval. `tests/chat-idempotency.test.ts` injects failure at the post-commit read and retries the same request. Admission and approval persist the replay marker in the mutation transaction. |
+| Owner diagnostic journal could retain credentials | Medium | `apps/server/src/assistant/judge-shadow.ts:105`. Ported with shared filtering. The diagnostic review above records the evidence and the preserved verdict metadata. |
+| Rejected database URL could reach startup output | Medium | `packages/database/src/index.ts:82`. Node URL syntax errors retain the rejected input. `tests/postgres-connection-recovery.test.ts` asserts the rejected input is absent from the error representation. The parser returns a fixed diagnostic without retaining the original object. |
+| An assistant could inherit another session's Windows grant | Medium | `apps/server/src/app.ts:500`, `packages/windows/src/index.ts:137–142`. Process-wide ownership metadata let a later chat replace the dispatching session. `tests/assistant-tools.test.ts` and `tests/windows-assistant-scope.test.ts` cover multiple authenticated sessions and delayed execution. Each dispatch now binds its validated session. |
+| Sign-out could leave Windows consent usable | Medium | `apps/server/src/app.ts:281`, `packages/windows/src/index.ts:55–72`. Changes to the full cookie header could cause revocation to target a different hash. `packages/windows/src/windows.test.ts` exercises stable bindings and liveness. Pairing and grants use the validated session ID, check liveness at consumption and revoke scoped consent after sign-out. Existing device pairings survive. |
+| Relay discarded site preview policies | Low | `apps/web/app/api/[...path]/route.ts:46–62`. The preview headers were stripped at the relay. `tests/web-api-proxy.test.ts` checks framing, sandbox and referrer headers for the preview route only. |
+| Chat attachment retention and counting | Low | `apps/server/src/command-chat.ts:4184,4210,4226,4427`. This is still an owner-only surface. An attachment can be reused across conversations and the current nullable conversation relationship cannot represent multiple retentions. This remains an owner decision. PR #9 supplied source evidence, and no additional runtime reproduction was run for this item. |
+| Cached response could survive deletion | Low | `apps/server/src/command-chat.ts:4427,4498`. `tests/chat-idempotency.test.ts` checks replay after deleting the conversation. Deletion removes the cached contents while retaining a marker, and reads verify that the owned conversation still exists. |
+| Local shadow trace could retain credentials | Low | `apps/server/src/assistant/router.ts:202`, `apps/server/src/assistant/conversation-state-shadow.ts:140,170`. The diagnostics review above records the fix and local journal/replay tests. |
+| New Windows grant could receive a prior frame | Low | `packages/windows/src/index.ts:194,204`. `packages/windows/src/windows.test.ts` sends a fresh frame after grant replacement. The control clears stored frames and verifies the capture's granting session before projecting it. |
+
+## Owner decisions
+
+- Confirm the production reverse proxy and VM egress policy cover private destinations, redirects and browser process containment. Confirm the installed Git lists `http.curloptResolve` before enabling remote skill sync. No VM settings or deployment files were changed.
+- The browser needs the public VAPID application key to subscribe. Confirm that this public value is the intended exception to the API key constraint. The private VAPID key, APNs private material and raw session credentials stay out of JSON. Verify production log handling for cookie headers, authorization headers and the iOS unregister route's token path.
+- Set a background delivery lifetime and account fairness target that preserve quiet hours and recovery after restarts. Decide whether to persist the optional first-line preview while previews are disabled.
+- Select export admission behavior for clients without Fetch Metadata and a maximum transcript size for share and export review. Account archives deliberately retain the requester's original file bytes. Decide whether those files need a separate classification or retention policy.
+- Define chat attachment retention across multi-conversation reuse. Consider retention and access for historical judge archives and development journals. Rotate affected credentials if an authorized review establishes previous exposure.
+- Verify production ingress behavior, real push delivery, VM Git version and native Windows companion behavior before release. The checks below use local disposable state and mocks.
+
+## Merge notes
+
+Held-file hooks are listed by their PR #95 lines. Each hook changes at most five lines, counting insertions and deletions together.
+
+| Held file | Hooks |
+| --- | --- |
+| `apps/server/src/app.ts` | Lines 13–14 add the quota implementation import and replace the quota route-set import. Line 46 imports the Windows dispatcher and consent revocation. Lines 188 and 197 add the validated internal session ID. Lines 249–251 remove the old quota pre-check. Lines 281 and 290 move Windows cleanup to successful sign-out. Line 361 runs the quota migration. Line 479 passes response headers to the cache. Line 487 forwards the draft write fence. Line 488 passes the quota reservation port. Line 500 calls the Windows session dispatcher. |
+| `apps/server/src/members.ts` | Line 5 imports the ledger counter. Lines 63–65 remove the old pre-check route set. Lines 113–115 delegate the count to the ledger. |
+| `apps/server/src/command-chat.ts` | Lines 1–2 add receipt and rejected-create imports. Lines 15, 19 and 273 switch to shared credential filtering. Line 144 declares the quota port. Lines 3985, 4079, 4155, 4259 and 4272 bind receipts and reserve quota in their mutation transactions. Lines 4277–4278 forward the goal and images through rejected-create cleanup. Lines 4418 and 4440 fence cancellation and deletion. Lines 4496, 4500, 4502, 4511, 4514–4516 and 4519 integrate receipt replay, claim registration, response caching and failure cleanup with the existing idempotency wrapper. |
+| `apps/server/src/assistant/agent-run.ts` | Lines 9, 463 and 471 import and apply credential filtering to the run view. |
+| `packages/browser/src/agent-browser.ts` | Lines 6 and 841 import and apply the cross-origin header allowlist. |
+| `packages/browser/src/network.ts` | Line 85 includes origin cache directives among the response headers available to the reader. |
+| `apps/web/components/conversation-actions.tsx` | Line 17 adds the label for the existing privacy review's credential finding. |
+
+The new browser redirect test is a new file. The locked manifests, deployment files and prohibited source trees are unchanged. Inspection with `git diff --unified=0` counted 42 held-file hunks. The largest changes five lines.
+
+## Verification
+
+- `git rev-parse HEAD origin/integration/wave-5-2026-11-25` returned `201321031293999003bb0ae55a29dbd250ac96ce` for both refs before review changes.
+- `git cat-file -t f015a1813c700c7cfd2f599a8095dd531a2ed1e4` returned `commit`.
+- `gh pr view 95 --repo ahmadalwakai/Mohassan-AI --json headRefOid,headRefName,baseRefName,isDraft` confirmed the requested commit and integration branch as the draft PR head.
+- `git fetch --no-tags origin refs/heads/security/review-2026-11-24:refs/remotes/origin/security/review-2026-11-24` completed. The review read `docs/SECURITY-REVIEW-2026-11-24.md` from that ref.
+- `npm ci --offline --ignore-scripts --no-audit --no-fund` exited 1 with `ENOTCACHED` for a locked package. The verification environment needs the lockfile cache and the pinned Playwright Chromium build.
+### Runtime and setup
+
+The owner authorized registry and CDN access for the pinned setup. The setup left the npm manifests and benchmark recipe unchanged. The isolated test and benchmark containers used `--network none`, dropped all capabilities and ran as UID 1000.
+
+| Setup command | Result |
+| --- | --- |
+| `ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm_config_cache=/workspace/scratch/wave5-npm-cache npm ci --no-audit --no-fund --registry=https://registry.npmjs.org` | Exit 0, installed 866 locked packages using Node 24.22.3 and npm 11.19.1. npm's registry integrity verification remained enabled. |
+| `PLAYWRIGHT_BROWSERS_PATH=/workspace/scratch/wave5-chromium ./node_modules/.bin/playwright install chromium` | Exit 0. Playwright 1.64.1 selected Chromium and headless shell build 1248, Chrome for Testing 156.0.8078.4, and its pinned FFmpeg build 1013. Both browser binaries reported 156.0.8078.4 in the offline runtime. |
+| `docker build --pull -t mohassan-wave5-security-bench:2026-11-25 scripts/dev-bench` | Exit 0. Used the Dockerfile's digest-pinned Node and Python images and Debian dependencies. Image ID `sha256:df75e4aa50b0a67f9777706ac269cde256f18ae50a7349485b4952d38cf22409`. The runtime reported Node 24.22.3, npm 11.19.1, Python 3.12.14 and Git 2.39.5. This Git listed `http.curloptResolve`. |
+| `git fetch --no-tags origin <full-sha>` for each of the four pins in `scripts/dev-bench/README.md` | All four fetches exited 0. Inputs used for execution were selected by the developer-only launcher. |
+
+### High-severity before and after
+
+The following command ran once with `checkout=/workspace/wave5-high-base` at PR #95 with the two regression files copied in and once with `checkout=/workspace/Mohassan-AI` on the fix. Both commands used mocked DNS, browser routing and HTTPS. The base command exited 1 with both regressions failing. The review command exited 0 with both passing. The name filter skipped 19 unrelated test cases on each run.
+
+```sh
+docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+  --mount type=bind,source=/workspace,target=/workspace --workdir "$checkout" \
+  -e NO_COLOR=1 mohassan-wave5-security-bench:2026-11-25 npm test -- \
+  packages/browser/src/agent-browser-redirect-headers.test.ts tests/web-push-delivery.test.ts \
+  -t 'forwards only passive headers|rejects a subscription whose provider'
+```
+
+Additional directed checks ran independently before integration. The durable deadline, draft stop and quota regressions all failed on PR #95 in Docker, and the draft and deadline checks passed in the first patched run of `tests/response-policy-long-run.test.ts tests/sites-api.test.ts tests/chat-notification-lifecycle.test.ts` (32 passed). The integrated run includes all three.
+
+### Affected suites and typecheck
+
+```sh
+docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+  --mount type=bind,source=/workspace,target=/workspace --workdir /workspace/Mohassan-AI \
+  mohassan-wave5-security-bench:2026-11-25 npm run typecheck
+```
+
+Exit 0 for the root and web projects. An earlier check identified type errors in the two regression fixtures for DNS and cache response headers. Both were corrected with fixture types and the command above passed after correction.
+
+The affected suite command uses the following arguments. It ran through `bash /workspace/scratch/wave5-suites.sh /workspace/Mohassan-AI`.
+
+```sh
+docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+  --mount type=bind,source=/workspace,target=/workspace --workdir "$checkout" \
+  -e MOHASSAN_ISOLATED_TEST=true -e PLAYWRIGHT_BROWSERS_PATH=/workspace/scratch/wave5-chromium \
+  -e NO_COLOR=1 mohassan-wave5-security-bench:2026-11-25 npm test -- \
+  packages/browser/src/agent-browser-redirect-headers.test.ts \
+  packages/coding/src/git-remote-network.test.ts packages/coding/src/git-remote.test.ts packages/windows/src/windows.test.ts \
+  tests/api-security.test.ts tests/auth-rate.test.ts tests/request-rate-limit.test.ts tests/web-api-proxy.test.ts \
+  tests/member-data-routes.test.ts tests/members-access.test.ts tests/member-data-export.test.ts \
+  tests/member-data-registry.test.ts tests/member-deletion.test.ts tests/member-sessions-audit.test.ts \
+  tests/conversation-share.test.ts tests/conversation-share-privacy.test.ts tests/conversation-share-storage.test.ts tests/conversation-share-web.test.ts \
+  tests/postgres-connection-recovery.test.ts tests/sites-api.test.ts tests/chat-idempotency.test.ts \
+  tests/response-policy-long-run.test.ts tests/long-run-credential-privacy.test.ts tests/chat-notification-lifecycle.test.ts \
+  tests/notifications.test.ts tests/ios-push.test.ts tests/web-push-delivery.test.ts tests/reminders-scheduler.test.ts \
+  tests/web-background-notifications.test.ts tests/web-notifications.test.ts \
+  tests/assistant-tools.test.ts tests/windows-assistant-scope.test.ts tests/assistant-computer-cancel-queue-audit.test.ts \
+  tests/assistant-computer-native-completion-audit.test.ts tests/assistant-native-queue-owner-access-audit.test.ts \
+  tests/assistant-judge-shadow.test.ts tests/assistant-judge-production.test.ts tests/judge-shadow-rotation.test.ts \
+  tests/agent-run-ledger.test.ts tests/model-relations-shadow.test.ts tests/conversation-state-shadow.test.ts tests/assistant-router.test.ts \
+  tests/page-cache.test.ts tests/browser-security.test.ts tests/live-data-service.test.ts tests/skills-remote-api.test.ts
+```
+
+Exit 0 with 46 files, 443 tests passed and two skipped. The skips are the platform-dependent Windows test and an optional router model fixture. The run includes every changed or new test file.
+
+### Paired development benchmark
+
+The launcher uses PR #95's inherited Wave 4 profile and sets the following overrides for both arms. The emergency kill switches and promotion list retain their Arm C defaults.
+
+```sh
+flags=(
+  MOHASSAN_ARITHMETIC_SEARCH=1
+  TEST_DRIVEN_CODING_PYTHON=/usr/local/bin/python3.12
+  MOHASSAN_MODEL_RELATIONS=shadow
+  MOHASSAN_REPLY_POLICY_ENABLED=1
+  MOHASSAN_CONTEXT_POLICY_ENABLED=1
+  MOHASSAN_LONG_RUN_ENABLED=1
+  MOHASSAN_BACKGROUND_RESULTS_ENABLED=1
+  MOHASSAN_ARBITER_ROUTING=1
+  MOHASSAN_ARBITER_QUESTION_REWRITE=1
+  MOHASSAN_ARBITER_LOCAL_COMPUTATION=1
+  MOHASSAN_ARBITER_COMPOUND_PLAN=1
+)
+settings=()
+for arm in base head; do
+  for flag in "${flags[@]}"; do
+    settings+=(--set "$arm:$flag")
+  done
+done
+docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+  --mount type=bind,source=/workspace,target=/workspace --workdir /workspace/Mohassan-AI \
+  -e PLAYWRIGHT_BROWSERS_PATH=/workspace/scratch/wave5-chromium \
+  -e npm_config_cache=/workspace/scratch/wave5-npm-cache \
+  mohassan-wave5-security-bench:2026-11-25 python3 -B scripts/dev-bench/run.py --workers 2 --offline \
+  --output "$output" --arm base=201321031293999003bb0ae55a29dbd250ac96ce --arm "head=$head_sha" "${settings[@]}"
+```
+
+The check compares the version totals plus every area, language and area/language group in the coordinator's summary. The base and review code run in one invocation. Only the published development splits are selected.
+
+`bash /workspace/scratch/wave5-paired-bench.sh 257b27b0cc8bdf8fb1a48ce48c7a78ef3bc054ac /workspace/scratch/wave5-paired-development` exited 0. The review hash identifies the measured code. The later report commit changes only this document.
+
+| Split | PR #95 base | Review | Groups checked, including overall | Groups that fell |
+| --- | ---: | ---: | ---: | ---: |
+| v1 development | 176/240 | 176/240 | 45 | 0 |
+| v2 development | 1,588/2,400 | 1,588/2,400 | 23 | 0 |
+
+`python3 -B /workspace/scratch/wave5-compare-groups.py /workspace/scratch/wave5-paired-development/summary.json` exited 0. It checks that both arms used the same settings, pinned input refs and toolchain. It checks identical group keys and coverage, then compares each `passed` count in `overall`, `byArea`, `byLanguage` and `byAreaAndLanguage`. All 68 counts held. The shipped three-arm `compare.py` requires both feature-flag arms to share a commit SHA. The following attempt exited 2 for that reason, so the paired check used the coordinator's summaries.
+
+```sh
+python3 -B scripts/dev-bench/compare.py \
+  --baseline /workspace/scratch/wave5-paired-development/base/receipt.json \
+  --flags-off /workspace/scratch/wave5-paired-development/base/receipt.json \
+  --flags-on /workspace/scratch/wave5-paired-development/head/receipt.json \
+  --output /workspace/scratch/wave5-paired-development/comparison.json
+```
+
+`sha256sum /workspace/scratch/wave5-paired-development/{summary.json,base/receipt.json,head/receipt.json}` returned:
+
+| Receipt | SHA-256 |
+| --- | --- |
+| Coordinator summary | `2082d9289b808fca60a3a81c10276c75b1f7bc1b5a5de22e0e750dd840a5feed` |
+| Base | `2b17af28e3a15f4496ac06a1da29a5b41fc6acbe4b214b95f5eab5511fe71bbe` |
+| Review | `b9ecd26b8e3037a3f095042d5b7e0ddb1508239fe0c9818fd471ee120f32786e` |
+
+`sha256sum scripts/dev-bench/Dockerfile` returned `03417f8e64d499bbda87143555e090af9463ca72afccdb16b9a888ef8768a761`. The image's `dpkg-query -W` check exited 0 for all 26 Debian packages named in the Dockerfile. It reported libseccomp `2.5.4-1+deb12u1`, Git `1:2.39.5-0+deb12u3`, and NSS `2:3.87.1-1+deb12u4`.
+
+### Branch verification
+
+`git merge-base --is-ancestor 201321031293999003bb0ae55a29dbd250ac96ce HEAD` exited 0 for the named starting point. The same command for PR #9's `1bb51dd998c790db4894d17780585f054dd27384` exited 1. `git diff --exit-code 257b27b0cc8bdf8fb1a48ce48c7a78ef3bc054ac HEAD -- . ':(exclude)docs/SECURITY-REVIEW-WAVE-5-2026-11-25.md'` exited 0. Only the report differs from the measured head.
+
+During the review, `git ls-remote origin refs/heads/integration/wave-5-2026-11-25 refs/heads/security/wave-5-review` showed the target moving to `9507ea4e5fcc09abb186b1bbab183904d0787693`. `gh pr view 97 --repo ahmadalwakai/Mohassan-AI --json number,isDraft,headRefOid,baseRefName,mergeable,mergeStateStatus,url` reported the draft as mergeable with the named target. The tests and paired benchmark cover the requested PR #95 snapshot and this review's code. A combined validation with the later target remains open.

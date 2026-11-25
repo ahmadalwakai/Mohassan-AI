@@ -1,4 +1,7 @@
 import { isDisambiguationPage } from './answer-check.js';
+import { mayShareCachedPage, pageCacheKey } from './page-cache-policy.js';
+
+export { pageCacheKey } from './page-cache-policy.js';
 
 /**
  * Evidence cache for pages read over HTTP (docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md §5.2, P4).
@@ -34,16 +37,6 @@ export function classifyPage(url: string): PageClass {
   return 'other';
 }
 
-/** The cache key: scheme, host and path with the query, without the fragment or a trailing slash. */
-export function pageCacheKey(url: string): string | null {
-  const parsed = URL.parse(url);
-  if (!parsed || !/^https?:$/.test(parsed.protocol)) return null;
-  parsed.hash = '';
-  parsed.username = '';
-  parsed.password = '';
-  return parsed.href.replace(/\/$/, '');
-}
-
 export function createPageCache(options: { now?: () => number; maxEntries?: number } = {}) {
   const now = options.now ?? Date.now;
   const limit = options.maxEntries ?? MAX_ENTRIES;
@@ -64,13 +57,13 @@ export function createPageCache(options: { now?: () => number; maxEntries?: numb
       return entry.page;
     },
     /** Stores a readable page under its class's lifetime; a live fact, an empty page or an oversized one is not kept. */
-    put(page: Omit<CachedPage, 'fetchedAt'> & { fetchedAt?: string }, options: { live?: boolean } = {}): CachedPage {
+    put(page: Omit<CachedPage, 'fetchedAt'> & { fetchedAt?: string }, options: { live?: boolean; responseHeaders?: Readonly<Record<string, string>> } = {}): CachedPage {
       const { links, ...content } = page;
       const disambiguationLinks = links && isDisambiguationPage(page) ? links.slice(0, 100).filter(link => link.length <= 1024) : undefined;
       const stored: CachedPage = { ...content, ...(disambiguationLinks?.length ? { links: disambiguationLinks } : {}),
         text: page.text.slice(0, MAX_TEXT_CHARS), fetchedAt: page.fetchedAt ?? new Date(now()).toISOString() };
       const key = pageCacheKey(page.url);
-      if (options.live || !key || !stored.text.trim() || page.status >= 400) return stored;
+      if (options.live || !key || !stored.text.trim() || page.status !== 200 || !mayShareCachedPage(options.responseHeaders)) return stored;
       if (entries.size >= limit) entries.delete(entries.keys().next().value!);
       entries.set(key, { page: stored, expiresAt: now() + PAGE_TTL_MS[classifyPage(page.url)] });
       return stored;

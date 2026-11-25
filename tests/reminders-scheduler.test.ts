@@ -95,10 +95,9 @@ describe('durable reminder scheduling', () => {
 
   afterAll(async () => { await database?.close(); });
 
-  it('recovers a committed reminder push and sends it once to the owning account', async () => {
+  it('recovers a committed reminder push and sends it once with a generic payload to the owning account', async () => {
     const subscription = await subscribe(ownerId);
     await subscribe(memberId);
-    await saveNotificationPreferences(database.db, ownerId, { hideTitle: true, quietHours: null });
     const reminder = await store.create(ownerId, input());
     const sendPush = vi.fn<PushSender>().mockResolvedValue('delivered');
     const scheduler = createReminderScheduler(database.db, { now, sendPush, delivery: {
