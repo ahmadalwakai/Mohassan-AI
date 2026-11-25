@@ -458,7 +458,7 @@ function orderedScenario(statements: readonly string[]): Scenario | null {
   return scene;
 }
 
-/** Pure comparisons can depend on facts declared later. Never reorder events that change balances. */
+/** Pure comparisons can depend on facts that follow them. Keep balance changes in their original order. */
 function comparisonScenario(statements: readonly string[]): Scenario | null {
   const base = emptyScenario();
   let pending: string[] = [];

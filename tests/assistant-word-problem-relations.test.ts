@@ -104,7 +104,7 @@ describe('English word-problem relations', () => {
       'What is the average number of badges Adam and Omar have')?.value).toBe('18');
   });
 
-  it('resolves the initial count and a later fraction only when the reference is explicit', () => {
+  it('resolves the initial count and a subsequent fraction only when the reference is explicit', () => {
     const facts = ['Alvo had 26 carrots', 'Alvo sold 6 carrots'];
     expect(solve(facts, 'How many carrots did Alvo have')).toBeNull();
     expect(solve(facts, 'How many carrots did Alvo have at first')?.value).toBe('26');
