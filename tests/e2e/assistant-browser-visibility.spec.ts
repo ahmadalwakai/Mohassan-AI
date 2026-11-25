@@ -117,9 +117,12 @@ test('a hidden tab keeps following its task and gets one system notice when it f
   });
   await signInAsFixtureOwner(page, 'assistant');
   await page.getByRole('button', { name: 'محادثة جديدة', exact: true }).click();
-  const id = await send(page, 'افتح http://127.0.0.1:4201/ ثم اقرأ الصفحة');
-  // The owner switches tabs right after sending.
+  const hiddenSync = page.waitForResponse(response => response.url().endsWith('/api/notifications/sync')
+    && response.request().postDataJSON()?.state === 'hidden');
   await page.evaluate(() => { (window as unknown as { __hidden: boolean }).__hidden = true; document.dispatchEvent(new Event('visibilitychange')); });
+  expect((await hiddenSync).ok()).toBe(true);
+  // A local calculation settles quickly, even though the tab is already hidden.
+  const id = await send(page, 'كم 15 ضرب 23؟');
   await settled(page, id);
   await expect.poll(() => page.evaluate(() => (window as unknown as { __notices: { title: string }[] }).__notices.map(notice => notice.title)), { timeout: 40_000 })
     .toEqual(['اكتملت المهمة']);
@@ -127,4 +130,66 @@ test('a hidden tab keeps following its task and gets one system notice when it f
   await page.evaluate(() => { (window as unknown as { __hidden: boolean }).__hidden = false; document.dispatchEvent(new Event('visibilitychange')); });
   await expect.poll(() => page.title()).toBe('موحسن');
   expect(await page.evaluate(() => (window as unknown as { __notices: unknown[] }).__notices.length)).toBe(1);
+});
+
+test('notification permission is offered after an eligible background task and a denial stays in settings', async ({ page }) => {
+  await page.addInitScript(() => {
+    const state = { hidden: false, prompts: 0 };
+    class FakeNotification {
+      static permission: NotificationPermission = 'default';
+      static async requestPermission() { state.prompts++; FakeNotification.permission = 'denied'; return FakeNotification.permission; }
+    }
+    Object.defineProperty(window, 'Notification', { value: FakeNotification, configurable: true });
+    Object.defineProperty(window, '__notificationTest', { value: state });
+    Object.defineProperty(Document.prototype, 'hidden', { get: () => state.hidden, configurable: true });
+  });
+  let eligible = false;
+  let hiddenSyncs = 0;
+  const visibleTabs = new Set<string>();
+  const closedTabs = new Set<string>();
+  await page.route('**/api/notifications/sync', async route => {
+    const { state, tabId } = route.request().postDataJSON();
+    if (state === 'visible') visibleTabs.add(tabId);
+    if (state === 'closed') closedTabs.add(tabId);
+    if (state === 'hidden') hiddenSyncs++;
+    await route.fulfill({ json: { backgroundTask: eligible && state === 'hidden', pending: [] } });
+  });
+  const setHidden = (hidden: boolean) => page.evaluate(value => {
+    (window as unknown as { __notificationTest: { hidden: boolean } }).__notificationTest.hidden = value;
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, hidden);
+  const prompts = () => page.evaluate(() => (window as unknown as { __notificationTest: { prompts: number } }).__notificationTest.prompts);
+
+  await signInAsFixtureOwner(page, 'assistant');
+  await expect.poll(() => visibleTabs.size).toBeGreaterThan(0);
+  await expect(page.getByTestId('notice-offer')).toHaveCount(0);
+  expect(await prompts()).toBe(0);
+
+  const firstTab = [...visibleTabs].at(-1);
+  const beforeRestore = visibleTabs.size;
+  await page.evaluate(() => {
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+  });
+  await expect.poll(() => visibleTabs.size).toBeGreaterThan(beforeRestore);
+  await expect.poll(() => firstTab && closedTabs.has(firstTab)).toBe(true);
+
+  eligible = true;
+  await setHidden(true);
+  await expect(page.getByTestId('notice-offer')).toBeVisible();
+  await setHidden(false);
+  await page.getByRole('button', { name: 'تفعيل الإشعارات' }).click();
+  expect(await prompts()).toBe(1);
+  await expect(page.getByTestId('notice-offer')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'مالك الاختبار' }).click();
+  await page.getByRole('button', { name: 'الإشعارات', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'الإشعارات' })).toContainText('الإشعارات محظورة لهذا الموقع.');
+  await page.getByRole('button', { name: 'إغلاق إعدادات الإشعارات' }).click();
+  await page.reload();
+  const beforeHidden = hiddenSyncs;
+  await setHidden(true);
+  await expect.poll(() => hiddenSyncs).toBeGreaterThan(beforeHidden);
+  await expect(page.getByTestId('notice-offer')).toHaveCount(0);
+  expect(await prompts()).toBe(0);
 });

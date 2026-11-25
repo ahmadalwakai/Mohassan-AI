@@ -29,7 +29,7 @@ import { isNewerSnapshot, steerable } from "./run-view";
 import { QuestionPanel, withoutQuestionList } from "./question-card";
 import { ChromeExtensionPanel } from "./chrome-extension-panel";
 import { adsConnectProblems, pendingAdsConnect } from "./ads-connect";
-import { NOTICE_AFTER_MS, declineNoticeOffer, noticeKindFor, noticeOfferOpen, requestNoticePermission, showTaskNotice } from "./task-notices";
+import { NotificationOffer, NotificationSettings, restoreNotificationConversation, type NotificationControls } from "./notification-settings";
 import styles from "./assistant-app.module.css";
 
 /** Plan §5.2 P5: the first useful progress line should show within half a second; a local answer is ready in ~30 ms. */
@@ -232,7 +232,7 @@ function DeleteDialog({ target, busy, error, onCancel, onConfirm }: { target: Su
 /** Owner-only views a failed turn can point to. The executor is a separate local experiment, never a stand-in for the chat model. */
 export type AssistantToolView = "integrations" | "executor" | "desktop";
 
-export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name: string; onAdvanced: () => void; onOpenTool?: (view: AssistantToolView) => void; onSignOut: () => void }) {
+export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifications }: { name: string; onAdvanced: () => void; onOpenTool?: (view: AssistantToolView) => void; onSignOut: () => void; notifications: NotificationControls }) {
   const [history, setHistory] = useState<Summary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -254,8 +254,6 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
   const autoOpened = useRef<string | null>(null);
   const [setting, setSetting] = useState<PanelSetting>("needed");
   const [unread, setUnread] = useState(0);
-  const [noticeOffer, setNoticeOffer] = useState(false);
-  const tasks = useRef(new Map<string, { startedAt: number; done: boolean; noticed: boolean }>());
   const seen = useRef<Record<string, string> | null>(null);
   const [itemMenu, setItemMenu] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Summary | null>(null);
@@ -295,8 +293,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
   useEffect(() => {
     let active = true;
     void refreshHistory().then((items) => {
-      const last = saved.get();
-      if (active && last && items.some((item) => item.id === last)) setSelectedId(last);
+      if (active) restoreNotificationConversation(items, saved.get(), setSelectedId);
     }).catch((caught) => { if (active) setError(messageOf(caught)); });
     return () => { active = false; };
   }, [refreshHistory]);
@@ -384,24 +381,13 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
   useEffect(() => {
     seen.current ??= seenTasks.get();
     const record = seen.current;
-    const now = Date.now();
-    let offer = false;
     for (const item of history) {
-      const task = tasks.current.get(item.id);
       if (item.status === "running") {
-        if (!task || task.done) tasks.current.set(item.id, { startedAt: now, done: false, noticed: false });
-        else if (now - task.startedAt >= NOTICE_AFTER_MS) offer = true;
         continue;
       }
       // A conversation first seen already finished is old news, never a new result.
       if (!(item.id in record)) record[item.id] = item.updatedAt;
-      if (task && !task.done) {
-        task.done = true;
-        const kind = noticeKindFor(item.status);
-        if (kind && !task.noticed) task.noticed = showTaskNotice(kind, item.title, () => open(item.id));
-      }
     }
-    if (offer && noticeOfferOpen()) setNoticeOffer(true);
     setUnread(history.filter((item) => item.status !== "running" && item.id in record && item.updatedAt > record[item.id] && item.id !== selection.current).length);
     seenTasks.set(record);
   }, [history]);
@@ -626,7 +612,6 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
   function showPanel() { openedBy.current = "user"; setBrowserOpen(true); }
   function hidePanel() { openedBy.current = "closed"; setBrowserOpen(false); }
   function chooseSetting(value: PanelSetting) { panelSetting.set(value); setSetting(value); }
-  async function enableNotices() { await requestNoticePermission(); setNoticeOffer(false); }
 
   const empty = !conversation || !conversation.messages.length;
   // The Chrome bar belongs to Google Ads work: campaign events, or a campaign asked for in this conversation.
@@ -688,6 +673,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
           <label className={styles.settingRow}><span>اعرض المتصفح</span>
             <select value={setting} onChange={(event) => chooseSetting(event.target.value as PanelSetting)}>{PANEL_SETTINGS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
           </label>
+          {notifications.viewerId ? <NotificationSettings viewerId={notifications.viewerId} /> : null}
           {onOpenTool ? <button onClick={() => { setMenuOpen(false); onOpenTool("desktop"); }}><Laptop size={15} />سطح المكتب</button> : null}
           <button onClick={() => { setMenuOpen(false); onAdvanced(); }}><Settings2 size={15} />الأدوات المتقدمة</button>
           <button onClick={onSignOut}><LogOut size={15} />تسجيل الخروج</button>
@@ -706,11 +692,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
             : <><Globe size={15} />المتصفح · عرض</>}</button> : null}
         {conversation ? <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="محادثة جديدة" onClick={startNew}><SquarePen size={18} /></button> : null}
       </header>
-      {noticeOffer ? <div className={styles.noticeBar} role="status" data-testid="notice-offer">
-        <span>مهمة تعمل في الخلفية منذ أكثر من 20 ثانية. أعلمك عند انتهاء المهام حين يكون التبويب مخفيًا؟</span>
-        <button type="button" className={styles.primary} onClick={() => void enableNotices()}>تفعيل الإشعارات</button>
-        <button type="button" className={styles.secondary} onClick={() => { declineNoticeOffer(); setNoticeOffer(false); }}>ليس الآن</button>
-      </div> : null}
+      <NotificationOffer controls={notifications} />
       {onOpenTool ? <ChromeExtensionPanel relevant={adsConversation} /> : null}
       {empty ? <div className={styles.welcome}>
         <span className={styles.welcomeMark} aria-hidden="true">م</span>
