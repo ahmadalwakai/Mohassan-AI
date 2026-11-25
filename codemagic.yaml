@@ -22,6 +22,16 @@ workflows:
             "$CM_BUILD_DIR/apps/ios/Tools/CloudChecks.swift" \
             -o "$CM_BUILD_DIR/build/checks/cloud-checks"
           "$CM_BUILD_DIR/build/checks/cloud-checks" "$CM_BUILD_DIR/apps/ios/Wasla/ConnectionDefaults.json" "$CM_BUILD_DIR/tests/fixtures/cloud-phone"
+      - name: Verify the APNs device and notification contract
+        script: |
+          set -euo pipefail
+          mkdir -p "$CM_BUILD_DIR/build/checks"
+          xcrun --sdk macosx swiftc \
+            -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
+            "$CM_BUILD_DIR/apps/ios/Wasla/PushNotificationModels.swift" \
+            "$CM_BUILD_DIR/apps/ios/Tools/PushNotificationChecks.swift" \
+            -o "$CM_BUILD_DIR/build/checks/push-notification-checks"
+          "$CM_BUILD_DIR/build/checks/push-notification-checks"
       - name: The app calls only the cloud server's /api routes
         script: |
           set -euo pipefail
@@ -92,6 +102,16 @@ workflows:
             "$CM_BUILD_DIR/apps/ios/Tools/CloudChecks.swift" \
             -o "$CM_BUILD_DIR/build/checks/cloud-checks"
           "$CM_BUILD_DIR/build/checks/cloud-checks" "$CM_BUILD_DIR/apps/ios/Wasla/ConnectionDefaults.json" "$CM_BUILD_DIR/tests/fixtures/cloud-phone"
+      - name: Verify the APNs device and notification contract
+        script: |
+          set -euo pipefail
+          mkdir -p "$CM_BUILD_DIR/build/checks"
+          xcrun --sdk macosx swiftc \
+            -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
+            "$CM_BUILD_DIR/apps/ios/Wasla/PushNotificationModels.swift" \
+            "$CM_BUILD_DIR/apps/ios/Tools/PushNotificationChecks.swift" \
+            -o "$CM_BUILD_DIR/build/checks/push-notification-checks"
+          "$CM_BUILD_DIR/build/checks/push-notification-checks"
       - name: Prepare the matching Wasla App Store provisioning profile
         script: |
           set -euo pipefail
