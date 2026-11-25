@@ -2,10 +2,13 @@ import type { Kysely } from 'kysely';
 import { analyzeCompoundRequest } from './compound-request.js';
 import {
   emptyConversationState, understandTurn, withAssistantAnswer,
-  type ConversationStateV2, type PendingStep, type TurnUnderstanding,
+  type ConversationStateV2, type TurnUnderstanding,
 } from './conversation-state.js';
+import type { BrainState } from './brain.js';
 import type { ConversationShadow, ConversationShadowInput } from './conversation-state-shadow.js';
-import { answerSubject, fold, isFollowUp, parseHands, refersBack, tidy, topicWords, webQuestion, type HandsPlan, type HandsStep } from './hands.js';
+import { answerSubject, fold, isFollowUp, notWebReason, parseHands, refersBack, tidy, topicWords, webQuestion, type HandsPlan } from './hands.js';
+import { projectInventoryFormat } from './inventory.js';
+import { memoryRecallFormat } from './memory-recall.js';
 import { ownFactQuestion } from './own-fact-question.js';
 import { publicConversationFollowup } from './public-conversation-followup.js';
 import { MAX_CONTEXT_REQUEST, requestActionText, resolveRequestContext, type RequestResolution } from './request-context.js';
@@ -14,6 +17,7 @@ import {
   reviewPublicProjection, type RequestScopeAssessment,
 } from './request-scope.js';
 import { returnParts } from './return-to.js';
+import { unsupportedRequest } from './unsupported-request.js';
 
 const HISTORY_LIMIT = 16;
 const MIN_CONFIDENCE = 0.76;
@@ -53,46 +57,24 @@ async function loadTranscript(db: Kysely<any>, conversationId: string): Promise<
   return rows.reverse();
 }
 
-interface PendingBinding { field?: 'question' | 'approval' | 'secure'; requestId?: string }
-
-function boundPending(input: PendingBinding): PendingStep | null {
-  if (!input.field) return null;
-  const kind = input.field === 'approval' ? 'approval' : input.field === 'secure' ? 'sign_in' : 'question_card';
-  return { kind, id: input.requestId ?? input.field };
-}
-
-async function transcriptBefore(db: Kysely<any>, conversationId: string, turnId: string): Promise<ConversationTranscriptEntry[]> {
-  const rows = await db.selectFrom('chat_messages as entry')
-    .innerJoin('chat_messages as anchor', join => join.onRef('anchor.conversation_id', '=', 'entry.conversation_id')
-      .on('anchor.id', '=', turnId).on('anchor.role', '=', 'user'))
-    .select(['entry.id', 'entry.role', 'entry.text']).where('entry.conversation_id', '=', conversationId)
-    .where(eb => eb.or([
-      eb('entry.created_at', '<', eb.ref('anchor.created_at')),
-      eb.and([eb('entry.created_at', '=', eb.ref('anchor.created_at')), eb('entry.id', '<', eb.ref('anchor.id'))]),
-    ])).orderBy('entry.created_at', 'desc').orderBy('entry.id', 'desc').limit(HISTORY_LIMIT).execute();
-  return rows.reverse();
-}
-
-/** Return a post-commit observer. History is read later, fenced by the committed message. */
-export function prepareConversationObservation(shadow: ConversationShadow | undefined, db: Kysely<any>,
-    input: Pick<ConversationShadowInput, 'conversationId' | 'turnId' | 'text' | 'legacy' | 'previousSource' | 'previousFound'>,
-    binding?: PendingBinding): (() => void) | undefined {
-  if (!shadow) return undefined;
-  const mode = conversationDecisionEnabled() ? 'active' : 'shadow';
-  const pending = binding && boundPending(binding);
-  return () => {
-    try {
-      shadow.observeLater({ ...input, mode, ...(pending ? { pending, boundAnswer: true } : {}) },
-        () => transcriptBefore(db, input.conversationId, input.turnId));
-    } catch { /* Observation never changes the chat. */ }
-  };
-}
-
-export interface ConversationChatSelection {
+interface ConversationChatSelection {
   decision: TurnUnderstanding['decision'];
-  search: HandsStep[] | null;
-  resolution: RequestResolution | undefined;
+  plan: HandsPlan | null;
+  resolution?: RequestResolution;
   previousSource?: RequestScopeAssessment;
+}
+
+interface ConversationTurnEntry {
+  db: Kysely<any>;
+  ownerId: string;
+  conversationId: string;
+  turnId: string;
+  text: string;
+  intent: string;
+  state: BrainState;
+  active: () => Promise<void>;
+  shadow?: ConversationShadow;
+  chatModel: boolean;
 }
 
 interface PriorPublicAnswer {
@@ -110,21 +92,15 @@ function hasObservedName(reference: NonNullable<TurnUnderstanding['decision']['r
 
 const comparableRequest = (text: string) => text.normalize('NFC').trim().replace(/\s+/gu, ' ');
 
-export async function selectConversationTurn(input: {
-  db: Kysely<any>; ownerId: string; conversationId: string; turnId: string; text: string;
-  resolution?: RequestResolution; previousSource?: RequestScopeAssessment | null; fresh: boolean;
-}): Promise<ConversationChatSelection | null> {
-  if (!input.fresh || !conversationDecisionEnabled()) return null;
-  const transcript = await loadTranscript(input.db, input.conversationId);
-  const latest = transcript.at(-1);
-  if (!latest || latest.role !== 'user' || comparableRequest(latest.text) !== comparableRequest(input.text)) return null;
-  const history = transcript.slice(0, -1);
+async function selectConversationTurn(input: ConversationTurnEntry, latest: StoredConversationEntry,
+    history: readonly StoredConversationEntry[]): Promise<ConversationChatSelection> {
   const decision = understandTurn(replayConversationTranscript(history), input.text, latest.id).decision;
   const { reference, references, standalone } = decision;
   const explicitReturn = returnParts(input.text);
-  const resolution = explicitReturn && input.resolution?.scope === 'private'
-    ? resolveRequestContext(input.text, null, { turnId: input.turnId }) : input.resolution;
-  const fallback = { decision, search: null, resolution };
+  const originalResolution = input.state.requestResolution;
+  const resolution = explicitReturn && originalResolution?.scope === 'private'
+    ? resolveRequestContext(input.text, null, { turnId: input.turnId }) : originalResolution;
+  const fallback = { decision, plan: null };
   if ((decision.type !== 'follow_up' && decision.type !== 'correction') || decision.confidence < MIN_CONFIDENCE
     || !reference || !references.length || references.length > 4 || references.some(item => !item.publicLookup) || !standalone || standalone.length > MAX_CONTEXT_REQUEST
     || !resolution || resolution.pendingQuestionId || comparableRequest(input.text) !== resolution.original
@@ -134,9 +110,12 @@ export async function selectConversationTurn(input: {
 
   const compound = analyzeCompoundRequest(input.text);
   if (compound.kind !== 'single' || compound.literalRanges.length) return fallback;
-  let previous = input.previousSource ?? undefined;
+  let previous = input.state.previousSource ?? undefined;
   if (!isPublicLookup(previous) && !explicitReturn) return fallback;
   const origin = requestActionText(requestScopeActionText(input.text));
+  if (input.state.routing?.route === 'pc' || parseHands(origin) || ownFactQuestion(origin) || projectInventoryFormat(input.text)) return fallback;
+  const earlierAsks = history.filter(message => message.role === 'user').map(message => message.text).slice(-4);
+  if (!notWebReason(tidy(origin)) && (input.state.routing?.handler === 'unsupported' || unsupportedRequest(origin, earlierAsks))) return fallback;
 
   for (const operand of references) {
     if (operand.role === 'user') {
@@ -169,22 +148,72 @@ export async function selectConversationTurn(input: {
     || !reviewPublicProjection(origin, step.query, { contextKind: 'follow_up', previous }).eligible) return fallback;
   const projected = resolveRequestContext(standalone, null, { turnId: input.turnId });
   const nextState = projected.nextState?.scope === 'public' ? projected.nextState : resolution.nextState;
-  return { decision, search, previousSource: previous, resolution: { ...resolution, kind: 'follow_up', query: step.query, ambiguities: [],
+  const plan: HandsPlan = { steps: search, next: 0, lang: /\p{Script=Arabic}/u.test(input.text) ? 'ar' : 'en' };
+  return { decision, plan, previousSource: previous, resolution: { ...resolution, kind: 'follow_up', query: step.query, ambiguities: [],
     scope: 'public', intent: 'web_search', sourceAssessment: assessment.source, topic: reference.text, nextState } };
 }
 
-export function applyConversationSelection(state: { requestResolution?: RequestResolution; requestContext?: RequestResolution['nextState']; previousSource?: RequestScopeAssessment | null },
-    selection: ConversationChatSelection | null): void {
-  if (!selection?.search || !selection.resolution) return;
-  state.requestResolution = selection.resolution;
-  if (selection.previousSource) state.previousSource = selection.previousSource;
-  if (selection.resolution.nextState) state.requestContext = selection.resolution.nextState;
+/**
+ * Called for an accepted run before the worker chooses a handler. The transcript
+ * is captured while the database is open so the deferred shadow only writes files.
+ */
+export async function enterConversationTurn(input: ConversationTurnEntry): Promise<ConversationChatSelection | null> {
+  const mode = conversationDecisionEnabled() ? 'active' : 'shadow';
+  const { state, shadow } = input;
+  if (input.intent !== 'task' || state.steps || state.trail.length || mode === 'shadow' && !shadow) return null;
+  const transcript = await loadTranscript(input.db, input.conversationId).catch(() => null);
+  const latest = transcript?.at(-1);
+  if (!transcript || latest?.role !== 'user' || comparableRequest(latest.text) !== comparableRequest(input.text)) return null;
+
+  const history = transcript.slice(0, -1);
+  const selection = mode === 'active' && !input.chatModel ? await selectConversationTurn(input, latest, history) : null;
+  const previousFound = shadow && mode === 'shadow' && isPublicLookup(state.previousSource)
+    ? (await input.db.selectFrom('chat_runs').select('state').where('owner_id', '=', input.ownerId)
+      .where('conversation_id', '=', input.conversationId).where('id', '!=', input.turnId)
+      .orderBy('created_at', 'desc').limit(1).executeTakeFirst().catch(() => undefined))?.state?.handsFound : undefined;
+  await input.active();
+
+  try {
+    shadow?.observeTask?.({ mode, conversationId: input.conversationId, turnId: input.turnId, text: input.text,
+      history, legacy: state.requestResolution, previousSource: state.previousSource, previousFound });
+  } catch { /* Diagnostics must never stop the run. */ }
+
+  // The existing clarifier needs the vetted resolution. Tool permissions still
+  // come from the original request and the planned lookup is consumed only later.
+  if (selection?.plan && selection.resolution) {
+    state.requestResolution = selection.resolution;
+    if (selection.previousSource) state.previousSource = selection.previousSource;
+    if (selection.resolution.nextState) state.requestContext = selection.resolution.nextState;
+  }
+  return selection;
 }
 
-export function isAppliedConversationQuestion(state: { requestResolution?: RequestResolution; resolvedRequest?: string | null },
-    query: string): boolean {
-  return conversationDecisionEnabled() && state.requestResolution?.kind === 'follow_up'
-    && state.requestResolution.query === query && state.resolvedRequest === query;
+interface ConversationLookup {
+  state: BrainState;
+  actionRequest: string;
+  handsPlan: HandsPlan | null;
+  freshRequest: boolean;
+  chatModel: boolean;
+  documentWork: unknown;
+  ownFact: ReturnType<typeof ownFactQuestion>;
+  mindReady: boolean;
+  memory: boolean;
+  adsFirst: boolean;
+  applyPlan: (plan: HandsPlan) => void;
+}
+
+/** A proven standalone takes the public lookup lane before any legacy heuristics run. */
+export function useLegacyConversationLookup(selection: ConversationChatSelection | null, input: ConversationLookup): boolean {
+  if (input.handsPlan || !input.freshRequest || input.chatModel || input.documentWork) return false;
+  const { state, actionRequest } = input;
+  if (!selection?.plan || input.ownFact || state.routing?.route === 'pc' || state.requestResolution?.scope === 'private'
+    || input.memory && memoryRecallFormat(actionRequest)) return true;
+
+  const { plan, resolution } = selection;
+  state.resolvedRequest = resolution?.query ?? null;
+  if (input.mindReady || input.adsFirst) state.webFallback = plan.steps;
+  else input.applyPlan(plan);
+  return false;
 }
 
 export function legacyShadowDecision(input: ConversationShadowInput, legacy: TurnUnderstanding) {

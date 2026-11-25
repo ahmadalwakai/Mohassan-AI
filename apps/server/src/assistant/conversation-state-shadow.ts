@@ -22,8 +22,8 @@ import {
  * or page text: the same boundary as bootstrapRequestContext. `seed` does the same from turns the host passes in.
  * In the live shadow log of 2026-11-22, two of seven conversations lost their thread this way before the rebuild existed.
  *
- * `observeLater` runs the same work after the caller's request has gone on (setImmediate), in call order, so the shadow
- * adds nothing to the request; the live log measured 36 ms median per turn on a machine at full load.
+ * `observeLater` queues understanding and file writes in call order. The worker can hand it a bounded
+ * transcript captured while the database was open.
  */
 export interface ConversationShadowInput {
   conversationId: string;
@@ -74,7 +74,9 @@ export interface ConversationShadow {
   /** Understands one user turn in shadow and logs it. Returns null when understanding itself failed. */
   observe(input: ConversationShadowInput): TurnUnderstanding | null;
   /** The same as observe, after the caller's request has gone on, in call order; returns at once and never throws. */
-  observeLater(input: ConversationShadowInput, history?: () => Promise<ConversationTranscriptEntry[]>): void;
+  observeLater(input: ConversationShadowInput): void;
+  /** Queues a worker turn with its captured transcript, once per run and input. */
+  observeTask?(input: ConversationShadowInput): void;
   /** Rebuilds a forgotten conversation from its stored user turns, oldest first. */
   seed(conversationId: string, turns: readonly { id: string; text: string }[]): void;
   state(conversationId: string): ConversationStateV2 | undefined;
@@ -202,28 +204,28 @@ export function createConversationShadow(options: { logFile: string; maxConversa
     }
   };
 
+  const recentTasks = new Map<string, string>();
+  const taskKey = (input: ConversationShadowInput) => `${input.conversationId}:${input.turnId}`;
+  const enqueue = (input: ConversationShadowInput) => {
+    try {
+      const copy = structuredClone(input);
+      later = later.then(() => indexed).then(() => new Promise<void>(resolve => setImmediate(resolve)))
+        .then(() => { observe(copy); }).catch(() => { /* never reaches the chat */ });
+    } catch { /* never reaches the chat */ }
+  };
+
   return {
     logFile: options.logFile,
     observe,
-    observeLater(input, history) {
-      try {
-        // A copy taken now: the caller may change its own objects after the request goes on.
-        const copy: ConversationShadowInput = {
-          conversationId: input.conversationId, turnId: input.turnId, text: input.text,
-          ...(input.history ? { history: input.history.map(message => ({ ...message })) } : {}),
-          ...(input.legacy ? { legacy: structuredClone(input.legacy) } : {}),
-          ...(input.previousSource ? { previousSource: structuredClone(input.previousSource) } : {}),
-          ...(input.previousFound ? { previousFound: structuredClone(input.previousFound) } : {}),
-          ...(input.boundAnswer ? { boundAnswer: true } : {}),
-          ...(input.mode ? { mode: input.mode } : {}),
-          ...(input.pending !== undefined ? { pending: input.pending ? { ...input.pending, ...(input.pending.fields ? { fields: [...input.pending.fields] } : {}) } : null } : {}),
-          ...(input.shown ? { shown: input.shown.map(item => ({ label: item.label, kind: item.kind })) } : {}),
-        };
-        later = later.then(() => indexed).then(() => new Promise<void>(resolve => setImmediate(resolve))).then(async () => {
-          if (history) copy.history = await history().catch(() => undefined);
-          observe(copy);
-        }).catch(() => { /* never reaches the chat */ });
-      } catch { /* never reaches the chat */ }
+    observeLater(input) {
+      if (recentTasks.get(taskKey(input)) !== input.text) enqueue(input);
+    },
+    observeTask(input) {
+      const key = taskKey(input);
+      if (recentTasks.get(key) === input.text) return;
+      recentTasks.set(key, input.text);
+      while (recentTasks.size > limit * 4) recentTasks.delete(recentTasks.keys().next().value!);
+      enqueue(input);
     },
     seed(conversationId, turns) {
       try {

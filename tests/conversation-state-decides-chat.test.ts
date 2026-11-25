@@ -142,6 +142,14 @@ describe('conversation decisions through the chat controller', () => {
     });
   });
 
+  it('keeps unsupported requests to call someone out of public lookup', async () => {
+    vi.stubEnv(flag, 'decide');
+    const first = await turn(companyQuestion);
+    const before = queries.length;
+    await turn('When was he born?'.replace('was he born', 'can I call him'), first.id);
+    expect(queries).toHaveLength(before);
+  });
+
   it('keeps an outer prohibition on web search', async () => {
     vi.stubEnv(flag, 'decide');
     const first = await turn(capitalQuestion);
@@ -150,13 +158,13 @@ describe('conversation decisions through the chat controller', () => {
     expect(queries).toHaveLength(before);
   });
 
-  it('logs an accepted card answer without the submitted answer text', async () => {
+  it('keeps card acceptance outside the normal-task observer', async () => {
     vi.stubEnv(flag, undefined);
     const first = await turn('افتح موقعًا واعرض لي محتواه');
     expect(first.question?.options.some(option => option.id === 'stop')).toBe(true);
     await control.respond(owner, first.id, { questionId: first.question!.id, optionId: 'stop' });
     const lines = await observations(first.id);
-    expect(lines).toHaveLength(2);
-    expect(lines[1]).toMatchObject({ text: '', legacyDecision: { kind: 'answer' }, decision: { type: 'card_answer' } });
+    expect(lines.map(line => line.text)).toEqual(['افتح موقعًا واعرض لي محتواه']);
+    expect((await control.detail(owner, first.id)).question).toBeNull();
   });
 });

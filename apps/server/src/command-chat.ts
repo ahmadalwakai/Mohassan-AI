@@ -28,7 +28,7 @@ import { searchRefusedReply, unsupportedReply, unsupportedRequest } from './assi
 import { decideBrowserVisibility, deriveBrowserVisibility } from './assistant/browser-visibility.js';
 import type { ShadowRouter } from './assistant/router.js';
 import type { ConversationShadow } from './assistant/conversation-state-shadow.js';
-import { applyConversationSelection, isAppliedConversationQuestion, prepareConversationObservation, selectConversationTurn } from './assistant/conversation-state-chat.js';
+import { enterConversationTurn, useLegacyConversationLookup } from './assistant/conversation-state-chat.js';
 import { publicConversationFollowup } from './assistant/public-conversation-followup.js';
 import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { judge as judgeAnswer } from './assistant/judge.js';
@@ -192,7 +192,7 @@ export interface CommandChatConfig {
   chromeExtension?: Pick<ChromeExtensionControl, 'status' | 'queueCampaign'>;
   /** Mohassan's own router model in shadow: logs its route next to the rules' route and changes nothing. */
   shadowRouter?: ShadowRouter;
-  /** Compares the legacy and v2 conversation decisions while v2 routing is off. */
+  /** Conversation state v2 in shadow (docs/HANDOVER-2026-11-22-CONVERSATION-STATE-V2.md): logs its understanding of each turn and changes nothing. */
   conversationShadow?: ConversationShadow;
   /** The judge («الحَكَم») in shadow (docs/HANDOVER-2026-11-22-JUDGE-SHADOW.md): records a verdict on each reply the owner sees and changes nothing. */
   judgeShadow?: JudgeShadow;
@@ -771,9 +771,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   async function addMessage(connection: Kysely<any>, id: string, role: 'user' | 'assistant', text: string) {
-    const messageId = randomUUID();
-    await connection.insertInto('chat_messages').values({ id: messageId, conversation_id: id, role, text: clean(text) }).execute();
-    return messageId;
+    await connection.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role, text: clean(text) }).execute();
   }
 
   async function addStep(id: string, runId: string, text: string) {
@@ -2006,10 +2004,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         if (level.level === 4) { await finish(id, runId, state, level.reason, 'blocked'); return; }
       }
       const actionRequest = requestActionText(requestScopeActionText(request));
-      const conversationTurn = await selectConversationTurn({ db, ownerId, conversationId: id, turnId: runId, text: request,
-        resolution: state.requestResolution, previousSource: state.previousSource, fresh: run.intent === 'task' && !state.steps && !state.trail.length });
-      if (conversationTurn) await active();
-      applyConversationSelection(state, conversationTurn);
+      const conversationTurn = await enterConversationTurn({ db, ownerId, conversationId: id, turnId: runId, text: request, intent: run.intent, state, active, shadow: config.conversationShadow, chatModel: hasChatModel() });
       const computationMemoryBinding = { ownerId, conversationId: id, runId, evaluatedAt: effectiveSource.evaluatedAt };
       const computationMemoryReceipt = createComputationMemoryReceipt(request, computationMemoryBinding);
       const userFactAssessment = assessUserFactMemoryRequest(request);
@@ -2505,6 +2500,14 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const previousAsk = history.filter(entry => entry.role === 'user').at(-1)?.text ?? null;
         config.shadowRouter.observe({ conversationId: id, text: request, previous: previousAsk, pendingQuestion: Boolean(conversation.question) });
       }
+      // Conversation state v2 in shadow: one understanding per new request, read by no reply path. observeLater runs it after this
+      // request has gone on (the live log measured 36 ms median per turn under load), in order, from a copy of these values.
+      if (config.conversationShadow && freshRequest) {
+        try {
+          config.conversationShadow.observeLater({ conversationId: id, turnId: runId, text: request,
+            pending: conversation.question ? { kind: 'question_card', id: conversation.question.id } : null });
+        } catch { /* The shadow never stops a run. */ }
+      }
       // A website without a model (owner, 2026-11-22): cards for whatever the brief still needs, as many as it takes,
       // then the site is composed from the owner's own words only; later sentences in the conversation edit it.
       // It sits before the clarifier and the web fallback: "فيه الأسئلة الشائعة" refers to the site, and
@@ -2618,7 +2621,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         // «اختصر جوابك السابق في جملة واحدة», "make it shorter": the previous answer's own opening and its source, quoted
         // (assistant/answer-reshape.ts). Refused as an unfollowable reference before 2026-11-23.
-        const shorter = !conversationTurn || conversationTurn.decision.type === 'refinement' ? shorterRequest(actionRequest) : null;
+        const shorter = shorterRequest(actionRequest);
         if (shorter) {
           const previousAnswer = history.findLast(entry => entry.role === 'assistant')?.text ?? null;
           const shortened = previousAnswer ? shorterAnswer(previousAnswer, shorter) : null;
@@ -2808,7 +2811,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       // A message of several questions waiting behind the Ads model or the mind: its first search sits in state.webFallback.
       let pendingSequence: HandsPlan | null = null;
-      if (!handsPlan && freshRequest && !hasChatModel() && !documentWork) {
+      if (useLegacyConversationLookup(conversationTurn, { state, actionRequest, handsPlan, freshRequest, chatModel: hasChatModel(), documentWork, ownFact, mindReady,
+        memory: Boolean(tools?.memory), adsFirst: Boolean(config.adsModel && fullReach()), applyPlan: plan => { handsPlan = plan; } })) {
         const desktopRequest = state.routing?.route === 'pc' || state.requestResolution?.sourceAssessment?.source === 'local_state';
         let steps = desktopRequest ? null : parseHands(actionRequest);
         // A question that needs the web goes to the browser without the owner naming it, unless memory or the project list answers it.
@@ -2829,25 +2833,25 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           }
         }
         // A how-to or planning request an active skill clearly covers is answered from that skill before any web search.
-        if (!steps && !privateRequest && !notWebReason(tidy(actionRequest)) && !(conversationTurn ? conversationTurn.decision.type === 'follow_up' : isFollowUp(tidy(actionRequest))) && await trySkill('advice')) return;
+        if (!steps && !privateRequest && !notWebReason(tidy(actionRequest)) && !isFollowUp(tidy(actionRequest)) && await trySkill('advice')) return;
         // The context parser's follow-up query is used only when it kept the earlier topic. For «وكم عدد سكانها؟» after
         // «ما عاصمة اليابان؟» it dropped «اليابان» (measured 2026-11-22, 0-baseline §9), so the hands add the topic themselves.
-        const parsedQuery = !conversationTurn && understanding?.kind === 'follow_up' && understanding.scope === 'public' ? understanding.query : null;
+        const parsedQuery = understanding?.kind === 'follow_up' && understanding.scope === 'public' ? understanding.query : null;
         const ownWords = new Set(topicWords(actionRequest));
         const contextualQuery = parsedQuery && topicWords(parsedQuery).some(word => !ownWords.has(word)) ? parsedQuery : null;
         const ambiguousReference = understanding?.kind === 'ambiguous' && understanding.ambiguities.some(reason => reason === 'missing_reference' || reason === 'missing_question' || reason === 'unclear_replacement');
         // A country-only property (currency/capital) stays with the user's country, even when the last page named its
         // capital or president. Refine public questions only; pending cards, actions and guesses retain their handlers.
-        const conversationQuery = !conversationTurn && understanding && !steps && !privateRequest && !ambiguousReference ? publicConversationFollowup({
+        const conversationQuery = understanding && !steps && !privateRequest && !ambiguousReference ? publicConversationFollowup({
           request, resolution: understanding, previousSource: state.previousSource,
           earlierUserTurns: history.filter(entry => entry.role === 'user').map(entry => entry.text),
           pending: Boolean(conversation.question || conversation.secure) || conversation.status === 'waiting_approval',
         }) : null;
-        const conversationAsk = conversationTurn?.search ?? (conversationQuery ? webQuestion(conversationQuery) : null);
+        const conversationAsk = conversationQuery ? webQuestion(conversationQuery) : null;
         // A pronoun follow-up («وكم عدد سكانها؟» after an answer read from the Tokyo article) asks about the thing the last answer
         // named, not about the words of the last question: «كم عدد سكانها طوكيو», where «كم عدد سكانها عاصمة اليابان» read Hokkaido (2026-11-22).
         // The item the answer named stands for its page when narrower («نهر النيل» read from «نهر»): answerSubject in hands.ts.
-        const foundBefore = !conversationTurn && freshRequest && !steps && !conversationAsk && isFollowUp(tidy(actionRequest)) && refersBack(tidy(actionRequest))
+        const foundBefore = freshRequest && !steps && !conversationAsk && isFollowUp(tidy(actionRequest)) && refersBack(tidy(actionRequest))
           ? (await db.selectFrom('chat_runs').select('state').where('conversation_id', '=', id).where('owner_id', '=', ownerId).where('id', '!=', runId)
             .orderBy('created_at', 'desc').limit(1).executeTakeFirst())?.state?.handsFound : null;
         const namedBefore = foundBefore && typeof foundBefore.title === 'string'
@@ -2855,17 +2859,17 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const entityAsk = namedBefore ? webQuestion(actionRequest, [namedBefore]) : null;
         // «ارجع إلى أينشتاين: أين ولد؟» asks about the subject by the fuller name an earlier answer was read under («ألبرت
         // أينشتاين»): searched as the one word, it was answered from his father's page (long-final turn 11, 2026-11-23).
-        const returning = !conversationTurn && freshRequest && !steps && !conversationAsk && !entityAsk ? returnParts(clean(request)) : null;
+        const returning = freshRequest && !steps && !conversationAsk && !entityAsk ? returnParts(clean(request)) : null;
         const earlierTitles = returning ? (await db.selectFrom('chat_runs').select('state').where('conversation_id', '=', id).where('owner_id', '=', ownerId)
           .where('id', '!=', runId).orderBy('created_at', 'desc').limit(12).execute())
           .map(row => row.state?.handsFound?.title).filter((title): title is string => typeof title === 'string').map(title => plainTitle(title)) : [];
         returnName = returning ? fullerName(returning.subject, earlierTitles) : null;
         const returnAsk = returning && returnName ? webQuestion(`${returning.question} ${returnName}`) : null;
         const asked = !ambiguousReference && !privateRequest && !steps && !(tools?.memory && memoryRecallFormat(request)) && !projectInventoryFormat(request)
-          ? conversationAsk ?? entityAsk ?? returnAsk ?? webQuestion(contextualQuery ?? actionRequest, conversationTurn || contextualQuery ? [] : earlierAsks) : null;
+          ? conversationAsk ?? entityAsk ?? returnAsk ?? webQuestion(contextualQuery ?? actionRequest, contextualQuery ? [] : earlierAsks) : null;
         // A follow-up reaches the mind with the previous question's topic, as the browser search does.
         const resolved = asked?.[0]?.kind === 'search' ? asked[0].query : null;
-        if (resolved && (conversationTurn?.search || !conversationTurn && isFollowUp(tidy(request)))) state.resolvedRequest = resolved;
+        if (resolved && isFollowUp(tidy(request))) state.resolvedRequest = resolved;
         const lookup = steps?.length === 1 && steps[0].kind === 'search' && !steps[0].site && !page ? steps : asked;
         // The request itself forbids the web search and nothing local answered it: say so, instead of starting a search the
         // gate then stops as a failed run with no reply.
@@ -2876,7 +2880,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         // Several questions in one message («ما عاصمة فرنسا؟ ثم كم عدد سكانها؟») are asked one after another, each with its own
         // search and its own verdict, instead of one search for the whole sentence (assistant/web-sequence.ts).
-        const sequence = asked && !steps && !entityAsk && !contextualQuery && !conversationTurn?.search
+        const sequence = asked && !steps && !entityAsk && !contextualQuery
           ? planWebSequence(actionRequest, { now: new Date(effectiveSource.evaluatedAt), self: selfFacts }) : null;
         const sequencePlan = sequence ? startWebSequence(sequence, /\p{Script=Arabic}/u.test(request) ? 'ar' : 'en') : null;
         // The mind answers first from what it knows and its own sources; the visible browser is the fallback.
@@ -2992,9 +2996,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         // rain falls») is judged on what was searched: judged on the whole request, the right Rain answer was withheld as
         // «subject_missing» in the live check of 2026-11-23.
         const searched = plan.steps.at(-1);
-        const standalone = searched?.kind === 'search' && isAppliedConversationQuestion(state, searched.query);
-        const reshaped = !plan.sequel && searched?.kind === 'search' && searched.ask && (searched.reply || standalone)
-          ? { question: searched.query, previous: standalone ? null : currentExecution.previousRequest ?? null } : undefined;
+        const reshaped = !plan.sequel && searched?.kind === 'search' && searched.ask && searched.reply
+          ? { question: searched.query, previous: currentExecution.previousRequest ?? null } : undefined;
         const judgedAs = plan.sequel ? { question: plan.sequel.asked, previous: plan.sequel.previous } : reshaped;
         let outcome: HandsOutcome;
         try {
@@ -3881,7 +3884,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if(closing)throw new BrowserError('CHAT_SHUTTING_DOWN','الخدمة تتوقف الآن.',503);
     const token=randomUUID();
     let previousToken:string|undefined;
-    let observeTurn: (() => void) | undefined;
     await db.transaction().execute(async (tx) => {
       const conversation=await tx.selectFrom('chat_conversations').selectAll().where('id','=',id).where('owner_id','=',ownerId).forUpdate().executeTakeFirst();
       if (config.accountActive && !await config.accountActive(ownerId, tx)) throw new BrowserError('CHAT_ACCOUNT_INACTIVE', 'هذا الحساب غير نشط.', 403);
@@ -3894,15 +3896,12 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // Insert the accepted reply in this same transaction. A rejected change
       // rolls it back; its DB-owned identity/time can anchor a new primary.
       const message = { id: randomUUID(), createdAt: new Date(), text: clean(say) };
-      observeTurn = prepareConversationObservation(config.conversationShadow, db,
-        { conversationId: id, turnId: message.id, text: message.text }, expected);
       await tx.insertInto('chat_messages').values({ id: message.id, conversation_id: id, role: 'user', text: message.text, created_at: message.createdAt }).execute();
       await change(state, tx, { ...message, createdAt: message.createdAt.getTime(), ...(priorSource ? { priorRequest: priorSource.request } : {}) });
       await tx.updateTable('chat_runs').set({ status:expected.stop?'cancelled':'running', state: JSON.stringify(state),lease_token:token,attempt:run.attempt+1,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, updated_at: new Date() }).where('id', '=', runId).execute();
       await tx.updateTable('chat_conversations').set({ status:expected.stop?'idle':'running',active_run_id:expected.stop?null:runId, question: null, approval: null, secure: null, error: null, progress:expected.stop?null:'يتابع العمل…', updated_at: new Date() }).where('id', '=', id).execute();
       if (expected.stop) await recordTerminalRun(tx, runId, 'cancelled');
     });
-    observeTurn?.();
     if(expected.stop){if(previousToken)forgetVault(id,previousToken);return detail(ownerId,id);}
     expected.afterClaim?.();
     await dispatch(ownerId, id, runId, token,true);
@@ -3980,7 +3979,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if (steering && classifySteering(clean(input.text)) === 'stop') return cancel(ownerId, id);
     if (!steering && (row.status === 'running' || WAITING_STATUSES.includes(row.status))) throw new BrowserError('CHAT_BUSY', 'أكمل ما ينتظر ردك، أو أوقف العمل قبل إرسال طلب جديد.', 409);
     let superseded: Awaited<ReturnType<typeof supersedeRun>> | null = null;
-    let observeTurn: (() => void) | undefined;
     const runId = randomUUID();
     const token=randomUUID();
     const fullForRouting = config.fullAccess ? await config.fullAccess(ownerId) : true;
@@ -4060,9 +4058,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             limitations: [...new Set([...routing.missingCapabilities, ...(sessionCapabilities.chatModel ? [] : ['chatModel'])])].slice(0, 12) } }),
         // A request the page tried to send, held for the corrected run's approval, is dropped: it belonged to the old objective.
         ...((superseded as { held: boolean } | null)?.held ? { dropHeld: true } : {}) };
-      const messageId = await addMessage(tx, id, 'user', input.text);
-      observeTurn = prepareConversationObservation(config.conversationShadow, db,
-        { conversationId: id, turnId: messageId, text: clean(input.text), legacy: resolution, previousSource, previousFound: previousRun?.state?.handsFound });
+      await addMessage(tx, id, 'user', input.text);
       await tx.insertInto('chat_runs').values({ id: runId, conversation_id: id, owner_id: ownerId, status: 'running', intent, goal: clean(input.text), steps: 0, lease_token:token,worker_id:instanceId,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, state: JSON.stringify(initialState), created_at: createdAt }).execute();
       await tx.updateTable('chat_conversations').set({ status: 'running', active_run_id: runId, question: null, approval: null, secure: null, error: null, progress: 'يفهم طلبك…', updated_at: new Date() }).where('id', '=', id).execute();
       // The browser level the request asks for (plan §6.1), logged with its reason and time after the run row it refers to. detail() re-derives the current level from the rows.
@@ -4079,7 +4075,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       forgetVault(id, replaced.token);
       await dropUnapproved(ownerId, { pendingTask: replaced.pendingTask });
     }
-    observeTurn?.();
     await dispatch(ownerId, id, runId,token);
     return detail(ownerId, id);
   }
@@ -4158,22 +4153,18 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const attached = ordered.map(image => ({ id: image.id as string, width: Number(image.width), height: Number(image.height) }));
     const shown = clean(text);
     const userText = shown || (reply.language === 'ar' ? (attached.length > 1 ? `${attached.length} صور` : 'صورة') : attached.length > 1 ? `${attached.length} images` : 'an image');
-    const messageId = randomUUID();
-    let observeTurn: (() => void) | undefined;
     await db.transaction().execute(async tx => {
       if (config.accountActive && !await config.accountActive(ownerId, tx)) throw new BrowserError('CHAT_ACCOUNT_INACTIVE', 'هذا الحساب غير نشط.', 403);
       const current = await tx.selectFrom('chat_conversations').select(['status', 'title']).where('id', '=', id).where('owner_id', '=', ownerId).forUpdate().executeTakeFirst();
       if (!current) throw notFound();
       if (current.status === 'running' || WAITING_STATUSES.includes(current.status)) throw new BrowserError('CHAT_BUSY', 'بدأت مهمة أخرى في هذه المحادثة أثناء قراءة الصورة.', 409);
       const now = Date.now();
-      observeTurn = prepareConversationObservation(config.conversationShadow, db, { conversationId: id, turnId: messageId, text: userText });
-      await tx.insertInto('chat_messages').values({ id: messageId, conversation_id: id, role: 'user', text: userText, images: JSON.stringify(attached), created_at: new Date(now) }).execute();
+      await tx.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role: 'user', text: userText, images: JSON.stringify(attached), created_at: new Date(now) }).execute();
       await tx.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role: 'assistant', text: reply.text, created_at: new Date(now + 1) }).execute();
       await tx.updateTable('chat_images').set({ conversation_id: id, expires_at: null }).where('id', 'in', unique).where('owner_id', '=', ownerId).execute();
       const title = current.title === 'محادثة جديدة' || current.title === 'قراءة صورة' ? { title: (shown || (reply.language === 'ar' ? 'قراءة صورة' : 'Image reading')).slice(0, 100) } : {};
       await tx.updateTable('chat_conversations').set({ status: 'idle', error: null, progress: null, updated_at: new Date(), ...title }).where('id', '=', id).execute();
     });
-    observeTurn?.();
     return detail(ownerId, id);
   }
 

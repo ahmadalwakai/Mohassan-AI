@@ -365,9 +365,11 @@ export async function createApplication(config: AppConfig) {
   const routerDir = join(process.cwd(), 'artifacts', 'router');
   const shadowRouter = !config.production && process.env.MOHASSAN_ROUTER_SHADOW !== '0' && !process.env.VITEST && existsSync(join(routerDir, 'router-b0.bin'))
     ? createShadowRouter({ modelDir: routerDir, logFile: join(process.cwd(), '.data', 'router', 'shadow.jsonl') }) : undefined;
-  // Development conversation diagnostics use the existing conversation shadow setting.
+  // Conversation state v2 runs in shadow outside production (MOHASSAN_CONVERSATION_SHADOW=0 turns it off); no reply path reads it.
   const conversationShadow = !config.production && process.env.MOHASSAN_CONVERSATION_SHADOW !== '0' && !process.env.VITEST
     ? createConversationShadow({ logFile: join(process.cwd(), '.data', 'conversation', 'shadow.jsonl') }) : undefined;
+  // Deferred shadow turns (observeLater) are written before the server closes.
+  if (conversationShadow) app.addHook('onClose', async () => { await conversationShadow.flush(); });
   // The judge («الحَكَم»): one verdict per reply (MOHASSAN_JUDGE_SHADOW=0 turns it off).
   // Its mechanical fix is applied on the owner's own account (the owner's word, 2026-11-22; MOHASSAN_JUDGE_FIX=0 turns that off),
   // and so is its withhold: a fixed sentence with the page link instead of a refused answer (same day; MOHASSAN_JUDGE_WITHHOLD=0 turns it off).
@@ -525,8 +527,6 @@ export async function createApplication(config: AppConfig) {
   app.post<{Params: {id: string}}>('/api/tasks/:id/cancel', async (request) => runtime.cancel((await owner(request)).id, request.params.id));
   app.post<{Params: {id: string}}>('/api/tasks/:id/approve', async (request) => runtime.approve((await owner(request)).id, request.params.id));
   app.addHook('onClose', async () => {clearInterval(benchmarkMaintenance);try{await skillRemoteScheduler?.stop();await skills.remote.shutdown();await benchmarkMaintenanceRun;await Promise.all([skillBenchmarks.shutdown(),skillForge.shutdown()]);}finally{try{await chat.shutdown();}finally{try{await runtime.stop();}finally{try{await browser.shutdown();}finally{try{await studioLive.close();}finally{await database.close();}}}}}});
-  // Fastify closes hooks in reverse order. Flush transcript reads before database shutdown.
-  if (conversationShadow) app.addHook('onClose', async () => { await conversationShadow.flush(); });
   if (config.runWorker) runtime.start();
   await app.ready();
   return {app, routes, runtime, database, auth,ai,coding,studio,studioAi,studioLive,browser,browserTask,memory,skills,chat,skillExecution,skillBenchmarks,skillForge,googleAds,inference,chromeExtension};
