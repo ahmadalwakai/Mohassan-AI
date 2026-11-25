@@ -44,6 +44,7 @@ import { createCommandChatControl, registerCommandChatRoutes } from './command-c
 import { createImageReader } from './image-reader.js';
 import { createInferenceControl, registerInferenceRoutes, type InferenceConfig } from './inference.js';
 import { createExecutorControl, executorConfigFromEnv, registerExecutorRoutes, type ExecutorConfig } from './executor.js';
+import { serverModelWorkerHealth } from './model-worker.js';
 import { createAdsLab, createAdsModelWorker, registerAdsLabRoutes, type AdsLabConfig } from './ads-lab.js';
 import { createAdsModelChat } from './assistant/ads-model-chat.js';
 import type { Mind, MindDeps } from './assistant/mind/contract.js';
@@ -250,7 +251,7 @@ export async function createApplication(config: AppConfig) {
     return reply.code(code).send({error: {code: typeof error.code === 'string' && code < 500 ? error.code : 'INTERNAL_ERROR', message: code < 500 ? error.message : 'تعذر إكمال الطلب. أعد المحاولة.'}});
   });
   metrics.registerRoutes();
-  app.get('/health', async () => ({status: 'ok'}));
+  app.get('/health', async () => ({status: 'ok', ...serverModelWorkerHealth(app)}));
   app.get('/api/setup', async () => {
     const user = await database.db.selectFrom('user').select('id').limit(1).executeTakeFirst();
     return {needsSetup: !user, setupAvailable: !config.production};

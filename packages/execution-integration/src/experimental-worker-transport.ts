@@ -5,6 +5,9 @@ import {
   type ModelTaskSubmission, type ModelTransport,
 } from './transport.js';
 
+export { PermanentModelWorker } from './permanent-worker.js';
+export type { PermanentModelWorkerOptions, PermanentModelWorkerStatus, PermanentModelWorkerRequest } from './permanent-worker.js';
+
 /**
  * EXPERIMENTAL, NOT CONTAINED. Deliberately NOT exported from index.ts.
  *

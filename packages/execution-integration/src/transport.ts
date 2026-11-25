@@ -158,6 +158,8 @@ function sameIdentity(a: ModelIdentity, b: ModelIdentity): boolean {
   return a.modelId === b.modelId && a.tokenizerId === b.tokenizerId && a.checkpointId === b.checkpointId;
 }
 
+export { copyJson, id, identity, integer, keys, record, sameIdentity };
+
 /** No getters, toJSON hooks, nonfinite numbers, cycles, or prototype-bearing input. */
 function copyJson(value: unknown, errorCode: TransportErrorCode): TransportJson {
   let remaining = MAX_JSON_NODES;
