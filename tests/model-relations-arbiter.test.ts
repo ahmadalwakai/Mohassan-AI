@@ -22,6 +22,10 @@ const input: ArbiterInput = {
 
 afterEach(() => vi.unstubAllEnvs());
 
+function percentile95(elapsed: number[]) {
+  return elapsed.sort((a, b) => a - b)[Math.ceil(elapsed.length * 0.95) - 1]!;
+}
+
 function brain(threshold: number, type: ArbiterDecisionType = 'routing') {
   return new ArbiterBrain({ schemaVersion: 1, decisions: { [type]: {
     threshold, components: [baseline, alternative],
@@ -114,8 +118,7 @@ describe('relations manager arbitration', () => {
       relations.arbitrate(sampleInputs[i % sampleInputs.length]!);
       elapsed.push(performance.now() - start);
     }
-    elapsed.sort((a, b) => a - b);
-    const p95 = elapsed[Math.ceil(elapsed.length * 0.95) - 1]!;
+    const p95 = percentile95(elapsed);
     console.info(`Arbitration p95 ${p95.toFixed(3)} ms over ${elapsed.length} warmed samples`);
     expect(p95).toBeLessThanOrEqual(1);
   });
@@ -198,22 +201,50 @@ describe('assistant arbitration hook', () => {
     };
     try {
       const first = 'Copper roof tiles';
-      const later = 'ألواح نحاسية على السطح';
+      const second = 'ألواح نحاسية على السطح';
       const firstDiscovery = queue(first);
       observe(runId, undefined, { token: 'lease-one', request: first }, 'First result', 'completed');
-      const laterDiscovery = queue(later);
-      observe(runId, undefined, { token: 'lease-two', request: later }, 'Second result', 'completed');
+      const secondDiscovery = queue(second);
+      observe(runId, undefined, { token: 'lease-two', request: second }, 'Second result', 'completed');
       expect(firstDiscovery).not.toHaveBeenCalled();
-      expect(laterDiscovery).not.toHaveBeenCalled();
+      expect(secondDiscovery).not.toHaveBeenCalled();
       await vi.waitFor(async () => expect((await readFile(logFile, 'utf8')).trim().split('\n')).toHaveLength(2));
       expect(firstDiscovery).toHaveBeenCalledOnce();
-      expect(laterDiscovery).toHaveBeenCalledOnce();
+      expect(secondDiscovery).toHaveBeenCalledOnce();
       expect(inspect.mock.calls.map(([turn]) => [turn.id, turn.arbiter?.map(decision => [decision.language, decision.length])])).toEqual([
         [`${runId}:lease-one`, [['en', first.length]]],
-        [`${runId}:lease-two`, [['ar', later.length]]],
+        [`${runId}:lease-two`, [['ar', second.length]]],
       ]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it('schedules discovery in at most 1 ms at p95 on the warmed default shadow path', () => {
+    vi.stubEnv('MOHASSAN_MODEL_RELATIONS', undefined);
+    const runId = 'arbiter-scheduling-test';
+    let completedDiscovery = 0;
+    const discover = () => {
+      completedDiscovery++;
+      return replacement;
+    };
+    const sample = () => {
+      const before = completedDiscovery;
+      const started = performance.now();
+      const result = discoverArbiterClaims('routing', hostResult, undefined, discover);
+      const elapsed = performance.now() - started;
+      expect(result).toBe(hostResult);
+      expect(completedDiscovery).toBe(before);
+      takeArbiterDecisions(runId);
+      return elapsed;
+    };
+    const elapsed = withArbiterExecution(runId, () => {
+      for (let i = 0; i < 2_000; i++) sample();
+      return Array.from({ length: 4_000 }, sample);
+    });
+    const p95 = percentile95(elapsed);
+    console.info(`Shadow discovery scheduling p95 ${p95.toFixed(3)} ms over ${elapsed.length} warmed samples`);
+    expect(completedDiscovery).toBe(6_000);
+    expect(p95).toBeLessThanOrEqual(1);
   });
 });
