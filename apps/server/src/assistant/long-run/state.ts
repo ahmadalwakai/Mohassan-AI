@@ -22,13 +22,15 @@ const step = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('prepare_site'), brief: SiteBriefSchema }),
   z.object({ kind: z.literal('build_site'), approval: z.boolean() }),
 ]);
+const background = z.object({ replyLength: z.enum(['short', 'medium', 'long']) }).strict();
 export type LongRunStep = z.infer<typeof step>;
 export type LongRunLanguage = 'ar' | 'en';
-export type LongRunPlan = { language: LongRunLanguage; steps: LongRunStep[] };
+export type LongRunPlan = { language: LongRunLanguage; steps: LongRunStep[]; background?: z.infer<typeof background> };
 
 const observation = z.object({ url, title: z.string().max(240), quote: z.string().max(700), hash: z.string().length(64) });
 const checkpoint = z.object({
   version: z.literal(1),
+  background: background.optional(),
   language: z.enum(['ar', 'en']),
   steps: z.array(step).min(1).max(LONG_RUN_LIMITS.steps),
   next: z.number().int().min(0).max(LONG_RUN_LIMITS.steps),
@@ -87,7 +89,7 @@ export function initialLongRunState(id: string, plan: LongRunPlan, at: number): 
   enterPhase(ledger, 'executing', at);
   return LongRunStateSchema.parse({
     agentRun: ledger,
-    longRun: { version: 1, language: plan.language, steps: plan.steps, next: 0, resources: 0, deadline: at + LONG_RUN_LIMITS.wallMs,
+    longRun: { version: 1, ...(plan.background ? { background: plan.background } : {}), language: plan.language, steps: plan.steps, next: 0, resources: 0, deadline: at + LONG_RUN_LIMITS.wallMs,
       dueAt: at, inFlight: null, candidates: [], observations: [], site: null, inputId: null },
   });
 }

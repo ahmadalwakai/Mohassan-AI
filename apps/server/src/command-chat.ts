@@ -36,6 +36,7 @@ import { publicConversationFollowup } from './assistant/public-conversation-foll
 import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { judge as judgeAnswer } from './assistant/judge.js';
 import { ensureChatConversationsTable, reviewJudgedReply } from './assistant/review/publication.js';
+import { backgroundRunView } from './assistant/long-run/view.js';
 import { continueWebSequence, joinSequence, planWebSequence, startWebSequence } from './assistant/web-sequence.js';
 import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
 import { runExtractiveWriting, type WritingPageReader } from './assistant/writing/host.js';
@@ -1047,7 +1048,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     // The mark is read before the lists, so the lists are never older than it: a change in between only makes the next
     // held request (chat-wait.ts) answer at once.
     const version = await conversationVersion(db, ownerId, id);
-    const lastRun = await db.selectFrom('chat_runs').select(['id', 'state', 'status', 'created_at', 'updated_at']).where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(1).executeTakeFirst();
+    const lastRun = await db.selectFrom('chat_runs').select(['id', 'state', 'status', 'created_at', 'updated_at', 'worker_id', 'goal']).where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(1).executeTakeFirst();
     // The newest 300 messages. Until 2026-11-23 these were the first 300, so a conversation past 300 messages kept its new
     // questions and answers in the database and never showed them.
     const [newest, steps] = await Promise.all([
@@ -1078,6 +1079,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         secure: row.secure ?? null, approval: row.approval ?? null, firstStep: steps[0]?.message ?? null, decidedAt: iso(row.updated_at) }),
       ...(version ? { version } : {}),
       ...(olderMessages ? { olderMessages } : {}),
+      ...backgroundRunView(lastRun, row.active_run_id),
       // The latest run as the runtime committed it (assistant/agent-run.ts); its row status is the authority for the verdict.
       run: lastRun ? projectRunView({ runId: lastRun.id, status: lastRun.status, ledger: lastRun.state?.agentRun, createdAt: lastRun.created_at, updatedAt: lastRun.updated_at,
         // Model calls are counted in the ledger; only a run recorded before ledgers existed is counted from its receipts.

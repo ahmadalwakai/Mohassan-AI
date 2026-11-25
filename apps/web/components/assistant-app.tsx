@@ -33,6 +33,7 @@ import { ChromeExtensionPanel } from "./chrome-extension-panel";
 import { adsConnectProblems, pendingAdsConnect } from "./ads-connect";
 import { AssistantNotifications, NOTICE_AFTER_MS, declineNoticeOffer, noticeKindFor, noticeOfferOpen, requestNoticePermission, showTaskNotice, type NotificationControls } from "./assistant-notifications";
 import { RemindersSettings } from "./reminders-settings";
+import { BackgroundRunCard } from "./background-run-card";
 import styles from "./assistant-app.module.css";
 
 /** Plan §5.2 P5: the first useful progress line should show within half a second; a local answer is ready in ~30 ms. */
@@ -146,6 +147,7 @@ const unfinishedVerdict = (conversation: Conversation) => conversation.status !=
 
 function Steps({ conversation }: { conversation: Conversation }) {
   const [open, setOpen] = useState(false);
+  if (conversation.backgroundRun) return null;
   const running = conversation.status === "running";
   const run = conversation.run ?? null;
   if (!running && !conversation.steps.length && !unfinishedVerdict(conversation)) return null;
@@ -652,7 +654,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
       onChange={(event) => { setDraft(event.target.value); event.target.style.height = "auto"; event.target.style.height = `${Math.min(event.target.scrollHeight, 220)}px`; }}
       onKeyDown={onComposerKey}
     />
-    {running || blocked || answering
+    {!conversation?.backgroundRun && (running || blocked || answering)
       ? <button type="button" className={styles.stop} aria-label="إيقاف" disabled={busy} onClick={() => void act(() => post("cancel", {}))}><Square size={13} fill="currentColor" /></button>
       : null}
     {!running || draft.trim() ? <button type="submit" className={styles.send} aria-label={steering ? "إرسال التصحيح" : "إرسال"} disabled={!canSend}>{busy ? <AgentActivity variant="spinner" /> : <ArrowUp size={19} />}</button> : null}
@@ -739,6 +741,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
               {index === conversation!.messages.length - 1 && message.role === "user" ? <Steps conversation={conversation!} /> : null}
             </article>)}
             {conversation!.messages.at(-1)?.role === "assistant" && (running || conversation!.steps.length > 0 || unfinishedVerdict(conversation!)) && !answering && !blocked ? <Steps conversation={conversation!} /> : null}
+            {conversation?.backgroundRun ? <BackgroundRunCard run={conversation.backgroundRun} busy={busy} onStop={() => void act(() => post("cancel", {}))} /> : null}
             {conversation!.campaign?.events.length ? <CampaignCard stream={conversation!.campaign} running={running} /> : null}
             {conversation!.question?.fields?.length ? null
             : conversation!.question ? <div className={styles.choices}>{conversation!.question.options.map((option) => <button key={option.id} disabled={busy} onClick={() => conversation!.question!.action === "google_ads_connect" && option.id === "connect" ? void connectGoogleAds() : void act(() => post("respond", { questionId: conversation!.question!.id, optionId: option.id }))}>{option.label}</button>)}</div> : null}

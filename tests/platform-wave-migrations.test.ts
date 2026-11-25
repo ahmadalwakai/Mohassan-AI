@@ -51,7 +51,7 @@ const platformIds = [
   ['039_conversation_shares', '038_conversation_shares'],
   ['040_member_data_rights', '037_member_data_rights'],
 ] as const;
-const currentIds = platformIds.map(([current]) => current);
+const currentIds = [...platformIds.map(([current]) => current), '041_long_run_checkpoints', '042_background_results'];
 const agentIds = ['035_chat_conversation_review', '036_structured_memory'];
 
 // Ledger registrations in the base startup migrators, retrieved 2026-11-25.
@@ -94,7 +94,7 @@ it('records platform migrations in startup order, restarts unchanged, and adopts
         .select(['version', 'applied_at']).orderBy('version').execute();
       const authLedger = await database.db.selectFrom('auth_schema_migrations')
         .select(['version', 'applied_at']).orderBy('version').execute();
-      const platformInserts = trace.inserts.filter(id => platformIds.some(([current]) => id === current));
+      const platformInserts = trace.inserts.filter(id => currentIds.includes(id));
       await beforeClose?.(database.db);
       return { appLedger, authLedger, platformInserts };
     } finally {

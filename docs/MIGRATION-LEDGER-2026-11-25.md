@@ -12,8 +12,12 @@
 | 2 | #65 | `038_reminders` | `036_reminders` |
 | 3 | #66 | `039_conversation_shares` | `038_conversation_shares` |
 | 4 | #69 | `040_member_data_rights` | `037_member_data_rights` |
+| 5 | #89 | `041_long_run_checkpoints` | — |
+| 6 | #92 | `042_background_results` | — |
 
 Startup recognizes each full legacy ID and changes the existing ledger row to its recorded ID inside the migration transaction, preserving the original application timestamp. The notifications upgrade also widens the existing notification kind constraint for reminder delivery. Fresh databases run each migration once. The platform branch starts at `c2a0ff7` and leaves the agent migrations to the agent wave.
+
+`042_background_results` follows `041_long_run_checkpoints`. It adds per-account iPhone registrations in `ios_push_devices`, per-device APNs delivery state, and background result metadata and preferences in the existing notification tables.
 
 ## Collisions
 
