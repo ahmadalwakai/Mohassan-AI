@@ -21,6 +21,7 @@ import { BrowserFilesPanel } from './browser-files-panel';
 import { DocumentsPanel } from './documents-panel';
 import { BrowserViewport } from './browser-viewport';
 import { CampaignCard } from "./campaign-card";
+import { ConversationActions } from "./conversation-actions";
 
 const ADS_WORDS = /حمل[ةت]|حملات|إعلان|اعلان|google ads|campaign|\bads?\b|advertis|ppc/i;
 import { ActivityLine, AgentActivity } from "./agent-activity";
@@ -700,6 +701,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
       <header className={styles.topbar}>
         <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="فتح القائمة" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
         <span dir="auto">{conversation?.title !== "محادثة جديدة" ? conversation?.title : ""}</span>
+        <ConversationActions conversationId={conversation?.id} />
         {conversation?.browser && !browserOpen && visibility?.canView !== false ? <button className={`${styles.showBrowser} ${running ? styles.background : ""}`} onClick={showPanel} aria-label="عرض المتصفح" data-testid="browser-chip">
           {running
             ? <><span className={styles.chipName}>المتصفح ·</span><ActivityLine text={conversation.progress ?? "يعمل في الخلفية"} since={requestedAt} compact /><span className={styles.chipAction}>· عرض</span></>

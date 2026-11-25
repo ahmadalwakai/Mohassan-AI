@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import type { createAuth } from './auth.js';
+import { conversationShareMemberRoutes, conversationSharePublicRoute } from './conversation-share-paths.js';
 
 /**
  * Members are people the owner invites. They use cloud services only (chat,
@@ -16,6 +17,7 @@ export type WorkspaceRole = 'owner' | 'member';
 
 /** Reached without a session. Each handler does its own checks. */
 export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
+  conversationSharePublicRoute,
   'GET /health',
   'GET /api/setup', 'POST /api/setup',
   'GET /api/auth/*', 'POST /api/auth/*',
@@ -29,6 +31,7 @@ const chat = '/api/chat/conversations';
 const files = '/api/browser/files/:conversationId';
 const ads = '/api/google-ads';
 export const MEMBER_ROUTES: ReadonlySet<string> = new Set([
+  ...conversationShareMemberRoutes,
   'GET /api/access',
   // The chat, including its own cloud browser (a profile per account).
   `GET ${chat}`, `POST ${chat}`, `GET ${chat}/:id`, `DELETE ${chat}/:id`, `GET ${chat}/:id/screen`,
