@@ -1,6 +1,7 @@
 import type { AgentBrowser } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { evaluateWordProblemGrammar } from '../apps/server/src/assistant/word-problem.js';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
 
 describe('arithmetic word problems through the chat controller', () => {
@@ -54,6 +55,17 @@ describe('arithmetic word problems through the chat controller', () => {
       tool: 'calculate', result: 'succeeded',
       observations: [{ criterionId: 'computed-answer', source: 'computation', independentlyVerified: true }],
     }]);
+    expect(run.state.completionReview).toMatchObject({ status: 'verified', allowCompletion: true });
+  });
+
+  it('searches after the grammar abstains and verifies the selected steps', async () => {
+    const story = 'A workshop has 8 rolls with 14 meters of ribbon per roll. The ribbon is divided equally into 4 display frames. How many meters of ribbon go on each frame?';
+    expect(evaluateWordProblemGrammar(story)).toMatchObject({ status: 'blocked', abstained: true });
+    const { text, run } = await ask(story);
+    expect(text.split('\n')).toEqual(['8 × 14 = 112', '112 ÷ 4 = 28', 'Final answer = 28']);
+    expect(run.status).toBe('completed');
+    expect(run.state.routing).toMatchObject({ route: 'compute', handler: 'local_computation' });
+    expect(run.state.trail.map((entry: { action: string }) => entry.action)).toEqual(['calculate']);
     expect(run.state.completionReview).toMatchObject({ status: 'verified', allowCompletion: true });
   });
 
