@@ -1,5 +1,5 @@
 const base = '/api/chat/monitors';
-export const monitorPaths = { base, pause: `${base}/:id/pause`, resume: `${base}/:id/resume`, stop: `${base}/:id/stop` } as const;
+export const monitorPaths = { base, pause: `${base}/:id/pause`, resume: `${base}/:id/resume`, stop: `${base}/:id/stop`, feedback: `${base}/alerts/:alertId/feedback` } as const;
 export const MONITOR_MEMBER_ROUTES = [
-  `GET ${base}`, `POST ${base}`, `POST ${monitorPaths.pause}`, `POST ${monitorPaths.resume}`, `POST ${monitorPaths.stop}`,
+  `GET ${base}`, `POST ${base}`, `POST ${monitorPaths.pause}`, `POST ${monitorPaths.resume}`, `POST ${monitorPaths.stop}`, `POST ${monitorPaths.feedback}`,
 ] as const;

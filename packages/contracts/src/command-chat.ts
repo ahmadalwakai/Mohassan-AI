@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { BackgroundRunSchema } from './background-run';
 import { MonitorCardSchema } from './monitors';
+import { MonitorAlertSchema } from './monitor-feedback';
 import { CampaignEventStreamSchema } from './campaign-progress';
 import { ChatRunViewSchema } from './agent-run';
 
@@ -205,6 +206,7 @@ export const ChatConversationSchema = ChatConversationSummarySchema.extend({
   backgroundRun: BackgroundRunSchema.optional(),
   monitorProposal: MonitorCardSchema.optional(),
   monitors: z.array(MonitorCardSchema).optional(),
+  monitorAlerts: z.array(MonitorAlertSchema).optional(),
 }).strict();
 
 export type ChatConversation = z.infer<typeof ChatConversationSchema>;

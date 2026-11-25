@@ -5,6 +5,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { MonitorCard, MonitorSpec } from "@mohassan/contracts";
 import { changeMonitor, followMonitorChanges, listMonitors, mergeMonitors, type MonitorAction } from "./monitors-client";
 import styles from "./smart-monitors.module.css";
+import { MonitorCardAlertFeedback } from "../features/monitor-feedback/alert-feedback";
 
 const copy = {
   ar: {
@@ -162,6 +163,7 @@ export function SmartMonitorCard({ monitor, onOpenConversation, onStopped }: {
       </> : null}
       {onOpenConversation ? <button type="button" onClick={() => onOpenConversation(monitor.conversationId)}>{text.open}</button> : null}
     </div> : null}
+    <MonitorCardAlertFeedback alerts={monitor.alerts} />
     {pending ? <p className={styles.detail} role="status">{text.saving}</p> : null}
     {error ? <p className={styles.error} role="alert">{error}</p> : null}
   </section>;

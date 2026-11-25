@@ -51,7 +51,7 @@ const platformIds = [
   ['039_conversation_shares', '038_conversation_shares'],
   ['040_member_data_rights', '037_member_data_rights'],
 ] as const;
-const currentIds = [...platformIds.map(([current]) => current), '041_long_run_checkpoints', '042_background_results', '043_smart_monitors'];
+const currentIds = [...platformIds.map(([current]) => current), '041_long_run_checkpoints', '042_background_results', '043_smart_monitors', '044_monitor_alert_feedback'];
 const agentIds = ['035_chat_conversation_review', '036_structured_memory'];
 
 // Ledger registrations in the base startup migrators, retrieved 2026-11-25.

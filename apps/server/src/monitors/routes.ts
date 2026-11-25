@@ -2,6 +2,7 @@ import { MonitorApproveSchema, MonitorListSchema } from '@mohassan/contracts';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Kysely } from 'kysely';
 import { z } from 'zod';
+import { registerMonitorAlertFeedbackRoute, withMonitorCardAlerts } from '../monitors-phase1/feedback.js';
 import { monitorPaths } from './route-keys.js';
 import { monitorChat } from './chat.js';
 import { MonitorError, type ReserveMonitorApproval } from './store.js';
@@ -20,18 +21,24 @@ export async function registerMonitorRuntime(app: FastifyInstance, db: Kysely<an
     }
   };
   const mutation = { onRequest: access, config: { rateLimit: { max: 12, timeWindow: '1 minute' } } };
+  registerMonitorAlertFeedbackRoute(app, db, owner, mutation);
   app.get(monitorPaths.base, { onRequest: access }, async request => {
     const { conversationId } = listQuery.parse(request.query);
-    return MonitorListSchema.parse({ monitors: await control.store.list((await owner(request)).id, conversationId) });
+    const { id } = await owner(request);
+    return MonitorListSchema.parse({ monitors: await withMonitorCardAlerts(db, id, await control.store.list(id, conversationId)) });
   });
   app.post(monitorPaths.base, mutation, async request => {
     const { proposalId } = MonitorApproveSchema.parse(request.body);
-    return control.store.approve((await owner(request)).id, proposalId, reserveApproval);
+    const { id } = await owner(request);
+    const [card] = await withMonitorCardAlerts(db, id, [await control.store.approve(id, proposalId, reserveApproval)]);
+    return card;
   });
   for (const action of ['pause', 'resume', 'stop'] as const) {
     app.post<{ Params: { id: string } }>(monitorPaths[action], mutation, async request => {
       emptyBody.parse(request.body ?? {});
-      return control.store.change((await owner(request)).id, z.uuid().parse(request.params.id), action);
+      const { id } = await owner(request);
+      const [card] = await withMonitorCardAlerts(db, id, [await control.store.change(id, z.uuid().parse(request.params.id), action)]);
+      return card;
     });
   }
   app.addHook('onReady', async () => { control.runtime.start(); });

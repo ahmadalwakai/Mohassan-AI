@@ -6,6 +6,8 @@ import { monitoringRequest } from '../assistant/response-policy-signals.js';
 import { matchText } from '../assistant/mind/normalize.js';
 import { migrateBackgroundResults } from '../background-results-migration.js';
 import type { CommandChatConfig } from '../command-chat.js';
+import { migrateMonitorAlertFeedback } from '../monitors-phase1/feedback-migration.js';
+import { addMonitorCardAlerts, conversationMonitorAlerts } from '../monitors-phase1/feedback.js';
 import { detectMonitorNeed, monitorHistoryMayMatter, safeMonitorRequest, type MonitorNeed } from './detection.js';
 import { monitorAccountAllowed, type EnabledMonitorRollout } from '../monitors-phase1/rollout.js';
 import { monitorRollout } from './flag.js';
@@ -100,6 +102,7 @@ function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: Enab
     return initializing ??= (async () => {
       await migrateBackgroundResults(db);
       await migrateMonitors(db);
+      await migrateMonitorAlertFeedback(db);
       ready = true;
     })().finally(() => { initializing = undefined; });
   };
@@ -139,10 +142,12 @@ function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: Enab
     initialize, runtime, store, availableTo,
     async view(ownerId: string, conversationId: string) {
       if (!ready || !await availableTo(ownerId)) return {};
-      const cards = await store.list(ownerId, conversationId);
+      const [listed, alerts] = await Promise.all([store.list(ownerId, conversationId), conversationMonitorAlerts(db, ownerId, conversationId)]);
+      const cards = addMonitorCardAlerts(listed, alerts);
       const monitorProposal = cards.find(card => card.status === 'proposed');
       const monitors = cards.filter(card => card.status !== 'proposed');
-      return { ...(monitorProposal ? { monitorProposal } : {}), ...(monitors.length ? { monitors } : {}) };
+      return { ...(monitorProposal ? { monitorProposal } : {}), ...(monitors.length ? { monitors } : {}),
+        ...(alerts.length ? { monitorAlerts: alerts.map(({ alert }) => alert) } : {}) };
     },
     async forTurn(turn: Turn) {
       if (!monitorHistoryMayMatter(turn.text) || !await availableTo(turn.ownerId) || !eligible(turn.text)) return null;

@@ -9,7 +9,7 @@ import { monitorTiming } from '../apps/server/src/monitors/schedule.js';
 import { createMonitorStore } from '../apps/server/src/monitors/store.js';
 
 const origin = 'http://127.0.0.1:3000';
-const setupToken = 'owner-rollout-test-setup-secret';
+const setupToken = 'owner-rollout-test-setup-secret-value';
 const config = {
   authSecret: 'owner-rollout-test-authentication-secret',
   internalSecret: 'owner-rollout-test-internal-service-secret',
@@ -115,6 +115,7 @@ describe('owner-only monitor rollout', () => {
     const blocked = [
       await request('GET', `${monitorPaths.base}?conversationId=bad`, member),
       await request('POST', monitorPaths.base, member, {}),
+      await request('POST', `${monitorPaths.base}/alerts/${randomUUID()}/feedback`, member, {}),
       ...await Promise.all(['pause', 'resume', 'stop'].map(action => request('POST', `${monitorPaths.base}/bad/${action}`, member, {}))),
     ];
     for (const response of blocked) {
@@ -132,7 +133,7 @@ describe('owner-only monitor rollout', () => {
     const priorRolloutStore = createMonitorStore(db);
     const spec = MonitorSpecSchema.parse({
       source: { kind: 'search', query: 'public park permits' }, read: { kind: 'items' }, condition: { kind: 'new-item' },
-      timing: monitorTiming('search', 'normal'), language: 'en', title: 'Park permits', message: 'Public permit published.',
+      timing: monitorTiming('search', 'normal', { now: new Date() }), language: 'en', title: 'Park permits', message: 'Public permit published.',
     });
     const observation = { value: [result.title], excerpt: result.title, url: result.url, observedAt: new Date().toISOString() };
     const ownerMonitor = await priorRolloutStore.propose(owner.id, { conversationId: ownerChat.id, spec, observation });

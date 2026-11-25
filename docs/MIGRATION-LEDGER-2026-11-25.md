@@ -15,6 +15,7 @@
 | 5 | #89 | `041_long_run_checkpoints` | — |
 | 6 | #92 | `042_background_results` | — |
 | 7 | `feat/smart-monitors` | `043_smart_monitors` | — |
+| 8 | `feat/monitors-phase1` | `044_monitor_alert_feedback` | — |
 
 Startup recognizes each full legacy ID and changes the existing ledger row to its recorded ID inside the migration transaction, preserving the original application timestamp. The notifications upgrade also widens the existing notification kind constraint for reminder delivery. Fresh databases run each migration once. The platform branch starts at `c2a0ff7` and leaves the agent migrations to the agent wave.
 
