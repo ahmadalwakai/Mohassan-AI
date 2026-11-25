@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "c2a0ff765071657cf200b5ee7d12fabaad738c0b",
+  "development": {
+    "sha256": "712a170d3d60c6aec41f9fe44e7d5cc222bbafbe28d9ca763b5f396db2d2410b",
+    "caseCount": 240,
+    "arabicCount": 120
+  },
+  "sealed": {
+    "sha256": "9be281fe111c7af2e60163080ca044d54cf09d361d4d45a14b7a3a81d152df2c",
+    "caseCount": 60,
+    "arabicCount": 30
+  }
+}
