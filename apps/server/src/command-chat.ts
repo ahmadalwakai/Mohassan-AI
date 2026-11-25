@@ -31,7 +31,7 @@ import type { ConversationShadow } from './assistant/conversation-state-shadow.j
 import { publicConversationFollowup } from './assistant/public-conversation-followup.js';
 import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { judge as judgeAnswer } from './assistant/judge.js';
-import { conversationReviewMigration, conversationReviewSettings, createConversationPublicationReviewer, type ConversationReviewSettings } from './assistant/review/publication.js';
+import { ensureChatConversationsTable, reviewJudgedReply } from './assistant/review/publication.js';
 import { continueWebSequence, joinSequence, planWebSequence, startWebSequence } from './assistant/web-sequence.js';
 import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
 import { composePlan, planningQuestion, planningTask } from './assistant/planner.js';
@@ -215,7 +215,6 @@ export interface CommandChatConfig {
    * under its own access rules. `all` (the default, labs): every line keeps its text, as before.
    */
   judgeLogText?: 'all' | 'owner';
-  conversationReview?: ConversationReviewSettings;
   /**
    * Run limits of the runtime (docs/architecture/agent-execution.md). `repairsPerRun`: how many corrections one run may
    * make after a check fails (default 1, at most 20); the same failure twice on one step is never retried again. The run
@@ -367,7 +366,7 @@ export async function commandChatMigration(db: Kysely<any>) {
   await db.transaction().execute(async (tx) => {
     await sql`LOCK TABLE schema_migrations IN EXCLUSIVE MODE`.execute(tx);
     if (!await tx.selectFrom('schema_migrations').select('version').where('version', '=', '013_command_chat').executeTakeFirst()) {
-      await sql`CREATE TABLE chat_conversations(id text PRIMARY KEY,owner_id text NOT NULL,title text NOT NULL,status text NOT NULL DEFAULT 'idle',active_run_id text,session_id text,question jsonb,approval jsonb,progress text,error text,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now())`.execute(tx);
+      await ensureChatConversationsTable(tx);
       await sql`CREATE INDEX chat_conversations_owner_idx ON chat_conversations(owner_id,updated_at DESC)`.execute(tx);
       await sql`CREATE TABLE chat_messages(id text PRIMARY KEY,conversation_id text NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,role text NOT NULL CHECK(role IN ('user','assistant')),text text NOT NULL,created_at timestamptz NOT NULL DEFAULT now())`.execute(tx);
       await sql`CREATE INDEX chat_messages_conversation_idx ON chat_messages(conversation_id,created_at,id)`.execute(tx);
@@ -415,14 +414,11 @@ export async function commandChatMigration(db: Kysely<any>) {
       await tx.insertInto('schema_migrations').values({version:'033_chat_request_keys'}).execute();
     }
     await campaignEventsMigration(tx);
-    await conversationReviewMigration(tx);
   });
 }
 
 export async function createCommandChatControl(db: Kysely<any>, config: CommandChatConfig) {
   await commandChatMigration(db);
-  const conversationReviewer = createConversationPublicationReviewer({ ...(config.conversationReview ?? conversationReviewSettings(process.env)), clean,
-    judgeEnabled: Boolean(config.judgeShadow), evidenceFor: judgeEvidence });
   const browser = config.browser;
   const providers = new Map<string, ModelProvider>();
   if (config.createProvider) {
@@ -1297,11 +1293,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (current.active_run_id !== runId || current.status !== 'running') throw new RunEnded();
       await tx.updateTable('chat_conversations').set({ status, progress: null, updated_at: new Date(), ...fields }).where('id', '=', id).execute();
       await tx.updateTable('chat_runs').set({ status, lease_expires_at:sql`CURRENT_TIMESTAMP + interval '10 minutes'`, updated_at: new Date() }).where('id', '=', runId).execute();
-      if (say) {
-        judgeReply(id, runId, say, status);
-        await conversationReviewer.publish(tx, { id, runId, text: clean(say), status, context: execution.getStore(), preserveContent: true });
-      }
+      if (say) await addMessage(tx, id, 'assistant', say);
     });
+    if (say) judgeReply(id, runId, say, status);
   }
 
   /** The owner sees the campaign draft before any request to connect or sign in: once, then never repeated. */
@@ -1362,7 +1356,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const applyWithhold = Boolean(allowChange && config.judgeWithholdForOwner && current.full);
       const verdict = config.judgeShadow.observe({ conversationId: id, runId, question: asked?.question ?? current.request, previous: asked ? asked.previous : current.previousRequest ?? null, reply, status,
         applyFix, applyWithhold, keepText: config.judgeLogText !== 'owner' || Boolean(current.full), ...(evidence.length ? { evidence } : {}) });
-      conversationReviewer.recordJudge(current, verdict, applyFix, applyWithhold);
       if (applyWithhold && verdict?.decision === 'withhold' && verdict.withholdText?.trim()) return { text: verdict.withholdText, withheld: true };
       if (applyFix && verdict?.decision === 'fix' && verdict.fixedReply?.trim()) return { text: verdict.fixedReply, withheld: false };
     } catch { /* The judge never stops a run. */ }
@@ -1388,7 +1381,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall', prejudged = false) {
     // The judge sees the reply first: logged in shadow for everyone; for the owner's account its fix, or its fixed withhold
     // sentence, is what goes on. Memory publications keep their own stricter checks and are never changed here.
-    const judged = prejudged ? { text, withheld: false } : judgeReply(id, runId, text, status, !memoryPublication);
+    const judged = prejudged || !config.judgeShadow ? { text, withheld: false } : await reviewJudgedReply(work => runTransaction(id, runId, work), { id, runId, clean, allowApply: !memoryPublication && state.supervision?.contract.mode !== 'enforced' }, () => judgeReply(id, runId, text, status, !memoryPublication));
     text = judged.text;
     // A withheld answer is not a completed task.
     if (judged.withheld && status === 'completed') status = 'partial';
@@ -1445,8 +1438,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           enforced: state.supervision?.contract.mode === 'enforced' || Boolean(memoryPublication),
           criterionLabels: Object.fromEntries((state.supervision?.contract.criteria ?? []).map(item => [item.id, criterionLabel(ledger, item.id, item.description)])) }).status;
       });
-      await conversationReviewer.publish(tx, { id, runId, text: clean(finalText), status: finalStatus,
-        context: execution.getStore(), preserveContent: judged.withheld || Boolean(memoryPublication) || state.supervision?.contract.mode === 'enforced' });
+      await addMessage(tx, id, 'assistant', finalText);
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',
         data: JSON.stringify({ contractHash: state.supervision?.contract.hash, review: state.completionReview }) }).execute();
@@ -4166,7 +4158,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (current.status === 'running' || WAITING_STATUSES.includes(current.status)) throw new BrowserError('CHAT_BUSY', 'بدأت مهمة أخرى في هذه المحادثة أثناء قراءة الصورة.', 409);
       const now = Date.now();
       await tx.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role: 'user', text: userText, images: JSON.stringify(attached), created_at: new Date(now) }).execute();
-      await conversationReviewer.publish(tx, { id, text: reply.text, status: 'completed', createdAt: new Date(now + 1), preserveContent: true });
+      await tx.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role: 'assistant', text: reply.text, created_at: new Date(now + 1) }).execute();
       await tx.updateTable('chat_images').set({ conversation_id: id, expires_at: null }).where('id', 'in', unique).where('owner_id', '=', ownerId).execute();
       const title = current.title === 'محادثة جديدة' || current.title === 'قراءة صورة' ? { title: (shown || (reply.language === 'ar' ? 'قراءة صورة' : 'Image reading')).slice(0, 100) } : {};
       await tx.updateTable('chat_conversations').set({ status: 'idle', error: null, progress: null, updated_at: new Date(), ...title }).where('id', '=', id).execute();

@@ -1,16 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sql } from 'kysely';
 import sharp from 'sharp';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentBrowser } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { describeDesktopCommand, parseDesktopCommand } from '@mohassan/desktop';
-import { createJudgeShadow } from '../apps/server/src/assistant/judge-shadow.js';
+import { createJudgeShadow, type JudgeShadowLine } from '../apps/server/src/assistant/judge-shadow.js';
 import { SUMMARY_MIN_MESSAGES } from '../apps/server/src/assistant/review/ledger.js';
-import { conversationReviewSettings } from '../apps/server/src/assistant/review/publication.js';
 import { createCommandChatControl, type CommandChatConfig } from '../apps/server/src/command-chat.js';
 
 const owner = 'conversation-publication-test-owner';
@@ -25,7 +24,6 @@ const source = {
 describe('conversation review at chat publication', () => {
   let database: Awaited<ReturnType<typeof createDatabase>>;
   let shadow: Awaited<ReturnType<typeof createCommandChatControl>>;
-  let active: typeof shadow;
   let directory: string;
   let judge: ReturnType<typeof createJudgeShadow>;
   const noIO = async (): Promise<never> => { throw new Error('Unexpected fixture I/O'); };
@@ -69,13 +67,14 @@ describe('conversation review at chat publication', () => {
         },
       },
     };
-    shadow = await createCommandChatControl(database.db, { ...config, conversationReview: conversationReviewSettings({}) });
-    active = await createCommandChatControl(database.db, { ...config, conversationReview: conversationReviewSettings({ MOHASSAN_CONVERSATION_REVIEW_APPLY: '1' }) });
+    shadow = await createCommandChatControl(database.db, config);
   });
+
+  beforeEach(() => vi.stubEnv('MOHASSAN_CONVERSATION_REVIEW_APPLY', undefined));
+  afterEach(() => vi.unstubAllEnvs());
 
   afterAll(async () => {
     await shadow?.shutdown();
-    await active?.shutdown();
     await judge?.flush();
     await database?.close();
     if (directory) await rm(directory, { force: true, recursive: true });
@@ -89,92 +88,99 @@ describe('conversation review at chat publication', () => {
     }))).execute();
   }
 
-  async function stored(id: string, messageId: string) {
-    return database.db.selectFrom('chat_messages').select(['text', 'conversation_review'])
-      .where('conversation_id', '=', id).where('id', '=', messageId).executeTakeFirstOrThrow();
+  async function judgeLines(id: string) {
+    await judge.flush();
+    const log = await readFile(judge.logFile, 'utf8').catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return '';
+      throw error;
+    });
+    return log.trim().split('\n').filter(Boolean)
+      .map(line => JSON.parse(line) as JudgeShadowLine).filter(line => line.conversationId === id);
   }
 
-  async function last(control: typeof shadow, id: string) {
-    await control.settled(id);
-    const conversation = await control.detail(owner, id);
+  async function last(id: string) {
+    await shadow.settled(id);
+    const conversation = await shadow.detail(owner, id);
     const message = conversation.messages.at(-1)!;
     expect(message.role, conversation.error ?? '').toBe('assistant');
-    return { conversation, message, row: await stored(id, message.id) };
+    return { conversation, message, lines: await judgeLines(id) };
   }
 
   it('keeps shadow text and stores only check codes alongside the actual judge decision', async () => {
     const { id } = await shadow.create(owner);
     await seed(id, 2);
     await shadow.send(owner, id, { text: request });
-    const { conversation, message, row } = await last(shadow, id);
+    const { conversation, message, lines } = await last(id);
     expect(message.text).toBe(draft);
-    expect(row.conversation_review).toMatchObject({
-      version: 1, runId: conversation.run?.id, action: 'fix', applied: false,
-      judge: [{ decision: expect.any(String), source: 'pre_send' }],
-      findings: expect.arrayContaining([expect.objectContaining({ check: 'preferences' })]),
-      ms: expect.any(Number),
-    });
-    expect(JSON.stringify(row.conversation_review)).not.toMatch(/Shivawn|Siobhán|catalogue/u);
+    expect(lines).toMatchObject([{ runId: conversation.run?.id, decision: expect.any(String), conversationReview: {
+      version: 1, action: 'fix', applied: false,
+      findings: expect.arrayContaining([expect.objectContaining({ check: 'preferences' })]), ms: expect.any(Number),
+    } }]);
+    expect(JSON.stringify(lines[0]!.conversationReview)).not.toMatch(/Shivawn|Siobhán|catalogue/u);
   });
 
-  it('fixes a name from an old turn with the flag on and advances the persisted summary', async () => {
-    const { id } = await active.create(owner);
+  it('fixes a name from an old turn and checkpoints only messages already stored', async () => {
+    vi.stubEnv('MOHASSAN_CONVERSATION_REVIEW_APPLY', '1');
+    const { id } = await shadow.create(owner);
     await seed(id, SUMMARY_MIN_MESSAGES + 2);
     for (let index = 0; index < 2; index += 1) {
-      await active.send(owner, id, { text: request });
-      const { message, row } = await last(active, id);
+      await shadow.send(owner, id, { text: request });
+      const { conversation, message, lines } = await last(id);
       expect(message.text).toContain('Hello, Siobhán!');
       expect(message.text).not.toContain('Shivawn');
-      expect(row.conversation_review).toMatchObject({ action: 'fix', applied: true });
+      expect(lines.at(-1)?.conversationReview).toMatchObject({ action: 'fix', applied: true });
       const { review_summary } = await database.db.selectFrom('chat_conversations').select('review_summary')
         .where('id', '=', id).executeTakeFirstOrThrow();
-      expect(review_summary).toMatchObject({ messageCount: SUMMARY_MIN_MESSAGES + 4 + index * 2,
-        throughMessageId: message.id, preferences: expect.arrayContaining([expect.objectContaining({ kind: 'name', value: 'Siobhán' })]) });
+      expect(review_summary).toMatchObject({ messageCount: SUMMARY_MIN_MESSAGES + 3 + index * 2,
+        throughMessageId: conversation.messages.at(-2)!.id,
+        preferences: expect.arrayContaining([expect.objectContaining({ kind: 'name', value: 'Siobhán' })]) });
     }
   });
 
-  it('records a single verdict for a waiting reply and keeps the approval prompt intact', async () => {
+  it('leaves waiting replies and approval prompts on the existing judge path', async () => {
     const { id } = await shadow.create(owner, { goal: 'احذف ملف old.txt من سطح المكتب' });
-    const { conversation, message, row } = await last(shadow, id);
+    const { conversation, message, lines } = await last(id);
     expect(conversation.status).toBe('waiting_approval');
     expect(conversation.approval?.prompt).toBe(message.text);
-    expect(row.conversation_review).toMatchObject({ applied: false, judge: [{ source: 'pre_send' }] });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.conversationReview).toBeUndefined();
   });
 
-  it('reviews a joined web reply once and keeps the two actual part verdicts in order', async () => {
+  it('keeps the two web part verdicts in order for a reply that bypasses the single hook', async () => {
     const { id } = await shadow.create(owner, { goal: 'ما عاصمة فرنسا؟ ثم كم عدد سكانها؟' });
-    const { conversation, message, row } = await last(shadow, id);
+    const { conversation, message, lines } = await last(id);
     expect(conversation.messages.filter(item => item.role === 'assistant')).toHaveLength(1);
     expect(message.text).toContain('عاصمتها باريس');
     expect(message.text).toContain('68 مليون');
-    expect(row.conversation_review).toMatchObject({ applied: false,
-      judge: [{ source: 'pre_send', decision: 'send' }, { source: 'pre_send', decision: 'send' }] });
+    expect(lines.map(line => [line.decision, line.conversationReview])).toEqual([
+      ['send', undefined], ['send', undefined],
+    ]);
   });
 
-  it('reviews an image reply that has no associated run', async () => {
+  it('leaves direct image replies outside the judge hook', async () => {
     const image = await sharp({ create: { width: 80, height: 40, channels: 3, background: '#ffffff' } }).png().toBuffer();
     const { id: imageId } = await shadow.uploadImage(owner, { mimeType: 'image/png', data: image.toString('base64') });
     const conversation = await shadow.create(owner, { images: [imageId] });
-    const { message, row } = await last(shadow, conversation.id);
-    expect(message.text).toBe(row.text);
-    expect(row.conversation_review).toMatchObject({ runId: null, applied: false,
-      judge: [{ decision: expect.any(String), applied: false, source: 'publication' }] });
+    const { conversation: stored, lines } = await last(conversation.id);
+    expect(stored.messages).toHaveLength(2);
+    expect(lines).toEqual([]);
   });
 
-  it('publishes the original text when review storage fails inside the transaction', async () => {
-    await sql`ALTER TABLE chat_messages ADD CONSTRAINT fixture_reject_review CHECK (conversation_review IS NULL) NOT VALID`.execute(database.db);
+  it('keeps the normal judge and reply when the summary transaction fails', async () => {
+    await sql`ALTER TABLE chat_conversations ADD CONSTRAINT fixture_reject_review CHECK (review_summary IS NULL) NOT VALID`.execute(database.db);
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const { id } = await shadow.create(owner);
-      await seed(id, 2);
+      await seed(id, SUMMARY_MIN_MESSAGES);
       await shadow.send(owner, id, { text: request });
-      const { message, row } = await last(shadow, id);
+      const { message, lines } = await last(id);
       expect(message.text).toBe(draft);
-      expect(row.conversation_review).toBeNull();
+      expect(lines).toHaveLength(1);
+      expect(lines[0]?.conversationReview).toBeUndefined();
       expect(log).toHaveBeenCalledWith(JSON.stringify({ level: 'warn', event: 'conversation_review_unavailable' }));
     } finally {
       log.mockRestore();
-      await sql`ALTER TABLE chat_messages DROP CONSTRAINT fixture_reject_review`.execute(database.db);
+      await sql`ALTER TABLE chat_conversations DROP CONSTRAINT fixture_reject_review`.execute(database.db);
     }
   });
 });
