@@ -85,7 +85,7 @@ const INVITATION: Copy = {
 
 const NIGHT: Copy = {
   ar: ['تصبح على خير!', 'ليلة طيبة!'],
-  en: ['Good night!', 'Good night, take care!'],
+  en: ['Good night! Take care.', 'Good night, see you next time!'],
 };
 
 const ENCOURAGE_USER: Copy = {
@@ -126,8 +126,8 @@ function copyFor(detection: MannersDetection, capabilities: ChatCapabilities | u
       const question = language === 'ar' ? 'من صنعك؟' : 'Who created you?';
       return evaluateLocalConversation(question)?.text ?? COPY.identity[language][0];
     }
-    if (detail === 'human') return language === 'ar' ? 'لا، أنا موحسن، مساعد رقمي.' : 'No, I’m Mohassan, a digital assistant.';
-    if (detail === 'ai') return language === 'ar' ? 'نعم، أنا موحسن، مساعد رقمي.' : 'Yes, I’m Mohassan, a digital assistant.';
+    if (detail === 'human') return language === 'ar' ? 'لا، أنا موحسن، مساعد يعمل بالذكاء الاصطناعي.' : 'No, I’m Mohassan, an AI assistant.';
+    if (detail === 'ai') return language === 'ar' ? 'أنا موحسن، مساعد يعمل بالذكاء الاصطناعي.' : 'I’m Mohassan, an AI assistant.';
   }
   if (act === 'wellbeing' && language === 'ar' && dialect && dialect !== 'msa') return 'تمام، شكرًا لسؤالك.';
   if (act === 'farewell' && detail === 'night') return choose(NIGHT[language], key);

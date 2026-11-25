@@ -1,6 +1,7 @@
 import type { Lang } from '../mind/contract.js';
 import { matchText } from '../mind/normalize.js';
 import { maskRequestLiteralData } from '../request-constraints.js';
+import { isEverydayManners } from './everyday.js';
 import { isMannersLanguageDirective, selectMannersLanguage } from './language.js';
 import { speechActRules, type MannersDetail, type MannersDialect, type SpeechAct, type SpeechActRule } from './speech-acts.js';
 
@@ -20,7 +21,7 @@ interface SocialSpan {
   end: number;
 }
 
-const WORD = /[\p{L}\p{N}][\p{L}\p{M}\p{N}]*(?:['’‘][\p{L}\p{M}\p{N}]+)*/gu;
+const WORD = /[\p{L}\p{N}][\p{L}\p{M}\p{N}]*(?:['’‘-][\p{L}\p{M}\p{N}]+)*/gu;
 const SEPARATOR = /[،,؛;!?؟:：\r\n]|\.(?=\s|$)|[—–]|-(?=\s)/u;
 const LEADING_SEPARATOR = /^(?:[\s،,؛;!?؟:：]+|[—–-](?=\s)|\.(?=\s|$))+/u;
 const DECORATION = /^[\s\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\u200d\uFE0F.,،;؛!?؟:：…—–-]*$/u;
@@ -35,6 +36,10 @@ const NAME_ONLY = /^(?:(?:just|only) (?:tell|write|say|give) (?:me )?(?:the |you
 const STRICT_TRAILING = /[،,؛;]|(?:[!?؟\r\n.]|[—–])(?=\s|$)/gu;
 const OTHER_COMMAND = /^(?:go|close|cancel|stop|start|pause|resume|continue|proceed|launch|install|run|exit|move|copy|export|set|enable|disable|remove|edit|add|print|turn|press)\b/iu;
 const MATH_START = /^[+-]?(?:\d+|\.\d+)\s*[-+×÷*/^]\s*[+-]?(?:\d+|\.\d+)/u;
+const LEADING_COURTESY = /^(?:please|kindly|من فضلك|لو سمحت)[\s,،:]+/iu;
+const LEADING_ADDRESS = /^(?:(?:mohassan|موحسن|يا موحسن)\s+|(?:(?:ai |virtual )?assistant|ai|bot|mohassan|يا موحسن)\s*[,،:]\s*)/iu;
+const LEADING_DISCOURSE = /^(?:well|okay|ok|all right|alright)\s*[,]\s*/iu;
+const TRAILING_COURTESY = /^(?:please|kindly|من فضلك|لو سمحت|ارجوك)[\s.!?؟،,]*$/u;
 const MAX_SOCIAL_CLAUSES = 6;
 
 function normalized(text: string): string {
@@ -50,10 +55,10 @@ function firstSocialSpan(original: string, view: string, from: number): SocialSp
   for (const word of tail.matchAll(WORD)) {
     const position = from + word.index;
     const gap = view.slice(previousEnd, position);
-    if (++count > 14 || (count === 1 ? !DECORATION.test(original.slice(from, position)) : !/^\s+$/u.test(gap))) break;
+    if (++count > 24 || (count === 1 ? !DECORATION.test(original.slice(from, position)) : !/^\s+$/u.test(gap))) break;
     if (count === 1) start = position;
     previousEnd = position + word[0].length;
-    const phrase = normalized(view.slice(start, previousEnd));
+    const phrase = normalized(view.slice(start, previousEnd)).replace(/(?<=[a-z])-(?=[a-z])/gu, ' ');
     const rule = speechActRules.find(candidate => candidate.pattern.test(phrase));
     if (rule) best = { rule, end: previousEnd };
   }
@@ -71,6 +76,7 @@ function firstSocialSpan(original: string, view: string, from: number): SocialSp
 function strongerAct(current: SpeechActRule, next: SpeechActRule): SpeechActRule {
   if (next.detail === 'quiet') return current.act === 'greeting' ? { ...current, detail: 'quiet' } : current;
   if (next.act === 'greeting' && current.act !== 'greeting') return current;
+  if (next.act === 'compliment' && current.act === 'thanks') return current;
   // In a bilingual greeting the first greeting provides the response language.
   if (next.act === 'greeting' && current.act === 'greeting' && next.language !== current.language) return current;
   if (next.act === current.act && current.detail && !next.detail && current.language === next.language) return current;
@@ -83,11 +89,16 @@ function isRequest(text: string): boolean {
 }
 
 function formatOrLanguageOnly(text: string, rule: SpeechActRule): boolean {
-  return isMannersLanguageDirective(text) || rule.act === 'identity' && rule.detail === 'name' && NAME_ONLY.test(normalized(text));
+  const phrase = normalized(text);
+  return isMannersLanguageDirective(text) || rule.act === 'identity' && rule.detail === 'name' && NAME_ONLY.test(phrase)
+    || isEverydayManners(rule) && TRAILING_COURTESY.test(phrase);
 }
 
 function leadingSocial(original: string, view: string, from = 0): { rule: SpeechActRule; end: number; requestStart: number | null } | null {
-  const first = firstSocialSpan(original, view, from);
+  const tail = view.slice(from);
+  const prefix = LEADING_COURTESY.exec(tail)?.[0] ?? LEADING_ADDRESS.exec(tail)?.[0] ?? LEADING_DISCOURSE.exec(tail)?.[0];
+  const prefixed = prefix ? firstSocialSpan(original, view, from + prefix.length) : null;
+  const first = firstSocialSpan(original, view, from) ?? (prefixed && isEverydayManners(prefixed.rule) ? prefixed : null);
   if (!first) return null;
   let { rule, end } = first;
   for (let clauses = 0; clauses < MAX_SOCIAL_CLAUSES; clauses++) {

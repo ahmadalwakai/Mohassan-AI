@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { standaloneMannersRoute } from './manners/chat.js';
 import { directRoute } from './brain.js';
 import { isCampaignRequest } from './campaign-request.js';
+import { recognizeEverydayClarification } from './everyday-clarification.js';
 import { parseHands, type HandsStep } from './hands.js';
 import { evaluateInlineDataFile } from './inline-data-file.js';
 import { evaluateLocalComputation, type LocalComputation } from './local-computation.js';
@@ -47,6 +48,8 @@ export interface RequestRoutingInput {
   text: string;
   /** Host-persisted user state only, parsed by resolveRequestContext. */
   context?: unknown;
+  /** Actual conversation history when the host has a turn count. */
+  previousTurns?: number;
   previousScope?: unknown;
   pendingQuestion?: z.infer<typeof PendingQuestionSchema>;
   capabilities?: Partial<Record<RoutingCapability, boolean>>;
@@ -207,6 +210,11 @@ function decideRuleRequestRoute(input: RequestRoutingInput, choices: ScratchRout
     if (input.fullAccess === false) return { ...decision, availability: 'restricted', reason: 'account_restriction' };
     if (!testDrivenCodingEnabled()) return { ...decision, availability: 'missing_capability', missingCapabilities: ['coding'], reason: 'missing_capability' };
     return decision;
+  }
+  if (recognizeEverydayClarification(input.text, input.previousTurns === undefined ? previousContext !== null : input.previousTurns > 0)) {
+    const decision = clarify('missing_reference');
+    return { ...decision, resolution: { ...decision.resolution, kind: 'ambiguous', query: null,
+      ambiguities: [...new Set([...resolution.ambiguities, 'missing_reference' as const])], nextState: previousContext } };
   }
   if (recognizeRuntimeStatusRequest(scopeRequest)) {
     const decision = base('chat', 'chat', 'local_status', 'host_runtime_status');

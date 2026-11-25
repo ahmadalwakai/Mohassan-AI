@@ -49,6 +49,7 @@ import { composeReferencedComputation, computationReference, computedRecord, eva
 import { evaluateLocalRecall } from './assistant/local-recall.js';
 import { ownFactQuestion } from './assistant/own-fact-question.js';
 import { evaluateLocalConversation } from './assistant/local-conversation.js';
+import { pauseEverydayClarification } from './assistant/everyday-clarification.js';
 import { admitManners } from './assistant/manners/chat.js';
 import { evaluateCapabilityReply } from './assistant/capability-reply.js';
 import { answerRuntimeStatus } from './assistant/runtime-status.js';
@@ -2347,6 +2348,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const earlier = await db.selectFrom('chat_messages').select(['role', 'text']).where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(HISTORY_MESSAGES + 1).execute();
       const history = earlier.reverse().slice(0, -1).map((entry) => ({ role: entry.role, text: clean(entry.text) }));
       currentExecution.previousRequest = history.filter(entry => entry.role === 'user').at(-1)?.text ?? null;
+      if (run.intent === 'task' && (state.routing?.route === 'clarify' || state.clarifiedRequest)
+        && await pauseEverydayClarification(request, state, (status, fields, prompt) => pause(id, runId, state, status, fields, prompt),
+          text => finish(id, runId, state, text, 'blocked'))) return;
       if (run.intent !== 'review_browser' && run.intent !== 'restore_browser' && await runExtractiveWriting({ db, config, ownerId, id, runId, request, state, signal, search, active, previousText: currentExecution.previousRequest, full: currentExecution.full,
         observe: async () => await browser.hasPage(ownerId, id) ? (await observeBrowser(ownerId, id)).page : null, scrub: text => vault.scrub(id, clean(text)),
         finish: (text, status) => finish(id, runId, state, text, status, undefined, undefined, true) })) return;
@@ -4040,7 +4044,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         previousContext = bootstrapRequestContext(previousMessages.reverse().map(message => ({ id: message.id, text: clean(message.text) })));
       }
       const chatModel = hasChatModel();
-      const routing = decideRequestRoute({ text: clean(input.text), context: previousContext, turnId: runId, fullAccess: fullForRouting,
+      const routing = decideRequestRoute({ text: clean(input.text), context: previousContext, turnId: runId, fullAccess: fullForRouting, previousTurns,
         previousUserTurn: previousRun?.goal,
         capabilities: { browser: true, search: true, memory: Boolean(tools?.memory), adsModel: Boolean(config.adsModel),
           computer: Boolean(tools?.computer), coding: Boolean(tools?.work?.code), chatModel, writerModel: chatModel, planner: true } });
