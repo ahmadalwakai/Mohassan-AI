@@ -164,4 +164,3 @@ export function loadMonitorDecisionHead(artifact: unknown, options: { pipelineCh
 
   return { predict, frameFeatureKeys: Object.freeze([...frameFeatureKeys]), textFeatureDimensions };
 }
-
