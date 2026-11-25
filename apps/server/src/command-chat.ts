@@ -105,6 +105,7 @@ import { RunLedgerError, addEvidence, appendStep, beginRepair, cancelLedger, cla
 import { PermissionGateError, checkPermission, consumePermission, pendingActionMaterial, recordDecision, requestPermission } from './assistant/permission-gate.js';
 import { TOOL_ACTION, beginHandsStep, completeApprovedHandsStep, completeHandsStep, desktopPlanStep, documentPlanStep, gateRefusalText, handsStepId, pathOfHandler, platformCapabilityOf, recordHandsPlan, recordModelStep,
   rejectHandsReadResult, reopenHandsReadStep, settleHandsPart, verifyStoredPdf } from './assistant/run-plans.js';
+import { recordChatAnswer, recordChatEnd, recordChatProgress, type ChatAnswerDetails, type ChatMetricsSink } from './ops/metrics/chat.js';
 
 export interface DesktopChatPort {
   parse(request: string): ParsedDesktopCommand | null;
@@ -113,6 +114,7 @@ export interface DesktopChatPort {
 }
 
 export interface CommandChatConfig {
+  chatMetrics?: ChatMetricsSink;
   /** False for a member: no projects, studio, computer or skill runs. Absent means full access. */
   fullAccess?: (ownerId: string) => Promise<boolean>;
   /** Current account access, checked using the same fenced transaction. Must not open a nested transaction. */
@@ -446,6 +448,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     ...(tools?.computer ? ['computer_view', 'computer_click', 'computer_type', 'computer_key'] as const : []),
   ];
   type Execution = { ownerId: string; id: string; runId: string; token: string; controller: AbortController; full: boolean;
+    metricsStartedAt?: number;
     request?: string; previousRequest?: string | null; constraints?: UserRequestConstraints | null; state?: BrainState; page?: AgentPage;
     /** Pages this run read over HTTP (the last five, in memory only): the judge in shadow compares the reply's sentences with them. */
     readPages?: AgentPage[] };
@@ -679,20 +682,23 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   async function interruptInactiveAccount(id: string, runId: string) {
     const current = execution.getStore();
     if (!current || current.id !== id || current.runId !== runId) return;
-    await db.transaction().execute(async tx => {
+    const endedAt = await db.transaction().execute(async tx => {
       const conversation = await tx.selectFrom('chat_conversations').select(['active_run_id', 'status']).where('id', '=', id)
         .where('owner_id', '=', current.ownerId).forUpdate().executeTakeFirst();
       const run = await tx.selectFrom('chat_runs').select(['id', 'status']).where('id', '=', runId).where('owner_id', '=', current.ownerId)
         .where('conversation_id', '=', id).where('lease_token', '=', current.token).where('worker_id', '=', instanceId).forUpdate().executeTakeFirst();
       if (conversation?.active_run_id !== runId || conversation.status !== 'running' || run?.status !== 'running') return;
-      await tx.updateTable('chat_runs').set({ status: 'interrupted', lease_token: randomUUID(), updated_at: new Date() }).where('id', '=', runId).execute();
+      const interruptedAt = new Date();
+      await tx.updateTable('chat_runs').set({ status: 'interrupted', lease_token: randomUUID(), updated_at: interruptedAt }).where('id', '=', runId).execute();
       await tx.updateTable('chat_effect_receipts').set({ status: 'unknown', finished_at: new Date() }).where('run_id', '=', runId).where('status', '=', 'started').execute();
       await tx.updateTable('chat_model_receipts').set({ status: 'unknown', error_code: 'CHAT_ACCOUNT_INACTIVE', finished_at: new Date() }).where('run_id', '=', runId).where('status', '=', 'started').execute();
       await recordTerminalRun(tx, runId, 'interrupted');
       await closeOpenCampaignTasks(tx, id, runId, unresolved => campaignCancelEvent('run_interrupted', unresolved));
       await tx.updateTable('chat_conversations').set({ status: 'failed', active_run_id: null, question: null, approval: null, secure: null, progress: null,
         error: 'توقف التشغيل لأن الحساب لم يعد نشطًا. لم أستأنف أي إجراء.', updated_at: new Date() }).where('id', '=', id).execute();
+      return interruptedAt;
     });
+    if (endedAt) await recordChatEnd(config.chatMetrics, current.full, current.state?.agentRun?.history, endedAt, current.metricsStartedAt);
   }
   async function browserEffectStatus(ownerId: string, id: string, connection: Kysely<any> = db): Promise<'clear' | 'pending' | 'unknown'> {
     const receipt = await connection.selectFrom('chat_effect_receipts as e').innerJoin('chat_runs as r', 'r.id', 'e.run_id')
@@ -908,7 +914,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     await closeOpenCampaignTasks(tx, id, oldRunId, unresolved => campaignCancelEvent('owner_cancelled', unresolved));
     await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: oldRunId, kind: 'superseded',
       message: 'صحّح المالك الطلب أثناء العمل؛ أُلغي ما كان معلّقًا ولم يُنفَّذ.', data: JSON.stringify({ by: newRunId }) }).execute();
-    return { runId: oldRunId, token: run.lease_token as string, goal: String(run.goal ?? ''), pendingTask, held };
+    return { runId: oldRunId, token: run.lease_token as string, goal: String(run.goal ?? ''), pendingTask, held, metricsHistory: ledger.history };
   }
 
   async function recordChatAction(runId: string, state: BrainState, event: ActionCompletionEventInput) {
@@ -1377,7 +1383,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
 
   /** `prejudged`: the text is a message of several answers, each already judged on its own question (web-sequence.ts). */
   async function finish(id: string, runId: string, state: BrainState, text: string, status: 'completed' | 'partial' | 'blocked',
-      proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall', prejudged = false) {
+      proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall', prejudged = false, metricsDetails?: ChatAnswerDetails) {
     // The judge sees the reply first: logged in shadow for everyone; for the owner's account its fix, or its fixed withhold
     // sentence, is what goes on. Memory publications keep their own stricter checks and are never changed here.
     const judged = prejudged ? { text, withheld: false } : judgeReply(id, runId, text, status, !memoryPublication);
@@ -1390,7 +1396,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const campaignTask = state.campaign ? campaignTaskId(runId, state.campaign.serial) : null;
     if (campaignEnd && state.campaign) state.campaign.open = false;
     await saveState(runId, state);
-    await runTransaction(id,runId,async (tx) => {
+    const publishedStatus = await runTransaction(id,runId,async (tx) => {
       const current = await tx.selectFrom('chat_conversations').select(['status', 'active_run_id']).where('id', '=', id).forUpdate().executeTakeFirstOrThrow();
       if (current.active_run_id !== runId || current.status !== 'running') throw new RunEnded();
       if (campaignEnd && campaignTask) await appendCampaignEvent(tx, { conversationId: id, runId, taskId: campaignTask }, campaignEnd);
@@ -1447,7 +1453,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (config.recordSkillGap && finalStatus !== 'completed') {
         await config.recordSkillGap(tx, { ownerId: execution.getStore()!.ownerId, chatRunId: runId, outcome: finalStatus, signal: state.gapSignal ?? null });
       }
+      return finalStatus;
     });
+    recordChatAnswer(config.chatMetrics, execution.getStore(), state, publishedStatus === 'blocked', metricsDetails, judged.withheld);
     const current=execution.getStore();if(current)forgetVault(id,current.token);
   }
 
@@ -1974,6 +1982,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     try {
       await active();
       const run = await db.selectFrom('chat_runs').selectAll().where('id', '=', runId).executeTakeFirstOrThrow();
+      if (config.chatMetrics) execution.getStore()!.metricsStartedAt = new Date(run.created_at).getTime();
       const state: BrainState = { ...newBrainState(), ...(run.state ?? {}) };
       const effectiveSource = await effectiveSourceForRun(run);
       if (!effectiveSource) {
@@ -2345,7 +2354,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           return;
         }
         await keepPage(id,restored.result.page);
-        await finish(id,runId,state,`أعدت قراءة الصفحة المحفوظة. ${restored.sameContent?'لم يتغير محتواها المرصود.':'تغيرت الصفحة؛ سأعتمد قراءتها الحالية في الطلب التالي.'} لم تُستأنف الإجراءات السابقة.`,'partial');
+        await finish(id,runId,state,`أعدت قراءة الصفحة المحفوظة. ${restored.sameContent?'لم يتغير محتواها المرصود.':'تغيرت الصفحة؛ سأعتمد قراءتها الحالية في الطلب التالي.'} لم تُستأنف الإجراءات السابقة.`,'partial',
+          undefined, undefined, false, { browserRead: true });
         return;
       }
       if (requestCapabilityAllowed(constraints, 'browser_navigation') && requestCapabilityAllowed(constraints, 'browser_action')
@@ -2681,7 +2691,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           await addStep(id, runId, intrinsicSequence.lang === 'ar' ? 'أجوبة محلية بالترتيب' : 'Local answers in order');
           state.trail.push({ step: ++state.steps, action: 'local_sequence', changed: false,
             result: clean(intrinsicSequence.parts.map(part => `${part.source} (${part.status}): ${part.evidence.map(item => item.quote).join(' | ') || 'fixed text'}`).join('\n')).slice(0, 1100) });
-          await finish(id, runId, state, vault.scrub(id, intrinsicSequence.text), intrinsicSequence.status);
+          await finish(id, runId, state, vault.scrub(id, intrinsicSequence.text), intrinsicSequence.status, undefined, undefined, false,
+            config.chatMetrics ? { localParts: intrinsicSequence.parts } : undefined);
           return;
         }
         if (intrinsicSelf) {
@@ -2878,7 +2889,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         // Several questions in one message («ما عاصمة فرنسا؟ ثم كم عدد سكانها؟») are asked one after another, each with its own
         // search and its own verdict, instead of one search for the whole sentence (assistant/web-sequence.ts).
         const sequence = asked && !steps && !entityAsk && !contextualQuery
-          ? planWebSequence(actionRequest, { now: new Date(effectiveSource.evaluatedAt), self: selfFacts }) : null;
+          ? planWebSequence(actionRequest, { now: new Date(effectiveSource.evaluatedAt), self: selfFacts }, Boolean(config.chatMetrics)) : null;
         const sequencePlan = sequence ? startWebSequence(sequence, /\p{Script=Arabic}/u.test(request) ? 'ar' : 'en') : null;
         // The mind answers first from what it knows and its own sources; the visible browser is the fallback.
         // Search by default is the last resort: the Ads model and the mind see the request first.
@@ -3067,7 +3078,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           // was read from, and the reply goes out once with every part in the order asked.
           const lang = plan.lang ?? (/\p{Script=Arabic}/u.test(request) ? 'ar' : 'en');
           const judged = judgeReply(id, runId, vault.scrub(id, outcome.text), outcome.status, true, judgedAs);
-          const next = continueWebSequence(plan.sequel, { request: plan.sequel.asked, text: judged.text, status: judged.withheld && outcome.status === 'completed' ? 'partial' : outcome.status },
+          const next = continueWebSequence(plan.sequel, { request: plan.sequel.asked, text: judged.text,
+            ...(config.chatMetrics && judged.withheld ? { withheld: true } : {}), status: judged.withheld && outcome.status === 'completed' ? 'partial' : outcome.status },
             plan.found?.title ? plainTitle(plan.found.title) : '', lang);
           if ('plan' in next) {
             // The run ledger: this part's steps settle with its own judged status before the next part's plan is recorded.
@@ -3081,13 +3093,15 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           }
           state.hands = null;
           const joined = joinSequence(next.answers);
-          await finish(id, runId, state, joined.text, joined.status, undefined, undefined, true);
+          await finish(id, runId, state, joined.text, joined.status, undefined, undefined, true,
+            config.chatMetrics ? { webParts: next.answers } : undefined);
           return;
         }
         state.hands = null;
         if (reshaped) {
           const judged = judgeReply(id, runId, vault.scrub(id, outcome.text), outcome.status, true, reshaped);
-          await finish(id, runId, state, judged.text, judged.withheld && outcome.status === 'completed' ? 'partial' : outcome.status, undefined, undefined, true);
+          await finish(id, runId, state, judged.text, judged.withheld && outcome.status === 'completed' ? 'partial' : outcome.status, undefined, undefined, true,
+            config.chatMetrics ? { withheld: judged.withheld } : undefined);
           return;
         }
         await finish(id, runId, state, vault.scrub(id, outcome.text), outcome.status);
@@ -3455,7 +3469,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         } else {
           delete mindState.mindFrame;
           state.webFallback = null;
-          await finish(id, runId, state, vault.scrub(id, clean(reply.text)), reply.status);
+          await finish(id, runId, state, vault.scrub(id, clean(reply.text)), reply.status, undefined, undefined, false,
+            config.chatMetrics ? { mindEvidence: reply.evidence } : undefined);
         }
         return;
       }
@@ -3837,14 +3852,17 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         : error instanceof BrowserError ? error.message
           : error instanceof ProviderError ? chatModelFailure(error).message
             : 'حدث خطأ أثناء العمل. أرسل «تابع» وسأحاول مجددًا.';
-      await runTransaction(id,runId,async tx=>{
+      const endedAt = await runTransaction(id,runId,async tx=>{
         await tx.updateTable('chat_conversations').set({ status: 'failed', active_run_id: null, progress: null, error: message, updated_at: new Date() }).where('id', '=', id).execute();
-        await tx.updateTable('chat_runs').set({ status: 'failed', updated_at: new Date() }).where('id', '=', runId).execute();
+        const failedAt = new Date();
+        await tx.updateTable('chat_runs').set({ status: 'failed', updated_at: failedAt }).where('id', '=', runId).execute();
         await recordTerminalRun(tx, runId, 'failed');
         await closeOpenCampaignTasks(tx, id, runId, unresolved => campaignFailureEvent(error, message, unresolved));
         if (config.recordSkillGap) await config.recordSkillGap(tx, { ownerId, chatRunId: runId, outcome: 'failed', signal: trustedSkillGapSignal(error) });
+        return failedAt;
       }).catch(()=>{});
       const current=execution.getStore();if(current)forgetVault(id,current.token);
+      if (endedAt && current) await recordChatEnd(config.chatMetrics, current.full, current.state?.agentRun?.history, endedAt, current.metricsStartedAt);
     } finally {
       clearTimeout(deadline);
       clearInterval(timer); await heartbeat;
@@ -3881,7 +3899,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if(closing)throw new BrowserError('CHAT_SHUTTING_DOWN','الخدمة تتوقف الآن.',503);
     const token=randomUUID();
     let previousToken:string|undefined;
-    await db.transaction().execute(async (tx) => {
+    const ended = await db.transaction().execute(async (tx) => {
       const conversation=await tx.selectFrom('chat_conversations').selectAll().where('id','=',id).where('owner_id','=',ownerId).forUpdate().executeTakeFirst();
       if (config.accountActive && !await config.accountActive(ownerId, tx)) throw new BrowserError('CHAT_ACCOUNT_INACTIVE', 'هذا الحساب غير نشط.', 403);
       if(!conversation||conversation.active_run_id!==runId||conversation.status!==expected.status||expected.field&&conversation[expected.field]?.id!==expected.requestId)throw new BrowserError('CHAT_RESUME_CONFLICT','تغير طلب المتابعة أو استُخدم بالفعل.',409);
@@ -3895,10 +3913,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const message = { id: randomUUID(), createdAt: new Date(), text: clean(say) };
       await tx.insertInto('chat_messages').values({ id: message.id, conversation_id: id, role: 'user', text: message.text, created_at: message.createdAt }).execute();
       await change(state, tx, { ...message, createdAt: message.createdAt.getTime(), ...(priorSource ? { priorRequest: priorSource.request } : {}) });
-      await tx.updateTable('chat_runs').set({ status:expected.stop?'cancelled':'running', state: JSON.stringify(state),lease_token:token,attempt:run.attempt+1,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, updated_at: new Date() }).where('id', '=', runId).execute();
+      const updatedAt = new Date();
+      await tx.updateTable('chat_runs').set({ status:expected.stop?'cancelled':'running', state: JSON.stringify(state),lease_token:token,attempt:run.attempt+1,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, updated_at: updatedAt }).where('id', '=', runId).execute();
       await tx.updateTable('chat_conversations').set({ status:expected.stop?'idle':'running',active_run_id:expected.stop?null:runId, question: null, approval: null, secure: null, error: null, progress:expected.stop?null:'يتابع العمل…', updated_at: new Date() }).where('id', '=', id).execute();
       if (expected.stop) await recordTerminalRun(tx, runId, 'cancelled');
+      if (expected.stop) return { history: state.agentRun?.history, at: updatedAt };
     });
+    if (ended) await recordChatEnd(config.chatMetrics, () => config.fullAccess?.(ownerId) ?? Promise.resolve(true), ended.history, ended.at);
     if(expected.stop){if(previousToken)forgetVault(id,previousToken);return detail(ownerId,id);}
     expected.afterClaim?.();
     await dispatch(ownerId, id, runId, token,true);
@@ -3980,7 +4001,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const token=randomUUID();
     const fullForRouting = config.fullAccess ? await config.fullAccess(ownerId) : true;
     const sessionCapabilities = await capabilitiesFor(ownerId);
-    await db.transaction().execute(async (tx) => {
+    const receivedAt = await db.transaction().execute(async (tx) => {
       const locked = await tx.selectFrom('chat_conversations').select(['status','browser_checkpoint','active_run_id','secure']).where('id', '=', id).where('owner_id', '=', ownerId).forUpdate().executeTakeFirst();
       if (!locked) throw notFound();
       if (config.accountActive && !await config.accountActive(ownerId, tx)) throw new BrowserError('CHAT_ACCOUNT_INACTIVE', 'هذا الحساب غير نشط.', 403);
@@ -4062,7 +4083,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const visibility = decideBrowserVisibility({ request: clean(input.text), route: routing.route, role: fullForRouting ? 'owner' : 'member' });
       await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId, kind: 'visibility', message: visibility.reason,
         data: JSON.stringify({ level: visibility.level, code: visibility.code, route: routing.route }) }).execute();
+      return createdAt;
     });
+    recordChatProgress(config.chatMetrics, fullForRouting, receivedAt);
     // The corrected run is committed; the old worker stops at once (its lease token already changed, so it can no longer
     // write), and a prepared task nobody approved is withdrawn.
     const replaced = superseded as Awaited<ReturnType<typeof supersedeRun>> | null;
@@ -4070,6 +4093,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const active = controllers.get(id);
       if (active && active.runId === replaced.runId && active.token === replaced.token) active.controller.abort(new Error('CHAT_SUPERSEDED'));
       forgetVault(id, replaced.token);
+      await recordChatEnd(config.chatMetrics, fullForRouting, replaced.metricsHistory);
       await dropUnapproved(ownerId, { pendingTask: replaced.pendingTask });
     }
     await dispatch(ownerId, id, runId,token);
@@ -4298,7 +4322,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     let cancelledToken:string|undefined;
     let cancelledController:AbortController|undefined;
     let cancelledState:unknown;
-    await db.transaction().execute(async (tx) => {
+    const stoppedHistory = await db.transaction().execute(async (tx) => {
       const row=await tx.selectFrom('chat_conversations').selectAll().where('id','=',id).where('owner_id','=',ownerId).forUpdate().executeTakeFirstOrThrow();
       await tx.updateTable('chat_conversations').set({ status: 'idle', active_run_id: null, question: null, approval: null, secure: null, progress: null, error: null, updated_at: new Date() }).where('id', '=', id).where('owner_id', '=', ownerId).execute();
       if (row.active_run_id) {
@@ -4317,10 +4341,12 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await tx.updateTable('chat_model_receipts').set({status:'unknown',error_code:'CHAT_CANCELLED',finished_at:new Date()}).where('run_id','=',row.active_run_id).where('status','=','started').execute();
         await recordTerminalRun(tx, row.active_run_id, 'cancelled');
         await closeOpenCampaignTasks(tx, id, row.active_run_id, unresolved => campaignCancelEvent('owner_cancelled', unresolved));
+        return stoppedLedger?.history;
       }
     });
     cancelledController?.abort(new Error('CHAT_CANCELLED'));
     if(cancelledToken)forgetVault(id,cancelledToken);
+    await recordChatEnd(config.chatMetrics, () => config.fullAccess?.(ownerId) ?? Promise.resolve(true), stoppedHistory);
     await dropUnapproved(ownerId,cancelledState);
     return detail(ownerId, id);
   }

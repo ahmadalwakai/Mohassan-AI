@@ -19,7 +19,7 @@ import { buildFrame } from './mind/frame.js';
 import { ownFactQuestion } from './own-fact-question.js';
 import { entityWords, isFollowUp, notWebReason, parseHands, refersBack, tidy, topicWords, webQuestion, type HandsPlan, type HandsStep } from './hands.js';
 
-export interface WebSequenceAnswer { request: string; text: string; status: 'completed' | 'partial' | 'blocked' }
+export interface WebSequenceAnswer { request: string; text: string; status: 'completed' | 'partial' | 'blocked'; source?: 'computation' | 'self'; withheld?: boolean }
 export interface WebSequencePart {
   /** The owner's words for this part, exactly as written. */
   request: string;
@@ -50,13 +50,13 @@ function webPart(request: string): boolean {
 }
 
 /** The parts of a message in order, or null when it is not a sequence this planner takes (see the module comment). */
-export function planWebSequence(request: string, deps: LocalSequenceDeps): WebSequencePart[] | null {
+export function planWebSequence(request: string, deps: LocalSequenceDeps, includeSource = false): WebSequencePart[] | null {
   const parts = sequenceParts(request);
   if (!parts) return null;
   const planned: WebSequencePart[] = [];
   for (const part of parts) {
     const local = answerLocalPart(part, deps);
-    if (local) planned.push({ request: part, local: { request: part, text: local.text, status: local.status } });
+    if (local) planned.push({ request: part, local: { request: part, text: local.text, status: local.status, ...(includeSource ? { source: local.source } : {}) } });
     else if (webPart(part)) planned.push({ request: part });
     else return null;
   }
