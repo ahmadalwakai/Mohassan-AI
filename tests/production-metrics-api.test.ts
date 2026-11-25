@@ -6,6 +6,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { ConversationSharePreview, CreatedConversationShare, ProductionMetricsResponse } from '@mohassan/contracts';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createApplication } from '../apps/server/src/app.js';
+import { monitorTiming } from '../apps/server/src/monitors/schedule.js';
+import { createMonitorStore } from '../apps/server/src/monitors/store.js';
+import { recordBackgroundRunOutcome } from '../apps/server/src/notifications-store.js';
 import { MEMBER_ROUTES } from '../apps/server/src/members.js';
 import { productionMetricsSettings } from '../apps/server/src/ops/metrics/index.js';
 
@@ -187,6 +190,52 @@ it('turns off collection and disk writes with the environment flag', async () =>
       windows: { hour: { roles: { owner: { routes: [], chat: { runs: 0 } }, member: { routes: [] } } } } });
     await f.app.close();
     await expect(readdir(f.snapshots)).rejects.toMatchObject({ code: 'ENOENT' });
+  } finally {
+    await f.dispose();
+  }
+}, 60_000);
+
+it('reads each alert’s current feedback once and exports only aggregates for a completed trial window', async () => {
+  const f = await fixture(true);
+  try {
+    const { db, app, ownerHeaders } = f;
+    const ownerId = (await app.inject({ url: '/api/access', headers: ownerHeaders })).json<{ user: { id: string } }>().user.id;
+    const conversationId = (await app.inject({ method: 'POST', url: '/api/chat/conversations',
+      headers: ownerHeaders, payload: {} })).json<{ id: string }>().id;
+    const hourMs = 3_600_000;
+    const end = Math.floor(Date.now() / hourMs) * hourMs;
+    const happenedAt = new Date(end - 1000);
+    const privateText = 'unexported monitor evidence';
+    const privateUrl = 'https://page.example.test/private-sample';
+    const { id } = await createMonitorStore(db).propose(ownerId, {
+      conversationId, observation: { excerpt: privateText, value: privateText, observedAt: happenedAt.toISOString() },
+      spec: { source: { kind: 'page', url: privateUrl }, read: { kind: 'main' }, condition: { kind: 'change' },
+        timing: monitorTiming('page', 'normal', { now: new Date() }), language: 'en', title: privateText, message: privateText },
+    });
+    const alert = randomUUID();
+    for (const alertId of [alert, randomUUID()]) {
+      await recordBackgroundRunOutcome(db, {
+        runId: alertId, userId: ownerId, conversationId, startedAt: happenedAt, outcome: 'completed',
+        language: 'en', preview: privateText, monitorId: id,
+      }, happenedAt);
+    }
+    await db.insertInto('monitor_alert_feedback').values({ user_id: ownerId, alert_id: alert, rating: 'helpful' }).execute();
+    await db.updateTable('monitor_alert_feedback').set({ rating: 'not_helpful', reason: 'wrong_value' })
+      .where('alert_id', '=', alert).execute();
+    const report = await app.inject({ url: '/api/ops/metrics', headers: ownerHeaders });
+    expect(report.statusCode).toBe(200);
+    expect(report.json<ProductionMetricsResponse>().completedMonitorWeek).toMatchObject({
+      startMs: end - 168 * hourMs, endMs: end,
+      monitors: { alerts: { total: 2, helpful: 0, notHelpful: 1, unrated: 1,
+        reasons: { no_meaningful_change: 0, late: 0, wrong_value: 1 } } },
+    });
+    const csv = await app.inject({ url: '/api/ops/metrics.csv', headers: ownerHeaders });
+    expect(csv.statusCode).toBe(200);
+    expect(csv.body).toContain('monitor_alerts,notHelpful,1');
+    expect(csv.body).toContain('monitor_feedback_reason,wrong_value,1');
+    for (const output of [report.body, csv.body]) {
+      for (const forbidden of [ownerId, conversationId, id, alert, privateText, privateUrl]) expect(output).not.toContain(forbidden);
+    }
   } finally {
     await f.dispose();
   }

@@ -7,6 +7,8 @@ import {
   type ChatTiming, type MetricBucket, type TimingData,
 } from './bucket';
 import {addLatency, createHistogram, histogramBytes, latencyBucketIndex} from './histogram';
+import {createMonitorMetricBucket, mergeMonitorMetricBucket, summarizeMonitorMetrics} from './monitor-buckets.js';
+import type {MonitorMetricEvent} from './monitor-events.js';
 
 export type {AnswerPath, Latency, MetricsView, MetricWindow, RouteMetrics, TrafficRole, WorkingRunPhase} from '@mohassan/contracts';
 
@@ -49,6 +51,7 @@ export class MetricsStore {
   readonly #memoryCapBytes: number;
   readonly #minutes: MinuteBuckets = new Map();
   readonly #hours: MinuteBuckets = new Map();
+  #completedMonitorEdge = createMonitorMetricBucket();
   readonly #pending = new Map<number, MinuteBuckets>();
   #histogramBytes = 0;
   #capacityReached = false;
@@ -96,6 +99,25 @@ export class MetricsStore {
     this.#recordChat(this.#historicalBuckets(atMs), role, observation);
   }
 
+  recordMonitor(event: MonitorMetricEvent): void {
+    const monitors = this.#buckets().map(bucket => bucket.monitors);
+    if (event.kind === 'delivery') {
+      for (const bucket of monitors) bucket.delivered[event.channel]++;
+      return;
+    }
+    if (event.kind === 'pause') {
+      for (const bucket of monitors) bucket.pauses[event.reason]++;
+      return;
+    }
+    const timings = monitors.map(bucket => ({histogram: bucket.lateness}));
+    for (const bucket of monitors) {
+      bucket.checked++;
+      bucket.succeeded += Number(event.succeeded);
+    }
+    this.#observe(timings, event.latenessMs);
+    monitors.forEach((bucket, index) => { bucket.lateness = timings[index].histogram; });
+  }
+
   recordResources(values: Partial<Record<ResourceMetric, number>>): void {
     if (this.#capacityReached) this.#advance(this.nowMs());
     if (this.#capacityReached) return;
@@ -131,8 +153,15 @@ export class MetricsStore {
         roles: {owner: bucket ? summarizeRoutes(bucket, 'owner') : [], member: bucket ? summarizeRoutes(bucket, 'member') : []},
       });
     }
+    const completedStart = currentHour - hourlySlots * hourMs;
+    const completedMonitors = createMonitorMetricBucket();
+    mergeMonitorMetricBucket(completedMonitors, this.#completedMonitorEdge);
+    for (const [start, bucket] of this.#hours) {
+      if (start >= completedStart && start < currentHour) mergeMonitorMetricBucket(completedMonitors, bucket.monitors);
+    }
     return {
       generatedAtMs: now,
+      completedMonitorWeek: {startMs: completedStart, endMs: currentHour, monitors: summarizeMonitorMetrics(completedMonitors)},
       countingOnly: this.#capacityReached,
       windows: {
         hour: aggregate(this.#minutes, currentMinute - (minuteSlots - 1) * minuteMs),
@@ -176,6 +205,12 @@ export class MetricsStore {
   }
 
   loadMinute(startMs: number, bucket: MetricBucket): void {
+    const now = this.nowMs();
+    this.#advance(now);
+    if (bucketStart(startMs, hourMs) === bucketStart(now, hourMs) - hourlySlots * hourMs) {
+      mergeMonitorMetricBucket(this.#completedMonitorEdge, bucket.monitors, this.#allocateHistogram);
+      return;
+    }
     for (const target of this.#historicalBuckets(startMs)) {
       mergeBucket(target, bucket, this.#allocateHistogram);
     }
@@ -242,6 +277,10 @@ export class MetricsStore {
 
   #release(bucket: MetricBucket): void {
     forEachHistogram(bucket, () => { this.#histogramBytes -= histogramBytes; });
+    this.#resumeTimingsIfSpace();
+  }
+
+  #resumeTimingsIfSpace(): void {
     const nextObservationBytes = histogramBytes * (this.#snapshots ? 3 : 2);
     if (this.#histogramBytes + nextObservationBytes <= this.#memoryCapBytes) this.#capacityReached = false;
   }
@@ -249,9 +288,18 @@ export class MetricsStore {
   #advance(now: number): void {
     const minute = bucketStart(now, minuteMs);
     if (minute === this.#currentMinute) return;
+    const hour = bucketStart(now, hourMs);
+    if (hour !== bucketStart(this.#currentMinute, hourMs)) {
+      if (this.#completedMonitorEdge.lateness) {
+        this.#histogramBytes -= histogramBytes;
+        this.#resumeTimingsIfSpace();
+      }
+      const departing = this.#hours.get(hour - hourlySlots * hourMs);
+      this.#completedMonitorEdge = departing?.monitors ?? createMonitorMetricBucket();
+      if (departing) departing.monitors = createMonitorMetricBucket();
+    }
     this.#currentMinute = minute;
     this.#recordBuckets = undefined;
-    const hour = bucketStart(now, hourMs);
     const evict = (buckets: MinuteBuckets, earliest: number) => {
       for (const [start, bucket] of buckets) {
         if (start >= earliest) continue;

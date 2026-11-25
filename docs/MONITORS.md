@@ -95,10 +95,12 @@ The server accepts up to 12 calls per minute on each mutation route, matching th
 
 ## Enable the rollout
 
-1. Deploy the server and web changes. On the managed Linux VM, set `MOHASSAN_MONITORS_ENABLED=1` in `/etc/mohassan/server.env` and run `sudo systemctl restart mohassan.service`. Apply the same setting to each API replica running monitor work.
+1. Deploy the server and web changes with `MOHASSAN_MONITORS_ENABLED=0`. For the trial, set `MOHASSAN_MONITORS_ENABLED=owner` in `/etc/mohassan/server.env` on each API replica and run `sudo systemctl restart mohassan.service`. In this mode, owner-role accounts get monitor detection, proposals, routes and scheduled checks. [Wave 6 deployment runbook](DEPLOY-WAVE-6-2026-11-25.md)
 2. Open a web conversation and ask to monitor a public fixture or source with a known value. Review the approval card, approve it and check that its next check appears. Open **المراقبات** in settings and exercise pause and resume.
 3. Verify that a completed monitor opens the right conversation and shows the evidence. Use a browser subscribed to Web Push and a registered iPhone with APNs configured to check closed-app delivery in those environments. [Existing background delivery setup](BACKGROUND-RESULTS.md)
 4. To turn the feature off, unset the flag or set it to `0` and restart the API. Detection, new approvals and smart checks stop. Stored monitors retain their original expiry. The existing two-hour monitor is available with its own rollout setting. [Wave 5 flags](INTEGRATION-WAVE-5-2026-11-25.md#flags)
+
+Set `MOHASSAN_MONITORS_ENABLED=1` on each API replica to enable monitoring for all active workspace accounts.
 
 ## Merge notes
 

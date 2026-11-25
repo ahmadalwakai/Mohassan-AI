@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
+import { monitorMetricTransaction, observeMonitorCheck } from '../ops/metrics/monitor-events.js';
+import { monitorOwnerIds, type EnabledMonitorRollout } from '../monitors-phase1/rollout.js';
 import { monitorHealth, monitorTrigger, publishMonitorNotice } from './delivery.js';
 import { evaluateMonitor } from './evaluation.js';
 import { MONITOR_LIMITS, nextMonitorBudgetDay, nextMonitorCheck } from './schedule.js';
@@ -27,11 +29,13 @@ async function withinSignal<T>(signal: AbortSignal, invoke: () => Promise<T>): P
 export function createMonitorRuntime(db: Kysely<any>, ports: {
   read: ReadMonitor;
   store?: MonitorStore;
+  rollout?: EnabledMonitorRollout;
 }, { now = () => new Date(), onError = () => console.error('[monitors] Poll failed; retrying.') }: {
   now?: () => Date;
   onError?: () => void;
 } = {}) {
-  const store = ports.store ?? createMonitorStore(db, { now });
+  const store = ports.store ?? createMonitorStore(db, { now, rollout: ports.rollout });
+  const ownersOnly = ports.rollout === 'owner';
   let timer: NodeJS.Timeout | undefined;
   let running: Promise<void> | undefined;
   let controller = new AbortController();
@@ -40,6 +44,7 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
     return db.transaction().execute(async tx => {
       const at = now();
       const row = await tx.selectFrom('smart_monitors').selectAll().where('status', '=', 'active')
+        .$if(ownersOnly, query => query.where('user_id', 'in', monitorOwnerIds(tx)))
         .where('expires_at', '>', at).where('next_check_at', '<=', at)
         .where(eb => eb.or([eb('lease_until', 'is', null), eb('lease_until', '<=', at)]))
         .orderBy('next_check_at').orderBy('id').limit(1).forUpdate().skipLocked().executeTakeFirst() as MonitorRow | undefined;
@@ -71,7 +76,7 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
   }
 
   async function finish({ row: claimed, token }: Claim, result: ReadResult, hostAdmitted: boolean) {
-    await db.transaction().execute(async tx => {
+    await monitorMetricTransaction(db, async (tx, observe) => {
       // Chat publication/deletion lock the conversation first. Match that ordering when writing evidence.
       if (!await lockConversation(tx, claimed)) return;
       const row = await tx.selectFrom('smart_monitors').selectAll().where('id', '=', claimed.id)
@@ -103,9 +108,10 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
         const failure = { failure_kind: result.kind, consecutive_failures: consecutiveFailures };
         if (consecutiveFailures >= MONITOR_LIMITS.consecutiveFailures || exhausted) {
           const notice = monitorHealth(row, result.kind, at);
-          const receipt = await publishMonitorNotice(tx, row, role, notice, at);
+          const receipt = await publishMonitorNotice(tx, row, role, notice, at, observe);
           await update.set({ ...last, ...failure, ...receipt, status: 'paused', note: notice.message,
             notifications: row.notifications + 1, next_check_at: null }).execute();
+          observe({ kind: 'pause', reason: result.kind });
           return;
         }
         const { dueAt, intervalMs } = nextMonitorCheck(row.spec, at, row.interval_ms, { changed: true, expiry });
@@ -122,7 +128,7 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
         failure_kind: null, consecutive_failures: 0 };
       if (trigger) {
         const notice = monitorTrigger(row, trigger, at);
-        const receipt = await publishMonitorNotice(tx, row, role, notice, at);
+        const receipt = await publishMonitorNotice(tx, row, role, notice, at, observe);
         await update.set({ ...observed, ...receipt, status: 'completed', notifications: row.notifications + 1, next_check_at: null }).execute();
         return;
       }
@@ -132,16 +138,17 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
   }
 
   async function publishDueNotice(at: Date): Promise<boolean> {
-    return db.transaction().execute(async tx => {
+    return monitorMetricTransaction(db, async (tx, observe) => {
       const candidate = await tx.selectFrom('smart_monitors as m').innerJoin('chat_conversations as c', 'c.id', 'm.conversation_id')
         .select(['m.id']).where('m.pending_notice', 'is not', null).where('m.notice_due_at', '<=', at)
+        .$if(ownersOnly, query => query.where('m.user_id', 'in', monitorOwnerIds(tx)))
         .orderBy('m.notice_due_at').orderBy('m.id').limit(1).forNoKeyUpdate('c').skipLocked().executeTakeFirst();
       if (!candidate) return false;
       const row = await tx.selectFrom('smart_monitors').selectAll().where('id', '=', candidate.id)
         .where('pending_notice', 'is not', null).where('notice_due_at', '<=', at).forUpdate().skipLocked().executeTakeFirst() as MonitorRow | undefined;
       if (!row?.pending_notice) return false;
       const role = await store.accountRole(row.user_id, tx);
-      const receipt = role ? await publishMonitorNotice(tx, row, role, row.pending_notice, at)
+      const receipt = role ? await publishMonitorNotice(tx, row, role, row.pending_notice, at, observe)
         : { notice_due_at: new Date(at.getTime() + MONITOR_LIMITS.maxIntervalMs) };
       await tx.updateTable('smart_monitors').set(receipt).where('id', '=', row.id).execute();
       return true;
@@ -150,6 +157,7 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
 
   async function cleanExpired(at: Date) {
     const pendingExpiry = db.selectFrom('smart_monitors').select('id').where('status', 'in', ['proposed', 'active', 'paused'])
+      .$if(ownersOnly, query => query.where('user_id', 'in', monitorOwnerIds(db)))
       .where('expires_at', '<=', at).orderBy('expires_at').limit(MONITOR_LIMITS.workPerPoll).forUpdate().skipLocked();
     await db.updateTable('smart_monitors').set(expire).where('id', 'in', pendingExpiry).execute();
     const staleHosts = db.selectFrom('smart_monitor_hosts').select('host_key').where('eligible_at', '<=', at)
@@ -177,13 +185,16 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
           hostAdmitted ||= retryAt === null;
           return retryAt;
         };
+        const startedAt = now().getTime();
         try {
           result = await withinSignal(signal, () => ports.read(checked.row.spec, { ownerId: checked.row.user_id, signal,
             cache: checked.row.source_cache ?? undefined, reserveHost, extendHost: store.extendHost }));
         } catch {
           result = { kind: 'unreachable' };
         }
-        if (!shutdown.aborted) await finish(checked, result, hostAdmitted);
+        if (shutdown.aborted) continue;
+        observeMonitorCheck(db, checked.row.next_check_at, startedAt, result.kind);
+        await finish(checked, result, hostAdmitted);
       }
     };
     const workers = await Promise.allSettled(Array.from({ length: MONITOR_LIMITS.concurrentReads }, worker));

@@ -2,7 +2,10 @@ import { delimiter, resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import { registerChatMetricsRefresh } from './chat-refresh.js';
+import type { MetricWindow } from '@mohassan/contracts';
 import { metricsCsv } from './csv.js';
+import { registerMonitorMetrics } from './monitor-events.js';
+import { readMonitorFeedbackMetrics } from './monitor-feedback.js';
 import { METRICS_CSV_PATH, METRICS_PATH, registerRequestMetrics } from './request.js';
 import { sampleProcessResources } from './resources.js';
 import { MetricsSnapshots } from './snapshots.js';
@@ -28,6 +31,7 @@ export async function registerProductionMetrics(
   if (snapshots) {
     await snapshots.load();
     registerRequestMetrics(app, cachedRole, (role, route, status, durationMs) => store.recordRequest(role, route, status, durationMs));
+    const stopMonitorMetrics = registerMonitorMetrics(db, event => store.recordMonitor(event));
     const stopSampling = sampleProcessResources(sample => store.recordResources(sample));
     let flushTimer: ReturnType<typeof setTimeout>;
     let closed = false;
@@ -44,13 +48,26 @@ export async function registerProductionMetrics(
     app.addHook('onClose', async () => {
       closed = true;
       stopSampling();
+      stopMonitorMetrics();
       clearTimeout(flushTimer);
       await snapshots.flush({ includeCurrentHour: true });
     });
   }
 
-  function view() {
-    return { ...store.view(), enabled, snapshotAvailable: snapshots?.healthy ?? false, chatAvailable: chatAvailable() };
+  async function view() {
+    const report = { ...store.view(), enabled, snapshotAvailable: snapshots?.healthy ?? false, chatAvailable: chatAvailable() };
+    if (!enabled) return report;
+    const windows: Pick<MetricWindow, 'startMs' | 'endMs' | 'monitors'>[] = Object.values(report.windows);
+    if (report.completedMonitorWeek) windows.push(report.completedMonitorWeek);
+    try {
+      const feedback = await readMonitorFeedbackMetrics(db, windows);
+      windows.forEach((window, index) => {
+        if (window.monitors) window.monitors.alerts = feedback[index];
+      });
+    } catch {
+      // Keep the other metrics available when the feedback counts cannot be read.
+    }
+    return report;
   }
 
   return {
@@ -60,7 +77,7 @@ export async function registerProductionMetrics(
       app.get(METRICS_CSV_PATH, async (_request, reply) => reply
         .type('text/csv; charset=utf-8')
         .header('Content-Disposition', 'attachment; filename="production-metrics.csv"')
-        .send(metricsCsv(view())));
+        .send(metricsCsv(await view())));
     },
   };
 }

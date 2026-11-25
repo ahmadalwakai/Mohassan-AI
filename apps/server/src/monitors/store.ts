@@ -2,7 +2,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { MonitorSpecSchema, type MonitorCard, type MonitorSpec } from '@mohassan/contracts';
 import { sql, type Kysely } from 'kysely';
 import { roleOf, type WorkspaceRole } from '../members.js';
+import { monitorRoleAllowed, type EnabledMonitorRollout } from '../monitors-phase1/rollout.js';
 import { backgroundAccountCanReceive } from '../notifications-store.js';
+import { monitorMetricTransaction } from '../ops/metrics/monitor-events.js';
 import { monitorSourceContainsCredentials } from './credential-privacy.js';
 import { evaluateMonitor, type MonitorEvaluationState, type MonitorObservation } from './evaluation.js';
 import { initialMonitorCheck, MONITOR_LIMITS, monitorExpiry, monitorTiming } from './schedule.js';
@@ -63,6 +65,7 @@ export type ReserveMonitorApproval = (tx: Kysely<any>, userId: string, requestId
 
 export type MonitorAccessOptions = {
   now?: () => Date;
+  rollout?: EnabledMonitorRollout;
   accountActive?: (userId: string, db: Kysely<any>) => Promise<boolean>;
   isMember?: (userId: string, db: Kysely<any>) => Promise<boolean>;
 };
@@ -108,11 +111,12 @@ export async function spendMonitorBudget(db: Kysely<any>, userId: string, role: 
 }
 
 export function createMonitorStore(db: Kysely<any>, {
-  now = () => new Date(), accountActive = (userId, tx) => backgroundAccountCanReceive(tx, userId), isMember,
+  now = () => new Date(), accountActive = (userId, tx) => backgroundAccountCanReceive(tx, userId), isMember, rollout = 'all',
 }: MonitorAccessOptions = {}) {
   async function accountRole(userId: string, tx: Kysely<any>): Promise<WorkspaceRole | null> {
     if (!await accountActive(userId, tx)) return null;
-    return isMember ? await isMember(userId, tx) ? 'member' : 'owner' : roleOf(tx, userId);
+    const role = isMember ? await isMember(userId, tx) ? 'member' : 'owner' : await roleOf(tx, userId);
+    return monitorRoleAllowed(rollout, role) ? role : null;
   }
 
   async function requireRole(userId: string, tx: Kysely<any>) {
@@ -245,7 +249,7 @@ export function createMonitorStore(db: Kysely<any>, {
     },
 
     async change(userId: string, id: string, action: 'pause' | 'resume' | 'stop'): Promise<MonitorCard> {
-      return db.transaction().execute(async tx => {
+      return monitorMetricTransaction(db, async (tx, observe) => {
         await requireRole(userId, tx);
         const row = await lockMonitor(tx, userId, id);
         const at = now();
@@ -255,6 +259,7 @@ export function createMonitorStore(db: Kysely<any>, {
           return updateMonitor(tx, id, { status: 'stopped', next_check_at: null }, at);
         }
         if (action === 'pause' && card.status === 'active') {
+          observe({ kind: 'pause', reason: 'manual' });
           return updateMonitor(tx, id, { status: 'paused', next_check_at: null, note: null }, at);
         }
         if (action === 'resume' && card.status === 'paused') {

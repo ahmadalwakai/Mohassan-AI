@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MonitorAlertSchema } from './monitor-feedback';
 
 const label = z.string().trim().min(1).max(180);
 const currency = z.string().regex(/^[A-Z]{3}$/u);
@@ -68,6 +69,7 @@ export const MonitorCardSchema = z.object({
   current: MonitorObservationSchema.nullable(), lastCheckedAt: z.iso.datetime().nullable(),
   nextCheckAt: z.iso.datetime().nullable(), expiresAt: z.iso.datetime(),
   offer: MonitorOfferSchema.optional(), note: z.string().max(1000).optional(),
+  alerts: z.array(MonitorAlertSchema).optional(),
 }).strict();
 export const MonitorListSchema = z.object({ monitors: z.array(MonitorCardSchema) }).strict();
 export const MonitorApproveSchema = z.object({ proposalId: z.uuid() }).strict();

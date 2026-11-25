@@ -35,6 +35,7 @@ import { AssistantNotifications, NOTICE_AFTER_MS, declineNoticeOffer, noticeKind
 import { RemindersSettings } from "./reminders-settings";
 import { BackgroundRunCard } from "./background-run-card";
 import { ConversationMonitors, MonitorSettings } from "./smart-monitors";
+import { ConversationMessageFeedback } from "../lib/monitor-feedback/alert-feedback";
 import styles from "./assistant-app.module.css";
 
 /** Plan §5.2 P5: the first useful progress line should show within half a second; a local answer is ready in ~30 ms. */
@@ -739,7 +740,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
             {conversation!.messages.map((message, index) => <article key={message.id} className={message.role === "user" ? styles.userTurn : styles.assistantTurn}>
               {message.role === "user" && message.images?.length ? <div className={styles.messageImages}>{message.images.map((image) => <a key={image.id} href={`/api/chat/images/${image.id}`} target="_blank" rel="noreferrer"><img src={`/api/chat/images/${image.id}`} alt="صورة مرفقة" width={image.width} height={image.height} /></a>)}</div> : null}
               {message.role === "user" ? <p dir="auto">{message.text}</p> : <Markdown text={asking && index === conversation!.messages.length - 1 ? withoutQuestionList(message.text) : message.text} />}
-              {message.role === "assistant" && message.text.trim() ? <div className={styles.replyTools}><CopyButton text={message.text} /><FeedbackButtons key={message.id} conversationId={conversation!.id} messageId={message.id} /></div> : null}
+              {message.role === "assistant" && message.text.trim() ? <div className={styles.replyTools}><CopyButton text={message.text} /><ConversationMessageFeedback alerts={conversation!.monitorAlerts} messageId={message.id} fallback={<FeedbackButtons key={message.id} conversationId={conversation!.id} messageId={message.id} />} /></div> : null}
               {index === conversation!.messages.length - 1 && message.role === "user" ? <Steps conversation={conversation!} /> : null}
             </article>)}
             {conversation!.messages.at(-1)?.role === "assistant" && (running || conversation!.steps.length > 0 || unfinishedVerdict(conversation!)) && !answering && !blocked ? <Steps conversation={conversation!} /> : null}

@@ -35,17 +35,42 @@ export type ChatMetrics = {
   paths: Record<AnswerPath, number>;
 };
 
+export const monitorDeliveryChannels = ['conversation', 'tab', 'webPush', 'apns'] as const;
+export type MonitorDeliveryChannel = (typeof monitorDeliveryChannels)[number];
+export const monitorPauseReasons = ['manual', 'missing', 'unreachable'] as const;
+export type MonitorPauseReason = (typeof monitorPauseReasons)[number];
+
+export type MonitorAlertFeedbackMetrics = {
+  total: number;
+  helpful: number;
+  notHelpful: number;
+  unrated: number;
+  reasons: Record<'no_meaningful_change' | 'late' | 'wrong_value', number>;
+};
+
+export type MonitorHealthMetrics = {
+  checkLatenessMs: {samples: number; p50: number | null; p95: number | null};
+  checks: {attempted: number; succeeded: number; successRate: number | null};
+  delivered: Record<MonitorDeliveryChannel, number>;
+  pauses: Record<MonitorPauseReason, number>;
+  alerts?: MonitorAlertFeedbackMetrics;
+};
+
+export type MonitorMetricWindow = {startMs: number; endMs: number; monitors: MonitorHealthMetrics};
+
 export type MetricWindow = {
   startMs: number;
   endMs: number;
   roles: Record<TrafficRole, {routes: RouteMetrics[]; chat: ChatMetrics}>;
   resources: Record<ResourceMetric, {samples: number; average: number | null; max: number | null}>;
+  monitors?: MonitorHealthMetrics;
 };
 
 export type MetricsView = {
   generatedAtMs: number;
   countingOnly: boolean;
   windows: {hour: MetricWindow; day: MetricWindow; week: MetricWindow};
+  completedMonitorWeek?: MonitorMetricWindow;
   hourlyRoutes: {startMs: number; endMs: number; roles: Record<TrafficRole, RouteMetrics[]>}[];
 };
 

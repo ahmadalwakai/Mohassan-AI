@@ -6,8 +6,11 @@ import { monitoringRequest } from '../assistant/response-policy-signals.js';
 import { matchText } from '../assistant/mind/normalize.js';
 import { migrateBackgroundResults } from '../background-results-migration.js';
 import type { CommandChatConfig } from '../command-chat.js';
+import { migrateMonitorAlertFeedback } from '../monitors-phase1/feedback-migration.js';
+import { addMonitorCardAlerts, conversationMonitorAlerts } from '../monitors-phase1/feedback.js';
 import { detectMonitorNeed, monitorHistoryMayMatter, safeMonitorRequest, type MonitorNeed } from './detection.js';
-import { smartMonitorsEnabled } from './flag.js';
+import { monitorAccountAllowed, type EnabledMonitorRollout } from '../monitors-phase1/rollout.js';
+import { monitorRollout } from './flag.js';
 import { migrateMonitors } from './migration.js';
 import { observePage } from './page.js';
 import { createMonitorRuntime } from './runtime.js';
@@ -39,8 +42,9 @@ const address = /https:\/\/[^\s<>"'«»]+/iu;
 const controls = new WeakMap<Kysely<any>, ReturnType<typeof createMonitorChat>>();
 
 export function installMonitorChat(db: Kysely<any>, config: Configuration) {
-  if (!smartMonitorsEnabled()) return;
-  if (!controls.has(db)) controls.set(db, createMonitorChat(db, config));
+  const rollout = monitorRollout();
+  if (rollout === 'off') return;
+  if (!controls.has(db)) controls.set(db, createMonitorChat(db, config, rollout));
   return controls.get(db);
 }
 
@@ -60,8 +64,10 @@ function scopedSource(need: MonitorNeed, spec: MonitorSpec) {
   return true;
 }
 
-export function legacyMonitorHandledBySmartChat(text: string) {
-  return smartMonitorsEnabled() && (monitoringRequest(matchText(text)) || detectMonitorNeed({ text })?.kind === 'explicit');
+export async function legacyMonitorHandledBySmartChat(db: Kysely<any>, ownerId: string, text: string) {
+  const control = monitorChat(db);
+  if (!control || !await control.availableTo(ownerId)) return false;
+  return monitoringRequest(matchText(text)) || detectMonitorNeed({ text })?.kind === 'explicit';
 }
 
 function blockedSource(turn: BlockedTurn) {
@@ -81,12 +87,13 @@ function blockedSource(turn: BlockedTurn) {
     ? { url, reason: 'unreachable' as const, runId: turn.runId } : null;
 }
 
-function createMonitorChat(db: Kysely<any>, config: Configuration) {
+function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: EnabledMonitorRollout) {
   const network = new SafeNetwork({ resolver: config.networkPolicy?.resolver, userAgent: config.networkPolicy?.userAgent });
   const searchProvider = config.searchProvider instanceof SearchEngine ? undefined : config.searchProvider;
   const reader = createMonitorReader({ db, network, searchProvider });
-  const store = createMonitorStore(db);
-  const runtime = createMonitorRuntime(db, { read: reader.read, store });
+  const store = createMonitorStore(db, { rollout });
+  const runtime = createMonitorRuntime(db, { read: reader.read, store, rollout });
+  const availableTo = (ownerId: string) => monitorAccountAllowed(db, ownerId, rollout);
   let initializing: Promise<void> | undefined;
   let ready = false;
   const initialize = (schemaReady = false) => {
@@ -95,6 +102,7 @@ function createMonitorChat(db: Kysely<any>, config: Configuration) {
     return initializing ??= (async () => {
       await migrateBackgroundResults(db);
       await migrateMonitors(db);
+      await migrateMonitorAlertFeedback(db);
       ready = true;
     })().finally(() => { initializing = undefined; });
   };
@@ -131,16 +139,18 @@ function createMonitorChat(db: Kysely<any>, config: Configuration) {
   }
 
   return {
-    initialize, runtime, store,
+    initialize, runtime, store, availableTo,
     async view(ownerId: string, conversationId: string) {
-      if (!ready) return {};
-      const cards = await store.list(ownerId, conversationId);
+      if (!ready || !await availableTo(ownerId)) return {};
+      const [listed, alerts] = await Promise.all([store.list(ownerId, conversationId), conversationMonitorAlerts(db, ownerId, conversationId)]);
+      const cards = addMonitorCardAlerts(listed, alerts);
       const monitorProposal = cards.find(card => card.status === 'proposed');
       const monitors = cards.filter(card => card.status !== 'proposed');
-      return { ...(monitorProposal ? { monitorProposal } : {}), ...(monitors.length ? { monitors } : {}) };
+      return { ...(monitorProposal ? { monitorProposal } : {}), ...(monitors.length ? { monitors } : {}),
+        ...(alerts.length ? { monitorAlerts: alerts.map(({ alert }) => alert) } : {}) };
     },
     async forTurn(turn: Turn) {
-      if (!monitorHistoryMayMatter(turn.text) || !eligible(turn.text)) return null;
+      if (!monitorHistoryMayMatter(turn.text) || !await availableTo(turn.ownerId) || !eligible(turn.text)) return null;
       const messages = await db.selectFrom('chat_messages as m').innerJoin('chat_conversations as c', 'c.id', 'm.conversation_id')
         .select(['m.role', 'm.text']).where('c.id', '=', turn.conversationId).where('c.owner_id', '=', turn.ownerId)
         .orderBy('m.created_at', 'desc').orderBy('m.id', 'desc').limit(13).execute();
@@ -150,7 +160,7 @@ function createMonitorChat(db: Kysely<any>, config: Configuration) {
       return need ? prepare(need, turn) : null;
     },
     async forBlockedTurn(turn: BlockedTurn) {
-      if (!address.test(turn.text) || !eligible(turn.text)) return null;
+      if (!address.test(turn.text) || !await availableTo(turn.ownerId) || !eligible(turn.text)) return null;
       const blocked = blockedSource(turn);
       if (!blocked) return null;
       const need = detectMonitorNeed({ text: turn.text, blocked });

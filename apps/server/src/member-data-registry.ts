@@ -109,6 +109,7 @@ export const memberDataRegistry: readonly AccountDataTable[] = [
   memberData('reminder_preferences', 'user_id time_zone'),
   accountData('background_apns_deliveries', 'data.event_id IN (SELECT task_id FROM chat_notifications WHERE user_id = $1)',
     'event_id registration_id next_at delivered_at attempts'),
+  memberData('monitor_alert_feedback', 'user_id alert_id rating reason updated_at'),
   memberData('chat_notifications', 'task_id user_id conversation_id kind started_at happened_at available_at delivery background_outcome background_language run_id monitor_id web_push_after web_push_device_id web_push_attempts'),
   memberData('smart_monitors', 'id user_id conversation_id spec status offer note evaluation last_checked_at next_check_at expires_at created_at approved_at checks notifications failure_kind'),
   memberData('smart_monitor_budgets', 'user_id budget_day checks previews notifications'),

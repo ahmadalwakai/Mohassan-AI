@@ -170,7 +170,7 @@ export async function withLongRunChat(db: Parameters<typeof createCommandChatCon
   runner.start();
 
   async function select(ownerId: string, text: string) {
-    if (!enabled || legacyMonitorHandledBySmartChat(text)) return null;
+    if (!enabled || await legacyMonitorHandledBySmartChat(db, ownerId, text)) return null;
     const full = config.fullAccess ? await config.fullAccess(ownerId) : true;
     if (reviewWorkRefusal(text, newBrainState(), full, { computer: Boolean(config.tools?.computer || config.desktop), memory: Boolean(config.tools?.memory) })) return null;
     return planLongRun(text, config, network, backgroundEnabled);

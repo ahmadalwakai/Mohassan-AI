@@ -9,6 +9,7 @@ import type { PushSender, WebPushPayload } from './web-push.js';
 import { backgroundKinds, backgroundPayload, type BackgroundNotificationEvent, type BackgroundOutcome } from './background-notification-payload.js';
 import { memberReminderDeliveryAllowed } from './member-deletion.js';
 import { hideNotificationTitleByDefault, notificationPresenceMs, updateNotificationPresence } from './notification-security.js';
+import { monitorMetricTransaction } from './ops/metrics/monitor-events.js';
 
 const PRIORITY_WINDOW_MS = 2_000;
 const EVENT_TTL_MS = 5 * 60_000;
@@ -255,7 +256,7 @@ export async function syncNotifications(db: Database, userId: string, input: Not
 }
 
 export async function claimNotification(db: Database, userId: string, id: string, channel: Delivery, now: Date, tabId?: string, acknowledge = false) {
-  return db.transaction().execute(async tx => {
+  return monitorMetricTransaction(db, async (tx, observe) => {
     const event = await events(tx).where('n.task_id', '=', id).where('n.user_id', '=', userId)
       .where('n.delivery', '=', 'pending').where('n.available_at', '<=', now)
       .where(eb => eb.or([eb('n.happened_at', '>', oldestEvent(now)), eb('n.background_outcome', 'is not', null)]))
@@ -268,7 +269,8 @@ export async function claimNotification(db: Database, userId: string, id: string
       if (channel !== 'tab' || !tabId) return null;
       const row = tx.updateTable('chat_notifications').where('task_id', '=', id);
       if (acknowledge) {
-        await row.set({ delivery: 'tab', tab_claim_id: null, tab_claim_until: null }).where('tab_claim_id', '=', tabId).execute();
+        const committed = await row.set({ delivery: 'tab', tab_claim_id: null, tab_claim_until: null }).where('tab_claim_id', '=', tabId).executeTakeFirst();
+        if (event.monitor_id && committed.numUpdatedRows > 0n) observe({ kind: 'delivery', channel: 'tab' });
         return null;
       }
       if (quiet || (event.tab_claim_until && event.tab_claim_until > now && event.tab_claim_id !== tabId)) return null;
@@ -351,7 +353,7 @@ export async function dispatchBackgroundWebPush(db: Database, send: PushSender<N
   await Promise.all(pending.map(async ({ user_id: userId, task_id: id }) => {
     const deviceId = await reserveBackgroundWebPush(db, userId, id, now, await isActive(userId));
     if (!deviceId) return;
-    await db.transaction().execute(async tx => {
+    await monitorMetricTransaction(db, async (tx, observe) => {
       const event = await lockDueWebPush(tx, id, now);
       if (!event || event.web_push_device_id !== deviceId) return;
       if (event.web_push_attempts && await activeTabs(tx, now).where('user_id', '=', userId).where('visible', '=', true).executeTakeFirst()) return;
@@ -364,7 +366,10 @@ export async function dispatchBackgroundWebPush(db: Database, send: PushSender<N
       const device = await ownDevices(tx, userId).select(['id', 'user_id', 'endpoint', 'p256dh', 'auth'])
         .where('id', '=', deviceId).executeTakeFirst();
       const result = device ? await deliverToWebDevice(tx, send, device, eventPayload(event, preferences)) : 'expired';
-      if (result === 'delivered') await row.set({ delivery: 'push', web_push_device_id: null }).execute();
+      if (result === 'delivered') {
+        await row.set({ delivery: 'push', web_push_device_id: null }).execute();
+        if (event.monitor_id) observe({ kind: 'delivery', channel: 'webPush' });
+      }
       else if (result === 'expired') await row.set({ web_push_device_id: null, web_push_after: null, web_push_attempts: 0 }).execute();
       else await row.set({ web_push_after: backgroundRetryAt(now, event.web_push_attempts), web_push_attempts: event.web_push_attempts + 1 }).execute();
     });

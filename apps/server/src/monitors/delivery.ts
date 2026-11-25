@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import type { WorkspaceRole } from '../members.js';
 import { recordBackgroundRunOutcome } from '../notifications-store.js';
+import type { MonitorMetricEvent } from '../ops/metrics/monitor-events.js';
 import type { MonitorObservation } from './evaluation.js';
 import { nextMonitorBudgetDay } from './schedule.js';
 import { spendMonitorBudget, type MonitorNotice, type MonitorRow } from './store.js';
@@ -31,12 +32,14 @@ export function monitorHealth(row: MonitorRow, failure: 'unreachable' | 'missing
 }
 
 /** Commit the conversation evidence and PR #92 outbox together or keep the receipt for the next budget day. */
-export async function publishMonitorNotice(tx: Kysely<any>, row: MonitorRow, role: WorkspaceRole, notice: MonitorNotice, at: Date) {
+export async function publishMonitorNotice(tx: Kysely<any>, row: MonitorRow, role: WorkspaceRole, notice: MonitorNotice, at: Date,
+  observe: (event: MonitorMetricEvent) => void) {
   if (!await spendMonitorBudget(tx, row.user_id, role, 'notifications', at)) {
     return { pending_notice: JSON.stringify(notice), notice_due_at: nextMonitorBudgetDay(at) };
   }
-  await tx.insertInto('chat_messages').values({ id: notice.eventId, conversation_id: row.conversation_id,
-    role: 'assistant', text: notice.message, created_at: at }).onConflict(conflict => conflict.column('id').doNothing()).execute();
+  const message = await tx.insertInto('chat_messages').values({ id: notice.eventId, conversation_id: row.conversation_id,
+    role: 'assistant', text: notice.message, created_at: at }).onConflict(conflict => conflict.column('id').doNothing()).returning('id').executeTakeFirst();
+  if (message) observe({ kind: 'delivery', channel: 'conversation' });
   await tx.updateTable('chat_conversations').set({ updated_at: sql`greatest(updated_at, ${at}::timestamptz)` })
     .where('id', '=', row.conversation_id).where('owner_id', '=', row.user_id).execute();
   await recordBackgroundRunOutcome(tx, { runId: notice.eventId, monitorId: row.id, userId: row.user_id,

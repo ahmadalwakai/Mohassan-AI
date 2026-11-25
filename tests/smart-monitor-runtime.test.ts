@@ -18,6 +18,8 @@ import { MONITOR_LIMITS, monitorExpiry, monitorTiming, nextMonitorCheck } from '
 import type { MonitorReadResult } from '../apps/server/src/monitors/sources.js';
 import { createMonitorStore } from '../apps/server/src/monitors/store.js';
 import { claimNotification, dispatchBackgroundWebPush, recordBackgroundRunOutcome, subscribePushDevice, syncNotifications } from '../apps/server/src/notifications-store.js';
+import { registerMonitorMetrics } from '../apps/server/src/ops/metrics/monitor-events.js';
+import { MetricsStore } from '../apps/server/src/ops/metrics/store.js';
 import { migrateRemindersInTransaction } from '../apps/server/src/reminders/migration.js';
 import type { ApnsSender } from '../apps/server/src/apns.js';
 import type { PushSender } from '../apps/server/src/web-push.js';
@@ -71,6 +73,7 @@ describe('durable smart monitor runtime', () => {
   let database: DatabaseHandle;
   let directory: string;
   let store: ReturnType<typeof createMonitorStore>;
+  let metrics: MetricsStore;
   let clock: number;
   const now = () => new Date(clock);
   const observe = (value: number) => ({ value, excerpt: `Price ${value}`, url: source.url, observedAt: now().toISOString() });
@@ -80,6 +83,7 @@ describe('durable smart monitor runtime', () => {
   const open = async () => {
     database = await createDatabase({ dataDir: directory });
     store = createMonitorStore(database.db, { now });
+    registerMonitorMetrics(database.db, event => metrics.recordMonitor(event));
   };
   const runtime = (read: Parameters<typeof createMonitorRuntime>[1]['read']) => createMonitorRuntime(database.db, { read, store }, { now });
 
@@ -110,6 +114,7 @@ describe('durable smart monitor runtime', () => {
 
   beforeEach(async () => {
     clock = baseline;
+    metrics = new MetricsStore({ now: () => clock });
     for (const table of ['chat_notifications', 'notification_tabs', 'notification_preferences', 'push_subscriptions', 'ios_push_devices', 'smart_monitor_budgets', 'smart_monitor_hosts', 'chat_conversations']) {
       await database.db.deleteFrom(table).execute();
     }
@@ -164,6 +169,12 @@ describe('durable smart monitor runtime', () => {
         sound: 'mohassan-done.caf', 'thread-id': memberConversation },
       conversationId: memberConversation, runId: event.task_id, kind: 'run-completed', monitorId: proposed.id,
     }, event.task_id);
+    expect(metrics.view().windows.hour.monitors).toMatchObject({
+      checks: { attempted: 1, succeeded: 1, successRate: 1 },
+      checkLatenessMs: { samples: 1, p50: expect.any(Number), p95: expect.any(Number) },
+      delivered: { conversation: 1, tab: 1, webPush: 0, apns: 1 },
+    });
+    expect(metrics.view().windows.hour.monitors!.checkLatenessMs.p50).toBeGreaterThanOrEqual(4 * hour - 15 * minute);
   });
 
   it('advances the due slot before a read and never repeats a check across an interrupted worker', async () => {
@@ -207,6 +218,7 @@ describe('durable smart monitor runtime', () => {
       kind: 'task_completed', runKind: 'run-completed', title: 'Monitor update',
       body: 'Open the conversation to see the update.', language: 'en', sound: true,
     });
+    expect(metrics.view().windows.day.monitors?.delivered).toEqual({ conversation: 1, tab: 0, webPush: 1, apns: 0 });
   });
 
   it('includes a due monitor alert in both push batches when another account has a full older batch', async () => {
@@ -267,6 +279,10 @@ describe('durable smart monitor runtime', () => {
       expect(await messages()).toEqual([expect.objectContaining({ text: expect.stringContaining(evidence) })]);
       const pending = (await syncNotifications(database.db, member, { tabId: randomUUID(), state: 'visible' }, now())).pending;
       expect(pending).toEqual([expect.objectContaining({ monitorId: id, runKind: 'run-blocked', body: 'Open the conversation to see why.' })]);
+      expect(metrics.view().windows.day.monitors).toMatchObject({
+        checks: { attempted: MONITOR_LIMITS.consecutiveFailures, succeeded: 0, successRate: 0 },
+        pauses: { [kind]: 1 },
+      });
     },
   );
 
@@ -286,6 +302,8 @@ describe('durable smart monitor runtime', () => {
 
     const active = await store.approve(member, first.id);
     await expect(store.change(member, first.id, 'pause')).resolves.toMatchObject({ status: 'paused', nextCheckAt: null });
+    await store.change(member, first.id, 'pause');
+    expect(metrics.view().windows.day.monitors?.pauses).toEqual({ manual: 1, missing: 0, unreachable: 0 });
     goto(active.nextCheckAt);
     const read = vi.fn(async () => value(3.69));
     await runtime(read).runOnce();

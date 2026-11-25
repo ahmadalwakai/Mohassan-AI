@@ -8,6 +8,7 @@ import {
 } from "@mohassan/contracts";
 import { Download, RefreshCw } from "lucide-react";
 import { MetricsFrame } from "./metrics-frame";
+import { hasMonitorHealth, MonitorHealth } from "./monitor-health";
 import {
   hasChatSamples, metricsCsvPath, metricsPath, requestMetrics, requestTotals, routeHistory, slowestRoutes, type MetricsState,
 } from "./metrics-data";
@@ -301,7 +302,7 @@ export function ProductionMetrics({ initialState }: { initialState: MetricsState
   const selectedWindow = report?.windows[windowKey];
   const empty = selectedWindow && Object.values(selectedWindow.roles).every(({ routes, chat }) =>
     !routes.some(route => route.count > 0) && !hasChatSamples(chat))
-    && resourceMetrics.every(metric => selectedWindow.resources[metric].samples === 0);
+    && resourceMetrics.every(metric => selectedWindow.resources[metric].samples === 0) && !hasMonitorHealth(selectedWindow.monitors);
 
   return (
     <MetricsFrame>
@@ -351,6 +352,7 @@ export function ProductionMetrics({ initialState }: { initialState: MetricsState
                   <SlowRoutes window={selectedWindow} role={role} />
                   <ChatMetrics window={selectedWindow} role={role} />
                   <ProcessMetrics window={selectedWindow} />
+                  {hasMonitorHealth(selectedWindow.monitors) && <MonitorHealth metrics={selectedWindow.monitors} />}
                 </>
               )}
               <RouteCharts report={report} role={role} />

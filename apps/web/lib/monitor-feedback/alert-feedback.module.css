@@ -1,0 +1,36 @@
+.alerts {
+  display: grid;
+  gap: .5rem;
+  list-style: none;
+  margin: .5rem 0 0;
+  padding: 0;
+}
+
+.feedback {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+}
+
+.feedback button, .feedback select {
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: .45rem;
+  color: inherit;
+  font: inherit;
+  min-height: 2rem;
+  padding: .15rem .5rem;
+}
+
+.feedback button[aria-pressed="true"] {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  font-weight: 700;
+}
+
+.feedback label {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+}
