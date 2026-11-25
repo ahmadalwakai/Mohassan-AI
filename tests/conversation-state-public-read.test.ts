@@ -3,6 +3,7 @@ import type { AgentBrowser } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
 import { replayConversationTranscript } from '../apps/server/src/assistant/conversation-state-chat.js';
+import type { ConversationEntity } from '../apps/server/src/assistant/conversation-state-entities.js';
 import { planPublicConversationRead } from '../apps/server/src/assistant/conversation-state-public-read.js';
 import { understandTurn } from '../apps/server/src/assistant/conversation-state.js';
 
@@ -60,5 +61,24 @@ it('keeps a separately named subject and an unrelated antecedent out of the prio
   const previous = { previous: firstQuestion, topic: state.topics.at(-1), found: { url: page.url, title: page.title, lines: [page.text] } };
   for (const text of ['And which currency does Croatia use?', 'Who designed its most famous cathedral?']) {
     expect(planPublicConversationRead({ ...previous, text, understanding: understandTurn(state, text, 'new') })).toBeNull();
+  }
+});
+
+it.each([
+  ['the Republic of Uruguay', undefined, true], ['the Oriental Republic', 'Uruguay', false],
+])('reuses the same observed page for the subject named %s', (name, aliasOf, priorUserTopic) => {
+  const text = 'When was it founded?';
+  const state = replayConversationTranscript([{ id: 'user', role: 'user', text: firstQuestion }]);
+  const current = understandTurn(state, text, 'follow-up');
+  const reference: ConversationEntity = { text: name, aliasOf, kind: 'place', role: 'user', turnId: 'user', salience: 0.9, publicLookup: true };
+  const understanding = { ...current, decision: { ...current.decision, type: 'follow_up' as const, reference, references: [reference] } };
+  const found = { url: page.url, title: page.title, lines: [page.text] };
+  const latestTopic = state.topics.at(-1);
+  const topic = priorUserTopic && latestTopic ? { ...latestTopic, entity: name, entityOrigin: 'user' as const } : latestTopic;
+  expect(planPublicConversationRead({ text, previous: firstQuestion, topic, understanding, found })).toMatchObject({
+    plan: { steps: [{ kind: 'ask_page', conversationPage: { expectedUrl: page.url, readPublic: true } }] },
+  });
+  if (priorUserTopic) {
+    expect(planPublicConversationRead({ text, previous: firstQuestion, topic: latestTopic, understanding, found })).toBeNull();
   }
 });

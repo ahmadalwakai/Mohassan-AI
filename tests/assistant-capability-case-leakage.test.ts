@@ -60,7 +60,7 @@ it('detects pasted inputs while allowing a short greeting inside an unrelated se
 });
 
 const development = frozenDevelopment();
-it.skipIf(!development)('keeps the frozen development prompts and field values out of the source tree', () => {
+it.skipIf(!development)('detects frozen development inputs beyond the pinned source baseline', () => {
   expect(createHash('sha256').update(development!).digest('hex')).toBe(developmentSha256);
   const { cases } = JSON.parse(development!.toString('utf8')) as { cases: BenchmarkCaseInput[] };
   expect(findSourceLeaks(cases, sourcesForLeakCheck())).toEqual([]);
