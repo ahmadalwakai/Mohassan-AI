@@ -192,19 +192,25 @@ Training and calibration each had zero rows. The trainer emitted no weights or t
 
 ## Shadow latency
 
-The measured implementation is `28e4ac347ce8febef37392c91f4eb273970f2bc9`. Default shadow queues additional candidate discovery and completes that work in the existing post-publication observer. A scoped replay collects synchronously so it can force an eligible choice before dispatch. The critical-path and replay timings use different boundaries.
+The scoped replay measured `28e4ac347ce8febef37392c91f4eb273970f2bc9`. Default shadow queues additional candidate discovery and completes that work in the existing post-publication observer. The final default-shadow runs used `775eb8609d9a2700c7d1a8f49bf4748934008a08`, which isolates deferred discovery from the publishing worker's execution context. A scoped replay collects synchronously so it can force an eligible choice before dispatch. The critical-path and replay timings use different boundaries.
 
 | Measurement | Samples | p95 |
 | --- | ---: | ---: |
 | Default shadow enqueue, warmed focused test | 4,000 | 0.003 ms |
-| Manager scoring with a test artifact, warmed focused test | 4,000 | 0.090 ms |
-| Default shadow publication hook, full v1 development | 279 | 0.147 ms |
-| Background arbitration in the default shadow v1 run | 19 | 0.600 ms |
+| Manager scoring with a test artifact, final warmed test | 4,000 | 0.072 ms |
+| Default shadow publication hook, full v1 development | 279 | 0.141 ms |
+| Background arbitration in the default shadow v1 run | 19 | 0.824 ms |
 | Scoped v1 replay arbitration | 19 | 0.463 ms |
+| Default shadow publication hook, full v2 development | 2,400 | 0.123 ms |
+| Background arbitration in the default shadow v2 run | 30 | 6.783 ms |
 
 The normal v1 shadow run matched every baseline scorer signature. Its owner summary recorded 17 compound-plan contests and two rewrite contests. Each reported an untrained scorer, with zero disagreements or changes. The final scoped replay also matched every v1 baseline scorer signature and reproduced all 38 forced outcomes. Fourteen alternatives lost an existing pass, two tied a pass, and three left an existing failure.
 
-The v1 normal shadow receipt is `2d3cd611cc195ddea25cfe43b734759f109e14470ac9beec5ecc46a1c6a02175`. The v1 scoped replay receipt is `33f19b9412d0f5c8393ef1e99de94be05dbbff453ae71b333a2d4e3a2302b3c3`. The v1 runs used a separate worktree and lower CPU priority while one v2 lane ran. Live promotion latency is unverified.
+The final v1 normal shadow receipt is `31c1cc43b067ba8709775bef8ac1043cadff8b6dbfda0da2518983a532a851e6`. The earlier normal shadow run at `28e4ac3` measured 0.147 ms p95 for the publication hook and 0.600 ms for background arbitration. Its receipt is `2d3cd611cc195ddea25cfe43b734759f109e14470ac9beec5ecc46a1c6a02175`. The v1 scoped replay receipt is `33f19b9412d0f5c8393ef1e99de94be05dbbff453ae71b333a2d4e3a2302b3c3`. The v1 runs used a separate worktree and lower CPU priority while one v2 lane ran. Live promotion latency is unverified.
+
+Both final normal shadow splits matched all 2,640 baseline scorer signatures. The v2 owner summary recorded 29 routing contests and one compound-plan contest. All relied on current precedence because the scorer was untrained. There were zero proposed disagreements and zero changes.
+
+The final v2 default shadow receipt is `191becef48404bd0d6589d4fd68c8428803392f3ded07313f47946ed06929c5c`. The paired normal shadow receipt is `32dcdfb082bf75152865fbd2d9cbb79c49720d908baf4f6fdce70ddecc7076c0`.
 
 ## Merge notes
 
@@ -241,6 +247,21 @@ test ! -e /workspace/work/arbiter-bench/final-combined/model.json
 
 The trainer's input combines the two text-free replay receipts after verifying their schema, exclusion manifest and split identities. The gate uses the two per-case arrays from the paired comparison receipt.
 
+The final normal v1 shadow and its owner summary exited 0.
+
+```bash
+docker run --rm --network none --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges --env PLAYWRIGHT_BROWSERS_PATH=/workspace/work/arbiter-bench/chromium --env TEST_DRIVEN_CODING_PYTHON=/usr/local/bin/python3 --volume /workspace:/workspace --workdir /workspace/Mohassan-Arbiter-Shadow mohassan-arbiter-bench nice -n 10 node --import tsx /workspace/Mohassan-AI/scripts/arbiter-bench/run.mjs /workspace/Mohassan-Arbiter-Shadow shadow /workspace/work/arbiter-bench/final-shadow-v1-775eb86 --v1
+npm run -s models:shadow-summary -- /workspace/work/arbiter-bench/final-shadow-v1-775eb86/default-shadow-log.jsonl > /workspace/work/arbiter-bench/final-shadow-v1-775eb86/default-shadow-summary.json
+```
+
+The final normal v2 shadow, paired comparison, and owner summary exited 0.
+
+```bash
+docker run --rm --network none --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges --env PLAYWRIGHT_BROWSERS_PATH=/workspace/work/arbiter-bench/chromium --env TEST_DRIVEN_CODING_PYTHON=/usr/local/bin/python3 --volume /workspace:/workspace --workdir /workspace/Mohassan-Arbiter-After mohassan-arbiter-bench node --import tsx /workspace/Mohassan-AI/scripts/arbiter-bench/run.mjs /workspace/Mohassan-Arbiter-After shadow /workspace/work/arbiter-bench/final-shadow-v2-775eb86 --v2
+node scripts/arbiter-bench/report.mjs /workspace/work/arbiter-bench/rc-base-v1/v1-development.json /workspace/work/arbiter-bench/rc-base/v2-development.json /workspace/work/arbiter-bench/final-shadow-v1-775eb86/v1-development.json /workspace/work/arbiter-bench/final-shadow-v2-775eb86/v2-development.json /workspace/work/arbiter-bench/final-combined/normal-shadow-paired.json > /workspace/work/arbiter-bench/final-combined/normal-shadow-paired-summary.json
+npm run -s models:shadow-summary -- /workspace/work/arbiter-bench/final-shadow-v2-775eb86/default-shadow-log.jsonl > /workspace/work/arbiter-bench/final-shadow-v2-775eb86/default-shadow-summary.json
+```
+
 ## Code and source checks
 
 | Check | Result |
@@ -252,7 +273,7 @@ The trainer's input combines the two text-free replay receipts after verifying t
 | V2 development literal scan relative to the release candidate | Exit 0, zero new matches across 2,400 development cases |
 | V2 hash guards relative to the release candidate | Exit 0, four passed with the original detectors and both hash registries |
 
-The initial affected-suite invocation omitted the downloaded Chromium path. Five PDF tests failed, 216 passed, and one skipped. The Chromium-configured rerun above passed. In that run the warmed manager scoring test measured 0.047 ms p95 and default shadow scheduling measured 0.003 ms p95.
+The initial affected-suite invocation omitted the downloaded Chromium path. Five PDF tests failed, 216 passed, and one skipped. The Chromium-configured rerun above passed. The final Chromium-configured run measured 0.072 ms p95 for warmed manager scoring and 0.003 ms p95 for default shadow scheduling.
 
 The original v2 guard references flagged the same 12 inherited occurrences across 10 paths on the release candidate and this branch. The release-relative scratch launcher used the same detectors and exact release bytes as its reference. The development literal scan additionally inspected changed source against the pinned v2 development literals. Both paths confined benchmark data access to development payloads and the published exclusion hashes.
 
@@ -285,4 +306,11 @@ The held-file and protected-tree checks below exited 0. The held-file list conta
 git diff --check d3ebd9223f44445627b9d3d0bdea08d5f9b0550a
 git diff --name-only d3ebd9223f44445627b9d3d0bdea08d5f9b0550a -- apps/server/src/assistant/mind packages/execution-pipeline packages/execution-model
 git diff --numstat d3ebd9223f44445627b9d3d0bdea08d5f9b0550a -- 'apps/web/components/**' 'packages/google-ads/src/**' 'packages/browser/src/**' 'packages/chrome-extension/**' 'apps/android/**' 'packages/providers/src/**' apps/server/src/{app,chrome-extension,command-chat,config,inference,members}.ts apps/server/src/assistant/{ads-model-chat,agent-run,brain,campaign-run,tools,hands}.ts packages/contracts/src/{ai-providers,campaign-progress,command-chat,google-ads}.ts
+```
+
+The deferred-context regression check first failed because a discovery callback inherited the execution from publication. The corrected observer passed the same test and recorded both deferred decisions under their original turn.
+
+```bash
+nice -n 15 npm test -- --maxWorkers=1 tests/model-relations-arbiter.test.ts -t 'associates them with the original turn' > /tmp/mohassan-arbiter-context-before.log 2>&1
+nice -n 15 npm test -- --maxWorkers=1 tests/model-relations-arbiter.test.ts -t 'associates them with the original turn' > /tmp/mohassan-arbiter-context-after.log 2>&1
 ```
