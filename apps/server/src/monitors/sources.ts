@@ -5,26 +5,39 @@ import {
 } from '@mohassan/browser';
 import type { LivePlace, MonitorSpec } from '@mohassan/contracts';
 import type { Kysely } from 'kysely';
+import { parse } from 'parse5';
 import { resolvePlace } from '../live-data/places.js';
 import { getRateValue } from '../live-data/rates.js';
 import { createLiveRequestClient, fetchPublicData } from '../live-data/request.js';
 import { getCurrentWeatherMetric } from '../live-data/weather.js';
 import type { MonitorObservation } from './evaluation.js';
+import { findMonitorDiscoveries, sitemapEntriesForPage, type MonitorDiscoveries, type MonitorDiscoveryCache, type MonitorFeedCache } from './feed-discovery-v2.js';
+import { parseMonitorFeedXml } from './feed-xml-v2.js';
 import { cleanMonitorText, observePage } from './page.js';
+import { observePageV2, type MonitorPageAnchor, type MonitorPageCandidate, type MonitorPageRelocation } from './page-v2.js';
 
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
 const MAX_REDIRECTS = 3;
 const MAX_PAGE_BYTES = 2_000_000;
+const MAX_XML_BYTES = 512 * 1024;
 const MAX_SEARCH_RESULTS = 10;
 const ROBOTS_CACHE_DURATION_MS = 60 * 60_000;
 const MAX_ROBOTS_HOSTS = 200;
 const MAX_ROBOTS_DELAY_MS = 30 * 24 * 60 * 60_000;
 const TRANSIENT_NETWORK = new Set(['BROWSER_DNS_FAILED', 'BROWSER_FETCH_FAILED']);
 
-export interface MonitorSourceCache { url: string; etag?: string; lastModified?: string }
+export interface MonitorSourceCache {
+  url: string;
+  etag?: string;
+  lastModified?: string;
+  anchor?: MonitorPageAnchor;
+  discovery?: MonitorDiscoveryCache;
+}
 export type MonitorReadResult =
-  | { kind: 'value'; observation: MonitorObservation; cache?: MonitorSourceCache }
-  | { kind: 'unchanged'; cache?: MonitorSourceCache }
+  | { kind: 'value'; observation: MonitorObservation; cache?: MonitorSourceCache; publicationTimes?: string[]; relocation?: MonitorPageRelocation }
+  | { kind: 'unchanged'; cache?: MonitorSourceCache; publicationTimes?: string[] }
+  | { kind: 'clarify'; candidates: MonitorPageCandidate[]; confidence: number; url: string; cache?: MonitorSourceCache }
+  | { kind: 'unsafe-target'; confidence: number; url: string }
   | { kind: 'missing'; url?: string }
   | { kind: 'unreachable'; url?: string }
   | { kind: 'deferred'; at: number };
@@ -34,6 +47,7 @@ export interface MonitorReadOptions {
   signal?: AbortSignal;
   cache?: MonitorSourceCache;
   preview?: boolean;
+  v2?: boolean;
   /** A null result admits this logical source check. A time defers it to the shared host's next slot. */
   reserveHost?: (hostname: string, minimumMs?: number) => Promise<number | null>;
   extendHost?: (hostname: string, minimumMs: number) => Promise<void>;
@@ -60,6 +74,13 @@ function validators(response: SafeResponse, url: string, old?: MonitorSourceCach
   if (etag && etag.length <= 512 && /^(?:W\/)?"[^"\r\n]*"$/u.test(etag)) cache.etag = etag;
   if (modified && modified.length <= 64 && Number.isFinite(Date.parse(modified))) cache.lastModified = modified;
   return cache;
+}
+
+function conditionalHeaders(cache: Pick<MonitorSourceCache, 'etag' | 'lastModified'> | undefined) {
+  return {
+    ...(cache?.etag && { 'if-none-match': cache.etag }),
+    ...(cache?.lastModified && { 'if-modified-since': cache.lastModified }),
+  };
 }
 
 function publicQuery(query: string): string {
@@ -118,7 +139,7 @@ export function createMonitorReader({
 }) {
   const storage = new AsyncLocalStorage<ReadContext>();
   const robotsHost = new AsyncLocalStorage<string>();
-  const delays = new Map<string, { minimum: number; until: number }>();
+  const delays = new Map<string, { minimum: number; until: number; sitemap?: string }>();
   const agent = network.policy.userAgent?.trim().split(/[\s/]/u, 1)[0] || 'MohassanAI-Research';
 
   async function reserveHost(hostname: string) {
@@ -162,8 +183,9 @@ export function createMonitorReader({
       if (originalRobotsHost && (response.status === 429 || response.status >= 500)) context?.unreachableRobots.add(originalRobotsHost);
       if (originalRobotsHost && response.status === 200) {
         const minimum = robotsDelay(response.body, agent);
+        const sitemap = context?.options.v2 ? /^\s*sitemap\s*:\s*(\S{1,2048})/imu.exec(response.body.toString('utf8'))?.[1] : undefined;
         if (delays.size >= MAX_ROBOTS_HOSTS) delays.delete(delays.keys().next().value!);
-        delays.set(originalRobotsHost, { minimum, until: clock() + ROBOTS_CACHE_DURATION_MS });
+        delays.set(originalRobotsHost, { minimum, until: clock() + ROBOTS_CACHE_DURATION_MS, ...(sitemap && { sitemap }) });
         if (minimum) await storage.getStore()?.options.extendHost?.(originalRobotsHost, minimum);
       }
       return response;
@@ -190,12 +212,107 @@ export function createMonitorReader({
       observedAt: new Date(clock()).toISOString(), ...(url && { url }) };
   }
 
+  async function readXml(raw: string, previous: MonitorDiscoveryCache | undefined, options: MonitorReadOptions):
+  Promise<{ cache: MonitorFeedCache; unchanged: boolean } | undefined> {
+    try {
+      const requestedUrl = validateUrl(network, raw).href;
+      let target = requestedUrl;
+      for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
+        const cached = previous?.documents.find(item => item.url === target);
+        const response = await publicNetwork.request(target, {
+          signal: options.signal, maxBytes: MAX_XML_BYTES, headers: conditionalHeaders(cached),
+        });
+        if (REDIRECTS.has(response.status) && response.headers.location) {
+          target = validateUrl(network, new URL(response.headers.location, target).href).href;
+          continue;
+        }
+        if ((response.status === 429 || response.status === 503) && response.headers['retry-after']) {
+          await options.extendHost?.(new URL(target).hostname, searchRetryAfter(response.headers['retry-after'], clock()));
+        }
+        if (response.status === 304 && cached && (cached.etag || cached.lastModified)) {
+          return { cache: { ...cached, ...validators(response, target, cached), requestedUrl }, unchanged: true };
+        }
+        if (response.status !== 200) return;
+        const text = new TextDecoder('utf-8', { fatal: true }).decode(response.body);
+        const data = parseMonitorFeedXml(text);
+        if (data) {
+          data.entries = data.entries.flatMap(entry => {
+            try {
+              const url = validateUrl(network, new URL(entry.url, target).href).href;
+              if (url.length > 2048) return [];
+              const title = entry.title && publicSearchText(cleanMonitorText(entry.title)).slice(0, 160);
+              return [{ ...entry, title, url }];
+            } catch { return []; }
+          });
+          return { cache: { ...validators(response, target), requestedUrl, data }, unchanged: false };
+        }
+        return;
+      }
+    } catch {
+      options.signal?.throwIfAborted();
+      // An optional discovery can fail while a page or another discovery stays readable.
+    }
+  }
+
+  async function readDiscoveredItems(spec: MonitorSpec, target: string, cache: MonitorSourceCache,
+    links: MonitorDiscoveries, previous: MonitorDiscoveryCache | undefined, options: MonitorReadOptions): Promise<MonitorReadResult | undefined> {
+    const [feed, sitemap] = await Promise.all([
+      links.feed ? readXml(links.feed, previous, options) : undefined,
+      links.sitemap ? readXml(links.sitemap, previous, options) : undefined,
+    ]);
+    const sitemapChildren = sitemap?.cache.data.kind === 'index' ? sitemap.cache.data.entries.flatMap(item => {
+      try {
+        const child = validateUrl(network, new URL(item.url, sitemap.cache.url).href);
+        return child.origin === new URL(sitemap.cache.url).origin ? [child.href] : [];
+      } catch { return []; }
+    }) : [];
+    const childLinks = [...new Set(sitemapChildren)].slice(0, 2);
+    const submaps = await Promise.all(childLinks.map(link => readXml(link, previous, options)));
+    const checked = [feed, sitemap, ...submaps].filter(item => item !== undefined);
+    const documents = checked.map(item => item.cache);
+    cache.discovery = { links, documents };
+    const attempted = [links.feed, links.sitemap, ...childLinks];
+    const lostDocument = previous?.documents.some(item => attempted.includes(item.requestedUrl) &&
+      !documents.some(document => document.requestedUrl === item.requestedUrl && document.data.kind === item.data.kind));
+    if (lostDocument) {
+      const deferredAt = storage.getStore()?.deferredAt;
+      return deferredAt === undefined ? { kind: 'unreachable', url: target } : { kind: 'deferred', at: deferredAt };
+    }
+    const validSitemaps = documents.filter(item => item.data.kind === 'sitemap');
+    const sitemapEntries = validSitemaps.flatMap(item => sitemapEntriesForPage(item.data.entries, target).map(entry => ({ entry, base: item.url })));
+    const validFeed = feed?.cache.data.kind === 'feed' ? feed.cache : undefined;
+    const entries = [...(validFeed?.data.entries.map(entry => ({ entry, base: validFeed.url })) ?? []), ...sitemapEntries];
+    if (!validFeed && !entries.length) return;
+    const unique = new Map<string, { title: string; url: string; published?: string }>();
+    for (const { entry, base } of entries) {
+      try {
+        const url = validateUrl(network, new URL(entry.url, base).href).href;
+        if (url.length > 2048 || unique.has(itemIdentity(url))) continue;
+        const title = publicSearchText(cleanMonitorText(entry.title ?? '')).slice(0, 160) || url;
+        unique.set(itemIdentity(url), { title, url, published: entry.published });
+      } catch { /* A private link cannot become evidence. */ }
+    }
+    const times = [...new Set(entries.flatMap(({ entry }) => entry.published ? [entry.published] : []))].sort().slice(-100);
+    const publicationTimes = times.length ? { publicationTimes: times } : {};
+    if (checked.every(item => item.unchanged) && previous?.documents.some(item => item.data.kind === 'feed' || item.data.kind === 'sitemap')) {
+      return { kind: 'unchanged', cache, ...publicationTimes };
+    }
+    const selected = [...unique].sort(([, a], [, b]) => (b.published ?? '').localeCompare(a.published ?? '')).slice(0, 100);
+    const values = selected.map(([, value]) => value);
+    const empty = spec.language === 'ar' ? 'لا توجد عناصر منشورة حالياً.' : 'There are no published items yet.';
+    return { kind: 'value', cache, ...publicationTimes, observation: {
+      ...observation(values.map(item => item.title), values.map(item => item.title).join(' · ') || empty, values[0]?.url ?? target),
+      itemKeys: selected.map(([key]) => key), itemUrls: values.map(item => item.url),
+    } };
+  }
+
   async function readPage(
     spec: MonitorSpec & { source: Extract<MonitorSpec['source'], { kind: 'page' }> },
     options: MonitorReadOptions,
   ): Promise<MonitorReadResult> {
     const availability = spec.read.kind === 'status' && !spec.read.label
       && spec.condition.kind === 'equals' && spec.condition.value === 'reachable';
+    const discoverItems = options.v2 && spec.read.kind === 'items';
     let target = validateUrl(network, spec.source.url).href;
     const unavailable = (value: string, ar: string, en: string): MonitorReadResult =>
       ({ kind: 'value', observation: observation(value, spec.language === 'ar' ? ar : en, target) });
@@ -207,10 +324,7 @@ export function createMonitorReader({
         response = await publicNetwork.request(target, {
           signal: options.signal,
           maxBytes: MAX_PAGE_BYTES,
-          headers: {
-            ...(cached?.etag && { 'if-none-match': cached.etag }),
-            ...(cached?.lastModified && { 'if-modified-since': cached.lastModified }),
-          },
+          headers: conditionalHeaders(cached),
         });
       } catch (error) {
         options.signal?.throwIfAborted();
@@ -229,7 +343,12 @@ export function createMonitorReader({
         await options.extendHost?.(new URL(target).hostname, searchRetryAfter(response.headers['retry-after'], clock()));
       }
       if (response.status === 304 && cached && (cached.etag || cached.lastModified)) {
-        return { kind: 'unchanged', cache: validators(response, target, cached) };
+        const cache = validators(response, target, cached);
+        if (discoverItems && cache.discovery) {
+          const items = await readDiscoveredItems(spec, target, cache, cache.discovery.links, cache.discovery, options);
+          if (items) return items;
+        }
+        return { kind: 'unchanged', cache };
       }
       if (availability && (response.status === 404 || response.status === 410)) {
         return unavailable('not published', `الصفحة غير منشورة (HTTP ${response.status}).`, `The page is unpublished (HTTP ${response.status}).`);
@@ -252,6 +371,29 @@ export function createMonitorReader({
         const reachable = observePage(body, target, contentType, { source: spec.source, read: { kind: 'main' } }, new Date(clock()).toISOString());
         if (!reachable) return { kind: 'missing', url: target };
         return { kind: 'value', observation: observation('reachable', reachable.excerpt, target), cache: validators(response, target) };
+      }
+      if (options.v2) {
+        const at = new Date(clock()).toISOString();
+        const document = /^text\/plain/iu.test(contentType) ? undefined : parse(body);
+        const cache = validators(response, target);
+        if (discoverItems) {
+          const policy = delays.get(new URL(target).hostname);
+          const discovered = findMonitorDiscoveries(document, target, policy && policy.until > clock() ? policy.sitemap : undefined);
+          const publicLink = (address: string | undefined) => {
+            try { return address ? validateUrl(network, address).href : undefined; }
+            catch { return undefined; }
+          };
+          const links = { feed: publicLink(discovered.feed), sitemap: publicLink(discovered.sitemap) };
+          const items = await readDiscoveredItems(spec, target, cache, links, cached?.discovery, options);
+          if (items) return items;
+        }
+        const result = observePageV2(body, target, contentType, spec, at, options.cache?.anchor, document);
+        if (result.kind === 'value') {
+          if (result.anchor) cache.anchor = result.anchor;
+          return { kind: 'value', observation: result.observation, cache, ...(result.relocation && { relocation: result.relocation }) };
+        }
+        if (result.kind === 'clarify') return { ...result, cache };
+        return result;
       }
       const value = observePage(body, target, contentType, spec, new Date(clock()).toISOString());
       return value ? { kind: 'value', observation: value, cache: validators(response, target) } : { kind: 'missing', url: target };

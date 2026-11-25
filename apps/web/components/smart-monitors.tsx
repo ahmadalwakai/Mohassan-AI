@@ -4,6 +4,7 @@ import { Activity, X } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { MonitorCard, MonitorSpec } from "@mohassan/contracts";
 import { changeMonitor, followMonitorChanges, listMonitors, mergeMonitors, type MonitorAction } from "./monitors-client";
+import { MonitorOfferSettings, MonitorV2ProposalCard } from "./smart-monitors-v2";
 import styles from "./smart-monitors.module.css";
 
 const copy = {
@@ -130,6 +131,7 @@ export function SmartMonitorCard({ monitor, onOpenConversation, onStopped }: {
     }
   }
 
+  if (monitor.clarification || proposed && monitor.spec.v2) return <MonitorV2ProposalCard monitor={monitor} describeCondition={conditionLabel} />;
   return <section className={styles.card} aria-labelledby={title} aria-busy={pending} data-testid={proposed ? "monitor-approval" : "monitor-card"} lang={language} dir={language === "ar" ? "rtl" : "ltr"}>
     <div className={styles.heading}>
       <strong id={title} dir="auto">{heading}</strong>
@@ -240,7 +242,7 @@ export function ConversationMonitors({ conversationId, monitors = [], proposal }
   </>;
 }
 
-export function MonitorSettings({ onOpenConversation }: { onOpenConversation: (id: string) => void }) {
+export function MonitorSettings({ onOpenConversation, v2 }: { onOpenConversation: (id: string) => void; v2?: boolean }) {
   const title = useId();
   const dialog = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -281,6 +283,7 @@ export function MonitorSettings({ onOpenConversation }: { onOpenConversation: (i
         <h2 id={title}>المراقبات</h2>
         <button ref={closeButton} type="button" autoFocus aria-label="إغلاق المراقبات" onClick={() => dialog.current?.close()}><X size={18} aria-hidden="true" /></button>
       </header>
+      {v2 && open ? <MonitorOfferSettings /> : null}
       {open ? <div className={styles.dialogBody} aria-busy={loading}>
         {error ? <>
           <p className={styles.error} role="alert">{error}</p>

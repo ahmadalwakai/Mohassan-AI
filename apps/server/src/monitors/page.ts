@@ -8,7 +8,7 @@ const BLOCK = new Set(['article', 'blockquote', 'body', 'button', 'dd', 'div', '
 const MOVING_ELEMENT = /(?:^|[\s_-])(?:ad|ads|advertisement|analytics|banner-rotation|carousel|cookie-banner|countdown|counter|current-time|live-clock|pageviews|ticker)(?:$|[\s_-])/iu;
 const MARKER = /^(?:(?:last (?:updated|refreshed)|generated (?:at|on)|server time|current time|page\s*views?|views?|visitors?|updated \d+ (?:seconds?|minutes?) ago|آخر تحديث|وقت الخادم|عدد المشاهدات|عدد الزوار)[:\s\-–—]|\d{1,2}:\d{2}:\d{2}(?:\s|$))/iu;
 const MAX_NODES = 20_000;
-const MAX_BLOCKS = 160;
+export const MAX_BLOCKS = 160;
 const MAX_BLOCK_LENGTH = 512;
 const DISPLAY_LENGTH = 320;
 
@@ -36,15 +36,15 @@ export function phraseIndex(text: string, phrase: string): number {
   return -1;
 }
 
-function display(value: string): string {
+export function display(value: string): string {
   return publicSearchText(cleanMonitorText(value)).slice(0, DISPLAY_LENGTH);
 }
 
-function isElement(node: Html.Node): node is Html.Element {
+export function isElement(node: Html.Node): node is Html.Element {
   return 'tagName' in node;
 }
 
-function attrs(node: Html.Element, ...names: string[]): string {
+export function attrs(node: Html.Element, ...names: string[]): string {
   return node.attrs.filter(attribute => names.includes(attribute.name)).map(attribute => attribute.value).join(' ');
 }
 
@@ -55,22 +55,22 @@ function excluded(node: Html.Element): boolean {
     || MOVING_ELEMENT.test(attrs(node, 'id', 'class', 'role', 'aria-label', 'data-testid'));
 }
 
-function children(node: Html.Node): Html.ChildNode[] {
+export function children(node: Html.Node): Html.ChildNode[] {
   return 'childNodes' in node ? node.childNodes : [];
 }
 
-interface Candidate extends WatchedBlock {
+export interface Candidate extends WatchedBlock {
   node?: Html.Element;
   scope: string[];
 }
 
-function pageCandidates(html: string, plain: boolean): Candidate[] {
+export function pageCandidates(html: string, plain: boolean, document?: Html.Document): Candidate[] {
   if (plain) return html.split(/\r?\n/u, MAX_BLOCKS).flatMap((line, index) => {
     const text = display(line);
     return text && !MARKER.test(text) ? [{ key: String(index), text, scope: [] }] : [];
   });
 
-  const tree = parse(html);
+  const tree = document ?? parse(html);
   const stack: { node: Html.Node; key: string; depth: number; parent?: Html.Element; scope: string[] }[] = [
     { node: tree, key: '', depth: 0, scope: [] },
   ];
@@ -107,15 +107,19 @@ function pageCandidates(html: string, plain: boolean): Candidate[] {
   }).slice(0, MAX_BLOCKS);
 }
 
-function labelNeedles(label: string): string[] {
+export function labelNeedles(label: string): string[] {
   return label === 'price' ? ['price', 'السعر', 'سعر'] : [matchMonitorText(label)];
 }
 
-function labelContext(candidates: Candidate[], label: string): Candidate[] {
+export function labelContext(candidates: Candidate[], label: string): Candidate[] {
   const needles = labelNeedles(label);
   const exact = candidates.findIndex(item => needles.includes(matchMonitorText(item.text).replace(/[:：\s]+$/u, '')));
   const first = exact >= 0 ? exact : candidates.findIndex(item => needles.some(needle => phraseIndex(matchMonitorText(item.text), needle) >= 0));
   if (first < 0) return [];
+  return pageAnchorContext(candidates, first, exact >= 0);
+}
+
+export function pageAnchorContext(candidates: Candidate[], first: number, exact: boolean): Candidate[] {
   const anchor = candidates[first];
   if (anchor.node && /^h[1-6]$/u.test(anchor.node.tagName)) {
     const rest = candidates.slice(first + 1);
@@ -123,7 +127,7 @@ function labelContext(candidates: Candidate[], label: string): Candidate[] {
     const end = rest.findIndex(item => /^h[1-6]$/u.test(item.node?.tagName ?? '') || parent && !item.scope.includes(parent));
     return [anchor, ...rest.slice(0, Math.min(end < 0 ? 4 : end, 4))];
   }
-  if (exact >= 0 && candidates[first + 1] && (!anchor.node || /^(?:dd|p|div|tr)$/u.test(candidates[first + 1].node?.tagName ?? ''))) {
+  if (exact && candidates[first + 1] && (!anchor.node || /^(?:dd|p|div|tr)$/u.test(candidates[first + 1].node?.tagName ?? ''))) {
     return [anchor, candidates[first + 1]];
   }
   return [anchor];
@@ -152,7 +156,7 @@ const monthNames = MONTHS.flat().join('|');
 const dayFirst = new RegExp(String.raw`(?<![\p{L}\p{N}])(\d{1,2})\s+(${monthNames})\.?\s+(\d{4})(?!\d)`, 'u');
 const monthFirst = new RegExp(String.raw`(?<![\p{L}\p{N}])(${monthNames})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})(?!\d)`, 'u');
 
-function dateFrom(text: string): string | undefined {
+export function dateFrom(text: string): string | undefined {
   const normalized = matchMonitorText(text);
   let date = /\b(\d{4}-\d{2}-\d{2})\b/u.exec(normalized)?.[1];
   if (!date) {
@@ -182,7 +186,7 @@ const statusRules = {
     positive: /\b(?:published|released|now live)\b|منشور|تم النشر|صدر/u, status: 'published', negative: 'unpublished' },
 };
 
-function statusFrom(candidates: Candidate[], label: string | undefined, anchored: boolean): { value: string; excerpt: string } | undefined {
+export function statusFrom(candidates: Candidate[], label: string | undefined, anchored: boolean): { value: string; excerpt: string } | undefined {
   const rule = label && Object.hasOwn(statusRules, label) ? statusRules[label as keyof typeof statusRules] : null;
   if (rule) {
     for (let index = 0; index < candidates.length; index++) {
@@ -205,7 +209,7 @@ function statusFrom(candidates: Candidate[], label: string | undefined, anchored
   return text ? { value: text, excerpt: text } : undefined;
 }
 
-function hasPhrase(text: string, phrase: string): boolean {
+export function hasPhrase(text: string, phrase: string): boolean {
   let index = phraseIndex(text, phrase);
   if (index < 0) return false;
   const prefix = /(?:\b(?:not(?: yet| currently)?|never|no longer|will be)\b|(?:^|\s)(?:غير|ليس|لم|لن)(?=\s|$))\s*$/iu;

@@ -13,12 +13,14 @@ test('shows evidence before approval and keeps the thread and monitor settings i
   const writes: string[] = [];
 
   await page.route('**/api/chat/conversations', async (route) => {
-    const response = await route.fetch();
     if (route.request().method() === 'GET') {
+      const response = await route.fetch();
       const history = await response.json();
       await route.fulfill({ response, json: { ...history, capabilities: { ...history.capabilities, smartMonitors: true } } });
       return;
     }
+    // Create the fixture conversation without dispatching a real assistant turn.
+    const response = await route.fetch({ postData: {} });
     const conversation: ChatConversation = await response.json();
     monitor = {
       id: monitorId, conversationId: conversation.id,
@@ -32,7 +34,9 @@ test('shows evidence before approval and keeps the thread and monitor settings i
       status: 'proposed', offer: 'explicit', note: 'I’ll notify you when the rate falls below 3.70.',
       lastCheckedAt: timestamp, nextCheckAt: null, expiresAt: new Date(now + 86_400_000).toISOString(),
     };
-    await route.fulfill({ response, json: { ...conversation, status: 'idle', monitorProposal: monitor } });
+    await route.fulfill({ response, json: { ...conversation, status: 'idle', monitorProposal: monitor,
+      messages: [{ id: randomUUID(), role: 'user', text: route.request().postDataJSON().goal, createdAt: timestamp },
+        { id: randomUUID(), role: 'assistant', text: 'I prepared the monitor plan.', createdAt: timestamp }] } });
   });
   await page.route(/\/api\/chat\/monitors(?:[/?]|$)/u, async (route) => {
     const request = route.request();

@@ -61,7 +61,7 @@ export function initialMonitorCheck(spec: MonitorSpec, at: Date, expiry: Date) {
   return nextMonitorCheck(spec, at, spec.timing.initialIntervalMs, { changed: true, expiry });
 }
 
-export function nextMonitorCheck(spec: MonitorSpec, at: Date, priorIntervalMs: number, {
+export function nextMonitorCheck(spec: Pick<MonitorSpec, 'source' | 'timing'>, at: Date, priorIntervalMs: number, {
   changed, expiry,
 }: { changed: boolean; expiry: Date }) {
   const earliest = intervals[spec.source.kind].urgent;

@@ -24,9 +24,11 @@ export async function changeMonitor(id: string, action: MonitorAction, fallback:
     method: "POST",
     ...(action === "approve" ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ proposalId: id }) } : {}),
   }, fallback);
-  changed.dispatchEvent(new CustomEvent<MonitorCard>("updated", { detail: updated }));
+  publishMonitorUpdate(updated);
   return updated;
 }
+
+export const publishMonitorUpdate = (monitor: MonitorCard) => changed.dispatchEvent(new CustomEvent<MonitorCard>("updated", { detail: monitor }));
 
 export function followMonitorChanges(update: (monitor: MonitorCard) => void): () => void {
   const listener = (event: Event) => update((event as CustomEvent<MonitorCard>).detail);
