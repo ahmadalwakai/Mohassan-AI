@@ -11,22 +11,35 @@ const developmentPath = 'tests/fixtures/agent-capability-bench/development.json'
 const frozenRevision = 'a258b3d47e39b5a2c03c71d4a9eb01107ae3d97f';
 const developmentSha256 = '712a170d3d60c6aec41f9fe44e7d5cc222bbafbe28d9ca763b5f396db2d2410b';
 
-// These two unchanged files came from the reviewed small-talk merge at
-// f50520112a23632ec4f6e4a121018077d1c422be. Any edit resumes the full scan.
-const inheritedMannersSourceHashes = new Map([
-  ['apps/server/src/assistant/manners/replies.ts', '2c36f626244438cdbb639cde6d552437f5a282aa5fed9b0d30a609b0f93911ea'],
-  ['tests/fixtures/manners-development.ts', '714ba5081e72072d9e8a11aa411eff0ff12c4872ad53e39bbca7cbe48039cc15'],
-]);
+// The reviewed small-talk merge f50520112a23632ec4f6e4a121018077d1c422be
+// contains one inherited reply literal on this exact source line. Its UTF-16
+// range masks one occurrence. Edited lines and further occurrences are scanned.
+const inheritedMannersReplyPath = 'apps/server/src/assistant/manners/replies.ts';
+const inheritedMannersReply = {
+  lineSha256: 'af3ffb3c619a245ec1250f3328fa00d804718c4fc779f56c98afc0e5cb24bb42',
+  start: 54,
+  end: 69,
+};
+
+const inheritedMannersFixturePath = 'tests/fixtures/manners-development.ts';
+const inheritedMannersFixtureSha256 = '714ba5081e72072d9e8a11aa411eff0ff12c4872ad53e39bbca7cbe48039cc15';
+
+function maskPinnedOccurrence(source: string, { lineSha256, start, end }: typeof inheritedMannersReply): string {
+  const lines = source.split('\n');
+  const index = lines.findIndex(line => createHash('sha256').update(line).digest('hex') === lineSha256);
+  if (index < 0) return source;
+  const line = lines[index]!;
+  lines[index] = line.slice(0, start) + ' '.repeat(end - start) + line.slice(end);
+  return lines.join('\n');
+}
 
 function* sourcesForLeakCheck(): Iterable<readonly [string, string]> {
-  for (const entry of sourceFiles(root)) {
-    const [path] = entry;
-    const inheritedHash = inheritedMannersSourceHashes.get(path);
-    if (inheritedHash) {
+  for (const [path, source] of sourceFiles(root)) {
+    if (path === inheritedMannersFixturePath) {
       const currentHash = createHash('sha256').update(readFileSync(resolve(root, path))).digest('hex');
-      if (currentHash === inheritedHash) continue;
+      if (currentHash === inheritedMannersFixtureSha256) continue;
     }
-    yield entry;
+    yield [path, path === inheritedMannersReplyPath ? maskPinnedOccurrence(source, inheritedMannersReply) : source];
   }
 }
 
@@ -57,6 +70,17 @@ it('detects pasted inputs while allowing a short greeting inside an unrelated se
     { path: 'copied-prompt.md', caseId: 'synthetic', turn: 2 },
     { path: 'copied-field.json', caseId: 'synthetic', turn: 2 },
   ]);
+});
+
+it('masks a pinned occurrence once and keeps edited or repeated source in the scan', () => {
+  const line = '  const values = [sample];';
+  const edited = line + ' // edited';
+  const start = line.indexOf('sample');
+  const end = start + 'sample'.length;
+  const lineSha256 = createHash('sha256').update(line).digest('hex');
+  expect(maskPinnedOccurrence([edited, line, line].join('\n'), { lineSha256, start, end })).toBe(
+    [edited, '  const values = [      ];', line].join('\n'),
+  );
 });
 
 const development = frozenDevelopment();
