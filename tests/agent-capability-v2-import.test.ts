@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,3 +48,23 @@ it('rejects changed upstream attribution bytes before release assembly', async (
     await rm(cache, { recursive: true, force: true });
   }
 });
+
+it('rejects changed cached source bytes before writing a development bundle', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mohassan-development-import-'));
+  try {
+    const cache = join(directory, 'cache');
+    const out = join(directory, 'dev');
+    await mkdir(cache);
+    await writeFile(join(cache, 'clinc150.json'), 'TAMPERED_ARTIFACT_SENTINEL');
+    const run = spawnSync(process.execPath, [
+      '--import', 'tsx', 'scripts/agent-capability-bench/v2/import-dev.ts', '--cache', cache, '--out', out,
+    ], { cwd: checkout, encoding: 'utf8' });
+
+    expect(run.status).toBe(1);
+    expect(run.stdout).toBe('');
+    expect(run.stderr.trim()).toBe('SHA-256 mismatch for clinc150.json.');
+    await expect(stat(out)).rejects.toMatchObject({ code: 'ENOENT' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 15_000);
