@@ -16,11 +16,11 @@ The evaluation report covers development model selection, calibration statistics
 
 | Head | Logistic development macro-F1 | Averaged-perceptron development macro-F1 | Threshold | Accepted calibration examples | Model bytes |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Refusal and scope | 0.943 | 0.938 | 0.800 | 1,304/1,478 | 262,383 |
-| Speech act | 0.954 | 0.944 | 0.806 | 1,969/1,981 | 174,990 |
-| Route | 0.924 | 0.918 | 0.800 | 1,203/1,339 | 612,027 |
-| Follow-up | 0.658 | 0.623 | 0.883 | 1,339/1,508 | 174,986 |
+| Refusal and scope | 0.943 | 0.938 | 0.800 | 1,308/1,485 | 262,384 |
+| Speech act | 0.954 | 0.954 | 0.805 | 1,978/1,989 | 174,990 |
+| Route | 0.925 | 0.904 | 0.800 | 1,208/1,346 | 612,029 |
+| Follow-up | 0.651 | 0.632 | 0.890 | 1,135/1,291 | 174,986 |
 
-Logistic regression was selected for all four heads. The CLINC150 refusal-and-scope test yielded 0.576 macro-F1, 0.389 out-of-scope recall on 1,328 examples, and 0.320 ECE. CLINC's broad out-of-scope category remains difficult under this mapping. The CANARD follow-up test yielded 0.620 macro-F1, 0.987 follow-up recall on 4,337 examples, and 0.187 new-request recall on 391 examples. Each MASSIVE test locale has one mapped small-talk example. Arabic small-talk recall was 0/1, and English recall was 1/1. Neither locale provides a reliable estimate of chat recall. The single-class ArBanking77 PAL and Aya slices measure recall within their annotated domains.
+Logistic regression was selected for all four heads. After the capability v2 ingestion exclusions, the CLINC150 refusal-and-scope test yielded 0.526 macro-F1, 0.346 out-of-scope recall on 1,237 examples, and 0.366 ECE. The CANARD follow-up test yielded 0.627 macro-F1, 0.983 follow-up recall on 3,235 examples, and 0.207 new-request recall on 353 examples. Each MASSIVE test locale has one mapped small-talk example. Arabic small-talk recall was 0/1, and English recall was 1/1. The single-class ArBanking77 PAL and Aya slices measure recall within their annotated domains. [Same-test before and after results](V2-RETRAINING.md)
 
 The pinned training environment uses Python 3.12 with the NumPy and SciPy versions in `requirements.txt`. The trainer fixes the seed and uses one BLAS thread. Two independent executions in the same environment produced matching model, metrics, manifest, and golden files byte for byte.

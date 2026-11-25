@@ -13,7 +13,9 @@ python3 packages/scratch-classifiers/train.py
 
 Use `--cache` to supply a local download directory and `--output` to compare a repeat run without overwriting the packaged outputs. The source licenses and Mohassan label mapping are in the [data card](DATA-CARD.md). The selection, calibration, and metric definitions are in the [model card](MODEL-CARD.md). The full test metrics, per-class support and recall, and calibration coverage are in [metrics.json](models/metrics.json).
 
-The [capability benchmark report](CAPABILITY-BENCHMARK.md) records development and sealed application results for both flag settings.
+The v2 exclusion retraining report compares the original and current heads on identical guarded test rows. [Retraining report](V2-RETRAINING.md)
+
+The v1 capability benchmark report records the initial development and sealed application results for both flag settings. [V1 benchmark report](CAPABILITY-BENCHMARK.md)
 
 ```sh
 python3 -m unittest discover -s packages/scratch-classifiers -p test_prepare_data.py -v
