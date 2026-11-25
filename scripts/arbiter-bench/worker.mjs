@@ -19,9 +19,9 @@ const fixtures = resolve(root, 'tests/fixtures/agent-capability-bench');
 const loadTooling = path => import(pathToFileURL(resolve(tooling, path)).href);
 const { withCapabilityHarness } = await loadTooling('observe.ts');
 const { scoreCapabilityCase } = await loadTooling('score.ts');
-const capture = mode !== 'base';
+const capture = mode === 'replay';
 const hooks = capture ? await import(pathToFileURL(resolve(root, 'apps/server/src/assistant/model-relations-arbiter.ts')).href) : undefined;
-const filter = capture ? JSON.parse(execFileSync('python3', ['-B', fileURLToPath(new URL('filter.py', import.meta.url)), root, version], {
+const filter = mode !== 'base' ? JSON.parse(execFileSync('python3', ['-B', fileURLToPath(new URL('filter.py', import.meta.url)), root, version], {
   encoding: 'utf8', maxBuffer: 2 * 1024 * 1024,
 })) : undefined;
 
@@ -49,7 +49,7 @@ await withCapabilityHarness(async observe => {
   for (const [index, item] of cases.entries()) {
     if (index % lanes !== lane) continue;
     const provenance = filter?.[item.id];
-    if (capture && !provenance) throw new Error('Missing exclusion result for development case.');
+    if (filter && !provenance) throw new Error('Missing exclusion result for development case.');
     result.filter.human += Number(provenance?.author === 'human');
     result.filter.excluded += Number(provenance?.excluded === true);
     if (!hooks) {

@@ -113,8 +113,8 @@ export function arbitrateComponent<T>(type: ArbiterDecisionType, context: {
   if (!arbiterEnabled() || !alternatives.length) return precedence.result;
   const active = execution.getStore();
   const runId = context.runId ?? active?.runId;
-  const trace = replay.getStore();
-  if (!runId && !trace) return precedence.result;
+  const trace = context.shadowLog ? undefined : replay.getStore();
+  if (!runId && !trace && !context.shadowLog) return precedence.result;
   const candidates = [precedence, ...alternatives];
   const input: ArbiterInput = {
     type, precedence: precedence.component,

@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -37,12 +37,33 @@ const env = {
   TEST_DRIVEN_CODING_ENABLED: 'true',
   MOHASSAN_QUESTION_REWRITER: '1',
   MOHASSAN_ARITHMETIC_SEARCH: '1',
-  MOHASSAN_MODEL_RELATIONS: mode === 'base' ? 'off' : 'shadow',
+  ...(mode === 'base' ? { MOHASSAN_MODEL_RELATIONS: 'off' } : {}),
 };
+
+function timing(values) {
+  const times = values.filter(Number.isFinite).sort((a, b) => a - b);
+  return { count: times.length, p50Ms: times[Math.ceil(times.length * 0.5) - 1] ?? null,
+    p95Ms: times[Math.ceil(times.length * 0.95) - 1] ?? null };
+}
+
+function logSize(path) {
+  return statSync(path, { throwIfNoEntry: false })?.size ?? 0;
+}
+
+function shadowTiming(path, offset) {
+  if (!logSize(path)) return { observerScheduling: timing([]), backgroundArbitration: timing([]) };
+  const records = readFileSync(path).subarray(offset).toString().split('\n').filter(Boolean).map(line => JSON.parse(line));
+  return {
+    observerScheduling: timing(records.map(record => record.schedulingMs)),
+    backgroundArbitration: timing(records.flatMap(record => (record.arbiter ?? []).map(decision => decision.elapsedMs))),
+  };
+}
 
 const allRows = [];
 for (const [version, lanes, caseCount] of [[1, 1, 240], [2, 8, 2400]]) {
   if (split !== undefined && split !== `--v${version}`) continue;
+  const logPath = resolve(root, '.data/model-relations-shadow.jsonl');
+  const logStart = mode === 'shadow' ? logSize(logPath) : 0;
   const data = [];
   for (let lane = 0; lane < lanes; lane += 1) {
     const path = resolve(receipt, `v${version}-lane-${lane}.json`);
@@ -71,7 +92,7 @@ for (const [version, lanes, caseCount] of [[1, 1, 240], [2, 8, 2400]]) {
   const rows = data.flatMap(run => run.rows);
   const unsupported = data.flatMap(run => run.unsupported);
   const protectedDecisions = data.flatMap(run => run.protectedDecisions);
-  const latencyMs = data.flatMap(run => run.latencyMs).sort((a, b) => a - b);
+  const latencyMs = data.flatMap(run => run.latencyMs);
   const filter = { human: 0, excluded: 0 };
   for (const run of data) {
     filter.human += run.filter.human;
@@ -79,9 +100,8 @@ for (const [version, lanes, caseCount] of [[1, 1, 240], [2, 8, 2400]]) {
   }
   writeFileSync(resolve(receipt, `v${version}-development.json`), JSON.stringify({
     source: data[0].source, mode, startedAt: data[0].startedAt, finishedAt: data.at(-1).finishedAt,
-    scores, summary, rows, unsupported, protectedDecisions, filter, arbitrationTiming: { count: latencyMs.length,
-      p50Ms: latencyMs[Math.ceil(latencyMs.length * 0.5) - 1] ?? null,
-      p95Ms: latencyMs[Math.ceil(latencyMs.length * 0.95) - 1] ?? null },
+    scores, summary, rows, unsupported, protectedDecisions, filter, arbitrationTiming: timing(latencyMs),
+    ...(mode === 'shadow' ? { shadowTiming: shadowTiming(logPath, logStart) } : {}),
   }, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
   console.log(`Development v${version} scored ${summary.overall.passed}/${caseCount} with ${rows.length} contested decisions.`);
   allRows.push(...rows.filter(({ input, outcomes }) => Object.keys(outcomes).length === input.claimants.length));
