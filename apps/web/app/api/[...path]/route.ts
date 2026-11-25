@@ -48,3 +48,8 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
   }
 }
 export {forward as GET,forward as POST,forward as DELETE};
+export async function PATCH(request: NextRequest, context: Parameters<typeof forward>[1]) {
+  const { path } = await context.params;
+  if (path.length !== 2 || path[0] !== "reminders") return new Response(null, { status: 405, headers: { Allow: "GET, HEAD, POST, DELETE, OPTIONS" } });
+  return forward(request, context);
+}

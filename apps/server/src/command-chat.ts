@@ -45,6 +45,7 @@ import { evaluateLocalRecall } from './assistant/local-recall.js';
 import { ownFactQuestion } from './assistant/own-fact-question.js';
 import { evaluateLocalConversation } from './assistant/local-conversation.js';
 import { evaluateCapabilityReply } from './assistant/capability-reply.js';
+import { dispatchReminderTurn } from './reminders/chat-turn.js';
 import { answerRuntimeStatus } from './assistant/runtime-status.js';
 import { evaluateSelfQuestion, type SelfFacts } from './assistant/self-knowledge.js';
 import { evaluateLocalSequence } from './assistant/local-sequence.js';
@@ -1981,6 +1982,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return;
       }
       const request = effectiveSource.request;
+      if (await dispatchReminderTurn({
+        db, state, runId, ownerId, id, run, effectiveSource, runTransaction, pause, addMessage, recordTerminalRun, ledgerSafe,
+        recordSkillGap: config.recordSkillGap, scrub: value => vault.scrubValue(id, value, clean), releaseVault: () => forgetVault(id, execution.getStore()!.token),
+      })) return;
       const actionContract = compileActionCompletionContract({ runId, request });
       if (state.actionCompletion !== undefined) {
         const restored = restoreActionCompletionLedger(state.actionCompletion, { runId, request });

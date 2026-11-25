@@ -87,7 +87,7 @@ describe('complete template answers through the real chat', () => {
     const completed = await result(id);
     expect(completed.run.status).toBe('blocked');
     expect(completed.detail.status).toBe('idle');
-    expect(completed.text).toContain('scheduling tool is unavailable');
+    expect(completed.text).toContain('scheduling service is unconfigured');
     expect(completed.text).not.toMatch(/(?:reminder|alert) (?:has been |was )?(?:set|scheduled)/iu);
   });
 });
