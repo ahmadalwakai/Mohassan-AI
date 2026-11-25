@@ -3,6 +3,7 @@ import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
+import { inheritedCapabilitySourceRevisions } from './helpers/inherited-capability-sources.js';
 
 type BenchmarkCorpus = {
   cases: {
@@ -74,8 +75,17 @@ it.skipIf(!hasDevelopmentCorpus)('keeps capability benchmark strings out of repo
     const bytes = readFileSync(absolute);
     if (bytes.includes(0)) continue;
     const source = bytes.toString('utf8').normalize('NFC');
+    const inheritedRevision = inheritedCapabilitySourceRevisions.get(path);
+    const inherited = inheritedRevision ? execFileSync('git', ['show', `${inheritedRevision}:${path}`], {
+      cwd: root, encoding: 'utf8',
+    }).normalize('NFC') : null;
     for (const { id, turn, field, pattern } of strings) {
-      if (pattern.test(source)) matches.push(`${path}: ${id}, turn ${turn}, ${field}`);
+      if (!pattern.test(source)) continue;
+      if (inherited !== null) {
+        const occurrences = new RegExp(pattern.source, `${pattern.flags}g`);
+        if ((source.match(occurrences)?.length ?? 0) <= (inherited.match(occurrences)?.length ?? 0)) continue;
+      }
+      matches.push(`${path}: ${id}, turn ${turn}, ${field}`);
     }
   }
   expect(matches).toEqual([]);

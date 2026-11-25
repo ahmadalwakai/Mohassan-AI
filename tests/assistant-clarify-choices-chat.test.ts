@@ -373,7 +373,10 @@ describe('choice clarification through the command chat controller', () => {
       await active.send(owner, waiting.id, { text: 'Remember that my password is ' + secret });
       await active.settled(waiting.id);
       const detail = await active.detail(owner, waiting.id);
-      expect(detail.status).toBe('blocked');
+      const latestRun = await database.db.selectFrom('chat_runs').select(['id', 'status'])
+        .where('conversation_id', '=', waiting.id).orderBy('created_at', 'desc').executeTakeFirstOrThrow();
+      expect(latestRun.id).not.toBe(before.id);
+      expect(latestRun.status).toBe('blocked');
       expect(JSON.stringify(detail)).not.toContain(secret);
       const messages = await database.db.selectFrom('chat_messages').select('text')
         .where('conversation_id', '=', waiting.id).where('role', '=', 'user').execute();

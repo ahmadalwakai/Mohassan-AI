@@ -147,14 +147,21 @@ describe('actual browser request authorization',()=>{
     await browser.act(owner,id,fresh,auth,(await browser.prepareAction(owner,id,fresh))!);
     expect(requests).toHaveLength(1);
   });
-  it('blocks JavaScript writes, background submissions and iframe form navigation',async()=>{
+  it('blocks JavaScript writes and background submissions',async()=>{
     const id=randomUUID(),auth=authority();
-    let page=(await browser.act(owner,id,{kind:'open',text:origin+'/script'},auth)).page;
+    const page=(await browser.act(owner,id,{kind:'open',text:origin+'/script'},auth)).page;
     await expect(browser.act(owner,id,{kind:'click',ref:ref(page,'Do action')},auth)).rejects.toMatchObject({code:'AGENT_EFFECT_DENIED'});
     expect(requests).toHaveLength(0);
-    await expect(browser.act(owner,id,{kind:'open',text:origin+'/automatic'},auth)).rejects.toBeDefined();
+    const handle=await conversationPage(id);
+    await Promise.all([
+      handle.waitForEvent('requestfailed',request=>request.method()==='GET'&&new URL(request.url()).pathname==='/effect-get'),
+      expect(browser.act(owner,id,{kind:'open',text:origin+'/automatic'},auth)).rejects.toBeDefined(),
+    ]);
     expect(requests).toHaveLength(0);
-    page=(await browser.act(owner,id,{kind:'open',text:origin+'/iframe'},auth)).page;
+  });
+  it('blocks programmatic form navigation in an iframe',async()=>{
+    const id=randomUUID(),auth=authority();
+    const page=(await browser.act(owner,id,{kind:'open',text:origin+'/iframe'},auth)).page;
     await expect(browser.act(owner,id,{kind:'click',ref:ref(page,'Programmatic')},auth)).rejects.toMatchObject({code:'AGENT_EFFECT_DENIED'});
     expect(requests).toHaveLength(0);
   });

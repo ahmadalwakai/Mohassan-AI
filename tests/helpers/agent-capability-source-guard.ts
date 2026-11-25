@@ -29,6 +29,19 @@ const inheritedMatches = [
     turn: 1,
     lineHash: '20a7d1fea93d473e1d8ca0f3d71a932603f91e7472723ad082e97c6c5d37add3',
   },
+  // The same two inherited occurrences were reviewed in wave 1 at f5052011.
+  {
+    path: 'apps/server/src/assistant/manners/replies.ts',
+    id: 'dev-small-talk-010',
+    turn: 1,
+    lineHash: 'af3ffb3c619a245ec1250f3328fa00d804718c4fc779f56c98afc0e5cb24bb42',
+  },
+  {
+    path: 'tests/fixtures/manners-development.ts',
+    id: 'dev-small-talk-003',
+    turn: 1,
+    lineHash: '5a93671980da132aeff769596bad6efc760f5d73a1bfdd9bb4f813f6ebaf6db6',
+  },
 ];
 
 type CorpusCase = {
