@@ -1,0 +1,14 @@
+.link {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.link:hover {
+  background: var(--hover);
+}
