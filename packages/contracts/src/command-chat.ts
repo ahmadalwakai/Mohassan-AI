@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { BackgroundRunSchema } from './background-run';
+import { MonitorCardSchema } from './monitors';
 import { CampaignEventStreamSchema } from './campaign-progress';
 import { ChatRunViewSchema } from './agent-run';
 
@@ -169,6 +170,7 @@ export const ChatConversationSummarySchema = z.object({
 export const chatCapabilityIds = ['computation', 'web', 'browser', 'memory', 'knowledge', 'documents', 'sites', 'skills', 'planner', 'letters', 'imageReading', 'ads', 'pc'] as const;
 export const ChatCapabilitiesSchema = z.object({
   chatModel: z.boolean(),
+  smartMonitors: z.boolean().optional(),
   available: z.array(z.enum(chatCapabilityIds)).max(chatCapabilityIds.length),
 }).strict();
 export type ChatCapabilities = z.infer<typeof ChatCapabilitiesSchema>;
@@ -201,6 +203,8 @@ export const ChatConversationSchema = ChatConversationSummarySchema.extend({
    */
   run: ChatRunViewSchema.nullable().optional(),
   backgroundRun: BackgroundRunSchema.optional(),
+  monitorProposal: MonitorCardSchema.optional(),
+  monitors: z.array(MonitorCardSchema).optional(),
 }).strict();
 
 export type ChatConversation = z.infer<typeof ChatConversationSchema>;
