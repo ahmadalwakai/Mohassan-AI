@@ -56,10 +56,11 @@ class VerifierAssertionTests(unittest.TestCase):
     items[index()] **= exponent()
     value = 2
     value <<= n
-    return items[0], value, seen, list(range(n)), math.comb(n, 2), math.perm(n), math.factorial(n)
+    values = range(n)
+    return items[0], value, seen, list(values), math.comb(n, 2), math.perm(n), math.factorial(n), isinstance(values, range)
 """
         self.assertEqual(self.verify(
-            source, "assert checked(3) == (8, pow(4, 2), [1, 2], [0, 1, 2], 3, 6, 6)",
+            source, "assert checked(3) == (8, pow(4, 2), [1, 2], [0, 1, 2], 3, 6, 6, True)",
         ), {"status": "passed"})
 
     def test_rejects_names_reserved_for_operator_guards(self):

@@ -16,3 +16,5 @@ JSON
 ```
 
 Expect one line, `{"status":"passed"}`, and exit status 0. A worker started as root, or one whose file and socket isolation checks fail, reports `isolation-unavailable`. Configure `TEST_DRIVEN_CODING_ENABLED=true` only after validating the deployed permissions and smoke check. The API admits up to two verification requests at once and applies a 250 ms cooldown per account after each verification.
+
+The verifier accepts `re` flag arguments composed of `ASCII`, `DOTALL`, `IGNORECASE`, `MULTILINE`, and `VERBOSE`. `range` is limited to 100,000 elements. `factorial`, `comb`, and `perm` accept integer inputs up to 10,000. Integer power and left-shift operations use a 16,384-bit size bound. Each assertion must call the candidate before it can pass.

@@ -124,14 +124,23 @@ def inspect_tree(root, supported_nodes, bound_names=None):
     return needs_guards
 
 
-def _bounded_range(*args):
-    values = range(*args)
-    try:
-        if len(values) <= MAX_RANGE_LENGTH:
-            return values
-    except OverflowError:
-        pass
-    raise ValueError("range exceeds verifier bounds")
+class _RangeType(type):
+    def __instancecheck__(cls, value):
+        return isinstance(value, range)
+
+
+class _BoundedRange(metaclass=_RangeType):
+    count = range.count
+    index = range.index
+
+    def __new__(cls, *args):
+        values = range(*args)
+        try:
+            if len(values) <= MAX_RANGE_LENGTH:
+                return values
+        except OverflowError:
+            pass
+        raise ValueError("range exceeds verifier bounds")
 
 
 def _bounded_combinatoric(function, *args):
@@ -167,19 +176,24 @@ def _restricted_regex(function, flags_index, /, *args, **kwargs):
     return function(*args, **kwargs)
 
 
-MODULE_OVERRIDES = {
-    "math": {name: partial(_bounded_combinatoric, getattr(math, name)) for name in ("factorial", "comb", "perm")},
-    "re": {
-        name: partial(_restricted_regex, getattr(re, name), flags_index)
-        for flags_index, names in enumerate((
-            (), ("compile",), ("findall", "finditer", "fullmatch", "match", "search"),
-            ("split",), ("sub", "subn"),
-        ))
-        for name in names
-    },
+SCOPED_MODULES = {
+    module: {name: getattr(MODULES[module], name) for name in names}
+    for module, names in MODULE_MEMBERS.items()
 }
+for _name in ("factorial", "comb", "perm"):
+    SCOPED_MODULES["math"][_name] = partial(_bounded_combinatoric, getattr(math, _name))
+for _flags_index, _names in enumerate((
+    ("compile",), ("findall", "finditer", "fullmatch", "match", "search"), ("split",), ("sub", "subn"),
+), start=1):
+    for _name in _names:
+        SCOPED_MODULES["re"][_name] = partial(_restricted_regex, getattr(re, _name), _flags_index)
+PURE_BUILTINS.update(pow=_bounded_power, range=_BoundedRange)
 
-GUARDED_OPERATORS = {ast.Pow: "__verifier_power", ast.LShift: "__verifier_left_shift"}
+GUARDED_OPERATORS = {
+    ast.Pow: ("__verifier_power", _bounded_power),
+    ast.LShift: ("__verifier_left_shift", _bounded_left_shift),
+}
+GUARD_BINDINGS = dict(GUARDED_OPERATORS.values())
 
 
 def _operator_call(helper, left, right):
@@ -189,16 +203,18 @@ def _operator_call(helper, left, right):
 class _GuardOperations(ast.NodeTransformer):
     def visit_BinOp(self, node):
         self.generic_visit(node)
-        helper = GUARDED_OPERATORS.get(type(node.op))
-        if helper is None:
+        guard = GUARDED_OPERATORS.get(type(node.op))
+        if guard is None:
             return node
+        helper, _ = guard
         return ast.copy_location(_operator_call(helper, node.left, node.right), node)
 
     def visit_AugAssign(self, node):
         self.generic_visit(node)
-        helper = GUARDED_OPERATORS.get(type(node.op))
-        if helper is None:
+        guard = GUARDED_OPERATORS.get(type(node.op))
+        if guard is None:
             return node
+        helper, _ = guard
         target = node.target
         if isinstance(target, ast.Name):
             value = _operator_call(helper, ast.Name(id=target.id, ctx=ast.Load()), node.value)
@@ -233,12 +249,7 @@ def compile_expression(node):
 
 
 def python_scope(printer):
-    modules = {
-        module: SimpleNamespace(**{
-            name: MODULE_OVERRIDES[module].get(name, getattr(MODULES[module], name)) for name in names
-        })
-        for module, names in MODULE_MEMBERS.items()
-    }
+    modules = {name: SimpleNamespace(**members) for name, members in SCOPED_MODULES.items()}
 
     def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
         if level or name not in modules:
@@ -246,9 +257,8 @@ def python_scope(printer):
         return modules[name]
 
     return {
-        "__builtins__": dict(PURE_BUILTINS, __import__=safe_import, print=printer, pow=_bounded_power, range=_bounded_range),
-        "__verifier_power": _bounded_power, "__verifier_left_shift": _bounded_left_shift,
-        **modules,
+        "__builtins__": dict(PURE_BUILTINS, __import__=safe_import, print=printer),
+        **GUARD_BINDINGS, **modules,
     }
 
 
