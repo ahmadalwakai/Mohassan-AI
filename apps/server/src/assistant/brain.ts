@@ -284,6 +284,7 @@ export interface BrainState {
   clarifiedRequestSource?: import('./effective-request-source.js').ClarifiedRequestSource;
   /** Host hash of the current user's pre-schema/pre-redaction bytes; never model-provided. */
   requestOriginalHash?: string;
+  codingVerification?: import('./test-driven-coding/reply.js').CodingVerification;
   requestClarification?: { attempts: number };
   clarificationAttempts?: number;
   /** Full bounded answer for deterministic templates; diagnostic trails are abbreviated. */

@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { calculate, calculationReply, evaluateArithmeticExpression } from '../apps/server/src/assistant/calculator.js';
+import { calculate, calculationReply, evaluateArithmeticExpression, evaluateExactArithmeticExpression, type ArithmeticStep } from '../apps/server/src/assistant/calculator.js';
 import { notWebReason } from '../apps/server/src/assistant/hands.js';
 
 const value = (text: string) => calculate(text)?.value;
 
 describe('calculate', () => {
+  it('preserves numeric evidence steps alongside exact rational evaluation', () => {
+    const steps: ArithmeticStep[] = [];
+    expect(evaluateArithmeticExpression('12.5% * (90 + 70)', { allowPercent: true, steps })).toEqual({ ok: true, value: 20 });
+    expect(steps).toEqual([
+      { left: 12.5, operator: '/', right: 100, value: 0.125 },
+      { left: 90, operator: '+', right: 70, value: 160 },
+      { left: 0.125, operator: '*', right: 160, value: 20 },
+    ]);
+    expect(evaluateExactArithmeticExpression('1/3 + 1/3 + 1/3')).toEqual({ ok: true, value: '1' });
+  });
+
   it('reads Arabic and English sums, words and symbols', () => {
     expect(value('كم يساوي 15 ضرب 23؟')).toBe(345);
     expect(value('٢٠ قسمة على ٤')).toBe(5);

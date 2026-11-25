@@ -72,10 +72,12 @@ export function figureKind(question: string): FigureKind {
   if (PEOPLE_QUESTION.test(question)) return 'people';
   return 'any';
 }
-const DIGIT = '[\\d٠-٩]';
+const DIGIT = '[\\d٠-٩۰-۹]';
+export const hasAnswerNumber = (text: string): boolean => /[\d٠-٩۰-۹]/u.test(text);
+export const normalizeAnswerDigits = (text: string): string => text.replace(/[٠-٩۰-۹]/gu, digit => String(digit.charCodeAt(0) & 0xf));
 const FIGURE_UNITS: Record<Exclude<FigureKind, 'any'>, RegExp> = {
   duration: new RegExp(`${DIGIT}+(?:[.,]${DIGIT}+)?\\s*(?:ثانية|ثوان|دقيقة|دقائق|دقيقه|ساعة|ساعات|ساعه|يوم|أيام|ايام|أسبوع|اسبوع|أسابيع|اسابيع|شهر|أشهر|اشهر|شهور|سنة|سنه|سنوات|عام|أعوام|اعوام|seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)(?![\\p{L}])`, 'iu'),
-  date: new RegExp(`(?:^|[^\\d٠-٩])(?:1[0-9]|20)${DIGIT}{2}(?![\\d٠-٩])|(?:يناير|فبراير|مارس|أبريل|ابريل|مايو|يونيو|يوليو|أغسطس|اغسطس|سبتمبر|أكتوبر|اكتوبر|نوفمبر|ديسمبر|كانون|شباط|آذار|نيسان|أيار|حزيران|تموز|آب|أيلول|تشرين|january|february|march|april|may|june|july|august|september|october|november|december)`, 'iu'),
+  date: /(?<!\d)(?:1[0-9]|20)\d{2}(?!\d)|(?<![\p{L}\d])(?:عام|سن[ةه]|year|ad|bc|ce|bce)\s+\d{1,4}(?!\d|[.,٫٬]\d)|(?<![\p{L}\d])\d{1,4}\s+(?:هـ|هجرية|ميلادي[ةه]?|ad|bc|ce|bce)(?!\p{L})|(?:يناير|فبراير|مارس|أبريل|ابريل|مايو|يونيو|يوليو|أغسطس|اغسطس|سبتمبر|أكتوبر|اكتوبر|نوفمبر|ديسمبر|كانون|شباط|آذار|نيسان|أيار|حزيران|تموز|آب|أيلول|تشرين|january|february|march|april|may|june|july|august|september|october|november|december)/iu,
   price: /[$€£¥₺]|(?:^|\s)(?:دولار|دولارات|يورو|جنيه|جنيهات|ريال|ريالات|درهم|دراهم|دينار|دنانير|ليرة|ليرات|USD|EUR|GBP|SAR|AED|EGP|TRY|dollars?|euros?|pounds?|cents?|riyals?|dirhams?|dinars?)(?![\p{L}])/iu,
   // «123 مليون نسمة», «68,605,616 نسمة», «10,577 people».
   people: new RegExp(`${DIGIT}+(?:[.,،٬]${DIGIT}+)*\\s*(?:ألف|الف|آلاف|الاف|مليون|ملايين|مليار|thousand|million|billion)?\\s*(?:نسمة|نسمه|نسمات|شخص|أشخاص|اشخاص|مواطن|مواطنا|مواطنين|ساكن|people|persons|inhabitants|residents)(?![\\p{L}])`, 'iu'),
@@ -137,6 +139,7 @@ function otherPeople(text: string, index: number): boolean {
 /** True when a line carries the kind of figure the question wants; a question of kind «any» needs only a number. */
 export function hasFigureOf(kind: FigureKind, line: string): boolean {
   if (kind === 'any') return true;
+  if (kind === 'date') return FIGURE_UNITS.date.test(normalizeAnswerDigits(line).replace(/[ً-ٰٟ]/gu, ''));
   if (kind !== 'people') return FIGURE_UNITS[kind].test(line);
   // Wikipedia leads carry vowel marks: «قُدِّر عدد سكانها بأكثرَ من 120 مليون نسَمة». Marks and tatweel only: the range
   // U+064B–U+0670 written as one span would also take the digits ٠–٩ and the percent sign ٪.
@@ -217,7 +220,7 @@ export function checkAnswerLine(question: string, line: string, options: { topic
   // A short frame («وصلت إلى …:») has too few letters to count; the script it is written in still names its language.
   if (answered === 'none' && own) { const arabic = /\p{Script=Arabic}/u.test(own), latin = /[A-Za-z]/u.test(own); answered = arabic && !latin ? 'ar' : latin && !arabic ? 'en' : 'none'; }
   if ((answered === 'ar' || answered === 'en') && answered !== asked) reasons.push('language');
-  if (NUMBER_QUESTION.test(question) && !/[\d٠-٩]/u.test(text)) reasons.push('needs_number');
+  if (NUMBER_QUESTION.test(question) && !hasAnswerNumber(text)) reasons.push('needs_number');
   else if (NUMBER_QUESTION.test(question) && !hasFigureOf(figureKind(question), text)) reasons.push('needs_unit');
   const aspect = aspectKind(question);
   if (aspect && !ASPECT_LINE[aspect].test(text)) reasons.push('needs_aspect');

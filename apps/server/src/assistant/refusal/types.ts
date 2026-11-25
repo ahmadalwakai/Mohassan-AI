@@ -3,7 +3,8 @@ export type RefusalCode = 'unsafe' | 'secrets' | 'other_account' | 'payment'
 
 export type RefusalAlternative = 'protect' | 'private_output' | 'secure_entry' | 'sign_in'
   | 'own_account' | 'compare' | 'review_payment' | 'draft' | 'manual_step' | 'public_info'
-  | 'plan' | 'forecast_sources' | 'ask_owner' | 'describe_image' | 'find_media' | 'share_material';
+  | 'plan' | 'forecast_sources' | 'ask_owner' | 'describe_image' | 'find_media' | 'share_material'
+  | 'device_control' | 'place_order' | 'make_booking' | 'place_call' | 'publish_content';
 
 export interface RefusalDecision {
   readonly code: RefusalCode;

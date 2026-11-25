@@ -265,7 +265,7 @@ export function verifyStoredPdf(stored: { id: string; size: number; hash: string
 }
 
 /** Handlers that answer from the request and local knowledge, with no external action. */
-const DIRECT_HANDLERS: ReadonlySet<RoutingHandler> = new Set(['local_conversation', 'local_computation', 'local_status']);
+const DIRECT_HANDLERS: ReadonlySet<RoutingHandler> = new Set(['local_conversation', 'local_computation', 'local_coding', 'local_status']);
 export const pathOfHandler = (handler: RoutingHandler | undefined): RunPath | null => !handler || handler === 'clarify' || handler === 'resume' ? null
   : DIRECT_HANDLERS.has(handler) ? 'direct' : 'action';
 

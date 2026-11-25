@@ -44,11 +44,13 @@ import { addNamedDocumentInput, finishInlineDataFile, preferDocumentControl, rea
 import { PdfError, parsePageSelection } from '@mohassan/pdf';
 import type { DocumentControl, DocumentEdit, DocumentInput, StoredDocument } from './documents.js';
 import { evaluateLocalComputation } from './assistant/local-computation.js';
+import { blockAbstainedWordProblem } from './assistant/word-problem-chat.js';
 import { isPageReasoningRequest } from './assistant/reasoning/index.js';
 import { composeReferencedComputation, computationReference, computedRecord, evaluateReferencedComputation, latestComputedResult, missingReferenceQuestion, referencedValueFromAnswer, withReferencedValue } from './assistant/computation-reference.js';
 import { evaluateLocalRecall } from './assistant/local-recall.js';
 import { ownFactQuestion } from './assistant/own-fact-question.js';
 import { evaluateLocalConversation } from './assistant/local-conversation.js';
+import { pauseEverydayClarification } from './assistant/everyday-clarification.js';
 import { admitManners } from './assistant/manners/chat.js';
 import { evaluateCapabilityReply } from './assistant/capability-reply.js';
 import { answerRuntimeStatus } from './assistant/runtime-status.js';
@@ -83,10 +85,11 @@ import { actionOperandHash, actionRequestHash, compileActionCompletionContract, 
   restoreActionCompletionLedger, reviewActionCompletion, type ActionCompletionEventInput, type ActionCompletionKind } from './assistant/action-completion.js';
 import { isEntireLiteralRequest, parseUserRequestConstraints, requestCapabilityAllowed, requestConstraintReply, requestScopeActionText, reviewPublicProjection, type ForbiddenRequestCapability, type RequestScopeAssessment, type UserRequestConstraints } from './assistant/request-scope.js';
 import { evaluateLocalKnowledge, isKnowledgeDocumentRequest, type LocalKnowledgeDocument } from './assistant/local-knowledge.js';
-import { decideRequestRoute } from './assistant/routing-decision.js';
+import { completeQuestionRewrite, questionRewriteHandsPlan, routeWithQuestionHistory } from './assistant/question-rewrite-chat.js';
 import { observePlanMessage, runCompiledChatPlan } from './assistant/plan/chat.js';
 import { clarificationAnswers, clarifyCommand } from './assistant/clarify/host.js';
 import { reviewWorkRefusal } from './assistant/refusal/turn.js';
+import { answerTestDrivenCoding, bindTestDrivenCodingHash, publishTestDrivenCoding } from './assistant/test-driven-coding/reply.js';
 import { describeSearchDestination, extractPublicSearchQueries, isSearchEntryElement, mergePublicQueryTerms, reviewGeneratedPublicQuery } from './assistant/public-query-provenance.js';
 import { reviewExplicitPublicBrowserQuery } from './assistant/browser-public-query.js';
 import { ADS_REWRITE_JSON_SCHEMA, ADS_REWRITE_SCHEMA_NAME, ADS_REWRITE_SYSTEM, buildRewritePrompt, type RewriteRequest } from '@mohassan/google-ads';
@@ -2013,6 +2016,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const refusal = run.intent === 'task' && reviewWorkRefusal(request, state, currentExecution.full,
         { computer: Boolean(tools?.computer || config.desktop), memory: Boolean(tools?.memory) });
       if (refusal) { await finish(id, runId, state, refusal.text, 'blocked', undefined, undefined, true); return; }
+      if (await completeQuestionRewrite(request, state, () => browser.dropHeld(ownerId, id),
+        question => finish(id, runId, state, vault.scrub(id, clean(question)), 'completed'))) return;
       // Level 4 (plan §6.1): a member asked for the computer's browser. One line with the reason and the alternative; no browser starts.
       if (!currentExecution.full) {
         const level = decideBrowserVisibility({ request, route: state.routing?.route ?? null, role: 'member' });
@@ -2078,6 +2083,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await finish(id, runId, state, reviewed.replacement?.text ?? 'لم أتحقق من سجل إجراءات صالح لهذا الطلب.', 'blocked');
         return;
       }
+      const codingReply = run.intent === 'task' && !state.steps && !state.trail.length && state.routing?.handler === 'local_coding'
+        ? await answerTestDrivenCoding(request, { authorized: fullReach() && state.routing.availability !== 'restricted', signal, originalHash: state.requestOriginalHash, scrub: text => vault.scrub(id, clean(text)) }) : null;
+      if (codingReply) return publishTestDrivenCoding(state, codingReply,
+        (text, status) => finish(id, runId, state, text, status, undefined, undefined, true));
       if (noteVerificationIntent) {
         const unavailable = () => /\p{Script=Arabic}/u.test(request)
           ? 'لم أتمكن من التحقق من حالة محاولة حفظ هذه الملاحظة الآن.'
@@ -2343,6 +2352,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const earlier = await db.selectFrom('chat_messages').select(['role', 'text']).where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(HISTORY_MESSAGES + 1).execute();
       const history = earlier.reverse().slice(0, -1).map((entry) => ({ role: entry.role, text: clean(entry.text) }));
       currentExecution.previousRequest = history.filter(entry => entry.role === 'user').at(-1)?.text ?? null;
+      if (run.intent === 'task' && (state.routing?.route === 'clarify' || state.clarifiedRequest)
+        && await pauseEverydayClarification(request, state, (status, fields, prompt) => pause(id, runId, state, status, fields, prompt),
+          text => finish(id, runId, state, text, 'blocked'))) return;
       if (run.intent !== 'review_browser' && run.intent !== 'restore_browser' && await runExtractiveWriting({ db, config, ownerId, id, runId, request, state, signal, search, active, previousText: currentExecution.previousRequest, full: currentExecution.full,
         observe: async () => await browser.hasPage(ownerId, id) ? (await observeBrowser(ownerId, id)).page : null, scrub: text => vault.scrub(id, clean(text)),
         finish: (text, status) => finish(id, runId, state, text, status, undefined, undefined, true) })) return;
@@ -2763,6 +2775,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           return;
         }
         if (computation && !(computation.status === 'partial' && hasChatModel())) {
+          const blocked = blockAbstainedWordProblem(computation, (text, status) => finish(id, runId, state, vault.scrub(id, text), status));
+          if (blocked) { await blocked; return; }
           await addStep(id, runId, computation.lang === 'ar' ? 'حساب محلي' : 'Local calculation');
           state.trail.push({ step: ++state.steps, action: 'calculate', result: clean(computation.evidence.map(item => item.quote).join('\n') || computation.text).slice(0, 1100), changed: false });
           observeChatLocalAnswer(state.supervision!, { source: 'computation', ...computation, startedAt: localStartedAt });
@@ -2874,7 +2888,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           earlierUserTurns: history.filter(entry => entry.role === 'user').map(entry => entry.text),
           pending: Boolean(conversation.question || conversation.secure) || conversation.status === 'waiting_approval',
         }) : null;
-        const conversationAsk = conversationQuery ? webQuestion(conversationQuery) : null;
+        const conversationAsk = questionRewriteHandsPlan(state.routing?.reason, contextualQuery, conversationQuery);
         // A pronoun follow-up («وكم عدد سكانها؟» after an answer read from the Tokyo article) asks about the thing the last answer
         // named, not about the words of the last question: «كم عدد سكانها طوكيو», where «كم عدد سكانها عاصمة اليابان» read Hokkaido (2026-11-22).
         // The item the answer named stands for its page when narrower («نهر النيل» read from «نهر»): answerSubject in hands.ts.
@@ -4036,7 +4050,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         previousContext = bootstrapRequestContext(previousMessages.reverse().map(message => ({ id: message.id, text: clean(message.text) })));
       }
       const chatModel = hasChatModel();
-      const routing = decideRequestRoute({ text: clean(input.text), context: previousContext, turnId: runId, fullAccess: fullForRouting,
+      const routing = await routeWithQuestionHistory(tx, id, previousRun?.state?.publicQueryTerms, intent === 'task' && !input.images?.length && !steeredHere, { text: clean(input.text), context: previousContext, turnId: runId, fullAccess: fullForRouting, previousTurns,
         previousUserTurn: previousRun?.goal,
         capabilities: { browser: true, search: true, memory: Boolean(tools?.memory), adsModel: Boolean(config.adsModel),
           computer: Boolean(tools?.computer), coding: Boolean(tools?.work?.code), chatModel, writerModel: chatModel, planner: true } });
@@ -4092,6 +4106,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             limitations: [...new Set([...routing.missingCapabilities, ...(sessionCapabilities.chatModel ? [] : ['chatModel'])])].slice(0, 12) } }),
         // A request the page tried to send, held for the corrected run's approval, is dropped: it belonged to the old objective.
         ...((superseded as { held: boolean } | null)?.held ? { dropHeld: true } : {}) };
+      bindTestDrivenCodingHash(initialState, input.text);
       await addMessage(tx, id, 'user', input.text);
       await tx.insertInto('chat_runs').values({ id: runId, conversation_id: id, owner_id: ownerId, status: 'running', intent, goal: clean(input.text), steps: 0, lease_token:token,worker_id:instanceId,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, state: JSON.stringify(initialState), created_at: createdAt }).execute();
       await tx.updateTable('chat_conversations').set({ status: 'running', active_run_id: runId, question: null, approval: null, secure: null, error: null, progress: 'يفهم طلبك…', updated_at: new Date() }).where('id', '=', id).execute();

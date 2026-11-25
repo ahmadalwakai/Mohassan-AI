@@ -70,6 +70,23 @@ describe('manners in the chat controller', () => {
     expect(judge).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reply, applyWithhold: false }));
   });
 
+  it.each([
+    ['I wanted to thank you again, Mohassan.', /welcome|happy to help/iu],
+    ['أراك غدًا يا موحسن!', /اللقاء|السلامة|طيب/u],
+    ['Kindly, how should I refer to you?', /^Mohassan$/u],
+    ['أنت روبوت ولا إنسان يا موحسن؟', /الذكاء الاصطناعي/u],
+  ] as const)('completes %s as local chat with the manners flag unset', async (goal, expected) => {
+    vi.stubEnv(flag, undefined);
+    const { detail, run, reply } = await ask(goal);
+    expect(detail).toMatchObject({ status: 'idle', question: null });
+    expect(detail.messages).toHaveLength(2);
+    expect(run).toMatchObject({ status: 'completed', steps: 0, state: { routing: { route: 'chat', handler: 'local_conversation' } } });
+    expect(reply).toMatch(expected);
+    expect(bindAccount).not.toHaveBeenCalled();
+    expect(search).not.toHaveBeenCalled();
+    expect(act).not.toHaveBeenCalled();
+  });
+
   it('publishes the greeting at admission while the normal task is still running', async () => {
     let release = () => {};
     const blocked = new Promise<void>(resolve => { release = resolve; });
