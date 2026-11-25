@@ -74,3 +74,60 @@ Android continues to read the existing chat responses with optional background m
 | `apps/web/components/notification-settings.tsx` | Add the sound and result preview controls. | 2 / 0 |
 
 Migration `042_background_results` follows `041_long_run_checkpoints` and adds `ios_push_devices`, the APNs delivery ledger, and additive columns on the existing notification tables. [Migration ledger](MIGRATION-LEDGER-2026-11-25.md)
+
+## Verification
+
+The measured product commit is `feb3c32df5999b00e51da529561d289cf8a49be0`, based on PR #89 at `4c05dc70a4b37495d7aac68a378c80dae54eec3c`.
+
+`npm run typecheck` exited 0 for server and web. The following command exited 0 with 302 tests across 20 suites. Coverage includes an HTTP client disconnect, restart and stop, one recorded terminal reply and notification, repeated sign-in handling, mock Web Push, mock APNs over HTTP/2, owner and member device registration, generic previews, and the web chime and autoplay guard.
+
+```bash
+npm test -- --maxWorkers=2 --fileParallelism --testTimeout=90000 --reporter=dot \
+  tests/assistant-chat-supervision.test.ts tests/chat-notification-lifecycle.test.ts \
+  tests/ios-push.test.ts tests/member-data-export.test.ts tests/member-data-registry.test.ts \
+  tests/member-data-routes.test.ts tests/members-access.test.ts tests/notifications.test.ts \
+  tests/platform-wave-migrations.test.ts tests/reminder-time.test.ts tests/reminders-api.test.ts \
+  tests/reminders-chat.test.ts tests/reminders-scheduler.test.ts tests/reminders-web.test.ts \
+  tests/response-policy-long-run.test.ts tests/response-policy-reply-quality.test.ts \
+  tests/response-policy-runtime.test.ts tests/response-policy.test.ts \
+  tests/web-background-notifications.test.ts tests/web-notifications.test.ts
+```
+
+The service worker passed syntax validation. The generator reproduced the tracked 16-bit mono 24 kHz PCM WAV byte for byte.
+
+```bash
+node --check apps/web/public/notifications-sw.js && node scripts/generate-completion-chime.mjs && file apps/web/public/mohassan-done.wav && git diff --exit-code -- apps/web/public/mohassan-done.wav
+```
+
+### Development benchmarks
+
+The original Wave 4 launcher and gate were absent from this VM. The scratch launcher reproduced the documented flags, pinned development runners and inputs, observer adapters, temporary PGlite databases, Chromium build 1248, Python 3.12.14 with libseccomp, and Node 24.22.3 with `--no-wasm-tier-up --no-wasm-dynamic-tiering --import tsx`. It installed the pinned audit runner files with `git archive` in detached worktrees and left measured product paths at their commits. It ran v1 first and then v2 in eight isolated lanes, validated the lane receipts and case order, and recomputed the v2 totals. Only the development payloads were extracted and executed. [Wave 4 methodology](INTEGRATION-WAVE-4-2026-11-25.md#measurement)
+
+The existing long-run flag was on in both arms. The reply and context policy flags were off in both arms. The only change between the two candidate arms was `MOHASSAN_BACKGROUND_RESULTS_ENABLED`. The benchmark observer calls the normal chat control directly. The affected suites exercise background admission, HTTP and restart delivery.
+
+All three launcher invocations and both gates exited 0. Every area, language, and area-by-language group held from base to off and from off to on. The three arms used the PR #89 lockfile, SHA-256 `fe2989772964d7cbc188f017985ccaca7805553755510a0314ec4e6e018606f6`. The observer recorded zero model calls and network attempts.
+
+| Development group | PR #89 | Flag off | Flag on |
+| --- | ---: | ---: | ---: |
+| v1 overall | 176/240 | 176/240 | 176/240 |
+| v1 Arabic | 85/120 | 85/120 | 85/120 |
+| v1 English | 91/120 | 91/120 | 91/120 |
+| v2 overall | 1586/2400 | 1586/2400 | 1586/2400 |
+| v2 Arabic | 982/1200 | 982/1200 | 982/1200 |
+| v2 English | 604/1200 | 604/1200 | 604/1200 |
+
+```bash
+/workspace/work/background-results-benchmark/run development base 4c05dc70a4b37495d7aac68a378c80dae54eec3c MOHASSAN_BACKGROUND_RESULTS_ENABLED=0
+/workspace/work/background-results-benchmark/run development off feb3c32df5999b00e51da529561d289cf8a49be0 MOHASSAN_BACKGROUND_RESULTS_ENABLED=0
+python3 -B /workspace/work/background-results-benchmark/gate.py \
+  /workspace/work/background-results-benchmark/receipts/base 4c05dc70a4b37495d7aac68a378c80dae54eec3c \
+  /workspace/work/background-results-benchmark/receipts/off feb3c32df5999b00e51da529561d289cf8a49be0 \
+  > /workspace/work/background-results-benchmark/base-to-off.log
+/workspace/work/background-results-benchmark/run development on feb3c32df5999b00e51da529561d289cf8a49be0 MOHASSAN_BACKGROUND_RESULTS_ENABLED=1
+python3 -B /workspace/work/background-results-benchmark/gate.py \
+  /workspace/work/background-results-benchmark/receipts/off feb3c32df5999b00e51da529561d289cf8a49be0 \
+  /workspace/work/background-results-benchmark/receipts/on feb3c32df5999b00e51da529561d289cf8a49be0 \
+  > /workspace/work/background-results-benchmark/off-to-on.log
+```
+
+Live APNs and browser push service delivery, physical iPhone behavior, and real-browser audio playback remain unverified.
