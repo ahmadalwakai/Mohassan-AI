@@ -47,12 +47,11 @@ describe('sandbox coding tools', () => {
       expect(formatted).toContain('problem,suggestion,layout');
       const typescript = await stageCodingTool(tools, 'typescript');
       await expect(readFile(join(typescript, 'bin', 'tsc'), 'utf8')).resolves.toContain('../lib/tsc.js');
-      const [syntaxCheck] = await prepareTsxCheck(tools, typescript, ['src/view.tsx']);
-      const source = await readFile(syntaxCheck, 'utf8');
-      expect(() => new Script(source)).not.toThrow();
       const tsx = await prepareTsxCheck(tools, typescript, ['src/main.tsx']);
       expect(tsx.slice(1)).toEqual([join(typescript, 'lib', 'typescript.js'), './src/main.tsx']);
-      await expect(readFile(tsx[0], 'utf8')).resolves.toContain('ts.transpileModule');
+      const source = await readFile(tsx[0], 'utf8');
+      expect(source).toContain('ts.transpileModule');
+      expect(() => new Script(source)).not.toThrow();
     } finally {
       await rm(root, { recursive: true, force: true });
     }
