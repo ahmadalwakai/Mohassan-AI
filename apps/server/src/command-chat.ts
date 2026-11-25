@@ -31,6 +31,7 @@ import type { ConversationShadow } from './assistant/conversation-state-shadow.j
 import { publicConversationFollowup } from './assistant/public-conversation-followup.js';
 import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { judge as judgeAnswer } from './assistant/judge.js';
+import { ensureChatConversationsTable, reviewJudgedReply } from './assistant/review/publication.js';
 import { continueWebSequence, joinSequence, planWebSequence, startWebSequence } from './assistant/web-sequence.js';
 import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
 import { composePlan, planningQuestion, planningTask } from './assistant/planner.js';
@@ -366,7 +367,7 @@ export async function commandChatMigration(db: Kysely<any>) {
   await db.transaction().execute(async (tx) => {
     await sql`LOCK TABLE schema_migrations IN EXCLUSIVE MODE`.execute(tx);
     if (!await tx.selectFrom('schema_migrations').select('version').where('version', '=', '013_command_chat').executeTakeFirst()) {
-      await sql`CREATE TABLE chat_conversations(id text PRIMARY KEY,owner_id text NOT NULL,title text NOT NULL,status text NOT NULL DEFAULT 'idle',active_run_id text,session_id text,question jsonb,approval jsonb,progress text,error text,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now())`.execute(tx);
+      await ensureChatConversationsTable(tx);
       await sql`CREATE INDEX chat_conversations_owner_idx ON chat_conversations(owner_id,updated_at DESC)`.execute(tx);
       await sql`CREATE TABLE chat_messages(id text PRIMARY KEY,conversation_id text NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,role text NOT NULL CHECK(role IN ('user','assistant')),text text NOT NULL,created_at timestamptz NOT NULL DEFAULT now())`.execute(tx);
       await sql`CREATE INDEX chat_messages_conversation_idx ON chat_messages(conversation_id,created_at,id)`.execute(tx);
@@ -1381,7 +1382,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall', prejudged = false) {
     // The judge sees the reply first: logged in shadow for everyone; for the owner's account its fix, or its fixed withhold
     // sentence, is what goes on. Memory publications keep their own stricter checks and are never changed here.
-    const judged = prejudged ? { text, withheld: false } : judgeReply(id, runId, text, status, !memoryPublication);
+    const judged = prejudged || !config.judgeShadow ? { text, withheld: false } : await reviewJudgedReply(work => runTransaction(id, runId, work), { id, runId, clean, allowApply: !memoryPublication && state.supervision?.contract.mode !== 'enforced' }, () => judgeReply(id, runId, text, status, !memoryPublication));
     text = judged.text;
     // A withheld answer is not a completed task.
     if (judged.withheld && status === 'completed') status = 'partial';
