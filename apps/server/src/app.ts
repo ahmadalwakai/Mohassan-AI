@@ -56,6 +56,7 @@ import { withoutFigures } from './assistant/readable-page.js';
 import { createChromeExtensionControl, registerChromeExtensionRoutes } from './chrome-extension.js';
 import { DesktopEngine } from '@mohassan/desktop';
 import { registerDesktopRoutes } from './desktop.js';
+import { registerTrainingMonitorRoutes } from './training-monitor/route.js';
 import { createGoogleAdsControl, googleAdsMigration, GoogleAdsError, type GoogleAdsConfig } from '@mohassan/google-ads';
 import { landingPageReader, registerGoogleAdsRoutes } from './google-ads.js';
 import { createSkillRuntime, skillGatewayTools } from './skill-runtime.js';
@@ -115,6 +116,7 @@ export interface AppConfig {
   sites?:{vercelToken?:string;vercelTeamId?:string;publishTarget?:'vercel'|'none';fetch?:typeof fetch};
   /** The owner's own Windows session (desktop app): off on the cloud deployment and in tests unless enabled. */
   desktop?:{enabled:boolean;dataDir?:string;projectsRoot?:string;roots?:string[];screenshotsDir?:string};
+  trainingMonitorRoot?: string;
 }
 export function secretEqual(a: string, b: string) {
   const left = Buffer.from(a), right = Buffer.from(b);
@@ -332,6 +334,7 @@ export async function createApplication(config: AppConfig) {
   // The desktop engine acts on this computer's own session; it never exists on the cloud server.
   const desktop=config.desktop?.enabled&&!config.production?new DesktopEngine({dataDir:config.desktop.dataDir??resolve('.data/desktop'),...(config.desktop.projectsRoot?{projectsRoot:config.desktop.projectsRoot}:{}),...(config.desktop.roots?.length?{roots:config.desktop.roots}:{}),...(config.desktop.screenshotsDir?{screenshotsDir:config.desktop.screenshotsDir}:{})}):null;
   await registerDesktopRoutes(app,{owner,engine:desktop});
+  const trainingMonitor = registerTrainingMonitorRoutes(app, config.trainingMonitorRoot);
   if(desktop)app.addHook('onClose',async()=>{await desktop.dispose();});
   const googleAds=createGoogleAdsControl(database.db,{...config.googleAds,webOrigin:config.webOrigin,fetchPage:config.googleAds?.fetchPage??landingPageReader(config.browser)});
   await registerGoogleAdsRoutes(app,{control:googleAds,owner});
@@ -529,5 +532,5 @@ export async function createApplication(config: AppConfig) {
   app.addHook('onClose', async () => {clearInterval(benchmarkMaintenance);try{await skillRemoteScheduler?.stop();await skills.remote.shutdown();await benchmarkMaintenanceRun;await Promise.all([skillBenchmarks.shutdown(),skillForge.shutdown()]);}finally{try{await chat.shutdown();}finally{try{await runtime.stop();}finally{try{await browser.shutdown();}finally{try{await studioLive.close();}finally{await database.close();}}}}}});
   if (config.runWorker) runtime.start();
   await app.ready();
-  return {app, routes, runtime, database, auth,ai,coding,studio,studioAi,studioLive,browser,browserTask,memory,skills,chat,skillExecution,skillBenchmarks,skillForge,googleAds,inference,chromeExtension};
+  return {app, routes, runtime, database, auth,ai,coding,studio,studioAi,studioLive,browser,browserTask,memory,skills,chat,skillExecution,skillBenchmarks,skillForge,googleAds,inference,chromeExtension,trainingMonitor};
 }
