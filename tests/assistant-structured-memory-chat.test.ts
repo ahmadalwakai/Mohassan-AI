@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChatConversation } from '@mohassan/contracts';
 import { MemoryItemSchema, MemoryWorkspaceSchema } from '@mohassan/memory';
+import { sql } from 'kysely';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApplication } from '../apps/server/src/app.js';
 
@@ -289,6 +290,81 @@ describe('structured memory over the authenticated chat routes', () => {
     expect((await say(ownerCookie, await start(ownerCookie), denied, true)).run.status).not.toBe('completed');
     expect((await say(ownerCookie, await start(ownerCookie), `«${rememberCompany}»`, true)).run.status).not.toBe('completed');
     expect(await items(ownerCookie)).toEqual(before);
+  }, 20000);
+
+  it('deduplicates secret refusals using the sanitized request digest', async () => {
+    const { app, db, headers, start, settle } = fixture;
+    const opened = await start(second);
+    const otherSecret = secretRequest.replace(secretValue, Array.from(secretValue).reverse().join(''));
+    const routes = [
+      { scope: 'create', url: '/api/chat/conversations', field: 'goal' },
+      { scope: `messages:${opened}`, url: `/api/chat/conversations/${opened}/messages`, field: 'text' },
+    ];
+    for (const { scope, url, field } of routes) {
+      const key = randomUUID();
+      const send = (text: string) => app.inject({ method: 'POST', url, headers: { ...headers(second), 'idempotency-key': key },
+        payload: { [field]: text } });
+      const accepted = await send(secretRequest);
+      expect(accepted.statusCode).toBe(200);
+      const id = accepted.json<ChatConversation>().id;
+      const settled = await settle(second, id);
+      expect(settled.run.status).toBe('blocked');
+      const sanitized = settled.detail.messages.find(message => message.role === 'user')?.text;
+      expect(typeof sanitized).toBe('string');
+      expect(sanitized?.includes(secretValue)).toBe(false);
+      const retry = await send(otherSecret);
+      expect(retry.statusCode).toBe(200);
+      expect(retry.json<ChatConversation>().id).toBe(id);
+      expect((await send(rememberCompany)).statusCode).toBe(409);
+
+      const digest = (text: string) => createHash('sha256').update(`${scope}\n${JSON.stringify({ [field]: text })}`).digest('hex');
+      const receipt = await db.selectFrom('chat_request_keys').select(['body_hash', 'response'])
+        .where('request_key', '=', key).executeTakeFirstOrThrow();
+      expect(receipt.body_hash === digest(secretRequest)).toBe(false);
+      expect(receipt.body_hash === digest(sanitized!)).toBe(true);
+      expect(JSON.stringify(receipt.response).includes(secretValue)).toBe(false);
+      const runs = await db.selectFrom('chat_runs').select('id').where('conversation_id', '=', id).execute();
+      expect(runs).toEqual([{ id: settled.run.id }]);
+    }
+  }, 20000);
+
+  it('rolls back verified memory if the terminal assistant message cannot be inserted', async () => {
+    const { app, db, headers, items, ownerCookie, start, say } = fixture;
+    const before = await items(ownerCookie);
+    const id = await start(ownerCookie);
+    const statement = `Remember that ${birthdayStatement}`;
+    await db.transaction().execute(async tx => {
+      await sql`CREATE FUNCTION reject_structured_reply() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM memory_structured_operations
+            WHERE conversation_id = NEW.conversation_id AND outcome = 'saved') THEN
+            RAISE EXCEPTION 'Fixture blocked the terminal memory reply';
+          END IF;
+          RETURN NEW;
+        END;
+      $$`.execute(tx);
+      await sql`CREATE TRIGGER reject_structured_reply BEFORE INSERT ON chat_messages
+        FOR EACH ROW WHEN (NEW.role = 'assistant') EXECUTE FUNCTION reject_structured_reply()`.execute(tx);
+    });
+    try {
+      const sent = await app.inject({ method: 'POST', url: `/api/chat/conversations/${id}/messages`,
+        headers: headers(ownerCookie), payload: { text: statement } });
+      expect(sent.statusCode).toBe(200);
+      await vi.waitFor(async () => {
+        const response = await app.inject({ url: `/api/chat/conversations/${id}`, headers: headers(ownerCookie) });
+        expect(response.statusCode).toBe(200);
+        const detail = response.json<ChatConversation>();
+        expect(detail.status).toBe('failed');
+        expect(detail.messages.some(message => message.role === 'assistant')).toBe(false);
+      }, { timeout: 10000, interval: 40 });
+      expect(await items(ownerCookie)).toEqual(before);
+      expect(await db.selectFrom('memory_structured_operations').select('run_id').where('conversation_id', '=', id).execute()).toEqual([]);
+    } finally {
+      await sql`DROP TRIGGER reject_structured_reply ON chat_messages`.execute(db);
+      await sql`DROP FUNCTION reject_structured_reply()`.execute(db);
+    }
+    expect((await say(ownerCookie, id, statement)).run.status).toBe('completed');
+    expect((await items(ownerCookie)).some(item => item.content === birthdayStatement)).toBe(true);
   }, 20000);
 
   it('refuses secrets when creating and correcting items through the memory API', async () => {

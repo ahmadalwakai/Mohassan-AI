@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import { MemoryError } from '@mohassan/memory';
 import type { Kysely } from 'kysely';
@@ -16,7 +17,7 @@ const secretRefusal = 'لم أحفظ هذه البيانات لأنها سرية
 const enabled = () => process.env.MOHASSAN_STRUCTURED_MEMORY === '1';
 
 /** Replace sensitive memory text before the chat stores the goal, message or request hash. */
-export function protectStructuredMemoryInput(raw: unknown, key: 'text' | 'goal' = 'text'): unknown {
+function protectStructuredMemoryInput(raw: unknown, key: 'text' | 'goal' = 'text'): unknown {
   if (!enabled() || !raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
   const field = Object.getOwnPropertyDescriptor(raw, key);
   if (!field || !('value' in field) || typeof field.value !== 'string' || field.value.trim().length > 4000) return raw;
@@ -24,9 +25,26 @@ export function protectStructuredMemoryInput(raw: unknown, key: 'text' | 'goal' 
   return { ...raw, [key]: secretPlaceholder };
 }
 
-export function protectStructuredMemoryIdempotencyBody(body: unknown, scope: string): unknown {
+function protectStructuredMemoryIdempotencyBody(body: unknown, scope: string): unknown {
   if (scope === 'create') return protectStructuredMemoryInput(body, 'goal');
   return scope.startsWith('messages:') ? protectStructuredMemoryInput(body) : body;
+}
+
+interface ChatIngress<Conversation, SendOptions extends unknown[]> {
+  create(ownerId: string, raw?: unknown): Promise<Conversation>;
+  send(ownerId: string, id: string, raw: unknown, ...options: SendOptions): Promise<Conversation>;
+  once<T>(ownerId: string, scope: string, key: string, body: unknown, run: () => Promise<T>): Promise<T>;
+}
+
+/** Filter chat input at the public control boundary, before hashing or persisting it. */
+export function protectStructuredMemoryIngress<Conversation, SendOptions extends unknown[]>(
+  ingress: ChatIngress<Conversation, SendOptions>,
+): Partial<ChatIngress<Conversation, SendOptions>> {
+  return {
+    create: (ownerId, raw) => ingress.create(ownerId, protectStructuredMemoryInput(raw, 'goal')),
+    send: (ownerId, id, raw, ...options) => ingress.send(ownerId, id, protectStructuredMemoryInput(raw), ...options),
+    once: (ownerId, scope, key, body, run) => ingress.once(ownerId, scope, key, protectStructuredMemoryIdempotencyBody(body, scope), run),
+  };
 }
 
 export function checkStructuredMemoryFields<T extends { title?: string; content?: string; reason?: string; comment?: string }>(input: T): T {
@@ -38,26 +56,49 @@ export function checkStructuredMemoryFields<T extends { title?: string; content?
 }
 
 type Reply = { text: string; status: 'completed' | 'blocked' };
-export interface StructuredMemoryPublication {
-  lock?: (tx: Kysely<any>) => Promise<void>;
-  resolve(tx: Kysely<any>): Promise<Reply>;
+type Publication = {
+  db: Kysely<any>;
+  tx: Kysely<any>;
+  conversationId: string;
+  runId: string;
   revalidate(tx: Kysely<any>): Promise<unknown>;
+};
+const publicationContext = new AsyncLocalStorage<Publication>();
+
+export function hasStructuredMemoryTransaction(db: Kysely<any>, conversationId: string, runId: string): boolean {
+  const publication = publicationContext.getStore();
+  return publication?.db === db && publication.conversationId === conversationId && publication.runId === runId;
+}
+
+/** The chat finisher's state checkpoint and reply both join the owner-locked transaction. */
+export async function joinStructuredMemoryTransaction<T>(work: (tx: Kysely<any>) => Promise<T>): Promise<T> {
+  const publication = publicationContext.getStore();
+  if (!publication) throw new Error('STRUCTURED_MEMORY_PUBLICATION_MISSING');
+  await publication.revalidate(publication.tx);
+  return work(publication.tx);
+}
+
+export function revalidateStructuredMemoryPublication(tx: Kysely<any>): Promise<unknown> {
+  const publication = publicationContext.getStore();
+  if (publication?.tx !== tx) throw new Error('STRUCTURED_MEMORY_PUBLICATION_MISSING');
+  return publication.revalidate(tx);
 }
 
 interface StructuredMemoryTurn {
+  db: Kysely<any>;
   ownerId: string;
   conversationId: string;
   runId: string;
   source: EffectiveRequestSource;
-  originalRequestHash?: string;
   constraints: UserRequestConstraints | null;
   state: BrainState;
   task: boolean;
   memoryAvailable: boolean;
   quota: number;
   scrub(text: string): string;
-  revalidate(tx: Kysely<any>): Promise<unknown>;
-  publish(publication: StructuredMemoryPublication): Promise<void>;
+  lockedExecution(tx: Kysely<any>, conversationId: string, runId: string): Promise<unknown>;
+  finish(conversationId: string, runId: string, state: BrainState, text: string, status: Reply['status'],
+    experienceProof: undefined, memoryPublication: undefined, prejudged: true): Promise<void>;
 }
 
 export function renderStructuredMemoryRecall(fact: { statement: string; date: Date }, ar: boolean): string {
@@ -68,6 +109,7 @@ export function renderStructuredMemoryRecall(fact: { statement: string; date: Da
 /** Route only the pinned current user instruction. Structured effects and the terminal chat reply share a transaction. */
 export async function handleStructuredMemoryTurn(input: StructuredMemoryTurn): Promise<boolean> {
   if (!input.task) return false;
+  const { db, state, ownerId, conversationId, runId } = input;
   const request = input.source.request;
   const intent = request === secretPlaceholder ? { kind: 'secret' } as const : parseStructuredMemoryRequest(request);
   if (intent.kind === 'none') return false;
@@ -80,14 +122,19 @@ export async function handleStructuredMemoryTurn(input: StructuredMemoryTurn): P
   const ar = /\p{Script=Arabic}/u.test(request);
   const blocked = (arabic: string, english: string): Reply => ({ status: 'blocked', text: ar ? arabic : english });
   const completed = (arabic: string, english: string): Reply => ({ status: 'completed', text: ar ? arabic : english });
-  const publish = async (resolve: StructuredMemoryPublication['resolve'], write = false) => {
-    await input.publish({ resolve, revalidate: input.revalidate,
-      ...(write ? { lock: (tx: Kysely<any>) => lockStructuredMemoryOwner(tx, input.ownerId) } : {}) });
+  const publish = async (resolve: (tx: Kysely<any>) => Promise<Reply>, write = false) => {
+    const revalidate = (tx: Kysely<any>) => input.lockedExecution(tx, conversationId, runId);
+    await db.transaction().execute(async tx => {
+      if (write) await lockStructuredMemoryOwner(tx, ownerId);
+      await revalidate(tx);
+      const { text, status } = await resolve(tx);
+      await publicationContext.run({ db, tx, conversationId, runId, revalidate },
+        () => input.finish(conversationId, runId, state, text, status, undefined, undefined, true));
+    });
     return true;
   };
   if (intent.kind === 'secret') return publish(async () => ({ status: 'blocked', text: secretRefusal }));
 
-  const state = input.state;
   if (state.computationMemory !== undefined || state.userFactMemory !== undefined) return false;
   if (intent.kind === 'statement' && intent.explicit) {
     const legacy = assessUserFactMemoryRequest(request);
@@ -95,12 +142,12 @@ export async function handleStructuredMemoryTurn(input: StructuredMemoryTurn): P
   }
 
   const write = intent.kind !== 'recall';
-  const actionHistory = restoreActionCompletionLedger(state.actionCompletion, { runId: input.runId, request });
+  const actionHistory = restoreActionCompletionLedger(state.actionCompletion, { runId, request });
   const clearHistory = state.actionCompletion === undefined || actionHistory && !actionHistory.events.length && !actionHistory.fault;
   const fresh = clearHistory && !state.steps && !state.pendingTask && !state.pendingComputer
     && !state.pendingDesktop && !state.hands && !state.site && !state.writer && !state.planner && !state.document && !state.adsBrief
     && state.trail.every(entry => entry.action === 'asked the user');
-  const verifiedSource = input.originalRequestHash === createHash('sha256').update(request, 'utf8').digest('hex')
+  const verifiedSource = state.requestOriginalHash === createHash('sha256').update(request, 'utf8').digest('hex')
     && input.scrub(request) === request && !isEntireLiteralRequest(request);
   const canRead = requestCapabilityAllowed(input.constraints, 'memory_read');
   const canWrite = !deniesMemoryWrite(request) && requestCapabilityAllowed(input.constraints, 'memory_write');
@@ -119,7 +166,7 @@ export async function handleStructuredMemoryTurn(input: StructuredMemoryTurn): P
     return publish(async () => blocked('الذاكرة غير متاحة لهذا الطلب.', 'Memory is unavailable for this request.'));
   }
 
-  const scope = { ownerId: input.ownerId, conversationId: input.conversationId, runId: input.runId, evaluatedAt: input.source.evaluatedAt };
+  const scope = { ownerId, conversationId, runId, evaluatedAt: input.source.evaluatedAt };
   return publish(async tx => {
     const previous = intent.target.subject === null ? await tx.selectFrom('chat_runs').select(['id', 'intent', 'goal', 'status'])
       .where('owner_id', '=', scope.ownerId).where('conversation_id', '=', scope.conversationId)
