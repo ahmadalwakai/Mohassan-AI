@@ -14,11 +14,21 @@ describe('chat requests with an Idempotency-Key', () => {
   let database: Awaited<ReturnType<typeof createDatabase>>;
   let control: Awaited<ReturnType<typeof createCommandChatControl>>;
   let app: ReturnType<typeof Fastify>;
+  let failBrowserDetailFor: string | undefined;
 
   beforeAll(async () => {
     database = await createDatabase();
     await migrate(database.db);
-    const browser = { setCheckpointStore() {}, async bindAccount() {}, async hasPage() { return false; }, async close() {} } as unknown as AgentBrowser;
+    const browser = {
+      setCheckpointStore() {}, async bindAccount() {}, async close() {}, async closeConversation() {},
+      async hasPage(_ownerId: string, id: string) {
+        if (failBrowserDetailFor === id) {
+          failBrowserDetailFor = undefined;
+          throw new Error('Local fixture: response construction failed');
+        }
+        return false;
+      },
+    } as unknown as AgentBrowser;
     control = await createCommandChatControl(database.db, { browser, models: { fast: [], deep: [], vision: '' }, recordExperiences: false });
     app = Fastify();
     await registerCommandChatRoutes(app, { control, owner: async () => ({ id: OWNER }) });
@@ -52,6 +62,41 @@ describe('chat requests with an Idempotency-Key', () => {
     expect(first.statusCode).toBe(200);
     expect(second.statusCode).toBe(200);
     expect(await userMessages(id)).toBe(before + 1);
+  });
+
+  it('replays a committed turn if constructing the first response failed', async () => {
+    const { id } = (await post('/api/chat/conversations', {})).json();
+    const browserState = { url: 'about:blank', title: 'Local test', observedAt: new Date().toISOString(), version: 'test' };
+    await database.db.updateTable('chat_conversations').set({ browser_state: JSON.stringify(browserState) }).where('id', '=', id).execute();
+    failBrowserDetailFor = id;
+    const endpoint = `/api/chat/conversations/${id}/messages`;
+    const body = { text: 'احسب 2 + 2' };
+    const key = 'phone-reply-interrupted';
+    const first = await post(endpoint, body, key);
+    expect(first.statusCode).toBe(500);
+    await control.settled(id);
+
+    const retried = await post(endpoint, body, key);
+    expect(retried.statusCode).toBe(200);
+    expect(retried.json().id).toBe(id);
+    expect(await userMessages(id)).toBe(1);
+    const runs = await database.db.selectFrom('chat_runs').select('id').where('conversation_id', '=', id).execute();
+    expect(runs).toHaveLength(1);
+  });
+
+  it('keeps the retry receipt while removing the cached conversation text on deletion', async () => {
+    const endpoint = '/api/chat/conversations';
+    const body = { goal: 'احسب 2 + 2' };
+    const key = 'phone-delete-fixture';
+    const first = await post(endpoint, body, key);
+    expect(first.statusCode).toBe(200);
+    const id = first.json().id;
+    await control.settled(id);
+    await control.remove(OWNER, id);
+    const row = await database.db.selectFrom('chat_request_keys').select('response')
+      .where('owner_id', '=', OWNER).where('request_key', '=', key).executeTakeFirst();
+    expect(row?.response).toEqual({ replayConversationId: id });
+    expect((await post(endpoint, body, key)).statusCode).toBe(404);
   });
 
   it('refuses the same key for a different body', async () => {

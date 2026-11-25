@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import type { createAuth } from './auth.js';
-import { memberRunsToday as countMemberRunsToday } from './member-run-quota.js';
+import { memberRunsToday as countMemberRuns } from './member-run-quota.js';
 import { NOTIFICATION_MEMBER_ROUTES } from './notifications-routes.js';
 import { REMINDER_MEMBER_ROUTES } from './reminders/route-keys.js';
 import { conversationShareMemberRoutes, conversationSharePublicRoute } from './conversation-share-paths.js';
@@ -107,8 +107,8 @@ export async function roleOf(db: Kysely<any>, userId: string): Promise<Workspace
 }
 
 /** Chat work a member started in the last 24 hours. */
-export function memberRunsToday(db: Kysely<any>, userId: string) {
-  return countMemberRunsToday(db, userId);
+export async function memberRunsToday(db: Kysely<any>, userId: string) {
+  return countMemberRuns(db, userId);
 }
 
 type User = { id: string; name: string; email: string };
