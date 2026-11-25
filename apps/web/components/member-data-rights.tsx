@@ -1,10 +1,10 @@
 import { Button, Spinner } from "@chakra-ui/react";
 import type { AccountSessions, CancelMemberDeletionResult, EndAccountSessionsResult, MemberDeletion, MemberDeletionStatus } from "@mohassan/contracts";
 import { ChevronDown, Download, ShieldCheck } from "lucide-react";
-import { useEffect, useId, useMemo, useReducer, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useMemo, useReducer, useRef, useState, type ComponentType, type FormEvent } from "react";
+import type { Access } from "./members";
 import styles from "./member-data-rights.module.css";
 
-export type { MemberDeletion };
 const sessionsPath = "/api/member-data/sessions";
 const deletionPath = "/api/member-data/deletion";
 const genericError = "تعذر الاتصال بالخدمة. حاول مجددًا.";
@@ -275,21 +275,33 @@ function PendingMemberDeletion({ deletion, signedIn }: { deletion: MemberDeletio
   </div></section></main>;
 }
 
-export function MemberDataAccessGate({ deletion, signedIn, error, dataOnly, onDeletionScheduled, onSignOut }: {
-  deletion: MemberDeletion | null;
-  signedIn: boolean;
+type MemberDataAccess = Access & { deletion?: MemberDeletion; dataOnly?: boolean };
+type MemberToolsProps = { access: Access; onChat: () => void; onSignOut: () => void };
+
+export function shouldMountMemberDataAccess(access: MemberDataAccess | null, advanced: boolean) {
+  return !access || Boolean(access.deletion || access.dataOnly) || (access.role === "member" && advanced);
+}
+
+export function MemberDataAccessMount({ access, error, tools: Tools, onChat, onSignOut }: {
+  access: MemberDataAccess | null;
   error: string;
-  dataOnly?: boolean;
-  onDeletionScheduled: DeletionAction;
+  tools: ComponentType<MemberToolsProps>;
+  onChat: () => void;
   onSignOut: () => void;
 }) {
-  if (deletion) return <PendingMemberDeletion deletion={deletion} signedIn={signedIn} />;
-  if (dataOnly) return <main className={styles.dataOnly}>
+  const [scheduledDeletion, setScheduledDeletion] = useState<MemberDeletion | null>(null);
+  const pending = scheduledDeletion ?? access?.deletion;
+  if (pending) return <PendingMemberDeletion deletion={pending} signedIn={!scheduledDeletion} />;
+  if (!access) return <main className="boot-screen"><AccountLoading error={error} retry={() => location.reload()} /></main>;
+  if (access.dataOnly) return <main className={styles.dataOnly}>
     <h1>حسابك موقوف</h1>
     <p>يمكنك إدارة بياناتك وجلساتك هنا.</p>
-    <MemberAccountData initiallyOpen onDeletionScheduled={onDeletionScheduled} />
+    <MemberAccountData initiallyOpen onDeletionScheduled={setScheduledDeletion} />
     {error ? <p className="inline-error" role="alert">{error}</p> : null}
     <Button variant="outline" onClick={onSignOut}>تسجيل الخروج</Button>
   </main>;
-  return <main className="boot-screen"><AccountLoading error={error} retry={() => location.reload()} /></main>;
+  return <div className={styles.memberToolsFrame}>
+    <div className={styles.memberToolsData}><MemberAccountData onDeletionScheduled={setScheduledDeletion} /></div>
+    <Tools access={access} onChat={onChat} onSignOut={onSignOut} />
+  </div>;
 }

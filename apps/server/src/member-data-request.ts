@@ -1,6 +1,5 @@
 import type { Kysely } from 'kysely';
-import { roleOf } from './members.js';
-import { getMemberDeletion, memberDeletionPending } from './member-deletion.js';
+import { getMemberDeletion } from './member-deletion.js';
 import { sessionIpPrefix } from './member-sessions.js';
 import { MEMBER_DATA_ROUTES } from './member-data-routes.js';
 
@@ -9,7 +8,9 @@ const suspendedMemberRoutes = new Set<string>(['GET /api/access', ...MEMBER_DATA
 export async function suspendedMemberDataAccess(db: Kysely<any>, userId: string, routeKey: string) {
   if (!suspendedMemberRoutes.has(routeKey)) return false;
   return Boolean(await db.selectFrom('workspace_members').select('user_id').where('user_id', '=', userId)
-    .where('role', '=', 'member').where('disabled_at', 'is not', null).executeTakeFirst());
+    .where('role', '=', 'member').where('disabled_at', 'is not', null)
+    .where(({ not, exists, selectFrom }) => not(exists(selectFrom('workspace_owner').select('id').where('owner_id', '=', userId))))
+    .executeTakeFirst());
 }
 
 export async function readLimitedMemberAccess(db: Kysely<any>, user: { id: string; name: string; email: string }) {
@@ -31,12 +32,4 @@ export async function memberAuthResponseBody(response: Response, path: string | 
     result.session.ipAddress = sessionIpPrefix(result.session.ipAddress ?? null);
   }
   return JSON.stringify(result);
-}
-
-export async function lockActiveChatAccount(tx: Kysely<any>, userId: string) {
-  const role = await roleOf(tx, userId);
-  if (role !== 'member') return role === 'owner';
-  const active = await tx.selectFrom('workspace_members').select('user_id').where('user_id', '=', userId)
-    .where('role', '=', 'member').where('disabled_at', 'is', null).forShare().executeTakeFirst();
-  return Boolean(active) && !await memberDeletionPending(tx, userId);
 }

@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { chromium, type BrowserContext, type ElementHandle, type Frame, type JSHandle, type Page, type Route } from 'playwright';
 import { decideEffect, type EffectActor } from './effect-policy.js';
 import { BrowserError, SafeNetwork } from './network.js';
-import { openAgentBrowserProfile, purgeAgentBrowserProfiles, rememberExistingAgentBrowserProfile } from './member-profile-storage.js';
 import { AgentSessionCheckpointSchema, AgentPostconditionSchema, evidenceHash, safeResumeUrl, pagePostcondition, type AgentSessionCheckpoint, type AgentPostcondition, type AgentVerificationReport, type AgentVerificationCheck } from './session-state.js';
 
 export type AgentFieldKind = 'password' | 'otp' | 'card' | 'identifier' | 'text';
@@ -488,6 +488,8 @@ export class AgentBrowser {
     return account ? `account:${JSON.stringify([ownerId, account])}` : `default:${ownerId}`;
   }
 
+  protected memberProfileState() { return { root: this.options.profileDir, owners: this.owners, accounts: this.accounts, recoveryBindings: this.recoveryBindings, hash: hashOf }; }
+
   /** Server-owned account selection, before opening a conversation. Never supplied by a page/model. */
   async bindAccount(ownerId: string, conversationId: string, accountId: string | null): Promise<void> {
     if (accountId !== null && !/^[a-zA-Z0-9_-]{1,128}$/.test(accountId)) throw new BrowserError('AGENT_ACCOUNT_INVALID', 'معرّف الحساب غير صالح.');
@@ -592,7 +594,9 @@ export class AgentBrowser {
   }
 
   private async launch(ownerKey: string): Promise<OwnerBrowser> {
-    const userDataDir = await openAgentBrowserProfile(this.options.profileDir, ownerKey, hashOf);
+    const profileName = ownerKey.startsWith('default:') ? hashOf(ownerKey.slice('default:'.length)) : `account-${hashOf(ownerKey)}`;
+    const userDataDir = `${this.options.profileDir}/${profileName}`;
+    await mkdir(userDataDir, { recursive: true });
     // Match BrowserEngine: Chromium cannot bypass the pinned host transport,
     // including on redirects, WebRTC, popups or requests missed by a route.
     const proxy = createServer((_request, response) => { response.writeHead(403); response.end(); });
@@ -1845,9 +1849,6 @@ export class AgentBrowser {
     const results = await Promise.allSettled([this.persist(entry), ...[...entry.pages].map(page => page.close())]);
     if (results[0].status === 'rejected') throw results[0].reason;
   }
-
-  rememberAccountProfile(ownerId: string, accountId: string | null) { return rememberExistingAgentBrowserProfile(this.options.profileDir, ownerId, accountId, hashOf); }
-  purgeAccount(ownerId: string, accounts: readonly string[]) { return purgeAgentBrowserProfiles(this.options.profileDir, ownerId, accounts, this.owners, this.accounts, this.recoveryBindings, hashOf); }
 
   async close(): Promise<void> {
     if (this.idleSweep) { clearInterval(this.idleSweep); this.idleSweep = undefined; }

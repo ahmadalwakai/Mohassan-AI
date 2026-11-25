@@ -5,8 +5,7 @@ import { join } from 'node:path';
 import Fastify from 'fastify';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AgentBrowser } from '../packages/browser/src/agent-browser.ts';
-import { openAgentBrowserProfile, purgeAgentBrowserProfiles } from '../packages/browser/src/member-profile-storage.ts';
+import { MemberAgentBrowser, purgeAgentBrowserProfiles } from '../apps/server/src/member-profile-storage.ts';
 import { createApplication } from '../apps/server/src/app.ts';
 import { memberDocumentDirectory } from '../apps/server/src/member-data-document-path.ts';
 import { purgeMemberAccount, startMemberDeletionPurge } from '../apps/server/src/member-deletion.ts';
@@ -102,6 +101,7 @@ describe('member deletion', () => {
     expect((await get('/api/access', recovery.cookie)).json().deletion).toEqual(deletion);
     expect((await get(self, recovery.cookie)).json()).toEqual({ deletion });
     expect((await get('/api/chat/conversations', recovery.cookie)).statusCode).toBe(403);
+    await expect(app!.chat.create(memberId, {})).rejects.toMatchObject({ code: 'CHAT_ACCOUNT_INACTIVE' });
     expect((await get(pending, ownerCookie)).json()).toEqual({
       requests: [{ userId: memberId, name: first.name, email: first.email, ...deletion }],
     });
@@ -125,13 +125,16 @@ describe('member deletion', () => {
     expect((await post(self, { password: owner.password }, ownerCookie)).json().error.code).toBe('OWNER_DELETION_PROTECTED');
     await sql`INSERT INTO member_deletion_requests (user_id, requested_at, purge_after)
       VALUES (${ownerId}, clock_timestamp() - interval '8 days', clock_timestamp() - interval '1 day')`.execute(db());
+    await db().insertInto('workspace_members').values({ user_id: ownerId, role: 'member', disabled_at: new Date() }).execute();
     try {
+      expect((await get('/api/access', ownerCookie)).json()).toMatchObject({ role: 'owner', services: ['all'] });
       expect((await get(self, ownerCookie)).json()).toEqual({ deletion: null });
       expect((await get(pending, ownerCookie)).json()).toEqual({ requests: [] });
       expect((await login(owner)).status).toBe(200);
       expect(await purgeMemberAccount(db(), ownerId, { documentsDir, purgeBrowserProfiles: async () => {} })).toBe(false);
       expect(await db().selectFrom('user').select('id').where('id', '=', ownerId).executeTakeFirst()).toBeDefined();
     } finally {
+      await db().deleteFrom('workspace_members').where('user_id', '=', ownerId).execute();
       await db().deleteFrom('member_deletion_requests').where('user_id', '=', ownerId).execute();
     }
   }, 30_000);
@@ -180,12 +183,17 @@ describe('member deletion', () => {
       await mkdir(folder, { recursive: true });
       await writeFile(join(folder, 'fixture.pdf'), 'test document');
     }
-    const defaultProfile = await openAgentBrowserProfile(browserDir, `default:${purgedId}`, hash);
-    const trackedProfile = await openAgentBrowserProfile(browserDir, `account:${JSON.stringify([purgedId, 'already-deleted-conversation'])}`, hash);
-    const legacyProfile = join(browserDir, `account-${hash(`account:${JSON.stringify([purgedId, legacyName])}`)}`);
-    await mkdir(legacyProfile, { recursive: true });
-    const otherProfile = await openAgentBrowserProfile(browserDir, `account:${JSON.stringify([memberId, legacyName])}`, hash);
-    const browser = new AgentBrowser({ profileDir: browserDir });
+    const defaultProfile = join(browserDir, hash(purgedId));
+    const namedProfile = (id: string, name: string) => join(browserDir, `account-${hash(`account:${JSON.stringify([id, name])}`)}`);
+    const trackedName = 'already-deleted-conversation';
+    const browser = new MemberAgentBrowser({ profileDir: browserDir });
+    await browser.bindAccount(purgedId, randomUUID(), trackedName);
+    const trackedProfile = namedProfile(purgedId, trackedName);
+    const legacyProfile = namedProfile(purgedId, legacyName);
+    const otherProfile = namedProfile(memberId, legacyName);
+    for (const folder of [defaultProfile, trackedProfile, legacyProfile, otherProfile]) {
+      await mkdir(folder, { recursive: true });
+    }
     const options = {
       documentsDir, purgeBrowserProfiles: (userId: string, accounts: readonly string[]) => browser.purgeAccount(userId, accounts),
     };

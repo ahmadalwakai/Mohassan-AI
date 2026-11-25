@@ -4,14 +4,13 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { Button, Spinner } from "@chakra-ui/react";
 import { ArrowRight, Check, Copy, LogOut, MessageCircle, UserPlus } from "lucide-react";
 import dynamic from "next/dynamic";
-import { MemberAccountData, type MemberDeletion } from "./member-data-rights";
-import { MemberSessionActions, OwnerMemberHistory } from "./member-audit";
+import { OwnerMemberHistory } from "./member-audit";
 import styles from "./members.module.css";
 
 const GoogleAdsWorkspace = dynamic(() => import("./google-ads-workspace").then(module => module.GoogleAdsWorkspace));
 const SitesWorkspace = dynamic(() => import("./sites-workspace").then(module => module.SitesWorkspace));
 
-export type Access = { user: { id: string; name: string; email: string }; role: "owner" | "member"; services: string[]; quota?: { dailyRuns: number; used: number }; deletion?: MemberDeletion; dataOnly?: boolean };
+export type Access = { user: { id: string; name: string; email: string }; role: "owner" | "member"; services: string[]; quota?: { dailyRuns: number; used: number } };
 type Session = { user: { id: string; name: string; email: string } };
 type Member = { id: string; name: string; email: string; joinedAt: string; disabled: boolean; runsToday: number };
 type Invite = { id: string; name: string; email: string; createdAt: string; expiresAt: string };
@@ -180,7 +179,7 @@ export function MembersPanel({ offline }: { offline: boolean }) {
     <section className="panel"><div className="panel-heading"><div><h2>الأعضاء</h2><p>{data ? `حد كل عضو ${data.dailyRuns} طلبًا في 24 ساعة.` : "…"}</p></div></div>
       {!data ? <div className={styles.empty}><Spinner size="sm" /></div> : data.members.length ? <ul className={styles.list}>{data.members.map(member => <li key={member.id}>
         <div><strong>{member.name}</strong><small dir="ltr">{member.email}</small><small>انضم {day(member.joinedAt)} · {member.runsToday} طلبًا اليوم{member.disabled ? " · موقوف" : ""}</small></div>
-        <MemberSessionActions member={member} offline={offline}><Button className={styles.secondary} disabled={busy || offline} onClick={() => { void act(() => api(`/api/members/${encodeURIComponent(member.id)}/access`, { enabled: member.disabled })); }}>{member.disabled ? "إعادة التفعيل" : "إيقاف"}</Button></MemberSessionActions>
+        <Button className={styles.secondary} disabled={busy || offline} onClick={() => { void act(() => api(`/api/members/${encodeURIComponent(member.id)}/access`, { enabled: member.disabled })); }}>{member.disabled ? "إعادة التفعيل" : "إيقاف"}</Button>
       </li>)}</ul> : <p className={styles.empty}>لا يوجد أعضاء بعد.</p>}
     </section>
     {data?.invites.length ? <section className="panel"><div className="panel-heading"><div><h2>دعوات لم تُستخدم</h2></div></div>
@@ -194,7 +193,7 @@ export function MembersPanel({ offline }: { offline: boolean }) {
 }
 
 /** What a member sees behind "advanced": their own Google Ads and their daily allowance. */
-export function MemberTools({ access, onChat, onSignOut, onDeletionScheduled }: { access: Access; onChat: () => void; onSignOut: () => void; onDeletionScheduled: (deletion: MemberDeletion) => void }) {
+export function MemberTools({ access, onChat, onSignOut }: { access: Access; onChat: () => void; onSignOut: () => void }) {
   const ads = access.services.includes("ads");
   return <div className={styles.member}>
     <header className={styles.memberHeader}>
@@ -205,7 +204,6 @@ export function MemberTools({ access, onChat, onSignOut, onDeletionScheduled }: 
       </div>
     </header>
     <main className={styles.memberMain}>
-      <MemberAccountData onDeletionScheduled={onDeletionScheduled} />
       {access.services.includes("sites") ? <><h1>المواقع</h1><SitesWorkspace offline={false} /></> : null}
       <h1>Google Ads</h1>
       {ads ? <GoogleAdsWorkspace offline={false} /> : <p className={styles.empty}>ربط Google Ads غير متاح بعد. سيظهر هنا عندما يفعّله صاحب الحساب.</p>}

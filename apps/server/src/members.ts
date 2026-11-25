@@ -3,10 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import type { createAuth } from './auth.js';
-import { withMemberAuditActor } from './member-audit.js';
-import { MEMBER_DATA_ROUTES } from './member-data-routes.js';
-import { readLimitedMemberAccess } from './member-data-request.js';
-import { discardUnusedSignupSession } from './member-sessions.js';
+import { MEMBER_DATA_ROUTES, readLimitedMemberAccess, signUpInvitedMember } from './member-administration.js';
 
 /**
  * Members are people the owner invites. They use cloud services only (chat,
@@ -133,10 +130,8 @@ export async function registerMemberRoutes(app: FastifyInstance, options: Member
   };
 
   app.get('/api/access', async (request) => {
-    const user = await options.owner(request);
-    const limited = await readLimitedMemberAccess(db, user);
-    if (limited) return limited;
-    const role = await options.role(request);
+    const limited = await readLimitedMemberAccess(db, await options.owner(request)); if (limited) return limited;
+    const user = await options.owner(request), role = await options.role(request);
     const services = role === 'owner' ? ['all'] : ['chat', 'memory', ...(options.adsAvailable() ? ['ads'] : []), ...(options.imagesAvailable() ? ['images'] : []), ...(options.sitesAvailable?.() ? ['sites'] : [])];
     const used = role === 'member' ? await memberRunsToday(db, user.id) : 0;
     return { user: { id: user.id, name: user.name, email: user.email }, role, services, ...(role === 'member' ? { quota: { dailyRuns: options.dailyRuns, used } } : {}) };
@@ -162,7 +157,7 @@ export async function registerMemberRoutes(app: FastifyInstance, options: Member
     const input = InviteInput.parse(request.body);
     if (await db.selectFrom('user').select('id').where(sql`lower(email)`, '=', input.email).executeTakeFirst()) throw failure(409, 'MEMBER_EXISTS', 'يوجد حساب بهذا البريد بالفعل.');
     const token = randomBytes(32).toString('base64url'), id = randomBytes(16).toString('hex');
-    await withMemberAuditActor(db, owner.id, async (tx) => {
+    await db.transaction().execute(async (tx) => {
       // One open invite per address: a new link replaces the old one.
       await tx.updateTable('workspace_invites').set({ revoked_at: new Date() }).where('email', '=', input.email).where('claimed_at', 'is', null).where('revoked_at', 'is', null).execute();
       await tx.insertInto('workspace_invites').values({ id, token_hash: hashToken(token), email: input.email, name: input.name, created_by: owner.id, expires_at: new Date(Date.now() + INVITE_DAYS * 86400000) }).execute();
@@ -172,19 +167,19 @@ export async function registerMemberRoutes(app: FastifyInstance, options: Member
   });
 
   app.post<{ Params: { id: string } }>('/api/members/invites/:id/revoke', async (request) => {
-    const owner = await requireOwner(request);
+    await requireOwner(request);
     const id = z.string().regex(/^[a-f0-9]{32}$/).parse(request.params.id);
     z.object({}).strict().parse(request.body ?? {});
-    const result = await withMemberAuditActor(db, owner.id, tx => tx.updateTable('workspace_invites').set({ revoked_at: new Date() }).where('id', '=', id).where('claimed_at', 'is', null).where('revoked_at', 'is', null).executeTakeFirst());
+    const result = await db.updateTable('workspace_invites').set({ revoked_at: new Date() }).where('id', '=', id).where('claimed_at', 'is', null).where('revoked_at', 'is', null).executeTakeFirst();
     if (!Number(result.numUpdatedRows)) throw failure(404, 'INVITE_NOT_FOUND', 'الدعوة غير موجودة أو استُخدمت.');
     return { ok: true };
   });
 
   app.post<{ Params: { id: string } }>('/api/members/:id/access', async (request) => {
-    const owner = await requireOwner(request);
+    await requireOwner(request);
     const userId = z.string().min(1).max(64).parse(request.params.id);
     const { enabled } = z.object({ enabled: z.boolean() }).strict().parse(request.body);
-    await withMemberAuditActor(db, owner.id, async (tx) => {
+    await db.transaction().execute(async (tx) => {
       const result = await tx.updateTable('workspace_members').set({ disabled_at: enabled ? null : new Date() }).where('user_id', '=', userId).where('role', '=', 'member').executeTakeFirst();
       if (!Number(result.numUpdatedRows)) throw failure(404, 'MEMBER_NOT_FOUND', 'العضو غير موجود.');
       // A disabled member is signed out everywhere at once.
@@ -211,18 +206,17 @@ export async function registerMemberRoutes(app: FastifyInstance, options: Member
     // Claim first so two tabs cannot both create an account from one link.
     const claimed = await db.updateTable('workspace_invites').set({ claimed_at: new Date() }).where('id', '=', invite.id).where('claimed_at', 'is', null).where('revoked_at', 'is', null).executeTakeFirst();
     if (!Number(claimed.numUpdatedRows)) throw failure(409, 'INVITE_IN_USE', 'تُستخدم هذه الدعوة الآن.');
-    let signup: Awaited<ReturnType<typeof auth.api.signUpEmail>>;
+    let userId: string;
     try {
-      signup = await auth.api.signUpEmail({ body: { name: input.name, email: invite.email, password: input.password } });
+      const result = await signUpInvitedMember(db, auth, { name: input.name, email: invite.email, password: input.password });
+      userId = result.user.id;
     } catch (error) {
       await db.updateTable('workspace_invites').set({ claimed_at: null }).where('id', '=', invite.id).where('consumed_by', 'is', null).execute();
       const status = (error as { statusCode?: number; status?: string }).statusCode;
       if (status === 422 || (error as { status?: string }).status === 'UNPROCESSABLE_ENTITY') throw failure(409, 'MEMBER_EXISTS', 'يوجد حساب بهذا البريد بالفعل.');
       throw error;
     }
-    const userId = signup.user.id;
     await db.transaction().execute(async (tx) => {
-      await discardUnusedSignupSession(tx, userId, signup.token);
       await tx.updateTable('workspace_invites').set({ consumed_by: userId }).where('id', '=', invite.id).execute();
       await tx.insertInto('workspace_members').values({ user_id: userId, role: 'member', invite_id: invite.id }).execute();
     });

@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import Fastify from 'fastify';
 import { createDatabase, migrate, sql } from '@mohassan/database';
-import { migrateAuth } from '../apps/server/src/auth.js';
-import { migrateMembers } from '../apps/server/src/members.js';
+import { createAuth, migrateAuth } from '../apps/server/src/auth.js';
+import { migrateMembers, registerMemberRoutes } from '../apps/server/src/members.js';
 import { migrateMemberDataRights } from '../apps/server/src/member-data-migration.js';
 import { listMemberAudit, recordMemberAudit, withMemberAuditActor } from '../apps/server/src/member-audit.js';
 import { endMemberSessions, endOtherAccountSessions, listAccountSessions, memberAuthClientIp, sessionIpPrefix } from '../apps/server/src/member-sessions.js';
+import { registerAuditedMemberRoutes } from '../apps/server/src/member-administration.js';
 
 const ownerId = 'owner-fixture';
 const otherOwnerId = 'second-owner-fixture';
@@ -144,5 +146,54 @@ describe('member sessions and administration audit', () => {
     const page = await listMemberAudit(db(), { limit: 2 });
     expect(page.entries).toEqual(entries.slice(0, 2));
     expect((await listMemberAudit(db(), { beforeId: page.nextBeforeId! })).entries).toEqual(entries.slice(2));
+  });
+
+  it('attributes existing invite and suspension routes to the acting owner and removes the unused signup session', async () => {
+    const app = Fastify();
+    const origin = 'http://127.0.0.1:3101';
+    const auth = createAuth(db(), { secret: 'isolated-members-audit-fixture-key-000001', webOrigin: origin, production: false });
+    try {
+      await registerAuditedMemberRoutes(app, {
+        db: db(), auth, webOrigin: origin, dailyRuns: 1, imagesAvailable: () => false, adsAvailable: () => false,
+        owner: async request => {
+          const id = String(request.headers['x-fixture-actor']);
+          return db().selectFrom('user').select(['id', 'name', 'email']).where('id', '=', id).executeTakeFirstOrThrow();
+        },
+        role: async request => request.headers['x-fixture-actor'] === memberId ? 'member' : 'owner',
+      }, registerMemberRoutes);
+
+      async function invite(actor: string, email: string) {
+        const response = await app.inject({ method: 'POST', url: '/api/members/invites', headers: { 'x-fixture-actor': actor }, payload: { name: 'Invite fixture', email } });
+        expect(response.statusCode).toBe(200);
+        return response.json<{ id: string; url: string }>();
+      }
+      const email = 'member-audit-invite@example.test';
+      const original = await invite(ownerId, email);
+      const replacement = await invite(otherOwnerId, email);
+      const revoked = await app.inject({ method: 'POST', url: `/api/members/invites/${replacement.id}/revoke`, headers: { 'x-fixture-actor': ownerId }, payload: {} });
+      expect(revoked.statusCode).toBe(200);
+
+      const accepted = await invite(ownerId, email);
+      const signup = await app.inject({ method: 'POST', url: '/api/invites/accept', payload: {
+        token: new URL(accepted.url).hash.slice('#invite='.length), name: 'Invite fixture', password: 'Member-audit-fixture-password',
+      } });
+      expect(signup.statusCode).toBe(200);
+      const user = await db().selectFrom('user').select('id').where('email', '=', email).executeTakeFirstOrThrow();
+      expect(await listAccountSessions(db(), user.id, '')).toEqual([]);
+
+      const suspended = await app.inject({ method: 'POST', url: `/api/members/${user.id}/access`, headers: { 'x-fixture-actor': otherOwnerId }, payload: { enabled: false } });
+      expect(suspended.statusCode).toBe(200);
+      const unsuspended = await app.inject({ method: 'POST', url: `/api/members/${user.id}/access`, headers: { 'x-fixture-actor': ownerId }, payload: { enabled: true } });
+      expect(unsuspended.statusCode).toBe(200);
+      const { entries } = await listMemberAudit(db(), { limit: 8 });
+      expect(entries.map(({ actorId, targetId, action }) => [actorId, targetId, action])).toEqual([
+        [ownerId, user.id, 'member_unsuspended'], [otherOwnerId, user.id, 'member_suspended'],
+        [user.id, accepted.id, 'invite_used'], [ownerId, accepted.id, 'invite_created'],
+        [ownerId, replacement.id, 'invite_revoked'], [otherOwnerId, replacement.id, 'invite_created'],
+        [otherOwnerId, original.id, 'invite_revoked'], [ownerId, original.id, 'invite_created'],
+      ]);
+    } finally {
+      await app.close();
+    }
   });
 });

@@ -11,11 +11,7 @@ import { Runtime } from '@mohassan/runtime';
 import { CreateTaskSchema, SetupSchema, WorkspaceSnapshotSchema, SkillBenchmarkSuiteSchema, type Integration } from '@mohassan/contracts';
 import { createAuth, createOwner, migrateAuth, recoverLocalSetupClaim } from './auth.js';
 import { MEMBER_QUOTA_ROUTES, MEMBER_ROUTES, PUBLIC_ROUTES, memberRunsToday, migrateMembers, registerMemberRoutes, roleOf, routeKey, type WorkspaceRole } from './members.js';
-import { migrateMemberDataRights } from './member-data-migration.js';
-import { registerMemberDataRoutes } from './member-data-routes.js';
-import { assertDeletionCanSignIn, memberDeletionAccess, registerMemberDeletionRoutes, startMemberDeletionPurge } from './member-deletion.js';
-import { lockActiveChatAccount, memberAuthResponseBody, suspendedMemberDataAccess } from './member-data-request.js';
-import { memberAuthClientIp } from './member-sessions.js';
+import { handleMemberDataRequest, registerMemberDataRights } from './member-data-bootstrap.js';
 import { lockOwnerToolAccess } from './owner-tool-authorization.js';
 import { createRequestRateLimitKey } from './request-rate-limit.js';
 import { createAIControl } from './ai.js';
@@ -146,10 +142,9 @@ export async function createApplication(config: AppConfig) {
   await migrateMembers(database.db);
   if (database.mode === 'embedded' && !config.production) await recoverLocalSetupClaim(database.db);
   await migrate(database.db);
-  await migrateMemberDataRights(database.db);
   await windowsMigration(database.db);
   await googleAdsMigration(database.db);
-  const auth = createAuth(database.db, {secret: config.authSecret, webOrigin: config.webOrigin, production: config.production, beforeSessionCreate: userId => assertDeletionCanSignIn(database.db, userId)});
+  const auth = createAuth(database.db, {secret: config.authSecret, webOrigin: config.webOrigin, production: config.production});
   const coding=await createCodingControl(database.db,{dataDir:config.codingDataDir,allowedRoots:config.codingAllowedRoots,apiKey:config.groqApiKey,model:config.groqReasoningModel,fetch:config.aiFetch,sandbox:config.sandboxRunner});
   let studio:Awaited<ReturnType<typeof createStudioControl>>;
   const studioLive=await createStudioLiveControl(database.db,{gatewayUrl:config.studioGatewayUrl,gatewaySecret:config.studioGatewaySecret,webOrigin:config.webOrigin,production:config.production,previewPort:config.studioPreviewPort,getSession:(ownerId,id)=>studio.detail(ownerId,id)});
@@ -175,7 +170,7 @@ export async function createApplication(config: AppConfig) {
   // Every registered route, so tests can prove each one sits behind the member gate.
   const routes = new Set<string>();
   app.addHook('onRoute', route => { for (const method of [route.method].flat()) { const key = routeKey(method, route.url); if (key) routes.add(key); } });
-  type SessionUser = {id: string; name: string; email: string; sessionId: string};
+  type SessionUser = {id: string; name: string; email: string};
   const sessions = new WeakMap<object, Promise<SessionUser | null>>();
   const roles = new WeakMap<object, Promise<WorkspaceRole | null>>();
   const sessionUser = (request: {headers: Record<string, unknown>}) => {
@@ -183,7 +178,7 @@ export async function createApplication(config: AppConfig) {
     if (!found) {
       const headers = new Headers();
       if (typeof request.headers.cookie === 'string') headers.set('cookie', request.headers.cookie);
-      found = auth.api.getSession({headers}).then(session => session ? {id: session.user.id, name: session.user.name, email: session.user.email, sessionId: session.session.id} : null);
+      found = auth.api.getSession({headers}).then(session => session ? {id: session.user.id, name: session.user.name, email: session.user.email} : null);
       sessions.set(request, found);
     }
     return found;
@@ -233,10 +228,7 @@ export async function createApplication(config: AppConfig) {
     if (!user) return reply.code(401).send({error: {code: 'UNAUTHORIZED', message: 'سجل الدخول للمتابعة.'}});
     const role = await roleFor(request, user.id);
     if (role === 'owner') return;
-    const deletionAccess = await memberDeletionAccess(database.db, user.id, key);
-    if (deletionAccess === 'limited') return;
-    if (deletionAccess === 'blocked') return reply.code(403).send({error:{code:'MEMBER_DELETION_PENDING',message:'حسابك بانتظار الحذف. يمكنك إلغاء الطلب خلال مهلة الحذف.'}});
-    if (!role && await suspendedMemberDataAccess(database.db, user.id, key)) return;
+    if (await handleMemberDataRequest(database.db, reply, key, user.id, role)) return;
     if (role !== 'member' || !MEMBER_ROUTES.has(key)) return reply.code(403).send({error: {code: 'MEMBER_FORBIDDEN', message: 'هذه الخدمة غير متاحة لحسابك.'}});
     if (MEMBER_QUOTA_ROUTES.has(key) && await memberRunsToday(database.db, user.id) >= memberDailyRuns) {
       return reply.code(429).send({error: {code: 'MEMBER_DAILY_LIMIT', message: `وصلت إلى حد ${memberDailyRuns} طلبًا خلال 24 ساعة. حاول لاحقًا.`}});
@@ -275,8 +267,6 @@ export async function createApplication(config: AppConfig) {
       const value = request.headers[key];
       if (typeof value === 'string') headers.set(key, value);
     }
-    const clientIp = memberAuthClientIp(request, config.production);
-    if (clientIp) headers.set('x-forwarded-for', clientIp);
     const response = await auth.handler(new Request(new URL(request.url, config.webOrigin), {
       method: request.method, headers,
       ...(request.method !== 'GET' ? {body: JSON.stringify(request.body ?? {})} : {}),
@@ -284,7 +274,7 @@ export async function createApplication(config: AppConfig) {
     for (const [key, value] of response.headers) if (!['set-cookie', 'content-length', 'transfer-encoding'].includes(key)) reply.header(key, value);
     const cookies = response.headers.getSetCookie();
     if (cookies.length) reply.header('set-cookie', cookies);
-    return reply.code(response.status).send(await memberAuthResponseBody(response, path));
+    return reply.code(response.status).send(await response.text());
   }});
   const owner = async (request: {headers: Record<string, unknown>}) => {
     const user = await sessionUser(request);
@@ -350,9 +340,7 @@ export async function createApplication(config: AppConfig) {
   // Generated websites (no model): composed from a brief, previewed by token, exported as ZIP, published to Vercel when a token is set.
   const sites=await createSitesControl(database.db,{tokenSecret:config.internalSecret,publisher:config.sites?.publishTarget==='vercel'?createVercelPublisher({token:config.sites.vercelToken,teamId:config.sites.vercelTeamId,fetch:config.sites.fetch}):noPublisher});
   await registerSiteRoutes(app,{control:sites,owner,role});
-  await registerMemberRoutes(app,{db:database.db,auth,webOrigin:config.webOrigin,owner,role,dailyRuns:memberDailyRuns,adsAvailable:()=>googleAds.configured,imagesAvailable:()=>false,sitesAvailable:()=>true});
-  await registerMemberDataRoutes(app,{db:database.db,owner,role,documentsDir:config.documentsDir??resolve('.data/documents')});
-  await registerMemberDeletionRoutes(app,{db:database.db,auth,owner,role});
+  const agentBrowser = await registerMemberDataRights(app, { db: database.db, auth, owner, role, config, adsAvailable: () => googleAds.configured, registerMemberRoutes, AgentBrowser, browserProfileDir: config.browserProfileDir ?? join(tmpdir(), `mohassan-browser-${randomUUID()}`) });
   const assistantTools=createAssistantTools({memory,coding,studio,studioChange:studioAi.available,runtime,windows,googleAds});
   const inference=await createInferenceControl(database.db,{...config.inference,groq:{apiKey:config.groqApiKey,fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b']},fetch:config.aiFetch});
   await registerInferenceRoutes(app,{control:inference,owner});
@@ -371,7 +359,6 @@ export async function createApplication(config: AppConfig) {
   if(adsChatWorker)app.addHook('onClose',async()=>{adsChatWorker.stop();});
   const adsWorker=adsChatWorker??config.adsModelWorker;
   const adsModel=adsWorker?createAdsModelChat({worker:adsWorker,fetchPage:config.googleAds?.fetchPage??landingPageReader(config.browser)}):undefined;
-  const agentBrowser=new AgentBrowser({profileDir:config.browserProfileDir??join(tmpdir(),`mohassan-browser-${randomUUID()}`),testOrigins:config.browser?.testOrigins,channel:config.browserChannel});
   const chromeExtension=await createChromeExtensionControl(database.db);
   registerChromeExtensionRoutes(app,{control:chromeExtension,owner});
   const adsSleep=config.googleAds?.sleep;
@@ -476,7 +463,7 @@ export async function createApplication(config: AppConfig) {
   const documentLink=(id:string)=>`${config.webOrigin}/api/documents/${id}/content`;
   // The own image reader (packages/vision): exported weights in artifacts/vision/ocr-v1 unless MOHASSAN_OCR_MODEL_DIR points elsewhere.
   const imageReader=await createImageReader({modelDir:process.env.MOHASSAN_OCR_MODEL_DIR??join(process.cwd(),'artifacts','vision','ocr-v1'),workers:Number(process.env.MOHASSAN_OCR_WORKERS??3)});
-  const chat=await createCommandChatControl(database.db,{...(shadowRouter?{shadowRouter}:{}),...(conversationShadow?{conversationShadow}:{}),...(judgeShadow?{judgeShadow,judgeFixForOwner:judgeConfig.fixForOwner,judgeWithholdForOwner:judgeConfig.withholdForOwner,judgeLogText:judgeConfig.logText}:{}),...(imageReader.available?{imageReader}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),sites:{createFromBrief:(ownerId,brief,options)=>sites.create(ownerId,{brief,conversationId:options.conversationId,role:options.role}),command:(ownerId,siteId,input)=>sites.command(ownerId,siteId,input),detail:(ownerId,siteId)=>sites.detail(ownerId,siteId),roleOf:ownerId=>roleOf(database.db,ownerId),link:siteId=>`${new URL(config.webOrigin).origin}/#sites=${siteId}`},...(desktop?{desktop:{parse:(text:string)=>desktop.parse(text),describe:(command,lang)=>desktop.describe(command,lang),execute:(command,options)=>desktop.execute(command,options)}}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,documents:{control:documents,link:documentLink},inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,readPage,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',accountFullAccess:(ownerId,tx)=>lockOwnerToolAccess(tx,ownerId),accountActive:(ownerId,tx)=>lockActiveChatAccount(tx,ownerId),memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
+  const chat=await createCommandChatControl(database.db,{...(shadowRouter?{shadowRouter}:{}),...(conversationShadow?{conversationShadow}:{}),...(judgeShadow?{judgeShadow,judgeFixForOwner:judgeConfig.fixForOwner,judgeWithholdForOwner:judgeConfig.withholdForOwner,judgeLogText:judgeConfig.logText}:{}),...(imageReader.available?{imageReader}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),sites:{createFromBrief:(ownerId,brief,options)=>sites.create(ownerId,{brief,conversationId:options.conversationId,role:options.role}),command:(ownerId,siteId,input)=>sites.command(ownerId,siteId,input),detail:(ownerId,siteId)=>sites.detail(ownerId,siteId),roleOf:ownerId=>roleOf(database.db,ownerId),link:siteId=>`${new URL(config.webOrigin).origin}/#sites=${siteId}`},...(desktop?{desktop:{parse:(text:string)=>desktop.parse(text),describe:(command,lang)=>desktop.describe(command,lang),execute:(command,options)=>desktop.execute(command,options)}}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,documents:{control:documents,link:documentLink},inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,readPage,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',accountFullAccess:(ownerId,tx)=>lockOwnerToolAccess(tx,ownerId),accountActive:async(ownerId,tx)=>{const role=await roleOf(tx,ownerId);if(role!=='member')return role!==null;return Boolean(await tx.selectFrom('workspace_members').select('user_id').where('user_id','=',ownerId).where('role','=','member').where('disabled_at','is',null).forShare().executeTakeFirst());},memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
     learningContext:learning.context,chromeExtension,
     knowledgeSearch:async(ownerId,query)=>(await learning.knowledge.retrieve(ownerId,query)).map(({title,text,source})=>({title,text,source})),
     ...(config.skillEngineEnabled?{recordSkillGap,skillContext:skills.context,loadSkill:skills.loadInstruction,
@@ -540,7 +527,6 @@ export async function createApplication(config: AppConfig) {
   app.get<{Params: {id: string}}>('/api/tasks/:id', async (request) => runtime.detail((await owner(request)).id, request.params.id));
   app.post<{Params: {id: string}}>('/api/tasks/:id/cancel', async (request) => runtime.cancel((await owner(request)).id, request.params.id));
   app.post<{Params: {id: string}}>('/api/tasks/:id/approve', async (request) => runtime.approve((await owner(request)).id, request.params.id));
-  startMemberDeletionPurge(app,database.db,{documentsDir:config.documentsDir??resolve('.data/documents'),purgeBrowserProfiles:(userId,accounts)=>agentBrowser.purgeAccount(userId,accounts)});
   app.addHook('onClose', async () => {clearInterval(benchmarkMaintenance);try{await skillRemoteScheduler?.stop();await skills.remote.shutdown();await benchmarkMaintenanceRun;await Promise.all([skillBenchmarks.shutdown(),skillForge.shutdown()]);}finally{try{await chat.shutdown();}finally{try{await runtime.stop();}finally{try{await browser.shutdown();}finally{try{await studioLive.close();}finally{await database.close();}}}}}});
   if (config.runWorker) runtime.start();
   await app.ready();

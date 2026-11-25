@@ -70,7 +70,19 @@
 }
 
 .memberActions {
+  display: grid;
   justify-items: end;
+  gap: 4px;
+}
+
+.memberToolsFrame {
+  background: #fbfcf9;
+}
+
+.memberToolsData {
+  max-width: 1100px;
+  margin-inline: auto;
+  padding: 16px 16px 0;
 }
 
 .list {

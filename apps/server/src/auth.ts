@@ -2,6 +2,13 @@ import { betterAuth } from 'better-auth';
 import { sql, type Kysely } from 'kysely';
 import { discardUnusedSignupSession } from './member-sessions.js';
 
+type SessionCreationCheck = (userId: string) => Promise<void>;
+const sessionCreationChecks = new WeakMap<object, SessionCreationCheck>();
+
+export function setAuthSessionCreationCheck(auth: ReturnType<typeof createAuth>, check: SessionCreationCheck) {
+  sessionCreationChecks.set(auth, check);
+}
+
 export async function migrateAuth(database: Kysely<any>) {
   await database.transaction().execute(async (db) => {
   await sql`SELECT pg_advisory_xact_lock(1846021105)`.execute(db);
@@ -51,7 +58,7 @@ export async function recoverLocalSetupClaim(db: Kysely<any>) {
   });
 }
 
-export function createAuth(db: Kysely<any>, options: {secret: string; webOrigin: string; production: boolean; beforeSessionCreate?: (userId: string) => Promise<void>}) {
+export function createAuth(db: Kysely<any>, options: {secret: string; webOrigin: string; production: boolean}) {
   const origin = new URL(options.webOrigin);
   const trustedOrigins = [origin.origin];
   if (!options.production && ['localhost', '127.0.0.1'].includes(origin.hostname)) {
@@ -59,19 +66,20 @@ export function createAuth(db: Kysely<any>, options: {secret: string; webOrigin:
     alias.hostname = alias.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
     trustedOrigins.push(alias.origin);
   }
-  return betterAuth({
+  const auth = betterAuth({
     appName: 'Mohassan AI',
     secret: options.secret,
     baseURL: options.webOrigin,
     database: {db, type: 'postgres'},
     trustedOrigins,
     emailAndPassword: {enabled: true, minPasswordLength: 12, maxPasswordLength: 128},
-    databaseHooks: {session: {create: {before: async session => { await options.beforeSessionCreate?.(session.userId); }}}},
+    databaseHooks: {session: {create: {before: async session => { await sessionCreationChecks.get(auth)?.(session.userId); }}}},
     session: {expiresIn: 60 * 60 * 24 * 7, updateAge: 60 * 60, cookieCache: {enabled: false}},
     rateLimit: {enabled: true, storage: 'database', window: 60, max: 30,customRules:{'/get-session':{window:60,max:120}}},
     advanced: {useSecureCookies: options.production},
     logger: {disabled: true},
   });
+  return auth;
 }
 
 export async function createOwner(db: Kysely<any>, auth: ReturnType<typeof createAuth>, input: {name: string; email: string; password: string}) {

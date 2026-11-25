@@ -1,11 +1,11 @@
 import { Button } from "@chakra-ui/react";
 import type { CancelMemberDeletionResult, EndAccountSessionsResult, MemberAuditPage, PendingMemberDeletions } from "@mohassan/contracts";
-import { RefreshCw } from "lucide-react";
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { ChevronDown, RefreshCw } from "lucide-react";
+import { useId, useMemo, useState } from "react";
 import { AccountLoading, AccountTime, ConfirmAccountAction, MemberAccountData, accountRequest, useAccountResource } from "./member-data-rights";
 import styles from "./member-data-rights.module.css";
 
-type MemberReference = { id: string; name: string };
+type MemberReference = { id: string; name: string; email: string };
 type AuditEntry = MemberAuditPage["entries"][number];
 const actionNames: Record<AuditEntry["action"], string> = {
   invite_created: "إنشاء دعوة",
@@ -19,14 +19,11 @@ const actionNames: Record<AuditEntry["action"], string> = {
   export_downloaded: "تنزيل نسخة البيانات",
 };
 
-export function MemberSessionActions({ member, offline, children }: { member: MemberReference; offline: boolean; children: ReactNode }) {
+function MemberSessionActions({ member, offline }: { member: MemberReference; offline: boolean }) {
   const [confirm, setConfirm] = useState(false);
   const [notice, setNotice] = useState("");
   return <div className={styles.memberActions}>
-    <div className={styles.actions}>
-      {children}
-      <Button size="sm" variant="outline" disabled={offline} onClick={() => { setNotice(""); setConfirm(true); }}>إنهاء جلسات العضو</Button>
-    </div>
+    <Button size="sm" variant="outline" disabled={offline} onClick={() => { setNotice(""); setConfirm(true); }}>إنهاء جلسات العضو</Button>
     {notice ? <small role="status">{notice}</small> : null}
     {confirm ? <ConfirmAccountAction title="إنهاء جلسات العضو" instruction={`سيُسجَّل خروج ${member.name} من جميع الأجهزة.`}
       label="تأكيد إنهاء الجلسات" close={() => setConfirm(false)} run={async () => {
@@ -35,6 +32,21 @@ export function MemberSessionActions({ member, offline, children }: { member: Me
         setNotice(result.ended ? "أُنهيت جلسات العضو." : "لا توجد جلسات نشطة لهذا العضو.");
       }} /> : null}
   </div>;
+}
+
+function MemberSessionsPanel({ members, offline }: { members: readonly MemberReference[]; offline: boolean }) {
+  const [open, setOpen] = useState(false);
+  return <details className={`panel ${styles.details}`} onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary className={styles.summary}><h2>جلسات الأعضاء</h2><ChevronDown size={18} aria-hidden="true" /></summary>
+    {open ? <div className={styles.body}>
+      {members.length ? <ul className={styles.list}>
+        {members.map(member => <li key={member.id}>
+          <div className={styles.record}><strong>{member.name}</strong><bdi dir="ltr">{member.email}</bdi></div>
+          <MemberSessionActions member={member} offline={offline} />
+        </li>)}
+      </ul> : <p>لا يوجد أعضاء لإدارة جلساتهم.</p>}
+    </div> : null}
+  </details>;
 }
 
 function PendingRequests({ offline, onCancel }: { offline: boolean; onCancel: () => void }) {
@@ -118,6 +130,7 @@ export function OwnerMemberHistory({ members, offline }: { members?: readonly Me
   return <>
     <MemberAccountData offline={offline} onExported={refreshAudit} />
     {members ? <>
+      <MemberSessionsPanel members={members} offline={offline} />
       <PendingRequests offline={offline} onCancel={refreshAudit} />
       <AuditLog members={members} revision={revision} offline={offline} />
     </> : null}

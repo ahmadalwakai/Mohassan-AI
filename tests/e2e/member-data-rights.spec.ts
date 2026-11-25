@@ -103,12 +103,15 @@ test('handles exports, sessions and the deletion grace period in the Arabic acco
     }
     await page.reload();
     await page.getByRole('navigation', { name: 'التنقل الرئيسي' }).getByRole('button', { name: 'الأعضاء' }).click();
-    const row = page.getByRole('listitem').filter({ hasText: email });
-    await row.getByRole('button', { name: 'إنهاء جلسات العضو' }).click();
+    const memberSessions = page.locator('details').filter({ has: page.getByRole('heading', { name: 'جلسات الأعضاء' }) });
+    await memberSessions.locator('summary').click();
+    await memberSessions.getByRole('listitem').filter({ hasText: email }).getByRole('button', { name: 'إنهاء جلسات العضو' }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'تأكيد إنهاء الجلسات' }).click();
     await expect(page.getByText('أُنهيت جلسات العضو.')).toBeVisible();
     expect(await (await memberContext.request.get('/api/auth/get-session')).json()).toBeNull();
 
+    const members = page.locator('section').filter({ has: page.getByRole('heading', { name: 'الأعضاء', exact: true, level: 2 }) });
+    const row = members.getByRole('listitem').filter({ hasText: email });
     await row.getByRole('button', { name: 'إيقاف', exact: true }).click();
     await expect(row.getByRole('button', { name: 'إعادة التفعيل' })).toBeVisible();
     await member.reload();

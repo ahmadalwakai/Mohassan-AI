@@ -1,5 +1,6 @@
 import { access, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { AgentBrowser } from '@mohassan/browser';
 
 interface ManagedContext { context: { close(): Promise<void> } }
 type KeyMap = Pick<Map<string, unknown>, 'keys' | 'delete'>;
@@ -17,20 +18,8 @@ async function rememberProfile(root: string, ownerId: string, name: string, hash
   await writeFile(join(index, name), '', { flag: 'a' });
 }
 
-/** Preserve the existing profile path and record bound profiles before Chromium can write to it. */
-export async function openAgentBrowserProfile(root: string, key: string, hash: ProfileHash) {
-  const name = profileName(key, hash);
-  if (key.startsWith('account:')) {
-    const [ownerId] = JSON.parse(key.slice('account:'.length)) as [string, string];
-    await rememberProfile(root, ownerId, name, hash);
-  }
-  const directory = join(root, name);
-  await mkdir(directory, { recursive: true });
-  return directory;
-}
-
 /** The last conversation for a legacy named profile may be its only remaining ownership record. */
-export async function rememberExistingAgentBrowserProfile(root: string, ownerId: string, accountId: string | null, hash: ProfileHash) {
+async function rememberExistingAgentBrowserProfile(root: string, ownerId: string, accountId: string | null, hash: ProfileHash) {
   if (!accountId) return;
   const name = profileName(accountKey(ownerId, accountId), hash);
   try {
@@ -77,4 +66,37 @@ export async function purgeAgentBrowserProfiles<T extends ManagedContext>(
   for (const name of knownProfiles) if (/^account-[a-f0-9]{24}$/u.test(name)) names.add(name);
   for (const name of names) await rm(join(root, name), { recursive: true, force: true });
   await rm(index, { recursive: true, force: true });
+}
+
+const rememberAccountProfile = Symbol('rememberAccountProfile');
+
+/** The server records ownership before a named profile can be used by the browser. */
+export function memberAgentBrowserClass(Base: typeof AgentBrowser) {
+  return class MemberAgentBrowser extends Base {
+    override async bindAccount(ownerId: string, conversationId: string, accountId: string | null): Promise<void> {
+      const { root, accounts, hash } = this.memberProfileState();
+      if (accountId !== null && accounts.get(JSON.stringify([ownerId, conversationId])) !== accountId) {
+        await rememberProfile(root, ownerId, profileName(accountKey(ownerId, accountId), hash), hash);
+      }
+      await super.bindAccount(ownerId, conversationId, accountId);
+    }
+
+    [rememberAccountProfile](ownerId: string, accountId: string | null) {
+      const { root, hash } = this.memberProfileState();
+      return rememberExistingAgentBrowserProfile(root, ownerId, accountId, hash);
+    }
+
+    purgeAccount(ownerId: string, accounts: readonly string[]) {
+      const { root, owners, accounts: bindings, recoveryBindings, hash } = this.memberProfileState();
+      return purgeAgentBrowserProfiles(root, ownerId, accounts, owners, bindings, recoveryBindings, hash);
+    }
+  };
+}
+
+export const MemberAgentBrowser = memberAgentBrowserClass(AgentBrowser);
+
+export async function rememberRemovedConversationProfile(browser: AgentBrowser, ownerId: string, accountId: string | null) {
+  if (rememberAccountProfile in browser && typeof browser[rememberAccountProfile] === 'function') {
+    await browser[rememberAccountProfile](ownerId, accountId);
+  }
 }

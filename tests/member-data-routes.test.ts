@@ -92,6 +92,15 @@ describe('member data rights over the authenticated application', () => {
       const response = await app().inject({ method, url, headers: headers(alice) });
       expect(response.statusCode, route).toBe(403);
     }
+    for (const [method, url] of [['GET', '/api/auth/get-session'], ['POST', '/api/auth/sign-in/email']] as const) {
+      const response = await app().inject({ method, url, headers: { origin, cookie: alice } });
+      expect(response.json().error.code).toBe('SERVICE_UNAUTHORIZED');
+    }
+    const badOrigin = await app().inject({ method: 'POST', url: '/api/auth/sign-in/email',
+      headers: { 'x-mohassan-internal': internalSecret, origin: 'https://untrusted.example.test' } });
+    expect(badOrigin.json().error.code).toBe('ORIGIN_DENIED');
+    const unsupportedAuth = await app().inject({ method: 'POST', url: '/api/auth/sign-up/email', headers: headers(alice) });
+    expect(unsupportedAuth.json().error.code).toBe('AUTH_ACTION_DISABLED');
   });
 
   it('limits session metadata and revocation to the signed-in account and its other sessions', async () => {
@@ -106,7 +115,7 @@ describe('member data rights over the authenticated application', () => {
     expect(sessions.filter(session => session.current)).toHaveLength(1);
     expect(sessions.filter(session => session.ipPrefix === '198.51.100.0/24')).toHaveLength(2);
     expect(list.body.includes(otherAlice.ip)).toBe(false);
-    const authDetails = await app().inject({ url: '/api/auth/get-session', headers: headers(otherAlice.cookie) });
+    const authDetails = await app().inject({ url: '/api/auth/get-session?disableCookieCache=true', headers: headers(otherAlice.cookie) });
     expect(authDetails.json().session.ipAddress).toBe('198.51.100.0/24');
     expect(authDetails.body.includes(otherAlice.ip)).toBe(false);
     for (const method of ['GET', 'DELETE'] as const) {
@@ -146,6 +155,7 @@ describe('member data rights over the authenticated application', () => {
 
     alice = (await logIn('alice')).cookie;
     expect((await app().inject({ url: '/api/access', headers: headers(alice) })).json().deletion).toEqual(deletion);
+    expect((await app().inject({ method: 'HEAD', url: '/api/access', headers: headers(alice) })).statusCode).toBe(200);
     expect((await app().inject({ url: '/api/member-data/deletion', headers: headers(alice) })).json()).toEqual({ deletion });
     for (const url of ['/api/member-data/export', '/api/member-data/sessions', '/api/chat/conversations']) {
       expect((await app().inject({ url, headers: headers(alice) })).json().error.code, url).toBe('MEMBER_DELETION_PENDING');
