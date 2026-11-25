@@ -1,14 +1,15 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  arbitrateComponent, beginArbiterReplayTurn, takeArbiterDecisions, withArbiterExecution, withArbiterReplay,
+  arbitrateComponent, beginArbiterReplayTurn, discoverArbiterClaims, takeArbiterDecisions, withArbiterExecution, withArbiterReplay,
 } from '../apps/server/src/assistant/model-relations-arbiter.js';
+import { createModelRelationsObserver } from '../apps/server/src/assistant/model-relations-shadow.js';
 import { decideHostRequestRoute } from '../apps/server/src/assistant/routing-decision.js';
 import { ArbiterBrain, type ArbiterInput } from '../packages/model-relations/src/arbiter.js';
-import { ModelRelationsManager, type ArbiterDecisionType } from '../packages/model-relations/src/manager.js';
+import { ModelRelationsManager, type ArbiterDecisionLog, type ArbiterDecisionType } from '../packages/model-relations/src/manager.js';
 import { modelRegistry } from '../packages/model-relations/src/registry.js';
 import { createModelRuntime, type ModelRunResult } from '../packages/model-relations/src/runtime.js';
 
@@ -177,5 +178,42 @@ describe('assistant arbitration hook', () => {
       expect(trace.decisions).toMatchObject([{ type: 'routing', turnId: 1, precedence: 'everyday-clarification',
         selected: 'factual-lookup', reason: 'forced' }]);
     });
+  });
+
+  it('discovers shadow claims after publication and associates them with the original turn', async () => {
+    vi.stubEnv('MOHASSAN_MODEL_RELATIONS', undefined);
+    const directory = await mkdtemp(join(tmpdir(), 'arbiter-publication-'));
+    const logFile = join(directory, 'shadow.jsonl');
+    const runtime = { run: async (): Promise<ModelRunResult> => ({ ok: false, reason: 'absent', elapsedMs: 0 }) };
+    const relations = new ModelRelationsManager(runtime, { hashKey: 'publication-test' });
+    const inspect = vi.fn(relations.inspect.bind(relations));
+    const observe = createModelRelationsObserver({ env: {}, logFile, inspector: async () => ({ inspect }) });
+    const runId = 'arbiter-reused-run';
+    const queue = (text: string) => {
+      const discover = vi.fn((shadowLog?: ArbiterDecisionLog[]) =>
+        arbitrateComponent('local-computation', { ...context, text, shadowLog }, hostClaim, otherClaims));
+      expect(withArbiterExecution(runId, () => discoverArbiterClaims('local-computation', hostResult, undefined, discover))).toBe(hostResult);
+      expect(discover).not.toHaveBeenCalled();
+      return discover;
+    };
+    try {
+      const first = 'Copper roof tiles';
+      const later = 'ألواح نحاسية على السطح';
+      const firstDiscovery = queue(first);
+      observe(runId, undefined, { token: 'lease-one', request: first }, 'First result', 'completed');
+      const laterDiscovery = queue(later);
+      observe(runId, undefined, { token: 'lease-two', request: later }, 'Second result', 'completed');
+      expect(firstDiscovery).not.toHaveBeenCalled();
+      expect(laterDiscovery).not.toHaveBeenCalled();
+      await vi.waitFor(async () => expect((await readFile(logFile, 'utf8')).trim().split('\n')).toHaveLength(2));
+      expect(firstDiscovery).toHaveBeenCalledOnce();
+      expect(laterDiscovery).toHaveBeenCalledOnce();
+      expect(inspect.mock.calls.map(([turn]) => [turn.id, turn.arbiter?.map(decision => [decision.language, decision.length])])).toEqual([
+        [`${runId}:lease-one`, [['en', first.length]]],
+        [`${runId}:lease-two`, [['ar', later.length]]],
+      ]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
