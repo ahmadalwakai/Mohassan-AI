@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { DecisionOutcome } from '@mohassan/contracts';
 import { standaloneMannersRoute } from './manners/chat.js';
 import { directRoute } from './brain.js';
 import { isCampaignRequest } from './campaign-request.js';
@@ -277,21 +276,4 @@ export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDe
     case 'unsupported': return { ...base('unsupported', 'unsupported', 'unsupported', reason), availability: 'missing_capability' };
     default: return has('chatModel') ? base('chat', 'chat', 'model', 'local_model_fallback') : clarify('unresolved_intent');
   }
-}
-
-
-const deliberationHandlers = {
-  web_search: 'search', browser_command: 'browser', news: 'search', memory: 'memory', reminder: 'reminder',
-  compute: 'local_computation', ads: 'ads', pc: 'computer', writing: 'writing', planning: 'planning',
-  coding: 'coding', chat: 'local_conversation', unsupported: 'unsupported', image: 'image', media: 'media',
-} as const satisfies Record<RoutedIntent, RoutingHandler>;
-
-/** Update the existing route preference. Source, scope, operands and availability remain host facts. */
-export function projectDeliberationRoute(decision: RequestRoutingDecision, outcome: DecisionOutcome): RequestRoutingDecision {
-  if (outcome.action !== 'act' || outcome.route === decision.route || decision.availability === 'restricted') return decision;
-  const route = routedIntents.find(intent => intent === outcome.route);
-  if (!route || (route === 'web_search' || route === 'news') && !decision.sourceAssessment.publicQueryEligible) return decision;
-  const { browserSteps: _previousPlan, localReply: _previousReply, ...facts } = decision;
-  return { ...facts, route, intent: route, handler: deliberationHandlers[route],
-    publicQuery: route === 'web_search' || route === 'news' ? decision.publicQuery : null };
 }

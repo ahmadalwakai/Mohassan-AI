@@ -180,7 +180,6 @@ describe('trusted gap metadata from chat', () => {
       // The run ledger (agent-run.ts) is bound to its run and stamped with wall-clock times; its content must still match.
       if (state.agentRun) {
         state.agentRun.runId = '<run>';
-        if (state.agentRun.deliberationTurnId) state.agentRun.deliberationTurnId = '<turn>';
         state.agentRun.updatedAt = '<time>';
         for (const entry of state.agentRun.history) entry.at = '<time>';
         if (state.agentRun.verdict) state.agentRun.verdict.decidedAt = '<time>';

@@ -25,7 +25,6 @@ import { CampaignCard } from "./campaign-card";
 const ADS_WORDS = /حمل[ةت]|حملات|إعلان|اعلان|google ads|campaign|\bads?\b|advertis|ppc/i;
 import { ActivityLine, AgentActivity } from "./agent-activity";
 import { RunDetails, RunVerdict } from "./run-status";
-import { hasRunDeliberation } from "./run-deliberation";
 import { isNewerSnapshot, steerable } from "./run-view";
 import { QuestionPanel, withoutQuestionList } from "./question-card";
 import { ChromeExtensionPanel } from "./chrome-extension-panel";
@@ -146,7 +145,7 @@ function Steps({ conversation }: { conversation: Conversation }) {
   const [open, setOpen] = useState(false);
   const running = conversation.status === "running";
   const run = conversation.run ?? null;
-  if (!running && !conversation.steps.length && !unfinishedVerdict(conversation)) return hasRunDeliberation(run) ? <RunDetails key={run.id} run={run} /> : null;
+  if (!running && !conversation.steps.length && !unfinishedVerdict(conversation)) return null;
   // The request's own time: its user message, so a reload keeps the count honest.
   const since = conversation.messages.filter((message) => message.role === "user").at(-1)?.createdAt ?? null;
   return <div className={styles.steps}>
@@ -732,7 +731,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
               {message.role === "assistant" && message.text.trim() ? <div className={styles.replyTools}><CopyButton text={message.text} /><FeedbackButtons key={message.id} conversationId={conversation!.id} messageId={message.id} /></div> : null}
               {index === conversation!.messages.length - 1 && message.role === "user" ? <Steps conversation={conversation!} /> : null}
             </article>)}
-            {conversation!.messages.at(-1)?.role === "assistant" && (!answering && !blocked || hasRunDeliberation(conversation!.run)) ? <Steps conversation={conversation!} /> : null}
+            {conversation!.messages.at(-1)?.role === "assistant" && (running || conversation!.steps.length > 0 || unfinishedVerdict(conversation!)) && !answering && !blocked ? <Steps conversation={conversation!} /> : null}
             {conversation!.campaign?.events.length ? <CampaignCard stream={conversation!.campaign} running={running} /> : null}
             {conversation!.question?.fields?.length ? null
             : conversation!.question ? <div className={styles.choices}>{conversation!.question.options.map((option) => <button key={option.id} disabled={busy} onClick={() => conversation!.question!.action === "google_ads_connect" && option.id === "connect" ? void connectGoogleAds() : void act(() => post("respond", { questionId: conversation!.question!.id, optionId: option.id }))}>{option.label}</button>)}</div> : null}

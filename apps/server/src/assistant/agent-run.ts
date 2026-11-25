@@ -7,7 +7,6 @@ import {
   type RunPhase, type RunRisk, type RunVerdict, type TerminalRunPhase, type VerificationMethod, type VerificationResult,
 } from '@mohassan/contracts';
 import type { TaskCompletionReview, TaskSupervisorState } from './task-supervisor.js';
-import { thoughtLedgerFields } from './deliberation/run-ledger.js';
 
 /**
  * The run ledger: the runtime's own record of one chat run (docs/architecture/agent-execution.md). It holds the run's
@@ -129,7 +128,6 @@ export const RunLedgerSchema = z.object({
   modelCalls: z.number().int().min(0).max(10_000),
   sequence: z.number().int().min(0).max(1_000_000),
   updatedAt: isoSchema,
-  ...thoughtLedgerFields,
 }).strict();
 export type RunLedger = z.infer<typeof RunLedgerSchema>;
 

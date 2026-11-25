@@ -2,7 +2,6 @@ import { useId, useState } from "react";
 import { Ban, CircleAlert, CircleCheck, CircleDashed, ChevronDown, ExternalLink } from "lucide-react";
 import type { ChatRunView } from "@mohassan/contracts";
 import { AUTHORIZATION_LABELS, EVIDENCE_LABELS, PERMISSION_LABELS, STAGE_LABELS, STEP_STATE_LABELS, engineLabel, linkable, verdictBadge, type VerdictTone } from "./run-view";
-import { RunDeliberation } from "./run-deliberation";
 import styles from "./run-status.module.css";
 
 const TONE_ICON: Record<VerdictTone, typeof CircleCheck> = { done: CircleCheck, partial: CircleDashed, blocked: CircleAlert, cancelled: Ban };
@@ -33,7 +32,6 @@ export function RunDetails({ run }: { run: ChatRunView }) {
     {open ? <div id={panel} className={styles.panel} data-testid="run-details">
       <p className={styles.line}><strong>المرحلة:</strong> {STAGE_LABELS[run.phase]}{badge?.reason ? ` — ${badge.reason}` : ""}</p>
       <p className={styles.line} data-testid="run-engine">{engineLabel(run)}</p>
-      <RunDeliberation record={run.deliberation} earlier={run.earlierDeliberation} />
       {run.path ? <p className={styles.line}><strong>المسار:</strong> {run.path === "direct" ? "جواب مباشر دون أدوات خارجية" : "بحث أو تنفيذ بأدوات"}</p> : null}
       {run.context?.corrections.length ? <p className={styles.line}><strong>صحّحتَ:</strong> <bdi>{run.context.corrections.join("، ")}</bdi></p> : null}
       {run.context?.constraints.length ? <p className={styles.line}><strong>ممنوع في طلبك:</strong> <bdi dir="ltr">{run.context.constraints.join(", ")}</bdi></p> : null}

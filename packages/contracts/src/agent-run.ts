@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { MAX_EARLIER_THOUGHT_RECORDS, ThoughtRecordSchema } from './deliberation';
 
 /**
  * One chat run as the server's runtime records it (2026-11-23; docs/architecture/agent-execution.md). Every field is
@@ -146,7 +145,5 @@ export const ChatRunViewSchema = z.object({
   /** Grows with every state the runtime commits for this run; a client keeps the snapshot with the higher value. */
   sequence: z.number().int().min(0).max(1_000_000),
   updatedAt: z.iso.datetime(),
-  deliberation: ThoughtRecordSchema.optional(),
-  earlierDeliberation: z.array(ThoughtRecordSchema).max(MAX_EARLIER_THOUGHT_RECORDS).optional(),
 }).strict();
 export type ChatRunView = z.infer<typeof ChatRunViewSchema>;
