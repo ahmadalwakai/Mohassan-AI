@@ -3,6 +3,7 @@ import type { IosPushPayload } from '@mohassan/contracts';
 import { sendToApnsDevice, type ApnsSender, type IosPushDevice } from './apns.js';
 import { backgroundPayload, type BackgroundNotificationEvent } from './background-notification-payload.js';
 import { backgroundAccountCanReceive, backgroundRetryAt, isQuietHours, notificationPreferences } from './notifications-store.js';
+import { monitorMetricTransaction } from './ops/metrics/monitor-events.js';
 
 function dueApnsDeliveries(db: Kysely<any>, now: Date) {
   return db.selectFrom('background_apns_deliveries as d').innerJoin('chat_notifications as n', 'n.task_id', 'd.event_id')
@@ -16,7 +17,7 @@ export async function dispatchBackgroundApns(db: Kysely<any>, send: ApnsSender, 
     .orderBy('d.next_at').orderBy('d.event_id').orderBy('d.registration_id').limit(20).execute() as Array<{ event_id: string; registration_id: string; user_id: string }>;
   await Promise.all(due.map(async ({ event_id: eventId, registration_id: registrationId, user_id: userId }) => {
     const active = await isActive(userId);
-    await db.transaction().execute(async tx => {
+    await monitorMetricTransaction(db, async (tx, observe) => {
       // Lock the device before its delivery so token expiry can safely cascade
       // through other queued events for the same token.
       const device = await tx.selectFrom('ios_push_devices').selectAll().where('registration_id', '=', registrationId)
@@ -45,6 +46,7 @@ export async function dispatchBackgroundApns(db: Kysely<any>, send: ApnsSender, 
       await delivery.set(result === 'delivered' ? { delivered_at: now } : {
         next_at: backgroundRetryAt(now, event.attempts), attempts: event.attempts + 1,
       }).execute();
+      if (monitorId && result === 'delivered') observe({ kind: 'delivery', channel: 'apns' });
     });
   }));
 }

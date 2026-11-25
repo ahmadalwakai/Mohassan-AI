@@ -4,6 +4,7 @@ import {
   type RouteMetrics, type TrafficRole, type WorkingRunPhase,
 } from '@mohassan/contracts';
 import {createHistogram, mergeHistograms, summarizeHistogram, type Histogram} from './histogram';
+import {createMonitorMetricBucket, mergeMonitorMetricBucket, summarizeMonitorMetrics, type MonitorMetricBucket} from './monitor-buckets.js';
 
 export type ChatTiming = 'firstProgress' | 'finalAnswer' | WorkingRunPhase;
 export type TimingData = {histogram?: Histogram};
@@ -17,6 +18,7 @@ type RoleData = {
 export type MetricBucket = {
   roles: Record<TrafficRole, RoleData>;
   resources: Map<ResourceMetric, ResourceData>;
+  monitors: MonitorMetricBucket;
 };
 
 export function createBucket(): MetricBucket {
@@ -24,7 +26,7 @@ export function createBucket(): MetricBucket {
     routes: new Map(),
     chat: {runs: 0, timings: new Map(), paths: {web: 0, local_computation: 0, skill_reader: 0, memory: 0, browser: 0, refusal: 0}},
   });
-  return {roles: {owner: role(), member: role()}, resources: new Map()};
+  return {roles: {owner: role(), member: role()}, resources: new Map(), monitors: createMonitorMetricBucket()};
 }
 
 export function routeData(routes: RoleData['routes'], route: string): RequestData {
@@ -55,6 +57,7 @@ export function resourceData(resources: MetricBucket['resources'], metric: Resou
 }
 
 export function forEachHistogram(bucket: MetricBucket, visit: (histogram: Histogram) => void): void {
+  if (bucket.monitors.lateness) visit(bucket.monitors.lateness);
   for (const role of trafficRoles) {
     for (const data of bucket.roles[role].routes.values()) if (data.histogram) visit(data.histogram);
     for (const data of bucket.roles[role].chat.timings.values()) if (data.histogram) visit(data.histogram);
@@ -80,6 +83,7 @@ export function mergeBucket(target: MetricBucket, source: MetricBucket, allocate
     for (const name of answerPaths) chat.paths[name] += incoming.paths[name];
     for (const [name, timing] of incoming.timings) mergeTiming(timingData(chat.timings, name), timing.histogram);
   }
+  mergeMonitorMetricBucket(target.monitors, source.monitors, allocate);
   for (const [metric, incoming] of source.resources) {
     const data = resourceData(target.resources, metric);
     data.samples += incoming.samples;
@@ -123,5 +127,6 @@ export function summarizeWindow(bucket: MetricBucket, startMs: number, endMs: nu
       ? {samples: data.samples, average: data.sum / data.samples, max: data.max}
       : {samples: 0, average: null, max: null}];
   })) as MetricWindow['resources'];
-  return {startMs, endMs, roles: {owner: summarizeRole('owner'), member: summarizeRole('member')}, resources};
+  return {startMs, endMs, roles: {owner: summarizeRole('owner'), member: summarizeRole('member')},
+    resources, monitors: summarizeMonitorMetrics(bucket.monitors)};
 }

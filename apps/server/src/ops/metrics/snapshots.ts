@@ -41,7 +41,7 @@ export class MetricsSnapshots {
       await this.#prune(files, hourStart);
       this.#lastMaintenance = hourStart;
       this.#loaded = true;
-      const earliestHour = hourStart - (hourlySlots - 1) * hourMs;
+      const earliestHour = hourStart - hourlySlots * hourMs;
       // Populate newer windows first if the histogram memory budget is exhausted.
       for (const file of files.reverse()) {
         if (file.hourStartMs < earliestHour || file.hourStartMs > hourStart) continue;

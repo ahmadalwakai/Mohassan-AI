@@ -41,12 +41,12 @@ export function mergeHistograms(target: Histogram, source: Histogram): void {
   target.maxMs = Math.max(target.maxMs, source.maxMs);
 }
 
-export function summarizeHistogram(histogram?: Histogram): Latency {
-  if (!histogram?.samples) return {samples: 0, p50: null, p90: null, p99: null};
+export function histogramPercentiles(histogram: Histogram | undefined, probabilities: readonly number[]): number[] {
+  if (!histogram?.samples) return [];
   // Nearest ranks, as in scripts/perf/fixture.ts and the discrete percentile
   // algorithm at https://www.postgresql.org/docs/18/functions-aggregate.html
   // (retrieved 2026-11-25). Report bucket upper bounds or the observed overflow maximum.
-  const ranks = [0.5, 0.9, 0.99].map(probability => Math.ceil(probability * histogram.samples));
+  const ranks = probabilities.map(probability => Math.ceil(probability * histogram.samples));
   const values: number[] = [];
   let observed = 0;
   for (let index = 0; index < histogramBucketCount && values.length < ranks.length; index++) {
@@ -55,5 +55,10 @@ export function summarizeHistogram(histogram?: Histogram): Latency {
       values.push(latencyBoundsMs[index] ?? histogram.maxMs);
     }
   }
-  return {samples: histogram.samples, p50: values[0], p90: values[1], p99: values[2]};
+  return values;
+}
+
+export function summarizeHistogram(histogram?: Histogram): Latency {
+  const [p50 = null, p90 = null, p99 = null] = histogramPercentiles(histogram, [0.5, 0.9, 0.99]);
+  return {samples: histogram?.samples ?? 0, p50, p90, p99};
 }

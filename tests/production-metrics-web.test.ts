@@ -123,6 +123,23 @@ describe("production metrics dashboard", () => {
     expect(markup).toContain("تنزيل CSV لكل الفترات");
   });
 
+  it("shows monitor health when monitor observations are the only traffic", () => {
+    const data = report(false);
+    data.windows.day.monitors = {
+      checkLatenessMs: { samples: 4, p50: 4096, p95: 8192 },
+      checks: { attempted: 4, succeeded: 3, successRate: 0.75 },
+      alerts: { total: 2, unrated: 1, helpful: 1, notHelpful: 0, reasons: { no_meaningful_change: 0, late: 0, wrong_value: 0 } },
+      delivered: { conversation: 2, tab: 1, webPush: 0, apns: 1 },
+      pauses: { manual: 0, missing: 0, unreachable: 1 },
+    };
+    const markup = render({ kind: "ready", report: data });
+    expect(markup).toContain("صحة المراقبات");
+    expect(markup).toContain("<bdi>p95</bdi>");
+    expect(markup).toContain("لم يتغير شيء مهم");
+    expect(markup).toContain("إشعارات آيفون");
+    expect(markup).not.toContain("لا توجد قياسات في الفترة المحددة");
+  });
+
   it("shows replies recorded after a window boundary even when no run start was recorded in that window", () => {
     const data = report(false);
     const owner = data.windows.day.roles.owner;

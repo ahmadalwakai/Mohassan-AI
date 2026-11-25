@@ -1,8 +1,8 @@
-import type { Latency, ProductionMetricsResponse } from '@mohassan/contracts';
+import type { Latency, MonitorHealthMetrics, ProductionMetricsResponse } from '@mohassan/contracts';
 
 const columns = [
   'window', 'start_utc', 'end_utc', 'role', 'section', 'name', 'count', 'samples', 'p50_ms', 'p90_ms', 'p99_ms',
-  '1xx', '2xx', '3xx', '4xx', '5xx', 'average', 'max', 'enabled', 'counting_only', 'snapshot_available', 'chat_available',
+  '1xx', '2xx', '3xx', '4xx', '5xx', 'average', 'max', 'enabled', 'counting_only', 'snapshot_available', 'chat_available', 'p95_ms', 'rate',
 ] as const;
 type Row = Partial<Record<typeof columns[number], string | number | boolean | null>>;
 
@@ -26,6 +26,20 @@ export function metricsCsv(view: ProductionMetricsResponse) {
   function latency(value: Latency): Row {
     return { samples: value.samples, p50_ms: value.p50, p90_ms: value.p90, p99_ms: value.p99 };
   }
+  function monitor(bounds: Row, data?: MonitorHealthMetrics) {
+    if (!data) return;
+    const writeMonitor = (section: string, name: string, values: Row) => write({ ...bounds, section, name, ...values });
+    const { samples, p50, p95 } = data.checkLatenessMs;
+    writeMonitor('monitor_checks', 'lateness', { samples, p50_ms: p50, p95_ms: p95 });
+    writeMonitor('monitor_checks', 'success', { count: data.checks.succeeded, samples: data.checks.attempted, rate: data.checks.successRate });
+    if (data.alerts) {
+      const { reasons, ...ratings } = data.alerts;
+      for (const [name, count] of Object.entries(ratings)) writeMonitor('monitor_alerts', name, { count });
+      for (const [name, count] of Object.entries(reasons)) writeMonitor('monitor_feedback_reason', name, { count });
+    }
+    for (const [name, count] of Object.entries(data.delivered)) writeMonitor('monitor_delivery', name, { count });
+    for (const [name, count] of Object.entries(data.pauses)) writeMonitor('monitor_pause', name, { count });
+  }
   for (const [window, data] of Object.entries(view.windows)) {
     const bounds = period(window, data);
     write({ ...bounds, section: 'window' });
@@ -43,7 +57,9 @@ export function metricsCsv(view: ProductionMetricsResponse) {
       for (const [name, count] of Object.entries(chat.paths)) write({ ...base, section: 'answer_path', name, count });
     }
     for (const [name, resource] of Object.entries(data.resources)) write({ ...bounds, section: 'resource', name, ...resource });
+    monitor(bounds, data.monitors);
   }
+  if (view.completedMonitorWeek) monitor(period('completed_monitor_week', view.completedMonitorWeek), view.completedMonitorWeek.monitors);
   for (const hour of view.hourlyRoutes) {
     const bounds = period('hourly_route', hour);
     for (const [role, routes] of Object.entries(hour.roles)) {

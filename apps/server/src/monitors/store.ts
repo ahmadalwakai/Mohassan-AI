@@ -4,6 +4,7 @@ import { sql, type Kysely } from 'kysely';
 import { roleOf, type WorkspaceRole } from '../members.js';
 import { monitorRoleAllowed, type EnabledMonitorRollout } from '../monitors-phase1/rollout.js';
 import { backgroundAccountCanReceive } from '../notifications-store.js';
+import { monitorMetricTransaction } from '../ops/metrics/monitor-events.js';
 import { monitorSourceContainsCredentials } from './credential-privacy.js';
 import { evaluateMonitor, type MonitorEvaluationState, type MonitorObservation } from './evaluation.js';
 import { initialMonitorCheck, MONITOR_LIMITS, monitorExpiry, monitorTiming } from './schedule.js';
@@ -248,7 +249,7 @@ export function createMonitorStore(db: Kysely<any>, {
     },
 
     async change(userId: string, id: string, action: 'pause' | 'resume' | 'stop'): Promise<MonitorCard> {
-      return db.transaction().execute(async tx => {
+      return monitorMetricTransaction(db, async (tx, observe) => {
         await requireRole(userId, tx);
         const row = await lockMonitor(tx, userId, id);
         const at = now();
@@ -258,6 +259,7 @@ export function createMonitorStore(db: Kysely<any>, {
           return updateMonitor(tx, id, { status: 'stopped', next_check_at: null }, at);
         }
         if (action === 'pause' && card.status === 'active') {
+          observe({ kind: 'pause', reason: 'manual' });
           return updateMonitor(tx, id, { status: 'paused', next_check_at: null, note: null }, at);
         }
         if (action === 'resume' && card.status === 'paused') {

@@ -1,4 +1,4 @@
-import {answerPaths, resourceMetrics, trafficRoles, type TrafficRole} from '@mohassan/contracts';
+import {answerPaths, monitorDeliveryChannels, monitorPauseReasons, resourceMetrics, trafficRoles, type TrafficRole} from '@mohassan/contracts';
 import {z} from 'zod';
 import {createBucket, resourceData, routeData, timingData, type MetricBucket} from './bucket';
 import {createHistogram, histogramBucketCount, type Histogram} from './histogram';
@@ -22,9 +22,17 @@ const roleSchema = z.object({
     timings: z.array(z.tuple([z.enum(['firstProgress', 'finalAnswer', ...workingPhases]), histogramSchema])),
   }).strict(),
 }).strict();
+const monitorSchema = z.object({
+  checked: count,
+  succeeded: count,
+  delivered: z.record(z.enum(monitorDeliveryChannels), count),
+  pauses: z.record(z.enum(monitorPauseReasons), count),
+  lateness: histogramSchema.optional(),
+}).strict();
 const bucketSchema = z.object({
   roles: z.object({owner: roleSchema, member: roleSchema}).strict(),
   resources: z.array(z.tuple([z.enum(resourceMetrics), count.positive(), sample, sample])),
+  monitors: monitorSchema.optional(),
 }).strict();
 const snapshotSchema = z.object({
   version: z.literal(1),
@@ -70,7 +78,11 @@ function encodeBucket(bucket: MetricBucket): SerializedBucket {
       chat: {runs: data.chat.runs, paths: data.chat.paths, timings},
     };
   }
+  const { checked, succeeded, delivered, pauses, lateness } = bucket.monitors;
+  const monitors = checked || Object.values(delivered).some(Boolean) || Object.values(pauses).some(Boolean)
+    ? { checked, succeeded, delivered, pauses, ...(lateness && {lateness: encodeHistogram(lateness)}) } : undefined;
   return {
+    monitors,
     roles: {owner: encodeRole('owner'), member: encodeRole('member')},
     resources: [...bucket.resources].map(([metric, data]) => [metric, data.samples, data.sum, data.max]),
   };
@@ -110,6 +122,10 @@ export function decodeBucket(value: SerializedBucket, restoreChat: boolean): Met
   }
   for (const [metric, samples, sum, max] of value.resources) {
     Object.assign(resourceData(bucket.resources, metric), {samples, sum, max});
+  }
+  if (value.monitors) {
+    const { lateness, ...counts } = value.monitors;
+    Object.assign(bucket.monitors, counts, lateness && {lateness: decodeHistogram(lateness)});
   }
   return bucket;
 }
