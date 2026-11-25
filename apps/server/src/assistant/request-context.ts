@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { returnedTo } from './return-to.js';
+import { explicitKnowledgeDocumentRequest } from './knowledge-document-request.js';
 import { assessRequestScope, parseRequestScopeAssessment, requestOperationText, RequestScopeAssessmentSchema, reviewPublicProjection, parseUserRequestConstraints, maskRequestLiteralData, isEntireLiteralRequest, type UserRequestConstraints, type RequestScopeAssessment } from './request-scope.js';
 
 /**
@@ -93,6 +94,7 @@ export interface RequestResolution {
 export interface RequestContextOptions {
   turnId?: string;
   pendingQuestion?: { id: string; fields?: readonly RequestSlotKind[] };
+  learnedFollowUp?: 'follow_up' | 'new';
 }
 
 const fold = (text: string) => text.normalize('NFKC').replace(/[\u0640\u064b-\u065f\u0670]/gu, '')
@@ -172,6 +174,7 @@ function privateIntent(intent: RequestContextIntent) {
 
 function classify(text: string): RequestContextIntent {
   const normalized = lexicalText(requestOperationText(requestActionText(text)));
+  if (explicitKnowledgeDocumentRequest(normalized)) return 'memory';
   if (MEMORY.test(normalized)) return 'memory';
   if (HOST_LOCAL.test(normalized)) return 'pc';
   if (STORED_PERSONAL.test(normalized)) return 'memory';
@@ -422,7 +425,13 @@ function resolveRequestContextBase(request: string, previousValue?: unknown, opt
   // A self-contained private/new command always starts a fresh context, even after طيب/and.
   const explicitIntent = privateIntent(intent) || ['browser_command', 'writing', 'compute', 'unsupported', 'chat'].includes(intent);
   const sameIntentModification = previous && intent === previous.intent && (MODIFIER.test(fold(original)) || CORRECTION.test(fold(original)));
-  const canFollow = follow && (!explicitIntent || sameIntentModification || intent === 'web_search');
+  const ruleFollow = follow && (!explicitIntent || sameIntentModification || intent === 'web_search');
+  // A classifier can help resolve a public continuation. Explicit corrective
+  // instructions, private state and pending answers keep the host's rules.
+  const learned = previous?.scope === 'public' && previous.topic && !correction.correction && !CORRECTION.test(fold(original))
+    && !['memory', 'ads', 'pc', 'reminder', 'planning', 'coding', 'browser_command', 'writing', 'compute', 'unsupported', 'chat'].includes(intent)
+    ? options.learnedFollowUp : undefined;
+  const canFollow = learned === 'follow_up' || (ruleFollow && (learned !== 'new' || pointsBack(fold(trimPunctuation(original)))));
   if (canFollow) {
     result.kind = 'follow_up';
     if (!previous?.topic || ['chat', 'unknown', 'unsupported'].includes(previous.intent)) {

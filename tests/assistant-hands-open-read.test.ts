@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { AgentAction, AgentElement, AgentPage } from '@mohassan/browser';
 import { describe as describeReply, isBareAddress, parseHands, runHands, shownLabel, siteToOpen, unnamedSite, type HandsIO } from '../apps/server/src/assistant/hands.js';
 
@@ -87,8 +87,21 @@ describe('a website the request does not name', () => {
     expect(unnamedSite('افتح صفحة')).toEqual({ read: false, lang: 'ar' });
     expect(unnamedSite('Open a website and show me its content')).toEqual({ read: true, lang: 'en' });
     expect(unnamedSite('افتح موقع field-notes.test')).toBeNull();
-    expect(unnamedSite('افتح الموقع واعرض لي محتواه')).toBeNull();
+    expect(unnamedSite('افتح الموقع واعرض لي محتواه')).toEqual({ read: true, lang: 'ar' });
     expect(unnamedSite('ابنِ لي موقعًا')).toBeNull();
+  });
+
+  it('distinguishes a missing browser destination from a link or a live page', () => {
+    const readCurrentPage = vi.fn();
+    expect(unnamedSite('Kindly open the web page for us.', readCurrentPage)).toEqual({ read: false, lang: 'en' });
+    expect(parseHands('Open the web page for us.')).toBeNull();
+    expect(parseHands('Open the membership link.')).toEqual([{ kind: 'click', target: 'membership link', ordinal: null }]);
+    expect(unnamedSite('ادخل على الرابط اللي أعنيه')).toEqual({ read: false, lang: 'ar' });
+    expect(unnamedSite('افتح صفحة الدعم التي أقصدها')).toBeNull();
+    expect(readCurrentPage).not.toHaveBeenCalled();
+    expect(unnamedSite('Visit this webpage and display its text.')).toEqual({ read: true, lang: 'en' });
+    expect(unnamedSite('Visit this webpage and display its text.', readCurrentPage)).toBeNull();
+    expect(readCurrentPage).toHaveBeenCalledExactlyOnceWith({ steps: [{ kind: 'read', more: false }], next: 0, lang: 'en' });
   });
 
   it('takes the site from the owner\'s answer: an address, a known site, or «افتح X»', () => {

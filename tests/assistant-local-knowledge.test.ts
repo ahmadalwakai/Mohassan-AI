@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { evaluateLocalKnowledge, type LocalKnowledgeDocument } from '../apps/server/src/assistant/local-knowledge.js';
+import { assessRequestScope } from '../apps/server/src/assistant/request-scope.js';
 
 const signal = new AbortController().signal;
 const hall: LocalKnowledgeDocument = { title: 'South Hall operations handbook', source: 'knowledge:hall:2#0',
@@ -33,6 +34,56 @@ describe('evaluated knowledge as a local capability', () => {
     const reply = await evaluateLocalKnowledge('Recall the capacity from my South Hall handbook.', lookup([hall]), signal);
     expect(reply?.text).toContain('176 people');
     expect(reply?.evidence[0].source).toBe('knowledge');
+  });
+
+  it('reads a named stored letter before general question parsing can reject its source preface', async () => {
+    const document = { title: 'Dispatch letter', source: 'knowledge:dispatch:1#0', text: 'The dispatch letter reference is RIV-852.' };
+    const reply = await evaluateLocalKnowledge('According to our dispatch letter that we saved, tell me the reference.', lookup([document]), signal);
+    expect(reply).toMatchObject({ status: 'completed', evidence: [{ title: document.title, sourceRef: document.source }] });
+    expect(reply?.text).toContain('RIV-852');
+  });
+
+  it('preserves an imperative-looking document title and the original numeric units', async () => {
+    const document = { title: 'Send Materials', source: 'knowledge:materials:2#0', text: 'The shipment weight in Send Materials is 32 kg.' };
+    const reply = await evaluateLocalKnowledge('What is the shipment weight in the stored Send Materials file?', lookup([document]), signal);
+    expect(reply).toMatchObject({ status: 'completed', evidence: [{ title: document.title, quote: 'The shipment weight in Send Materials is 32 kg' }] });
+  });
+
+  it('returns a recorded rental amount for the requested unit in a named document', async () => {
+    const document = { title: 'Depot tenancy handbook', source: 'knowledge:depot:3#0',
+      text: 'The monthly rent for stall B in the Depot tenancy handbook is €450. The monthly rent for stall D is €700.' };
+    const reply = await evaluateLocalKnowledge('What is the monthly rent for stall B in my Depot tenancy handbook?', lookup([document]), signal);
+    expect(reply).toMatchObject({ status: 'completed', evidence: [{ quote: 'The monthly rent for stall B in the Depot tenancy handbook is €450' }] });
+    expect(reply?.text).not.toContain('€700');
+  });
+
+  it('checks deadline wording against a stored assertion without changing the quote', async () => {
+    const document = { title: 'طلب المشاركة الفنية', source: 'knowledge:event:2#0', text: 'آخر يوم لتقديم طلب المشاركة الفنية هو الخميس.' };
+    const reply = await evaluateLocalKnowledge('قولي آخر يوم لتقديم طلب المشاركة الفنية في المستند المحفوظ.', lookup([document]), signal);
+    expect(reply).toMatchObject({ status: 'completed', evidence: [{ quote: 'آخر يوم لتقديم طلب المشاركة الفنية هو الخميس' }] });
+  });
+
+  it('summarizes only the exact named source in original chunk order', async () => {
+    const title = 'Redwood safety manual';
+    const deps = lookup([
+      { title, text: 'Keep the west stairwell clear. Use the south entrance.', source: 'knowledge:redwood:1#3' },
+      { title, text: 'The east ramp closes at dusk.', source: 'knowledge:redwood:1#0' },
+      { title: 'Cedar safety manual', text: 'The lift is closed.', source: 'knowledge:cedar:1#0' },
+    ]);
+    const reply = await evaluateLocalKnowledge('Summarize our saved Redwood safety manual in two bullet points.', deps, signal);
+    expect(reply?.status).toBe('completed');
+    expect(reply?.evidence.map(({ sourceRef }) => sourceRef)).toEqual(['knowledge:redwood:1#0', 'knowledge:redwood:1#3']);
+    expect(reply?.text.split('\n').every(line => line.startsWith('- '))).toBe(true);
+    expect(reply?.text).not.toContain('The lift');
+    expect(deps.knowledge).toHaveBeenCalledExactlyOnceWith('redwood safety manual');
+  });
+
+  it('rejects ambiguous same-title summary sources and quotes a directly requested read', async () => {
+    const document = { title: 'Redwood safety manual', text: 'The east ramp closes at dusk.', source: 'knowledge:redwood:1#0' };
+    const ambiguous = lookup([document, { ...document, source: 'knowledge:other:1#0' }]);
+    expect(await evaluateLocalKnowledge('Summarize my saved Redwood safety manual.', ambiguous, signal)).toMatchObject({ status: 'blocked', evidence: [] });
+    expect(await evaluateLocalKnowledge('Read my saved Redwood safety manual.', lookup([document]), signal))
+      .toMatchObject({ status: 'completed', evidence: [{ quote: document.text, sourceRef: document.source }] });
   });
 
   it('can answer a static public question from evaluated documents and falls through when no excerpt supports it', async () => {
@@ -87,6 +138,11 @@ describe('evaluated knowledge as a local capability', () => {
 });
 
 describe('freshness and route boundaries', () => {
+  it('keeps general questions about private or internal document types public', () => {
+    expect(assessRequestScope('How are private manuals normally indexed?')).toMatchObject({ source: 'public_lookup', publicQueryEligible: true });
+    expect(assessRequestScope('What should an internal guidance report cover?')).toMatchObject({ source: 'public_lookup', publicQueryEligible: true });
+  });
+
   it.each([
     'Who is the president of France?', 'Who is the current CEO of Aster Corp?',
     'What is the gold price today?', 'What is the weather in London?', 'What are the latest company regulations?',

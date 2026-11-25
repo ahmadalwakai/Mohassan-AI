@@ -9,9 +9,16 @@ import { isSiteRequest } from '@mohassan/sites';
 import type { WebSequel } from './web-sequence.js';
 import { splitReplyDirective, type ReplyField } from './reply-directive.js';
 import { returnedTo } from './return-to.js';
+import { evaluatePageReasoning, isPageReasoningRequest, planComparisonPage } from './reasoning/index.js';
+import { resolveUnnamedSite, type UnnamedSite } from './clarify/website.js';
+import { reviewHandsRefusal, reviewRefusalControl, reviewRefusalDestination, reviewRefusalField } from './refusal/permissions.js';
+import { refusalReply } from './refusal/replies.js';
+import { refusalPolicyEnabled } from './refusal/settings.js';
+import type { RefusalDecision } from './refusal/types.js';
 
 export { returnedTo };
 export { siteName };
+export type { UnnamedSite } from './clarify/website.js';
 
 /**
  * How the owner asked the reply to look (reply-directive.ts), kept apart from the search words: «in two short Arabic
@@ -52,15 +59,15 @@ const NEWS_WORD = /(?:^|\s)(?:ال)?(?:[اأ]خبار|عناوين)(?=\s|$)|\b(?
 const NEWS_FILLER = /(?:^|\s)(?:لخص|لخصلي|اعطني|أعطني|اعرض|قل|هات|ما|ماذا|هي|شو|ايش|إيش|وش|لي|أهم|اهم|آخر|اخر|أبرز|ابرز|اليوم|الآن|الان|حاليا|حاليًا|الصباح|من|في|على|عن|موقع|(?:ال)?[اأ]خبار|عناوين|العناوين|summari[sz]e|give|tell|show|me|the|what|what's|whats|is|are|top|latest|today|today's|todays|now|from|on|in|of|news|headlines|please)(?=\s|$)/giu;
 
 /** «لخّص لي أهم أخبار اليوم», «أخبار الجزيرة», «آخر أخبار الاقتصاد», «what's the news today». */
-function parseNews(text: string): HandsStep | null {
-  if (!NEWS_WORD.test(text)) return null;
+function parseNews(text: string, learned = false): HandsStep | null {
+  if (!learned && !NEWS_WORD.test(text)) return null;
   let rest = ` ${text} `.replace(/[؟?،,.!]/gu, ' ');
   let source: NewsSource | null = null;
   for (const [pattern, found] of NEWS_SOURCES) if (pattern.test(rest)) { source = found; rest = rest.replace(pattern, ' '); break; }
   // Twice: fillers that sit next to each other share the space between them.
   rest = rest.replace(NEWS_FILLER, ' ').replace(NEWS_FILLER, ' ').replace(/\s+/g, ' ').trim();
   // A long remainder is a question about the news, not a request for headlines.
-  if (rest.split(' ').filter(Boolean).length > 3) return null;
+  if (!learned && rest.split(' ').filter(Boolean).length > 3) return null;
   const arabic = /[؀-ۿ]/u.test(text);
   return { kind: 'news', source: source ?? (arabic ? NEWS_SOURCES[3][1] : BBC_ENGLISH), topic: rest };
 }
@@ -90,7 +97,7 @@ const VERBS = '(?:ابحث|أبحث|إبحث|دور|فتش|اضغط|إضغط|ا�
 const SPLIT = new RegExp(`\\s*[،,؛;]\\s*(?:ثم\\s+|و\\s*)?(?=${VERBS})|\\s+(?:ثم|وبعدين|وبعدها|بعدها|and then|then)\\s+|\\s+and\\s+(?=(?:search|look up|click|tap|open|read|type|scroll|go back|summari))|\\s+و(?=${VERBS})`, 'iu');
 
 /** Asking to see what a page says: «اقرأ», «لخص», «اعرض», «أرني», with an object pronoun («اقرأها») or not. Tidied text. */
-const SHOW_PAGE_AR = '(?:اقرأ|إقرأ|اقرا|لخص|اعرض|أعرض|اظهر|أظهر|ارني|أرني)(?:ها|ه)?';
+const SHOW_PAGE_AR = '(?:اقرأ|إقرأ|اقرا|لخص|اعرض|أعرض|اظهر|أظهر|ارني|أرني|ورني)(?:ها|ه)?';
 /** What is to be seen: the page, its content or its text, by name or by a pronoun («محتواه», «ما فيها»). */
 const PAGE_CONTENT_AR = '(?:محتوى\\s+)?(?:هذه\\s+)?(?:الصفح[ةه]|المحتوى|النص|المقال[ةه]?|الموقع|ما فيها|ما فيه|محتواه|محتواها|محتوياته|محتوياتها|نصه|نصها)';
 const SHOW_PAGE_EN = '(?:read|summari[sz]e|show|display)';
@@ -110,26 +117,11 @@ const OPEN_THEN_READ = new RegExp(`^(.+?)\\s*[،,]?\\s+(?:ثم\\s+|وبعدها\
 const TLD = '(?:com|net|org|edu|gov|mil|int|info|biz|io|ai|app|dev|me|tv|co|uk|us|ca|au|de|fr|es|it|nl|se|ch|tr|ru|in|cn|jp|news|blog|site|online|store|tech|sa|ae|eg|jo|kw|qa|bh|om|ma|tn|dz|iq|sy|lb|ps|ly|sd|ye)';
 /** A whole message that is one web address: «https://example.com», «www.bbc.com/arabic», «example.org». Tidied text. */
 const BARE_ADDRESS = new RegExp(`^(?:https?:\\/\\/[^\\s<>"'«»]+|(?:www\\.)?(?:[a-z0-9-]+\\.)+${TLD}(?:[/?#][^\\s<>"'«»]*)?)$`, 'iu');
-/**
- * «افتح موقعًا واعرض لي محتواه» with no address, «افتح موقعًا», «open a website and show me its content»: a page to open that
- * the request does not name. Production searched the sentence itself on 2026-11-23, and the search guard refused it as
- * private. Group 1 is the request to see the content. Folded text (fold()).
- */
-const UNNAMED_SITE_AR = /^(?:من فضلك\s+|لو سمحت\s+)?(?:افتح|ادخل|اذهب)(?:\s+لي)?(?:\s+(?:الي|علي))?\s+(?:موقعا|موقع|صفحه|رابطا|رابط)(?:\s+(?:ما|ويب|الكترونيا?|انترنت))?(\s*[،,]?\s+(?:ثم\s+|و)(?:اقرا|لخص|اعرض|اظهر|ارني)(?:ها|ه)?(?:\s+لي)?(?:\s+(?:محتواه|محتواها|محتوياته|محتوياتها|نصه|نصها|ما فيه|ما فيها|المحتوي|النص|الصفحه))?)?$/u;
-const UNNAMED_SITE_EN = /^(?:please\s+)?(?:open|visit|go to)\s+(?:a|any|some)\s+(?:website|web ?site|site|web ?page|page|link)(\s*,?\s+(?:and(?:\s+then)?|then)\s+(?:show|read|display)(?:\s+me)?(?:\s+(?:it|its (?:content|contents|text)|the (?:content|contents|text)|what(?:'s| is) on it))?)?$/u;
-
 /** A whole message that is one web address, which has no language of its own. */
 export const isBareAddress = (request: string): boolean => typeof request === 'string' && BARE_ADDRESS.test(tidy(request));
 
-/** A request to open a website that names none: whether it also asks to see the content, and its language. */
-export interface UnnamedSite { read: boolean; lang: 'ar' | 'en' }
-export function unnamedSite(request: string): UnnamedSite | null {
-  if (typeof request !== 'string' || request.length > 200) return null;
-  const text = fold(request);
-  const ar = UNNAMED_SITE_AR.exec(text);
-  if (ar) return { read: Boolean(ar[1]), lang: 'ar' };
-  const en = UNNAMED_SITE_EN.exec(text);
-  return en ? { read: Boolean(en[1]), lang: 'en' } : null;
+export function unnamedSite(request: string, readCurrentPage?: (plan: HandsPlan) => void): UnnamedSite | null {
+  return resolveUnnamedSite(request, { openThenRead: OPEN_THEN_READ, tidy, fold }, readCurrentPage);
 }
 
 /** The card that asks which website to open, in the request's language. */
@@ -245,6 +237,7 @@ function parseSegment(raw: string): HandsStep | HandsStep[] | null {
   match = /^(?:اضغط|إضغط|انقر|اختر|افتح|إفتح|ادخل)\s+(?:لي\s+)?(?:على\s+|عل\s+|إلى\s+|الى\s+)?(.+)$/u.exec(text)
     ?? /^(?:click|tap|choose|select|open)\s+(?:on\s+)?(.+)$/i.exec(text);
   if (match) {
+    if (unnamedSite(text)) return null;
     const named = strip(match[1]);
     const target = named.replace(LABEL_WORDS, '').trim();
     if (!target) return null;
@@ -292,7 +285,7 @@ function parseOpenAndAsk(request: string): HandsStep[] | null {
  * The owner's request as browser steps, or null when any part is not a plain browser command.
  * A lone «افتح موقع» stays with the direct route, which proves the opened destination.
  */
-export function parseHands(request: string): HandsStep[] | null {
+export function parseHands(request: string, learnedNews = false): HandsStep[] | null {
   // An instruction about the reply is not a step, and a tag in front is not part of the command: «Search the web for X.
   // Return the page title and source link.» searches for X and names the found page's title and link (reply-directive.ts).
   const framing = typeof request === 'string' ? splitReplyDirective(request) : null;
@@ -308,7 +301,11 @@ export function parseHands(request: string): HandsStep[] | null {
       return steps;
     }
   }
-  return parseCommand(request);
+  const steps = parseCommand(request);
+  if (steps || !learnedNews) return steps;
+  const text = tidy(framing?.body ?? request);
+  const news = text && parseNews(text, true);
+  return news ? [news] : null;
 }
 
 /** «افتح X واعرض لي محتواه» as two steps: open the page, then read it out. Only an address or a known site comes before. */
@@ -328,8 +325,9 @@ function parseCommand(request: string): HandsStep[] | null {
   // وأقرأه لك»). In production on 2026-11-23 a bare link was answered «The required search or browsing route is not fully available».
   const address = tidy(request);
   if (BARE_ADDRESS.test(address)) return [{ kind: 'open', url: address, name: address.replace(/^https?:\/\//iu, '').split(/[/?#]/u)[0] }, { kind: 'read', more: false }];
-  const openAsk = parseOpenAndAsk(request);
+  const openAsk = planComparisonPage(request, SPLIT) ?? parseOpenAndAsk(request);
   if (openAsk) return openAsk;
+  if (isPageReasoningRequest(request)) return [{ kind: 'ask_page', question: request.trim() }];
   const openRead = parseOpenAndRead(request);
   if (openRead) return openRead;
   const segments = tidy(request).split(SPLIT).map(part => part?.trim()).filter((part): part is string => Boolean(part));
@@ -1397,6 +1395,11 @@ const NO_PAGE = 'لا توجد صفحة مفتوحة في هذه المحادث�
 /** Runs the plan from `plan.next`. The caller persists `plan` in the run state before any pause. */
 export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutcome> {
   normalizeHandsPlan(plan);
+  const enforceRefusal = refusalPolicyEnabled();
+  const refused = (decision: RefusalDecision): HandsOutcome => ({ kind: 'done', status: 'blocked',
+    text: refusalReply(decision, plan.lang === 'en' ? '' : 'العربية').text });
+  const planRefusal = enforceRefusal && reviewHandsRefusal(plan.steps);
+  if (planRefusal) return refused(planRefusal);
   const first = plan.steps[0];
   const publicPageRead = plan.steps.length === 1 && first?.kind === 'ask_page' && first.conversationPage?.readPublic;
   let page = publicPageRead ? null : await io.page();
@@ -1410,9 +1413,11 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     return io.settle(next);
   };
   /** A native form: a GET is just an address to open; anything else waits for the owner. */
-  const submit = async (action: AgentAction, label: string): Promise<AgentPage | null | 'none'> => {
+  const submit = async (action: AgentAction, label: string): Promise<AgentPage | null | 'none' | RefusalDecision> => {
     const permit = await io.prepare(action).catch(() => null);
     if (!permit) return 'none';
+    const effectRefusal = enforceRefusal && reviewRefusalDestination(permit.url, permit.method);
+    if (effectRefusal) return effectRefusal;
     if (permit.method === 'GET') return go({ kind: 'open', text: permit.url }, label);
     await io.approve(action, permit, label);
     return null;
@@ -1571,7 +1576,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           if ('failed' in found) return { kind: 'done', status: 'blocked', text: searchFailed(step.query, found.failed, plan.lang) };
           searched = found.results;
         } else {
-          let reached: AgentPage | null | 'none';
+          let reached: AgentPage | null | 'none' | RefusalDecision;
           if (template) reached = await go({ kind: 'open', text: template }, `البحث عن ${step.query}`);
           else {
             reached = await submit({ kind: 'type', ref: box!.ref, text: step.query, submit: true }, `البحث عن «${step.query}»`);
@@ -1581,6 +1586,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             }
           }
           if (!reached) return { kind: 'paused' };
+          if ('code' in reached) return refused(reached);
           page = reached;
           // Some sites draw their results after the page loads: look again, three times at most.
           for (let look = 0; look < 3 && queryOf(page.url) && !resultLinks(page, 1, step.query).length; look++) {
@@ -1716,11 +1722,14 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           return { kind: 'done', status: 'partial', text: `لم أجد ${step.ordinal ? `النتيجة رقم ${step.ordinal}` : `«${step.target}»`} في ${hostOf(page.url)}.${near ? ` مما أراه في الصفحة: ${near}.` : ''}` };
         }
         const label = tidy(element.label).slice(0, 80) || step.target;
+        const effectRefusal = enforceRefusal && (reviewRefusalControl(label)
+          || (element.role === 'link' && element.href ? reviewRefusalDestination(element.href) : null));
+        if (effectRefusal) return refused(effectRefusal);
         const reason = sensitiveAction(label);
         if (reason) return { kind: 'done', status: 'partial', text: `«${label}» يبدو ${reason}، فلن أضغطه بنفسي. اضغطه أنت من لوحة المتصفح إن أردت، ثم قل لي «تابع».` };
         await io.step(`الضغط على «${label.slice(0, 50)}»`);
         plan.next = index + 1;
-        let reached: AgentPage | null | 'none';
+        let reached: AgentPage | null | 'none' | RefusalDecision;
         if (element.role === 'link' && element.href && !/^https?:/i.test(element.href)) return { kind: 'done', status: 'partial', text: `«${label}» ليس رابط صفحة ويب (${element.href.split(':')[0]})، فلم أفتحه.` };
         if (element.role === 'link' && element.href) reached = await go({ kind: 'open', text: realUrl(element.href) }, label);
         else {
@@ -1728,6 +1737,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           if (reached === 'none') reached = await go({ kind: 'click', ref: element.ref }, label);
         }
         if (!reached) return { kind: 'paused' };
+        if ('code' in reached) return refused(reached);
         page = reached;
         break;
       }
@@ -1735,6 +1745,8 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         if (!page) return { kind: 'done', status: 'blocked', text: NO_PAGE };
         const field = findField(page, step.field);
         if (!field) return { kind: 'done', status: 'partial', text: `لم أجد ${step.field ? `خانة «${step.field}»` : 'خانة كتابة'} في ${hostOf(page.url)}.` };
+        const effectRefusal = enforceRefusal && reviewRefusalField(field.label, step.text);
+        if (effectRefusal) return refused(effectRefusal);
         await io.step(`كتابة «${step.text.slice(0, 40)}»`);
         plan.next = index + 1;
         page = await io.act({ kind: 'type', ref: field.ref, text: step.text });
@@ -1804,11 +1816,12 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
       }
     }
     if (io.complete) {
-      const answer = step.kind === 'ask_page' && page ? plannedPageAnswer(plan, page, step) : null;
+      const ranked = step.kind === 'ask_page' && page ? evaluatePageReasoning(page, step.question, plan.lang ?? 'ar') : null;
+      const answer = !ranked && step.kind === 'ask_page' && page ? plannedPageAnswer(plan, page, step) : null;
       const missing = step.kind === 'search' && (step.ask ? !plan.found?.lines.length
         : !plan.results?.length && (!page || !resultLinks(page, 1, step.query).length))
         || answer !== null && (!answer.parts.length || answer.missing.length > 0);
-      await io.complete(index, missing ? 'partial' : 'completed');
+      await io.complete(index, missing || ranked?.status === 'blocked' ? 'partial' : 'completed');
     }
   }
   return { kind: 'done', ...describe(plan, page) };
@@ -1996,6 +2009,9 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
   if (last.kind === 'ask_page') {
     // The page's own words as quotes under the host's labels: the judge checks every quote against the page (kind «quote»).
     const en = (plan.lang ?? (/[؀-ۿ]/u.test(last.question) ? 'ar' : 'en')) === 'en';
+    const ranked = !last.conversationPage || matchesConversationPage(page, last.conversationPage)
+      ? evaluatePageReasoning(page, last.question, en ? 'en' : 'ar') : null;
+    if (ranked) return { status: ranked.status, text: ranked.text };
     const title = plainTitle(page.title) || hostOf(page.url);
     const name = last.conversationPage ? `[${shownTitle(title)}](${page.url})` : `**${title}** (${hostOf(page.url)})`;
     const { parts, missing } = plannedPageAnswer({ ...plan, lang: en ? 'en' : 'ar' }, page, last);

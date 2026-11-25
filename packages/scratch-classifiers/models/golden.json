@@ -1,0 +1,471 @@
+{
+  "cases": [
+    {
+      "abstained": true,
+      "dataset": "clinc150",
+      "head": "refusal",
+      "text": "in spanish, meet me tomorrow is said how",
+      "topK": [
+        {
+          "label": "allow",
+          "score": 0.7474618632935837
+        },
+        {
+          "label": "out_of_scope",
+          "score": 0.24709048951494067
+        },
+        {
+          "label": "refuse",
+          "score": 0.005447647191475718
+        }
+      ]
+    },
+    {
+      "abstained": false,
+      "dataset": "clinc150",
+      "head": "refusal",
+      "text": "how do you say hello in japanese",
+      "topK": [
+        {
+          "label": "allow",
+          "score": 0.9902980949322332
+        },
+        {
+          "label": "out_of_scope",
+          "score": 0.008668881855386341
+        },
+        {
+          "label": "refuse",
+          "score": 0.0010330232123805497
+        }
+      ]
+    },
+    {
+      "abstained": false,
+      "dataset": "massive-ar-SA",
+      "head": "refusal",
+      "text": "مطعم الملكي الملكي توصيل وجبتي البيتزا",
+      "topK": [
+        {
+          "label": "out_of_scope",
+          "score": 0.9162847831832402
+        },
+        {
+          "label": "allow",
+          "score": 0.08229091685341135
+        },
+        {
+          "label": "refuse",
+          "score": 0.0014242999633483056
+        }
+      ]
+    },
+    {
+      "abstained": true,
+      "dataset": "massive-ar-SA",
+      "head": "refusal",
+      "text": "شغلل كان يا مكان",
+      "topK": [
+        {
+          "label": "out_of_scope",
+          "score": 0.7749586394759528
+        },
+        {
+          "label": "allow",
+          "score": 0.2158122717077248
+        },
+        {
+          "label": "refuse",
+          "score": 0.00922908881632242
+        }
+      ]
+    },
+    {
+      "abstained": false,
+      "dataset": "massive-en-US",
+      "head": "refusal",
+      "text": "find my thai takeaways around grassmarket",
+      "topK": [
+        {
+          "label": "allow",
+          "score": 0.9567764293798313
+        },
+        {
+          "label": "out_of_scope",
+          "score": 0.0335915322383297
+        },
+        {
+          "label": "refuse",
+          "score": 0.009632038381839106
+        }
+      ]
+    },
+    {
+      "abstained": true,
+      "dataset": "massive-en-US",
+      "head": "refusal",
+      "text": "hey hey",
+      "topK": [
+        {
+          "label": "out_of_scope",
+          "score": 0.5034519370028212
+        },
+        {
+          "label": "allow",
+          "score": 0.4875582181379218
+        },
+        {
+          "label": "refuse",
+          "score": 0.00898984485925695
+        }
+      ]
+    },
+    {
+      "abstained": false,
+      "dataset": "arbanking77-pal",
+      "head": "refusal",
+      "text": "الها أسبوع بطاقتي مش معي، لازم أقلق؟",
+      "topK": [
+        {
+          "label": "out_of_scope",
+          "score": 0.9988977349858861
+        },
+        {
+          "label": "refuse",
+          "score": 0.000997772985071547
+        },
+        {
+          "label": "allow",
+          "score": 0.00010449202904230128
+        }
+      ]
+    },
+    {
+      "abstained": true,
+      "dataset": "arbanking77-pal",
+      "head": "refusal",
+      "text": "كيف اعدل بياناتي",
+      "topK": [
+        {
+          "label": "out_of_scope",
+          "score": 0.795151697063207
+        },
+        {
+          "label": "allow",
+          "score": 0.17656430936570439
+        },
+        {
+          "label": "refuse",
+          "score": 0.028283993571088607
+        }
+      ]
+    },
+    {
+      "abstained": false,
+      "dataset": "clinc150",
+      "head": "speechAct",
+      "text": "in spanish, meet me tomorrow is said how",
+      "topK": [
+        {
+          "label": "request",
+          "score": 0.9999968196839041
+        },
+        {
+          "label": "smalltalk",
+          "score": 3.180316096014926e-06
+        }
+      ]
+    },
+    {
+      "abstained": true,
+      "dataset": "clinc150",
+      "head": "speechAct",
+      "text": "how do you say good bye in french",
+      "topK": [
+        {
+          "label": "request",
+          "score": 0.592276030171442
+        },
+        {
+          "label": "smalltalk",
+          "score": 0.40772396982855785
+        }
+      ]
+    },
+    {
+      "abstained": false,
+      "dataset": "massive-ar-SA",
+      "head": "speechAct",
+      "text": "طفي اللمبات الله يسعدك",
+      "topK": [
+        {
+          "label": "request",
+          "score": 0.9999578285195733
+        },
+        {
+          "label": "smalltalk",
+          "score": 4.21714804267552e-05
+        }
+      ]
+    },
+    {
+      "abstained": true,
+      "dataset": "massive-ar-SA",
+      "head": "speechAct",
+      "text": "سلام سلام",
+      "topK": [
+        {
+          "label": "smalltalk",
+          "score": 0.6107593924274068
+        },
+        {
+          "label": "request",
+          "score": 0.3892406075725932
+        }
+      ]
+    },
+    {
+      "abstained": false,
+      "dataset": "massive-en-US",
+      "head": "speechAct",
+      "text": "turn the lights off please",
+      "topK": [
+        {
+          "label": "request",
+          "score": 0.99999908936453
+        },
+        {
+          "label": "smalltalk",
+          "score": 9.106354699370023e-07
+        }
+      ]
+    },
+    {
+      "abstained": true,
+      "dataset": "massive-en-US",
+      "head": "speechAct",
+      "text": "hey hey",
+      "topK": [
+        {
+          "label": "request",
+          "score": 0.7812436099947819
+        },
+        {
+          "label": "smalltalk",
+          "score": 0.218756390005218
+        }
+      ]
+    },
+    {
+      "abstained": false,
+      "dataset": "arbanking77-pal",
+      "head": "speechAct",
+      "text": "الها أسبوع بطاقتي مش معي، لازم أقلق؟",
+      "topK": [
+        {
+          "label": "request",
+          "score": 0.9999970975221075
+        },
+        {
+          "label": "smalltalk",
+          "score": 2.9024778924377183e-06
+        }
+      ]
+    },
+    {
+      "abstained": true,
+      "dataset": "clinc150",
+      "head": "route",
+      "text": "in spanish, meet me tomorrow is said how",
+      "topK": [
+        {
+          "label": "writing",
+          "score": 0.6541482333535842
+        },
+        {
+          "label": "unsupported",
+          "score": 0.19335630209186688
+        },
+        {
+          "label": "web_search",
+          "score": 0.08364339608262836
+        }
+      ]
+    },
+    {
+      "abstained": false,
+      "dataset": "clinc150",
+      "head": "route",
+      "text": "how do you say hello in japanese",
+      "topK": [
+        {
+          "label": "writing",
+          "score": 0.9984710410763288
+        },
+        {
+          "label": "chat",
+          "score": 0.0012451714252250312
+        },
+        {
+          "label": "news",
+          "score": 0.0001714252335615203
+        }
+      ]
+    },
+    {
+      "abstained": false,
+      "dataset": "massive-ar-SA",
+      "head": "route",
+      "text": "مطعم الملكي الملكي توصيل وجبتي البيتزا",
+      "topK": [
+        {
+          "label": "unsupported",
+          "score": 0.8516419595342122
+        },
+        {
+          "label": "web_search",
+          "score": 0.14776077968817825
+        },
+        {
+          "label": "reminder",
+          "score": 0.0003961299123991907
+        }
+      ]
+    },
+    {
+      "abstained": true,
+      "dataset": "massive-ar-SA",
+      "head": "route",
+      "text": "سلام سلام",
+      "topK": [
+        {
+          "label": "chat",
+          "score": 0.5896318113224652
+        },
+        {
+          "label": "unsupported",
+          "score": 0.21564130617003024
+        },
+        {
+          "label": "web_search",
+          "score": 0.1585821972575284
+        }
+      ]
+    },
+    {
+      "abstained": false,
+      "dataset": "massive-en-US",
+      "head": "route",
+      "text": "find my thai takeaways around grassmarket",
+      "topK": [
+        {
+          "label": "web_search",
+          "score": 0.995426907030536
+        },
+        {
+          "label": "unsupported",
+          "score": 0.0020331327079796454
+        },
+        {
+          "label": "chat",
+          "score": 0.0014562682358001506
+        }
+      ]
+    },
+    {
+      "abstained": true,
+      "dataset": "massive-en-US",
+      "head": "route",
+      "text": "hey hey",
+      "topK": [
+        {
+          "label": "unsupported",
+          "score": 0.43335690705729635
+        },
+        {
+          "label": "chat",
+          "score": 0.34565647774655295
+        },
+        {
+          "label": "web_search",
+          "score": 0.1663448643670015
+        }
+      ]
+    },
+    {
+      "abstained": false,
+      "dataset": "arbanking77-pal",
+      "head": "route",
+      "text": "الها أسبوع بطاقتي مش معي، لازم أقلق؟",
+      "topK": [
+        {
+          "label": "unsupported",
+          "score": 0.999972558967965
+        },
+        {
+          "label": "web_search",
+          "score": 1.7055433893352757e-05
+        },
+        {
+          "label": "compute",
+          "score": 5.051809898133424e-06
+        }
+      ]
+    },
+    {
+      "abstained": true,
+      "dataset": "arbanking77-pal",
+      "head": "route",
+      "text": "فيه تكرار بالسداد",
+      "topK": [
+        {
+          "label": "unsupported",
+          "score": 0.6391843292267054
+        },
+        {
+          "label": "web_search",
+          "score": 0.22946364649528123
+        },
+        {
+          "label": "news",
+          "score": 0.1036346494592561
+        }
+      ]
+    },
+    {
+      "abstained": false,
+      "dataset": "canard",
+      "head": "followUp",
+      "previousText": "What group disbanded?",
+      "text": "When did they disband?",
+      "topK": [
+        {
+          "label": "follow_up",
+          "score": 0.9883004071786916
+        },
+        {
+          "label": "new",
+          "score": 0.011699592821308356
+        }
+      ]
+    },
+    {
+      "abstained": true,
+      "dataset": "canard",
+      "head": "followUp",
+      "previousText": "was that successful?",
+      "text": "who did giambi play against that day?",
+      "topK": [
+        {
+          "label": "follow_up",
+          "score": 0.8757858803532025
+        },
+        {
+          "label": "new",
+          "score": 0.12421411964679752
+        }
+      ]
+    }
+  ],
+  "version": 1
+}

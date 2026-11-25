@@ -18,7 +18,7 @@ const secretRefusal = 'لم أحفظ هذه البيانات لأنها سرية
 const enabled = () => process.env.MOHASSAN_STRUCTURED_MEMORY === '1';
 
 /** Replace sensitive memory text before the chat stores the goal, message or request hash. */
-function protectStructuredMemoryInput(raw: unknown, key: 'text' | 'goal' = 'text'): unknown {
+export function protectStructuredMemoryInput(raw: unknown, key: 'text' | 'goal' = 'text'): unknown {
   if (!enabled() || !raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
   const field = Object.getOwnPropertyDescriptor(raw, key);
   if (!field || !('value' in field) || typeof field.value !== 'string' || field.value.trim().length > 4000) return raw;
