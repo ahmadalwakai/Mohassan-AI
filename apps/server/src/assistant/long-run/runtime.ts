@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { BrowserError } from '@mohassan/browser';
 import { ChatApproveSchema, ChatSecureSubmitSchema, type NotificationKind } from '@mohassan/contracts';
 import { sql, type Kysely } from 'kysely';
-import { recordNotificationOutcome } from '../../notifications-store.js';
+import { recordBackgroundRunOutcome, recordNotificationOutcome } from '../../notifications-store.js';
 import {
   addEvidence, decideVerdict, enterPhase, settleStep, setStepAuthorization, startStep, tryEnterPhase,
 } from '../agent-run.js';
@@ -81,7 +81,15 @@ function finalReply(state: LongRunState) {
     return `${headline}\n\n${say(data.language, 'عدد الفحوص', 'Checks')}: ${data.observations.length}. [${safeLabel(source.title)}](<${source.url}>).`;
   }
   const intro = say(data.language, `قرأت ${data.observations.length} من المصادر العامة.`, `I read ${data.observations.length} public sources.`);
-  return `${intro}\n\n${data.observations.map(item => `- [${safeLabel(item.title)}](<${item.url}>) — ${safeLabel(item.quote)}`).join('\n')}`;
+  const length = data.background?.replyLength;
+  const excerptLimit = length === 'short' ? 160 : length === 'medium' ? 360 : 700;
+  const sources = data.observations.map(item => {
+    const excerpt = item.quote.length <= excerptLimit ? item.quote : `${item.quote.slice(0, excerptLimit).trimEnd()}…`;
+    return `[${safeLabel(item.title)}](<${item.url}>) — ${safeLabel(excerpt)}`;
+  });
+  if (length === 'short') return `${intro} ${sources.join(' | ')}`;
+  const heading = length === 'long' ? `${say(data.language, '### المصادر', '### Sources')}\n\n` : '';
+  return `${intro}\n\n${heading}${sources.map(source => `- ${source}`).join('\n')}`;
 }
 
 export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, options: { now?: () => number; onError?: () => void } = {}) {
@@ -107,6 +115,12 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
     await recordNotificationOutcome(tx, { taskId, userId: row.owner_id, conversationId: row.conversation_id, startedAt: row.created_at, kind }, new Date(time));
   }
 
+  async function notifyBackground(tx: Kysely<any>, row: Row, state: LongRunState, time: number,
+    outcome: 'completed' | 'approval' | 'sign-in' | 'payment' | 'failed', preview?: string) {
+    await recordBackgroundRunOutcome(tx, { runId: row.id, userId: row.owner_id, conversationId: row.conversation_id, startedAt: row.created_at,
+      outcome, language: state.longRun.language, ...(preview ? { preview } : {}) }, new Date(time));
+  }
+
   async function save(tx: Kysely<any>, row: Row, state: LongRunState, time: number, status: string = row.status) {
     await tx.updateTable('chat_runs').set({
       state: JSON.stringify(LongRunStateSchema.parse(state)), status, updated_at: new Date(time), steps: state.longRun.next,
@@ -124,8 +138,14 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
     await tx.updateTable('chat_conversations').set({ status: 'idle', active_run_id: null, approval: null, secure: null, progress: null, error: null, updated_at: new Date(time) })
       .where('id', '=', row.conversation_id).execute();
     if (!sendNotice) return;
-    await message(tx, row.conversation_id, detail, time);
-    await notify(tx, row, verdict.status === 'completed' ? 'task_completed' : 'task_failed', time);
+    const completed = verdict.status === 'completed';
+    if (state.longRun.background) {
+      await message(tx, row.conversation_id, detail, Math.max(time, new Date(row.created_at).getTime() + 1));
+      await notifyBackground(tx, row, state, time, completed ? 'completed' : 'failed', completed ? detail : undefined);
+    } else {
+      await message(tx, row.conversation_id, detail, time);
+      await notify(tx, row, completed ? 'task_completed' : 'task_failed', time);
+    }
   }
 
   async function blocked(tx: Kysely<any>, row: Row, state: LongRunState, time: number, ar: string, en: string) {
@@ -153,7 +173,11 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
         lease_token: randomUUID(), worker_id: LONG_RUN_WORKER, lease_expires_at: legacyLease, state: JSON.stringify(state), created_at: new Date(time), updated_at: new Date(time) })
         .onConflict(conflict => conflict.doNothing()).returning('id').executeTakeFirst();
       if (!inserted) throw new BrowserError('CHAT_LONG_RUN_ACTIVE', say(plan.language, 'لديك مهمة طويلة جارية بالفعل. أوقفها قبل بدء مهمة أخرى.', 'You have an active long-running task. Stop it before starting another.'), 409);
-      await message(tx, conversationId, text, time, 'user');
+      await message(tx, conversationId, text, plan.background ? time - 1 : time, 'user');
+      if (plan.background) {
+        await message(tx, conversationId, say(plan.language, 'سأعمل على هذا في الخلفية وأرسل لك النتيجة عند الانتهاء.',
+          "I'll work on this in the background and notify you when it's done."), time);
+      }
       await tx.updateTable('chat_conversations').set({ status: 'running', active_run_id: id,
         ...(chat.title === 'محادثة جديدة' ? { title: text.slice(0, 100) } : {}),
         progress: say(plan.language, 'بدأت المهمة الطويلة.', 'Long-running task started.'), error: null, updated_at: new Date(time) })
@@ -174,7 +198,8 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
     await tx.updateTable('chat_conversations').set({ status: 'waiting_approval', progress: null,
       approval: JSON.stringify({ id, prompt, detail: material.consequence, target: material.target, consequence: material.consequence, reversible: material.reversible }), updated_at: new Date(time) })
       .where('id', '=', row.conversation_id).execute();
-    await notify(tx, row, 'needs_you', time, permission.id);
+    if (state.longRun.background) await notifyBackground(tx, row, state, time, 'approval');
+    else await notify(tx, row, 'needs_you', time, permission.id);
   }
 
   async function claim(candidate: { id: string; conversation_id: string }): Promise<Claim | undefined> {
@@ -240,7 +265,8 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
     await tx.updateTable('chat_conversations').set({ status: 'waiting_input', progress: null, updated_at: new Date(time),
       secure: JSON.stringify({ id, kind: 'hands_on', site: result.site.slice(0, 200), prompt, note: null, fields: [] }) })
       .where('id', '=', row.conversation_id).execute();
-    await notify(tx, row, 'needs_you', time, id);
+    if (state.longRun.background) await notifyBackground(tx, row, state, time, result.reason === 'payment' ? 'payment' : 'sign-in');
+    else await notify(tx, row, 'needs_you', time, id);
   }
 
   async function settle(claimed: Claim, result: Result) {
@@ -301,7 +327,7 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
       const progress = say(data.language, `الخطوات المعالجة: ${data.next} من ${data.steps.length}.`, `Steps processed: ${data.next} of ${data.steps.length}.`);
       await tx.updateTable('chat_conversations').set({ progress, updated_at: new Date(time) }).where('id', '=', row.conversation_id).execute();
       // Durably enqueue the first and every third non-terminal checkpoint.
-      if (data.next === 1 || data.next % 3 === 0) await notify(tx, row, 'task_progress', time, progressId(row.id, data.next));
+      if (!data.background && (data.next === 1 || data.next % 3 === 0)) await notify(tx, row, 'task_progress', time, progressId(row.id, data.next));
     });
   }
 

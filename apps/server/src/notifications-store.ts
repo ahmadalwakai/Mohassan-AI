@@ -1,15 +1,19 @@
-import { randomUUID } from 'node:crypto';
-import type { Generated, Kysely } from 'kysely';
+import { createHash, randomUUID } from 'node:crypto';
+import { sql, type Generated, type Kysely, type Selectable } from 'kysely';
 import {
   NOTIFICATION_AFTER_MS, type NotificationKind, type NotificationPayload, type NotificationPreferences,
   type NotificationQuietHours, type NotificationSyncRequest, type NotificationSyncResponse,
   type PushDevice, type PushSubscribeRequest,
 } from '@mohassan/contracts';
 import type { PushSender, WebPushPayload } from './web-push.js';
+import { backgroundKinds, backgroundPayload, type BackgroundNotificationEvent, type BackgroundOutcome } from './background-notification-payload.js';
+import { memberReminderDeliveryAllowed } from './member-deletion.js';
 
 const PRESENCE_MS = 25_000;
 const PRIORITY_WINDOW_MS = 2_000;
 const EVENT_TTL_MS = 5 * 60_000;
+export const backgroundRetryAt = (now: Date, attempts = 0) =>
+  new Date(now.getTime() + Math.min(15 * 60_000, 60_000 * 2 ** Math.min(attempts, 4)));
 
 interface NotificationEvent {
   task_id: string;
@@ -20,6 +24,15 @@ interface NotificationEvent {
   happened_at: Date;
   available_at: Date;
   delivery: 'pending' | 'tab' | 'push' | 'suppressed';
+  run_id: Generated<string | null>;
+  background_outcome: Generated<BackgroundOutcome | null>;
+  background_language: Generated<BackgroundNotificationEvent['background_language'] | null>;
+  result_preview: Generated<string | null>;
+  web_push_after: Generated<Date | null>;
+  web_push_attempts: Generated<number>;
+  web_push_device_id: Generated<string | null>;
+  tab_claim_id: Generated<string | null>;
+  tab_claim_until: Generated<Date | null>;
 }
 interface DeviceRow {
   id: string;
@@ -35,7 +48,8 @@ interface DeviceRow {
 interface NotificationDatabase {
   chat_notifications: NotificationEvent;
   notification_tabs: { user_id: string; tab_id: string; visible: boolean; expires_at: Date };
-  notification_preferences: { user_id: string; quiet_start: string | null; quiet_end: string | null; time_zone: string | null; hide_title: boolean };
+  notification_preferences: { user_id: string; quiet_start: string | null; quiet_end: string | null; time_zone: string | null; hide_title: boolean;
+    completion_sound: Generated<boolean>; show_result_preview: Generated<boolean> };
   push_subscriptions: Omit<DeviceRow, 'created_at' | 'failure_count'> & { created_at: Generated<Date>; failure_count: Generated<number> };
   chat_runs: { owner_id: string; created_at: Date; status: string };
   chat_conversations: { id: string; owner_id: string; title: string };
@@ -60,13 +74,17 @@ export async function notificationPreferences(db: Database, userId: string): Pro
   const row = await db.selectFrom('notification_preferences').selectAll().where('user_id', '=', userId).executeTakeFirst();
   const quietHours = row?.quiet_start && row.quiet_end && row.time_zone
     ? { start: row.quiet_start, end: row.quiet_end, timeZone: row.time_zone } : null;
-  return { quietHours, hideTitle: row?.hide_title ?? false };
+  return { quietHours, hideTitle: row?.hide_title ?? false,
+    ...(row?.completion_sound === false && { completionSound: false }),
+    ...(row?.show_result_preview === true && { showResultPreview: true }) };
 }
 
 export async function saveNotificationPreferences(db: Database, userId: string, preferences: NotificationPreferences) {
   const settings = {
     quiet_start: preferences.quietHours?.start ?? null, quiet_end: preferences.quietHours?.end ?? null,
     time_zone: preferences.quietHours?.timeZone ?? null, hide_title: preferences.hideTitle,
+    ...(preferences.completionSound !== undefined && { completion_sound: preferences.completionSound }),
+    ...(preferences.showResultPreview !== undefined && { show_result_preview: preferences.showResultPreview }),
   };
   await db.insertInto('notification_preferences').values({ user_id: userId, ...settings })
     .onConflict(conflict => conflict.column('user_id').doUpdateSet(settings)).execute();
@@ -118,13 +136,25 @@ export async function recordPushResult(db: Database, device: StoredPushDevice, r
 
 export async function sendToPushDevice<Payload extends WebPushPayload>(db: Database, send: PushSender<Payload>, userId: string, payload: Payload) {
   for (const device of await pushDeliveryDevices(db, userId)) {
-    const result = await send({ endpoint: device.endpoint, keys: { p256dh: device.p256dh, auth: device.auth } }, payload);
-    await recordPushResult(db, device, result);
+    const result = await deliverToWebDevice(db, send, device, payload);
     if (result === 'delivered') return 1;
     // Only definite expiration permits trying another device without risking a second notification.
     if (result === 'failed') break;
   }
   return 0;
+}
+
+async function deliverToWebDevice<Payload extends WebPushPayload>(db: Database, send: PushSender<Payload>, device: StoredPushDevice, payload: Payload) {
+  const result = await send({ endpoint: device.endpoint, keys: { p256dh: device.p256dh, auth: device.auth } }, payload);
+  await recordPushResult(db, device, result);
+  return result;
+}
+
+export async function backgroundAccountCanReceive(tx: Kysely<any>, userId: string) {
+  if (!await memberReminderDeliveryAllowed(tx, userId)) return false;
+  const owner = await tx.selectFrom('workspace_owner').select('id').where('id', '=', 1).where('owner_id', '=', userId).executeTakeFirst();
+  return Boolean(owner || await tx.selectFrom('workspace_members').select('user_id').where('user_id', '=', userId)
+    .where('disabled_at', 'is', null).forShare().skipLocked().executeTakeFirst());
 }
 
 function activeTabs(db: Database, now: Date) {
@@ -150,17 +180,50 @@ export async function recordNotificationOutcome(db: Database, outcome: {
     .execute();
 }
 
+export async function recordBackgroundRunOutcome(db: Database, event: {
+  runId: string; userId: string; conversationId: string; startedAt: Date; outcome: BackgroundOutcome;
+  language: BackgroundNotificationEvent['background_language']; preview?: string;
+}, now = new Date()) {
+  const { runId, userId, conversationId, startedAt, outcome, language } = event;
+  const { kind } = backgroundKinds[outcome];
+  const key = createHash('sha256').update(`${runId}/notification/${outcome}`).digest('hex');
+  const taskId = kind !== 'needs_you' ? runId
+    : `${key.slice(0, 8)}-${key.slice(8, 12)}-4${key.slice(13, 16)}-8${key.slice(17, 20)}-${key.slice(20, 32)}`;
+  const preview = outcome === 'completed' && event.preview?.trim().split(/\r?\n/u, 1)[0]?.trim().slice(0, 160) || null;
+  const availableAt = new Date(now.getTime() + PRIORITY_WINDOW_MS);
+  // The event, final reply and terminal run state commit together. One APNs row
+  // per registration preserves accepted deliveries while other devices retry.
+  await sql`WITH event AS (
+    INSERT INTO chat_notifications
+      (task_id, user_id, conversation_id, kind, started_at, happened_at, available_at, delivery,
+       run_id, background_outcome, background_language, result_preview)
+    VALUES (${taskId}, ${userId}, ${conversationId}, ${kind}, ${startedAt}, ${now}, ${availableAt}, 'pending',
+      ${runId}, ${outcome}, ${language}, ${preview})
+    ON CONFLICT (task_id) DO NOTHING
+    RETURNING task_id, user_id
+  )
+    INSERT INTO background_apns_deliveries (event_id, registration_id, next_at)
+    SELECT event.task_id, device.registration_id, ${availableAt}
+    FROM event JOIN ios_push_devices AS device ON event.user_id = device.user_id`.execute(db);
+}
+
 function events(db: Database) {
   return db.selectFrom('chat_notifications as n').innerJoin('chat_conversations as c', join =>
     join.onRef('n.conversation_id', '=', 'c.id').onRef('n.user_id', '=', 'c.owner_id'))
     .where('n.kind', '!=', 'reminder_due')
-    .select(['n.task_id', 'n.user_id', 'n.conversation_id', 'n.kind', 'n.started_at', 'n.happened_at', 'c.title'])
+    .selectAll('n').select('c.title')
     .$narrowType<{ kind: NotificationKind }>();
 }
 
-function eventPayload(event: Pick<NotificationEvent, 'task_id' | 'conversation_id'> & { kind: NotificationKind; title: string }, hideTitle: boolean): NotificationPayload {
+type EventWithTitle = Selectable<NotificationEvent> & { kind: NotificationKind; title: string };
+
+function eventPayload(event: EventWithTitle, preferences: NotificationPreferences): NotificationPayload {
+  if (event.run_id && event.background_outcome && event.background_language && event.conversation_id) {
+    return backgroundPayload({ ...event, run_id: event.run_id, background_outcome: event.background_outcome,
+      background_language: event.background_language, conversation_id: event.conversation_id }, preferences);
+  }
   return { taskId: event.task_id, kind: event.kind, conversationId: event.conversation_id,
-    ...(!hideTitle && { conversationTitle: event.title.slice(0, 100) }) };
+    ...(!preferences.hideTitle && { conversationTitle: event.title.slice(0, 100) }) };
 }
 
 export const oldestEvent = (now: Date) => new Date(now.getTime() - EVENT_TTL_MS);
@@ -173,46 +236,141 @@ export async function syncNotifications(db: Database, userId: string, input: Not
   const presence = { visible: input.state === 'visible', expires_at: new Date(now.getTime() + PRESENCE_MS) };
   await db.insertInto('notification_tabs').values({ user_id: userId, tab_id: input.tabId, ...presence })
     .onConflict(conflict => conflict.columns(['user_id', 'tab_id']).doUpdateSet(presence)).execute();
-  if (input.state === 'visible') return { backgroundTask: false, pending: [] };
-
+  let recentEvents = events(db).where('n.user_id', '=', userId).where('n.delivery', '=', 'pending')
+    .where(eb => eb.or([eb('n.tab_claim_until', 'is', null), eb('n.tab_claim_until', '<=', now), eb('n.tab_claim_id', '=', input.tabId)]))
+    .where(eb => eb.or([eb('n.happened_at', '>', oldestEvent(now)), eb('n.run_id', 'is not', null)]))
+    .where(eb => eb.or([
+      eb.not(eb.exists(eb.selectFrom('push_subscriptions').select('id').whereRef('push_subscriptions.id', '=', 'n.web_push_device_id'))),
+      ...(presence.visible ? [eb('n.web_push_attempts', '>', 0)] : []),
+    ]));
+  if (presence.visible) recentEvents = recentEvents.where('n.run_id', 'is not', null);
   const [preferences, running, recent, hasVisible] = await Promise.all([
     notificationPreferences(db, userId),
     db.selectFrom('chat_runs').select('status').where('owner_id', '=', userId).where('status', '=', 'running')
       .where('created_at', '<=', new Date(now.getTime() - NOTIFICATION_AFTER_MS)).limit(1).executeTakeFirst(),
-    events(db).select('n.available_at').where('n.user_id', '=', userId).where('n.delivery', '=', 'pending')
-      .where('n.happened_at', '>', oldestEvent(now)).orderBy('n.available_at').limit(25).execute(),
+    recentEvents.orderBy('n.available_at').limit(25).execute(),
     activeTabs(db, now).where('user_id', '=', userId).where('visible', '=', true).limit(1).executeTakeFirst(),
   ]);
   const backgroundTask = !hasVisible && (Boolean(running) || recent.some(event => event.happened_at.getTime() - event.started_at.getTime() >= NOTIFICATION_AFTER_MS));
-  const pending = hasVisible || isQuietHours(preferences.quietHours, now) ? [] : recent
-    .filter(event => event.available_at <= now).map(event => eventPayload(event, preferences.hideTitle));
+  const pending = (hasVisible && !presence.visible) || isQuietHours(preferences.quietHours, now) ? [] : recent
+    .filter(event => event.available_at <= now).map(event => eventPayload(event, preferences));
   return { backgroundTask, pending };
 }
 
-export async function claimNotification(db: Database, userId: string, id: string, channel: Delivery, now: Date, tabId?: string) {
+export async function claimNotification(db: Database, userId: string, id: string, channel: Delivery, now: Date, tabId?: string, acknowledge = false) {
   return db.transaction().execute(async tx => {
     const event = await events(tx).where('n.task_id', '=', id).where('n.user_id', '=', userId)
       .where('n.delivery', '=', 'pending').where('n.available_at', '<=', now)
-      .where('n.happened_at', '>', oldestEvent(now)).forUpdate('n').executeTakeFirst();
+      .where(eb => eb.or([eb('n.happened_at', '>', oldestEvent(now)), eb('n.run_id', 'is not', null)]))
+      .forUpdate('n').executeTakeFirst();
     if (!event) return null;
-    const { quietHours, hideTitle } = await notificationPreferences(tx, userId);
-    const quiet = isQuietHours(quietHours, now);
+    const preferences = await notificationPreferences(tx, userId);
+    const quiet = isQuietHours(preferences.quietHours, now);
     const tabs = activeTabs(tx, now).where('user_id', '=', userId);
+    if (event.run_id) {
+      if (channel !== 'tab' || !tabId) return null;
+      const row = tx.updateTable('chat_notifications').where('task_id', '=', id);
+      if (acknowledge) {
+        await row.set({ delivery: 'tab', tab_claim_id: null, tab_claim_until: null }).where('tab_claim_id', '=', tabId).execute();
+        return null;
+      }
+      if (quiet || (event.tab_claim_until && event.tab_claim_until > now && event.tab_claim_id !== tabId)) return null;
+      const tab = await tabs.select('visible').where('tab_id', '=', tabId).executeTakeFirst();
+      if (!tab || (!tab.visible && await tabs.where('visible', '=', true).executeTakeFirst())) return null;
+      if ((!tab.visible || !event.web_push_attempts) && event.web_push_device_id && await tx.selectFrom('push_subscriptions').select('id')
+        .where('id', '=', event.web_push_device_id).executeTakeFirst()) return null;
+      await row.set({ tab_claim_id: tabId, tab_claim_until: new Date(now.getTime() + PRESENCE_MS) }).execute();
+      return eventPayload(event, preferences);
+    }
+    if (acknowledge) return null;
     if (!quiet && channel === 'tab' && (!tabId || !await tabs.where('tab_id', '=', tabId).where('visible', '=', false).executeTakeFirst())) return null;
     const result = await tx.updateTable('chat_notifications').set({ delivery: quiet ? 'suppressed' : channel })
       .where('task_id', '=', id).where(eb => eb.not(eb.exists(channel === 'push' ? tabs : tabs.where('visible', '=', true))))
       .returning('task_id').executeTakeFirst();
-    return result && !quiet ? eventPayload(event, hideTitle) : null;
+    return result && !quiet ? eventPayload(event, preferences) : null;
   });
 }
 
-export function pendingPushNotifications(db: Database, now: Date) {
+function webPushCandidates(db: Database, now: Date, retryPinned = false) {
   return events(db).clearSelect().select(['n.task_id', 'n.user_id'])
-    .where('n.delivery', '=', 'pending').where('n.available_at', '<=', now).where('n.happened_at', '>', oldestEvent(now))
-    .where(eb => eb.not(eb.exists(eb.selectFrom('notification_tabs').select('tab_id')
-      .where('expires_at', '>', now).whereRef('notification_tabs.user_id', '=', 'n.user_id'))))
+    .where('n.delivery', '=', 'pending').where('n.available_at', '<=', now)
+    .where(eb => {
+      const tabs = eb.selectFrom('notification_tabs').select('tab_id').where('expires_at', '>', now)
+        .whereRef('notification_tabs.user_id', '=', 'n.user_id');
+      const closed = eb.not(eb.exists(tabs));
+      if (!retryPinned) return closed;
+      return eb.or([closed, eb.and([
+        eb.exists(eb.selectFrom('push_subscriptions').select('id').whereRef('push_subscriptions.id', '=', 'n.web_push_device_id')),
+        eb.or([eb('n.web_push_attempts', '=', 0), eb.not(eb.exists(tabs.where('visible', '=', true)))]),
+      ])]);
+    })
     .where(eb => eb.exists(eb.selectFrom('push_subscriptions').select('id').whereRef('push_subscriptions.user_id', '=', 'n.user_id')))
-    .orderBy('n.available_at').limit(20).execute();
+    .orderBy('n.available_at').limit(20);
+}
+
+export function pendingPushNotifications(db: Database, now: Date, excludeBackground = false) {
+  const pending = webPushCandidates(db, now).where('n.happened_at', '>', oldestEvent(now));
+  return (excludeBackground ? pending.where('n.run_id', 'is', null) : pending).execute();
+}
+
+function lockDueWebPush(db: Database, id: string, now: Date) {
+  return events(db).where('n.task_id', '=', id).where('n.delivery', '=', 'pending')
+    .where(eb => eb.or([eb('n.tab_claim_until', 'is', null), eb('n.tab_claim_until', '<=', now)]))
+    .where(eb => eb.or([eb('n.web_push_after', 'is', null), eb('n.web_push_after', '<=', now)]))
+    .forUpdate('n').skipLocked().executeTakeFirst();
+}
+
+async function reserveBackgroundWebPush(db: Database, userId: string, id: string, now: Date, active: boolean) {
+  return db.transaction().execute(async tx => {
+    const event = await lockDueWebPush(tx, id, now);
+    if (!event) return;
+    const row = tx.updateTable('chat_notifications').where('task_id', '=', id);
+    const preferences = active && await backgroundAccountCanReceive(tx, userId) && await notificationPreferences(tx, userId);
+    if (!preferences || isQuietHours(preferences.quietHours, now)) {
+      await row.set({ web_push_after: backgroundRetryAt(now) }).execute();
+      return;
+    }
+    const devices = await pushDeliveryDevices(tx, userId);
+    const prior = devices.find(device => device.id === event.web_push_device_id);
+    const tabs = activeTabs(tx, now).where('user_id', '=', userId);
+    if (prior) {
+      if (event.web_push_attempts && await tabs.where('visible', '=', true).executeTakeFirst()) return;
+      return prior.id;
+    }
+    const next = devices[0];
+    if (!next || await tabs.executeTakeFirst()) return;
+    // Commit the target first so a crash after provider acceptance retries the
+    // same browser. A returned failure lets a visible tab recover the notice.
+    await row.set({ web_push_device_id: next.id, web_push_attempts: 0 }).execute();
+    return next.id;
+  });
+}
+
+export async function dispatchBackgroundWebPush(db: Database, send: PushSender<NotificationPayload>, isActive: (id: string) => Promise<boolean>, now: Date) {
+  const pending = await webPushCandidates(db, now, true).where('n.run_id', 'is not', null)
+    .where(eb => eb.or([eb('n.tab_claim_until', 'is', null), eb('n.tab_claim_until', '<=', now)]))
+    .where(eb => eb.or([eb('n.web_push_after', 'is', null), eb('n.web_push_after', '<=', now)])).execute();
+  await Promise.all(pending.map(async ({ user_id: userId, task_id: id }) => {
+    const deviceId = await reserveBackgroundWebPush(db, userId, id, now, await isActive(userId));
+    if (!deviceId) return;
+    await db.transaction().execute(async tx => {
+      const event = await lockDueWebPush(tx, id, now);
+      if (!event || event.web_push_device_id !== deviceId) return;
+      if (event.web_push_attempts && await activeTabs(tx, now).where('user_id', '=', userId).where('visible', '=', true).executeTakeFirst()) return;
+      const row = tx.updateTable('chat_notifications').where('task_id', '=', id);
+      const preferences = await backgroundAccountCanReceive(tx, userId) && await notificationPreferences(tx, userId);
+      if (!preferences || isQuietHours(preferences.quietHours, now)) {
+        await row.set({ web_push_after: backgroundRetryAt(now) }).execute();
+        return;
+      }
+      const device = await ownDevices(tx, userId).select(['id', 'user_id', 'endpoint', 'p256dh', 'auth'])
+        .where('id', '=', deviceId).executeTakeFirst();
+      const result = device ? await deliverToWebDevice(tx, send, device, eventPayload(event, preferences)) : 'expired';
+      if (result === 'delivered') await row.set({ delivery: 'push', web_push_device_id: null }).execute();
+      else if (result === 'expired') await row.set({ web_push_device_id: null, web_push_after: null, web_push_attempts: 0 }).execute();
+      else await row.set({ web_push_after: backgroundRetryAt(now, event.web_push_attempts), web_push_attempts: event.web_push_attempts + 1 }).execute();
+    });
+  }));
 }
 
 export async function createTestNotification(db: Database, userId: string, now = new Date()): Promise<NotificationPayload> {
@@ -228,9 +386,9 @@ export async function ownsPushNotification(db: Database, userId: string, id: str
     .where('n.task_id', '=', id).where('n.user_id', '=', userId).where(eb => eb.or([
       eb('n.delivery', '=', 'push'),
       // The worker may check ownership before the provider's response reaches the reminder scheduler.
-      eb.and([eb('n.kind', '=', 'reminder_due'), eb('n.delivery', '=', 'pending')]),
+      eb.and([eb.or([eb('n.kind', '=', 'reminder_due'), sql<boolean>`to_jsonb(n)->>'run_id' IS NOT NULL`]), eb('n.delivery', '=', 'pending')]),
     ]))
-    .where('n.happened_at', '>', oldestEvent(now)).where(eb => eb.or([
+    .where(eb => eb.or([eb('n.happened_at', '>', oldestEvent(now)), sql<boolean>`to_jsonb(n)->>'run_id' IS NOT NULL`])).where(eb => eb.or([
       eb('n.conversation_id', 'is', null),
       eb.exists(eb.selectFrom('chat_conversations as c').select('c.id').whereRef('c.id', '=', 'n.conversation_id').whereRef('c.owner_id', '=', 'n.user_id')),
     ])).executeTakeFirst());
