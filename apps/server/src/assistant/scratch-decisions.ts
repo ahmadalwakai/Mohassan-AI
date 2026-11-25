@@ -60,7 +60,8 @@ function choose(input: RequestRoutingInput, rule: RequestRoutingDecision, predic
   const followUp = predictions.followUp.label;
   const publicRoute = rule.intent === 'unknown' || PUBLIC_ROUTES.has(rule.intent);
   if (hasPublicHistory && publicRoute && source.scope !== 'private'
-      && (followUp === 'follow_up' && resolution.kind !== 'follow_up' || followUp === 'new' && resolution.kind === 'follow_up')) {
+      && (followUp === 'follow_up' && resolution.kind !== 'follow_up' && !source.reasons.includes('explicit_new_task')
+        || followUp === 'new' && resolution.kind === 'follow_up')) {
     choices.followUp = followUp;
   }
 

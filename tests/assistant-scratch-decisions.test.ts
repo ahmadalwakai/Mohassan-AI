@@ -106,6 +106,14 @@ describe('scratch classifier request decisions', () => {
     expect(decision.resolution.query).toContain('Brighton');
   });
 
+  it('keeps a self-contained lookup independent of the preceding public topic', () => {
+    const context = bootstrapRequestContext([{ text: 'What will the weather be in Valparaíso tomorrow?' }]);
+    const input = { text: 'Who restored the old observatory in Greenwich?', context, capabilities };
+    const baseline = decideRequestRoute(input, null);
+    expect(baseline).toMatchObject({ resolution: { kind: 'new', query: input.text }, publicQuery: input.text });
+    expect(decideRequestRoute(input, policy({ followUp: 'follow_up' }))).toEqual(baseline);
+  });
+
   it('can start a new request after a discourse lead without inheriting the previous place', () => {
     const context = bootstrapRequestContext([{ text: 'What is the weather in London today?' }]);
     const input = { text: 'طيب لماذا السماء زرقاء؟', context, capabilities };
