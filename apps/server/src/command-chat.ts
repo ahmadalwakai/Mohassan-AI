@@ -28,6 +28,7 @@ import { searchRefusedReply, unsupportedReply, unsupportedRequest } from './assi
 import { decideBrowserVisibility, deriveBrowserVisibility } from './assistant/browser-visibility.js';
 import type { ShadowRouter } from './assistant/router.js';
 import type { ConversationShadow } from './assistant/conversation-state-shadow.js';
+import { enterConversationTurn, useLegacyConversationLookup } from './assistant/conversation-state-chat.js';
 import { publicConversationFollowup } from './assistant/public-conversation-followup.js';
 import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { judge as judgeAnswer } from './assistant/judge.js';
@@ -2003,6 +2004,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         if (level.level === 4) { await finish(id, runId, state, level.reason, 'blocked'); return; }
       }
       const actionRequest = requestActionText(requestScopeActionText(request));
+      const conversationTurn = await enterConversationTurn({ db, ownerId, conversationId: id, turnId: runId, text: request, intent: run.intent, state, active, shadow: config.conversationShadow, chatModel: hasChatModel() });
       const computationMemoryBinding = { ownerId, conversationId: id, runId, evaluatedAt: effectiveSource.evaluatedAt };
       const computationMemoryReceipt = createComputationMemoryReceipt(request, computationMemoryBinding);
       const userFactAssessment = assessUserFactMemoryRequest(request);
@@ -2809,7 +2811,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       // A message of several questions waiting behind the Ads model or the mind: its first search sits in state.webFallback.
       let pendingSequence: HandsPlan | null = null;
-      if (!handsPlan && freshRequest && !hasChatModel() && !documentWork) {
+      if (useLegacyConversationLookup(conversationTurn, { state, actionRequest, handsPlan, freshRequest, chatModel: hasChatModel(), documentWork, ownFact, mindReady,
+        memory: Boolean(tools?.memory), adsFirst: Boolean(config.adsModel && fullReach()), applyPlan: plan => { handsPlan = plan; } })) {
         const desktopRequest = state.routing?.route === 'pc' || state.requestResolution?.sourceAssessment?.source === 'local_state';
         let steps = desktopRequest ? null : parseHands(actionRequest);
         // A question that needs the web goes to the browser without the owner naming it, unless memory or the project list answers it.
