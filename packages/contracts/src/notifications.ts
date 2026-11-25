@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const NOTIFICATION_AFTER_MS = 20_000;
 
-export const NotificationKindSchema = z.enum(['task_completed', 'needs_you', 'task_failed']);
+export const NotificationKindSchema = z.enum(['task_completed', 'needs_you', 'task_failed', 'task_progress']);
 export type NotificationKind = z.infer<typeof NotificationKindSchema>;
 
 export const NotificationPayloadSchema = z.object({
