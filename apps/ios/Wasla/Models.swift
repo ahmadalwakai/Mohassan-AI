@@ -393,7 +393,7 @@ enum FieldAnswers {
 
 // MARK: - Reply text: the web's Markdown subset (apps/web/components/markdown.tsx)
 
-/// Headings, lists, quotes, code blocks, **bold**, `code` and links, read the way the web reads them.
+/// Headings, lists, quotes, fenced code, pipe tables, bold, inline code and links in a chat reply.
 /// Only https links become tappable, and they open inside the app.
 @available(iOS 15.0, macOS 12.0, *)
 enum ReplyMarkdown {
@@ -403,12 +403,14 @@ enum ReplyMarkdown {
         case quote([String])
         case list(ordered: Bool, items: [String])
         case code(String)
+        case table(headers: [String], rows: [[String]])
     }
 
     private static let orderedItem = #"^\s*\d+[.)]\s+"#
-    private static let bulletItem = #"^\s*[-*•]\s+"#
+    private static let bulletItem = #"^\s*[-+*•]\s+"#
     private static let quoteLine = #"^\s*>"#
-    private static let headingLine = #"^#{1,3}\s+\S"#
+    private static let headingLine = #"^#{1,6}\s+\S"#
+    private static let tableRule = #"^:?-+:?$"#
 
     private static func matches(_ line: String, _ pattern: String) -> Bool { line.range(of: pattern, options: .regularExpression) != nil }
     private static func blank(_ line: String) -> Bool { line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -430,7 +432,7 @@ enum ReplyMarkdown {
                 continue
             }
             if matches(line, headingLine) {
-                blocks.append(.heading(line.replacingOccurrences(of: #"^#{1,3}\s+"#, with: "", options: .regularExpression)))
+                blocks.append(.heading(line.replacingOccurrences(of: #"^#{1,6}\s+"#, with: "", options: .regularExpression)))
                 index += 1
                 continue
             }
@@ -454,16 +456,64 @@ enum ReplyMarkdown {
                 blocks.append(.list(ordered: pattern == orderedItem, items: items))
                 continue
             }
+            if let headers = tableHeader(lines, at: index) {
+                var rows: [[String]] = []
+                index += 2
+                while index < lines.count, !startsBlock(lines[index]),
+                      let cells = tableCells(lines[index]), cells.count <= headers.count {
+                    rows.append(cells + Array(repeating: "", count: headers.count - cells.count))
+                    index += 1
+                }
+                blocks.append(.table(headers: headers, rows: rows))
+                continue
+            }
             // A paragraph runs to the next blank line or block; it always takes at least this line.
             var paragraph = [line]
             index += 1
-            while index < lines.count, !blank(lines[index]), !fence(lines[index]), !matches(lines[index], headingLine),
-                  !matches(lines[index], orderedItem), !matches(lines[index], bulletItem), !matches(lines[index], quoteLine) {
+            while index < lines.count, !blank(lines[index]), !startsBlock(lines[index]), tableHeader(lines, at: index) == nil {
                 paragraph.append(lines[index]); index += 1
             }
             blocks.append(.paragraph(paragraph.joined(separator: "\n")))
         }
         return blocks
+    }
+
+    private static func startsBlock(_ line: String) -> Bool {
+        fence(line) || matches(line, headingLine) || matches(line, orderedItem) || matches(line, bulletItem) || matches(line, quoteLine)
+    }
+
+    private static func tableHeader(_ lines: [String], at index: Int) -> [String]? {
+        guard index + 1 < lines.count, let header = tableCells(lines[index]), header.contains(where: { !$0.isEmpty }),
+              let rules = tableCells(lines[index + 1]), rules.count == header.count,
+              rules.allSatisfy({ matches($0, tableRule) }) else { return nil }
+        return header
+    }
+
+    private static func tableCells(_ line: String) -> [String]? {
+        guard line.contains("|") else { return nil }
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        var cells: [String] = []
+        var cell = ""
+        var escaped = false
+        for character in trimmed {
+            if escaped {
+                if character != "|" { cell.append("\\") }
+                cell.append(character)
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else if character == "|" {
+                cells.append(cell.trimmingCharacters(in: .whitespaces))
+                cell = ""
+            } else {
+                cell.append(character)
+            }
+        }
+        guard !cells.isEmpty else { return nil }
+        if escaped { cell.append("\\") }
+        if !cell.isEmpty { cells.append(cell.trimmingCharacters(in: .whitespaces)) }
+        if trimmed.first == "|" { cells.removeFirst() }
+        return cells.isEmpty ? nil : cells
     }
 
     private static let inlinePattern = try! NSRegularExpression(pattern: #"(\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]\n]+\]\(https?://[^\s)]+\)|https?://[^\s<>()]+[^\s<>().,،])"#)

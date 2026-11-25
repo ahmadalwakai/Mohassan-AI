@@ -256,9 +256,12 @@ enum CloudChecks {
         try check(RemoteReadiness.device(in: WindowsOverview(enabled: true, devices: [second, device]), preferred: device.id)?.name == "Office PC", "the PC used last stays chosen")
         try check(RemoteReadiness.device(in: WindowsOverview(enabled: true, devices: [offline, second]), preferred: nil)?.name == "Second", "else the first PC online")
 
-        // 10. Replies render the web's Markdown subset; only https links open.
+        // 10. Replies render Markdown; only https links open.
         let blocks = ReplyMarkdown.blocks("# عنوان\n\n- أ\n- ب\n\n> اقتباس\n\n```\ncode\n```\nنص **عريض**")
         try check(blocks.count == 5 && blocks.first == .heading("عنوان") && blocks[1] == .list(ordered: false, items: ["أ", "ب"]), "markdown blocks")
+        let table = "قبل الجدول\r\n| الاسم | الملاحظات |\r\n| :--- | ---: |\r\n| أ | أ \\| ب |\r\n| ج |\r\nبعد الجدول"
+        try check(ReplyMarkdown.blocks(table) == [.paragraph("قبل الجدول"), .table(headers: ["الاسم", "الملاحظات"], rows: [["أ", "أ | ب"], ["ج", ""]]), .paragraph("بعد الجدول")], "markdown table keeps cells, surrounding text and escaped pipes")
+        try check(ReplyMarkdown.blocks("أ | ب\nهذا | نص") == [.paragraph("أ | ب\nهذا | نص")], "prose with pipes stays a paragraph")
         try check(SafeLink.https("https://example.com/a") != nil && SafeLink.https("http://example.com") == nil && SafeLink.https("https://user@example.com") == nil, "only plain https links open")
         try check(ReplyMarkdown.plainText("[موقع](https://example.com) و **مهم**") == "موقع (https://example.com) و مهم", "plain copy keeps titles and addresses")
 
