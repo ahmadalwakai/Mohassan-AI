@@ -11,6 +11,8 @@ import shutil
 import subprocess
 from tempfile import TemporaryDirectory
 
+from monitor_audit import instrument_observer, instrument_product, instrument_scoring
+
 V1_BUNDLE = "a258b3d47e39b5a2c03c71d4a9eb01107ae3d97f"
 V2_BUNDLE = "12cedfe592aab40cdd47ee00d05ea86a6d2bae89"
 AUDIT = "a1e1cb020b7ba093885edbf501149e7b8252c0cb"
@@ -57,6 +59,7 @@ OVERRIDES = {
         "MOHASSAN_LONG_RUN_ENABLED",
         "MOHASSAN_BACKGROUND_RESULTS_ENABLED",
         "MOHASSAN_MONITORS_ENABLED",
+        "MOHASSAN_MONITORS_V2",
         *ARBITER_FLAGS,
         *(f"{flag}_KILL" for flag in ARBITER_FLAGS),
     )},
@@ -240,7 +243,7 @@ for (const browser of ['chromium', 'chromium-headless-shell']) {
 
 def run_arm(
     repo: Path, output: Path, commit: str, overrides: dict[str, str], *,
-    workers: int = LANES, offline: bool = False,
+    workers: int = LANES, offline: bool = False, monitor_audit: bool = False,
 ) -> dict[str, object]:
     """Write native split receipts under an existing empty, private output directory."""
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
@@ -269,7 +272,8 @@ def run_arm(
             lock = checkout / "package-lock.json"
             inputs["product/package-lock.json"] = digest(lock)
             install_environment = environment | {
-                "npm_config_cache": os.environ.get("npm_config_cache", str(temporary / "npm-cache"))
+                "npm_config_cache": os.environ.get("npm_config_cache", str(temporary / "npm-cache")),
+                **({"ELECTRON_SKIP_BINARY_DOWNLOAD": "1"} if offline else {}),
             }
             install = ["npm", "ci", "--no-audit", "--no-fund", *(["--offline"] if offline else [])]
             run_logged(install, checkout, install_environment, output / "npm-ci.log")
@@ -301,6 +305,12 @@ def run_arm(
                                 str(checkout / adapter_path), str(observe), version],
                                cwd=checkout, env=environment, check=True)
                 instrument_runner(runner, version)
+                if monitor_audit:
+                    mounted.append(instrument_observer(observe))
+                    instrument_scoring(runner)
+                    for file in instrument_product(checkout):
+                        inputs[f"{version}/effective/{file.relative_to(checkout)}"] = digest(file)
+                    inputs[f"{version}/effective/monitor-audit.mjs"] = digest(mounted[-1])
                 inputs[f"{version}/effective/observe.ts"] = digest(observe)
                 inputs[f"{version}/effective/run.ts"] = digest(runner)
                 if any((checkout / path).exists() for path in HOLDOUTS):
@@ -313,6 +323,8 @@ def run_arm(
                     receipts[receipt.name] = digest(receipt)
                     for path in mounted:
                         path.unlink()
+                    if monitor_audit:
+                        git(checkout, "restore", "--worktree", "--", "apps/server/src/monitors", "packages/browser/src/network.ts")
                 else:
                     def run_lane(index: int) -> tuple[str, str]:
                         receipt = output / f"v2-lane-{index}.json"
