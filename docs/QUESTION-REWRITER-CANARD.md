@@ -18,7 +18,7 @@ The exclusion step checks the native CANARD identifier, the titles and dialogue 
 
 The ranker chooses among bounded edits of the current question. The candidates keep or remove existing words, copy spans from the titles and recent turns, and apply small grammatical edits such as adding possessive punctuation. The model scores these candidates with numeric weights over hashed local word and edit features. It starts at zero and fits only on screened, deduplicated training rows. A training row supplies a target when its human rewrite is reachable by an exact or punctuation-normalized candidate. The trainer quantizes each checkpoint and selects its epoch, abstention margin, and combination order on screened CANARD dev by normalized substring count, then exact count.
 
-The learned weights in `apps/server/src/assistant/question-edit-weights.ts` are distributed under CC BY-SA 4.0 with the CANARD, QuAC, and Wikipedia attribution above. The runtime uses the exported configuration from that artifact. Arabic continues through the existing rules. [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)
+The learned weights in `apps/server/src/assistant/question-edit-weights.ts` are distributed under CC BY-SA 4.0 with the CANARD, QuAC, and Wikipedia attribution above. The runtime loads the weights and abstention margin from the artifact. V2 development separately compares the two runtime orders with those values fixed. The product uses the rules first because that order preserved all 46 existing follow-up passes. Arabic continues through the existing rules. [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)
 
 ## Reproduce the training and evaluation
 

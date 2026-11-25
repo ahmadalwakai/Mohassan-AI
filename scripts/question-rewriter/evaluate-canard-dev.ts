@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { predictQuestionEdit } from '../../apps/server/src/assistant/question-edit-model.ts';
 import { questionEditOrder } from '../../apps/server/src/assistant/question-edit-weights.ts';
-import { combineQuestionRewrites } from '../../apps/server/src/assistant/question-rewrite-order.ts';
+import { combineQuestionRewrites, questionRewriteOrder } from '../../apps/server/src/assistant/question-rewrite-order.ts';
 import { rewriteFollowUpQuestion } from '../../apps/server/src/assistant/question-rewriter.ts';
 import { normalizeQuestionRewrite, questionRewriteCounts, questionRewriteLiteral, scoreQuestionRewrite } from './question-edit-metrics.ts';
 
@@ -70,4 +70,6 @@ for (const row of rows) {
   }
 }
 
-console.log(JSON.stringify({ receipt, selectedOrder: questionEditOrder, all, contextDependentFollowUps }, null, 2));
+console.log(JSON.stringify({
+  receipt, canardPreferredOrder: questionEditOrder, selectedOrder: questionRewriteOrder, all, contextDependentFollowUps,
+}, null, 2));

@@ -2,8 +2,7 @@ import type { Kysely } from 'kysely';
 import { analyzeCompoundRequest } from './compound-request.js';
 import { reviewGeneratedPublicQuery } from './public-query-provenance.js';
 import { predictQuestionEdit } from './question-edit-model.js';
-import { questionEditOrder } from './question-edit-weights.js';
-import { combineQuestionRewrites } from './question-rewrite-order.js';
+import { combineQuestionRewrites, questionRewriteOrder } from './question-rewrite-order.js';
 import { parseQuestionRewriteRequest } from './question-rewrite-request.js';
 import { rewriteFollowUpQuestion, type QuestionHistory } from './question-rewriter.js';
 import { splitReplyDirective } from './reply-directive.js';
@@ -18,7 +17,7 @@ function rewriteQuestion(question: string, history: QuestionHistory, canUse?: (p
     return canUse && proposal !== original && !canUse(proposal) ? original : proposal;
   };
   if (/\p{Script=Arabic}/u.test(question)) return rules();
-  return combineQuestionRewrites(question, questionEditOrder, rules, () => {
+  return combineQuestionRewrites(question, questionRewriteOrder, rules, () => {
     const edit = predictQuestionEdit(question, history);
     return edit && (!canUse || canUse(edit.text)) ? edit.text : null;
   });
