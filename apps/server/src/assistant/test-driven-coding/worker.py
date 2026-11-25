@@ -1,17 +1,18 @@
 """One isolated request for Python synthesis or fresh assertion verification."""
 
 import ast
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 import json
 import os.path
 import signal
 import sys
+import warnings
 
 # Isolated mode removes the script directory from Python's module search.
 # Add only the directory of this trusted, packaged worker and its siblings.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from assertions import (
-    AssertionProblem, UnsupportedSyntax, compile_candidate, example_nodes,
+    AssertionProblem, UnsupportedSyntax, compile_candidate, compile_expression, example_nodes,
     parse_assertions, python_scope,
 )
 from isolation import IsolationUnavailable, isolate
@@ -19,10 +20,10 @@ from synthesis import synthesize
 
 
 MAX_INPUT_BYTES = 64 * 1024
-MAX_ASSERTION_BYTES = 2048
 MAX_CANDIDATE_BYTES = 8192
 MAX_OUTPUT_BYTES = 8192
 CANDIDATE_SECONDS = 0.075
+_deadline_armed = False
 
 
 class TimeLimit(Exception):
@@ -34,15 +35,19 @@ class OutputLimit(Exception):
 
 
 def _timed_out(_number, _frame):
-    raise TimeLimit
+    if _deadline_armed:
+        raise TimeLimit
 
 
 @contextmanager
 def _attempt_deadline():
-    signal.setitimer(signal.ITIMER_REAL, CANDIDATE_SECONDS)
+    global _deadline_armed
+    _deadline_armed = True
     try:
+        signal.setitimer(signal.ITIMER_REAL, CANDIDATE_SECONDS)
         yield
     finally:
+        _deadline_armed = False
         signal.setitimer(signal.ITIMER_REAL, 0)
 
 
@@ -62,13 +67,10 @@ class _OutputBudget:
         print(*values, file=self, **kwargs)
 
 
-def _failed(reason, index=None, assertion=None, tried=None):
+def _failed(reason, index=None, tried=None):
     result = {"status": "failed", "reason": reason}
     if index is not None:
         result["assertionIndex"] = index
-    if assertion:
-        encoded = assertion.encode("utf-8")[:MAX_ASSERTION_BYTES]
-        result["assertion"] = encoded.decode("utf-8", errors="ignore")
     if tried is not None:
         result["tried"] = tried
     return result
@@ -81,12 +83,23 @@ def _verify(source, problem):
     candidate_scope = python_scope(output.print)
     assertion_scope = python_scope(output.print)
     index = 0
+    calls = 0
+
+    def call_candidate(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return candidate(*args, **kwargs)
+
     try:
         with _attempt_deadline():
             exec(compile_candidate(source, problem), candidate_scope)
-            assertion_scope[problem.entry] = candidate_scope[problem.entry]
+            candidate = candidate_scope[problem.entry]
+            assertion_scope[problem.entry] = call_candidate
             for index, assertion in enumerate(problem.assertions):
+                previous_calls = calls
                 exec(assertion.code, assertion_scope)
+                if calls == previous_calls:
+                    raise AssertionError
         return {"status": "passed"}
     except UnsupportedSyntax:
         return _failed("unsupported-candidate")
@@ -100,7 +113,7 @@ def _verify(source, problem):
         reason = "memory-limit"
     except Exception:
         reason = "assertion-error"
-    return _failed(reason, index, problem.assertions[index].source)
+    return _failed(reason, index)
 
 
 def _sample_value(value, depth=0):
@@ -126,8 +139,7 @@ def _examples(problem, on_timeout):
         if any(isinstance(part, ast.Name) and part.id == problem.entry for part in ast.walk(node)):
             raise ValueError
         scope = python_scope(_OutputBudget().print)
-        expression = ast.fix_missing_locations(ast.Expression(node))
-        result = eval(compile(expression, "<example>", "eval", optimize=0), scope)
+        result = eval(compile_expression(node), scope)
         if not _sample_value(result):
             raise ValueError
         return result
@@ -140,7 +152,7 @@ def _examples(problem, on_timeout):
             on_timeout()
             continue
         except Exception:
-            # Non-literal test forms still run unchanged in the final verifier.
+            # Non-literal test forms still run in the final verifier.
             continue
         yield example
 
@@ -156,7 +168,7 @@ def _solve(description, problem):
 
     examples = tuple(_examples(problem, example_timeout))
     if not examples:
-        return {**_failed("no-supported-examples", assertion=problem.assertions[0].source, tried=0), **limits}
+        return {**_failed("no-supported-examples", tried=0), **limits}
 
     tried = 0
     verified_source = None
@@ -178,7 +190,7 @@ def _solve(description, problem):
         return {"status": "passed", "source": verified_source, "tried": tried}
     if best_failure is not None:
         return {**best_failure, "tried": tried, **limits}
-    return {**_failed("no-candidate-passed", assertion=problem.assertions[0].source, tried=tried), **limits}
+    return {**_failed("no-candidate-passed", tried=tried), **limits}
 
 
 def _request():
@@ -194,7 +206,7 @@ def _request():
     try:
         problem = parse_assertions(payload.get("assertions"))
     except AssertionProblem as error:
-        return _failed(error.reason, error.index, error.source)
+        return _failed(error.reason, error.index)
     if payload["mode"] == "verify":
         return _verify(payload.get("source"), problem)
     description = payload.get("description")
@@ -203,20 +215,39 @@ def _request():
     return _solve(description, problem)
 
 
-def main():
+class _Sink:
+    def write(self, value):
+        return len(value)
+
+    def flush(self):
+        pass
+
+
+def _run():
     try:
         isolate()
     except IsolationUnavailable:
-        result = {"status": "unavailable", "reason": "isolation-unavailable"}
-    else:
-        signal.signal(signal.SIGALRM, _timed_out)
-        try:
-            result = _request()
-        except MemoryError:
-            result = _failed("memory-limit")
-        except (UnicodeError, RecursionError):
-            result = _failed("invalid-request")
-    print(json.dumps(result, ensure_ascii=True, separators=(",", ":")))
+        return {"status": "unavailable", "reason": "isolation-unavailable"}
+    signal.signal(signal.SIGALRM, _timed_out)
+    try:
+        return _request()
+    except MemoryError:
+        return _failed("memory-limit")
+    except (UnicodeError, RecursionError):
+        return _failed("invalid-request")
+
+
+def main():
+    output = sys.stdout
+    sink = _Sink()
+    try:
+        with redirect_stdout(sink), redirect_stderr(sink), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            result = _run()
+        response = json.dumps(result, ensure_ascii=True, separators=(",", ":"))
+    except BaseException:
+        response = '{"status":"failed","reason":"internal-error"}'
+    output.write(response + "\n")
 
 
 if __name__ == "__main__":

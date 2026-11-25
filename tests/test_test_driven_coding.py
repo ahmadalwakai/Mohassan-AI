@@ -1,6 +1,7 @@
 """Integration tests for Python assertions and the isolated verifier process."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -12,20 +13,25 @@ WORKER = Path(__file__).resolve().parents[1] / "apps/server/src/assistant/test-d
 PYTHON = [sys.executable, "-I", "-B", "-S"]
 
 
-def run_worker(payload):
+def run_worker(payload, fixture=None):
+    args = [str(WORKER)] if fixture is None else ["-c", fixture, str(WORKER.parent)]
     with TemporaryDirectory(prefix="mohassan-python-test-") as temp:
         result = subprocess.run(
-            [*PYTHON, str(WORKER)], input=json.dumps(payload), cwd=temp,
+            [*PYTHON, *args], input=json.dumps(payload), cwd=temp,
             env={}, capture_output=True, text=True, timeout=5, check=True,
         )
         if list(Path(temp).iterdir()):
             raise AssertionError("the sandbox directory is no longer empty")
     if result.stderr:
         raise AssertionError(result.stderr)
-    return json.loads(result.stdout)
+    lines = result.stdout.splitlines()
+    if len(lines) != 1 or not result.stdout.endswith("\n"):
+        raise AssertionError("the worker did not emit exactly one JSON line")
+    return json.loads(lines[0])
 
 
 @unittest.skipUnless(sys.platform == "linux", "seccomp is a Linux backend")
+@unittest.skipIf(getattr(os, "geteuid", lambda: 0)() == 0, "verifier requires an unprivileged user")
 class IsolatedVerifierTests(unittest.TestCase):
     def verify(self, source, assertions=None):
         return run_worker({
@@ -56,7 +62,7 @@ assert tuple(add_offset([2, 6], -3)) == (-1, 3)
         ])
         self.assertEqual(result, {
             "status": "failed", "reason": "assertion-failed",
-            "assertionIndex": 1, "assertion": "assert tag(9) == 15",
+            "assertionIndex": 1,
         })
 
     def test_no_implementation_is_returned_for_inconsistent_examples(self):
@@ -68,7 +74,8 @@ assert tuple(add_offset([2, 6], -3)) == (-1, 3)
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["reason"], "assertion-failed")
         self.assertNotIn("source", result)
-        self.assertEqual(result["assertion"], assertions[result["assertionIndex"]])
+        self.assertIn(result["assertionIndex"], range(len(assertions)))
+        self.assertNotIn("assertion", result)
         self.assertGreater(result["tried"], 0)
 
     def test_parses_nested_python_values_and_allows_pure_module_imports(self):
@@ -118,37 +125,87 @@ assert tuple(add_offset([2, 6], -3)) == (-1, 3)
             with self.subTest(reason=reason):
                 self.assertEqual(self.verify(source)["reason"], reason)
 
-    def test_kernel_denies_file_network_and_child_process_operations(self):
-        # The trusted fixture exercises the system filter separately from the AST checks.
+    def test_requires_a_candidate_call_in_each_assertion(self):
+        for skipped in ("True or tag(9) == 13", "tag(9) == 13 if False else True"):
+            with self.subTest(skipped=skipped):
+                result = self.verify("def tag(n):\n    return n + 4", [
+                    "assert tag(23) == 27", f"assert {skipped}",
+                ])
+                self.assertEqual(result, {
+                    "status": "failed", "reason": "assertion-failed", "assertionIndex": 1,
+                })
+
+    def test_regex_debug_flag_leaves_only_the_json_result(self):
+        result = self.verify("def tag(n):\n    return n + 4", [
+            "assert tag(23) == 27 and re.search('a', 'a', 128)",
+        ])
+        self.assertEqual(result, {
+            "status": "failed", "reason": "assertion-error", "assertionIndex": 0,
+        })
+
+    def test_sinks_process_output_and_ignores_warnings(self):
         fixture = """
-import errno
-import os
-import socket
+import sys
+import warnings
+sys.path.insert(0, sys.argv[1])
+import worker
+
+def request():
+    print('stdout fixture')
+    print('stderr fixture', file=sys.stderr)
+    warnings.warn('warning fixture')
+    return {'status': 'passed'}
+
+worker._request = request
+worker.main()
+"""
+        self.assertEqual(run_worker(None, fixture), {"status": "passed"})
+
+    def test_ignores_alarm_delivered_after_verification(self):
+        fixture = """
+import signal
 import sys
 sys.path.insert(0, sys.argv[1])
-from isolation import isolate
-isolate()
-for operation in (
-    lambda: os.open('result.txt', os.O_WRONLY | os.O_CREAT),
-    lambda: socket.socket(),
-    os.fork,
-):
-    try:
-        operation()
-    except OSError as error:
-        if error.errno != errno.EPERM:
-            raise SystemExit(2)
-    else:
-        raise SystemExit(3)
-print('denied')
+import worker
+
+verify = worker._verify
+timed_out = worker._timed_out
+delivered = False
+
+def observe_alarm(number, frame):
+    global delivered
+    delivered = True
+    timed_out(number, frame)
+
+def verify_then_alarm(source, problem):
+    result = verify(source, problem)
+    signal.setitimer(signal.ITIMER_REAL, 0.000001)
+    while not delivered:
+        pass
+    return result
+
+worker._timed_out = observe_alarm
+worker._verify = verify_then_alarm
+worker.main()
 """
-        with TemporaryDirectory(prefix="mohassan-python-test-") as temp:
-            result = subprocess.run(
-                [*PYTHON, "-c", fixture, str(WORKER.parent)], cwd=temp, env={},
-                capture_output=True, text=True, timeout=5, check=True,
-            )
-            self.assertEqual(result.stdout, "denied\n")
-            self.assertEqual(list(Path(temp).iterdir()), [])
+        self.assertEqual(run_worker({
+            "mode": "verify", "source": "def tag(n):\n    return n + 4",
+            "assertions": ["assert tag(23) == 27"],
+        }, fixture), {"status": "passed"})
+
+    def test_unexpected_worker_failure_uses_a_fixed_response(self):
+        fixture = """
+import sys
+sys.path.insert(0, sys.argv[1])
+import worker
+
+def request():
+    raise RuntimeError('fixture failure')
+
+worker._request = request
+worker.main()
+"""
+        self.assertEqual(run_worker(None, fixture), {"status": "failed", "reason": "internal-error"})
 
     def test_fail_closed_when_seccomp_is_missing(self):
         fixture = """

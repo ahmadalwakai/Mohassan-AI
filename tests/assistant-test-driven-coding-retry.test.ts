@@ -1,16 +1,22 @@
-import { createHash } from 'node:crypto';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { answerTestDrivenCoding } from '../apps/server/src/assistant/test-driven-coding/reply.js';
+import { createHash, randomUUID } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { answerTestDrivenCoding, initializeTestDrivenCoding } from '../apps/server/src/assistant/test-driven-coding/reply.js';
 
 const { execFile } = vi.hoisted(() => ({ execFile: vi.fn() }));
 vi.mock('node:child_process', () => ({ execFile }));
+vi.mock('node:fs/promises', async importOriginal => ({
+  ...await importOriginal<typeof import('node:fs/promises')>(),
+  access: vi.fn().mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' })),
+  realpath: vi.fn(async path => path),
+  stat: vi.fn().mockResolvedValue({ isFile: () => true, uid: 0, mode: 0o755 }),
+}));
 
 const prompt = 'Implement a Python function to combine two adjustments.\nassert add_adjustments(21, -9) == 12';
+const python = '/usr/bin/python3.12';
 const searchTimeout = { status: 'failed', reason: 'assertion-failed', searchLimit: 'search-cpu-time', tried: 1 };
 
 function answer() {
-  vi.stubEnv('TEST_DRIVEN_CODING_ENABLED', 'true');
-  return answerTestDrivenCoding(prompt, { authorized: true, signal: new AbortController().signal,
+  return answerTestDrivenCoding(prompt, { accountId: randomUUID(), authorized: true, signal: new AbortController().signal,
     originalHash: createHash('sha256').update(prompt).digest('hex'), scrub: text => text });
 }
 
@@ -23,17 +29,31 @@ function respond(result: object, delay = 0) {
 
 afterEach(() => {
   execFile.mockReset();
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
 
 describe.skipIf(process.platform !== 'linux')('verified Python search timeout recovery', () => {
+  beforeEach(async () => {
+    vi.stubEnv('TEST_DRIVEN_CODING_ENABLED', 'true');
+    vi.stubEnv('TEST_DRIVEN_CODING_PYTHON', python);
+    vi.spyOn(process, 'geteuid').mockReturnValue(1000);
+    execFile.mockImplementationOnce((_program, _args, _options, callback) => {
+      callback(null, '3 12\n');
+      return {};
+    });
+    expect(await initializeTestDrivenCoding()).toBe(python);
+    execFile.mockReset();
+  });
+
   it('retries once with the same isolation launch and the remaining wall budget', async () => {
     respond(searchTimeout, 20);
     respond({ status: 'passed', source: 'def add_adjustments(a, b):\n    return a + b\n' });
     expect(await answer()).toMatchObject({ status: 'completed', verification: { reason: 'passed', searchLimit: 'search-cpu-time' } });
     expect(execFile).toHaveBeenCalledTimes(2);
     const [first, second] = execFile.mock.calls;
-    expect(first[0]).toBe('python3');
+    expect(first[0]).toBe(python);
+    expect(second[0]).toBe(python);
     expect(first[1].slice(0, 3)).toEqual(['-I', '-B', '-S']);
     expect(second[1]).toEqual(first[1]);
     expect(first[2]).toMatchObject({ timeout: 2500, maxBuffer: 32 * 1024, killSignal: 'SIGKILL' });
