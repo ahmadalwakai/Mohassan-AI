@@ -1,4 +1,6 @@
 import type { SearchHit } from '../research.js';
+import { webFreshnessText } from './freshness.js';
+export { webFreshnessText } from './freshness.js';
 
 const normalizeWord = (word:string) => word.normalize('NFKC').toLowerCase().replace(/[أإآٱ]/gu,'ا').replace(/[\u0640\p{M}\p{Cf}]/gu,'').replace(/^ال(?=\p{L}{3})/u,'');
 const noise = new Set('the a an of for to in on and or is are what how which who where when why does do latest newest current now today official find search please ما ماذا هو هي هل من في على عن الى إلى كيف كم متى اين أين لماذا ابحث البحث أحدث اخر آخر اليوم الآن الان حاليا'.split(' ').map(normalizeWord));
@@ -80,7 +82,7 @@ export function compileQuery(input: string) {
   return { question, retrievalQuestion, sites: [...new Set(sites)], tokens, phrases,
     language: /\p{Script=Arabic}/u.test(retrievalQuestion) ? 'ar' as const : 'en' as const,
     intent,
-    timeSensitive: /\b(?:today|weather|prices?|fees?|fares?|costs?|opening\s+hours|renew(?:al)?|latest|current|now|train|flight)\b|اليوم|طقس|سعر|[أا]سعار|تكلف[ةه]|تكاليف|رسوم|مواعيد|ال[آا]ن|حاليا|قطار|طيران/i.test(question)
+    timeSensitive: /\b(?:today|weather|prices?|fees?|fares?|costs?|opening\s+hours|renew(?:al)?|latest|current|now|train|flight)\b|اليوم|طقس|سعر|[أا]سعار|تكلف[ةه]|تكاليف|رسوم|مواعيد|ال[آا]ن|حاليا|قطار|طيران/i.test(webFreshnessText(question))
       || /(?:^|\s)(?:اخر|احدث)(?:\s|$)/u.test(phraseText(question)) };
 }
 /** Bounded excerpts copied from the local document; quoted evidence is never synthesized. */

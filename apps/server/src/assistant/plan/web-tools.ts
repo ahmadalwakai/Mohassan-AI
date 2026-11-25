@@ -3,13 +3,13 @@ import { isIP } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   BrowserError, SafeNetwork, SearchEngine, compileQuery, excludesWikipedia, isPublicAddress, matchesSearchPhrases, publicSearchScan,
-  publicSearchText, safeResumeUrl, type AgentPage, type SearchHit, type SearchProvider,
+  publicSearchText, safeResumeUrl, webFreshnessText, type AgentPage, type SearchHit, type SearchProvider,
 } from '@mohassan/browser';
 import type { CommandChatConfig } from '../../command-chat.js';
 import { reviewBrowserRequestScope } from '../browser-request-scope.js';
 import { reviewExplicitPublicBrowserQuery } from '../browser-public-query.js';
 import {
-  excerpt, LIVE, pageAnswer, parseHands, plainTitle, PROVIDER_SPACING_MS, readableOverHttp, topicCoverage, topicWords,
+  excerpt, isLiveWebQuestion, pageAnswer, parseHands, plainTitle, PROVIDER_SPACING_MS, readableOverHttp, topicCoverage, topicWords,
 } from '../hands.js';
 import { extractPublicSearchQueries, mergePublicQueryTerms, reviewGeneratedPublicQuery } from '../public-query-provenance.js';
 import { parseUserRequestConstraints, requestCapabilityAllowed, requestScopeActionText, reviewPublicProjection } from '../request-scope.js';
@@ -301,7 +301,7 @@ export function createPlanWebTools(context: PlanWebToolContext) {
     const state = searchSources.get(step.id) ?? { hits: [], used: new Set<string>() };
     searchSources.set(step.id, state);
     const qualifier = compileQuery(proposed.raw);
-    const live = LIVE.test(proposed.raw) || qualifier.timeSensitive;
+    const live = isLiveWebQuestion(proposed.raw) || qualifier.timeSensitive;
     const compact = lookupText(proposed.raw).replace(/^(?:(?:what|which|how much|who)\s+(?:is|are|was|were)\s+)?(?:the|a|an)\s+|^(?:ما هو|ما هي|ما|كم)\s+/iu, '')
       .replace(/^(?:what|which|how much|who)\s+(?:is|are|was|were)\s+/iu, '');
     // Narrow only the question scaffolding. Keep currencies, time qualifiers, domains and literal phrases intact.
@@ -367,7 +367,7 @@ export function createPlanWebTools(context: PlanWebToolContext) {
     const url = safeUrl(raw);
     if (!url) return { ok: false, reason: 'restricted' };
     const signal = signalOf(attempt);
-    const page = await readPage(url, signal, LIVE_EXPLICIT.test(step.text));
+    const page = await readPage(url, signal, LIVE_EXPLICIT.test(webFreshnessText(step.text)));
     if (page === 'disallowed') return { ok: false, reason: literal ? 'restricted' : 'no_result' };
     // Use the unauthenticated reader for the value and the browser observation
     // for the explicit navigation. A signed-in page is not a public operand.

@@ -1,4 +1,4 @@
-import { AgentEffectHeld, BrowserError, compileQuery, publicSearchScan, publicSearchText, safeResumeUrl, type AgentAction, type AgentElement, type AgentPage, type AgentRequestPermit, type SearchHit } from '@mohassan/browser';
+import { AgentEffectHeld, BrowserError, compileQuery, publicSearchScan, publicSearchText, safeResumeUrl, webFreshnessText, type AgentAction, type AgentElement, type AgentPage, type AgentRequestPermit, type SearchHit } from '@mohassan/browser';
 import { directRoute, namedSite, sensitiveAction } from './brain.js';
 import { hostOf, readingLabel, siteName } from './activity.js';
 import { checkAnswerLine, figureKind, hasAnswerNumber, isDisambiguationPage, isDisambiguationTitle, isMetaLine, isReasonQuestion, questionLanguage } from './answer-check.js';
@@ -15,7 +15,7 @@ import { reviewHandsRefusal, reviewRefusalControl, reviewRefusalDestination, rev
 import { refusalReply } from './refusal/replies.js';
 import { refusalPolicyEnabled } from './refusal/settings.js';
 import type { RefusalDecision } from './refusal/types.js';
-import { explicitFactualEvidence } from './factual-evidence.js';
+import { explicitFactualEvidence, formatFactualPassage, readFactualPassage } from './factual-evidence.js';
 
 export { returnedTo };
 export { siteName };
@@ -344,7 +344,10 @@ function parseCommand(request: string): HandsStep[] | null {
 }
 
 /** Information that lives on the web and changes: prices, weather, scores, schedules, anything «today» or «latest». */
-export const LIVE = /(?:^|\s)(?:ب|و|ل)?(?:ال)?(?:سعر|اسعار|أسعار|طقس|حرار[ةه]|صرف|نتيج[ةه]|نتائج|مباراة|مباريات|موعد|مواعيد|دوام|ترتيب|عنوان)(?=\s|$)|(?:^|\s)(?:اليوم|الآن|الان|حاليا|حاليًا|هالأيام|هذه الأيام|غدا|غدًا|بكرة|الليلة|آخر|اخر|أحدث|احدث)(?=\s|$)|\b(?:price|prices|cost|weather|forecast|temperature|score|scores|exchange rate|fixtures?|schedule|today|tonight|tomorrow|now|current(?:ly)?|latest|this week|opening hours)\b/iu;
+const LIVE = /(?:^|\s)(?:ب|و|ل)?(?:ال)?(?:سعر|اسعار|أسعار|طقس|حرار[ةه]|صرف|نتيج[ةه]|نتائج|مباراة|مباريات|موعد|مواعيد|دوام|ترتيب|عنوان)(?=\s|$)|(?:^|\s)(?:اليوم|الآن|الان|حاليا|حاليًا|هالأيام|هذه الأيام|غدا|غدًا|بكرة|الليلة|آخر|اخر|أحدث|احدث)(?=\s|$)|\b(?:price|prices|cost|weather|forecast|temperature|score|scores|exchange rate|fixtures?|schedule|today|tonight|tomorrow|now|current(?:ly)?|latest|this week|opening hours)\b/iu;
+export function isLiveWebQuestion(question: string): boolean {
+  return LIVE.test(webFreshnessText(question));
+}
 /** «دورلي على…», «شوفلي…»: a lookup asked without the formal verb. */
 const LOOKUP = /^(?:ابحثلي|ابحث لي|دورلي|دور لي|شوفلي|شوف لي|اعرفلي|اعرف لي|جدلي|جد لي|find out|google)\s+(?:عن\s+|على\s+)?(.+)$/iu;
 /**
@@ -386,7 +389,7 @@ export function notWebReason(text: string): 'memory_ads_pc' | 'reminder' | 'arit
   if (ARITHMETIC.test(text)) return 'arithmetic';
   if (WRITER.test(text)) return 'writing';
   if (URL_LIKE.test(text) || directRoute(text)) return 'address';
-  if (CHAT.test(text) && !LIVE.test(text)) return 'chat';
+  if (CHAT.test(text) && !isLiveWebQuestion(text)) return 'chat';
   return null;
 }
 
@@ -881,7 +884,7 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
   // Some sources explain a process first, then name it in the next sentence.
   const namesSubject = definition ? new RegExp(`^this (?:process|reaction|method|technique|phenomenon) (?:(?:is )?called|is known as) ${subject}$`, 'u') : null;
   // A price, a time or a score is a number: for such questions a sentence without one does not answer.
-  const wantsNumber = LIVE.test(question);
+  const wantsNumber = isLiveWebQuestion(question);
   const numberAnswer = wantsNumber || WANTS_NUMBER.test(question);
   const kind = figureKind(question);
   // "How many people live in Japan?": the article says «population» or «inhabitants» ("With a population of almost 123 million
@@ -1359,7 +1362,7 @@ export const searchFailed = (query: string, detail: string, lang: 'ar' | 'en' = 
   ? `تعذّر البحث عن «${query}»: مصادر البحث لم تستجب الآن (${detail}). هذا فشل في الطلب، لا بحث بلا نتائج. أعد المحاولة بعد قليل.`
   : `The search for “${query}” failed: the search sources did not answer just now (${detail}). This is a failed request, not a search without results. Please try again shortly.`;
 
-const noSearchSource = (query: string, lang: 'ar' | 'en' = /[؀-ۿ]/u.test(query) ? 'ar' : 'en') => LIVE.test(query) ? noLiveSource(query, lang) : lang === 'ar'
+const noSearchSource = (query: string, lang: 'ar' | 'en' = /[؀-ۿ]/u.test(query) ? 'ar' : 'en') => isLiveWebQuestion(query) ? noLiveSource(query, lang) : lang === 'ar'
   ? `لم أجد في المصادر المتاحة لي (ويكيبيديا والواجهات الموثقة) نتائج مرتبطة بسؤالك «${query}». أرسل رابط موقع مناسب أو حدد اسم الجهة التي تريد البحث لديها.`
   : `I found no results relevant to “${query}” in the sources available to me (Wikipedia and documented APIs). Send a suitable website link or name the organization to search.`;
 
@@ -1446,7 +1449,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     }
     try { compileQuery(query); } catch { throw new BrowserError('RESEARCH_QUERY_INVALID', 'اكتب موضوعًا محددًا للبحث، واستخدم site: مع اسم نطاق صالح فقط.', 400); }
     if (!io.search) return 'unavailable';
-    const live = LIVE.test(query);
+    const live = isLiveWebQuestion(query);
     const topic = topicWords(query);
     // The search providers did not answer (unavailable, rate limited, invalid answer): a failed request, told apart from a
     // search that answered with nothing about the question.
@@ -1605,6 +1608,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         }
         if (searched) plan.results = searched;
         const tried = new Set<string>();
+        const extracted = new Map<string, NonNullable<HandsPlan['found']>>();
         const readResults = async (results: SearchResult[], candidates = results) => {
           // A question wants its answer, not a list: read the top results until one page answers in its own words.
           // A page the judge already refused for this question is neither read again nor offered again (plan.rejected, set by the
@@ -1643,7 +1647,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             tried.add(withoutHash(item.url));
             const read = reads[index];
             if (read?.kind === 'disallowed') continue;
-            const explicit = read?.kind === 'page' && !LIVE.test(step.query) && !isDisambiguationPage(read.page)
+            const explicit = read?.kind === 'page' && !isLiveWebQuestion(step.query) && !isDisambiguationPage(read.page)
               ? explicitFactualEvidence(read.page, step.query) : undefined;
             if (explicit?.kind === 'unanswered') continue;
             if (explicit?.kind === 'answer' && read?.kind === 'page') {
@@ -1652,7 +1656,9 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
               break;
             }
             let opened: AgentPage;
-            if (read?.kind === 'page' && readableOverHttp(read.page.text)) opened = read.page;
+            const readPassage = read?.kind === 'page' && !isLiveWebQuestion(step.query)
+              ? readFactualPassage(read.page, step.query) : undefined;
+            if (read?.kind === 'page' && (readPassage || readableOverHttp(read.page.text))) opened = read.page;
             else {
               await io.step(read ? `فتح ${hostOf(item.url)} في المتصفح` : `قراءة ${hostOf(item.url)}`);
               const current = page;
@@ -1662,6 +1668,12 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
               opened = shown;
             }
             if (isDisambiguationPage(opened)) continue;
+            const passage = read?.kind === 'page' && read.page === opened ? readPassage
+              : !isLiveWebQuestion(step.query) ? readFactualPassage(opened, step.query) : undefined;
+            const extract = passage ? formatFactualPassage(passage) : undefined;
+            if (extract && passage) extracted.set(passage.value.toLowerCase(), {
+              url: opened.url, title: tidy(opened.title) || hostOf(opened.url), lines: [extract], readAt: opened.observedAt,
+            });
             // The answer line must carry what the question asks for (a number, a name, the question's language), or the next page is tried.
             // For a subject's attribute («كم عدد سكان مصر») the line names the subject, unless the page is the subject's own article:
             // «عدد سكان المدينة … 1500 نسمة» from «القصير (مصر)» is not Egypt's population.
@@ -1671,7 +1683,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             const reasonWords = topicWords(reasonSubject(step.query));
             const entity = reasonWords.length ? [] : entityWords(step.query);
             const byOwnName = ownUrls.has(withoutHash(opened.url));
-            if (WANTS_NUMBER.test(step.query) && !LIVE.test(step.query) && !byOwnName && !aboutSubject(opened.title, topic, entity)) continue;
+            if (WANTS_NUMBER.test(step.query) && !isLiveWebQuestion(step.query) && !byOwnName && !aboutSubject(opened.title, topic, entity)) continue;
             // An aspect («فوائد الشاي الأخضر») is read only from a page about its subject, not from one that mentions it.
             // A reason («لماذا السماء زرقاء؟») is read the same way, from a page about the thing asked about.
             const aspect = reasonWords.length ? reasonWords : entity.length ? [] : aspectSubject(step.query);
@@ -1701,11 +1713,12 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             if (lines.length && topic.length >= 2 && titleScore(opened.title, topic) === 0 && titleScore(item.title, topic) === 0
               && topicCoverage(lines[0]!, topic) < Math.max(2, topic.length - 1)) continue;
             if (lines.length) {
+              if (extract && passage && lines[0] !== passage.quote) lines.unshift(extract);
               plan.found = { url: opened.url, title: tidy(opened.title) || hostOf(opened.url), lines, readAt: opened.observedAt };
               // A figure is shown with a second page's figure when another fitting page was already read (plan §7.4): the
               // reply says whether the two agree, and shows both when they differ. No extra fetch: the pages came together.
               // The other page must be about the same subject: its title holds every topic word, or is the subject itself.
-              if (WANTS_NUMBER.test(step.query) || LIVE.test(step.query)) {
+              if (WANTS_NUMBER.test(step.query) || isLiveWebQuestion(step.query)) {
                 for (const [other, otherRead] of reads.entries()) {
                   if (other === index || otherRead?.kind !== 'page' || !readableOverHttp(otherRead.page.text) || isDisambiguationPage(otherRead.page)) continue;
                   const ownArticle = ownPage(otherRead.page, entity);
@@ -1725,12 +1738,14 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             title: tidy(item.element.label).slice(0, 90).replace(/[[\]]/g, ''), url: item.url,
           }));
           if (!await readResults(results)) return { kind: 'paused' };
+          if (!plan.found && extracted.size === 1) plan.found = extracted.values().next().value;
           if (!plan.found && retrySubject) {
             const own = await retrySubject();
             if (own.length) {
               const retryUrls = new Set(own.map(item => withoutHash(item.url)));
               const combined = [...own, ...results.filter(item => !retryUrls.has(withoutHash(item.url)))];
               if (!await readResults(combined, own)) return { kind: 'paused' };
+              if (!plan.found && extracted.size === 1) plan.found = extracted.values().next().value;
             }
           }
         }
@@ -2019,7 +2034,7 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
       const also = others.length ? `\n\n**${en ? 'See also:' : 'للمزيد:'}** ${others.map(item => `[${shownTitle(item.title)}](${item.url})`).join(' · ')}` : '';
       // A second page on the same figure: named when it agrees, quoted when it differs, so a lone number is never presented as settled.
       // With no second page, the reply says so (plan §7.1: «المصدر يقول…، ولم أتحقق منه في مصدر ثانٍ»).
-      const wantsFigure = WANTS_NUMBER.test(last.query) || LIVE.test(last.query);
+      const wantsFigure = WANTS_NUMBER.test(last.query) || isLiveWebQuestion(last.query);
       const second = plan.found.second ? plan.found.second.agrees
         ? `\n\n**${en ? 'A second source agrees:' : 'مصدر ثانٍ يؤكد:'}** [${siteName(plan.found.second.url)} — ${plainTitle(plan.found.second.title)}](${plan.found.second.url})`
         : `\n\n**${en ? 'A second source differs:' : 'مصدر ثانٍ يختلف:'}** ${en ? `“${plan.found.second.line}”` : `«${plan.found.second.line}»`} — [${siteName(plan.found.second.url)} — ${plainTitle(plan.found.second.title)}](${plan.found.second.url})`

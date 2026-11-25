@@ -4,7 +4,7 @@
  * Usage: npx tsx scripts/quality/two-sources.ts [--port 4140] [--out artifacts/plan-2026-11-22] [--ids rq020,rq021]
  *
  * Takes the figure questions of real-questions-v1.jsonl (a count, a duration, a price, a version: the
- * same WANTS_NUMBER/LIVE test the hands use) that go to the web, not to arithmetic, memory or a named site,
+ * same figure and freshness checks the hands use) that go to the web, not to arithmetic, memory or a named site,
  * and sends each as a new conversation to the disposable measurement server (scripts/perf/fixture.ts:
  * no model, empty database, Windows control off). For every reply it records whether a second source was
  * shown, whether it agreed or differed, and both quoted lines. Nothing here judges correctness: that is
@@ -13,7 +13,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { LIVE } from '../../apps/server/src/assistant/hands.js';
+import { isLiveWebQuestion } from '../../apps/server/src/assistant/hands.js';
 import { FixtureClient, observeRun, startMeasureFixture, type RunObservation } from '../perf/fixture.js';
 
 const argument = (name: string, fallback: string) => { const at = process.argv.indexOf(`--${name}`); return at >= 0 && process.argv[at + 1] ? process.argv[at + 1]! : fallback; };
@@ -28,7 +28,7 @@ const set = (await readFile(path.join(out, 'real-questions-v1.jsonl'), 'utf8')).
 // `--ids rq020,rq021,rq041` measures those questions only, whatever the filters say.
 const ids = argument('ids', '').split(',').map(id => id.trim()).filter(Boolean);
 const items = ids.length ? set.filter(item => ids.includes(item.id))
-  : set.filter(item => item.kind === 'single' && (WANTS_NUMBER.test(item.text) || LIVE.test(item.text)) && !NOT_WEB_FIGURE.test(item.text));
+  : set.filter(item => item.kind === 'single' && (WANTS_NUMBER.test(item.text) || isLiveWebQuestion(item.text)) && !NOT_WEB_FIGURE.test(item.text));
 console.log(`${items.length} figure questions of ${set.length}: ${items.map(item => item.id).join(', ')}`);
 
 const SECOND = /\*\*(?:مصدر ثانٍ (يؤكد|يختلف)|A second source (agrees|differs)):\*\*\s*(.*)/u;
