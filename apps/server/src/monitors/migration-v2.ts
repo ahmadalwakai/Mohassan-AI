@@ -1,5 +1,7 @@
 import { sql, type Kysely } from 'kysely';
 
+import { migrateMonitorAlertFeedbackInTransaction } from '../monitors-phase1/feedback-migration.js';
+import { migrateMonitorDecisionsInTransaction } from './decision/migration.js';
 import { migrateMonitorVisualBudget } from './sources/migration.js';
 import { migrateMonitorV2ChatTables } from './v2-chat-migration.js';
 
@@ -16,4 +18,6 @@ export async function migrateMonitorsV2InTransaction(tx: Kysely<any>) {
   }
   await migrateMonitorV2ChatTables(tx);
   await migrateMonitorVisualBudget(tx);
+  await migrateMonitorAlertFeedbackInTransaction(tx);
+  await migrateMonitorDecisionsInTransaction(tx);
 }

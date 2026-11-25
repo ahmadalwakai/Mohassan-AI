@@ -2,6 +2,7 @@ import { normalizeRequest } from '../assistant/mind/normalize.js';
 import { recognizeMarket } from '../live-data/recognize-market.js';
 import type { MonitorCard } from '@mohassan/contracts';
 import { monitorMatchText, monitorPageUrl, safeMonitorRequest } from './detection.js';
+import { monitorOfferTopic } from './decision/offer-topic.js';
 
 type Language = 'ar' | 'en';
 type Verb = 'pause' | 'resume' | 'stop';
@@ -128,10 +129,7 @@ export function detectMonitorAnswerOffer(request: string, answer: string, pages:
   const excerpt = factualPending(page.text.slice(0, 12_000), candidate.pending)
     ?? (candidate.topic === 'registration' ? factualPending(page.text.slice(0, 12_000), soon) : undefined);
   if (!excerpt) return null;
-  const canonical = new URL(url);
-  for (const key of [...canonical.searchParams.keys()]) if (/^(?:utm_.+|gclid|fbclid)$/iu.test(key)) canonical.searchParams.delete(key);
-  canonical.searchParams.sort();
-  const topic = `${canonical.hostname}${canonical.pathname.replace(/\/$/u, '')}${canonical.search}`;
+  const topic = monitorOfferTopic(url);
   const language = languageOf(request);
   return { url, topic, language, label: candidate.topic, before: candidate.before, after: candidate.after,
     title: candidate.title[language], excerpt, observedAt: page.observedAt };

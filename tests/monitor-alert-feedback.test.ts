@@ -97,7 +97,13 @@ describe('authenticated monitor alert feedback', () => {
     }
     expect((await feedback(alertId, member, { rating: 'helpful', reason: 'late' })).statusCode).toBe(400);
     expect((await feedback(alertId, member, { rating: 'not_helpful', reason: 'free text' })).statusCode).toBe(400);
+    const excluded = await feedback(alertId, member, input);
+    expect(excluded.statusCode).toBe(403);
+    expect(excluded.json()).toMatchObject({ error: { code: 'MONITOR_RECORDING_NOT_ENABLED' } });
     expect(await db.selectFrom('monitor_alert_feedback').select('alert_id').where('alert_id', 'in', [alertId, runId]).execute()).toEqual([]);
+    const recording = await request('POST', `${monitors}/decision-recording`, member, { decisionRecording: true });
+    expect(recording.statusCode, recording.body).toBe(200);
+    expect(recording.json()).toEqual({ included: true, canChange: true });
     expect((await feedback(alertId, member, input)).statusCode).toBe(200);
     expect((await feedback(alertId, owner, { rating: 'not_helpful' })).statusCode).toBe(404);
     expect(await db.selectFrom('monitor_alert_feedback').select(['user_id', 'rating']).where('alert_id', '=', alertId).execute())

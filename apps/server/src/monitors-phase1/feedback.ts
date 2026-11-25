@@ -5,6 +5,8 @@ import {
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
+import { assertMemberFeatureAccess } from '../member-deletion.js';
+import { monitorDecisionRecordingAllowed } from '../monitors/decision/records.js';
 import { monitorPaths } from '../monitors/route-keys.js';
 
 type FeedbackRow = {
@@ -17,19 +19,25 @@ function feedbackState({ rating, reason, updated_at }: FeedbackRow) {
   return MonitorAlertFeedbackStateSchema.parse({ rating, ...(reason && { reason }), updatedAt: new Date(updated_at).toISOString() });
 }
 
-async function saveFeedback(db: Kysely<any>, userId: string, alertId: string, input: MonitorAlertFeedback) {
-  const result = await sql<FeedbackRow>`
-    INSERT INTO monitor_alert_feedback (user_id, alert_id, rating, reason)
-    SELECT n.user_id, n.task_id, ${input.rating}, ${input.reason ?? null}
-    FROM chat_notifications n JOIN smart_monitors m
-      ON m.id = n.monitor_id AND m.user_id = n.user_id AND m.conversation_id = n.conversation_id
-    WHERE n.user_id = ${userId} AND n.task_id = ${alertId}
-    ON CONFLICT (user_id, alert_id) DO UPDATE SET
-      rating = excluded.rating, reason = excluded.reason, updated_at = clock_timestamp()
-    RETURNING rating, reason, updated_at`.execute(db);
-  const saved = result.rows[0];
-  if (!saved) throw Object.assign(new Error('لم يتم العثور على تنبيه المراقبة.'), { statusCode: 404, code: 'MONITOR_ALERT_NOT_FOUND' });
-  return feedbackState(saved);
+export function saveMonitorAlertFeedback(db: Kysely<any>, userId: string, alertId: string, input: MonitorAlertFeedback, at?: Date) {
+  return db.transaction().execute(async tx => {
+    await assertMemberFeatureAccess(tx, userId);
+    if (!await monitorDecisionRecordingAllowed(tx, userId)) {
+      throw Object.assign(new Error('فعّل تسجيل قرارات المراقبة لحفظ التقييم.'), { statusCode: 403, code: 'MONITOR_RECORDING_NOT_ENABLED' });
+    }
+    const result = await sql<FeedbackRow>`
+      INSERT INTO monitor_alert_feedback (user_id, alert_id, rating, reason, updated_at)
+      SELECT n.user_id, n.task_id, ${input.rating}, ${input.reason ?? null}, ${at ?? sql`clock_timestamp()`}
+      FROM chat_notifications n JOIN smart_monitors m
+        ON m.id = n.monitor_id AND m.user_id = n.user_id AND m.conversation_id = n.conversation_id
+      WHERE n.user_id = ${userId} AND n.task_id = ${alertId}
+      ON CONFLICT (user_id, alert_id) DO UPDATE SET
+        rating = excluded.rating, reason = excluded.reason, updated_at = excluded.updated_at
+      RETURNING rating, reason, updated_at`.execute(tx);
+    const saved = result.rows[0];
+    if (!saved) throw Object.assign(new Error('لم يتم العثور على تنبيه المراقبة.'), { statusCode: 404, code: 'MONITOR_ALERT_NOT_FOUND' });
+    return feedbackState(saved);
+  });
 }
 
 export function registerMonitorAlertFeedbackRoute(app: FastifyInstance, db: Kysely<any>,
@@ -37,7 +45,7 @@ export function registerMonitorAlertFeedbackRoute(app: FastifyInstance, db: Kyse
   options: { onRequest: (request: FastifyRequest) => Promise<void>; config: { rateLimit: { max: number; timeWindow: string } } }) {
   app.post<{ Params: { alertId: string } }>(monitorPaths.feedback, options, async request => {
     const { id } = await owner(request);
-    return saveFeedback(db, id, z.uuid().parse(request.params.alertId), MonitorAlertFeedbackSchema.parse(request.body));
+    return saveMonitorAlertFeedback(db, id, z.uuid().parse(request.params.alertId), MonitorAlertFeedbackSchema.parse(request.body));
   });
 }
 

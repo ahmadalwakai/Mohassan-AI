@@ -6,6 +6,8 @@ import { monitorRoleAllowed, type EnabledMonitorRollout } from '../monitors-phas
 import { backgroundAccountCanReceive } from '../notifications-store.js';
 import { monitorMetricTransaction, type MonitorMetricEvent } from '../ops/metrics/monitor-events.js';
 import { monitorSourceContainsCredentials } from './credential-privacy.js';
+import type { MonitorDecisionSnapshot } from './decision/features.js';
+import { captureMonitorProposal, recordMonitorProposalDecision } from './decision/records.js';
 import { evaluateMonitor, type MonitorEvaluationState, type MonitorObservation } from './evaluation.js';
 import { evaluateMonitorV2 } from './evaluation-v2.js';
 import { monitorSourceFlags, smartMonitorsV2Enabled } from './flag.js';
@@ -88,6 +90,7 @@ type Proposal = {
   offer?: MonitorCard['offer'];
   note?: string;
   v2Preview?: MonitorV2Preview;
+  decisionFeatures?: MonitorDecisionSnapshot;
 };
 
 export function monitorCard(row: MonitorRow, at: Date, v2 = false): MonitorCard {
@@ -258,6 +261,7 @@ export function createMonitorStore(db: Kysely<any>, {
           last_checked_at: input.observation ? new Date(input.observation.observedAt) : at, interval_ms: spec.timing.initialIntervalMs,
           expires_at: new Date(Math.min(at.getTime() + MONITOR_LIMITS.proposalLifetimeMs, monitorExpiry(spec.timing, at).getTime())), created_at: at,
         }).returningAll().executeTakeFirstOrThrow() as MonitorRow;
+        if (v2 && input.decisionFeatures) await captureMonitorProposal(trx, row, input.decisionFeatures, at);
         return monitorCard(row, at, v2);
       };
       return tx ? execute(tx) : db.transaction().execute(execute);
@@ -281,14 +285,15 @@ export function createMonitorStore(db: Kysely<any>, {
         const { dueAt, intervalMs } = v2 && row.spec.v2 ? nextPredictiveMonitorCheck(row.spec, at, {
           state: row.v2_state?.schedule, expiry, checksUsed: 0,
         }) : initialMonitorCheck(row.spec, at, expiry);
+        if (v2) await recordMonitorProposalDecision(tx, row, 'approved', at);
         return updateMonitor(tx, row.id, { status: 'active', approved_at: at, expires_at: expiry, next_check_at: dueAt,
           interval_ms: intervalMs }, at);
       });
     },
 
-    async list(userId: string, conversationId?: string): Promise<MonitorCard[]> {
+    async list(userId: string, conversationId?: string, connection = db): Promise<MonitorCard[]> {
       const at = now();
-      let query = db.selectFrom('smart_monitors').selectAll().where('user_id', '=', userId);
+      let query = connection.selectFrom('smart_monitors').selectAll().where('user_id', '=', userId);
       if (!v2) query = query.where(sql<boolean>`spec->'v2' IS NULL`);
       else for (const predicate of disabled) query = query.where(predicate);
       if (conversationId) query = query.where('conversation_id', '=', conversationId);
@@ -352,6 +357,9 @@ export function createMonitorStore(db: Kysely<any>, {
         const card = monitorCard(row, at, v2);
         if (action === 'stop') {
           if (!liveStatuses.some(status => status === card.status)) return card;
+          if (v2 && (card.status === 'proposed' || row.notifications === 0)) {
+            await recordMonitorProposalDecision(tx, row, card.status === 'proposed' ? 'declined' : 'stopped_early', at);
+          }
           return updateMonitor(tx, id, { status: 'stopped', next_check_at: null, ...(v2 && { v2_digest_due_at: null }) }, at);
         }
         if (action === 'pause' && card.status === 'active') {

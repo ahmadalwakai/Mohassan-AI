@@ -47,6 +47,10 @@ def instrument_product(checkout):
         instrument_decision(github_intent, module, 'detectGithubMonitorNeed', 'detection')
         instrument_decision(github_intent, module, 'detectGithubAnswerOffer', 'proactive')
         measured.append(github_intent)
+    reasoner = monitors / 'decision/reasoner.ts'
+    if reasoner.is_file():
+        instrument_decision(reasoner, module, 'reasonMonitorContext', 'context')
+        measured.append(reasoner)
     network = checkout / 'packages/browser/src/network.ts'
     source = network.read_text()
     start_marker = '    const browser=options.browser===true;'

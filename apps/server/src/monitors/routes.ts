@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { registerMonitorAlertFeedbackRoute, withMonitorCardAlerts } from '../monitors-phase1/feedback.js';
 import { monitorPaths } from './route-keys.js';
 import { monitorChat } from './chat.js';
+import { monitorRecordingSetting, setMonitorRecordingSetting } from './decision/records.js';
 import { MonitorError, type ReserveMonitorApproval } from './store.js';
 
 const listQuery = z.object({ conversationId: z.uuid().optional() }).strict();
@@ -16,6 +17,7 @@ const v2Mutation = z.union([
   z.object({ proactiveOffers: z.boolean() }).strict(),
 ]);
 const emptyBody = z.object({}).strict();
+const recordingSetting = z.strictObject({ decisionRecording: z.boolean() });
 
 export async function registerMonitorRuntime(app: FastifyInstance, db: Kysely<any>,
   owner: (request: FastifyRequest) => Promise<{ id: string }>, reserveApproval: ReserveMonitorApproval) {
@@ -54,6 +56,11 @@ export async function registerMonitorRuntime(app: FastifyInstance, db: Kysely<an
       return card;
     });
   }
+  app.get(monitorPaths.decisionRecording, { onRequest: access }, async request => monitorRecordingSetting(db, (await owner(request)).id));
+  app.post(monitorPaths.decisionRecording, mutation, async request => {
+    const { decisionRecording } = recordingSetting.parse(request.body);
+    return setMonitorRecordingSetting(db, (await owner(request)).id, decisionRecording);
+  });
   app.addHook('onReady', async () => { control.runtime.start(); });
   app.addHook('preClose', async () => { await control.runtime.stop(); });
 }

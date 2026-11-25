@@ -15,3 +15,9 @@ export function monitorSourceFlags(env: NodeJS.ProcessEnv = process.env) {
 }
 
 export type MonitorSourceFlags = ReturnType<typeof monitorSourceFlags>;
+
+export const monitorContextEnabled = (env: NodeJS.ProcessEnv = process.env) =>
+  smartMonitorsV2Enabled(env) && env.MOHASSAN_MONITOR_CONTEXT === '1';
+
+export const monitorContextShadowEnabled = (env: NodeJS.ProcessEnv = process.env) =>
+  smartMonitorsV2Enabled(env) && env.MOHASSAN_MONITOR_CONTEXT_SHADOW === '1';

@@ -19,6 +19,7 @@
 | 9 | #100 | `045_smart_monitor_conversation_controls` | — |
 | 10 | #104 | `046_smart_monitor_visual_budget` | — |
 | 11 | #102 | `047_monitor_alert_feedback` | `044_monitor_alert_feedback` |
+| 12 | #105 | `048_smart_monitor_decisions` | `046_smart_monitor_decisions` |
 
 Startup recognizes each full legacy ID and changes the existing ledger row to its recorded ID inside the migration transaction, preserving the original application timestamp. The notifications upgrade also widens the existing notification kind constraint for reminder delivery. Fresh databases run each migration once. The platform branch starts at `c2a0ff7` and leaves the agent migrations to the agent wave.
 
@@ -36,11 +37,14 @@ Wave 5 runs `041_long_run_checkpoints` through the `042_background_results` star
 
 `047_monitor_alert_feedback` adds one optional feedback record per account and monitor alert. Startup applies it with monitors off, and deletion of the account or alert cascades to its feedback.
 
+`048_smart_monitor_decisions` adds the recording preference and proposal outcomes. The training export joins those outcomes with `047` alert feedback. The startup transaction applies `044` through `048` in order under the monitor schema lock.
+
 ## Collisions
 
 - Prefix `035` was claimed by notifications (#20), conversation review (#28, retained in #61), feedback (#30), standalone structured memory (#31, recognized as legacy in #61), and the activation console (#43).
 - Prefix `036` was claimed by reminders (#65) and agent wave 1 structured memory (#61).
 - Prefix `037` moves from member data rights to notifications. Prefix `038` moves from conversation shares to reminders. Each legacy check uses the entire ID to distinguish these entries.
+- Prefix `044` was claimed by alert feedback and v2 state. Prefix `046` was claimed by the visual budget and decision recording. The full legacy IDs identify the feedback and decision entries independently of the recorded v2 and visual IDs.
 - The base already uses prefixes `007`, `029`, and `033` for more than one distinct full ID in `schema_migrations`. The quota migration proposed by #9 uses `auth_schema_migrations`, a separate ledger. Platform integration makes no number assignments for the excluded feedback, activation, or quota migrations. [Base tree](https://github.com/ahmadalwakai/Mohassan-AI/tree/c2a0ff765071657cf200b5ee7d12fabaad738c0b)
 
 ## Open pull requests #1–#70

@@ -14,6 +14,7 @@ from monitor_audit import SOURCE_FLAGS
 
 
 VERSIONS = {"v1": 240, "v2": 2400}
+CONTEXT_FLAGS = ("MOHASSAN_MONITOR_CONTEXT", "MOHASSAN_MONITOR_CONTEXT_SHADOW")
 
 
 @dataclass(frozen=True)
@@ -96,24 +97,43 @@ def coverage(cases: list[Case]) -> list[tuple[str, str, str]]:
     return [(case.id, case.area, case.language) for case in cases]
 
 
-def validate_monitor_profiles(settings):
+def validate_monitor_profiles(settings, *, monitor_context):
+    access_flag = "MOHASSAN_MONITORS_ENABLED"
     version_flag = "MOHASSAN_MONITORS_V2"
-    toggled = {version_flag, *SOURCE_FLAGS}
-    profiles = [{key: value for key, value in arm.items() if key not in toggled} for arm in settings]
-    if profiles[0] != profiles[1] or profiles[0] != profiles[2] or profiles[0].get("MOHASSAN_MONITORS_ENABLED") != "1":
-        raise ValueError("Monitor audit requires a common settings profile with v1 enabled")
-    if any(flag in arm for arm in settings for flag in SOURCE_FLAGS):
-        if ([arm.get(version_flag) for arm in settings] != ["1", "1", "1"]
-                or any([arm.get(flag) for arm in settings] != ["0", "0", "1"] for flag in SOURCE_FLAGS)):
-            raise ValueError("Source audit requires v2 enabled in every arm and every source flag on only for flagsOn")
-    elif [arm.get(version_flag, "0") for arm in settings] != ["0", "0", "1"]:
-        raise ValueError("Version audit requires v2 on only for flagsOn")
+    enabled = ["1", "1", "1"]
+    flags_on = ["0", "0", "1"]
+    if monitor_context:
+        expected = dict.fromkeys(CONTEXT_FLAGS, flags_on)
+        if settings[2].get(access_flag) == "owner":
+            github, pdf, visual = SOURCE_FLAGS
+            expected.update({
+                access_flag: ["0", "0", "owner"], version_flag: flags_on,
+                github: flags_on, pdf: flags_on, visual: ["0", "0", "0"],
+            })
+        else:
+            expected.update({access_flag: enabled, version_flag: enabled})
+    elif any(flag in arm for arm in settings for flag in SOURCE_FLAGS):
+        expected = {access_flag: enabled, version_flag: enabled} | dict.fromkeys(SOURCE_FLAGS, flags_on)
+    else:
+        expected = {access_flag: enabled, version_flag: flags_on}
+
+    profiles = [{key: value for key, value in arm.items() if key not in expected} for arm in settings]
+    if profiles[0] != profiles[1] or profiles[0] != profiles[2]:
+        raise ValueError("Monitor audit requires a common settings profile outside the compared flags")
+    for flag, values in expected.items():
+        if [arm.get(flag, "0") for arm in settings] != values:
+            raise ValueError(f"Monitor audit requires {flag} values {values} across the three arms")
 
 
-def summarize_monitor_audit(versions, requested_cases):
+def summarize_monitor_audit(versions, requested_cases, *, monitor_context=False):
     categories = ("detection", "management", "proactive")
+    if monitor_context:
+        categories += ("context",)
     per_turn = {category: [] for category in categories}
     matches = {category: [] for category in (*categories, "offers", "falseOffers")}
+    if monitor_context:
+        matches["falseContext"] = []
+    context_decisions = {version: Counter() for version in versions}
     for version, cases in versions.items():
         for case in cases:
             if case.monitor_audit is None:
@@ -126,6 +146,10 @@ def summarize_monitor_audit(versions, requested_cases):
                         per_turn[category].append(sum(sample["ms"] for sample in samples))
                     if any(sample["matched"] for sample in samples):
                         hits[category].append(index)
+                        if category == "context" and (version, case.id) not in requested_cases:
+                            hits["falseContext"].append(index)
+                    if category == "context":
+                        context_decisions[version].update(sample["kind"] for sample in samples)
                 if turn["offers"]:
                     hits["offers"].append(index)
                     if (version, case.id) not in requested_cases:
@@ -137,6 +161,7 @@ def summarize_monitor_audit(versions, requested_cases):
         "counts": {category: len(cases) for category, cases in matches.items()},
         "matches": matches,
         "turns": sum(len(case.monitor_audit) for cases in versions.values() for case in cases),
+        **({"contextDecisions": context_decisions} if monitor_context else {}),
         "timing": {
             category: {"measuredTurns": len(samples), **{
                 percentile: sorted(samples)[math.ceil(rank * len(samples)) - 1] if samples else None
@@ -218,14 +243,19 @@ def compare(
     repeated: Receipt | None = None,
     masks: list | None = None,
     monitor_requests: set[tuple[str, str]] | None = None,
+    monitor_context: bool = False,
 ) -> dict:
     if flags_off.commit != flags_on.commit:
         raise ValueError("The two feature-flag arms must measure the same commit")
     if masks is not None and repeated is None:
         raise ValueError("Reply masks require a baseline repeat")
+    if monitor_context and monitor_requests is None:
+        raise ValueError("Context audit requires reviewed monitoring-request case IDs")
     comparison_inputs = {"baseline": baseline, "flagsOff": flags_off, "flagsOn": flags_on}
     if monitor_requests is not None:
-        validate_monitor_profiles([receipt.source["settings"] for receipt in comparison_inputs.values()])
+        validate_monitor_profiles(
+            [receipt.source["settings"] for receipt in comparison_inputs.values()], monitor_context=monitor_context,
+        )
         known_cases = {(version, case.id) for version, cases in baseline.versions.items() for case in cases}
         if not monitor_requests <= known_cases:
             raise ValueError("Monitor request labels must refer to published development case IDs")
@@ -313,8 +343,14 @@ def compare(
             "repeatReplyDifferences": repeat_reply_differences,
             "passed": not (verdict_differences or check_differences or reply_differences or regressions or repeat_verdict_differences),
         }
-    audits = ({name: summarize_monitor_audit(receipt.versions, monitor_requests)
+    audits = ({name: summarize_monitor_audit(receipt.versions, monitor_requests, monitor_context=monitor_context)
                for name, receipt in comparison_inputs.items()} if monitor_requests is not None else {})
+    context_gates = {}
+    if monitor_context:
+        context_gates = {
+            "observedOnlyWithFlagsOn": [audits[name]["timing"]["context"]["measuredTurns"] > 0
+                                        for name in comparison_inputs] == [False, False, True],
+        }
     return {
         "schemaVersion": 1,
         "inputs": {
@@ -324,7 +360,9 @@ def compare(
         "replyMasks": list(proof.values()),
         "versions": versions,
         **({"monitorAudit": audits} if audits else {}),
+        **({"monitorContextGates": context_gates} if context_gates else {}),
         "passed": all(version["passed"] for version in versions.values())
+        and all(context_gates.values())
         and all(audit["counts"]["falseOffers"] == 0 for audit in audits.values()),
     }
 
@@ -338,6 +376,8 @@ def main() -> int:
     parser.add_argument("--reply-masks", type=Path)
     parser.add_argument("--monitor-requests", type=Path,
                         help="audit monitors with a JSON object listing reviewed monitoring-request case IDs by version")
+    parser.add_argument("--monitor-context", action="store_true",
+                        help="audit context and shadow with always-on v2 or the owner trial profile")
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     try:
@@ -348,6 +388,7 @@ def main() -> int:
             monitor_requests={(version, case_id)
                               for version, ids in json.loads(args.monitor_requests.read_bytes()).items() for case_id in ids}
             if args.monitor_requests else None,
+            monitor_context=args.monitor_context,
         )
         with os.fdopen(os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as output:
             json.dump(report, output, indent=2)

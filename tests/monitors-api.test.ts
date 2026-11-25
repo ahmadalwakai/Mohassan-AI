@@ -282,3 +282,77 @@ describe('version 2 conversational management and offer settings', () => {
     expect((await controls.view(ownerId, another)).monitorProposal).toBeUndefined();
   });
 });
+
+describe('monitor context through chat and reminders', () => {
+  let application: App;
+  let owner: string;
+  let ownerId: string;
+
+  beforeAll(async () => {
+    vi.stubEnv('MOHASSAN_MONITORS_ENABLED', '1');
+    vi.stubEnv('MOHASSAN_MONITORS_V2', '1');
+    vi.stubEnv('MOHASSAN_MONITOR_CONTEXT', '1');
+    application = await createApplication(configuration);
+    owner = await register(application, 'MonitorContextOwner', 'owner');
+    ownerId = (await application.app.inject({ url: '/api/access', headers: headers(owner) })).json().user.id;
+  });
+  afterAll(async () => { await application?.app.close(); vi.unstubAllEnvs(); });
+
+  function fixturePage(text: string) {
+    return vi.spyOn(SafeNetwork.prototype, 'request').mockImplementation(async (address, options) => {
+      await options?.beforeDispatch?.();
+      const robots = new URL(address).pathname === '/robots.txt';
+      return { status: 200, url: address, headers: { 'content-type': 'text/plain' },
+        body: Buffer.from(robots ? 'User-agent: *\nAllow: /' : text) };
+    });
+  }
+
+  it('routes scheduled notifications to the reminder handler and public conditions to a proposal', async () => {
+    const notification = await ask(application, owner, 'Notify me in two hours to review the workshop application.');
+    expect(notification.question?.prompt).toContain('IANA');
+    expect(notification.monitorProposal).toBeUndefined();
+    const clock = await ask(application, owner, 'ذكّرني غدًا الساعة 9 بالاجتماع');
+    expect(clock.question?.prompt).toContain('IANA');
+    expect(clock.monitorProposal).toBeUndefined();
+
+    const source = 'https://workshop.example.org/enrolment';
+    const request = fixturePage('Registration is closed.');
+    try {
+      const conditional = await ask(application, owner, `نبهني عندما يفتح التسجيل في ${source}`);
+      expect(conditional.question).toBeNull();
+      expect(MonitorCardSchema.parse(conditional.monitorProposal)).toMatchObject({
+        status: 'proposed', offer: 'explicit', nextCheckAt: null, spec: { source: { kind: 'page', url: source } },
+      });
+    } finally { request.mockRestore(); }
+  });
+
+  it('offers a monitor from the earlier observed topic and respects a declined proposal', async () => {
+    const db = application.database.db;
+    const control = monitorChat(db)!;
+    const url = 'https://workshop-context.example.org/enrolment';
+    const draft = await application.app.inject({ method: 'POST', url: '/api/chat/conversations', headers: headers(owner), payload: {} });
+    const conversationId = draft.json().id as string;
+    const now = Date.now();
+    await db.insertInto('chat_messages').values([
+      { id: randomUUID(), conversation_id: conversationId, role: 'user', text: `Is registration open at ${url}?`, created_at: new Date(now - 2) },
+      { id: randomUUID(), conversation_id: conversationId, role: 'assistant', text: 'Registration is currently closed.', created_at: new Date(now - 1) },
+    ]).execute();
+    const request = fixturePage('Registration is closed.');
+    try {
+      const sent = await application.app.inject({ method: 'POST', url: `/api/chat/conversations/${conversationId}/messages`,
+        headers: headers(owner), payload: { text: 'Okay, I am waiting for it to open.' } });
+      expect(sent.statusCode, sent.body).toBe(200);
+      const detail = await settle(application, conversationId, owner);
+      expect(detail.messages.at(-1)?.text).toContain('Would you like me to watch this page');
+      const card = MonitorCardSchema.parse(detail.monitorProposal);
+      expect(card).toMatchObject({ status: 'proposed', offer: 'implicit', spec: { source: { kind: 'page', url },
+        read: { kind: 'status', label: 'registration' }, condition: { kind: 'contains', value: 'registration open' } } });
+      const declined = await application.app.inject({ method: 'POST', url: `${path}/${card.id}/stop`, headers: headers(owner) });
+      expect(declined.statusCode, declined.body).toBe(200);
+      request.mockClear();
+      expect(await control.forTurn({ ownerId, conversationId, runId: randomUUID(), text: 'I am still waiting for it to open.' })).toBeNull();
+      expect(request).not.toHaveBeenCalled();
+      expect((await control.view(ownerId, conversationId)).monitorProposal).toBeUndefined();
+    } finally { request.mockRestore(); }
+  });
+});
