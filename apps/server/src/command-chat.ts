@@ -77,6 +77,7 @@ import { actionOperandHash, actionRequestHash, compileActionCompletionContract, 
 import { isEntireLiteralRequest, parseUserRequestConstraints, requestCapabilityAllowed, requestConstraintReply, requestScopeActionText, reviewPublicProjection, type ForbiddenRequestCapability, type RequestScopeAssessment, type UserRequestConstraints } from './assistant/request-scope.js';
 import { evaluateLocalKnowledge, isKnowledgeDocumentRequest, type LocalKnowledgeDocument } from './assistant/local-knowledge.js';
 import { decideRequestRoute } from './assistant/routing-decision.js';
+import { answerTestDrivenCoding } from './assistant/test-driven-coding/reply.js';
 import { describeSearchDestination, extractPublicSearchQueries, isSearchEntryElement, mergePublicQueryTerms, reviewGeneratedPublicQuery } from './assistant/public-query-provenance.js';
 import { reviewExplicitPublicBrowserQuery } from './assistant/browser-public-query.js';
 import { ADS_REWRITE_JSON_SCHEMA, ADS_REWRITE_SCHEMA_NAME, ADS_REWRITE_SYSTEM, buildRewritePrompt, type RewriteRequest } from '@mohassan/google-ads';
@@ -2059,6 +2060,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await finish(id, runId, state, reviewed.replacement?.text ?? 'لم أتحقق من سجل إجراءات صالح لهذا الطلب.', 'blocked');
         return;
       }
+      if (run.intent === 'task' && !state.steps && !state.trail.length && state.routing?.handler === 'local_coding') {
+        const reply = await answerTestDrivenCoding(request, { authorized: fullReach() && state.routing.availability !== 'restricted', signal, originalHash: state.requestOriginalHash, scrub: text => vault.scrub(id, clean(text)) });
+        return finish(id, runId, state, reply.text, reply.status, undefined, undefined, true);
+      }
       if (noteVerificationIntent) {
         const unavailable = () => /\p{Script=Arabic}/u.test(request)
           ? 'لم أتمكن من التحقق من حالة محاولة حفظ هذه الملاحظة الآن.'
@@ -4033,7 +4038,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const noteVerificationSupervisor = userFactMemoryVerification
         ? createUserFactMemoryVerificationSupervisor(clean(input.text), noteVerificationBinding, userFactMemoryVerification.source) : null;
       const initialState: BrainState = { ...newBrainState(), requestContext: resolution.nextState, requestResolution: resolution,
-        ...(!input.answers && requestOriginalHash ? { requestOriginalHash } : {}),
+        ...(!input.answers && requestOriginalHash ? { requestOriginalHash: routing.handler === 'local_coding' ? createHash('sha256').update(input.text).digest('hex') : requestOriginalHash } : {}),
         // The conversation's website, so a later sentence edits it instead of starting a search.
         ...(previousRun?.state?.siteId ? { siteId: previousRun.state.siteId, sitePendingWant: previousRun.state.sitePendingWant ?? null } : {}),
         ...(memoryVerification ? { memoryVerification } : {}),
