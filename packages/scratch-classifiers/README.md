@@ -15,6 +15,8 @@ Use `--cache` to supply a local download directory and `--output` to compare a r
 
 The v2 exclusion retraining report compares the original and current heads on identical guarded test rows. [Retraining report](V2-RETRAINING.md)
 
+The v2 follow-up records the factual routing diagnosis, paired development results, and one-shot sealed release. [V2 follow-up report](V2-FOLLOWUP.md)
+
 The v1 capability benchmark report records the initial development and sealed application results for both flag settings. [V1 benchmark report](CAPABILITY-BENCHMARK.md)
 
 ```sh
