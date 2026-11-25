@@ -55,15 +55,15 @@ const NEWS_WORD = /(?:^|\s)(?:ال)?(?:[اأ]خبار|عناوين)(?=\s|$)|\b(?
 const NEWS_FILLER = /(?:^|\s)(?:لخص|لخصلي|اعطني|أعطني|اعرض|قل|هات|ما|ماذا|هي|شو|ايش|إيش|وش|لي|أهم|اهم|آخر|اخر|أبرز|ابرز|اليوم|الآن|الان|حاليا|حاليًا|الصباح|من|في|على|عن|موقع|(?:ال)?[اأ]خبار|عناوين|العناوين|summari[sz]e|give|tell|show|me|the|what|what's|whats|is|are|top|latest|today|today's|todays|now|from|on|in|of|news|headlines|please)(?=\s|$)/giu;
 
 /** «لخّص لي أهم أخبار اليوم», «أخبار الجزيرة», «آخر أخبار الاقتصاد», «what's the news today». */
-function parseNews(text: string): HandsStep | null {
-  if (!NEWS_WORD.test(text)) return null;
+function parseNews(text: string, learned = false): HandsStep | null {
+  if (!learned && !NEWS_WORD.test(text)) return null;
   let rest = ` ${text} `.replace(/[؟?،,.!]/gu, ' ');
   let source: NewsSource | null = null;
   for (const [pattern, found] of NEWS_SOURCES) if (pattern.test(rest)) { source = found; rest = rest.replace(pattern, ' '); break; }
   // Twice: fillers that sit next to each other share the space between them.
   rest = rest.replace(NEWS_FILLER, ' ').replace(NEWS_FILLER, ' ').replace(/\s+/g, ' ').trim();
   // A long remainder is a question about the news, not a request for headlines.
-  if (rest.split(' ').filter(Boolean).length > 3) return null;
+  if (!learned && rest.split(' ').filter(Boolean).length > 3) return null;
   const arabic = /[؀-ۿ]/u.test(text);
   return { kind: 'news', source: source ?? (arabic ? NEWS_SOURCES[3][1] : BBC_ENGLISH), topic: rest };
 }
@@ -281,7 +281,7 @@ function parseOpenAndAsk(request: string): HandsStep[] | null {
  * The owner's request as browser steps, or null when any part is not a plain browser command.
  * A lone «افتح موقع» stays with the direct route, which proves the opened destination.
  */
-export function parseHands(request: string): HandsStep[] | null {
+export function parseHands(request: string, learnedNews = false): HandsStep[] | null {
   // An instruction about the reply is not a step, and a tag in front is not part of the command: «Search the web for X.
   // Return the page title and source link.» searches for X and names the found page's title and link (reply-directive.ts).
   const framing = typeof request === 'string' ? splitReplyDirective(request) : null;
@@ -297,7 +297,11 @@ export function parseHands(request: string): HandsStep[] | null {
       return steps;
     }
   }
-  return parseCommand(request);
+  const steps = parseCommand(request);
+  if (steps || !learnedNews) return steps;
+  const text = tidy(framing?.body ?? request);
+  const news = text && parseNews(text, true);
+  return news ? [news] : null;
 }
 
 /** «افتح X واعرض لي محتواه» as two steps: open the page, then read it out. Only an address or a known site comes before. */
