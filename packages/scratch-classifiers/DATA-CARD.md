@@ -34,6 +34,12 @@ The machine-readable table in [`data/label-map.json`](data/label-map.json) lists
 
 The selected corpora provide no credible route supervision for `ads`, `browser_command`, `clarify`, `coding`, `image`, `media` generation, `memory`, `pc`, `planning` or `reply`. The follow-up corpus is English information-seeking dialogue. It has no Arabic, conversation-card replies, approvals, or direct examples of switching tasks. Source-level test results measure the listed mappings. The independent capability benchmark measures transfer to Mohassan messages.
 
+## Capability v2 exclusion
+
+Preparation verifies the v2 registry manifest and both exclusion partitions from the contamination audit. It rejects native rows by matching normalized input-text hashes or source IDs before deduplication and assignment to classifier folds. CLINC150 passes the native partition and zero-based index, including its `oos_` partitions. MASSIVE passes locale and item ID, which the registry canonicalizes across translations. CANARD passes the dialogue ID, native `Question_no`, current question, and previous question when present. ArBanking77 and Aya candidates pass their model-visible prompts. [Exclusion registry](../../tests/fixtures/agent-capability-bench/v2/exclusion/manifest.json) · [Audit](https://github.com/ahmadalwakai/Mohassan-AI/pull/70)
+
+The registry manifest SHA-256 is `de192bdc7203e1aa24fa06b216d3976f4ea77ec103e085a4019af7a60c2f3054`. Preparation rejected 6,281 native rows before label filtering and deduplication finished. The count includes rows that other preparation steps would have dropped. It writes a sibling `.exclusions.json` receipt for the prepared JSONL. Training validates the registry, data digest and seed against the receipt, including when reusing prepared files with `--data`. The model metrics record aggregate drop counts by dataset and native partition. [Training receipt](models/metrics.json)
+
 ## Train, development, calibration and test splits
 
 - Preserve upstream train and test groups. Split original validation groups into development and calibration with the fixed seed `20261125`. CLINC150 groups equivalent utterances. MASSIVE pairs locales by utterance ID and alternates the seeded order within each development intent. CANARD groups all turns by upstream dialogue ID.
@@ -42,14 +48,14 @@ The selected corpora provide no credible route supervision for `ads`, `browser_c
 - Fold text with the production normalizer and strip punctuation for comparison. For CANARD the comparison key includes the previous question. Duplicate keys go to the most held-out split, and conflicting targets for the same head are omitted. Duplicate rows per dataset are folded into one per head. This catches exact collisions under the comparison, while semantically equivalent paraphrases can still occur across upstream splits.
 - MASSIVE v1.0 has one held-out greeting group in each of the two locales. Its small-talk test recall reflects a single positive per locale. CANARD has many more context-dependent than standalone later questions. The Arabic dialect supplement contains banking requests only. The Aya subsets supply positive refusal coverage only.
 
-The fixed seed produces 70,164 examples after filtering. Rows can carry labels for multiple heads.
+The fixed seed produces 64,595 examples after filtering. Rows can carry labels for multiple heads.
 
 | Dataset | Train | Development | Calibration | Test |
 | --- | ---: | ---: | ---: | ---: |
-| CLINC150 | 3,158 | 402 | 315 | 1,928 |
-| MASSIVE Arabic | 8,563 | 782 | 761 | 2,308 |
-| MASSIVE English | 9,102 | 817 | 796 | 2,357 |
-| CANARD | 26,453 | 1,369 | 1,508 | 4,728 |
+| CLINC150 | 3,163 | 402 | 316 | 1,719 |
+| MASSIVE Arabic | 8,570 | 785 | 768 | 1,873 |
+| MASSIVE English | 9,104 | 817 | 796 | 1,903 |
+| CANARD | 23,491 | 1,192 | 1,291 | 3,588 |
 | ArBanking77 Palestinian | 2,719 | 155 | 163 | 894 |
 | Aya Arabic | 369 | 54 | 51 | 60 |
 | Aya English | 253 | 32 | 35 | 32 |

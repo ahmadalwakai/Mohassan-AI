@@ -67,11 +67,33 @@ describe('scratch classifier request decisions', () => {
     expect(evaluateLocalConversation(input.text, decision)).toEqual(decision.localReply);
   });
 
-  it('can select the existing news step for an approved public lookup', () => {
-    const input = { text: 'What is happening around the world this morning?', capabilities };
+  it('can select the existing news step when the host only has a nominal fallback', () => {
+    const input = { text: 'Central European shipping update', capabilities };
     const decision = decideRequestRoute(input, policy({ route: 'news' }));
     expect(decision).toMatchObject({ route: 'news', handler: 'search', reason: 'scratch_route', publicQuery: input.text,
       browserSteps: [{ kind: 'news', source: { name: 'BBC News' } }],
+    });
+  });
+
+  it.each([
+    'Who designed the Sydney Opera House?',
+    'متى افتُتح متحف الفن الإسلامي في الدوحة؟',
+    'Which is longer, the Seine or the Loire?',
+    'Height of Mount Taranaki',
+  ])('preserves the supported lookup for %s despite confident incompatible predictions', text => {
+    const input = { text, capabilities };
+    const baseline = decideRequestRoute(input, null);
+    expect(baseline).toMatchObject({ route: 'web_search', handler: 'search', publicQuery: text });
+    for (const labels of [{ refusal: 'refuse' }, { refusal: 'out_of_scope' }, { route: 'news' }, { speechAct: 'smalltalk' }]) {
+      expect(decideRequestRoute(input, policy(labels))).toEqual(baseline);
+    }
+  });
+
+  it('can refuse an unsupported action when its only rule match is the nominal search fallback', () => {
+    const input = { text: 'Reroute the office phone', capabilities };
+    expect(decideRequestRoute(input, null)).toMatchObject({ sourceAssessment: { reasons: ['nominal_public_subject'] }, route: 'web_search' });
+    expect(decideRequestRoute(input, policy({ refusal: 'out_of_scope' }))).toMatchObject({
+      route: 'unsupported', reason: 'scratch_out_of_scope', publicQuery: null,
     });
   });
 

@@ -23,6 +23,7 @@ os.environ["OMP_NUM_THREADS"] = "1"
 import numpy as np
 from scipy.sparse import csr_matrix
 
+from data_guard import read_receipt
 from training.features import feature_ids
 from training.linear import acceptance_threshold, logistic, macro_f1, perceptron, predict, quantize, score, temperature
 
@@ -164,13 +165,14 @@ def json_bytes(value: object, *, pretty: bool = False) -> bytes:
 
 
 def train(path: Path, output: Path, seed: int) -> None:
+    with path.open("rb") as prepared:
+        data_sha256 = hashlib.file_digest(prepared, "sha256").hexdigest()
+    receipt = read_receipt(path, data_sha256, seed)
     data = read_data(path)
     models = {}
     goldens = []
-    with path.open("rb") as prepared:
-        data_sha256 = hashlib.file_digest(prepared, "sha256").hexdigest()
     report = {"version": 1, "seed": seed, "minimumCalibrationAccuracy": ACCEPTED_ACCURACY,
-              "dataSha256": data_sha256, "heads": {}}
+              "dataSha256": data_sha256, "exclusionReceipt": receipt, "heads": {}}
     for head in HEADS:
         print(f"Training {head}…", flush=True)
         model, metrics, examples = fit_head(data[head], DIMENSIONS, seed)
@@ -201,7 +203,7 @@ def train(path: Path, output: Path, seed: int) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data", type=Path, help="Use prepared JSONL instead of fetching the pinned sources.")
+    parser.add_argument("--data", type=Path, help="Use prepared JSONL with its v2 exclusion receipt instead of fetching the pinned sources.")
     parser.add_argument("--cache", type=Path, default=DATA_DIR / "sources", help="Directory for pinned download caches.")
     parser.add_argument("--output", type=Path, default=PACKAGE / "models")
     parser.add_argument("--seed", type=int, default=SEED)
