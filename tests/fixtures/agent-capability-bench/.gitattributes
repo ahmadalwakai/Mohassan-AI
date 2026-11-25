@@ -8,3 +8,10 @@
 /v2/sealed/attribution/*-LICENSE.* -whitespace
 /v2/sealed/attribution/*-NOTICE.* -whitespace
 /v2/sealed/attribution/MBPP-DATASET-CARD.md -whitespace
+/v2/dev/** -text
+/v2/dev/payload.json -diff
+/v2/dev/sampling-v2-dev.seed -diff
+/v2/dev/attribution/wikipedia-articles.json -diff
+/v2/dev/attribution/*-LICENSE.* -whitespace
+/v2/dev/attribution/*-NOTICE.* -whitespace
+/v2/dev/attribution/MBPP-DATASET-CARD.md -whitespace

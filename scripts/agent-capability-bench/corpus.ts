@@ -118,7 +118,7 @@ const v2SealDirectory = fileURLToPath(new URL('../../tests/fixtures/agent-capabi
 
 export class CapabilityCorpusError extends Error {}
 
-function isWithin(directory: string, path: string): boolean {
+export function isWithin(directory: string, path: string): boolean {
   const subpath = relative(directory, path);
   return subpath !== '..' && !subpath.startsWith(`..${sep}`) && !isAbsolute(subpath);
 }
@@ -188,7 +188,7 @@ async function loadPartition(path: string | undefined, label: 'development' | 's
   return cases;
 }
 
-function normalizeInput(value: string): string {
+export function normalizeInput(value: string): string {
   return value.normalize('NFC').trim().replace(/\s+/gu, ' ').toLowerCase();
 }
 

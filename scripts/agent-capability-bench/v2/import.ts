@@ -2,12 +2,10 @@ import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadCapabilityCorpus } from '../corpus.js';
-import { importClinc, importMassive } from './intent.js';
-import { importGsm8k, importMbpp } from './math-code.js';
+import { collectCapabilityNotices, downloadCapabilitySources, mapCapabilitySources } from './import-sources.js';
 import { quotas } from './policy.js';
-import { importCanard, importMintaka, importTyDiQA } from './qa.js';
 import { availableStrata, buildSealedSet } from './sample.js';
-import { downloadSource, massiveLocale, massiveNotices, sha256, sourcePins, sourceText, upstreamNoticePins } from './sources.js';
+import { sha256 } from './sources.js';
 import { wikiAttribution } from './wiki-attribution.js';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -65,7 +63,7 @@ async function readSeed(input: string): Promise<Buffer> {
   return seed;
 }
 
-async function releaseFiles(cache: string, massive: Buffer, seed: Buffer, built: ReturnType<typeof buildSealedSet>) {
+async function releaseFiles(cache: string, artifacts: Awaited<ReturnType<typeof downloadCapabilitySources>>, seed: Buffer, built: ReturnType<typeof buildSealedSet>) {
   const documents = ['README.md', 'attribution/ATTRIBUTION.md'];
   const entries = new Map<string, Buffer | string>([
     [seedName, seed],
@@ -74,9 +72,8 @@ async function releaseFiles(cache: string, massive: Buffer, seed: Buffer, built:
     ['attribution/wikipedia-articles.json', wikiAttribution(built.payload)],
   ]);
   for (const name of documents) entries.set(name, await readFile(join(root, releasePath, name)));
-  for (const [name, bytes] of Object.entries(massiveNotices(massive))) entries.set(`attribution/${name}`, bytes);
-  for (const name of Object.keys(upstreamNoticePins) as (keyof typeof upstreamNoticePins)[]) {
-    entries.set(`attribution/${name}`, await downloadSource(cache, name));
+  for (const [name, bytes] of Object.entries(await collectCapabilityNotices(cache, artifacts))) {
+    entries.set(`attribution/${name}`, bytes);
   }
   return entries;
 }
@@ -93,23 +90,9 @@ async function main() {
     await mkdir(cache, { recursive: true, mode: 0o700 });
     if (((await lstat(cache)).mode & 0o077) !== 0) throw new Error('Expected a private source cache.');
     step = 'download and verify the pinned source artifacts';
-    // Keep the download order fixed and avoid retaining duplicate archive copies.
-    const artifacts = new Map<keyof typeof sourcePins, Buffer>();
-    for (const name of Object.keys(sourcePins) as (keyof typeof sourcePins)[]) {
-      artifacts.set(name, await downloadSource(cache, name));
-    }
-    const raw = (name: keyof typeof sourcePins) => sourceText(artifacts.get(name)!);
-    const massive = artifacts.get('massive-1.1.tar.gz')!;
+    const artifacts = await downloadCapabilitySources(cache);
     step = 'map rows from the public datasets';
-    const results = [
-      importClinc(raw('clinc150.json')),
-      importMassive(massiveLocale(massive, 'en-US'), massiveLocale(massive, 'ar-SA')),
-      importMintaka(raw('mintaka.json')),
-      importTyDiQA(raw('tydiqa-ar.jsonl'), raw('tydiqa-en.jsonl')),
-      importCanard(raw('canard.json')),
-      importGsm8k(raw('gsm8k.jsonl')),
-      importMbpp(raw('mbpp.json')),
-    ];
+    const results = mapCapabilitySources(artifacts);
     if (!seed || !out) {
       console.log(JSON.stringify({ available: availableStrata(results), sources: results.map(
         ({ dataset, seen, candidates, dropped }) => ({ dataset, seen, admitted: candidates.length, dropped }),
@@ -122,7 +105,7 @@ async function main() {
       development: join(v1, 'development.json'), sealed: join(v1, 'holdout/sealed.json') });
     const built = buildSealedSet(results, quotas, seed, [...previous.development, ...previous.sealed!]);
     step = 'assemble and verify the release attribution';
-    const entries = await releaseFiles(cache, massive, seed, built);
+    const entries = await releaseFiles(cache, artifacts, seed, built);
     const files = Object.fromEntries([...entries.keys()].sort().map(name => [name, sha256(entries.get(name)!)]));
     const manifest = JSON.stringify({ ...JSON.parse(built.manifest), files }) + '\n';
     step = 'write a fresh release directory';

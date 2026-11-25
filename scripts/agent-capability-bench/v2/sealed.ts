@@ -19,17 +19,23 @@ const stratumSchema = z.strictObject({
   count: z.number().int().positive(),
 });
 
+const bundlePartitionSchema = z.strictObject({
+  sha256,
+  caseCount: z.number().int().positive(),
+  arabicCount: z.number().int().nonnegative(),
+});
+
 export const capabilityV2ManifestSchema = z.strictObject({
   schemaVersion: z.literal(2),
   baselineCommit: z.literal(capabilityBaselineCommit),
   mappingVersion: z.literal(capabilityV2MappingVersion),
-  sealed: z.strictObject({
-    sha256,
-    caseCount: z.number().int().positive(),
-    arabicCount: z.number().int().nonnegative(),
-  }),
+  sealed: bundlePartitionSchema,
   strata: z.array(stratumSchema).min(1),
   files: z.record(releasePath, sha256),
+});
+
+export const capabilityV2DevelopmentManifestSchema = capabilityV2ManifestSchema.omit({ sealed: true }).extend({
+  development: bundlePartitionSchema,
 });
 
 export const capabilityV2PayloadSchema = z.strictObject({
@@ -45,7 +51,7 @@ function stratumLabel({ area, language }: Pick<z.infer<typeof stratumSchema>, 'a
   return `${area}/${language}`;
 }
 
-async function readBytes(path: string, label: 'manifest' | 'payload' | 'release'): Promise<Buffer> {
+export async function readV2BundleBytes(path: string, label: 'manifest' | 'payload' | 'release'): Promise<Buffer> {
   try {
     return await readFile(path);
   } catch {
@@ -53,7 +59,7 @@ async function readBytes(path: string, label: 'manifest' | 'payload' | 'release'
   }
 }
 
-function parseJson<T>(bytes: Buffer, schema: z.ZodType<T>, label: 'manifest' | 'payload'): T {
+export function parseV2BundleJson<T>(bytes: Buffer, schema: z.ZodType<T>, label: 'manifest' | 'payload'): T {
   let json: unknown;
   try {
     json = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
@@ -65,12 +71,12 @@ function parseJson<T>(bytes: Buffer, schema: z.ZodType<T>, label: 'manifest' | '
   return result.data;
 }
 
-async function verifyRelease(path: string, { files, sealed }: CapabilityV2Manifest): Promise<Buffer> {
+async function verifyRelease(path: string, files: CapabilityV2Manifest['files'], digest: string, manifestFile?: string): Promise<Buffer> {
   const payloadPath = resolve(path);
   if (basename(payloadPath) !== capabilityV2PayloadFile) {
     throw new CapabilityCorpusError('Capability v2 requires the release bundle payload.json.');
   }
-  if (files[capabilityV2PayloadFile] !== sealed.sha256) {
+  if (files[capabilityV2PayloadFile] !== digest) {
     throw new CapabilityCorpusError('The capability v2 payload fingerprint does not match the release manifest.');
   }
 
@@ -82,19 +88,20 @@ async function verifyRelease(path: string, { files, sealed }: CapabilityV2Manife
   for (const entry of entries) {
     if (entry.isDirectory()) continue;
     if (!entry.isFile()) throw new CapabilityCorpusError('The capability v2 release must contain regular files only.');
-    actual.add(relative(directory, join(entry.parentPath, entry.name)).split(sep).join('/'));
+    const name = relative(directory, join(entry.parentPath, entry.name)).split(sep).join('/');
+    if (name !== manifestFile) actual.add(name);
   }
   if (actual.size !== expected.length || expected.some(([name]) => !actual.has(name))) {
     throw new CapabilityCorpusError('The capability v2 release file inventory does not match the manifest.');
   }
 
-  const payload = await readBytes(payloadPath, 'payload');
-  if (createHash('sha256').update(payload).digest('hex') !== sealed.sha256) {
+  const payload = await readV2BundleBytes(payloadPath, 'payload');
+  if (createHash('sha256').update(payload).digest('hex') !== digest) {
     throw new CapabilityCorpusError('SHA-256 mismatch for the capability v2 payload file.');
   }
   for (const [name, digest] of expected) {
     if (name === capabilityV2PayloadFile) continue;
-    const bytes = await readBytes(join(directory, name), 'release');
+    const bytes = await readV2BundleBytes(join(directory, name), 'release');
     if (createHash('sha256').update(bytes).digest('hex') !== digest) {
       throw new CapabilityCorpusError('SHA-256 mismatch for a capability v2 release file.');
     }
@@ -102,19 +109,21 @@ async function verifyRelease(path: string, { files, sealed }: CapabilityV2Manife
   return payload;
 }
 
-export async function loadSealedCapabilityCorpus(paths: { manifest: string; sealed: string }) {
-  const manifestBytes = await readBytes(paths.manifest, 'manifest');
-  const manifest = parseJson(manifestBytes, capabilityV2ManifestSchema, 'manifest');
-  const { sealed, strata } = manifest;
+export async function readV2BundleCases(
+  path: string,
+  { files, strata }: Pick<CapabilityV2Manifest, 'files' | 'strata'>,
+  partition: CapabilityV2Manifest['sealed'],
+  manifestFile?: string,
+) {
   const strataCounts = new Map(strata.map(row => [stratumLabel(row), row.count]));
   const expectedTotal = strata.reduce((count, row) => count + row.count, 0);
   const expectedArabic = strata.reduce((count, row) => count + (row.language === 'ar' ? row.count : 0), 0);
-  if (strataCounts.size !== strata.length || expectedTotal !== sealed.caseCount || expectedArabic !== sealed.arabicCount) {
+  if (strataCounts.size !== strata.length || expectedTotal !== partition.caseCount || expectedArabic !== partition.arabicCount) {
     throw new CapabilityCorpusError('Inconsistent capability v2 manifest counts.');
   }
 
-  const payload = await verifyRelease(paths.sealed, manifest);
-  const { cases } = parseJson(payload, capabilityV2PayloadSchema, 'payload');
+  const payload = await verifyRelease(path, files, partition.sha256, manifestFile);
+  const { cases } = parseV2BundleJson(payload, capabilityV2PayloadSchema, 'payload');
   const actualCounts = new Map<string, number>();
   for (const item of cases) {
     const key = stratumLabel(item);
@@ -124,5 +133,12 @@ export async function loadSealedCapabilityCorpus(paths: { manifest: string; seal
     throw new CapabilityCorpusError('Case counts do not match the capability v2 strata.');
   }
   validateDistinct(cases);
+  return cases;
+}
+
+export async function loadSealedCapabilityCorpus(paths: { manifest: string; sealed: string }) {
+  const manifestBytes = await readV2BundleBytes(paths.manifest, 'manifest');
+  const manifest = parseV2BundleJson(manifestBytes, capabilityV2ManifestSchema, 'manifest');
+  const cases = await readV2BundleCases(paths.sealed, manifest, manifest.sealed);
   return { manifest, cases, manifestSha256: createHash('sha256').update(manifestBytes).digest('hex') };
 }

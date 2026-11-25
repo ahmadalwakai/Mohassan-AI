@@ -1,29 +1,45 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { mkdir, open, readFile, realpath, writeFile } from 'node:fs/promises';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { capabilityBaselineCommit, CapabilityCorpusError, loadCapabilityCorpus } from './corpus.js';
+import { capabilityBaselineCommit, CapabilityCorpusError, isWithin, loadCapabilityCorpus } from './corpus.js';
 import { withCapabilityHarness } from './observe.js';
 import { failureStages, scoreCapabilityCase, summarizeCapability } from './score.js';
+import { loadDevelopmentCapabilityCorpus } from './v2/dev.js';
 import { loadSealedCapabilityCorpus } from './v2/sealed.js';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const fixtureDir = resolve(root, 'tests/fixtures/agent-capability-bench');
+const v2DevBundlePath = 'tests/fixtures/agent-capability-bench/v2/dev';
 const git = promisify(execFile);
 
 function parseArgs(args: string[]) {
   const values = new Map<string, string>();
-  for (let index = 0; index < args.length; index += 2) {
-    const name = args[index]!, value = args[index + 1];
+  for (let index = 0; index < args.length; index++) {
+    const name = args[index]!;
+    if (name === '--v2-dev' && !values.has(name)) {
+      values.set(name, 'true');
+      continue;
+    }
+    const value = args[++index];
     if (!['--version', '--development', '--manifest', '--sealed', '--output', '--baseline'].includes(name)
       || values.has(name) || !value || value.startsWith('--')) {
-      throw new Error('Expected v1 options --manifest PATH --development PATH --output PATH and optional --sealed PATH, or --version 2 --sealed PATH --output PATH with optional --baseline true.');
+      throw new Error('Expected v1 options --manifest PATH --development PATH --output PATH and optional --sealed PATH, --version 2 --sealed PATH --output PATH with optional --baseline true, or --v2-dev with optional --output PATH and --baseline true.');
     }
     values.set(name, value);
   }
   const path = (name: string) => values.has(name) ? resolve(values.get(name)!) : undefined;
+  const defaultOutput = () => resolve(root, 'artifacts/agent-capability-bench', `${randomUUID()}.json`);
+  const baseline = values.has('--baseline');
+  if (values.has('--v2-dev')) {
+    if (['--version', '--development', '--manifest', '--sealed'].some(name => values.has(name))) {
+      throw new Error('--v2-dev uses the committed development bundle and accepts only --output PATH and --baseline true.');
+    }
+    if (baseline && values.get('--baseline') !== 'true') throw new Error('Expected --baseline true.');
+    return { version: '2', split: 'development', output: path('--output') ?? defaultOutput(), baseline } as const;
+  }
   const version = values.get('--version') ?? '1';
   if (version !== '1' && version !== '2') throw new Error('The capability benchmark version must be 1 or 2.');
   if (version === '2') {
@@ -32,20 +48,20 @@ function parseArgs(args: string[]) {
     if (!sealed || !output || values.has('--development') || values.has('--manifest')) {
       throw new Error('Capability v2 requires --sealed PATH and --output PATH and uses the pinned manifest.');
     }
-    if (values.has('--baseline') && values.get('--baseline') !== 'true') throw new Error('Expected --baseline true.');
-    return { version, sealed, output, baseline: values.has('--baseline') } as const;
+    if (baseline && values.get('--baseline') !== 'true') throw new Error('Expected --baseline true.');
+    return { version, split: 'sealed', sealed, output, baseline } as const;
   }
-  if (values.has('--baseline')) throw new Error('--baseline is available only for capability v2.');
+  if (baseline) throw new Error('--baseline is available only for capability v2.');
   return {
     version,
     manifest: path('--manifest') ?? resolve(fixtureDir, 'manifest.json'),
     development: path('--development') ?? resolve(fixtureDir, 'development.json'),
     sealed: path('--sealed'),
-    output: path('--output') ?? resolve(root, 'artifacts/agent-capability-bench', `${randomUUID()}.json`),
+    output: path('--output') ?? defaultOutput(),
   } as const;
 }
 
-async function sourceRevision(baseline = false) {
+async function sourceRevision(baseline = false, development = false) {
   const [revision, status, lockfile] = await Promise.all([
     git('git', ['rev-parse', 'HEAD'], { cwd: root }),
     git('git', ['status', '--porcelain=v1', '-z', `--untracked-files=${baseline ? 'all' : 'normal'}`], { cwd: root }),
@@ -53,9 +69,12 @@ async function sourceRevision(baseline = false) {
   ]);
   const gitCommit = revision.stdout.trim();
   const changes = status.stdout.split('\0').filter(Boolean);
-  if (baseline && (gitCommit !== capabilityBaselineCommit
-    || changes.some(change => !change.startsWith('?? scripts/agent-capability-bench/')))) {
-    throw new CapabilityCorpusError('Capability v2 baseline requires the pinned commit with only untracked benchmark tooling.');
+  const allowedImports = ['?? scripts/agent-capability-bench/'];
+  if (development) allowedImports.push(`?? ${v2DevBundlePath}/`);
+  if (baseline && (gitCommit !== capabilityBaselineCommit || changes.some(change => !allowedImports.some(prefix => change.startsWith(prefix))))) {
+    throw new CapabilityCorpusError(development
+      ? 'Capability v2 development baseline requires the pinned commit with only untracked benchmark tooling and development fixtures.'
+      : 'Capability v2 baseline requires the pinned commit with only untracked benchmark tooling.');
   }
   return {
     source: { gitCommit, worktreeClean: changes.length === 0, lockfileSha256: createHash('sha256').update(lockfile).digest('hex') },
@@ -96,18 +115,45 @@ function runtime() {
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone };
 }
 
+async function canonicalOutput(path: string): Promise<string> {
+  const parent = dirname(path);
+  const canonicalParent = await realpath(parent).catch(error => {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || parent === path) throw error;
+    return canonicalOutput(parent);
+  });
+  return resolve(canonicalParent, basename(path));
+}
+
+async function checkDevelopmentOutput(path: string): Promise<void> {
+  const [output, ...fixtures] = await Promise.all([
+    canonicalOutput(path),
+    ...['dev', 'sealed'].map(split => {
+      const dir = resolve(fixtureDir, 'v2', split);
+      return realpath(dir).catch(() => dir);
+    }),
+  ]);
+  if (fixtures.some(directory => isWithin(directory, output))) {
+    throw new CapabilityCorpusError('Capability v2 development reports require a path outside both fixture directories.');
+  }
+}
+
 async function runV2(paths: Extract<ReturnType<typeof parseArgs>, { version: '2' }>, startedAt: string) {
-  const { source, trackedWorktreeClean } = await sourceRevision(paths.baseline);
-  const corpus = await loadSealedCapabilityCorpus({
+  const development = paths.split === 'development';
+  const { source, trackedWorktreeClean } = await sourceRevision(paths.baseline, development);
+  if (development) await checkDevelopmentOutput(paths.output);
+  const corpus = development ? await loadDevelopmentCapabilityCorpus(resolve(root, v2DevBundlePath)) : await loadSealedCapabilityCorpus({
     manifest: resolve(root, 'scripts/agent-capability-bench/v2/manifest.json'), sealed: paths.sealed,
   });
-  if (corpus.manifest.sealed.caseCount !== 1_200) throw new CapabilityCorpusError('The capability v2 release requires 1,200 sealed cases.');
+  if ('sealed' in corpus.manifest && corpus.manifest.sealed.caseCount !== 1_200) {
+    throw new CapabilityCorpusError('The capability v2 release requires 1,200 sealed cases.');
+  }
   const harnessFiles = ['run.ts', 'corpus.ts', 'observe.ts', 'score.ts', 'v2/mapping.ts', 'v2/sealed.ts'];
+  if (development) harnessFiles.push('v2/dev.ts');
   const harnessSha256 = Object.fromEntries(await Promise.all(harnessFiles.map(async file => {
     const bytes = await readFile(resolve(root, 'scripts/agent-capability-bench', file));
     return [file, createHash('sha256').update(bytes).digest('hex')];
   })));
-  harnessSha256['v2/manifest.json'] = corpus.manifestSha256;
+  harnessSha256[development ? `${v2DevBundlePath}/manifest.json` : 'v2/manifest.json'] = corpus.manifestSha256;
   await mkdir(dirname(paths.output), { recursive: true });
   const receipt = await open(paths.output, 'wx', 0o600).catch(error => {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
@@ -117,17 +163,19 @@ async function runV2(paths: Extract<ReturnType<typeof parseArgs>, { version: '2'
   });
   const reportControllerError = console.error;
   try {
-    // Controller diagnostics can contain per-run details. The sealed mode emits aggregates only.
+    // Controller diagnostics can include details beyond the scored checks.
     console.error = () => {};
-    const summary = await withCapabilityHarness(async observe => {
+    const scores = await withCapabilityHarness(async observe => {
       const scores = [];
       for (const item of corpus.cases) scores.push(scoreCapabilityCase(item, await observe(item)));
-      return summarizeCapability(scores);
+      return scores;
     });
+    const summary = summarizeCapability(scores);
     const report = {
       schemaVersion: 2, startedAt, finishedAt: new Date().toISOString(),
       source: { ...source, trackedWorktreeClean, baselineVerified: paths.baseline, harnessSha256 },
       manifest: corpus.manifest, runtime: runtime(), summary,
+      ...(development ? { split: paths.split, scores } : {}),
     };
     await receipt.writeFile(JSON.stringify(report, null, 2) + '\n', { encoding: 'utf8' });
     console.log(`${table(summary, true)}\n\n${failureTable(summary)}`);
@@ -135,7 +183,7 @@ async function runV2(paths: Extract<ReturnType<typeof parseArgs>, { version: '2'
     console.error = reportControllerError;
     await receipt.close();
   }
-  console.log('\nAggregate JSON report written.');
+  console.log(development ? `\nDevelopment JSON report with per-case checks: ${paths.output}` : '\nAggregate JSON report written.');
 }
 
 async function main() {

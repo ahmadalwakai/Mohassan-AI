@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { capabilityBaselineCommit, capabilityCaseSchema, type CapabilityCase } from '../corpus.js';
+import { capabilityBaselineCommit, capabilityCaseSchema, normalizeInput, type CapabilityCase } from '../corpus.js';
 import { mappingVersion, type Candidate, type Dataset, type ImportResult } from './mapping.js';
 import { sha256 } from './sources.js';
 
@@ -11,23 +11,25 @@ export interface Quota {
   slice?: 'in-scope' | 'oos';
 }
 
-function share({ dataset, item, key }: Candidate): string {
+export function candidateStratum({ dataset, item, key }: Candidate): string {
   const stratum = `${dataset}/${item.area}/${item.language}`;
   return dataset === 'clinc150' && item.area === 'refusal' ? `${stratum}/${key.startsWith('oos_test:') ? 'oos' : 'in-scope'}` : stratum;
 }
-const quotaName = ({ dataset, area, language, slice }: Quota) => [dataset, area, language, ...(slice ? [slice] : [])].join('/');
+export const quotaStratum = ({ dataset, area, language, slice }: Quota) => [dataset, area, language, ...(slice ? [slice] : [])].join('/');
 const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
-const normalize = (value: string) => value.normalize('NFC').trim().replace(/\s+/gu, ' ').toLowerCase();
 const encoded = (value: object) => JSON.stringify(value) + '\n';
-const inputKey = ({ turns }: Pick<CapabilityCase, 'turns'>) => JSON.stringify(turns.map(turn => [normalize(turn.text),
-  Object.entries(turn.fields ?? {}).sort(([a], [b]) => compare(a, b)).map(([key, value]) => [key, normalize(value)]),
+const inputKey = ({ turns }: Pick<CapabilityCase, 'turns'>) => JSON.stringify(turns.map(turn => [normalizeInput(turn.text),
+  Object.entries(turn.fields ?? {}).sort(([a], [b]) => compare(a, b)).map(([key, value]) => [key, normalizeInput(value)]),
   Boolean(turn.answerQuestion), turn.approve]));
-const familyKey = ({ dataset, family }: Candidate) => JSON.stringify([dataset, family]);
+export const familyKey = ({ dataset, family }: Candidate) => JSON.stringify([dataset, family]);
 
 export function availableStrata(results: readonly ImportResult[]): Record<string, number> {
   const counts = new Map<string, number>();
   for (const { candidates } of results) {
-    for (const item of candidates) counts.set(share(item), (counts.get(share(item)) ?? 0) + 1);
+    for (const item of candidates) {
+      const stratum = candidateStratum(item);
+      counts.set(stratum, (counts.get(stratum) ?? 0) + 1);
+    }
   }
   return Object.fromEntries([...counts.entries()].sort(([a], [b]) => compare(a, b)));
 }
@@ -37,7 +39,7 @@ export function buildSealedSet(results: readonly ImportResult[], quotas: readonl
   if (seed.length !== 32) throw new Error('The custodian seed must be exactly 32 random bytes.');
   const digest = (purpose: string, candidate: Candidate) => createHmac('sha256', seed)
     .update(JSON.stringify([mappingVersion, purpose, candidate.dataset, candidate.key])).digest('hex');
-  const pools = new Map(quotas.map(quota => [quotaName(quota), {
+  const pools = new Map(quotas.map(quota => [quotaStratum(quota), {
     quota, selected: 0, offset: 0, rows: [] as { candidate: Candidate; rank: string }[],
   }]));
   if (pools.size !== quotas.length || quotas.some(({ count }) => !Number.isSafeInteger(count) || count < 1)) {
@@ -47,7 +49,7 @@ export function buildSealedSet(results: readonly ImportResult[], quotas: readonl
   const previousOverlap = new Map<string, number>();
   for (const { candidates } of results) {
     for (const candidate of candidates) {
-      const name = share(candidate);
+      const name = candidateStratum(candidate);
       if (previousInputs.has(inputKey(candidate.item))) {
         previousOverlap.set(name, (previousOverlap.get(name) ?? 0) + 1);
       } else pools.get(name)?.rows.push({ candidate, rank: digest('rank', candidate) });
