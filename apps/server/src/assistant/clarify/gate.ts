@@ -5,9 +5,10 @@ import { requestCapabilityAllowed, type UserRequestConstraints } from '../reques
 import { decideRequestRoute, rankClarificationRoutes, type RequestRoutingDecision } from '../routing-decision.js';
 import type { ShadowRouteCandidate, ShadowRouter } from '../router.js';
 import { applyChoiceRequestEdit } from './choice-request.js';
+import { missingRequestInput } from './missing-input.js';
 import { armClarification, hasAnsweredClarification } from './resume.js';
-import { clarificationCard, clarificationLanguage, decideClarification, legacyClarificationNeeded, missingClarificationDetail,
-  missingClarificationSlot, type ClarificationChoice, type ClarificationKind, type ClarificationPlan } from './policy.js';
+import { clarificationCard, clarificationLanguage, decideClarification, legacyClarificationNeeded, missingClarificationSlot,
+  openClarification, type ClarificationChoice, type ClarificationKind, type ClarificationPlan } from './policy.js';
 import { clarificationEntityReference, conversationClarificationCandidates, lookupClarificationCandidates } from './sources.js';
 
 type SourceInput = Parameters<typeof lookupClarificationCandidates>[0];
@@ -28,7 +29,6 @@ interface ClarificationGateInput {
   memory?: SourceInput['memory'];
   route: (request: string) => RequestRoutingDecision;
   pause: (question: ChatQuestion) => Promise<void>;
-  block: (text: string) => Promise<void>;
 }
 
 export function routeClarifiedRequest(text: string, config: CommandChatConfig, fullAccess: boolean, chatModel: boolean, turnId?: string) {
@@ -37,7 +37,7 @@ export function routeClarifiedRequest(text: string, config: CommandChatConfig, f
     coding: Boolean(config.tools?.work?.code), chatModel, writerModel: chatModel } });
 }
 
-const danglingReference = /(?<!\p{L})(?:it|that|this|them|هذا|هذه|ذلك|تلك)(?!\p{L})/iu;
+const danglingReference = /(?<!\p{L})(?:it|that|this|them|there|he|she|هذا|هذه|ذلك|تلك|هناك|هو|هي)(?!\p{L})/iu;
 
 function report(enabled: boolean, legacyWouldAsk: boolean, decision: string, kind: ClarificationKind, count: number, b0Count: number) {
   console.info(JSON.stringify({ event: 'clarification_shadow', enabled, legacyWouldAsk, decision, kind, candidateCount: count, b0Count }));
@@ -51,7 +51,8 @@ export async function runClarificationGate(input: ClarificationGateInput): Promi
   const legacyWouldAsk = legacyClarificationNeeded(state.requestResolution);
   const language = clarificationLanguage(request);
   const missing = missingClarificationSlot(actionRequest, state.requestResolution);
-  const named = clarificationEntityReference(actionRequest);
+  const named = legacyWouldAsk ? null : clarificationEntityReference(actionRequest);
+  const missingInput = missing ? null : missingRequestInput(actionRequest, language, state.requestResolution, state.routing);
   let shadow: readonly ShadowRouteCandidate[] = [];
   try { shadow = input.shadowRouter?.candidates?.(request) ?? []; } catch { /* The shadow never holds up a request. */ }
   const ranked = rankClarificationRoutes(actionRequest, state.routing, shadow);
@@ -72,6 +73,7 @@ export async function runClarificationGate(input: ClarificationGateInput): Promi
     report(enabled, legacyWouldAsk, route.decision, 'route', routeChoices.length, shadow.length);
   }
 
+  if (!plan && missingInput) plan = openClarification(missingInput.kind, language, undefined, missingInput.prompt);
   if (!plan && (missing || named || legacyWouldAsk)) {
     const kind: Exclude<ClarificationKind, 'route'> = missing ?? 'entity';
     const subject = kind === 'entity' ? named ?? actionRequest.match(danglingReference)?.[0] : undefined;
@@ -85,11 +87,11 @@ export async function runClarificationGate(input: ClarificationGateInput): Promi
       const revised = applyChoiceRequestEdit(request, candidate.label, { kind, subject });
       return revised !== null && revised !== request && revised.length <= 4000;
     };
-    const options: Pick<ClarificationPlan, 'kind' | 'language' | 'subject'> = { kind, language, subject };
+    const options = { kind, language, subject };
     let decision = decideClarification({ ...options, candidates: local.filter(forDestination) });
     if (enabled && decision.decision !== 'clear_winner') {
       const search = publicSubject && requestCapabilityAllowed(constraints, 'public_search') ? input.search : undefined;
-      const memory = !publicSubject && requestCapabilityAllowed(constraints, 'memory_read') ? input.memory : undefined;
+      const memory = !publicSubject && (kind !== 'entity' || reference) && requestCapabilityAllowed(constraints, 'memory_read') ? input.memory : undefined;
       const found = await lookupClarificationCandidates({ text: actionRequest, kind, reference, ownerId: input.ownerId,
         signal: input.signal, search, readPage: input.readPage, memory });
       input.signal.throwIfAborted();
@@ -97,15 +99,15 @@ export async function runClarificationGate(input: ClarificationGateInput): Promi
     }
     if (decision.decision === 'ask') plan = decision.plan;
     report(enabled, legacyWouldAsk, decision.decision, kind, decision.decision === 'ask' ? decision.plan.candidates.length : decision.count, shadow.length);
-    if (enabled && !plan && (legacyWouldAsk || missing) && decision.decision === 'insufficient_evidence') {
-      await input.block(missingClarificationDetail(kind, language));
-      return true;
-    }
+    if (!plan && (legacyWouldAsk || missing) && decision.decision === 'insufficient_evidence')
+      plan = openClarification(kind === 'entity' && !subject ? 'request' : kind, language, subject);
   }
 
   if (!enabled || !plan) return false;
   const card = clarificationCard(plan);
   if (!armClarification(state, card.id, plan)) return false;
+  state.routing = { route: 'clarify', intent: state.routing?.intent ?? 'unknown', handler: 'clarify',
+    availability: 'needs_context', missingCapabilities: [], reason: plan.kind === 'route' ? 'unresolved_intent' : 'missing_reference' };
   await input.pause(card);
   return true;
 }

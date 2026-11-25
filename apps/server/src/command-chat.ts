@@ -2640,7 +2640,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // finishes the same request (state.pendingOpen above). In production on 2026-11-23 the sentence itself was searched for,
       // and the search guard refused it as private information. Before the general clarifier below, which would ask what
       // «its» in «show me its content» refers to instead of which website.
-      const unnamed = freshRequest && !handsPlan && !documentWork && !hasChatModel() && state.routing?.route !== 'pc' ? unnamedSite(actionRequest) : null;
+      const unnamed = freshRequest && !handsPlan && !documentWork && !hasChatModel() && state.routing?.route !== 'pc' ? unnamedSite(actionRequest, page ? plan => { handsPlan = plan; } : undefined) : null;
       if (unnamed) {
         state.pendingOpen = unnamed;
         const card = siteQuestion(unnamed);
@@ -2649,7 +2649,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           options: [{ id: 'stop', label: unnamed.lang === 'ar' ? 'توقف هنا' : 'Stop here' }], fields: card.fields } satisfies ChatQuestion) }, card.prompt);
         return;
       }
-      if (await clarifyCommand({ config, id, ownerId, runId, request, actionRequest, state, history, signal, constraints, search, fullAccess: fullReach(), chatModel: hasChatModel(), eligible: freshRequest && !handsPlan && !documentWork && !intrinsicRuntime && !intrinsicConversation && !intrinsicSelf && !intrinsicComputation && !intrinsicSequence, active, assertPublicSearch, pause, finish }, async () => {
+      if (await clarifyCommand({ config, id, ownerId, runId, request, actionRequest, state, history, signal, constraints, search, fullAccess: fullReach(), chatModel: hasChatModel(), eligible: freshRequest && !handsPlan && !documentWork && !intrinsicRuntime && !intrinsicConversation && !intrinsicSelf && !intrinsicComputation && !intrinsicSequence, active, assertPublicSearch, pause }, async () => {
       if (freshRequest && !documentWork && !intrinsicRuntime && !intrinsicConversation && !intrinsicSelf && !intrinsicComputation && !intrinsicSequence && state.requestResolution?.kind === 'ambiguous' && state.requestResolution.ambiguities.some(reason =>
         reason === 'missing_reference' || reason === 'missing_question' || reason === 'unclear_replacement')) {
         const attempts = (state.clarificationAttempts ?? 0) + 1;

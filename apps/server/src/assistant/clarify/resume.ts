@@ -14,7 +14,7 @@ interface AnswerChoice {
 }
 
 export interface ClarificationResumePlan {
-  kind: 'entity' | 'route' | 'date' | 'account' | 'file';
+  kind: 'entity' | 'route' | 'date' | 'account' | 'file' | 'conversion' | 'request';
   subject?: string;
   candidates: readonly AnswerChoice[];
   language: 'ar' | 'en';
@@ -58,15 +58,19 @@ function cannotResume(ar: boolean): BrowserError {
   return new BrowserError('CHAT_CLARIFICATION_CHANGED', ar ? 'تعذّر ربط الإجابة بالطلب المعلّق.' : 'The answer could not be bound to the pending request.', 409);
 }
 
-function unsafeAnswer(ar: boolean, route = false): BrowserError {
-  const text = route
+function unsafeAnswer(ar: boolean, kind: ClarificationResumePlan['kind'], open: boolean): BrowserError {
+  const text = open
+    ? kind === 'request'
+      ? ar ? 'أعد كتابة طلبك كاملاً واذكر الإجراء المقصود.' : 'Enter a complete request that says what you want me to do.'
+      : ar ? 'اكتب القيمة المطلوبة أو أعد صياغة الطلب مع التفاصيل الناقصة.' : 'Enter the requested value or restate the request with the missing details.'
+    : kind === 'route'
     ? ar ? 'اختر إجابة من البطاقة أو اكتب طلبًا كاملًا يحدّد الإجراء المطلوب.' : 'Choose an answer from the card or enter a complete request naming the action.'
     : ar ? 'اختر إجابة من البطاقة أو اكتب القيمة المقصودة فقط.' : 'Choose an answer from the card or enter just the requested value.';
   return new BrowserError('CHAT_CLARIFICATION_ANSWER_INVALID', text, 400);
 }
 
 function explicitAlternative(routing: RequestRoutingDecision): boolean {
-  return routing.availability === 'ready' && routing.resolution.kind === 'new'
+  return routing.availability !== 'needs_context' && routing.resolution.kind === 'new'
     && !['clarify', 'reply', 'chat', 'unsupported'].includes(routing.route)
     && (routing.reason === 'deterministic_browser_plan' && Boolean(routing.browserSteps?.length)
       || !routing.sourceAssessment.reasons.some(reason => reason === 'nominal_public_subject' || reason === 'missing_target'));
@@ -88,28 +92,34 @@ export function resumeClarification(state: BrainState & ClarificationState, inpu
   if (state.actionCompletion !== undefined && (!priorLedger || priorLedger.events.length || priorLedger.fault)) throw cannotResume(ar);
 
   const routeChoice = pending.kind === 'route';
+  const openCard = pending.candidates.length === 0;
+  const invalidAnswer = () => unsafeAnswer(ar, pending.kind, openCard);
   const choice = pending.candidates.find(candidate => routeChoice ? candidate.label === message.text
     : [candidate.label, candidate.value].some(value => operandKey(value) === operandKey(message.text)));
-  const source = routeChoice ? createClarifiedRequestSource(message.text, message.id) : null;
-  const clarified = pending.kind === 'route' ? source && { request: message.text, source }
+  const edited = pending.kind === 'request' || pending.kind === 'route' ? null
     : createChoiceRequestSource(goal, message.text, message.id, { kind: pending.kind, ...(pending.subject ? { subject: pending.subject } : {}) });
-  if (!clarified || clarified.request === goal) throw unsafeAnswer(ar, routeChoice);
+  const responseRoute = routeChoice || openCard && !(pending.kind === 'conversion' && edited) ? input.route(message.text) : null;
+  const fullRequest = routeChoice || Boolean(responseRoute && explicitAlternative(responseRoute));
+  const source = fullRequest ? createClarifiedRequestSource(message.text, message.id) : null;
+  const clarified = fullRequest ? source && { request: message.text, source } : edited;
+  if (!clarified || clarified.request === goal) throw invalidAnswer();
 
   const priorConstraints = parseUserRequestConstraints(goal)?.forbiddenCapabilities ?? [];
   const nextConstraints = parseUserRequestConstraints(clarified.request)?.forbiddenCapabilities ?? [];
-  if (priorConstraints.some(capability => !nextConstraints.includes(capability))) throw unsafeAnswer(ar, routeChoice);
-  const routing = input.route(clarified.request);
-  if (routeChoice && (choice
-    ? choice.value !== message.text || routing.route !== choice.route || routing.availability !== 'ready'
-    : !explicitAlternative(routing))) throw unsafeAnswer(ar, true);
+  if (priorConstraints.some(capability => !nextConstraints.includes(capability))) throw invalidAnswer();
+  const routing = fullRequest && responseRoute ? responseRoute : input.route(clarified.request);
+  if (routeChoice && (routing.availability !== 'ready' || (choice
+    ? choice.value !== message.text || routing.route !== choice.route
+    : !explicitAlternative(routing)))) throw invalidAnswer();
+  if (openCard && routing.availability === 'needs_context') throw invalidAnswer();
   const wasPrivate = state.requestResolution?.scope === 'private' || state.requestResolution?.sourceAssessment?.scope === 'private'
     || state.requestResolution?.kind === 'ambiguous' && state.previousSource?.scope === 'private';
   const literalPrivate = choice?.source === 'memory' || choice?.private || pending.kind === 'account' || pending.kind === 'file';
   const publicDestination = ['web_search', 'news', 'browser_command'].includes(routing.route) || routing.sourceAssessment.publicQueryEligible;
   if ((wasPrivate || literalPrivate) && (publicDestination || routing.resolution.scope === 'public')
-    || literalPrivate && routing.resolution.scope !== 'private') throw unsafeAnswer(ar, routeChoice);
-  if (pending.kind === 'entity' && state.requestResolution?.sourceAssessment?.publicQueryEligible
-    && (routing.sourceAssessment.scope !== 'public' || routing.sourceAssessment.operation !== 'lookup')) throw unsafeAnswer(ar);
+    || literalPrivate && routing.resolution.scope !== 'private') throw invalidAnswer();
+  if (!fullRequest && pending.kind === 'entity' && state.requestResolution?.sourceAssessment?.publicQueryEligible
+    && (routing.sourceAssessment.scope !== 'public' || routing.sourceAssessment.operation !== 'lookup')) throw invalidAnswer();
 
   const contract = compileActionCompletionContract({ runId, request: clarified.request });
   if (!contract) throw cannotResume(ar);

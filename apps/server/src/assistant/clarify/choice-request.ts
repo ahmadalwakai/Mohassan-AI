@@ -1,7 +1,10 @@
 import { z } from 'zod';
+import { evaluateLocalComputation } from '../local-computation.js';
+import { parseUserRequestConstraints } from '../request-constraints.js';
+import { conversionQuantity } from './conversion-input.js';
 
 export const ChoiceRequestEditSchema = z.object({
-  kind: z.enum(['entity', 'date', 'account', 'file']),
+  kind: z.enum(['entity', 'date', 'account', 'file', 'conversion']),
   subject: z.string().min(1).max(160).optional(),
 }).strict();
 export type ChoiceRequestEdit = z.infer<typeof ChoiceRequestEditSchema>;
@@ -16,6 +19,8 @@ const punctuation = /[.!?؟…]+$/u;
 const arabic = /\p{Script=Arabic}/u;
 const computerSuffix = /(?:\s+on my (?:computer|pc)|\s+على\s+جهازي)$/iu;
 const accountSuffix = /\b(my|the) account$/iu;
+const unitLabel = String.raw`[\p{L}\p{M}\p{N}°][\p{L}\p{M}\p{N}°^/ .-]*?`;
+const unitPair = new RegExp(String.raw`^(?:(?:from|من)\s+)?(${unitLabel})\s+(?:to|into|[إا]ل[يى])\s+(${unitLabel})[.!?؟]*$`, 'iu');
 
 function replaceUniqueSubject(goal: string, subject: string, value: string): string | null {
   const escaped = subject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -36,11 +41,27 @@ function explicitEntityRequest(goal: string, subject: string | undefined, value:
   return projected?.replace(followUp, arabic.test(goal) ? 'ماذا تعرف عن ' : 'What can you tell me about ') ?? null;
 }
 
+function conversionRequest(goal: string, answer: string): string | null {
+  const constraints = parseUserRequestConstraints(goal);
+  const span = constraints?.positiveSpan;
+  if (constraints && !span) return null;
+  const action = span ? goal.slice(span.start, span.end) : goal;
+  const quantity = conversionQuantity(action);
+  const units = unitPair.exec(answer);
+  if (!quantity || !units) return null;
+  const [, from, to] = units;
+  const request = arabic.test(action) ? `حوّل ${quantity} ${from} إلى ${to}` : `Convert ${quantity} ${from} to ${to}`;
+  const calculation = evaluateLocalComputation(request, new Date(0));
+  if (calculation?.status !== 'completed' || calculation.consumption?.kind !== 'conversion') return null;
+  return span ? `${goal.slice(0, span.start)}${request}${goal.slice(span.end)}` : request;
+}
+
 /** The only data added to an operand is the exact answer saved in the user message. */
 export function applyChoiceRequestEdit(goal: string, answer: string, edit: ChoiceRequestEdit): string | null {
   const value = answer.trim();
-  if (value.length > 160 || !(edit.kind === 'file' ? filePath : literalValue).test(value)
-    || instruction.test(value) || actionClause.test(value) || other.test(value)) return null;
+  if (value.length > 160 || instruction.test(value) || actionClause.test(value) || other.test(value)) return null;
+  if (edit.kind === 'conversion') return conversionRequest(goal, value);
+  if (!(edit.kind === 'file' ? filePath : literalValue).test(value)) return null;
   if (edit.kind === 'entity') return explicitEntityRequest(goal, edit.subject, value);
   if (edit.subject) return replaceUniqueSubject(goal, edit.subject, value);
   const suffix = goal.match(punctuation)?.[0] ?? '';

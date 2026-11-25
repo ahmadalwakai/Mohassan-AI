@@ -103,6 +103,21 @@ describe('a calculation on an earlier result', () => {
     expect(computationReference('Show me the previous result page')).toBeNull();
   });
 
+  it('uses the existing calculator to double a referenced value in either language', () => {
+    expect(on('Would you please double the previous total and report the answer?', '-2.5')).toBe('(-2.5) * 2 = -5');
+    expect(on('ضاعف هذا الرقم.', '7')).toBe('(7) * 2 = 14');
+    expect(on('ضاعفها!', '8')).toBe('(8) * 2 = 16');
+    expect(computationReference('Double the previous value, then save it.')).toBeNull();
+    expect(computationReference('Double the string thickness.')).toBeNull();
+  });
+
+  it('uses a referenced quantity without changing its stated conversion units', () => {
+    const request = 'Would you convert this from miles to yards?';
+    expect(computationReference(request)?.phrase).toBe('this');
+    expect(on(request, '2')).toBe('2 miles = 3520 yards');
+    expect(on('Convert it from seconds to kilograms.', '2')).not.toContain(' = ');
+  });
+
   it('shows the calculation and where the earlier value came from, each line a computed claim', () => {
     const result = evaluateReferencedComputation('Add 12 to 888.')!;
     const shown = composeReferencedComputation(result, { value: '888', line: '37 * 24 = 888', from: 'conversation' });

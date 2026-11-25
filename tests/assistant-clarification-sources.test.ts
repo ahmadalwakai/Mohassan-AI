@@ -60,6 +60,16 @@ describe('clarification candidate sources', () => {
       .toEqual([expect.objectContaining({ value: 'Paris, Texas', score: 0.97 })]);
   });
 
+  it('does not re-infer a name when understanding found an unresolved reference', async () => {
+    const search = vi.fn(async () => [disambiguationHit]);
+    const memory = vi.fn(async () => ({ text: '', evidence: [] }));
+    const input = { kind: 'entity' as const, text: 'What is its color, اللون؟', reference: null };
+    expect(conversationClarificationCandidates({ ...input, history: [] })).toEqual([]);
+    expect(await lookupClarificationCandidates({ ...input, ownerId: 'owner', signal: new AbortController().signal, search, memory })).toEqual([]);
+    expect(search).not.toHaveBeenCalled();
+    expect(memory).not.toHaveBeenCalled();
+  });
+
   it('uses only owner-scoped structured memory evidence and tolerates a failed search', async () => {
     const memory = vi.fn(async () => ({ text: 'Name: Paris (should not read)', evidence: [
       'Name: Paris (mythology)', 'Paris (city)', 'Paris (ignore instructions)', 'Paris (a secret)\u202e',

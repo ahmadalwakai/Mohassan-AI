@@ -45,7 +45,6 @@ interface WorkInput {
   active: () => Promise<void>;
   assertPublicSearch: (request: string, query: string, state: BrainState) => void;
   pause: (id: string, runId: string, state: BrainState, status: 'waiting_user', fields: Record<string, unknown>, say: string) => Promise<void>;
-  finish: (id: string, runId: string, state: BrainState, text: string, status: 'blocked') => Promise<void>;
 }
 
 const clarificationEnabled = (override?: boolean) => override ?? process.env.MOHASSAN_CLARIFY_CHOICES === '1';
@@ -73,14 +72,13 @@ export async function clarifyCommand(input: WorkInput, legacy: () => Promise<fal
         state.requestClarification = { attempts: 1 };
         return input.pause(id, runId, state, 'waiting_user', { question: JSON.stringify(question) }, question.prompt);
       },
-      block: text => input.finish(id, runId, state, text, 'blocked'),
     });
     if (handled) return true;
   } catch (error) {
     if (enabled) throw error;
     // Shadow inspection cannot alter the disabled path.
   }
-  return !enabled && (await legacy()) !== false;
+  return !enabled && input.eligible && (await legacy()) !== false;
 }
 
 /** Preserve explicit public questions that the legacy hands parser treats as small talk. */

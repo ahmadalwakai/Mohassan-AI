@@ -8,9 +8,11 @@ import { isSiteRequest } from '@mohassan/sites';
 import type { WebSequel } from './web-sequence.js';
 import { splitReplyDirective, type ReplyField } from './reply-directive.js';
 import { returnedTo } from './return-to.js';
+import { resolveUnnamedSite, type UnnamedSite } from './clarify/website.js';
 
 export { returnedTo };
 export { siteName };
+export type { UnnamedSite } from './clarify/website.js';
 
 /**
  * How the owner asked the reply to look (reply-directive.ts), kept apart from the search words: «in two short Arabic
@@ -89,7 +91,7 @@ const VERBS = '(?:ابحث|أبحث|إبحث|دور|فتش|اضغط|إضغط|ا�
 const SPLIT = new RegExp(`\\s*[،,؛;]\\s*(?:ثم\\s+|و\\s*)?(?=${VERBS})|\\s+(?:ثم|وبعدين|وبعدها|بعدها|and then|then)\\s+|\\s+and\\s+(?=(?:search|look up|click|tap|open|read|type|scroll|go back|summari))|\\s+و(?=${VERBS})`, 'iu');
 
 /** Asking to see what a page says: «اقرأ», «لخص», «اعرض», «أرني», with an object pronoun («اقرأها») or not. Tidied text. */
-const SHOW_PAGE_AR = '(?:اقرأ|إقرأ|اقرا|لخص|اعرض|أعرض|اظهر|أظهر|ارني|أرني)(?:ها|ه)?';
+const SHOW_PAGE_AR = '(?:اقرأ|إقرأ|اقرا|لخص|اعرض|أعرض|اظهر|أظهر|ارني|أرني|ورني)(?:ها|ه)?';
 /** What is to be seen: the page, its content or its text, by name or by a pronoun («محتواه», «ما فيها»). */
 const PAGE_CONTENT_AR = '(?:محتوى\\s+)?(?:هذه\\s+)?(?:الصفح[ةه]|المحتوى|النص|المقال[ةه]?|الموقع|ما فيها|ما فيه|محتواه|محتواها|محتوياته|محتوياتها|نصه|نصها)';
 const SHOW_PAGE_EN = '(?:read|summari[sz]e|show|display)';
@@ -109,26 +111,11 @@ const OPEN_THEN_READ = new RegExp(`^(.+?)\\s*[،,]?\\s+(?:ثم\\s+|وبعدها\
 const TLD = '(?:com|net|org|edu|gov|mil|int|info|biz|io|ai|app|dev|me|tv|co|uk|us|ca|au|de|fr|es|it|nl|se|ch|tr|ru|in|cn|jp|news|blog|site|online|store|tech|sa|ae|eg|jo|kw|qa|bh|om|ma|tn|dz|iq|sy|lb|ps|ly|sd|ye)';
 /** A whole message that is one web address: «https://example.com», «www.bbc.com/arabic», «example.org». Tidied text. */
 const BARE_ADDRESS = new RegExp(`^(?:https?:\\/\\/[^\\s<>"'«»]+|(?:www\\.)?(?:[a-z0-9-]+\\.)+${TLD}(?:[/?#][^\\s<>"'«»]*)?)$`, 'iu');
-/**
- * «افتح موقعًا واعرض لي محتواه» with no address, «افتح موقعًا», «open a website and show me its content»: a page to open that
- * the request does not name. Production searched the sentence itself on 2026-11-23, and the search guard refused it as
- * private. Group 1 is the request to see the content. Folded text (fold()).
- */
-const UNNAMED_SITE_AR = /^(?:من فضلك\s+|لو سمحت\s+)?(?:افتح|ادخل|اذهب)(?:\s+لي)?(?:\s+(?:الي|علي))?\s+(?:موقعا|موقع|صفحه|رابطا|رابط)(?:\s+(?:ما|ويب|الكترونيا?|انترنت))?(\s*[،,]?\s+(?:ثم\s+|و)(?:اقرا|لخص|اعرض|اظهر|ارني)(?:ها|ه)?(?:\s+لي)?(?:\s+(?:محتواه|محتواها|محتوياته|محتوياتها|نصه|نصها|ما فيه|ما فيها|المحتوي|النص|الصفحه))?)?$/u;
-const UNNAMED_SITE_EN = /^(?:please\s+)?(?:open|visit|go to)\s+(?:a|any|some)\s+(?:website|web ?site|site|web ?page|page|link)(\s*,?\s+(?:and(?:\s+then)?|then)\s+(?:show|read|display)(?:\s+me)?(?:\s+(?:it|its (?:content|contents|text)|the (?:content|contents|text)|what(?:'s| is) on it))?)?$/u;
-
 /** A whole message that is one web address, which has no language of its own. */
 export const isBareAddress = (request: string): boolean => typeof request === 'string' && BARE_ADDRESS.test(tidy(request));
 
-/** A request to open a website that names none: whether it also asks to see the content, and its language. */
-export interface UnnamedSite { read: boolean; lang: 'ar' | 'en' }
-export function unnamedSite(request: string): UnnamedSite | null {
-  if (typeof request !== 'string' || request.length > 200) return null;
-  const text = fold(request);
-  const ar = UNNAMED_SITE_AR.exec(text);
-  if (ar) return { read: Boolean(ar[1]), lang: 'ar' };
-  const en = UNNAMED_SITE_EN.exec(text);
-  return en ? { read: Boolean(en[1]), lang: 'en' } : null;
+export function unnamedSite(request: string, readCurrentPage?: (plan: HandsPlan) => void): UnnamedSite | null {
+  return resolveUnnamedSite(request, { openThenRead: OPEN_THEN_READ, tidy, fold }, readCurrentPage);
 }
 
 /** The card that asks which website to open, in the request's language. */
@@ -244,6 +231,7 @@ function parseSegment(raw: string): HandsStep | HandsStep[] | null {
   match = /^(?:اضغط|إضغط|انقر|اختر|افتح|إفتح|ادخل)\s+(?:لي\s+)?(?:على\s+|عل\s+|إلى\s+|الى\s+)?(.+)$/u.exec(text)
     ?? /^(?:click|tap|choose|select|open)\s+(?:on\s+)?(.+)$/i.exec(text);
   if (match) {
+    if (unnamedSite(text)) return null;
     const named = strip(match[1]);
     const target = named.replace(LABEL_WORDS, '').trim();
     if (!target) return null;

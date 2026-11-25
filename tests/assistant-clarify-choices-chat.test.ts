@@ -305,6 +305,61 @@ describe('choice clarification through the command chat controller', () => {
     } finally { info.mockRestore(); }
   });
 
+  it('continues the same run after a complete reply to an open card', async () => {
+    const goal = 'What about it?';
+    const waiting = await ask(goal);
+    expect(waiting.status).toBe('waiting_user');
+    const question = ChatQuestionSchema.parse(waiting.question);
+    expect(question.options).toEqual([]);
+    const before = await run(waiting.id);
+    await expect(active.send(owner, waiting.id, { text: 'Other', questionId: question.id }))
+      .rejects.toMatchObject({ code: 'CHAT_CLARIFICATION_ANSWER_INVALID' });
+    expect((await active.detail(owner, waiting.id)).question?.id).toBe(question.id);
+    const text = 'Calculate 27 plus 18.';
+    await active.send(owner, waiting.id, { text, questionId: question.id });
+    await active.settled(waiting.id);
+
+    const detail = await active.detail(owner, waiting.id);
+    expect(detail.question).toBeNull();
+    expect(detail.messages.filter(message => message.role === 'user').map(message => message.text)).toEqual([goal, text]);
+    expect(detail.messages.filter(message => message.role === 'assistant').at(-1)?.text).toMatch(/\b45\b/u);
+    expect(await run(waiting.id)).toMatchObject({ id: before.id, goal, status: 'completed', state: { routing: { route: 'compute' } } });
+    expect(lookups).toEqual([]);
+  });
+
+  it('uses a short numeric answer to finish the original referenced calculation', async () => {
+    const goal = 'Would you double that number?';
+    const waiting = await ask(goal);
+    expect(waiting.status).toBe('waiting_user');
+    const question = ChatQuestionSchema.parse(waiting.question);
+    expect(question.prompt).toContain('that number');
+    const before = await run(waiting.id);
+    await active.send(owner, waiting.id, { text: '12.5', questionId: question.id });
+    await active.settled(waiting.id);
+
+    const detail = await active.detail(owner, waiting.id);
+    expect(detail.question).toBeNull();
+    expect(detail.messages.filter(message => message.role === 'assistant').at(-1)?.text).toContain('12.5 * 2 = 25');
+    expect(await run(waiting.id)).toMatchObject({ id: before.id, goal, status: 'completed' });
+    expect(lookups).toEqual([]);
+  });
+
+  it('converts the original quantity after the owner supplies both units', async () => {
+    const goal = 'Convert 37.';
+    const waiting = await ask(goal);
+    expect(waiting.status).toBe('waiting_user');
+    const question = ChatQuestionSchema.parse(waiting.question);
+    const before = await run(waiting.id);
+    await active.send(owner, waiting.id, { text: 'kilometres to metres', questionId: question.id });
+    await active.settled(waiting.id);
+
+    const detail = await active.detail(owner, waiting.id);
+    expect(detail.question).toBeNull();
+    expect(detail.messages.filter(message => message.role === 'assistant').at(-1)?.text).toContain('37000 metres');
+    expect(await run(waiting.id)).toMatchObject({ id: before.id, goal, status: 'completed', state: { routing: { route: 'compute' } } });
+    expect(lookups).toEqual([]);
+  });
+
   it('does not send private account text to public search', async () => {
     // Existing fixture from assistant-request-context.test.ts.
     const detail = await ask('ما كلمة المرور في حسابي؟');
