@@ -1,6 +1,8 @@
 import type { Frame } from './contract.js';
 import { fixedReply, type LocalReply } from './limits.js';
-import { evaluateArithmeticExpression } from '../calculator.js';
+import { evaluateArithmeticExpression, type ArithmeticStep } from '../calculator.js';
+import { parseNumberWords } from '../reasoning/number-words.js';
+import { arithmeticExpression } from './arithmetic-language.js';
 import { finishComputationConsumption, prepareComputationSource, type ComputationConsumption, type ComputationKind, type PreparedComputationSource } from './computation-consumption.js';
 export type { ComputationConsumption } from './computation-consumption.js';
 
@@ -48,54 +50,27 @@ function calculated(frame: Frame, value: string, line: string): LocalReply {
   };
 }
 
-// «كم حاصل 17 × 23؟» and «ما هو ناتج …» ask for the result as «ما ناتج …» does (real request rq039, 2026-11-22).
-const ARITHMETIC_INTRO = /^(?:(?:please|kindly|من فضلك|لو سمحت)[,،:\s]+)?(?:(?:calculate|compute|evaluate|solve|what is|what['’]s|how much is|(?:كم|ما)(?: (?:هو|هي))?(?: (?:يساوي|تساوي|ناتج|حاصل|نتيج[ةه]))?|ناتج|حاصل|نتيج[ةه])|(?:(?:نبي|نبغي|ابغي|ابي|بدي|بدنا|عايز|عايزة|عايزين|اريد|نريد)\s+(?:ان\s+)?)?(?:احسب(?:وا|ي)?|نحسب))[\s:،]+/iu;
-
-const OPERAND_COMMANDS = [
-  { match: /^(?:subtract|اطرح)[\s:،]+(.+?)\s+(?:from|من)\s+(.+)$/iu, operator: '-', reverse: true },
-  { match: /^(?:divide|اقسم)[\s:،]+(.+?)\s+(?:by|علي)\s+(.+)$/iu, operator: '/' },
-  { match: /^(?:multiply|اضرب)[\s:،]+(.+?)\s+(?:by|في)\s+(.+)$/iu, operator: '*' },
-  { match: /^(?:add|اجمع|اضف)[\s:،]+(.+?)\s+(?:to|and|الي|مع)\s+(.+)$/iu, operator: '+' },
-] as const;
-
-function directedExpression(input: string) {
-  for (const rule of OPERAND_COMMANDS) {
-    const match = rule.match.exec(input);
-    if (!match) continue;
-    const [, first, second] = match;
-    const [left, right] = 'reverse' in rule ? [second, first] : [first, second];
-    return `(${left}) ${rule.operator} (${right})`;
-  }
-  return input;
-}
-
-function arithmeticExpression(input: string): string | null {
-  const math = input.replace(ARITHMETIC_INTRO, '');
-  if (/\b0(?:x[0-9a-f]+|b[01]+|o[0-7]+)\b/iu.test(math)) return null;
-  const expression = directedExpression(math)
-    .replace(/\b(?:percent|per cent)\b|(?:بال|في\s+ال)م(?:ا?ئ[ةه]|ي[ةه])(?!\p{L})/giu, '%')
-    .replace(/%\s*(?:of\b|من(?!\p{L}))/giu, '% *')
-    // An Arabic operator word takes its preposition with it: «قسمة على» and «ضرب في» are one operator each. Leaving «على»
-    // behind made «(١٢ زائد ٨) قسمة على ٣» an unreadable expression (real requests rq014 and rq070, 2026-11-22).
-    .replace(/\b(?:divided by|over)\b|مقسوم(?:ا|ة|ه)?\s+علي|قسم[ةه](?:\s+علي(?!\p{L}))?/giu, '/')
-    .replace(/\b(?:times|multiplied by)\b|مضروب(?:ا|ة|ه)?\s+في|ضرب(?:\s+في(?!\p{L}))?|(?<=\d)\s*[xX]\s*(?=\d)|[×·]/giu, '*')
-    .replace(/\bplus\b|(?:زائد|زايد|جمع)(?!\p{L})/giu, '+')
-    .replace(/\bminus\b|(?:ناقص|طرح)(?!\p{L})/giu, '-')
-    .replace(/÷/gu, '/').trim();
-  // Retain the unsupported-language boundary: a currency/source request or an
-  // instruction with extra words stays available to routing. Numeric grammar
-  // and evaluation belong to the one shared, bounded parser.
-  const tokens = [...expression.matchAll(/(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?|[()+*\/^%\-]/giu)].map(match => match[0]);
-  if (!tokens.length || tokens.join('') !== expression.replace(/\s+/gu, '')) return null;
-  return expression;
-}
-
-function arithmetic(input: string): { value: number; expression: string } | null {
+function arithmetic(input: string, steps?: ArithmeticStep[]): { value: number; expression: string } | null {
   const expression = arithmeticExpression(input);
   if (expression === null) return null;
-  const result = evaluateArithmeticExpression(expression, { allowPercent: true });
+  const result = evaluateArithmeticExpression(expression, { allowPercent: true, steps });
   if (result.ok) return { value: result.value, expression };
   throw new CalculationError(result.error === 'division_by_zero' ? 'division' : result.error === 'syntax' ? 'expression' : result.error);
+}
+
+function arithmeticWork(reply: LocalReply, steps: readonly ArithmeticStep[], value: number): LocalReply {
+  const symbols = { '+': '+', '-': '−', '*': '×', '/': '÷', '^': '^' } as const;
+  const lines = steps.map(({ left, operator, right, value }) => {
+    const values = [left, right, value];
+    const shown = values.map(formatNumber);
+    const relation = shown.every((item, index) => Number(item) === values[index]) ? '=' : '≈';
+    return `${shown[0]} ${symbols[operator]} ${shown[1]} ${relation} ${shown[2]}`;
+  });
+  if (!lines.length || lines.length === 1 && !lines[0].includes('≈')) return reply;
+  const summary = Number(formatNumber(value)) === value ? reply.text : reply.text.replace(' = ', ' ≈ ');
+  const text = [...lines, summary].join('\n');
+  const working = { id: 'calculation-working', source: 'computed' as const, quote: text, value: reply.evidence[0].value };
+  return { ...reply, text, evidence: [...reply.evidence, working], claims: [{ text, support: [working.id], status: 'confirmed' }] };
 }
 
 type Unit = { dim: string; factor: number; offset?: number; names: string; pluralNames?: string; abbreviations?: string };
@@ -146,13 +121,14 @@ const UNITS: readonly Unit[] = [
   { dim: 'data', factor: 2 ** 20, names: 'mebibyte|ميبيبايت', abbreviations: 'MiB' },
   { dim: 'data', factor: 2 ** 30, names: 'gibibyte|جيبيبايت', abbreviations: 'GiB' },
   { dim: 'data', factor: 2 ** 40, names: 'tebibyte|تيبيبايت', abbreviations: 'TiB' },
-  { dim: 'duration', factor: 1, names: 'sec|second|ثانية|ثانيه|ثوان', pluralNames: 'ثوان' },
-  { dim: 'duration', factor: 60, names: 'min|minute|دقيقة|دقيقه|دقائق', pluralNames: 'دقائق' },
+  { dim: 'duration', factor: 1, names: 's|sec|second|ثانية|ثانيه|ثوان|ثواني', pluralNames: 'ثوان|ثواني' },
+  { dim: 'duration', factor: 60, names: 'min|minute|دقيقة|دقيقه|دقائق|دقايق', pluralNames: 'دقائق|دقايق' },
   { dim: 'duration', factor: 3600, names: 'h|hr|hour|ساعة|ساعه|ساعات', pluralNames: 'ساعات' },
 ];
 
 function unit(raw: string) {
   const label = raw.trim().replace(/^(?:degrees?\s+|درج(?:ة|ه|ات)\s+)/iu, '');
+  if (!label) return undefined;
   const words = label.toLowerCase().replace(/\s+/gu, ' ');
   const singular = words.replace(/\b([a-z]{2,})s\b/gu, '$1');
   const arabicUninflected = words.replace(/^ال(?=\p{Script=Arabic})/u, '').replace(/(?<=\p{Script=Arabic})ا(?=\s|$)/gu, '');
@@ -162,6 +138,8 @@ function unit(raw: string) {
     return names.includes(words) || names.includes(singular) || names.includes(arabicUninflected);
   });
 }
+
+export { unit as resolveComputationUnit };
 
 const FRACTION_COUNTS = new Map([
   'a|an|one|واحد|واحدة', 'two|اثنان|اثنين|اثنتان|اثنتين', 'three|ثلاثة|ثلاث', 'four|اربعة|اربع',
@@ -189,16 +167,19 @@ for (const [index, [english, englishPlural, arabic, arabicPlural]] of [
 const SPOKEN_FRACTION = String.raw`(?:(?:${[...FRACTION_COUNTS.keys()].join('|')}|\d+)\s+)?(?:${[...FRACTION_WORDS.keys()].join('|')})(?![\p{L}\p{N}])`;
 const SPOKEN_CARDINAL = String.raw`(?:${[...FRACTION_COUNTS.keys()].join('|')})(?![\p{L}\p{N}])`;
 const NUMERIC_FRACTION = String.raw`${NUMBER}\s*/\s*${NUMBER}`;
-const CONVERSION = new RegExp(String.raw`(?:^|[\s:،])(${SPOKEN_FRACTION}|${SPOKEN_CARDINAL}|${NUMERIC_FRACTION}|${NUMBER})\s*(.+?)(?:[\s,،;؛:]+(?:to|into|in|الي|ب)[\s,،;؛:]+|\s*(?:→|⇒|->)\s*)(.+)$`, 'iu');
+const UNIT_AMOUNT = String.raw`(?:${SPOKEN_FRACTION}|${SPOKEN_CARDINAL}|${NUMERIC_FRACTION}|${NUMBER})`;
+const CONVERSION = new RegExp(String.raw`(?:^|[\s:،])(${UNIT_AMOUNT})\s*(.+?)(?:[\s,،;؛:]+(?:to|into|in|الي|ب)[\s,،;؛:]+|\s*(?:→|⇒|->)\s*)(.+)$`, 'iu');
 const unitLabel = (raw: string) => raw.trim().replace(/^[,،;؛:.]+|[,،;؛:.]+$/gu, '').trim().replace(/^\(\s*([^()]+?)\s*\)$/u, '$1');
 
-function unitQuantity(raw: string, original: string, rawUnit: string): { value: number; fraction: boolean } | null {
+type Quantity = { value: number; fraction?: readonly [number, number] };
+
+function unitQuantity(raw: string, original: string, rawUnit: string): Quantity | null {
   const slash = raw.indexOf('/');
   if (slash >= 0) {
     const numerator = safeNumber(Number(raw.slice(0, slash)));
     const denominator = safeNumber(Number(raw.slice(slash + 1)));
     if (denominator === 0) throw new CalculationError('division');
-    return { value: safeNumber(numerator / denominator), fraction: true };
+    return { value: safeNumber(numerator / denominator), fraction: [Math.abs(numerator), Math.abs(denominator)] };
   }
 
   const words = raw.toLowerCase().split(/\s+/u);
@@ -213,25 +194,178 @@ function unitQuantity(raw: string, original: string, rawUnit: string): { value: 
         : FRACTION_COUNTS.get(ambiguous[1]!);
       const label = unitLabel(rawUnit).replace(/^ال(?=\p{Script=Arabic})/u, '');
       const plural = unit(label)?.pluralNames?.split('|').includes(label) ?? false;
-      if (cardinal !== undefined && (initialMarks.includes('\u064e') || !ambiguous[2] && plural)) return { value: cardinal, fraction: false };
+      if (cardinal !== undefined && (initialMarks.includes('\u064e') || !ambiguous[2] && plural)) return { value: cardinal };
       throw new CalculationError('quantity');
     }
   }
   const word = FRACTION_WORDS.get(words.at(-1)!);
   if (!word) {
     const cardinal = FRACTION_COUNTS.get(raw.toLowerCase());
-    return { value: safeNumber(cardinal ?? Number(raw)), fraction: false };
+    return { value: safeNumber(cardinal ?? Number(raw)) };
   }
   const count = words.length === 1 ? word.implicitCount : FRACTION_COUNTS.get(words[0]) ?? Number(words[0]);
   if (count === null || !Number.isSafeInteger(count) || words.length > 1 && word.implicitCount === 2) return null;
-  return { value: count / word.denominator, fraction: true };
+  return { value: count / word.denominator, fraction: [count, word.denominator] };
+}
+
+const HOW_MANY_UNITS = '(?:كم|كام|قديش|اديش|اقديش|شكد|اشكد|كمش)';
+const CONVERSION_QUESTIONS = [
+  String.raw`how many (?<target>.+?) (?:(?:are there |are )?in|per|are|is) (?<origin>.+)`,
+  String.raw`(?:what is|what['’]s|how much is) (?<origin>.+?) (?:in|as|expressed in) (?<target>.+)`,
+  String.raw`${HOW_MANY_UNITS} (?<target>.+?) (?:في|داخل|بداخل|ب *)\s*(?<origin>.+)`,
+  String.raw`(?:(?:اذا|لو) +)?(?:(?:عند(?:ي|نا|ك|كم)|عد(?:نا|كم)|لدينا|مع(?:ي|نا|ايا)) +)?(?<origin>.+?)[,،. ]+(?:(?:هذا|هذه|هذي|هاي|دي|ده|هي|هو) +)?${HOW_MANY_UNITS}(?: +(?:يساوي|تساوي|يعادل|تعادل|يطلع|بتطلع|بيطلع))? +(?:ب *|في +)(?<target>.+)`,
+  String.raw`(?:convert|conversion|حول|تحويل)[\s:،]+(?<origin>.+?)(?:\s+(?:to|into|in|الي)\s+|\s+ل\s*|\s*(?:→|⇒|->)\s*)(?<target>.+)`,
+].map(pattern => new RegExp(`^${pattern}$`, 'diu'));
+const NUMBER_AND_UNIT = new RegExp(String.raw`^(${UNIT_AMOUNT})\s*(.+)$`, 'iu');
+const FRACTION_AMOUNT = new RegExp(String.raw`^(?:${SPOKEN_FRACTION}|${NUMERIC_FRACTION})$`, 'iu');
+const COUNT_AMOUNT = new RegExp(String.raw`^(?:${SPOKEN_CARDINAL}|${NUMBER})$`, 'iu');
+const QUANTITY_JOIN = /\s+(?:and\s+|و\s*|الا\s+)/giu;
+const UNIT_LABEL_WORDS = 1 + Math.max(...UNITS.flatMap(item => item.names.split('|').map(name => name.split(' ').length)));
+
+type UnitTerm = { from: Unit; label: string; start: number; amount: string | number; spokenValue?: string };
+type ConversionTerms = { terms: [UnitTerm, UnitTerm?]; subtract: boolean };
+
+function unitTerm(text: string, start: number): UnitTerm | null {
+  const explicit = NUMBER_AND_UNIT.exec(text);
+  if (explicit) {
+    const sourceLabel = FRACTION_AMOUNT.test(explicit[1]) ? explicit[2].replace(/^\s*(?:of\s+)?(?:an?|the)\s+|^\s*من\s+/iu, '') : explicit[2];
+    const label = unitLabel(sourceLabel);
+    const from = unit(label);
+    if (from) return { from, label, start, amount: explicit[1] };
+  }
+  // Only split where the remaining words can fit a registered unit and its
+  // optional degree prefix. Conjunctions within numeral text remain intact.
+  for (const boundary of [...text.matchAll(/\s+/gu)].slice(-UNIT_LABEL_WORDS)) {
+    const label = unitLabel(text.slice(boundary.index + boundary[0].length));
+    const from = unit(label);
+    if (!from) continue;
+    const amount = text.slice(0, boundary.index);
+    const spokenValue = parseNumberWords(amount, /\p{Script=Arabic}/u.test(amount) ? 'ar' : 'en');
+    if (spokenValue !== null) return { from, label, start, amount, spokenValue };
+  }
+  const label = unitLabel(text);
+  const dualSpelling = /^(.+)ت(ان|ين)$/u.exec(label)?.[1];
+  const dualStem = /^(.+)(?:ان|ين)$/u.exec(label)?.[1];
+  const dual = (dualSpelling ? unit(`${dualSpelling}ة`) ?? unit(`${dualSpelling}ه`) : undefined)
+    ?? (dualStem ? unit(dualStem) : undefined);
+  if (dual) return { from: dual, label, start, amount: 2 };
+  const from = unit(label);
+  const plural = /(?:[a-z]{2,}s|feet)$/iu.test(label) || from?.pluralNames?.split('|').includes(label.replace(/^ال/u, ''));
+  return from && !plural && from.dim !== 'temperature' ? { from, label, start, amount: 1 } : null;
+}
+
+function quantityTerms(text: string, start: number): ConversionTerms | null {
+  const simple = unitTerm(text, start);
+  if (simple) return { terms: [simple], subtract: false };
+  for (const join of text.matchAll(QUANTITY_JOIN)) {
+    const rightStart = join.index + join[0].length;
+    const leftText = text.slice(0, join.index);
+    const rightText = text.slice(rightStart);
+    const rightAmount = rightText.replace(/^(?:a|an)\s+/iu, '');
+    const leftTerm = unitTerm(leftText, start);
+    const rightTerm = unitTerm(rightText, start + rightStart);
+    const left = leftTerm ?? (rightTerm && typeof rightTerm.amount === 'string' && FRACTION_AMOUNT.test(rightTerm.amount) && COUNT_AMOUNT.test(leftText)
+      ? { label: rightTerm.label, from: rightTerm.from, start, amount: leftText } : null);
+    const right = rightTerm ?? (leftTerm && FRACTION_AMOUNT.test(rightAmount)
+      ? { label: leftTerm.label, from: leftTerm.from, start: start + rightStart + rightText.length - rightAmount.length, amount: rightAmount } : null);
+    if (left && right) return { terms: [left, right], subtract: join[0].trim() === 'الا' };
+  }
+  return null;
+}
+
+function readConversionQuestion(source: PreparedComputationSource) {
+  for (const pattern of CONVERSION_QUESTIONS) {
+    const match = pattern.exec(source.input);
+    if (!match?.groups || !match.indices?.groups) continue;
+    const targetLabel = unitLabel(match.groups.target);
+    const target = unit(targetLabel);
+    if (!target) continue;
+    const origin = match.groups.origin;
+    const quantity = quantityTerms(origin, match.indices.groups.origin[0]);
+    if (quantity) return { ...quantity, target, targetLabel, origin };
+  }
+  return null;
+}
+
+const CONVERSION_QUESTION_CUE = new RegExp(String.raw`^(?:how many|what is|what['’]s|how much is)\s|(?<!\p{L})${HOW_MANY_UNITS}(?!\p{L})`, 'iu');
+const CONVERSION_INTRO = /^(?:convert|conversion|حول|تحويل)[\s:،]+/iu;
+const RAISED_DIGITS = /[¹²³\u2070-\u207f]/u;
+
+function conversionWithCoverage(source: PreparedComputationSource) {
+  if (!CONVERSION_INTRO.test(source.input) && !CONVERSION_QUESTION_CUE.test(source.input)) return null;
+  const question = readConversionQuestion(source);
+  if (!question) return null;
+  const raisedQuantity = question.terms.some(term => {
+    if (!term || typeof term.amount === 'number') return false;
+    const original = source.span(term.start, term.start + term.amount.length);
+    return RAISED_DIGITS.test(source.original.slice(original.start, original.end));
+  });
+  return raisedQuantity ? null : question;
+}
+
+/** Frame classification uses the same whole-request grammar as evaluation. */
+export function isUnitConversionQuestion(request: string): boolean {
+  if (!CONVERSION_QUESTION_CUE.test(request.replace(/[أإآٱ]/gu, 'ا'))) return false;
+  const source = prepareComputationSource(request, SHORT_ANSWER_TAIL);
+  return source.valid && !source.literal && !/[\u2080-\u209f]/u.test(source.original) && Boolean(conversionWithCoverage(source));
+}
+
+function conversionAmount(source: PreparedComputationSource, term: UnitTerm): Quantity | null {
+  if (typeof term.amount === 'number') return { value: term.amount };
+  if (term.spokenValue !== undefined) return { value: safeNumber(Number(term.spokenValue)) };
+  const span = source.span(term.start, term.start + term.amount.length);
+  return unitQuantity(term.amount, source.original.slice(span.start, span.end), term.label);
+}
+
+function conversionStep(quantity: Quantity, from: Unit, target: Unit, value = quantity.value) {
+  const rounded = formatNumber(value);
+  const amount = quantity.fraction && Number(rounded) !== value
+    ? `${value < 0 ? '−' : ''}(${quantity.fraction.map(formatNumber).join(' ÷ ')})` : rounded;
+  const offset = from.offset ?? 0;
+  const targetOffset = target.offset ?? 0;
+  if (offset !== targetOffset) {
+    const shift = offset - targetOffset;
+    const base = `${amount} × ${formatNumber(from.factor)} ${shift < 0 ? '−' : '+'} ${formatNumber(Math.abs(shift))}`;
+    return target.factor === 1 ? base : `(${base}) ÷ ${formatNumber(target.factor)}`;
+  }
+  return from.factor < target.factor
+    ? `${amount} ÷ ${formatNumber(target.factor / from.factor)}`
+    : `${amount} × ${formatNumber(from.factor / target.factor)}`;
+}
+
+function conversionQuestion(frame: Frame, source: PreparedComputationSource, question: NonNullable<ReturnType<typeof readConversionQuestion>>): LocalReply | null {
+  const { terms, subtract, target, targetLabel, origin } = question;
+  const [left, right] = terms;
+  if (left.from.dim !== target.dim || right && (right.from.dim !== target.dim || target.dim === 'temperature')) throw new CalculationError('units');
+  const first = conversionAmount(source, left);
+  if (!first) return null;
+  let base = first.value * left.from.factor + (left.from.offset ?? 0);
+  let step = conversionStep(first, left.from, target);
+  if (right) {
+    const second = conversionAmount(source, right);
+    if (!second) return null;
+    // A leading minus applies to an unsigned mixed quantity. A sign on
+    // both terms instead specifies the arithmetic for each term explicitly.
+    const explicitRightSign = typeof right.amount === 'string' && /^(?:[+-]|negative\b|minus\b|سالب\s|ناقص\s)/iu.test(right.amount);
+    const wholeNegative = !explicitRightSign && (first.value < 0 || Object.is(first.value, -0));
+    const delta = subtract ? -second.value : second.value;
+    base += (wholeNegative ? -delta : delta) * right.from.factor;
+    const leftStep = conversionStep(first, left.from, target, wholeNegative ? Math.abs(first.value) : first.value);
+    const rightStep = conversionStep(second, right.from, target, Math.abs(delta));
+    const expression = `${leftStep} ${delta < 0 ? '−' : '+'} ${rightStep}`;
+    step = `${wholeNegative ? '−' : ''}(${expression})`;
+  }
+  if (left.from.dim === 'temperature' && base < 0) throw new CalculationError('range');
+  const result = formatNumber(safeNumber((base - (target.offset ?? 0)) / target.factor));
+  return calculated(frame, result, `${origin} = ${step} ${targetLabel} = ${result} ${targetLabel}`);
 }
 
 function conversion(input: string, frame: Frame, requested: boolean, source: PreparedComputationSource): LocalReply | null {
-  const phrase = CONVERSION.exec(input);
-  if (!phrase) return null;
+  const offset = CONVERSION_INTRO.exec(input)?.[0].length ?? 0;
+  const phrase = CONVERSION.exec(input.slice(offset));
+  if (phrase?.index !== 0) return null;
   const [, sourceNumber, rawSource, rawTarget] = phrase;
-  const numberStart = phrase.index + phrase[0].indexOf(sourceNumber);
+  const numberStart = offset + phrase[0].indexOf(sourceNumber);
   const originalNumber = source.span(numberStart, numberStart + sourceNumber.length);
   const quantity = unitQuantity(sourceNumber, source.original.slice(originalNumber.start, originalNumber.end), rawSource);
   if (!quantity) return null;
@@ -247,7 +381,9 @@ function conversion(input: string, frame: Frame, requested: boolean, source: Pre
   const base = quantity.value * from.factor + (from.offset ?? 0);
   if (from.dim === 'temperature' && base < 0) throw new CalculationError('range');
   const result = formatNumber(safeNumber((base - (target.offset ?? 0)) / target.factor));
-  return calculated(frame, result, `${sourceNumber} ${sourceLabel} = ${result} ${targetLabel}`);
+  // The original proof is part of existing saved-result receipts.
+  const work = source.showWork ? `${conversionStep(quantity, from, target)} ${targetLabel} = ` : '';
+  return calculated(frame, result, `${sourceNumber} ${sourceLabel} = ${work}${result} ${targetLabel}`);
 }
 
 const MONTHS = [
@@ -279,7 +415,7 @@ function datesIn(input: string, currentYear: number): DateParts[] {
 }
 
 function dayRange(frame: Frame, input: string, left: Date, right: Date): LocalReply {
-  const weeks = /\bweeks?\b|(?:اسبوع|اسابيع)(?!\p{L})/iu.test(input);
+  const weeks = /\bweeks?\b|(?:اسبوعا?|اسابيع)(?!\p{L})/iu.test(input);
   const amount = Math.abs(right.getTime() - left.getTime()) / DAY_MS;
   const value = formatNumber(weeks ? amount / 7 : amount);
   const unitName = frame.lang === 'ar' ? weeks ? 'أسبوع' : 'يوم' : weeks ? 'weeks' : 'days';
@@ -420,9 +556,9 @@ const CLOCK_OPERAND = String.raw`(?:\d{1,2}:\d{2}(?:\s*[ap]\.?m\.?)?|\d{1,2}\s*[
 const ENVELOPE = (body: string) => new RegExp(String.raw`^(?:${body})(?=$|[^\p{L}\p{N}_])`, 'iu');
 const DATE_ENVELOPES: readonly (readonly [ComputationKind, RegExp])[] = [
   ['weekday', ENVELOPE(String.raw`(?:what (?:day of the week|weekday|day)(?: (?:is|was|will be))?|which (?:weekday|day of the week)(?: (?:is|was|will be))?|ما (?:اليوم الموافق|يوم الاسبوع|اليوم الذي يصادف)|اي يوم(?: من الاسبوع)?(?: (?:كان|يصادف|يوافق))?)\s+${DATE_OPERAND}`)],
-  ['date_range', ENVELOPE(String.raw`(?:(?:how many|number of) (?:days|weeks)(?: are there)? (?:between|from)|(?:calculate|compute) (?:the )?(?:days|weeks|difference) (?:between|from)|كم (?:يوما?|اسبوعا?) (?:بين|من)|(?:احسب )?(?:فرق الايام|فرق التاريخين|الفارق بين التاريخين)(?: بين| من)?)\s+${DATE_OPERAND}\s*(?:and|to|until|و|الي|الى|حتي|حتى)\s*${DATE_OPERAND}`)],
-  ['date_shift', ENVELOPE(String.raw`(?:(?:add|subtract|اضف|اطرح|زود)\s+${SHIFT_COUNT}\s+(?:to|from|الي|الى|من|علي|على)\s+${DATE_OPERAND}|(?:what (?:date|day)(?: (?:is|will it be))?|(?:ما|اي) (?:التاريخ|تاريخ|يوم)(?: (?:يكون|يصادف))?)\s+${SHIFT_COUNT}\s+(?:after|before|بعد|قبل)\s+${DATE_OPERAND}|(?:ما|اي) (?:التاريخ|تاريخ|يوم)\s+(?:بعد|قبل)\s+${SHIFT_COUNT}\s+(?:من\s+)?${DATE_OPERAND}|${SHIFT_COUNT}\s+(?:after|before|بعد|قبل)\s+${DATE_OPERAND})`)],
-  ['date_distance', ENVELOPE(String.raw`(?:(?:how many|number of) (?:days|weeks)(?: are (?:left|remaining))? (?:until|since)|(?:days|weeks) (?:until|since)|كم (?:يوما?|اسبوعا?) (?:حتي|حتى|منذ)|(?:كم )?(?:يوما?|ايام|اسبوعا?|اسابيع) (?:باقي[ةه]?|متبقي[ةه]?)(?: حتي| حتى)?)\s+${DATE_OPERAND}`)],
+  ['date_range', ENVELOPE(String.raw`(?:(?:how many|number of) (?:days|weeks)(?: are there)? (?:between|from)|(?:calculate|compute) (?:the )?(?:days|weeks|difference) (?:between|from)|(?:كم|كام|قديش|اديش|شكد|اشكد) (?:يوما?|ايام|اسبوعا?|اسابيع) (?:بين|من)|(?:احسب )?(?:فرق الايام|فرق التاريخين|الفارق بين التاريخين)(?: بين| من)?)\s+${DATE_OPERAND}\s*(?:and|to|until|و|الي|الى|حتي|حتى)\s*${DATE_OPERAND}`)],
+  ['date_shift', ENVELOPE(String.raw`(?:(?:add|subtract|اضف|اطرح|زود)\s+${SHIFT_COUNT}\s+(?:to|from|الي|الى|من|علي|على)\s+${DATE_OPERAND}|(?:what (?:date|day)(?: (?:is|will it be))?|(?:ما|اي)(?: (?:هو|هي))? (?:التاريخ|تاريخ|يوم)(?: (?:يكون|يصادف))?)\s+${SHIFT_COUNT}\s+(?:after|before|بعد|قبل)\s+${DATE_OPERAND}|(?:ما|اي)(?: (?:هو|هي))? (?:التاريخ|تاريخ|يوم)\s+(?:بعد|قبل)\s+${SHIFT_COUNT}\s+(?:من\s+)?${DATE_OPERAND}|${SHIFT_COUNT}\s+(?:after|before|بعد|قبل)\s+${DATE_OPERAND})`)],
+  ['date_distance', ENVELOPE(String.raw`(?:(?:how many|number of) (?:days|weeks)(?: are (?:left|remaining))? (?:until|since)|(?:days|weeks) (?:until|since)|(?:كم|كام|قديش|اديش|شكد|اشكد) (?:يوما?|ايام|اسبوعا?|اسابيع) (?:حتي|حتى|منذ)|(?:(?:كم|كام|قديش|اديش|شكد|اشكد) )?(?:يوما?|ايام|اسبوعا?|اسابيع) (?:باقي[ةه]?|متبقي[ةه]?)(?: حتي| حتى)?)\s+${DATE_OPERAND}`)],
   ['date_distance', ENVELOPE(String.raw`(?:calculate a date in the hijri calendar|احسب(?: التاريخ| تاريخا?)? الهجري)`) ],
 ];
 const CLOCK_ENVELOPES: readonly (readonly [ComputationKind, RegExp])[] = [
@@ -436,19 +572,20 @@ function inspectPreparedComputation(source: PreparedComputationSource): Computat
   // positions are not baseline digits. Never flatten them into another sum,
   // date, clock or quantity; subscripts do not denote square/cubic units.
   if (/[\u2080-\u209f]/u.test(source.original)) return finishComputationConsumption(source, 'unsupported');
-  const raised = /[¹²³\u2070-\u207f]/u.test(source.original);
+  const raised = RAISED_DIGITS.test(source.original);
   for (const [kind, pattern] of [...CLOCK_ENVELOPES, ...DATE_ENVELOPES]) {
     const match = pattern.exec(source.input);
     if (match) return raised ? finishComputationConsumption(source, 'unsupported') : finishComputationConsumption(source, kind, { start: 0, end: match[0].length });
   }
   if (arithmeticExpression(source.input) !== null) return raised ? finishComputationConsumption(source, 'unsupported') : finishComputationConsumption(source, 'arithmetic', { start: 0, end: source.input.length });
-  const intro = /^(?:(?:convert|conversion|حول|تحويل)[\s:،]+)/iu.exec(source.input);
+  if (conversionWithCoverage(source)) return finishComputationConsumption(source, 'conversion', { start: 0, end: source.input.length });
+  const intro = CONVERSION_INTRO.exec(source.input);
   const offset = intro?.[0].length ?? 0;
   const phrase = CONVERSION.exec(source.input.slice(offset));
   if (phrase && phrase.index === 0) {
     const number = phrase[1]!;
     const originalQuantity = source.span(offset + phrase[0].indexOf(number), offset + phrase[0].indexOf(number) + number.length);
-    if (/[¹²³\u2070-\u207f]/u.test(source.original.slice(originalQuantity.start, originalQuantity.end))) return finishComputationConsumption(source, 'unsupported');
+    if (RAISED_DIGITS.test(source.original.slice(originalQuantity.start, originalQuantity.end))) return finishComputationConsumption(source, 'unsupported');
     const targetText = phrase[3]!;
     const targetStart = source.input.length - targetText.length;
     // A known target followed by extra text proves a remainder. Unknown units
@@ -470,6 +607,23 @@ export function inspectComputationRequest(original: string): ComputationConsumpt
   return inspectPreparedComputation(prepareComputationSource(original, SHORT_ANSWER_TAIL));
 }
 
+/** The same whole-expression parser used for calculation also identifies spoken arithmetic for routing. */
+export function isSpokenArithmeticRequest(original: string): boolean {
+  if (!/\p{L}/u.test(original)) return false;
+  const source = prepareComputationSource(original, SHORT_ANSWER_TAIL);
+  if (!source.valid || source.literal || /[¹²³\u2070-\u209f]/u.test(source.original)) return false;
+  const expression = arithmeticExpression(source.input);
+  return expression !== null && /[\d)]\s*[+*/^%\-]/u.test(expression);
+}
+
+/** Date questions need a full date envelope before their dialect wording can choose computation. */
+export function isCalendarCalculationRequest(original: string): boolean {
+  if (!/[0-9٠-٩۰-۹]/u.test(original)) return false;
+  const source = prepareComputationSource(original, SHORT_ANSWER_TAIL);
+  return source.valid && !source.literal && !/[¹²³\u2070-\u209f]/u.test(source.original)
+    && DATE_ENVELOPES.some(([, pattern]) => pattern.exec(source.input)?.[0] === source.input);
+}
+
 export interface ComputedReply extends LocalReply { consumption: ComputationConsumption }
 
 export function compute(frame: Frame, now: Date, options: { originalText?: string } = {}): ComputedReply | null {
@@ -489,12 +643,17 @@ export function compute(frame: Frame, now: Date, options: { originalText?: strin
       const dated = dateCalculation(display, input, now, consumption.kind);
       if (dated) return covered(dated);
     }
-    const operation = consumption.kind === 'arithmetic' ? arithmetic(input) : null;
+    const steps = source.showWork && !display.valueOnly ? [] : undefined;
+    const operation = consumption.kind === 'arithmetic' ? arithmetic(input, steps) : null;
     if (operation) {
       const value = formatNumber(operation.value);
-      return covered(calculated(display, value, `${operation.expression} = ${value}`));
+      const reply = calculated(display, value, `${operation.expression} = ${value}`);
+      return covered(steps ? arithmeticWork(reply, steps, operation.value) : reply);
     }
-    const converted = consumption.kind === 'conversion' ? conversion(input, display, conversionRequest, source) : null;
+    const question = consumption.kind === 'conversion' ? conversionWithCoverage(source) : null;
+    const originalConversion = consumption.kind === 'conversion' && !question?.terms[1]
+      ? conversion(input, display, conversionRequest && !question, source) : null;
+    const converted = originalConversion ?? (question ? conversionQuestion(display, source, question) : null);
     return converted ? covered(converted) : conversionRequest ? covered(fixedReply(MESSAGES.units[frame.lang], 'blocked')) : null;
   } catch (error) {
     if (error instanceof CalculationError) return covered(fixedReply(MESSAGES[error.kind][frame.lang], 'blocked'));

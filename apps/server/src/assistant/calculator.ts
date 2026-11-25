@@ -44,6 +44,12 @@ const MAX_TOKENS = 512;
 const MAX_OPERATIONS = 256;
 const MAX_NESTING = 64;
 type Operator = '+' | '-' | '*' | '/' | '^' | 'positive' | 'negative';
+export interface ArithmeticStep {
+  left: number;
+  operator: '+' | '-' | '*' | '/' | '^';
+  right: number;
+  value: number;
+}
 const PRECEDENCE: Record<Operator, number> = { '+': 0, '-': 0, '*': 1, '/': 1, positive: 2, negative: 2, '^': 3 };
 class ArithmeticFailure extends Error {
   constructor(readonly kind: ArithmeticError) { super(kind); }
@@ -77,7 +83,7 @@ function tokens(s: string): Token[] | null {
  * sign on its right is still allowed: -3^2 = -9 and 2^-2 = 0.25.
  * Input is numeric notation only; no language rewriting or code evaluation.
  */
-export function evaluateArithmeticExpression(expression: string, options: { allowPercent?: boolean } = {}): ArithmeticEvaluation {
+export function evaluateArithmeticExpression(expression: string, options: { allowPercent?: boolean; steps?: ArithmeticStep[] } = {}): ArithmeticEvaluation {
   if (typeof expression !== 'string' || expression.length > MAX_EXPRESSION_LENGTH) return { ok: false, error: 'complexity' };
   try {
     const list = tokens(expression);
@@ -106,6 +112,7 @@ export function evaluateArithmeticExpression(expression: string, options: { allo
       if (result === 0 && ((operator === '*' && left !== 0 && right !== 0)
           || (operator === '/' && left !== 0) || (operator === '^' && left !== 0))) throw new ArithmeticFailure('range');
       operands.push(safeNumber(result));
+      options.steps?.push({ left, operator, right, value: result });
     };
     for (const token of list) {
       if (token.kind === 'num') {
@@ -151,6 +158,7 @@ export function evaluateArithmeticExpression(expression: string, options: { allo
         const result = operand / 100;
         if (result === 0 && operand !== 0) throw new ArithmeticFailure('range');
         operands.push(result);
+        options.steps?.push({ left: operand, operator: '/', right: 100, value: result });
       } else apply(instruction.value);
     }
     if (operands.length !== 1) throw new ArithmeticFailure('syntax');

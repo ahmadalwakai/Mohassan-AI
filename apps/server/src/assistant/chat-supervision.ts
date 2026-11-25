@@ -46,7 +46,7 @@ export function createChatSupervisor(id: string, request: string, resolution?: R
     return compileTaskSupervisor({ id, objective: request, mode: 'advisory', now,
       operation: { kind: 'memory_recall', target: `memory:${taskEvidenceHash(request)}` } });
   }
-  if (frame.intent === 'compute') return createTaskSupervisor({ id, objective: request, now, mode: 'advisory', criteria: [{
+  if (frame.intent === 'compute' || resolution?.intent === 'compute' && resolution.sourceAssessment?.source === 'supplied_content') return createTaskSupervisor({ id, objective: request, now, mode: 'advisory', criteria: [{
     id: 'computed-answer', kind: 'answer_evidence', target: `computation:${taskEvidenceHash(request)}`,
     description: 'The rendered answer preserves the value and support produced by the local computation service.',
   }] });
