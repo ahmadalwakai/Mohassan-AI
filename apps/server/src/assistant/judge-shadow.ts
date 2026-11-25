@@ -1,6 +1,10 @@
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { judge, type JudgeCode, type JudgeDecision, type JudgeInput, type JudgeVerdict, type ReplyKind } from './judge.js';
+import type { TruthVerdict } from './truth-judge.js';
+
+type TruthFacts = Omit<TruthVerdict, 'replacement'>;
+export type TruthShadowVerdict = TruthFacts & { applied: boolean; appliedDecision?: JudgeDecision; supplemental?: TruthFacts };
 
 /**
  * The judge in shadow: the chat sends what it sends, and this records what the judge would have decided about it,
@@ -22,6 +26,7 @@ export interface JudgeShadowInput extends JudgeInput {
    * the owner's, whose text already lives in the database under its own access rules. Default true.
    */
   keepText?: boolean;
+  truth?: TruthShadowVerdict | Promise<TruthShadowVerdict>;
 }
 export interface JudgeShadowLine {
   at: string;
@@ -53,11 +58,14 @@ export interface JudgeShadowLine {
   ms: number;
   /** False when the line was written without the conversation's text (JudgeShadowInput.keepText). Absent in lines from before this field existed, which all kept it. */
   textKept?: boolean;
+  truth?: TruthShadowVerdict;
 }
 export interface JudgeShadow {
   readonly logFile: string;
+  /** MOHASSAN_JUDGE_TRUTH=1 enables truth decisions at the same reply boundary. Shadow checks are always logged here. */
+  readonly truthEnabled?: boolean;
   /** Judges one reply in shadow and logs the verdict. Returns null when judging itself failed. */
-  observe(input: JudgeShadowInput): JudgeVerdict | null;
+  observe(input: JudgeShadowInput, evaluated?: JudgeVerdict): JudgeVerdict | null;
   /** Resolves once every line queued so far is on disk (for tests and shutdown). */
   flush(): Promise<void>;
 }
@@ -80,13 +88,14 @@ export function judgeSettings(production: boolean, env: NodeJS.ProcessEnv, cwd: 
   };
 }
 
-export function createJudgeShadow(options: { logFile: string; now?: () => Date }): JudgeShadow {
+export function createJudgeShadow(options: { logFile: string; now?: () => Date; truthEnabled?: boolean }): JudgeShadow {
   const now = options.now ?? (() => new Date());
   let queue: Promise<void> = Promise.resolve();
   let directoryReady = false, warned = false;
-  const write = (line: JudgeShadowLine) => {
+  const write = (line: JudgeShadowLine, pendingTruth?: JudgeShadowInput['truth']) => {
     queue = queue.then(async () => {
       if (!directoryReady) { await mkdir(dirname(options.logFile), { recursive: true }); directoryReady = true; }
+      if (pendingTruth) line.truth = await pendingTruth;
       await appendFile(options.logFile, `${JSON.stringify(line)}\n`, 'utf8');
     }).catch(() => {
       // A shadow log must never reach the chat. The first failed write is named once in the server log: the judge still
@@ -96,9 +105,10 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
   };
   return {
     logFile: options.logFile,
-    observe(input) {
+    truthEnabled: options.truthEnabled ?? process.env.MOHASSAN_JUDGE_TRUTH === '1',
+    observe(input, evaluated) {
       try {
-        const verdict = judge(input);
+        const verdict = evaluated ?? judge(input);
         const applied = Boolean(input.applyFix && verdict.decision === 'fix' && verdict.fixedReply?.trim())
           || Boolean(input.applyWithhold && verdict.decision === 'withhold' && verdict.withholdText?.trim());
         const keep = input.keepText !== false;
@@ -109,7 +119,7 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
           decision: verdict.decision, applied, withholdText: keep ? verdict.withholdText : null, kind: verdict.kind, lang: verdict.lang, intent: verdict.frame.intent, answerType: verdict.frame.answerType, sourced: verdict.sourced,
           codes: verdict.codes, findings: keep ? verdict.findings : verdict.findings.map(finding => ({ ...finding, excerpt: '', detail: '' })), lead: quoted(verdict.lead), best: quoted(verdict.best),
           fixedReply: keep && verdict.fixedReply ? verdict.fixedReply.slice(0, MAX_REPLY) : null, support: verdict.support, evidence: input.evidence?.length ?? 0, ms: verdict.ms, textKept: keep,
-        });
+        }, input.truth);
         return verdict;
       } catch {
         return null;

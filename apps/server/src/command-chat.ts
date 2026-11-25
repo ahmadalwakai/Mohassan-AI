@@ -35,6 +35,7 @@ import { continueWebSequence, joinSequence, planWebSequence, startWebSequence } 
 import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
 import { composePlan, planningQuestion, planningTask } from './assistant/planner.js';
 import type { SkillReader, SkillReadMode } from './assistant/skill-reader.js';
+import { publishTruthReply } from './assistant/truth-publication.js';
 import { buildSiteReply, siteAnswers, siteCard, siteCommandTurn, siteTask, type SitesChatPort } from './assistant/site-builder.js';
 import { composeDocumentSpec, documentCreatedReply, documentEditedReply, documentInfoReply, documentQuestion, documentRequestGaps, documentTask, noSourceReply, unsupportedDocumentReply, type DocumentEditTask, type DocumentOperation } from './assistant/documents.js';
 import { PdfError, parsePageSelection } from '@mohassan/pdf';
@@ -1353,6 +1354,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const evidence = judgeEvidence(current);
       const applyFix = Boolean(allowChange && config.judgeFixForOwner && current.full);
       const applyWithhold = Boolean(allowChange && config.judgeWithholdForOwner && current.full);
+      const checked = publishTruthReply(config, current, { conversationId: id, runId, reply, status, question: asked?.question ?? current.request,
+        previous: asked ? asked.previous : current.previousRequest ?? null, applyFix, applyWithhold, keepText: config.judgeLogText !== 'owner' || current.full, ...(evidence.length ? { evidence } : {}) },
+        { allowChange, assertPublicSearch, assertBrowserRequestScope, scrub: text => vault.scrub(id, text) });
+      if (checked) return checked;
       const verdict = config.judgeShadow.observe({ conversationId: id, runId, question: asked?.question ?? current.request, previous: asked ? asked.previous : current.previousRequest ?? null, reply, status,
         applyFix, applyWithhold, keepText: config.judgeLogText !== 'owner' || Boolean(current.full), ...(evidence.length ? { evidence } : {}) });
       if (applyWithhold && verdict?.decision === 'withhold' && verdict.withholdText?.trim()) return { text: verdict.withholdText, withheld: true };
