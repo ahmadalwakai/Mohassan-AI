@@ -26,8 +26,6 @@ import { liveLabel } from './assistant/activity.js';
 import type { DesktopCommand, DesktopOutcome, ParsedDesktopCommand } from '@mohassan/desktop';
 import { searchRefusedReply, unsupportedReply, unsupportedRequest } from './assistant/unsupported-request.js';
 import { decideBrowserVisibility, deriveBrowserVisibility } from './assistant/browser-visibility.js';
-import { browserTaskProgress, browserTaskVisibility, createBrowserTaskWaiters, handleBrowserTaskChat, isBrowserTaskSecure, noteBrowserTaskApproval, pauseBrowserTaskChat, prepareLegacyBrowserHandover, resumeLegacyBrowserHandover, skipBrowserTaskHandover, type BrowserHandsMode } from './assistant/browser-task-chat.js';
-import type { BrowserTaskWait } from './assistant/browser-task-runner.js';
 import type { ShadowRouter } from './assistant/router.js';
 import type { ConversationShadow } from './assistant/conversation-state-shadow.js';
 import { publicConversationFollowup } from './assistant/public-conversation-followup.js';
@@ -89,6 +87,8 @@ import { projectInventoryFormat, renderProjectInventory } from './assistant/inve
 import { decodeStructuredMemoryDecision, memoryRecallFormat, structuredMemoryDecisionSchema } from './assistant/memory-recall.js';
 import { reviewMemoryRecallEvidence } from './assistant/memory-recall-evidence.js';
 import { projectPreferredLanguageMemoryQuery, recognizePreferredLanguageRequest } from './assistant/preferred-language-fact.js';
+import { browserTaskProgress, browserTaskVisibility, createBrowserTaskWaiters, handleBrowserTaskChat, isBrowserTaskSecure, noteBrowserTaskApproval, pauseBrowserTaskChat, prepareLegacyBrowserHandover, resumeLegacyBrowserHandover, skipBrowserTaskHandover, type BrowserHandsMode } from './assistant/browser-task-chat.js';
+import type { BrowserTaskWait } from './assistant/browser-task-runner.js';
 import { CredentialVault } from './assistant/vault.js';
 import { trustedSkillGapSignal } from './assistant/skill-gaps.js';
 import { chatModelFailure } from './assistant/model-failure.js';

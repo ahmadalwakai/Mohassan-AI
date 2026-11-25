@@ -1833,11 +1833,11 @@ export class AgentBrowser {
     if (!await this.hasPage(ownerId, conversationId)) throw new BrowserError('AGENT_NO_PAGE', 'لا توجد صفحة مفتوحة.', 409);
     const entry = await this.conversation(ownerId, conversationId);
     return this.withMutation(entry, async () => {
+    if (this.options.browserHands) rememberBrowserHandsInput(entry.redactions, input.text);
     this.clearActivity(entry);
     entry.recovery.status = 'review_required';
     await this.persist(entry);
     this.ownerInput(entry);
-    if (this.options.browserHands) rememberBrowserHandsInput(entry.redactions, input.text);
     if (input.text) await entry.page.keyboard.insertText(input.text);
     if (input.key) await entry.page.keyboard.press(input.key).catch(() => {});
     });
