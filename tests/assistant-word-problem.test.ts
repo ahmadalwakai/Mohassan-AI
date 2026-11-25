@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateWordProblem } from '../apps/server/src/assistant/word-problem.js';
+import { evaluateWordProblem, evaluateWordProblemGrammar, readWordProblem } from '../apps/server/src/assistant/word-problem.js';
 import { parseNumber, unitKey } from '../apps/server/src/assistant/word-problem-quantities.js';
 
 describe('local arithmetic word problems', () => {
@@ -41,6 +41,26 @@ describe('local arithmetic word problems', () => {
     expect(evaluateWordProblem('How many years did the Roman Empire last?')).toBeNull();
     expect(evaluateWordProblem('Search for a workshop that sells 9 rolls. How many are available?')).toBeNull();
     expect(evaluateWordProblem('A baker makes 3 loaves per hour. How many loaves does it make in 4 hours? Then save the result.')).toBeNull();
+  });
+
+  it('recognizes an explicit percentage target for search after the grammar declines', () => {
+    const story = 'A shelf has 28 teapots. Seven of the teapots are blue. What percent of the teapots are blue?';
+    expect(evaluateWordProblemGrammar(story)).toBeNull();
+    expect(readWordProblem(story)).toMatchObject({
+      lang: 'en',
+      statements: ['A shelf has 28 teapots', 'Seven of the teapots are blue'],
+      question: 'What percent of the teapots are blue',
+    });
+    expect(readWordProblem(`${story} Then publish the result.`)).toBeNull();
+  });
+
+  it('retains a quantified lead-in as a premise for search', () => {
+    const story = 'A ferry carries 12 passengers per trip. On a day with 4 trips, how many passengers does the ferry carry?';
+    expect(evaluateWordProblemGrammar(story)).toBeNull();
+    expect(readWordProblem(story)).toMatchObject({
+      statements: ['A ferry carries 12 passengers per trip', 'On a day with 4 trips'],
+      question: 'how many passengers does the ferry carry',
+    });
   });
 
   it.each([

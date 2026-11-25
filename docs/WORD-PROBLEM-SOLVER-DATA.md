@@ -13,7 +13,13 @@ The held-out evaluation and development probes use the standard English GSM8K **
 
 The preparation script loads and verifies both v2 exclusion partitions from the contamination audit's manifest before processing rows. The manifest SHA-256 is `de192bdc7203e1aa24fa06b216d3976f4ea77ec103e085a4019af7a60c2f3054`. The filter checks each problem, entire annotated solution, individual solution lines and split-qualified source ID `gsm8k:train:<one-based line>` before deduplicating or assigning splits. The `train` namespace distinguishes upstream train offsets from the benchmark's test offsets. [Contamination audit](https://github.com/ahmadalwakai/Mohassan-AI/pull/70)
 
-Before tuning, eligible rows were ranked by SHA-256 of the UTF-8 seed `mohassan-word-problem-holdout-v1`, a zero byte and the ASCII hex digest of the normalized question. The first `floor(eligible / 5)` rows were held out. The prepared hold-out SHA-256 is `ddd39b03baf3e5c6c3c4fa2c970ae8e8996b57b841426a8cd9860931fd7eb985`. The other rows have SHA-256 `ec38e14d05011f85b5016e2cdecabbbbfc61e3f1379796d40af8307b8aeae94d` and were used to probe grammar coverage during development. The solver is deterministic and uses no fitted components. Arabic coverage uses hand-written unit tests only.
+Before tuning, eligible rows were ranked by SHA-256 of the UTF-8 seed `mohassan-word-problem-holdout-v1`, a zero byte and the ASCII hex digest of the normalized question. The first `floor(eligible / 5)` rows were held out. The prepared hold-out SHA-256 is `ddd39b03baf3e5c6c3c4fa2c970ae8e8996b57b841426a8cd9860931fd7eb985`. The other rows have SHA-256 `ec38e14d05011f85b5016e2cdecabbbbfc61e3f1379796d40af8307b8aeae94d`.
+
+## Expression search
+
+The typed grammar runs first. When it leaves an English problem unresolved, the search extracts quantities, builds a bounded set of expression trees and checks them with the exact calculator. A linear ranker scores each tree using its operations, unit agreement and nearby cue words. A second linear model scores confidence in the highest-ranked answer using these features and the score gap to the best candidate with a different value. Scores below the calibrated threshold leave the request on its existing path. Both models start with zero weights. Arabic continues through the typed grammar.
+
+The trainer verifies both prepared partition hashes. It expands earlier calculator annotations into each annotated final expression and gives the strongest training signal to candidates that match that derivation. Other candidates that compute the same verified annotation value receive less weight. To fit answer confidence, three deterministic folds produce predictions for rows unseen by their ranker. The first half of the original 1,494-row hold-out sets the threshold. The second half measures precision with the threshold fixed. Runtime reads the resulting weights and threshold from `apps/server/src/assistant/arithmetic-search-model.json`.
 
 The held-out evaluator supplies only the problem text to the offline capability harness. Correct answers require a completed compute route, a recorded `calculate` call, zero questions, and a single designated final number equivalent to the gold number under exact rational comparison. Other completed calculate responses and responses with a designated final number count as answered for precision. Cases without either count as abstentions when the harness observes the turn successfully. Harness errors are counted separately. Accuracy and abstention rate divide their counts by all hold-out cases. Precision divides correct answers by answered cases.
 
@@ -28,6 +34,9 @@ git -C "$scratch/upstream" fetch --depth=1 --filter=blob:none origin "$revision"
 git -C "$scratch/upstream" show "$revision:grade_school_math/data/train.jsonl" > "$scratch/raw-train.jsonl"
 git -C "$scratch/upstream" show "$revision:LICENSE" > "$scratch/LICENSE"
 PYTHONDONTWRITEBYTECODE=1 python3 "$repo/scripts/word-problem-evaluation/prepare.py" "$merged" "$scratch/raw-train.jsonl" "$scratch/frozen"
+cd "$repo"
+node --import tsx scripts/word-problem-evaluation/train-arithmetic-search.ts "$scratch/frozen" "$scratch/arithmetic-search-model.json"
+cmp "$scratch/arithmetic-search-model.json" apps/server/src/assistant/arithmetic-search-model.json
 "$merged/node_modules/.bin/tsx" "$repo/scripts/word-problem-evaluation/evaluate.mjs" "$merged" "$scratch/frozen/heldout.jsonl"
 ```
 
