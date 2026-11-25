@@ -40,6 +40,7 @@ describe('compiled plans through command chat', () => {
   const readPage = vi.fn<NonNullable<CommandChatConfig['readPage']>>();
   const legacySave = vi.fn(async () => { throw new Error('Memory writes require an exact operation.'); });
   const browserCall = vi.fn<AgentBrowser['act']>();
+  const browserHasPage = vi.fn<AgentBrowser['hasPage']>();
 
   beforeAll(async () => {
     database = await createDatabase({});
@@ -52,7 +53,7 @@ describe('compiled plans through command chat', () => {
     documents = createDocumentControl(database.db, { dir: directory, fontsDir: resolve('packages/pdf/fonts'), allowedRoots: async () => [] });
     sites = await createSitesControl(database.db, { tokenSecret: 'synthetic-plan-site-preview-test-0000' });
     const memory = createMemoryControl(database.db);
-    const browser = { setCheckpointStore() {}, async bindAccount() {}, async hasPage() { return false; }, async close() {},
+    const browser = { setCheckpointStore() {}, async bindAccount() {}, hasPage: browserHasPage, async close() {},
       act: browserCall, observe: browserCall, screen: browserCall } as unknown as AgentBrowser;
     control = await createCommandChatControl(database.db, { browser, models: { fast: [], deep: [], vision: '' }, recordExperiences: false,
       networkPolicy: { testOrigins: [capitalUrl, priceUrl, pageUrl].map(url => new URL(url).origin) },
@@ -73,6 +74,7 @@ describe('compiled plans through command chat', () => {
   beforeEach(() => {
     vi.stubEnv('MOHASSAN_PLAN_COMPILER', 'on');
     browserCall.mockReset().mockRejectedValue(new Error('Unexpected browser call.'));
+    browserHasPage.mockReset().mockResolvedValue(false);
     search.mockReset().mockImplementation(async query => /gold/i.test(query)
       ? [{ title: 'Gold quote in USD', url: priceUrl, snippet: price }]
       : [{ title: 'Capital of France', url: capitalUrl, snippet: capital }]);
@@ -94,13 +96,15 @@ describe('compiled plans through command chat', () => {
     if (directory) await rm(directory, { recursive: true, force: true });
   });
 
-  async function ask(goal: string) {
-    const { id } = await control.create(owner, { goal });
+  async function ask(goal: string, conversationId?: string) {
+    const id = conversationId ?? (await control.create(owner, { goal })).id;
+    if (conversationId) await control.send(owner, id, { text: goal });
     await control.settled(id);
     const detail = await control.detail(owner, id);
-    const run = await database.db.selectFrom('chat_runs').select(['state', 'status', 'steps']).where('conversation_id', '=', id).executeTakeFirstOrThrow();
+    const run = await database.db.selectFrom('chat_runs').select(['state', 'status', 'steps'])
+      .where('conversation_id', '=', id).orderBy('created_at', 'desc').executeTakeFirstOrThrow();
     expect(detail.error).toBeNull();
-    return { run, ledger: (run.state as BrainState).agentRun!, text: detail.messages.filter(message => message.role === 'assistant').at(-1)?.text ?? '' };
+    return { id, run, ledger: (run.state as BrainState).agentRun!, text: detail.messages.filter(message => message.role === 'assistant').at(-1)?.text ?? '' };
   }
 
   it('keeps the legacy path by default and for a single clause', async () => {
@@ -195,6 +199,25 @@ describe('compiled plans through command chat', () => {
     for (const step of steps) expect(result.ledger.evidence.some(evidence => evidence.stepId === step.id)).toBe(true);
     expect(result.ledger.modelCalls).toBe(0);
     expect(browserCall).not.toHaveBeenCalled();
+  });
+
+  it('preserves the observed source for a follow-up about an explicitly opened page', async () => {
+    vi.stubEnv('MOHASSAN_CONVERSATION_SHADOW', 'decide');
+    const observed = { ...observedRates(pageUrl), title: 'Observatory timetable',
+      text: 'The observatory opens at 09:45 on Monday. The observatory opens at 11:30 on Thursday.' };
+    browserCall.mockResolvedValue({ page: observed, changed: true });
+
+    const original = await ask(`Open ${pageUrl} and show me when the observatory opens on Monday.`);
+    expect(original.run.status, original.text).toBe('completed');
+    expect(original.text).toContain('09:45');
+    expect((original.run.state as BrainState).handsFound?.url).toBe(pageUrl);
+
+    browserHasPage.mockResolvedValue(true);
+    const followup = await ask('And on Thursday?', original.id);
+    expect(followup.run.status, followup.text).toBe('completed');
+    expect(followup.text).toContain('11:30');
+    expect(followup.text).toContain(pageUrl);
+    expect(search).not.toHaveBeenCalled();
   });
 
   it('records a checked browser navigation before a calculation that uses its figure', async () => {

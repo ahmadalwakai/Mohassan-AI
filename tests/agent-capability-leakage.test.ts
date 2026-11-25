@@ -9,6 +9,11 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const fixturePath = 'tests/fixtures/agent-capability-bench/';
 const developmentPath = join(root, fixturePath, 'development.json');
 const benchmarkBaseline = 'c2a0ff765071657cf200b5ee7d12fabaad738c0b';
+const inheritedMannersRevision = 'f50520112a23632ec4f6e4a121018077d1c422be';
+const inheritedMannersPaths = new Set([
+  'apps/server/src/assistant/manners/replies.ts',
+  'tests/fixtures/manners-development.ts',
+]);
 const benchmarkTests = new Set([
   'tests/agent-capability-corpus.test.ts',
   'tests/agent-capability-observe.test.ts',
@@ -108,9 +113,11 @@ describe('capability benchmark leakage', () => {
       if (!matches.length) continue;
       // Two ordinary phrases predate the benchmark in a training template and an identity test.
       // Match their exact source contexts and counts so any additional copy still fails.
-      const historical = historicalPaths.has(path)
-        ? findMatches(git(['show', `${benchmarkBaseline}:${path}`]), patterns)
-        : [];
+      // Wave 1 also accepted two reviewed manners files. Their exact original
+      // contexts and counts are allowed, and any added occurrence is checked.
+      const reference = inheritedMannersPaths.has(path) ? inheritedMannersRevision
+        : historicalPaths.has(path) ? benchmarkBaseline : null;
+      const historical = reference ? findMatches(git(['show', `${reference}:${path}`]), patterns) : [];
       for (const { caseId, turn, line } of newMatches(matches, historical)) {
         copies.push(`${path}:${line} matches ${caseId} turn ${turn}`);
       }

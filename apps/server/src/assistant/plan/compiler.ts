@@ -1,5 +1,6 @@
 import { asksToRemember } from '../brain.js';
 import { computedRecord } from '../computation-reference.js';
+import { planConversationPageRead } from '../conversation-state-page.js';
 import { documentTask } from '../documents.js';
 import { normalizeRequest } from '../mind/normalize.js';
 import { ownFactQuestion } from '../own-fact-question.js';
@@ -154,7 +155,11 @@ function canProject(text: string, tool: PlanTool, route: RequestRoutingDecision,
 /** Classify each original clause using the existing deterministic routing contract. */
 export function compilePlan(text: string, options: RouteOptions = {}): CompiledPlan {
   const lang = normalizeRequest(text).lang;
-  const clauses = expandComparisonClauses(attachPageSelectors(splitPlanClauses(text)));
+  const split = splitPlanClauses(text);
+  // Opening one named page to answer a question on that page is a single
+  // lookup. Preserve additional clauses for the normal dependency compiler.
+  const clauses = split.length === 2 && planConversationPageRead(text)
+    ? [text] : expandComparisonClauses(attachPageSelectors(split));
   const steps: PlanStep[] = [];
   const constraints = parseUserRequestConstraints(text);
   const { context, previousScope, pendingQuestion, ...sharedOptions } = options;

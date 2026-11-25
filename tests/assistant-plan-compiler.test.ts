@@ -45,9 +45,16 @@ describe('plan compiler source and reference contracts', () => {
     });
   });
 
+  it.each([
+    'Open https://archive.example.test/music and show me the rehearsal venue.',
+    'افتح https://archive.example.test/music واعرض اسم الفرقة الموسيقية.',
+  ])('compiles a question about an explicitly opened page as one lookup for %s', text => {
+    expect(compilePlan(text).steps).toMatchObject([{ tool: 'read', text }]);
+  });
+
   it('attaches a measurement to its explicitly opened page before binding a quantity calculation', () => {
     const [source, computation] = compilePlan(
-      'Open https://catalog.example.test/passes, read the admission price, then calculate the total for two passes.',
+      'Open https://catalog.example.test/passes and read the admission price, then calculate the total for two passes.',
     ).steps;
     expect(source).toMatchObject({ tool: 'read', publicInput: true, output: 'number' });
     expect(computation).toMatchObject({ tool: 'compute', dependsOn: [source?.id] });
