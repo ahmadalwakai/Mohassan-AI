@@ -13,7 +13,7 @@ import { migrateAuth } from '../apps/server/src/auth.js';
 import { migrateMembers, roleOf } from '../apps/server/src/members.js';
 import { lockOwnerToolAccess } from '../apps/server/src/owner-tool-authorization.js';
 
-const OWNER = 'isolated-native-role-queue-owner', COOKIE = 'synthetic-native-role-queue-session';
+const OWNER = 'isolated-native-role-queue-owner', SESSION_ID = 'synthetic-native-role-queue-session';
 const hash = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
 const BLANK = { thought: null, plan: null, note: null, url: null, ref: null, text: null, submit: null, options: null, sensitive: null, outcome: null };
 const fixtures: Array<{ chat: Awaited<ReturnType<typeof createCommandChatControl>>; app: ReturnType<typeof Fastify>;
@@ -24,6 +24,7 @@ async function run(downgradeAtQueueEntry: boolean, grantPath: 'policy' | 'primar
   const database = await createDatabase({}); expect(database.mode).toBe('embedded');
   await migrateAuth(database.db); await migrateMembers(database.db); await migrate(database.db); await windowsMigration(database.db);
   for (const id of [OWNER, 'isolated-other-primary-owner']) await database.db.insertInto('user').values({ id, name: id, email: `${id}@example.test` }).execute();
+  await database.db.insertInto('session').values({ id: SESSION_ID, userId: OWNER, token: randomUUID(), expiresAt: new Date(Date.now() + 60000) }).execute();
   if (grantPath !== 'policy') {
     await database.db.insertInto('workspace_owner').values({ id: 1, owner_id: grantPath === 'primary' ? OWNER : 'isolated-other-primary-owner' }).execute();
     if (grantPath === 'additional') await database.db.insertInto('workspace_members').values({ user_id: OWNER, role: 'owner', disabled_at: null }).execute();
@@ -39,7 +40,7 @@ async function run(downgradeAtQueueEntry: boolean, grantPath: 'policy' | 'primar
   await database.db.insertInto('windows_devices').values({ id: deviceId, owner_id: OWNER, name: 'Synthetic disconnected role companion',
     key_hash: hash('synthetic-unused-role-device-key'), last_seen_at: new Date(), state: JSON.stringify(deviceState),
     last_frame: JSON.stringify({ ...frame, receivedAt: new Date().toISOString() }) }).execute();
-  await database.db.insertInto('windows_grants').values({ id: grantId, owner_id: OWNER, device_id: deviceId, session_binding: hash(COOKIE),
+  await database.db.insertInto('windows_grants').values({ id: grantId, owner_id: OWNER, device_id: deviceId, session_binding: `session:${hash(SESSION_ID)}`,
     scope: 'control', target_key: targetKey, approval_nonce: epoch, expires_at: new Date(Date.now() + 30000) }).execute();
   let entered = false, roleChangeCommitted = false, performCalls = 0, fenceCalls = 0, accountChecks = 0, forbiddenCalls = 0;
   const roleFenceTransactions: unknown[] = [];
@@ -72,10 +73,9 @@ async function run(downgradeAtQueueEntry: boolean, grantPath: 'policy' | 'primar
     const value = Reflect.get(target, member, target); return typeof value === 'function' ? value.bind(target) : value;
   } });
   const app = Fastify({ logger: false });
-  const native = await registerWindowsRoutes(app, { db: windowsDb, owner: async () => ({ id: OWNER }),
+  const native = await registerWindowsRoutes(app, { db: windowsDb, owner: async () => ({ id: OWNER, sessionId: SESSION_ID }),
     config: { webOrigin: 'http://127.0.0.1:3000', production: false, windowsEnabled: true } });
-  app.get('/fixture/session', request => { native.noteSession(OWNER, request); return { ok: true }; });
-  await app.ready(); await app.inject({ url: '/fixture/session', headers: { cookie: COOKIE } });
+  await app.ready();
   const forbidden = async (): Promise<never> => { forbiddenCalls++; throw new Error('No unrelated external or native input process belongs to this audit.'); };
   const tools = createAssistantTools({ memory: { search: forbidden, create: forbidden }, coding: { available: false, workspace: forbidden },
     studio: { workspace: forbidden, detail: forbidden }, studioChange: false,
@@ -124,7 +124,7 @@ async function run(downgradeAtQueueEntry: boolean, grantPath: 'policy' | 'primar
     } }),
   });
   fixtures.push({ database, app, chat });
-  const { id } = await chat.create(OWNER, { goal: 'Click the Confirm button in the current PC window.' }); await chat.settled(id);
+  const { id } = await native.runInSession(OWNER, SESSION_ID, () => chat.create(OWNER, { goal: 'Click the Confirm button in the current PC window.' })); await chat.settled(id);
   const canonical = grantPath === 'policy' ? undefined : await roleOf(database.db, OWNER);
   const role = grantPath === 'policy'
     ? await database.db.selectFrom('fixture_native_role').select(['active', 'full_access']).where('owner_id', '=', OWNER).executeTakeFirstOrThrow()

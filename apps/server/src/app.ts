@@ -43,7 +43,8 @@ import { createVercelPublisher, noPublisher } from './sites-publish.js';
 import { createStudioLiveControl } from './studio-live.js';
 import { createBrowserTaskControl } from './browser-task.js';
 import { clarifyDesktopFile } from './assistant/clarify/host.js';
-import { commandChatMigration, registerCommandChatRoutes } from './command-chat.js';
+import { commandChatMigration } from './command-chat.js';
+import { registerWindowsScopedChatRoutes } from './windows-chat-session.js';
 import { createRefusalAwareCommandChat as createCommandChatControl } from './assistant/refusal/chat-control.js';
 import { migrateRemindersInTransaction } from './reminders/migration.js';
 import { registerReminderRuntime } from './reminders/runtime.js';
@@ -185,7 +186,7 @@ export async function createApplication(config: AppConfig) {
   // Every registered route, so tests can prove each one sits behind the member gate.
   const routes = new Set<string>();
   app.addHook('onRoute', route => { for (const method of [route.method].flat()) { const key = routeKey(method, route.url); if (key) routes.add(key); } });
-  type SessionUser = {id: string; name: string; email: string};
+  type SessionUser = {id: string; name: string; email: string; sessionId: string};
   const sessions = new WeakMap<object, Promise<SessionUser | null>>();
   const roles = new WeakMap<object, Promise<WorkspaceRole | null>>();
   const metrics = await registerProductionMetrics(app, config.production, request => roles.get(request), database.db);
@@ -194,7 +195,7 @@ export async function createApplication(config: AppConfig) {
     if (!found) {
       const headers = new Headers();
       if (typeof request.headers.cookie === 'string') headers.set('cookie', request.headers.cookie);
-      found = auth.api.getSession({headers}).then(session => session ? {id: session.user.id, name: session.user.name, email: session.user.email} : null);
+      found = auth.api.getSession({headers}).then(session => session ? {id: session.user.id, name: session.user.name, email: session.user.email, sessionId: session.session.id} : null);
       sessions.set(request, found);
     }
     return found;
@@ -278,7 +279,7 @@ export async function createApplication(config: AppConfig) {
     const path = request.url.split('?')[0];
     const allowed = new Set(['POST /api/auth/sign-in/email', 'GET /api/auth/get-session', 'POST /api/auth/sign-out']);
     if (!allowed.has(`${request.method} ${path}`)) return reply.code(403).send({error: {code: 'AUTH_ACTION_DISABLED', message: 'هذه العملية غير متاحة.'}});
-    if(request.method==='POST'&&path==='/api/auth/sign-out')await revokeWindowsSession(database.db,typeof request.headers.cookie==='string'?request.headers.cookie:'');
+    const signingOut = request.method === 'POST' && path === '/api/auth/sign-out' ? await sessionUser(request) : null;
     const headers = new Headers();
     for (const key of ['cookie', 'origin', 'user-agent', 'content-type']) {
       const value = request.headers[key];
@@ -288,6 +289,7 @@ export async function createApplication(config: AppConfig) {
       method: request.method, headers,
       ...(request.method !== 'GET' ? {body: JSON.stringify(request.body ?? {})} : {}),
     }));
+    if (signingOut && response.ok) await revokeWindowsSession(database.db, signingOut.sessionId);
     for (const [key, value] of response.headers) if (!['set-cookie', 'content-length', 'transfer-encoding'].includes(key)) reply.header(key, value);
     const cookies = response.headers.getSetCookie();
     if (cookies.length) reply.header('set-cookie', cookies);
@@ -497,7 +499,7 @@ export async function createApplication(config: AppConfig) {
     }}:{}),
   });
   await registerReminderRuntime(app, { db: database.db, owner });
-  await registerCommandChatRoutes(app,{control:chat,owner:async request=>{const user=await owner(request);windows.noteSession(user.id,request);return user;}});
+  await registerWindowsScopedChatRoutes(app, { control: chat, owner }, windows, sessionUser);
   registerNotificationRoutes(app, { db: database.db, owner, isActive: async id => Boolean(await roleOf(database.db, id)), recoverChatRuns: chat.recoverExpired });
   registerConversationShareRoutes(app,{db:database.db,owner,role,webOrigin:config.webOrigin,internalSecret:config.internalSecret,fontsDir:config.documentsFontsDir});
   await registerBrowserFileRoutes(app,{db:database.db,browser:agentBrowser,owner});
