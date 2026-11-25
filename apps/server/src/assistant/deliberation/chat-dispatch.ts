@@ -10,6 +10,7 @@ import type { EffectiveRequestSource } from '../effective-request-source.js';
 import type { JudgeEvidence } from '../judge.js';
 import { projectPreferredLanguageMemoryQuery } from '../preferred-language-fact.js';
 import { decideRequestRoute, projectDeliberationRoute, type RequestRoutingDecision } from '../routing-decision.js';
+import { gateRefusalText } from '../run-plans.js';
 import { handlerRoutes, type CascadeHandler } from './cascade-handlers.js';
 import { inspectCascade, type CascadeInput, type CascadeTurn } from './cascade.js';
 import { conversationEvidence } from './conversation-evidence.js';
@@ -109,7 +110,7 @@ async function prepare(input: Intake, enabled: boolean): Promise<Prepared> {
   const previousStates = recentRuns.map(row => row.state).filter(Boolean) as BrainState[];
   const turnId = typeof recentMessages[0]?.id === 'string' ? recentMessages[0].id : runId;
   const configured: NonNullable<CascadeInput['configured']> = {
-    desktop: !!config.desktop, computer: !!config.tools?.computer, documents: !!config.documents, sites: !!config.sites,
+    computer: !!config.tools?.computer, documents: !!config.documents, sites: !!config.sites,
     memory: !!config.tools?.memory, knowledge: !!config.knowledgeSearch, skills: !!config.skillAnswer,
     inventory: !!config.tools?.work?.inventory, ads: !!config.adsModel, mind: !!(config.mind && config.mindDeps), chatModel: input.chatModel,
   };
@@ -136,7 +137,7 @@ async function prepare(input: Intake, enabled: boolean): Promise<Prepared> {
       siteMatch = !!state.sitePendingWant && !/[؟?]\s*$/u.test(text.trim());
     }
   }
-  const inspected = inspectCascade({ text, routing, now, state, history, previousStates, configured, fullAccess: input.fullAccess,
+  const inspected = inspectCascade({ text, routing, now, state, history, previousStates, configured, desktop: config.desktop, fullAccess: input.fullAccess,
     pendingCard, hostIntent: input.runIntent, ownerId, conversationId, runId, confirmed: !!choice,
     actionLedgerValid: !!actionLedger, memoryHit, siteMatch });
   const { memoryHit: readMemoryHit } = deliberationSettings(db);
@@ -159,7 +160,9 @@ async function prepare(input: Intake, enabled: boolean): Promise<Prepared> {
       ...(previous?.text === text ? reading.spans.filter(span => span.turn === 'current').map(span => ({ ...span, turn: 'previous' as const })) : []),
     ];
   }
-  const canSteer = !!(enabled && !pendingCard && !state.hands && !state.steps && actionLedger && !actionLedger.events.length
+  // A concrete native match owns its inputs, approval and outcome. Keep the proposal advisory on that lane.
+  const nativeWork = inspected.legacy.action === 'act' && ['desktop', 'document'].includes(inspected.legacy.handler ?? '');
+  const canSteer = !!(enabled && (choice || !nativeWork) && !pendingCard && !state.hands && !state.steps && actionLedger && !actionLedger.events.length
     && !actionLedger.fault && input.runIntent === 'task' && !state.computationMemory && !state.userFactMemory && !state.adsCampaign
     && !state.securePageHash && state.trail.every(entry => entry.action === 'asked the user')
     && !inspected.predicates.some(candidate => cascadeHandler(candidate.handler) && authorityHandlers.has(candidate.handler)));
@@ -229,6 +232,8 @@ export async function beginChatDeliberation(input: Intake, callbacks: WorkCallba
     } else if (!response && result.outcome.action === 'ask') {
       const question = questionFor(prepared, text);
       response = { text: question.prompt, question };
+    } else if (!response && routing.reason === 'account_restriction' && routing.availability === 'restricted') {
+      response = { text: gateRefusalText('actor_not_allowed', arabic ? 'ar' : 'en') };
     } else if (!response) {
       response = { text: arabic ? 'لم أجد إجراءً متاحًا يطابق طلبك.' : 'I could not identify an available action that matches your request.' };
     }
