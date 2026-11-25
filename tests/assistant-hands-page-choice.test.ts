@@ -61,6 +61,45 @@ describe('page choice: a title that names nothing of the question', () => {
     expect(text(outcome).split('\n')[0]).toBe('طوكيو هي عاصمة اليابان وأكبر مدنها، وتقع على خليج طوكيو.');
   });
 
+  it('reads relevant search hits before retrying under the subject name', async () => {
+    const guide = pageOf('https://museum.example/glassmaking', 'An introduction to old crafts',
+      'Glassblowing is a technique for shaping molten glass by inflating it through a long tube.');
+    const events: string[] = [];
+    const input = io(by(guide), query => {
+      events.push(`search:${query}`);
+      return [{ title: guide.title, url: guide.url, snippet: 'Glassblowing technique' }];
+    });
+    const read = input.read!;
+    input.read = url => { events.push(`read:${url}`); return read(url); };
+    const result = await runHands({ steps: webQuestion('What is glassblowing?')!, next: 0 }, input);
+    expect(result).toMatchObject({ kind: 'done', status: 'completed' });
+    expect(text(result)).toContain('shaping molten glass');
+    expect(events.filter(event => event.startsWith('search:'))).toEqual(['search:What is glassblowing']);
+    expect(events).toContain(`read:${guide.url}`);
+  });
+
+  it('retries by subject after reading an initial result without an answer', async () => {
+    const fair = pageOf('https://museum.example/art-fair', 'Annual arts fair',
+      'The fair opens on Saturday with student exhibits in the courtyard and refreshments in the hall.');
+    const article = pageOf('https://museum.example/glassblowing', 'Glassblowing',
+      'Glassblowing is a technique for shaping molten glass by inflating it through a long tube.');
+    const events: string[] = [];
+    const input = io(by(fair, article), query => {
+      events.push(`search:${query}`);
+      return query === 'glassblowing'
+        ? [{ title: article.title, url: article.url }]
+        : [{ title: fair.title, url: fair.url, snippet: 'Glassblowing technique demonstrations' }];
+    });
+    const read = input.read!;
+    input.read = url => { events.push(`read:${url}`); return read(url); };
+    const result = await runHands({ steps: webQuestion('What is glassblowing?')!, next: 0 }, input);
+    expect(result).toMatchObject({ kind: 'done', status: 'completed' });
+    expect(text(result)).toContain('shaping molten glass');
+    expect(events.filter(event => !event.includes('wikipedia.org'))).toEqual([
+      'search:What is glassblowing', `read:${fair.url}`, 'search:glassblowing', `read:${article.url}`,
+    ]);
+  });
+
   it('does not answer a train-ticket question from a rail operator whose sentence names two of seven words (rq036)', async () => {
     const operator = pageOf('https://en.wikipedia.org/wiki/CrossCountry', 'CrossCountry - Wikipedia',
       'CrossCountry is a train operating company. 2 trains per day extends to and from Glasgow Central, calling at Haymarket and Motherwell.');
