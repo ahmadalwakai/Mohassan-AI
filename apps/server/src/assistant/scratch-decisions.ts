@@ -1,8 +1,10 @@
 import { loadScratchClassifiers, type ScratchClassifiers, type ScratchHead, type ScratchPrediction } from '@mohassan/scratch-classifiers';
+import { getModelEntry } from '../../../../packages/model-relations/src/registry.js';
 import { webQuestion } from './hands.js';
 import { buildFrame } from './mind/frame.js';
 import { hasQuantitativeQuestion } from './quantitative-question.js';
 import { arithmeticSearchEnabled } from './arithmetic-search-settings.js';
+import { arbitrateComponent } from './model-relations-arbiter.js';
 import { parseRequestContextState, requestActionText } from './request-context.js';
 import { maskRequestLiteralData, requestScopeActionText } from './request-scope.js';
 import type { RequestRoutingDecision, RequestRoutingInput, RoutedIntent } from './routing-decision.js';
@@ -101,7 +103,7 @@ function choose(input: RequestRoutingInput, rule: RequestRoutingDecision, predic
 }
 
 export function applyScratchRouting(input: RequestRoutingInput, rule: RequestRoutingDecision, policy: ScratchDecisionPolicy,
-    reroute: (choices: ScratchRoutingChoices) => RequestRoutingDecision): RequestRoutingDecision {
+    reroute: (choices: ScratchRoutingChoices) => RequestRoutingDecision, arbitrate = false): RequestRoutingDecision {
   const previous = parseRequestContextState(input.context);
   let predictions: Record<ScratchHead, ScratchPrediction>;
   try { predictions = policy.predictAll(input.text, { previousText: previous?.topic ?? undefined }); }
@@ -112,6 +114,20 @@ export function applyScratchRouting(input: RequestRoutingInput, rule: RequestRou
   const choices = policy.enabled ? choose(input, rule, predictions, previous?.scope === 'public' && Boolean(previous.topic), ruleRefusal) : {};
   let selected = Object.values(choices).some(Boolean) ? reroute(choices) : rule;
   if (choices.followUp && selected.resolution.kind !== choices.followUp) selected = rule;
+
+  // Keep refusal decisions authoritative. Only a ready, different host route is an alternative.
+  if (arbitrate && selected !== rule && !choices.refusal && selected.availability === 'ready' && rule.availability === 'ready'
+    && (selected.handler !== rule.handler || selected.route !== rule.route || selected.resolution.kind !== rule.resolution.kind)) {
+    const head = choices.smalltalk ? 'speechAct' : choices.route ? 'route' : 'followUp';
+    const id = head === 'speechAct' ? 'scratch-speech-act' : head === 'route' ? 'scratch-route' : 'scratch-follow-up';
+    const modelState = getModelEntry(id)?.state;
+    const { label, topK } = predictions[head];
+    const score = topK.find(item => item.label === label)?.score;
+    selected = arbitrateComponent('routing', { text: input.text, runId: input.turnId, conversationState: rule.resolution.kind,
+      ...(modelState ? { modelStates: { [id]: modelState } } : {}) },
+    { component: id, label: label ?? undefined, score, modelState, result: selected },
+    [{ component: 'rule-routing', label: rule.reason, result: rule }]);
+  }
 
   const trace = (head: ScratchHead, baseline: string, effective = baseline) => ({ rule: baseline, model: predictions[head], selected: effective });
   const ruleSpeech = rule.handler === 'local_conversation' && !rule.resolution.constraints?.standalone ? 'smalltalk' : 'request';
