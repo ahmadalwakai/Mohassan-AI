@@ -1,10 +1,16 @@
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   assertPublishedBaseline, type BranchReportCandidate, type BranchReportRun, renderBranchReport,
 } from '../scripts/agent-capability-bench/by-branch-report.js';
 import { compareCapabilityCases } from '../scripts/agent-capability-bench/by-branch-statistics.js';
 import { capabilityBaselineCommit, type CapabilityCase } from '../scripts/agent-capability-bench/corpus.js';
+import type { FrozenLane, FrozenStudy, MeasureOptions } from '../scripts/agent-capability-bench/measure-by-branch.js';
 import { type CapabilityScore, summarizeCapability } from '../scripts/agent-capability-bench/score.js';
+import { writeStudyReport } from '../scripts/agent-capability-bench/write-by-branch-report.js';
 
 const strata: Array<[CapabilityCase['area'], CapabilityCase['language'], number, number]> = [
   ['small-talk', 'en', 4, 50], ['factual', 'ar', 171, 425], ['factual', 'en', 32, 90], ['follow-up', 'en', 0, 95],
@@ -14,7 +20,7 @@ const strata: Array<[CapabilityCase['area'], CapabilityCase['language'], number,
 const baselineScores = strata.flatMap(([area, language, passed, total]) =>
   Array.from({ length: total }, (_, index): CapabilityScore => ({
     id: `private-test-case-${area}-${language}-${index}`, area, language, variety: 'unspecified',
-    passed: index < passed, stage: null, failures: [], turns: [], latencyMs: null, setupMs: 0, completedWithFailure: false,
+    passed: index < passed, stage: 'answer', failures: [], turns: [], latencyMs: null, setupMs: 0, completedWithFailure: false,
   })));
 const hash = (character: string) => character.repeat(64);
 const baseline: BranchReportRun = {
@@ -60,7 +66,7 @@ describe('v2 branch report', () => {
       || (score.area !== 'comparison' && score.passed));
     const exposed = setupCandidate('e2e/follow-up-end-to-end', 51, score => score.area === 'follow-up' || score.passed);
     const report = renderBranchReport({
-      baseCommit, baseline, commands: ['git fetch origin'], candidates: [clean, exposed, regressed], absentBranches: [],
+      baseCommit, releaseCommit: baseCommit, baseline, commands: ['git fetch origin'], candidates: [clean, exposed, regressed], absentBranches: [],
     });
     const ranking = report.slice(report.indexOf('## Ranking'), report.indexOf('## Recommended merge set'));
     expect(ranking).toContain('| 1 | [#124]');
@@ -88,7 +94,7 @@ describe('v2 branch report', () => {
       v1: { comparison: 'v1 development baseline', overall: 10, areas: {} },
     };
     const report = renderBranchReport({
-      baseCommit, baseline, commands: [], candidates: [weak, skipped], absentBranches: ['integration/wave-1'],
+      baseCommit, releaseCommit: baseCommit, baseline, commands: [], candidates: [weak, skipped], absentBranches: ['integration/wave-1'],
       checks: [{ command: 'npm test -- tests/agent-capability-by-branch-report.test.ts', result: 'Exit 0' }],
     });
     expect(report).toContain('gain below the significance threshold');
@@ -108,9 +114,117 @@ describe('v2 branch report', () => {
     const borderline = setupCandidate('feat/borderline', 123, score => score.passed || gains.has(score.id));
     const unavailable: BranchReportCandidate = { branch: 'feat/unavailable', flags: {}, candidateCommit };
     const report = renderBranchReport({
-      baseCommit, baseline, commands: [], candidates: [borderline, unavailable], absentBranches: [],
+      baseCommit, releaseCommit: baseCommit, baseline, commands: [], candidates: [borderline, unavailable], absentBranches: [],
     });
     expect(report).toContain('| 6 | 0 | 0.03125 | 0.0625 |');
     expect(report).not.toContain('Recommend `feat/borderline`');
+  });
+});
+
+const sha256 = (content: string | Buffer) => createHash('sha256').update(content).digest('hex');
+const collector = 'scripts/agent-capability-bench/collect-paired-outcomes.ts';
+const baselineLane: FrozenLane = {
+  name: 'baseline', commit: capabilityBaselineCommit, mergeCommit: capabilityBaselineCommit,
+};
+const candidateLane: FrozenLane = {
+  name: 'pr-123', commit: candidateCommit, mergeCommit,
+  candidate: { branch: 'feat/gain', pr: 123, flags: { FEATURE_FLAG: '1' }, adapter: 'clarification' },
+};
+
+async function createStudy(work: (options: MeasureOptions) => Promise<void>) {
+  const directory = await mkdtemp(join(tmpdir(), 'capability-report-'));
+  try {
+    const receiptsDir = join(directory, 'receipts');
+    const attemptsDir = join(directory, 'attempts');
+    await Promise.all([mkdir(receiptsDir), mkdir(attemptsDir)]);
+    const manifest = await readFile(new URL('../scripts/agent-capability-bench/v2/manifest.json', import.meta.url));
+    const manifestSha256 = sha256(manifest);
+    const payloadSha256 = JSON.parse(manifest.toString('utf8')).sealed.sha256 as string;
+    const commonHashes = {
+      'collect-paired-outcomes.ts': hash('1'), 'corpus.ts': hash('2'), 'score.ts': hash('3'), 'v2/mapping.ts': hash('4'),
+      'v2/sealed.ts': hash('5'), 'v2/manifest.json': manifestSha256,
+    };
+    const plan: FrozenStudy = {
+      baseCommit, releaseCommit: baseCommit, absentBranches: ['integration/wave-1'], commands: ['git fetch origin'],
+      collectorHashes: { [collector]: commonHashes['collect-paired-outcomes.ts'] },
+      lanes: [baselineLane, candidateLane],
+    };
+    await writeFile(join(directory, 'study.json'), JSON.stringify(plan));
+    for (const lane of plan.lanes) {
+      const scores = lane.candidate
+        ? baselineScores.map(score => ({ ...score, passed: score.passed || score.id === 'private-test-case-small-talk-en-4' }))
+        : baselineScores;
+      const observerPath = lane.candidate?.adapter ? 'by-branch-observe.ts' : 'observe.ts';
+      const source = {
+        ...baseline.receipt.source, gitCommit: lane.mergeCommit, baselineVerified: !lane.candidate,
+        harnessSha256: { ...commonHashes, [observerPath]: hash('6') },
+      };
+      const outcomes = scores.map(({ id, area, language, passed }) => ({ id, area, language, passed }));
+      const receipt = JSON.stringify({
+        ...baseline.receipt, source, manifestSha256, payloadSha256, summary: summarizeCapability(scores), outcomes,
+        schemaVersion: 1, partition: 'v2-sealed',
+      });
+      await Promise.all([
+        writeFile(join(attemptsDir, `${lane.commit}.attempt`), 'reserved'),
+        writeFile(join(receiptsDir, `${lane.name}.paired.json`), receipt, { mode: 0o600 }),
+        writeFile(join(receiptsDir, `${lane.name}.json`), JSON.stringify({ commands: ['node --import tsx collector'], receiptSha256: sha256(receipt) })),
+        writeFile(join(receiptsDir, `${lane.name}.preflight.json`), JSON.stringify({
+          source, runtime: baseline.receipt.runtime, schemaVersion: 1, partition: 'setup-preflight',
+        })),
+      ]);
+    }
+    await work({ mode: 'report', directory, jobs: 1, output: join(directory, 'report.md') });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+describe('writing a report from frozen v2 receipts', () => {
+  it('verifies receipts and retains changes privately while rendering only aggregates', async () => {
+    await createStudy(async options => {
+      const invocation = 'node --import tsx measure-by-branch.ts report';
+      await writeStudyReport(options, invocation);
+      await writeStudyReport(options, invocation);
+      const report = await readFile(options.output!, 'utf8');
+      const path = join(options.directory, 'paired-comparisons.json');
+      expect((await stat(path)).mode & 0o777).toBe(0o600);
+      const { comparisons } = JSON.parse(await readFile(path, 'utf8'));
+      expect(comparisons[0].caseDeltas).toHaveLength(1200);
+      expect(comparisons[0].caseDeltas.find(({ delta }: { delta: number }) => delta === 1)).toMatchObject({
+        id: 'private-test-case-small-talk-en-4', delta: 1,
+      });
+      expect(report).toContain(invocation);
+      expect(report).toContain('by-branch-observe.ts');
+      expect(report).not.toContain('private-test-case');
+      await expect(writeStudyReport(options, 'different report invocation')).rejects.toThrow('Output exists with different content');
+    });
+  });
+
+  it('rejects mismatched preflight provenance and tampered receipts', async () => {
+    await createStudy(async options => {
+      const path = join(options.directory, 'receipts', 'pr-123.preflight.json');
+      const preflight = JSON.parse(await readFile(path, 'utf8'));
+      preflight.source.harnessSha256['by-branch-observe.ts'] = hash('0');
+      await writeFile(path, JSON.stringify(preflight));
+      await expect(writeStudyReport(options)).rejects.toThrow('Preflight and sealed provenance differ for pr-123');
+      const receipt = join(options.directory, 'receipts', 'pr-123.paired.json');
+      await writeFile(receipt, '{ "modified": true }');
+      await expect(writeStudyReport(options)).rejects.toThrow('Sealed receipt custody verification failed for pr-123');
+      await expect(stat(options.output!)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+  });
+
+  it('waits for terminal lane records and includes explicit failures', async () => {
+    await createStudy(async options => {
+      const path = join(options.directory, 'receipts', 'pr-123.json');
+      await rm(path);
+      await expect(writeStudyReport(options)).rejects.toThrow('The study is still in progress. No terminal record for pr-123.');
+      await expect(stat(join(options.directory, 'paired-comparisons.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(stat(options.output!)).rejects.toMatchObject({ code: 'ENOENT' });
+      await writeFile(path, JSON.stringify({ commands: ['node --import tsx collector'], failure: 'sealed collector' }));
+      await writeStudyReport(options);
+      const report = await readFile(options.output!, 'utf8');
+      expect(report).toContain('Measurement stopped during sealed collector. A sealed attempt was reserved.');
+    });
   });
 });

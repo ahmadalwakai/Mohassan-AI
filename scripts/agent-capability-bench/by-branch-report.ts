@@ -28,6 +28,7 @@ export interface BranchReportCandidate extends Pick<Candidate, 'branch' | 'flags
 
 export interface BranchReportStudy {
   baseCommit: string;
+  releaseCommit: string;
   commands: readonly string[];
   checks?: readonly { command: string; result: string }[];
   baseline: BranchReportRun;
@@ -135,7 +136,7 @@ function historicalRows(candidate: BranchReportCandidate, subgroupAdjusted: Read
 function runProvenance(label: string, run: BranchReportRun) {
   const { source, runtime, startedAt, finishedAt } = run.receipt;
   return [
-    `### ${label}`, '',
+    '<details>', `<summary>${label}</summary>`, '',
     `Evaluation HEAD ${code(source.gitCommit)}. ${runtime.platform} ${runtime.architecture}, Node.js ${code(runtime.node)}, timezone ${code(runtime.timeZone)}. Started ${code(startedAt)} and finished ${code(finishedAt)}.`, '',
     `- Lockfile SHA-256 ${code(source.lockfileSha256)}`,
     `- Receipt SHA-256 ${code(run.receiptSha256)}`,
@@ -143,6 +144,7 @@ function runProvenance(label: string, run: BranchReportRun) {
       .map(([file, sha]) => `- ${code(file)} SHA-256 ${code(sha)}`),
     '',
     ...commandBlock(run.commands),
+    '</details>', '',
   ];
 }
 
@@ -169,7 +171,7 @@ export function renderBranchReport(study: BranchReportStudy) {
   const n = summary.overall.total.toLocaleString('en-GB');
   const rows = [
     '# Mohassan capability benchmark v2 by branch — 25 November 2026', '',
-    `The study measured ${measured.length} of ${candidates.length} available candidates on the same ${n} sealed cases. The release draws from public human-written datasets. The paired baseline replay at ${code(baseline.receipt.source.gitCommit)} matched the published v2 pass counts overall and in every area and language group. The candidates were measured separately on scratch merges with the measurement branch based on ${code(study.baseCommit)}. [V2 release audit](CAPABILITY-BENCH-V2-2026-11-25.md) · [V2 data and mapping](CAPABILITY-BENCH-V2-DATA.md)`, '',
+    `The study measured ${measured.length} of ${candidates.length} available candidates on the same ${n} sealed cases. The release draws from public human-written datasets. The paired baseline replay at ${code(baseline.receipt.source.gitCommit)} matched the published v2 pass counts overall and in every area and language group. Each candidate was measured on a separate scratch merge with frozen measurement commit ${code(study.baseCommit)}, based on the PR #56 release at ${code(study.releaseCommit)}. [V2 release audit](CAPABILITY-BENCH-V2-2026-11-25.md) · [V2 data and mapping](CAPABILITY-BENCH-V2-DATA.md)`, '',
     '## Ranking', '',
     `The baseline passed **${passCount(summary.overall)} (${percentage(summary.overall.passed / summary.overall.total)})**, with a Wilson 95% interval of ${interval(summary.overall.wilson95)}. Deltas are against that baseline. Equal deltas share a rank.`, '',
     '| Rank | Candidate | V2 passed | Wilson 95% CI | Delta passes | Delta rate | Newly passing | Newly failing | McNemar p | Holm p |',
@@ -186,7 +188,7 @@ export function renderBranchReport(study: BranchReportStudy) {
   if (recommended.length) {
     rows.push(...recommended.map(candidate => {
       const group = candidate.comparison.overall;
-      const stack = candidate.stackedOn ? ' with its measured parent' : '';
+      const stack = candidate.stackedOn ? ' with its included parent stack' : '';
       const links = [candidate.pr, candidate.stackedOn].filter((number): number is number => number !== undefined).map(pr).join(' · ');
       return `- Recommend ${branch(candidate)}${stack}. ${signed(group.deltaCount)} passing cases (${deltaPp(group.deltaRate)}), overall Holm p = ${pValue(overallAdjusted.get(group)!)}.${links ? ` ${links}` : ''}`;
     }), '', 'The measured configuration for each recommendation includes its listed flags and inherited commits. Joint effects of separately measured candidates are unverified.', '');
@@ -211,7 +213,7 @@ export function renderBranchReport(study: BranchReportStudy) {
     'The seal is a separately sampled, pinned release. The branches below had prior exposure to some upstream datasets. Exact overlap with the sealed cases remains unverified.', '',
     `- ${code('e2e/follow-up-end-to-end')} inherits PR #35, which used the byte-identical official CANARD test file for its retrospective development and holdout evaluation. V2 also uses that source for follow-up cases. [PR #51](${github}/pull/51) · [PR #35 freeze manifest](${github}/blob/2d171b0dce3ab9eac4721aee0a6b6d0f436d2a64/scripts/conversation-state/decision-eval-freeze.json) · [V2 source pins](../scripts/agent-capability-bench/v2/sources.ts)`,
     `- ${code('feat/scratch-classifiers')} uses first-party linear classifiers trained from zero initialization on human-labelled data. Its data card records CLINC150 at the same pin as v2, the official CANARD test split and MASSIVE v1.0. V2 uses MASSIVE v1.1. Official test splits were used for classifier evaluation after fitting and selection. [PR #47 data card](${github}/blob/76b1a9325a5ef4edda84816cc6523aa06026121e/packages/scratch-classifiers/DATA-CARD.md) · [Model card](${github}/blob/76b1a9325a5ef4edda84816cc6523aa06026121e/packages/scratch-classifiers/MODEL-CARD.md)`,
-    `- ${code('e2e/refusal-generalization')} uses CLINC150 at the same pin as v2 and Arabic MASSIVE v1.0. The official test splits were used for classifier evaluation after fitting and calibration. [PR #57 training README](${github}/blob/f1ea533a3a33302b621b9e416c543941ccabbc53/scripts/refusal-classifier/README.md)`, '',
+    `- ${code('e2e/refusal-generalization')} uses CLINC150 at the same pin as v2 and Arabic MASSIVE v1.0. After fitting and calibration, its evaluation used the official test splits for the classifier and replayed official CLINC150 test rows through the application-integrated refusal policy. [PR #57 training README](${github}/blob/f1ea533a3a33302b621b9e416c543941ccabbc53/scripts/refusal-classifier/README.md)`, '',
     '## Area and language results', '',
     'Each table uses the same paired cases within the group. Wilson 95% intervals describe each pass proportion. Exact two-sided McNemar p-values use the counts of cases that switched from fail to pass and pass to fail. The per-case paired difference is +1, −1 or 0 for a gain, a loss or an unchanged outcome. Receipts with per-case differences stay in the private measurement workspace.', '',
     `Areas without v2 cases are ${capabilityAreas.filter(area => !measuredAreas.has(area)).map(code).join(', ')}. Arabic and English have different area and source mixes. [V2 coverage and interpretation](CAPABILITY-BENCH-V2-2026-11-25.md#coverage-and-interpretation)`, '',
@@ -220,6 +222,20 @@ export function renderBranchReport(study: BranchReportStudy) {
     ...Object.entries(summary.byLanguage).map(([label, group]) => `| ${languageLabel(label)} | ${passCount(group)} | ${interval(group.wilson95)} |`),
     ...Object.entries(summary.byArea).map(([label, group]) => `| ${code(label)} | ${passCount(group)} | ${interval(group.wilson95)} |`), '',
   );
+  if (measured.length) {
+    const languages = Object.keys(summary.byLanguage);
+    const areas = Object.keys(summary.byArea);
+    rows.push('### Pass-count deltas at a glance', '',
+      `| Candidate | ${[...languages.map(languageLabel), ...areas.map(code)].join(' | ')} |`,
+      `| --- | ${[...languages, ...areas].map(() => '---:').join(' | ')} |`,
+      ...measured.map(candidate => {
+        const deltas = [
+          ...languages.map(language => candidate.comparison.byLanguage[language].deltaCount),
+          ...areas.map(area => candidate.comparison.byArea[area].deltaCount),
+        ];
+        return `| ${candidateLabel(candidate)} | ${deltas.map(signed).join(' | ')} |`;
+      }), '', '### Paired subgroup statistics', '');
+  }
   for (const candidate of measured) {
     const title = candidate.pr ? `#${candidate.pr} ${candidate.branch}` : candidate.branch;
     rows.push(
@@ -247,11 +263,13 @@ export function renderBranchReport(study: BranchReportStudy) {
       const flags = Object.entries(candidate.flags).map(([name, value]) => code(`${name}=${value}`)).join(' ');
       return `| ${candidateLabel(candidate)} | ${code(candidate.candidateCommit)} | ${candidate.mergeCommit ? code(candidate.mergeCommit) : '—'} | ${candidate.stackedOn ? pr(candidate.stackedOn) : '—'} | ${flags || 'Defaults'} | ${candidate.adapter ? code(candidate.adapter) : '—'} |`;
     }), '',
-    ...commandBlock(study.commands),
+    '<details>', '<summary>Freeze and report commands</summary>', '',
+    ...commandBlock(study.commands), '</details>', '',
     ...runProvenance('Baseline replay', baseline),
   );
   for (const candidate of candidates) {
-    if (candidate.commands?.length) rows.push(`### ${candidate.branch} preparation`, '', ...commandBlock(candidate.commands));
+    if (candidate.commands?.length) rows.push('<details>', `<summary>${candidate.branch} preparation</summary>`, '',
+      ...commandBlock(candidate.commands), '</details>', '');
     if (candidate.run) rows.push(...runProvenance(candidate.branch, candidate.run));
   }
   if (study.checks?.length) {

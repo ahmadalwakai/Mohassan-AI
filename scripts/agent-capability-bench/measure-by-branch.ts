@@ -12,7 +12,9 @@ const exec = promisify(execFile);
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const toolDir = 'scripts/agent-capability-bench';
 const collector = `${toolDir}/collect-paired-outcomes.ts`;
-const seal = 'tests/fixtures/agent-capability-bench/v2/sealed/payload.json';
+const runner = `${toolDir}/measure-by-branch.ts`;
+const sealDirectory = 'tests/fixtures/agent-capability-bench/v2/sealed';
+const seal = `${sealDirectory}/payload.json`;
 const baselineCommit = 'c2a0ff765071657cf200b5ee7d12fabaad738c0b';
 const baseRef = 'test/capability-bench-v2-human';
 const expectedPayload = '6ab7dac41ba54eccf0a48fd0958eada651e0c0fcb3a1156913bd6b9fdb25abbf';
@@ -134,7 +136,9 @@ async function freezeStudy(directory: string, browsers: string, invocation: stri
   await git(fetch);
   const baseCommit = await git(['rev-parse', 'HEAD']);
   await git(['merge-base', '--is-ancestor', releaseCommit, baseCommit]);
-  await git(['diff', '--quiet', releaseCommit, baseCommit, '--', seal, toolDir, `:(exclude)${toolDir}/by-branch-*.ts`, `:(exclude)${collector}`, `:(exclude)${toolDir}/measure-by-branch.ts`]);
+  await git(['diff', '--quiet', releaseCommit, baseCommit, '--', sealDirectory, toolDir,
+    `:(exclude)${toolDir}/by-branch-*.ts`, `:(exclude)${collector}`, `:(exclude)${runner}`,
+    `:(exclude)${toolDir}/write-by-branch-report.ts`]);
   const date = await git(['show', '-s', '--format=%cI', baseCommit]);
   const stamp = {
     GIT_AUTHOR_NAME: 'Capability benchmark', GIT_AUTHOR_EMAIL: 'capability-benchmark@example.invalid', GIT_AUTHOR_DATE: date,
@@ -229,13 +233,12 @@ async function measureLane(study: FrozenStudy, lane: FrozenLane, directory: stri
   }
 }
 
-async function measure(options: MeasureOptions) {
+async function measure(options: MeasureOptions, invocation: string) {
   const directory = options.directory;
   const browsers = await realpath(options.browsers!);
   await mkdir(directory, { mode: 0o700 });
   const privateDirectory = await realpath(directory);
   if (isInside(root, privateDirectory)) throw new Error('Put the private study directory outside the repository.');
-  const invocation = spell(['node', '--import', 'tsx', `${toolDir}/measure-by-branch.ts`, ...process.argv.slice(2)]);
   const study = await freezeStudy(privateDirectory, browsers, invocation);
   if (await hashFile(join(root, seal)) !== expectedPayload) throw new Error('The release payload pin changed.');
   await Promise.all(['worktrees', 'receipts', 'attempts'].map(name => mkdir(join(privateDirectory, name), { mode: 0o700 })));
@@ -249,9 +252,11 @@ async function measure(options: MeasureOptions) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const options = parseMeasureArgs(process.argv.slice(2));
-    if (options.mode === 'measure') await measure(options);
-    else await (await import('./write-by-branch-report.js')).writeStudyReport(options);
+    const args = process.argv.slice(2);
+    const options = parseMeasureArgs(args);
+    const invocation = spell(['node', '--import', 'tsx', runner, ...args]);
+    if (options.mode === 'measure') await measure(options, invocation);
+    else await (await import('./write-by-branch-report.js')).writeStudyReport(options, invocation);
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'Capability branch measurement failed.');
     process.exitCode = 1;
