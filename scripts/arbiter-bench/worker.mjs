@@ -10,6 +10,8 @@ process.on('uncaughtException', () => {
   process.stdout.write(`Worker stopped during ${stage}.\n`);
   process.exitCode = 1;
 });
+// The parent receives only this worker's fixed diagnostic, never controller data.
+for (const method of ['debug', 'log', 'info', 'warn', 'error']) console[method] = () => {};
 const lane = Number(laneText);
 const root = process.cwd();
 const tooling = resolve(root, `scripts/arbiter-bench-v${version}`);
@@ -41,7 +43,6 @@ const result = { source, lane, version, mode, cases: [], rows: [], unsupported: 
 const lanes = version === '1' ? 1 : 8;
 const split = `v${version}-development`;
 const startedAt = new Date().toISOString();
-console.error = () => { /* Controller diagnostics can contain fixture data. */ };
 
 stage = 'observing';
 await withCapabilityHarness(async observe => {
@@ -75,9 +76,10 @@ await withCapabilityHarness(async observe => {
       if (mode === 'replay') {
         for (const { component } of claimants) {
           const forced = await inspect([{ turnId, occurrence, type, component }]);
-          if (!forced.decisions.some(entry => entry.turnId === turnId && (entry.occurrence ?? 1) === occurrence
-              && entry.type === type && entry.selected === component && entry.reason === 'forced')) {
-            result.unsupported.push({ ...indexData, component });
+          const applied = forced.decisions.find(entry => entry.turnId === turnId && (entry.occurrence ?? 1) === occurrence
+            && entry.type === type);
+          if (applied?.selected !== component || applied?.reason !== 'forced') {
+            result.unsupported.push({ ...indexData, component, reason: applied?.reason ?? 'site-unobserved' });
           } else {
             outcomes[component] = forced.score.passed;
           }

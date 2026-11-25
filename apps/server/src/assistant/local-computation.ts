@@ -6,6 +6,7 @@ import { evaluateLocalReasoning, type ReasoningContext } from './reasoning/index
 import { analyzeCompoundRequest, type CompoundRequestAnalysis, type PendingActionKind } from './compound-request.js';
 import { splitReplyDirective, type ReplyDirective, type ReplyLanguage } from './reply-directive.js';
 import { evaluateWordProblem } from './word-problem.js';
+import { arbiterEnabled, arbitrateComponent, hasArbiterExecution } from './model-relations-arbiter.js';
 
 /** A local calculation is a reusable capability, independent of the experimental Mind route. */
 export interface LocalComputation {
@@ -34,14 +35,30 @@ export interface LocalComputation {
 export function evaluateLocalComputation(request: string, now = new Date(), reasoning?: ReasoningContext): LocalComputation | null {
   if (!request.trim() || request.length > 4000 || !Number.isFinite(now.getTime())) return null;
   const beforeWork = calculationBodyBeforeWork(request);
+  const contestedReasoning = reasoning && Object.hasOwn(reasoning, 'previousUserTurn') && hasArbiterExecution() && arbiterEnabled();
+  const choose = (ranked: LocalComputation, native: () => LocalComputation | null): LocalComputation => {
+    if (!contestedReasoning) return ranked;
+    const started = performance.now();
+    try {
+      const computation = native();
+      if (!computation) return ranked;
+      return arbitrateComponent<LocalComputation>('local-computation', { text: request, started,
+        conversationState: reasoning?.previousUserTurn ? 'with-history' : 'new' },
+      { component: 'reasoning-engine', label: ranked.status, result: ranked },
+      [{ component: 'local-calculator', label: computation.status, result: computation }]);
+    } catch {
+      return ranked;
+    }
+  };
   if (beforeWork) {
-    return evaluateLocalReasoning(beforeWork, now, reasoning)
-      ?? evaluateComputationText(request, now, beforeWork);
+    const ranked = evaluateLocalReasoning(beforeWork, now, reasoning);
+    return ranked ? choose(ranked, () => evaluateComputationText(request, now, beforeWork))
+      : evaluateComputationText(request, now, beforeWork);
   }
-  const whole = evaluateLocalReasoning(request, now, reasoning) ?? evaluateComputationText(request, now);
+  const ranked = evaluateLocalReasoning(request, now, reasoning);
+  const native = () => evaluateComputationText(request, now) ?? evaluateWordProblem(request);
+  const whole = ranked ? choose(ranked, native) : native();
   if (whole) return whole;
-  const wordProblem = evaluateWordProblem(request);
-  if (wordProblem) return wordProblem;
   // «QA test 2026-11-23: Calculate 37 × 24 and reply with the result in one short Arabic sentence.» (live test, 2026-11-23):
   // the label in front and the closing instruction about the reply are not part of the calculation. Only the request
   // between them is calculated, and only when it is a complete calculation on its own; the reply then follows the

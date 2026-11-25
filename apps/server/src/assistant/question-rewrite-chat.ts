@@ -8,7 +8,8 @@ import { rewriteFollowUpQuestion, type QuestionHistory } from './question-rewrit
 import { splitReplyDirective } from './reply-directive.js';
 import { parseRequestContextState } from './request-context.js';
 import { assessRequestScope, reviewPublicProjection } from './request-scope.js';
-import { decideRequestRoute, type RequestRoutingInput, type RoutingHandler, type RoutingReason } from './routing-decision.js';
+import { decideHostRequestRoute, decideRequestRoute, type RequestRoutingInput, type RoutingHandler, type RoutingReason } from './routing-decision.js';
+import { arbitrateComponent } from './model-relations-arbiter.js';
 
 export function renderQuestionRewrite(request: string, handler: RoutingHandler | undefined): string | null {
   if (handler !== 'writing') return null;
@@ -56,7 +57,7 @@ async function readTurns(db: Kysely<any>, conversationId: string): Promise<Quest
 /** Resolve ordinary public follow-ups before routing while retaining the raw message as the authority. */
 export async function routeWithQuestionHistory(db: Kysely<any>, conversationId: string, publicTerms: unknown, allowLive: boolean,
   input: RequestRoutingInput) {
-  const fallback = () => decideRequestRoute(input);
+  const fallback = () => allowLive ? decideHostRequestRoute(input) : decideRequestRoute(input);
   if (!allowLive || process.env.MOHASSAN_QUESTION_REWRITER !== '1' || input.pendingQuestion
     || !questionStart.test(input.text) || splitReplyDirective(input.text).directive) return fallback();
   const previous = parseRequestContextState(input.context)?.sourceAssessment;
@@ -81,5 +82,9 @@ export async function routeWithQuestionHistory(db: Kysely<any>, conversationId: 
   const source: typeof current = { ...current, reasons: ['inherited_source'] };
   const resolution = { ...routed.resolution, kind: 'follow_up' as const, original: input.text.replace(/\s+/gu, ' ').trim(),
     query: question, sourceAssessment: source };
-  return { ...routed, reason: 'rewritten_question' as const, resolution, sourceAssessment: source, publicQuery: question };
+  const rewritten = { ...routed, reason: 'rewritten_question' as const, resolution, sourceAssessment: source, publicQuery: question };
+  if (original.handler !== 'search' || !original.publicQuery || original.publicQuery === question) return rewritten;
+  return arbitrateComponent('question-rewrite', { text: input.text, runId: input.turnId, conversationState: resolution.kind },
+    { component: 'question-rewriter', label: rewritten.reason, result: rewritten },
+    [{ component: 'factual-lookup', label: original.reason, result: original }]);
 }

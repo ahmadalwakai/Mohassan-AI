@@ -36,6 +36,7 @@ import { publicConversationFollowup } from './assistant/public-conversation-foll
 import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { judge as judgeAnswer } from './assistant/judge.js';
 import { observeImageRelations, observeModelRelations } from './assistant/model-relations-shadow.js';
+import { withArbiterExecution } from './assistant/model-relations-arbiter.js';
 import { ensureChatConversationsTable, reviewJudgedReply } from './assistant/review/publication.js';
 import { continueWebSequence, joinSequence, planWebSequence, startWebSequence } from './assistant/web-sequence.js';
 import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
@@ -3951,7 +3952,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     controllers.set(id, {runId,token,controller});
     if(!preserveVault){const prior=vaultOwners.get(id);if(prior)forgetVault(id,prior);}
     vaultOwners.set(id,token);
-    const worker = execution.run({ownerId,id,runId,token,controller,full},()=>work(ownerId, id, runId, controller)).catch(() => {});
+    const worker = execution.run({ownerId,id,runId,token,controller,full},()=>withArbiterExecution(runId, () => work(ownerId, id, runId, controller))).catch(() => {});
     workers.set(id, worker);
     void worker.finally(() => { if (workers.get(id) === worker) workers.delete(id); });
   }

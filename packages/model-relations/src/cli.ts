@@ -55,6 +55,8 @@ async function summarizeShadow(path: string): Promise<void> {
   const input = createReadStream(path);
   const lines = createInterface({ input, crlfDelay: Infinity });
   const counts = new Map<string, { considered: number; attempted: number; compared: number; disagreements: number; fallbacks: number }>();
+  const decisions = new Map<string, { contested: number; disagreements: number; changed: number;
+    reasons: Map<string, number>; alternatives: Map<string, number>; times: number[] }>();
   let turns = 0;
   try {
     for await (const line of lines) {
@@ -75,6 +77,21 @@ async function summarizeShadow(path: string): Promise<void> {
           counts.set(call.model, count);
         }
       }
+      for (const decision of row.arbiter ?? []) {
+        const { type, precedence, proposed, selected, reason, elapsedMs } = decision;
+        const count = decisions.get(type) ?? { contested: 0, disagreements: 0, changed: 0,
+          reasons: new Map<string, number>(), alternatives: new Map<string, number>(), times: [] };
+        count.contested++;
+        count.reasons.set(reason, (count.reasons.get(reason) ?? 0) + 1);
+        if (proposed !== precedence) {
+          count.disagreements++;
+          const path = `${precedence} → ${proposed}`;
+          count.alternatives.set(path, (count.alternatives.get(path) ?? 0) + 1);
+        }
+        if (selected !== precedence) count.changed++;
+        if (Number.isFinite(elapsedMs) && elapsedMs >= 0) count.times.push(elapsedMs);
+        decisions.set(type, count);
+      }
       turns++;
     }
   } catch {
@@ -83,11 +100,18 @@ async function summarizeShadow(path: string): Promise<void> {
     lines.close();
     input.destroy();
   }
-  print({ turns, models: [...counts].sort(([first], [second]) => first.localeCompare(second, 'en')).map(([model, count]) => ({
-    model,
-    ...count,
-    disagreementRate: count.compared ? count.disagreements / count.compared : null,
-  })) });
+  print({
+    turns,
+    models: [...counts].sort(([first], [second]) => first.localeCompare(second, 'en')).map(([model, count]) => ({
+      model, ...count, disagreementRate: count.compared ? count.disagreements / count.compared : null,
+    })),
+    ...(decisions.size ? { arbiter: [...decisions].sort(([first], [second]) => first.localeCompare(second, 'en'))
+      .map(([type, { times, reasons, alternatives, ...count }]) => ({
+        type, ...count, disagreementRate: count.disagreements / count.contested,
+        reasons: Object.fromEntries(reasons), disagreementsByChoice: Object.fromEntries(alternatives),
+        p95Ms: times.length ? percentile(times.sort((a, b) => a - b), 0.95) : null,
+      })) } : {}),
+  });
 }
 
 async function main([command, modelId, inputPath, iterationsArg, ...extra]: readonly string[]): Promise<number> {

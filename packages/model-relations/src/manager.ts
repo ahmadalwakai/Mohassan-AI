@@ -1,5 +1,27 @@
 import { createHmac, randomBytes } from 'node:crypto';
+import { ArbiterBrain, type ArbiterInput } from './arbiter.js';
 import type { ModelRunResult } from './runtime.js';
+
+const arbiterFlags = {
+  routing: 'MOHASSAN_ARBITER_ROUTING',
+  'question-rewrite': 'MOHASSAN_ARBITER_QUESTION_REWRITE',
+  'local-computation': 'MOHASSAN_ARBITER_LOCAL_COMPUTATION',
+  'compound-plan': 'MOHASSAN_ARBITER_COMPOUND_PLAN',
+} as const;
+export type ArbiterDecisionType = keyof typeof arbiterFlags;
+
+// Add entries only with per-area and per-language receipts for both development splits.
+const promotedDecisionTypes: readonly ArbiterDecisionType[] = [];
+
+export interface ArbiterDecisionLog extends ArbiterInput {
+  selected: string;
+  proposed: string;
+  confidence: number | null;
+  threshold: number | null;
+  reason: string;
+  elapsedMs: number;
+  explanation?: ReturnType<ArbiterBrain['choose']>['reasons'];
+}
 
 const routes = ['web_search', 'browser_command', 'news', 'memory', 'reminder', 'compute', 'ads', 'pc', 'writing',
   'planning', 'coding', 'chat', 'reply', 'clarify', 'image', 'media', 'unsupported'] as const;
@@ -30,6 +52,7 @@ export interface TurnObservation {
   id: string;
   text: string;
   previousText?: string | null;
+  arbiter?: readonly ArbiterDecisionLog[];
   baseline: {
     route: string;
     refusal: Refusal;
@@ -59,6 +82,9 @@ interface ManagerOptions {
   maxTurnMs?: number;
   hashKey?: string | Buffer;
   judge?: (input: JudgeObservation) => JudgeDecision;
+  arbiter?: ArbiterBrain;
+  promotedDecisionTypes?: readonly ArbiterDecisionType[];
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface DecisionValue {
@@ -91,6 +117,7 @@ export interface TurnDecisionLog {
   requestHash: string;
   replyHash?: string;
   elapsedMs: number;
+  arbiter?: readonly ArbiterDecisionLog[];
   arbitration: {
     winner: 'existing-rules';
     reason: 'host-refusal' | 'host-smalltalk' | 'shadow';
@@ -159,12 +186,42 @@ export class ModelRelationsManager {
   private readonly hashKey: string | Buffer;
   private readonly maxTurnMs: number;
   private readonly counts = new Map<string, SummaryCounts>();
+  private readonly arbiter: ArbiterBrain;
+  private readonly promoted: ReadonlySet<ArbiterDecisionType>;
+  private readonly env: NodeJS.ProcessEnv;
   private turns = 0;
 
   constructor(private readonly runtime: ModelRunner, private readonly options: ManagerOptions = {}) {
     this.hashKey = options.hashKey ?? randomBytes(32);
     this.maxTurnMs = options.maxTurnMs ?? 1500;
+    this.arbiter = options.arbiter ?? new ArbiterBrain();
+    this.promoted = new Set(options.promotedDecisionTypes ?? promotedDecisionTypes);
+    this.env = options.env ?? process.env;
     if (!Number.isFinite(this.maxTurnMs) || this.maxTurnMs < 1) throw new RangeError('Model relations turn budget must be positive');
+  }
+
+  /** Selects an already available claim without asking any model to run or loading an artifact. */
+  arbitrate(input: ArbiterInput, options: { forced?: string; protected?: boolean } = {}): ArbiterDecisionLog {
+    const started = performance.now();
+    const { type, precedence, claimants } = input;
+    const flag = Object.hasOwn(arbiterFlags, type) ? arbiterFlags[type as ArbiterDecisionType] : undefined;
+    const decision = (selected: string, proposed: string, reason: string, confidence: number | null = null,
+      threshold: number | null = null, explanation?: ArbiterDecisionLog['explanation']): ArbiterDecisionLog => ({
+      ...input, selected, proposed, reason, confidence, threshold, elapsedMs: performance.now() - started,
+      ...(explanation?.length ? { explanation } : {}),
+    });
+    if (options.protected) return decision(precedence, precedence, 'protected');
+    if (options.forced && flag && claimants.some(claim => claim.component === options.forced)) {
+      return decision(options.forced, options.forced, 'forced');
+    }
+    if (this.env.MOHASSAN_MODEL_RELATIONS === 'off') return decision(precedence, precedence, 'off');
+    const pick = this.arbiter.choose(input);
+    const proposed = pick.proposedChoice ?? pick.choice;
+    const reason = flag && this.env[`${flag}_KILL`] === '1' ? 'killed'
+      : pick.choice === precedence ? pick.reason
+      : !flag || !this.promoted.has(type as ArbiterDecisionType) || this.env[flag] !== '1' ? 'shadow' : pick.reason;
+    const selected = reason === 'higher-pass-likelihood' ? pick.choice : precedence;
+    return decision(selected, proposed, reason, pick.confidence, pick.threshold, pick.reasons);
   }
 
   summary() {
@@ -172,7 +229,7 @@ export class ModelRelationsManager {
       disagreementRate: counts.compared ? counts.disagreements / counts.compared : null })) };
   }
 
-  async inspect(turn: TurnObservation): Promise<TurnDecisionLog> {
+  async inspect(turn: TurnObservation, review = this.options.judge): Promise<TurnDecisionLog> {
     const started = performance.now();
     const deadline = { at: started + this.maxTurnMs, expired: false };
     const stages: StageObservation[] = [];
@@ -199,6 +256,7 @@ export class ModelRelationsManager {
       this.turns++;
       return { event: 'model_relations_turn', mode: 'shadow', turnHash: this.hash('turn', turn.id),
         requestHash: this.hash('request', turn.text),
+        ...(turn.arbiter?.length ? { arbiter: turn.arbiter } : {}),
         ...(baseline.answer !== undefined ? { replyHash: this.hash('reply', baseline.answer) } : {}),
         elapsedMs: performance.now() - started, arbitration, stages };
     };
@@ -264,15 +322,14 @@ export class ModelRelationsManager {
       : undefined) ?? baseline.answer;
 
     const judgeStage = stage('reply-judge', baseline.judge, judgeLabels);
-    if (this.options.judge && answer && question && !deadline.expired && performance.now() < deadline.at) {
+    if (review && answer && question && !deadline.expired && performance.now() < deadline.at) {
       const judging = performance.now();
       const context = { previous, status: baseline.status, evidence };
       try {
-        const judge = this.options.judge;
-        const verdict = value('reply-judge', judge({ ...context, question, reply: answer }), judgeLabels);
+        const verdict = value('reply-judge', review({ ...context, question, reply: answer }), judgeLabels);
         if (!judgeStage.rule && baseline.answer) {
           judgeStage.rule = answer === baseline.answer && question === ruleQuestion ? verdict
-            : value('reply-judge', judge({ ...context, question: ruleQuestion, reply: baseline.answer }), judgeLabels);
+            : value('reply-judge', review({ ...context, question: ruleQuestion, reply: baseline.answer }), judgeLabels);
         }
         judgeStage.review = { outcome: 'ok', elapsedMs: performance.now() - judging, verdict,
           ...(judgeStage.rule ? { disagreed: verdict.hash !== judgeStage.rule.hash } : {}) };
