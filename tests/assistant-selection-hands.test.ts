@@ -2,9 +2,12 @@ import { setImmediate } from 'node:timers/promises';
 import type { AgentPage } from '@mohassan/browser';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { describe as describeReply, runHands, type HandsIO, type HandsPlan } from '../apps/server/src/assistant/hands.js';
+import { withAnswerSelectionMode, type SelectionObservation } from '../apps/server/src/assistant/selection/hands-selection.js';
 
-const { rankAnswer } = vi.hoisted(() => ({ rankAnswer: vi.fn() }));
-vi.mock('../apps/server/src/assistant/selection/ranker.js', () => ({ rankAnswer }));
+const { rankAnswer, rankCalibratedAnswer, acceptsLegacyCandidate } = vi.hoisted(() => ({
+  rankAnswer: vi.fn(), rankCalibratedAnswer: vi.fn(), acceptsLegacyCandidate: vi.fn(),
+}));
+vi.mock('../apps/server/src/assistant/selection/ranker.js', () => ({ rankAnswer, rankCalibratedAnswer, acceptsLegacyCandidate }));
 
 const question = 'Who invented the telephone?';
 const legacyQuote = 'John Taylor invented the telephone used at the exhibit.';
@@ -25,10 +28,12 @@ const askPage: HandsPlan = { steps: [{ kind: 'ask_page', question }], next: 1, l
 
 function rankerVerdict(source: AgentPage | null) {
   const selected = source ? { url: source.url, text: goodQuote, score: 6, reasons: [], kind: 'sentence' } : null;
-  rankAnswer.mockReturnValue({
+  const decision = {
     intent: { language: 'en', type: 'person' }, reason: selected ? 'selected' : 'no-evidence',
     selected, ranked: selected ? [selected] : [], threshold: 5,
-  });
+  };
+  rankAnswer.mockReturnValue(decision);
+  rankCalibratedAnswer.mockReturnValue(decision);
 }
 
 const searchPlan = (): HandsPlan => ({ steps: [{ kind: 'search', site: null, query: question, ask: true }], next: 0, lang: 'en' });
@@ -49,6 +54,8 @@ function searchIO(): HandsIO {
 beforeEach(() => {
   vi.stubEnv('MOHASSAN_ANSWER_SELECTION', undefined);
   rankAnswer.mockReset();
+  rankCalibratedAnswer.mockReset();
+  acceptsLegacyCandidate.mockReset();
 });
 
 afterEach(() => {
@@ -63,7 +70,8 @@ describe('answer selection in Hands', () => {
     expect(await runHands(plan, searchIO())).toMatchObject({ kind: 'done', status: 'completed' });
     expect(plan.found?.lines[0]).toBe(legacyQuote);
     expect(describeReply(askPage, oldPage).text).toContain(`> ${legacyQuote}`);
-    expect(rankAnswer).not.toHaveBeenCalled();
+    expect(rankCalibratedAnswer).not.toHaveBeenCalled();
+    expect(acceptsLegacyCandidate).not.toHaveBeenCalled();
   });
 
   it('lets the ranker choose across the already admitted reads only when enabled', async () => {
@@ -71,7 +79,8 @@ describe('answer selection in Hands', () => {
     rankerVerdict(bestPage);
     const plan = searchPlan();
     const result = await runHands(plan, searchIO());
-    expect(rankAnswer).toHaveBeenCalledWith(question, [oldPage, bestPage]);
+    expect(rankCalibratedAnswer).toHaveBeenCalledWith(question, [oldPage, bestPage]);
+    expect(acceptsLegacyCandidate).not.toHaveBeenCalled();
     expect(plan.found).toMatchObject({ url: bestPage.url, lines: [goodQuote], readAt: bestPage.observedAt });
     expect(result).toMatchObject({ kind: 'done', status: 'completed', text: expect.stringContaining(goodQuote) });
     expect(describeReply(askPage, bestPage).text).toContain(`> ${goodQuote}`);
@@ -86,7 +95,7 @@ describe('answer selection in Hands', () => {
     io.act = async action => action.text === earlier.url ? earlier : bestPage;
     const plan = searchPlan();
     expect(await runHands(plan, io)).toMatchObject({ kind: 'done', status: 'completed' });
-    expect(rankAnswer).toHaveBeenCalledWith(question, [bestPage]);
+    expect(rankCalibratedAnswer).toHaveBeenCalledWith(question, [bestPage]);
   });
 
   it('excludes final URLs rejected by the judge even when results redirect to them', async () => {
@@ -100,8 +109,13 @@ describe('answer selection in Hands', () => {
     io.read = async url => read(url === alias ? oldPage.url : url);
     const plan = { ...searchPlan(), rejected: [`${oldPage.url}#lead`] };
     expect(await runHands(plan, io)).toMatchObject({ kind: 'done', status: 'completed' });
-    expect(rankAnswer).toHaveBeenCalledWith(question, [bestPage]);
+    expect(rankCalibratedAnswer).toHaveBeenCalledWith(question, [bestPage]);
     expect(plan.found?.url).toBe(bestPage.url);
+    rankerVerdict(null);
+    acceptsLegacyCandidate.mockReturnValue(true);
+    const retry = { ...searchPlan(), rejected: plan.rejected };
+    expect(await runHands(retry, io)).toMatchObject({ kind: 'done', status: 'partial' });
+    expect(acceptsLegacyCandidate).not.toHaveBeenCalled();
   });
 
   it('only shadows the ranker for live questions even when the flag is enabled', async () => {
@@ -120,36 +134,83 @@ describe('answer selection in Hands', () => {
     expect(await runHands(plan, io)).toMatchObject({ kind: 'done', status: 'completed' });
     expect(plan.found?.lines[0]).toBe(quote);
     await setImmediate();
-    expect(rankAnswer).toHaveBeenCalledWith(query, [market]);
+    expect(rankCalibratedAnswer).toHaveBeenCalledWith(query, [market]);
+    expect(acceptsLegacyCandidate).not.toHaveBeenCalled();
     expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({ scope: 'search', applied: false, ranker: 'abstain' });
   });
 
   it('renders an abstention in either entry point when enabled', async () => {
     vi.stubEnv('MOHASSAN_ANSWER_SELECTION', '1');
     rankerVerdict(null);
+    acceptsLegacyCandidate.mockReturnValue(false);
     const plan = searchPlan();
     expect(await runHands(plan, searchIO())).toMatchObject({ kind: 'done', status: 'partial' });
     expect(plan.found).toBeUndefined();
     const result = describeReply(askPage, oldPage);
     expect(result.status).toBe('partial');
     expect(result.text).not.toContain(legacyQuote);
+    expect(acceptsLegacyCandidate).toHaveBeenCalledTimes(2);
+    expect(acceptsLegacyCandidate).toHaveBeenCalledWith(question, oldPage, legacyQuote);
   });
 
-  it('uses the existing chooser for unsupported question types even when enabled', () => {
+  it('keeps only the validated legacy lead when the calibrated ranker abstains', async () => {
     vi.stubEnv('MOHASSAN_ANSWER_SELECTION', '1');
     rankerVerdict(null);
-    rankAnswer.mockReturnValue({ intent: { language: 'en', type: 'unknown' }, reason: 'unsupported-question', selected: null, ranked: [], threshold: 61 });
-    expect(describeReply(askPage, oldPage).text).toContain(`> ${legacyQuote}`);
+    acceptsLegacyCandidate.mockReturnValue(true);
+    const extraQuote = 'The telephone invented for this exhibit included a different speaker.';
+    const source = { ...oldPage, text: `${legacyQuote} ${extraQuote}` };
+    const io = searchIO();
+    const read = io.read!;
+    io.read = async url => url === source.url ? { kind: 'page', page: source } : read(url);
+    const plan = searchPlan();
+    expect(await runHands(plan, io)).toMatchObject({ kind: 'done', status: 'completed' });
+    expect(plan.found?.lines).toEqual([legacyQuote]);
+    expect(describeReply(askPage, source).text).toContain(`> ${legacyQuote}`);
+    expect(describeReply(askPage, source).text).not.toContain(extraQuote);
+    expect(acceptsLegacyCandidate).toHaveBeenCalledWith(question, source, legacyQuote);
   });
 
-  it('keeps explicit page title questions and survives a ranker failure', () => {
+  it('replays the historical unsupported behavior while combined mode abstains', () => {
+    const unsupported = { intent: { language: 'en', type: 'unknown' }, reason: 'unsupported-question', selected: null, ranked: [], threshold: 61 };
+    rankAnswer.mockReturnValue(unsupported);
+    rankCalibratedAnswer.mockReturnValue(unsupported);
+    const capture = vi.fn<(observation: SelectionObservation) => void>();
+    const historical = withAnswerSelectionMode('ranker-only', () => describeReply(askPage, oldPage), capture);
+    expect(historical.text).toContain(`> ${legacyQuote}`);
+    expect(capture).toHaveBeenCalledWith({
+      question, pages: [oldPage], baseline: { url: oldPage.url, text: legacyQuote }, scope: 'open-page', live: false, decision: unsupported, choice: 'legacy',
+    });
+    expect(withAnswerSelectionMode('combined', () => describeReply(askPage, oldPage)).status).toBe('partial');
+    expect(acceptsLegacyCandidate).not.toHaveBeenCalled();
+  });
+
+  it('isolates actual legacy and combined replays without changing the flag', async () => {
     vi.stubEnv('MOHASSAN_ANSWER_SELECTION', '1');
-    rankAnswer.mockImplementation(() => { throw new Error('Broken ranker'); });
+    rankerVerdict(bestPage);
+    const legacy = searchPlan();
+    const combined = searchPlan();
+    const capture = vi.fn<(observation: SelectionObservation) => void>();
+    await Promise.all([
+      withAnswerSelectionMode('legacy', () => runHands(legacy, searchIO()), capture),
+      withAnswerSelectionMode('combined', () => runHands(combined, searchIO())),
+    ]);
+    expect(legacy.found?.lines[0]).toBe(legacyQuote);
+    expect(combined.found?.lines[0]).toBe(goodQuote);
+    expect(capture).toHaveBeenCalledWith({
+      question, pages: [oldPage, bestPage], baseline: { url: oldPage.url, text: legacyQuote }, scope: 'search', live: false, decision: undefined, choice: 'legacy',
+    });
+    expect(rankCalibratedAnswer).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps explicit page title questions and abstains after a combined ranker failure', () => {
+    vi.stubEnv('MOHASSAN_ANSWER_SELECTION', '1');
+    rankCalibratedAnswer.mockImplementation(() => { throw new Error('Broken ranker'); });
     const titledPage = { ...oldPage, text: `${oldPage.title}\n${oldPage.text}` };
     const plan: HandsPlan = { steps: [{ kind: 'ask_page', question: 'What is the page title?' }], next: 1, lang: 'en' };
     expect(describeReply(plan, titledPage).text).toContain(`> ${oldPage.title}`);
-    expect(rankAnswer).not.toHaveBeenCalled();
-    expect(describeReply(askPage, oldPage).text).toContain(`> ${legacyQuote}`);
+    expect(rankCalibratedAnswer).not.toHaveBeenCalled();
+    expect(describeReply(askPage, oldPage).status).toBe('partial');
+    expect(acceptsLegacyCandidate).not.toHaveBeenCalled();
   });
 
   it('records shadow disagreement without logging questions, URLs or quotes', async () => {

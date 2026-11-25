@@ -2,7 +2,7 @@ import { readableSource } from '@mohassan/browser';
 import { describe, expect, it } from 'vitest';
 import { createPageCache } from '../apps/server/src/assistant/page-cache.js';
 import { collectPageStructure, pageStructure, rememberPageStructure, type SelectionBlock } from '../apps/server/src/assistant/selection/page-structure.js';
-import { quoteCandidates, rankAnswer, type SelectionPage } from '../apps/server/src/assistant/selection/ranker.js';
+import { acceptsLegacyCandidate, quoteCandidates, rankAnswer, type SelectionPage } from '../apps/server/src/assistant/selection/ranker.js';
 
 const page = (title: string, text: string, url = 'https://en.wikipedia.org/wiki/Test'): SelectionPage => ({ title, text, url });
 
@@ -67,5 +67,34 @@ describe('deterministic answer selection', () => {
     const institutional = page('Water', text, 'https://example.gov/water');
     expect(rankAnswer('What is water?', [first, second]).selected?.url).toBe(first.url);
     expect(rankAnswer('What is water?', [first, second, institutional]).selected?.url).toBe(institutional.url);
+  });
+});
+
+describe('legacy lead qualification', () => {
+  const question = 'Who invented the telephone?';
+
+  it('accepts a grounded lead after legacy citation and punctuation cleanup', () => {
+    const source = page('Telephone', 'Alexander Graham Bell [ 1 ] invented the telephone .');
+    expect(acceptsLegacyCandidate(question, source, 'Alexander Graham Bell invented the telephone.')).toBe(true);
+    expect(acceptsLegacyCandidate(question, source, 'Alexander Graham Bell did not invent the telephone.')).toBe(false);
+  });
+
+  it('requires subject and type agreement even when the source really contains the lead', () => {
+    const otherWork = 'John Taylor invented a device for communication between sailing vessels.';
+    const missingPerson = 'The telephone is a device that transmits sound.';
+    const source = page('Telephone', `${otherWork} ${missingPerson}`);
+    expect(acceptsLegacyCandidate(question, source, otherWork)).toBe(false);
+    expect(acceptsLegacyCandidate(question, source, missingPerson)).toBe(false);
+    const relative = 'Messi’s son is 13 years old.';
+    expect(acceptsLegacyCandidate('How old is Messi?', page('Lionel Messi', relative), relative)).toBe(false);
+  });
+
+  it('checks the displayed portion of a clipped lead and rejects unattested blocks', () => {
+    const source = page('Telephone', 'Alexander Graham Bell invented the telephone, which changed communication forever.');
+    expect(acceptsLegacyCandidate(question, source, 'Alexander Graham Bell invented the telephone …')).toBe(true);
+    expect(acceptsLegacyCandidate(question, source, 'Alexander Graham Bell invented …')).toBe(false);
+    expect(acceptsLegacyCandidate(question, source, '… invented the telephone, which changed communication forever.')).toBe(false);
+    const invented = 'Alexander Graham Bell invented the telephone.';
+    expect(acceptsLegacyCandidate(question, { ...source, text: '', blocks: [{ kind: 'paragraph', text: invented }] }, invented)).toBe(false);
   });
 });
