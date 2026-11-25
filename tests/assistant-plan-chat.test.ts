@@ -203,11 +203,11 @@ describe('compiled plans through command chat', () => {
 
   it('preserves the observed source for a follow-up about an explicitly opened page', async () => {
     vi.stubEnv('MOHASSAN_CONVERSATION_SHADOW', 'decide');
-    const observed = { ...observedRates(pageUrl), title: 'Observatory timetable',
-      text: 'The observatory opens at 09:45 on Monday. The observatory opens at 11:30 on Thursday.' };
+    const observed = { ...observedRates(pageUrl), title: 'Repair kiosk timetable',
+      text: 'The repair kiosk opens at 09:45 on Monday. The repair kiosk opens at 11:30 on Thursday.' };
     browserCall.mockResolvedValue({ page: observed, changed: true });
 
-    const original = await ask(`Open ${pageUrl} and show me when the observatory opens on Monday.`);
+    const original = await ask(`Open ${pageUrl} and show me when the repair kiosk opens on Monday.`);
     expect(original.run.status, original.text).toBe('completed');
     expect(original.text).toContain('09:45');
     expect((original.run.state as BrainState).handsFound?.url).toBe(pageUrl);
