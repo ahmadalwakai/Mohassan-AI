@@ -28,7 +28,7 @@ The pronoun-replacement baseline substitutes the article title for third-person 
 
 ## Follow-up v2 measurement
 
-The filter ran once on the official release and retained 2,599 of 3,430 rows. All three evaluations used those same filtered rows and Node `v24.22.3`. The base checkout was detached at `201321031293999003bb0ae55a29dbd250ac96ce`. The feature checkout was at `8237ef54f84d1013e0929df5f16bb24ca3761269`.
+The filter ran once on the official release and retained 2,599 of 3,430 rows. All three evaluations used those same filtered rows and Node `v24.22.3`. The base checkout was detached at `201321031293999003bb0ae55a29dbd250ac96ce`. The feature checkout was at `e30a31b265bca6b50ee8a82284b5f992b925a72b`.
 
 Run from `/workspace/Mohassan-AI` to prepare the measured input. The checkout at the base commit contained the same PR #70 exclusion manifest and registry files.
 
@@ -42,10 +42,10 @@ python3 -B scripts/question-rewriter/prepare-canard-dev.py --audit-root /workspa
 Run the first evaluation from `/workspace/work/canard-followup/base-guard` and the other two from `/workspace/Mohassan-AI`.
 
 ```sh
-MOHASSAN_FOLLOWUP_V2=0 node --import /workspace/Mohassan-AI/node_modules/tsx/dist/loader.mjs scripts/question-rewriter/evaluate-canard-dev.ts /workspace/work/canard-followup/dev-filtered.json > /workspace/work/canard-followup/canard-final-a.json
-MOHASSAN_FOLLOWUP_V2=0 node --import /workspace/Mohassan-AI/node_modules/tsx/dist/loader.mjs scripts/question-rewriter/evaluate-canard-dev.ts /workspace/work/canard-followup/dev-filtered.json > /workspace/work/canard-followup/canard-final-b.json
-MOHASSAN_FOLLOWUP_V2=1 node --import /workspace/Mohassan-AI/node_modules/tsx/dist/loader.mjs scripts/question-rewriter/evaluate-canard-dev.ts /workspace/work/canard-followup/dev-filtered.json > /workspace/work/canard-followup/canard-final-c.json
-cmp /workspace/work/canard-followup/canard-final-a.json /workspace/work/canard-followup/canard-final-b.json
+MOHASSAN_FOLLOWUP_V2=0 node --import /workspace/Mohassan-AI/node_modules/tsx/dist/loader.mjs scripts/question-rewriter/evaluate-canard-dev.ts /workspace/work/canard-followup/dev-filtered.json > /workspace/work/canard-followup/canard-reviewed-a.json
+MOHASSAN_FOLLOWUP_V2=0 node --import /workspace/Mohassan-AI/node_modules/tsx/dist/loader.mjs scripts/question-rewriter/evaluate-canard-dev.ts /workspace/work/canard-followup/dev-filtered.json > /workspace/work/canard-followup/canard-reviewed-b.json
+MOHASSAN_FOLLOWUP_V2=1 node --import /workspace/Mohassan-AI/node_modules/tsx/dist/loader.mjs scripts/question-rewriter/evaluate-canard-dev.ts /workspace/work/canard-followup/dev-filtered.json > /workspace/work/canard-followup/canard-reviewed-c.json
+cmp /workspace/work/canard-followup/canard-reviewed-a.json /workspace/work/canard-followup/canard-reviewed-b.json
 ```
 
 The input checksum matched the data card, the exclusion filter dropped 831 rows, and all three evaluations exited 0. `cmp` exited 0 with byte-identical base and flag-off receipts.

@@ -179,14 +179,14 @@ There are zero hooks in the held files. The two assistant hooks are `question-re
 
 ## Focused checks
 
-The product commit measured by the coordinator is `8237ef54f84d1013e0929df5f16bb24ca3761269`.
+The product commit measured by the coordinator is `e30a31b265bca6b50ee8a82284b5f992b925a72b`.
 
 ```bash
 npm run typecheck
 npm test -- --maxWorkers=2 --reporter=dot tests/followup-english-ellipsis.test.ts tests/followup-english-referents.test.ts tests/followup-v2-arabic.test.ts tests/followup-v2-chat.test.ts tests/question-rewriter.test.ts tests/question-rewrite-chat.test.ts tests/public-conversation-followup.test.ts tests/assistant-follow-up.test.ts tests/assistant-conversation-follow-up.test.ts
 ```
 
-Typecheck exited 0 for the root and web projects. The focused suite exited 0 with 110 tests across nine files, including four Arabic rollout-on tests. An initial run identified a capitalized preposition in the date reconstruction and the final run verified the fix.
+Typecheck exited 0 for the root and web projects. The focused suite exited 0 with 112 tests across nine files, including four Arabic rollout-on tests. An initial run identified a capitalized preposition in the date reconstruction and the final run verified the fix.
 
 The separate CANARD run scored 685 exact and 787 normalized substring matches at base and with the feature flag off. With the feature flag on it scored 684 exact and 786 normalized substring matches. The commands, context-dependent subset and input hashes are in the evaluation data card. [CANARD evaluation](QUESTION-REWRITER-CANARD.md#follow-up-v2-measurement)
 
@@ -221,7 +221,9 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges -
   --set a:MOHASSAN_ARBITER_LOCAL_COMPUTATION=1 --set a:MOHASSAN_ARBITER_COMPOUND_PLAN=1
 ```
 
-The coordinated run used one launcher invocation with the same Wave 5 flags on all arms and the arbiter in shadow. The launcher inherits the Wave 4 flags, including `MOHASSAN_QUESTION_REWRITER=1`, from its base profile. The command used this wrapper.
+Review found that a pronoun match could start inside another word and that the nominal rule could rewrite a quoted literal. The initial launcher invocation was stopped during arm A and returned 137. The corrected product was measured in a fresh output directory with all three arms.
+
+The coordinated run uses one launcher invocation with the same Wave 5 flags on all arms and the arbiter in shadow. The launcher inherits the Wave 4 flags, including `MOHASSAN_QUESTION_REWRITER=1`, from its base profile. The command used this wrapper.
 
 ```bash
 #!/usr/bin/env bash
@@ -262,12 +264,12 @@ docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges -
 ```
 
 ```bash
-bash /workspace/work/followup-bench/run-final.sh /workspace/work/followup-bench/final 8237ef54f84d1013e0929df5f16bb24ca3761269
+bash /workspace/work/followup-bench/run-final.sh /workspace/work/followup-bench/final-reviewed e30a31b265bca6b50ee8a82284b5f992b925a72b
 ```
 
 ## Source guards
 
-The original guard baselines predate the required integration base. I ran the original commands on the detached base at `201321031293999003bb0ae55a29dbd250ac96ce` and on the measured product at `8237ef54f84d1013e0929df5f16bb24ca3761269`. The first two commands each exited 1 on both checkouts. The synthetic check passed and the source check reported the same 12 inherited occurrences across 10 paths. The development-only case-text command exited 1 on both checkouts, with identical sets of 67 path/hash pairs and 142 occurrences above its historical baseline, plus 159 preexisting pairs. It scanned 2,400 development cases and 2,361 base files or 2,368 product files.
+The original guard baselines predate the required integration base. I ran the original commands on the detached base at `201321031293999003bb0ae55a29dbd250ac96ce` and on the measured product at `e30a31b265bca6b50ee8a82284b5f992b925a72b`. The first two commands each exited 1 on both checkouts. The synthetic check passed and the source check reported the same 12 inherited occurrences across 10 paths. The development-only case-text command exited 1 on both checkouts, with identical sets of 67 path/hash pairs and 142 occurrences above its historical baseline, plus 159 preexisting pairs. It scanned 2,400 development cases and 2,361 base files or 2,368 product files.
 
 ```bash
 git worktree add --detach /workspace/work/followup-bench/guard-base 201321031293999003bb0ae55a29dbd250ac96ce
