@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 import https from 'node:https';
 import http from 'node:http';
 import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
+import { crossOriginReadHeaders } from './redirect-headers.js';
 
 export class BrowserError extends Error {
   constructor(public readonly code:string,message:string,public readonly statusCode=400){super(message);this.name='BrowserError';}
@@ -104,7 +105,9 @@ export class SafeNetwork {
       target=this.validate(target,options.allowedOrigins).href;
       await options.beforeRequest?.(target);
       const response=await this.request(target,options);
-      if([301,302,303,307,308].includes(response.status)&&response.headers.location){target=this.validate(new URL(response.headers.location,target).href,options.allowedOrigins).href;continue;}
+      if([301,302,303,307,308].includes(response.status)&&response.headers.location){const next=this.validate(new URL(response.headers.location,target).href,options.allowedOrigins).href; const { headers }: NonNullable<Parameters<SafeNetwork['request']>[1]> = options;
+        if (headers && new URL(next).origin !== new URL(target).origin) options = Object.assign({ ...options }, { headers: crossOriginReadHeaders(headers) });
+        target=next;continue;}
       if(response.status<200||response.status>=400)throw new BrowserError('BROWSER_HTTP_ERROR',`لم يسمح المصدر بقراءة المحتوى (HTTP ${response.status}).`,502);
       if(response.status===202)throw new BrowserError('RESEARCH_SOURCE_PENDING','لم يقدّم المصدر محتوى نهائيًا؛ قد يكون بانتظار تحقق أو معالجة.',502);
       const type=response.headers['content-type']??'';
