@@ -45,6 +45,36 @@ describe('official programming documentation extraction', () => {
     expect(urls[0]).toContain('/LICENSE.md');
   });
 
+  it('reads root-level Node.js error records and keeps the MIT notice', async () => {
+    const body = '<p>Node.js could not resolve a module.</p><pre><code class="language-mjs">import "./module.js";\n</code></pre>';
+    const corpus = validateCorpus(await importOfficial('node', async url => url.endsWith('/LICENSE')
+      ? 'Node.js license\n"""\nCopyright Node.js contributors.\nPermission is hereby granted.\n"""'
+      : JSON.stringify({ type: 'module', miscs: [{ textRaw: 'Node.js errors', miscs: [{ textRaw: '`ERR_MODULE_NOT_FOUND`', desc: body }] }] })));
+    expect(corpus.sources[0]).toMatchObject({ license: 'MIT', copyrightNotice: 'Copyright Node.js contributors.\nPermission is hereby granted.' });
+    expect(corpus.passages).toContainEqual(expect.objectContaining({
+      url: 'https://nodejs.org/download/release/v22.21.1/docs/api/errors.html#err_module_not_found',
+      symbols: ['ERR_MODULE_NOT_FOUND'],
+      code: [{ language: 'mjs', text: 'import "./module.js";\n' }],
+    }));
+  });
+
+  it('keeps distinct Handbook prose and snippet licenses and marks failing code', async () => {
+    const source = async (url: string) => {
+      if (url.endsWith('/LICENSE')) return 'Attribution 4.0 International';
+      if (url.endsWith('/LICENSE-CODE')) return 'The MIT License\nCopyright (c) Microsoft Corporation';
+      const permalink = '/docs/handbook/2/' + url.split('/').at(-1) + '.html';
+      return ['---', 'title: Handbook', 'permalink: ' + permalink, '---', '',
+        'This example has a compiler diagnostic.', '', '```ts twoslash', '// @errors: 9876',
+        'const name: string = 3;', '```', ''].join('\n');
+    };
+    const corpus = validateCorpus(await importOfficial('typescript', source));
+    expect(corpus.sources[0]).toMatchObject({ license: 'CC-BY-4.0' });
+    expect(corpus.passages[0].code[0]).toMatchObject({
+      license: 'MIT', copyrightNotice: 'The MIT License\nCopyright (c) Microsoft Corporation',
+      role: 'failure', text: '// @errors: 9876\nconst name: string = 3;\n',
+    });
+  });
+
   it('checks MDN code provenance per block and fingerprints the input bytes', async () => {
     function content(mark: string) {
       return async (url: string) => url.endsWith('/LICENSE.md') ? 'CC-BY-SA 2.5' : [
