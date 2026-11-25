@@ -1,0 +1,6 @@
+{"id":"head-ar-1","language":"ar","category":"routing","text":"ذكّرني غدًا.","label":"reminder"}
+{"id":"head-ar-2","language":"ar","category":"routing","text":"احسب ٧ + ٣.","label":"compute"}
+{"id":"head-ar-3","language":"ar","category":"routing","text":"ما أخبار الطقس اليوم؟","label":"web_search"}
+{"id":"head-en-1","language":"en","category":"routing","text":"What is my remembered address?","label":"memory"}
+{"id":"head-en-2","language":"en","category":"routing","text":"Lower the volume.","label":"pc"}
+{"id":"head-en-3","language":"en","category":"routing","text":"Write a welcome note.","label":"writing"}
