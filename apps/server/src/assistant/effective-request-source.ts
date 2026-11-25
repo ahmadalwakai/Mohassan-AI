@@ -1,12 +1,16 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { applyChoiceRequestEdit, ChoiceRequestEditSchema, type ChoiceRequestEdit } from './clarify/choice-request.js';
 
 const instant = z.number().int().min(0).max(8_640_000_000_000_000);
 const identity = z.string().min(1).max(160).refine(value => value.trim() === value && !/[\u0000-\u001f\u007f]/u.test(value));
 const text = z.string().min(1).max(4000).refine(value => !!value.trim() && !/[\u0000\ud800-\udfff]/u.test(value));
 const hash = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex');
-export const ClarifiedRequestSourceSchema = z.object({ version: z.literal(1), messageId: identity,
-  requestHash: z.string().regex(/^[a-f0-9]{64}$/u) }).strict();
+const digest = z.string().regex(/^[a-f0-9]{64}$/u);
+const FullRequestSource = z.object({ version: z.literal(1), messageId: identity, requestHash: digest }).strict();
+const ChoiceRequestSource = z.object({ version: z.literal(2), messageId: identity, requestHash: digest,
+  goalHash: digest, answerHash: digest, edit: ChoiceRequestEditSchema }).strict();
+export const ClarifiedRequestSourceSchema = z.discriminatedUnion('version', [FullRequestSource, ChoiceRequestSource]);
 export type ClarifiedRequestSource = z.infer<typeof ClarifiedRequestSourceSchema>;
 const Binding = z.object({ ownerId: identity, conversationId: identity, createdAt: instant, goal: text, now: instant }).strict();
 const Message = z.object({ id: identity, ownerId: identity, conversationId: identity, role: z.literal('user'), text,
@@ -24,9 +28,20 @@ export interface EffectiveRequestMessageLookup { ownerId: string; conversationId
 export type EffectiveRequestMessageLoader = (lookup: EffectiveRequestMessageLookup) => Promise<unknown>;
 
 /** Metadata only. The message timestamp must subsequently be read from the host DB. */
-export function createClarifiedRequestSource(request: unknown, messageId: unknown): ClarifiedRequestSource | null {
+export function createClarifiedRequestSource(request: unknown, messageId: unknown): z.infer<typeof FullRequestSource> | null {
   const checked = text.safeParse(request), id = identity.safeParse(messageId);
   return checked.success && id.success ? { version: 1, messageId: id.data, requestHash: hash(checked.data) } : null;
+}
+
+/** Compute the composite from the original instruction and the owner's short answer. */
+export function createChoiceRequestSource(goal: string, answer: string, messageId: string, edit: ChoiceRequestEdit): {
+  request: string; source: z.infer<typeof ChoiceRequestSource>;
+} | null {
+  const request = applyChoiceRequestEdit(goal, answer, edit);
+  if (!request || !text.safeParse(request).success || !text.safeParse(goal).success || !text.safeParse(answer).success) return null;
+  const source = ChoiceRequestSource.safeParse({ version: 2, messageId, requestHash: hash(request),
+    goalHash: hash(goal), answerHash: hash(answer), edit });
+  return source.success ? { request, source: source.data } : null;
 }
 
 function ownField(value: unknown, field: string): { present: boolean; value?: unknown; invalid?: boolean } {
@@ -60,14 +75,21 @@ export async function resolveEffectiveRequestSource(input: EffectiveRequestSourc
     if (!source.present) return { request, evaluatedAt: binding.data.createdAt, source: 'run_created' };
     if (!clarified.present) return null;
     if (!ownDataFields(source.value, ['version', 'messageId', 'requestHash'])) return null;
+    if (ownField(source.value, 'version').value === 2) {
+      if (!ownDataFields(source.value, ['goalHash', 'answerHash', 'edit'])) return null;
+      const edit = ownField(source.value, 'edit').value, subject = ownField(edit, 'subject');
+      if (!ownDataFields(edit, ['kind']) || subject.invalid) return null;
+    }
     const pointer = ClarifiedRequestSourceSchema.safeParse(source.value);
     if (!pointer.success || pointer.data.requestHash !== hash(request) || typeof loadMessage !== 'function') return null;
+    if (pointer.data.version === 2 && pointer.data.goalHash !== hash(binding.data.goal)) return null;
     const loaded = await loadMessage({ ownerId: binding.data.ownerId, conversationId: binding.data.conversationId, messageId: pointer.data.messageId });
     if (!ownDataFields(loaded, ['id', 'ownerId', 'conversationId', 'role', 'text', 'createdAt'])) return null;
     const message = Message.safeParse(loaded);
     if (!message.success || message.data.id !== pointer.data.messageId || message.data.ownerId !== binding.data.ownerId
-      || message.data.conversationId !== binding.data.conversationId || message.data.text !== request
-      || hash(message.data.text) !== pointer.data.requestHash || message.data.createdAt < binding.data.createdAt || message.data.createdAt > binding.data.now) return null;
+      || message.data.conversationId !== binding.data.conversationId || message.data.createdAt < binding.data.createdAt || message.data.createdAt > binding.data.now) return null;
+    if (pointer.data.version === 1 ? message.data.text !== request : hash(message.data.text) !== pointer.data.answerHash
+      || applyChoiceRequestEdit(binding.data.goal, message.data.text, pointer.data.edit) !== request) return null;
     return { request, evaluatedAt: message.data.createdAt, source: 'clarification_message' };
   } catch { return null; }
 }

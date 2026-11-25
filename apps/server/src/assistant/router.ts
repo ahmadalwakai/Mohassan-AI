@@ -76,12 +76,18 @@ export function routerLogits(model: RouterModel, text: string): number[] {
   });
 }
 
-export function routeWithModel(model: RouterModel, text: string): { route: string; confidence: number } {
+export interface ShadowRouteCandidate { route: string; score: number }
+
+export function rankRouterModelRoutes(model: RouterModel, text: string): ShadowRouteCandidate[] {
   const logits = routerLogits(model, text), top = Math.max(...logits);
   if (!logits.length || !logits.every(Number.isFinite)) throw new Error('ROUTER_MODEL_NONFINITE');
   const exps = logits.map(value => Math.exp(value - top)), total = exps.reduce((a, b) => a + b, 0);
-  const best = logits.indexOf(top);
-  return { route: model.routes[best], confidence: exps[best] / total };
+  return model.routes.map((route, index) => ({ route, score: exps[index] / total })).sort((a, b) => b.score - a.score);
+}
+
+export function routeWithModel(model: RouterModel, text: string): { route: string; confidence: number } {
+  const [best] = rankRouterModelRoutes(model, text);
+  return { route: best.route, confidence: best.score };
 }
 
 /** Loads router-b0.bin and checks it against the sha256 in its JSON header. */
@@ -115,7 +121,11 @@ export function rulesRoute(text: string, previous: string | null): string {
   return ({ reminder: 'reminder', arithmetic: 'compute', writing: 'writing', chat: 'chat', address: 'browser_command', memory_ads_pc: 'memory_ads_pc', empty: 'none' } as Record<string, string>)[reason ?? ''] ?? 'none';
 }
 
-export interface ShadowRouter { observe(entry: { conversationId: string; text: string; previous: string | null; pendingQuestion: boolean }): void }
+export interface ShadowRouter {
+  observe(entry: { conversationId: string; text: string; previous: string | null; pendingQuestion: boolean }): void;
+  /** Only reads the already configured shadow head; results have no routing authority. */
+  candidates?(text: string): readonly ShadowRouteCandidate[];
+}
 
 /**
  * Shadow mode: never changes what the chat does. The model loads once in the background; until then, or if it
@@ -126,17 +136,25 @@ export function createShadowRouter(options: { modelDir: string; logFile: string;
   let model: RouterModel | null = null, failed = false;
   const loading = loadRouterModel(options.modelDir).then(loaded => { model = loaded; }).catch(() => { failed = true; });
   let writing: Promise<unknown> = mkdir(path.dirname(options.logFile), { recursive: true }).catch(() => undefined);
+  let cached: { text: string; candidates: ShadowRouteCandidate[] } | undefined;
+  function ranked(text: string): readonly ShadowRouteCandidate[] {
+    if (!model || text.length > MAX_ROUTER_TEXT) return [];
+    if (cached?.text !== text) cached = { text, candidates: rankRouterModelRoutes(model, text) };
+    return cached.candidates;
+  }
   return {
+    candidates: text => ranked(text).slice(0, 4).map(candidate => ({ ...candidate })),
     observe(entry) {
       if (failed) return;
       writing = writing.then(async () => {
         await loading;
         if (!model) return;
         const started = performance.now();
-        const choice = routeWithModel(model, entry.text);
+        const [choice] = ranked(entry.text);
+        if (!choice) return;
         const line = { at: (options.now?.() ?? new Date()).toISOString(), conversation: entry.conversationId, text: entry.text.slice(0, 500),
           previous: entry.previous?.slice(0, 200) ?? null, pendingQuestion: entry.pendingQuestion, rules: rulesRoute(entry.text, entry.previous),
-          model: choice.route, confidence: Number(choice.confidence.toFixed(3)), ms: Number((performance.now() - started).toFixed(2)) };
+          model: choice.route, confidence: Number(choice.score.toFixed(3)), ms: Number((performance.now() - started).toFixed(2)) };
         await appendFile(options.logFile, `${JSON.stringify(line)}\n`, 'utf8');
       }).catch(() => undefined);
     },

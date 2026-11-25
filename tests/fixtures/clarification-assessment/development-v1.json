@@ -1,0 +1,795 @@
+{
+  "dataset": "MASSIVE 1.0",
+  "archiveSha256": "7df623fd2d300a4d235d6ee5bd396c9a28258d3a0ccb29abdb054506eba153f8",
+  "provenance": "Synthetic development fixtures assembled deterministically from human-authored source utterances. Evaluation only. Do not use for training.",
+  "locales": {
+    "en-US": {
+      "templates": [
+        {
+          "sourceId": 13255,
+          "before": "please give me information about ",
+          "after": ""
+        },
+        {
+          "sourceId": 13881,
+          "before": "please give me information on ",
+          "after": ""
+        },
+        {
+          "sourceId": 14283,
+          "before": "tell me about ",
+          "after": ""
+        }
+      ],
+      "groups": [
+        {
+          "stem": "adam",
+          "candidates": [
+            {
+              "sourceId": 14534,
+              "title": "adam gilchrist"
+            },
+            {
+              "sourceId": 13074,
+              "title": "adam sandler"
+            }
+          ]
+        },
+        {
+          "stem": "bill",
+          "candidates": [
+            {
+              "sourceId": 13250,
+              "title": "bill clinton"
+            },
+            {
+              "sourceId": 13283,
+              "title": "bill gates"
+            },
+            {
+              "sourceId": 13806,
+              "title": "bill pullman"
+            }
+          ]
+        },
+        {
+          "stem": "bob",
+          "candidates": [
+            {
+              "sourceId": 14773,
+              "title": "bob dean"
+            },
+            {
+              "sourceId": 13276,
+              "title": "bob dylan"
+            }
+          ]
+        },
+        {
+          "stem": "bryan",
+          "candidates": [
+            {
+              "sourceId": 13050,
+              "title": "bryan adams"
+            },
+            {
+              "sourceId": 13638,
+              "title": "bryan cranston"
+            }
+          ]
+        },
+        {
+          "stem": "chris",
+          "candidates": [
+            {
+              "sourceId": 13878,
+              "title": "chris evans"
+            },
+            {
+              "sourceId": 3316,
+              "title": "chris hedges"
+            }
+          ]
+        },
+        {
+          "stem": "chuck",
+          "candidates": [
+            {
+              "sourceId": 7794,
+              "title": "chuck ingerman"
+            },
+            {
+              "sourceId": 15069,
+              "title": "chuck norris"
+            }
+          ]
+        },
+        {
+          "stem": "david",
+          "candidates": [
+            {
+              "sourceId": 13809,
+              "title": "david bowie"
+            },
+            {
+              "sourceId": 13051,
+              "title": "david lynch"
+            }
+          ]
+        },
+        {
+          "stem": "eddie",
+          "candidates": [
+            {
+              "sourceId": 14714,
+              "title": "eddie murphy"
+            },
+            {
+              "sourceId": 15974,
+              "title": "eddie richards"
+            }
+          ]
+        },
+        {
+          "stem": "emma",
+          "candidates": [
+            {
+              "sourceId": 15028,
+              "title": "emma stone"
+            },
+            {
+              "sourceId": 15056,
+              "title": "emma watson"
+            }
+          ]
+        },
+        {
+          "stem": "frank",
+          "candidates": [
+            {
+              "sourceId": 14886,
+              "title": "frank goggins"
+            },
+            {
+              "sourceId": 13001,
+              "title": "frank sinatra"
+            }
+          ]
+        },
+        {
+          "stem": "george",
+          "candidates": [
+            {
+              "sourceId": 14053,
+              "title": "george clooney"
+            },
+            {
+              "sourceId": 14913,
+              "title": "george rogers clark"
+            },
+            {
+              "sourceId": 14017,
+              "title": "george washington"
+            }
+          ]
+        },
+        {
+          "stem": "hugh",
+          "candidates": [
+            {
+              "sourceId": 13269,
+              "title": "hugh jackman"
+            },
+            {
+              "sourceId": 14187,
+              "title": "hugh lourie"
+            }
+          ]
+        },
+        {
+          "stem": "jennifer",
+          "candidates": [
+            {
+              "sourceId": 14491,
+              "title": "jennifer aniston"
+            },
+            {
+              "sourceId": 14250,
+              "title": "jennifer garner"
+            },
+            {
+              "sourceId": 14608,
+              "title": "jennifer lawrence"
+            },
+            {
+              "sourceId": 13224,
+              "title": "jennifer lopez"
+            }
+          ]
+        },
+        {
+          "stem": "joe",
+          "candidates": [
+            {
+              "sourceId": 11448,
+              "title": "joe rogan"
+            },
+            {
+              "sourceId": 8454,
+              "title": "joe smith"
+            }
+          ]
+        },
+        {
+          "stem": "john",
+          "candidates": [
+            {
+              "sourceId": 14588,
+              "title": "john dillinger"
+            },
+            {
+              "sourceId": 13427,
+              "title": "john legend"
+            },
+            {
+              "sourceId": 13893,
+              "title": "john lennon"
+            },
+            {
+              "sourceId": 16892,
+              "title": "john smith"
+            }
+          ]
+        },
+        {
+          "stem": "keith",
+          "candidates": [
+            {
+              "sourceId": 14331,
+              "title": "keith richards"
+            },
+            {
+              "sourceId": 13225,
+              "title": "keith urban"
+            }
+          ]
+        },
+        {
+          "stem": "ryan",
+          "candidates": [
+            {
+              "sourceId": 13807,
+              "title": "ryan reynolds"
+            },
+            {
+              "sourceId": 14853,
+              "title": "ryan seacrest"
+            }
+          ]
+        },
+        {
+          "stem": "sam",
+          "candidates": [
+            {
+              "sourceId": 9449,
+              "title": "sam harris"
+            },
+            {
+              "sourceId": 15919,
+              "title": "sam smith"
+            }
+          ]
+        },
+        {
+          "stem": "taylor",
+          "candidates": [
+            {
+              "sourceId": 13135,
+              "title": "taylor lautner"
+            },
+            {
+              "sourceId": 13133,
+              "title": "taylor swift"
+            }
+          ]
+        },
+        {
+          "stem": "tom",
+          "candidates": [
+            {
+              "sourceId": 16825,
+              "title": "tom brady"
+            },
+            {
+              "sourceId": 15042,
+              "title": "tom cruise"
+            },
+            {
+              "sourceId": 13844,
+              "title": "tom hanks"
+            },
+            {
+              "sourceId": 13835,
+              "title": "tom izzo"
+            }
+          ]
+        },
+        {
+          "stem": "will",
+          "candidates": [
+            {
+              "sourceId": 13547,
+              "title": "will ferrell"
+            },
+            {
+              "sourceId": 13546,
+              "title": "will smith"
+            }
+          ]
+        },
+        {
+          "stem": "amazon",
+          "candidates": [
+            {
+              "sourceId": 14673,
+              "title": "amazon forest"
+            },
+            {
+              "sourceId": 14634,
+              "title": "amazon river"
+            }
+          ]
+        },
+        {
+          "stem": "broadway",
+          "candidates": [
+            {
+              "sourceId": 12179,
+              "title": "broadway street"
+            },
+            {
+              "sourceId": 8864,
+              "title": "broadway theater"
+            }
+          ]
+        },
+        {
+          "stem": "disney",
+          "candidates": [
+            {
+              "sourceId": 14465,
+              "title": "disney land"
+            },
+            {
+              "sourceId": 16172,
+              "title": "disney world"
+            }
+          ]
+        },
+        {
+          "stem": "miami",
+          "candidates": [
+            {
+              "sourceId": 11926,
+              "title": "miami beach"
+            },
+            {
+              "sourceId": 15094,
+              "title": "miami florida"
+            }
+          ]
+        }
+      ]
+    },
+    "ar-SA": {
+      "templates": [
+        {
+          "sourceId": 13255,
+          "before": "من فضلك أعطني معلومات عن ",
+          "after": ""
+        },
+        {
+          "sourceId": 13895,
+          "before": "هل يمكنك ان تخبرني عن ",
+          "after": ""
+        },
+        {
+          "sourceId": 14283,
+          "before": "أخبرني عن ",
+          "after": ""
+        }
+      ],
+      "groups": [
+        {
+          "stem": "إيما",
+          "candidates": [
+            {
+              "sourceId": 15028,
+              "title": "إيما ستون"
+            },
+            {
+              "sourceId": 14230,
+              "title": "إيما واتسون"
+            }
+          ]
+        },
+        {
+          "stem": "الملك",
+          "candidates": [
+            {
+              "sourceId": 14320,
+              "title": "الملك عبد العزيز"
+            },
+            {
+              "sourceId": 14726,
+              "title": "الملك عبدالله"
+            },
+            {
+              "sourceId": 14749,
+              "title": "الملك فهد"
+            }
+          ]
+        },
+        {
+          "stem": "تركي",
+          "candidates": [
+            {
+              "sourceId": 15753,
+              "title": "تركي العتيبي"
+            },
+            {
+              "sourceId": 7687,
+              "title": "تركي صالح"
+            }
+          ]
+        },
+        {
+          "stem": "خالد",
+          "candidates": [
+            {
+              "sourceId": 15690,
+              "title": "خالد السفياني"
+            },
+            {
+              "sourceId": 16637,
+              "title": "خالد العمري"
+            },
+            {
+              "sourceId": 16684,
+              "title": "خالد المصطفى"
+            }
+          ]
+        },
+        {
+          "stem": "سعود",
+          "candidates": [
+            {
+              "sourceId": 15948,
+              "title": "سعود العتيبي"
+            },
+            {
+              "sourceId": 14502,
+              "title": "سعود الفيصل"
+            }
+          ]
+        },
+        {
+          "stem": "سعيد",
+          "candidates": [
+            {
+              "sourceId": 6877,
+              "title": "سعيد الرامح"
+            },
+            {
+              "sourceId": 9588,
+              "title": "سعيد حنتوش"
+            },
+            {
+              "sourceId": 8510,
+              "title": "سعيد رشيد"
+            },
+            {
+              "sourceId": 13027,
+              "title": "سعيد صالح"
+            }
+          ]
+        },
+        {
+          "stem": "شهد",
+          "candidates": [
+            {
+              "sourceId": 16991,
+              "title": "شهد عسيري"
+            },
+            {
+              "sourceId": 16853,
+              "title": "شهد عمر"
+            }
+          ]
+        },
+        {
+          "stem": "صالح",
+          "candidates": [
+            {
+              "sourceId": 16656,
+              "title": "صالح الحارثي"
+            },
+            {
+              "sourceId": 16334,
+              "title": "صالح العنزي"
+            }
+          ]
+        },
+        {
+          "stem": "عباس",
+          "candidates": [
+            {
+              "sourceId": 11445,
+              "title": "عباس إبراهيم"
+            },
+            {
+              "sourceId": 10768,
+              "title": "عباس العقاد"
+            }
+          ]
+        },
+        {
+          "stem": "عبدالله",
+          "candidates": [
+            {
+              "sourceId": 16899,
+              "title": "عبدالله السبيعي"
+            },
+            {
+              "sourceId": 13194,
+              "title": "عبدالله السدحان"
+            },
+            {
+              "sourceId": 7794,
+              "title": "عبدالله العصيمي"
+            }
+          ]
+        },
+        {
+          "stem": "متعب",
+          "candidates": [
+            {
+              "sourceId": 8454,
+              "title": "متعب الثبيتي"
+            },
+            {
+              "sourceId": 15973,
+              "title": "متعب الخالدي"
+            },
+            {
+              "sourceId": 15793,
+              "title": "متعب السفياني"
+            }
+          ]
+        },
+        {
+          "stem": "محمد",
+          "candidates": [
+            {
+              "sourceId": 14503,
+              "title": "محمد بن سلمان"
+            },
+            {
+              "sourceId": 13780,
+              "title": "محمد علي"
+            },
+            {
+              "sourceId": 13636,
+              "title": "محمد هنيدي"
+            }
+          ]
+        },
+        {
+          "stem": "محمود",
+          "candidates": [
+            {
+              "sourceId": 10576,
+              "title": "محمود خالد"
+            },
+            {
+              "sourceId": 10575,
+              "title": "محمود موسى"
+            }
+          ]
+        },
+        {
+          "stem": "مريم",
+          "candidates": [
+            {
+              "sourceId": 16992,
+              "title": "مريم القرشي"
+            },
+            {
+              "sourceId": 16503,
+              "title": "مريم سمير"
+            }
+          ]
+        },
+        {
+          "stem": "مصلح",
+          "candidates": [
+            {
+              "sourceId": 16230,
+              "title": "مصلح الثقفي"
+            },
+            {
+              "sourceId": 16977,
+              "title": "مصلح القرشي"
+            }
+          ]
+        },
+        {
+          "stem": "برج",
+          "candidates": [
+            {
+              "sourceId": 14490,
+              "title": "برج العرب"
+            },
+            {
+              "sourceId": 12238,
+              "title": "برج الفيصلية"
+            },
+            {
+              "sourceId": 13802,
+              "title": "برج خليفة"
+            }
+          ]
+        },
+        {
+          "stem": "جامعة",
+          "candidates": [
+            {
+              "sourceId": 7370,
+              "title": "جامعة أم القرى"
+            },
+            {
+              "sourceId": 12208,
+              "title": "جامعة الملك عبد العزيز"
+            }
+          ]
+        },
+        {
+          "stem": "جبال",
+          "candidates": [
+            {
+              "sourceId": 15039,
+              "title": "جبال الروكي"
+            },
+            {
+              "sourceId": 15038,
+              "title": "جبال تهامة"
+            },
+            {
+              "sourceId": 14118,
+              "title": "جبال طويق"
+            }
+          ]
+        },
+        {
+          "stem": "حديقة",
+          "candidates": [
+            {
+              "sourceId": 7768,
+              "title": "حديقة الأندلس"
+            },
+            {
+              "sourceId": 12132,
+              "title": "حديقة الردف"
+            },
+            {
+              "sourceId": 14710,
+              "title": "حديقة الملك سلمان"
+            }
+          ]
+        },
+        {
+          "stem": "شارع",
+          "candidates": [
+            {
+              "sourceId": 11796,
+              "title": "شارع البوليفارد"
+            },
+            {
+              "sourceId": 12932,
+              "title": "شارع التحلية"
+            },
+            {
+              "sourceId": 12501,
+              "title": "شارع الثمانين"
+            },
+            {
+              "sourceId": 12284,
+              "title": "شارع زايد"
+            }
+          ]
+        },
+        {
+          "stem": "قاعة",
+          "candidates": [
+            {
+              "sourceId": 7368,
+              "title": "قاعة الاحتفالات"
+            },
+            {
+              "sourceId": 8474,
+              "title": "قاعة الخزامى"
+            },
+            {
+              "sourceId": 7843,
+              "title": "قاعة المؤتمرات"
+            },
+            {
+              "sourceId": 8817,
+              "title": "قاعة الماسة"
+            }
+          ]
+        },
+        {
+          "stem": "مطعم",
+          "candidates": [
+            {
+              "sourceId": 57,
+              "title": "مطعم الشرق"
+            },
+            {
+              "sourceId": 58,
+              "title": "مطعم الملكي"
+            },
+            {
+              "sourceId": 8812,
+              "title": "مطعم خيال"
+            }
+          ]
+        },
+        {
+          "stem": "مقهى",
+          "candidates": [
+            {
+              "sourceId": 12716,
+              "title": "مقهى إكليل الجبل"
+            },
+            {
+              "sourceId": 12714,
+              "title": "مقهى بلكونة ورد"
+            },
+            {
+              "sourceId": 8656,
+              "title": "مقهى ودق"
+            }
+          ]
+        },
+        {
+          "stem": "مول",
+          "candidates": [
+            {
+              "sourceId": 8070,
+              "title": "مول الرياض"
+            },
+            {
+              "sourceId": 12712,
+              "title": "مول العرب"
+            }
+          ]
+        },
+        {
+          "stem": "وادي",
+          "candidates": [
+            {
+              "sourceId": 14854,
+              "title": "وادي النيل"
+            },
+            {
+              "sourceId": 13747,
+              "title": "وادي رم"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

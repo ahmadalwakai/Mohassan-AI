@@ -112,7 +112,7 @@ function arabicDirective(clause: string): Omit<ReplyDirective, 'text'> | null {
   if (!words.length) return null;
   let at = 0;
   const lead = words.slice(0, 2).join(' ');
-  if (VERB_AR.test(lead)) at = 2; else if (VERB_AR.test(words[0]!)) at = 1;
+  if (words.length > 1 && VERB_AR.test(lead)) at = 2; else if (VERB_AR.test(words[0]!)) at = 1;
   if (words[at] && OBJECT_AR.test(words[at]!)) at++;
   if (at === words.length) return null;
   const rest = words.slice(at);

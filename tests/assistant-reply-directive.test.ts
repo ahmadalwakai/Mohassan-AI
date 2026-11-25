@@ -39,6 +39,12 @@ describe('a request, its label and its closing instruction about the reply', () 
     expect(incidentalLabel('Note: remember to bring milk')).toEqual({ label: 'Note', rest: 'remember to bring milk' });
     expect(incidentalLabel('What is this: a test?')).toBeNull();
   });
+
+  it('preserves a trailing word in a multiword Arabic subject', () => {
+    // Development-only. MASSIVE 1.0 ar-SA rows 13255 and 12714, joined at the annotated slot.
+    const body = 'من فضلك أعطني معلومات عن مقهى بلكونة ورد';
+    expect(splitReplyDirective(body)).toMatchObject({ body, label: null, directive: null });
+  });
 });
 
 describe('a calculation with a label and an instruction about the reply', () => {
