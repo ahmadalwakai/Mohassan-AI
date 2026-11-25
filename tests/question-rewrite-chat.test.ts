@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentBrowser, AgentPage, SearchProvider } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
-import { completeQuestionRewrite } from '../apps/server/src/assistant/question-rewrite-chat.js';
+import { completeQuestionRewrite, renderQuestionRewrite } from '../apps/server/src/assistant/question-rewrite-chat.js';
 import { parseQuestionRewriteRequest } from '../apps/server/src/assistant/question-rewrite-request.js';
 import { decideRequestRoute } from '../apps/server/src/assistant/routing-decision.js';
 
@@ -45,6 +45,15 @@ describe('supplied question rewrite', () => {
     await expect(completeQuestionRewrite(supplied, state, dropHeld, finish)).resolves.toBe(true);
     expect(state.dropHeld).toBe(false);
     expect(finish).toHaveBeenCalledWith('When did Mina Solano start cataloguing field recordings');
+  });
+
+  it('continues to use the Arabic rules for an Arabic writing request', () => {
+    const request = [
+      'صغ السؤال التالي كسؤال مستقل دون علامة الاستفهام.',
+      'عنوان المقال: حديقة الضفاف',
+      'السؤال الأخير: ما مساحتها؟',
+    ].join('\n');
+    expect(renderQuestionRewrite(request, decideRequestRoute({ text: request }).handler)).toBe('ما مساحة حديقة الضفاف');
   });
 });
 

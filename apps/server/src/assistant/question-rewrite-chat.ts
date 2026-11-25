@@ -1,6 +1,9 @@
 import type { Kysely } from 'kysely';
 import { analyzeCompoundRequest } from './compound-request.js';
 import { reviewGeneratedPublicQuery } from './public-query-provenance.js';
+import { predictQuestionEdit } from './question-edit-model.js';
+import { questionEditOrder } from './question-edit-weights.js';
+import { combineQuestionRewrites } from './question-rewrite-order.js';
 import { parseQuestionRewriteRequest } from './question-rewrite-request.js';
 import { rewriteFollowUpQuestion, type QuestionHistory } from './question-rewriter.js';
 import { splitReplyDirective } from './reply-directive.js';
@@ -8,11 +11,24 @@ import { parseRequestContextState } from './request-context.js';
 import { assessRequestScope, reviewPublicProjection } from './request-scope.js';
 import { decideRequestRoute, type RequestRoutingInput, type RoutingHandler } from './routing-decision.js';
 
+function rewriteQuestion(question: string, history: QuestionHistory, canUse?: (proposal: string) => boolean): string {
+  const original = question.trim();
+  const rules = () => {
+    const proposal = rewriteFollowUpQuestion(question, history);
+    return canUse && proposal !== original && !canUse(proposal) ? original : proposal;
+  };
+  if (/\p{Script=Arabic}/u.test(question)) return rules();
+  return combineQuestionRewrites(question, questionEditOrder, rules, () => {
+    const edit = predictQuestionEdit(question, history);
+    return edit && (!canUse || canUse(edit.text)) ? edit.text : null;
+  });
+}
+
 export function renderQuestionRewrite(request: string, handler: RoutingHandler | undefined): string | null {
   if (handler !== 'writing') return null;
   const supplied = parseQuestionRewriteRequest(request);
   if (!supplied) return null;
-  const question = rewriteFollowUpQuestion(supplied.question, supplied.history);
+  const question = rewriteQuestion(supplied.question, supplied.history);
   if (supplied.omitEndingPunctuation) return question.replace(/[.!?؟…]+$/u, '').trimEnd();
   if (/[?؟]$/u.test(question)) return question;
   return question.replace(/[.!…]+$/u, '').trimEnd() + (/\p{Script=Arabic}/u.test(question) ? '؟' : '?');
@@ -61,9 +77,10 @@ export async function routeWithQuestionHistory(db: Kysely<any>, conversationId: 
     || analyzeCompoundRequest(input.text).kind !== 'single') return fallback();
 
   const turns = await readTurns(db, conversationId);
-  const question = rewriteFollowUpQuestion(input.text, { turns });
-  if (question === input.text || !reviewGeneratedPublicQuery(input.text, question, publicTerms).eligible
-    || !reviewPublicProjection(input.text, question, scopeOptions).eligible) return fallback();
+  const canProject = (proposal: string) => reviewGeneratedPublicQuery(input.text, proposal, publicTerms).eligible
+    && reviewPublicProjection(input.text, proposal, scopeOptions).eligible;
+  const question = rewriteQuestion(input.text, { turns }, canProject);
+  if (question === input.text.trim()) return fallback();
 
   const routed = decideRequestRoute({ ...input, text: question });
   if (routed.route !== 'web_search' || routed.handler !== 'search' || !routed.sourceAssessment.publicQueryEligible) return fallback();

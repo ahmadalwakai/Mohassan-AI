@@ -1,5 +1,9 @@
 import { readFileSync } from 'node:fs';
+import { predictQuestionEdit } from '../../apps/server/src/assistant/question-edit-model.ts';
+import { questionEditOrder } from '../../apps/server/src/assistant/question-edit-weights.ts';
+import { combineQuestionRewrites } from '../../apps/server/src/assistant/question-rewrite-order.ts';
 import { rewriteFollowUpQuestion } from '../../apps/server/src/assistant/question-rewriter.ts';
+import { normalizeQuestionRewrite, questionRewriteCounts, questionRewriteLiteral, scoreQuestionRewrite } from './question-edit-metrics.ts';
 
 interface CanardRow {
   History: string[];
@@ -26,22 +30,10 @@ function replacePronouns(question: string, article: string): string {
   });
 }
 
-function normalize(text: string): string {
-  return text.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase();
-}
-
-function withoutEndingPunctuation(text: string): string {
-  return text.trim().replace(/[.!?؟]+$/u, '').trimEnd();
-}
-
-function counts() {
-  return { total: 0, exact: 0, normalizedSubstring: 0 };
-}
-
-function score(result: ReturnType<typeof counts>, output: string, reference: string, normalizedReference: string) {
-  result.total++;
-  if (output === reference) result.exact++;
-  if (normalizedReference && normalize(output).includes(normalizedReference)) result.normalizedSubstring++;
+const methods = ['pronounReplacement', 'rules', 'model', 'rulesFirst', 'modelFirst'] as const;
+type Method = (typeof methods)[number];
+function allMethods(): Record<Method, ReturnType<typeof questionRewriteCounts>> {
+  return Object.fromEntries(methods.map(method => [method, questionRewriteCounts()])) as Record<Method, ReturnType<typeof questionRewriteCounts>>;
 }
 
 const [inputPath, ...rest] = process.argv.slice(2);
@@ -51,8 +43,8 @@ if (receipt?.input !== 3430 || receipt.retained !== rows.length || receipt.input
   throw new Error('Invalid CANARD dev preparation receipt.');
 }
 
-const all = { pronounReplacement: counts(), rewriter: counts() };
-const contextDependentFollowUps = { pronounReplacement: counts(), rewriter: counts() };
+const all = allMethods();
+const contextDependentFollowUps = allMethods();
 
 for (const row of rows) {
   const [articleTitle, sectionTitle, ...dialogue] = row.History;
@@ -60,15 +52,22 @@ for (const row of rows) {
   for (let index = 0; index < dialogue.length; index += 2) {
     turns.push({ question: dialogue[index]!, answer: dialogue[index + 1] });
   }
-  const baseline = replacePronouns(row.Question, articleTitle);
-  const rewritten = rewriteFollowUpQuestion(row.Question, { articleTitle, sectionTitle, turns });
-  const reference = normalize(withoutEndingPunctuation(row.Rewrite));
-  score(all.pronounReplacement, baseline, row.Rewrite, reference);
-  score(all.rewriter, rewritten, row.Rewrite, reference);
-  if (row.Question_no > 1 && reference && !normalize(row.Question).includes(reference)) {
-    score(contextDependentFollowUps.pronounReplacement, baseline, row.Rewrite, reference);
-    score(contextDependentFollowUps.rewriter, rewritten, row.Rewrite, reference);
+  const history = { articleTitle, sectionTitle, turns };
+  const rules = rewriteFollowUpQuestion(row.Question, history);
+  const model = predictQuestionEdit(row.Question, history)?.text ?? null;
+  const outputs: Record<Method, string> = {
+    pronounReplacement: replacePronouns(row.Question, articleTitle),
+    rules,
+    model: model ?? row.Question,
+    rulesFirst: combineQuestionRewrites(row.Question, 'rules-first', () => rules, () => model),
+    modelFirst: combineQuestionRewrites(row.Question, 'model-first', () => rules, () => model),
+  };
+  const reference = questionRewriteLiteral(row.Rewrite);
+  const dependsOnContext = row.Question_no > 1 && reference && !normalizeQuestionRewrite(row.Question).includes(reference);
+  for (const method of methods) {
+    scoreQuestionRewrite(all[method], outputs[method], row.Rewrite, reference);
+    if (dependsOnContext) scoreQuestionRewrite(contextDependentFollowUps[method], outputs[method], row.Rewrite, reference);
   }
 }
 
-console.log(JSON.stringify({ receipt, all, contextDependentFollowUps }, null, 2));
+console.log(JSON.stringify({ receipt, selectedOrder: questionEditOrder, all, contextDependentFollowUps }, null, 2));
