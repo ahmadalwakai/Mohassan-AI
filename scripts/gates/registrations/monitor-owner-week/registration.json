@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "gate_id": "monitor-owner-week-phase1",
+  "question": "During the 168 completed UTC hours from the owner-approved start, do owner-only monitors run on time, read successfully, provide useful alerts and deliver them through the chosen channels, with few unexpected pauses?",
+  "adapter": "classifier",
+  "cases": {
+    "path": "cases.jsonl",
+    "sha256": "1c865493869cf6662d26a2b89edae5619f7c8f3cebca642fed8c06e5c8e4e407",
+    "sealed": false,
+    "allow_reuse": false
+  },
+  "candidate": {
+    "path": "trial.json",
+    "sha256": "b8d957809f7af463af1318c253dd75c71aa8510ccfddfdbfba3f567e740913da"
+  },
+  "generation": null,
+  "judging": {
+    "judges": 0,
+    "aggregation": "automatic",
+    "shuffle_seed": 0,
+    "identity_terms": []
+  },
+  "rule": {
+    "test": {
+      "name": "none"
+    },
+    "minimum_counts": {
+      "overall": 19
+    },
+    "minimum_passes": {
+      "overall": 19
+    },
+    "classifier": {
+      "ece_bins": 1
+    }
+  }
+}
