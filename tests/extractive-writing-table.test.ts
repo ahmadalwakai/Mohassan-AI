@@ -21,7 +21,7 @@ describe('extractive writing comparison tables in chat', () => {
     expect(html).toContain('<th scope="row"><bdi>Definition</bdi></th>');
     expect(html).toContain(`href="${earth.url}"`);
     expect(html).toContain(`href="${eclipse.url}"`);
-    expect(html).toContain('لم أجد');
+    expect(html).toContain('<th scope="col"><bdi>Solar eclipse</bdi></th>');
     expect(html).toContain('tabindex="0"');
   });
 

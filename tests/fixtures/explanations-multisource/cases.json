@@ -1,0 +1,1431 @@
+[
+  {
+    "id": "ar-why-solar-heating",
+    "language": "ar",
+    "kind": "why",
+    "question": "لماذا تُعد الشمس المحرك الأساسي لدورة الماء؟",
+    "sourceUrls": [
+      "https://water.usgs.gov/edu/watercyclearabic.html",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+      "https://ar.wikipedia.org/wiki/%D8%B3%D8%AD%D8%A7%D8%A8"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+        "quote": "إن الشمس التي تعتبر المحرك الأساسي لدورة الماء تقوم بتسخين المياه في المحيطات التي تتبخر (تتحول) إلى بخار ماء داخل الجو.",
+        "alternatives": [
+          {
+            "url": "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+            "quote": "تُدفع دورة الماء بطاقة الشمس عندما تسخن المحيطات والمياه السطحية الأخرى."
+          },
+          {
+            "url": "https://ar.wikipedia.org/wiki/%D8%B3%D8%AD%D8%A7%D8%A8",
+            "quote": "تعتبر السحب شكل من أشكال الرطوبة الجويّة التي يمكن رؤيتها بالعين المجرّدة، حيث تعتبر الشمس المُحرّك الأساسي لدورة الماء، تقوم بتسخين المحيطات التي تحوّل جزءاً من مياهها من حالتها السائلة إلى بخار، فتقوم التيارات الهوائية المتصاعدة بأخذ بخار الماء إلى داخل الغلاف الجوي (حيث درجات الحرارة المنخفضة) فيتكاثف الهواء المشبّع ببخار الماء مكونًا بذلك جزيئات الماء السائلة أو المتجمدة فتمتزج بذرات الغبار مشكلة بذلك السحب."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ar-why-cloud-cooling",
+    "language": "ar",
+    "kind": "why",
+    "question": "لماذا يتكثف بخار الماء في طبقات الجو الباردة مكوّنًا السحب؟",
+    "sourceUrls": [
+      "https://water.usgs.gov/edu/watercyclearabic.html",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+      "https://ar.wikipedia.org/wiki/%D8%B3%D8%AD%D8%A7%D8%A8"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+        "quote": "وتقوم التيارات الهوائية المتصاعدة بأخذ بخار الماء إلى أعلى داخل الغلاف الجوي، حيث درجات الحرارة الباردة التي تتسبب في تكثيف بخار الماء، وتحويله إلى سحاب.",
+        "alternatives": [
+          {
+            "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+            "quote": "وعندما تكون درجات الحرارة بمعدلات أبرد يحدث مزيد من التكثف وتتشكل السحب."
+          },
+          {
+            "url": "https://ar.wikipedia.org/wiki/%D8%B3%D8%AD%D8%A7%D8%A8",
+            "quote": "تعتبر السحب شكل من أشكال الرطوبة الجويّة التي يمكن رؤيتها بالعين المجرّدة، حيث تعتبر الشمس المُحرّك الأساسي لدورة الماء، تقوم بتسخين المحيطات التي تحوّل جزءاً من مياهها من حالتها السائلة إلى بخار، فتقوم التيارات الهوائية المتصاعدة بأخذ بخار الماء إلى داخل الغلاف الجوي (حيث درجات الحرارة المنخفضة) فيتكاثف الهواء المشبّع ببخار الماء مكونًا بذلك جزيئات الماء السائلة أو المتجمدة فتمتزج بذرات الغبار مشكلة بذلك السحب."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ar-why-dew-cold-surface",
+    "language": "ar",
+    "kind": "why",
+    "question": "لماذا تظهر قطرات الندى على سطح بارد؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D9%86%D8%AF%D9%89",
+      "https://water.usgs.gov/edu/watercyclearabic.html",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://ar.wikipedia.org/wiki/%D9%86%D8%AF%D9%89",
+        "quote": "عندما تنخفض حرارة سطح ما حتى تؤول إلى نقطة الندى، يتكثف بخار الماء عند الضغط الجوي مشكلاً قطرات صغيرة على السطح."
+      },
+      {
+        "url": "https://ar.wikipedia.org/wiki/%D9%86%D8%AF%D9%89",
+        "quote": "تسمى درجة الحرارة التي تبدأ عندها القطرات بالتشكل بنقطة الندى."
+      }
+    ]
+  },
+  {
+    "id": "ar-why-groundwater-permeability",
+    "language": "ar",
+    "kind": "why",
+    "question": "لماذا تؤثر مسامية الصخور ونفاذيتها في حركة المياه الجوفية؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D9%85%D9%8A%D8%A7%D9%87_%D8%AC%D9%88%D9%81%D9%8A%D8%A9",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+      "https://water.usgs.gov/edu/watercyclearabic.html"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+        "quote": "وتعتمد المياه التي تتحرك تحت الأرض على قابلية نفاذ( سهولة تحرك المياه أو صعوبته) ومسامية (كمية الفراغات المفتوحة في المادة) الصخور تحت السطحية.",
+        "alternatives": [
+          {
+            "url": "https://ar.wikipedia.org/wiki/%D9%85%D9%8A%D8%A7%D9%87_%D8%AC%D9%88%D9%81%D9%8A%D8%A9",
+            "quote": "عملية التسرب تعتمد على نوع التربة الموجودة على سطح الأرض التي تلامس المياه السطحية (مصدر التغذية) فكلما كانت التربة مفككة وذات فراغات كبيرة ومسامية عالية ساعدت على التسرب الأفضل للمياه وبالتالي الحصول على مخزون مياه جوفية جيد بمرور الزمن."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ar-why-rain-on-pavement",
+    "language": "ar",
+    "kind": "why",
+    "question": "لماذا تجري مياه المطر على سطح الطرق الأسفلتية؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D9%85%D9%8A%D8%A7%D9%87_%D8%AC%D9%88%D9%81%D9%8A%D8%A9",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+      "https://water.usgs.gov/edu/watercyclearabic.html"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+        "quote": "إن بعضاً من مياه الأمطار عادة ما يتسرب إلى داخل الأرض، إلا أنه عندما يسقط على أرض متشبعة، أو غير نافذة، مثل الطرق الأسفلتية، ومواقف السيارات فإنه يبدأ في الجريان على نحو منحدر."
+      }
+    ]
+  },
+  {
+    "id": "ar-why-evaporative-cooling",
+    "language": "ar",
+    "kind": "why",
+    "question": "لماذا يبرّد تبخر الماء جسم الإنسان؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D8%AA%D8%A8%D8%AE%D8%B1",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+      "https://water.usgs.gov/edu/watercyclearabic.html"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+        "quote": "وكما أن التبخر يزيل الحرارة من البيئة، فإن الماء الذي يتبخر من جسمك هو الذي يجعلك تشعر بالبرودة."
+      }
+    ]
+  },
+  {
+    "id": "ar-how-ocean-to-atmosphere",
+    "language": "ar",
+    "kind": "how",
+    "question": "كيف تنتقل المياه من المحيطات إلى الغلاف الجوي؟",
+    "sourceUrls": [
+      "https://water.usgs.gov/edu/watercyclearabic.html",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+      "https://ar.wikipedia.org/wiki/%D8%B3%D8%AD%D8%A7%D8%A8"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+        "quote": "إن الشمس التي تعتبر المحرك الأساسي لدورة الماء تقوم بتسخين المياه في المحيطات التي تتبخر (تتحول) إلى بخار ماء داخل الجو.",
+        "alternatives": [
+          {
+            "url": "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+            "quote": "يؤدي هذا إلى تبخر (تحول الماء إلى بخار ماء) المياه السطحية السائلة وتسامي (تحول الجليد إلى بخار ماء) الماء المتجمد، مما ينقل كميات كبيرة من الماء إلى الغلاف الجوي كبخار ماء."
+          }
+        ]
+      },
+      {
+        "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+        "quote": "التبخر هو العملية التي يتحول بموجبها الماء من سائل إلى غاز أو بخار، ويعد الطريقة الرئيسة لانتقال المياه مرة أخرى إلى دورة الماء، لتصبح بخار ماء داخل الغلاف الجوي."
+      }
+    ]
+  },
+  {
+    "id": "ar-how-cloud-to-rain",
+    "language": "ar",
+    "kind": "how",
+    "question": "كيف تسقط مياه السحب على الأرض على هيئة أمطار؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D9%87%D8%B7%D9%88%D9%84",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+      "https://water.usgs.gov/edu/watercyclearabic.html"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+        "quote": "وعندما يتوحد رذاذ الماء مع بعضه وينمو في الحجم، يمكن أن يحصل التساقط.",
+        "alternatives": [
+          {
+            "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+            "quote": "تقوم التيارات الهوائية بتحريك السحب حول الكرة الأرضية، وتصطدم ذرات السحاب وتنمو وتسقط من السماء كأمطار، ويسقط بعض من هذه الأمطار كجليد، ويمكن أن يتراكم كأنهار جليدية."
+          }
+        ]
+      },
+      {
+        "url": "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+        "quote": "بمرور الوقت، يتكثف بخار الماء هذا إلى سحب على شكل قطرات سائلة أو متجمدة ويؤدي في النهاية إلى هطول الأمطار (مطر أو ثلج)، مما يعيد الماء إلى سطح الأرض.",
+        "alternatives": [
+          {
+            "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+            "quote": "وهو الوسيلة الرئيسية لعودة الماء الموجود في الغلاف الجوي إلى الأرض."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ar-how-groundwater-recharge",
+    "language": "ar",
+    "kind": "how",
+    "question": "كيف تتغذى خزانات المياه الجوفية بمياه المطر؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D9%85%D9%8A%D8%A7%D9%87_%D8%AC%D9%88%D9%81%D9%8A%D8%A9",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+      "https://water.usgs.gov/edu/watercyclearabic.html"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+        "quote": "في أي مكان في العالم تتسرب بعض المياه التي تسقط كأمطار أو جليد إلى داخل التربة والصخور تحت السطح.",
+        "alternatives": [
+          {
+            "url": "https://ar.wikipedia.org/wiki/%D9%85%D9%8A%D8%A7%D9%87_%D8%AC%D9%88%D9%81%D9%8A%D8%A9",
+            "quote": "مصدر هذه المياه غالبا المطر أو الأنهار الدائمة أو الموسمية أو الجليد الذائب وتتسرب المياه من سطح الأرض إلى داخلها فيما يعرف بالتغذية (الإنجليزية: Recharge)."
+          }
+        ]
+      },
+      {
+        "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+        "quote": "ويمكن أن يتسرب بعض من هذه المياه إلى مسافات أعمق لتغذية مستودعات المياه الجوفية.",
+        "alternatives": [
+          {
+            "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+            "quote": "والسبب في وجود المياه الجوفية هو تسرب المياه السطحية إلى أسفل داخل الطبقات الصخرية الخازنة للماء في جوف الأرض."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ar-how-plant-transpiration",
+    "language": "ar",
+    "kind": "how",
+    "question": "كيف يعود الماء الذي امتصته جذور النبات إلى الجو عن طريق النتح؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D9%86%D8%AA%D8%AD",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+      "https://water.usgs.gov/edu/watercyclearabic.html"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+        "quote": "يدخل الماء إلى الجهاز الوعائي للنبات عبر الجذور ويتبخر، أو ينتح، عبر ثغور الأوراق.",
+        "alternatives": [
+          {
+            "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+            "quote": "الارتشاح هو العملية التي تنتقل بموجبها الرطوبة من منطقة الجذور، عن طريق النبات، إلى مسامات صغيرة في الجانب السفلي لأوراق النبات، حيث تتحول إلى بخار يخرج إلى الغلاف الجوي."
+          },
+          {
+            "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+            "quote": "وتقوم الجذور النباتية بامتصاص المياه الضحلة، ثم ترتشح من خلال أسطح الأوراق النباتية، لتعود مرة أخرى إلى الغلاف الجوي."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ar-how-spring-discharge",
+    "language": "ar",
+    "kind": "how",
+    "question": "كيف يخرج الماء الجوفي إلى سطح الأرض على شكل ينبوع؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D9%85%D9%8A%D8%A7%D9%87_%D8%AC%D9%88%D9%81%D9%8A%D8%A9",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+      "https://water.usgs.gov/edu/watercyclearabic.html"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+        "quote": "الينبوع هو الماء المتدفق نتيجة امتلاء أحد المستودعات المائية الأرضية إلى النقطة التي تتدفق فيها المياه إلى سطح الأرض.",
+        "alternatives": [
+          {
+            "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+            "quote": "وتجد بعض من المياه الجوفية فتحات على سطح الأرض حيث تخرج منها كينابيع من المياه العذبة."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ar-how-rivers-to-ocean",
+    "language": "ar",
+    "kind": "how",
+    "question": "كيف يعود جزء من مياه الأمطار الجارية إلى المحيطات عبر الأنهار؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D9%85%D9%8A%D8%A7%D9%87_%D8%AC%D9%88%D9%81%D9%8A%D8%A9",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+      "https://water.usgs.gov/edu/watercyclearabic.html"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+        "quote": "يدخل جزء من مياه الأمطار الجارية إلى مجاري الأنهار ويتحرك نحو المحيطات.",
+        "alternatives": [
+          {
+            "url": "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+            "quote": "يمكن للجريان السطحي أن يشق طريقه عبر الجداول والبحيرات إلى المحيطات أو يتدفق مباشرة إلى المحيطات نفسها."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ar-comparison-evaporation-condensation",
+    "language": "ar",
+    "kind": "comparison",
+    "question": "ما الفرق بين التبخر والتكثف في اتجاه تحول حالة الماء؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D8%AA%D9%83%D8%AB%D9%8A%D9%81",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+      "https://water.usgs.gov/edu/watercyclearabic.html"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+        "quote": "التبخر هو العملية التي يتحول بموجبها الماء من سائل إلى غاز أو بخار، ويعد الطريقة الرئيسة لانتقال المياه مرة أخرى إلى دورة الماء، لتصبح بخار ماء داخل الغلاف الجوي."
+      },
+      {
+        "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+        "quote": "التكثف هو عملية تحول الماء من حالته الغازية (بخار) إلى سائل.",
+        "alternatives": [
+          {
+            "url": "https://ar.wikipedia.org/wiki/%D8%AA%D9%83%D8%AB%D9%8A%D9%81",
+            "quote": "التكثف هو تحول حالة المادة من غاز إلى سائل."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ar-comparison-evaporation-sublimation",
+    "language": "ar",
+    "kind": "comparison",
+    "question": "ما الفرق بين التبخر والتسامي من حيث حالة الماء قبل التحول؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D8%AA%D8%A8%D8%AE%D8%B1",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+      "https://water.usgs.gov/edu/watercyclearabic.html"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+        "quote": "يؤدي هذا إلى تبخر (تحول الماء إلى بخار ماء) المياه السطحية السائلة وتسامي (تحول الجليد إلى بخار ماء) الماء المتجمد، مما ينقل كميات كبيرة من الماء إلى الغلاف الجوي كبخار ماء."
+      }
+    ]
+  },
+  {
+    "id": "ar-comparison-runoff-infiltration",
+    "language": "ar",
+    "kind": "comparison",
+    "question": "ما الفرق بين الجريان السطحي والتسرب إلى باطن الأرض بعد هطول المطر؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D9%85%D9%8A%D8%A7%D9%87_%D8%AC%D9%88%D9%81%D9%8A%D8%A9",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+      "https://water.usgs.gov/edu/watercyclearabic.html"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+        "quote": "قد يتبخر المطر الذي يصل إلى سطح الأرض مرة أخرى، أو يتدفق فوق السطح، أو يتسرب إلى الأرض.",
+        "alternatives": [
+          {
+            "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+            "quote": "إن بعضاً من مياه الأمطار عادة ما يتسرب إلى داخل الأرض، إلا أنه عندما يسقط على أرض متشبعة، أو غير نافذة، مثل الطرق الأسفلتية، ومواقف السيارات فإنه يبدأ في الجريان على نحو منحدر."
+          }
+        ]
+      },
+      {
+        "url": "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+        "quote": "الأكثر سهولة في الملاحظة هو الجريان السطحي: تدفق المياه العذبة إما من المطر أو الجليد الذائب."
+      }
+    ]
+  },
+  {
+    "id": "ar-comparison-saturated-unsaturated",
+    "language": "ar",
+    "kind": "comparison",
+    "question": "ما الفرق بين المنطقة المشبعة والمنطقة غير المشبعة تحت سطح الأرض؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D9%85%D9%8A%D8%A7%D9%87_%D8%AC%D9%88%D9%81%D9%8A%D8%A9",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+      "https://water.usgs.gov/edu/watercyclearabic.html"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+        "quote": "وأسفل المنطقة غير المشبعة، توجد المنطقة المشبعة، حيث يملأ الماء بصورة كاملة الفراغات الموجودة بين الصخور وذرات التربة.",
+        "alternatives": [
+          {
+            "url": "https://ar.wikipedia.org/wiki/%D9%85%D9%8A%D8%A7%D9%87_%D8%AC%D9%88%D9%81%D9%8A%D8%A9",
+            "quote": "المنطقة المشبعة هي طبقة تحتوي على مواد حاملة للمياه وتكون كل الفراغات المتصلة ببعضها مملوءة بالماء ويكون الضغط بها أكبر من الضغط الجوي مما يسمح للمياه بالخروج منها إلى البئر أو العيون، تغذية المنطقة المشبعة يتم عبر ترشح المياه من سطح الأرض إلى هذه الطبقة عبر مرورها بالمنطقة غير المشبعة."
+          }
+        ]
+      },
+      {
+        "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+        "quote": "ففي المنطقة غير المشبعة توجد بعض المياه في فتحات الصخور تحت السطحية، إلا أن الأرض لا تكون مشبعة.",
+        "alternatives": [
+          {
+            "url": "https://ar.wikipedia.org/wiki/%D9%85%D9%8A%D8%A7%D9%87_%D8%AC%D9%88%D9%81%D9%8A%D8%A9",
+            "quote": "المنطقة غير المشبعة بالماء تقع مباشرة تحت سطح الأرض في معظم المناطق وتحتوي على المياه والهواء ويكون الضغط بها أقل من الضغط الجوي مما يمنع المياه بتلك المنطقة من الخروج منها إلى أي بئر محفور بها، وهي طبقة مختلفة السمك ويقع تحتها مباشرة المنطقة المشبعة."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ar-comparison-groundwater-surface-water",
+    "language": "ar",
+    "kind": "comparison",
+    "question": "ما الفرق بين المياه الجوفية والمياه السطحية من حيث موقعها؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D9%85%D9%8A%D8%A7%D9%87_%D8%AC%D9%88%D9%81%D9%8A%D8%A9",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+      "https://water.usgs.gov/edu/watercyclearabic.html"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://ar.wikipedia.org/wiki/%D9%85%D9%8A%D8%A7%D9%87_%D8%AC%D9%88%D9%81%D9%8A%D8%A9",
+        "quote": "المياه الجوفية هي كل المياه التي تقع تحت سطح الأرض وهي المسمى المقابل للمياه الواقعة على سطح الأرض وتسمى المياه السطحية، وتقع المياه الجوفية في منطقتين مختلفتين وهما المنطقة المشبعة بالماء والمنطقة غير المشبعة بالماء."
+      }
+    ]
+  },
+  {
+    "id": "ar-comparison-transpiration-evaporation",
+    "language": "ar",
+    "kind": "comparison",
+    "question": "ما الفرق بين النتح والتبخر من المحيطات في دورة الماء؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D9%86%D8%AA%D8%AD",
+      "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+      "https://water.usgs.gov/edu/watercyclearabic.html"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://read.uotinitiative.org/read/ar-mafahim-ilm-al-ahya-mupqs/contents/20-2-biogeochemical-cycles--c1c0fd1bf1.html",
+        "quote": "يدخل الماء إلى الجهاز الوعائي للنبات عبر الجذور ويتبخر، أو ينتح، عبر ثغور الأوراق.",
+        "alternatives": [
+          {
+            "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+            "quote": "إذن، الارتشاح هو تبخر الماء من أوراق النبات."
+          },
+          {
+            "url": "https://ar.wikipedia.org/wiki/%D9%86%D8%AA%D8%AD",
+            "quote": "النتح أو نتح ثغري خروج الماء على شكل بخار من أجزاء النبات المعرضة للهواء وخصوصاً الأوراق قد يحدث النتح للسيقان أو الازهار أو الجذور وذلك عن طريق المسام النباتية."
+          }
+        ]
+      },
+      {
+        "url": "https://water.usgs.gov/edu/watercyclearabic.html",
+        "quote": "إن الشمس التي تعتبر المحرك الأساسي لدورة الماء تقوم بتسخين المياه في المحيطات التي تتبخر (تتحول) إلى بخار ماء داخل الجو."
+      }
+    ]
+  },
+  {
+    "id": "ar-why-infrequent-eclipses",
+    "language": "ar",
+    "kind": "why",
+    "question": "لماذا لا يحدث خسوف القمر عند كل بدر؟",
+    "sourceUrls": [
+      "https://nasainarabic.net/main/articles/view/lunar-eclipses-what-they",
+      "https://ar.wikipedia.org/wiki/%D8%AE%D8%B3%D9%88%D9%81_%D8%A7%D9%84%D9%82%D9%85%D8%B1",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.08%3A_Eclipses_of_the_Sun_and_Moon",
+      "https://ar-why-infrequent-eclipses.test/contradiction"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://nasainarabic.net/main/articles/view/lunar-eclipses-what-they",
+        "quote": "ولأن مدار القمر حول الأرض يتواجد في مستوى يختلف قليلاً عن مدار الأرض حول الشمس، لا يحدث الاصطفاف المناسب والمثالي لحدوث الخسوف عند اكتمال بدر كل شهر."
+      }
+    ],
+    "conflicts": [
+      {
+        "left": {
+          "url": "https://nasainarabic.net/main/articles/view/lunar-eclipses-what-they",
+          "quote": "ولأن مدار القمر حول الأرض يتواجد في مستوى يختلف قليلاً عن مدار الأرض حول الشمس، لا يحدث الاصطفاف المناسب والمثالي لحدوث الخسوف عند اكتمال بدر كل شهر."
+        },
+        "right": {
+          "url": "https://ar-why-infrequent-eclipses.test/contradiction",
+          "quote": "ولأن مدار القمر حول الأرض يتواجد في مستوى يختلف قليلاً عن مدار الأرض حول الشمس، يحدث الاصطفاف المناسب والمثالي لحدوث الخسوف عند اكتمال بدر كل شهر."
+        }
+      }
+    ]
+  },
+  {
+    "id": "ar-why-red-lunar-eclipse",
+    "language": "ar",
+    "kind": "why",
+    "question": "لماذا يميل لون القمر إلى الأحمر أثناء الخسوف الكلي؟",
+    "sourceUrls": [
+      "https://nasainarabic.net/main/articles/view/lunar-eclipses-what-they",
+      "https://ar.wikipedia.org/wiki/%D8%AE%D8%B3%D9%88%D9%81_%D8%A7%D9%84%D9%82%D9%85%D8%B1",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.08%3A_Eclipses_of_the_Sun_and_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://nasainarabic.net/main/articles/view/lunar-eclipses-what-they",
+        "quote": "ويعد القمر الأحمر ممكناً لأنه بينما يكون القمر في ظل كامل، يمر بعض الضوء من الشمس عبر الغلاف الجوي للأرض وينحني باتجاه القمر.",
+        "alternatives": [
+          {
+            "url": "https://ar.wikipedia.org/wiki/%D8%AE%D8%B3%D9%88%D9%81_%D8%A7%D9%84%D9%82%D9%85%D8%B1",
+            "quote": "وفي بداية الخسوف الكلي فإن لون القمر يميل للحمرة بسبب الأشعة الحمراء التي لا يمكن امتصاصها من أعلى الغلاف الجوي للأرض."
+          }
+        ]
+      },
+      {
+        "url": "https://nasainarabic.net/main/articles/view/lunar-eclipses-what-they",
+        "quote": "وبينما تزول باقي ألوان الطيف أو تتبعثر في الغلاف الجوي، يستطيع اللون الأحمر المرور بسهولة، ويظهر تأثيره على إشراق الكواكب وغروبها على القمر."
+      }
+    ]
+  },
+  {
+    "id": "ar-why-moon-phase-changes",
+    "language": "ar",
+    "kind": "why",
+    "question": "لماذا يتغير الجزء المضاء من القمر الذي نراه من الأرض؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D8%B7%D9%88%D8%B1_%D8%A7%D9%84%D9%82%D9%85%D8%B1",
+      "https://nasainarabic.net/education/articles/view/the-moon",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.06%3A_Phases_and_Motions_of_the_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://ar.wikipedia.org/wiki/%D8%B7%D9%88%D8%B1_%D8%A7%D9%84%D9%82%D9%85%D8%B1",
+        "quote": "تنشأ أوجه القمر بسبب النظر إلى نصف الكرة المضاء من القمر من مناظير هندسية (تلسكوب) مختلفة.",
+        "alternatives": [
+          {
+            "url": "https://ar.wikipedia.org/wiki/%D8%B7%D9%88%D8%B1_%D8%A7%D9%84%D9%82%D9%85%D8%B1",
+            "quote": "أوجه القمر أو أطواره أو منازله هي المراحل التي يمر بها القمر فيتغير شكلهُ المرئي من مرحلة المحاق مروراً بالهلال ثم البدر ثم محاقًا وهكذا دواليك، وهذهِ المراحل ناتجة من دوران القمر حول الأرض في مدار إهليلجي، ويدور في فترة (29 يوما و12 ساعة و44 دقيقة)، أي خلال شهر قمري كامل، وتختلف أطوار القمر بشكل دوري أثناء دوران القمر حول الأرض اعتمادا على التغير في المواقع النسبية لكل من القمر والأرض والشمس."
+          },
+          {
+            "url": "https://nasainarabic.net/education/articles/view/the-moon",
+            "quote": "وبما أن القمر يعكس ضوء الشمس فقط، تختلف مساحة سطحه المضاءة في أوقات مختلفة، وتسمى بأطوار القمر."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ar-why-dim-new-moon",
+    "language": "ar",
+    "kind": "why",
+    "question": "لماذا يبدو القمر داكنًا عند المحاق؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D8%B7%D9%88%D8%B1_%D8%A7%D9%84%D9%82%D9%85%D8%B1",
+      "https://nasainarabic.net/education/articles/view/how-hot-and-cold-does-it-get-on-the-moon",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.06%3A_Phases_and_Motions_of_the_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://nasainarabic.net/education/articles/view/how-hot-and-cold-does-it-get-on-the-moon",
+        "quote": "عند طلوع القمر الجديد، يكون كل من القمر والشمس في الجانب نفسه بالنسبة للأرض."
+      },
+      {
+        "url": "https://nasainarabic.net/education/articles/view/how-hot-and-cold-does-it-get-on-the-moon",
+        "quote": "وعندها نشاهد جانب القمر الموجود في الظل، ولذلك يكون القمر داكنا."
+      }
+    ]
+  },
+  {
+    "id": "ar-how-lunar-eclipse",
+    "language": "ar",
+    "kind": "how",
+    "question": "كيف يحدث خسوف القمر؟",
+    "sourceUrls": [
+      "https://nasainarabic.net/main/articles/view/lunar-eclipses-what-they",
+      "https://ar.wikipedia.org/wiki/%D8%AE%D8%B3%D9%88%D9%81_%D8%A7%D9%84%D9%82%D9%85%D8%B1",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.08%3A_Eclipses_of_the_Sun_and_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://ar.wikipedia.org/wiki/%D8%AE%D8%B3%D9%88%D9%81_%D8%A7%D9%84%D9%82%D9%85%D8%B1",
+        "quote": "خسوف القمر هو ظاهرة فلكية تحدث عندما يحجب ظل الأرض ضوء الشمس المنعكس على القمر في الأوضاع العادية.",
+        "alternatives": [
+          {
+            "url": "https://nasainarabic.net/main/articles/view/lunar-eclipses-what-they",
+            "quote": "تحدث الخسوفات عندما يحجب ظل الأرض ضوء الشمس الذي يعكسه القمر في الأوضاع العادية."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ar-how-solar-eclipse",
+    "language": "ar",
+    "kind": "how",
+    "question": "كيف يحدث كسوف الشمس؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D9%83%D8%B3%D9%88%D9%81_%D8%A7%D9%84%D8%B4%D9%85%D8%B3",
+      "https://nasainarabic.net/education/articles/view/how-hot-and-cold-does-it-get-on-the-moon",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.08%3A_Eclipses_of_the_Sun_and_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://nasainarabic.net/education/articles/view/how-hot-and-cold-does-it-get-on-the-moon",
+        "quote": "وخلال الكسوف الشمسي، يتحرك القمر بيننا (على الأرض) وبين الشمس ويحجب بالتالي أشعة الشمس.",
+        "alternatives": [
+          {
+            "url": "https://ar.wikipedia.org/wiki/%D9%83%D8%B3%D9%88%D9%81_%D8%A7%D9%84%D8%B4%D9%85%D8%B3",
+            "quote": "كسوف الشمس (الإنجليزية: solar eclipse) هو نوع من الكسوف يحدث عندما تكون الأرض والقمر والشمس على استقامة واحدة تقريبا ويكون القمر في المنتصف أي في وقت ولادة القمر الجديد عندما يكون في طور المحاق مطلع الشهر القمري بحيث يلقي القمر ظله على الأرض وفي هذه الحالة إذا كنا في مكان ملائم لمشاهدة الكسوف سنرى قرص القمر المظلم يعبر قرص الشمس المضئ."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ar-how-moon-phases-sequence",
+    "language": "ar",
+    "kind": "how",
+    "question": "كيف تتعاقب أطوار القمر من المحاق إلى البدر ثم إلى المحاق من جديد؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D8%B7%D9%88%D8%B1_%D8%A7%D9%84%D9%82%D9%85%D8%B1",
+      "https://nasainarabic.net/education/articles/view/the-moon",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.06%3A_Phases_and_Motions_of_the_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://nasainarabic.net/education/articles/view/the-moon",
+        "quote": "تبدأ الدورة بالمحاق إلى الهلال المتزايد ثم الربع الأول ويليه الأحدب المتزايد ثم القمر الكامل فالأحدب المتناقص ويليه الربع الثالث فالهلال المتناقص، وبعد ذلك المحاق من جديد.",
+        "alternatives": [
+          {
+            "url": "https://ar.wikipedia.org/wiki/%D8%B7%D9%88%D8%B1_%D8%A7%D9%84%D9%82%D9%85%D8%B1",
+            "quote": "أوجه القمر أو أطواره أو منازله هي المراحل التي يمر بها القمر فيتغير شكلهُ المرئي من مرحلة المحاق مروراً بالهلال ثم البدر ثم محاقًا وهكذا دواليك، وهذهِ المراحل ناتجة من دوران القمر حول الأرض في مدار إهليلجي، ويدور في فترة (29 يوما و12 ساعة و44 دقيقة)، أي خلال شهر قمري كامل، وتختلف أطوار القمر بشكل دوري أثناء دوران القمر حول الأرض اعتمادا على التغير في المواقع النسبية لكل من القمر والأرض والشمس."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ar-how-lunar-eclipse-shadow",
+    "language": "ar",
+    "kind": "how",
+    "question": "كيف يمر القمر بمنطقتي ظل الأرض أثناء الخسوف؟",
+    "sourceUrls": [
+      "https://nasainarabic.net/main/articles/view/lunar-eclipses-what-they",
+      "https://ar.wikipedia.org/wiki/%D8%AE%D8%B3%D9%88%D9%81_%D8%A7%D9%84%D9%82%D9%85%D8%B1",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.08%3A_Eclipses_of_the_Sun_and_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://nasainarabic.net/main/articles/view/lunar-eclipses-what-they",
+        "quote": "إذاً، فالأمر يحدث كالتالي: تلقي الأرض بظلين على القمر أثناء الخسوف، وهما سويداء الظل (umbra) وهو ظل معتم كامل، وشبه الظل (penumbra) وهو ظل خارجي جزئي."
+      },
+      {
+        "url": "https://nasainarabic.net/main/articles/view/lunar-eclipses-what-they",
+        "quote": "يمر القمر من خلال هذين الظلين على مراحل عدة، ولا يمكن ملاحظة المرحلتين الأولى والنهائية التي يكون فيها القمر في منطقة شبه الظل بوضوح عال، ولذلك يكون الجزء الأفضل من الخسوف هو ذاك الذي يكون في منتصف الحدث، أي عندما يكون القمر في سويداء الظل."
+      }
+    ]
+  },
+  {
+    "id": "ar-comparison-solar-lunar-eclipses",
+    "language": "ar",
+    "kind": "comparison",
+    "question": "ما الفرق بين كسوف الشمس وخسوف القمر من حيث الجرم الذي يحجب الضوء؟",
+    "sourceUrls": [
+      "https://nasainarabic.net/education/articles/view/how-hot-and-cold-does-it-get-on-the-moon",
+      "https://ar.wikipedia.org/wiki/%D8%AE%D8%B3%D9%88%D9%81_%D8%A7%D9%84%D9%82%D9%85%D8%B1",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.08%3A_Eclipses_of_the_Sun_and_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://nasainarabic.net/education/articles/view/how-hot-and-cold-does-it-get-on-the-moon",
+        "quote": "وخلال الكسوف الشمسي، يتحرك القمر بيننا (على الأرض) وبين الشمس ويحجب بالتالي أشعة الشمس."
+      },
+      {
+        "url": "https://nasainarabic.net/education/articles/view/how-hot-and-cold-does-it-get-on-the-moon",
+        "quote": "أما خلال الخسوف القمري، فتحجب الأرض ضوء الشمس الذي يضيء القمر في العادة.",
+        "alternatives": [
+          {
+            "url": "https://ar.wikipedia.org/wiki/%D8%AE%D8%B3%D9%88%D9%81_%D8%A7%D9%84%D9%82%D9%85%D8%B1",
+            "quote": "خسوف القمر هو ظاهرة فلكية تحدث عندما يحجب ظل الأرض ضوء الشمس المنعكس على القمر في الأوضاع العادية."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ar-comparison-total-partial-solar",
+    "language": "ar",
+    "kind": "comparison",
+    "question": "ما الفرق بين الكسوف الكلي والكسوف الجزئي للشمس من حيث الجزء المحجوب من قرصها؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D9%83%D8%B3%D9%88%D9%81_%D8%A7%D9%84%D8%B4%D9%85%D8%B3",
+      "https://nasainarabic.net/education/articles/view/how-hot-and-cold-does-it-get-on-the-moon",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.08%3A_Eclipses_of_the_Sun_and_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://ar.wikipedia.org/wiki/%D9%83%D8%B3%D9%88%D9%81_%D8%A7%D9%84%D8%B4%D9%85%D8%B3",
+        "quote": "الكسوف الكلي (الإنجليزية: Total eclipse) ويحدث عندما يصل ظل القمر إلى سطح الأرض وفي هذه الحالة ينكسف كامل قرص الشمس."
+      },
+      {
+        "url": "https://ar.wikipedia.org/wiki/%D9%83%D8%B3%D9%88%D9%81_%D8%A7%D9%84%D8%B4%D9%85%D8%B3",
+        "quote": "وشبه ظل القمر في هذه الحالة هي المنطقة التي لا يرى كامل قرص الشمس منها أي أن قرص الشمس لن يشاهد كاملاً من هذه المناطق."
+      }
+    ]
+  },
+  {
+    "id": "ar-comparison-annular-total-solar",
+    "language": "ar",
+    "kind": "comparison",
+    "question": "ما الفرق بين الكسوف الحلقي والكسوف الكلي من حيث تغطية قرص الشمس؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D9%83%D8%B3%D9%88%D9%81_%D8%A7%D9%84%D8%B4%D9%85%D8%B3",
+      "https://nasainarabic.net/education/articles/view/how-hot-and-cold-does-it-get-on-the-moon",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.08%3A_Eclipses_of_the_Sun_and_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://ar.wikipedia.org/wiki/%D9%83%D8%B3%D9%88%D9%81_%D8%A7%D9%84%D8%B4%D9%85%D8%B3",
+        "quote": "الكسوف الحلقي أو الخاتميّ (الإنجليزية: Annular eclipse) ويحدث عندما يكون القمر في نقطة بعيدة ما عن الأرض (لأن مسار القمر حول الأرض بيضاوي) فيكون قرص القمر أصغر من أن يحجب كامل قرص الشمس، وفي هذه الحالة لايصل رأس مخروط ظل القمر إلى سطح الأرض، فينكسف قرص الشمس من الوسط في المناطق التي تقع في امتداد مخروط الظلّ وقد تصل فترة حلقتيه إلى اثنتى عشرة دقيقة وثلاثين ثانية وذلك بسبب المسافة الأكبر التي يجب على قرص القمر الصغير ان يقطعها."
+      },
+      {
+        "url": "https://ar.wikipedia.org/wiki/%D9%83%D8%B3%D9%88%D9%81_%D8%A7%D9%84%D8%B4%D9%85%D8%B3",
+        "quote": "الكسوف الكلي (الإنجليزية: Total eclipse) ويحدث عندما يصل ظل القمر إلى سطح الأرض وفي هذه الحالة ينكسف كامل قرص الشمس."
+      }
+    ]
+  },
+  {
+    "id": "ar-comparison-new-full-moon",
+    "language": "ar",
+    "kind": "comparison",
+    "question": "ما الفرق بين المحاق والبدر من حيث الجزء المضيء المرئي من القمر؟",
+    "sourceUrls": [
+      "https://ar.wikipedia.org/wiki/%D8%B7%D9%88%D8%B1_%D8%A7%D9%84%D9%82%D9%85%D8%B1",
+      "https://nasainarabic.net/education/articles/view/the-moon",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.06%3A_Phases_and_Motions_of_the_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://ar.wikipedia.org/wiki/%D8%B7%D9%88%D8%B1_%D8%A7%D9%84%D9%82%D9%85%D8%B1",
+        "quote": "ويكون النصف الأول من القمر مضاء بواسطة الشمس (ما عدا حالات الخسوف القمري)، وبذلك يرى ساطعاً أو مشرقاً، إلا أن جزءاً من نصف الكرة المضاء والذي يكون مرئياً للمراقب يمكن أن يتغير من 100% (البدر) إلى 0% (المحاق).",
+        "alternatives": [
+          {
+            "url": "https://ar.wikipedia.org/wiki/%D8%B7%D9%88%D8%B1_%D8%A7%D9%84%D9%82%D9%85%D8%B1",
+            "quote": "إن وجه القمر لا يحدث بسبب ظل الأرض على سطح القمر كما يحصل أثناء خسوف القمر، حيث يظهر القمر في مراحل مختلفة عندما تتغير الإحداثيات الهندسية لكل من مواقع الشمس والأرض والقمر، إذ يكون شكله بدراً عندما يكون موقعي الشمس والقمر على جانبي الأرض متقابلان، ويكون محاقاً (يسمى أيضا قمراً مظلماً عندما يكون غير مرئي ليلاً) عندما يكون موقعي الشمس والقمر على تقابل لنفس الوجه الجانبي من الأرض."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "en-why-solar-heating",
+    "language": "en",
+    "kind": "why",
+    "question": "Why does sunlight drive the water cycle?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://en.wikipedia.org/wiki/Water_cycle",
+        "quote": "The water cycle is powered by the energy emitted from the sun."
+      },
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Evaporation happens when water absorbs energy from the sun, the atmosphere, or even our own body heat."
+      }
+    ]
+  },
+  {
+    "id": "en-why-cloud-cooling",
+    "language": "en",
+    "kind": "why",
+    "question": "Why do clouds form as moist air cools?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://en.wikipedia.org/wiki/Water_cycle",
+        "quote": "The lower temperature forces the water vapor to go through another phase change, this time it forces it to condense into liquid water droplets which are supported by an updraft; if there is enough of these water droplets over a large area, it is considered a cloud."
+      },
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Condensation happens when there is more water vapor than the air can hold at the current temperature."
+      }
+    ]
+  },
+  {
+    "id": "en-why-pavement-runoff",
+    "language": "en",
+    "kind": "why",
+    "question": "Why can water on concrete become surface runoff?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Water can also flow over impermeable surfaces, like concrete."
+      }
+    ]
+  },
+  {
+    "id": "en-why-groundwater-storage",
+    "language": "en",
+    "kind": "why",
+    "question": "Why can aquifers serve as long-term stores of fresh water?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://en.wikipedia.org/wiki/Water_cycle",
+        "quote": "Some water infiltrates deep into the ground and replenishes aquifers, which can store freshwater for long periods of time."
+      }
+    ]
+  },
+  {
+    "id": "en-why-water-vapor-warming",
+    "language": "en",
+    "kind": "why",
+    "question": "Why can water vapor contribute to atmospheric warming?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle",
+      "https://en-why-water-vapor-warming.test/contradiction"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "More water vapor in the atmosphere can also lead to warming temperatures because water vapor traps energy."
+      }
+    ],
+    "conflicts": [
+      {
+        "left": {
+          "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+          "quote": "More water vapor in the atmosphere can also lead to warming temperatures because water vapor traps energy."
+        },
+        "right": {
+          "url": "https://en-why-water-vapor-warming.test/contradiction",
+          "quote": "More water vapor in the atmosphere can also lead to warming temperatures because water vapor does not trap energy."
+        }
+      }
+    ]
+  },
+  {
+    "id": "en-why-cold-dew",
+    "language": "en",
+    "kind": "why",
+    "question": "Why does water vapor condense into dew when the air cools enough?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Water vapor condenses into water droplets to form clouds or to form dew on the ground."
+      },
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Condensation happens when there is more water vapor than the air can hold at the current temperature."
+      }
+    ]
+  },
+  {
+    "id": "en-how-complete-water-cycle",
+    "language": "en",
+    "kind": "how",
+    "question": "How does the water cycle move water from the surface into the air and back?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://gpm.nasa.gov/education/water-cycle",
+        "quote": "The water cycle describes how water evaporates from the surface of the earth, rises into the atmosphere, cools and condenses into rain or snow in clouds, and falls again to the surface as precipitation.",
+        "alternatives": [
+          {
+            "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+            "quote": "There are many ways that water moves between pools — liquid water evaporates into water vapor, is transported through the atmosphere, condenses to form clouds, and returns to the surface as precipitation like rain or snow."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "en-how-aquifer-recharge",
+    "language": "en",
+    "kind": "how",
+    "question": "How can water that infiltrates soil replenish an aquifer?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Percolation: Water that has infiltrated the soil can continue moving downward into the groundwater.",
+        "alternatives": [
+          {
+            "url": "https://en.wikipedia.org/wiki/Water_cycle",
+            "quote": "Some water infiltrates deep into the ground and replenishes aquifers, which can store freshwater for long periods of time."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "en-how-transpiration",
+    "language": "en",
+    "kind": "how",
+    "question": "How does water taken up by plant roots return to the air through transpiration?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Transpiration: Liquid water evaporates from the leaves of plants in a process called transpiration."
+      },
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Much of the water that plants take up through their roots and store eventually leaves the plant this way.",
+        "alternatives": [
+          {
+            "url": "https://en.wikipedia.org/wiki/Water_cycle",
+            "quote": "Some infiltration stays close to the land surface and can seep back into surface-water bodies (and the ocean) as groundwater discharge or be taken up by plants and transferred back to the atmosphere as water vapor by transpiration."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "en-how-water-back-to-ocean",
+    "language": "en",
+    "kind": "how",
+    "question": "How can rainwater that lands on the ground get back to the ocean?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://en.wikipedia.org/wiki/Water_cycle",
+        "quote": "Most water falls as rain back into the ocean or onto land, where the water flows over the ground as surface runoff."
+      },
+      {
+        "url": "https://en.wikipedia.org/wiki/Water_cycle",
+        "quote": "A portion of this runoff enters rivers, with streamflow moving water towards the oceans.",
+        "alternatives": [
+          {
+            "url": "https://gpm.nasa.gov/education/water-cycle",
+            "quote": "The water falling on land collects in rivers and lakes, soil, and porous layers of rock, and much of it flows back into the oceans, where it will once more evaporate."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "en-how-spring-discharge",
+    "language": "en",
+    "kind": "how",
+    "question": "How does groundwater reach the land surface as a spring?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://en.wikipedia.org/wiki/Water_cycle",
+        "quote": "Some groundwater finds openings in the land surface and emerges as freshwater springs."
+      }
+    ]
+  },
+  {
+    "id": "en-how-precipitation",
+    "language": "en",
+    "kind": "how",
+    "question": "How do cloud particles grow into precipitation?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://en.wikipedia.org/wiki/Water_cycle",
+        "quote": "Atmospheric circulation moves water vapor around the globe; cloud particles collide, grow, and fall out of the upper atmospheric layers as precipitation."
+      },
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Precipitation: Once water has condensed in the atmosphere, it eventually falls back to Earth through rain, snow, or other types of precipitation."
+      }
+    ]
+  },
+  {
+    "id": "en-comparison-evaporation-condensation",
+    "language": "en",
+    "kind": "comparison",
+    "question": "What is the difference between evaporation and condensation in the water cycle?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Evaporation: Liquid water can turn into water vapor, like moisture in the atmosphere, through evaporation."
+      },
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Condensation: Water vapor can condense into liquid."
+      }
+    ]
+  },
+  {
+    "id": "en-comparison-sublimation-deposition",
+    "language": "en",
+    "kind": "comparison",
+    "question": "What is the difference between sublimation and deposition for water?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Sublimation: Snow or ice can turn directly into water vapor — without melting — through sublimation."
+      },
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Deposition: Water vapor can turn directly into ice without condensing first."
+      }
+    ]
+  },
+  {
+    "id": "en-comparison-runoff-infiltration",
+    "language": "en",
+    "kind": "comparison",
+    "question": "What is the difference between runoff and infiltration after rain?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Runoff and streamflow: Water can flow over the surface of the land.",
+        "alternatives": [
+          {
+            "url": "https://en.wikipedia.org/wiki/Water_cycle",
+            "quote": "Most water falls as rain back into the ocean or onto land, where the water flows over the ground as surface runoff."
+          }
+        ]
+      },
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Infiltration: Water on the ground surface can move into the soil.",
+        "alternatives": [
+          {
+            "url": "https://en.wikipedia.org/wiki/Water_cycle",
+            "quote": "Not all runoff flows into rivers; much of it soaks into the ground as infiltration."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "en-comparison-evaporation-transpiration",
+    "language": "en",
+    "kind": "comparison",
+    "question": "What is the difference between evaporation and transpiration as sources of atmospheric water vapor?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Evaporation: Liquid water can turn into water vapor, like moisture in the atmosphere, through evaporation."
+      },
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Transpiration: Liquid water evaporates from the leaves of plants in a process called transpiration."
+      }
+    ]
+  },
+  {
+    "id": "en-comparison-infiltration-percolation",
+    "language": "en",
+    "kind": "comparison",
+    "question": "What is the difference between infiltration and percolation in the soil?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Infiltration: Water on the ground surface can move into the soil."
+      },
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Percolation: Water that has infiltrated the soil can continue moving downward into the groundwater."
+      }
+    ]
+  },
+  {
+    "id": "en-comparison-condensation-precipitation",
+    "language": "en",
+    "kind": "comparison",
+    "question": "What is the difference between condensation and precipitation in the atmosphere?",
+    "sourceUrls": [
+      "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+      "https://en.wikipedia.org/wiki/Water_cycle",
+      "https://gpm.nasa.gov/education/water-cycle"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Water vapor condenses into water droplets to form clouds or to form dew on the ground."
+      },
+      {
+        "url": "https://www.noaa.gov/education/resource-collections/freshwater/water-cycle",
+        "quote": "Precipitation: Once water has condensed in the atmosphere, it eventually falls back to Earth through rain, snow, or other types of precipitation."
+      }
+    ]
+  },
+  {
+    "id": "en-why-infrequent-eclipses",
+    "language": "en",
+    "kind": "why",
+    "question": "Why do solar and lunar eclipses occur only occasionally?",
+    "sourceUrls": [
+      "https://science.nasa.gov/moon/eclipses/",
+      "https://en.wikipedia.org/wiki/Lunar_eclipse",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.08%3A_Eclipses_of_the_Sun_and_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://science.nasa.gov/moon/eclipses/",
+        "quote": "The tilt of the Moon’s orbit prevents us from having monthly solar and lunar eclipses.",
+        "alternatives": [
+          {
+            "url": "https://science.nasa.gov/moon/eclipses/",
+            "quote": "This tilt is the reason why we have occasional eclipses instead of eclipses every month."
+          }
+        ]
+      },
+      {
+        "url": "https://science.nasa.gov/moon/eclipses/",
+        "quote": "The Moon's orbit around Earth is tilted relative to Earth's orbit around the Sun.",
+        "alternatives": [
+          {
+            "url": "https://science.nasa.gov/moon/eclipses/",
+            "quote": "The Moon’s orbit is tilted about 5 degrees compared to the plane of Earth’s orbit around the Sun."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "en-why-red-lunar-eclipse",
+    "language": "en",
+    "kind": "why",
+    "question": "Why does the Moon look reddish during a total lunar eclipse?",
+    "sourceUrls": [
+      "https://science.nasa.gov/moon/eclipses/",
+      "https://en.wikipedia.org/wiki/Lunar_eclipse",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.08%3A_Eclipses_of_the_Sun_and_Moon",
+      "https://en-why-red-lunar-eclipse.test/contradiction"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://science.nasa.gov/moon/eclipses/",
+        "quote": "Because these longer wavelengths make it through Earth’s atmosphere, and the shorter wavelengths have scattered away, the Moon appears orangish or reddish during a lunar eclipse.",
+        "alternatives": [
+          {
+            "url": "https://science.nasa.gov/moon/eclipses/",
+            "quote": "During a lunar eclipse, the Moon appears red or orange because any sunlight that's not blocked by our planet is filtered through a thick slice of Earth’s atmosphere on its way to the lunar surface."
+          }
+        ]
+      },
+      {
+        "url": "https://science.nasa.gov/moon/eclipses/",
+        "quote": "Colors with shorter wavelengths ― the blues and violets ― scatter more easily than colors with longer wavelengths, like red and orange."
+      }
+    ],
+    "conflicts": [
+      {
+        "left": {
+          "url": "https://science.nasa.gov/moon/eclipses/",
+          "quote": "During a lunar eclipse, the Moon appears red or orange because any sunlight that's not blocked by our planet is filtered through a thick slice of Earth’s atmosphere on its way to the lunar surface."
+        },
+        "right": {
+          "url": "https://en-why-red-lunar-eclipse.test/contradiction",
+          "quote": "During a lunar eclipse, the Moon does not appear red or orange because any sunlight that's not blocked by our planet is filtered through a thick slice of Earth’s atmosphere on its way to the lunar surface."
+        }
+      }
+    ]
+  },
+  {
+    "id": "en-why-solar-eclipse-visibility",
+    "language": "en",
+    "kind": "why",
+    "question": "Why is it harder for a person to see a solar eclipse from one location than a lunar eclipse?",
+    "sourceUrls": [
+      "https://science.nasa.gov/moon/eclipses/",
+      "https://en.wikipedia.org/wiki/Lunar_eclipse",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.08%3A_Eclipses_of_the_Sun_and_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://science.nasa.gov/moon/eclipses/",
+        "quote": "Though solar eclipses happen as often as lunar eclipses, they are visible from such a small area of Earth each time that it’s much rarer to encounter one."
+      },
+      {
+        "url": "https://science.nasa.gov/moon/eclipses/",
+        "quote": "Each lunar eclipse is visible from half of Earth."
+      }
+    ]
+  },
+  {
+    "id": "en-why-waxing-crescent-growth",
+    "language": "en",
+    "kind": "why",
+    "question": "Why does the waxing crescent appear to get larger each day?",
+    "sourceUrls": [
+      "https://science.nasa.gov/moon/moon-phases/",
+      "https://en.wikipedia.org/wiki/Lunar_phase",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.06%3A_Phases_and_Motions_of_the_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://science.nasa.gov/moon/moon-phases/",
+        "quote": "It grows daily as the Moon’s orbit carries the Moon’s dayside farther into view."
+      }
+    ]
+  },
+  {
+    "id": "en-how-moon-phases",
+    "language": "en",
+    "kind": "how",
+    "question": "How does the Moon's orbit produce the phases we see from Earth?",
+    "sourceUrls": [
+      "https://science.nasa.gov/moon/moon-phases/",
+      "https://en.wikipedia.org/wiki/Lunar_phase",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.06%3A_Phases_and_Motions_of_the_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://science.nasa.gov/moon/moon-phases/",
+        "quote": "The Sun always illuminates half of the Moon while the other half remains dark, but how much we are able to see of that illuminated half changes as the Moon travels through its orbit."
+      }
+    ]
+  },
+  {
+    "id": "en-how-annular-eclipse",
+    "language": "en",
+    "kind": "how",
+    "question": "How does the Moon produce an annular solar eclipse?",
+    "sourceUrls": [
+      "https://science.nasa.gov/eclipses/types/",
+      "https://en.wikipedia.org/wiki/Solar_eclipse",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.08%3A_Eclipses_of_the_Sun_and_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://science.nasa.gov/eclipses/types/",
+        "quote": "An annular solar eclipse happens when the Moon passes between the Sun and Earth, but when it is at or near its farthest point from Earth."
+      },
+      {
+        "url": "https://science.nasa.gov/eclipses/types/",
+        "quote": "Because the Moon is farther away from Earth, it appears smaller than the Sun and does not completely cover the Sun."
+      }
+    ]
+  },
+  {
+    "id": "en-how-partial-lunar-eclipse",
+    "language": "en",
+    "kind": "how",
+    "question": "How does an imperfect alignment of the Sun, Earth, and Moon create a partial lunar eclipse?",
+    "sourceUrls": [
+      "https://science.nasa.gov/moon/eclipses/",
+      "https://en.wikipedia.org/wiki/Lunar_eclipse",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.08%3A_Eclipses_of_the_Sun_and_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://science.nasa.gov/moon/eclipses/",
+        "quote": "An imperfect alignment of Sun, Earth and Moon results in the Moon passing through only part of Earth's umbra."
+      },
+      {
+        "url": "https://science.nasa.gov/moon/eclipses/",
+        "quote": "The shadow grows and then recedes without ever entirely covering the Moon."
+      }
+    ]
+  },
+  {
+    "id": "en-how-earthshine",
+    "language": "en",
+    "kind": "how",
+    "question": "How does earthshine illuminate the dark part of a crescent Moon?",
+    "sourceUrls": [
+      "https://science.nasa.gov/moon/moon-phases/",
+      "https://en.wikipedia.org/wiki/Lunar_phase",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.06%3A_Phases_and_Motions_of_the_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://science.nasa.gov/moon/moon-phases/",
+        "quote": "This effect is caused by the Sun’s light reflecting off Earth’s surface onto the face of the Moon.",
+        "alternatives": [
+          {
+            "url": "https://science.nasa.gov/moon/moon-phases/",
+            "quote": "Because Earth at that point in its orbit is nearly full from the Moon’s perspective, the light it reflects, called earthshine, is bright enough to dimly illuminate the darkened surface."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "en-comparison-solar-lunar-eclipses",
+    "language": "en",
+    "kind": "comparison",
+    "question": "What is the difference between a solar eclipse and a lunar eclipse in terms of which object blocks the light?",
+    "sourceUrls": [
+      "https://science.nasa.gov/moon/eclipses/",
+      "https://en.wikipedia.org/wiki/Lunar_eclipse",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.08%3A_Eclipses_of_the_Sun_and_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://science.nasa.gov/moon/eclipses/",
+        "quote": "During a solar eclipse, the Moon casts a shadow on Earth, and blocks or partially blocks our view of the Sun.",
+        "alternatives": [
+          {
+            "url": "https://science.nasa.gov/moon/eclipses/",
+            "quote": "During a solar eclipse, the Moon blocks the Sun from view."
+          }
+        ]
+      },
+      {
+        "url": "https://science.nasa.gov/moon/eclipses/",
+        "quote": "When Earth is positioned precisely between the Moon and Sun, Earth’s shadow falls upon the surface of the Moon, dimming it and sometimes turning the lunar surface a striking red over the course of a few hours.",
+        "alternatives": [
+          {
+            "url": "https://science.nasa.gov/moon/eclipses/",
+            "quote": "During a lunar eclipse, Earth’s shadow obscures the Moon."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "en-comparison-total-annular-solar",
+    "language": "en",
+    "kind": "comparison",
+    "question": "What is the difference between a total solar eclipse and an annular solar eclipse in the coverage of the Sun?",
+    "sourceUrls": [
+      "https://science.nasa.gov/eclipses/types/",
+      "https://en.wikipedia.org/wiki/Solar_eclipse",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.08%3A_Eclipses_of_the_Sun_and_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://science.nasa.gov/eclipses/types/",
+        "quote": "A total solar eclipse happens when the Moon passes between the Sun and Earth, completely blocking the face of the Sun."
+      },
+      {
+        "url": "https://science.nasa.gov/eclipses/types/",
+        "quote": "Because the Moon is farther away from Earth, it appears smaller than the Sun and does not completely cover the Sun."
+      }
+    ]
+  },
+  {
+    "id": "en-comparison-new-full-moon",
+    "language": "en",
+    "kind": "comparison",
+    "question": "What is the difference between a new Moon and a full Moon in their position relative to the Sun?",
+    "sourceUrls": [
+      "https://science.nasa.gov/moon/moon-phases/",
+      "https://en.wikipedia.org/wiki/Lunar_phase",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.06%3A_Phases_and_Motions_of_the_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://science.nasa.gov/moon/moon-phases/",
+        "quote": "In this phase, the Moon is in the same part of the sky as the Sun and rises and sets with the Sun."
+      },
+      {
+        "url": "https://science.nasa.gov/moon/moon-phases/",
+        "quote": "The Moon is opposite the Sun, as viewed from Earth, revealing the Moon’s dayside."
+      }
+    ]
+  },
+  {
+    "id": "en-comparison-first-last-quarter",
+    "language": "en",
+    "kind": "comparison",
+    "question": "What is the difference between a first quarter Moon and a last quarter Moon in rise and set times?",
+    "sourceUrls": [
+      "https://science.nasa.gov/moon/moon-phases/",
+      "https://en.wikipedia.org/wiki/Lunar_phase",
+      "https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Astronomy_2e_%28OpenStax%29/04%3A_Earth_Moon_and_Sky/4.06%3A_Phases_and_Motions_of_the_Moon"
+    ],
+    "keyClaims": [
+      {
+        "url": "https://science.nasa.gov/moon/moon-phases/",
+        "quote": "A first quarter Moon rises around midday and sets around the middle of the night."
+      },
+      {
+        "url": "https://science.nasa.gov/moon/moon-phases/",
+        "quote": "A last quarter Moon, also known as a third quarter Moon, rises around the middle of the night and sets around midday."
+      }
+    ]
+  }
+]

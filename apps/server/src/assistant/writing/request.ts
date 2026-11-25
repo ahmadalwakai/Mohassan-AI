@@ -1,7 +1,8 @@
 import { pdfPaths } from '../documents.js';
+import { analyzeCompoundRequest, MAX_COMPOUND_ACTIONS } from '../compound-request.js';
 import { normalizeRequest } from '../mind/normalize.js';
 import { requestActionText } from '../request-context.js';
-import { requestOperationText, requestScopeActionText } from '../request-scope.js';
+import { assessRequestScope, requestOperationText, requestScopeActionText } from '../request-scope.js';
 import { sentenceSpans, type WritingLanguage } from './evidence.js';
 import type { RestructureOptions } from './restructure.js';
 import type { WritingFormat } from './summary.js';
@@ -24,6 +25,8 @@ export interface ExtractiveWritingTask {
   count?: number;
   topic?: string;
   subjects?: string[];
+  intent?: 'why' | 'how';
+  opensSource?: boolean;
   structure: RestructureOptions;
 }
 
@@ -34,6 +37,7 @@ const RESTRUCTURE = /^(?:restructure|rearrange|re-?format|organi[sz]e|sort|order
 const URL = /https?:\/\/[^\s<>"'«»“”]+/giu;
 const PDF = /(?:\bpdf\b|\.pdf(?=$|[\s"'»”])|(?<!\p{L})(?:ملف|مستند) (?:مرفق|مرفوع)(?!\p{L}))/iu;
 const LINK_REF = /\b(?:pages?|sites?|sources?|articles?|links?|reports?)\b|(?<!\p{L})(?:الصفح[هة]|صفح[هة]|المصادر|مصادر|الموقع|المواقع|المقالات|الروابط|الرابط|المقال)(?!\p{L})/iu;
+const PAGE_REFERENCE = /\b(?:(?:the|this|that|these|those)\s+)?(?:(?:open|current)\s+)(?:pages?|sites?|sources?|articles?|links?|reports?)\b|\b(?:the|this|that|these|those)\s+(?:pages?|sites?|sources?|articles?|links?|reports?)\b|(?:هذا|هذه|الصفح|الرابط|المصادر|المفتوح)/iu;
 const RECENT = /\b(?:last|latest|previous|prior|read earlier|you (?:have )?(?:read|found|opened)|above|earlier)\b|(?:اخر|السابق|سابقا|قرات|قريتها|الماضي|اعلاه|فتحته)/iu;
 const PREVIOUS_TEXT = /\b(?:my|the) (?:last|previous|earlier) (?:message|text|notes?|paragraphs?)\b|\b(?:text|notes?|message) (?:i (?:sent|pasted|gave|provided)|above|from (?:the )?previous message)\b|(?:النص|رسالتي|الرساله|الملاحظات) (?:الذي |التي )?(?:ارسلت|ارسلته|ارسلته لك|كتبته|كتبته لك|لصقته|اعلاه|السابق|السابقه)|(?:اخر|السابق) (?:رساله|نص)/iu;
 const TEXT_TARGET = /\b(?:text|notes?|paragraphs?|sentences?|bullets?|bullet points?)\b|(?<!\p{L})(?:النص|نص|الملاحظات|الملاحظه|الفقره|الفقرات|النقاط|نقاط)(?!\p{L})/iu;
@@ -56,6 +60,20 @@ const FORMAT_SUFFIX = /(?:\s+|[,،]\s*)(?:(?:in|as) (?:(?:a|one|two|three|four|f
 const TERMINAL = /[\s.!?؟]+$/u;
 const PROCESS_QUESTION = /^how (?:does|do|did)\b/iu;
 const PROCESS_SUFFIX = /\s+(?:work(?:s)?|operat(?:e|es)|function(?:s)?)$/iu;
+const WHY_QUESTION = /^(?:why(?:\s+(?:does|do|did|is|are|was|were))?|what causes|لماذا|ليش|ليه|ما (?:سبب|[أا]سباب))(?=\s+[\p{L}\p{N}])\s+/iu;
+const HOW_QUESTION = /^(?:how(?:\s+(?:does|do|did|is|are|was|were|can|could|would|should))?|كيف|[إا]زاي|(?:شو|وش|[أا]يش|ما) (?:هي )?الطريق[هة])(?=\s+[\p{L}\p{N}])\s+/iu;
+const NON_EXPLANATION = /^(?:how (?:about|much|many|long|far|old|often|soon|tall|high|deep|wide|large|big|fast|heavy)\b|how (?:does|do|did|can|could|would|should) you\b|how are you\b|كيف (?:حالك|حالكم|[أا]شغل المتصفح|[أا]فتح المتصفح)(?!\p{L}))/iu;
+const UNBOUND_QUESTION_SUBJECT = /^(?:it|this|that|them|they|there|هذه|هذا|تلك|ذلك)(?!\p{L})/iu;
+const IMPERSONAL_QUESTION = /^(?:why|how)\s+(?:is|was)\s+it\s+[a-z]+\s+(?:for [a-z][a-z -]{1,50}? )?to\s+[a-z]/iu;
+const OWNED_QUESTION = /(?<!\p{L})(?:my|our|mine|ours|لدينا|عندنا|(?:ال)?خاص[هة]? (?:بي|بنا)|تخصني)(?!\p{L})/iu;
+const PERSON_SPECIFIC_QUESTION = /^(?:i\b|we\s+(?:[a-z]{3,}ed|had|were|did|got|lost|left|went|made|took|put)\b)/iu;
+const ANSWER_PREFIX = /^(?:explain(?: to me| for me)?|describe|tell me|teach me|say|[اأإ]شرح(?:لي|ها|ه)?(?: لي)?|وضح(?:لي|ها|ه)?(?: لي)?|فسر(?:لي|ها|ه)?(?: لي)?|علمني|خبرني|احكيلي|قولي|قول لي|قل لي)\s+/iu;
+const FOLLOWUP_COMPARE = /^(?:(?:tell me|say|show me) (?:which|who)\s|(?:عطني|اعطني|خبرني|احكيلي|قولي|قل لي) (?:الفرق|[أا]ي(?:هما|هم)?)(?!\p{L}))/iu;
+const COMPARATIVE_WORDING = /(?<!\p{L})(?:difference|more|less|fewer|cheaper|costlier|larger|smaller|longer|shorter|faster|slower|higher|lower|earlier|later|better|worse|الفرق|[أا](?:كثر|قل|كبر|صغر|طول|قصر|سرع|بطا|علي|دني|رخص|غلي|فضل))(?!\p{L})/iu;
+const READ_AND_ANSWER = /^(?:(?:please|kindly|can you|could you|would you|من فضلك|لو سمحت|ممكن|هل يمكنك)\s+)*(?:open|read|visit|go to|[أا]فتح|[أا]قر[أا]|زر)\s+(https?:\/\/[^\s<>"'«»“”]+)(?:\s+(?:and(?: then)?|then)\s+|[.,،؛;]\s+|\s+(?:ثم\s+|و\s*|(?=(?:اشرح|وضح|فسر|علمني|خبرني|احكيلي|قارن))))(.+)$/isu;
+const EXTRA_ACTION = /(?:\b(?:and(?: then)?|then|also)\s+(?:sign in|log in|click|type|submit|download|upload|buy|book|pay|share|install|order|register)\b|(?:\s+(?:ثم|وبعدين)\s+|\s+و)(?:انقر|اضغط|اكتب|سجل|اشتر|احجز|حمل|نزّل|ارفع|ادفع|شارك|ثبت)(?!\p{L}))/iu;
+const PREPOSITIONAL_SEQUENCE = /(?:\bfrom\s+[^.!?؟;؛]+?\s+(?:to|into|through)\s+|(?<!\p{L})من\s+[^.!?؟;؛]+?\s+الي\s+)/iu;
+const PREPOSITIONAL_CONTINUATION = /^(?:to\s+(?:the|an?|another|its|their|each)\s+|(?:into|through|towards?|الي|عبر|نحو)\s+(?!(?:ان|أن)(?!\p{L})))\p{L}/iu;
 const RECENT_TOPIC = /^(?:it|this|that|هذا|هذه|ذلك)$/iu;
 const SOURCE_ONLY_TOPIC = /^(?:(?:the|this|that|these|those|following|provided|supplied|attached|النص|هذا|هذه|ذلك)\s+)*(?:text|phrase|sentence|paragraph|quote|quotation|pages?|articles?|documents?|sources?|links?|pdfs?|الصفح[هة]|الصفحات|المقال|المصادر|النص|الروابط)$/iu;
 const OPERAND_DELIMITERS = /\band\b|(?<!\p{L})و(?!\p{L})|[\s,،;؛.()[\]<>"'«»‘’“”-]/giu;
@@ -159,17 +177,80 @@ function topicIn(instruction: string, kind: ExtractiveWritingTask['kind']): stri
   return topic.replace(/^[\s:：«“"']+|[\s.!?؟»”"']+$/gu, '');
 }
 
+function answerWithoutActions(answer: string): boolean {
+  for (let index = 0; index < MAX_COMPOUND_ACTIONS; index++) {
+    const analysis = analyzeCompoundRequest(answer);
+    if (EXTRA_ACTION.test(requestOperationText(analysis.outerText))) return false;
+    if (analysis.kind === 'single') return true;
+    // A prepositional chain can describe several destinations in one question.
+    // Recheck each remaining clause so a later explicit action still keeps its own route.
+    if (analysis.kind !== 'unsupported_tail' || !analysis.tail
+      || index === 0 && !PREPOSITIONAL_SEQUENCE.test(requestOperationText(analysis.primary.text))
+      || !PREPOSITIONAL_CONTINUATION.test(requestOperationText(analysis.tail.text))) return false;
+    answer = analysis.tail.text;
+  }
+  return false;
+}
+
+function readAndAnswer(instruction: string): { answer: string; url: string } | null {
+  const match = READ_AND_ANSWER.exec(instruction);
+  if (!match) return null;
+  const url = writingUrl(unwrapAddress(match[1]!));
+  const answer = match[2]!.trim();
+  if (!url || urlsIn(answer).length || !answerWithoutActions(answer)) return null;
+  return { answer, url };
+}
+
+function questionIntent(value: string): 'why' | 'how' | undefined {
+  if (WHY_QUESTION.test(value)) return 'why';
+  if (HOW_QUESTION.test(value) && !NON_EXPLANATION.test(value)) return 'how';
+}
+
+function comparisonSubjects(topic: string): string[] {
+  const subjectText = topic.replace(FOLLOWUP_COMPARE, '').trim()
+    .replace(/^(?:the\s+[^,،]{1,80}?\s+(?:of|for|between)|(?:الفرق|الاختلاف)?(?:\s*في [^،,]{1,60}?)?\s*بين)\s+/iu, '')
+    .replace(/\s+(?:in terms of|with respect to|with regard to|as)\s+[^,،]+$/iu, '');
+  const split = (text: string) => text.split(/\s+(?:(?:and|or|vs\.?|versus|مقابل|ولا)\s+|و\s*)/iu)
+    .map(value => value.trim()).filter(Boolean);
+  const subjects = split(subjectText);
+  if (subjects.length > 2) {
+    const unqualified = split(subjectText.replace(/\s+(?:in|في)\s+[^,،]+$/iu, ''));
+    if (unqualified.length === 2) return unqualified;
+  }
+  return subjects;
+}
+
 export function parseExtractiveWriting(request: string): ExtractiveWritingTask | null {
   if (typeof request !== 'string' || !request.trim() || request.length > 8000) return null;
   const { instruction, content } = rawBody(request);
   const outer = requestActionText(requestScopeActionText(instruction));
-  const head = requestOperationText(outer);
+  const read = content ? null : readAndAnswer(outer);
+  const operand = read?.answer ?? outer;
+  const head = requestOperationText(operand);
+  const question = operand.replace(ANSWER_PREFIX, '');
+  const questionHead = requestOperationText(question);
+  const intent = questionIntent(questionHead);
+  const questionPrefix = intent === 'why' ? WHY_QUESTION : HOW_QUESTION;
+  const questionSubject = questionHead.replace(questionPrefix, '');
+  const legacyProcess = PROCESS_QUESTION.test(head) && PROCESS_SUFFIX.test(withoutPresentation(withoutSourceClues(head)));
+  const localQuestion = intent && !read && !content && (OWNED_QUESTION.test(questionHead)
+    || PERSON_SPECIFIC_QUESTION.test(questionSubject) || /^(?:why|how) (?:did|were|was) we\b/iu.test(questionHead));
+  if (localQuestion) return null;
+  const hasSubject = !UNBOUND_QUESTION_SUBJECT.test(questionSubject) || IMPERSONAL_QUESTION.test(questionHead);
+  // A named public question can use evidence search. Preserve the ordinary
+  // routes for private records, assistant capabilities, values, and unnamed past incidents.
+  const standaloneQuestion = Boolean(intent && !read && !content && !/^how did\b/iu.test(head)
+    && hasSubject && assessRequestScope(outer).scope !== 'private'
+    && answerWithoutActions(operand));
+  if (intent && !read && !content && !legacyProcess && !standaloneQuestion) return null;
   // Compound actions and translation stay with their existing routes.
   if (/\b(?:and(?: then)?|then)\s+(?:send|publish|delete|open|save|click|write|translate|paraphrase|rewrite|email (?:it|them|that|this))\b|(?:ثم|وبعدين)\s+(?:ارسل|انشر|احذف|افتح|احفظ|ترجم|اكتب)(?!\p{L})|(?:وارسل|وانشر|وترجم|واعد صياغه)(?!\p{L})/iu.test(head)) return null;
-  const kind = SUMMARY.test(head) ? 'summary' : COMPARE.test(head) ? 'comparison'
-    : EXPLAIN.test(head) ? 'explanation' : RESTRUCTURE.test(head) ? 'restructure' : null;
-  if (!kind || /^how do (?:i|you)\b/iu.test(head)
-    || PROCESS_QUESTION.test(head) && !PROCESS_SUFFIX.test(withoutPresentation(withoutSourceClues(head)))) return null;
+  const kind = COMPARE.test(head) || read && FOLLOWUP_COMPARE.test(head) && COMPARATIVE_WORDING.test(head) ? 'comparison'
+    : read ? intent || EXPLAIN.test(head) ? 'explanation' : null
+      : SUMMARY.test(head) ? 'summary' : standaloneQuestion || EXPLAIN.test(head) ? 'explanation'
+        : RESTRUCTURE.test(head) ? 'restructure' : null;
+  if (!kind || !read && !standaloneQuestion && (/^how do (?:i|you)\b/iu.test(head)
+    || PROCESS_QUESTION.test(head) && !legacyProcess)) return null;
   const previousText = PREVIOUS_TEXT.test(head);
   const textTarget = TEXT_TARGET.test(head);
   const dateOrder = DATE_ORDER.test(head);
@@ -193,20 +274,20 @@ export function parseExtractiveWriting(request: string): ExtractiveWritingTask |
     ? ACTIONS.test(head) ? DATES.test(head) ? 'both' : 'actions' : DATES.test(head) ? 'dates' : undefined
     : undefined;
 
-  const urls = urlsIn(outer);
+  const urls = read ? [read.url] : urlsIn(outer);
   const paths = PDF.test(head) && !urls.length ? pdfPaths(outer) : [];
-  const topic = topicIn(outer, kind);
+  const topic = kind === 'explanation' && intent && !legacyProcess && !RECENT_TOPIC.test(questionHead)
+    ? topicIn(question.replace(questionPrefix, ''), kind)
+    : topicIn(operand, kind);
   if (kind === 'explanation' && !content && /^(?:you|yourself|[اأإ]نت|نفسك)$/iu.test(topic)) return null;
-  const subjects = kind === 'comparison'
-    ? topic.split(/\s+(?:and|vs\.?|versus|و\s*)\s*|\s+مقابل\s+/iu).map(value => value.trim()).filter(Boolean)
-    : undefined;
+  const subjects = kind === 'comparison' ? comparisonSubjects(topic) : undefined;
   let source: SourceRequest = { kind: 'missing' };
   if (content) source = { kind: 'paste', ...content };
   else if (previousText) source = { kind: 'previous_text' };
   else if (kind !== 'restructure') {
     if (urls.length) source = { kind: 'urls', urls };
     else if (PDF.test(head)) source = { kind: 'pdf', paths, all: ALL.test(head) };
-    else if (!OWNED_REPORT.test(head) && LINK_REF.test(head) && (RECENT.test(head) || ALL.test(head) || /\b(?:this|that|the|current|open)\b|(?:هذا|هذه|الصفح|الرابط|المصادر|المفتوح)/iu.test(head))) {
+    else if (!OWNED_REPORT.test(head) && LINK_REF.test(head) && (RECENT.test(head) || ALL.test(head) || PAGE_REFERENCE.test(head))) {
       const pluralSources = /المصادر|\bsources\b/iu.test(head);
       source = { kind: 'page', recent: RECENT.test(head) || pluralSources, all: ALL.test(head) || pluralSources };
     } else if (/^(?:summari[sz]e|shorten|لخص|اختصر)\s+(?:it|that|them|هذا|هذه|ذلك)(?=\s|[.!?؟]|$)/iu.test(head) || /^(?:لخص|اختصر)(?:ه|ها|هم)(?=\s|[.!?؟]|$)/iu.test(head)
@@ -214,7 +295,8 @@ export function parseExtractiveWriting(request: string): ExtractiveWritingTask |
       source = { kind: 'page', recent: true, all: false };
     } else if (kind !== 'summary' && topic && !SOURCE_ONLY_TOPIC.test(topic)
       && !/^(?:it|this|that|them|هذا|هذه|ذلك|النص التالي|الفرق بينهما)\s*$/iu.test(topic)) {
-      source = { kind: 'search', query: kind === 'comparison' && subjects?.length === 2 ? subjects.join(' ') : topic };
+      const questionQuery = standaloneQuestion && !legacyProcess ? withoutPresentation(question) : undefined;
+      source = { kind: 'search', query: questionQuery || (kind === 'comparison' && subjects?.length === 2 ? subjects.join(' ') : topic) };
     }
   }
   if (kind === 'comparison' && subjects?.length !== 2 && (source.kind === 'search' || source.kind === 'missing')) return null;
@@ -228,6 +310,8 @@ export function parseExtractiveWriting(request: string): ExtractiveWritingTask |
   return { kind, language, source, instruction: instructionText, format, count: count || undefined,
     ...(focusedTopic ? { topic } : {}),
     ...(subjects?.length === 2 ? { subjects } : {}),
+    ...(kind === 'explanation' && intent ? { intent } : {}),
+    ...(read ? { opensSource: true } : {}),
     structure: { format, headings, chronological, extract } };
 }
 
