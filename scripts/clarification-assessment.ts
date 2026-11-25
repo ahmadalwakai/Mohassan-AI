@@ -87,10 +87,10 @@ async function evaluate(fixture: Fixture, enabled: boolean) {
   let control: Awaited<ReturnType<typeof createCommandChatControl>> | undefined;
   try {
     await migrate(database.db);
-    control = await createCommandChatControl(database.db, {
-      browser, models: { fast: [], deep: [], vision: '' }, searchProvider, recordExperiences: false, clarifyChoices: enabled,
+    const config = {
+      browser, models: { fast: [], deep: [], vision: '' }, searchProvider, recordExperiences: false as const, clarifyChoices: enabled,
       fetch: forbidden,
-      async readPage(url) {
+      async readPage(url: string) {
         reads.push(url);
         if (!active) throw new Error('Unexpected assessment page read.');
         const pages: SearchHit[] = [active.page, ...active.choices];
@@ -99,7 +99,8 @@ async function evaluate(fixture: Fixture, enabled: boolean) {
         const links = found === active.page ? active.choices.map(choice => choice.url) : [];
         return { status: 200, title: found.title, text: found.snippet, url, links };
       },
-    });
+    };
+    control = await createCommandChatControl(database.db, config);
     const observations: Observation[] = [];
     for (const [locale, { groups, templates }] of Object.entries(fixture.locales) as [Locale, Fixture['locales'][Locale]][]) {
       for (const [groupIndex, group] of groups.entries()) {

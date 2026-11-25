@@ -1,7 +1,6 @@
 import type { ChatQuestion } from '@mohassan/contracts';
 import type { CommandChatConfig } from '../../command-chat.js';
 import type { BrainState } from '../brain.js';
-import type { HandsStep } from '../hands.js';
 import { requestCapabilityAllowed, type UserRequestConstraints } from '../request-scope.js';
 import { decideRequestRoute, rankClarificationRoutes, type RequestRoutingDecision } from '../routing-decision.js';
 import type { ShadowRouteCandidate, ShadowRouter } from '../router.js';
@@ -32,25 +31,10 @@ interface ClarificationGateInput {
   block: (text: string) => Promise<void>;
 }
 
-export function clarificationEnabled(override?: boolean): boolean {
-  return override ?? process.env.MOHASSAN_CLARIFY_CHOICES === '1';
-}
-
 export function routeClarifiedRequest(text: string, config: CommandChatConfig, fullAccess: boolean, chatModel: boolean, turnId?: string) {
   return decideRequestRoute({ text, fullAccess, turnId, capabilities: { browser: true, search: true, planner: true,
     memory: Boolean(config.tools?.memory), adsModel: Boolean(config.adsModel), computer: Boolean(config.tools?.computer),
     coding: Boolean(config.tools?.work?.code), chatModel, writerModel: chatModel } });
-}
-
-export function needsClarificationBeforeDesktop(enabled: boolean, text: string, state: BrainState): boolean {
-  return enabled && !hasAnsweredClarification(state) && missingClarificationSlot(text, state.requestResolution) === 'file';
-}
-
-/** An explicit broad knowledge question can contain “you” and look like small talk to the hands parser. */
-export function clarifiedPublicLookup(state: BrainState, text: string): HandsStep[] | null {
-  if (!hasAnsweredClarification(state) || state.routing?.route !== 'web_search' || !state.requestResolution?.sourceAssessment?.publicQueryEligible) return null;
-  const query = clarificationEntityReference(text);
-  return query ? [{ kind: 'search', query, site: null, ask: true }] : null;
 }
 
 const danglingReference = /(?<!\p{L})(?:it|that|this|them|هذا|هذه|ذلك|تلك)(?!\p{L})/iu;

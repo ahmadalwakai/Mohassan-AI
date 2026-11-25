@@ -4,6 +4,7 @@ import { ChatQuestionSchema } from '@mohassan/contracts';
 import { createDatabase, migrate } from '@mohassan/database';
 import { describeDesktopCommand, parseDesktopCommand, type DesktopCommand } from '@mohassan/desktop';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
+import { clarifyDesktopFile } from '../apps/server/src/assistant/clarify/host.js';
 
 // Development-only assertions. Requests substitute the user's Paris example into human MASSIVE 1.0
 // utterances 14283 (English) and 13895 (Arabic). The brief Wikipedia excerpts are CC BY-SA.
@@ -42,8 +43,8 @@ const articleTitles = (lang: keyof typeof cases) => cases[lang].articles.slice(0
 const lookups: string[] = [];
 const memoryLookups: Array<{ ownerId: string; query: string }> = [];
 const desktopCalls: DesktopCommand[] = [];
-const dates = [7, 14].map(days => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10));
 const files = ['AGENTS.md', 'README.md'];
+const dates = [7, 14].map(days => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10));
 let returnDisambiguation = true;
 let returnDefaultArticle = false;
 const browser = {
@@ -91,18 +92,21 @@ describe('choice clarification through the command chat controller', () => {
     const config = { models: { fast: [], deep: [], vision: '' }, browser, searchProvider, readPage, recordExperiences: false as const,
       desktop: { parse: parseDesktopCommand, describe: describeDesktopCommand, async execute(command: DesktopCommand) {
         desktopCalls.push(command);
-        if (command.kind !== 'file_read' || !files.includes(command.path) || command.folder) throw new Error('Unexpected desktop dispatch');
+        if (command.kind !== 'file_read' || command.folder) throw new Error('Unexpected desktop dispatch');
         return { status: 'completed' as const, text: command.path };
       } },
       tools: { memory: {
         async search(ownerId: string, query: string) {
           memoryLookups.push({ ownerId, query });
-          return { text: '', evidence: query === 'date' ? dates : query === 'file' ? files : [] };
+          return { text: '', evidence: query === 'date' ? dates : query === 'file' ? files.map(file => 'file ' + file) : [] };
         },
         async save() { throw new Error('Clarification does not write memory'); },
       } } };
-    active = await createCommandChatControl(database.db, { ...config, clarifyChoices: true });
-    inactive = await createCommandChatControl(database.db, { ...config, clarifyChoices: false });
+    const activeConfig = { ...config, clarifyChoices: true,
+      desktop: { ...config.desktop, parse: (text: string) => clarifyDesktopFile(text, parseDesktopCommand, true) } };
+    const inactiveConfig = { ...config, clarifyChoices: false };
+    active = await createCommandChatControl(database.db, activeConfig);
+    inactive = await createCommandChatControl(database.db, inactiveConfig);
   });
 
   afterAll(async () => {
@@ -187,13 +191,13 @@ describe('choice clarification through the command chat controller', () => {
     await finished(detail.id, before.id, 'en', cases.en.other);
   });
 
-  it('shares the same provider lookup with normal research when the search finds a clear subject', async () => {
+  it('keeps the ordinary search wording when the evidence finds a clear subject', async () => {
     returnDefaultArticle = true;
     const detail = await ask('What is Paris?');
     expect(detail.question).toBeNull();
     expect(detail.messages.at(-1)?.text).toContain('capital and largest city of France');
     expect((await run(detail.id)).status).toBe('completed');
-    expect(lookups).toEqual(['Paris']);
+    expect(lookups).toEqual(['What is Paris', 'What is Paris']);
   });
 
   it('recovers both matching subjects from earlier owner turns when search provides none', async () => {

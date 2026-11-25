@@ -27,13 +27,13 @@
 ## التشغيل الفعلي
 
 ```sh
-node --import tsx scripts/clarification-assessment.ts /workspace/scratch/clarify-eval/report-final.json > /workspace/scratch/clarify-eval/run-final.log 2>&1
-npm test -- tests/assistant-reply-directive.test.ts
+node --import tsx scripts/clarification-assessment.ts /workspace/scratch/clarify-eval/report-five-line-final.json > /workspace/scratch/clarify-eval/run-five-line-final.log 2>&1
+cmp /workspace/scratch/clarify-eval/report-final.json /workspace/scratch/clarify-eval/report-five-line-final.json
 npm run typecheck
 ```
 
-- اكتمل القياس برمز خروج 0 بعد 600 تنفيذ، من 01:46:00 إلى 01:47:11 بتوقيت لندن في 25 نوفمبر 2026. بصمة SHA-256 لملف النتائج هي `ecbc41cde6e76b77141fffde32feeba0ecf39e2214a3fdc47705eb6542fa992d`.
-- اجتازت مجموعة محلّل تعليمات الرد 21 من 21 اختبارًا. اجتاز فحص TypeScript للجذر والويب.
+- اكتمل القياس برمز خروج 0 بعد 600 تنفيذ، من 01:59:32 إلى 02:00:40 بتوقيت لندن في 25 نوفمبر 2026. بصمة SHA-256 لملف النتائج هي `ecbc41cde6e76b77141fffde32feeba0ecf39e2214a3fdc47705eb6542fa992d`. أكد `cmp` التطابق التام مع التقرير السابق قبل تقليص نقاط الربط.
+- اجتاز فحص TypeScript للجذر والويب. نجح 292 اختبارًا عبر 16 مجموعة، وتُخطّي اختبار اختياري واحد لتطابق B0. [أمر الاختبارات الكامل](https://github.com/ahmadalwakai/Mohassan-AI/pull/32#verification)
 
 ## حدود القياس
 

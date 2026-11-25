@@ -77,9 +77,7 @@ import { actionOperandHash, actionRequestHash, compileActionCompletionContract, 
 import { isEntireLiteralRequest, parseUserRequestConstraints, requestCapabilityAllowed, requestConstraintReply, requestScopeActionText, reviewPublicProjection, type ForbiddenRequestCapability, type RequestScopeAssessment, type UserRequestConstraints } from './assistant/request-scope.js';
 import { evaluateLocalKnowledge, isKnowledgeDocumentRequest, type LocalKnowledgeDocument } from './assistant/local-knowledge.js';
 import { decideRequestRoute } from './assistant/routing-decision.js';
-import { clarificationEnabled, clarifiedPublicLookup, needsClarificationBeforeDesktop, routeClarifiedRequest, runClarificationGate } from './assistant/clarify/gate.js';
-import { hasAnsweredClarification, hasPendingClarification, resumeClarification } from './assistant/clarify/resume.js';
-import { createClarificationSearch, ordinaryClarificationQuery } from './assistant/clarify/search.js';
+import { clarificationAnswers, clarifyCommand } from './assistant/clarify/host.js';
 import { describeSearchDestination, extractPublicSearchQueries, isSearchEntryElement, mergePublicQueryTerms, reviewGeneratedPublicQuery } from './assistant/public-query-provenance.js';
 import { reviewExplicitPublicBrowserQuery } from './assistant/browser-public-query.js';
 import { ADS_REWRITE_JSON_SCHEMA, ADS_REWRITE_SCHEMA_NAME, ADS_REWRITE_SYSTEM, buildRewritePrompt, type RewriteRequest } from '@mohassan/google-ads';
@@ -194,7 +192,6 @@ export interface CommandChatConfig {
   chromeExtension?: Pick<ChromeExtensionControl, 'status' | 'queueCampaign'>;
   /** Mohassan's own router model in shadow: logs its route next to the rules' route and changes nothing. */
   shadowRouter?: ShadowRouter;
-  clarifyChoices?: boolean;
   /** Conversation state v2 in shadow (docs/HANDOVER-2026-11-22-CONVERSATION-STATE-V2.md): logs its understanding of each turn and changes nothing. */
   conversationShadow?: ConversationShadow;
   /** The judge («الحَكَم») in shadow (docs/HANDOVER-2026-11-22-JUDGE-SHADOW.md): records a verdict on each reply the owner sees and changes nothing. */
@@ -436,7 +433,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     || config.inference?.active() === true;
   const vault = new CredentialVault();
   const search = config.searchProvider ?? new SearchEngine(new SafeNetwork(config.networkPolicy));
-  const clarifyChoices = clarificationEnabled(config.clarifyChoices);
   const controllers = new Map<string, {runId:string;token:string;controller:AbortController}>();
   const workers = new Map<string, Promise<void>>();
   const vaultOwners = new Map<string,string>();
@@ -1986,7 +1982,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return;
       }
       const request = effectiveSource.request;
-      const clarificationSearch = createClarificationSearch(search, ownerId, signal);
       const actionContract = compileActionCompletionContract({ runId, request });
       if (state.actionCompletion !== undefined) {
         const restored = restoreActionCompletionLedger(state.actionCompletion, { runId, request });
@@ -2267,8 +2262,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         && !state.steps && state.trail.every(entry => entry.action === 'asked the user');
       // A web address belongs to Mohassan's own browser (plan §6: it opens there at level 2 or 3), never to the computer's shell:
       // on 2026-11-22 eight real «افتح https://…» requests ended in «تعذر تشغيل powershell.exe» through the desktop path.
-      const desktopParsed = config.desktop && desktopFresh && !hasChatModel() && fullReach() && !/https?:\/\/|\bwww\./iu.test(actionRequest)
-        && !needsClarificationBeforeDesktop(clarifyChoices, actionRequest, state) ? config.desktop.parse(actionRequest) : null;
+      const desktopParsed = config.desktop && desktopFresh && !hasChatModel() && fullReach() && !/https?:\/\/|\bwww\./iu.test(actionRequest) ? config.desktop.parse(actionRequest) : null;
       if (desktopParsed && requestCapabilityAllowed(constraints, desktopParsed.mutating ? 'computer_action' : 'computer_read')) {
         await runDesktopCommand(desktopParsed.command, desktopParsed.lang, false);
         return;
@@ -2655,11 +2649,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           options: [{ id: 'stop', label: unnamed.lang === 'ar' ? 'توقف هنا' : 'Stop here' }], fields: card.fields } satisfies ChatQuestion) }, card.prompt);
         return;
       }
-      const clarifyEligible = freshRequest && !handsPlan && !documentWork && !intrinsicRuntime && !intrinsicConversation && !intrinsicSelf && !intrinsicComputation && !intrinsicSequence;
-      if (await runClarificationGate({ enabled: clarifyChoices, eligible: clarifyEligible, request, actionRequest, state, history, ownerId, signal, constraints, shadowRouter: config.shadowRouter,
-        search: async (query, limit) => { await active(); assertPublicSearch(request, query, state); return clarificationSearch.probe(query, limit, ordinaryClarificationQuery(actionRequest, history)); }, readPage: config.readPage, memory: tools?.memory?.search,
-        route: text => routeClarifiedRequest(text, config, fullReach(), hasChatModel(), runId), pause: question => pause(id, runId, state, 'waiting_user', { question: JSON.stringify(question) }, question.prompt), block: text => finish(id, runId, state, text, 'blocked') })) return;
-      if (!clarifyChoices && !hasAnsweredClarification(state) && freshRequest && !documentWork && !intrinsicRuntime && !intrinsicConversation && !intrinsicSelf && !intrinsicComputation && !intrinsicSequence && state.requestResolution?.kind === 'ambiguous' && state.requestResolution.ambiguities.some(reason =>
+      if (await clarifyCommand({ config, id, ownerId, runId, request, actionRequest, state, history, signal, constraints, search, fullAccess: fullReach(), chatModel: hasChatModel(), eligible: freshRequest && !handsPlan && !documentWork && !intrinsicRuntime && !intrinsicConversation && !intrinsicSelf && !intrinsicComputation && !intrinsicSequence, active, assertPublicSearch, pause, finish }, async () => {
+      if (freshRequest && !documentWork && !intrinsicRuntime && !intrinsicConversation && !intrinsicSelf && !intrinsicComputation && !intrinsicSequence && state.requestResolution?.kind === 'ambiguous' && state.requestResolution.ambiguities.some(reason =>
         reason === 'missing_reference' || reason === 'missing_question' || reason === 'unclear_replacement')) {
         const attempts = (state.clarificationAttempts ?? 0) + 1;
         state.clarificationAttempts = attempts;
@@ -2672,6 +2663,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await pause(id, runId, state, 'waiting_user', { question: JSON.stringify({ id: randomUUID(), prompt, options: [] } satisfies ChatQuestion) }, prompt);
         return;
       }
+      return false; })) return;
       // Deterministic arithmetic, units and calendar operations are shared brain
       // capabilities. They must run before the web fallback, without enabling the
       // experimental Mind route or spending a model request.
@@ -2874,7 +2866,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         returnName = returning ? fullerName(returning.subject, earlierTitles) : null;
         const returnAsk = returning && returnName ? webQuestion(`${returning.question} ${returnName}`) : null;
         const asked = !ambiguousReference && !privateRequest && !steps && !(tools?.memory && memoryRecallFormat(request)) && !projectInventoryFormat(request)
-          ? conversationAsk ?? entityAsk ?? returnAsk ?? webQuestion(contextualQuery ?? actionRequest, contextualQuery ? [] : earlierAsks) ?? clarifiedPublicLookup(state, actionRequest) : null;
+          ? conversationAsk ?? entityAsk ?? returnAsk ?? webQuestion(contextualQuery ?? actionRequest, contextualQuery ? [] : earlierAsks) : null;
         // A follow-up reaches the mind with the previous question's topic, as the browser search does.
         const resolved = asked?.[0]?.kind === 'search' ? asked[0].query : null;
         if (resolved && isFollowUp(tidy(request))) state.resolvedRequest = resolved;
@@ -2972,9 +2964,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             assertPublicSearch(request, query, state, Boolean(returnName && query.includes(returnName)));
             // The shared engine reports each provider's failure: a search whose providers did not answer is a failed request
             // (RESEARCH_PROVIDERS_FAILED), told apart from one that answered with nothing about the question (2026-11-23).
+            const engine = search as Partial<Pick<SearchEngine, 'execute'>>;
             let hits: Awaited<ReturnType<SearchProvider['search']>>;
-            if (clarificationSearch.execute) {
-              const outcome = await clarificationSearch.execute(query, limit);
+            if (typeof engine.execute === 'function') {
+              const outcome = await engine.execute.call(search, query, limit, signal, { ownerId });
               if (!outcome.hits.length) {
                 state.trail.push({ step: ++state.steps, action: `search ${query}`.slice(0, 300), changed: false,
                   result: `no results; provider failures: ${outcome.failures.map(item => `${item.provider} ${item.kind}`).join(', ') || 'none'}`.slice(0, 1100) });
@@ -2982,7 +2975,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
                 throw new BrowserError('RESEARCH_SEARCH_UNAVAILABLE', 'لم يُرجع البحث مصادر مرتبطة بالسؤال قابلة للقراءة.', 502);
               }
               hits = outcome.hits.map(hit => hit.coverage === 'local_only' ? { ...hit, snippet: `نسخة مفهرسة بتاريخ ${hit.fetchedAt}. ${hit.snippet}` } : hit);
-            } else hits = await clarificationSearch.search(query, limit);
+            } else hits = await search.search(query, limit, signal, { ownerId });
             state.publicQueryTerms = mergePublicQueryTerms(state.publicQueryTerms, hits.flatMap(hit => [hit.title, hit.snippet]));
             await active();
             state.trail.push({ step: ++state.steps, action: `search ${query}`.slice(0, 300), result: `results: ${hits.map(hit => `${hit.title} | ${hit.url}`).join('\n')}`.slice(0, 1100), changed: hits.length > 0 });
@@ -3899,16 +3892,12 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if(!run||run.worker_id!==instanceId)throw new BrowserError('CHAT_SESSION_UNAVAILABLE','جلسة المتصفح تخص عاملًا آخر أو انتهت. راجع الحالة قبل طلب جديد.',409);
       previousToken=run.lease_token;
       const state: BrainState = { ...newBrainState(), ...(run.state ?? {}) };
-      const choicePending = expected.field === 'question' && !expected.stop && hasPendingClarification(state);
-      const priorSource = state.requestClarification || choicePending ? await effectiveSourceForRun(run, tx) : null;
+      const priorSource = state.requestClarification ? await effectiveSourceForRun(run, tx) : null;
       // Insert the accepted reply in this same transaction. A rejected change
       // rolls it back; its DB-owned identity/time can anchor a new primary.
       const message = { id: randomUUID(), createdAt: new Date(), text: clean(say) };
       await tx.insertInto('chat_messages').values({ id: message.id, conversation_id: id, role: 'user', text: message.text, created_at: message.createdAt }).execute();
-      const accepted = { ...message, createdAt: message.createdAt.getTime(), ...(priorSource ? { priorRequest: priorSource.request } : {}) };
-      const choiceFullAccess = choicePending && (config.accountFullAccess ? await config.accountFullAccess(ownerId, tx) : !config.fullAccess);
-      if (!choicePending || !resumeClarification(state, { runId, questionId: expected.requestId, message: accepted,
-        route: text => routeClarifiedRequest(text, config, choiceFullAccess, hasChatModel(), runId) })) await change(state, tx, accepted);
+      await change(state, tx, { ...message, createdAt: message.createdAt.getTime(), ...(priorSource ? { priorRequest: priorSource.request } : {}) });
       await tx.updateTable('chat_runs').set({ status:expected.stop?'cancelled':'running', state: JSON.stringify(state),lease_token:token,attempt:run.attempt+1,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, updated_at: new Date() }).where('id', '=', runId).execute();
       await tx.updateTable('chat_conversations').set({ status:expected.stop?'idle':'running',active_run_id:expected.stop?null:runId, question: null, approval: null, secure: null, error: null, progress:expected.stop?null:'يتابع العمل…', updated_at: new Date() }).where('id', '=', id).execute();
       if (expected.stop) await recordTerminalRun(tx, runId, 'cancelled');
@@ -4437,7 +4426,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   return {
-    create, list, detail, send, respond, approve, secureSubmit, cancel, remove, screen, browserActivity, shutdown,restoreBrowser,reviewBrowser, uploadImage, image: imageBytes, feedback, once,
+    create, list, detail, ...clarificationAnswers({ db, config, hasChatModel, resume, send, respond }), approve, secureSubmit, cancel, remove, screen, browserActivity, shutdown,restoreBrowser,reviewBrowser, uploadImage, image: imageBytes, feedback, once,
     imagesAvailable: () => Boolean(config.imageReader?.available),
     pointer: (ownerId: string, id: string, raw: unknown) => { const input = ChatPointerSchema.parse(raw); return handsOn(ownerId, id, () => browser.pointer(ownerId, id, input.x, input.y)); },
     keyboard: (ownerId: string, id: string, raw: unknown) => { const input = ChatKeyboardSchema.parse(raw); return handsOn(ownerId, id, () => browser.keyboard(ownerId, id, input)); },

@@ -29,6 +29,10 @@ export function hasPendingClarification(state: BrainState): boolean {
   return (state as BrainState & ClarificationState).pendingClarification !== undefined;
 }
 
+export function isPendingClarification(state: BrainState & ClarificationState, questionId: string): boolean {
+  return state.pendingClarification?.questionId === questionId && !state.answeredClarification;
+}
+
 export function hasAnsweredClarification(state: BrainState): boolean {
   return (state as BrainState & ClarificationState).answeredClarification === true;
 }
@@ -122,6 +126,7 @@ export function resumeClarification(state: BrainState & ClarificationState, inpu
   state.failures = 0;
   state.unchanged = 0;
   delete state.pendingClarification;
+  delete state.requestClarification;
   state.answeredClarification = true;
   return true;
 }
