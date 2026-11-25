@@ -6,6 +6,7 @@ import type { BrainState } from '../brain.js';
 import { analyzeCompoundRequest } from '../compound-request.js';
 import { createComputationMemoryReceipt } from '../computation-memory-receipt.js';
 import { evaluateLocalComputation } from '../local-computation.js';
+import { arbitrateComponent } from '../model-relations-arbiter.js';
 import { requestActionText } from '../request-context.js';
 import { requestScopeActionText } from '../request-scope.js';
 import { compilePlan, MAX_PLAN_STEPS } from './compiler.js';
@@ -17,6 +18,11 @@ function planMode(): 'off' | 'shadow' | 'on' {
   const mode = process.env.MOHASSAN_PLAN_COMPILER;
   return mode === 'shadow' || mode === 'on' ? mode : 'off';
 }
+
+const directHandlers = {
+  local_computation: 'local-calculator', local_conversation: 'small-talk', local_coding: 'verified-coding',
+  writing: 'writer', search: 'factual-lookup', browser: 'browser-plan',
+} as const;
 
 /** Logs the graph for every accepted message, with no request or tool-result content. */
 export function observePlanMessage(text: string): void {
@@ -85,6 +91,14 @@ export async function runCompiledChatPlan(context: ChatPlanContext): Promise<boo
   if (plan.steps.length === 2 && plan.steps[0]?.tool === 'compute' && plan.steps[1]?.tool === 'remember'
     && createComputationMemoryReceipt(request, { ownerId: context.ownerId, conversationId: context.conversationId,
       runId: context.runId, evaluatedAt: now.getTime() })) return false;
+
+  const routing = state.routing;
+  const handler = routing?.handler;
+  if (routing?.availability === 'ready' && handler && Object.hasOwn(directHandlers, handler)
+    && !arbitrateComponent('compound-plan', { text: request, runId: context.runId,
+      conversationState: state.requestResolution?.kind ?? 'new' },
+    { component: 'plan-compiler', label: 'compound', result: true },
+    [{ component: directHandlers[handler as keyof typeof directHandlers], label: routing.reason, result: false }])) return false;
 
   const ledger = context.ledger();
   const localSequence = plan.steps.every(step => step.tool === 'compute' && !step.dependsOn.length);

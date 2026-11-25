@@ -25,6 +25,7 @@ import { startsFactualQuestion } from './public-question-syntax.js';
 import { applyScratchRouting, runtimeScratchPolicy, type ScratchDecisionPolicy, type ScratchRoutingChoices } from './scratch-decisions.js';
 import { reviewRoutingRefusal } from './refusal/turn.js';
 import { parseTestDrivenCodingRequest, testDrivenCodingEnabled } from './test-driven-coding/request.js';
+import { arbiterEnabled, arbitrateComponent, discoverArbiterClaims } from './model-relations-arbiter.js';
 
 /**
  * Read-only routing contract for the host to adopt, test and observe. A decision
@@ -144,9 +145,59 @@ export function decideRequestRoute(input: RequestRoutingInput, policy: ScratchDe
   return policy ? applyScratchRouting(input, rule, policy, choices => decideRuleRequestRoute(input, choices)) : rule;
 }
 
+type RoutingComponent = 'small-talk' | 'everyday-clarification' | 'verified-coding' | 'question-rewriter'
+  | 'factual-lookup' | 'local-computation';
+type RoutingClaim = { component: RoutingComponent; label: RoutingReason; result: RequestRoutingDecision };
+
+function terminalRoutingComponent(decision: RequestRoutingDecision): RoutingComponent | null {
+  if (decision.availability !== 'ready') return null;
+  if (decision.handler === 'search' && decision.publicQuery !== null) return 'factual-lookup';
+  if (decision.handler === 'local_computation') return 'local-computation';
+  return null;
+}
+
+function offer(component: RoutingComponent, result: RequestRoutingDecision): RoutingClaim {
+  return { component, label: result.reason, result };
+}
+
+/** Compare explicit routing claims at admission. The existing refusal and scope checks still run. */
+export function decideHostRequestRoute(input: RequestRoutingInput): RequestRoutingDecision {
+  if (!arbiterEnabled() || !input.turnId || input.pendingQuestion) return decideRequestRoute(input);
+  const rules = routingClaims(input);
+  const first = rules.next();
+  const rule = first.done ? first.value : first.value.result;
+  const policy = runtimeScratchPolicy();
+  const baseline = policy ? applyScratchRouting(input, rule, policy, choices => decideRuleRequestRoute(input, choices), true) : rule;
+  if (first.done || baseline !== rule || baseline.resolution.constraints) return baseline;
+  return discoverArbiterClaims('routing', baseline, input.turnId, shadowLog => {
+    const started = performance.now();
+    try {
+      const alternatives = new Map<RoutingComponent, RoutingClaim>();
+      let next = rules.next();
+      while (!next.done) {
+        if (next.value.component !== first.value.component && !alternatives.has(next.value.component)) alternatives.set(next.value.component, next.value);
+        next = rules.next();
+      }
+      const last = next.value;
+      if (last.reason === 'request_refused' || last.availability === 'restricted' || last.resolution.constraints) return baseline;
+      const terminal = terminalRoutingComponent(last);
+      if (terminal && terminal !== first.value.component) alternatives.set(terminal, offer(terminal, last));
+      return arbitrateComponent('routing', { text: input.text, runId: input.turnId, conversationState: baseline.resolution.kind, started, shadowLog },
+        first.value, [...alternatives.values()]);
+    } catch {
+      return baseline;
+    }
+  });
+}
+
 function decideRuleRequestRoute(input: RequestRoutingInput, choices: ScratchRoutingChoices = {}): RequestRoutingDecision {
+  const first = routingClaims(input, choices).next();
+  return first.done ? first.value : first.value.result;
+}
+
+function* routingClaims(input: RequestRoutingInput, choices: ScratchRoutingChoices = {}): Generator<RoutingClaim, RequestRoutingDecision> {
   const manners = standaloneMannersRoute(input);
-  if (manners) return manners;
+  if (manners) yield offer('small-talk', manners);
   const pending = PendingQuestionSchema.safeParse(input.pendingQuestion);
   const options: RequestContextOptions = { turnId: input.turnId, learnedFollowUp: choices.followUp,
     ...(pending.success ? { pendingQuestion: { id: pending.data.id, fields: pending.data.fields } } : {}) };
@@ -182,7 +233,7 @@ function decideRuleRequestRoute(input: RequestRoutingInput, choices: ScratchRout
   });
   const clarify = (reason: RoutingReason): RequestRoutingDecision => ({ ...base('clarify', resolution.intent, 'clarify', reason), availability: 'needs_context' });
   if (resolution.resolved === null || input.pendingQuestion !== undefined && !pending.success) return clarify('invalid_request');
-  if (!pending.success && parseQuestionRewriteRequest(input.text)) return base('writing', 'writing', 'writing', 'explicit_handler');
+  if (!pending.success && parseQuestionRewriteRequest(input.text)) yield offer('question-rewriter', base('writing', 'writing', 'writing', 'explicit_handler'));
   const scopeRequest = requestActionText(requestScopeActionText(resolution.resolved));
   if (resolution.constraints?.ambiguous) return clarify('unresolved_intent');
   if (resolution.constraints?.standalone) {
@@ -212,12 +263,12 @@ function decideRuleRequestRoute(input: RequestRoutingInput, choices: ScratchRout
       resolved: resolution.resolved, query: null, sourceAssessment: source, nextState };
     if (input.fullAccess === false) return { ...decision, availability: 'restricted', reason: 'account_restriction' };
     if (!testDrivenCodingEnabled()) return { ...decision, availability: 'missing_capability', missingCapabilities: ['coding'], reason: 'missing_capability' };
-    return decision;
+    yield offer('verified-coding', decision);
   }
   if (recognizeEverydayClarification(input.text, input.previousTurns === undefined ? previousContext !== null : input.previousTurns > 0)) {
     const decision = clarify('missing_reference');
-    return { ...decision, resolution: { ...decision.resolution, kind: 'ambiguous', query: null,
-      ambiguities: [...new Set([...resolution.ambiguities, 'missing_reference' as const])], nextState: previousContext } };
+    yield offer('everyday-clarification', { ...decision, resolution: { ...decision.resolution, kind: 'ambiguous', query: null,
+      ambiguities: [...new Set([...resolution.ambiguities, 'missing_reference' as const])], nextState: previousContext } });
   }
   if (recognizeRuntimeStatusRequest(scopeRequest)) {
     const decision = base('chat', 'chat', 'local_status', 'host_runtime_status');
@@ -241,8 +292,8 @@ function decideRuleRequestRoute(input: RequestRoutingInput, choices: ScratchRout
     const retainedAcknowledgement = resolution.intent === 'chat' && resolution.nextState !== null && resolution.nextState.intent !== 'chat';
     const nextState = retainedAcknowledgement ? structuredClone(resolution.nextState) : decision.resolution.nextState
       ? parseRequestContextState({ ...decision.resolution.nextState, scope: 'unknown', sourceAssessment: localSource }) : null;
-    return { ...decision, sourceAssessment: localSource, localReply: localConversation,
-      resolution: { ...decision.resolution, scope: 'unknown', query: null, sourceAssessment: localSource, nextState } };
+    yield offer('small-talk', { ...decision, sourceAssessment: localSource, localReply: localConversation,
+      resolution: { ...decision.resolution, scope: 'unknown', query: null, sourceAssessment: localSource, nextState } });
   }
   if (localComputation) {
     const decision = base('compute', 'compute', 'local_computation', 'local_computation');

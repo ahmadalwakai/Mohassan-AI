@@ -5,22 +5,12 @@ import type { ModelRelationsManager, TurnObservation } from '../../../../package
 import type { BrainState } from './brain.js';
 import { judge, type JudgeEvidence } from './judge.js';
 import { detectManners } from './manners/detect.js';
+import { captureArbiterDecisions, modelRelationsManager } from './model-relations-arbiter.js';
 import { afterStructuredMemoryPublication } from './structured-memory-turn.js';
 
 type Page = { text: string; url: string; title: string };
 type Execution = { token?: string; request?: string; previousRequest?: string | null; page?: Page; readPages?: Page[] };
 type Inspector = Pick<ModelRelationsManager, 'inspect'>;
-
-async function createInspector(): Promise<Inspector> {
-  const [{ createModelRuntime }, { ModelRelationsManager }] = await Promise.all([
-    import('../../../../packages/model-relations/src/runtime.js'),
-    import('../../../../packages/model-relations/src/manager.js'),
-  ]);
-  const runtime = createModelRuntime({
-    heavyAvailable: () => process.env.MOHASSAN_MODEL_WORKER !== '1' && process.env.EXECUTOR_EXPERIMENT !== 'uncontained-local',
-  });
-  return new ModelRelationsManager(runtime, { judge: input => judge(input).decision });
-}
 
 function pageEvidence(pages: readonly Page[]): JudgeEvidence[] {
   const seen = new Set<string>();
@@ -34,7 +24,7 @@ export function createModelRelationsObserver(options: {
   inspector?: () => Promise<Inspector>;
 } = {}) {
   const env = options.env ?? process.env;
-  const getInspector = options.inspector ?? createInspector;
+  const getInspector = options.inspector ?? (async () => modelRelationsManager);
   let inspector: Promise<Inspector> | undefined;
   let directory: Promise<string | undefined> | undefined;
 
@@ -49,13 +39,14 @@ export function createModelRelationsObserver(options: {
     const resolution = state?.requestResolution;
     const arithmeticValue = state?.computed?.value;
     const pages = [...(execution.readPages ?? []), ...(execution.page ? [execution.page] : [])];
+    const arbiter = captureArbiterDecisions(runId);
     let schedulingMs = 0;
     const schedule = () => setImmediate(() => {
       const work = async () => {
         const evidence = pageEvidence(pages);
         const question = resolution?.resolved ?? text;
         const observation: TurnObservation = {
-          id, text, previousText,
+          id, text, previousText, arbiter: arbiter?.(),
           baseline: {
             route: imageReadMs === undefined ? routing?.route ?? 'unsupported' : 'image',
             refusal: routing?.reason === 'scratch_out_of_scope' ? 'out_of_scope'
@@ -69,7 +60,7 @@ export function createModelRelationsObserver(options: {
           },
         };
         const worker = await (inspector ??= getInspector().catch(error => { inspector = undefined; throw error; }));
-        const decision = await worker.inspect(observation);
+        const decision = await worker.inspect(observation, input => judge(input).decision);
         const file = options.logFile ?? resolve('.data/model-relations-shadow.jsonl');
         await (directory ??= mkdir(dirname(file), { recursive: true, mode: 0o700 })
           .catch(error => { directory = undefined; throw error; }));
