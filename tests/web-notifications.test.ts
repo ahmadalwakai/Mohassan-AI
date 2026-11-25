@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  conversationFromNotification, currentPushDevice, notificationConversationLink, restoreNotificationConversation,
+  conversationFromNotification, currentPushDevice, notificationConversationLink, takeConversationFromNotification,
   releaseThisBrowser, showHiddenNotification, subscribeThisBrowser, unsubscribeDevice,
 } from '../apps/web/components/notification-client';
 
@@ -84,13 +84,11 @@ describe('web push worker', () => {
 });
 
 describe('notifications in an open tab', () => {
-  it('opens a deep-linked conversation even outside the recent list and consumes its URL parameter', () => {
+  it('extracts the linked conversation and consumes its URL parameter', () => {
     vi.stubGlobal('location', { href: `${origin}/?conversation=${conversationId}` });
     const replaceState = vi.fn();
     vi.stubGlobal('history', { replaceState });
-    const select = vi.fn();
-    restoreNotificationConversation([{ id: 'recent' }], 'recent', select);
-    expect(select).toHaveBeenCalledExactlyOnceWith(conversationId);
+    expect(takeConversationFromNotification()).toBe(conversationId);
     expect(replaceState.mock.calls[0]?.[2].href).toBe(`${origin}/`);
   });
 

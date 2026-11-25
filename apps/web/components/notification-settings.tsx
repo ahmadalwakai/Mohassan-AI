@@ -17,8 +17,6 @@ import { noticePermission } from './task-notices';
 import chatStyles from './assistant-app.module.css';
 import styles from './notification-settings.module.css';
 
-export { restoreNotificationConversation, type NotificationControls } from './notification-client';
-
 const path = '/api/notifications/settings';
 
 function homeQuietHours(): NotificationQuietHours {

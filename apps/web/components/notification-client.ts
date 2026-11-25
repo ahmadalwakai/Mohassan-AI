@@ -29,7 +29,7 @@ export function conversationFromNotification(url: URL): string | null {
   return id && conversationIdPattern.test(id) ? id : null;
 }
 
-function takeConversationFromNotification(): string | null {
+export function takeConversationFromNotification(): string | null {
   const url = new URL(location.href);
   const id = conversationFromNotification(url);
   if (id) {
@@ -37,14 +37,6 @@ function takeConversationFromNotification(): string | null {
     history.replaceState(history.state, '', url);
   }
   return id;
-}
-
-export function restoreNotificationConversation(
-  recent: { id: string }[], saved: string | null, select: (id: string) => void,
-): void {
-  const linked = takeConversationFromNotification();
-  if (linked) select(linked);
-  else if (saved && recent.some(conversation => conversation.id === saved)) select(saved);
 }
 
 export function notificationConversationLink(conversationId: string | null): string {
