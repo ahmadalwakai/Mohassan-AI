@@ -2,12 +2,13 @@ import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Project } from "@mohassan/contracts";
 import { WindowsAppContainerSandbox } from "@mohassan/sandbox";
 import { CodingEngine, generateDeterministicEdits, snapshotHash, type EditGenerator, type SandboxRunner } from "./index.ts";
 import { git } from "./git.ts";
 import { sha256, type SnapshotFile } from "./security.ts";
+import { inspectTypeScript } from "./typescript-repair.ts";
 
 const testPath = "test/answer.test.mjs";
 const jsPath = "src/answer.mjs";
@@ -24,11 +25,11 @@ const base = { "package.json": '{"type":"module","scripts":{"test":"node --test 
 const examples = [
   {
     name: "missing import", target: tsPath, before: "export const answer = () => answerValue;\n",
-    after: './values.mjs', files: { "src/values.mjs": "export const answerValue = 42;\n" },
+    after: 'import { answerValue } from "./values.mjs";\n\nexport const answer = () => answerValue;\n', files: { "src/values.mjs": "export const answerValue = 42;\n" },
   },
   {
     name: "single spelling correction", target: tsPath, before: "const expectedValue = 42;\nexport const answer = () => expcetedValue;\n",
-    after: "=> expectedValue;", files: {
+    after: "const expectedValue = 42;\nexport const answer = () => expectedValue;\n", files: {
       "package.json": '{"type":"module","scripts":{"test":"node --test","typecheck":"tsc --noEmit -p config/typecheck.json"}}\n',
       "config/typecheck.json": '{"files":["../src/answer.ts"]}\n',
     },
@@ -36,7 +37,7 @@ const examples = [
   {
     name: "ESLint rule", target: jsPath,
     before: "export function answer() {\n  if (!!true) return 42;\n}\n",
-    after: "if (true) return 42;", files: { [configPath]: 'export default [{ rules: { "no-extra-boolean-cast": "error" } }];\n' },
+    after: "export function answer() {\n  if (true) return 42;\n}\n", files: { [configPath]: 'export default [{ rules: { "no-extra-boolean-cast": "error" } }];\n' },
   },
 ] as const;
 
@@ -73,13 +74,13 @@ function receipt(files: SnapshotFile[], exitCode: number) {
 }
 
 // This adapter checks fingerprints and tool requests without executing repository code.
-function boundaryAdapter(before: string): SandboxRunner {
+function boundaryAdapter(before: string, baselineExitCode = 1): SandboxRunner {
   return {
     available: async () => ({ available: true, provider: "receipt-fixture", message: "Synthetic receipt" }),
     run: async (request) => {
       expect(request.testFiles).toEqual([testPath]);
       if (request.files.some(({ path }) => path === "config/typecheck.json")) expect(request.typecheck).toEqual({ project: "config/typecheck.json" });
-      return receipt(request.files, request.files.some(({ content }) => content === before) ? 1 : 0);
+      return receipt(request.files, request.files.some(({ content }) => content === before) ? baselineExitCode : 0);
     },
     lintFix: async (request) => {
       expect(request.configPath).toBe(configPath);
@@ -103,18 +104,47 @@ async function assertRepair(example: typeof examples[number], sandbox: SandboxRu
   const { engine, request } = execute(input, sandbox);
   const result = await engine.execute(request);
   expect(result).toMatchObject({ outcome: "ready_for_review", sourceUnchanged: true, usage: { inputTokens: 0, outputTokens: 0 } });
-  expect(result.baselineTests?.snapshotHash).toBe(snapshotHash(Object.entries(input.contents).map(([path, content]) => ({ path, content }))));
-  expect(result.changes).toEqual([{ path: example.target, beforeHash: sha256(example.before), afterHash: expect.any(String) }]);
+  const original = Object.entries(input.contents).map(([path, content]) => ({ path, content }));
+  const provider = (await sandbox.available()).provider;
+  expect(result.baselineTests).toMatchObject({
+    snapshotHash: snapshotHash(original), isolationVerified: true, network: "denied", provider,
+    exitCode: example.target === tsPath ? 1 : 0,
+  });
   const repaired = await readFile(join(input.directory, "coding-worktrees", request.taskId, example.target), "utf8");
-  expect(repaired).toContain(example.after);
-  expect(result.changes[0]?.afterHash).toBe(sha256(repaired));
+  expect(repaired).toBe(example.after);
+  expect(result.changes).toEqual([{ path: example.target, beforeHash: sha256(example.before), afterHash: sha256(repaired) }]);
+  const updated = original.map((file) => file.path === example.target ? { ...file, content: repaired } : file);
+  expect(result.tests).toMatchObject({ snapshotHash: snapshotHash(updated), isolationVerified: true, network: "denied", provider, exitCode: 0 });
+  if (example.target === tsPath) {
+    const project = Object.hasOwn(example.files, "config/typecheck.json") ? "config/typecheck.json" : undefined;
+    const before = inspectTypeScript(original, request.signal, project).diagnosticPaths;
+    const after = inspectTypeScript(updated, request.signal, project).diagnosticPaths;
+    expect(before).toContain(example.target);
+    expect(after).not.toContain(example.target);
+    expect(after.length).toBeLessThan(before.length);
+  }
   expect(await readFile(join(input.project.path, example.target), "utf8")).toBe(example.before);
   expect(await engine.verify(result, request)).toEqual(result);
 }
 
+async function assertLogicRefused(makeSandbox: (before: string) => SandboxRunner) {
+  const before = "export const answer = () => 40 - 2;\n";
+  const input = await fixture(jsPath, before);
+  const sandbox = makeSandbox(before);
+  const run = vi.spyOn(sandbox, "run");
+  const { engine, request } = execute(input, sandbox);
+  await expect(engine.execute(request)).rejects.toMatchObject({ code: "NO_PROVEN_FIX", message: /لم تجد الأدوات إصلاحًا/ });
+  expect(run).toHaveBeenCalledTimes(1);
+  await expect(run.mock.results[0]?.value).resolves.toMatchObject({
+    exitCode: 1, snapshotHash: snapshotHash(Object.entries(input.contents).map(([path, content]) => ({ path, content }))),
+  });
+  expect(await readFile(join(input.directory, "coding-worktrees", request.taskId, jsPath), "utf8")).toBe(before);
+  expect(await readFile(join(input.project.path, jsPath), "utf8")).toBe(before);
+}
+
 describe("deterministic repair and engine fingerprints", () => {
   it.each(examples)("applies a proven $name fix to a separate Git worktree", async (example) => {
-    await assertRepair(example, boundaryAdapter(example.before));
+    await assertRepair(example, boundaryAdapter(example.before, example.target === tsPath ? 1 : 0));
   });
 
   it.each(examples)("rejects a stale expected hash for $name", async (example) => {
@@ -141,11 +171,7 @@ describe("deterministic repair and engine fingerprints", () => {
   });
 
   it("refuses a logic bug that tests expose but tools cannot repair", async () => {
-    const before = "export const answer = () => 40 - 2;\n";
-    const input = await fixture(jsPath, before);
-    const { engine, request } = execute(input, boundaryAdapter(before));
-    await expect(engine.execute(request)).rejects.toMatchObject({ code: "NO_PROVEN_FIX", message: /لم تجد الأدوات إصلاحًا/ });
-    expect(await readFile(join(input.project.path, jsPath), "utf8")).toBe(before);
+    await assertLogicRefused(boundaryAdapter);
   });
 
   it("rejects a lint receipt for a different snapshot", async () => {
@@ -209,9 +235,6 @@ describe.skipIf(process.platform !== "win32")("real deterministic repair in Wind
   }, 90_000);
 
   it("refuses a real failing logic test without guessing a change", async () => {
-    const before = "export const answer = () => 40 - 2;\n";
-    const input = await fixture(jsPath, before);
-    const { engine, request } = execute(input, new WindowsAppContainerSandbox());
-    await expect(engine.execute(request)).rejects.toMatchObject({ code: "NO_PROVEN_FIX" });
+    await assertLogicRefused(() => new WindowsAppContainerSandbox());
   }, 90_000);
 });

@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Script } from 'node:vm';
@@ -52,6 +53,31 @@ describe('sandbox coding tools', () => {
       const source = await readFile(tsx[0], 'utf8');
       expect(source).toContain('ts.transpileModule');
       expect(() => new Script(source)).not.toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports the fixable no-extra-boolean-cast diagnostic in read-only ESLint analysis', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mohassan-lint-analysis-'));
+    try {
+      const path = 'src/answer.mjs';
+      const content = 'export function answer() {\n  if (!!true) return 42;\n}\n';
+      const configPath = 'eslint.config.mjs';
+      const config = 'export default [{ rules: { "no-extra-boolean-cast": "error" } }];\n';
+      const args = await prepareLintCommand(join(root, 'tools'), join(root, 'work'), {
+        files: [{ path, content }, { path: configPath, content: config }], configPath, fixFiles: [path], formatting: false,
+      });
+      const requireStaged = createRequire(args[1]);
+      const { Linter }: typeof import('eslint') = requireStaged('eslint');
+      const linter = new Linter();
+      const preparedConfig = requireStaged(args[5]);
+      const diagnostics = linter.verify(content, preparedConfig, { filename: path });
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]).toMatchObject({ ruleId: 'no-extra-boolean-cast', fix: { text: 'true' } });
+      expect(content.slice(...diagnostics[0].fix!.range)).toBe('!!true');
+      const corrected = 'export function answer() {\n  if (true) return 42;\n}\n';
+      expect(linter.verify(corrected, preparedConfig, { filename: path })).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
