@@ -37,7 +37,7 @@
 mkdir -p artifacts/code-knowledge
 npx tsx scripts/code-knowledge/import.ts --docs mdn,python,node,typescript --output artifacts/code-knowledge/corpus.json
 npx tsx scripts/code-knowledge/ask.ts --corpus artifacts/code-knowledge/corpus.json 'What does Promise.allSettled return?'
-printf '%s\n' "KeyError: 'foo'" |
+printf '%s\n' 'Error: listen EADDRINUSE' |
   npx tsx scripts/code-knowledge/ask.ts --corpus artifacts/code-knowledge/corpus.json --error
 ```
 
