@@ -7,6 +7,7 @@ import { classifyRefusal } from './classifier.js';
 import { reviewHandsRefusal, reviewPendingRefusal } from './permissions.js';
 import { refusalReply } from './replies.js';
 import { logRefusalDecision, refusalPolicyEnabled } from './settings.js';
+import type { RefusalDecision } from './types.js';
 
 type RefusalContext = Parameters<typeof classifyRefusal>[1];
 
@@ -38,7 +39,8 @@ export function reviewRoutingRefusal(input: RequestRoutingInput, resolution: Req
   const decision = classifyTurn(input.text, resolution, { fullAccess: input.fullAccess !== false, scope, capabilities })
     ?? reviewProposedHands(input.text);
   if (!decision) return null;
-  return { version: 1, ...refusalRouting(decision.code), sourceAssessment: scope, publicQuery: null,
+  return { version: 1, ...refusalRouting(decision.code),
+    sourceAssessment: { ...scope, publicQueryEligible: false }, publicQuery: null,
     resolution: { ...resolution, query: null, nextState: previousContext } };
 }
 
@@ -46,12 +48,17 @@ export function reviewWorkRefusal(request: string, state: BrainState, fullAccess
   const resolution = state.requestResolution ?? undefined;
   const context = { fullAccess, capabilities, scope: assessRequestScope(request, { contextKind: resolution?.kind }) };
   const original = resolution?.kind === 'answer' && !state.questionAnswer?.fields ? resolution.original : null;
+  const enabled = refusalPolicyEnabled();
+  // The worker may see different capabilities or a rewritten request. A
+  // refusal recorded at admission must still stop the run before dispatch.
+  const admittedRefusal: RefusalDecision | null = enabled && state.routing?.reason === 'request_refused'
+    ? { code: 'no_capability', alternative: 'public_info' } : null;
   const decision = classifyTurn(request, resolution, context)
     ?? (original && original !== request ? classifyRefusal(original, { ...context, scope: assessRequestScope(original) }) : null)
     ?? (state.hands ? reviewHandsRefusal(state.hands.steps) : reviewProposedHands(request))
-    ?? reviewPendingRefusal(state);
+    ?? reviewPendingRefusal(state)
+    ?? admittedRefusal;
   if (!decision) return null;
-  const enabled = refusalPolicyEnabled();
   logRefusalDecision(decision.code, enabled);
   if (!enabled) return null;
   state.routing = refusalRouting(decision.code);
