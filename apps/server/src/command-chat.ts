@@ -87,6 +87,7 @@ import { projectInventoryFormat, renderProjectInventory } from './assistant/inve
 import { decodeStructuredMemoryDecision, memoryRecallFormat, structuredMemoryDecisionSchema } from './assistant/memory-recall.js';
 import { reviewMemoryRecallEvidence } from './assistant/memory-recall-evidence.js';
 import { projectPreferredLanguageMemoryQuery, recognizePreferredLanguageRequest } from './assistant/preferred-language-fact.js';
+import { answerBrowserTaskSecure, dispatchBrowserTask, isBrowserTaskSecure, legacyBrowserTaskPage, recordBrowserTaskResume } from './assistant/browser-task-chat-host.js';
 import { CredentialVault } from './assistant/vault.js';
 import { trustedSkillGapSignal } from './assistant/skill-gaps.js';
 import { chatModelFailure } from './assistant/model-failure.js';
@@ -1462,6 +1463,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const kind = situation(page);
       const site = siteOf(page.url);
       const authKind = ['password', 'identifier', 'otp'].includes(kind);
+      if (config.browserHands === 'on') { const result = await legacyBrowserTaskPage(state, page, kind, site); if (result !== undefined) return result; }
       if (personalSignIn && (authKind || kind === 'browser_refused')) {
         await finish(id, runId, state, PERSONAL_SIGN_IN_STOP, 'partial');
         return null;
@@ -2364,6 +2366,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         state.securePageHash=null;
       }
       if (state.pendingClick) throw new BrowserError('CHAT_APPROVAL_STALE','الموافقة القديمة لا تتضمن بصمة طلب؛ اطلب إجراء جديدًا.',409);
+      if (config.browserHands && await dispatchBrowserTask({ config, db, ownerId, id, runId, intent: run.intent, request, actionRequest, page, state, browserCheckpoint: conversation.browser_checkpoint, signal, search, vault, clean, fullReach, requireCurrentOwnerAccess, withExecution: job => execution.run(currentExecution, job), outsideExecution: job => execution.exit(job), isClosing: () => closing, settled: key => workers.get(key), terminalError: error => error instanceof RunEnded || error instanceof AccountAccessEnded, setPage: observed => { page = observed; }, ledgerOf, saveState, keepPage, addStep, finish, pause, resume, runTransaction, authority, actBrowser, observeBrowser, prepareBrowserAction, assertBrowserRequestScope, assertPublicSearch, browserEffectStatus, admitPending, pauseBrowserAction, pauseHeld })) return;
       if ((state.pendingAction || state.pendingHeld || state.pendingComputer) && (await browserEffectStatus(ownerId, id) !== 'clear'
         || (state.pendingAction || state.pendingHeld) && (state.progressRecovery?.browser?.uncertain || conversation.browser_checkpoint?.status === 'review_required'))) {
         await finish(id, runId, state, /[؀-ۿ]/u.test(request)
@@ -3893,6 +3896,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // Insert the accepted reply in this same transaction. A rejected change
       // rolls it back; its DB-owned identity/time can anchor a new primary.
       const message = { id: randomUUID(), createdAt: new Date(), text: clean(say) };
+      if (recordBrowserTaskResume(expected))
       await tx.insertInto('chat_messages').values({ id: message.id, conversation_id: id, role: 'user', text: message.text, created_at: message.createdAt }).execute();
       await change(state, tx, { ...message, createdAt: message.createdAt.getTime(), ...(priorSource ? { priorRequest: priorSource.request } : {}) });
       await tx.updateTable('chat_runs').set({ status:expected.stop?'cancelled':'running', state: JSON.stringify(state),lease_token:token,attempt:run.attempt+1,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, updated_at: new Date() }).where('id', '=', runId).execute();
@@ -4276,6 +4280,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const row = await owned(ownerId, id);
     const secure = row.secure as ChatSecureRequest | null;
     if (row.status !== 'waiting_input' || secure?.id !== input.requestId || !row.active_run_id) throw new BrowserError('CHAT_SECURE_CHANGED', 'هذا الطلب لم يعد معلقًا.', 409);
+    if (config.browserHands === 'on' && isBrowserTaskSecure(secure)) return answerBrowserTaskSecure(input, ownerId, id, row.active_run_id, resume, detail);
     if (input.action === 'submit') {
       if (secure.site === GOOGLE_SIGN_IN_ORIGIN) throw new BrowserError('CHAT_GOOGLE_SIGN_IN_UNSUPPORTED', GOOGLE_SIGN_IN_STOP, 409);
       if (!input.values || !Object.values(input.values).some(Boolean)) throw new BrowserError('CHAT_SECURE_EMPTY', 'أدخل البيانات المطلوبة.');

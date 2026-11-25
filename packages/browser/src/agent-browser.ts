@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http';
 import { chromium, type BrowserContext, type ElementHandle, type Frame, type JSHandle, type Page, type Route } from 'playwright';
 import { decideEffect, type EffectActor } from './effect-policy.js';
 import { BrowserError, SafeNetwork } from './network.js';
+import { browserHandsFrameSource, guardBrowserHandsReservation, guardBrowserHandsRoute, installBrowserHands } from './browser-hands-runtime.js';
 import { AgentSessionCheckpointSchema, AgentPostconditionSchema, evidenceHash, safeResumeUrl, pagePostcondition, type AgentSessionCheckpoint, type AgentPostcondition, type AgentVerificationReport, type AgentVerificationCheck } from './session-state.js';
 
 export type AgentFieldKind = 'password' | 'otp' | 'card' | 'identifier' | 'text';
@@ -448,6 +449,7 @@ export class AgentBrowser {
   constructor(private readonly options: AgentBrowserOptions) {
     this.network = new SafeNetwork({ testOrigins: options.testOrigins });
     this.checkpointStore = options.onCheckpoint;
+    installBrowserHands(this, { frameModel: FRAME_MODEL_SCRIPT, frameLimit: MAX_FRAME_ELEMENTS, hashOf, requestBodyHash });
     this.settleQuietMs = Number.isFinite(options.settleQuietMs) && options.settleQuietMs! >= 0 ? Math.min(options.settleQuietMs!, SETTLE_CAP_MS) : SETTLE_QUIET_MS;
     this.idlePageMs = options.idlePageMs === undefined ? DEFAULT_IDLE_PAGE_MS : options.idlePageMs && options.idlePageMs > 0 ? options.idlePageMs : null;
     if (this.idlePageMs) {
@@ -669,6 +671,7 @@ export class AgentBrowser {
         if (!permit && method === 'GET' && entry.recovery.effect?.method === 'GET' && entry.recovery.effect.urlHash === evidenceHash(url)) throw new BrowserError('AGENT_RECOVERY_GET_REPLAY_DENIED', 'حُجبت إعادة وجهة إرسال GET السابقة دون موافقة جديدة مطابقة.', 409);
         const actor = this.actor(entry, operation, topLevel, url);
         const decision = decideEffect({ url, method, bodyHash, pageOrigin: frameOrigin(initialPopup ? entry.page.mainFrame() : request.frame()), topLevelNavigation: topLevel, actor, ...(entry.navigationUrl ? { expectedNavigation: entry.navigationUrl } : {}), ...(permit ? { permit: { url: permit.url, method: permit.method, bodyHash: permit.bodyHash, used: operation!.used, expiresAt: permit.expiresAt } } : {}), now: Date.now() });
+        guardBrowserHandsRoute(this, route, url, actor, decision, operation);
         // A click may not steer a frame: a programmatic form submit into an
         // iframe is an effect that the read rule below must not excuse.
         if (navigation && !topLevel && actor === 'agent' && decision.kind === 'allow' && !decision.consumesPermit) throw new BrowserError('AGENT_EFFECT_DENIED', 'حُجب تنقل إطار تلقائي بلا موافقة مطابقة. لم يُرسل الطلب.', 403);
@@ -938,6 +941,7 @@ export class AgentBrowser {
     }
     entry.lastUsed = Date.now();
     if (reserve) {
+      guardBrowserHandsReservation(this, entry);
       if (entry.operation) throw new BrowserError('AGENT_ACTION_BUSY', 'هناك إجراء جارٍ في هذه الصفحة.', 409);
       entry.operation = reserve;
     }
@@ -1097,6 +1101,7 @@ export class AgentBrowser {
     for (let attempt = 0; attempt < 2; attempt++) {
       let pending = this.frameModels.get(frame);
       if (!pending) {
+        const FRAME_MODEL_SCRIPT = browserHandsFrameSource(this);
         pending = frame.evaluateHandle<FrameModel>(FRAME_MODEL_SCRIPT);
         this.frameModels.set(frame, pending);
       }

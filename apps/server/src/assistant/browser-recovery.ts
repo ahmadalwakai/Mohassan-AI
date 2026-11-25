@@ -29,7 +29,7 @@ export function reserveBrowserRecovery(value: BrowserRecoveryState | undefined, 
 
 /** Exact host error codes only. Policy, approvals and uncertain effects never qualify. */
 export function transientBrowserFailure(error: unknown, action: AgentAction | 'observe', approved = false): string | null {
-  if (approved) return null;
+  if (approved || (action !== 'observe' && action.browserHands)) return null;
   const kind = action === 'observe' ? action : action.kind;
   if (error instanceof BrowserError) {
     if (['AGENT_PAGE_CLOSED', 'AGENT_NO_PAGE', 'AGENT_PAGE_UNREADABLE'].includes(error.code)) return error.code;
