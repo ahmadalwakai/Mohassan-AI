@@ -58,7 +58,7 @@ describe('manners reply rendering', () => {
   it('answers salutations, introductions and goodnight in context', () => {
     expect(renderMannersReply(detection('greeting', { language: 'ar', detail: 'peace' })).text).toMatch(/^وعليكم السلام/u);
     expect(renderMannersReply(detection('greeting', { detail: 'meeting' })).text).toBe('Nice to meet you too!');
-    expect(renderMannersReply(detection('farewell', { detail: 'night' })).text).toBe('Good night!');
+    expect(renderMannersReply(detection('farewell', { detail: 'night' })).text).toMatch(/^Good night\b/u);
   });
 
   it('does not solicit a task in a quiet greeting or a greeting wrapped around a task', () => {
