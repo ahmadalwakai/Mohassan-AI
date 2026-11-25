@@ -14,6 +14,7 @@ import { Megaphone,
 import { BrowserTaskInputSchema, browserReadOrigins, detectBrowserOpenIntent, type Autonomy, type Capability, type CodingWorkspace, type Integration, type Task, type TaskEvent, type TaskStatus, type WorkspaceSnapshot } from "@mohassan/contracts";
 import { PlanningResultView } from "./planning-result";
 import type { Access } from "./members";
+import { MemberDataAccessMount, shouldMountMemberDataAccess } from "./member-data-rights";
 import { AiConnection } from "./ai-connection";
 import { pendingAdsConnect } from "./ads-connect";
 import { AiProviders } from "./ai-providers";
@@ -332,6 +333,7 @@ export function Workspace() {
     request<Access>("/api/access").then(value => { if (active) setAccess(value); }).catch((caught) => {
       if (!active) return;
       if (caught instanceof ApiError && [401, 403].includes(caught.status)) { setSession(null); setBoot("signin"); setError(caught.status === 403 ? caught.message : ""); }
+      else setError(errorMessage(caught));
     });
     return () => { active = false; };
   }, [boot, session]);
@@ -400,7 +402,7 @@ export function Workspace() {
   if (boot === "unconfigured") return <main className="boot-screen"><Brand compact /><span className="empty-icon"><ShieldCheck size={28} /></span><h1>يلزم إعداد حساب المالك</h1><p>إنشاء الحساب الأول متاح من بيئة الخادم فقط. بعد إتمامه، أعد المحاولة للدخول إلى مساحة العمل.</p><Button className="primary-button" onClick={() => { void retryBoot(); }}><RefreshCw size={16} />إعادة المحاولة</Button></main>;
   if (boot === "setup" || boot === "signin") return <AuthScreen needsSetup={boot === "setup"} onAuthenticated={(value) => { setSession(value); setBoot("ready"); }} onRetry={() => { void request<{ needsSetup: boolean; setupAvailable?: boolean }>("/api/setup").then((value) => { if (!value.needsSetup) setBoot("signin"); }).catch(() => {}); }} />;
 
-  if (access?.role === "member" && advanced) return <MemberTools access={access} onChat={() => setAdvanced(false)} onSignOut={() => { void signOut(); }} />;
+  if (shouldMountMemberDataAccess(access, advanced)) return <MemberDataAccessMount access={access} error={error} tools={MemberTools} onChat={() => setAdvanced(false)} onSignOut={() => { void signOut(); }} />;
   if (!advanced || !owner) return <AssistantApp name={session?.user.name ?? "بك"} onAdvanced={() => setAdvanced(true)} onOpenTool={owner ? (target) => { setView(target); setAdvanced(true); } : undefined} onSignOut={() => { void signOut(); }} notifications={notifications} />;
 
   const tasks = snapshot?.tasks ?? [];

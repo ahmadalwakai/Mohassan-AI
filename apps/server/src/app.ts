@@ -11,6 +11,7 @@ import { Runtime } from '@mohassan/runtime';
 import { CreateTaskSchema, SetupSchema, WorkspaceSnapshotSchema, SkillBenchmarkSuiteSchema, type Integration } from '@mohassan/contracts';
 import { createAuth, createOwner, migrateAuth, recoverLocalSetupClaim } from './auth.js';
 import { MEMBER_QUOTA_ROUTES, MEMBER_ROUTES, PUBLIC_ROUTES, memberRunsToday, migrateMembers, registerMemberRoutes, roleOf, routeKey, type WorkspaceRole } from './members.js';
+import { handleMemberDataRequest, registerMemberDataRights } from './member-data-bootstrap.js';
 import { lockOwnerToolAccess } from './owner-tool-authorization.js';
 import { createRequestRateLimitKey } from './request-rate-limit.js';
 import { createAIControl } from './ai.js';
@@ -237,6 +238,7 @@ export async function createApplication(config: AppConfig) {
     if (!user) return reply.code(401).send({error: {code: 'UNAUTHORIZED', message: 'سجل الدخول للمتابعة.'}});
     const role = await roleFor(request, user.id);
     if (role === 'owner') return;
+    if (await handleMemberDataRequest(database.db, reply, key, user.id, role)) return;
     if (role !== 'member' || !MEMBER_ROUTES.has(key)) return reply.code(403).send({error: {code: 'MEMBER_FORBIDDEN', message: 'هذه الخدمة غير متاحة لحسابك.'}});
     if (MEMBER_QUOTA_ROUTES.has(key) && await memberRunsToday(database.db, user.id) >= memberDailyRuns) {
       return reply.code(429).send({error: {code: 'MEMBER_DAILY_LIMIT', message: `وصلت إلى حد ${memberDailyRuns} طلبًا خلال 24 ساعة. حاول لاحقًا.`}});
@@ -350,7 +352,7 @@ export async function createApplication(config: AppConfig) {
   // Generated websites (no model): composed from a brief, previewed by token, exported as ZIP, published to Vercel when a token is set.
   const sites=await createSitesControl(database.db,{tokenSecret:config.internalSecret,publisher:config.sites?.publishTarget==='vercel'?createVercelPublisher({token:config.sites.vercelToken,teamId:config.sites.vercelTeamId,fetch:config.sites.fetch}):noPublisher});
   await registerSiteRoutes(app,{control:sites,owner,role});
-  await registerMemberRoutes(app,{db:database.db,auth,webOrigin:config.webOrigin,owner,role,dailyRuns:memberDailyRuns,adsAvailable:()=>googleAds.configured,imagesAvailable:()=>false,sitesAvailable:()=>true});
+  const agentBrowser = await registerMemberDataRights(app, { db: database.db, auth, owner, role, config, adsAvailable: () => googleAds.configured, registerMemberRoutes, AgentBrowser, browserProfileDir: config.browserProfileDir ?? join(tmpdir(), `mohassan-browser-${randomUUID()}`) });
   const assistantTools=createAssistantTools({memory,coding,studio,studioChange:studioAi.available,runtime,windows,googleAds});
   const inference=await createInferenceControl(database.db,{...config.inference,groq:{apiKey:config.groqApiKey,fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b']},fetch:config.aiFetch});
   await registerInferenceRoutes(app,{control:inference,owner});
@@ -369,7 +371,6 @@ export async function createApplication(config: AppConfig) {
   if(adsChatWorker)app.addHook('onClose',async()=>{adsChatWorker.stop();});
   const adsWorker=adsChatWorker??config.adsModelWorker;
   const adsModel=adsWorker?createAdsModelChat({worker:adsWorker,fetchPage:config.googleAds?.fetchPage??landingPageReader(config.browser)}):undefined;
-  const agentBrowser=new AgentBrowser({profileDir:config.browserProfileDir??join(tmpdir(),`mohassan-browser-${randomUUID()}`),testOrigins:config.browser?.testOrigins,channel:config.browserChannel});
   const chromeExtension=await createChromeExtensionControl(database.db);
   registerChromeExtensionRoutes(app,{control:chromeExtension,owner});
   const adsSleep=config.googleAds?.sleep;

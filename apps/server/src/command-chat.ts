@@ -14,6 +14,8 @@ import {
 import { AgentEffectHeld, AgentSessionCheckpointSchema, BrowserError, SearchEngine, SafeNetwork, type AgentPostcondition, type AgentAction, type AgentAuthority, type AgentActionResult, type AgentBrowser, type AgentCaptureResult, type AgentPage, type NetworkPolicy, type SearchProvider } from '@mohassan/browser';
 import { GroqProvider, ProviderError, redactSecrets, classifyProviderFallback, waitForRetryAfter, validatedRetryAfterMs, type InferenceRouter, type ModelProvider } from '@mohassan/providers';
 import { unfenceJson } from './inference.js';
+import { rememberRemovedConversationProfile } from './member-profile-storage.js';
+import { withMemberChatDeletionFence } from './member-chat-deletion-fence.js';
 import { redactCredentialText } from '@mohassan/cognitive';
 import { classifyExperience, escapedContextLength, recordExperience, type ExperienceInput } from '@mohassan/learning';
 import {
@@ -425,6 +427,7 @@ export async function commandChatMigration(db: Kysely<any>) {
 
 export async function createCommandChatControl(db: Kysely<any>, config: CommandChatConfig) {
   await commandChatMigration(db);
+  config = await withMemberChatDeletionFence(db, config);
   const browser = config.browser;
   const providers = new Map<string, ModelProvider>();
   if (config.createProvider) {
@@ -4348,6 +4351,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const row = await owned(ownerId, id);
     if (row.active_run_id) await cancel(ownerId, id);
     await workers.get(id)?.catch(() => {});
+    await rememberRemovedConversationProfile(browser, ownerId, row.browser_account ?? null);
     await db.transaction().execute(async (tx) => {
       const locked = await tx.selectFrom('chat_conversations').select('id').where('id', '=', id).where('owner_id', '=', ownerId).forUpdate().executeTakeFirst();
       if (!locked) throw notFound();

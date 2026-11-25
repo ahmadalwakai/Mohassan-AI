@@ -1,5 +1,13 @@
 import { betterAuth } from 'better-auth';
 import { sql, type Kysely } from 'kysely';
+import { discardUnusedSignupSession } from './member-sessions.js';
+
+type SessionCreationCheck = (userId: string) => Promise<void>;
+const sessionCreationChecks = new WeakMap<object, SessionCreationCheck>();
+
+export function setAuthSessionCreationCheck(auth: ReturnType<typeof createAuth>, check: SessionCreationCheck) {
+  sessionCreationChecks.set(auth, check);
+}
 
 export async function migrateAuth(database: Kysely<any>) {
   await database.transaction().execute(async (db) => {
@@ -58,18 +66,20 @@ export function createAuth(db: Kysely<any>, options: {secret: string; webOrigin:
     alias.hostname = alias.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
     trustedOrigins.push(alias.origin);
   }
-  return betterAuth({
+  const auth = betterAuth({
     appName: 'Mohassan AI',
     secret: options.secret,
     baseURL: options.webOrigin,
     database: {db, type: 'postgres'},
     trustedOrigins,
     emailAndPassword: {enabled: true, minPasswordLength: 12, maxPasswordLength: 128},
+    databaseHooks: {session: {create: {before: async session => { await sessionCreationChecks.get(auth)?.(session.userId); }}}},
     session: {expiresIn: 60 * 60 * 24 * 7, updateAge: 60 * 60, cookieCache: {enabled: false}},
     rateLimit: {enabled: true, storage: 'database', window: 60, max: 30,customRules:{'/get-session':{window:60,max:120}}},
     advanced: {useSecureCookies: options.production},
     logger: {disabled: true},
   });
+  return auth;
 }
 
 export async function createOwner(db: Kysely<any>, auth: ReturnType<typeof createAuth>, input: {name: string; email: string; password: string}) {
@@ -80,7 +90,10 @@ export async function createOwner(db: Kysely<any>, auth: ReturnType<typeof creat
   try {
     // Public HTTP registration is never mounted. Only this one-time server operation can call it.
     const result = await auth.api.signUpEmail({body: input});
-    await db.updateTable('workspace_owner').set({owner_id: result.user.id}).where('id', '=', 1).execute();
+    await db.transaction().execute(async tx => {
+      await discardUnusedSignupSession(tx, result.user.id, result.token);
+      await tx.updateTable('workspace_owner').set({owner_id: result.user.id}).where('id', '=', 1).execute();
+    });
     return result.user;
   } catch (error) {
     await db.deleteFrom('workspace_owner').where('id', '=', 1).where('owner_id', 'is', null).execute();
