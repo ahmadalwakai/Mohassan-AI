@@ -9,10 +9,10 @@ import type { BrainState } from './brain.js';
 import { browserTaskLabel, browserTaskSafeLocation, newBrowserTaskProgress, runBrowserTask, type BrowserTaskApproval, type BrowserTaskLog, type BrowserTaskPort, type BrowserTaskProgress, type BrowserTaskWait } from './browser-task-runner.js';
 import { parseBrowserTask, type BrowserTaskSpec, type BrowserTaskStep } from './browser-task-spec.js';
 import type { HandsStep } from './hands.js';
+import { browserTaskHandoverNote, browserTaskHandoverVisibility } from './browser-task-handover-card.js';
 
 export type BrowserHandsMode = 'on' | 'shadow';
 
-const MANUAL_NOTE = 'أكمل الخطوة في المتصفح. سأتابع عند التحقق من أن الصفحة أصبحت جاهزة.';
 type TaskState = BrainState & { browserTask?: BrowserTaskProgress };
 const stepId = (index: number) => `browser-task-${index + 1}`;
 
@@ -23,11 +23,11 @@ export function browserTaskProgress(state: BrainState, create = false): BrowserT
 }
 
 export function browserTaskSecure(wait: BrowserTaskWait): Omit<ChatSecureRequest, 'id'> {
-  return { kind: 'hands_on', site: wait.step.site, prompt: wait.step.prompt, note: MANUAL_NOTE, fields: [] };
+  return { kind: 'hands_on', site: wait.step.site, prompt: wait.step.prompt, note: browserTaskHandoverNote(wait.step.kind), fields: [] };
 }
 
 export function isBrowserTaskSecure(secure: ChatSecureRequest | null) {
-  return secure?.kind === 'hands_on' && secure.fields.length === 0 && secure.note === MANUAL_NOTE;
+  return Boolean(browserTaskHandoverVisibility(secure));
 }
 
 export function browserTaskVisibility(state: BrainState | null | undefined, secure: ChatSecureRequest | null) {
@@ -104,14 +104,14 @@ export function skipBrowserTaskHandover(state: BrainState) {
 
 type WaitingResult = NonNullable<BrowserTaskProgress['humanResult']>;
 export function createBrowserTaskWaiters() {
-  const pending = new Map<string, { abort: AbortController; done: Promise<void> }>();
+  const pending = new Map<string, AbortController>();
   function start(options: { conversationId: string; wait: BrowserTaskWait;
     observe: () => Promise<AgentPage | null>; isWaiting: () => Promise<boolean>; claim: (result: WaitingResult) => Promise<unknown> }) {
     const key = options.conversationId;
-    pending.get(key)?.abort.abort();
+    pending.get(key)?.abort();
     const abort = new AbortController();
     const wait = options.wait;
-    const done = (async () => {
+    void (async () => {
       const outcome = await waitForBrowserHumanProgress<AgentPage>({ step: wait.step, originalUrl: wait.origin.url, targetUrl: wait.targetUrl,
         signal: abort.signal,
         isStillBlocked: wait.target ? page => browserTaskSafeLocation(page.url) === wait.origin.url && findBrowserHandsElement(page.elements,
@@ -130,18 +130,10 @@ export function createBrowserTaskWaiters() {
     })().catch(error => {
       if (!abort.signal.aborted && (!(error instanceof BrowserError) || !['CHAT_RESUME_CONFLICT', 'CHAT_SHUTTING_DOWN', 'CHAT_SESSION_UNAVAILABLE'].includes(error.code)))
         console.warn(JSON.stringify({ event: 'browser_hands_wait_failed', code: error instanceof BrowserError ? error.code : 'unexpected' }));
-    }).finally(() => { if (pending.get(key)?.abort === abort) pending.delete(key); });
-    pending.set(key, { abort, done });
+    }).finally(() => { if (pending.get(key) === abort) pending.delete(key); });
+    pending.set(key, abort);
   }
-  return {
-    start,
-    stop(conversationId: string) { pending.get(conversationId)?.abort.abort(); },
-    async close() {
-      const waits = [...pending.values()];
-      for (const wait of waits) wait.abort.abort();
-      await Promise.all(waits.map(wait => wait.done));
-    },
-  };
+  return { start };
 }
 
 export interface BrowserTaskChatPorts {

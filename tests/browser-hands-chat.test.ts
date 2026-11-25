@@ -13,6 +13,7 @@ let server: Awaited<ReturnType<typeof startBrowserHandsFixture>>;
 let database: Awaited<ReturnType<typeof createDatabase>>;
 let control: Awaited<ReturnType<typeof createCommandChatControl>>;
 let browser: AgentBrowser;
+let browserOwnerAccess = true;
 
 beforeAll(async () => {
   server = await startBrowserHandsFixture();
@@ -22,6 +23,7 @@ beforeAll(async () => {
   await migrate(database.db);
   control = await createCommandChatControl(database.db, {
     browser, browserHands: 'on', models: { fast: [], deep: [], vision: '' }, recordExperiences: false,
+    accountFullAccess: async () => browserOwnerAccess,
   });
 });
 
@@ -50,6 +52,7 @@ describe('browser handovers through the existing owner take-over path', () => {
       const paused = await control.detail(owner, id);
       expect(paused.visibility).toMatchObject({ level: 3, code });
       expect(paused.secure).toMatchObject({ kind: 'hands_on', fields: [] });
+      expect(paused.visibility?.reason).toBe(paused.secure?.prompt);
       expect(paused.secure?.prompt).toContain('127.0.0.1');
       expect(paused.secure?.prompt).toMatch(/\p{Script=Arabic}/u);
       const runId = paused.run?.id;
@@ -68,6 +71,7 @@ describe('browser handovers through the existing owner take-over path', () => {
       expect(done.run?.id).toBe(runId);
       expect(done.visibility?.code).not.toBe(code);
       expect(done.messages.at(-1)?.text).toContain('fixture-main-27');
+      expect(done.messages.filter(message => message.role === 'user')).toHaveLength(1);
       expect((await database.db.selectFrom('chat_runs').select('status').where('conversation_id', '=', id).execute()).map(row => row.status))
         .toEqual(['completed']);
     } finally {
@@ -97,6 +101,28 @@ it('uses the existing exact approval for an irreversible browser submission', as
     expect(done.messages.at(-1)?.text).toContain('fixture-record-removed');
     expect(server.approvedActions()).toBe(before + 1);
   } finally {
+    await control.cancel(owner, id);
+    await browser.closeConversation(owner, id);
+  }
+});
+
+it('rechecks owner authority at the irreversible request boundary', async () => {
+  const url = new URL('/approval/ar/record', server.origin).href;
+  const before = server.approvedActions();
+  const { id } = await control.create(owner, { goal: ['افتح', url, 'ثم', 'اضغط زر «حذف السجل»', 'ثم', 'اقرأ الصفحة'].join(' ') });
+  try {
+    await expect.poll(async () => (await control.detail(owner, id)).status, { timeout: 8000 }).toBe('waiting_approval');
+    const { approval, run } = await control.detail(owner, id);
+    if (!approval || !run) throw new Error('Fixture approval is missing');
+    // The worker's earlier access snapshot is still valid. The transaction that
+    // reserves the irreversible effect must observe the revocation.
+    browserOwnerAccess = false;
+    await control.approve(owner, id, { approved: true, approvalId: approval.id });
+    await control.settled(id);
+    expect(server.approvedActions()).toBe(before);
+    expect(await database.db.selectFrom('chat_effect_receipts').select('id').where('run_id', '=', run.id).execute()).toEqual([]);
+  } finally {
+    browserOwnerAccess = true;
     await control.cancel(owner, id);
     await browser.closeConversation(owner, id);
   }

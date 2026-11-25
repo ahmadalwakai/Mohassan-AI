@@ -4,10 +4,8 @@ import { createServer, type Server } from 'node:http';
 import { chromium, type BrowserContext, type ElementHandle, type Frame, type JSHandle, type Page, type Route } from 'playwright';
 import { decideEffect, type EffectActor } from './effect-policy.js';
 import { BrowserError, SafeNetwork } from './network.js';
+import { browserHandsFrameSource, guardBrowserHandsReservation, guardBrowserHandsRoute, installBrowserHands } from './browser-hands-runtime.js';
 import { AgentSessionCheckpointSchema, AgentPostconditionSchema, evidenceHash, safeResumeUrl, pagePostcondition, type AgentSessionCheckpoint, type AgentPostcondition, type AgentVerificationReport, type AgentVerificationCheck } from './session-state.js';
-import { BROWSER_HANDS_FORM_GUARD_SCRIPT, assertBrowserHandsEffect, assertBrowserHandsOwnerFree, assertBrowserHandsReady, blockBrowserHandsSecret, browserHandsActionHash, browserHandsActionResult, browserHandsElementPositions, browserHandsGuardedAction, finishBrowserHandsHandover, observeBrowserHandsPage, performBrowserHandsChoiceClick, performBrowserHandsWrite, rememberBrowserHandsInput, type BrowserHandsActionBinding, type BrowserHandsWriteReceipt } from './browser-hands-agent.js';
-import { BROWSER_HANDS_FRAME_SCRIPT, browserHandsPageContent, browserHandsScreenshotMasks, type BrowserHandsElementMatch, type BrowserHandsFrameContent } from './browser-hands-dom.js';
-import { BrowserHumanStepError } from './browser-hands-human.js';
 
 export type AgentFieldKind = 'password' | 'otp' | 'card' | 'identifier' | 'text';
 
@@ -20,8 +18,6 @@ export interface AgentElement {
   href?: string;
   disabled?: boolean;
   inViewport: boolean;
-  match?: BrowserHandsElementMatch;
-  frameOrigin?: string;
 }
 
 export interface AgentPage {
@@ -35,14 +31,12 @@ export interface AgentPage {
   hash: string;
   observedAt: string;
   documentStatus?: number;
-  content?: BrowserHandsFrameContent[];
 }
 
 export interface AgentActionResult {
   page: AgentPage;
   changed: boolean;
   verification?: AgentVerificationReport;
-  browserHandsWrite?: BrowserHandsWriteReceipt;
 }
 
 /** Ephemeral host telemetry only: no element identity, input value or saved page data. */
@@ -123,7 +117,6 @@ export interface AgentAction {
   ref?: string;
   text?: string;
   submit?: boolean;
-  browserHands?: BrowserHandsActionBinding;
 }
 export interface AgentAuthority {
   signal: AbortSignal;
@@ -136,7 +129,6 @@ export interface AgentAuthority {
 
 export interface AgentBrowserOptions {
   profileDir: string;
-  browserHands?: boolean;
   /** Hosts allowed for local fixtures only. Everything else must be a public address. */
   testOrigins?: string[];
   /** When set, every navigation, subresource and redirect must stay in this scope. */
@@ -198,13 +190,12 @@ interface FrameSnapshot {
   challenge: boolean;
   integrity: string;
   scroll: AgentPage['scroll'];
-  content?: BrowserHandsFrameContent;
 }
 
 interface FrameModel {
   read(firstRef: number, limit: number): FrameSnapshot;
   resolve(ref: string): Element | null;
-  prepareForm(action: AgentAction): { url: string; method: 'GET' | 'POST'; body: string; multipart: boolean } | { humanOnly: NonNullable<BrowserHandsElementMatch['humanOnly']> } | null;
+  prepareForm(action: AgentAction): { url: string; method: 'GET' | 'POST'; body: string; multipart: boolean } | null;
   canWrite(ref: string, value: string, approved: boolean): boolean;
   recordWrite(ref: string): void;
   captureSample(): { epoch: number; viewport: number[]; ready: boolean };
@@ -252,7 +243,7 @@ const HELD_MS = 5 * 60000;
  * Held by Playwright in each document. Refs bind to DOM nodes and their
  * observed identity without writing selectors into the page's markup.
  */
-const frameModelScript = (hands: boolean) => String.raw`(() => {
+const FRAME_MODEL_SCRIPT = String.raw`(() => {
   let captureEpoch = 0;
   const captureChange = () => { captureEpoch = Math.min(2147483647, captureEpoch + 1); };
   let captureObserver;
@@ -270,7 +261,7 @@ const frameModelScript = (hands: boolean) => String.raw`(() => {
   const identities = new WeakMap();
   const agentValues = new WeakMap();
   let targets = new Map();
-  const interactive = 'a[href],button,input,textarea,select,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=option],[role=checkbox],[role=radio],[role=switch],[role=combobox],[role=textbox],[role=searchbox],[contenteditable="true"],[contenteditable=""]${hands ? ',[contenteditable="plaintext-only"]' : ''}';
+  const interactive = 'a[href],button,input,textarea,select,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=option],[role=checkbox],[role=radio],[role=switch],[role=combobox],[role=textbox],[role=searchbox],[contenteditable="true"],[contenteditable=""]';
   const visible = (node) => {
     const rect = node.getBoundingClientRect();
     if (rect.width < 2 || rect.height < 2) return false;
@@ -304,14 +295,11 @@ const frameModelScript = (hands: boolean) => String.raw`(() => {
     if (node.tagName === 'INPUT') return node.type === 'file' ? 'file' : ['submit', 'button', 'image', 'reset'].includes(node.type) ? 'button' : ['checkbox', 'radio'].includes(node.type) ? node.type : 'textbox';
     return 'button';
   };
-  ${hands ? BROWSER_HANDS_FRAME_SCRIPT : ''}
-  ${hands ? BROWSER_HANDS_FORM_GUARD_SCRIPT : ''}
   const identityOf = (node) => JSON.stringify([
-    location.href, node.tagName, roleOf(node), ${hands} ? browserHandsName(node) : labelOf(node), node.id, node.name, node.type,
+    location.href, node.tagName, roleOf(node), labelOf(node), node.id, node.name, node.type,
     node.href, node.getAttribute('target'), node.getAttribute('onclick'), node.disabled, node.getAttribute('aria-disabled'),
     node.form?.action, node.form?.method, node.form?.enctype, node.form?.target,
     node.getAttribute('formaction'), node.getAttribute('formmethod'), node.getAttribute('formenctype'), node.getAttribute('formtarget'),
-    ...(${hands} ? [browserHandsMetadata(node)] : []),
   ]);
   const resolve = (ref) => {
     const node = targets.get(ref);
@@ -336,14 +324,11 @@ const frameModelScript = (hands: boolean) => String.raw`(() => {
       const ref = previous?.identity === identity ? previous.ref : 'e' + (firstRef + index);
       identities.set(node, { ref, identity });
       nextTargets.set(ref, node);
-      const match = ${hands} ? browserHandsMetadata(node, index) : undefined;
-      const rect = node.getBoundingClientRect(), legacyField = fieldKind(node, singleDigitBoxes);
-      const field = match ? match.field ?? (['identifier', 'text'].includes(legacyField) ? legacyField : undefined) : legacyField;
-      const sensitive = match?.humanOnly || match?.control === 'file' || field && field !== 'text' && field !== 'identifier';
+      const rect = node.getBoundingClientRect(), field = fieldKind(node, singleDigitBoxes);
+      const sensitive = field && field !== 'text' && field !== 'identifier';
       const value = !sensitive && 'value' in node && node.tagName !== 'BUTTON' && !['submit', 'button'].includes(node.type) ? clean(node.value).slice(0, 60) : '';
       return {
-        ref, role: roleOf(node), label: (match?.name ?? labelOf(node)).slice(0, 90), field,
-        ...(match ? { match } : {}),
+        ref, role: roleOf(node), label: labelOf(node).slice(0, 90), field,
         ...(value ? { value } : {}),
         // Preserve every accepted URL; the extra character keeps oversized URLs rejectable.
         ...(node.tagName === 'A' && node.href ? { href: node.href.slice(0, 2501) } : {}),
@@ -358,12 +343,10 @@ const frameModelScript = (hands: boolean) => String.raw`(() => {
     });
     const main = document.querySelector('main,[role=main],article');
     const mainText = clean(main?.innerText), bodyText = clean(document.body?.innerText);
-    const content = ${hands} ? browserHandsContent(nodes) : undefined;
     return {
       url: location.href, title: clean(document.title).slice(0, 200),
-      text: content?.main ?? (mainText.length > 400 ? mainText : bodyText).slice(0, 24000),
+      text: (mainText.length > 400 ? mainText : bodyText).slice(0, 24000),
       elements, challenge: challengeFrames.length > 0,
-      ...(content ? { content } : {}),
       // Kept on the host only as a hash; hidden values and passwords never enter the model snapshot.
       integrity: JSON.stringify(nodes.filter(node => node.matches('form,input,button,textarea,select,a[href]')).slice(0,1000).map(node => [node.tagName,node.id,node.name,node.type,node.form?.action,node.form?.method,node.getAttribute('formaction'),node.getAttribute('formmethod'),node.getAttribute('target'),node.href,node.value,node.checked,node.disabled])),
       scroll: { top: Math.round(scrollY), height: document.documentElement.scrollHeight, viewport: innerHeight },
@@ -377,8 +360,6 @@ const frameModelScript = (hands: boolean) => String.raw`(() => {
     if (input.kind === 'click' && !submitter) return null;
     const form = node.form;
     if (!form) return null;
-    const humanOnly = ${hands} ? browserHandsAssociatedHumanField(form) : null;
-    if (humanOnly) return { humanOnly };
     const button = submitter || Array.from(form.elements).find(item => ['BUTTON','INPUT'].includes(item.tagName) && item.type === 'submit' && !item.disabled);
     const method = (button?.hasAttribute('formmethod') ? button.formMethod : form.method).toUpperCase();
     const action = button?.hasAttribute('formaction') ? button.formAction : form.action;
@@ -395,18 +376,16 @@ const frameModelScript = (hands: boolean) => String.raw`(() => {
     if (method === 'GET') url.search = body;
     return {url:url.href,method,body:method === 'POST' ? body : '',multipart:method === 'POST' && encoding === 'multipart/form-data'};
   };
-  const valueOf = node => ${hands} ? browserHandsValue(node) : 'value' in node ? String(node.value) : String(node.textContent || '');
+  const valueOf = node => 'value' in node ? String(node.value) : String(node.textContent || '');
   const canWrite = (ref, value, approved) => {
     const node = resolve(ref);
     if (!node) return false;
-    const choice = ${hands} ? browserHandsCanWriteChoice(node, value, agentValues) : undefined;
-    if (choice !== undefined) return choice;
     const current = valueOf(node);
     if (approved || current === value || !current || agentValues.get(node) === current) return true;
     // A select's original default is page state, not a choice the owner made.
     return node.tagName === 'SELECT' && Array.from(node.options).every((option, index) => option.selected === (option.defaultSelected || !Array.from(node.options).some(item => item.defaultSelected) && index === 0));
   };
-  const recordWrite = ref => { const node = resolve(ref); if (node) ${hands} ? browserHandsRecordWrite(node, agentValues) : agentValues.set(node, valueOf(node)); };
+  const recordWrite = ref => { const node = resolve(ref); if (node) agentValues.set(node, valueOf(node)); };
   return { read, resolve, prepareForm, canWrite, recordWrite, captureSample };
 })()`;
 
@@ -470,6 +449,7 @@ export class AgentBrowser {
   constructor(private readonly options: AgentBrowserOptions) {
     this.network = new SafeNetwork({ testOrigins: options.testOrigins });
     this.checkpointStore = options.onCheckpoint;
+    installBrowserHands(this, { frameModel: FRAME_MODEL_SCRIPT, frameLimit: MAX_FRAME_ELEMENTS, hashOf, requestBodyHash });
     this.settleQuietMs = Number.isFinite(options.settleQuietMs) && options.settleQuietMs! >= 0 ? Math.min(options.settleQuietMs!, SETTLE_CAP_MS) : SETTLE_QUIET_MS;
     this.idlePageMs = options.idlePageMs === undefined ? DEFAULT_IDLE_PAGE_MS : options.idlePageMs && options.idlePageMs > 0 ? options.idlePageMs : null;
     if (this.idlePageMs) {
@@ -691,7 +671,7 @@ export class AgentBrowser {
         if (!permit && method === 'GET' && entry.recovery.effect?.method === 'GET' && entry.recovery.effect.urlHash === evidenceHash(url)) throw new BrowserError('AGENT_RECOVERY_GET_REPLAY_DENIED', 'حُجبت إعادة وجهة إرسال GET السابقة دون موافقة جديدة مطابقة.', 409);
         const actor = this.actor(entry, operation, topLevel, url);
         const decision = decideEffect({ url, method, bodyHash, pageOrigin: frameOrigin(initialPopup ? entry.page.mainFrame() : request.frame()), topLevelNavigation: topLevel, actor, ...(entry.navigationUrl ? { expectedNavigation: entry.navigationUrl } : {}), ...(permit ? { permit: { url: permit.url, method: permit.method, bodyHash: permit.bodyHash, used: operation!.used, expiresAt: permit.expiresAt } } : {}), now: Date.now() });
-        if (this.options.browserHands) assertBrowserHandsEffect(route, url, actor, decision, operation);
+        guardBrowserHandsRoute(this, route, url, actor, decision, operation);
         // A click may not steer a frame: a programmatic form submit into an
         // iframe is an effect that the read rule below must not excuse.
         if (navigation && !topLevel && actor === 'agent' && decision.kind === 'allow' && !decision.consumesPermit) throw new BrowserError('AGENT_EFFECT_DENIED', 'حُجب تنقل إطار تلقائي بلا موافقة مطابقة. لم يُرسل الطلب.', 403);
@@ -734,7 +714,7 @@ export class AgentBrowser {
   private actor(entry: ConversationPage, operation: ConversationPage['operation'], topLevel: boolean, url: string): EffectActor {
     if (!operation) return (entry.ownerInputUntil ?? 0) > Date.now() ? 'owner' : 'page';
     // Once its request left or its page changed, the action is over; what follows is the new page's own traffic.
-    if ((operation.permit || GESTURES.has(operation.kind) || this.options.browserHands && operation.kind === 'select') && !operation.used && !operation.navigated) return 'agent';
+    if ((operation.permit || GESTURES.has(operation.kind)) && !operation.used && !operation.navigated) return 'agent';
     return topLevel && entry.navigationUrl === url ? 'agent' : 'page';
   }
 
@@ -961,7 +941,7 @@ export class AgentBrowser {
     }
     entry.lastUsed = Date.now();
     if (reserve) {
-      if (this.options.browserHands) assertBrowserHandsOwnerFree(entry);
+      guardBrowserHandsReservation(this, entry);
       if (entry.operation) throw new BrowserError('AGENT_ACTION_BUSY', 'هناك إجراء جارٍ في هذه الصفحة.', 409);
       entry.operation = reserve;
     }
@@ -971,7 +951,6 @@ export class AgentBrowser {
 
   /** Legacy direct action methods also exclude a concurrent evidence capture. */
   private async withMutation<T>(entry: ConversationPage, run: () => Promise<T>): Promise<T> {
-    if (this.options.browserHands) assertBrowserHandsOwnerFree(entry);
     if (entry.captureReservation) throw new BrowserError('AGENT_CAPTURE_BUSY', 'يجري التقاط قراءة موثقة لهذه الصفحة؛ انتظر اكتمالها.', 409);
     entry.mutations++;
     try { return await run(); } finally { entry.mutations--; }
@@ -1122,7 +1101,8 @@ export class AgentBrowser {
     for (let attempt = 0; attempt < 2; attempt++) {
       let pending = this.frameModels.get(frame);
       if (!pending) {
-        pending = frame.evaluateHandle<FrameModel>(frameModelScript(this.options.browserHands === true));
+        const FRAME_MODEL_SCRIPT = browserHandsFrameSource(this);
+        pending = frame.evaluateHandle<FrameModel>(FRAME_MODEL_SCRIPT);
         this.frameModels.set(frame, pending);
       }
       const firstRef = this.nextRef;
@@ -1144,7 +1124,7 @@ export class AgentBrowser {
 
   private async capture(entry: ConversationPage): Promise<void> {
     const secrets=this.redactions(entry);
-    const mask=entry.page.frames().filter(frame=>!frame.isDetached()).flatMap(frame=>[frame.locator('input[type="password"],input[autocomplete="one-time-code"],input[autocomplete^="cc-"]'),...secrets.map(secret=>frame.getByText(secret,{exact:false})),...(this.options.browserHands ? browserHandsScreenshotMasks(frame) : [])]);
+    const mask=entry.page.frames().filter(frame=>!frame.isDetached()).flatMap(frame=>[frame.locator('input[type="password"],input[autocomplete="one-time-code"],input[autocomplete^="cc-"]'),...secrets.map(secret=>frame.getByText(secret,{exact:false}))]);
     // Never reuse an old, possibly sensitive capture when masking fails.
     entry.shot = await entry.page.screenshot({ type: 'jpeg', quality: 62, timeout: 5000, mask }).catch(() => null);
   }
@@ -1157,22 +1137,21 @@ export class AgentBrowser {
     const main = results[0]?.snapshot;
     if (!main || page !== entry.page) throw new BrowserError('AGENT_PAGE_UNREADABLE', 'تعذرت قراءة الصفحة؛ ما زالت تتحمّل أو توقفت عن الاستجابة.', 502);
     const targets = new Map<string, ObservedTarget>();
-    const elements = results.flatMap((result, index) => {
+    const elements = results.flatMap(result => {
       if (!result) return [];
       const { frame, model, snapshot } = result;
       for (const element of snapshot.elements) {
         targets.set(element.ref, { frame, model, href: element.href });
       }
-      return this.options.browserHands ? browserHandsElementPositions(snapshot.elements, index * MAX_FRAME_ELEMENTS, snapshot.url) : snapshot.elements;
+      return snapshot.elements;
     });
     entry.targets = targets;
     elements.sort((first, second) => Number(second.inViewport) - Number(first.inViewport));
-    const frameText = results.slice(1).map((result) => result?.snapshot.text ?? '').filter((text) => text.length > (this.options.browserHands ? 0 : 30)).join(' ').slice(0, 2000);
+    const frameText = results.slice(1).map((result) => result?.snapshot.text ?? '').filter((text) => text.length > 30).join(' ').slice(0, 2000);
     const text = `${main.text} ${frameText}`.trim();
     const hasField = (field: AgentFieldKind) => elements.some((element) => element.field === field);
     const challenge = results.some((result) => result?.snapshot.challenge) || /verify you are human|i'?m not a robot|unusual traffic|أنا لست روبوت|تحقق من أنك إنسان/i.test(text.slice(0, 3000));
-    const fingerprint = hashOf(JSON.stringify([main.url, main.title, text, results.map(result => result?.snapshot.integrity), elements,
-      ...(this.options.browserHands ? [results.map(result => [result?.snapshot.url, result?.snapshot.title, result?.snapshot.content])] : [])]));
+    const fingerprint = hashOf(JSON.stringify([main.url, main.title, text, results.map(result => result?.snapshot.integrity), elements]));
     if (screenshot) await this.capture(entry);
     const response = entry.documentResponse;
     const snapshot:AgentPage = {
@@ -1180,7 +1159,6 @@ export class AgentBrowser {
       signals: { captcha: challenge, password: hasField('password'), otp: hasField('otp'), card: hasField('card') },
       scroll: main.scroll, hash: fingerprint, observedAt: new Date().toISOString(),
       ...(response && response.url.split('#')[0] === main.url.split('#')[0] ? { documentStatus: response.status } : {}),
-      ...(this.options.browserHands ? browserHandsPageContent(results.map(result => result?.snapshot.content)) : {}),
     };
     const secrets=this.redactions(entry);
     const scrub=(value:unknown):unknown=>typeof value==='string'?secrets.reduce((text,secret)=>text.split(secret).join('[محجوب]'),value):Array.isArray(value)?value.map(scrub):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([key,item])=>[key,scrub(item)])):value;
@@ -1341,18 +1319,6 @@ export class AgentBrowser {
     return result;
   }
 
-  async observeHands(ownerId: string, conversationId: string): Promise<AgentPage | null> {
-    if (!this.options.browserHands || !await this.hasPage(ownerId, conversationId)) return null;
-    const entry = await this.conversation(ownerId, conversationId);
-    return observeBrowserHandsPage(entry, () => this.read(entry, false));
-  }
-
-  async finishHandsHandover(ownerId: string, conversationId: string, expected: Pick<AgentPage, 'url' | 'hash'>, authority: AgentAuthority): Promise<AgentPage | null> {
-    if (!this.options.browserHands || !await this.hasPage(ownerId, conversationId)) return null;
-    const entry = await this.conversation(ownerId, conversationId);
-    return finishBrowserHandsHandover(entry, expected, authority, () => this.result(entry, false), () => this.persist(entry, authority));
-  }
-
   async open(ownerId: string, conversationId: string, input: string): Promise<AgentActionResult> {
     const url = this.normalizeUrl(input);
     if (!await this.isAllowed(url)) throw new BrowserError('AGENT_NETWORK_DENIED', 'هذا العنوان داخلي أو غير موجود، ولا يمكن فتحه.', 403);
@@ -1378,7 +1344,6 @@ export class AgentBrowser {
     this.beginRead(entry);
     try {
     const observed = await this.read(entry, false);
-    if (this.options.browserHands) assertBrowserHandsReady(observed, action);
     const model = action.kind === 'press'
       ? await this.frameModels.get(entry.page.mainFrame())
       : entry.targets.get(action.ref ?? '')?.model;
@@ -1387,9 +1352,8 @@ export class AgentBrowser {
       throw new BrowserError('AGENT_FORM_UNSUPPORTED', 'هذا النموذج لا يملك إرسالًا محدودًا يمكن تفويضه بأمان.', 403);
     });
     if (!prepared) return null;
-    if ('humanOnly' in prepared) blockBrowserHandsSecret(observed.elements.find(item => item.ref === action.ref)?.frameOrigin ?? observed.url, prepared.humanOnly);
     this.network.validate(prepared.url, this.options.allowedOrigins);
-    return { id:randomUUID(),url: prepared.url, method: prepared.method, bodyHash: requestBodyHash((prepared.multipart ? 'multipart-text:' : '') + prepared.body), pageHash: observed.hash, actionHash: hashOf(JSON.stringify(browserHandsActionHash(action, this.options.browserHands))), expiresAt: Date.now() + 5 * 60000 };
+    return { id:randomUUID(),url: prepared.url, method: prepared.method, bodyHash: requestBodyHash((prepared.multipart ? 'multipart-text:' : '') + prepared.body), pageHash: observed.hash, actionHash: hashOf(JSON.stringify([action.kind,action.ref??null,action.text??null,action.submit??false])), expiresAt: Date.now() + 5 * 60000 };
     } finally { entry.readers--; }
   }
 
@@ -1403,7 +1367,6 @@ export class AgentBrowser {
     this.discard(entry);
     try {
       authority.signal.throwIfAborted(); await authority.assertActive();
-      if (this.options.browserHands && browserHandsGuardedAction(action)) assertBrowserHandsReady(await this.read(entry, false), action, Boolean(approved), operation);
       if (entry.recovery.reviewRequired && !['open', 'back', 'scroll', 'wait'].includes(action.kind)) throw new BrowserError('AGENT_RECOVERY_REVIEW_REQUIRED', 'يوجد أثر غير محسوم؛ اقرأ نتيجته وراجعها قبل أي فعل جديد.', 409);
       if (approved) {
         const current = await this.prepareAction(ownerId, conversationId, action);
@@ -1434,12 +1397,11 @@ export class AgentBrowser {
       entry.recovery.status = entry.recovery.reviewRequired ? 'review_required' : 'ready';
       entry.recovery.actionKind = null;
       await this.persist(entry);
-      return this.options.browserHands ? browserHandsActionResult(action, result) : result;
+      return result;
     } catch (error) {
       if (entry.closed) throw error;
       if (operation.used || error instanceof BrowserError && error.code === 'AGENT_EFFECT_UNKNOWN') entry.recovery.reviewRequired = true;
       entry.recovery.status = entry.recovery.reviewRequired ? 'review_required' : entry.held ? 'approval_pending' : 'ready';
-      if (this.options.browserHands && entry.recovery.status === 'ready' && error instanceof BrowserHumanStepError) entry.recovery.actionKind = null;
       await this.persist(entry);
       throw error;
     } finally {
@@ -1537,10 +1499,6 @@ export class AgentBrowser {
       }
       await this.duringActivity(entry, await this.startActivity(entry, 'click', target), async () => {
         await this.assertTargetCurrent(entry, ref, target, observed);
-        if (this.options.browserHands && await performBrowserHandsChoiceClick(target, async desired => {
-          await this.assertTargetCurrent(entry, ref, target, observed);
-          if (!await observed.model.evaluate((model, input) => model.canWrite(input.ref, input.desired, false), { ref, desired })) throw new BrowserError('AGENT_FIELD_VALUE_PROTECTED', 'تغير اختيار المالك قبل النقر.', 409);
-        }, () => observed.model.evaluate((model, ref) => model.recordWrite(ref), ref))) return;
         try { await target.click({ timeout: 5000 }); }
         catch {
           if (entry.operation?.denial) throw entry.operation.denial;
@@ -1556,16 +1514,13 @@ export class AgentBrowser {
     const entry = await this.conversation(ownerId, conversationId);
     return this.withMutation(entry, async () => {
     await this.withTarget(entry, ref, async (target, observed) => {
-      const assertCanWrite = async (desired = text) => {
-        const canWrite = await observed.model.evaluate((model, input) => model.canWrite(input.ref, input.text, input.approved), { ref, text: desired, approved: Boolean(entry.operation?.permit) });
+      const assertCanWrite = async () => {
+        const canWrite = await observed.model.evaluate((model, input) => model.canWrite(input.ref, input.text, input.approved), { ref, text, approved: Boolean(entry.operation?.permit) });
         if (!canWrite) throw new BrowserError('AGENT_FIELD_VALUE_PROTECTED', 'الحقل يحتوي على قيمة من المالك أو الصفحة؛ يلزم تأكيده قبل استبدالها.', 409);
       };
       await assertCanWrite();
       await this.duringActivity(entry, await this.startActivity(entry, 'type', target), async () => {
       await this.assertTargetCurrent(entry, ref, target, observed);
-      if (this.options.browserHands) return performBrowserHandsWrite(target, { kind: 'type', value: text, submit },
-        async desired => { await this.assertTargetCurrent(entry, ref, target, observed); await assertCanWrite(desired); },
-        () => observed.model.evaluate((model, ref) => model.recordWrite(ref), ref));
       await assertCanWrite();
       try {
         await target.fill(text, { timeout: 5000 });
@@ -1596,16 +1551,13 @@ export class AgentBrowser {
     const entry = await this.conversation(ownerId, conversationId);
     return this.withMutation(entry, async () => {
     await this.withTarget(entry, ref, async (target, observed) => {
-      const assertCanWrite = async (desired = value) => {
-        const canWrite = await observed.model.evaluate((model, input) => model.canWrite(input.ref, input.value, false), { ref, value: desired });
+      const assertCanWrite = async () => {
+        const canWrite = await observed.model.evaluate((model, input) => model.canWrite(input.ref, input.value, false), { ref, value });
         if (!canWrite) throw new BrowserError('AGENT_FIELD_VALUE_PROTECTED', 'تغيّر اختيار المالك؛ يلزم تأكيده قبل استبداله.', 409);
       };
-      if (!this.options.browserHands) await assertCanWrite();
+      await assertCanWrite();
       await this.duringActivity(entry, await this.startActivity(entry, 'select', target), async () => {
       await this.assertTargetCurrent(entry, ref, target, observed);
-      if (this.options.browserHands) return performBrowserHandsWrite(target, { kind: 'select', value },
-        async desired => { await this.assertTargetCurrent(entry, ref, target, observed); await assertCanWrite(desired); },
-        () => observed.model.evaluate((model, ref) => model.recordWrite(ref), ref));
       await assertCanWrite();
       await target.selectOption({ label: value }, { timeout: 4000 }).catch(async () => {
         await this.assertTargetCurrent(entry, ref, target, observed);
@@ -1669,7 +1621,6 @@ export class AgentBrowser {
    */
   async fillSecret(ownerId: string, conversationId: string, ref: string, value: string): Promise<void> {
     const entry = await this.conversation(ownerId, conversationId);
-    if (this.options.browserHands) blockBrowserHandsSecret(entry.page.url());
     return this.withMutation(entry, async () => {
     if(value.length>=4)entry.redactions.set(value,Date.now()+10*60000);
     await this.withTarget(entry, ref, async (target, observed) => this.duringActivity(entry, await this.startActivity(entry, 'type', target), async () => {
@@ -1684,7 +1635,6 @@ export class AgentBrowser {
   /** Code inputs split across single-digit boxes take keystrokes, not a fill. */
   async typeSecretKeys(ownerId: string, conversationId: string, ref: string, value: string): Promise<void> {
     const entry = await this.conversation(ownerId, conversationId);
-    if (this.options.browserHands) blockBrowserHandsSecret(entry.page.url(), 'code');
     return this.withMutation(entry, async () => {
     if(value.length>=4)entry.redactions.set(value,Date.now()+10*60000);
     await this.withTarget(entry, ref, async (target, observed) => this.duringActivity(entry, await this.startActivity(entry, 'type', target), async () => {
@@ -1833,7 +1783,6 @@ export class AgentBrowser {
     if (!await this.hasPage(ownerId, conversationId)) throw new BrowserError('AGENT_NO_PAGE', 'لا توجد صفحة مفتوحة.', 409);
     const entry = await this.conversation(ownerId, conversationId);
     return this.withMutation(entry, async () => {
-    if (this.options.browserHands) rememberBrowserHandsInput(entry.redactions, input.text);
     this.clearActivity(entry);
     entry.recovery.status = 'review_required';
     await this.persist(entry);

@@ -11,7 +11,7 @@ import {
   ChatSecureSubmitSchema, ChatSendSchema, ChatImageUploadSchema, chatCapabilityIds, type ChatCapabilities, type ChatConversation, type ChatQuestion, type ChatSecureRequest,
   SkillRunInputSchema, type SkillRunInput, type SkillGapObservation,
 } from '@mohassan/contracts';
-import { AgentEffectHeld, AgentSessionCheckpointSchema, BrowserError, browserHandsConsent, SearchEngine, SafeNetwork, type AgentPostcondition, type AgentAction, type AgentAuthority, type AgentActionResult, type AgentBrowser, type AgentCaptureResult, type AgentPage, type NetworkPolicy, type SearchProvider } from '@mohassan/browser';
+import { AgentEffectHeld, AgentSessionCheckpointSchema, BrowserError, SearchEngine, SafeNetwork, type AgentPostcondition, type AgentAction, type AgentAuthority, type AgentActionResult, type AgentBrowser, type AgentCaptureResult, type AgentPage, type NetworkPolicy, type SearchProvider } from '@mohassan/browser';
 import { GroqProvider, ProviderError, redactSecrets, classifyProviderFallback, waitForRetryAfter, validatedRetryAfterMs, type InferenceRouter, type ModelProvider } from '@mohassan/providers';
 import { unfenceJson } from './inference.js';
 import { redactCredentialText } from '@mohassan/cognitive';
@@ -87,8 +87,7 @@ import { projectInventoryFormat, renderProjectInventory } from './assistant/inve
 import { decodeStructuredMemoryDecision, memoryRecallFormat, structuredMemoryDecisionSchema } from './assistant/memory-recall.js';
 import { reviewMemoryRecallEvidence } from './assistant/memory-recall-evidence.js';
 import { projectPreferredLanguageMemoryQuery, recognizePreferredLanguageRequest } from './assistant/preferred-language-fact.js';
-import { browserTaskProgress, browserTaskVisibility, createBrowserTaskWaiters, handleBrowserTaskChat, isBrowserTaskSecure, noteBrowserTaskApproval, pauseBrowserTaskChat, prepareLegacyBrowserHandover, resumeLegacyBrowserHandover, skipBrowserTaskHandover, type BrowserHandsMode } from './assistant/browser-task-chat.js';
-import type { BrowserTaskWait } from './assistant/browser-task-runner.js';
+import { answerBrowserTaskSecure, dispatchBrowserTask, isBrowserTaskSecure, legacyBrowserTaskPage, recordBrowserTaskResume } from './assistant/browser-task-chat-host.js';
 import { CredentialVault } from './assistant/vault.js';
 import { trustedSkillGapSignal } from './assistant/skill-gaps.js';
 import { chatModelFailure } from './assistant/model-failure.js';
@@ -132,7 +131,6 @@ export interface CommandChatConfig {
   imageReader?: { readonly available: boolean; readonly modelId: string | null; read(bytes: Uint8Array, signal?: AbortSignal): Promise<ImageReading> };
   fetch?: typeof fetch;
   browser: AgentBrowser;
-  browserHands?: BrowserHandsMode;
   networkPolicy?: NetworkPolicy;
   searchProvider?: SearchProvider;
   /**
@@ -422,7 +420,6 @@ export async function commandChatMigration(db: Kysely<any>) {
 export async function createCommandChatControl(db: Kysely<any>, config: CommandChatConfig) {
   await commandChatMigration(db);
   const browser = config.browser;
-  const browserTaskWaiters = createBrowserTaskWaiters();
   const providers = new Map<string, ModelProvider>();
   if (config.createProvider) {
     for (const model of new Set([...config.models.fast, ...config.models.deep, config.models.vision].filter(model => model.trim()))) providers.set(model, config.createProvider(model));
@@ -498,7 +495,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     for (;;) {
       try { return await browser.act(args[0], args[1], action, args[3], args[4], args[5]); }
       catch (error) {
-        if (config.browserHands === 'on' && action.browserHands) throw error;
         const reason = transientBrowserFailure(error, action, Boolean(args[4]));
         if (!current?.state || !reason) throw error;
         const checkpoint = await browserRecoveryCheckpoint(current);
@@ -728,31 +724,26 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       await tx.updateTable('chat_conversations').set({browser_checkpoint:JSON.stringify(checkpoint)}).where('id','=',checkpoint.conversationId).execute();
     });
   });
-  async function fencedBrowserCheckpoint(connection: Kysely<any>, current: Execution, checkpoint: z.infer<typeof AgentSessionCheckpointSchema>, humanCompletion = false) {
+  async function fencedBrowserCheckpoint(connection: Kysely<any>, current: Execution, checkpoint: z.infer<typeof AgentSessionCheckpointSchema>) {
     const row = await connection.selectFrom('chat_conversations').select('browser_checkpoint').where('id', '=', current.id).executeTakeFirst();
     if (current.state?.progressRecovery?.browser?.uncertain) return { ...checkpoint, status: 'review_required' as const };
     if (row?.browser_checkpoint?.status === 'review_required') {
       const run = await connection.selectFrom('chat_runs').select('intent').where('id', '=', current.runId).executeTakeFirst();
-      const manual = humanCompletion && checkpoint.status === 'ready' && row.browser_checkpoint.actionKind === null
-        && current.state && browserTaskProgress(current.state)?.waiting && await browserEffectStatus(current.ownerId, current.id, connection) === 'clear';
-      if (run?.intent !== 'review_browser' && !manual) return { ...checkpoint, status: 'review_required' as const };
+      if (run?.intent !== 'review_browser') return { ...checkpoint, status: 'review_required' as const };
     }
     return checkpoint;
   }
-  function authority(humanCompletion = false): AgentAuthority {
+  function authority(): AgentAuthority {
     const current = execution.getStore(); if (!current) throw new RunEnded();
     return { signal: current.controller.signal, assertActive:()=>execution.run(current,assertActive),
       saveCheckpoint: checkpoint=>execution.run(current,()=>runTransaction(current.id,current.runId,async tx=>{
         if(checkpoint.ownerId!==current.ownerId||checkpoint.conversationId!==current.id)throw new RunEnded();
         const row=await tx.selectFrom('chat_conversations').select('browser_account').where('id','=',current.id).executeTakeFirstOrThrow();
         if((row.browser_account??null)!==checkpoint.accountId)throw new BrowserError('CHAT_ACCOUNT_CHANGED','تغير حساب جلسة المتصفح.',409);
-        const saved = await fencedBrowserCheckpoint(tx, current, checkpoint, humanCompletion);
+        const saved = await fencedBrowserCheckpoint(tx, current, checkpoint);
         await tx.updateTable('chat_conversations').set({browser_checkpoint:JSON.stringify(saved)}).where('id','=',current.id).execute();
       })),
       dispatched: async permit => execution.run(current,()=>runTransaction(current.id,current.runId,async tx => {
-        if (config.browserHands === 'on' && current.state && browserTaskProgress(current.state)?.approval
-          && config.accountFullAccess && !await config.accountFullAccess(current.ownerId, tx))
-          throw new BrowserError('CHAT_TOOL_FORBIDDEN', 'تغيرت صلاحية التحكم بالمتصفح قبل إرسال الطلب.', 403);
         const id=permit.id; await tx.insertInto('chat_effect_receipts').values({id,run_id:current.runId,lease_token:current.token,method:permit.method,target_hash:createHash('sha256').update(permit.url).digest('hex'),body_hash:permit.bodyHash,status:'started'}).execute(); return id;
       })),
       completed: async (id,status) => { await db.updateTable('chat_effect_receipts').set({status:status===null?'unknown':'responded',response_status:status,finished_at:new Date()}).where('id','=',id).where('lease_token','=',current.token).where('status','=','started').execute(); },
@@ -840,8 +831,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const asked = ledger.permissions.findLast(item => item.decision !== 'invalidated' && item.decision !== 'expired');
     const capability = pending.material.capability;
     const platform = platformCapabilityOf(capability);
-    const ownerOnly = capability.startsWith('desktop.') || capability.startsWith('computer.') || capability === 'runtime.task'
-      || config.browserHands === 'on' && Boolean(browserTaskProgress(state)?.approval);
+    const ownerOnly = capability.startsWith('desktop.') || capability.startsWith('computer.') || capability === 'runtime.task';
     const decision = checkPermission(ledger, { material: pending.material, actorId: current.ownerId, conversationId: id, runId,
       actorAllowed: !ownerOnly || current.full && (!config.fullAccess || await config.fullAccess(current.ownerId) === true),
       platformAllowed: !platform || requestCapabilityAllowed(parseUserRequestConstraints(request), platform), approvalId: asked?.id ?? null, at });
@@ -1058,7 +1048,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // The browser level (plan §6.1) is read from the rows above, never stored apart from them: the UI opens the panel by itself only at 3.
       visibility: deriveBrowserVisibility({ request: messages.findLast(item => item.role === 'user')?.text ?? '', route: lastRun?.state?.routing?.route ?? null,
         role: (config.fullAccess ? await config.fullAccess(ownerId) : true) ? 'owner' : 'member', hasPage: Boolean(page), status: row.status,
-        secure: row.secure ?? null, handsOn: config.browserHands === 'on' ? browserTaskVisibility(lastRun?.state, row.secure ?? null) : undefined, approval: row.approval ?? null, firstStep: steps[0]?.message ?? null, decidedAt: iso(row.updated_at) }),
+        secure: row.secure ?? null, approval: row.approval ?? null, firstStep: steps[0]?.message ?? null, decidedAt: iso(row.updated_at) }),
       ...(version ? { version } : {}),
       ...(olderMessages ? { olderMessages } : {}),
       // The latest run as the runtime committed it (assistant/agent-run.ts); its row status is the authority for the verdict.
@@ -1323,12 +1313,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     await pause(id, runId, state, 'waiting_input', { secure: JSON.stringify({ id: randomUUID(), ...secure }) }, secure.prompt);
   }
 
-  function pauseBrowserTask(id: string, runId: string, state: BrainState, wait: BrowserTaskWait, page: AgentPage) {
-    const ownerId = execution.getStore()!.ownerId;
-    return pauseBrowserTaskChat({ db, conversationId: id, runId, ownerId, wait, state, page, waiters: browserTaskWaiters, keepPage: observed => keepPage(id, observed), log: label => addStep(id, runId, label),
-      announce: (secure, visibility) => runTransaction(id, runId, async tx => { await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId, kind: 'visibility', message: secure.prompt, data: JSON.stringify(visibility) }).execute(); }),
-      pause: secure => pause(id, runId, state, 'waiting_input', { secure: JSON.stringify(secure) }, secure.prompt), outsideRun: job => execution.exit(job), observe: () => browser.observeHands(ownerId, id), canWait: () => !closing, claim: async (secureId, result) => { await workers.get(id); await resume(ownerId, id, runId, resumed => { browserTaskProgress(resumed, true)!.humanResult = result; }, '', { status: 'waiting_input', field: 'secure', requestId: secureId, silent: true }); } }); }
-
   async function pauseBrowserAction(id: string, runId: string, state: BrainState, pending: NonNullable<BrainState['pendingAction']>) {
     state.pendingAction = pending;
     const destination = new URL(pending.permit.url);
@@ -1479,11 +1463,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const kind = situation(page);
       const site = siteOf(page.url);
       const authKind = ['password', 'identifier', 'otp'].includes(kind);
-      if (config.browserHands === 'on') {
-        const wait = prepareLegacyBrowserHandover(state, page);
-        if (wait && fullReach()) { await pauseBrowserTask(id, runId, state, wait, page); return null; }
-        if (wait || authKind || ['captcha', 'browser_refused', 'device_prompt'].includes(kind) || site === GOOGLE_SIGN_IN_ORIGIN) return page;
-      }
+      if (config.browserHands === 'on') { const result = await legacyBrowserTaskPage(state, page, kind, site); if (result !== undefined) return result; }
       if (personalSignIn && (authKind || kind === 'browser_refused')) {
         await finish(id, runId, state, PERSONAL_SIGN_IN_STOP, 'partial');
         return null;
@@ -1504,7 +1484,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       if (kind === 'cookies') {
         const host = new URL(page.url).host;
-        const button = config.browserHands === 'on' ? browserHandsConsent(page.elements) : cookieRejectButton(page);
+        const button = cookieRejectButton(page);
         if (state.handledCookieHosts.includes(host) || !button) return page;
         state.handledCookieHosts.push(host);
         const action: AgentAction = { kind: 'click', ref: button.ref };
@@ -2381,16 +2361,12 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             page = (await readBrowserForRecovery(currentExecution, checkpoint)).page;
         }
       }
-      if (config.browserHands === 'on' && browserTaskProgress(state)?.legacy) {
-        page = await resumeLegacyBrowserHandover(state, page, expected => browser.finishHandsHandover(ownerId, id, expected, authority(true)), (text, status) => finish(id, runId, state, text, status));
-        if (!page) return;
-        await keepPage(id, page);
-      }
       if(state.securePageHash){
         if(!page||page.hash!==state.securePageHash)throw new BrowserError('CHAT_SECURE_PAGE_CHANGED','تغيرت صفحة تسجيل الدخول بعد طلب البيانات. لم تُكتب البيانات؛ راجع الصفحة وابدأ طلبًا جديدًا.',409);
         state.securePageHash=null;
       }
       if (state.pendingClick) throw new BrowserError('CHAT_APPROVAL_STALE','الموافقة القديمة لا تتضمن بصمة طلب؛ اطلب إجراء جديدًا.',409);
+      if (config.browserHands && await dispatchBrowserTask({ config, db, ownerId, id, runId, intent: run.intent, request, actionRequest, page, state, browserCheckpoint: conversation.browser_checkpoint, signal, search, vault, clean, fullReach, requireCurrentOwnerAccess, withExecution: job => execution.run(currentExecution, job), outsideExecution: job => execution.exit(job), isClosing: () => closing, settled: key => workers.get(key), terminalError: error => error instanceof RunEnded || error instanceof AccountAccessEnded, setPage: observed => { page = observed; }, ledgerOf, saveState, keepPage, addStep, finish, pause, resume, runTransaction, authority, actBrowser, observeBrowser, prepareBrowserAction, assertBrowserRequestScope, assertPublicSearch, browserEffectStatus, admitPending, pauseBrowserAction, pauseHeld })) return;
       if ((state.pendingAction || state.pendingHeld || state.pendingComputer) && (await browserEffectStatus(ownerId, id) !== 'clear'
         || (state.pendingAction || state.pendingHeld) && (state.progressRecovery?.browser?.uncertain || conversation.browser_checkpoint?.status === 'review_required'))) {
         await finish(id, runId, state, /[؀-ۿ]/u.test(request)
@@ -2414,7 +2390,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         page=result.page; await keepPage(id,page);
         state.trail.push({step:state.steps,action:pending.label,result:'request sent after exact user approval; verify the page outcome',changed:result.changed});
         if (state.hands && admittedBrowserStep) completeApprovedHandsStep(ledgerOf(state, runId), state.hands, admittedBrowserStep, Date.now());
-        if (config.browserHands === 'on') await noteBrowserTaskApproval(db, state, runId, pending.permit.id);
         await saveState(runId, state);
       }
       if (state.pendingHeld) {
@@ -2427,14 +2402,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         page=result.page; await keepPage(id,page);
         state.trail.push({step:state.steps,action:pending.label,result:'the held request was sent once after exact user approval; verify the page outcome',changed:result.changed});
         if (state.hands && admittedBrowserStep) completeApprovedHandsStep(ledgerOf(state, runId), state.hands, admittedBrowserStep, Date.now());
-        if (config.browserHands === 'on') await noteBrowserTaskApproval(db, state, runId, pending.id);
         await saveState(runId, state);
       }
-      if ((run.intent === 'task' || !run.intent) && config.browserHands && fullReach() && (!state.steps || browserTaskProgress(state)) && await handleBrowserTaskChat({ mode: config.browserHands, request: actionRequest, legacy: () => parseHands(actionRequest), page, state, ledger: () => ledgerOf(state, runId),
-        io: { signal, rethrow: error => { if (error instanceof RunEnded || error instanceof AccountAccessEnded) throw error; }, text: value => vault.scrub(id, clean(value)), observe: async () => { await requireCurrentOwnerAccess(); assertBrowserRequestScope(request, 'browser_action', state); if (!await browser.hasPage(ownerId, id)) return null; const observed = (await observeBrowser(ownerId, id)).page; await keepPage(id, observed); return observed; }, act: async action => { await requireCurrentOwnerAccess(); const result = await actBrowser(ownerId, id, action, authority()); await keepPage(id, result.page); return result; }, prepare: async action => { await requireCurrentOwnerAccess(); return prepareBrowserAction(ownerId, id, action); }, search: async query => { await requireCurrentOwnerAccess(); assertPublicSearch(request, query, state); return search.search(query, 5, signal, { ownerId }); } },
-        save: () => saveState(runId, state), log: label => addStep(id, runId, label), finish: (text, status) => finish(id, runId, state, text, status), shadow: summary => runTransaction(id, runId, async tx => { await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId, kind: 'browser_task_shadow', message: 'Browser task understanding', data: JSON.stringify(summary) }).execute(); }), handover: (wait, observed) => pauseBrowserTask(id, runId, state, wait, observed), finishHandover: async expected => { await requireCurrentOwnerAccess(); const observed = await browser.finishHandsHandover(ownerId, id, expected, authority(true)); if (observed) await keepPage(id, observed); return observed; },
-        approve: (approval, label) => 'held' in approval ? pauseHeld(id, runId, state, approval.held, label) : pauseBrowserAction(id, runId, state, { ...approval, label }),
-      })) return;
       if (state.pendingTask) {
         const pending = state.pendingTask;
         state.pendingTask = null;
@@ -3911,7 +3880,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   /** Continues the paused run after the owner has answered it. */
-  async function resume(ownerId: string, id: string, runId: string, change: (state: BrainState, tx: Kysely<any>, message: { id: string; createdAt: number; text: string; priorRequest?: string }) => void | Promise<void>, say: string, expected:{status:string;field?:'question'|'approval'|'secure';requestId?:string;stop?:boolean;afterClaim?:()=>void;silent?:boolean}) {
+  async function resume(ownerId: string, id: string, runId: string, change: (state: BrainState, tx: Kysely<any>, message: { id: string; createdAt: number; text: string; priorRequest?: string }) => void | Promise<void>, say: string, expected:{status:string;field?:'question'|'approval'|'secure';requestId?:string;stop?:boolean;afterClaim?:()=>void}) {
     if(closing)throw new BrowserError('CHAT_SHUTTING_DOWN','الخدمة تتوقف الآن.',503);
     const token=randomUUID();
     let previousToken:string|undefined;
@@ -3927,7 +3896,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // Insert the accepted reply in this same transaction. A rejected change
       // rolls it back; its DB-owned identity/time can anchor a new primary.
       const message = { id: randomUUID(), createdAt: new Date(), text: clean(say) };
-      if (!expected.silent) await tx.insertInto('chat_messages').values({ id: message.id, conversation_id: id, role: 'user', text: message.text, created_at: message.createdAt }).execute();
+      if (recordBrowserTaskResume(expected))
+      await tx.insertInto('chat_messages').values({ id: message.id, conversation_id: id, role: 'user', text: message.text, created_at: message.createdAt }).execute();
       await change(state, tx, { ...message, createdAt: message.createdAt.getTime(), ...(priorSource ? { priorRequest: priorSource.request } : {}) });
       await tx.updateTable('chat_runs').set({ status:expected.stop?'cancelled':'running', state: JSON.stringify(state),lease_token:token,attempt:run.attempt+1,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, updated_at: new Date() }).where('id', '=', runId).execute();
       await tx.updateTable('chat_conversations').set({ status:expected.stop?'idle':'running',active_run_id:expected.stop?null:runId, question: null, approval: null, secure: null, error: null, progress:expected.stop?null:'يتابع العمل…', updated_at: new Date() }).where('id', '=', id).execute();
@@ -4310,10 +4280,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const row = await owned(ownerId, id);
     const secure = row.secure as ChatSecureRequest | null;
     if (row.status !== 'waiting_input' || secure?.id !== input.requestId || !row.active_run_id) throw new BrowserError('CHAT_SECURE_CHANGED', 'هذا الطلب لم يعد معلقًا.', 409);
-    if (config.browserHands === 'on' && isBrowserTaskSecure(secure)) {
-      if (input.action === 'submit') throw new BrowserError('CHAT_BROWSER_MANUAL_INPUT', 'أدخل هذه البيانات في المتصفح مباشرة.', 409);
-      if (input.action === 'done') return detail(ownerId, id);
-    }
+    if (config.browserHands === 'on' && isBrowserTaskSecure(secure)) return answerBrowserTaskSecure(input, ownerId, id, row.active_run_id, resume, detail);
     if (input.action === 'submit') {
       if (secure.site === GOOGLE_SIGN_IN_ORIGIN) throw new BrowserError('CHAT_GOOGLE_SIGN_IN_UNSUPPORTED', GOOGLE_SIGN_IN_STOP, 409);
       if (!input.values || !Object.values(input.values).some(Boolean)) throw new BrowserError('CHAT_SECURE_EMPTY', 'أدخل البيانات المطلوبة.');
@@ -4321,7 +4288,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const url = (row.browser_state as { url?: string } | null)?.url;
     return resume(ownerId, id, row.active_run_id, (state) => {
       if (input.action === 'skip') {
-        if (config.browserHands === 'on' && isBrowserTaskSecure(secure)) skipBrowserTaskHandover(state);
         if (url) state.skippedAuthUrls.push(url);
         state.trail.push({ step: state.steps, action: 'requested sign-in', result: 'the user declined. Continue without it or finish.', changed: false });
       }
@@ -4358,7 +4324,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await closeOpenCampaignTasks(tx, id, row.active_run_id, unresolved => campaignCancelEvent('owner_cancelled', unresolved));
       }
     });
-    browserTaskWaiters.stop(id);
     cancelledController?.abort(new Error('CHAT_CANCELLED'));
     if(cancelledToken)forgetVault(id,cancelledToken);
     await dropUnapproved(ownerId,cancelledState);
@@ -4410,7 +4375,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
 
   async function shutdown() {
     closing = true;
-    await browserTaskWaiters.close();
     for (const {controller} of controllers.values()) controller.abort(new Error('CHAT_SHUTDOWN'));
     await Promise.allSettled([...workers.values()]);
     const abandoned:{ownerId:string;state:unknown}[]=[];
