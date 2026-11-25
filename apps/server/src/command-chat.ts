@@ -1,3 +1,4 @@
+import { cleanRejectedChatCreate } from './rejected-chat-create.js';
 import { createHash, randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import type { ImageReading } from '@mohassan/vision';
@@ -142,6 +143,7 @@ export interface CommandChatConfig {
   fullAccess?: (ownerId: string) => Promise<boolean>;
   /** Current account access, checked using the same fenced transaction. Must not open a nested transaction. */
   accountActive?: (ownerId: string, connection: Kysely<any>) => Promise<boolean>;
+  reserveMemberRun?: (tx: Kysely<any>, ownerId: string, runId: string) => Promise<void>;
   /** Native input admission only: lock the granting owner row in this transaction. Never open a nested/outer transaction here. */
   accountFullAccess?: (ownerId: string, connection: Kysely<any>) => Promise<boolean>;
   apiKey?: string;
@@ -4077,6 +4079,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if(intent==='review_browser'&&(!expectedCheckpointToken||checkpointToken(locked.browser_checkpoint)!==expectedCheckpointToken))throw new BrowserError('CHAT_REVIEW_CHANGED','تغيرت حالة الجلسة بعد عرضها. حدّث الصفحة وراجع النتيجة الحالية.',409);
       const steeredHere = steering !== null && locked.active_run_id === steering && steerableRow(locked.status, locked.secure);
       if (!steeredHere && (locked.status === 'running' || WAITING_STATUSES.includes(locked.status))) throw new BrowserError('CHAT_BUSY', 'أكمل ما ينتظر ردك، أو أوقف العمل قبل إرسال طلب جديد.', 409);
+      await config.reserveMemberRun?.(tx, ownerId, runId);
       if (steeredHere) superseded = await supersedeRun(tx, ownerId, id, steering!, runId);
       const previousTurns = Number((await tx.selectFrom('chat_messages').select(eb => eb.fn.countAll<string | number>().as('n'))
         .where('conversation_id', '=', id).where('role', '=', 'user').executeTakeFirstOrThrow()).n);
@@ -4274,8 +4277,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     // Preserve the actual caller's bytes until send captures their digest. The
     // public schema still supplies the same trimmed display/routing goal.
     const originalGoal = raw && typeof raw === 'object' && !Array.isArray(raw) ? Object.getOwnPropertyDescriptor(raw, 'goal') : undefined;
-    if (input.images?.length) return send(ownerId, id, { ...(input.goal ? { text: originalGoal && 'value' in originalGoal ? originalGoal.value : input.goal } : {}), images: input.images });
-    return input.goal ? send(ownerId, id, { text: originalGoal && 'value' in originalGoal ? originalGoal.value : input.goal }) : detail(ownerId, id);
+    if (!input.goal && !input.images?.length) return detail(ownerId, id);
+    const text = originalGoal && 'value' in originalGoal ? originalGoal.value : input.goal;
+    return cleanRejectedChatCreate(db, ownerId, id, () => send(ownerId, id, { ...(input.goal ? { text } : {}), ...(input.images?.length ? { images: input.images } : {}) }));
   }
 
   async function restoreBrowser(ownerId:string,id:string) {
