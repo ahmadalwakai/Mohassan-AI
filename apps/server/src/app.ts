@@ -75,12 +75,14 @@ import { recordSkillGap, createSkillBenchmarkControl, createSkillForgeControl, c
 import { MAX_GITHUB_SKILLS, MAX_IMPORTED_VERSIONS_PER_OWNER } from '../../../packages/skills/src/import-store.js';
 import { buildSkillReaderIndex, createSkillReader, skillInstructionText } from './assistant/skill-reader.js';
 import { createSkillRemoteScheduler, registerSkillRemoteRoutes, type SkillRemoteSettings } from './skill-remote.js';
+import { registerBackupStatusRoute } from './backup-status.js';
 
 /** Fallback window for the reader when no catalogue index is given (tests). The chat passes the catalogue index, which has no window. */
 const SKILL_READER_DISCOVERY = MAX_GITHUB_SKILLS + MAX_IMPORTED_VERSIONS_PER_OWNER + 50;
 
 export interface AppConfig {
   dataDir?: string; databaseUrl?: string; authSecret: string; internalSecret: string;
+  backupStatusDirectory?: string;
   setupToken: string; webOrigin: string; production: boolean; runWorker: boolean;
   groqApiKey?:string;groqModel?:string;groqReasoningModel?:string;aiFetch?:typeof fetch;
   codingDataDir?:string;codingAllowedRoots?:string[];sandboxRunner?:SandboxRunner;
@@ -479,6 +481,7 @@ export async function createApplication(config: AppConfig) {
   await registerStudioAiRoutes(app,{control:studioAi,owner});
   await studio.reviews.register(app,owner);
   await studioLive.register(app,owner);
+  registerBackupStatusRoute(app, owner, config.backupStatusDirectory);
   app.get('/api/workspace', async (request) => {
     const user = await owner(request);
     const snapshot = await runtime.snapshot(user.id);
