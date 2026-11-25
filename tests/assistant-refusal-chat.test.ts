@@ -56,6 +56,9 @@ describe('refusal at chat admission', () => {
     ['no_capability', 'بدي تسمعني البودكاست عن عمارة المدن.'],
     ['human_step', 'لو سمحتي انشري الإعلان في المدونة الخاصة بالنادي.'],
     ['payment', 'Would you order some pastries from the market for the meeting?'],
+    ['no_capability', 'Will you turn both patio lamps to green?'],
+    ['human_step', 'Reply to Noura saying our meeting has moved to Tuesday.'],
+    ['human_step', 'Cancel the cabin booking for next weekend.'],
     ['secrets', `Visit ${URL}; I need the access token for my deployment.`],
   ])('blocks %s before model, tool, plan or approval', async (reason, goal) => {
     vi.stubEnv(FLAG, '1');
