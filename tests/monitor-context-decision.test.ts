@@ -11,11 +11,13 @@ const assistant = (text: string) => ({ role: 'assistant', text });
 const cases = [
   { language: 'en', status: `Is registration open at ${page}?`, closed: 'Registration is closed now.',
     waiting: "Okay, I'm waiting for them to open it.", again: 'Is registration open yet?', price: 'How much is the dollar now?',
+    forecast: 'Tell me the weather tomorrow', timedNotice: 'Tell me tomorrow at 9 to check the page',
     time: 'Remind me tomorrow at 9', condition: `Notify me when registration opens at ${page}`,
     contextualCondition: 'Remind me when it opens.', stop: 'Stop monitoring registration',
     offer: 'Would you like me to watch this page and let you know when the status changes?', decline: 'No thanks.', accept: 'Yes please.' },
   { language: 'ar', status: `هل التسجيل مفتوح في ${page}؟`, closed: 'التسجيل مغلق الآن.',
     waiting: 'طيب، أنا أنتظر أن يفتحوه.', again: 'هل التسجيل مفتوح الآن؟', price: 'كم سعر الدولار الآن؟',
+    forecast: 'أخبرني كيف سيكون الطقس غدًا', timedNotice: 'أخبرني غدًا الساعة 9 أن أراجع الصفحة',
     time: 'ذكّرني غدًا الساعة 9', condition: `نبّهني عندما يفتح التسجيل في ${page}`,
     contextualCondition: 'نبّهني عندما يفتحوه.', stop: 'أوقف مراقبة التسجيل',
     offer: 'أتريد أن أراقب هذه الصفحة وأنبّهك عندما تتغيّر الحالة؟', decline: 'لا شكرًا.', accept: 'نعم من فضلك.' },
@@ -58,6 +60,8 @@ describe.each(cases)('monitor decisions in $language', example => {
 
   it('routes clock triggers to reminders and condition triggers to monitor proposals', () => {
     expect(reasonMonitorContext(pending(example.time))).toMatchObject({ decision: 'reminder', evidence: ['scheduled_trigger'] });
+    expect(reasonMonitorContext(pending(example.forecast))).toMatchObject({ decision: 'none' });
+    expect(reasonMonitorContext(pending(example.timedNotice))).toMatchObject({ decision: 'reminder', evidence: ['scheduled_trigger'] });
     expect(reasonMonitorContext(pending(example.condition))).toMatchObject({ decision: 'propose', need: { sourceUrl: page } });
     expect(reasonMonitorContext(pending(example.contextualCondition))).toMatchObject({ decision: 'propose', need: { sourceUrl: page } });
   });

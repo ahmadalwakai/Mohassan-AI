@@ -19,6 +19,7 @@ const TIME = /\b(?:today|tonight|tomorrow|yesterday|daily|weekly|monthly|next (?
 // Use the existing reminder time parser for scheduling expressions. These leads
 // distinguish requests to schedule an alert from queries that merely mention a date.
 const NOTIFICATION = /^(?:(?:remind|notify|alert|ping|tell) (?:me|us)|let (?:me|us) know|نبهني|نبهن[اي]|ذكرني|اخبرني|خبرني|بلغني|قول لي|قل لي|اعلمني|اشعرني)(?=$|[^\p{L}])\s*/u;
+const SCHEDULE_NOTIFICATION = /^(?:remind|notify|alert|ping|نبهني|نبهن[اي]|ذكرني|بلغني|اشعرني)(?=$|[^\p{L}])/u;
 const TIME_REQUEST = /^(?:(?:set|create|schedule|start|cancel|stop|delete|snooze|change|show|list) (?:me )?(?:(?:a|an|the|my) )?(?:alarms?|timers?|reminders?|calendar (?:event|appointment))|(?:add|schedule|cancel|reschedule|delete|move) (?:a |an |the |my )?(?:meeting|appointment|event)(?: (?:for|on|to|at|in|tomorrow|today|next)|$)|wake (?:me|us) up|اضبط (?:لي )?(?:ال)?(?:منبه|مؤقت|تذكير)|(?:اضف|جدول|الغ|احذف|اوقف|غير|عدل|اعرض) (?:لي )?(?:ال)?(?:منبه|مؤقت|تذكير|تذكيراتي|موعد|مواعيد)|تذكيري|ايقظني)(?=$|[^\p{L}])/u;
 const CONDITION = /^(?:(?:if|when|once|whenever|as soon as|every time)\b|(?:اذا|لما|عندما|حينما|بمجرد(?: ما| ان)?|كلما)(?!\p{L}))\s+/u;
 const REFERENCE_CONDITION = /^(?:(?:it|they|that(?: page| site| link)?|this (?:page|site|link)) (?:opens?|reopens?|goes? live|loads?|becomes? (?:available|reachable)|comes? back online|is (?:available|published|released))|(?:ان |ما )?(?:يفتح(?:وا|ون|وه[ا]?|ونها)?|تفتح|يشتغل|تشتغل|تتوفر|يتوفر|تنشر|ينشر|يصدر|تصدر)(?: (?:الموقع|الصفحه|الرابط))?)[.!?؟\s]*$/u;
@@ -99,8 +100,14 @@ export function noticeTrigger(turn: MonitorContextTurn, now: Date) {
   const predicate = condition ? body.slice(condition[0].length) : '';
   const conditionNotification = Boolean(predicate && FUTURE_CHANGE.test(predicate));
   const referenceCondition = conditionNotification && REFERENCE_CONDITION.test(predicate);
+  const strongNotice = Boolean(notice && SCHEDULE_NOTIFICATION.test(notice[0]));
+  // “Tell me the weather tomorrow” asks about tomorrow's forecast. With a
+  // general speech verb, a clock/date leading the clause is the timed trigger.
+  const leadingTime = turn.timeExpressions.some(expression => body.startsWith(expression)
+    && (body.length === expression.length || /[\s,،]/u.test(body[expression.length])));
+  const span = notice && !conditionNotification && parseReminderTime(body, { now, timeZone: 'UTC' }).span;
   const timeRequest = TIME_REQUEST.test(turn.normalized) || Boolean(notice && !conditionNotification
-    && (turn.timeExpressions.length || parseReminderTime(body, { now, timeZone: 'UTC' }).span));
+    && (leadingTime || span && (strongNotice || span.start === 0) || strongNotice && turn.timeExpressions.length));
   return { timeRequest, conditionNotification, referenceCondition };
 }
 
