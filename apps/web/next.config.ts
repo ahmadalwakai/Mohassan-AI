@@ -7,6 +7,7 @@ const distDir = process.env.NEXT_DIST_DIR || (process.env.MOHASSAN_ISOLATED_TEST
 const config: NextConfig = {
   distDir,
   transpilePackages: ["@mohassan/contracts"],
+  logging: { incomingRequests: { ignore: [/^\/(?:share\/|api\/chat\/conversation-shares\/public\/)/] } },
   experimental: { optimizePackageImports: ["@chakra-ui/react", "lucide-react"] },
 };
 

@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { createAuth } from './auth.js';
 import { NOTIFICATION_MEMBER_ROUTES } from './notifications-routes.js';
 import { REMINDER_MEMBER_ROUTES } from './reminders/route-keys.js';
+import { conversationShareMemberRoutes, conversationSharePublicRoute } from './conversation-share-paths.js';
 
 /**
  * Members are people the owner invites. They use cloud services only (chat,
@@ -18,6 +19,7 @@ export type WorkspaceRole = 'owner' | 'member';
 
 /** Reached without a session. Each handler does its own checks. */
 export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
+  conversationSharePublicRoute,
   'GET /health',
   'GET /api/setup', 'POST /api/setup',
   'GET /api/auth/*', 'POST /api/auth/*',
@@ -31,6 +33,7 @@ const chat = '/api/chat/conversations';
 const files = '/api/browser/files/:conversationId';
 const ads = '/api/google-ads';
 export const MEMBER_ROUTES: ReadonlySet<string> = new Set([
+  ...conversationShareMemberRoutes,
   'GET /api/access',
   ...NOTIFICATION_MEMBER_ROUTES,
   ...REMINDER_MEMBER_ROUTES,

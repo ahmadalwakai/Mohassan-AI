@@ -56,6 +56,8 @@ import { rebindBrowserAction, reserveBrowserRecovery, transientBrowserFailure, t
 import { bootstrapRequestContext, parseRequestContextState, requestActionText, resolveRequestContext } from './assistant/request-context.js';
 import { createChatSupervisor, observeChatCapture, observeChatLocalAnswer, observeChatTool, resumeChatSupervisor, reviewChatAnswer } from './assistant/chat-supervision.js';
 import { createComputationMemoryReceipt, restoreComputationMemoryReceipt } from './assistant/computation-memory-receipt.js';
+import { migrateConversationShares } from './conversation-share-migration.js';
+import { noteConversationPromptPrivacy } from './conversation-share-privacy.js';
 import { runComputationMemoryFlow } from './assistant/computation-memory-flow.js';
 import { completeComputationMemory } from './assistant/computation-memory-completion.js';
 import { createClarifiedRequestSource, resolveEffectiveRequestSource } from './assistant/effective-request-source.js';
@@ -417,6 +419,7 @@ export async function commandChatMigration(db: Kysely<any>) {
       await tx.insertInto('schema_migrations').values({version:'033_chat_request_keys'}).execute();
     }
     await campaignEventsMigration(tx);
+    await migrateConversationShares(tx);
   });
 }
 
@@ -775,7 +778,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   async function addMessage(connection: Kysely<any>, id: string, role: 'user' | 'assistant', text: string) {
-    await connection.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role, text: clean(text) }).execute();
+    await connection.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role, text: clean(text), run_id: role === 'assistant' ? execution.getStore()?.runId ?? null : null }).execute();
   }
 
   async function addStep(id: string, runId: string, text: string) {
@@ -3600,6 +3603,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         const skillsEnabled = Boolean(skillContext && config.loadSkill);
         await recordSkillContext(id, runId, state, skillContext, compiled);
+        noteConversationPromptPrivacy(state, { memory: promptInput.memory, browser: promptInput.page, learning: learningContext, skill: skillContext });
         const prompt = buildPrompt({ ...promptInput, skillContext });
         const tier = chooseTier(state, warning);
         // Only the Google Ads skill brings this tool, so every other prompt stays byte-identical.

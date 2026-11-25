@@ -12,6 +12,7 @@ export * from './reminders';
 import { SkillRunInputSchema, SkillNodeBindingSchema, isBoundedSkillJson } from './skills';
 export * from './command-chat';
 export * from './live-data';
+export * from './conversation-share';
 export * from './agent-run';
 export * from './skills';
 export * from './google-ads';

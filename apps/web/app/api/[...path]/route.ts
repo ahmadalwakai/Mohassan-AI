@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic';
 async function forward(request: NextRequest, context: {params: Promise<{path:string[]}>}) {
   const {path} = await context.params;
   if (path.some(part=>!(/^[a-zA-Z0-9._~-]+$/).test(part) || part==='..')) return Response.json({error:{code:'INVALID_PATH',message:'مسار غير صالح.'}},{status:400});
+  if (path[0]==='chat' && path[1]==='conversation-shares' && path[2]==='public') return new Response(null,{status:404,headers:{'Cache-Control':'no-store','X-Robots-Tag':'noindex, nofollow','Content-Security-Policy':"default-src 'none'; sandbox"}});
   const secret = process.env.INTERNAL_API_SECRET;
   if (!secret) return Response.json({error:{code:'NOT_CONFIGURED',message:'ابدأ الخدمة من أمر تشغيل المشروع.'}},{status:503});
   const target = new URL(`/api/${path.map(encodeURIComponent).join('/')}`,process.env.MOHASSAN_SERVER_URL || 'http://127.0.0.1:4000');
@@ -29,11 +30,12 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
       body=new Uint8Array(size);let offset=0;for(const part of parts){body.set(part,offset);offset+=part.byteLength;}
     }
     const learningImport=path.length===2&&path[0]==='learning'&&path[1]==='documents'&&request.method==='POST';
-    const response=await fetch(target,{method:request.method,headers,body:body as BodyInit|undefined,cache:'no-store',redirect:'manual',signal:AbortSignal.any([request.signal,AbortSignal.timeout(path[0]==='chat'&&request.method==='POST'&&(path.length===1||path[path.length-1]==='messages')?150000:path[0]==='sites'&&path[2]==='publish'&&request.method==='POST'?300000:path[0]==='studio'&&request.method==='POST'?360000:path[0]==='executor'&&request.method==='POST'?180000:path[0]==='desktop'?(request.method==='POST'?930000:60000):learningImport?30000:['research','browser','google-ads','search','documents'].includes(path[0]??'')?60000:15000)])});
+    const conversationExport=path.length===4&&path[0]==='chat'&&path[1]==='conversations'&&path[3]==='export'&&request.method==='GET';
+    const response=await fetch(target,{method:request.method,headers,body:body as BodyInit|undefined,cache:'no-store',redirect:'manual',signal:AbortSignal.any([request.signal,AbortSignal.timeout(conversationExport?60000:path[0]==='chat'&&request.method==='POST'&&(path.length===1||path[path.length-1]==='messages')?150000:path[0]==='sites'&&path[2]==='publish'&&request.method==='POST'?300000:path[0]==='studio'&&request.method==='POST'?360000:path[0]==='executor'&&request.method==='POST'?180000:path[0]==='desktop'?(request.method==='POST'?930000:60000):learningImport?30000:['research','browser','google-ads','search','documents'].includes(path[0]??'')?60000:15000)])});
     const output=new Headers({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
     const contentType=response.headers.get('content-type');if(contentType)output.set('content-type',contentType);
-    // Downloads keep their file name and are sandboxed: browser file grants and PDF documents.
-    if((path.length===6&&path[0]==='browser'&&path[1]==='files'&&path[3]==='grants'&&path[5]==='content')||(path.length===3&&path[0]==='documents'&&path[2]==='content')){
+    // Downloads keep their file name and are sandboxed.
+    if(conversationExport||(path.length===6&&path[0]==='browser'&&path[1]==='files'&&path[3]==='grants'&&path[5]==='content')||(path.length===3&&path[0]==='documents'&&path[2]==='content')){
       const disposition=response.headers.get('content-disposition');
       if(disposition&&/^attachment; filename="[a-zA-Z0-9][a-zA-Z0-9._ -]{0,99}"; filename\*=UTF-8''[a-zA-Z0-9._% -]{1,1200}$/.test(disposition))output.set('Content-Disposition',disposition);
       output.set('Content-Security-Policy',"default-src 'none'; sandbox");
