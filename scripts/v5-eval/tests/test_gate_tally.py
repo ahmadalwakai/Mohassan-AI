@@ -7,6 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import gate_tally as tool  # noqa: E402
+from sampling_diagnostic import _EOS_TOKEN_ID, _SAMPLING, _SEEDS  # noqa: E402
 from execution_pipeline import chat_probes, gate3_probes  # noqa: E402
 
 
@@ -72,9 +73,51 @@ def test_gate3_threshold_uses_only_strict_verdicts_in_each_language(tmp_path, ar
     assert result["gate3_strict_rule"] == {"probes_per_language": 20, "minimum_strict_passes_per_language": 16,
                                            "met_in_both_languages": meets_rule}
     assert result["languages"] == {language: {"total": 20, "strict_passes": count, "content_passes": 19,
-                                              "reader_loops": 1, "objective_eos": 2, "objective_loops": 2}
+                                              "reader_loops": 1, "objective_eos": 2, "objective_loops": 2,
+                                              "option_b_passes": 19}
                                    for language, count in (("ar", ar), ("en", en))}
     assert "gate3_passed" not in result
+
+
+# The owner's delegate pre-registered the Option B threshold on 2026-11-25 at 21:24 UTC.
+@pytest.mark.parametrize(("ar", "en", "meets_rule"), [(15, 20, False), (20, 15, False), (16, 16, True), (20, 20, True)])
+def test_option_b_threshold_applies_in_each_language(tmp_path, ar, en, meets_rule):
+    paths, _, verdicts, _ = _fixture_files(tmp_path, PROSE_IDS, {"ar": 0, "en": 0})
+    thresholds = {"ar": ar, "en": en}
+    for verdict in verdicts:
+        _, language, number = verdict["id"].split("-")
+        verdict.update(content="pass", loop="no" if int(number) <= thresholds[language] else "yes")
+    _jsonl(paths[1], verdicts)
+
+    result = tool.tally(*paths)
+    assert {language: counts["option_b_passes"] for language, counts in result["languages"].items()} == thresholds
+    assert result["v5_3_condition_option_b"] == {"probes_per_language": 20, "minimum_per_language": 16,
+                                                "per_item": "content == pass and loop == no",
+                                                "met_in_both_languages": meets_rule}
+    assert result["gate3_strict_rule"]["met_in_both_languages"] is False
+
+
+def test_option_b_counts_reader_content_and_loop_independently_of_strict_and_objective(tmp_path):
+    paths, _, verdicts, _ = _fixture_files(tmp_path, PROSE_IDS)
+    verdicts[0].update(verdict="fail", content="pass", loop="no")
+    verdicts[1].update(verdict="pass", content="pass", loop="yes")
+    verdicts[2].update(verdict="pass", content="fail", loop="no")
+    _jsonl(paths[1], verdicts)
+
+    counts = tool.tally(*paths)["languages"]["ar"]
+    assert counts["strict_passes"] == 19
+    assert counts["option_b_passes"] == 18
+    assert counts["objective_eos"] == 2
+    assert counts["objective_loops"] == 2
+
+
+def test_prose_lists_only_reader_objective_loop_disagreements(tmp_path):
+    paths, *_ = _fixture_files(tmp_path, PROSE_IDS)
+    assert tool.tally(*paths)["reader_objective_loop_disagreements"] == [
+        {"id": f"gate3-{language}-{index:02d}", "reader_loop": reader_loop, "objective_loop": objective_loop}
+        for language in LANGUAGES
+        for index, reader_loop, objective_loop in ((1, "no", True), (2, "yes", False), (3, "no", True))
+    ]
 
 
 def test_chat_reports_preregistered_core_and_known_hard_apart(tmp_path):
@@ -83,7 +126,10 @@ def test_chat_reports_preregistered_core_and_known_hard_apart(tmp_path):
 
     assert result["probe_suite"] == "chat"
     assert result["known_hard"] == preregistration["known_hard"]
+    assert "v5_3_condition_option_b" not in result
+    assert "reader_objective_loop_disagreements" not in result
     for counts in result["languages"].values():
+        assert "option_b_passes" not in counts
         assert counts["core"] == {"total": 19, "strict_passes": 19, "content_passes": 18, "reader_loops": 1,
                                    "objective_eos": 2, "objective_loops": 1}
         assert counts["known_hard"] == {"total": 1, "strict_passes": 1, "content_passes": 1, "reader_loops": 0,
@@ -118,16 +164,20 @@ def test_tally_rejects_invalid_reader_values(tmp_path, key, value):
         tool.tally(*paths)
 
 
-def test_tally_rejects_language_mismatch_and_sampled_predictions(tmp_path):
+def test_tally_rejects_language_mismatch(tmp_path):
     paths, predictions, *_ = _fixture_files(tmp_path, CHAT_IDS)
     predictions[0]["language"] = "en"
     _jsonl(paths[0], predictions)
     with pytest.raises(ValueError, match="Prediction language"):
         tool.tally(*paths)
 
-    predictions[0]["language"] = "ar"
-    predictions[0]["seed"] = 1
-    _jsonl(paths[0], predictions)
+
+@pytest.mark.parametrize("probe_ids", [CHAT_IDS, PROSE_IDS], ids=["chat", "prose"])
+def test_tally_rejects_complete_sampling_files(tmp_path, probe_ids):
+    paths, predictions, *_ = _fixture_files(tmp_path, probe_ids)
+    decoding = {**_SAMPLING, "device": "cpu", "dtype": "float32", "stop_at_eos": True,
+                "eos_token_id": _EOS_TOKEN_ID, "backend": "generate_cached"}
+    _jsonl(paths[0], [{**row, "seed": seed, "decoding": decoding} for row in predictions for seed in _SEEDS])
     with pytest.raises(ValueError, match="Sampling diagnostic predictions"):
         tool.tally(*paths)
 

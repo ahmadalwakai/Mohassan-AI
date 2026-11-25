@@ -8,10 +8,10 @@ from the trainer's `snapshot` receipt and choose fresh output paths.
 
 ## Run order
 
-1. After the foundation run finishes, use its published `selected` checkpoint.
-   If publication is still pending, run the trainer's existing `export` with
-   the recorded config hash. The trainer publishes `best.pt`, `settings.json`
-   and `manifest.json` in `selected`.
+1. Export the checkpoint after the foundation run finishes. If the trainer
+   already published `selected` automatically, use that export. Otherwise,
+   set `CONFIG_SHA` from the original training receipt and run the export
+   command. It publishes `best.pt`, `settings.json` and `manifest.json`.
 
    ```bash
    PY=.venv-execution/Scripts/python
@@ -21,21 +21,36 @@ from the trainer's `snapshot` receipt and choose fresh output paths.
    CORPUS=artifacts/corpora/foundation-v5/corpus-20261123b
    PROBES=artifacts/chat-training/v5/probes
    OUT=artifacts/chat-training/v5/end-of-run-20261125
-   mkdir -p "$OUT"
-   # Only if publication is still pending, with CONFIG_SHA set from the training receipt:
-   # "$PY" packages/execution-pipeline/scripts/train_v5_foundation.py export --config-sha256 "$CONFIG_SHA"
+   EVAL=scripts/v5-eval
    FINETUNE=selected
-   CKPT_SHA=$("$PY" -c 'import json, sys; from pathlib import Path; print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["files"]["best.pt"])' "$RUN/$FINETUNE/manifest.json")
-   # To publish a milestone, set CONFIG_SHA and POSITIONS from the run:
-   # "$PY" packages/execution-pipeline/scripts/train_v5_foundation.py snapshot --config-sha256 "$CONFIG_SHA" --tokens "$POSITIONS"
-   # Use the snapshot receipt's finetune and checkpoint_sha256 as FINETUNE and CKPT_SHA.
+   if [ ! -f "$RUN/$FINETUNE/manifest.json" ]; then
+     "$PY" packages/execution-pipeline/scripts/train_v5_foundation.py export --config-sha256 "${CONFIG_SHA:?Set CONFIG_SHA from the training receipt}"
+   fi
    ```
 
-2. Prepare, check and generate the frozen greedy outputs using the frozen probe
-   commands. Take `CHAT_SHA` and `PROSE_SHA` from the respective prepare receipts
-   (`protocol_sha256`).
+2. Confirm the decision file exists before opening any output. Set
+   `DECISION_FILE` to the path on the owner's PC recording the V5-3 Option B
+   decision from 21:24 UTC on 2026-11-25. Stop here if the check fails.
 
    ```bash
+   test -f "${DECISION_FILE:-}" && printf 'Decision file confirmed: %s\n' "$DECISION_FILE"
+   ```
+
+3. Sample the training bins before generating any probes. The published training
+   settings supply the corpus and tokenizer hashes. The Markdown starts with
+   per-language counts for framing and prompt-prefix matches, EOS and length.
+
+   ```bash
+   mkdir -p "$OUT"
+   "$PY" "$EVAL/training_token_sample.py" --corpus "$CORPUS" --tokenizer-run "$RUN" --training-settings "$RUN/$FINETUNE/settings.json" --output "$OUT/training-token-sample"
+   ```
+
+4. Prepare, check and generate the greedy outputs with the frozen probe
+   commands, then score them. Take `CHAT_SHA` and `PROSE_SHA` from the respective
+   prepare receipts (`protocol_sha256`).
+
+   ```bash
+   CKPT_SHA=$("$PY" -c 'import json, sys; from pathlib import Path; print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["files"]["best.pt"])' "$RUN/$FINETUNE/manifest.json")
    CHAT=packages/execution-pipeline/scripts/chat_probes.py
    PROSE=packages/execution-pipeline/scripts/gate3_probes.py
    "$PY" "$CHAT" prepare --run "$RUN" --finetune "$FINETUNE" --checkpoint-sha256 "$CKPT_SHA" --output "$OUT/chat-greedy"
@@ -45,37 +60,31 @@ from the trainer's `snapshot` receipt and choose fresh output paths.
    "$PY" "$CHAT" predict --protocol "$OUT/chat-greedy/protocol.json" --protocol-sha256 "$CHAT_SHA"
    "$PY" "$PROSE" check --protocol "$OUT/prose-greedy/protocol.json" --protocol-sha256 "$PROSE_SHA"
    "$PY" "$PROSE" predict --protocol "$OUT/prose-greedy/protocol.json" --protocol-sha256 "$PROSE_SHA"
+   "$PY" "$EVAL/loop_measure.py" score --predictions "$OUT/chat-greedy/predictions.jsonl" --output "$OUT/chat-objective.json"
+   "$PY" "$EVAL/loop_measure.py" score --predictions "$OUT/prose-greedy/predictions.jsonl" --output "$OUT/prose-objective.json"
    ```
 
-3. Measure the greedy predictions. Run the same command for each available
-   historical chat or prose predictions file. Set `M100_PREDICTIONS` and
+   Use the same scorer for each available historical chat or prose predictions
+   file. Set `M100_PREDICTIONS` and
    `M300_PREDICTIONS` to the corresponding saved `predictions.jsonl` paths and
    use a distinct score path for each file.
 
    ```bash
-   EVAL=scripts/v5-eval
-   "$PY" "$EVAL/loop_measure.py" score --predictions "$OUT/chat-greedy/predictions.jsonl" --output "$OUT/chat-objective.json"
-   "$PY" "$EVAL/loop_measure.py" score --predictions "$OUT/prose-greedy/predictions.jsonl" --output "$OUT/prose-objective.json"
    "$PY" "$EVAL/loop_measure.py" score --predictions "$PROBES/baseline-v4-chat-20261123/predictions.jsonl" --output "$OUT/v4-chat-objective.json"
    "$PY" "$EVAL/loop_measure.py" score --predictions "$M100_PREDICTIONS" --output "$OUT/100m-objective.json"
    "$PY" "$EVAL/loop_measure.py" score --predictions "$M300_PREDICTIONS" --output "$OUT/300m-objective.json"
    ```
 
-4. Run the sampling diagnostic in fresh folders. `--reference` selects the
-   reference decoder and takes its own fresh output folder.
+5. Run the sampling diagnostic in fresh folders, then score all 240 outputs
+   across both suites. Each score reports overall and per-seed language
+   totals. `--reference` selects the reference decoder and takes its own fresh
+   output folder.
 
    ```bash
    "$PY" "$EVAL/sampling_diagnostic.py" --protocol "$OUT/chat-greedy/protocol.json" --protocol-sha256 "$CHAT_SHA" --output "$OUT/chat-sampling"
    "$PY" "$EVAL/sampling_diagnostic.py" --protocol "$OUT/prose-greedy/protocol.json" --protocol-sha256 "$PROSE_SHA" --output "$OUT/prose-sampling"
-   ```
-
-5. Sample the training bins using the tokenizer copied into the foundation run.
-   The published training settings supply the corpus and tokenizer hashes.
-   Read `training-token-sample.md` and use the JSON for the token and framing
-   details.
-
-   ```bash
-   "$PY" "$EVAL/training_token_sample.py" --corpus "$CORPUS" --tokenizer-run "$RUN" --training-settings "$RUN/$FINETUNE/settings.json" --output "$OUT/training-token-sample"
+   "$PY" "$EVAL/loop_measure.py" score --predictions "$OUT/chat-sampling/predictions.jsonl" --output "$OUT/chat-sampling-objective.json"
+   "$PY" "$EVAL/loop_measure.py" score --predictions "$OUT/prose-sampling/predictions.jsonl" --output "$OUT/prose-sampling-objective.json"
    ```
 
 6. Have the reader score the greedy outputs against the frozen criteria and save
@@ -114,23 +123,31 @@ checked-in plan records the earlier baseline, milestones and Gate 3.
   offset, find the next EOS (258), then take the document through the following
   EOS, including that terminal token. Skip repeated draws of a document.
   Report the zero-based draw and document offsets, length in tokens, EOS,
-  kind, any length over 512 and the framing round-trip for conversations. A
-  malformed message frame gets an error and a null first differing position
-  when no reference framing can be produced. Include the whole decoded
-  conversation or the first 600 characters of decoded prose.
+  kind and any length over 512. For conversations, check the corpus builder's
+  prompt-plus-reply round-trip and compare standalone prompt token IDs to the
+  document prefix. The report includes the first differing position and the
+  four prompt-tail positions. A malformed message frame gets an error and a
+  null first differing position when no reference framing can be produced.
+  Include the whole decoded conversation or the first 600 characters of
+  decoded prose.
 - **Reader verdicts.** Each row contains `id`, `verdict`, `content`, `loop`
   and `reason`. Use `pass` or `fail` for the strict `verdict` and for
   `content`, which sets ending and length aside. Use `yes` or `no` for
-  `loop` and give a one-line reason. The Gate 3 rule uses the strict
-  verdicts for all 20 frozen prose probes per language and requires at least
-  16 passes in each language. Chat core IDs and known-hard IDs are reported
-  using the owner's pre-registration.
+  `loop` and give a one-line reason. Option A is the official Gate 3 result
+  and requires at least 16 strict passes out of 20 frozen prose probes in each
+  language. The owner's delegate recorded Option B for the V5-3 condition at
+  21:24 UTC on 2026-11-25 before any final output existed. Option B requires at
+  least 16 out of 20 per language with `content == "pass"` and `loop == "no"`.
+  The prose tally always shows both conditions and lists reader and objective
+  loop disagreements. Chat core and known-hard groups come from the owner's
+  pre-registration.
 
 ## Refusals
 
-- `loop_measure.py` refuses malformed or empty prediction input, duplicate IDs
-  and an existing output file. Its score binds the exact input and tool bytes
-  by SHA-256.
+- `loop_measure.py` refuses malformed or empty prediction input, duplicate
+  unseeded IDs, duplicate sampled ID and seed pairs, missing or invalid
+  sampled seeds, mixed seeded and unseeded input, and an existing output
+  file. Its score binds the exact input and tool bytes by SHA-256.
 - `sampling_diagnostic.py` refuses a bad protocol hash, unsupported protocol
   type or failed pinned check, and a loaded checkpoint with a prompt hint or
   unexpected EOS, or a prompt that exceeds context with the full output budget.

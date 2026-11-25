@@ -38,7 +38,8 @@ def corpus_fixture(tmp_path):
             {"role": "assistant", "content": response},
             {"role": "user", "content": question},
         ]
-        chat_text = conversation_prompt(messages) + (f"ab {response} " * 100).rstrip()
+        prompt = conversation_prompt(messages)
+        chat_text = prompt + (f"ab {response} " * 100).rstrip()
         chat_ids = encoder.encode(chat_text) + [eos]
         differing_position = chat_ids.index(merged)
         alternate_ids = chat_ids[:differing_position] + pair + chat_ids[differing_position + 1:]
@@ -49,7 +50,7 @@ def corpus_fixture(tmp_path):
         bin_path = corpus / f"{language}.train.bin"
         np.asarray(flat_ids, dtype="<u2").tofile(bin_path)
         manifest["files"][bin_path.name] = {"tokens": len(flat_ids), "sha256": sha256_file(bin_path)}
-        rows[language] = (flat_ids, chat_text, differing_position, prose_text)
+        rows[language] = (flat_ids, chat_text, differing_position, prose_text, encoder.encode(prompt))
     manifest_file = corpus / "manifest.json"
     manifest_file.write_text(json.dumps(manifest), encoding="utf-8")
     settings_file = tokenizer_run / "selected" / "settings.json"
@@ -95,7 +96,7 @@ def test_sample_uses_pinned_loader_document_boundaries_and_fixed_seed(corpus_fix
     assert report["tokenizer_sha256"] == sha256_file(tokenizer_run / "tokenizer.json")
     assert report["tokenizer_report_sha256"] == sha256_file(tokenizer_run / "tokenizer-report.json")
     rng = random.Random(20261125)
-    for language, (ids, chat_text, differing_position, prose_text) in fixtures.items():
+    for language, (ids, chat_text, differing_position, prose_text, prompt_ids) in fixtures.items():
         assert report["train_bins_sha256"][f"{language}.train.bin"] == sha256_file(corpus / f"{language}.train.bin")
         documents = [doc for doc in report["documents"] if doc["language"] == language]
         assert [(doc["draw_offset"], doc["offset"], doc["length_tokens"]) for doc in documents] == expected_draws(ids, 258, rng)
@@ -109,9 +110,23 @@ def test_sample_uses_pinned_loader_document_boundaries_and_fixed_seed(corpus_fix
         assert canonical["first_differing_position"] is None
         assert alternate["framing_round_trip"] is False
         assert alternate["first_differing_position"] == differing_position
+        for conversation in (canonical, alternate):
+            assert conversation["prompt_prefix_match"] is True
+            assert conversation["prompt_prefix_first_difference"] is None
+            assert conversation["prompt_tail_ids"] == prompt_ids[-4:]
+            assert conversation["document_ids_at_prompt_tail"] == prompt_ids[-4:]
         prose, = [doc for doc in documents if doc["kind"] == "prose" and doc["over_512_tokens"]]
         assert len(prose_text) > 600
         assert prose["text"] == prose_text[:600]
+        assert report["by_language"][language] == {
+            "conversation_documents": 2,
+            "framing_round_trip_passes": 1,
+            "prompt_prefix_matches": 2,
+            "ends_with_eos": len(documents),
+            "over_512_tokens": sum(doc["length_tokens"] > 512 for doc in documents),
+        }
+        summary_row = f"| {language} | 2 | 1 | 2 | {len(documents)} | {report['by_language'][language]['over_512_tokens']} |"
+        assert markdown.index(summary_row) < markdown.index("## ")
 
 
 def test_cut_includes_the_next_document_eos_and_skips_partial_tail():
@@ -141,6 +156,25 @@ def test_conversation_markers_come_from_the_formatter(tmp_path, monkeypatch):
     assert document["framing_round_trip"] is True
 
 
+def test_joint_encoding_can_merge_across_a_matching_frame_and_reply_boundary(tmp_path):
+    prompt = conversation_prompt([{"role": "user", "content": "Question"}])
+    reply = "\n\nReply"
+    pair = (prompt.encode("utf-8")[-1], reply.encode("utf-8")[0])
+    ByteBPETokenizer([pair]).save(tmp_path / "tokenizer.json")
+    (tmp_path / "tokenizer-report.json").write_text(json.dumps({"pretokenizer": PRETOKENIZER}), encoding="utf-8")
+    encoder = TextEncoder(tmp_path)
+    ids = encoder.encode(prompt + reply) + [encoder.tokenizer.eos_token_id]
+    prompt_ids = encoder.encode(prompt)
+    merged, = encoder.tokenizer.encode(prompt[-1] + reply[0])
+    document = sample.describe_document("en", 0, 0, ids, encoder, *sample.frame_boundaries())
+    assert document["framing_round_trip"] is True
+    assert document["prompt_prefix_match"] is False
+    assert document["prompt_prefix_first_difference"] == len(prompt_ids) - 1
+    assert document["prompt_tail_ids"] == prompt_ids[-4:]
+    assert document["document_ids_at_prompt_tail"] == prompt_ids[-4:-1] + [merged]
+    assert sample.language_counts([document])["en"]["prompt_prefix_matches"] == 0
+
+
 def test_malformed_framing_is_reported(tmp_path):
     ByteBPETokenizer().save(tmp_path / "tokenizer.json")
     encoder = TextEncoder(tmp_path)
@@ -152,6 +186,8 @@ def test_malformed_framing_is_reported(tmp_path):
     document = sample.describe_document("en", 0, 0, ids, encoder, prefix, suffix)
     assert document["framing_round_trip"] is False
     assert document["first_differing_position"] == len(encoder.encode(cut + "\n"))
+    assert document["prompt_prefix_match"] is False
+    assert document["prompt_prefix_first_difference"] == document["first_differing_position"]
 
     invalid_json = prefix + "["
     ids = encoder.encode(invalid_json) + [encoder.tokenizer.eos_token_id]
@@ -159,6 +195,9 @@ def test_malformed_framing_is_reported(tmp_path):
     assert document["framing_round_trip"] is False
     assert document["first_differing_position"] is None
     assert document["framing_error"]
+    assert document["prompt_prefix_match"] is False
+    assert document["prompt_prefix_first_difference"] is None
+    assert document["prompt_tail_ids"] == document["document_ids_at_prompt_tail"] == []
 
 
 @pytest.mark.parametrize(("filename", "error"), [

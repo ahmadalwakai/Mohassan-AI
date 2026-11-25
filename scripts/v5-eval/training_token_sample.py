@@ -82,27 +82,55 @@ def frame_boundaries() -> tuple[str, str]:
     return rendered[:json_start], rendered[json_end:]
 
 
+def first_difference(actual: list[int], expected: list[int]) -> int | None:
+    return next(
+        (index for index, (actual_id, expected_id) in enumerate(zip_longest(actual, expected))
+         if actual_id != expected_id),
+        None,
+    )
+
+
 def framing_check(encoder: TextEncoder, ids: list[int], text: str, prefix: str, suffix: str) -> dict:
     try:
         messages, json_end = json.JSONDecoder().raw_decode(text, len(prefix))
         prompt = conversation_prompt(messages)
     except ValueError as exc:
-        return {"framing_round_trip": False, "first_differing_position": None, "framing_error": str(exc)}
+        return {
+            "framing_round_trip": False,
+            "first_differing_position": None,
+            "framing_error": str(exc),
+            "prompt_prefix_match": False,
+            "prompt_prefix_first_difference": None,
+            "prompt_tail_ids": [],
+            "document_ids_at_prompt_tail": [],
+        }
+
+    # The frozen chat probes encode the prompt on its own, before generating the reply.
+    # https://github.com/ahmadalwakai/Mohassan-AI/blob/c2a0ff765071657cf200b5ee7d12fabaad738c0b/packages/execution-pipeline/execution_pipeline/chat_probes.py#L60-L67
+    # Retrieved 2026-11-25.
+    prompt_ids = encoder.encode(prompt)
+    prompt_end = len(prompt_ids)
+    prompt_difference = first_difference(ids[:prompt_end], prompt_ids)
 
     # Plan section 8.3 stores the framed prompt followed by the reply and EOS.
     # https://github.com/ahmadalwakai/Mohassan-AI/blob/c2a0ff765071657cf200b5ee7d12fabaad738c0b/docs/CHAT-MODEL-TRAINING-PLAN.md#83-design
     # Retrieved 2026-11-25.
+    # The owner confirmed the joint encode at artifacts/corpora/foundation-v5/prepare-20261123.py:210.
     if text.startswith(suffix, json_end):
         reply = text[json_end + len(suffix):]
         expected = encoder.encode(prompt + reply) + [EOS]
     else:
-        expected = encoder.encode(prompt)
+        expected = prompt_ids
 
-    first_difference = next(
-        (index for index, (actual, wanted) in enumerate(zip_longest(ids, expected)) if actual != wanted),
-        None,
-    )
-    return {"framing_round_trip": first_difference is None, "first_differing_position": first_difference}
+    document_difference = first_difference(ids, expected)
+    return {
+        "framing_round_trip": document_difference is None,
+        "first_differing_position": document_difference,
+        "prompt_prefix_match": prompt_difference is None,
+        "prompt_prefix_first_difference": prompt_difference,
+        "prompt_tail_ids": prompt_ids[-4:],
+        "document_ids_at_prompt_tail": ids[max(0, prompt_end - 4):prompt_end],
+    }
 
 
 def describe_document(
@@ -129,6 +157,17 @@ def describe_document(
 
 def markdown(report: dict) -> str:
     lines = ["# V5 training token sample", "", f"Seed {SEED}. {DOCUMENTS_PER_LANGUAGE} documents per language.", ""]
+    lines.extend((
+        "| Language | Conversation documents | Framing round-trip passes | Prompt-prefix matches | "
+        f"Documents ending with {EOS} | Documents over {CONTEXT_TOKENS} tokens |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ))
+    for language, counts in report["by_language"].items():
+        lines.append(
+            f"| {language} | {counts['conversation_documents']} | {counts['framing_round_trip_passes']} | "
+            f"{counts['prompt_prefix_matches']} | {counts['ends_with_eos']} | {counts['over_512_tokens']} |"
+        )
+    lines.append("")
     for document in report["documents"]:
         lines.extend((
             f"## {document['language']} document at token {document['offset']}",
@@ -144,11 +183,44 @@ def markdown(report: dict) -> str:
             difference = document["first_differing_position"]
             if difference is not None:
                 lines.append(f"- First differing token position **{difference}**")
+            prefix_match = document["prompt_prefix_match"]
+            if "framing_error" in document:
+                lines.append("- Prompt prefix comparison unavailable")
+            else:
+                lines.append(f"- Prompt prefix matches **{'yes' if prefix_match else 'no'}**")
+                difference = document["prompt_prefix_first_difference"]
+                if difference is not None:
+                    lines.append(f"- First differing prompt token position **{difference}**")
+                lines.extend((
+                    f"- Prompt tail token IDs `{document['prompt_tail_ids']}`",
+                    f"- Document IDs at prompt tail `{document['document_ids_at_prompt_tail']}`",
+                ))
             if "framing_error" in document:
                 lines.append(f"- {document['framing_error']}")
         # Indent corpus text so it is rendered literally even if it contains Markdown.
         lines.extend(("", *("    " + line for line in document["text"].split("\n")), ""))
     return "\n".join(lines)
+
+
+def language_counts(documents: list[dict]) -> dict:
+    counts = {
+        language: {
+            "conversation_documents": 0,
+            "framing_round_trip_passes": 0,
+            "prompt_prefix_matches": 0,
+            "ends_with_eos": 0,
+            "over_512_tokens": 0,
+        }
+        for language in LANGUAGES
+    }
+    for doc in documents:
+        language = counts[doc["language"]]
+        language["conversation_documents"] += doc["kind"] == "conversation"
+        language["framing_round_trip_passes"] += doc.get("framing_round_trip") is True
+        language["prompt_prefix_matches"] += doc.get("prompt_prefix_match") is True
+        language["ends_with_eos"] += doc["ends_with_eos"]
+        language["over_512_tokens"] += doc["over_512_tokens"]
+    return counts
 
 
 def write_sample(corpus: Path, tokenizer_run: Path, training_settings: Path, output: Path) -> dict:
@@ -202,6 +274,7 @@ def write_sample(corpus: Path, tokenizer_run: Path, training_settings: Path, out
         "tokenizer_report_sha256": tokenizer_report_sha,
         "train_bins_sha256": train_bin_hashes,
         "tool_sha256": sha256_file(Path(__file__)),
+        "by_language": language_counts(documents),
         "documents": documents,
     }
     files = {

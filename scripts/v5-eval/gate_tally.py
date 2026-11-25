@@ -28,6 +28,8 @@ GATE3_LANGUAGES = {
 # Training plan sections 8.4 (retrieved 2026-11-25) and 8.8 (owner's 2026-11-25 pre-registration).
 # https://github.com/ahmadalwakai/Mohassan-AI/blob/c2a0ff765071657cf200b5ee7d12fabaad738c0b/docs/CHAT-MODEL-TRAINING-PLAN.md#84-stages-and-gates
 GATE3_STRICT_MINIMUM = 16
+# Owner's delegate recorded the v5-3 condition on 2026-11-25 at 21:24 UTC.
+V5_3_OPTION_B_MINIMUM = 16
 
 
 def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -96,14 +98,14 @@ def _load_verdicts(path: Path) -> tuple[dict[str, dict[str, Any]], str]:
 
 
 def _counts(probe_ids: list[str], predictions: dict[str, dict[str, Any]],
-            verdicts: dict[str, dict[str, Any]]) -> dict[str, int]:
+            verdicts: dict[str, dict[str, Any]], objective_loops: dict[str, bool]) -> dict[str, int]:
     return {
         "total": len(probe_ids),
         "strict_passes": sum(verdicts[probe_id]["verdict"] == "pass" for probe_id in probe_ids),
         "content_passes": sum(verdicts[probe_id]["content"] == "pass" for probe_id in probe_ids),
         "reader_loops": sum(verdicts[probe_id]["loop"] == "yes" for probe_id in probe_ids),
         "objective_eos": sum(counts_as_eos(predictions[probe_id]) for probe_id in probe_ids),
-        "objective_loops": sum(measure_loop(predictions[probe_id]["text"])["looped"] for probe_id in probe_ids),
+        "objective_loops": sum(objective_loops[probe_id] for probe_id in probe_ids),
     }
 
 
@@ -129,14 +131,21 @@ def tally(predictions_path: Path, verdicts_path: Path, preregistration_path: Pat
     _require_ids(set(verdicts), set(predictions), "Verdicts")
     core, known_hard, preregistration_sha256 = _load_preregistration(preregistration_path)
 
+    objective_loops = {probe_id: measure_loop(predictions[probe_id]["text"])["looped"]
+                       for probe_id in expected_languages}
     languages = {}
     for language in LANGUAGES:
         probe_ids = [probe_id for probe_id, expected in expected_languages.items() if expected == language]
-        counts: dict[str, Any] = _counts(probe_ids, predictions, verdicts)
+        counts: dict[str, Any] = _counts(probe_ids, predictions, verdicts, objective_loops)
         if suite == "chat":
-            counts["core"] = _counts(core[language], predictions, verdicts)
-            counts["known_hard"] = _counts([probe_id for probe_id in probe_ids if probe_id in known_hard],
-                                           predictions, verdicts)
+            counts["core"] = _counts(core[language], predictions, verdicts, objective_loops)
+            hard_ids = [probe_id for probe_id in probe_ids if probe_id in known_hard]
+            counts["known_hard"] = _counts(hard_ids, predictions, verdicts, objective_loops)
+        else:
+            counts["option_b_passes"] = sum(
+                verdicts[probe_id]["content"] == "pass" and verdicts[probe_id]["loop"] == "no"
+                for probe_id in probe_ids
+            )
         languages[language] = counts
 
     result = {
@@ -155,6 +164,19 @@ def tally(predictions_path: Path, verdicts_path: Path, preregistration_path: Pat
             "met_in_both_languages": all(languages[language]["strict_passes"] >= GATE3_STRICT_MINIMUM
                                         for language in LANGUAGES),
         }
+        result["v5_3_condition_option_b"] = {
+            "probes_per_language": GATE3_TOTAL_PER_LANGUAGE,
+            "minimum_per_language": V5_3_OPTION_B_MINIMUM,
+            "per_item": "content == pass and loop == no",
+            "met_in_both_languages": all(languages[language]["option_b_passes"] >= V5_3_OPTION_B_MINIMUM
+                                        for language in LANGUAGES),
+        }
+        disagreements = []
+        for probe_id, objective_loop in objective_loops.items():
+            reader_loop = verdicts[probe_id]["loop"]
+            if (reader_loop == "yes") != objective_loop:
+                disagreements.append({"id": probe_id, "reader_loop": reader_loop, "objective_loop": objective_loop})
+        result["reader_objective_loop_disagreements"] = disagreements
     return result
 
 

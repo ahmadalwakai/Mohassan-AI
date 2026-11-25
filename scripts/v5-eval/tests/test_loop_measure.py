@@ -56,6 +56,7 @@ def test_score_cli_reports_both_languages_and_hashes_existing_format(tmp_path):
     command = [sys.executable, str(source), "score", "--predictions", str(predictions), "--output", str(output)]
     subprocess.run(command, check=True)
     result = json.loads(output.read_text(encoding="utf-8"))
+    assert set(result) == {"predictions_sha256", "tool_sha256", "by_language", "by_id"}
     assert result["predictions_sha256"] == hashlib.sha256(data).hexdigest()
     assert result["tool_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
     assert result["by_language"] == {
@@ -73,4 +74,87 @@ def test_prediction_record_rejects_duplicate_json_keys(tmp_path):
     predictions = tmp_path / "predictions.jsonl"
     predictions.write_text('{"id":"chat-ar-01","id":"chat-ar-02"}\n', encoding="utf-8")
     with pytest.raises(ValueError, match="duplicate JSON key 'id'"):
+        loop_measure.load_predictions(predictions)
+
+
+@pytest.fixture
+def sampled_rows():
+    rows = []
+    for seed, language, eos, loop in [
+        (2, "en", True, False), (1, "ar", True, False),
+        (3, "ar", True, True), (3, "en", False, False),
+        (1, "en", False, True), (2, "ar", False, True),
+    ]:
+        rows.append({
+            "id": f"chat-{language}-01",
+            "language": language,
+            "text": "one one one one one one" if loop else "no repeated phrase",
+            "stop_reason": "eos" if eos else "length",
+            "terminal_token_id": 258 if eos else None,
+            "output_tokens": 10 if eos else 192,
+            "seed": seed,
+            "decoding": {"do_sample": True},
+        })
+    return rows
+
+
+def _write_predictions(path, rows):
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+
+def test_score_sampling_diagnostic_by_language_and_seed(tmp_path, sampled_rows):
+    predictions = tmp_path / "predictions.jsonl"
+    output = tmp_path / "score.json"
+    _write_predictions(predictions, sampled_rows)
+    loaded, _ = loop_measure.load_predictions(predictions)
+    assert loaded == {(row["id"], row["seed"]): row for row in sampled_rows}
+
+    loop_measure.score(predictions, output)
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["by_language"] == {
+        "ar": dict(total=3, eos=2, loops=2, length_stops=1),
+        "en": dict(total=3, eos=1, loops=1, length_stops=2),
+    }
+    assert report["by_seed"] == {
+        "1": {"ar": dict(total=1, eos=1, loops=0, length_stops=0),
+              "en": dict(total=1, eos=0, loops=1, length_stops=1)},
+        "2": {"ar": dict(total=1, eos=0, loops=1, length_stops=1),
+              "en": dict(total=1, eos=1, loops=0, length_stops=0)},
+        "3": {"ar": dict(total=1, eos=1, loops=1, length_stops=0),
+              "en": dict(total=1, eos=0, loops=0, length_stops=1)},
+    }
+    assert set(report["by_id"]) == {f'{row["id"]}#seed{row["seed"]}' for row in sampled_rows}
+    assert report["by_id"]["chat-ar-01#seed3"] == {
+        "looped": True, "highest_count": 3, "repeated_phrase": "one one one one",
+    }
+
+
+@pytest.mark.parametrize(("case", "error"), [
+    ("duplicate", r"duplicate prediction \(id, seed\)"),
+    ("missing", r"missing seeds \[2\] for prediction ID 'chat-en-01'"),
+    ("mixed_seed_first", "mixed predictions with and without a seed"),
+    ("mixed_unseeded_first", "mixed predictions with and without a seed"),
+])
+def test_refuses_inconsistent_sampling_records(tmp_path, sampled_rows, case, error):
+    if case == "duplicate":
+        sampled_rows.append(sampled_rows[0])
+    elif case == "missing":
+        sampled_rows.pop(0)
+    else:
+        index = 0 if case == "mixed_unseeded_first" else -1
+        del sampled_rows[index]["seed"]
+    predictions = tmp_path / "predictions.jsonl"
+    output = tmp_path / "score.json"
+    _write_predictions(predictions, sampled_rows)
+    with pytest.raises(ValueError, match=error):
+        loop_measure.score(predictions, output)
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("seed", [0, 4, True, "2", None])
+def test_refuses_invalid_sampling_seed(tmp_path, sampled_rows, seed):
+    sampled_rows[0]["seed"] = seed
+    predictions = tmp_path / "predictions.jsonl"
+    _write_predictions(predictions, sampled_rows)
+    with pytest.raises(ValueError, match="invalid seed"):
         loop_measure.load_predictions(predictions)
