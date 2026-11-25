@@ -454,7 +454,7 @@ export async function createApplication(config: AppConfig) {
     try { body = new TextDecoder(charset, { fatal: true }).decode(response.body); } catch { return null; }
     // Captions are not the article's sentences; joined into the text they glued onto the next one (readable-page.ts).
     const source = readableSource(withoutFigures(body), response.url);
-    return pageCache.put({ url: response.url, title: source.title, text: source.text, status: response.status }, options);
+    return pageCache.put({ url: response.url, title: source.title, text: source.text, status: response.status, links: source.links }, options);
   };
   // PDF files from the chat: stored under the data directory; local .pdf paths are read for the owner only, inside the coding roots.
   await migrateDocuments(database.db);
