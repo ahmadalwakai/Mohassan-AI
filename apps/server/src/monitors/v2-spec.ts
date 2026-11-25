@@ -3,6 +3,10 @@ import {
 } from '@mohassan/contracts';
 import { parseNumberWords } from '../assistant/reasoning/number-words.js';
 import { monitorCurrencyPair, monitorMatchText, monitorPageUrl, type MonitorNeed } from './detection.js';
+import { monitorSourceFlags, type MonitorSourceFlags } from './flag.js';
+import { githubMonitorSpec } from './sources/github-intent.js';
+import { pdfMonitorSource, pdfMonitorSpec } from './sources/pdf-intent.js';
+import { visualMonitorSpec } from './sources/visual-intent.js';
 import { generateMonitorSpec } from './spec.js';
 
 const address = /https?:\/\/[^\s<>"'`«»“”]+/giu;
@@ -49,7 +53,7 @@ function trendCondition(body: string, language: MonitorSpec['language']): Monito
 }
 
 function structuredTarget(spec: MonitorSpec, body: string): MonitorValueTarget | undefined {
-  if (spec.source.kind !== 'page') return;
+  if (spec.source.kind !== 'page' && spec.source.kind !== 'visual') return;
   const property = product.test(body) ? 'productName' : eventStatus.test(body) ? 'eventStatus' : startDate.test(body) ? 'startDate'
     : spec.read.kind === 'number' && spec.read.label === 'price' ? 'price'
       : spec.read.kind === 'status' && spec.read.label === 'availability' ? 'availability' : undefined;
@@ -62,7 +66,7 @@ function structuredTarget(spec: MonitorSpec, body: string): MonitorValueTarget |
   }
 }
 
-function parseTarget(need: MonitorNeed, now: Date): { spec: MonitorSpec; target: MonitorV2Target } | null {
+function parseTarget(need: MonitorNeed, now: Date, flags: MonitorSourceFlags): { spec: MonitorSpec; target: MonitorV2Target } | null {
   const body = monitorMatchText(need.text.replace(address, ' '));
   const trend = trendCondition(body, need.language);
   if (trend === null) return null;
@@ -72,8 +76,10 @@ function parseTarget(need: MonitorNeed, now: Date): { spec: MonitorSpec; target:
   const event = eventStatus.test(body);
   const date = startDate.test(body);
   const field = productName || event || date;
-  const primary = generateMonitorSpec(need, now) ?? ((trend || field) && generateMonitorSpec({ ...need,
-    text: `${trend ? need.text.replace(directionWord, changes) : need.text} ${field ? pageContent : ''} ${changes}` }, now));
+  const sourceSpec = (value: MonitorNeed) => flags.pdf && pdfMonitorSource(value) ? pdfMonitorSpec(value, now)
+    : (flags.github && githubMonitorSpec(value, now)) || (flags.visual && visualMonitorSpec(value, now)) || generateMonitorSpec(value, now);
+  const primary = sourceSpec(need) ?? ((trend || field) && sourceSpec({ ...need,
+    text: `${trend ? need.text.replace(directionWord, changes) : need.text} ${field ? pageContent : ''} ${changes}` }));
   if (!primary) return null;
 
   let selected = primary;
@@ -119,7 +125,7 @@ function splitSources(text: string) {
   return { parts: [...parts, text.slice(start)], connectors };
 }
 
-export function generateMonitorV2Spec(need: MonitorNeed, now = new Date()): MonitorSpec | null {
+export function generateMonitorV2Spec(need: MonitorNeed, now = new Date(), flags = monitorSourceFlags()): MonitorSpec | null {
   if (need.kind !== 'explicit') {
     const spec = generateMonitorSpec(need, now);
     return spec && { ...spec, v2: { freshnessMs: MONITOR_V2_DEFAULT_FRESHNESS_MS } };
@@ -128,7 +134,7 @@ export function generateMonitorV2Spec(need: MonitorNeed, now = new Date()): Moni
   if (parts.length > 3 || new Set(connectors).size > 1 || connectors[0] === 'sequence' && parts.length !== 2) return null;
   const parsed = parts.map((text, index) => parseTarget(parts.length === 1 ? need : {
     ...need, text, sourceUrl: monitorPageUrl(text), ...(index > 0 && { sourceText: undefined }),
-  }, now));
+  }, now, flags));
   const [first, ...rest] = parsed;
   if (!first || rest.some(part => !part)) return null;
   const body = monitorMatchText(need.text.replace(address, ' '));

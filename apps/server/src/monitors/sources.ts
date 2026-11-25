@@ -11,6 +11,10 @@ import { getRateValue } from '../live-data/rates.js';
 import { createLiveRequestClient, fetchPublicData } from '../live-data/request.js';
 import { getCurrentWeatherMetric } from '../live-data/weather.js';
 import type { MonitorObservation } from './evaluation.js';
+import { monitorSourceFlags, type MonitorSourceFlags } from './flag.js';
+import { GITHUB_API_HOST, readGithubMonitor, type GithubMonitorCache } from './sources/github.js';
+import { readPdfMonitor } from './sources/pdf.js';
+import { createVisualMonitorReader, reserveMonitorVisualRead } from './sources/visual.js';
 import { findMonitorDiscoveries, sitemapEntriesForPage, type MonitorDiscoveries, type MonitorDiscoveryCache, type MonitorFeedCache } from './feed-discovery-v2.js';
 import { parseMonitorFeedXml } from './feed-xml-v2.js';
 import { cleanMonitorText, observePage } from './page.js';
@@ -32,12 +36,13 @@ export interface MonitorSourceCache {
   lastModified?: string;
   anchor?: MonitorPageAnchor;
   discovery?: MonitorDiscoveryCache;
+  github?: GithubMonitorCache;
 }
 export type MonitorReadResult =
   | { kind: 'value'; observation: MonitorObservation; cache?: MonitorSourceCache; publicationTimes?: string[]; relocation?: MonitorPageRelocation }
   | { kind: 'unchanged'; cache?: MonitorSourceCache; publicationTimes?: string[] }
   | { kind: 'clarify'; candidates: MonitorPageCandidate[]; confidence: number; url: string; cache?: MonitorSourceCache }
-  | { kind: 'unsafe-target'; confidence: number; url: string }
+  | { kind: 'unsafe-target'; confidence: number; url: string; reason?: 'visual-unreadable' }
   | { kind: 'missing'; url?: string }
   | { kind: 'unreachable'; url?: string }
   | { kind: 'deferred'; at: number };
@@ -130,12 +135,15 @@ function itemIdentity(raw: string): string {
 }
 
 export function createMonitorReader({
-  db, network = new SafeNetwork(), searchProvider, clock = Date.now,
+  db, network = new SafeNetwork(), searchProvider, clock = Date.now, flags = monitorSourceFlags(), visual,
 }: {
   db: Kysely<any>;
   network?: SafeNetwork;
   searchProvider?: SearchProvider;
   clock?: () => number;
+  flags?: MonitorSourceFlags;
+  visual?: Omit<Parameters<typeof createVisualMonitorReader>[0], 'network' | 'clock' | 'reserveDaily'> &
+    Partial<Pick<Parameters<typeof createVisualMonitorReader>[0], 'reserveDaily'>>;
 }) {
   const storage = new AsyncLocalStorage<ReadContext>();
   const robotsHost = new AsyncLocalStorage<string>();
@@ -165,6 +173,9 @@ export function createMonitorReader({
   class HostNetwork extends SafeNetwork {
     override async request(input: string, options: NetworkOptions = {}) {
       const target = validateUrl(network, input, options.allowedOrigins);
+      if (flags.github && target.hostname.toLowerCase().replace(/\.$/u, '') === GITHUB_API_HOST) {
+        throw new BrowserError('MONITOR_GITHUB_SOURCE_REQUIRED', 'Use a GitHub monitor for this API.');
+      }
       const originalRobotsHost = robotsHost.getStore();
       const context = storage.getStore();
       const response = await network.request(target.href, {
@@ -204,6 +215,9 @@ export function createMonitorReader({
   }
 
   const publicNetwork = new PublicMonitorNetwork(network.policy);
+  const readVisual = flags.visual && createVisualMonitorReader({
+    reserveDaily: at => reserveMonitorVisualRead(db, at), ...visual, network: publicNetwork, clock,
+  });
   const search = searchProvider ?? new SearchEngine(publicNetwork, { admission: new SqlSearchStore(db, clock), now: clock });
   const live = createLiveRequestClient({ fetch: (url, init) => fetchPublicData(url, init, publicNetwork), clock });
 
@@ -387,7 +401,9 @@ export function createMonitorReader({
           const items = await readDiscoveredItems(spec, target, cache, links, cached?.discovery, options);
           if (items) return items;
         }
-        const result = observePageV2(body, target, contentType, spec, at, options.cache?.anchor, document);
+        const previous = options.cache?.anchor;
+        if (previous?.origin === 'visual') return { kind: 'missing', url: target };
+        const result = observePageV2(body, target, contentType, spec, at, previous, document, flags.visual && spec.read.kind === 'number');
         if (result.kind === 'value') {
           if (result.anchor) cache.anchor = result.anchor;
           return { kind: 'value', observation: result.observation, cache, ...(result.relocation && { relocation: result.relocation }) };
@@ -413,7 +429,18 @@ export function createMonitorReader({
     const context: ReadContext = { options, hosts: new Map(), unreachableRobots: new Set() };
     return storage.run(context, async () => {
       try {
-        if (source.kind === 'page') return await readPage({ ...spec, source }, options);
+        if (source.kind === 'github') return flags.github && options.v2
+          ? await readGithubMonitor(network, { ...spec, source }, options, clock) : { kind: 'unreachable' };
+        if (source.kind === 'pdf') return flags.pdf && options.v2
+          ? await readPdfMonitor({ ...spec, source }, options, publicNetwork, clock) : { kind: 'unreachable' };
+        if (source.kind === 'page' || source.kind === 'visual') {
+          if (source.kind === 'visual' && (!readVisual || !options.v2)) return { kind: 'unreachable' };
+          const result = await readPage({ ...spec, source: { ...source, kind: 'page' } }, options);
+          if (readVisual && options.v2 && spec.read.kind === 'number' && result.kind === 'missing') {
+            return await readVisual(spec, result.url ?? source.url, options);
+          }
+          return result;
+        }
         if (source.kind === 'currency') {
           const rate = await live.run(scope => getRateValue(scope, source.base, source.quote), options.signal);
           if (!rate) return { kind: 'missing' };

@@ -5,7 +5,9 @@ import { roleOf, type WorkspaceRole } from '../members.js';
 import { backgroundAccountCanReceive } from '../notifications-store.js';
 import { evaluateMonitor, type MonitorEvaluationState, type MonitorObservation } from './evaluation.js';
 import { evaluateMonitorV2 } from './evaluation-v2.js';
-import { smartMonitorsV2Enabled } from './flag.js';
+import { monitorSourceFlags, smartMonitorsV2Enabled } from './flag.js';
+import { GITHUB_API_HOST } from './sources/github-network.js';
+import { monitorDisabledSourcePredicates, monitorSourcesAvailable } from './sources/rollout.js';
 import { learnMonitorSchedule, nextPredictiveMonitorCheck } from './schedule-v2.js';
 import type { MonitorV2Preview, MonitorV2State } from './v2-runtime-types.js';
 import { initialMonitorCheck, MONITOR_LIMITS, monitorExpiry, monitorTiming } from './schedule.js';
@@ -113,8 +115,17 @@ export async function spendMonitorBudget(db: Kysely<any>, userId: string, role: 
 }
 
 export function createMonitorStore(db: Kysely<any>, {
-  now = () => new Date(), v2 = smartMonitorsV2Enabled(), accountActive = (userId, tx) => backgroundAccountCanReceive(tx, userId), isMember,
+  now: suppliedNow, v2 = smartMonitorsV2Enabled(), accountActive = (userId, tx) => backgroundAccountCanReceive(tx, userId), isMember,
 }: MonitorAccessOptions = {}) {
+  const now = suppliedNow ?? (() => new Date());
+  const sourceFlags = monitorSourceFlags();
+  const disabled = monitorDisabledSourcePredicates('spec', sourceFlags);
+  function requireSource(spec: MonitorSpec) {
+    if (!monitorSourcesAvailable(spec, sourceFlags)) {
+      throw new MonitorError(409, 'MONITOR_SOURCE_DISABLED', 'This monitor source is unavailable.');
+    }
+  }
+
   async function accountRole(userId: string, tx: Kysely<any>): Promise<WorkspaceRole | null> {
     if (!await accountActive(userId, tx)) return null;
     return isMember ? await isMember(userId, tx) ? 'member' : 'owner' : roleOf(tx, userId);
@@ -162,18 +173,21 @@ export function createMonitorStore(db: Kysely<any>, {
     async reserveHost(host: string, minimumMs?: number): Promise<number | null> {
       const key = hostKey(host);
       const at = now();
-      const eligibleAt = new Date(at.getTime() + Math.max(MONITOR_LIMITS.hostIntervalMs, minimumMs ?? 0));
-      const { rows } = await sql`INSERT INTO smart_monitor_hosts (host_key, eligible_at) VALUES (${key}, ${eligibleAt})
+      const delay = Math.max(MONITOR_LIMITS.hostIntervalMs, minimumMs ?? 0);
+      // Production GitHub reservations use the shared database clock across replicas.
+      const admittedAt = sourceFlags.github && host === GITHUB_API_HOST && !suppliedNow ? sql`CURRENT_TIMESTAMP` : sql`${at}::timestamptz`;
+      const { rows } = await sql`INSERT INTO smart_monitor_hosts (host_key, eligible_at)
+        VALUES (${key}, ${admittedAt} + ${delay}::double precision * interval '1 millisecond')
         ON CONFLICT (host_key) DO UPDATE SET eligible_at = EXCLUDED.eligible_at
-        WHERE smart_monitor_hosts.eligible_at <= ${at} RETURNING host_key`.execute(db);
+        WHERE smart_monitor_hosts.eligible_at <= ${admittedAt} RETURNING host_key`.execute(db);
       if (rows.length) return null;
       const row = await db.selectFrom('smart_monitor_hosts').select('eligible_at').where('host_key', '=', key).executeTakeFirst();
       return row ? new Date(row.eligible_at).getTime() : at.getTime() + MONITOR_LIMITS.hostIntervalMs;
     },
 
     async extendHost(host: string, minimumMs: number): Promise<void> {
-      const eligibleAt = new Date(now().getTime() + minimumMs);
-      await db.updateTable('smart_monitor_hosts').set({ eligible_at: sql`greatest(eligible_at, ${eligibleAt}::timestamptz)` })
+      const at = sourceFlags.github && host === GITHUB_API_HOST && !suppliedNow ? sql`CURRENT_TIMESTAMP` : sql`${now()}::timestamptz`;
+      await db.updateTable('smart_monitor_hosts').set({ eligible_at: sql`greatest(eligible_at, ${at} + ${minimumMs}::double precision * interval '1 millisecond')` })
         .where('host_key', '=', hostKey(host)).execute();
     },
 
@@ -181,6 +195,7 @@ export function createMonitorStore(db: Kysely<any>, {
       const at = now();
       const candidate = MonitorSpecSchema.parse(input.spec);
       if (!v2 && (candidate.v2 || input.v2Preview)) throw new MonitorError(409, 'MONITOR_V2_DISABLED', 'Smart monitor v2 is unavailable.');
+      requireSource(candidate);
       const timing = monitorTiming(candidate.source.kind, candidate.timing.urgency, { now: at,
         ...candidate.timing, requestedIntervalMs: candidate.timing.initialIntervalMs });
       const spec = MonitorSpecSchema.parse({ ...candidate, timing });
@@ -237,6 +252,7 @@ export function createMonitorStore(db: Kysely<any>, {
       return db.transaction().execute(async tx => {
         await requireRole(userId, tx);
         const row = await lockMonitor(tx, userId, id);
+        requireSource(row.spec);
         const at = now();
         const status = monitorCard(row, at, v2).status;
         if (status === 'active') return monitorCard(row, at, v2);
@@ -257,6 +273,7 @@ export function createMonitorStore(db: Kysely<any>, {
       const at = now();
       let query = db.selectFrom('smart_monitors').selectAll().where('user_id', '=', userId);
       if (!v2) query = query.where(sql<boolean>`spec->'v2' IS NULL`);
+      else for (const predicate of disabled) query = query.where(predicate);
       if (conversationId) query = query.where('conversation_id', '=', conversationId);
       const rows = await query.orderBy(sql`(status IN ('proposed', 'active', 'paused') AND expires_at > ${at})`, 'desc')
         .orderBy('created_at', 'desc').orderBy('id').limit(MONITOR_LIMITS.listLimit).execute() as MonitorRow[];
@@ -267,6 +284,7 @@ export function createMonitorStore(db: Kysely<any>, {
       return db.transaction().execute(async tx => {
         await requireRole(userId, tx);
         const row = await lockMonitor(tx, userId, id);
+        requireSource(row.spec);
         const at = now();
         const state = row.v2_state;
         const clarification = v2 && state?.clarification;
@@ -322,6 +340,7 @@ export function createMonitorStore(db: Kysely<any>, {
           return updateMonitor(tx, id, { status: 'paused', next_check_at: null, note: null }, at);
         }
         if (action === 'resume' && card.status === 'paused') {
+          requireSource(row.spec);
           if (v2 && row.v2_state?.clarification) {
             throw new MonitorError(409, 'MONITOR_PREVIEW_REQUIRED', 'Confirm the watched value before resuming.');
           }

@@ -4,6 +4,8 @@
 
 في الإصدار الثاني تقرأ المراقبات البيانات المنظّمة وموجزات النشر، وتطلب منك تحديد القيمة عند الالتباس. يمكنك جمع عدة شروط ومتابعة الاتجاهات وطلب ملخّص يومي. تتعلّم كل مراقبة توقيت تغيّر مصدرها، وتعرض التنبيهات القيمة قبل التغيّر وبعده. الإصدار الثاني اختياري ومطفأ افتراضيًا.
 
+تضيف المرحلة الثانية مراقبة المستودعات العامة على GitHub وملفات PDF العامة والأرقام المرسومة داخل الصور أو لوحات الرسم. لكل مصدر مفتاح تفعيل مستقل ومطفأ افتراضيًا. يبدأ فحص الصور بعد تعذّر قراءة النص والبيانات المنظّمة، وتتوقّف المراقبة أو تطلب منك اختيار الجزء عند ضعف الثقة. دقة التعرّف الضوئي الفعلية تنتظر الاختبار بأوزان النموذج.
+
 ## From chat to notification
 
 1. The detector evaluates Arabic and English requests with deterministic rules. An explicit request gets a proposal for approval. A user who says they are waiting for a public change, or repeats the same public status question in the conversation, gets an offer. A run that cannot finish because a verified public page is unavailable or its publication status is pending can offer to watch for availability or publication and to continue the task when the user asks. The detector uses recent user turns to resolve references such as “this page” and asks for details when the target or condition is ambiguous.
@@ -233,6 +235,40 @@ env MOHASSAN_E2E_WEB_PORT=3114 MOHASSAN_E2E_SERVER_PORT=4114 npm_config_offline=
 
 On the release snapshot, `npm run typecheck` exited **0**, and the nine affected Vitest suites passed **162/162**, including the Arabic fixtures, DTD and external-entity rejection, budget isolation and the existing build 15 APNs envelope. Both Playwright scenarios passed in the same offline environment, including price choice before activation and confirmation of a conversational stop. The release browser rerun took 1.1 minutes using local fixtures.
 
+## Phase 2 sources
+
+Each source has an independent rollout flag and uses v2 proposals, choices, scheduling, evidence and delivery. Both `MOHASSAN_MONITORS_ENABLED=1` and `MOHASSAN_MONITORS_V2=1` are required. The source flags default to off. Turning one off suspends its checks and new approvals. The original expiry still applies.
+
+| Flag | Watches | Normal / urgent starting interval |
+| --- | --- | --- |
+| `MOHASSAN_MONITORS_GITHUB=1` | Public repository releases and tags, latest stable release or first API-listed tag, pull request state or head SHA, branch head SHA, pull request or branch CI | 15 / 6 minutes |
+| `MOHASSAN_MONITORS_PDF=1` | Public PDF text revisions, a number near a label, a phrase appearing and new marked list items | 30 / 10 minutes |
+| `MOHASSAN_MONITORS_VISUAL=1` | Numeric values in an anchored image or canvas from a public page, with source-backed choices when several regions qualify | 30 / 15 minutes for explicit visual monitors |
+
+For example, “tell me when PR 42 in owner/repo is merged” and «نبّهني لما يُدمج الطلب 42 في owner/repo» select the same pull request condition. “Watch the CI on branch main” uses an established repository from the conversation or asks for it. A grounded answer about a pending pull request, CI run or release can offer a watch through the existing one-off-per-topic and opt-out controls. A refusal, small talk, or a clarification does not offer a watch.
+
+### GitHub limits and evidence
+
+The adapter uses only anonymous GET requests to `https://api.github.com` through SafeNetwork. It validates same-origin redirects and sends an ETag per endpoint when it has a cached response. GitHub allows 60 unauthenticated REST requests per hour per originating IP. The shared SQL host slot admits a serial batch of up to five requests over 25 seconds. The spacing is `5 × 60 minutes / 60 + 25 seconds = 325 seconds`. A rolling hour can overlap at most 12 batches even if a request leaves at the end of its batch. This counts conditional requests and redirect hops. A `403` or `429` defers the batch using `Retry-After`, or `X-RateLimit-Reset` at exhausted `X-RateLimit-Remaining`, with a one-minute minimum wait. The same backoff applies across accounts and workers. The adapter sends and stores no token. Adding a token would be a separate owner decision. [GitHub REST rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api) · [GitHub REST best practices](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api)
+
+CI uses the same head SHA for the combined commit status and check runs. Failure takes precedence over pending and success. An empty result stays pending. The adapter bounds the check-run listing at three pages and withholds the observation if the response cannot account for all reported runs. Release and tag lists use the first 30 API entries. A repository with no eligible release can serve as a baseline. [GitHub source reader](../apps/server/src/monitors/sources/github.ts)
+
+| Primary source | Retrieved | SHA-256 |
+| --- | --- | --- |
+| [REST API rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api) | 2026-11-25 | `de0b9cfb42e53b9ff14128ec6fe37376e6fba54dec13ac0026b0b8dbc5625fec` |
+| [REST API best practices](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api) | 2026-11-25 | `31eb742eec6dc1f2a2bad54820c82f46bfe89cdb9e94c3ce7bb3f0000656db1e` |
+| [GitHub REST OpenAPI description archive](https://codeload.github.com/github/rest-api-description/zip/refs/heads/main), release 1.1.4, API 2022-11-28 | 2026-11-25 | `1726204dfb4810d071301f3f89d8b862a83429a22179fd5e3b6fd9df09af992c` for `descriptions/api.github.com/api.github.com.2022-11-28.json` |
+
+Each source was requested once. The OpenAPI archive transfer timed out after the complete member arrived. The partial archive was 528,331,742 bytes with SHA-256 `d9e3c596400227e69ea3fde3c54e1da2f2103aed9ae8294ad4f788c7f330a2e6`. The member matched its archive CRC and length, and the extracted README identifies release 1.1.4. The offline fixture validator pins the extracted member's SHA-256. [Fixture validation](../scripts/monitor-simulation/github-openapi.ts)
+
+### PDF and visual limits
+
+PDF extraction reuses the project's bounded PDF.js worker. The input limit is 10,000,000 bytes, the page limit is 100, the extracted text limit is 256,000 bytes and the read deadline is 15 seconds. Each extractor process admits at most two workers with limited heaps and terminates a worker after cancellation or timeout. Encrypted and malformed documents fail safely. The same limits apply on every redirect through SafeNetwork. PDF text changes use v2 confirmation and the displayed evidence remains bounded. List entries use bullets or numbering for identity. [PDF reader](../apps/server/src/monitors/sources/pdf.ts)
+
+Visual reading starts when structured and visible-text reads cannot identify the numeric target. Chromium uses a fresh, same-origin session with GET-only SafeNetwork traffic and a 12-second render limit within a 20-second fallback deadline. A render can fetch at most 20 resources and 8 MB in aggregate. HTML is capped at 2 MB and other resources at 512 kB. Up to four regions may be captured, each at most 960 × 640 pixels and 500 kB. The separate shared budget allows 120 render attempts per UTC day across accounts and workers. Exhausting it defers the read until the next UTC day. This bounds Chromium work and limits one attempt to four OCR reads. [Visual reader](../apps/server/src/monitors/sources/visual.ts) · [Browser capture](../apps/server/src/monitors/sources/visual-browser.ts)
+
+The own reader must report at least 0.90 confidence for the line that supplies a single value. The value must agree with required currency or unit and any saved reading pattern. An ambiguous high-confidence read asks which region to watch. A low-confidence read asks for clarification during preview or pauses an active monitor, with no condition alert. The OCR weights live in `artifacts/vision/ocr-v1` or `MOHASSAN_OCR_MODEL_DIR`. Verification uses a deterministic reader double. **Real OCR accuracy is unverified until the monitor runs with the weights.** [Own image reader](IMAGE-READING-2026-11-22.md)
+
 ## Enable the rollout
 
 1. Deploy the server and web changes. On the managed Linux VM, set `MOHASSAN_MONITORS_ENABLED=1` in `/etc/mohassan/server.env` and run `sudo systemctl restart mohassan.service`. Apply the same setting to each API replica running monitor work.
@@ -243,6 +279,12 @@ On the release snapshot, `npm run typecheck` exited **0**, and the nine affected
 Set `MOHASSAN_MONITORS_V2=1` alongside the original flag to try the v2 controls and new-monitor workflow. Set only the v2 flag to `0` to return to v1 chat behavior.
 
 ## Merge notes
+
+### Phase 2, stacked on PR #100
+
+- `046_smart_monitor_visual_budget` adds `smart_monitor_visual_budget` after `045`. Its single row records the UTC day's shared render admission. [Migration ledger](MIGRATION-LEDGER-2026-11-25.md)
+- `packages/browser/src/engine.ts` accepts an injected SafeNetwork and exposes the existing bounded browser page to monitor capture.
+- `apps/web/components/smart-monitors.tsx` and `apps/web/components/smart-monitors-v2.tsx` display the three new source labels.
 
 ### V2, stacked on PR #98
 
