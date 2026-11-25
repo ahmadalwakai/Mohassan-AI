@@ -119,6 +119,8 @@ PR #91 adds no migration. [Migration ledger](MIGRATION-LEDGER-2026-11-25.md)
 | `MOHASSAN_ARBITER_ROUTING_KILL`, `MOHASSAN_ARBITER_QUESTION_REWRITE_KILL`, `MOHASSAN_ARBITER_LOCAL_COMPUTATION_KILL`, `MOHASSAN_ARBITER_COMPOUND_PLAN_KILL` | Off | Set a corresponding switch to `1` to force existing precedence for that decision type. |
 | `MOHASSAN_MODEL_RELATIONS` | Existing default is shadow | Use `off` to disable the entire relations manager, including its shadow journal. |
 
+The relation manager's existing worker controls are `MOHASSAN_MODEL_WORKER`, which defaults off, and `EXECUTOR_EXPERIMENT`, which defaults unset. The manager marks heavy in-process work unavailable when the resident model worker is enabled or the local executor experiment selects `uncontained-local`. [Model relations runbook](MODELS-RUNBOOK.md)
+
 This tree has zero promoted arbiter decision types. The four activation flags cannot promote a decision type by themselves. Existing refusal, account authorization and approval checks keep their authority. [Response policy](RESPONSE-POLICY.md) · [Background results](BACKGROUND-RESULTS.md) · [Arbiter owner guide](ARBITER-BRAIN-VERIFICATION.md)
 
 | Environment variable | Default | Use |
@@ -338,3 +340,110 @@ PY
 - The flags-off comparison covers every case with exact replies, repeat-proven literal masks or exact matched-input replay. The focused background suites exercise the restart and stop paths where its projection and the interactive arbiter hook meet.
 - The disposable PostgreSQL upgrade applied only 041 and 042. Existing rows in the release database matched on every original column.
 - The committed launcher retrieved fixed development inputs, reproduced Wave 4 and ran all three Wave 5 arms in one invocation with case and receipt validation. All evaluation runs used the development splits.
+
+### Full Vitest
+
+The full suite ran from `/workspace/work/wave5-vitest-candidate`, detached at `26d0de8009d9ecc70195198e8f32c22755170e56`. This run used three file workers. The historical release run used one worker and the same repository test selection.
+
+```bash
+PLAYWRIGHT_BROWSERS_PATH=/workspace/work/chromium npm_config_cache=/workspace/work/npm-cache npm test -- --maxWorkers=3 --fileParallelism --reporter=default --reporter=json --outputFile.json=/workspace/work/wave5-vitest-merged.json
+```
+
+| Run | Files collected | Passed | Failed | Expected fail | Skipped | Duration |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Release candidate report | 562 | 9,915 | 23 | 1 | 83 | 6,102.37 s |
+| Merged candidate | 570 | 10,027 | 21 | 1 | 73 | 2,137.70 s |
+
+Exit 1 with 557 passing, five failing and eight skipped files. All 21 failures matched the release report by test identity. The candidate passed the previously failing cooldown and source-leakage assertions, the ten browser-file cases, and all 36 cases in the two files previously interrupted by V8 worker crashes. No worker crash occurred in this run. [Release Vitest results](RELEASE-CANDIDATE-2026-11-25.md#full-vitest)
+
+| File | Matched failed identities |
+| --- | --- |
+| `tests/ads-goal-grammar.test.ts` | The 15 generated-grammar cases, including each Arabic and English instance. The independent duplicate-label checker passed. |
+| `tests/ads-goal-corpus.test.ts` | `uses local phrases in both languages while retaining valid pointers and attached location prefixes` |
+| `packages/desktop/src/desktop.test.ts` | `scaffolds a node project with git and registers it` |
+| `tests/assistant-runtime-constraints-chat.test.ts` | `completes the supported recall request without forbidden I/O: Do not save anything. What is my depot …` |
+| `tests/assistant-test-driven-coding.test.ts` | `publishes a verified function when enabled`, `withholds a declaration on contradictory assertions and when the flag is off`, `does not discard an unsupported assertion before supported examples` |
+
+The missing Git-ignored Ads vocabulary accounts for the 16 Ads failures. The desktop case needs Windows `cmd.exe`. The release report identifies the same three coding failures in a native sandbox without a trusted Python interpreter. Our primary development comparison used the isolated trusted Python runtime.
+
+JSON receipt SHA-256 `3f2ddf9f4dedfa6177dba71674a01095d372451bc416a4f8b465ca8a6fda9b48`. Console log SHA-256 `ae15cfc655a8e9840866f4fb6d0015f5bafc03af90cb4fee52f2610b85117b3d`.
+
+The failure comparison command exited 0 with 21 matches and zero candidate-only assertions or suite errors. Its JSON SHA-256 is `5eeef38d3815bf22c7dd8206e408324ff8f7326fcff0403076e41ec35c320865`.
+
+```bash
+python3 -B /workspace/work/wave5-vitest-review/compare-release.py /workspace/work/wave5-vitest-merged.json /workspace/work/wave5-vitest-candidate
+```
+
+Eight files collected only skipped cases. These cover two local-development-corpus guards, three Windows/AppContainer suites, two optional resident-model-worker suites, and the exported OCR model parity suite. Their required local fixtures, Windows, model-worker configuration or OCR artifacts were unavailable in the full-suite checkout. The 73 skipped assertions are recorded in the JSON receipt.
+
+### Playwright
+
+The historical report supplies counts for all five configurations and names the default profile's candidate-only failure. The pinned release replay supplies complete failure identities for direct comparison. Both replays collected and ran 52 tests across the five profiles. The configurations and specs are identical between the measured commits.
+
+The release checkout was `/workspace/work/wave5-rc-tests`. The candidate checkout was `/workspace/work/wave5-playwright-candidate`. Both used the same local Chromium 1248, the isolated application fixture on ports 3100 and 4100, and a scratch preload supplying the installed browser and local Alexandria fonts. The three-worker Vitest run overlapped part of the browser runs.
+
+```bash
+set -o pipefail
+bash /workspace/work/wave5-verification/run-playwright.sh /workspace/work/wave5-rc-tests 2>&1 | tee /workspace/work/wave5-verification/playwright-rc.log
+bash /workspace/work/wave5-verification/run-playwright.sh /workspace/work/wave5-playwright-candidate 2>&1 | tee /workspace/work/wave5-verification/playwright-candidate.log
+```
+
+Each wrapper recorded the individual command and exit status. These are the corresponding test commands for the two checked-out revisions:
+
+```bash
+export PLAYWRIGHT_BROWSERS_PATH=/workspace/work/chromium
+export npm_config_cache=/workspace/work/npm-cache
+export NODE_OPTIONS=--require=/workspace/work/wave5-verification/playwright-preload.cjs
+export MOHASSAN_E2E_WEB_PORT=3100
+export MOHASSAN_E2E_SERVER_PORT=4100
+for config in playwright.config.ts playwright.browser-visibility.config.ts \
+  playwright.browser-autonomy.config.ts playwright.agent-execution.config.ts \
+  playwright.skills-focus-audit.config.ts; do
+  name=${config%.config.ts}
+  PLAYWRIGHT_JSON_OUTPUT_FILE="$evidence/$name.json" npm run test:e2e -- \
+    --config="$config" --output="$evidence/$name-artifacts" --reporter=line,json
+done
+```
+
+The release evidence directory is `/workspace/work/wave5-verification/playwright-d3ebd92.bLr8INkS` and the candidate directory is `/workspace/work/wave5-verification/playwright-26d0de8.fP8jooIQ`. Counts are passed / failed / skipped. The exit status matches on both replays. [Historical Playwright results](RELEASE-CANDIDATE-2026-11-25.md#playwright)
+
+| Configuration | Published release | Pinned release replay | Merged candidate | Exit | Matched failures |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `playwright.config.ts` | 31 / 8 / 1 | 33 / 7 / 0 | 33 / 7 / 0 | 1 | 7 |
+| `playwright.browser-visibility.config.ts` | 5 / 0 / 0 | 5 / 0 / 0 | 5 / 0 / 0 | 0 | 0 |
+| `playwright.browser-autonomy.config.ts` | 1 / 1 / 0 | 1 / 1 / 0 | 1 / 1 / 0 | 1 | 1 |
+| `playwright.agent-execution.config.ts` | 0 / 1 / 0 | 0 / 1 / 0 | 0 / 1 / 0 | 1 | 1 |
+| `playwright.skills-focus-audit.config.ts` | 4 / 0 / 0 | 4 / 0 / 0 | 4 / 0 / 0 | 0 | 0 |
+
+Each default failure matched by spec, Chromium project and title:
+
+- `ads-sign-in.spec.ts:17` · Google sign-in from the chat returns to the same conversation and continues it.
+- `agent-execution.spec.ts:25` · a request goes from the composer through the runtime to a verdict the screen shows as the server holds it. The dedicated execution profile reported this same identity.
+- `assistant-browser-cursor.spec.ts:18` · shows the real agent cursor moving between targets and recovers a failed screen frame. The dedicated autonomy profile reported this same identity.
+- `assistant-browser-cursor.spec.ts:92` · resumes the same browser task when scrolling replaces the observed button before input.
+- `assistant.spec.ts:42` · a task runs from one message through sign-in, a code and an approval.
+- `browser-files.spec.ts:6` · owner reviews an upload grant and releases a verified download from quarantine. Both runs hit its 150-second cap.
+- `workspace.spec.ts:6` · owner setup, approvals, verified results, offline recovery and mobile navigation. Both logs contain `GET /api/auth/get-session` returning 429 before the timeout.
+
+The historical default profile timed out on the hidden-tab notice and skipped the subsequent notification-permission case. Both identities passed in both replays. There were no flaky results or runner errors in any of the ten receipts.
+
+The identity comparison exited 0 for all five matched pairs:
+
+```bash
+rc=/workspace/work/wave5-verification/playwright-d3ebd92.bLr8INkS
+merged=/workspace/work/wave5-verification/playwright-26d0de8.fP8jooIQ
+for profile in playwright playwright.browser-visibility playwright.browser-autonomy \
+  playwright.agent-execution playwright.skills-focus-audit; do
+  python3 -B /workspace/work/wave5-verification/failed-tests.py playwright "$rc/$profile.json" "$merged/$profile.json"
+done
+```
+
+| JSON receipt | Pinned release SHA-256 | Merged SHA-256 |
+| --- | --- | --- |
+| Default | `80546746cb2d4c1bfc5039ac652294e29c90e1e4bcdadd4236c1911478373636` | `1a9f03225cd61fbfbf82ddc1e68fcd08173391a158357bdc4a48bc9f3b11bc96` |
+| Browser visibility | `c49d44d97bcb3ce5ca384fbfe505ca83943bbcd6c7b5b4e7d68739a8e422f8af` | `3508752bc2381f2e2a98fdef7d76527d362d0ba07dba37ddfcb3f08295166be9` |
+| Browser autonomy | `c3841d63ee60acb49236cd48e9df435151788a2b716963a98305c3f4db446d56` | `94b6710d1094e61f79eb5b42dba903b19dea806969d20592e2dd27dd6c3d23b1` |
+| Agent execution | `5b7a22fb3ab8554863ad6eb8636a1749247abe58dae6af88d64bc3c8c53aa118` | `f911b69677c0e1801b4639a2d293b65399a8748fc195e071e2f0ea41161fde00` |
+| Skills focus | `bb1a83f6b9be3723ed6e0ab51ba1afa9dfb9bd00ffff629a8a388cad941405de` | `04ed452d9182a18731d62ffaaa65f3bdb6e1750187d06a06a7b0b005bd61fb74` |
+
+The checks cover the three rollout configurations in development and APNs through the focused test fixtures. Live Apple delivery, native Windows behavior, and the optional local artifacts listed above remain unverified.
