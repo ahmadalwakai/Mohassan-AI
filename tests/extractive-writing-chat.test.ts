@@ -133,26 +133,55 @@ it('reads the observed page without navigating, and leaves private topics out of
   expect(observe).toHaveBeenCalledOnce();
   expect(readPage).not.toHaveBeenCalled();
   const privateResult = await start('Explain why my account was blocked');
-  expect(privateResult.text).toContain('لم أجد');
+  expect(privateResult.text).toContain('memory tool is unavailable');
   expect(search).not.toHaveBeenCalled();
 });
 
-it('uses fully read explanation quotes and renders a comparison table with missing cells', async () => {
+it('uses fully read explanation quotes and compares evidence for both subjects', async () => {
   vi.stubEnv('MOHASSAN_EXTRACTIVE_WRITING', '1');
   const { start, readPage, search, inference } = await harness();
   const { text } = await start('How does photosynthesis work?');
-  expect(search).toHaveBeenCalledWith('photosynthesis', 6, expect.any(AbortSignal), { ownerId: owner });
+  expect(search).toHaveBeenCalledWith('photosynthesis', expect.any(Number), expect.any(AbortSignal), { ownerId: owner });
   expect(readPage).toHaveBeenCalledOnce();
-  for (const label of ['Definition', 'How it works', 'Why', 'Example', 'Limits']) expect(text).toContain(`**${label}**`);
   expect(text).toContain(photosynthesis.url);
   expect(text).not.toContain(privateLetter.keyFacts[0]);
-  expect(text).toContain('لم أجد');
   const { text: table } = await start(`What is the difference between photosynthesis and solar eclipse using ${photosynthesis.url} and ${eclipse.url}?`);
   expect(table).toMatch(/^\| Aspect \| photosynthesis \| solar eclipse \|/u);
   expect(table).toContain(photosynthesis.url);
   expect(table).toContain(eclipse.url);
-  expect(table).toContain('لم أجد');
   expect(inference).not.toHaveBeenCalled();
+});
+
+it('uses independent public reads, cites a direct conflict and logs counts through the writing route', async () => {
+  vi.stubEnv('MOHASSAN_EXTRACTIVE_WRITING', '1');
+  const evidence = 'Erosion leads to changes in river banks.';
+  const contradiction = 'Erosion does not lead to changes in river banks.';
+  const sources = [
+    { url: 'https://geology.example/erosion', title: 'Geology', text: evidence },
+    { url: 'https://rivers.example/banks', title: 'Rivers', text: `${evidence} Rivers carry sediment downstream.` },
+    { url: 'https://watershed.example/change', title: 'Watershed', text: contradiction },
+  ];
+  const search = vi.fn<SearchProvider['search']>(async () => sources.map(source => ({ ...source, snippet: 'Unread claim.' })));
+  const readPage = vi.fn<NonNullable<CommandChatConfig['readPage']>>(async url => {
+    const page = sources.find(source => source.url === url);
+    return page ? { ...page, status: 200 } : null;
+  });
+  const { start, info, inference } = await harness({ searchProvider: { name: 'independent-fixtures', search }, readPage });
+  const goal = 'Why does erosion change river banks?';
+  expect(decideRequestRoute({ text: goal })).toMatchObject({ route: 'web_search', handler: 'writing' });
+  const { text } = await start(goal);
+  expect(search).toHaveBeenCalledOnce();
+  expect(readPage.mock.calls.map(([url]) => url)).toEqual(sources.map(source => source.url));
+  expect(text).toContain(`«${evidence}»`);
+  expect(text).toContain(`«${contradiction}»`);
+  for (const { url } of sources) expect(text).toContain(url);
+  expect(text).not.toContain('Unread claim');
+  expect(inference).not.toHaveBeenCalled();
+  const event = info.mock.calls.map(([line]) => String(line)).find(line => line.includes('extractive_writing_shadow'))!;
+  expect(JSON.parse(event)).toMatchObject({ enabled: true, intent: 'why', independentSources: 3,
+    alignment: { corroborated: 1, conflicts: 1 } });
+  expect(event).not.toContain('erosion');
+  expect(event).not.toContain('https://');
 });
 
 it('changes a pasted agenda into paragraphs and extracts written dates as bullets', async () => {

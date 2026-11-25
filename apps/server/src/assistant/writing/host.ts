@@ -3,12 +3,15 @@ import type { Kysely } from 'kysely';
 import type { DocumentControl } from '../../documents.js';
 import type { BrainState } from '../brain.js';
 import { reviewBrowserRequestScope } from '../browser-request-scope.js';
+import { buildFrame } from '../mind/frame.js';
 import { extractPublicSearchQueries } from '../public-query-provenance.js';
 import { assessRequestScope, parseUserRequestConstraints, requestCapabilityAllowed, reviewPublicProjection } from '../request-scope.js';
 import { writingTask } from '../writer.js';
 import type { WritingSource } from './evidence.js';
+import { gatherExplanationSources, MAX_EXPLANATION_SOURCES, sourceBodyIdentity, sourceIdentity } from './multisource/gather.js';
+import { usesAlignedEvidence } from './multisource/types.js';
 import { writingPdfSource } from './pdf-source.js';
-import { renderExtractiveWriting } from './render.js';
+import { renderExtractiveWriting, type ExtractiveWritingReply } from './render.js';
 import { extractiveWritingEnabled, writingUrl, type ExtractiveWritingTask } from './request.js';
 
 const SOURCE_LIMIT = 6;
@@ -54,11 +57,25 @@ function supplied(task: ExtractiveWritingTask, previous: string | null | undefin
   return undefined;
 }
 
-function observeShadow(task: ExtractiveWritingTask, enabled: boolean, sources: number, spans: number, complete: boolean | null): void {
+function observeShadow(task: ExtractiveWritingTask, enabled: boolean, sources: number, reply: ExtractiveWritingReply | null, complete: boolean | null, independentSources?: number): void {
   try {
     console.info(JSON.stringify({ event: 'extractive_writing_shadow', enabled, operation: task.kind,
-      sourceKind: task.source.kind, format: task.format, language: task.language, sources, spans, complete }));
+      sourceKind: task.source.kind, format: task.format, language: task.language, sources, spans: reply?.evidence.length ?? 0, complete,
+      ...(usesAlignedEvidence(task) ? { intent: task.intent ?? task.kind, independentSources, alignment: reply?.alignment } : {}) }));
   } catch { /* Logging must not affect the request. */ }
+}
+
+function independentSourceCount(sources: readonly WritingSource[]): number {
+  const bodies = new Set<string>();
+  const publishers = new Set<string>();
+  for (const source of sources) {
+    const publisher = sourceIdentity(source);
+    const body = sourceBodyIdentity(source);
+    if (!publisher || bodies.has(body)) continue;
+    bodies.add(body);
+    publishers.add(publisher);
+  }
+  return publishers.size;
 }
 
 async function attempt<T>(ports: WritingPorts, read: () => Promise<T>): Promise<T | null> {
@@ -79,28 +96,29 @@ function allowedUrl(value: string): string | null {
   return url && !extractPublicSearchQueries(url).length ? url : null;
 }
 
-async function readUrls(ports: WritingPorts, urls: readonly string[]): Promise<Sources> {
+async function readUrl(ports: WritingPorts, value: string): Promise<WritingSource | null> {
   // The production port enforces SafeNetwork, robots, access limits and redirects.
   const readPage = ports.config.readPage;
+  const url = allowedUrl(value);
+  if (!url || !readPage || ports.scrub(url) !== url) return null;
+  const page = await attempt(ports, () => readPage(url, ports.signal, { includePdf: true }));
+  return page && page !== 'disallowed' && page.status >= 200 && page.status < 300 && page.text.trim() && allowedUrl(page.url)
+    ? { title: page.title, text: page.text, url: page.url, layout: page.layout } : null;
+}
+
+async function readUrls(ports: WritingPorts, urls: readonly string[]): Promise<Sources> {
   const unique = [...new Set(urls)];
   const selected = unique.slice(0, SOURCE_LIMIT);
   const items: WritingSource[] = [];
-  const read = async (value: string): Promise<WritingSource | null> => {
-    const url = allowedUrl(value);
-    if (!url || !readPage || ports.scrub(url) !== url) return null;
-    const page = await attempt(ports, () => readPage(url, ports.signal, { includePdf: true }));
-    return page && page !== 'disallowed' && page.status >= 200 && page.status < 300 && page.text.trim() && allowedUrl(page.url)
-      ? { title: page.title, text: page.text, url: page.url, layout: page.layout } : null;
-  };
   // The shared PDF reader admits two workers. A list of PDF URLs uses it in batches.
   for (let index = 0; index < selected.length; index += PARALLEL_READS) {
-    const batch = await Promise.all(selected.slice(index, index + PARALLEL_READS).map(read));
+    const batch = await Promise.all(selected.slice(index, index + PARALLEL_READS).map(url => readUrl(ports, url)));
     items.push(...batch.filter(page => page !== null));
   }
   return { items: [...new Map(items.map(source => [source.url, source])).values()], missing: items.length < unique.length };
 }
 
-async function recentReadUrls(ports: WritingPorts, all: boolean): Promise<string[]> {
+async function recentReadUrls(ports: WritingPorts, limit: number): Promise<string[]> {
   const rows = await ports.db.selectFrom('chat_runs').select('state')
     .where('conversation_id', '=', ports.id).where('owner_id', '=', ports.ownerId).where('id', '!=', ports.runId)
     .where('status', 'in', ['completed', 'partial']).orderBy('created_at', 'desc').limit(12).execute();
@@ -111,7 +129,7 @@ async function recentReadUrls(ports: WritingPorts, all: boolean): Promise<string
     const publicHandsUrl = state?.requestResolution?.scope === 'public' ? state.handsFound?.url : undefined;
     for (const url of [...urlsRead, publicHandsUrl]) {
       if (typeof url === 'string' && allowedUrl(url)) urls.add(url);
-      if (urls.size >= (all ? SOURCE_LIMIT : 1)) return [...urls];
+      if (urls.size >= limit) return [...urls];
     }
   }
   return [...urls];
@@ -128,14 +146,14 @@ async function readDocument(ports: WritingPorts, id: string): Promise<WritingSou
   return attempt(ports, async () => writingPdfSource(await documents.control.content(ports.ownerId, id), ports.signal, documents.link(id)));
 }
 
-async function readDocuments(ports: WritingPorts, selection: Extract<ExtractiveWritingTask['source'], { kind: 'pdf' }>): Promise<Sources> {
+async function readDocuments(ports: WritingPorts, selection: Extract<ExtractiveWritingTask['source'], { kind: 'pdf' }>, limit: number): Promise<Sources> {
   const documents = ports.config.documents;
   if (!documents) return { items: [], missing: true };
   const found: (WritingSource | null)[] = [];
   if (selection.paths.length) {
     const names = selection.paths.filter(path => !/[/\\]/u.test(path));
     const stored = names.length ? await documents.control.list(ports.ownerId, undefined, 50) : [];
-    for (const path of selection.paths.slice(0, SOURCE_LIMIT)) {
+    for (const path of selection.paths.slice(0, limit)) {
       const matches = stored.filter(doc => doc.name.toLowerCase() === path.toLowerCase());
       const here = matches.find(doc => doc.conversationId === ports.id);
       if (here || matches.length === 1) found.push(await readDocument(ports, (here ?? matches[0]).id));
@@ -143,20 +161,25 @@ async function readDocuments(ports: WritingPorts, selection: Extract<ExtractiveW
         found.push(await attempt(ports, async () => writingPdfSource(await documents.control.readLocal(ports.ownerId, path), ports.signal)));
       } else found.push(null);
     }
-    return { items: found.filter(item => item !== null), missing: selection.paths.length > SOURCE_LIMIT || found.includes(null) };
+    return { items: found.filter(item => item !== null), missing: selection.paths.length > limit || found.includes(null) };
   }
-  const documentsHere = await documents.control.list(ports.ownerId, ports.id, selection.all ? SOURCE_LIMIT + 1 : 1);
-  for (const doc of documentsHere.slice(0, SOURCE_LIMIT)) found.push(await readDocument(ports, doc.id));
-  return { items: found.filter(item => item !== null), missing: documentsHere.length > SOURCE_LIMIT || found.includes(null) };
+  const documentsHere = await documents.control.list(ports.ownerId, ports.id, selection.all ? limit + 1 : 1);
+  for (const doc of documentsHere.slice(0, limit)) found.push(await readDocument(ports, doc.id));
+  return { items: found.filter(item => item !== null), missing: documentsHere.length > limit || found.includes(null) };
 }
 
-function publicTopic(task: ExtractiveWritingTask, query: string): boolean {
+function publicTopic(task: ExtractiveWritingTask, query: string, state: BrainState): boolean {
   if (query.length > 500 || !/\p{L}/u.test(query)) return false;
-  const current = assessRequestScope(task.instruction);
+  const context = { contextKind: state.requestResolution?.kind, previous: state.previousSource ?? undefined };
+  const current = assessRequestScope(task.instruction, context);
   if (current.scope === 'private' || current.reasons.includes('unresolved_reference')) return false;
+  if (usesAlignedEvidence(task) && buildFrame(task.instruction).personal
+    && !current.reasons.some(reason => reason === 'explicit_public_lookup' || reason === 'public_document_reference')) return false;
   const projected = assessRequestScope(query);
   if (projected.scope === 'private' || projected.reasons.includes('unresolved_reference')) return false;
-  if (reviewPublicProjection(task.instruction, query).eligible) return true;
+  const projection = reviewPublicProjection(task.instruction, query, context);
+  if (projection.eligible) return true;
+  if (projection.reason !== 'source_not_public' || context.contextKind === 'follow_up' || context.contextKind === 'ambiguous') return false;
   // The parser identifies an explicit explanation/comparison topic. The legacy
   // public classifier recognizes questions, including one-word named subjects.
   return reviewPublicProjection(task.language === 'ar' ? `ما هو ${query}؟` : `What is ${query}?`, query).eligible;
@@ -165,11 +188,12 @@ function publicTopic(task: ExtractiveWritingTask, query: string): boolean {
 async function collect(ports: WritingPorts, task: ExtractiveWritingTask, input?: WritingSource): Promise<Sources> {
   if (input) return { items: [input] };
   const source = task.source;
+  const limit = usesAlignedEvidence(task) ? MAX_EXPLANATION_SOURCES : SOURCE_LIMIT;
   const constraints = parseUserRequestConstraints(ports.request);
-  if (source.kind === 'pdf') return readDocuments(ports, source);
+  if (source.kind === 'pdf') return readDocuments(ports, source, limit);
   const navigation = requestCapabilityAllowed(constraints, 'browser_navigation');
   if (source.kind === 'page' && navigation) {
-    const urls = source.recent || source.all ? await recentReadUrls(ports, source.all) : [];
+    const urls = source.recent || source.all ? await recentReadUrls(ports, source.all ? limit : 1) : [];
     if (urls.length) return readUrls(ports, urls);
     const page = await attempt(ports, ports.observe);
     if (page?.text?.trim() && page.documentStatus !== 404 && !Object.values(page.signals).some(Boolean)) {
@@ -180,7 +204,7 @@ async function collect(ports: WritingPorts, task: ExtractiveWritingTask, input?:
   if (source.kind === 'urls') {
     const documents = ports.config.documents;
     const owned: string[] = [], publicUrls: string[] = [];
-    for (const url of source.urls.slice(0, SOURCE_LIMIT)) {
+    for (const url of source.urls.slice(0, limit)) {
       const id = documents && documentId(url, documents.link);
       if (id) owned.push(id);
       else publicUrls.push(url);
@@ -190,15 +214,23 @@ async function collect(ports: WritingPorts, task: ExtractiveWritingTask, input?:
       const item = await readDocument(ports, id);
       if (item) local.push(item);
     }
-    const publicSources = navigation && reviewBrowserRequestScope(task.instruction, 'browser_navigation').allowed
+    const publicSources = navigation && reviewBrowserRequestScope(task.instruction, 'browser_navigation', ports.state.requestResolution).allowed
       ? await readUrls(ports, publicUrls) : { items: [], missing: Boolean(publicUrls.length) };
-    return { items: [...local, ...publicSources.items], missing: publicSources.missing || local.length !== owned.length || source.urls.length > SOURCE_LIMIT };
+    return { items: [...local, ...publicSources.items], missing: publicSources.missing || local.length !== owned.length || source.urls.length > limit };
   }
   if (source.kind === 'search' && navigation && requestCapabilityAllowed(constraints, 'public_search')
-    && publicTopic(task, source.query) && ports.scrub(source.query) === source.query && ports.config.readPage) {
-    const hits = await attempt(ports, () => ports.search.search(source.query, SOURCE_LIMIT, ports.signal, { ownerId: ports.ownerId }));
+    && publicTopic(task, source.query, ports.state) && ports.scrub(source.query) === source.query && ports.config.readPage) {
     // Search hits are addresses only. No snippets are admitted as read evidence.
-    const reads = await readUrls(ports, hits?.map(hit => hit.url) ?? []);
+    const search = async (count: number) => {
+      const hits = await attempt(ports, () => ports.search.search(source.query, count, ports.signal, { ownerId: ports.ownerId }));
+      return hits?.map(hit => hit.url) ?? null;
+    };
+    if (usesAlignedEvidence(task)) {
+      const items = await gatherExplanationSources({ query: source.query, ownerId: ports.ownerId, provider: ports.search,
+        signal: ports.signal, search, read: url => readUrl(ports, url) });
+      return { items };
+    }
+    const reads = await readUrls(ports, await search(SOURCE_LIMIT) ?? []);
     return { items: reads.items };
   }
   return { items: [] };
@@ -215,8 +247,12 @@ export async function runExtractiveWriting(ports: WritingPorts): Promise<boolean
   if (!enabled) {
     try {
       const reply = input ? renderExtractiveWriting(task, [input]) : null;
-      observeShadow(task, false, input ? 1 : 0, reply?.evidence.length ?? 0, reply?.complete ?? null);
+      observeShadow(task, false, input ? 1 : 0, reply, reply?.complete ?? null);
     } catch { /* A shadow candidate cannot change the current route. */ }
+    return false;
+  }
+  if (usesAlignedEvidence(task) && task.source.kind === 'search' && !ports.config.readPage) {
+    observeShadow(task, true, 0, null, null, 0);
     return false;
   }
   const { items, missing: unavailableSource } = await collect(ports, task, input);
@@ -231,7 +267,8 @@ export async function runExtractiveWriting(ports: WritingPorts): Promise<boolean
   const missing = unavailableSource || sources.length !== items.length;
   const reply = renderExtractiveWriting(task, sources);
   const complete = reply.complete && !missing;
-  observeShadow(task, true, sources.length, reply.evidence.length, complete);
+  const independentSources = usesAlignedEvidence(task) ? independentSourceCount(sources) : undefined;
+  observeShadow(task, true, sources.length, reply, complete, independentSources);
   // Only public HTTP reads should become candidates for a later HTTP fetch.
   const documents = ports.config.documents;
   if (task.source.kind === 'urls' || task.source.kind === 'search') {

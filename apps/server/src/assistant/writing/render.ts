@@ -1,8 +1,13 @@
 import type { EvidenceSpan, WritingSource } from './evidence.js';
+import { cite, inline, quote } from './citation.js';
 import { explain, explanationSections, type ExplanationGroup } from './explanation.js';
+import { alignClaims } from './multisource/alignment.js';
+import { extractClaims } from './multisource/claims.js';
+import { composeExplanation } from './multisource/compose.js';
+import { usesAlignedEvidence } from './multisource/types.js';
 import { restructure } from './restructure.js';
 import { summarize } from './summary.js';
-import { writingUrl, type ExtractiveWritingTask } from './request.js';
+import type { ExtractiveWritingTask } from './request.js';
 
 const LABELS = {
   ar: { definition: 'التعريف', how: 'كيف يعمل', why: 'لماذا', example: 'مثال', limits: 'الحدود', missing: 'لم أجد',
@@ -15,24 +20,7 @@ export interface ExtractiveWritingReply {
   text: string;
   evidence: EvidenceSpan[];
   complete: boolean;
-}
-
-function inline(text: string): string {
-  return text.replace(/\r?\n/gu, ' ').replace(/[\\\x60*_[\]<>|#~!]/gu, '\\$&');
-}
-
-function cite(span: EvidenceSpan, task: ExtractiveWritingTask): string {
-  const { source } = span;
-  const title = inline((source.title || LABELS[task.language].source).slice(0, 120)).replace(/\\[\[\]]/gu, '');
-  const page = source.page ? (task.language === 'ar' ? `، ص. ${source.page}` : `, p. ${source.page}`) : '';
-  const url = source.url && writingUrl(source.url);
-  if (url) return `[${title}${page}](${url.replace(/[<>|]/gu, encodeURIComponent)})`;
-  const offset = source.offset ?? 0;
-  return `〔${title}${page} ${offset + span.start}–${offset + span.end}〕`;
-}
-
-function quote(span: EvidenceSpan, task: ExtractiveWritingTask): string {
-  return `«${inline(span.text)}» ${cite(span, task)}`;
+  alignment?: { claims: number; groups: number; corroborated: number; conflicts: number };
 }
 
 function summaryReply(task: ExtractiveWritingTask, sources: readonly WritingSource[]): ExtractiveWritingReply {
@@ -104,5 +92,11 @@ function restructureReply(task: ExtractiveWritingTask, source?: WritingSource): 
 export function renderExtractiveWriting(task: ExtractiveWritingTask, sources: readonly WritingSource[]): ExtractiveWritingReply {
   if (task.kind === 'summary') return summaryReply(task, sources);
   if (task.kind === 'restructure') return restructureReply(task, sources[0]);
+  if (usesAlignedEvidence(task)) {
+    const claims = sources.flatMap(extractClaims);
+    const { groups, conflicts } = alignClaims(claims);
+    return { ...composeExplanation(task, groups, conflicts), alignment: { claims: claims.length, groups: groups.length,
+      corroborated: groups.filter(group => group.support > 1).length, conflicts: conflicts.length } };
+  }
   return explanationReply(task, sources);
 }
