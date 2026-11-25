@@ -8,15 +8,45 @@ The API is running at `https://mohassan-api-132-145-71-214.sslip.io` on the Alwa
 
 The migration verified every row in all 84 tables using counts and content hashes before changing `DATABASE_URL`. The pre-migration custom-format dump, original environment and verification record are under `/var/backups/mohassan/migration-2026-11-08T00-56-30-232Z`. An independent copy is saved in the administrator's private `.codex/backups/mohassan-cloud` directory on Windows. Secrets stay out of source control. The old Neon endpoint has five-minute automatic suspension enabled; deleting that retained cloud backup requires explicit owner confirmation and is separate from website operation.
 
-`mohassan.service` starts after `postgresql@18-main.service`; Caddy manages HTTPS. `mohassan-backup.timer` schedules a root-only PostgreSQL dump daily at 03:15 UTC with up to 15 minutes of jitter and retains seven daily files in `/var/backups/mohassan/daily`. It does not delete the migration backup. Keep an off-host backup as well. Check `systemctl status mohassan postgresql@18-main caddy` and `systemctl list-timers mohassan-backup.timer` without printing the private environment file.
+`mohassan.service` starts after `postgresql@18-main.service`, and Caddy manages HTTPS. The production backup timer runs daily at 03:15 UTC with up to 15 minutes of jitter. The [backups and restore drill](#backups-and-restore-drill) instructions cover installing the manifest, off-server pull and weekly drill.
 
 Local `.env` now uses port 15432 through an explicitly opened SSH maintenance tunnel. The cloud site itself needs neither that tunnel nor the Windows computer. The old Windows API supervisor and Startup shortcut were stopped and archived to prevent two APIs from sharing the production database.
+
+## Backups and restore drill
+
+- The daily job retains seven custom-format dumps and their matching manifests under root-only `/var/backups/mohassan/daily`. The manifest records the dump hash and size, PostgreSQL versions, UTC timestamps, both migration ledgers, and row counts from the snapshot that `pg_dump` uses. A retry on the same UTC day reuses that day's completed pair. The separate migration backup is outside daily retention.
+- The root job stages only the newest pair for `mohassan-backup-pull`. The restricted SSH key serves the pair to the owner's PC. Follow the [Windows pull and Task Scheduler setup](../backup-pull/README.md) to create the key, register the task yourself, and verify the first copy. A PC that misses a day downloads the newest available pair when it next runs. VM reclamation can cut off access to the newest local backup, so confirm that a verified copy is on the PC.
+- The weekly drill runs Sunday at 05:00 UTC. It checks the newest pair's hash and size, restores into `mohassan_restore_drill_YYYYMMDD`, compares both migration ledgers and every table's count, checks relationships, and drops its scratch database. A pre-existing scratch database with that name stops the drill and is left for owner inspection. The newest 12 reports are retained under `/var/lib/mohassan-backup-status`; the API group can read the metadata there.
+
+To install this revision, save any host-specific operations unit edits, stop the API and backup timers during the planned source update, and wait for any running backup or drill to finish. Run `prepare.sh` with the normal prerequisites. It installs the backup units, scripts, SSH restrictions and journal drop-ins, and leaves timer enablement and service starts to the owner. Follow the Windows setup instructions to authorize the pull key and reload SSH. Start the API through the normal release procedure before running the commands below.
+
+```sh
+sudo systemctl enable --now mohassan-backup.timer mohassan-restore-drill.timer
+sudo systemctl start mohassan-backup.service
+sudo systemctl start mohassan-restore-drill.service
+systemctl list-timers mohassan-backup.timer mohassan-restore-drill.timer
+sudo journalctl -u mohassan-backup.service -u mohassan-restore-drill.service -n 40
+```
+
+Verify `GET /api/ops/backup-status` with an owner session. It shows the newest dump's age from its snapshot time, the latest drill's age and verdict, and the last verified off-server download if the owner has imported the PC's receipt. `check-cloud.mjs` warns when the snapshot is over 26 hours old, or when the latest drill failed or is over 8 days old. For the authenticated check, keep `INTERNAL_API_SECRET` in the verifier's process environment and pass an owner session cookie privately. In the Bash example below, replace the example hostname with the trusted direct API origin.
+
+```bash
+read -rs owner_cookie
+printf '%s\n' "$owner_cookie" | node scripts/check-cloud.mjs --owner-session-stdin https://api.example.org
+unset owner_cookie
+```
+
+The verifier sends the cookie only to that origin's backup status endpoint after its service boundary checks. The normal health checks can still run without an owner cookie. Their output then marks backup status unavailable.
+
+The judge rotates `shadow.jsonl` in its writer on the first write of a new UTC day or before crossing 16 MiB. A single larger record stays intact. It keeps 14 compressed archives in `MOHASSAN_JUDGE_LOG_DIR`. The API journal uses the `mohassan` namespace after the API is restarted, with a 128 MiB persistent cap and a 32 MiB runtime cap. Use `sudo journalctl --namespace=mohassan -u mohassan.service` for new API logs. Backup and drill unit logs stay in the default journal. Keep direct access to judge logs restricted because they can contain owner conversations.
+
+Use the [production recovery runbook](../../docs/BACKUP-RESTORE-2026-11-25.md) for a lost VM or failed database. It explains what the drill's recovery point and restore duration can establish.
 
 ## Prerequisites
 
 1. Use an Always Free eligible VM in the account's home region, with persistent disk and a public IP. Allow TCP 80/443 in both OCI networking and the host firewall; restrict SSH appropriately. Do not expose port 4000.
 2. Install a current **Node 24.x Linux ARM64** release from the [official downloads](https://nodejs.org/en/download) and verify its signed checksums. This template expects `/usr/local/bin/node` and `/usr/local/bin/npm`. The repository requires Node 24, not the latest major release.
-3. Install Git, CA certificates and the [official Caddy Ubuntu package](https://caddyserver.com/docs/install#debian-ubuntu-raspbian). Keep Caddy's `/var/lib/caddy` state persistent. Its package may start the default Caddy service during installation.
+3. Install Git, CA certificates, OpenSSH server and the [official Caddy Ubuntu package](https://caddyserver.com/docs/install#debian-ubuntu-raspbian). Keep Caddy's `/var/lib/caddy` state persistent. Its package may start the default Caddy service during installation.
 4. Generate a fresh snapshot with `node scripts/package-cloud.mjs`. Transfer its `source` directory to `/opt/mohassan/app`, without Windows `node_modules`, `.data`, `.env`, or browser profiles. Verify the snapshot manifest after transfer. Directory ancestors must permit the service user to read the source.
 5. On the VM, run `sudo bash /opt/mohassan/app/scripts/cloud-linux/prepare.sh`. It installs locked dependencies with `npm ci --include=dev` because the runtime uses `tsx`, installs Chromium and its Ubuntu libraries, runs a browser smoke check as `mohassan`, and installs the systemd unit. It does not start or enable the API. It requires network access to the package and browser registries.
 

@@ -1,6 +1,6 @@
-import { appendFile, mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { judge, type JudgeCode, type JudgeDecision, type JudgeInput, type JudgeVerdict, type ReplyKind } from './judge.js';
+import { createJudgeLogWriter } from './judge-shadow-log.js';
 
 /**
  * The judge in shadow: the chat sends what it sends, and this records what the judge would have decided about it,
@@ -82,13 +82,11 @@ export function judgeSettings(production: boolean, env: NodeJS.ProcessEnv, cwd: 
 
 export function createJudgeShadow(options: { logFile: string; now?: () => Date }): JudgeShadow {
   const now = options.now ?? (() => new Date());
+  const append = createJudgeLogWriter(options.logFile);
   let queue: Promise<void> = Promise.resolve();
-  let directoryReady = false, warned = false;
+  let warned = false;
   const write = (line: JudgeShadowLine) => {
-    queue = queue.then(async () => {
-      if (!directoryReady) { await mkdir(dirname(options.logFile), { recursive: true }); directoryReady = true; }
-      await appendFile(options.logFile, `${JSON.stringify(line)}\n`, 'utf8');
-    }).catch(() => {
+    queue = queue.then(() => append(`${JSON.stringify(line)}\n`, line.at.slice(0, 10))).catch(() => {
       // A shadow log must never reach the chat. The first failed write is named once in the server log: the judge still
       // decides without its log, and a folder the service cannot write should not stay unnoticed.
       if (!warned) { warned = true; console.error(JSON.stringify({ level: 'warn', event: 'judge_log_unavailable', logFile: options.logFile })); }
