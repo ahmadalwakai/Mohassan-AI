@@ -1,6 +1,6 @@
 /** Small deterministic PDFs for parser security tests; no authoring dependency. */
 export function pdfFixture(pages: readonly string[], options: { imageOnly?: boolean; encrypted?: boolean; script?: string; compressed?: Uint8Array } = {}): Buffer {
-  const characters = [...new Set(pages.join('').split(''))];
+  const characters = [...new Set(pages.join('').replace(/[\r\n]/gu, '').split(''))];
   const hex = (value: string) => [...value].map(char => char.charCodeAt(0).toString(16).padStart(4, '0')).join('');
   const cmap = `/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo << /Registry (Fixture) /Ordering (Identity) /Supplement 0 >> def\n/CMapName /Fixture def\n/CMapType 2 def\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n${characters.length} beginbfchar\n${characters.map(char => `<${hex(char)}> <${hex(char)}>`).join('\n')}\nendbfchar\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend`;
   const stream = (content: string | Uint8Array, attributes = '') => { const bytes = Buffer.from(content); return Buffer.concat([Buffer.from(`<< /Length ${bytes.length} ${attributes} >>\nstream\n`), bytes, Buffer.from('\nendstream')]); };
@@ -16,8 +16,9 @@ export function pdfFixture(pages: readonly string[], options: { imageOnly?: bool
     const page = objects.length + 1, contents = page + 1; pageIds.push(page);
     objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> /XObject << /Im1 6 0 R >> >> /Contents ${contents} 0 R >>`);
     // A PDF stores displayed glyph order; the extractor applies its bidi mapping.
-    const visualText = text.replace(/[\u0600-\u06ff]+/gu, word => [...word].reverse().join(''));
-    objects.push(options.compressed ? stream(options.compressed, '/Filter /FlateDecode') : stream(options.imageOnly ? 'q 100 0 0 100 10 10 cm /Im1 Do Q' : `BT /F1 12 Tf 50 750 Td <${hex(visualText)}> Tj ET`));
+    const visualLines = text.split(/\r?\n/u).map(line => line.replace(/(?:(?![\p{Nd}٫٬])\p{Script=Arabic})+/gu, word => [...word].reverse().join('')));
+    const operators = visualLines.map(line => `<${hex(line)}> Tj`).join(' T* ');
+    objects.push(options.compressed ? stream(options.compressed, '/Filter /FlateDecode') : stream(options.imageOnly ? 'q 100 0 0 100 10 10 cm /Im1 Do Q' : `BT /F1 12 Tf 18 TL 50 750 Td ${operators} ET`));
   }
   objects[1] = `<< /Type /Pages /Count ${pageIds.length} /Kids [${pageIds.map(id => `${id} 0 R`).join(' ')}] >>`;
   if (options.script) {

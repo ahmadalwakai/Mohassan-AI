@@ -21,7 +21,7 @@ function targetCard(card: MonitorCard): Target {
   const { condition, language, source, title } = card.spec;
   const reading = condition.kind === 'threshold' || condition.kind === 'crossing'
     ? `${local(language, condition.direction === 'above' ? 'فوق' : 'دون', condition.direction)} ${condition.value}`
-    : source.kind === 'page' ? new URL(source.url).pathname : undefined;
+    : 'url' in source ? new URL(source.url).pathname : undefined;
   return { id: card.id, label: reading ? `${title} · ${reading}`.slice(0, 300) : title, fingerprint: fingerprint(card.spec) };
 }
 

@@ -11,7 +11,7 @@ import shutil
 import subprocess
 from tempfile import TemporaryDirectory
 
-from monitor_audit import instrument_observer, instrument_product, instrument_scoring
+from monitor_audit import SOURCE_FLAGS, instrument_observer, instrument_product, instrument_scoring
 
 V1_BUNDLE = "a258b3d47e39b5a2c03c71d4a9eb01107ae3d97f"
 V2_BUNDLE = "12cedfe592aab40cdd47ee00d05ea86a6d2bae89"
@@ -60,6 +60,7 @@ OVERRIDES = {
         "MOHASSAN_BACKGROUND_RESULTS_ENABLED",
         "MOHASSAN_MONITORS_ENABLED",
         "MOHASSAN_MONITORS_V2",
+        *SOURCE_FLAGS,
         *ARBITER_FLAGS,
         *(f"{flag}_KILL" for flag in ARBITER_FLAGS),
     )},

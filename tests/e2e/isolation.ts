@@ -132,11 +132,12 @@ export async function stopOwnedChildren(children: OwnedChild[]): Promise<void> {
   }));
 }
 
-export async function startIsolatedE2E(options: { localBrain?: boolean } = {}): Promise<{ directory: string; stop(): Promise<void> }> {
+export async function startIsolatedE2E(options: { localBrain?: boolean; githubMonitor?: boolean } = {}): Promise<{ directory: string; stop(): Promise<void> }> {
   // Never reuse, kill, or contact an existing local server on these fixture ports.
   await requireFreePort(E2E_SERVER_PORT); await requireFreePort(E2E_WEB_PORT);
   const fixture = await createE2EFixture();
   if (options.localBrain) fixture.environment.MOHASSAN_E2E_LOCAL_BRAIN = '1';
+  if (options.githubMonitor) fixture.environment.MOHASSAN_E2E_GITHUB_MONITOR = '1';
   const children: OwnedChild[] = [];
   let stopping: Promise<void> | undefined;
   const stop = () => stopping ??= (async () => { await stopOwnedChildren(children); await fixture.cleanup(); })();

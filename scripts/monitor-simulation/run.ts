@@ -5,15 +5,20 @@ import { parseArgs } from 'node:util';
 import { MONITOR_V2_DEFAULT_FRESHNESS_MS, MonitorSpecSchema } from '@mohassan/contracts';
 import type { MonitorSpec } from '@mohassan/contracts';
 import type { MonitorObservation } from '../../apps/server/src/monitors/evaluation.js';
+import * as productionSchedule from '../../apps/server/src/monitors/schedule.js';
 import type { MonitorSourceCache } from '../../apps/server/src/monitors/sources.js';
-import { classes, createScenario, matchesEvent, minute, parameters, seedCounts, type Scenario, type SeedBank } from './fixtures.js';
+import { classes, createScenario, matchesEvent, minute, parameters, phase2Classes, seedCounts, type Scenario, type SeedBank } from './fixtures.js';
 
 const baselineCommit = 'a453dc17a78f55c0cd3e5bf23f347843893bc3d2';
 const ownerId = 'simulation-account';
 const baselinePath = 'apps/server/src/monitors';
-const { values } = parseArgs({ options: { baseline: { type: 'string' }, bank: { type: 'string' }, 'v1-only': { type: 'boolean' }, replication: { type: 'string' } } });
-if (!values.baseline || (values.bank !== 'tuning' && values.bank !== 'held-out') || (values['v1-only'] && values.bank !== 'tuning')) {
-  throw new Error('Use --baseline <pinned-worktree> --bank tuning|held-out. --v1-only is available for the tuning bank.');
+const { values } = parseArgs({ options: {
+  baseline: { type: 'string' }, bank: { type: 'string' }, 'v1-only': { type: 'boolean' }, replication: { type: 'string' },
+  phase2: { type: 'boolean' },
+} });
+if ((values.bank !== 'tuning' && values.bank !== 'held-out')
+  || (values.phase2 ? values.baseline || values['v1-only'] || values.replication : !values.baseline || (values['v1-only'] && values.bank !== 'tuning'))) {
+  throw new Error('Use --bank tuning|held-out with either --phase2 or --baseline <pinned-worktree>. --v1-only is available for v1 tuning.');
 }
 const bank: SeedBank = values.bank;
 const replication = values.replication;
@@ -22,17 +27,21 @@ if (replication !== undefined && (bank !== 'held-out' || !/^[a-f\d]{64}$/u.test(
 }
 // Double the initial held-out bank to reduce sampling error in the independent replication.
 const trialsPerClass = replication ? 2 * seedCounts['held-out'] : seedCounts[bank];
-const baseline = resolve(values.baseline);
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
-if (git(baseline, 'rev-parse', 'HEAD') !== baselineCommit || git(baseline, 'status', '--porcelain', '--untracked-files=no')) {
-  throw new Error(`The baseline must be a clean checkout at ${baselineCommit}.`);
+const v1 = values.baseline ? await loadV1(values.baseline) : undefined;
+async function loadV1(path: string) {
+  const baseline = resolve(path);
+  if (git(baseline, 'rev-parse', 'HEAD') !== baselineCommit || git(baseline, 'status', '--porcelain', '--untracked-files=no')) {
+    throw new Error(`The baseline must be a clean checkout at ${baselineCommit}.`);
+  }
+  const load = (module: string) => import(pathToFileURL(resolve(baseline, baselinePath, `${module}.ts`)).href);
+  const [schedule, evaluation, sources] = await Promise.all([
+    load('schedule') as Promise<typeof import('../../apps/server/src/monitors/schedule.js')>,
+    load('evaluation') as Promise<typeof import('../../apps/server/src/monitors/evaluation.js')>,
+    load('sources') as Promise<typeof import('../../apps/server/src/monitors/sources.js')>,
+  ]);
+  return { schedule, evaluation, sources };
 }
-const loadBaseline = (module: string) => import(pathToFileURL(resolve(baseline, baselinePath, `${module}.ts`)).href);
-const [baselineSchedule, baselineEvaluation, baselineSources] = await Promise.all([
-  loadBaseline('schedule') as Promise<typeof import('../../apps/server/src/monitors/schedule.js')>,
-  loadBaseline('evaluation') as Promise<typeof import('../../apps/server/src/monitors/evaluation.js')>,
-  loadBaseline('sources') as Promise<typeof import('../../apps/server/src/monitors/sources.js')>,
-]);
 const v2 = values['v1-only'] ? undefined : await Promise.all([
   import('../../apps/server/src/monitors/schedule-v2.js'), import('../../apps/server/src/monitors/evaluation-v2.js'),
   import('../../apps/server/src/monitors/sources.js'),
@@ -47,11 +56,13 @@ interface Outcome {
   clarifications: number;
   healthPauses: number;
   previewFailures: number;
+  lowConfidenceChecks: number;
+  lowConfidenceAlerts: number;
 }
 
 function createSpec(fixture: Scenario, advanced: boolean): MonitorSpec {
   const { source, read, condition, language, deadline } = fixture;
-  const timing = baselineSchedule.monitorTiming(source.kind, 'normal', { now: new Date(fixture.start), deadline });
+  const timing = (v1?.schedule ?? productionSchedule).monitorTiming(source.kind, 'normal', { now: new Date(fixture.start), deadline });
   const v2Spec: MonitorSpec['v2'] = {
     freshnessMs: MONITOR_V2_DEFAULT_FRESHNESS_MS,
     ...(fixture.sourceClass === 'structured-offer' && { target: { property: 'price', currency: 'USD' } }),
@@ -63,16 +74,19 @@ function createSpec(fixture: Scenario, advanced: boolean): MonitorSpec {
 }
 
 async function simulate(fixture: Scenario, advanced: typeof v2): Promise<Outcome> {
+  const modules = advanced ?? v1;
+  if (!modules) throw new Error('Simulation requires a production monitor reader.');
+  const schedule = v1?.schedule ?? productionSchedule;
   const spec = createSpec(fixture, Boolean(advanced));
   const expiry = new Date(fixture.end);
   let clock = fixture.start;
-  const { read } = (advanced?.sources ?? baselineSources).createMonitorReader(fixture.ports(() => clock));
+  const { read } = modules.sources.createMonitorReader(fixture.ports(() => clock));
   const slots = new Map<string, number>();
   let hostAdmitted = false;
   const reserveHost = async (host: string, minimum = 0) => {
     const eligibleAt = slots.get(host) ?? -Infinity;
     if (eligibleAt > clock) return eligibleAt;
-    slots.set(host, clock + Math.max(minimum, baselineSchedule.MONITOR_LIMITS.hostIntervalMs));
+    slots.set(host, clock + Math.max(minimum, schedule.MONITOR_LIMITS.hostIntervalMs));
     hostAdmitted = true;
     return null;
   };
@@ -84,7 +98,8 @@ async function simulate(fixture: Scenario, advanced: typeof v2): Promise<Outcome
     ownerId, reserveHost, extendHost, preview, cache, ...(advanced && { v2: true }),
   });
   const preview = await readAt(true);
-  const outcome: Outcome = { checks: 0, deliveries: [], relocated: false, relocationRecorded: false, clarifications: 0, healthPauses: 0, previewFailures: 0 };
+  const outcome: Outcome = { checks: 0, deliveries: [], relocated: false, relocationRecorded: false, clarifications: 0,
+    healthPauses: 0, previewFailures: 0, lowConfidenceChecks: 0, lowConfidenceAlerts: 0 };
   if (preview.kind !== 'value') {
     if (preview.kind === 'clarify') outcome.clarifications++;
     else outcome.previewFailures++;
@@ -92,13 +107,13 @@ async function simulate(fixture: Scenario, advanced: typeof v2): Promise<Outcome
   }
   let observation = preview.observation;
   cache = preview.cache;
-  let v1Evaluation = baselineEvaluation.evaluateMonitor(spec, undefined, observation).state;
+  let v1Evaluation = v1?.evaluation.evaluateMonitor(spec, undefined, observation).state;
   let v2Evaluation = advanced?.evaluation.evaluateMonitorV2(spec, undefined, [{ index: 0, observation }], new Date(clock), { canDeliver: false }).state;
   let learned = advanced?.schedule.learnMonitorSchedule(undefined, new Date(clock), {
     changed: false, publicationTimes: preview.publicationTimes,
   });
   let next = advanced?.schedule.nextPredictiveMonitorCheck(spec, new Date(clock), { state: learned, expiry, checksUsed: 0 })
-    ?? baselineSchedule.initialMonitorCheck(spec, new Date(clock), expiry);
+    ?? schedule.initialMonitorCheck(spec, new Date(clock), expiry);
   let failures = 0;
   let active = true;
   const recurring = advanced && fixture.sourceClass === 'recurring-feed';
@@ -110,9 +125,11 @@ async function simulate(fixture: Scenario, advanced: typeof v2): Promise<Outcome
     const result = await readAt();
     if (result.kind === 'deferred') {
       outcome.checks -= Number(!hostAdmitted);
-      next = { ...next, dueAt: new Date(Math.max(clock + baselineSchedule.MONITOR_LIMITS.pollMs, result.at)) };
+      next = { ...next, dueAt: new Date(Math.max(clock + schedule.MONITOR_LIMITS.pollMs, result.at)) };
       continue;
     }
+    const weakRead = fixture.lowConfidenceAt?.(clock);
+    if (weakRead) outcome.lowConfidenceChecks++;
     if (result.kind === 'clarify' || result.kind === 'unsafe-target') {
       if (result.kind === 'clarify') outcome.clarifications++;
       else outcome.healthPauses++;
@@ -122,20 +139,20 @@ async function simulate(fixture: Scenario, advanced: typeof v2): Promise<Outcome
     const failed = result.kind === 'missing' || result.kind === 'unreachable';
     if (failed) {
       failures++;
-      if (failures >= baselineSchedule.MONITOR_LIMITS.consecutiveFailures || outcome.checks >= spec.timing.maxChecks) {
+      if (failures >= schedule.MONITOR_LIMITS.consecutiveFailures || outcome.checks >= spec.timing.maxChecks) {
         outcome.healthPauses++;
         break;
       }
       next = advanced?.schedule.nextPredictiveMonitorCheck(spec, at, { state: learned, expiry, checksUsed: outcome.checks, failed,
         priorIntervalMs: next.intervalMs })
-        ?? baselineSchedule.nextMonitorCheck(spec, at, next.intervalMs, { changed: true, expiry });
+        ?? schedule.nextMonitorCheck(spec, at, next.intervalMs, { changed: true, expiry });
       continue;
     }
     failures = 0;
     if (result.kind === 'value') {
       observation = result.observation;
       cache = result.cache;
-      if (fixture.layoutChangeAt !== undefined && clock >= fixture.layoutChangeAt && observation.value === fixture.relocationValue(clock)) {
+      if (fixture.layoutChangeAt !== undefined && clock >= fixture.layoutChangeAt && observation.value === fixture.relocationValue?.(clock)) {
         outcome.relocated = true;
         outcome.relocationRecorded ||= Boolean(result.relocation);
       }
@@ -156,14 +173,15 @@ async function simulate(fixture: Scenario, advanced: typeof v2): Promise<Outcome
       next = advanced.schedule.nextPredictiveMonitorCheck(spec, at, { state: learned, expiry, checksUsed: outcome.checks,
         priorIntervalMs: next.intervalMs, changed: evaluated.changed, needsConfirmation: evaluated.needsConfirmation,
         confirmNoEarlierThan: evaluated.confirmNoEarlierThan });
-    } else {
-      const evaluated = baselineEvaluation.evaluateMonitor(spec, v1Evaluation, observation, { revalidated });
+    } else if (v1) {
+      const evaluated = v1.evaluation.evaluateMonitor(spec, v1Evaluation, observation, { revalidated });
       v1Evaluation = evaluated.state;
       alert = evaluated.trigger;
-      next = baselineSchedule.nextMonitorCheck(spec, at, next.intervalMs, { changed: evaluated.changed, expiry });
+      next = schedule.nextMonitorCheck(spec, at, next.intervalMs, { changed: evaluated.changed, expiry });
     }
     if (alert) {
       outcome.deliveries.push({ at: clock, observation: alert });
+      if (weakRead) outcome.lowConfidenceAlerts++;
       active = Boolean(recurring && outcome.deliveries.length < spec.timing.maxNotifications);
     }
   }
@@ -192,6 +210,8 @@ class Scores {
   clarifications = 0;
   healthPauses = 0;
   previewFailures = 0;
+  lowConfidenceChecks = 0;
+  lowConfidenceAlerts = 0;
   delays: number[] = [];
   restrictedDelays: number[] = [];
 
@@ -234,6 +254,8 @@ class Scores {
     this.clarifications += outcome.clarifications;
     this.healthPauses += outcome.healthPauses;
     this.previewFailures += outcome.previewFailures;
+    this.lowConfidenceChecks += outcome.lowConfidenceChecks;
+    this.lowConfidenceAlerts += outcome.lowConfidenceAlerts;
     return matched;
   }
 
@@ -255,45 +277,86 @@ class Scores {
 
 type PairedDelays = { v1: number[]; v2: number[] };
 const pairedSummary = ({ v1, v2 }: PairedDelays) => ({ matchingEvents: v1.length, v1: delaySummary(v1), v2: delaySummary(v2) });
-const totals = { v1: new Scores(), v2: new Scores() };
-const sharedPaired: PairedDelays = { v1: [], v2: [] };
-const comparison = [];
-for (const sourceClass of classes) {
-  const first = new Scores();
-  const second = new Scores();
-  const paired: PairedDelays = { v1: [], v2: [] };
-  const recurring = sourceClass === 'recurring-feed';
-  for (let trial = 0; trial < trialsPerClass; trial++) {
-    const fixture = createScenario(bank, trial, sourceClass, replication);
-    const old = await simulate(fixture, undefined);
-    const oldDelays = first.record(fixture, old);
-    if (!recurring) totals.v1.record(fixture, old);
-    if (v2) {
-      const current = await simulate(fixture, v2);
-      const currentDelays = second.record(fixture, current);
-      if (!recurring) totals.v2.record(fixture, current);
-      for (const [event, oldDelay] of oldDelays) {
-        const currentDelay = currentDelays.get(event);
-        if (currentDelay === undefined) continue;
-        paired.v1.push(oldDelay);
-        paired.v2.push(currentDelay);
-        if (!recurring) {
-          sharedPaired.v1.push(oldDelay);
-          sharedPaired.v2.push(currentDelay);
+if (values.phase2) await runPhase2();
+else await compareLegacy();
+
+async function runPhase2() {
+  const [{ createPhase2Scenario, phase2Parameters }, { simulateGithubBudget }] = await Promise.all([
+    import('./phase2-fixtures.js'), import('./github-budget.js'),
+  ]);
+  const total = new Scores();
+  const classes = [];
+  for (const sourceClass of phase2Classes) {
+    const scores = new Scores();
+    for (let trial = 0; trial < trialsPerClass; trial++) {
+      const fixture = await createPhase2Scenario(bank, trial, sourceClass);
+      const outcome = await simulate(fixture, v2);
+      scores.record(fixture, outcome);
+      total.record(fixture, outcome);
+    }
+    classes.push({ sourceClass, ...scores.summary(), lowConfidenceChecks: scores.lowConfidenceChecks, lowConfidenceAlerts: scores.lowConfidenceAlerts });
+  }
+  const githubBudget = await simulateGithubBudget();
+  // These are the gates frozen in docs/MONITOR-SOURCES-PHASE2-CRITERIA.md.
+  const criteria = { minimumRecall: 0.9, minimumPrecision: 1, maxFalseAlarmsPerMonitorWeek: 0,
+    maxMeanDelayMinutes: 360, maxP95DelayMinutes: 720, maxChecksPerMonitorWeek: 52 };
+  const gates = {
+    recall: classes.every(row => (row.recall ?? 0) >= criteria.minimumRecall),
+    precision: classes.every(row => (row.precision ?? 0) >= criteria.minimumPrecision),
+    falseAlarms: classes.every(row => row.falseAlarmsPerMonitorWeek === criteria.maxFalseAlarmsPerMonitorWeek),
+    meanDelay: classes.every(row => row.meanDelayMinutes !== null && row.meanDelayMinutes <= criteria.maxMeanDelayMinutes),
+    p95Delay: classes.every(row => row.p95DelayMinutes !== null && row.p95DelayMinutes <= criteria.maxP95DelayMinutes),
+    checks: classes.every(row => row.checksPerMonitorWeek !== null && row.checksPerMonitorWeek <= criteria.maxChecksPerMonitorWeek),
+    lowConfidenceAlerts: total.lowConfidenceChecks > 0 && total.lowConfidenceAlerts === 0,
+    githubBudget: githubBudget.budgetViolations === 0 && githubBudget.saturated,
+  };
+  console.log(JSON.stringify({ head: git(process.cwd(), 'rev-parse', 'HEAD'), bank, seedsPerClass: trialsPerClass,
+    parameters: phase2Parameters, criteria, classes, aggregate: { ...total.summary(), lowConfidenceChecks: total.lowConfidenceChecks,
+      lowConfidenceAlerts: total.lowConfidenceAlerts }, githubBudget, gates }, null, 2));
+  if (bank === 'held-out' && Object.values(gates).some(passed => !passed)) process.exitCode = 1;
+}
+
+async function compareLegacy() {
+  const totals = { v1: new Scores(), v2: new Scores() };
+  const sharedPaired: PairedDelays = { v1: [], v2: [] };
+  const comparison = [];
+  for (const sourceClass of classes) {
+    const first = new Scores();
+    const second = new Scores();
+    const paired: PairedDelays = { v1: [], v2: [] };
+    const recurring = sourceClass === 'recurring-feed';
+    for (let trial = 0; trial < trialsPerClass; trial++) {
+      const fixture = createScenario(bank, trial, sourceClass, replication);
+      const old = await simulate(fixture, undefined);
+      const oldDelays = first.record(fixture, old);
+      if (!recurring) totals.v1.record(fixture, old);
+      if (v2) {
+        const current = await simulate(fixture, v2);
+        const currentDelays = second.record(fixture, current);
+        if (!recurring) totals.v2.record(fixture, current);
+        for (const [event, oldDelay] of oldDelays) {
+          const currentDelay = currentDelays.get(event);
+          if (currentDelay === undefined) continue;
+          paired.v1.push(oldDelay);
+          paired.v2.push(currentDelay);
+          if (!recurring) {
+            sharedPaired.v1.push(oldDelay);
+            sharedPaired.v2.push(currentDelay);
+          }
         }
       }
     }
+    comparison.push({ sourceClass, v1: first.summary(), ...(v2 && { v2: second.summary(), paired: pairedSummary(paired) }) });
   }
-  comparison.push({ sourceClass, v1: first.summary(), ...(v2 && { v2: second.summary(), paired: pairedSummary(paired) }) });
+  const paired = pairedSummary(sharedPaired);
+  const shared = { v1: totals.v1.summary(), ...(v2 && { v2: totals.v2.summary(), paired }) };
+  const gates = v2 && {
+    noRecallLossByClass: comparison.every(row => row.v2!.trueEvents >= row.v1.trueEvents),
+    lowerPairedMeanDelay: paired.v2.meanDelayMinutes !== null && paired.v1.meanDelayMinutes !== null && paired.v2.meanDelayMinutes < paired.v1.meanDelayMinutes,
+    lowerPairedP95Delay: paired.v2.p95DelayMinutes !== null && paired.v1.p95DelayMinutes !== null && paired.v2.p95DelayMinutes < paired.v1.p95DelayMinutes,
+    equalOrFewerChecks: shared.v2!.checks <= shared.v1.checks,
+  };
+  console.log(JSON.stringify({ baseline: baselineCommit, head: git(process.cwd(), 'rev-parse', 'HEAD'), bank, ...(replication && { replication }), seeds: trialsPerClass, parameters,
+    comparison, sharedOneShot: shared, ...(gates && { gates }) }, null, 2));
+  if (bank === 'held-out' && gates && Object.values(gates).some(passed => !passed)) process.exitCode = 1;
 }
-const paired = pairedSummary(sharedPaired);
-const shared = { v1: totals.v1.summary(), ...(v2 && { v2: totals.v2.summary(), paired }) };
-const gates = v2 && {
-  noRecallLossByClass: comparison.every(row => row.v2!.trueEvents >= row.v1.trueEvents),
-  lowerPairedMeanDelay: paired.v2.meanDelayMinutes !== null && paired.v1.meanDelayMinutes !== null && paired.v2.meanDelayMinutes < paired.v1.meanDelayMinutes,
-  lowerPairedP95Delay: paired.v2.p95DelayMinutes !== null && paired.v1.p95DelayMinutes !== null && paired.v2.p95DelayMinutes < paired.v1.p95DelayMinutes,
-  equalOrFewerChecks: shared.v2!.checks <= shared.v1.checks,
-};
-console.log(JSON.stringify({ baseline: baselineCommit, head: git(process.cwd(), 'rev-parse', 'HEAD'), bank, ...(replication && { replication }), seeds: trialsPerClass, parameters,
-  comparison, sharedOneShot: shared, ...(gates && { gates }) }, null, 2));
-if (bank === 'held-out' && gates && Object.values(gates).some(passed => !passed)) process.exitCode = 1;

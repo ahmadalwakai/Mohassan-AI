@@ -1,5 +1,6 @@
 import { sql, type Kysely } from 'kysely';
 
+import { migrateMonitorVisualBudget } from './sources/migration.js';
 import { migrateMonitorV2ChatTables } from './v2-chat-migration.js';
 
 export const MONITOR_V2_MIGRATION = '044_smart_monitors_v2';
@@ -14,4 +15,5 @@ export async function migrateMonitorsV2InTransaction(tx: Kysely<any>) {
     await tx.insertInto('schema_migrations').values({ version: MONITOR_V2_MIGRATION }).execute();
   }
   await migrateMonitorV2ChatTables(tx);
+  await migrateMonitorVisualBudget(tx);
 }

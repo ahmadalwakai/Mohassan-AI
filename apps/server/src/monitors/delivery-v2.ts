@@ -1,5 +1,5 @@
 import { safeResumeUrl } from '@mohassan/browser';
-import type { MonitorSpec } from '@mohassan/contracts';
+import { monitorGithubArabicStatus, monitorV2Targets, type MonitorSpec } from '@mohassan/contracts';
 import type { MonitorObservation } from './evaluation.js';
 import type { MonitorV2Notice } from './evaluation-v2.js';
 
@@ -29,24 +29,27 @@ export function monitorV2EvidenceMessage(spec: MonitorSpec, notice: MonitorV2Not
       when: 'Observed', source: 'Source', yes: 'Present', no: 'Absent', empty: 'No items',
       digest: 'Daily monitor digest', events: 'Checks with changes', excerpt: 'Excerpt' };
 
-  function value(observed: MonitorObservation): string {
+  function value(observed: MonitorObservation, github: boolean): string {
     const { value } = observed;
     if (typeof value === 'number') return number.format(value);
     if (typeof value === 'boolean') return value ? words.yes : words.no;
     if (Array.isArray(value)) return value.length ? plain(value.join(' · '), 180) : words.empty;
-    return plain(ar && Object.hasOwn(arabicStatus, value) ? arabicStatus[value] : value, 180);
+    const labels = github ? monitorGithubArabicStatus : arabicStatus;
+    return plain(ar && Object.hasOwn(labels, value) ? labels[value] : value, 180);
   }
 
   const heading = notice.digest ? `${words.digest} · ${plain(spec.title, 180)}\n${words.events} · ${number.format(notice.events)}`
     : plain(spec.message, 500);
+  const targets = monitorV2Targets(spec);
   const rows = notice.evidence.map(item => {
+    const github = targets[item.index]?.source.kind === 'github';
     const publicUrl = item.after.url && safeResumeUrl(item.after.url);
     const fallback = conversationId && /^[a-f\d-]{36}$/iu.test(conversationId) ? `/?conversation=${conversationId}` : null;
     const url = publicUrl || fallback;
     const percentage = item.percent === null ? words.unavailable : `${signed.format(item.percent)}${ar ? '٪' : '%'}`;
     return [
-      `${words.before} · ${value(item.before)}`,
-      `${words.after} · ${value(item.after)}`,
+      `${words.before} · ${value(item.before, github)}`,
+      `${words.after} · ${value(item.after, github)}`,
       `${words.absolute} · ${item.absolute === null ? words.unavailable : signed.format(item.absolute)}`,
       `${words.percent} · ${percentage}`,
       `${words.when} · ${time.format(new Date(item.after.observedAt))}`,

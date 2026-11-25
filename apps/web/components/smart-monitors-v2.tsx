@@ -66,7 +66,8 @@ function durationLabel(ms: number, language: Language) {
 function targetLabel(target: MonitorV2Target, language: Language) {
   const { source } = target;
   switch (source.kind) {
-    case "page": return source.anchor ? `${source.anchor} · ${source.url}` : source.url;
+    case "page": case "pdf": case "visual": return source.anchor ? `${source.anchor} · ${source.url}` : source.url;
+    case "github": return `${source.owner}/${source.repo}${"number" in source.watch ? ` #${source.watch.number}` : "branch" in source.watch ? ` · ${source.watch.branch}` : ""}`;
     case "currency": return `${source.base}/${source.quote}`;
     case "weather": return source.location;
     case "search": return source.query;

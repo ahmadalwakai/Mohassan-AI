@@ -21,7 +21,7 @@ export interface MonitorPageAnchor {
   label: string;
   pattern: { kind: string; currency?: string; unit?: string };
   context: string;
-  origin: 'structured' | 'visible';
+  origin: 'structured' | 'visible' | 'visual';
   old?: true;
 }
 export interface MonitorPageCandidate {
@@ -279,7 +279,7 @@ function sameValue(left: MonitorPageCandidate, right: MonitorPageCandidate): boo
 }
 
 export function observePageV2(body: string, url: string, contentType: string, spec: PageSpec, at: string,
-  previous?: MonitorPageAnchor, document?: Html.Document): ObserveResult {
+  previous?: MonitorPageAnchor, document?: Html.Document, allowMissingTarget = false): ObserveResult {
   const property = targetProperty(spec);
   const plain = /^text\/plain/iu.test(contentType);
   const doc = plain ? undefined : document ?? parse(body);
@@ -314,7 +314,9 @@ export function observePageV2(body: string, url: string, contentType: string, sp
   if (!previous) {
     if (distinct.length > 1) return { kind: 'clarify', candidates: distinct.slice(0, 4), confidence: middle, url };
     if (distinct.length === 1 && !distinct[0].anchor.old) return confirm(distinct[0], 1);
-    if (distinct.length || directTarget?.currency || directTarget?.unit) return { kind: 'unsafe-target', confidence: 0, url };
+    if (distinct.length || !allowMissingTarget && (directTarget?.currency || directTarget?.unit)) {
+      return { kind: 'unsafe-target', confidence: 0, url };
+    }
     return spec.read.kind === 'status' && !directTarget?.property ? legacy() : { kind: 'missing', url };
   }
   const ranked = distinct.map(item => ({ item, confidence: score(previous, item.anchor) })).sort((a, b) => b.confidence - a.confidence);

@@ -61,7 +61,8 @@ function matchesTarget(card: MonitorCard, target: string, language: Language): b
     if (market?.kind === 'exchange-quote') return market.from === source.base || market.from === source.quote;
   } else if (source.kind === 'weather') return monitorMatchText(source.location) === target;
   else if (source.kind === 'search') return monitorMatchText(source.query) === target;
-  else if (source.kind === 'page') return monitorMatchText(source.url) === target || monitorMatchText(source.anchor ?? '') === target;
+  else if ('url' in source) return monitorMatchText(source.url) === target || monitorMatchText(source.anchor ?? '') === target;
+  else if (source.kind === 'github') return monitorMatchText(`${source.owner}/${source.repo}`) === target;
   return false;
 }
 

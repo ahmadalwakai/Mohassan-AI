@@ -3,6 +3,7 @@ import { SafeNetwork, type SearchProvider } from '@mohassan/browser';
 import type { MonitorSpec } from '@mohassan/contracts';
 import type { Kysely } from 'kysely';
 import type { MonitorObservation } from '../../apps/server/src/monitors/evaluation.js';
+import type { createMonitorReader } from '../../apps/server/src/monitors/sources.js';
 
 export const minute = 60_000;
 export const hour = 60 * minute;
@@ -15,7 +16,9 @@ const runId = '00000000-0000-4000-8000-000000000001';
 export const classes = [
   'plain-page', 'structured-offer', 'arabic-page', 'weekly-feed', 'recurring-feed', 'currency', 'weather', 'search', 'run',
 ] as const;
-export type SourceClass = typeof classes[number];
+export const phase2Classes = ['pull-request', 'github-ci', 'github-release', 'pdf-revision', 'visual-noise'] as const;
+export type Phase2SourceClass = typeof phase2Classes[number];
+export type SourceClass = typeof classes[number] | Phase2SourceClass;
 export type SeedBank = 'tuning' | 'held-out';
 export const seedCounts = { tuning: 32, 'held-out': 64 } as const;
 type Schedule = 'poisson' | 'daily' | 'weekly' | 'burst';
@@ -41,7 +44,7 @@ export const parameters = {
   moveProbability: 0.5,
 } as const;
 
-function random(bank: SeedBank, trial: number, source: SourceClass, replication?: string) {
+export function random(bank: SeedBank, trial: number, source: SourceClass, replication?: string) {
   const domain = replication ? `${bank}/replication/${replication}` : bank;
   let counter = 0;
   return () => {
@@ -52,9 +55,9 @@ function random(bank: SeedBank, trial: number, source: SourceClass, replication?
   };
 }
 
-const pick = (rand: () => number, min: number, max: number) => min + Math.floor(rand() * (max - min + 1));
-const chance = (rand: () => number, probability: number) => rand() < probability;
-const iso = (time: number) => new Date(time).toISOString();
+export const pick = (rand: () => number, min: number, max: number) => min + Math.floor(rand() * (max - min + 1));
+export const chance = (rand: () => number, probability: number) => rand() < probability;
+export const iso = (time: number) => new Date(time).toISOString();
 const quote = (price: number) => Number(price.toFixed(3));
 
 function eventTimes(regime: Schedule, rand: () => number, start: number, stop: number): number[] {
@@ -104,8 +107,9 @@ export interface Scenario {
   language: MonitorSpec['language'];
   truth: TruthEvent[];
   layoutChangeAt?: number;
-  relocationValue: (at: number) => number;
-  ports: (clock: () => number) => { db: Kysely<any>; network: SafeNetwork; searchProvider: SearchProvider; clock: () => number };
+  relocationValue?: (at: number) => number;
+  lowConfidenceAt?: (at: number) => boolean;
+  ports: (clock: () => number) => Parameters<typeof createMonitorReader>[0];
 }
 
 function gates(at: number, options: { etag?: boolean; modified?: boolean } = {}) {
