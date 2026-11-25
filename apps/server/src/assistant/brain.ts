@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { AgentElement, AgentPage } from '@mohassan/browser';
 import { parseRequestContextState, type RequestContextState, type RequestResolution } from './request-context.js';
+import { appendResponsePolicyPrompt, responsePolicyPromptInput } from './response-policy-runtime.js';
 
 /**
  * The assistant's own thinking. Everything that can be decided from the page
@@ -490,6 +491,7 @@ export function skillContextBudget(input: PromptInput): number {
 }
 
 export function buildPrompt(input: PromptInput): string {
+  input = responsePolicyPromptInput(input);
   const { history, memory, skillContext } = input;
   const sections = essentialSections(input);
   // Sources precede the final task reminder so an embedded instruction is never
@@ -508,6 +510,7 @@ export function buildPrompt(input: PromptInput): string {
   }
   if (memory) addReference(untrustedData('memory', memory.slice(0, 400)));
   for (const entry of history.slice(-6).reverse()) addReference(untrustedData('earlier_conversation', `${entry.role}: ${entry.text.slice(0, 500)}`));
+  appendResponsePolicyPrompt(input, PROMPT_CHAR_BUDGET - sections.join('\n\n').length - 2, addReference, untrustedData);
   return sections.join('\n\n');
 }
 
