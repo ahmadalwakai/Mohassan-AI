@@ -70,7 +70,7 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
       .where('owner_id', '=', candidate.user_id).forNoKeyUpdate().executeTakeFirst();
   }
 
-  async function finish({ row: claimed, token }: Claim, result: ReadResult) {
+  async function finish({ row: claimed, token }: Claim, result: ReadResult, hostAdmitted: boolean) {
     await db.transaction().execute(async tx => {
       // Chat publication/deletion lock the conversation first. Match that ordering when writing evidence.
       if (!await lockConversation(tx, claimed)) return;
@@ -91,7 +91,9 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
         return;
       }
       if (result.kind === 'deferred') {
-        await update.set({ ...clearLease, next_check_at: new Date(Math.max(result.at, at.getTime() + MONITOR_LIMITS.pollMs)) }).execute();
+        // The account paid for admission. Only spend the monitor's check budget if an earlier host was admitted.
+        await update.set({ ...clearLease, checks: row.checks - Number(!hostAdmitted),
+          next_check_at: new Date(Math.max(result.at, at.getTime() + MONITOR_LIMITS.pollMs)) }).execute();
         return;
       }
       const last = { ...clearLease, last_checked_at: at };
@@ -169,13 +171,19 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
         if (checked === 'deferred') continue;
         const signal = AbortSignal.any([shutdown, AbortSignal.timeout(MONITOR_LIMITS.readTimeoutMs)]);
         let result: ReadResult;
+        let hostAdmitted = false;
+        const reserveHost = async (host: string) => {
+          const retryAt = await store.reserveHost(host);
+          hostAdmitted ||= retryAt === null;
+          return retryAt;
+        };
         try {
           result = await withinSignal(signal, () => ports.read(checked.row.spec, { ownerId: checked.row.user_id, signal,
-            cache: checked.row.source_cache ?? undefined, reserveHost: store.reserveHost, extendHost: store.extendHost }));
+            cache: checked.row.source_cache ?? undefined, reserveHost, extendHost: store.extendHost }));
         } catch {
           result = { kind: 'unreachable' };
         }
-        if (!shutdown.aborted) await finish(checked, result);
+        if (!shutdown.aborted) await finish(checked, result, hostAdmitted);
       }
     };
     const workers = await Promise.allSettled(Array.from({ length: MONITOR_LIMITS.concurrentReads }, worker));
