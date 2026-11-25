@@ -11,6 +11,10 @@ import re
 from string import Template
 from time import process_time
 
+from collection_rules import collection_rules
+from numeric_productions import numeric_rules
+from statement_productions import statement_programs
+
 
 # The grammar uses the intersection of these types across all observed inputs.
 Kind = str
@@ -18,7 +22,7 @@ Example = tuple[tuple[object, ...], object]
 
 BASIC_BUILTINS = {
     function.__name__: function for function in (
-        abs, all, any, bool, chr, dict, divmod, enumerate, float, int, len, list,
+        abs, all, any, bool, chr, dict, divmod, enumerate, float, int, isinstance, len, list,
         max, min, ord, range, reversed, round, set, sorted, str, sum, tuple, zip,
     )
 }
@@ -43,15 +47,19 @@ class Rule:
     weight: int
     imports: frozenset[str]
     distinct: bool
+    result: Kind | None
+    commutative: bool
 
 
-def rule(kinds: str, expression: str, words: str, *, weight=1, imports=(), distinct=False) -> Rule:
+def rule(kinds: str, expression: str, words: str, *, weight=1, imports=(), distinct=False,
+         result=None, commutative=False) -> Rule:
     template = Template(expression)
     argument_kinds = tuple(kinds.split())
     parameters = ("a", "b", "c")[:len(argument_kinds)]
     body = template.substitute({name: name for name in parameters})
     evaluate = eval(f"lambda {', '.join(parameters)}: {body}", EVALUATION_GLOBALS)
-    return Rule(argument_kinds, template, evaluate, frozenset(words.split()), weight, frozenset(imports), distinct)
+    return Rule(argument_kinds, template, evaluate, frozenset(words.split()), weight,
+                frozenset(imports), distinct, result, commutative)
 
 
 # Each rule is a typed production. The description only affects order within a
@@ -71,9 +79,9 @@ RULES = (
     rule("integer", "$a.bit_count()", "bit bits count binary set"),
     rule("integer", "$a.bit_length()", "bit bits length binary"),
     rule("integer", "chr($a)", "character code unicode ascii"),
-    rule("number number", "$a + $b", "add sum total plus"),
+    rule("number number", "$a + $b", "add sum total plus", result="number", commutative=True),
     rule("number number", "$a - $b", "subtract difference minus", distinct=True),
-    rule("number number", "$a * $b", "multiply product times area square"),
+    rule("number number", "$a * $b", "multiply product times area square", result="number", commutative=True),
     rule("number number", "$a / $b", "divide quotient ratio average", distinct=True),
     rule("number number", "$a // $b", "divide quotient floor", distinct=True),
     rule("number number", "$a % $b", "modulo remainder divisible multiple odd even", distinct=True),
@@ -85,13 +93,13 @@ RULES = (
     rule("integer integer", "math.gcd($a, $b)", "greatest common divisor gcd", imports=("math",)),
     rule("integer integer", "math.lcm($a, $b)", "least common multiple lcm", imports=("math",)),
     rule("small-integer", "math.factorial($a)", "factorial", imports=("math",)),
-    rule("integer integer", "$a & $b", "bitwise bit binary and"),
-    rule("integer integer", "$a | $b", "bitwise bit binary or"),
-    rule("integer integer", "$a ^ $b", "bitwise bit binary xor"),
+    rule("integer integer", "$a & $b", "bitwise bit binary and", result="integer", commutative=True),
+    rule("integer integer", "$a | $b", "bitwise bit binary or", result="integer", commutative=True),
+    rule("integer integer", "$a ^ $b", "bitwise bit binary xor", result="integer", commutative=True),
     rule("integer small-integer", "$a << $b", "shift left bits binary"),
     rule("integer small-integer", "$a >> $b", "shift right bits binary"),
-    rule("value value", "$a == $b", "equals equal same exactly", distinct=True),
-    rule("value value", "$a != $b", "different unequal distinct", distinct=True),
+    rule("value value", "$a == $b", "equals equal same exactly", distinct=True, result="boolean", commutative=True),
+    rule("value value", "$a != $b", "different unequal distinct", distinct=True, result="boolean", commutative=True),
     rule("number number", "$a < $b", "less below smaller", distinct=True),
     rule("number number", "$a <= $b", "less below at most", distinct=True),
     rule("number number", "$a > $b", "more above greater larger", distinct=True),
@@ -101,21 +109,21 @@ RULES = (
     rule("boolean boolean", "$a or $b", "either or any", distinct=True),
     rule("boolean value value", "$b if $a else $c", "if conditional otherwise else"),
     rule("value", "bool($a)", "boolean truth true false empty"),
-    rule("iterable", "len($a)", "length size count number"),
-    rule("ordered", "list($a)", "convert list elements"),
-    rule("ordered", "tuple($a)", "convert tuple elements"),
-    rule("iterable", "set($a)", "convert set distinct unique elements"),
-    rule("ordered", "dict($a)", "convert dictionary mapping"),
+    rule("iterable", "len($a)", "length size count number", result="integer"),
+    rule("ordered", "list($a)", "convert list elements", result="list"),
+    rule("ordered", "tuple($a)", "convert tuple elements", result="tuple"),
+    rule("iterable", "set($a)", "convert set distinct unique elements", result="set"),
+    rule("ordered", "dict($a)", "convert dictionary mapping", result="dictionary"),
     rule("iterable", "min($a)", "minimum min smallest least"),
     rule("iterable", "max($a)", "maximum max largest greatest"),
     rule("ordered", "sum($a)", "sum total add"),
     rule("ordered", "math.prod($a)", "product multiply total", imports=("math",)),
     rule("iterable", "any($a)", "any some exists true"),
     rule("iterable", "all($a)", "all every each true"),
-    rule("iterable", "sorted($a)", "sort sorted order ascending"),
-    rule("iterable", "sorted($a, reverse=True)", "sort sorted order descending reverse"),
-    rule("ordered", "sorted($a, key=len)", "sort sorted length shortest longest"),
-    rule("ordered", "sorted($a, key=abs)", "sort sorted absolute magnitude"),
+    rule("iterable", "sorted($a)", "sort sorted order ascending", result="list"),
+    rule("iterable", "sorted($a, reverse=True)", "sort sorted order descending reverse", result="list"),
+    rule("ordered", "sorted($a, key=len)", "sort sorted length shortest longest", result="list"),
+    rule("ordered", "sorted($a, key=abs)", "sort sorted absolute magnitude", result="list"),
     rule("ordered", "max($a, key=len)", "longest length maximum"),
     rule("ordered", "min($a, key=len)", "shortest length minimum"),
     rule("value iterable", "$a in $b", "contains member present includes"),
@@ -139,7 +147,7 @@ RULES = (
     rule("text", "$a.title()", "title capitalize words"),
     rule("text", "$a.capitalize()", "capitalize first initial letter"),
     rule("text", "$a.strip()", "trim strip spaces whitespace leading trailing"),
-    rule("text", "$a.split()", "split words tokenize whitespace"),
+    rule("text", "$a.split()", "split words tokenize whitespace", result="list"),
     rule("text", "$a.splitlines()", "split lines newline"),
     rule("text", "$a.isupper()", "upper uppercase case"),
     rule("text", "$a.islower()", "lower lowercase case"),
@@ -149,7 +157,7 @@ RULES = (
     rule("text", "int($a)", "convert integer digits number"),
     rule("text", "float($a)", "convert decimal float number"),
     rule("text", "ord($a)", "ascii unicode code point"),
-    rule("text text", "$a.split($b)", "split separator delimiter"),
+    rule("text text", "$a.split($b)", "split separator delimiter", result="list"),
     rule("text text", "$a.strip($b)", "trim strip characters"),
     rule("text text", "$a.find($b)", "find index substring position first"),
     rule("text text", "$a.rfind($b)", "find index substring position last"),
@@ -205,6 +213,8 @@ RULES = (
     rule("text short-text", r"re.sub(r'\s+', $b, $a)", "regex replace normalize whitespace spaces", weight=2, imports=("re",)),
     rule("text", r"re.sub(r'[^\w\s]', '', $a)", "regex remove punctuation letters words", weight=2, imports=("re",)),
     rule("text", r"re.sub(r'\D', '', $a)", "regex remove nondigits extract digits", weight=2, imports=("re",)),
+    *collection_rules(rule),
+    *numeric_rules(rule),
 )
 
 
@@ -230,7 +240,7 @@ class Term:
     source: str
     values: tuple[object, ...]
     types: frozenset[Kind]
-    inputs: frozenset[int]
+    inputs: int
     imports: frozenset[str] = frozenset()
 
 
@@ -244,6 +254,10 @@ def _value_types(value):
         kinds.update(("number", "hashable"))
     if value_type is int:
         kinds.add("integer")
+        if value >= 0:
+            kinds.add("nonnegative-integer")
+        if abs(value) <= 100_000:
+            kinds.add("bounded-integer")
         if abs(value) <= 32:
             kinds.add("precision")
         if 0 <= value <= 32:
@@ -271,6 +285,11 @@ def _types_for(values):
 
 def _freeze(value):
     """Preserve distinctions that another Python operation can observe."""
+    value_type = type(value)
+    if value_type is int and value.bit_length() <= 256:
+        return int, value
+    if value is None or value_type is bool or (value_type is str and len(value) <= MAX_STRING_SIZE):
+        return value_type, value
     remaining = MAX_VALUE_NODES
 
     def freeze(item, depth):
@@ -293,8 +312,8 @@ def _freeze(value):
             raise ValueError("unsupported or oversized value")
         if value_type is dict:
             return value_type, tuple((freeze(key, depth + 1), freeze(value, depth + 1)) for key, value in item.items())
-        constructor = frozenset if value_type in (set, frozenset) else tuple
-        return value_type, constructor(freeze(value, depth + 1) for value in item)
+        # A later list conversion or iteration can observe set order as well.
+        return value_type, tuple(freeze(value, depth + 1) for value in item)
 
     return freeze(value, 0)
 
@@ -321,11 +340,50 @@ def _size_partitions(total, length):
             yield (first, *rest)
 
 
-def _combinations(rule, size, pools):
+def _combinations(rule, size, pools, arity):
     for sizes in _size_partitions(size - rule.weight, len(rule.kinds)):
+        if rule.commutative and sizes[0] > sizes[1]:
+            continue
         for operands in product(*(pools[cost, kind] for cost, kind in zip(sizes, rule.kinds))):
-            if not rule.distinct or len({term.source for term in operands}) == len(operands):
-                yield operands
+            if rule.distinct and len({term.source for term in operands}) != len(operands):
+                continue
+            if rule.commutative and sizes[0] == sizes[1] and operands[0].source > operands[1].source:
+                continue
+            inputs = operands[0].inputs
+            for operand in operands[1:]:
+                inputs |= operand.inputs
+            if inputs or not arity:
+                yield operands, inputs
+
+
+def _example_hints(examples):
+    """Use consistent changes in sequence length to distinguish common transforms."""
+    hints = set()
+    for column in zip(*(args for args, _ in examples)):
+        inputs = []
+        outputs = []
+        for value, (_, expected) in zip(column, examples):
+            if type(value) not in (str, list, tuple) or type(expected) not in (str, list, tuple):
+                break
+            inputs.append(len(value))
+            outputs.append(len(expected))
+        else:
+            if all(a == b for a, b in zip(inputs, outputs)) and any(inputs):
+                hints.update(("map", "elementwise", "sort", "reverse"))
+            elif all(a >= b for a, b in zip(inputs, outputs)):
+                hints.update(("filter", "slice", "remove"))
+            elif all(a <= b for a, b in zip(inputs, outputs)):
+                hints.update(("append", "concat", "repeat"))
+    return hints
+
+
+def _rank_rules(rules, words, expected_types, hints):
+    """Prefer operations suggested by the task and able to return its output kind."""
+    def priority(production):
+        fit = 0 if production.result is None else 1 if production.result in expected_types else -1
+        return -len(production.words & words), -fit, -bool(production.words & hints)
+
+    return sorted(rules, key=priority)
 
 
 def _render(name, parameters, expression, imports):
@@ -357,12 +415,12 @@ def _contradictory_examples(examples):
     return False
 
 
-def _recurrence_terms(name, parameters, observations, size, words):
+def _recurrence_programs(name, parameters, observations, argument_types, size, words):
     recurrences = sorted(RECURRENCES, key=lambda recurrence: -len(recurrence.words & words))
     for recurrence in recurrences:
         if recurrence.size != size or len(parameters) != len(recurrence.kinds):
             continue
-        if not all(kind in _types_for(values) for kind, values in zip(recurrence.kinds, zip(*observations))):
+        if not all(kind in types for kind, types in zip(recurrence.kinds, argument_types)):
             continue
         # Fibonacci's naive recurrence is exponential. Limit its pruning inputs.
         if "fibonacci" in recurrence.words and any(args[0] > 18 for args in observations):
@@ -371,15 +429,10 @@ def _recurrence_terms(name, parameters, observations, size, words):
         if parameters[0] != "arg1":
             body = re.sub(r"\barg([1-9])\b", lambda match: parameters[int(match[1]) - 1], body)
         expression = Template(body).substitute(entry=name)
+        source = _render(name, parameters, expression, ())
         namespace = EVALUATION_GLOBALS.copy()
-        try:
-            for args in observations:
-                _freeze(args)
-            exec(_render(name, parameters, expression, ()), namespace)
-            evaluate = namespace[name]
-            yield expression, tuple(evaluate(*args) for args in observations)
-        except EVALUATION_ERRORS:
-            continue
+        exec(source, namespace)
+        yield source, namespace[name]
 
 
 def synthesize(
@@ -405,22 +458,28 @@ def synthesize(
     prefix = "value" if re.fullmatch(r"arg[1-9]\d*", name) else "arg"
     parameters = tuple(f"{prefix}{index + 1}" for index in range(arity))
     words = frozenset(re.findall(r"[a-z]+", description.lower()))
-    rules = sorted(RULES, key=lambda production: -len(production.words & words))
+    expected_types = _types_for(expected)
+    rules = _rank_rules(RULES, words, expected_types, _example_hints(examples))
     pools: dict[tuple[int, Kind], list[Term]] = defaultdict(list)
     observed = set()
+    example_matches = {}
+    verified_sources = set()
     evaluations = 0
     verifications = 0
     diagnostic = None
     diagnostic_matches = -1
     example_count = len(expected)
 
-    def verify_term(term):
+    def verify_source(candidate):
         nonlocal verifications
-        if verifications == MAX_VERIFICATIONS:
+        if verifications == MAX_VERIFICATIONS or candidate in verified_sources:
             return None
+        verified_sources.add(candidate)
         verifications += 1
-        candidate = _render(name, parameters, term.source, term.imports)
         return candidate if verify(candidate) else None
+
+    def verify_term(term):
+        return verify_source(_render(name, parameters, term.source, term.imports))
 
     def keep(term, size, observation):
         if observation in observed:
@@ -439,11 +498,12 @@ def synthesize(
         return None
 
     initial = [
-        Term(parameter, values, _types_for(values), frozenset({index}))
+        Term(parameter, values, _types_for(values), 1 << index)
         for index, (parameter, values) in enumerate(zip(parameters, zip(*observations)))
     ]
+    argument_types = tuple(term.types for term in initial)
     for constant in _literal_constants(description):
-        initial.append(Term(repr(constant), (constant,) * len(expected), frozenset(_value_types(constant)), frozenset()))
+        initial.append(Term(repr(constant), (constant,) * len(expected), frozenset(_value_types(constant)), 0))
     for term in initial:
         try:
             keep(term, 1, (term.inputs, tuple(map(_freeze, term.values))))
@@ -458,19 +518,42 @@ def synthesize(
     if _contradictory_examples(examples):
         return report_failure()
 
+    try:
+        for args in observations:
+            _freeze(args)
+        samples_within_limits = True
+    except ValueError:
+        samples_within_limits = False
+
     for size in range(2, MAX_SIZE + 1):
-        for expression, values in _recurrence_terms(name, parameters, observations, size, words):
-            if _matching_examples(values, expected) == example_count:
-                term = Term(expression, values, _types_for(values), frozenset(range(arity)))
-                if result := verify_term(term):
-                    return result
+        if samples_within_limits:
+            programs = (
+                statement_programs(name, parameters, argument_types, expected_types, words)
+                if size == 3 else _recurrence_programs(name, parameters, observations, argument_types, size, words)
+            )
+            for source, evaluate in programs:
+                if process_time() >= deadline:
+                    return report_failure("search-cpu-time")
+                if evaluations >= MAX_EVALUATIONS:
+                    return report_failure("search-evaluations")
+                if verifications >= MAX_VERIFICATIONS:
+                    return report_failure("search-verifications")
+                evaluations += 1
+                values = []
+                try:
+                    for args in observations:
+                        if process_time() >= deadline:
+                            return report_failure("search-cpu-time")
+                        values.append(evaluate(*args))
+                except EVALUATION_ERRORS:
+                    continue
+                if _matching_examples(values, expected) == example_count:
+                    if result := verify_source(source):
+                        return result
         for production in rules:
             if process_time() >= deadline:
                 return report_failure("search-cpu-time")
-            for operands in islice(_combinations(production, size, pools), MAX_PER_RULE_AND_SIZE):
-                inputs = frozenset().union(*(operand.inputs for operand in operands))
-                if arity and not inputs:
-                    continue
+            for operands, inputs in islice(_combinations(production, size, pools, arity), MAX_PER_RULE_AND_SIZE):
                 if evaluations >= MAX_EVALUATIONS:
                     return report_failure("search-evaluations")
                 if verifications >= MAX_VERIFICATIONS:
@@ -480,11 +563,26 @@ def synthesize(
                 evaluations += 1
                 try:
                     values = tuple(production.evaluate(*args) for args in zip(*(term.values for term in operands)))
-                    observation = inputs, tuple(map(_freeze, values))
+                    if size == MAX_SIZE:
+                        # Terminal terms cannot supply operands. Avoid retaining
+                        # their value graphs or computing keys for poor matches.
+                        matched_examples = _matching_examples(values, expected)
+                        if matched_examples != example_count and matched_examples <= diagnostic_matches:
+                            continue
+                        for value in values:
+                            _freeze(value)
+                    else:
+                        signature = tuple(map(_freeze, values))
+                        observation = inputs, signature
+                        matched_examples = example_matches.get(signature)
+                        if matched_examples is None:
+                            matched_examples = _matching_examples(values, expected)
+                            example_matches[signature] = matched_examples
+                        # Equivalent expressions can disagree on assertions
+                        # that could not be projected. Keep full-match alternatives.
+                        if observation in observed and matched_examples != example_count:
+                            continue
                 except EVALUATION_ERRORS:
-                    continue
-                matched_examples = _matching_examples(values, expected)
-                if observation in observed and matched_examples != example_count and matched_examples <= diagnostic_matches:
                     continue
                 source = production.template.substitute({key: f"({term.source})" for key, term in zip(("a", "b", "c"), operands)})
                 imports = production.imports.union(*(term.imports for term in operands))
@@ -495,5 +593,6 @@ def synthesize(
                 elif matched_examples > diagnostic_matches:
                     diagnostic = term
                     diagnostic_matches = matched_examples
-                keep(term, size, observation)
+                if size < MAX_SIZE:
+                    keep(term, size, observation)
     return report_failure()
