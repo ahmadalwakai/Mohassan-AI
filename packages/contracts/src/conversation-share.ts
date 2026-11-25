@@ -22,7 +22,7 @@ export const ConversationSnapshotSchema = z.object({
   }).strict()),
 }).strict();
 export const ConversationPrivacyFindingSchema = z.object({
-  kind: z.enum(['email', 'phone', 'path', 'google-ads-id', 'token-url', 'memory', 'tool-output']),
+  kind: z.enum(['email', 'phone', 'path', 'google-ads-id', 'token-url', 'credential', 'memory', 'tool-output']),
   location: z.enum(['title', 'message', 'source']),
   messageIndex: z.number().int().nonnegative().optional(),
   preview: z.string(),

@@ -6,7 +6,9 @@ import sharp from 'sharp';
 import { SiteBriefSchema, SiteCheckReportSchema, SiteDetailSchema, SiteKindSchema, SiteLangSchema, SiteSummarySchema, SiteWantSchema, type SiteBrief, type SiteCheckReport, type SiteDetail, type SiteImageRef, type SitePartialBrief, type SiteSummary, type SiteWant } from '@mohassan/contracts';
 import { applyAnswers, applyPatch, checkSite, completeBrief, composeSite, contentTypeFor, detectRequests, fulfilWant, GENERATOR_VERSION, siteCommand, slugify, zipFiles, type SiteFile, type SiteImageAsset } from '@mohassan/sites';
 import { noPublisher, PublishError, type SitePublisher } from './sites-publish.js';
+import { createSitePreviewReader } from './site-preview.js';
 import type { WorkspaceRole } from './members.js';
+import type { DraftWriteFence } from './assistant/long-run/execution-guards.js';
 
 /**
  * Generated websites: the brief is the source of truth, the composed text files are the snapshot the
@@ -34,7 +36,6 @@ const UploadInput = z.object({
 }).strict();
 const BriefUpdate = z.object({ brief: SiteBriefSchema, revision: z.number().int().min(1) }).strict();
 const CommandInput = z.object({ text: z.string().trim().min(1).max(4000), want: z.enum(['about', 'team', 'faq', 'pricing', 'projects', 'features', 'steps', 'facts', 'testimonials', 'posts', 'hours', 'address']).optional() }).strict();
-const FILE_PATH = /^(?:[a-z0-9][a-z0-9-]{0,40}\/)?[a-z0-9][a-z0-9._-]{0,80}\.[a-z0-9]{2,11}$/;
 
 interface SiteRow { id: string; owner_id: string; conversation_id: string | null; slug: string; brief: unknown; files: unknown; files_hash: string; checks: unknown; history: unknown; revision: number; generator_version: string; status: string; published_url: string | null; published_at: Date | null; publish: unknown; created_at: Date; updated_at: Date }
 interface ImageRow { id: string; site_id: string; owner_id: string; mime_type: string; width: number; height: number; data_base64: string; small_base64: string | null; alt: string; role: string; created_at: Date }
@@ -122,7 +123,7 @@ export async function createSitesControl(db: Kysely<any>, config: SitesConfig) {
     const rows = await db.selectFrom('sites').selectAll().where('owner_id', '=', ownerId).orderBy('updated_at', 'desc').limit(limits.ownerSites).execute() as SiteRow[];
     return rows.map(summary);
   }
-  async function create(ownerId: string, input: { brief: unknown; conversationId?: string | null; role?: WorkspaceRole }): Promise<SiteDetail> {
+  async function create(ownerId: string, input: { brief: unknown; conversationId?: string | null; role?: WorkspaceRole; draftWriteFence?: DraftWriteFence }): Promise<SiteDetail> {
     const brief = SiteBriefSchema.parse(input.brief);
     const built = build(brief, []);
     const id = randomUUID();
@@ -131,7 +132,10 @@ export async function createSitesControl(db: Kysely<any>, config: SitesConfig) {
       const count = await tx.selectFrom('sites').select(eb => eb.fn.countAll<string>().as('n')).where('owner_id', '=', ownerId).executeTakeFirstOrThrow();
       const cap = input.role === 'member' ? limits.memberSites : limits.ownerSites;
       if (Number(count.n) >= cap) throw new SiteError('SITE_QUOTA', `بلغ الحساب حدّه من المواقع (${cap}). احذف موقعاً قديماً أولاً.`, 409);
-      return tx.insertInto('sites').values({ id, owner_id: ownerId, conversation_id: input.conversationId ?? null, slug, brief: JSON.stringify(brief), files: JSON.stringify(built.text), files_hash: built.filesHash, checks: JSON.stringify(built.checks), history: '[]', revision: 1, generator_version: GENERATOR_VERSION, status: 'ready', created_at: now(), updated_at: now() }).returningAll().executeTakeFirstOrThrow() as Promise<SiteRow>;
+      const assertLive = await input.draftWriteFence?.(tx);
+      const inserted = await tx.insertInto('sites').values({ id, owner_id: ownerId, conversation_id: input.conversationId ?? null, slug, brief: JSON.stringify(brief), files: JSON.stringify(built.text), files_hash: built.filesHash, checks: JSON.stringify(built.checks), history: '[]', revision: 1, generator_version: GENERATOR_VERSION, status: 'ready', created_at: now(), updated_at: now() }).returningAll().executeTakeFirstOrThrow() as SiteRow;
+      assertLive?.();
+      return inserted;
     });
     return detailOf(row);
   }
@@ -249,24 +253,8 @@ export async function createSitesControl(db: Kysely<any>, config: SitesConfig) {
       return detailOf(await saveRevision(tx, row, brief, build(brief, await imagesOf(id, tx)), false), tx);
     });
   }
-  /** A file of the previewed revision, by its token: text from the stored snapshot, images from their table. */
-  async function previewFile(id: string, candidate: string, path: string): Promise<{ bytes: Buffer; contentType: string; status: number } | null> {
-    if (!/^[A-Za-z0-9_-]{32}$/.test(candidate) || !z.uuid().safeParse(id).success) return null;
-    const row = await db.selectFrom('sites').select(['id', 'revision', 'files']).where('id', '=', id).executeTakeFirst() as Pick<SiteRow, 'id' | 'revision' | 'files'> | undefined;
-    if (!row || !tokenValid(id, row.revision, candidate)) return null;
-    const files = z.array(z.object({ path: z.string(), content: z.string(), contentType: z.string() })).parse(row.files);
-    const wanted = path === '' ? 'index.html' : path;
-    if (!FILE_PATH.test(wanted)) return null;
-    const text = files.find(file => file.path === wanted);
-    if (text) return { bytes: Buffer.from(text.content, 'utf8'), contentType: text.contentType, status: 200 };
-    const asset = wanted.match(/^assets\/([0-9a-f-]{36})(-small)?\.(png|jpg|webp)$/);
-    if (asset) {
-      const image = await db.selectFrom('site_images').select(['data_base64', 'small_base64', 'mime_type']).where('id', '=', asset[1]!).where('site_id', '=', id).executeTakeFirst() as Pick<ImageRow, 'data_base64' | 'small_base64' | 'mime_type'> | undefined;
-      if (image) return { bytes: Buffer.from(asset[2] && image.small_base64 ? image.small_base64 : image.data_base64, 'base64'), contentType: image.mime_type, status: 200 };
-    }
-    const notFound = files.find(file => file.path === '404.html');
-    return notFound ? { bytes: Buffer.from(notFound.content, 'utf8'), contentType: notFound.contentType, status: 404 } : null;
-  }
+  const previewFile = createSitePreviewReader(db, tokenValid);
+
   async function publish(ownerId: string, id: string, signal?: AbortSignal): Promise<SiteDetail> {
     const row = await rowFor(ownerId, id);
     if (!publisher.available()) throw new PublishError('PUBLISH_NOT_CONFIGURED', 'النشر غير مهيأ على هذا الخادم؛ حمّل الموقع كملف ZIP أو فعّل النشر من الإعدادات.', 409);
@@ -327,7 +315,7 @@ export async function registerSiteRoutes(app: FastifyInstance, { control, owner,
   });
   app.delete<{ Params: { id: string } }>('/api/sites/:id', async request => { await control.remove((await owner(request)).id, id(request.params.id)); return { ok: true }; });
   // Public by token (PUBLIC_ROUTES): a sandboxed preview iframe has an opaque origin and sends no cookie.
-  app.get<{ Params: { id: string; token: string; '*': string } }>('/api/sites/:id/p/:token/*', { config: { rateLimit: { max: 600, timeWindow: '1 minute', keyGenerator: (request: any) => `site-preview:${request.params?.token ?? ''}` } } }, async (request, reply) => {
+  app.get<{ Params: { id: string; token: string; '*': string } }>('/api/sites/:id/p/:token/*', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (request, reply) => {
     const file = await control.previewFile(request.params.id, request.params.token, request.params['*'] ?? '');
     if (!file) return reply.code(404).send({ error: { code: 'SITE_PREVIEW_NOT_FOUND', message: 'لم يُعثر على ملف المعاينة.' } });
     return reply.code(file.status).type(file.contentType).header('Content-Security-Policy', "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox").header('X-Frame-Options', 'SAMEORIGIN').header('Referrer-Policy', 'no-referrer').send(file.bytes);

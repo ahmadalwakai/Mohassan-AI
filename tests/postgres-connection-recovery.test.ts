@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { inspect } from 'node:util';
 import pg from 'pg';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDatabase, sql, type DatabaseHandle } from '@mohassan/database';
@@ -49,6 +50,15 @@ afterEach(async () => {
 });
 
 describe('PostgreSQL connection recovery', () => {
+  it('rejects malformed connection URLs without exposing input to startup logging', async () => {
+    const fixture = 'sample-value-for-url-tests';
+    const error = await createDatabase({ connectionString: `postgresql://fixture:${fixture}@[invalid/fixture` })
+      .catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('DATABASE_URL is not a valid URL.');
+    expect(inspect(error).includes(fixture)).toBe(false);
+  });
+
   it('discards a failed idle connection without crashing and opens a fresh connection', async () => {
     await sql`select 1 as value`.execute(store.db);
     expect(pool.idleCount).toBe(1);

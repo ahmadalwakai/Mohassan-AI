@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Kysely } from 'kysely';
 import { z } from 'zod';
-import { assertMemberFeatureAccess } from './member-deletion.js';
+import { checkPushRegistration } from './notification-security.js';
 import { IOS_PUSH_MEMBER_ROUTES, registerIosPushRoutes } from './ios-push-routes.js';
 import { apnsConfigFromEnv, createApnsSender } from './apns.js';
 import { dispatchBackgroundApns } from './background-apns-delivery.js';
@@ -66,7 +66,7 @@ export function registerNotificationRoutes(app: FastifyInstance, options: {
     if (!isBrowserPushSubscription(input)) return reply.code(400).send({ error: { code: 'INVALID_PUSH_SUBSCRIPTION', message: 'اشتراك المتصفح غير صالح.' } });
     if (!send) return reply.code(503).send(pushUnavailable);
     const own = await db.transaction().execute(async tx => {
-      await assertMemberFeatureAccess(tx, id);
+      await checkPushRegistration(tx, id, input);
       return subscribePushDevice(tx as Kysely<any>, id, input);
     });
     if (!own) return reply.code(409).send({ error: { code: 'PUSH_ENDPOINT_IN_USE', message: 'هذا الاشتراك مرتبط بحساب آخر.' } });
@@ -87,6 +87,7 @@ export function registerNotificationRoutes(app: FastifyInstance, options: {
   });
   app.post(test, { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
     const { id } = await owner(request);
+    z.strictObject({}).parse(request.body ?? {});
     if (!send) return reply.code(503).send(pushUnavailable);
     const delivered = await sendToPushDevice(db, send, id, await createTestNotification(db, id));
     return { delivered } satisfies PushTestResponse;

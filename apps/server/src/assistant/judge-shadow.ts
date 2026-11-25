@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { judge, type JudgeCode, type JudgeDecision, type JudgeInput, type JudgeVerdict, type ReplyKind } from './judge.js';
 import { conversationReviewForJudge, type ConversationReviewLog } from './review/publication.js';
 import { createJudgeLogWriter } from './judge-shadow-log.js';
+import { keepJudgeShadowText } from './judge-shadow-privacy.js';
 
 /**
  * The judge in shadow: the chat sends what it sends, and this records what the judge would have decided about it,
@@ -102,7 +103,7 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
         const verdict = judge(input);
         const applied = Boolean(input.applyFix && verdict.decision === 'fix' && verdict.fixedReply?.trim())
           || Boolean(input.applyWithhold && verdict.decision === 'withhold' && verdict.withholdText?.trim());
-        const keep = input.keepText !== false;
+        const keep = keepJudgeShadowText(input, verdict);
         const quoted = (line: JudgeVerdict['lead']) => keep || !line ? line : { ...line, text: '' };
         write({
           at: now().toISOString(), conversationId: input.conversationId, runId: input.runId,

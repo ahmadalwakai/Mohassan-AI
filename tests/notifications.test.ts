@@ -169,7 +169,9 @@ describe('authenticated notifications', () => {
     expect((await setSettings({ ...prefs, quietHours: { ...prefs.quietHours, timeZone: '+03:00' } })).statusCode).toBe(400);
     expect((await setSettings(prefs)).json().preferences).toEqual(prefs);
     expect((await application.app.inject({ url: url('settings'), headers: headers(ownerCookie) })).json().preferences)
-      .toEqual({ hideTitle: false, quietHours: null });
+      .toEqual({ hideTitle: true, quietHours: null });
+    const invalid = await application.app.inject({ method: 'POST', url: url('test'), headers: headers(memberCookie), payload: { body: 'fixture' } });
+    expect(invalid.statusCode).toBe(400);
     const tested = await application.app.inject({ method: 'POST', url: url('test'), headers: headers(memberCookie), payload: {} });
     expect(tested.statusCode, tested.body).toBe(200);
     expect(tested.json()).toEqual({ delivered: 1 });
@@ -187,13 +189,43 @@ describe('authenticated notifications', () => {
     }
   });
 
+  it('caps browser registrations per account while allowing a device refresh', async () => {
+    const prior = Array.from({ length: 15 }, (_, index) => subscription(`existing-${index}`));
+    await db().insertInto('push_subscriptions').values(prior.map(input => ({
+      id: randomUUID(), user_id: memberId, endpoint: input.endpoint, p256dh: input.keys.p256dh, auth: input.keys.auth, label: input.label,
+    }))).execute();
+    const register = (cookie: string, input: ReturnType<typeof subscription>) => application.app.inject({
+      method: 'POST', url: url('subscribe'), headers: headers(cookie), payload: input,
+    });
+    const results = await Promise.all([register(memberCookie, subscription('next-1')), register(memberCookie, subscription('next-2'))]);
+    expect(results.map(result => result.statusCode).sort()).toEqual([200, 429]);
+    expect((await register(memberCookie, { ...prior[0]!, label: 'Renamed at the cap' })).statusCode).toBe(200);
+    expect((await register(ownerCookie, subscription('separate-account'))).statusCode).toBe(200);
+  });
+
+  it('caps tab presence per account while allowing refresh and reuse after close', async () => {
+    const tabIds = Array.from({ length: 31 }, () => randomUUID());
+    await db().insertInto('notification_tabs').values(tabIds.map(tabId => ({
+      user_id: memberId, tab_id: tabId, visible: false, expires_at: later,
+    }))).execute();
+    const contenders = [randomUUID(), randomUUID()];
+    await Promise.all(contenders.map(tabId => syncNotifications(db(), memberId, { tabId, state: 'hidden' }, now)));
+    const tabs = () => db().selectFrom('notification_tabs').select(['tab_id', 'visible']).where('user_id', '=', memberId).execute();
+    expect(await tabs()).toHaveLength(32);
+    await syncNotifications(db(), memberId, { tabId: tabIds[0]!, state: 'visible' }, now);
+    expect(await tabs()).toContainEqual({ tab_id: tabIds[0], visible: true });
+    await syncNotifications(db(), memberId, { tabId: tabIds[0]!, state: 'closed' }, now);
+    await syncNotifications(db(), memberId, { tabId: randomUUID(), state: 'hidden' }, now);
+    expect(await tabs()).toHaveLength(32);
+  });
+
   it('gives needs_you priority before a claim and never notifies twice as a run resumes', async () => {
     const id = await conversation(ownerId), tabId = randomUUID();
     const task = await outcome(ownerId, id, 'task_completed');
     await outcome(ownerId, id, 'needs_you', 25_000, now, task);
     await outcome(ownerId, id, 'task_failed', 25_000, now, task);
     const synced = await syncNotifications(db(), ownerId, { tabId, state: 'hidden' }, later);
-    expect(synced).toEqual({ backgroundTask: true, pending: [{ taskId: task, kind: 'needs_you', conversationId: id, conversationTitle: 'عنوان خاص' }] });
+    expect(synced).toEqual({ backgroundTask: true, pending: [{ taskId: task, kind: 'needs_you', conversationId: id }] });
     const claimed = await Promise.all([
       claimNotification(db(), ownerId, task, 'tab', later, tabId),
       claimNotification(db(), ownerId, task, 'tab', later, tabId),
@@ -239,6 +271,7 @@ describe('authenticated notifications', () => {
     const time = new Date(Date.now() - 3_000);
     const ownerTask = await outcome(ownerId, own, 'task_failed', 30_000, time);
     const memberTask = await outcome(memberId, other, 'task_completed', 25_000, time);
+    await saveNotificationPreferences(db(), ownerId, { quietHours: null, hideTitle: false });
     await saveNotificationPreferences(db(), memberId, { quietHours: null, hideTitle: true });
     const tabId = randomUUID();
     const sync = (cookie: string) => application.app.inject({ method: 'POST', url: url('sync'), headers: headers(cookie), payload: { tabId, state: 'hidden' } });
@@ -287,7 +320,7 @@ describe('authenticated notifications', () => {
     expect(transport).not.toHaveBeenCalled();
     await Promise.all([dispatchPushNotifications(db(), transport, async () => true, later), dispatchPushNotifications(db(), transport, async () => true, later)]);
     expect(transport.mock.calls.map(([device]) => device.endpoint)).toEqual([expired.endpoint, backup.endpoint]);
-    for (const [, payload] of transport.mock.calls) expect(payload).toEqual({ kind: 'needs_you', taskId, conversationId: id, conversationTitle: 'عنوان خاص' });
+    for (const [, payload] of transport.mock.calls) expect(payload).toEqual({ kind: 'needs_you', taskId, conversationId: id });
     expect(await ownsPushNotification(db(), memberId, taskId, later)).toBe(true);
     expect(await ownsPushNotification(db(), ownerId, taskId, later)).toBe(false);
     const saved = (await application.app.inject({ url: url('settings'), headers: headers(memberCookie) })).json().devices;

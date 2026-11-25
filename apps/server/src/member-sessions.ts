@@ -2,6 +2,7 @@ import { isIP } from 'node:net';
 import type { FastifyRequest } from 'fastify';
 import { sql, type Kysely } from 'kysely';
 import type { AccountSession } from '@mohassan/contracts';
+import { verifiedProxyClientIp } from './proxy-client-ip.js';
 
 // Device and product tokens follow the vendor UA examples (retrieved 2026-11-25).
 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/User-Agent
@@ -33,8 +34,8 @@ function deviceLabel(userAgent: string | null): string {
 
 /** The caller has already checked the internal proxy secret. */
 export function memberAuthClientIp(request: Pick<FastifyRequest, 'headers' | 'ip'>, production: boolean): string | undefined {
-  const forwarded = request.headers['x-mohassan-client-ip'];
-  if (typeof forwarded === 'string' && isIP(forwarded)) return forwarded;
+  const forwarded = verifiedProxyClientIp(request.headers, true);
+  if (forwarded) return forwarded;
   return !production && isIP(request.ip) ? request.ip : undefined;
 }
 
