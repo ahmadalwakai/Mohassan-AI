@@ -131,7 +131,7 @@ The simulator checks the pinned v1 checkout at `a453dc17a78f55c0cd3e5bf23f347843
 
 Each trial covers one monitor-week. Checks count logical scheduled source reads. A feed check can issue conditional reads for several resources. Precision counts matched alerts over all condition alerts. Recall counts detected ground-truth opportunities. False alarms and checks are divided by enrolled monitor-weeks, including trials that ended early. Latency uses the event time and alert observation time. The table shows raw latency over detected events. The paired comparison uses only events both arms detect. The restricted comparison assigns each miss its time to expiry, accounting for changes in the detected population. Relocation success means reading the right value after a known layout move. An explicit relocation record is counted separately. The one-shot aggregate contains the eight classes with the same notification semantics. The recurring feed is reported separately because v1 stops after its first trigger.
 
-The first candidate was tuned on 32 seeds per source class. Its 64 held-out seeds per class were opened after freeze. The subsequent scheduler work was delegated to an agent with no access to those results, using the original tuning bank. The independent replication uses 128 fresh trials per class under the same generator, parameters, oracle and gates. Its 256-bit salt is generated after the second freeze and recorded with the results.
+The first candidate was tuned on 32 seeds per source class. Its 64 held-out seeds per class were opened after freeze. A separate agent then worked on the scheduler in a fresh context using the code and the original tuning bank. The independent replication uses 128 fresh trials per class under the same generator, parameters, oracle and gates. Its 256-bit salt is generated after the second freeze and recorded with the results.
 
 ### Held-out results
 
@@ -177,6 +177,46 @@ The independent replication at `ae662ed` exited **0**. Each source class matched
 
 For the 597 events both arms detected, mean and p95 fell from 152.51 / 332.00 to 132.71 / 320.73 minutes. Restricted mean and p95 fell from 2,465.89 / 9,013.00 to 2,009.96 / 8,203.00 minutes. Raw mean and p95 rose across each arm's own set of detected events, which included 184 more detections in v2. The candidate recorded 51 relocations. The recurring watch detected 195 additional publication events and used 4.15 more checks per monitor-week.
 
+### Three-arm development benchmark
+
+The coordinator ran the pinned baseline and the same release candidate with v2 off and on. All arms used PR #95’s arm C settings with v1 monitoring enabled, the same development inputs, two workers and a network-disabled container. The case comparison includes reply text and scored turn details. Timing-only receipt fields do not enter the equality check. [Development launcher](../scripts/dev-bench/README.md) · [PR #95 settings](INTEGRATION-WAVE-5-2026-11-25.md#three-arm-development-run)
+
+| Development set | Cases | Baseline | Head, v2 off | Head, v2 on | Flag-off verdict / check / reply differences | Enabled subgroup regressions |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| V1 | 240 | 176 | 176 | 176 | 0 / 0 / 0 | 0 |
+| V2 | 2,400 | 1,588 | 1,588 | 1,588 | 0 / 0 / 0 | 0 |
+
+- V1 compared 14 area, 2 language and 28 area/language groups.
+- V2 compared 8 area, 2 language and 12 area/language groups.
+
+| Arm | Detection matches | Management matches | Proactive matches | Displayed offers | False offers |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Baseline | 0 | 0 | 0 | 0 | 0 |
+| Head, v2 off | 0 | 0 | 0 | 0 | 0 |
+| Head, v2 on | 0 | 0 | 0 | 0 | 0 |
+
+No development case matched detection, management or proactive offering. The reviewed monitoring-request allowlist is empty for these development sets. The functional suites exercise positive monitoring and offer cases.
+
+The timings are nearest-rank values in milliseconds. Each sampled turn sums its calls to the relevant check.
+
+| Arm | Detection turns | Detection p50 / p95 ms | Proactive turns | Proactive p50 / p95 ms |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline | 2,247 | 0.0304 / 0.2023 | 0 | — / — |
+| Head, v2 off | 2,247 | 0.0300 / 0.1746 | 0 | — / — |
+| Head, v2 on | 2,247 | 0.0224 / 0.1644 | 1,635 | 0.1071 / 0.2763 |
+
+The launcher exited **0** and the release comparator exited **0**. No sealed set was used. The exploratory invocation on `4415845` was stopped after its baseline arm completed when that snapshot was superseded.
+
+```bash
+/workspace/scratch/monitor-dev-bench ae662ed9ad2872bc68154e8b8c1e5a75028763ec /workspace/scratch/monitor-dev-three-arms-release
+/workspace/scratch/monitor-bench-offline python3 -B scripts/dev-bench/compare.py \
+  --baseline /workspace/scratch/monitor-dev-three-arms-release/a/receipt.json \
+  --flags-off /workspace/scratch/monitor-dev-three-arms-release/b/receipt.json \
+  --flags-on /workspace/scratch/monitor-dev-three-arms-release/c/receipt.json \
+  --monitor-requests /workspace/scratch/monitor-dev-bench-requests.json \
+  --output /workspace/scratch/monitor-dev-three-arms-release/monitor-comparison.json
+```
+
 ### Offline tests
 
 Node `24.22.3` and Playwright Chromium build `1248` were used. Setup downloaded locked packages from the npm registry and the pinned browser from Playwright. The verification commands ran with Docker networking disabled and loopback available to the web and API fixtures.
@@ -191,7 +231,7 @@ env MOHASSAN_E2E_WEB_PORT=3114 MOHASSAN_E2E_SERVER_PORT=4114 npm_config_offline=
   npm run test:e2e -- tests/e2e/smart-monitors.spec.ts tests/e2e/smart-monitors-v2.spec.ts
 ```
 
-On the release snapshot, `npm run typecheck` exited **0**, and the nine affected Vitest suites passed **162/162**, including the Arabic fixtures, DTD and external-entity rejection, budget isolation and the existing build 15 APNs envelope. Both Playwright scenarios passed in the same offline environment, including price choice before activation and confirmation of a conversational stop. They exercise the browser with local fixtures.
+On the release snapshot, `npm run typecheck` exited **0**, and the nine affected Vitest suites passed **162/162**, including the Arabic fixtures, DTD and external-entity rejection, budget isolation and the existing build 15 APNs envelope. Both Playwright scenarios passed in the same offline environment, including price choice before activation and confirmation of a conversational stop. The release browser rerun took 1.1 minutes using local fixtures.
 
 ## Enable the rollout
 
