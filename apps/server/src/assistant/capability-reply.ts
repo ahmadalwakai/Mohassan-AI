@@ -116,8 +116,8 @@ function blockedCopy(route: Route, routing: ParsedRouting | null, lang: 'ar' | '
     ? `${start} حدّد الشيء المقصود والنتيجة التي تريدها في رسالة واحدة.`
     : `${start} Name the subject and the result you want in one message.`;
   if (route === 'reminder') return lang === 'ar'
-    ? `${start} ${missing ? 'أداة التذكير والجدولة غير متاحة في هذه المحادثة حاليًا.' : 'لم يُنجز مسار الجدولة هذا الطلب.'} لا يوجد تنبيه مؤكّد من هذا الرد.`
-    : `${start} ${missing ? 'The reminder and scheduling tool is unavailable in this conversation.' : 'The scheduling route did not complete this request.'} This reply does not confirm an alert.`;
+    ? `${start} ${missing ? 'التذكير والجدولة غير مهيّأين في هذه المحادثة.' : 'اذكر ما تريد تذكّره والتاريخ والوقت، أو قل «بعد ساعتين».'} لا يوجد تنبيه مؤكّد من هذا الرد.`
+    : `${start} ${missing ? 'The reminder and scheduling service is unconfigured in this conversation.' : 'Give the reminder text and the date and time, or say “in 2 hours”.'} This reply does not confirm an alert.`;
   if (route === 'memory') return lang === 'ar'
     ? `${start} ${missing ? 'أداة الذاكرة غير متاحة في هذه المحادثة.' : 'لم يثبت هذا المسار قراءة المعلومة أو حفظها.'} اكتب المعلومة هنا إذا كان طلبك يعتمد عليها.`
     : `${start} ${missing ? 'The memory tool is unavailable in this conversation.' : 'This route did not establish that the information was retrieved or saved.'} Include the information here if the request depends on it.`;

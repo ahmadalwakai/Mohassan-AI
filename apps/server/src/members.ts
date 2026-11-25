@@ -4,6 +4,7 @@ import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import type { createAuth } from './auth.js';
 import { NOTIFICATION_MEMBER_ROUTES } from './notifications-routes.js';
+import { REMINDER_MEMBER_ROUTES } from './reminders/route-keys.js';
 
 /**
  * Members are people the owner invites. They use cloud services only (chat,
@@ -32,6 +33,7 @@ const ads = '/api/google-ads';
 export const MEMBER_ROUTES: ReadonlySet<string> = new Set([
   'GET /api/access',
   ...NOTIFICATION_MEMBER_ROUTES,
+  ...REMINDER_MEMBER_ROUTES,
   // The chat, including its own cloud browser (a profile per account).
   `GET ${chat}`, `POST ${chat}`, `GET ${chat}/:id`, `DELETE ${chat}/:id`, `GET ${chat}/:id/screen`,
   `GET ${chat}/:id/browser/activity`,

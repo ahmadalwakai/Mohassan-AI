@@ -31,6 +31,7 @@ import { QuestionPanel, withoutQuestionList } from "./question-card";
 import { ChromeExtensionPanel } from "./chrome-extension-panel";
 import { adsConnectProblems, pendingAdsConnect } from "./ads-connect";
 import { AssistantNotifications, NOTICE_AFTER_MS, declineNoticeOffer, noticeKindFor, noticeOfferOpen, requestNoticePermission, showTaskNotice, type NotificationControls } from "./assistant-notifications";
+import { RemindersSettings } from "./reminders-settings";
 import styles from "./assistant-app.module.css";
 
 /** Plan §5.2 P5: the first useful progress line should show within half a second; a local answer is ready in ~30 ms. */
@@ -708,6 +709,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
             ? <><span className={styles.chipName}>المتصفح ·</span><ActivityLine text={conversation.progress ?? "يعمل في الخلفية"} since={requestedAt} compact /><span className={styles.chipAction}>· عرض</span></>
             : <><Globe size={15} />المتصفح · عرض</>}</button> : null}
         {conversation ? <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="محادثة جديدة" onClick={startNew}><SquarePen size={18} /></button> : null}
+        <RemindersSettings conversation={conversation} selection={selection} setConversation={setConversation} refreshHistory={refreshHistory} onOpenConversation={open} />
       </header>
       {noticeOffer ? <div className={styles.noticeBar} role="status" data-testid="notice-offer">
         <span>مهمة تعمل في الخلفية منذ أكثر من 20 ثانية. أعلمك عند انتهاء المهام حين يكون التبويب مخفيًا؟</span>

@@ -8,6 +8,7 @@ export * from './skill-forge';
 export * from './skill-run-gaps';
 export * from './skill-remote';
 export * from './skill-catalogue';
+export * from './reminders';
 import { SkillRunInputSchema, SkillNodeBindingSchema, isBoundedSkillJson } from './skills';
 export * from './command-chat';
 export * from './live-data';
