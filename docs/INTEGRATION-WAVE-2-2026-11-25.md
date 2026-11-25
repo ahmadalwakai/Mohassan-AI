@@ -269,7 +269,7 @@ The earlier #47 trial used feature tip `76b1a93`, which contains the original tr
 
 ## Merge notes
 
-Wave 2 has no added or renumbered migration IDs. Wave 1 retains `035_chat_conversation_review` and `036_structured_memory`, with `035_structured_memory` still accepted as the legacy ID. The platform review at `43352a8` reserves prefixes 037–040. The inherited agent IDs may need renumbering if the eventual merge target has assigned them elsewhere. [Platform ledger](https://github.com/ahmadalwakai/Mohassan-AI/blob/43352a8d2d2961869a99b56c028dc38a956ef364/docs/MIGRATION-LEDGER-2026-11-25.md)
+Wave 2 has no added or renumbered migration IDs. Wave 1 retains `035_chat_conversation_review` and `036_structured_memory`, with `035_structured_memory` still accepted as the legacy ID. The platform review at `ef54ec4` reserves prefixes 037–040. The inherited agent IDs may need renumbering if the eventual merge target has assigned them elsewhere. [Platform ledger](https://github.com/ahmadalwakai/Mohassan-AI/blob/ef54ec49b2c54e17321f0037064fb7b1dcce3dff/docs/MIGRATION-LEDGER-2026-11-25.md)
 
 ### Existing held files
 
@@ -421,8 +421,19 @@ The unchanged-file check exited 0. The isolated source guard with the temporary 
 
 ### Full affected verification
 
-The 291-file affected-suite rerun is in progress on the frozen product `1c33e42`. It runs with three workers after the benchmark processes exited. This draft will record the exact exit and counts when the suite finishes.
+The affected-suite rerun passed all 291 files on the frozen product `1c33e42`. Vitest reported 6,046 passed and two skipped in 1,656.61 seconds. It ran with three workers after the benchmark processes exited. The same verification command passed root and web typecheck, all 12 separate follow-up tests with decision mode active, and the diff scope checks. The router parity check skipped because the trained router artifact was absent. The separate opt-in sealed source run covered the other skip.
 
 ```bash
 WAVE2_VITEST_WORKERS=3 /workspace/work/verify-wave2 final
 ```
+
+The launcher selected wave 1's affected files, changed tests, direct imports of changed modules or workspaces, and the transitive integration tests for the controller, learning evaluator, memory, request scope, browser routing, skill reader and Mind progress. The frozen v1 test overlay supplied the capability scorer, corpus and observer tests and the development fixtures. The underlying Vitest and scope invocations were:
+
+```bash
+PLAYWRIGHT_BROWSERS_PATH=/workspace/work/wave2-chromium /workspace/work/wave2-benchmark/overlay checks -- --maxWorkers=3 --fileParallelism --reporter=verbose --disableConsoleIntercept "${affected[@]}"
+env -i PATH="$PATH" TZ=UTC PLAYWRIGHT_BROWSERS_PATH=/workspace/work/wave2-chromium MOHASSAN_CONVERSATION_SHADOW=decide npm test -- tests/assistant-conversation-follow-up.test.ts
+git diff --check 93066fb HEAD
+git diff --exit-code 93066fb HEAD -- packages/execution-pipeline packages/execution-model
+```
+
+The isolated test-scope change and this report are the only changes after the frozen run. The classifier latency bound remained 2 ms and passed in the full rerun. The exact logs and the full target list are in `/workspace/work/wave2-checks-final`.
