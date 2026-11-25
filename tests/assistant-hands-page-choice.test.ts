@@ -38,6 +38,20 @@ const film = pageOf('https://en.wikipedia.org/wiki/The_Third_Murder', 'The Third
 const filmHit = { title: film.title, url: film.url, snippet: 'The trio visit Misumi again, this time showing him a magazine' };
 
 describe('page choice: a title that names nothing of the question', () => {
+  it('reads a reference about electric current while screening it out for a live request', async () => {
+    const relay = pageOf('https://en.wikipedia.org/wiki/Atlas_relay', 'Atlas relay',
+      'The Atlas relay has a direct current rating of 6 amperes across both terminals.');
+    const answer = await runHands({ steps: webQuestion('What is the direct current rating of the Atlas relay?')!, next: 0, lang: 'en' },
+      io(by(relay), [{ title: relay.title, url: relay.url }]));
+    expect(answer).toMatchObject({ kind: 'done', status: 'completed' });
+    expect(text(answer)).toContain('6 amperes');
+
+    const fresh = await runHands({ steps: webQuestion('What is the current price of the Atlas relay?')!, next: 0, lang: 'en' },
+      io(by(relay), [{ title: relay.title, url: relay.url }]));
+    expect(fresh).toMatchObject({ kind: 'done', status: 'blocked' });
+    expect(text(fresh)).not.toContain('6 amperes');
+  });
+
   it('does not answer a travel question from a film whose sentence shares only «visit» and «time»', async () => {
     const outcome = await runHands({ steps: webQuestion('What is the best time to visit Japan?')!, next: 0, lang: 'en' }, io(by(film), [filmHit]));
     expect(outcome).toMatchObject({ kind: 'done', status: 'partial' });

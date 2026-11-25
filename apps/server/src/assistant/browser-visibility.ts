@@ -14,7 +14,7 @@
  */
 import type { ChatBrowserVisibility, ChatBrowserVisibilityLevel } from '@mohassan/contracts';
 import { directRoute } from './brain.js';
-import { LIVE, notWebReason, parseHands, tidy, webQuestion } from './hands.js';
+import { isLiveWebQuestion, notWebReason, parseHands, tidy, webQuestion } from './hands.js';
 
 export type VisibilityCode =
   | 'local_compute' | 'local_memory' | 'local_card' | 'local_chat' | 'reminder' | 'computer' | 'ads' | 'coding' | 'unsupported' | 'clarify' | 'reply' | 'unknown'
@@ -92,7 +92,7 @@ function browserCommand(text: string, role: 'owner' | 'member', lang: Visibility
   return choose('browser_steps', lang);
 }
 
-function webLevel(text: string, lang: VisibilityLanguage): VisibilityChoice { return choose(LIVE.test(text) ? 'web_live' : 'web_knowledge', lang); }
+function webLevel(text: string, lang: VisibilityLanguage): VisibilityChoice { return choose(isLiveWebQuestion(text) ? 'web_live' : 'web_knowledge', lang); }
 function newsLevel(role: 'owner' | 'member', lang: VisibilityLanguage): VisibilityChoice { return role === 'member' ? choose('web_knowledge', lang) : choose('news_page', lang); }
 
 /** The request-time table (§6.1). Deterministic: the same words and routing always give the same level. */

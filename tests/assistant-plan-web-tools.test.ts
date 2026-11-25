@@ -1,5 +1,6 @@
 // Agent-written development cases for public plan tools. Never use as training data.
 import type { AgentPage, SearchProvider } from '@mohassan/browser';
+import { compileQuery } from '@mohassan/browser';
 import { describe, expect, it, vi } from 'vitest';
 import { compilePlan } from '../apps/server/src/assistant/plan/compiler.js';
 import { resolveStepInputs } from '../apps/server/src/assistant/plan/references.js';
@@ -31,6 +32,26 @@ function watchPage(text: string): AgentPage {
 }
 
 describe('public web plan adapters', () => {
+  it('uses the original query and cached references for physical current quantities', async () => {
+    const goal = 'Search for the alternating current rating of the harbour transformer.';
+    const [lookup] = compilePlan(`${goal} Then read the result.`).steps;
+    const step = { ...lookup!, output: 'text' as const };
+    const { tools, search, readPage } = fixture(goal);
+    const url = 'https://en.wikipedia.org/wiki/Harbour_transformer';
+    const title = 'Harbour transformer';
+    const text = 'The harbour transformer has an alternating current rating of 14 amperes at full load.';
+    search.mockResolvedValue([{ url, title, snippet: text }]);
+    readPage.mockResolvedValue({ url, title, text, status: 200 });
+
+    await expect(tools.search(step, { text: step.text, references: [] }, initial)).resolves.toMatchObject({
+      ok: true, evidence: { reference: url }, text: expect.stringContaining('14 amperes'),
+    });
+    expect(search.mock.calls[0]?.[0]).toContain('alternating current rating');
+    expect(readPage).toHaveBeenCalledExactlyOnceWith(url, signal, { live: false });
+    expect(compileQuery(goal).timeSensitive).toBe(false);
+    expect(compileQuery('Check the inrush current reading now.').timeSensitive).toBe(true);
+  });
+
   it('sends only an attributable entity as an explicit follow-up search operand', async () => {
     const goal = 'Search for the capital of France, then search for its parks.';
     const [earlier, step] = compilePlan(goal).steps;
