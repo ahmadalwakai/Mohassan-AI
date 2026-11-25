@@ -1361,7 +1361,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if (!current?.request) return unchanged;
     try {
       const evidence = judgeEvidence(current);
-      const applyFix = Boolean(allowChange && config.judgeFixForOwner && current.full);
+      const applyFix = Boolean(allowChange && config.judgeFixForOwner && current.full && !(current.state && dispatchFor(current.state)?.enabled));
       const applyWithhold = Boolean(allowChange && config.judgeWithholdForOwner && current.full);
       const verdict = config.judgeShadow.observe({ conversationId: id, runId, question: asked?.question ?? current.request, previous: asked ? asked.previous : current.previousRequest ?? null, reply, status,
         applyFix, applyWithhold, keepText: config.judgeLogText !== 'owner' || Boolean(current.full), ...(evidence.length ? { evidence } : {}) });

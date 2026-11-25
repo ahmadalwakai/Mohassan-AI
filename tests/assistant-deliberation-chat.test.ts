@@ -95,11 +95,16 @@ describe('deliberation on command chat', () => {
   });
 
   it('does not start browser preflight for an opted-in local calculation', async () => {
-    const { request, browserLifecycle } = await isolated({ deliberationEnabled: true });
+    const appliedFixes: (boolean | undefined)[] = [];
+    const { request, browserLifecycle } = await isolated({
+      deliberationEnabled: true, judgeFixForOwner: true,
+      judgeShadow: { logFile: '', observe(input) { appliedFixes.push(input.applyFix); return null; }, async flush() {} },
+    });
     const detail = await request('Calculate 28 * 3.'); // assistant-runtime-constraints-chat.test.ts
     expect(detail.run?.deliberation).toMatchObject({ enforced: true, chosen: { action: 'act', handler: 'local_computation' } });
     expect(detail.messages.at(-1)?.text).toContain('84');
     expect(browserLifecycle).toEqual([]);
+    expect(appliedFixes).toEqual([false]);
   });
 
   it('asks once with candidate buttons, then dispatches the confirmed handler', async () => {
