@@ -32,6 +32,7 @@ import { enterConversationTurn, useLegacyConversationLookup } from './assistant/
 import { publicConversationFollowup } from './assistant/public-conversation-followup.js';
 import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { judge as judgeAnswer } from './assistant/judge.js';
+import { observeImageRelations, observeModelRelations } from './assistant/model-relations-shadow.js';
 import { ensureChatConversationsTable, reviewJudgedReply } from './assistant/review/publication.js';
 import { continueWebSequence, joinSequence, planWebSequence, startWebSequence } from './assistant/web-sequence.js';
 import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
@@ -1311,6 +1312,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (say) await addMessage(tx, id, 'assistant', say);
     });
     if (say) judgeReply(id, runId, say, status);
+    observeModelRelations(runId, state, execution.getStore(), say, status);
   }
 
   /** The owner sees the campaign draft before any request to connect or sign in: once, then never repeated. */
@@ -1406,7 +1408,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const campaignTask = state.campaign ? campaignTaskId(runId, state.campaign.serial) : null;
     if (campaignEnd && state.campaign) state.campaign.open = false;
     await saveState(runId, state);
-    await runTransaction(id,runId,async (tx) => {
+    const published = await runTransaction(id,runId,async (tx) => {
       const current = await tx.selectFrom('chat_conversations').select(['status', 'active_run_id']).where('id', '=', id).forUpdate().executeTakeFirstOrThrow();
       if (current.active_run_id !== runId || current.status !== 'running') throw new RunEnded();
       if (campaignEnd && campaignTask) await appendCampaignEvent(tx, { conversationId: id, runId, taskId: campaignTask }, campaignEnd);
@@ -1464,7 +1466,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (config.recordSkillGap && finalStatus !== 'completed') {
         await config.recordSkillGap(tx, { ownerId: execution.getStore()!.ownerId, chatRunId: runId, outcome: finalStatus, signal: state.gapSignal ?? null });
       }
+      return { text: finalText, status: finalStatus };
     });
+    observeModelRelations(runId, state, execution.getStore(), published.text, published.status);
     const current=execution.getStore();if(current)forgetVault(id,current.token);
   }
 
@@ -3896,7 +3900,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await recordTerminalRun(tx, runId, 'failed');
         await closeOpenCampaignTasks(tx, id, runId, unresolved => campaignFailureEvent(error, message, unresolved));
         if (config.recordSkillGap) await config.recordSkillGap(tx, { ownerId, chatRunId: runId, outcome: 'failed', signal: trustedSkillGapSignal(error) });
-      }).catch(()=>{});
+      }).then(() => observeModelRelations(runId, execution.getStore()?.state, execution.getStore(), message, 'failed'), () => {});
       const current=execution.getStore();if(current)forgetVault(id,current.token);
     } finally {
       clearTimeout(deadline);
@@ -4197,6 +4201,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(new Error('IMAGE_READ_TIMEOUT')), 140_000);
     const readings: ImageReading[] = [];
+    const readingStarted = performance.now();
     try {
       for (const image of ordered) {
         const bytes = Buffer.from(image.data_base64 as string, 'base64');
@@ -4207,22 +4212,25 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (error instanceof BrowserError) throw error;
       throw new BrowserError('CHAT_IMAGE_READ_FAILED', controller.signal.aborted ? 'استغرقت قراءة الصورة وقتًا طويلًا. جرّب صورة أصغر.' : 'تعذرت قراءة الصورة. تأكد من أنها PNG أو JPEG سليمة.', 422);
     } finally { clearTimeout(deadline); }
+    const imageReadMs = performance.now() - readingStarted;
     const reply = composeImageReply({ request: text, readings });
     const attached = ordered.map(image => ({ id: image.id as string, width: Number(image.width), height: Number(image.height) }));
     const shown = clean(text);
     const userText = shown || (reply.language === 'ar' ? (attached.length > 1 ? `${attached.length} صور` : 'صورة') : attached.length > 1 ? `${attached.length} images` : 'an image');
+    const messageId = randomUUID();
     await db.transaction().execute(async tx => {
       if (config.accountActive && !await config.accountActive(ownerId, tx)) throw new BrowserError('CHAT_ACCOUNT_INACTIVE', 'هذا الحساب غير نشط.', 403);
       const current = await tx.selectFrom('chat_conversations').select(['status', 'title']).where('id', '=', id).where('owner_id', '=', ownerId).forUpdate().executeTakeFirst();
       if (!current) throw notFound();
       if (current.status === 'running' || WAITING_STATUSES.includes(current.status)) throw new BrowserError('CHAT_BUSY', 'بدأت مهمة أخرى في هذه المحادثة أثناء قراءة الصورة.', 409);
       const now = Date.now();
-      await tx.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role: 'user', text: userText, images: JSON.stringify(attached), created_at: new Date(now) }).execute();
+      await tx.insertInto('chat_messages').values({ id: messageId, conversation_id: id, role: 'user', text: userText, images: JSON.stringify(attached), created_at: new Date(now) }).execute();
       await tx.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role: 'assistant', text: reply.text, created_at: new Date(now + 1) }).execute();
       await tx.updateTable('chat_images').set({ conversation_id: id, expires_at: null }).where('id', 'in', unique).where('owner_id', '=', ownerId).execute();
       const title = current.title === 'محادثة جديدة' || current.title === 'قراءة صورة' ? { title: (shown || (reply.language === 'ar' ? 'قراءة صورة' : 'Image reading')).slice(0, 100) } : {};
       await tx.updateTable('chat_conversations').set({ status: 'idle', error: null, progress: null, updated_at: new Date(), ...title }).where('id', '=', id).execute();
     });
+    observeImageRelations(messageId, userText, reply.text, imageReadMs);
     observePlanMessage(userText);
     return detail(ownerId, id);
   }
