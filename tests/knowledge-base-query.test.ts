@@ -16,6 +16,7 @@ const area = 'P2046';
 const population = 'P1082';
 const incumbent = 'P35';
 const headOfGovernment = 'P6';
+const inception = 'P571';
 const squareKilometre = 'Q712226';
 const squareMetre = 'Q25343';
 const dumpDate = '2026-11-01';
@@ -59,6 +60,10 @@ function itemClaim(property: string, id: string, qualifiers: StoredClaim['qualif
   };
 }
 
+function dateClaim(property: string, date: string, precision: number): StoredClaim {
+  return { property, id: null, rank: 'normal', qualifiers: {}, references: [], snak: time(property, date, precision) };
+}
+
 const datedPopulation = quantity(population, '+100', '1', {
   id: `${cairo}$source-fixture`, qualifiers: { P585: [at2020] },
   references: [{
@@ -95,11 +100,20 @@ describe('query a completed offline Wikidata snapshot', () => {
           itemClaim(incumbent, 'Q900000105', { P585: [time('P585', '2020-00-00', 8)] }),
           itemClaim(headOfGovernment, 'Q900000106', { P585: [at2020], P580: [time('P580', '2021-00-00')] }),
           itemClaim(headOfGovernment, 'Q900000107', { P582: [time('P582', '2024-00-00')] }),
+          dateClaim(inception, '1900-05-00', 10),
+          dateClaim(inception, '2000-05-00', 10),
         ],
       }),
       entity(cairoAlias, {
         labels: { ar: 'كايرو', en: 'Cairo' }, aliases: { ar: ['القاهرة'] },
         descriptions: { en: 'Other city with the same name' }, categories: ['cities'],
+        claims: [
+          quantity(population, '+20', '1', { rank: 'preferred', qualifiers: { P585: [at2020] } }),
+          quantity(population, '+30', '1', { qualifiers: { P585: [at2021] } }),
+          quantity(population, '+31', '1', { rank: 'preferred', qualifiers: { P585: [at2021] } }),
+          quantity(population, '+40', '1', { qualifiers: { P585: [time('P585', '2021-00-00')] } }),
+          quantity(population, '+999', '1', { qualifiers: { P585: [time('P585', '2022-00-00'), time('P585', '2023-00-00')] } }),
+        ],
       }),
       entity(regionA, { categories: ['countries', 'places'], claims: [quantity(area, '+9007199254740993', squareKilometre)] }),
       entity(regionB, { categories: ['countries', 'places'], claims: [quantity(area, '+9007199254740993000000', squareMetre)] }),
@@ -168,6 +182,49 @@ describe('query a completed offline Wikidata snapshot', () => {
     ]);
     expect(kb.lookupFacts(cairo, incumbent, { year: 2027 })).toEqual([]);
     expect(() => kb.lookupFacts(cairo, population, { year: 2020.5 })).toThrow(RangeError);
+  });
+
+  it('selects dates before rank, retaining temporal provenance and omitting undated values', () => {
+    expect(kb.lookupFacts(cairo, population, { order: 'earliest' })).toMatchObject([{
+      statement: datedPopulation,
+      source: { dumpDate, revision: 123456789 },
+    }]);
+    expect(kb.lookupFacts(cairo, population, { order: 'latest' })).toMatchObject([{
+      statement: { qualifiers: { P585: [at2021] }, snak: { datavalue: { value: { amount: '+120' } } } },
+    }]);
+    expect(kb.lookupFacts(cairo, population, { year: 2020, order: 'latest' })[0]?.statement).toEqual(datedPopulation);
+    expect(kb.lookupFacts(regionA, area, { order: 'latest' })).toEqual([]);
+  });
+
+  it('preserves overlapping time bounds, preferring rank only for identical bounds', () => {
+    function amounts(options: Parameters<typeof kb.lookupFacts>[2]) {
+      return kb.lookupFacts(cairoAlias, population, options).map(fact => fact.statement.snak.datavalue?.value);
+    }
+    expect(amounts({ order: 'latest' })).toEqual([{ amount: '+31', unit: '1' }, { amount: '+40', unit: '1' }]);
+    expect(amounts({ order: 'latest', allRanks: true })).toEqual([
+      { amount: '+30', unit: '1' }, { amount: '+31', unit: '1' }, { amount: '+40', unit: '1' },
+    ]);
+    expect(amounts({ year: 2021, allRanks: true })).toEqual([
+      { amount: '+30', unit: '1' }, { amount: '+31', unit: '1' }, { amount: '+40', unit: '1' },
+    ]);
+  });
+
+  it('can order interval starts and date main values without treating end-only qualifiers as starts', () => {
+    expect(kb.lookupFacts(cairo, incumbent, { order: 'latest' })[0]?.statement.snak.datavalue?.value).toEqual({ id: 'Q900000102' });
+    expect(kb.lookupFacts(cairo, headOfGovernment, { order: 'earliest' })).toEqual([]);
+    expect(kb.lookupFacts(cairo, inception, { order: 'earliest' })).toMatchObject([{
+      statement: { snak: { datavalue: { value: { time: '+1900-05-00T00:00:00Z', precision: 10 } } } },
+    }]);
+  });
+
+  it('passes temporal options through both quantity query entry points', () => {
+    expect(kb.compare({ entityIds: [cairoAlias, cairo], property: population, unit: '1', order: 'earliest' })).toMatchObject({
+      status: 'ordered', rows: [{ entityId: cairo, amount: '100' }, { entityId: cairoAlias, amount: '20' }],
+    });
+    expect(kb.superlative({ category: 'cities', property: population, unit: '1', order: 'latest' })).toMatchObject({
+      status: 'partial', amount: '120', categoryEntities: 2, comparableEntities: 1,
+      facts: [{ entityId: cairo }],
+    });
   });
 
   it('ranks exact decimal amounts across compatible area units and reports ties and coverage', () => {

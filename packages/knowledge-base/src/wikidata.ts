@@ -49,6 +49,7 @@ interface DumpItem {
   labels?: Partial<Record<Language, DumpTerm>>;
   descriptions?: Partial<Record<Language, DumpTerm>>;
   aliases?: Partial<Record<Language, DumpTerm[]>>;
+  sitelinks?: Record<string, unknown>;
   claims?: Record<string, DumpStatement[]>;
 }
 
@@ -97,6 +98,7 @@ function projectItem(item: DumpItem, categories: EntityCategory[]): StoredEntity
   const entity: StoredEntity = {
     id: item.id,
     revision: Number.isSafeInteger(item.lastrevid) ? item.lastrevid as number : null,
+    ...(item.sitelinks && { sitelinkCount: Object.keys(item.sitelinks).length }),
     categories,
     labels: {},
     descriptions: {},

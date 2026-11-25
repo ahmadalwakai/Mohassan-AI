@@ -31,6 +31,7 @@ export interface StoredClaim {
 export interface StoredEntity {
   id: string;
   revision: number | null;
+  sitelinkCount?: number;
   labels: LocalizedText;
   descriptions: LocalizedText;
   aliases: Partial<Record<Language, string[]>>;

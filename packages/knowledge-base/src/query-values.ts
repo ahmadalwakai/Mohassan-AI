@@ -2,6 +2,7 @@ import type { StoredClaim, WikidataSnak } from './types.ts';
 
 const WIKIDATA_ITEM = /^(?:https?:\/\/www\.wikidata\.org\/entity\/)?(Q[1-9]\d*)$/u;
 const GREGORIAN_CALENDAR = 'Q1985727';
+const JULIAN_CALENDAR = 'Q1985786';
 
 export function unitId(unit: string) {
   return unit === '1' ? unit : WIKIDATA_ITEM.exec(unit)?.[1];
@@ -25,40 +26,75 @@ export function validateYear(year: number | undefined) {
   }
 }
 
-function dateBounds(snak: WikidataSnak): DateBounds | undefined {
+export function readWikidataDate(snak: WikidataSnak) {
   if (snak.snaktype !== 'value' || snak.datavalue?.type !== 'time') return;
   const value = record(snak.datavalue.value);
   if (typeof value?.time !== 'string' || typeof value.precision !== 'number' ||
     !Number.isInteger(value.precision) || value.precision < 9 || value.precision > 14 ||
-    typeof value.calendarmodel !== 'string' || unitId(value.calendarmodel) !== GREGORIAN_CALENDAR ||
+    typeof value.calendarmodel !== 'string' ||
     (value.before ?? 0) !== 0 || (value.after ?? 0) !== 0 || (value.timezone ?? 0) !== 0) return;
 
-  const date = /^([+-]\d{1,16})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}Z$/u.exec(value.time);
-  if (!date) return;
+  const calendar = unitId(value.calendarmodel);
+  const date = /^([+-]\d{1,16})-(\d{2})-(\d{2})T([01]\d|2[0-3]):([0-5]\d):([0-5]\d)Z$/u.exec(value.time);
+  if (!date || (calendar !== GREGORIAN_CALENDAR && calendar !== JULIAN_CALENDAR)) return;
   const year = Number(date[1]);
   const month = Number(date[2]);
   const day = Number(date[3]);
+  const precision = value.precision;
   if (Math.abs(year) > 999_999_999) return;
-  if (value.precision === 9) return { earliest: dateKey(year, 1, 1), latest: dateKey(year, 12, 31) };
-  if (month < 1 || month > 12) return;
-  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
-  if (value.precision === 10) {
-    return { earliest: dateKey(year, month, 1), latest: dateKey(year, month, daysInMonth) };
+  if (precision >= 10 && (month < 1 || month > 12)) return;
+  if (precision >= 11 && (day < 1 || day > monthLength(year, month, calendar))) return;
+  return { kind: 'date' as const, year, ...(precision >= 10 && { month }), ...(precision >= 11 && { day }),
+    calendar, raw: value.time, precision };
+}
+
+function monthLength(year: number, month: number, calendar: string) {
+  const leapYear = year % 4 === 0 && (calendar === JULIAN_CALENDAR || year % 100 !== 0 || year % 400 === 0);
+  return [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+}
+
+function dateBounds(snak: WikidataSnak): DateBounds | undefined {
+  const date = readWikidataDate(snak);
+  if (!date || date.calendar !== GREGORIAN_CALENDAR) return;
+  return calendarDateBounds(date);
+}
+
+export function calendarDateBounds(date: NonNullable<ReturnType<typeof readWikidataDate>>): DateBounds {
+  const { year, month, day } = date;
+  if (month === undefined) return { earliest: dateKey(year, 1, 1), latest: dateKey(year, 12, 31) };
+  if (day === undefined) {
+    return { earliest: dateKey(year, month, 1), latest: dateKey(year, month, monthLength(year, month, date.calendar)) };
   }
-  if (day < 1 || day > daysInMonth) return;
   const exactDay = dateKey(year, month, day);
   return { earliest: exactDay, latest: exactDay };
 }
 
-function boundary(snaks: WikidataSnak[], edge: keyof DateBounds): number | undefined {
+function uniqueDateBounds(snaks: WikidataSnak[]): DateBounds | undefined {
   const first = snaks[0] && dateBounds(snaks[0]);
   if (!first) return;
-  // Distinct endpoints do not establish a unique interval.
   if (snaks.every(snak => {
     const bounds = dateBounds(snak);
     return bounds?.earliest === first.earliest && bounds.latest === first.latest;
-  })) return first[edge];
+  })) return first;
+}
+
+function boundary(snaks: WikidataSnak[], edge: keyof DateBounds): number | undefined {
+  return uniqueDateBounds(snaks)?.[edge];
+}
+
+/** Compare dated values, observations and interval starts at their stated precision. */
+export function orderedStatementDate(claim: StoredClaim): DateBounds | undefined {
+  if (claim.snak.datavalue?.type === 'time') return dateBounds(claim.snak);
+  const { P585: points, P580: starts, P582: ends } = claim.qualifiers;
+  const candidates = points ?? starts;
+  if (!candidates) return;
+  const date = uniqueDateBounds(candidates);
+  const start = starts ? boundary(starts, 'earliest') : -Infinity;
+  const end = ends ? boundary(ends, 'latest') : Infinity;
+  if (!date || start === undefined || end === undefined) return;
+  const earliest = Math.max(date.earliest, start);
+  const latest = Math.min(date.latest, end);
+  if (earliest <= latest) return { earliest, latest };
 }
 
 export function appliesInYear(claim: StoredClaim, year: number, snapshotDay: number) {
@@ -83,8 +119,9 @@ export function appliesInYear(claim: StoredClaim, year: number, snapshotDay: num
 
 type Decimal = { coefficient: bigint; exponent: number };
 
-// Powers of ten relative to the square metre. Other units compare by exact identity.
+// Powers of ten within each dimension. Other units compare by exact identity.
 const AREA_UNIT_EXPONENTS: Record<string, number> = { Q25343: 0, Q35852: 4, Q712226: 6 };
+const LENGTH_UNIT_EXPONENTS: Record<string, number> = { Q11573: 0, Q828224: 3 };
 
 export function quantityInUnit(claim: StoredClaim, targetUnit: string): Decimal | undefined {
   if (claim.snak.snaktype !== 'value' || claim.snak.datavalue?.type !== 'quantity') return;
@@ -95,10 +132,10 @@ export function quantityInUnit(claim: StoredClaim, targetUnit: string): Decimal 
 
   let adjustment = 0;
   if (sourceUnit !== targetUnit) {
-    const from = AREA_UNIT_EXPONENTS[sourceUnit];
-    const to = AREA_UNIT_EXPONENTS[targetUnit];
-    if (from === undefined || to === undefined) return;
-    adjustment = from - to;
+    const dimension = [AREA_UNIT_EXPONENTS, LENGTH_UNIT_EXPONENTS]
+      .find(units => units[sourceUnit] !== undefined && units[targetUnit] !== undefined);
+    if (!dimension) return;
+    adjustment = dimension[sourceUnit] - dimension[targetUnit];
   }
   const amount = /^([+-]?)(\d{1,256})(?:\.(\d{1,256}))?$/u.exec(value.amount);
   if (!amount) return;
