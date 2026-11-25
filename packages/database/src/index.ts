@@ -5,6 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
+import { ensureChatConversationsTable } from "./chat-schema.ts";
 
 export interface DatabaseOptions {
   connectionString?: string;
@@ -368,8 +369,18 @@ export async function migrate(db: Kysely<any>): Promise<void> {
       )`.execute(tx);
       await tx.insertInto('schema_migrations').values({ version: '026_experiences' }).execute();
     }
+    // Command chat can bootstrap its schema on a different database connection.
+    await sql`LOCK TABLE schema_migrations IN EXCLUSIVE MODE`.execute(tx);
+    const review = await tx.selectFrom('schema_migrations').select('version').where('version', '=', '035_chat_conversation_review').executeTakeFirst();
+    if (!review) {
+      // Command chat's remaining tables are initialized later on a fresh database.
+      await ensureChatConversationsTable(tx);
+      await sql`ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS review_summary jsonb`.execute(tx);
+      await tx.insertInto('schema_migrations').values({ version: '035_chat_conversation_review' }).execute();
+    }
   });
 }
 
 export { sql } from "kysely";
+export { ensureChatConversationsTable } from "./chat-schema.ts";
 export type { RuntimeDatabase, TaskRecord, TaskEventRecord, ApprovalRecord, TaskPlanStepRecord, TaskPlanDependencyRecord, ModelRunRecord } from "./records.ts";

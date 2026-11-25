@@ -17,6 +17,7 @@ describe('local answers in order through the real chat controller', () => {
   let database: Awaited<ReturnType<typeof createDatabase>>;
   let control: Awaited<ReturnType<typeof createCommandChatControl>>;
   let directory: string;
+  let judgeShadow: ReturnType<typeof createJudgeShadow>;
   const searched: string[] = [];
 
   beforeAll(async () => {
@@ -34,11 +35,17 @@ describe('local answers in order through the real chat controller', () => {
       name: 'isolated-local-sequence-search',
       async search(query) { searched.push(query); return []; },
     };
+    judgeShadow = createJudgeShadow({ logFile: join(directory, 'judge.jsonl') });
     control = await createCommandChatControl(database.db, { browser, models: { fast: [], deep: [], vision: '' }, searchProvider,
-      fullAccess: async ownerId => ownerId !== member, judgeShadow: createJudgeShadow({ logFile: join(directory, 'judge.jsonl') }),
+      fullAccess: async ownerId => ownerId !== member, judgeShadow,
       judgeFixForOwner: true, judgeWithholdForOwner: true });
   });
-  afterAll(async () => { await control?.shutdown(); await database?.close(); await rm(directory, { recursive: true, force: true }); });
+  afterAll(async () => {
+    await control?.shutdown();
+    await judgeShadow?.flush();
+    await database?.close();
+    await rm(directory, { recursive: true, force: true });
+  });
 
   async function ask(account: string, goal: string) {
     const { id } = await control.create(account, { goal });

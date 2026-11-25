@@ -1,6 +1,7 @@
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { judge, type JudgeCode, type JudgeDecision, type JudgeInput, type JudgeVerdict, type ReplyKind } from './judge.js';
+import { conversationReviewForJudge, type ConversationReviewLog } from './review/publication.js';
 
 /**
  * The judge in shadow: the chat sends what it sends, and this records what the judge would have decided about it,
@@ -53,6 +54,8 @@ export interface JudgeShadowLine {
   ms: number;
   /** False when the line was written without the conversation's text (JudgeShadowInput.keepText). Absent in lines from before this field existed, which all kept it. */
   textKept?: boolean;
+  /** Symbolic review findings for the candidate chosen by this verdict. */
+  conversationReview?: ConversationReviewLog;
 }
 export interface JudgeShadow {
   readonly logFile: string;
@@ -109,6 +112,7 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
           decision: verdict.decision, applied, withholdText: keep ? verdict.withholdText : null, kind: verdict.kind, lang: verdict.lang, intent: verdict.frame.intent, answerType: verdict.frame.answerType, sourced: verdict.sourced,
           codes: verdict.codes, findings: keep ? verdict.findings : verdict.findings.map(finding => ({ ...finding, excerpt: '', detail: '' })), lead: quoted(verdict.lead), best: quoted(verdict.best),
           fixedReply: keep && verdict.fixedReply ? verdict.fixedReply.slice(0, MAX_REPLY) : null, support: verdict.support, evidence: input.evidence?.length ?? 0, ms: verdict.ms, textKept: keep,
+          conversationReview: conversationReviewForJudge(input, verdict, applied),
         });
         return verdict;
       } catch {

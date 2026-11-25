@@ -320,6 +320,10 @@ const ABLE_SHORT: Record<Lang, Record<Exclude<keyof SelfFacts, 'chatModel'>, str
 const ORDER: (Exclude<keyof SelfFacts, 'chatModel'>)[] = ['web', 'browser', 'computation', 'memory', 'knowledge', 'documents', 'sites', 'planner', 'letters', 'skills', 'ads', 'imageReading', 'pc'];
 const CONFIGURABLE: Configurable[] = ['memory', 'knowledge', 'documents', 'sites', 'skills', 'ads', 'imageReading', 'pc'];
 
+export function describeAvailableSelfCapabilities(available: readonly Exclude<keyof SelfFacts, 'chatModel'>[], lang: Lang): string[] {
+  return available.map(key => ABLE_SHORT[lang][key]);
+}
+
 const NO_MODEL = {
   ar: 'لا يوجد نموذج توليد محادثة مهيأ في هذه النسخة، فلا أكتب نصًا حرًا ولا أشرح بأسلوبي.',
   en: 'No chat-generation model is configured in this build, so I do not write free text or explain in my own words.',
@@ -351,7 +355,7 @@ const listed = (items: readonly string[], lang: Lang): string => lang === 'ar' ?
 /** What can be used and what cannot, in the one or two sentences the question allowed. The same host facts as the full answer. */
 function briefCapabilities(facts: SelfFacts, lang: Lang, sentences: 1 | 2): string {
   const ar = lang === 'ar';
-  const able = ORDER.filter(key => facts[key]).map(key => ABLE_SHORT[lang][key]);
+  const able = describeAvailableSelfCapabilities(ORDER.filter(key => facts[key]), lang);
   const missing = [
     ...(facts.chatModel ? [] : [ar ? 'نموذج لغوي يفهم الطلبات الحرة ويكتب' : 'a language model that understands free requests and writes']),
     ar ? 'إنشاء الصور والفيديو والصوت' : 'media generation (images, video and audio)',

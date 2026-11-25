@@ -30,7 +30,9 @@ const META_LINE = new RegExp([
   '^(?:المقال(?:ة|ه|ات) الرئيسي?[ةه]|مقال(?:ة|ه|ات) مفصل[ةه]|طالع [أا]يض[اًا]+|انظر [أا]يض[اًا]+)\\s*:', '^(?:main articles?|further information|see also)\\s*:',
   '\\bmay refer to\\b', '\\bmay also refer to\\b', '\\bfor other uses\\b', '\\bthis article is about\\b', '\\bnot to be confused with\\b', '\\bsee also\\b.*\\(disambiguation\\)',
   '\\bfrom wikipedia, the free encyclopedia\\b', '\\bjump to (?:navigation|content|search)\\b',
-  '^by [A-Z][\\w.-]+(?: [A-Z][\\w.-]+){0,3}\\b', '\\blast updated\\b', '\\bupdated (?:on )?\\d', '\\bpublished(?: on)?:? ', '\\bposted (?:on|by)\\b', '\\bmin(?:ute)?s? read\\b', 'آخر تحديث', 'تاريخ النشر', 'نُ?شر في \\d', 'بقلم ',
+  '^by [A-Z][\\w.-]+(?: [A-Z][\\w.-]+){0,3}\\b', '\\blast updated\\b', '\\bupdated (?:on )?\\d',
+  '^published(?: on)?\\s*:', '^published(?: on)?\\s+(?:[A-Z][a-z]{2,8}\\.?\\s+\\d{1,2},?\\s+\\d{4}|\\d{1,2}\\s+[A-Z][a-z]{2,8}\\s+\\d{4}|\\d{4}-\\d{1,2}-\\d{1,2})[.]?$',
+  '\\bposted (?:on|by)\\b', '\\bmin(?:ute)?s? read\\b', 'آخر تحديث', 'تاريخ النشر', 'نُ?شر في \\d', 'بقلم ',
 ].join('|'), 'iu');
 export function isMetaLine(line: string): boolean { return META_LINE.test(line.trim()); }
 

@@ -27,6 +27,7 @@ import { registerSearchRoutes } from './search.js';
 import { registerBrowserFileRoutes } from './browser-files.js';
 import { createDocumentControl, migrateDocuments, registerDocumentRoutes } from './documents.js';
 import { PdfError } from '@mohassan/pdf';
+import { isWritingPdf, readWritingPdf } from './assistant/writing/pdf-source.js';
 import { registerMemoryRoutes } from './memory.js';
 import { registerLearningRoutes, type LearningConfig } from './learning.js';
 import { createIsolatedLearningEvaluator } from './learning-evaluator.js';
@@ -428,7 +429,7 @@ export async function createApplication(config: AppConfig) {
   // Pages read over HTTP are kept by site kind (plan §5.2 P4): an encyclopedia article for a week, documentation
   // for a day, news for a quarter of an hour. A page read for a live fact is fetched every time.
   const pageCache = createPageCache();
-  const readPage = async (url: string, signal: AbortSignal, options: { live?: boolean } = {}) => {
+  const readPage = async (url: string, signal: AbortSignal, options: { live?: boolean; includePdf?: boolean } = {}) => {
     const cached = pageCache.get(url, options);
     if (cached) return cached;
     const combined = AbortSignal.any([signal, AbortSignal.timeout(READ_PAGE_TIMEOUT_MS)]);
@@ -448,6 +449,7 @@ export async function createApplication(config: AppConfig) {
       catch (retryError) { if (signal.aborted) throw retryError; return null; }
     }
     const type = response.headers['content-type'] ?? '';
+    if (options.includePdf && isWritingPdf(response)) return readWritingPdf(response, signal);
     if (response.status >= 400 || !/^(?:text\/html|application\/xhtml\+xml)(?:[;\s]|$)/i.test(type)) return null;
     const charset = /charset\s*=\s*["']?([^\s;"']+)/i.exec(type)?.[1] ?? 'utf-8';
     let body: string;

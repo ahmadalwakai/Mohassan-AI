@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { standaloneMannersRoute } from './manners/chat.js';
 import { directRoute } from './brain.js';
 import { isCampaignRequest } from './campaign-request.js';
 import { parseHands, type HandsStep } from './hands.js';
@@ -13,7 +14,9 @@ import {
   parseRequestContextState, type RequestContextIntent, type RequestContextOptions, type RequestResolution,
 } from './request-context.js';
 import { writingTask } from './writer.js';
-import { assessRequestScope, parseRequestScopeAssessment, requestScopeActionText, reviewPublicProjection, requestConstraintReply, type RequestScopeAssessment } from './request-scope.js';
+import { usesAlignedEvidence } from './writing/multisource/types.js';
+import { extractiveWritingEnabled } from './writing/request.js';
+import { assessRequestScope, parseRequestScopeAssessment, requestCapabilityAllowed, requestScopeActionText, reviewPublicProjection, requestConstraintReply, type RequestScopeAssessment } from './request-scope.js';
 
 /**
  * Read-only routing contract for the host to adopt, test and observe. A decision
@@ -73,6 +76,8 @@ const frameIntent = (intent: ReturnType<typeof buildFrame>['intent']): RoutedInt
 
 /** No I/O, model calls, public search fallback for private requests or state mutation. */
 export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDecision {
+  const manners = standaloneMannersRoute(input);
+  if (manners) return manners;
   const pending = PendingQuestionSchema.safeParse(input.pendingQuestion);
   const options: RequestContextOptions = { turnId: input.turnId,
     ...(pending.success ? { pendingQuestion: { id: pending.data.id, fields: pending.data.fields } } : {}) };
@@ -156,6 +161,24 @@ export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDe
         ambiguities: resolution.ambiguities.filter(reason => reason === 'invalid_previous_state' || reason === 'unsafe_previous_context'),
         provenance: [{ field: 'topic', sourceTurnId: currentId, relation: 'current' }, ...slots.map(slot => ({ field: slot.kind, sourceTurnId: slot.sourceTurnId, relation: 'current' as const }))],
       } };
+  }
+  const extractive = extractiveWritingEnabled() && writingTask(input.text, 'extractive');
+  if (extractive && !(extractive.source.kind === 'search' && usesAlignedEvidence(extractive)
+    && (resolution.kind === 'ambiguous' || sourceAssessment.reasons.includes('unresolved_reference')))) {
+    // Public evidence acquisition uses the same route vocabulary as ordinary public reads.
+    const constraints = resolution.constraints ?? null;
+    if ((usesAlignedEvidence(extractive) || extractive.opensSource) && sourceAssessment.scope !== 'private'
+      && requestCapabilityAllowed(constraints, 'browser_navigation')) {
+      if (extractive.source.kind === 'urls') {
+        const route = extractive.opensSource ? 'browser_command' : 'web_search';
+        return base(route, route, 'writing', 'explicit_handler');
+      }
+      if (extractive.source.kind === 'search' && requestCapabilityAllowed(constraints, 'public_search')
+        && (explicitPublicSource || resolution.scope !== 'private' && !buildFrame(action).personal)) {
+        return base('web_search', 'web_search', 'writing', 'explicit_handler');
+      }
+    }
+    return base('writing', 'writing', 'writing', 'explicit_handler');
   }
   if (resolution.kind === 'ambiguous') return clarify('missing_reference');
   if (sourceAssessment.reasons.includes('unresolved_reference')) return clarify('missing_reference');
