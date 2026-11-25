@@ -32,6 +32,8 @@ python3 -B scripts/dev-bench/run.py \
 
 The wave 4 target is `176/240` on V1 and `1586/2400` on V2. Run without competing workloads, especially during V2 coding evaluation. The principal settings come from the [wave 4 runbook](../../docs/INTEGRATION-WAVE-4-2026-11-25.md#flags). For a paired run, repeat `--arm NAME=COMMIT` in measurement order, and use `--set NAME:KEY=VALUE` for that arm's rollout flags. See the wave 5 report for the release and candidate arm commands. `--workers 1` runs all eight V2 lanes serially, as in the release candidate's final comparison. `--offline` uses the npm cache selected by `npm_config_cache` and supports a network-disabled runner with a populated cache.
 
+`Dockerfile` recreates the Linux runtime for commits with the hardened verifier. Build it with `docker build -t mohassan-wave5-bench:2026-11-25 scripts/dev-bench`. The container uses an unprivileged account and root-owned Python. For each arm in that runtime, pass `--set NAME:TEST_DRIVEN_CODING_PYTHON=/usr/local/bin/python3.12`. Mount the clone, Chromium and populated npm cache at the paths used by the launcher and run with Docker networking disabled.
+
 `summary.json` records the measured commits, input and tool SHA-256 digests, effective settings, toolchain, receipt hashes and recomputed summaries. Each arm directory has the V1 and eight V2 lane receipts plus the validated `receipt.json` with cases in release order. If the product writes a model-relations shadow journal, it is copied into the output for latency measurement. Keep this directory local. The receipts contain development reply text, and the coordinator prints counts and commit IDs.
 
 Run the parity and subgroup checks against the coordinated receipts:
@@ -45,3 +47,15 @@ python3 -B scripts/dev-bench/compare.py \
 ```
 
 When a repeated baseline proves that a reply value varies, supply `--baseline-repeat` with that baseline's coordinated receipt and `--reply-masks` with a JSON array. Each entry names `version`, `caseId`, 1-based `turn`, and a `values` object with the exact `baseline`, `baselineRepeat` and `flagsOff` literals. Each literal must occur once in its specified reply. The comparator requires identical surrounding text and records hashes of the masked values.
+
+## Historical PR #89 controls
+
+In a separate detached checkout at `7f9c417f2e06b77c26eb6ff677d06e3457da650b`, install that lockfile and run its own `scripts/response-policy/development-bench.mjs` with `prepare OUTPUT` followed by `off OUTPUT 4`. To reproduce the browser-missing run, use a normal account without a default Playwright browser install and leave `PLAYWRIGHT_BROWSERS_PATH` unset for those two commands. Then run the controls from that checkout:
+
+```bash
+bash /path/to/integration-clone/scripts/dev-bench/forensics/case-probes.sh \
+  /path/to/legacy-output /path/to/canonical-receipt.json \
+  /path/to/new-evidence /path/to/chromium
+```
+
+The control script derives the affected V2 case IDs from the receipt comparison. It repeats the V1 document-file cases with Chromium, then tests those V2 cases with each inherited classifier restored in isolation. [Commands and results](../../docs/INTEGRATION-WAVE-5-2026-11-25.md#pr-89-reproduction-and-5-whys)

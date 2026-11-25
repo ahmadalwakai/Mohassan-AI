@@ -55,3 +55,157 @@ bash /workspace/work/wave5-pr89-evidence/case-probes.sh v2
 | V2 · scratch refusal · English | `human-5502f004e5d2cb9a24045d57`, `human-fc98192c465a629207012c26` |
 | V2 · scratch small talk · English | `human-07b12cdc95eca62733166fa8`, `human-8ed16738623850de8e941b80` |
 | V2 · learned refusal · English | `human-95575077f10cd03e36fe5723` |
+
+## Merge order
+
+The base is release candidate `d3ebd9223f44445627b9d3d0bdea08d5f9b0550a`. The selected second parents, in order, are listed below. PR #92 is stacked on the exact PR #89 head.
+
+| Order | PR | Pinned branch tip |
+| --- | --- | --- |
+| 1 | [#89](https://github.com/ahmadalwakai/Mohassan-AI/pull/89) | `origin/feat/response-policy` at `4c05dc70a4b37495d7aac68a378c80dae54eec3c` |
+| 2 | [#92](https://github.com/ahmadalwakai/Mohassan-AI/pull/92) | `origin/feat/background-results` at `6197542a81d43dc6c5bc8e792fe11c605852c958` |
+| 3 | [#91](https://github.com/ahmadalwakai/Mohassan-AI/pull/91) | `origin/feat/arbiter-brain` at `8af14c6cd0970477263b4918fc9254c7a17724fa` |
+
+## Merge notes
+
+Git created three two-parent commits in the selected order. Each committed tree matched its `git merge-tree --write-tree` result, so no hunks needed manual resolution. The protected-path diff was empty and PR #94's head failed the ancestor check.
+
+| PR | Merge commit |
+| --- | --- |
+| #89 | `927f25ab41b2cbaf19c5e69efad9bd978466358b` |
+| #92 | `508f7b3dcad42499225051c3b9e4b37c9da2ba69` |
+| #91 | `26d0de8009d9ecc70195198e8f32c22755170e56` |
+
+The original hooks operate at different points in chat. PR #92 reads the latest durable run’s worker, task and checkpoint state when projecting the active conversation card. PR #91 binds the interactive worker to the run ID when it starts and captures observations at the existing publication hook. The durable worker saves its terminal result and notification in one transaction. PR #89 attaches the durable wrapper via the existing refusal-aware factory. PR #92 adds the startup migration call after member data rights and before chat starts.
+
+The counts below are per pull request against its own base and cover existing held files.
+
+| PR | File | Additions / deletions | Hook |
+| --- | --- | --- | --- |
+| #89 | `apps/server/src/command-chat.ts` | 4 / 1 | Shape eligible completed replies before review, delegate history reads and bind the request channel. |
+| #89 | `apps/server/src/assistant/brain.ts` | 3 / 0 | Apply context scope to prompt input and append bounded policy guidance and older evidence. |
+| #89 | `apps/web/components/notification-client.ts` | 1 / 0 | Add the localized progress-notification title. |
+| #92 | `apps/server/src/app.ts` | 2 / 0 | Import and invoke the background-results migration before chat initialization. |
+| #92 | `apps/server/src/command-chat.ts` | 3 / 1 | Select the latest run’s worker and task and project the active background card. |
+| #92 | `packages/contracts/src/command-chat.ts` | 2 / 0 | Add optional `backgroundRun` to the conversation response. |
+| #92 | `apps/web/components/assistant-app.tsx` | 4 / 1 | Render the background card and its Stop action. |
+| #92 | `apps/web/components/notification-client.ts` | 4 / 1 | Claim background outcomes through existing sync and exclude them from the legacy native-notice loop. |
+| #92 | `apps/web/components/notification-settings.tsx` | 2 / 0 | Add completion sound and preview controls. |
+| #91 | `apps/server/src/command-chat.ts` | 2 / 1 | Bind arbiter observations to the existing interactive execution and run ID. |
+
+## Migrations
+
+Application startup runs `037_notifications`, `038_reminders`, `039_conversation_shares` and `040_member_data_rights` in release-candidate order. The background-results migrator then calls `041_long_run_checkpoints` before `042_background_results`. Both new migrations use the full ID in the locked application ledger and return early when already recorded.
+
+| ID | Schema change |
+| --- | --- |
+| `041_long_run_checkpoints` | Add the partial unique index for one active durable run per account and the index for due checkpoints. Expand the notification kind constraint to accept `task_progress`. Checkpoints use the existing `chat_runs.state`. |
+| `042_background_results` | Add `ios_push_devices`, the per-registration `background_apns_deliveries` ledger, background metadata on `chat_notifications`, and completion-sound and result-preview preferences. Existing preference rows get sound on and previews off by column default. Existing notification rows get null background metadata and zero Web Push attempts. |
+
+PR #91 adds no migration. [Migration ledger](MIGRATION-LEDGER-2026-11-25.md)
+
+## Rollout flags and environment
+
+| Environment variable | Default | Effect |
+| --- | --- | --- |
+| `MOHASSAN_REPLY_POLICY_ENABLED` | Off | Set `1` for response policy composition guidance and conservative removal of exact question echoes. |
+| `MOHASSAN_CONTEXT_POLICY_ENABLED` | Off | Set `1` for bounded older transcript reads on explicit triggers and to honor explicit current-message-only directions. |
+| `MOHASSAN_LONG_RUN_ENABLED` | Off | Set `1` to admit supported durable plans through chat. These cover public-source research, timed public-page monitoring and draft websites from complete briefs. |
+| `MOHASSAN_BACKGROUND_RESULTS_ENABLED` | Off | Set `1` with durable admission enabled to add the acknowledgement, background card, final chat reply and outcome notifications for new durable runs. |
+| `MOHASSAN_ARBITER_ROUTING` | Off | Set `1` to allow a promoted decision type to arbitrate between eligible existing handlers. |
+| `MOHASSAN_ARBITER_QUESTION_REWRITE` | Off | Set `1` to allow a promoted decision type to choose between a validated rewrite and the original eligible public query. |
+| `MOHASSAN_ARBITER_LOCAL_COMPUTATION` | Off | Set `1` to allow a promoted decision type to choose between the reasoning and native calculator results. |
+| `MOHASSAN_ARBITER_COMPOUND_PLAN` | Off | Set `1` to allow a promoted decision type to choose a compiled plan or the available direct handler. |
+| `MOHASSAN_ARBITER_ROUTING_KILL`, `MOHASSAN_ARBITER_QUESTION_REWRITE_KILL`, `MOHASSAN_ARBITER_LOCAL_COMPUTATION_KILL`, `MOHASSAN_ARBITER_COMPOUND_PLAN_KILL` | Off | Set a corresponding switch to `1` to force existing precedence for that decision type. |
+| `MOHASSAN_MODEL_RELATIONS` | Existing default is shadow | Use `off` to disable the entire relations manager, including its shadow journal. |
+
+This tree has zero promoted arbiter decision types. The four activation flags cannot promote a decision type by themselves. Existing refusal, account authorization and approval checks keep their authority. [Response policy](RESPONSE-POLICY.md) · [Background results](BACKGROUND-RESULTS.md) · [Arbiter owner guide](ARBITER-BRAIN-VERIFICATION.md)
+
+| Environment variable | Default | Use |
+| --- | --- | --- |
+| `APNS_KEY_ID` | Unset | Apple APNs signing key ID. |
+| `APNS_TEAM_ID` | Unset | Apple Developer team ID. |
+| `APNS_KEY_PATH` | Unset | Absolute path to the private `.p8` key, readable by the API service user. |
+| `APNS_BUNDLE_ID` | Unset | App bundle ID used as the `apns-topic`. |
+| `WEB_PUSH_VAPID_SUBJECT`, `WEB_PUSH_VAPID_PUBLIC_KEY`, `WEB_PUSH_VAPID_PRIVATE_KEY` | Unset | Existing browser push contact and matching key pair for subscribed browsers. |
+
+APNs delivery requires all four APNs settings. Account preferences default to generic notification text, completion sound on after a web-page interaction, and quiet hours off. Subscribed closed browsers use Web Push and the browser or operating system controls the sound. [Background results](BACKGROUND-RESULTS.md)
+
+### Owner steps
+
+1. Edit the server environment for the chat API. On the Linux VM, edit `/etc/mohassan/server.env` privately and apply changes with `sudo systemctl restart mohassan.service`. Start with the rollout flags off and let startup apply the migrations.
+2. Turn on reply shaping or older context independently by setting its flag to `1`. Verify the behavior with a self-contained request and an older-context request in the same conversation.
+3. Set `MOHASSAN_LONG_RUN_ENABLED=1` to admit durable work. Also set `MOHASSAN_BACKGROUND_RESULTS_ENABLED=1` for the card and background-result notifications. Test a supported long run and its Stop action. Enable notifications and subscribe each browser that should receive closed-page alerts.
+4. For iPhone delivery, enable Push Notifications on the matching Apple App ID. Create an APNs key, store its `.p8` file outside Git with restricted access and set all four APNs variables. Permit outbound TLS over port 443 to `api.sandbox.push.apple.com` or `api.push.apple.com` for the environments in use. Restart the API. Register from an authenticated app build at `POST /api/push/devices` and verify delivery in each configured environment.
+5. For arbiter shadow, leave `MOHASSAN_MODEL_RELATIONS` unset or set it to `shadow`. Leave the decision flags off for this rollout. Review observed decisions with `npm run models:shadow-summary -- .data/model-relations-shadow.jsonl` from the API checkout once it has a writable journal directory. Live decision authority requires a future calibrated promotion and the corresponding flag. [Model relations runbook](MODELS-RUNBOOK.md#observe-model-relations)
+
+### Rollback
+
+Set the four response and durable-run flags and all four arbiter activation flags to `0` and restart the API. Set `MOHASSAN_MODEL_RELATIONS=off` to disable shadow observation too. Disabling durable admission stops new runs. Already-admitted runs can recover, stop and deliver their recorded outcomes. Clear APNs configuration if APNs dispatch itself must stop. Keep 041 and 042 applied. The schema changes are additive.
+
+## Verification
+
+The tested product head is `26d0de8009d9ecc70195198e8f32c22755170e56`.
+
+### Typecheck and background results
+
+```bash
+npm run typecheck
+PLAYWRIGHT_BROWSERS_PATH=/workspace/work/chromium npm test -- --maxWorkers=2 --fileParallelism --testTimeout=90000 --reporter=dot tests/response-policy-long-run.test.ts tests/ios-push.test.ts tests/web-background-notifications.test.ts
+```
+
+Typecheck exited 0 for the root and web projects. The focused Vitest command exited 0 with 30/30 tests in three suites. It covers durable restart, transient retry, stopping without another step or notice, cancelling a conversation through the normal API, an HTTP disconnect, push registration and notification delivery.
+
+### PostgreSQL
+
+```bash
+set -o pipefail
+bash /workspace/work/wave5-verification/run-migrations.sh /workspace/work/wave5-rc-tests /workspace/work/mohassan-wave5 2>&1 | tee /workspace/work/wave5-verification/migrations.log
+```
+
+Exit 0 on PostgreSQL 18.7. Two disposable databases used the published `postgres:18.7` image at digest `sha256:c699303802144847d238196173655dbbecf7a96aeca1565f2b02eb671a1f0b6b`. The fresh start recorded all 45 application and two auth migrations. Its final six wave registrations were 037, 038, 039, 040, 041 and 042 in that order. The upgrade first recorded the release candidate's 43 application and two auth migrations, seeded 12 rows, then ran 041 followed by 042. All 58 preexisting rows across 129 tables matched by SHA-256 on their original columns, including migration timestamps. The checks confirmed the new column defaults, expanded notification kind, durable-run indexes and two empty APNs tables. Both databases then restarted without new ledger entries or changes to rows across 131 tables.
+
+The test booted the real `createApplication` path with its standard PostgreSQL adapter. Its command log SHA-256 is `7336077b74aaac8e25c1522747dbfef3319cf2be8ae1ec4962ea6876a8dfac7c`.
+
+### Historical replay controls
+
+From the detached PR #89 implementation checkout, the committed portable equivalent ran with the following command and exited 0:
+
+```bash
+bash /workspace/work/mohassan-wave5/scripts/dev-bench/forensics/case-probes.sh /workspace/work/wave5-pr89-evidence/historical /workspace/work/wave5-pr89-canonical/pr89/receipt.json /workspace/work/wave5-pr89-portable-confirmation /workspace/work/chromium
+```
+
+### Three-arm development run
+
+The release candidate and merged head use the same pinned development bundles and Wave 4 profile. All arms also use `MOHASSAN_ARITHMETIC_SEARCH=1` and the same trusted Python interpreter. A and B disable the existing relations manager. B sets all eight new activation flags to `0`. C sets them to `1` and puts the manager in shadow. The four emergency kill switches are unset, and the promotion list is empty. The coordinator processes the three arms in one invocation. Up to two V2 workers run at once, preserving all eight modulo-assigned lanes. Other test suites are kept idle during scoring.
+
+The run uses the Linux recipe in `scripts/dev-bench/Dockerfile` (SHA-256 `03417f8e64d499bbda87143555e090af9463ca72afccdb16b9a888ef8768a761`). The local image ID is `sha256:307862772e849b16d3732f81672ee058ac1629a6679575f90d5b34510d119f48`. The container has an unprivileged passwd account with a normal home, and the verifier accepted root-owned Python 3.12.14. Chromium and npm package bytes came from the mounted caches.
+
+```bash
+docker build -t mohassan-wave5-bench:2026-11-25 /workspace/work/wave5-bench-runtime
+export PLAYWRIGHT_BROWSERS_PATH=/workspace/work/chromium
+export npm_config_cache=/workspace/work/npm-cache
+docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+  --mount type=bind,source=/workspace/work,target=/workspace/work \
+  --workdir /workspace/work/mohassan-wave5 \
+  --env PLAYWRIGHT_BROWSERS_PATH --env npm_config_cache \
+  mohassan-wave5-bench:2026-11-25 python3 -B scripts/dev-bench/run.py --workers 2 --offline \
+  --output /workspace/work/wave5-three-arms \
+  --arm a=d3ebd9223f44445627b9d3d0bdea08d5f9b0550a \
+  --arm b=26d0de8009d9ecc70195198e8f32c22755170e56 \
+  --arm c=26d0de8009d9ecc70195198e8f32c22755170e56 \
+  --set a:MOHASSAN_ARITHMETIC_SEARCH=1 --set a:TEST_DRIVEN_CODING_PYTHON=/usr/local/bin/python3.12 \
+  --set b:MOHASSAN_ARITHMETIC_SEARCH=1 --set b:TEST_DRIVEN_CODING_PYTHON=/usr/local/bin/python3.12 \
+  --set c:MOHASSAN_ARITHMETIC_SEARCH=1 --set c:TEST_DRIVEN_CODING_PYTHON=/usr/local/bin/python3.12 \
+  --set a:MOHASSAN_MODEL_RELATIONS=off --set b:MOHASSAN_MODEL_RELATIONS=off --set c:MOHASSAN_MODEL_RELATIONS=shadow \
+  --set b:MOHASSAN_REPLY_POLICY_ENABLED=0 --set c:MOHASSAN_REPLY_POLICY_ENABLED=1 \
+  --set b:MOHASSAN_CONTEXT_POLICY_ENABLED=0 --set c:MOHASSAN_CONTEXT_POLICY_ENABLED=1 \
+  --set b:MOHASSAN_LONG_RUN_ENABLED=0 --set c:MOHASSAN_LONG_RUN_ENABLED=1 \
+  --set b:MOHASSAN_BACKGROUND_RESULTS_ENABLED=0 --set c:MOHASSAN_BACKGROUND_RESULTS_ENABLED=1 \
+  --set b:MOHASSAN_ARBITER_ROUTING=0 --set c:MOHASSAN_ARBITER_ROUTING=1 \
+  --set b:MOHASSAN_ARBITER_QUESTION_REWRITE=0 --set c:MOHASSAN_ARBITER_QUESTION_REWRITE=1 \
+  --set b:MOHASSAN_ARBITER_LOCAL_COMPUTATION=0 --set c:MOHASSAN_ARBITER_LOCAL_COMPUTATION=1 \
+  --set b:MOHASSAN_ARBITER_COMPOUND_PLAN=0 --set c:MOHASSAN_ARBITER_COMPOUND_PLAN=1
+```
+
+For future builds, `scripts/dev-bench/` is the equivalent committed Docker build context.
