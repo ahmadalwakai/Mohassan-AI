@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 import https from 'node:https';
 import http from 'node:http';
 import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
+import { crossOriginReadHeaders } from './redirect-headers.js';
 
 export class BrowserError extends Error {
   constructor(public readonly code:string,message:string,public readonly statusCode=400){super(message);this.name='BrowserError';}
@@ -100,10 +101,12 @@ export class SafeNetwork {
   }
   async text(input:string,options:{allowedOrigins?:readonly string[];signal?:AbortSignal;beforeRequest?:(url:string)=>Promise<void>}={}):Promise<{url:string;text:string;status:number}> {
     let target=input;
+    let previousOrigin: string | undefined, redirectedHeaders: Record<string,string> | undefined;
     for(let redirects=0;redirects<=5;redirects++){
       target=this.validate(target,options.allowedOrigins).href;
       await options.beforeRequest?.(target);
-      const response=await this.request(target,options);
+      const origin = new URL(target).origin; if (previousOrigin && origin !== previousOrigin) { const { headers }: NonNullable<Parameters<SafeNetwork['request']>[1]> = options; if (headers) redirectedHeaders = crossOriginReadHeaders(redirectedHeaders ?? headers); }
+      const response=await this.request(target,redirectedHeaders ? Object.assign({ ...options }, { allowedOrigins: options.allowedOrigins, signal: options.signal, headers: redirectedHeaders }) : options); previousOrigin=origin;
       if([301,302,303,307,308].includes(response.status)&&response.headers.location){target=this.validate(new URL(response.headers.location,target).href,options.allowedOrigins).href;continue;}
       if(response.status<200||response.status>=400)throw new BrowserError('BROWSER_HTTP_ERROR',`لم يسمح المصدر بقراءة المحتوى (HTTP ${response.status}).`,502);
       if(response.status===202)throw new BrowserError('RESEARCH_SOURCE_PENDING','لم يقدّم المصدر محتوى نهائيًا؛ قد يكون بانتظار تحقق أو معالجة.',502);
