@@ -155,13 +155,22 @@ test('a task runs from one message through sign-in, a code and an approval', asy
     await page.reload();
     const reviewLabel = 'راجعت بنفسي أثر الإجراء السابق.';
     const reviewButton = 'تسجيل المراجعة دون تكرار الإجراء';
+    const fullBrowser = page.getByRole('complementary', { name: 'المتصفح', exact: true });
+    const browserChip = page.getByTestId('browser-chip');
+    async function showFullBrowser() {
+      await expect(fullBrowser.or(browserChip)).toBeVisible();
+      if (await browserChip.isVisible()) await browserChip.click();
+    }
+    await showFullBrowser();
     await expect(page.getByRole('button', { name: reviewButton })).toBeDisabled();
     await page.getByRole('checkbox', { name: reviewLabel }).check();
     await expect(page.getByRole('button', { name: reviewButton })).toBeEnabled();
     await page.getByRole('navigation', { name: 'المحادثات' }).getByRole('button', { name: 'ادخل إلى حسابي التجريبي واحذفه', exact: true }).click();
-    await expect(page.getByRole('complementary', { name: 'المتصفح' })).toContainText('حساب المتصفح: work-e2e');
+    await showFullBrowser();
+    await expect(fullBrowser).toContainText('حساب المتصفح: work-e2e');
     await expect(page.getByRole('checkbox', { name: reviewLabel })).toHaveCount(0);
     await page.getByRole('navigation', { name: 'المحادثات' }).getByRole('button', { name: 'افتح حسابي التجريبي الشخصي', exact: true }).click();
+    await showFullBrowser();
     await expect(page.getByRole('checkbox', { name: reviewLabel })).not.toBeChecked();
     await expect(page.getByRole('button', { name: reviewButton })).toBeDisabled();
     await page.setViewportSize({ width: 390, height: 780 });
@@ -182,6 +191,7 @@ test('a task runs from one message through sign-in, a code and an approval', asy
     }
     expect((await detail(workConversation.id)).browser).toMatchObject({ live: false, recovery: 'available' });
     await page.getByRole('navigation', { name: 'المحادثات' }).getByRole('button', { name: 'ادخل إلى حسابي التجريبي واحذفه', exact: true }).click();
+    await showFullBrowser();
     await expect(page.getByRole('button', { name: 'استعادة الصفحة', exact: true })).toBeEnabled();
     await expect(page.getByRole('complementary', { name: 'المتصفح' })).toContainText('حساب المتصفح: work-e2e');
     await page.screenshot({ animations: 'disabled', path:test.info().outputPath('assistant-restore-desktop.png') });
