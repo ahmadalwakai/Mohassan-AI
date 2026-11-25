@@ -2450,7 +2450,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const freshRequest = freshBeforeBrowser && (!requestTrail.length || Boolean(state.clarifiedRequest) && requestTrail.every(entry => entry.action === 'asked the user'));
       const intrinsicAllowed = !handsPlan && !state.site && !state.writer && !state.planner && !state.document && !state.adsBrief && freshRequest;
       const intrinsicStartedAt = Date.now();
-      const intrinsicConversation = intrinsicAllowed ? evaluateLocalConversation(actionRequest) : null;
+      const intrinsicConversation = intrinsicAllowed ? evaluateLocalConversation(actionRequest, state.routing) : null;
       const intrinsicComputation = intrinsicAllowed ? evaluateLocalComputation(actionRequest, new Date(effectiveSource.evaluatedAt)) : null;
       const feature = (configured: boolean, allowed = true) => ({ configured, accountAccess: allowed ? 'allowed' : 'denied', health: configured ? 'unverified' : 'unknown' });
       const intrinsicRuntime = intrinsicAllowed ? answerRuntimeStatus(actionRequest, {
@@ -2673,7 +2673,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         const conversationReply = intrinsicConversation;
         if (conversationReply) {
-          await finish(id, runId, state, conversationReply.text, 'completed');
+          await finish(id, runId, state, conversationReply.text, conversationReply.status === 'blocked' ? 'blocked' : 'completed');
           return;
         }
         // Before the single question about the assistant: «من صنعك؟ ثم ما قدراتك؟» is answered whole, not by its first part.
@@ -2816,6 +2816,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const earlierAsks = history.filter(entry => entry.role === 'user').map(entry => entry.text).slice(-4);
         const understanding = state.requestResolution;
         const privateRequest = understanding?.scope === 'private' || Boolean(ownFact);
+        if (!steps && !privateRequest && state.routing?.reason === 'scratch_route' && state.routing.route === 'news') steps = parseHands(actionRequest, true);
         if (privateRequest && steps?.length === 1 && steps[0].kind === 'search' && !steps[0].site && !page) steps = null;
         // An honest limit comes before any search: drawing, playing media, booking, buying, calling or sending is
         // not a web question, and the router's «unsupported» verdict used to be ignored here («ارسم لي صورة قطة»

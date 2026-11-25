@@ -1,0 +1,572 @@
+{
+  "dataSha256": "0d1ffaf90ceb6828eeaba9ee203292ca2c4d2e7b957ba66ed0f6327a31eee20a",
+  "heads": {
+    "followUp": {
+      "calibration": {
+        "accepted": 1339,
+        "acceptedAccuracy": 0.988050784167289,
+        "coverage": 0.8879310344827587,
+        "examples": 1508,
+        "expectedCalibrationError": 0.00923440506702091,
+        "macroF1": 0.5725746490907373,
+        "perClass": {
+          "follow_up": {
+            "recall": 0.9814941740918437,
+            "support": 1459
+          },
+          "new": {
+            "recall": 0.14285714285714285,
+            "support": 49
+          }
+        }
+      },
+      "developmentMacroF1": {
+        "averaged_perceptron": 0.6229896452963207,
+        "logistic": 0.6583168833526195
+      },
+      "labels": [
+        "follow_up",
+        "new"
+      ],
+      "modelBytes": 174986,
+      "selectedModel": "logistic",
+      "splitSizes": {
+        "calibration": 1508,
+        "dev": 1369,
+        "test": 4728,
+        "train": 26453
+      },
+      "temperature": 1.8505718104771474,
+      "test": {
+        "canard": {
+          "accepted": 4182,
+          "acceptedAccuracy": 0.9655667144906743,
+          "coverage": 0.8845177664974619,
+          "examples": 4728,
+          "expectedCalibrationError": 0.03500659787083722,
+          "macroF1": 0.6197868056485314,
+          "perClass": {
+            "follow_up": {
+              "recall": 0.9873184228729537,
+              "support": 4337
+            },
+            "new": {
+              "recall": 0.1867007672634271,
+              "support": 391
+            }
+          }
+        }
+      },
+      "threshold": 0.8828596220024829
+    },
+    "refusal": {
+      "calibration": {
+        "accepted": 1304,
+        "acceptedAccuracy": 0.9662576687116564,
+        "coverage": 0.8822733423545331,
+        "examples": 1478,
+        "expectedCalibrationError": 0.014511260132520172,
+        "macroF1": 0.9430259878573356,
+        "perClass": {
+          "allow": {
+            "recall": 0.9746328437917223,
+            "support": 749
+          },
+          "out_of_scope": {
+            "recall": 0.8895800933125972,
+            "support": 643
+          },
+          "refuse": {
+            "recall": 0.9302325581395349,
+            "support": 86
+          }
+        }
+      },
+      "developmentMacroF1": {
+        "averaged_perceptron": 0.9384164588402345,
+        "logistic": 0.9426294949866331
+      },
+      "labels": [
+        "allow",
+        "out_of_scope",
+        "refuse"
+      ],
+      "modelBytes": 262383,
+      "selectedModel": "logistic",
+      "splitSizes": {
+        "calibration": 1478,
+        "dev": 1575,
+        "test": 5567,
+        "train": 16461
+      },
+      "temperature": 1.5470412723984495,
+      "test": {
+        "arbanking77-pal": {
+          "accepted": 847,
+          "acceptedAccuracy": 1.0,
+          "coverage": 0.9474272930648769,
+          "examples": 894,
+          "expectedCalibrationError": 0.02638601077690573,
+          "macroF1": 0.9955056179775281,
+          "perClass": {
+            "allow": {
+              "recall": null,
+              "support": 0
+            },
+            "out_of_scope": {
+              "recall": 0.9910514541387024,
+              "support": 894
+            },
+            "refuse": {
+              "recall": null,
+              "support": 0
+            }
+          }
+        },
+        "aya-arb": {
+          "accepted": 46,
+          "acceptedAccuracy": 0.9782608695652174,
+          "coverage": 0.7666666666666667,
+          "examples": 60,
+          "expectedCalibrationError": 0.06126631616451209,
+          "macroF1": 0.9655172413793104,
+          "perClass": {
+            "allow": {
+              "recall": null,
+              "support": 0
+            },
+            "out_of_scope": {
+              "recall": null,
+              "support": 0
+            },
+            "refuse": {
+              "recall": 0.9333333333333333,
+              "support": 60
+            }
+          }
+        },
+        "aya-eng": {
+          "accepted": 27,
+          "acceptedAccuracy": 1.0,
+          "coverage": 0.84375,
+          "examples": 32,
+          "expectedCalibrationError": 0.0909474888421259,
+          "macroF1": 1.0,
+          "perClass": {
+            "allow": {
+              "recall": null,
+              "support": 0
+            },
+            "out_of_scope": {
+              "recall": null,
+              "support": 0
+            },
+            "refuse": {
+              "recall": 1.0,
+              "support": 32
+            }
+          }
+        },
+        "clinc150": {
+          "accepted": 1562,
+          "acceptedAccuracy": 0.6081946222791293,
+          "coverage": 0.8101659751037344,
+          "examples": 1928,
+          "expectedCalibrationError": 0.32027896819253443,
+          "macroF1": 0.5755094914745651,
+          "perClass": {
+            "allow": {
+              "recall": 0.9883333333333333,
+              "support": 600
+            },
+            "out_of_scope": {
+              "recall": 0.38930722891566266,
+              "support": 1328
+            },
+            "refuse": {
+              "recall": null,
+              "support": 0
+            }
+          }
+        },
+        "massive-ar-SA": {
+          "accepted": 1135,
+          "acceptedAccuracy": 0.9929515418502203,
+          "coverage": 0.8657513348588863,
+          "examples": 1311,
+          "expectedCalibrationError": 0.043279549127942005,
+          "macroF1": 0.951791767660116,
+          "perClass": {
+            "allow": {
+              "recall": 0.9742647058823529,
+              "support": 816
+            },
+            "out_of_scope": {
+              "recall": 0.9232323232323232,
+              "support": 495
+            },
+            "refuse": {
+              "recall": null,
+              "support": 0
+            }
+          }
+        },
+        "massive-en-US": {
+          "accepted": 1221,
+          "acceptedAccuracy": 0.9918099918099919,
+          "coverage": 0.9098360655737705,
+          "examples": 1342,
+          "expectedCalibrationError": 0.03158656909787953,
+          "macroF1": 0.9729274951990572,
+          "perClass": {
+            "allow": {
+              "recall": 0.9723225030084236,
+              "support": 831
+            },
+            "out_of_scope": {
+              "recall": 0.9765166340508806,
+              "support": 511
+            },
+            "refuse": {
+              "recall": null,
+              "support": 0
+            }
+          }
+        }
+      },
+      "threshold": 0.8
+    },
+    "route": {
+      "calibration": {
+        "accepted": 1203,
+        "acceptedAccuracy": 0.9792186201163757,
+        "coverage": 0.8984316654219567,
+        "examples": 1339,
+        "expectedCalibrationError": 0.014136363107471513,
+        "macroF1": 0.9151860098106965,
+        "perClass": {
+          "chat": {
+            "recall": 0.9056603773584906,
+            "support": 53
+          },
+          "compute": {
+            "recall": 0.84375,
+            "support": 32
+          },
+          "news": {
+            "recall": 0.7901234567901234,
+            "support": 81
+          },
+          "reminder": {
+            "recall": 0.9146341463414634,
+            "support": 82
+          },
+          "unsupported": {
+            "recall": 0.9559322033898305,
+            "support": 590
+          },
+          "web_search": {
+            "recall": 0.9612244897959183,
+            "support": 490
+          },
+          "writing": {
+            "recall": 0.9090909090909091,
+            "support": 11
+          }
+        }
+      },
+      "developmentMacroF1": {
+        "averaged_perceptron": 0.9176506866545673,
+        "logistic": 0.9242879995293649
+      },
+      "labels": [
+        "chat",
+        "compute",
+        "news",
+        "reminder",
+        "unsupported",
+        "web_search",
+        "writing"
+      ],
+      "modelBytes": 612027,
+      "selectedModel": "logistic",
+      "splitSizes": {
+        "calibration": 1339,
+        "dev": 1441,
+        "test": 4477,
+        "train": 15735
+      },
+      "temperature": 1.123607373700761,
+      "test": {
+        "arbanking77-pal": {
+          "accepted": 876,
+          "acceptedAccuracy": 1.0,
+          "coverage": 0.9798657718120806,
+          "examples": 894,
+          "expectedCalibrationError": 0.011214864284623491,
+          "macroF1": 0.9983193277310924,
+          "perClass": {
+            "chat": {
+              "recall": null,
+              "support": 0
+            },
+            "compute": {
+              "recall": null,
+              "support": 0
+            },
+            "news": {
+              "recall": null,
+              "support": 0
+            },
+            "reminder": {
+              "recall": null,
+              "support": 0
+            },
+            "unsupported": {
+              "recall": 0.9966442953020134,
+              "support": 894
+            },
+            "web_search": {
+              "recall": null,
+              "support": 0
+            },
+            "writing": {
+              "recall": null,
+              "support": 0
+            }
+          }
+        },
+        "clinc150": {
+          "accepted": 866,
+          "acceptedAccuracy": 0.9849884526558892,
+          "coverage": 0.9311827956989247,
+          "examples": 930,
+          "expectedCalibrationError": 0.018560189608402687,
+          "macroF1": 0.9552848790267984,
+          "perClass": {
+            "chat": {
+              "recall": 0.9444444444444444,
+              "support": 180
+            },
+            "compute": {
+              "recall": 0.9666666666666667,
+              "support": 30
+            },
+            "news": {
+              "recall": null,
+              "support": 0
+            },
+            "reminder": {
+              "recall": 0.95,
+              "support": 60
+            },
+            "unsupported": {
+              "recall": 0.9727272727272728,
+              "support": 330
+            },
+            "web_search": {
+              "recall": 0.9933333333333333,
+              "support": 300
+            },
+            "writing": {
+              "recall": 0.8,
+              "support": 30
+            }
+          }
+        },
+        "massive-ar-SA": {
+          "accepted": 1121,
+          "acceptedAccuracy": 0.983942908117752,
+          "coverage": 0.855072463768116,
+          "examples": 1311,
+          "expectedCalibrationError": 0.02922387917961943,
+          "macroF1": 0.7788659731369248,
+          "perClass": {
+            "chat": {
+              "recall": 0.0,
+              "support": 1
+            },
+            "compute": {
+              "recall": 0.8,
+              "support": 40
+            },
+            "news": {
+              "recall": 0.8629032258064516,
+              "support": 124
+            },
+            "reminder": {
+              "recall": 0.9893617021276596,
+              "support": 94
+            },
+            "unsupported": {
+              "recall": 0.9474747474747475,
+              "support": 495
+            },
+            "web_search": {
+              "recall": 0.9622980251346499,
+              "support": 557
+            },
+            "writing": {
+              "recall": null,
+              "support": 0
+            }
+          }
+        },
+        "massive-en-US": {
+          "accepted": 1217,
+          "acceptedAccuracy": 0.9843878389482333,
+          "coverage": 0.9068554396423248,
+          "examples": 1342,
+          "expectedCalibrationError": 0.008761718448013017,
+          "macroF1": 0.8147704732644936,
+          "perClass": {
+            "chat": {
+              "recall": 1.0,
+              "support": 1
+            },
+            "compute": {
+              "recall": 0.825,
+              "support": 40
+            },
+            "news": {
+              "recall": 0.8225806451612904,
+              "support": 124
+            },
+            "reminder": {
+              "recall": 0.9895833333333334,
+              "support": 96
+            },
+            "unsupported": {
+              "recall": 0.9823874755381604,
+              "support": 511
+            },
+            "web_search": {
+              "recall": 0.9526315789473684,
+              "support": 570
+            },
+            "writing": {
+              "recall": null,
+              "support": 0
+            }
+          }
+        }
+      },
+      "threshold": 0.8
+    },
+    "speechAct": {
+      "calibration": {
+        "accepted": 1969,
+        "acceptedAccuracy": 0.9964448958862366,
+        "coverage": 0.993942453306411,
+        "examples": 1981,
+        "expectedCalibrationError": 0.004200907604439359,
+        "macroF1": 0.9506270686286238,
+        "perClass": {
+          "request": {
+            "recall": 0.9979253112033195,
+            "support": 1928
+          },
+          "smalltalk": {
+            "recall": 0.8867924528301887,
+            "support": 53
+          }
+        }
+      },
+      "developmentMacroF1": {
+        "averaged_perceptron": 0.9436010085574572,
+        "logistic": 0.9544124852292706
+      },
+      "labels": [
+        "request",
+        "smalltalk"
+      ],
+      "modelBytes": 174990,
+      "selectedModel": "logistic",
+      "splitSizes": {
+        "calibration": 1981,
+        "dev": 2109,
+        "test": 6489,
+        "train": 23436
+      },
+      "temperature": 0.9538496553958072,
+      "test": {
+        "arbanking77-pal": {
+          "accepted": 894,
+          "acceptedAccuracy": 1.0,
+          "coverage": 1.0,
+          "examples": 894,
+          "expectedCalibrationError": 0.0002853979544025959,
+          "macroF1": 1.0,
+          "perClass": {
+            "request": {
+              "recall": 1.0,
+              "support": 894
+            },
+            "smalltalk": {
+              "recall": null,
+              "support": 0
+            }
+          }
+        },
+        "clinc150": {
+          "accepted": 915,
+          "acceptedAccuracy": 0.9923497267759562,
+          "coverage": 0.9838709677419355,
+          "examples": 930,
+          "expectedCalibrationError": 0.006195312530899231,
+          "macroF1": 0.9789757656136966,
+          "perClass": {
+            "request": {
+              "recall": 0.9973333333333333,
+              "support": 750
+            },
+            "smalltalk": {
+              "recall": 0.9444444444444444,
+              "support": 180
+            }
+          }
+        },
+        "massive-ar-SA": {
+          "accepted": 2306,
+          "acceptedAccuracy": 0.9995663486556808,
+          "coverage": 0.9991334488734835,
+          "examples": 2308,
+          "expectedCalibrationError": 0.002272452428478845,
+          "macroF1": 0.49978326831382747,
+          "perClass": {
+            "request": {
+              "recall": 0.9995665366276549,
+              "support": 2307
+            },
+            "smalltalk": {
+              "recall": 0.0,
+              "support": 1
+            }
+          }
+        },
+        "massive-en-US": {
+          "accepted": 2341,
+          "acceptedAccuracy": 0.9995728321230244,
+          "coverage": 0.9932117098005939,
+          "examples": 2357,
+          "expectedCalibrationError": 0.0032874761127033554,
+          "macroF1": 0.6662418578306428,
+          "perClass": {
+            "request": {
+              "recall": 0.99830220713073,
+              "support": 2356
+            },
+            "smalltalk": {
+              "recall": 1.0,
+              "support": 1
+            }
+          }
+        }
+      },
+      "threshold": 0.8059522510971926
+    }
+  },
+  "minimumCalibrationAccuracy": 0.8,
+  "seed": 20261125,
+  "version": 1
+}

@@ -4,7 +4,7 @@
  * searched for 11 s and then said it found nothing (artifacts/plan-2026-11-22/0-baseline.md §8.3).
  * Each reply names what cannot be done and the nearest thing that can.
  */
-export type UnsupportedKind = 'image' | 'media' | 'act' | 'generic';
+export type UnsupportedKind = 'image' | 'media' | 'act' | 'generic' | 'safety';
 /** `spec`: the owner's own description of how the picture should look, when the message is only that (see imageSpecification). */
 export interface UnsupportedRequest { kind: UnsupportedKind; lang: 'ar' | 'en'; spec?: string }
 
@@ -128,6 +128,10 @@ const IMAGE_ALTERNATIVE = {
   en: 'What I can do: search the web for the subject and show its sources, for example “search for cat pictures” or “open google and search for cat images”.',
 };
 const REPLY: Record<UnsupportedKind, Record<'ar' | 'en', string>> = {
+  safety: {
+    ar: 'لا أستطيع المساعدة في هذا الطلب كما صيغ. يمكنك طلب معلومات عامة أو مساعدة بطريقة آمنة.',
+    en: 'I can’t help with this request as phrased. You can ask for general information or help with a safe alternative.',
+  },
   image: {
     ar: `لا أرسم الصور ولا أولّدها؛ هذه القدرة غير مفعّلة في موحسن الآن.\n\n${IMAGE_ALTERNATIVE.ar}`,
     en: `I cannot draw or generate images; that capability is not enabled in Mohassan yet.\n\n${IMAGE_ALTERNATIVE.en}`,
