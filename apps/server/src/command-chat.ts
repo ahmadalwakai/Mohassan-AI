@@ -3,6 +3,7 @@ import sharp from 'sharp';
 import type { ImageReading } from '@mohassan/vision';
 import { composeImageReply, readingForTrail } from './assistant/image-reading.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { bindActivationRuntime } from './activation-runtime.js';
 import type { FastifyInstance } from 'fastify';
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
@@ -4422,7 +4423,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     }
   }
 
-  return {
+  return bindActivationRuntime(db, {
     create, list, detail, send, respond, approve, secureSubmit, cancel, remove, screen, browserActivity, shutdown,restoreBrowser,reviewBrowser, uploadImage, image: imageBytes, feedback, once,
     imagesAvailable: () => Boolean(config.imageReader?.available),
     pointer: (ownerId: string, id: string, raw: unknown) => { const input = ChatPointerSchema.parse(raw); return handsOn(ownerId, id, () => browser.pointer(ownerId, id, input.x, input.y)); },
@@ -4433,7 +4434,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     /** Holds until the conversation's mark differs from `since` (chat-wait.ts); the caller then reads the detail. */
     waitForChange: (ownerId: string, id: string, since: string, waitMs: number, signal?: AbortSignal) =>
       waitForChange(() => conversationVersion(db, ownerId, id), since, waitMs, { signal }),
-  };
+  });
 }
 
 export async function registerCommandChatRoutes(app: FastifyInstance, { control, owner }: { control: Awaited<ReturnType<typeof createCommandChatControl>>; owner: (request: any) => Promise<{ id: string }> }) {

@@ -41,6 +41,7 @@ import { createVercelPublisher, noPublisher } from './sites-publish.js';
 import { createStudioLiveControl } from './studio-live.js';
 import { createBrowserTaskControl } from './browser-task.js';
 import { createCommandChatControl, registerCommandChatRoutes } from './command-chat.js';
+import { registerActivationConsole, type ActivationConsoleOptions } from './activation-console.js';
 import { createImageReader } from './image-reader.js';
 import { createInferenceControl, registerInferenceRoutes, type InferenceConfig } from './inference.js';
 import { createExecutorControl, executorConfigFromEnv, registerExecutorRoutes, type ExecutorConfig } from './executor.js';
@@ -80,6 +81,7 @@ import { createSkillRemoteScheduler, registerSkillRemoteRoutes, type SkillRemote
 const SKILL_READER_DISCOVERY = MAX_GITHUB_SKILLS + MAX_IMPORTED_VERSIONS_PER_OWNER + 50;
 
 export interface AppConfig {
+  activationConsole?: ActivationConsoleOptions;
   dataDir?: string; databaseUrl?: string; authSecret: string; internalSecret: string;
   setupToken: string; webOrigin: string; production: boolean; runWorker: boolean;
   groqApiKey?:string;groqModel?:string;groqReasoningModel?:string;aiFetch?:typeof fetch;
@@ -474,6 +476,7 @@ export async function createApplication(config: AppConfig) {
     }}:{}),
   });
   await registerCommandChatRoutes(app,{control:chat,owner:async request=>{const user=await owner(request);windows.noteSession(user.id,request);return user;}});
+  const stopActivationLogs=await registerActivationConsole(app,{db:database.db,owner,role,config,judgeLogFile:judgeConfig.logFile});
   await registerBrowserFileRoutes(app,{db:database.db,browser:agentBrowser,owner});
   await registerDocumentRoutes(app,{control:documents,owner,link:documentLink});
   await registerStudioAiRoutes(app,{control:studioAi,owner});
@@ -526,7 +529,7 @@ export async function createApplication(config: AppConfig) {
   app.get<{Params: {id: string}}>('/api/tasks/:id', async (request) => runtime.detail((await owner(request)).id, request.params.id));
   app.post<{Params: {id: string}}>('/api/tasks/:id/cancel', async (request) => runtime.cancel((await owner(request)).id, request.params.id));
   app.post<{Params: {id: string}}>('/api/tasks/:id/approve', async (request) => runtime.approve((await owner(request)).id, request.params.id));
-  app.addHook('onClose', async () => {clearInterval(benchmarkMaintenance);try{await skillRemoteScheduler?.stop();await skills.remote.shutdown();await benchmarkMaintenanceRun;await Promise.all([skillBenchmarks.shutdown(),skillForge.shutdown()]);}finally{try{await chat.shutdown();}finally{try{await runtime.stop();}finally{try{await browser.shutdown();}finally{try{await studioLive.close();}finally{await database.close();}}}}}});
+  app.addHook('onClose', async () => {clearInterval(benchmarkMaintenance);try{await skillRemoteScheduler?.stop();await skills.remote.shutdown();await benchmarkMaintenanceRun;await Promise.all([skillBenchmarks.shutdown(),skillForge.shutdown()]);}finally{try{await chat.shutdown();}finally{try{await runtime.stop();}finally{try{await browser.shutdown();}finally{try{await studioLive.close();}finally{try{await stopActivationLogs();}finally{await database.close();}}}}}}});
   if (config.runWorker) runtime.start();
   await app.ready();
   return {app, routes, runtime, database, auth,ai,coding,studio,studioAi,studioLive,browser,browserTask,memory,skills,chat,skillExecution,skillBenchmarks,skillForge,googleAds,inference,chromeExtension};
