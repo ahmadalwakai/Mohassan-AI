@@ -16,7 +16,9 @@ export function monitorRoleAllowed(rollout: EnabledMonitorRollout, role: Workspa
 }
 
 export async function monitorAccountAllowed(db: Kysely<any>, userId: string, rollout: EnabledMonitorRollout) {
-  return monitorRoleAllowed(rollout, await roleOf(db, userId));
+  // All-account readiness also serves the standalone chat controller, without workspace tables.
+  // The HTTP session gate and transactional monitor writes enforce account access.
+  return rollout === 'all' || await roleOf(db, userId) === 'owner';
 }
 
 /** Select the same owner grants as roleOf, before a worker takes a bounded batch. */

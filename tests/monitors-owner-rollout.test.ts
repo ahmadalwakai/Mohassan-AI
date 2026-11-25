@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { MonitorCardSchema, MonitorSpecSchema } from '@mohassan/contracts';
+import { createDatabase, migrate } from '@mohassan/database';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApplication } from '../apps/server/src/app.js';
-import { legacyMonitorHandledBySmartChat, monitorChat } from '../apps/server/src/monitors/chat.js';
+import { installMonitorChat, legacyMonitorHandledBySmartChat, monitorChat } from '../apps/server/src/monitors/chat.js';
 import { monitorRollout, smartMonitorsEnabled } from '../apps/server/src/monitors/flag.js';
 import { monitorPaths } from '../apps/server/src/monitors/route-keys.js';
 import { monitorTiming } from '../apps/server/src/monitors/schedule.js';
@@ -28,6 +29,21 @@ it.each([
   const env = { MOHASSAN_MONITORS_ENABLED: value };
   expect(monitorRollout(env)).toBe(mode);
   expect(smartMonitorsEnabled(env)).toBe(mode !== 'off');
+});
+
+it('keeps all-account monitors available to the standalone chat controller', async () => {
+  vi.stubEnv('MOHASSAN_MONITORS_ENABLED', '1');
+  const database = await createDatabase({});
+  try {
+    await migrate(database.db);
+    const monitor = installMonitorChat(database.db, {});
+    expect(await monitor?.availableTo('standalone-account')).toBe(true);
+    expect(await legacyMonitorHandledBySmartChat(database.db, 'standalone-account', goal)).toBe(true);
+    expect(await legacyMonitorHandledBySmartChat(database.db, 'standalone-account', 'Calculate 2 + 2')).toBe(false);
+  } finally {
+    await database.close();
+    vi.unstubAllEnvs();
+  }
 });
 
 describe('owner-only monitor rollout', () => {
