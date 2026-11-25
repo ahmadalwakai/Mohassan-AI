@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>موحسن على iPhone</title>
+  <style>
+    @font-face { font-family: Alexandria; src: url("../../apps/ios/Wasla/Fonts/Alexandria-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+    @font-face { font-family: Alexandria; src: url("../../apps/ios/Wasla/Fonts/Alexandria-Medium.ttf") format("truetype"); font-weight: 500; font-display: swap; }
+    @font-face { font-family: Alexandria; src: url("../../apps/ios/Wasla/Fonts/Alexandria-SemiBold.ttf") format("truetype"); font-weight: 600; font-display: swap; }
+    @font-face { font-family: Alexandria; src: url("../../apps/ios/Wasla/Fonts/Alexandria-Bold.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #e8eae5; color: #202823; font: 16px/1.55 Alexandria, system-ui, sans-serif; }
+    h1, h2, h3, h4, p, ol, ul, figure { margin: 0; }
+    button, input { font: inherit; }
+    button { color: inherit; cursor: pointer; }
+    svg { display: block; flex: none; }
+    .gallery { max-width: 1280px; margin: auto; padding-block: 54px 64px; }
+    .gallery > h1 { font-size: 30px; letter-spacing: -.035em; }
+    .gallery > h1, .theme > h2 { padding-inline: 18px; }
+    .theme { margin-block-start: 38px; }
+    .theme > h2 { font-size: 18px; margin-block-end: 14px; }
+    .devices { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+    figure { width: 393px; max-width: 100%; }
+    figcaption { margin-block-start: 10px; padding-inline: 18px; color: #53625b; font-size: 13px; }
+    .phone {
+      --background: #f7f6f2;
+      --panel: #eeefe9;
+      --surface: #ffffff;
+      --ink: #202823;
+      --muted: #53625b;
+      --line: #d2dcd5;
+      --control-line: #78877f;
+      --soft: #e8eee8;
+      --accent: #216852;
+      --accent-soft: #dfeee6;
+      --on-accent: #ffffff;
+      --alert: #a33a2c;
+      --keyboard: #d1d3da;
+      --key: #ffffff;
+      --key-special: #aeb3bf;
+      --system-ink: #131618;
+      --system-shelf: #dce3db;
+      color-scheme: light;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      height: 852px;
+      width: 393px;
+      max-width: 100%;
+      overflow: hidden;
+      isolation: isolate;
+      background: var(--background);
+      color: var(--ink);
+    }
+    .dark .phone {
+      --background: #141816;
+      --panel: #1a201d;
+      --surface: #212925;
+      --ink: #f2f4f0;
+      --muted: #acb9b1;
+      --line: #3a4a42;
+      --control-line: #718379;
+      --soft: #26332d;
+      --accent: #72cbb0;
+      --accent-soft: #23453a;
+      --on-accent: #10291f;
+      --alert: #ee9383;
+      --keyboard: #1d1e22;
+      --key: #414247;
+      --key-special: #303137;
+      --system-ink: #f7f7f8;
+      --system-shelf: #0e120f;
+      color-scheme: dark;
+    }
+    .status {
+      direction: ltr;
+      position: relative;
+      display: flex;
+      flex: 0 0 59px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 26px 1px 30px;
+      font: 650 16px/1 system-ui, sans-serif;
+      color: var(--ink);
+    }
+    .status-icons { display: flex; gap: 5px; align-items: center; }
+    .island { position: absolute; top: 11px; left: 50%; transform: translateX(-50%); width: 126px; height: 37px; border-radius: 25px; background: #070807; }
+    .island::after { content: ""; position: absolute; top: 14px; right: 13px; width: 8px; height: 8px; border-radius: 50%; background: radial-gradient(circle at 38% 45%, #232941, #10131b 62%, #0a0b0b); }
+    .home { width: 136px; height: 5px; border-radius: 4px; background: var(--system-ink); position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); z-index: 2; }
+    .icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .bar {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      flex: 0 0 56px;
+      padding-inline: 12px;
+      border-block-end: 1px solid var(--line);
+      background: var(--background);
+    }
+    .bar h3 { font-size: 16px; font-weight: 600; }
+    .bar-group { display: flex; gap: 2px; align-items: center; }
+    .bar-group:last-child { justify-content: end; }
+    .icon-button {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      flex-shrink: 0;
+      place-items: center;
+      color: var(--muted);
+      background: none;
+      border: 0;
+      border-radius: 15px;
+      padding: 0;
+      position: relative;
+    }
+    .icon-button :is(svg, span) { position: relative; }
+    .icon-button.new { color: var(--accent); }
+    .icon-button.new::before, .icon-button.attach::before { content: ""; position: absolute; inset: 4px; border-radius: 50%; background: var(--accent-soft); }
+    .icon-button.attach::before { background: var(--soft); }
+    .bar .icon { width: 17px; height: 17px; }
+    .thread {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 20px 22px 4px;
+      scrollbar-width: none;
+    }
+    .turns { display: flex; flex-direction: column; gap: 24px; }
+    .user-turn {
+      align-self: flex-start;
+      padding: 10px 14px;
+      max-width: 91%;
+      border: 1px solid var(--line);
+      border-radius: 19px 7px 19px 19px;
+      background: var(--soft);
+      font-size: 16px;
+      line-height: 1.5;
+    }
+    .reply { display: flex; flex-direction: column; gap: 14px; min-width: 0; font-size: 16px; line-height: 1.55; }
+    .reply h4 { font-size: 16px; font-weight: 600; }
+    .table-scroll { overflow-x: auto; border-radius: 14px; outline-offset: -2px; scrollbar-width: thin; scrollbar-color: var(--control-line) transparent; }
+    table { border-spacing: 0; width: max-content; text-align: start; font-size: 14px; }
+    th, td { width: 128px; height: 44px; padding: 8px 12px; border-inline-end: 1px solid var(--line); border-block-end: 1px solid var(--line); background: var(--surface); text-align: start; }
+    th:first-child, td:first-child { border-inline-start: 1px solid var(--line); }
+    th { border-block-start: 1px solid var(--line); background: var(--accent-soft); font-weight: 600; }
+    th:first-child { border-start-start-radius: 14px; }
+    th:last-child { border-start-end-radius: 14px; }
+    tr:last-child td:first-child { border-end-start-radius: 14px; }
+    tr:last-child td:last-child { border-end-end-radius: 14px; }
+    .reply ul { padding-inline-start: 17px; }
+    .reply li + li { margin-block-start: 8px; }
+    .reply li::marker { color: var(--accent); }
+    .reply-actions { display: flex; gap: 2px; margin-block-start: -9px; }
+    .reply-actions .icon { width: 16px; height: 16px; }
+    .composer { padding: 8px 16px 9px; flex: 0 0 auto; }
+    .compose-card {
+      display: flex;
+      align-items: end;
+      gap: 6px;
+      min-height: 58px;
+      padding: 6px;
+      border-radius: 24px;
+      border: 1px solid var(--accent);
+      background: var(--surface);
+      box-shadow: 0 4px 14px #0002;
+    }
+    .compose-card .send { background: var(--accent); color: var(--on-accent); border-radius: 16px; }
+    .draft { display: flex; flex: 1; align-items: center; min-height: 44px; color: var(--ink); font-size: 16px; padding-inline: 4px; }
+    .caret { height: 20px; width: 1.7px; margin-inline-start: 1px; background: var(--accent); }
+    .keyboard { flex: 0 0 auto; height: 276px; padding: 9px 5px 0; border-block-start: 1px solid var(--line); background: var(--keyboard); color: var(--system-ink); }
+    .keyrow { display: flex; gap: 4px; direction: ltr; margin-block-end: 9px; }
+    .key { flex: 1; display: grid; place-items: center; height: 41px; border-radius: 5px; background: var(--key); box-shadow: 0 1px 0 #0005; font: 400 21px/1 system-ui, sans-serif; }
+    .key.special { flex: 1.55; background: var(--key-special); font-size: 16px; }
+    .key.space { flex: 5; font: 400 14px/1.2 Alexandria, sans-serif; color: var(--system-ink); }
+    .keyboard-footer { direction: ltr; display: flex; justify-content: space-between; padding: 2px 23px; }
+    .keyboard-footer .icon { width: 20px; height: 20px; }
+    .phone[data-screen="conversations"], .phone[data-screen="settings"] { background: var(--system-shelf); }
+    .sheet { flex: 1 1 auto; min-height: 0; overflow: hidden; border-radius: 26px 26px 0 0; background: var(--background); }
+    .sheet .bar { min-height: 56px; }
+    .done { min-width: 52px; min-height: 36px; margin-inline-end: 5px; padding: 5px 13px; border: 0; border-radius: 20px; background: var(--accent-soft); color: var(--accent); font-size: 14px; font-weight: 600; }
+    .conversations, .settings { padding: 17px 22px 34px; }
+    .conversation-list { display: grid; gap: 10px; list-style: none; padding: 0; }
+    .conversation {
+      display: flex;
+      width: 100%;
+      align-items: center;
+      text-align: start;
+      gap: 12px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      color: var(--ink);
+      background: var(--surface);
+      min-height: 72px;
+    }
+    .tile { width: 40px; height: 40px; display: grid; flex: none; place-items: center; border-radius: 11px; color: var(--muted); background: var(--soft); }
+    .conversation[aria-current="true"] { border-color: var(--accent); }
+    .conversation[aria-current="true"] .tile { color: var(--accent); background: var(--accent-soft); }
+    .conversation[aria-current="true"] .subtitle { color: var(--accent); }
+    .conversation .text { flex: 1 1 auto; }
+    .conversation .title, .settings-row .title { display: block; font-size: 14px; font-weight: 600; }
+    .conversation .subtitle, .settings-row .subtitle { display: block; margin-block-start: 3px; color: var(--muted); font-size: 12px; }
+    .chevron { width: 13px; height: 13px; color: var(--muted); }
+    .settings { display: grid; gap: 22px; padding-block-start: 18px; }
+    .settings-section h4 { color: var(--muted); margin: 0 2px 8px; font-size: 13px; font-weight: 600; }
+    .settings-card { padding: 17px; border: 1px solid var(--line); border-radius: 20px; background: var(--surface); }
+    .account-card { display: grid; gap: 14px; }
+    .settings-row { display: flex; gap: 12px; align-items: center; min-height: 36px; }
+    .account-divider { height: 1px; background: var(--line); }
+    .settings-row .tile { width: 36px; height: 36px; border-radius: 10px; color: var(--accent); background: var(--accent-soft); }
+    .settings-row .title { font-weight: 500; }
+    .settings-row .tile .icon { width: 16px; height: 16px; }
+    .settings-row.sign-out { min-height: 44px; }
+    .settings-row.sign-out, .settings-row.sign-out .tile { color: var(--alert); }
+    .settings-row.sign-out .tile { background: color-mix(in srgb, var(--alert) 10%, transparent); }
+    .settings-card p { color: var(--muted); font-size: 13px; line-height: 1.7; }
+    .segments { display: flex; padding: 3px; gap: 3px; background: var(--background); border-radius: 13px; }
+    .segments span { display: grid; flex: 1; place-items: center; min-height: 44px; padding-inline: 4px; border: 1px solid transparent; border-radius: 10px; text-align: center; color: var(--muted); font-size: 12px; font-weight: 600; }
+    .segments [aria-current="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+    @media (max-width: 1260px) { .devices { justify-content: center; } }
+    @media (max-width: 450px) { .gallery { padding-block-start: 28px; } }
+  </style>
+</head>
+<body>
+  <svg xmlns="http://www.w3.org/2000/svg" style="display: none" aria-hidden="true">
+    <symbol id="sidebar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M15 5v14m2-10h2m-2 3h2"/></symbol>
+    <symbol id="edit" viewBox="0 0 24 24"><path d="M12 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-6M11 13l1-4 6.5-6.5 3 3L15 12l-4 1Z"/></symbol>
+    <symbol id="computer" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></symbol>
+    <symbol id="gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="m10 3 4 0 .5 2.3 1.6.9 2.3-.7 2 3.5-1.7 1.6v1.8l1.7 1.6-2 3.5-2.3-.7-1.6.9L14 21h-4l-.5-2.3-1.6-.9-2.3.7-2-3.5 1.7-1.6v-1.8L3.6 10l2-3.5 2.3.7 1.6-.9L10 3Z"/></symbol>
+    <symbol id="clip" viewBox="0 0 24 24"><path d="m9 13 6-6a2 2 0 0 1 3 3l-7 7a4 4 0 0 1-6-6l7-7a5 5 0 0 1 7 7l-7 7"/></symbol>
+    <symbol id="up" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6" stroke-width="2.1"/></symbol>
+    <symbol id="copy" viewBox="0 0 24 24"><rect x="8" y="7" width="12" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h2"/></symbol>
+    <symbol id="thumb" viewBox="0 0 24 24"><path d="M8 20H5a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h3m0 10V10l5-7a3 3 0 0 1 2 3l-.6 4h4.7a2 2 0 0 1 2 2.5l-1.5 6a2 2 0 0 1-2 1.5H8Z"/></symbol>
+    <symbol id="bubble" viewBox="0 0 24 24"><path d="M6 5h12a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3h-7l-5 4v-4a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3Z"/><path d="M7 10h10m-10 3h6"/></symbol>
+    <symbol id="bubbles" viewBox="0 0 24 24"><path d="M14 13H8l-4 3v-3H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2Z"/><path d="M19 8h1a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-1v3l-4-3h-5a2 2 0 0 1-2-2"/></symbol>
+    <symbol id="chevron" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></symbol>
+    <symbol id="person" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="9" r="3"/><path d="M6 18a6 5 0 0 1 12 0"/></symbol>
+    <symbol id="server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h1m-1 9h1m5-9h4m-4 9h4"/></symbol>
+    <symbol id="signout" viewBox="0 0 24 24"><path d="M13 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h7m-1-8h9m-3-3 3 3-3 3"/></symbol>
+    <symbol id="delete" viewBox="0 0 24 24"><path d="M21 6H10l-7 6 7 6h11a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1Zm-9 3 5 6m0-6-5 6"/></symbol>
+    <symbol id="return" viewBox="0 0 24 24"><path d="M20 5v5a3 3 0 0 1-3 3H5m4-4-4 4 4 4"/></symbol>
+    <symbol id="globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M4 8h16M4 16h16"/></symbol>
+    <symbol id="mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M6 12a6 6 0 0 0 12 0m-6 6v3m-3 0h6"/></symbol>
+  </svg>
+
+  <main class="gallery">
+    <h1>موحسن على iPhone</h1>
+    <section class="theme dark" data-theme="dark" aria-labelledby="dark-title">
+      <h2 id="dark-title">المظهر الداكن</h2>
+      <div class="devices"></div>
+    </section>
+    <section class="theme light" data-theme="light" aria-labelledby="light-title">
+      <h2 id="light-title">المظهر الفاتح</h2>
+      <div class="devices"></div>
+    </section>
+  </main>
+
+  <template id="status">
+    <div class="status" aria-hidden="true">
+      <span>9:41</span><div class="island"></div>
+      <div class="status-icons">
+        <svg width="19" height="14" viewBox="0 0 19 14" fill="currentColor"><rect x="0" y="9" width="3.5" height="4" rx="1"/><rect x="5" y="6" width="3.5" height="7" rx="1"/><rect x="10" y="3" width="3.5" height="10" rx="1"/><rect x="15" width="3.5" height="13" rx="1"/></svg>
+        <svg width="16" height="13" viewBox="0 0 16 13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1 3a10 10 0 0 1 14 0M3.5 5.7a6.3 6.3 0 0 1 9 0M6 8.3a2.8 2.8 0 0 1 4 0"/><circle cx="8" cy="11" r=".6" fill="currentColor"/></svg>
+        <svg width="27" height="14" viewBox="0 0 27 14" fill="currentColor"><rect x=".5" y="1.5" width="23" height="11" rx="3" opacity=".55" fill="none" stroke="currentColor"/><rect x="2.5" y="3.5" width="19" height="7" rx="1"/><path d="M25 5c2 0 2 4 0 4Z" opacity=".55"/></svg>
+      </div>
+    </div>
+  </template>
+
+  <template id="chat">
+    <header class="bar">
+      <div class="bar-group">
+        <button class="icon-button" type="button" aria-label="المحادثات"><svg class="icon" aria-hidden="true"><use href="#sidebar"/></svg></button>
+        <button class="icon-button new" type="button" aria-label="محادثة جديدة"><svg class="icon" aria-hidden="true"><use href="#edit"/></svg></button>
+      </div>
+      <h3>موحسن</h3>
+      <div class="bar-group">
+        <button class="icon-button" type="button" aria-label="التحكم بالكمبيوتر"><svg class="icon" aria-hidden="true"><use href="#computer"/></svg></button>
+        <button class="icon-button" type="button" aria-label="الإعدادات"><svg class="icon" aria-hidden="true"><use href="#gear"/></svg></button>
+      </div>
+    </header>
+    <div class="thread" aria-label="رسائل المحادثة">
+      <div class="turns">
+        <p class="user-turn">رتّب لي خطة نشر هذا الأسبوع.</p>
+        <article class="reply" aria-label="رد موحسن">
+          <h4>خطة النشر للأسبوع</h4>
+          <div class="table-scroll" role="region" aria-label="جدول خطة النشر، يُمرّر أفقيًا" tabindex="0">
+            <table aria-label="جدول خطة النشر">
+              <thead><tr><th scope="col">اليوم</th><th scope="col">الموضوع</th><th scope="col">الصيغة</th><th scope="col">الملاحظات</th></tr></thead>
+              <tbody>
+                <tr><td>الأحد</td><td>فكرة الأسبوع</td><td>منشور</td><td>سؤال للمتابعين</td></tr>
+                <tr><td>الأربعاء</td><td>خلف الكواليس</td><td>فيديو قصير</td><td>لقطتان تكفيان</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <ul>
+            <li>جهّز الصور والنصوص قبل النشر.</li>
+            <li>راجع التفاعل بعد <strong>٢٤ ساعة</strong>.</li>
+          </ul>
+          <div class="reply-actions" aria-label="إجراءات الرد">
+            <button class="icon-button" type="button" aria-label="نسخ الرد"><svg class="icon" aria-hidden="true"><use href="#copy"/></svg></button>
+            <button class="icon-button" type="button" aria-label="قيّم الرد"><svg class="icon" aria-hidden="true"><use href="#thumb"/></svg></button>
+          </div>
+        </article>
+      </div>
+    </div>
+    <div class="composer">
+      <div class="compose-card">
+        <button class="icon-button attach" type="button" aria-label="إرفاق صورة"><svg class="icon" aria-hidden="true"><use href="#clip"/></svg></button>
+        <div class="draft" role="textbox" aria-label="الرسالة" aria-readonly="true">أضف فكرة ليوم الجمعة<span class="caret" aria-hidden="true"></span></div>
+        <button class="icon-button send" type="button" aria-label="إرسال الرسالة"><svg class="icon" aria-hidden="true"><use href="#up"/></svg></button>
+      </div>
+    </div>
+    <div class="keyboard" aria-hidden="true">
+      <div class="keyrow" data-keys="ض ص ث ق ف غ ع ه خ ح ج"></div>
+      <div class="keyrow" data-keys="ش س ي ب ل ا ت ن م ك ط"></div>
+      <div class="keyrow" data-keys="ئ ء ؤ ر لا ى ة و ز ظ"><span class="key special"><svg class="icon"><use href="#delete"/></svg></span></div>
+      <div class="keyrow"><span class="key special">١٢٣</span><span class="key special">☺</span><span class="key space">مسافة</span><span class="key special"><svg class="icon"><use href="#return"/></svg></span></div>
+      <div class="keyboard-footer"><svg class="icon"><use href="#globe"/></svg><svg class="icon"><use href="#mic"/></svg></div>
+    </div>
+  </template>
+
+  <template id="conversations">
+    <div class="sheet">
+      <header class="bar"><div></div><h3>محادثاتك</h3><div class="bar-group"><button class="done" type="button">تم</button></div></header>
+      <div class="conversations">
+        <ul class="conversation-list">
+          <li><button class="conversation" type="button" aria-current="true"><span class="tile"><svg class="icon" aria-hidden="true"><use href="#bubbles"/></svg></span><span class="text"><span class="title">خطة النشر للأسبوع</span><span class="subtitle">جاهز</span></span><svg class="icon chevron" aria-hidden="true"><use href="#chevron"/></svg></button></li>
+          <li><button class="conversation" type="button"><span class="tile"><svg class="icon" aria-hidden="true"><use href="#bubble"/></svg></span><span class="text"><span class="title">أفكار لحملة تشرين الثاني</span><span class="subtitle">جاهز</span></span><svg class="icon chevron" aria-hidden="true"><use href="#chevron"/></svg></button></li>
+          <li><button class="conversation" type="button"><span class="tile"><svg class="icon" aria-hidden="true"><use href="#bubble"/></svg></span><span class="text"><span class="title">مراجعة مسودة الرسالة</span><span class="subtitle">ينتظر إجابتك</span></span><svg class="icon chevron" aria-hidden="true"><use href="#chevron"/></svg></button></li>
+          <li><button class="conversation" type="button"><span class="tile"><svg class="icon" aria-hidden="true"><use href="#bubble"/></svg></span><span class="text"><span class="title">تلخيص تقرير الأداء</span><span class="subtitle">جاهز</span></span><svg class="icon chevron" aria-hidden="true"><use href="#chevron"/></svg></button></li>
+        </ul>
+      </div>
+    </div>
+  </template>
+
+  <template id="settings">
+    <div class="sheet">
+      <header class="bar"><div></div><h3>الإعدادات</h3><div class="bar-group"><button class="done" type="button">تم</button></div></header>
+      <div class="settings">
+        <section class="settings-section">
+          <h4>الحساب</h4>
+          <div class="settings-card account-card">
+            <div class="settings-row"><span class="tile"><svg class="icon" aria-hidden="true"><use href="#person"/></svg></span><div><span class="title">البريد</span><bdi class="subtitle" dir="ltr">owner@example.com</bdi></div></div>
+            <div class="account-divider" aria-hidden="true"></div>
+            <div class="settings-row"><span class="tile"><svg class="icon" aria-hidden="true"><use href="#server"/></svg></span><div><span class="title">الخادم</span><bdi class="subtitle" dir="ltr">www.mohassansy.com</bdi></div></div>
+            <div class="account-divider" aria-hidden="true"></div>
+            <div class="settings-row sign-out"><span class="tile"><svg class="icon" aria-hidden="true"><use href="#signout"/></svg></span><span class="title">تسجيل الخروج</span></div>
+          </div>
+        </section>
+        <section class="settings-section">
+          <h4>المظهر</h4>
+          <div class="settings-card"><div class="segments" aria-label="المظهر"><span data-choice="dark">داكن</span><span data-choice="light">فاتح</span><span>حسب الجهاز</span></div></div>
+        </section>
+        <section class="settings-section">
+          <h4>ما يعمل الآن</h4>
+          <div class="settings-card"><p>نموذج لغوي متصل، والردود الحرة متاحة.</p></div>
+        </section>
+        <section class="settings-section">
+          <h4>حول</h4>
+          <div class="settings-card"><p>التطبيق نافذة إلى موحسن على الخادم السحابي، كما في الويب: المحادثات والعقل والأسئلة والموافقات والتحكم بالكمبيوتر تجري هناك. لا يحتاج الهاتف إلى الكمبيوتر ليحادث موحسن.</p></div>
+        </section>
+      </div>
+    </div>
+  </template>
+
+  <script>
+    const screens = Object.entries({ chat: 'المحادثة', conversations: 'المحادثات', settings: 'الإعدادات' });
+    for (const theme of document.querySelectorAll('[data-theme]')) {
+      for (const [screen, label] of screens) {
+        const figure = document.createElement('figure');
+        const phone = document.createElement('div');
+        const home = document.createElement('div');
+        const caption = document.createElement('figcaption');
+        phone.className = 'phone';
+        phone.dataset.screen = screen;
+        home.className = 'home';
+        home.setAttribute('aria-hidden', 'true');
+        phone.append(document.getElementById('status').content.cloneNode(true), document.getElementById(screen).content.cloneNode(true), home);
+        caption.textContent = label;
+        figure.append(phone, caption);
+        theme.querySelector('.devices').append(figure);
+        const selected = phone.querySelector(`[data-choice="${theme.dataset.theme}"]`);
+        if (selected) selected.setAttribute('aria-current', 'true');
+      }
+    }
+    for (const row of document.querySelectorAll('[data-keys]')) {
+      const keys = row.dataset.keys.split(' ').map(letter => {
+        const key = document.createElement('span');
+        key.className = 'key';
+        key.textContent = letter;
+        return key;
+      });
+      row.prepend(...keys);
+    }
+  </script>
+</body>
+</html>
