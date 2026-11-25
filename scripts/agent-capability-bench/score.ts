@@ -1,7 +1,8 @@
 import type { CapabilityCase } from './corpus.js';
 import type { CapabilityCaseObservation } from './observe.js';
 
-export type FailureStage = 'understanding' | 'routing' | 'planning' | 'tool' | 'answer' | 'verification';
+export const failureStages = ['understanding', 'routing', 'planning', 'tool', 'answer', 'verification'] as const;
+export type FailureStage = (typeof failureStages)[number];
 
 interface Failure {
   turn: number;
@@ -129,9 +130,13 @@ function summarize(scores: readonly CapabilityScore[]) {
   const passed = scores.filter(score => score.passed).length;
   const latency = scores.flatMap(score => score.latencyMs === null ? [] : [score.latencyMs]).sort((a, b) => a - b);
   const percentile = (value: number) => latency.length ? latency[Math.ceil(value * latency.length) - 1]! : null;
+  const countStages = (includesStage: (score: CapabilityScore, stage: FailureStage) => boolean) =>
+    Object.fromEntries(failureStages.map(stage => [stage, scores.filter(score => includesStage(score, stage)).length]));
   return { passed, total: scores.length, rate: scores.length ? passed / scores.length : null,
     wilson95: wilson95(passed, scores.length), p50Ms: percentile(0.5), p95Ms: percentile(0.95),
-    measuredLatency: latency.length, completedWithFailure: scores.filter(score => score.completedWithFailure).length };
+    measuredLatency: latency.length, completedWithFailure: scores.filter(score => score.completedWithFailure).length,
+    primaryFailureStages: countStages((score, stage) => score.stage === stage),
+    anyFailureStages: countStages((score, stage) => score.failures.some(failure => failure.stage === stage)) };
 }
 
 export function summarizeCapability(scores: readonly CapabilityScore[]) {

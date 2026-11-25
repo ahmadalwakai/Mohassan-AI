@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { caseFixtureSchema, withCapabilityHarness } from '../scripts/agent-capability-bench/observe.js';
+import { caseFixtureSchema, turnQuestionCount, withCapabilityHarness } from '../scripts/agent-capability-bench/observe.js';
 
 // The inputs below are existing regression inputs from assistant-live-test-repairs-chat,
 // assistant-hands-http-chat, assistant-open-read-chat, assistant-clarification-time-audit,
@@ -51,6 +51,15 @@ it('counts a clarification once and binds a follow-up to the actual pending ques
     expect(result.turns[1]).toMatchObject({ status: 'completed', questionCount: 0, steps: 1 });
     expect(result.turns[1]?.answer).toContain('888');
   });
+});
+
+it('excludes echoed compound-request headings from the question count', () => {
+  // Exact headings from the existing assistant-web-sequence regression.
+  const request = 'ما عاصمة فرنسا؟ ثم كم عدد سكانها؟';
+  const reply = '**ما عاصمة فرنسا؟**\nعاصمتها باريس.\n\n**كم عدد سكانها؟**\nيبلغ عدد سكان فرنسا نحو 68 مليون نسمة.';
+  expect(turnQuestionCount(request, [reply], null)).toBe(0);
+  expect(turnQuestionCount(request, [reply, '**هل أتابع؟**'], null)).toBe(1);
+  expect(turnQuestionCount(request, ['ما عاصمة فرنسا؟'], null)).toBe(1);
 });
 
 it('verifies exact memory through the real isolated store', async () => {

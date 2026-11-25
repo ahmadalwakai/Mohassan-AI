@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { CapabilityCorpusError, loadCapabilityCorpus } from './corpus.js';
 import { withCapabilityHarness } from './observe.js';
-import { scoreCapabilityCase, summarizeCapability } from './score.js';
+import { failureStages, scoreCapabilityCase, summarizeCapability } from './score.js';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const fixtureDir = resolve(root, 'tests/fixtures/agent-capability-bench');
@@ -57,6 +57,15 @@ function table(summary: Summary) {
   ].join('\n');
 }
 
+function failureTable(summary: Summary) {
+  const { primaryFailureStages, anyFailureStages } = summary.overall;
+  return [
+    '| Stage | First failing stage | Cases with any failed check |',
+    '| --- | ---: | ---: |',
+    ...failureStages.map(stage => `| ${stage} | ${primaryFailureStages[stage]} | ${anyFailureStages[stage]} |`),
+  ].join('\n');
+}
+
 async function main() {
   let paths: ReturnType<typeof parseArgs>;
   try { paths = parseArgs(process.argv.slice(2)); }
@@ -92,8 +101,10 @@ async function main() {
     };
     await mkdir(dirname(paths.output), { recursive: true });
     await writeFile(paths.output, JSON.stringify(report, null, 2) + '\n', { encoding: 'utf8', flag: 'wx' });
-    console.log(table(summary));
-    if (corpus.sealed) for (const result of results) console.log(`\n${result.name}\n${table(result.summary)}`);
+    console.log(`${table(summary)}\n\n${failureTable(summary)}`);
+    if (corpus.sealed) {
+      for (const result of results) console.log(`\n${result.name}\n${table(result.summary)}\n\n${failureTable(result.summary)}`);
+    }
     console.log(`\nJSON report with per-case checks: ${paths.output}`);
     return 0;
   } catch (error) {

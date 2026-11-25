@@ -12,7 +12,7 @@ export const capabilityAreas = [
   'document-file', 'coding', 'google-ads', 'desktop', 'memory', 'clarification', 'refusal',
 ] as const;
 export const capabilityLanguages = ['ar', 'en'] as const;
-export const capabilityVarieties = ['msa', 'gulf', 'levantine', 'egyptian', 'english', 'mixed'] as const;
+export const capabilityVarieties = ['msa', 'gulf', 'levantine', 'egyptian', 'iraqi', 'english', 'mixed'] as const;
 
 const nonblank = z.string().min(1).max(4000).refine(value => value.trim().length > 0);
 const label = z.string().regex(/^[a-z][a-z0-9_.:-]{0,95}$/u);

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   capabilityAreas, capabilityBaselineCommit, capabilityCaseSchema, capabilityExpectationSchema,
@@ -74,6 +75,22 @@ async function withCorpus(
 }
 
 describe('capability corpus loading', () => {
+  it('validates the pinned evaluation-only development cases without the holdout payload', async () => {
+    const fixture = new URL('./fixtures/agent-capability-bench/', import.meta.url);
+    const { manifest, development, sealed } = await loadCapabilityCorpus({
+      manifest: fileURLToPath(new URL('manifest.json', fixture)),
+      development: fileURLToPath(new URL('development.json', fixture)),
+    });
+    expect(manifest.development).toMatchObject({ caseCount: 240, arabicCount: 120 });
+    expect(manifest.sealed).toMatchObject({ caseCount: 60, arabicCount: 30 });
+    expect(sealed).toBeUndefined();
+    expect(development.every(item => item.provenance.author === 'agent' && item.provenance.source.includes('never for training'))).toBe(true);
+    for (const area of capabilityAreas) {
+      const languages = new Set(development.filter(item => item.area === area).map(item => item.language));
+      expect(languages).toEqual(new Set(['ar', 'en']));
+    }
+  });
+
   it('loads development without the sealed payload and loads both only with an explicit sealed path', async () => {
     await withCorpus(async ({ sealed, ...visible }, manifest) => {
       const audit = await loadCapabilityCorpus({ ...visible, sealed });
@@ -128,11 +145,11 @@ describe('capability corpus loading', () => {
 
   it('requires the development split to cover every area and wording variety', async () => {
     await withCorpus(async ({ sealed: _sealed, ...paths }) => {
-      await expect(loadCapabilityCorpus(paths)).rejects.toThrow('Missing development coverage for: coding, egyptian.');
+      await expect(loadCapabilityCorpus(paths)).rejects.toThrow('Missing development coverage for: coding, egyptian, iraqi.');
     }, development => {
       for (const item of development) {
         if (item.area === 'coding') item.area = 'comparison';
-        if (item.variety === 'egyptian') item.variety = 'msa';
+        if (item.variety === 'egyptian' || item.variety === 'iraqi') item.variety = 'msa';
       }
     });
   });
@@ -157,6 +174,8 @@ describe('capability case expectations', () => {
   it('requires the declared language variety and exactly one question for clarification cases', () => {
     const [item] = structuralRows('d', 2);
     expect(capabilityCaseSchema.safeParse({ ...item, variety: 'english' }).success).toBe(false);
+    expect(capabilityCaseSchema.safeParse({ ...item, variety: 'iraqi' }).success).toBe(true);
+    expect(capabilityCaseSchema.safeParse({ ...item, language: 'en', variety: 'iraqi' }).success).toBe(false);
     expect(capabilityCaseSchema.safeParse({ ...item, area: 'clarification' }).success).toBe(false);
     expect(capabilityCaseSchema.safeParse({
       ...item, turns: [{ ...item!.turns[0], approve: false, text: '' }],

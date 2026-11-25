@@ -12,6 +12,7 @@ import { createMemoryControl, memoryMigration } from '@mohassan/memory';
 import { migrateAuth } from '../../apps/server/src/auth.js';
 import type { BrainState, TrailEntry } from '../../apps/server/src/assistant/brain.js';
 import { judge } from '../../apps/server/src/assistant/judge.js';
+import { sequenceParts } from '../../apps/server/src/assistant/local-sequence.js';
 import { withoutFigures } from '../../apps/server/src/assistant/readable-page.js';
 import { createSkillReader } from '../../apps/server/src/assistant/skill-reader.js';
 import { createAssistantTools, type AssistantTools } from '../../apps/server/src/assistant/tools.js';
@@ -243,13 +244,16 @@ function recordedAdsPort(fixture: NonNullable<CapabilityCaseFixture['ads']>, rec
   };
 }
 
-function turnQuestionCount(replies: readonly string[], detail: ChatConversation): number {
+export function turnQuestionCount(request: string, replies: readonly string[], question: ChatConversation['question']): number {
+  // The web sequence writer uses each original request part as a standalone bold heading.
+  const echoedHeadings = new Set(sequenceParts(request)?.map(part => `**${part.trim()}**`) ?? []);
   const questionMarks = replies.reduce((count, reply) => {
-    const prose = reply.replace(/```[\s\S]*?```|`[^`\n]*`|https?:\/\/[^\s)>\]]+/gu, '');
+    const withoutEchoes = reply.split(/\r?\n/u).filter(line => !echoedHeadings.has(line.trim())).join('\n');
+    const prose = withoutEchoes.replace(/```[\s\S]*?```|`[^`\n]*`|https?:\/\/[^\s)>\]]+/gu, '');
     return count + (prose.match(/[?؟]+/gu)?.length ?? 0);
   }, 0);
   // The product can display the card as both a message and a structured question. Count its fields once.
-  return Math.max(questionMarks, detail.question ? Math.max(1, detail.question.fields?.length ?? 0) : 0);
+  return Math.max(questionMarks, question ? Math.max(1, question.fields?.length ?? 0) : 0);
 }
 
 function trailToolCalls(trail: readonly TrailEntry[]): CapabilityToolCall[] {
@@ -347,7 +351,7 @@ async function observeCase(database: Database, documents: Documents, item: Capab
         const boundaryCalls = calls.slice(offset);
         const assessment = run.state.requestResolution?.sourceAssessment;
         const evidence = detail.run.evidence;
-        turns.push({ answer: replies.join('\n'), questionCount: turnQuestionCount(replies, detail), questionFields: detail.question?.fields?.map(field => field.id) ?? [],
+        turns.push({ answer: replies.join('\n'), questionCount: turnQuestionCount(turn.text, replies, detail.question), questionFields: detail.question?.fields?.map(field => field.id) ?? [],
           status: run.status, conversationStatus: detail.status, source: assessment?.source ?? null, operation: assessment?.operation ?? null,
           understanding: run.state.requestResolution?.kind ?? null, route: run.state.routing?.route ?? null, handler: run.state.routing?.handler ?? null,
           routeReason: run.state.routing?.reason ?? null, steps: Math.max(run.steps - (resumedRun?.steps ?? 0), toolCalls.length), toolCalls, boundaryCalls,

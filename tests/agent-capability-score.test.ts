@@ -60,7 +60,11 @@ describe('checking structured signals without a benchmark corpus', () => {
     expect(failure.completedWithFailure).toBe(true);
     expect(failure.turns[0]).not.toHaveProperty('answer');
     const stats = summarizeCapability([pass, failure]);
-    expect(stats.overall).toMatchObject({ passed: 1, total: 2, rate: 0.5, p50Ms: 5, p95Ms: 15 });
+    expect(stats.overall).toMatchObject({
+      passed: 1, total: 2, rate: 0.5, p50Ms: 5, p95Ms: 15,
+      primaryFailureStages: { understanding: 0, routing: 0, planning: 1, tool: 0, answer: 0, verification: 0 },
+      anyFailureStages: { understanding: 0, routing: 0, planning: 1, tool: 1, answer: 1, verification: 1 },
+    });
     expect(stats.byArea.calculation).toEqual(stats.byLanguage.en);
     expect(stats.byAreaAndLanguage['calculation/en']).toEqual(stats.byArea.calculation);
   });
