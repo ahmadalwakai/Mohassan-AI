@@ -1,0 +1,115 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { AgentAction, AgentBrowser, AgentPage } from '@mohassan/browser';
+import { createDatabase, migrate } from '@mohassan/database';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { createCommandChatControl } from '../apps/server/src/command-chat.js';
+import { evaluateLocalComputation } from '../apps/server/src/assistant/local-computation.js';
+import { parseHands } from '../apps/server/src/assistant/hands.js';
+import { createJudgeShadow } from '../apps/server/src/assistant/judge-shadow.js';
+
+const owner = 'isolated-reasoning-owner';
+const page: AgentPage = {
+  id: 'route-lengths', url: 'https://lengths.example/', title: 'Route lengths', hash: 'route-lengths',
+  text: 'Pine: Length: 12 m. Birch: Length: 16 m. Ash: Length: 5 m.',
+  elements: [], signals: { captcha: false, password: false, otp: false, card: false },
+  scroll: { top: 0, height: 1000, viewport: 800 }, observedAt: '2026-11-22T16:00:00.000Z',
+};
+
+describe('extended reasoning in the existing chat routes', () => {
+  let database: Awaited<ReturnType<typeof createDatabase>>;
+  let control: Awaited<ReturnType<typeof createCommandChatControl>>;
+  const pages = new Map<string, AgentPage>();
+  let logDirectory: string;
+  let judgeShadow: ReturnType<typeof createJudgeShadow>;
+  const search = vi.fn(async () => { throw new Error('Reasoning must not send a search query.'); });
+  const act = vi.fn(async (_owner: string, id: string, action: AgentAction) => {
+    if (action.kind !== 'open' || new URL(action.text!).href !== page.url) throw new Error('Unexpected browser action');
+    pages.set(id, page);
+    return { page, changed: true };
+  });
+
+  beforeAll(async () => {
+    logDirectory = await mkdtemp(join(tmpdir(), 'mohassan-reasoning-chat-'));
+    judgeShadow = createJudgeShadow({ logFile: join(logDirectory, 'judge.jsonl') });
+    database = await createDatabase();
+    await migrate(database.db);
+    const browser = {
+      setCheckpointStore() {}, async bindAccount() {}, async hasPage(_owner: string, id: string) { return pages.has(id); },
+      async observe(_owner: string, id: string) { return { page: pages.get(id)!, changed: false }; },
+      act, async close() {},
+    } as unknown as AgentBrowser;
+    control = await createCommandChatControl(database.db, { models: { fast: [], deep: [], vision: '' }, browser, recordExperiences: false,
+      searchProvider: { name: 'reasoning-must-not-search', search }, judgeShadow, judgeFixForOwner: true, judgeWithholdForOwner: true });
+  });
+
+  afterAll(async () => {
+    vi.unstubAllEnvs();
+    await control?.shutdown();
+    await database?.close();
+    await judgeShadow?.flush();
+    if (logDirectory) await rm(logDirectory, { recursive: true, force: true });
+  });
+
+  async function ask(goal: string, existing?: string) {
+    const id = existing ?? (await control.create(owner, { goal })).id;
+    if (existing) await control.send(owner, id, { text: goal });
+    await control.settled(id);
+    const detail = await control.detail(owner, id);
+    const run = await database.db.selectFrom('chat_runs').select(['id', 'status', 'state'])
+      .where('conversation_id', '=', id).orderBy('created_at', 'desc').executeTakeFirstOrThrow();
+    expect(detail.error).toBeNull();
+    return { id, text: detail.messages.filter(message => message.role === 'assistant').at(-1)?.text ?? '', run };
+  }
+
+  it('leaves ranking and legacy arithmetic on their former routes by default', () => {
+    vi.stubEnv('MOHASSAN_REASONING', undefined);
+    expect(evaluateLocalComputation('two and a half million')).toBeNull();
+    expect(parseHands('Which is longer on this page: Pine or Birch?')).toBeNull();
+    expect(evaluateLocalComputation('Calculate 7 * 6')?.evidence[0]?.value).toBe('42');
+  });
+
+  it('answers number words and inline comparisons through the local calculation route', async () => {
+    vi.stubEnv('MOHASSAN_REASONING', '1');
+    for (const [request, expected] of [
+      ['two and a half million', '2500000'],
+      ['Which is older: Sam 31 years or Lee 40 years?', 'Lee'],
+    ]) {
+      const { text, run } = await ask(request);
+      expect(text.replace(/[,٬]/gu, '')).toContain(expected);
+      expect(run.status).toBe('completed');
+      expect(run.state.trail).toMatchObject([{ action: 'calculate' }]);
+      expect(await database.db.selectFrom('chat_model_receipts').select('id').where('run_id', '=', run.id).execute()).toEqual([]);
+    }
+    expect(act).not.toHaveBeenCalled();
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it('returns a local gap for an explicitly current exchange rate', async () => {
+    vi.stubEnv('MOHASSAN_REASONING', '1');
+    const { text, run } = await ask('Convert 50 USD to EUR at the current exchange rate');
+    expect(text).toContain('current exchange rate is unavailable');
+    expect(run.status).toBe('blocked');
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it('ranks observed page fields and cites the values through the browser route', async () => {
+    vi.stubEnv('MOHASSAN_REASONING', '1');
+    const { id, text, run } = await ask('Open https://lengths.example and tell me which is longer on the page: Pine or Birch?');
+    expect(text).toContain('Pine');
+    expect(text).toContain('Birch');
+    expect(text).toContain('12 m');
+    expect(text).toContain('16 m');
+    expect(text).toContain(page.url);
+    expect(run.status).toBe('completed');
+    expect(act).toHaveBeenCalledTimes(1);
+    const gap = await ask('Which is longer on this page: Pine or Fir?', id);
+    expect(gap.text).toContain('Fir');
+    expect(gap.text).toContain('12 m');
+    expect(gap.text).toContain(page.url);
+    expect(gap.run.status).not.toBe('completed');
+    expect(act).toHaveBeenCalledTimes(1);
+    expect(search).not.toHaveBeenCalled();
+  });
+});
