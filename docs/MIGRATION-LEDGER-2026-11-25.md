@@ -25,6 +25,8 @@ Wave 5 runs `041_long_run_checkpoints` through the `042_background_results` star
 
 `043_smart_monitors` follows `042_background_results`. It adds `smart_monitors`, `smart_monitor_budgets`, `smart_monitor_hosts`, and a nullable `chat_notifications.monitor_id` for monitor outcomes carried by the existing delivery queues. The rollout flag controls monitor admission, routes, and scheduling.
 
+`044_monitor_alert_feedback` follows `043_smart_monitors`. It adds one optional feedback record per account and monitor alert. Startup applies it with monitors off, and deletion of the account or alert cascades to its feedback.
+
 ## Collisions
 
 - Prefix `035` was claimed by notifications (#20), conversation review (#28, retained in #61), feedback (#30), standalone structured memory (#31, recognized as legacy in #61), and the activation console (#43).
