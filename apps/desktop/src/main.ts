@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { registerBrowserLiveViewWindow } from './browser-live-view-window';
 
 /**
  * تطبيق موحسن لسطح المكتب. يشغّل خدمة موحسن وواجهتها من مجلد المشروع على هذا الجهاز،
@@ -19,6 +20,7 @@ interface Config {
   autostartStack: boolean;
   closeToTray: boolean;
   startHidden: boolean;
+  browserLiveViewAlwaysOnTop: boolean;
 }
 
 const APP_ID = 'ai.mohassan.desktop';
@@ -52,10 +54,15 @@ function loadConfig(): Config {
     autostartStack: saved.autostartStack ?? true,
     closeToTray: saved.closeToTray ?? true,
     startHidden: flag('--hidden') || (saved.startHidden ?? false),
+    browserLiveViewAlwaysOnTop: saved.browserLiveViewAlwaysOnTop === true,
   };
   if (option('--repo')) config.repoRoot = resolve(option('--repo')!);
-  try { mkdirSync(userDir, { recursive: true }); writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8'); } catch { /* read-only profile */ }
+  saveConfig(config);
   return config;
+}
+
+function saveConfig(config: Config) {
+  try { mkdirSync(userDir, { recursive: true }); writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8'); } catch { /* read-only profile */ }
 }
 
 const config = loadConfig();
@@ -70,6 +77,8 @@ let tray: Tray | null = null;
 let stack: ChildProcess | null = null;
 let stackStartedHere = false;
 let quitting = false;
+let browserLiveView: ReturnType<typeof registerBrowserLiveViewWindow> | undefined;
+let refreshTray: (() => void) | undefined;
 
 const icon = () => nativeImage.createFromPath(join(assets, 'icon.png'));
 const trayIcon = () => nativeImage.createFromPath(join(assets, 'tray.png'));
@@ -157,11 +166,13 @@ function createMainWindow() {
     mainWindow?.hide();
   });
   mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('move', () => browserLiveView?.reposition());
   mainWindow.once('ready-to-show', () => {
     if (!config.startHidden) { mainWindow?.show(); mainWindow?.focus(); }
     splash?.close(); splash = null;
   });
   void mainWindow.loadURL(config.webUrl);
+  browserLiveView?.sync();
 }
 
 /**
@@ -190,6 +201,14 @@ function toggleMain() {
 
 function openAtLogin(): boolean { return app.getLoginItemSettings().openAtLogin; }
 
+function setBrowserLiveViewEnabled(enabled: boolean) {
+  config.browserLiveViewAlwaysOnTop = enabled;
+  saveConfig(config);
+  browserLiveView?.sync();
+  browserLiveView?.notifyEnabledChanged();
+  refreshTray?.();
+}
+
 /** A Desktop shortcut that launches this same app, packaged or from the repository. */
 function createDesktopShortcut() {
   const target = process.execPath;
@@ -209,6 +228,7 @@ function buildTray() {
     { type: 'separator' },
     { label: 'إعادة تشغيل الخدمة', click: () => { stopStack(); setTimeout(() => { void boot(true); }, 1500); } },
     { label: 'التشغيل مع Windows', type: 'checkbox', checked: openAtLogin(), click: item => { app.setLoginItemSettings({ openAtLogin: item.checked, args: ['--hidden'] }); refresh(); } },
+    { label: 'نافذة المتصفح المصغّرة دائمًا في المقدّمة', type: 'checkbox', checked: config.browserLiveViewAlwaysOnTop, click: item => setBrowserLiveViewEnabled(item.checked) },
     { label: 'اختصار على سطح المكتب', click: createDesktopShortcut },
     { label: 'فتح الإعدادات', click: () => { void shell.openPath(configPath); } },
     { label: 'فتح سجل التشغيل', click: () => { void shell.openPath(logFile); } },
@@ -216,6 +236,7 @@ function buildTray() {
     { label: `الوضع: ${config.mode === 'lab' ? 'مختبر محلي' : config.mode === 'production' ? 'إنتاج' : 'تطوير'} · ${config.webUrl}`, enabled: false },
     { label: 'خروج', click: () => { quitting = true; app.quit(); } },
   ]));
+  refreshTray = refresh;
   refresh();
   tray.on('click', toggleMain);
   tray.on('double-click', showMain);
@@ -268,6 +289,14 @@ else {
     // Expose the page to UI Automation (screen readers, and Mohassan's own desktop engine when it drives this window).
     // Electron only accepts this call after `ready`; calling it earlier aborted the packaged app with exit code 1.
     app.setAccessibilitySupportEnabled(true);
+    browserLiveView = registerBrowserLiveViewWindow({
+      webUrl: config.webUrl,
+      preload: join(__dirname, 'preload.js'),
+      icon,
+      mainWindow: () => mainWindow,
+      enabled: () => config.browserLiveViewAlwaysOnTop,
+      onWindowClosed: () => { if (!quitting) setBrowserLiveViewEnabled(false); },
+    });
     buildTray();
     globalShortcut.register('CommandOrControl+Shift+M', toggleMain);
     void boot();

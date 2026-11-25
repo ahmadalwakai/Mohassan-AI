@@ -86,27 +86,29 @@ test('a task runs from one message through sign-in, a code and an approval', asy
     const workConversation = await (await creation).json();
     expect(workConversation.browserAccount).toBe('work-e2e');
     page.off('request', countCreations);
-    await expect(page.getByRole('button', { name: 'متابعة' })).toBeVisible({ timeout: 30000 });
+    const chat = page.getByRole('log', { name: 'المحادثة' });
+    const submitSecureForm = chat.getByRole('button', { name: 'متابعة', exact: true });
+    await expect(submitSecureForm).toBeVisible({ timeout: 30000 });
     await expect(page.getByRole('complementary', { name: 'المتصفح' })).toContainText('حساب المتصفح: work-e2e');
     await expect(page.getByLabel('اسم جلسة الحساب')).toHaveCount(0);
     await expect(page.getByRole('complementary', { name: 'المتصفح' }).getByRole('img')).toBeVisible();
     await page.screenshot({ animations: 'disabled', path:test.info().outputPath('assistant-login.png') });
     await page.getByLabel('البريد أو اسم المستخدم').fill('owner@example.test');
     await page.getByLabel('كلمة المرور').fill('not-the-right-one');
-    await page.getByRole('button', { name: 'متابعة' }).click();
+    await submitSecureForm.click();
     await expect(page.getByText('لم يقبل الموقع هذه البيانات')).toBeVisible({ timeout: 30000 });
 
     await page.getByLabel('البريد أو اسم المستخدم').fill('owner@example.test');
     await page.getByLabel('كلمة المرور').fill(PASSWORD);
-    await page.getByRole('button', { name: 'متابعة' }).click();
+    await submitSecureForm.click();
     await expect(page.getByLabel('رمز التحقق')).toBeVisible({ timeout: 30000 });
     await page.getByLabel('رمز التحقق').fill(CODE);
-    await page.getByRole('button', { name: 'متابعة' }).click();
+    await submitSecureForm.click();
 
-    await expect(page.getByRole('button', { name: 'موافق' })).toBeVisible({ timeout: 30000 });
+    await expect(chat.getByRole('button', { name: 'موافق', exact: true })).toBeVisible({ timeout: 30000 });
     expect(site.state.deleted).toBe(false);
     await page.screenshot({ animations: 'disabled', path:test.info().outputPath('assistant-approval.png') });
-    await page.getByRole('button', { name: 'موافق' }).click();
+    await chat.getByRole('button', { name: 'موافق', exact: true }).click();
     await expect(page.getByRole('log').getByText('تم حذف الحساب كما طلبت.')).toBeVisible({ timeout: 30000 });
     expect(site.state.deleted).toBe(true);
     expect(site.state.deleteRequests).toBe(1);

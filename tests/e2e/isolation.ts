@@ -27,6 +27,7 @@ if (E2E_WEB_PORT === E2E_SERVER_PORT) throw new Error('E2E_PORTS_EQUAL');
 export function isolatedE2EEnvironment(directory: string, ambient: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const systemRoot = ambient.SystemRoot || ambient.SYSTEMROOT || ambient.WINDIR;
   const home = path.join(directory, 'home');
+  const installedBrowsers = ambient.PLAYWRIGHT_BROWSERS_PATH;
   return {
     NODE_ENV: 'development', NODE_OPTIONS: '', NODE_PATH: '', NODE_EXTRA_CA_CERTS: '',
     PATH: [path.dirname(process.execPath), ...(systemRoot ? [path.join(systemRoot, 'System32'), systemRoot] : ['/usr/bin', '/bin'])].join(path.delimiter),
@@ -34,7 +35,9 @@ export function isolatedE2EEnvironment(directory: string, ambient: NodeJS.Proces
     HOME: home, USERPROFILE: home, APPDATA: path.join(home, 'AppData', 'Roaming'), LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
     TEMP: path.join(directory, 'tmp'), TMP: path.join(directory, 'tmp'), TMPDIR: path.join(directory, 'tmp'),
     // Installed browser binaries are read-only dependencies, never profiles or credentials.
-    PLAYWRIGHT_BROWSERS_PATH: process.platform === 'win32' ? path.join(homedir(), 'AppData', 'Local', 'ms-playwright') : path.join(homedir(), '.cache', 'ms-playwright'),
+    PLAYWRIGHT_BROWSERS_PATH: installedBrowsers === '0' || (installedBrowsers && path.isAbsolute(installedBrowsers))
+      ? installedBrowsers
+      : process.platform === 'win32' ? path.join(homedir(), 'AppData', 'Local', 'ms-playwright') : path.join(homedir(), '.cache', 'ms-playwright'),
     NEXT_TELEMETRY_DISABLED: '1', DO_NOT_TRACK: '1', CI: '1',
     MOHASSAN_ISOLATED_TEST: 'true', MOHASSAN_E2E_ROOT: directory,
     DATA_DIR: path.join(directory, 'database'), DATABASE_URL: '',

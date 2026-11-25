@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server';
+import { boundedBrowserLiveFrame } from './browser-live-frame';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 async function forward(request: NextRequest, context: {params: Promise<{path:string[]}>}) {
@@ -42,6 +43,9 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
     for(const cookie of response.headers.getSetCookie())output.append('set-cookie',cookie);
     // Only a path on this site: the service must never send a visitor elsewhere through the proxy.
     const location=response.headers.get('location');if(path[0]==='google-ads'&&location?.startsWith('/')&&!location.startsWith('//'))output.set('location',location);
+    if (request.method === 'GET' && path.length === 4 && path[0] === 'chat' && path[1] === 'conversations'
+      && path[3] === 'screen' && target.searchParams.get('liveView') === '1' && response.ok && contentType?.startsWith('image/jpeg'))
+      return await boundedBrowserLiveFrame(response, output);
     return new Response(response.body,{status:response.status,headers:output});
   } catch {
     return Response.json({error:{code:'SERVICE_UNAVAILABLE',message:'تعذر الاتصال بخدمة المهام. تحقق من تشغيلها وأعد المحاولة.'}},{status:503,headers:{'Cache-Control':'no-store'}});

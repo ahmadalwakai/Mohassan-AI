@@ -32,6 +32,14 @@ describe('owned E2E infrastructure isolation', () => {
     expect(env.CODING_ALLOWED_ROOTS).toBe(path.join(directory,'approved-root'));expect(env.SKILL_ENGINE_ENABLED).toBe('true');expect(env.RUN_WORKER).toBe('true');
   });
 
+  it('shares an explicit Playwright binary cache without inheriting browser profiles', () => {
+    const directory = path.join(tmpdir(), 'synthetic-e2e-root');
+    const binaries = path.join(tmpdir(), 'synthetic-playwright-binaries');
+    const env = isolatedE2EEnvironment(directory, { PLAYWRIGHT_BROWSERS_PATH: binaries, BROWSER_PROFILE_DIR: 'outside' });
+    expect(env.PLAYWRIGHT_BROWSERS_PATH).toBe(binaries);
+    expect(env.BROWSER_PROFILE_DIR).toBe(path.join(directory, 'browser-profile'));
+  });
+
   it('copies only source without .env and cleans the owned junction without deleting dependencies', async () => {
     const source=await syntheticWeb();let fixture:Awaited<ReturnType<typeof createE2EFixture>>|undefined;
     try {
