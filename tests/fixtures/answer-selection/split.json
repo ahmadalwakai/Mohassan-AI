@@ -1,0 +1,493 @@
+{
+  "version": 1,
+  "algorithm": "page-family-sha256-prefix-v1",
+  "targetHoldoutPercent": 30,
+  "groups": [
+    {
+      "pageIds": [
+        "ar-earthquake",
+        "en-earthquake"
+      ],
+      "partition": "holdout"
+    },
+    {
+      "pageIds": [
+        "ar-photosynthesis",
+        "en-photosynthesis"
+      ],
+      "partition": "holdout"
+    },
+    {
+      "pageIds": [
+        "ar-red-sea",
+        "en-red-sea"
+      ],
+      "partition": "holdout"
+    },
+    {
+      "pageIds": [
+        "ar-berlin-wall",
+        "en-berlin-wall"
+      ],
+      "partition": "holdout"
+    },
+    {
+      "pageIds": [
+        "ar-wwii",
+        "en-wwii"
+      ],
+      "partition": "holdout"
+    },
+    {
+      "pageIds": [
+        "ar-solar-eclipse",
+        "en-solar-eclipse"
+      ],
+      "partition": "holdout"
+    },
+    {
+      "pageIds": [
+        "ar-water",
+        "en-water"
+      ],
+      "partition": "holdout"
+    },
+    {
+      "pageIds": [
+        "ar-messi",
+        "en-messi"
+      ],
+      "partition": "holdout"
+    },
+    {
+      "pageIds": [
+        "ar-algeria",
+        "en-algeria"
+      ],
+      "partition": "holdout"
+    },
+    {
+      "pageIds": [
+        "ar-arab-league",
+        "ar-cairo",
+        "ar-egypt",
+        "ar-un",
+        "ar-world-health-organization",
+        "en-arab-league",
+        "en-cairo",
+        "en-egypt",
+        "en-un",
+        "en-world-health-organization"
+      ],
+      "partition": "development"
+    },
+    {
+      "pageIds": [
+        "ar-baikal",
+        "ar-mariana-trench",
+        "ar-mount-everest",
+        "en-baikal",
+        "en-mariana-trench",
+        "en-mount-everest"
+      ],
+      "partition": "development"
+    },
+    {
+      "pageIds": [
+        "ar-ibn-khaldun",
+        "en-ibn-khaldun"
+      ],
+      "partition": "development"
+    },
+    {
+      "pageIds": [
+        "ar-naguib-mahfouz",
+        "en-naguib-mahfouz"
+      ],
+      "partition": "development"
+    },
+    {
+      "pageIds": [
+        "ar-pyramids",
+        "en-pyramids"
+      ],
+      "partition": "development"
+    },
+    {
+      "pageIds": [
+        "ar-rain",
+        "en-rain"
+      ],
+      "partition": "development"
+    },
+    {
+      "pageIds": [
+        "ar-sky",
+        "en-sky"
+      ],
+      "partition": "development"
+    },
+    {
+      "pageIds": [
+        "ar-light",
+        "en-light"
+      ],
+      "partition": "development"
+    },
+    {
+      "pageIds": [
+        "ar-amazon",
+        "en-amazon"
+      ],
+      "partition": "development"
+    },
+    {
+      "pageIds": [
+        "ar-africa",
+        "ar-japan",
+        "ar-tokyo",
+        "en-africa",
+        "en-japan",
+        "en-tokyo"
+      ],
+      "partition": "development"
+    },
+    {
+      "pageIds": [
+        "ar-salmon",
+        "en-salmon"
+      ],
+      "partition": "development"
+    },
+    {
+      "pageIds": [
+        "ar-telephone",
+        "en-telephone"
+      ],
+      "partition": "development"
+    },
+    {
+      "pageIds": [
+        "ar-ibn-sina",
+        "en-ibn-sina"
+      ],
+      "partition": "development"
+    },
+    {
+      "pageIds": [
+        "ar-eiffel",
+        "en-eiffel"
+      ],
+      "partition": "development"
+    }
+  ],
+  "development": {
+    "pageIds": [
+      "ar-africa",
+      "ar-amazon",
+      "ar-arab-league",
+      "ar-baikal",
+      "ar-cairo",
+      "ar-egypt",
+      "ar-eiffel",
+      "ar-ibn-khaldun",
+      "ar-ibn-sina",
+      "ar-japan",
+      "ar-light",
+      "ar-mariana-trench",
+      "ar-mount-everest",
+      "ar-naguib-mahfouz",
+      "ar-pyramids",
+      "ar-rain",
+      "ar-salmon",
+      "ar-sky",
+      "ar-telephone",
+      "ar-tokyo",
+      "ar-un",
+      "ar-world-health-organization",
+      "en-africa",
+      "en-amazon",
+      "en-arab-league",
+      "en-baikal",
+      "en-cairo",
+      "en-egypt",
+      "en-eiffel",
+      "en-ibn-khaldun",
+      "en-ibn-sina",
+      "en-japan",
+      "en-light",
+      "en-mariana-trench",
+      "en-mount-everest",
+      "en-naguib-mahfouz",
+      "en-pyramids",
+      "en-rain",
+      "en-salmon",
+      "en-sky",
+      "en-telephone",
+      "en-tokyo",
+      "en-un",
+      "en-world-health-organization"
+    ],
+    "questionIds": [
+      "ar-africa-01",
+      "ar-africa-02",
+      "ar-africa-03",
+      "ar-amazon-01",
+      "ar-amazon-02",
+      "ar-amazon-03",
+      "ar-arab-league-01",
+      "ar-arab-league-02",
+      "ar-arab-league-03",
+      "ar-baikal-01",
+      "ar-baikal-02",
+      "ar-baikal-03",
+      "ar-cairo-01",
+      "ar-cairo-02",
+      "ar-cairo-03",
+      "ar-cairo-04",
+      "ar-egypt-01",
+      "ar-egypt-02",
+      "ar-egypt-03",
+      "ar-eiffel-01",
+      "ar-eiffel-02",
+      "ar-eiffel-03",
+      "ar-eiffel-04",
+      "ar-ibn-khaldun-01",
+      "ar-ibn-khaldun-02",
+      "ar-ibn-khaldun-03",
+      "ar-ibn-sina-01",
+      "ar-ibn-sina-02",
+      "ar-ibn-sina-03",
+      "ar-japan-01",
+      "ar-japan-02",
+      "ar-japan-03",
+      "ar-japan-04",
+      "ar-japan-05",
+      "ar-light-01",
+      "ar-light-02",
+      "ar-light-03",
+      "ar-mariana-trench-01",
+      "ar-mariana-trench-02",
+      "ar-mariana-trench-03",
+      "ar-mount-everest-01",
+      "ar-mount-everest-02",
+      "ar-mount-everest-03",
+      "ar-naguib-mahfouz-01",
+      "ar-naguib-mahfouz-02",
+      "ar-naguib-mahfouz-03",
+      "ar-pyramids-01",
+      "ar-pyramids-02",
+      "ar-pyramids-03",
+      "ar-rain-01",
+      "ar-rain-02",
+      "ar-rain-03",
+      "ar-rain-04",
+      "ar-rain-05",
+      "ar-rain-06",
+      "ar-salmon-01",
+      "ar-salmon-02",
+      "ar-salmon-03",
+      "ar-salmon-04",
+      "ar-sky-01",
+      "ar-sky-02",
+      "ar-sky-03",
+      "ar-sky-04",
+      "ar-telephone-01",
+      "ar-telephone-02",
+      "ar-telephone-03",
+      "ar-tokyo-01",
+      "ar-tokyo-02",
+      "ar-tokyo-03",
+      "ar-tokyo-04",
+      "ar-un-01",
+      "ar-un-02",
+      "ar-un-03",
+      "ar-un-04",
+      "ar-world-health-organization-01",
+      "ar-world-health-organization-02",
+      "ar-world-health-organization-03",
+      "en-africa-asia-area",
+      "en-africa-countries",
+      "en-africa-definition",
+      "en-africa-poverty-cause",
+      "en-amazon-definition",
+      "en-amazon-length",
+      "en-amazon-mouth",
+      "en-amazon-nile-comparison",
+      "en-arab-league-country-hq",
+      "en-arab-league-date",
+      "en-arab-league-definition",
+      "en-arab-league-members",
+      "en-baikal-definition",
+      "en-baikal-depth",
+      "en-baikal-inscribed",
+      "en-baikal-location",
+      "en-cairo-01",
+      "en-cairo-02",
+      "en-cairo-03",
+      "en-cairo-04",
+      "en-egypt-01",
+      "en-egypt-02",
+      "en-egypt-03",
+      "en-eiffel-01",
+      "en-eiffel-02",
+      "en-eiffel-03",
+      "en-eiffel-04",
+      "en-everest-first-climb",
+      "en-everest-first-date",
+      "en-everest-height",
+      "en-everest-measure-method",
+      "en-ibn-khaldun-01",
+      "en-ibn-khaldun-02",
+      "en-ibn-khaldun-03",
+      "en-ibn-khaldun-04",
+      "en-ibn-sina-01",
+      "en-ibn-sina-02",
+      "en-ibn-sina-03",
+      "en-ibn-sina-04",
+      "en-japan-01",
+      "en-japan-02",
+      "en-japan-03",
+      "en-japan-04",
+      "en-light-01",
+      "en-light-02",
+      "en-light-03",
+      "en-mariana-depth",
+      "en-mariana-location",
+      "en-mariana-name",
+      "en-naguib-mahfouz-01",
+      "en-naguib-mahfouz-02",
+      "en-naguib-mahfouz-03",
+      "en-naguib-mahfouz-04",
+      "en-pyramids-01",
+      "en-pyramids-02",
+      "en-pyramids-03",
+      "en-pyramids-04",
+      "en-rain-01",
+      "en-rain-02",
+      "en-rain-03",
+      "en-rain-04",
+      "en-rain-05",
+      "en-salmon-01",
+      "en-salmon-02",
+      "en-salmon-03",
+      "en-salmon-04",
+      "en-sky-01",
+      "en-sky-02",
+      "en-sky-03",
+      "en-sky-04",
+      "en-telephone-01",
+      "en-telephone-02",
+      "en-telephone-03",
+      "en-telephone-04",
+      "en-tokyo-01",
+      "en-tokyo-02",
+      "en-tokyo-03",
+      "en-tokyo-04",
+      "en-trench-baikal-depth",
+      "en-un-01",
+      "en-un-02",
+      "en-un-03",
+      "en-un-04",
+      "en-world-health-organization-01",
+      "en-world-health-organization-02",
+      "en-world-health-organization-03",
+      "en-world-health-organization-04"
+    ],
+    "sha256": "227c1bbc24848ddd8e1793ff060f996e8b4f83201c8f69e216cc750f8cf154e5"
+  },
+  "holdout": {
+    "pageIds": [
+      "ar-algeria",
+      "ar-berlin-wall",
+      "ar-earthquake",
+      "ar-messi",
+      "ar-photosynthesis",
+      "ar-red-sea",
+      "ar-solar-eclipse",
+      "ar-water",
+      "ar-wwii",
+      "en-algeria",
+      "en-berlin-wall",
+      "en-earthquake",
+      "en-messi",
+      "en-photosynthesis",
+      "en-red-sea",
+      "en-solar-eclipse",
+      "en-water",
+      "en-wwii"
+    ],
+    "questionIds": [
+      "ar-algeria-01",
+      "ar-algeria-02",
+      "ar-algeria-03",
+      "ar-algeria-04",
+      "ar-berlin-wall-01",
+      "ar-berlin-wall-02",
+      "ar-berlin-wall-03",
+      "ar-berlin-wall-04",
+      "ar-earthquake-01",
+      "ar-earthquake-02",
+      "ar-earthquake-03",
+      "ar-earthquake-04",
+      "ar-messi-01",
+      "ar-messi-02",
+      "ar-messi-03",
+      "ar-messi-04",
+      "ar-messi-05",
+      "ar-photosynthesis-01",
+      "ar-photosynthesis-02",
+      "ar-photosynthesis-03",
+      "ar-red-sea-01",
+      "ar-red-sea-02",
+      "ar-red-sea-03",
+      "ar-red-sea-04",
+      "ar-solar-eclipse-01",
+      "ar-solar-eclipse-02",
+      "ar-solar-eclipse-03",
+      "ar-water-01",
+      "ar-water-02",
+      "ar-water-03",
+      "ar-wwii-01",
+      "ar-wwii-02",
+      "ar-wwii-03",
+      "ar-wwii-04",
+      "en-algeria-01",
+      "en-algeria-02",
+      "en-algeria-03",
+      "en-berlin-wall-01",
+      "en-berlin-wall-02",
+      "en-berlin-wall-03",
+      "en-berlin-wall-04",
+      "en-earthquake-01",
+      "en-earthquake-02",
+      "en-earthquake-03",
+      "en-earthquake-04",
+      "en-messi-01",
+      "en-messi-02",
+      "en-messi-03",
+      "en-messi-04",
+      "en-photosynthesis-01",
+      "en-photosynthesis-02",
+      "en-photosynthesis-03",
+      "en-photosynthesis-04",
+      "en-red-sea-01",
+      "en-red-sea-02",
+      "en-red-sea-03",
+      "en-solar-eclipse-01",
+      "en-solar-eclipse-02",
+      "en-solar-eclipse-03",
+      "en-solar-eclipse-04",
+      "en-water-boils",
+      "en-water-definition",
+      "en-water-solvent-name",
+      "en-water-three-states",
+      "en-wwii-01",
+      "en-wwii-02",
+      "en-wwii-03",
+      "en-wwii-04"
+    ],
+    "sha256": "dda5539833425ac8700c755876356adc7adacf33e44d3692fe1940094a72f10f"
+  },
+  "sha256": "f8bbb31fe202bca8aef6af0540075a1ace67bc305ffc7f1e0bfcc4a9b1b91d43"
+}
