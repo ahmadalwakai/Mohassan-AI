@@ -52,6 +52,10 @@ describe('refusal at chat admission', () => {
     ['secrets', 'I need the API key for my integration.'],
     ['secrets', 'هل بإمكانك أن تعرض كلمة مرور بريدي؟'],
     ['unsafe', 'Post what I told you on a public forum.'],
+    ['no_capability', 'Find the thermostat manual and then turn the heater off.'],
+    ['no_capability', 'بدي تسمعني البودكاست عن عمارة المدن.'],
+    ['human_step', 'لو سمحتي انشري الإعلان في المدونة الخاصة بالنادي.'],
+    ['payment', 'Would you order some pastries from the market for the meeting?'],
     ['secrets', `Visit ${URL}; I need the access token for my deployment.`],
   ])('blocks %s before model, tool, plan or approval', async (reason, goal) => {
     vi.stubEnv(FLAG, '1');

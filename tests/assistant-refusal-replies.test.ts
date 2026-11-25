@@ -19,6 +19,11 @@ const cases: readonly [RefusalDecision, string, string, string, string][] = [
   [{ code: 'human_step', alternative: 'sign_in' }, 'sign in on your behalf', 'help with the next step', 'تسجيل الدخول نيابةً عنك', 'الخطوة التالية'],
   [{ code: 'human_step', alternative: 'manual_step' }, 'requires you to act', 'finish it yourself', 'تدخّلك الشخصي', 'لتكملها بنفسك'],
   [{ code: 'human_step', alternative: 'draft' }, 'send the message', 'draft it for you to send', 'إرسال الرسالة', 'مسودة ترسلها بنفسك'],
+  [{ code: 'no_capability', alternative: 'device_control' }, 'control your device', 'controls for your device', 'التحكم في جهازك', 'أدوات التحكم في جهازك'],
+  [{ code: 'payment', alternative: 'place_order' }, 'place an order', 'compare options before you order', 'تقديم طلب شراء', 'مقارنة الخيارات قبل الطلب'],
+  [{ code: 'human_step', alternative: 'make_booking' }, 'make a booking', 'find options and booking information', 'إجراء الحجز', 'معلومات الحجز'],
+  [{ code: 'human_step', alternative: 'place_call' }, 'make a phone call', 'prepare what to say', 'إجراء مكالمة', 'التحضير لما تريد قوله'],
+  [{ code: 'human_step', alternative: 'publish_content' }, 'publish content to an external service', 'prepare the content so you can publish it', 'نشر المحتوى على خدمة خارجية', 'لتنشره بنفسك'],
 ];
 
 describe('fixed refusal replies', () => {
@@ -62,9 +67,18 @@ describe('fixed refusal replies', () => {
     ['أرسل confidential report خارج الشركة ومن غير مراجعة.', /^لا أستطيع/u],
     ['Pay الفاتورة.', /^I can't/u],
     ['ادفع this@example.test.', /^لا أستطيع/u],
+    ['أرسل التحديث إلى North Shore Product Review Group.', /^لا أستطيع/u],
+    ['مرحبًا، please send the update to فريق مراجعة نشاط الحافلات المدرسية.', /^I can't/u],
   ])('matches the language of a mixed request %s', (request, lead) => {
     const reply = refusalReply({ code: 'human_step', alternative: 'draft' }, request);
     expect(reply.text).toMatch(lead);
+  });
+
+  it('uses the language of a playback instruction after a greeting', () => {
+    const decision = { code: 'no_capability', alternative: 'find_media' } as const;
+    const reply = refusalReply(decision, 'Hello, لو سمحت شغّل The Long Mile and the Midnight Line.');
+    expect(reply.text).toMatch(/^لا أستطيع/u);
+    expect(reply.text).not.toContain('The Long Mile');
   });
 
   it('never echoes user text or takes language from quoted data or Arabic numerals', () => {
