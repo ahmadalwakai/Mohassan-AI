@@ -155,6 +155,20 @@ describe('manners in the chat controller', () => {
     expect(act).not.toHaveBeenCalled();
   });
 
+  it('acknowledges appreciation before refusing a device request without tools', async () => {
+    vi.stubEnv('MOHASSAN_REFUSAL_POLICY', '1');
+    const goal = 'I appreciate your feedback. Would you mind switching off the porch light?';
+    const { detail, run, reply } = await ask(goal);
+    expect(detail.messages[0]).toMatchObject({ role: 'user', text: goal });
+    expect(detail.messages[1]).toMatchObject({ role: 'assistant', text: expect.stringMatching(/welcome|happy to help|glad/iu) });
+    expect(run).toMatchObject({ goal: 'Would you mind switching off the porch light?', status: 'blocked', steps: 0,
+      state: { routing: { route: 'unsupported', reason: 'request_refused' }, trail: [] } });
+    expect(reply).toMatch(/can't|cannot|unable/iu);
+    expect(bindAccount).not.toHaveBeenCalled();
+    expect(search).not.toHaveBeenCalled();
+    expect(act).not.toHaveBeenCalled();
+  });
+
   it('binds the task to the exact input and leaves schema-trimmed bytes detectable', () => {
     const task = 'Remember exactly this note: "Résumé e\u0301."';
     const displayed = `Hi! ${task}`;
