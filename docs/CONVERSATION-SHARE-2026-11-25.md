@@ -17,7 +17,7 @@
 
 ## التخزين وعرض اللقطة
 
-تقرأ الخدمة `chat_conversations` و`chat_messages` من ترحيل `013_command_chat` بشرط تطابق معرّف صاحب المحادثة مع الحساب. يضم نص رد المساعد روابط مصادره ضمن Markdown. يضيف ترحيل `014_assistant` الحقل `chat_runs.state` الذي يستعمله الفحص لتصنيف منشأ الرد. يسجّل الترحيل `038_conversation_shares` مرجع التشغيل للردود الجديدة المرتبطة بتشغيل، ويتعامل بحذر مع الردود الأقدم التي تُنسب إلى التشغيل بالوقت أو يتعذّر تحديد منشئها. [ترحيلات المحادثة](../apps/server/src/command-chat.ts) · [مخزن المشاركة](../apps/server/src/conversation-share-storage.ts)
+تقرأ الخدمة `chat_conversations` و`chat_messages` من ترحيل `013_command_chat` بشرط تطابق معرّف صاحب المحادثة مع الحساب. يضم نص رد المساعد روابط مصادره ضمن Markdown. يضيف ترحيل `014_assistant` الحقل `chat_runs.state` الذي يستعمله الفحص لتصنيف منشأ الرد. يسجّل الترحيل `039_conversation_shares` مرجع التشغيل للردود الجديدة المرتبطة بتشغيل، ويتعامل بحذر مع الردود الأقدم التي تُنسب إلى التشغيل بالوقت أو يتعذّر تحديد منشئها. [ترحيلات المحادثة](../apps/server/src/command-chat.ts) · [مخزن المشاركة](../apps/server/src/conversation-share-storage.ts)
 
 يحفظ `conversation_shares` اللقطة المنقّحة مع وقت الإنشاء والانتهاء والإلغاء. يعتمد البحث على بصمة `SHA-256` لرمز عشوائي من 128 بت. يُحفظ إعداد مشاركة الأعضاء في `conversation_share_settings`. تستعمل المشاركة معاينة موقّعة مرتبطة بمحتوى المحادثة، ويتحقق الخادم منها قبل حفظ اللقطة. يؤدي تعذّر العثور على رابط صالح إلى عرض صفحة عدم التوفر. [مخزن المشاركة](../apps/server/src/conversation-share-storage.ts) · [العقود](../packages/contracts/src/conversation-share.ts)
 

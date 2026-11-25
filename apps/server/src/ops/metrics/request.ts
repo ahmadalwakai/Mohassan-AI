@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { conversationSharePaths } from '../../conversation-share-paths.js';
 import type { WorkspaceRole } from '../../members.js';
 
 export const METRICS_PATH = '/api/ops/metrics';
@@ -28,6 +29,8 @@ export function createRequestMetricsHooks<Request extends RequestPattern>(roleFo
       // https://fastify.dev/docs/latest/Reference/Request/#routeoptions (retrieved 2026-11-25)
       const pattern = request.routeOptions.url;
       if (!pattern || pattern === METRICS_PATH || pattern === METRICS_CSV_PATH) return;
+      // Viewing a public share uses its bearer link even when the viewer has a workspace session.
+      if (pattern === conversationSharePaths.public) return;
       const cachedRole = roleFor(request);
       if (!cachedRole) return;
       const durationMs = performance.now() - started;

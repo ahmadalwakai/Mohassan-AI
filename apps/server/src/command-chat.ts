@@ -4,7 +4,7 @@ import type { ImageReading } from '@mohassan/vision';
 import { composeImageReply, readingForTrail } from './assistant/image-reading.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { FastifyInstance } from 'fastify';
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 import { z } from 'zod';
 import {
   ChatApproveSchema, ChatBrowserActivitySchema, ChatConversationSchema, ChatCreateSchema, ChatFeedbackSchema, ChatKeyboardSchema, ChatPointerSchema, ChatQuestionSchema, ChatRespondSchema,
@@ -369,7 +369,7 @@ const sleep = (milliseconds: number, signal: AbortSignal) => new Promise<void>((
 class RunEnded extends Error {}
 class AccountAccessEnded extends RunEnded {}
 
-export async function commandChatMigration(db: Kysely<any>) {
+export async function commandChatMigration(db: Kysely<any>, beforeShares?: (tx: Transaction<any>) => Promise<void>) {
   await db.transaction().execute(async (tx) => {
     await sql`LOCK TABLE schema_migrations IN EXCLUSIVE MODE`.execute(tx);
     if (!await tx.selectFrom('schema_migrations').select('version').where('version', '=', '013_command_chat').executeTakeFirst()) {
@@ -421,6 +421,7 @@ export async function commandChatMigration(db: Kysely<any>) {
       await tx.insertInto('schema_migrations').values({version:'033_chat_request_keys'}).execute();
     }
     await campaignEventsMigration(tx);
+    await beforeShares?.(tx);
     await migrateConversationShares(tx);
   });
 }

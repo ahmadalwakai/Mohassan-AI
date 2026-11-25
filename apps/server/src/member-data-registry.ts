@@ -25,6 +25,10 @@ function owned(table: string, columns: string | false): AccountDataTable {
   return accountData(table, 'data.owner_id = $1', columns);
 }
 
+function memberData(table: string, columns: string): AccountDataTable {
+  return accountData(table, 'data.user_id = $1', columns);
+}
+
 function through(key: string, table: string, parentKey = 'id'): string {
   return `data.${key} IN (SELECT ${parentKey} FROM ${table} WHERE owner_id = $1)`;
 }
@@ -100,6 +104,14 @@ export const memberDataRegistry: readonly AccountDataTable[] = [
   owned('coding_projects', 'id owner_id name repo_path base_commit allowed_paths test_profile scope_hash created_at'),
 
   // Browser, conversations, files, and sites.
+  memberData('reminder_deliveries', 'delivery_key reminder_id user_id conversation_id text due_at time_zone delivered_at late'),
+  memberData('reminders', 'id user_id conversation_id text due_at time_zone recurrence status attempts last_error created_at updated_at delivery_key'),
+  memberData('reminder_preferences', 'user_id time_zone'),
+  memberData('chat_notifications', 'task_id user_id conversation_id kind started_at happened_at available_at delivery'),
+  memberData('notification_tabs', 'user_id tab_id visible expires_at'),
+  memberData('notification_preferences', 'user_id quiet_start quiet_end time_zone hide_title'),
+  memberData('push_subscriptions', 'id user_id label created_at last_success_at failure_count'),
+  accountData('conversation_shares', 'data.sharer_id = $1', 'id sharer_id conversation_id snapshot shared_at expires_at revoked_at'),
   owned('browser_file_grants', 'id owner_id conversation_id direction status filename media_type content_hash byte_count inspection response_status error_code expires_at created_at updated_at'),
   owned('chat_images', 'id owner_id conversation_id content_hash mime_type width height bytes created_at expires_at'),
   accountData('chat_campaign_events', through('conversation_id', 'chat_conversations'), 'id conversation_id run_id task_id seq type step_id status data created_at'),
@@ -107,7 +119,7 @@ export const memberDataRegistry: readonly AccountDataTable[] = [
   accountData('chat_model_receipts', through('run_id', 'chat_runs'), 'id run_id step model status input_tokens output_tokens usage_known action_valid output_hash error_code started_at finished_at purpose http_status retry_after_ms retry_reason'),
   accountData('chat_events', through('conversation_id', 'chat_conversations'), 'id conversation_id run_id kind message data created_at'),
   accountData('chat_observations', through('conversation_id', 'chat_conversations'), 'id conversation_id session_id content_hash screenshot_hash created_at'),
-  accountData('chat_messages', through('conversation_id', 'chat_conversations'), 'id conversation_id role text created_at images'),
+  accountData('chat_messages', through('conversation_id', 'chat_conversations'), 'id conversation_id role text created_at images run_id'),
   owned('chat_request_keys', false),
   owned('chat_runs', 'id conversation_id owner_id status goal steps created_at updated_at attempt intent'),
   owned('chat_conversations', 'id owner_id title status active_run_id session_id question progress error created_at updated_at'),

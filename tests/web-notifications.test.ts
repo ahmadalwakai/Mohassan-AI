@@ -81,6 +81,20 @@ describe('web push worker', () => {
     await unauthorized.dispatch('push', { data: { json: () => ({ ...task, conversationId: null, kind: 'task_completed' }) } });
     expect(unauthorized.showNotification).not.toHaveBeenCalled();
   });
+
+  it('shows a reminder only after checking ownership and never displays its text', async () => {
+    const push = { data: { json: () => ({ ...task, kind: 'reminder_due', text: 'private reminder' }) } };
+    const worker = startWorker();
+    await worker.dispatch('push', push);
+    expect(worker.fetch).toHaveBeenCalledOnce();
+    expect(worker.showNotification).toHaveBeenCalledExactlyOnceWith('حان موعد التذكير', expect.objectContaining({
+      body: undefined, data: { conversationId },
+    }));
+
+    const unauthorized = startWorker({ status: 404 });
+    await unauthorized.dispatch('push', push);
+    expect(unauthorized.showNotification).not.toHaveBeenCalled();
+  });
 });
 
 describe('notifications in an open tab', () => {

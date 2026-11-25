@@ -1,16 +1,20 @@
-import { randomUUID } from 'node:crypto';
+import { createECDH, randomBytes, randomUUID } from 'node:crypto';
 import { createDatabase, migrate, type DatabaseHandle } from '@mohassan/database';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrateAuth } from '../apps/server/src/auth.ts';
 import { commandChatMigration } from '../apps/server/src/command-chat.ts';
+import { migrateMemberDataRights } from '../apps/server/src/member-data-migration.ts';
 import { migrateMembers } from '../apps/server/src/members.ts';
+import { ownsPushNotification, pendingPushNotifications, saveNotificationPreferences, subscribePushDevice } from '../apps/server/src/notifications-store.ts';
 import { migrateReminders } from '../apps/server/src/reminders/migration.ts';
+import { queueReminderPush } from '../apps/server/src/reminders/push-delivery.ts';
 import {
   conversationReminderDelivery,
   createReminderScheduler,
   REMINDER_POLL_MS,
 } from '../apps/server/src/reminders/scheduler.ts';
 import { createReminderStore } from '../apps/server/src/reminders/storage.ts';
+import type { PushSender } from '../apps/server/src/web-push.ts';
 
 // UTC interval and calendar arithmetic from ECMAScript (retrieved 2026-11-25).
 // https://tc39.es/ecma262/#sec-time-values-and-time-range
@@ -47,6 +51,15 @@ describe('durable reminder scheduling', () => {
     .select(['id', 'conversation_id', 'role', 'text']).orderBy('created_at').execute();
   const stateOf = (id: string) => database.db.selectFrom('reminders')
     .select(['status', 'attempts', 'last_error']).where('id', '=', id).executeTakeFirstOrThrow();
+  async function subscribe(userId: string) {
+    const subscription = {
+      // A synthetic provider path in the format already accepted by the notification sender.
+      endpoint: `https://fcm.googleapis.com/fcm/send/${randomUUID()}`,
+      keys: { p256dh: createECDH('prime256v1').generateKeys().toString('base64url'), auth: randomBytes(16).toString('base64url') },
+    };
+    await subscribePushDevice(database.db, userId, { ...subscription, label: 'Fixture browser' });
+    return subscription;
+  }
 
   beforeAll(async () => {
     database = await createDatabase();
@@ -56,6 +69,7 @@ describe('durable reminder scheduling', () => {
     await commandChatMigration(database.db);
     await migrateReminders(database.db);
     await migrateReminders(database.db);
+    await migrateMemberDataRights(database.db);
     await database.db.insertInto('user').values([
       { id: ownerId, name: 'Owner', email: 'owner@example.test' },
       { id: memberId, name: 'Member', email: 'member@example.test' },
@@ -67,6 +81,9 @@ describe('durable reminder scheduling', () => {
 
   beforeEach(async () => {
     clock = baseline;
+    await database.db.deleteFrom('chat_notifications').execute();
+    await database.db.deleteFrom('push_subscriptions').execute();
+    await database.db.deleteFrom('notification_preferences').execute();
     await database.db.deleteFrom('chat_conversations').execute();
     await database.db.insertInto('chat_conversations').values([
       { id: ownerConversation, owner_id: ownerId },
@@ -77,6 +94,66 @@ describe('durable reminder scheduling', () => {
   });
 
   afterAll(async () => { await database?.close(); });
+
+  it('recovers a committed reminder push and sends it once to the owning account', async () => {
+    const subscription = await subscribe(ownerId);
+    await subscribe(memberId);
+    await saveNotificationPreferences(database.db, ownerId, { hideTitle: true, quietHours: null });
+    const reminder = await store.create(ownerId, input());
+    const sendPush = vi.fn<PushSender>().mockResolvedValue('delivered');
+    const scheduler = createReminderScheduler(database.db, { now, sendPush, delivery: {
+      async deliver(tx, delivery) {
+        await queueReminderPush.deliver(tx, delivery);
+        // Shutdown after persisting the outbox entry, before the push drain.
+        void scheduler.stop();
+      },
+    } });
+    clock = firstDue;
+    await scheduler.runOnce();
+    const entry = await database.db.selectFrom('reminder_deliveries').select('delivery_key')
+      .where('reminder_id', '=', reminder.id).executeTakeFirstOrThrow();
+    const id = entry.delivery_key;
+    expect(await store.listDue(ownerId)).toEqual([]);
+    expect(sendPush).not.toHaveBeenCalled();
+    expect(await pendingPushNotifications(database.db, now())).toEqual([]);
+    expect(await ownsPushNotification(database.db, ownerId, id, now())).toBe(true);
+    expect(await ownsPushNotification(database.db, memberId, id, now())).toBe(false);
+
+    const recovered = createReminderScheduler(database.db, { now, sendPush });
+    await Promise.all([recovered.runOnce(), createReminderScheduler(database.db, { now, sendPush }).runOnce()]);
+    await recovered.runOnce();
+
+    expect(sendPush).toHaveBeenCalledExactlyOnceWith(subscription, {
+      kind: 'reminder_due', taskId: id, conversationId: ownerConversation,
+    });
+    expect(await messages()).toEqual([]);
+    expect(await store.listDue(ownerId)).toEqual([expect.objectContaining({ id, reminderId: reminder.id })]);
+    expect(await ownsPushNotification(database.db, ownerId, id, now())).toBe(true);
+  });
+
+  it.each(['no subscription', 'quiet hours', 'provider failure', 'transport exception'] as const)(
+    'falls back once to the conversation on %s', async situation => {
+      await subscribe(memberId);
+      if (situation !== 'no subscription') await subscribe(ownerId);
+      if (situation === 'quiet hours') {
+        await saveNotificationPreferences(database.db, ownerId, { quietHours: { start: '00:00', end: '23:59', timeZone }, hideTitle: false });
+      }
+      const sendPush = vi.fn<PushSender>().mockResolvedValue('failed');
+      if (situation === 'transport exception') sendPush.mockRejectedValue(new Error('Synthetic transport failure'));
+      await store.create(ownerId, input());
+      const scheduler = createReminderScheduler(database.db, { now, sendPush });
+      clock = firstDue;
+      await scheduler.runOnce();
+      await scheduler.runOnce();
+
+      const [delivery] = await store.listDue(ownerId);
+      expect(sendPush).toHaveBeenCalledTimes(situation === 'provider failure' || situation === 'transport exception' ? 1 : 0);
+      expect(await messages()).toEqual([expect.objectContaining({
+        id: delivery.id, conversation_id: ownerConversation, text: expect.stringContaining(delivery.text),
+      })]);
+      expect(await ownsPushNotification(database.db, ownerId, delivery.id, now())).toBe(false);
+    },
+  );
 
   it('claims a due occurrence once across concurrent schedulers and a fresh scheduler', async () => {
     const reminder = await store.create(ownerId, input());

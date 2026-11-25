@@ -11,6 +11,7 @@ import { renderConversationMarkdown, renderConversationPdf } from './conversatio
 import { conversationSharePaths as paths } from './conversation-share-paths.js';
 import { scanConversationPrivacy } from './conversation-share-privacy.js';
 import { createConversationShareStorage } from './conversation-share-storage.js';
+import { assertMemberFeatureAccess } from './member-deletion.js';
 import type { WorkspaceRole } from './members.js';
 
 type Identity = (request: FastifyRequest) => Promise<{ id: string }>;
@@ -89,7 +90,7 @@ export function registerConversationShareRoutes(app: FastifyInstance, options: C
     if (!timingSafeEqual(receipt, Buffer.from(input.review, 'hex'))) {
       throw failure(409, 'CONVERSATION_SHARE_REVIEW_CHANGED', 'تغيّرت المحادثة. راجع فحص الخصوصية من جديد.');
     }
-    const { share, token } = await store.createShare(actor.id, id, snapshot, input.expiry, actorRole);
+    const { share, token } = await store.createShare(actor.id, id, snapshot, input.expiry, actorRole, assertMemberFeatureAccess);
     return reply.code(201).send({ share, url: new URL(`/share/${token}`, options.webOrigin).href });
   });
 

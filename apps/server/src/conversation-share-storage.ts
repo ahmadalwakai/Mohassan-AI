@@ -158,9 +158,11 @@ export function createConversationShareStorage(db: Kysely<any>, now: () => numbe
     });
   }
 
-  async function createShare(ownerId: string, conversationId: string, snapshot: ConversationSnapshot, expiry: ConversationShareExpiry, role: WorkspaceRole) {
+  async function createShare(ownerId: string, conversationId: string, snapshot: ConversationSnapshot, expiry: ConversationShareExpiry,
+    role: WorkspaceRole, beforeCreate?: (tx: Kysely<any>, userId: string) => Promise<void>) {
     const checkedSnapshot = ConversationSnapshotSchema.parse(snapshot);
     return db.transaction().execute(async tx => {
+      await beforeCreate?.(tx, ownerId);
       const conversation = await tx.selectFrom('chat_conversations').select('id')
         .where('id', '=', conversationId).where('owner_id', '=', ownerId).forShare().executeTakeFirst();
       if (!conversation) throw failure(404, 'CHAT_NOT_FOUND', 'لم يُعثر على المحادثة.');

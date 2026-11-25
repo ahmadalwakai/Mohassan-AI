@@ -9,6 +9,7 @@ import { memberDataRegistry } from '../apps/server/src/member-data-registry.ts';
 const nonAccountTables = {
   ai_provider_health: 'Shared provider health, keyed by provider.',
   auth_schema_migrations: 'Auth migration versions.',
+  conversation_share_settings: 'Workspace-wide policy for members creating share links.',
   rateLimit: 'Better Auth keys this by IP address and endpoint, including unauthenticated clients.',
   schema_migrations: 'Application migration versions.',
   search_provider_admission: 'Shared provider admission state.',

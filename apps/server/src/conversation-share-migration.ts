@@ -2,8 +2,11 @@ import { sql, type Kysely } from 'kysely';
 
 /** Runs under the command chat migration's schema lock, after the chat tables exist. */
 export async function migrateConversationShares(tx: Kysely<any>) {
-  const version = '038_conversation_shares';
+  const version = '039_conversation_shares';
   if (await tx.selectFrom('schema_migrations').select('version').where('version', '=', version).executeTakeFirst()) return;
+  const previous = await tx.updateTable('schema_migrations').set({ version })
+    .where('version', '=', '038_conversation_shares').returning('version').executeTakeFirst();
+  if (previous) return;
 
   await sql`ALTER TABLE chat_messages ADD COLUMN run_id text REFERENCES chat_runs(id) ON DELETE SET NULL`.execute(tx);
   // The identifier is kept for the sharer's list. The snapshot does not read from or depend on live chat rows.

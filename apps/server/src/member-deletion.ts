@@ -25,7 +25,7 @@ const publicDeletion = (row: DeletionTimes): MemberDeletion => ({
   purgeAfter: new Date(row.purge_after).toISOString(),
 });
 
-function memberDeletionQuery(db: Kysely<any>) {
+export function memberDeletionQuery(db: Kysely<any>) {
   return db.selectFrom('member_deletion_requests as d')
     .innerJoin('workspace_members as m', 'm.user_id', 'd.user_id')
     .where('m.role', '=', 'member')
@@ -45,6 +45,24 @@ export async function getMemberDeletion(db: Kysely<any>, userId: string) {
 
 export async function memberDeletionPending(db: Kysely<any>, userId: string) {
   return Boolean(await deletionState(db, userId));
+}
+
+async function lockMemberFeatureAccess(tx: Kysely<any>, userId: string, skipLocked: boolean) {
+  const identity = tx.selectFrom('user').select('id').where('id', '=', userId).forKeyShare();
+  const locked = await (skipLocked ? identity.skipLocked() : identity).executeTakeFirst();
+  return Boolean(locked) && !await memberDeletionPending(tx, userId);
+}
+
+export async function assertMemberFeatureAccess(tx: Kysely<any>, userId: string) {
+  if (!await lockMemberFeatureAccess(tx, userId, false)) {
+    throw failure(403, 'MEMBER_DELETION_PENDING', 'حسابك بانتظار الحذف. يمكنك إلغاء الطلب خلال مهلة الحذف.');
+  }
+}
+
+export function memberReminderDeliveryAllowed(tx: Kysely<any>, userId: string) {
+  // The scheduler may already hold conversation or reminder locks. The purge
+  // takes the identity lock first, so skip delivery if that lock is unavailable.
+  return lockMemberFeatureAccess(tx, userId, true);
 }
 
 export async function memberDeletionAccess(db: Kysely<any>, userId: string, routeKey: string) {
@@ -89,6 +107,13 @@ async function requestMemberDeletion(db: Kysely<any>, userId: string, sessionId:
       ON CONFLICT (user_id) DO NOTHING
       RETURNING requested_at, purge_after`.execute(tx);
     if (!row.rows[0]) throw failure(409, 'DELETION_ALREADY_REQUESTED', 'حذف الحساب مطلوب بالفعل.');
+    await tx.updateTable('conversation_shares').set({ revoked_at: row.rows[0].requested_at })
+      .where('sharer_id', '=', userId).where('revoked_at', 'is', null).execute();
+    await tx.deleteFrom('push_subscriptions').where('user_id', '=', userId).execute();
+    await tx.updateTable('chat_notifications').set({ delivery: 'suppressed' }).where('user_id', '=', userId)
+      .where('conversation_id', 'is not', null).where('delivery', 'in', ['pending', 'push'])
+      // The scheduler pauses queued reminders and resumes them if deletion is canceled.
+      .where(eb => eb.or([eb('kind', '!=', 'reminder_due'), eb('delivery', '=', 'push')])).execute();
     await tx.deleteFrom('session').where('userId', '=', userId).execute();
     await recordMemberAudit(tx, { actorId: userId, targetId: userId, action: 'deletion_requested' });
     return publicDeletion(row.rows[0]);

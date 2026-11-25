@@ -5,6 +5,7 @@ import {
   type NotificationQuietHours, type NotificationSyncRequest, type NotificationSyncResponse,
   type PushDevice, type PushSubscribeRequest,
 } from '@mohassan/contracts';
+import type { PushSender, WebPushPayload } from './web-push.js';
 
 const PRESENCE_MS = 25_000;
 const PRIORITY_WINDOW_MS = 2_000;
@@ -14,7 +15,7 @@ interface NotificationEvent {
   task_id: string;
   user_id: string;
   conversation_id: string | null;
-  kind: NotificationKind;
+  kind: WebPushPayload['kind'];
   started_at: Date;
   happened_at: Date;
   available_at: Date;
@@ -115,6 +116,17 @@ export async function recordPushResult(db: Database, device: StoredPushDevice, r
     .where('id', '=', id).where('user_id', '=', userId).where('p256dh', '=', p256dh).where('auth', '=', auth).execute();
 }
 
+export async function sendToPushDevice<Payload extends WebPushPayload>(db: Database, send: PushSender<Payload>, userId: string, payload: Payload) {
+  for (const device of await pushDeliveryDevices(db, userId)) {
+    const result = await send({ endpoint: device.endpoint, keys: { p256dh: device.p256dh, auth: device.auth } }, payload);
+    await recordPushResult(db, device, result);
+    if (result === 'delivered') return 1;
+    // Only definite expiration permits trying another device without risking a second notification.
+    if (result === 'failed') break;
+  }
+  return 0;
+}
+
 function activeTabs(db: Database, now: Date) {
   return db.selectFrom('notification_tabs').select('tab_id').where('expires_at', '>', now);
 }
@@ -141,15 +153,17 @@ export async function recordNotificationOutcome(db: Database, outcome: {
 function events(db: Database) {
   return db.selectFrom('chat_notifications as n').innerJoin('chat_conversations as c', join =>
     join.onRef('n.conversation_id', '=', 'c.id').onRef('n.user_id', '=', 'c.owner_id'))
-    .select(['n.task_id', 'n.user_id', 'n.conversation_id', 'n.kind', 'n.started_at', 'n.happened_at', 'c.title']);
+    .where('n.kind', '!=', 'reminder_due')
+    .select(['n.task_id', 'n.user_id', 'n.conversation_id', 'n.kind', 'n.started_at', 'n.happened_at', 'c.title'])
+    .$narrowType<{ kind: NotificationKind }>();
 }
 
-function eventPayload(event: Pick<NotificationEvent, 'task_id' | 'kind' | 'conversation_id'> & { title: string }, hideTitle: boolean): NotificationPayload {
+function eventPayload(event: Pick<NotificationEvent, 'task_id' | 'conversation_id'> & { kind: NotificationKind; title: string }, hideTitle: boolean): NotificationPayload {
   return { taskId: event.task_id, kind: event.kind, conversationId: event.conversation_id,
     ...(!hideTitle && { conversationTitle: event.title.slice(0, 100) }) };
 }
 
-const oldestEvent = (now: Date) => new Date(now.getTime() - EVENT_TTL_MS);
+export const oldestEvent = (now: Date) => new Date(now.getTime() - EVENT_TTL_MS);
 
 export async function syncNotifications(db: Database, userId: string, input: NotificationSyncRequest, now = new Date()): Promise<NotificationSyncResponse> {
   await db.deleteFrom('notification_tabs').where('user_id', '=', userId).where(eb => eb.or([
@@ -211,7 +225,11 @@ export async function createTestNotification(db: Database, userId: string, now =
 
 export async function ownsPushNotification(db: Database, userId: string, id: string, now = new Date()) {
   return Boolean(await db.selectFrom('chat_notifications as n').select('n.task_id')
-    .where('n.task_id', '=', id).where('n.user_id', '=', userId).where('n.delivery', '=', 'push')
+    .where('n.task_id', '=', id).where('n.user_id', '=', userId).where(eb => eb.or([
+      eb('n.delivery', '=', 'push'),
+      // The worker may check ownership before the provider's response reaches the reminder scheduler.
+      eb.and([eb('n.kind', '=', 'reminder_due'), eb('n.delivery', '=', 'pending')]),
+    ]))
     .where('n.happened_at', '>', oldestEvent(now)).where(eb => eb.or([
       eb('n.conversation_id', 'is', null),
       eb.exists(eb.selectFrom('chat_conversations as c').select('c.id').whereRef('c.id', '=', 'n.conversation_id').whereRef('c.owner_id', '=', 'n.user_id')),

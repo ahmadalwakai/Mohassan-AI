@@ -109,8 +109,11 @@ export function createReminderStore(db: Kysely<any>, { now = () => new Date() }:
     },
 
     async listDue(userId) {
-      const rows = await db.selectFrom('reminder_deliveries').selectAll().where('user_id', '=', userId)
-        .orderBy('delivered_at', 'desc').orderBy('delivery_key', 'desc').limit(DUE_LIST_LIMIT).execute() as ReminderDeliveryRecord[];
+      const rows = await db.selectFrom('reminder_deliveries as d').selectAll('d').where('d.user_id', '=', userId)
+        .where(({ not, exists, selectFrom }) => not(exists(selectFrom('chat_notifications as n').select('n.task_id')
+          .whereRef('n.user_id', '=', 'd.user_id').where('n.task_id', '=', sql<string>`d.delivery_key::text`)
+          .where('n.kind', '=', 'reminder_due').where('n.delivery', '=', 'pending'))))
+        .orderBy('d.delivered_at', 'desc').orderBy('d.delivery_key', 'desc').limit(DUE_LIST_LIMIT).execute() as ReminderDeliveryRecord[];
       return rows.map(row => ({
         id: row.delivery_key, reminderId: row.reminder_id, conversationId: row.conversation_id, text: row.text,
         dueAt: new Date(row.due_at).toISOString(), timeZone: row.time_zone,

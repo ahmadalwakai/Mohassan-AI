@@ -26,8 +26,8 @@ describe('conversation share storage', () => {
 
   it('applies the command chat migration once and reads visible text and sources in message order', async () => {
     await commandChatMigration(database.db);
-    const migrations = await database.db.selectFrom('schema_migrations').select('version').where('version', '=', '038_conversation_shares').execute();
-    expect(migrations).toEqual([{ version: '038_conversation_shares' }]);
+    const migrations = await database.db.selectFrom('schema_migrations').select('version').where('version', '=', '039_conversation_shares').execute();
+    expect(migrations).toEqual([{ version: '039_conversation_shares' }]);
     const id = await conversation('المصادر');
     const question = 'أعطني المرجع.';
     const answer = 'هذه الإجابة.\n<think>hidden reasoning</think>\n\n**المصدر:** [وثائق](https://example.test/wiki/page_(documentation))';

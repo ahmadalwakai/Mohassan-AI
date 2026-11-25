@@ -9,6 +9,9 @@ import { MemberAgentBrowser, purgeAgentBrowserProfiles } from '../apps/server/sr
 import { createApplication } from '../apps/server/src/app.ts';
 import { memberDocumentDirectory } from '../apps/server/src/member-data-document-path.ts';
 import { purgeMemberAccount, startMemberDeletionPurge } from '../apps/server/src/member-deletion.ts';
+import { conversationSharePaths } from '../apps/server/src/conversation-share-paths.ts';
+import { createReminderScheduler } from '../apps/server/src/reminders/scheduler.ts';
+import { addPlatformMemberData } from './fixtures/platform-member-data.ts';
 
 describe('member deletion', () => {
   const origin = 'http://127.0.0.1:3000';
@@ -87,6 +90,22 @@ describe('member deletion', () => {
     expect((await get(self, another.cookie)).json()).toEqual({ deletion: null });
     expect(await audit(memberId)).toEqual([]);
 
+    const conversationId = randomUUID(), ownerConversationId = randomUUID();
+    await db().insertInto('chat_conversations').values([
+      { id: conversationId, owner_id: memberId, title: 'Member share fixture' },
+      { id: ownerConversationId, owner_id: ownerId, title: 'Owner share fixture' },
+    ]).execute();
+    const memberData = await addPlatformMemberData(db(), memberId, conversationId);
+    const ownerData = await addPlatformMemberData(db(), ownerId, ownerConversationId);
+    const queuedId = memberData.exportedRows.reminder_deliveries.delivery_key;
+    const queuedAt = new Date();
+    await db().insertInto('chat_notifications').values({
+      task_id: queuedId, user_id: memberId, conversation_id: conversationId, kind: 'reminder_due',
+      started_at: queuedAt, happened_at: queuedAt, available_at: memberData.dueAt, delivery: 'pending',
+    }).execute();
+    const publicPath = (token: string) => conversationSharePaths.public.replace(':token', token);
+    expect((await get(publicPath(memberData.token))).statusCode).toBe(200);
+
     const request = await post(self, { password: first.password }, one.cookie);
     expect(request.statusCode).toBe(200);
     const { deletion } = request.json();
@@ -94,6 +113,19 @@ describe('member deletion', () => {
     for (const cookie of [one.cookie, another.cookie]) expect((await get(self, cookie)).statusCode).toBe(401);
     expect((await remove(self, one.cookie)).statusCode).toBe(401);
     expect(await db().selectFrom('session').select('id').where('userId', '=', memberId).execute()).toHaveLength(0);
+    expect((await get(publicPath(memberData.token))).statusCode).toBe(404);
+    expect((await get(publicPath(ownerData.token))).statusCode).toBe(200);
+    expect(await db().selectFrom('push_subscriptions').select('id').execute()).toEqual([{ id: ownerData.pushId }]);
+    expect(await db().selectFrom('chat_notifications').select('delivery').where('task_id', '=', memberData.taskId).executeTakeFirst())
+      .toEqual({ delivery: 'suppressed' });
+    const now = () => new Date(Math.max(memberData.dueAt.getTime(), ownerData.dueAt.getTime()));
+    const scheduler = createReminderScheduler(db(), { now });
+    const deliveries = () => db().selectFrom('reminder_deliveries').select('delivery_key')
+      .where('delivery_key', 'in', [memberData.deliveryKey, ownerData.deliveryKey]).execute();
+    const queuedMessage = () => db().selectFrom('chat_messages').select('id').where('id', '=', queuedId).executeTakeFirst();
+    await scheduler.runOnce();
+    expect(await deliveries()).toEqual([{ delivery_key: ownerData.deliveryKey }]);
+    expect(await queuedMessage()).toBeUndefined();
     expect(await purgeMemberAccount(db(), memberId, { documentsDir, purgeBrowserProfiles: async () => {} })).toBe(false);
 
     const recovery = await login(first);
@@ -107,6 +139,11 @@ describe('member deletion', () => {
     });
     expect((await remove(self, recovery.cookie, { userId: purgedId })).statusCode).toBe(400);
     expect((await remove(self, recovery.cookie)).json()).toEqual({ cancelled: true });
+    await scheduler.runOnce();
+    expect(await deliveries()).toHaveLength(2);
+    expect(await queuedMessage()).toEqual({ id: queuedId });
+    expect((await get(publicPath(memberData.token))).statusCode).toBe(404);
+    expect(await db().selectFrom('push_subscriptions').select('id').where('user_id', '=', memberId).execute()).toEqual([]);
     expect((await get(self, recovery.cookie)).json()).toEqual({ deletion: null });
     expect((await get('/api/chat/conversations', recovery.cookie)).statusCode).toBe(200);
     expect((await remove(self, recovery.cookie)).json()).toEqual({ cancelled: false });
@@ -177,6 +214,7 @@ describe('member deletion', () => {
     await db().insertInto('chat_messages').values(Array.from({ length: 251 }, () =>
       ({ id: randomUUID(), conversation_id: conversationId, role: 'user', text: 'fixture message' }))).execute();
     await db().insertInto('chat_messages').values({ id: randomUUID(), conversation_id: otherConversation, role: 'user', text: 'other fixture message' }).execute();
+    const platform = await addPlatformMemberData(db(), purgedId, conversationId);
     const deletedDocs = memberDocumentDirectory(documentsDir, purgedId);
     const retainedDocs = memberDocumentDirectory(documentsDir, memberId);
     for (const folder of [deletedDocs, retainedDocs]) {
@@ -207,6 +245,10 @@ describe('member deletion', () => {
       await expect(purge()).rejects.toThrow('simulated interruption');
       expect(await db().selectFrom('chat_messages').select('id').where('conversation_id', '=', conversationId).execute()).toHaveLength(0);
       expect(await db().selectFrom('chat_messages').select('id').where('conversation_id', '=', otherConversation).execute()).toHaveLength(1);
+      for (const [table, row] of Object.entries(platform.exportedRows)) {
+        const accountColumn = 'sharer_id' in row ? 'sharer_id' : 'user_id';
+        expect(await db().selectFrom(table).select(accountColumn).where(accountColumn, '=', purgedId).execute(), table).toEqual([]);
+      }
       expect(await db().selectFrom('user').select('id').where('id', '=', purgedId).executeTakeFirst()).toBeDefined();
       expect((await db().selectFrom('member_deletion_requests').select('started_at').where('user_id', '=', purgedId).executeTakeFirstOrThrow()).started_at).toBeTruthy();
       expect(await db().selectFrom('session').select('id').where('userId', '=', purgedId).execute()).toHaveLength(0);

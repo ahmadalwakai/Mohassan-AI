@@ -2,13 +2,16 @@ import { sql, type Kysely } from 'kysely';
 import { MemberAuditActionSchema } from '@mohassan/contracts';
 import { installMemberAdministrationAudit } from './member-audit.js';
 
-const version = '037_member_data_rights';
+const version = '040_member_data_rights';
 
 /** Server migration: auth and workspace membership must already be installed. */
 export async function migrateMemberDataRights(db: Kysely<any>) {
   await db.transaction().execute(async tx => {
     await sql`SELECT pg_advisory_xact_lock(1846021106)`.execute(tx);
     if (await tx.selectFrom('schema_migrations').select('version').where('version', '=', version).executeTakeFirst()) return;
+    const previous = await tx.updateTable('schema_migrations').set({ version })
+      .where('version', '=', '037_member_data_rights').returning('version').executeTakeFirst();
+    if (previous) return;
 
     await sql`CREATE TABLE member_deletion_requests (
       user_id text PRIMARY KEY REFERENCES "user"(id) ON DELETE CASCADE,

@@ -12,6 +12,7 @@ import { buildOperations, operationsHash, summarizeOperations } from '@mohassan/
 import { listZip } from '@mohassan/sites';
 import { createApplication } from '../apps/server/src/app.ts';
 import { createMemberDataExport } from '../apps/server/src/member-data-export.ts';
+import { addPlatformMemberData } from './fixtures/platform-member-data.ts';
 
 const exportUrl = '/api/member-data/export';
 const origin = 'http://127.0.0.1:3000';
@@ -112,6 +113,7 @@ describe('signed-in account exports', () => {
     image.data.fill(pixel);
     const png = PNG.sync.write(image);
     await db().insertInto('chat_conversations').values({ id: conversationId, owner_id: account.id, title: account.name }).execute();
+    const platform = await addPlatformMemberData(db(), account.id, conversationId);
     await db().insertInto('chat_messages').values({ id: randomUUID(), conversation_id: conversationId, text: message, role: 'user' }).execute();
     await db().insertInto('chat_images').values({
       id: imageId, owner_id: account.id, conversation_id: conversationId, width: image.width, height: image.height,
@@ -190,8 +192,8 @@ describe('signed-in account exports', () => {
       data: JSON.stringify({ detail: { apiKey, field: 'Safe fixture value', text: `Connected as ${adsSecrets.login_customer_id}` } }),
     }).execute();
 
-    return { message, png, imageId, siteImageId, document, documentId, documentName, files, adsName, campaign: summary!.campaignName,
-      secrets: [...Object.values(oauthSecrets), ...Object.values(adsSecrets), apiKey, credential.password as string],
+    return { message, png, imageId, siteImageId, document, documentId, documentName, files, adsName, campaign: summary!.campaignName, platform,
+      secrets: [...Object.values(oauthSecrets), ...Object.values(adsSecrets), ...platform.secrets, apiKey, credential.password as string],
     };
   }
 
@@ -248,6 +250,9 @@ describe('signed-in account exports', () => {
     expect(readTable(archive, 'chat_events')).toMatchObject([{ data: { detail: { field: 'Safe fixture value' } } }]);
     expect(readTable(archive, 'google_ads_connections')).toEqual([{ account_name: ownData.adsName }]);
     expect(readTable(archive, 'google_ads_drafts')).toMatchObject([{ summary: { campaignName: ownData.campaign } }]);
+    for (const [table, row] of Object.entries(ownData.platform.exportedRows)) {
+      expect(readTable(archive, table)).toMatchObject([row]);
+    }
     expect(archive.get(`files/chat-images/${ownData.imageId}.png`)?.equals(ownData.png)).toBe(true);
     expect(archive.get(`files/site-images/${ownData.siteImageId}.png`)?.equals(ownData.png)).toBe(true);
     expect(archive.get(`files/site-images/${ownData.siteImageId}-small.png`)?.equals(ownData.png)).toBe(true);

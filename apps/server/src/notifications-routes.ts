@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Kysely } from 'kysely';
 import { z } from 'zod';
+import { assertMemberFeatureAccess } from './member-deletion.js';
 import {
   NotificationClaimRequestSchema, NotificationPreferencesSchema, NotificationSyncRequestSchema, PushSubscribeRequestSchema,
   type NotificationClaimResponse, type NotificationPayload, type NotificationSettingsResponse, type PushSubscribeResponse,
@@ -8,10 +9,10 @@ import {
 } from '@mohassan/contracts';
 import {
   claimNotification, createTestNotification, listPushDevices, notificationPreferences, ownsPushNotification, pendingPushNotifications,
-  pushDeliveryDevices, recordPushResult, saveNotificationPreferences, subscribePushDevice, syncNotifications,
+  saveNotificationPreferences, sendToPushDevice, subscribePushDevice, syncNotifications,
   unsubscribePushDevice,
 } from './notifications-store.js';
-import { isBrowserPushSubscription, sendWebPushNotification, webPushConfigFromEnv } from './web-push.js';
+import { isBrowserPushSubscription, sendWebPushNotification, webPushConfigFromEnv, type PushSender } from './web-push.js';
 
 const base = '/api/notifications';
 const settings = `${base}/settings`, subscribe = `${base}/subscribe`, device = `${base}/devices/:id`;
@@ -21,28 +22,15 @@ export const NOTIFICATION_MEMBER_ROUTES = [
   `POST ${test}`, `GET ${event}`, `POST ${claim}`,
 ];
 
-type PushSender = (subscription: { endpoint: string; keys: { p256dh: string; auth: string } },
-  payload: NotificationPayload) => ReturnType<typeof sendWebPushNotification>;
 const pushUnavailable = { error: { code: 'PUSH_UNAVAILABLE', message: 'إرسال الإشعارات إلى الأجهزة غير مهيّأ.' } };
 
-async function sendToDevice(db: Kysely<any>, send: PushSender, userId: string, payload: NotificationPayload) {
-  for (const device of await pushDeliveryDevices(db, userId)) {
-    const result = await send({ endpoint: device.endpoint, keys: { p256dh: device.p256dh, auth: device.auth } }, payload);
-    await recordPushResult(db, device, result);
-    if (result === 'delivered') return 1;
-    // Only a definite expiration permits trying another device without risking a second notification.
-    if (result === 'failed') break;
-  }
-  return 0;
-}
-
-export async function dispatchPushNotifications(db: Kysely<any>, send: PushSender,
+export async function dispatchPushNotifications(db: Kysely<any>, send: PushSender<NotificationPayload>,
   isActive: (userId: string) => Promise<boolean>, now = new Date()) {
   const pending = await pendingPushNotifications(db, now);
   await Promise.all(pending.map(async ({ user_id: userId, task_id: id }) => {
     if (!await isActive(userId)) return;
     const payload = await claimNotification(db, userId, id, 'push', now);
-    if (payload) await sendToDevice(db, send, userId, payload);
+    if (payload) await sendToPushDevice(db, send, userId, payload);
   }));
 }
 
@@ -70,7 +58,10 @@ export function registerNotificationRoutes(app: FastifyInstance, options: {
     const input = PushSubscribeRequestSchema.parse(request.body);
     if (!isBrowserPushSubscription(input)) return reply.code(400).send({ error: { code: 'INVALID_PUSH_SUBSCRIPTION', message: 'اشتراك المتصفح غير صالح.' } });
     if (!send) return reply.code(503).send(pushUnavailable);
-    const own = await subscribePushDevice(db, id, input);
+    const own = await db.transaction().execute(async tx => {
+      await assertMemberFeatureAccess(tx, id);
+      return subscribePushDevice(tx as Kysely<any>, id, input);
+    });
     if (!own) return reply.code(409).send({ error: { code: 'PUSH_ENDPOINT_IN_USE', message: 'هذا الاشتراك مرتبط بحساب آخر.' } });
     return { device: own } satisfies PushSubscribeResponse;
   });
@@ -89,7 +80,7 @@ export function registerNotificationRoutes(app: FastifyInstance, options: {
   app.post(test, { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
     const { id } = await owner(request);
     if (!send) return reply.code(503).send(pushUnavailable);
-    const delivered = await sendToDevice(db, send, id, await createTestNotification(db, id));
+    const delivered = await sendToPushDevice(db, send, id, await createTestNotification(db, id));
     return { delivered } satisfies PushTestResponse;
   });
 

@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { ReminderDeliverySummary } from '@mohassan/contracts';
+import { memberDeletionQuery, memberReminderDeliveryAllowed } from '../member-deletion.js';
+import type { PushSender } from '../web-push.js';
+import { deliverQueuedReminderPush, queueReminderPush } from './push-delivery.js';
 import { OWNER_ACTIVE_REMINDER_LIMIT, readReminderRecurrence, reminderUpdatedAt, type ReminderRecord } from './storage.js';
 import { nextReminderOccurrence, ReminderCalendarExhausted } from './time.js';
 
@@ -32,11 +35,13 @@ export const conversationReminderDelivery: ReminderDeliveryPort = {
 interface SchedulerOptions {
   now?: () => Date;
   delivery?: ReminderDeliveryPort;
+  sendPush?: PushSender;
   onError?: () => void;
 }
 
 export function createReminderScheduler(db: Kysely<any>, {
-  now = () => new Date(), delivery = conversationReminderDelivery, onError = () => console.error('[reminders] Poll failed; retrying.'),
+  now = () => new Date(), sendPush, delivery = sendPush ? queueReminderPush : conversationReminderDelivery,
+  onError = () => console.error('[reminders] Poll failed; retrying.'),
 }: SchedulerOptions = {}) {
   let interval: NodeJS.Timeout | undefined;
   let startupAt: Date | undefined;
@@ -50,6 +55,7 @@ export function createReminderScheduler(db: Kysely<any>, {
       // PostgreSQL locking clause semantics: https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE (retrieved 2026-11-25).
       let candidates = tx.selectFrom('reminders as r').innerJoin('chat_conversations as c', 'c.id', 'r.conversation_id')
         .select('r.id').where('r.status', '=', 'scheduled').where('r.due_at', '<=', at)
+        .where(eb => eb.not(eb.exists(memberDeletionQuery(tx).select('d.user_id').whereRef('d.user_id', '=', 'r.user_id'))))
         .where(eb => eb.or([eb('r.attempts', '=', 0), eb('r.updated_at', '<=', retryBefore)]));
       if (visited.length) candidates = candidates.where('r.id', 'not in', visited);
       const candidate = await candidates.orderBy('r.due_at').orderBy('r.id').limit(1).forNoKeyUpdate('c').skipLocked().executeTakeFirst();
@@ -59,6 +65,7 @@ export function createReminderScheduler(db: Kysely<any>, {
         .where(eb => eb.or([eb('attempts', '=', 0), eb('updated_at', '<=', retryBefore)]))
         .forUpdate().skipLocked().executeTakeFirst() as ReminderRecord | undefined;
       if (!row) return candidate.id as string;
+      if (!await memberReminderDeliveryAllowed(tx, row.user_id)) return row.id;
 
       const dueAt = new Date(row.due_at);
       const reminder = {
@@ -108,6 +115,12 @@ export function createReminderScheduler(db: Kysely<any>, {
       const id = await deliverOne(now(), visited);
       if (!id) break;
       visited.push(id);
+    }
+    const checkedPushes: string[] = [];
+    while (checkedPushes.length < MAX_DELIVERIES_PER_POLL && !stopping) {
+      const id = await deliverQueuedReminderPush(db, sendPush, conversationReminderDelivery, now(), checkedPushes);
+      if (!id) break;
+      checkedPushes.push(id);
     }
   }
 

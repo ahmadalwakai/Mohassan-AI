@@ -1,8 +1,16 @@
 import { sql, type Transaction } from 'kysely';
 
 export async function migrateNotifications(tx: Transaction<any>) {
-  const version = '035_notifications';
+  const version = '037_notifications';
   if (await tx.selectFrom('schema_migrations').select('version').where('version', '=', version).executeTakeFirst()) return;
+  const previous = await tx.updateTable('schema_migrations').set({ version })
+    .where('version', '=', '035_notifications').returning('version').executeTakeFirst();
+  if (previous) {
+    await sql`ALTER TABLE chat_notifications DROP CONSTRAINT chat_notifications_kind_check,
+      ADD CONSTRAINT chat_notifications_kind_check
+      CHECK (kind IN ('task_completed', 'needs_you', 'task_failed', 'reminder_due'))`.execute(tx);
+    return;
+  }
 
   await sql`CREATE TABLE notification_preferences (
     user_id text PRIMARY KEY,
@@ -35,7 +43,7 @@ export async function migrateNotifications(tx: Transaction<any>) {
     task_id text PRIMARY KEY,
     user_id text NOT NULL,
     conversation_id text,
-    kind text NOT NULL CHECK (kind IN ('task_completed', 'needs_you', 'task_failed')),
+    kind text NOT NULL CHECK (kind IN ('task_completed', 'needs_you', 'task_failed', 'reminder_due')),
     started_at timestamptz NOT NULL,
     happened_at timestamptz NOT NULL,
     available_at timestamptz NOT NULL,

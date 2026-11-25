@@ -41,7 +41,8 @@ import { createSitesControl, registerSiteRoutes } from './sites.js';
 import { createVercelPublisher, noPublisher } from './sites-publish.js';
 import { createStudioLiveControl } from './studio-live.js';
 import { createBrowserTaskControl } from './browser-task.js';
-import { createCommandChatControl, registerCommandChatRoutes } from './command-chat.js';
+import { commandChatMigration, createCommandChatControl, registerCommandChatRoutes } from './command-chat.js';
+import { migrateRemindersInTransaction } from './reminders/migration.js';
 import { registerReminderRuntime } from './reminders/runtime.js';
 import { registerConversationShareRoutes } from './conversation-share.js';
 import { createImageReader } from './image-reader.js';
@@ -352,6 +353,7 @@ export async function createApplication(config: AppConfig) {
   // Generated websites (no model): composed from a brief, previewed by token, exported as ZIP, published to Vercel when a token is set.
   const sites=await createSitesControl(database.db,{tokenSecret:config.internalSecret,publisher:config.sites?.publishTarget==='vercel'?createVercelPublisher({token:config.sites.vercelToken,teamId:config.sites.vercelTeamId,fetch:config.sites.fetch}):noPublisher});
   await registerSiteRoutes(app,{control:sites,owner,role});
+  await commandChatMigration(database.db, migrateRemindersInTransaction);
   const agentBrowser = await registerMemberDataRights(app, { db: database.db, auth, owner, role, config, adsAvailable: () => googleAds.configured, registerMemberRoutes, AgentBrowser, browserProfileDir: config.browserProfileDir ?? join(tmpdir(), `mohassan-browser-${randomUUID()}`) });
   const assistantTools=createAssistantTools({memory,coding,studio,studioChange:studioAi.available,runtime,windows,googleAds});
   const inference=await createInferenceControl(database.db,{...config.inference,groq:{apiKey:config.groqApiKey,fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b']},fetch:config.aiFetch});

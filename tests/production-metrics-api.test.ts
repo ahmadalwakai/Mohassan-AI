@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { ProductionMetricsResponse } from '@mohassan/contracts';
+import type { ConversationSharePreview, CreatedConversationShare, ProductionMetricsResponse } from '@mohassan/contracts';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createApplication } from '../apps/server/src/app.js';
 import { MEMBER_ROUTES } from '../apps/server/src/members.js';
@@ -82,10 +82,28 @@ it('keeps JSON and CSV owner-only and records request and chat data without priv
     const uuid = randomUUID();
     expect((await app.inject({ url: `/api/tasks/${uuid}`, headers: memberHeaders })).statusCode).toBe(403);
     expect((await app.inject({ url: `/api/tasks/${uuid}`, headers: ownerHeaders })).statusCode).toBe(404);
+    expect((await app.inject({ url: `/api/notifications/events/${uuid}`, headers: memberHeaders })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'DELETE', url: `/api/reminders/${uuid}`, headers: memberHeaders })).statusCode).toBe(404);
+    expect((await app.inject({ url: '/api/member-data/sessions', headers: memberHeaders })).statusCode).toBe(200);
 
     const created = await app.inject({ method: 'POST', url: '/api/chat/conversations', headers: ownerHeaders, payload: {} });
     expect(created.statusCode).toBe(200);
     const conversationId = created.json<{ id: string }>().id;
+    const shareUrl = `/api/chat/conversations/${conversationId}/share`;
+    const preview = await app.inject({ method: 'POST', url: `${shareUrl}/preview`, headers: ownerHeaders, payload: {} });
+    expect(preview.statusCode).toBe(200);
+    const review = preview.json<ConversationSharePreview>().review;
+    const published = await app.inject({ method: 'POST', url: shareUrl, headers: ownerHeaders,
+      payload: { expiry: '1d', redact: true, review } });
+    expect(published.statusCode).toBe(201);
+    const { share, url } = published.json<CreatedConversationShare>();
+    const shareToken = new URL(url).pathname.split('/').at(-1)!;
+    const publicUrl = `/api/chat/conversation-shares/public/${shareToken}`;
+    for (const viewer of [f.headers(), ownerHeaders, memberHeaders]) {
+      expect((await app.inject({ url: publicUrl, headers: viewer })).statusCode).toBe(200);
+    }
+    const revoked = await app.inject({ method: 'DELETE', url: `/api/chat/conversation-shares/${share.id}`, headers: ownerHeaders });
+    expect(revoked.statusCode).toBe(200);
     const query = 'fixture_private_query_47621', message = 'احسب 4351 + 869';
     const email = 'do-not-store-metrics@example.test', ip = '203.0.113.81';
     const submitted = await app.inject({ method: 'POST', url: `/api/chat/conversations/${conversationId}/messages?${query}=hidden`,
@@ -111,10 +129,15 @@ it('keeps JSON and CSV owner-only and records request and chat data without priv
     expect(hour.roles.owner.routes).toEqual(expect.arrayContaining([
       expect.objectContaining({ route: 'POST /api/chat/conversations/:id/messages', count: 1, latency: expect.objectContaining({ samples: 1 }) }),
       expect.objectContaining({ route: 'GET /api/tasks/:id', count: 1, statusClasses: expect.objectContaining({ '4xx': 1 }) }),
+      expect.objectContaining({ route: 'POST /api/chat/conversations/:id/share/preview', count: 1 }),
+      expect.objectContaining({ route: 'DELETE /api/chat/conversation-shares/:id', count: 1 }),
     ]));
     expect(hour.roles.member.routes).toEqual(expect.arrayContaining([
       expect.objectContaining({ route: 'GET /api/access', count: 1, statusClasses: expect.objectContaining({ '2xx': 1 }) }),
       expect.objectContaining({ route: 'GET /api/tasks/:id', count: 1, statusClasses: expect.objectContaining({ '4xx': 1 }) }),
+      expect.objectContaining({ route: 'GET /api/notifications/events/:id', count: 1 }),
+      expect.objectContaining({ route: 'DELETE /api/reminders/:id', count: 1 }),
+      expect.objectContaining({ route: 'GET /api/member-data/sessions', count: 1 }),
     ]));
     const csv = await app.inject({ url: '/api/ops/metrics.csv', headers: ownerHeaders });
     expect(csv.statusCode).toBe(200);
@@ -130,7 +153,9 @@ it('keeps JSON and CSV owner-only and records request and chat data without priv
     const disk = (await Promise.all(files.map(file => readFile(join(f.snapshots, file), 'utf8')))).join('');
     expect(disk).toContain('/api/chat/conversations/:id/messages');
     for (const source of [measured.body, csv.body, disk]) {
-      for (const privateValue of [query, message, email, ip, uuid, conversationId, String(visibility.run_id), memberId, owner.email, member.email, token]) {
+      expect(source).not.toContain('/api/chat/conversation-shares/public/');
+      for (const privateValue of [query, message, email, ip, uuid, conversationId, String(visibility.run_id), memberId,
+        owner.email, member.email, token, shareToken, share.id, review]) {
         expect(source).not.toContain(privateValue);
       }
     }

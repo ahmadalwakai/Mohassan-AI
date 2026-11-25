@@ -3,6 +3,13 @@ import { sendNotification, WebPushError, type PushSubscription, type RequestOpti
 import type { NotificationPayload } from '@mohassan/contracts';
 
 export type VapidDetails = NonNullable<RequestOptions['vapidDetails']>;
+export type WebPushPayload = NotificationPayload | (Omit<NotificationPayload, 'kind' | 'conversationId'> & {
+  kind: 'reminder_due';
+  conversationId: string;
+});
+export type PushSender<Payload extends WebPushPayload = WebPushPayload> = (
+  subscription: PushSubscription, payload: Payload,
+) => ReturnType<typeof sendWebPushNotification>;
 
 const curveName = 'prime256v1';
 const pushToken = '[A-Za-z0-9._~:%=-]+';
@@ -65,7 +72,7 @@ export function isBrowserPushSubscription(subscription: PushSubscription) {
   }
 }
 
-export async function sendWebPushNotification(config: VapidDetails, subscription: PushSubscription, payload: NotificationPayload) {
+export async function sendWebPushNotification(config: VapidDetails, subscription: PushSubscription, payload: WebPushPayload) {
   if (!isBrowserPushSubscription(subscription)) return 'failed';
   try {
     await sendNotification(subscription, JSON.stringify(payload), {
