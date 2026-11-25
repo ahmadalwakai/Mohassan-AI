@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { AgentBrowser, SearchProvider } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
@@ -49,11 +49,11 @@ describe('routing requests that supply Python assertions', () => {
     expect(decideRequestRoute({ text: prompt, fullAccess: false })).toMatchObject({ availability: 'restricted' });
   });
 
-  it('reports when the verifier cannot start without publishing a declaration', async () => {
+  it.skipIf(process.platform !== 'linux' || process.geteuid?.() === 0)('reports when the verifier cannot start without publishing a declaration', async () => {
     vi.stubEnv('TEST_DRIVEN_CODING_ENABLED', 'true');
-    vi.stubEnv('PATH', '/dev/null');
+    vi.stubEnv('TEST_DRIVEN_CODING_PYTHON', '/dev/null/python3');
     const reply = await answerTestDrivenCoding(prompt, {
-      authorized: true, signal: new AbortController().signal,
+      accountId: randomUUID(), authorized: true, signal: new AbortController().signal,
       originalHash: createHash('sha256').update(prompt).digest('hex'), scrub: text => text,
     });
     expect(reply.status).toBe('blocked');
@@ -63,8 +63,7 @@ describe('routing requests that supply Python assertions', () => {
   });
 });
 
-describe.skipIf(process.platform !== 'linux')('verified code through the command chat controller', () => {
-  const owner = 'synthetic-python-function-owner';
+describe.skipIf(process.platform !== 'linux' || process.geteuid?.() === 0)('verified code through the command chat controller', () => {
   const forbiddenIO = vi.fn(async () => { throw new Error('This request uses only its assertion examples'); });
   let database: Awaited<ReturnType<typeof createDatabase>>;
   let control: Awaited<ReturnType<typeof createCommandChatControl>>;
@@ -87,6 +86,7 @@ describe.skipIf(process.platform !== 'linux')('verified code through the command
   });
 
   async function ask(text: string) {
+    const owner = randomUUID();
     const conversation = await control.create(owner, { goal: text });
     await control.settled(conversation.id);
     const detail = await control.detail(owner, conversation.id);

@@ -2,8 +2,11 @@
 
 import ast
 import builtins
+from copy import deepcopy
 from dataclasses import dataclass
+from functools import partial
 import math
+import operator
 import re
 from types import SimpleNamespace
 
@@ -16,6 +19,8 @@ PURE_BUILTINS = {
         "reversed", "round", "set", "sorted", "str", "sum", "tuple", "zip",
     )
 }
+REGEX_FLAGS = ("ASCII", "DOTALL", "IGNORECASE", "MULTILINE", "VERBOSE")
+REGEX_FLAG_MASK = sum(int(getattr(re, flag)) for flag in REGEX_FLAGS)
 MODULE_MEMBERS = {
     "math": (
         "acos", "asin", "atan", "atan2", "ceil", "comb", "copysign", "cos",
@@ -24,8 +29,8 @@ MODULE_MEMBERS = {
         "isqrt", "lcm", "log", "log10", "log2", "perm", "pi", "pow", "prod",
         "radians", "remainder", "sin", "sqrt", "tan", "tau", "trunc",
     ),
-    "re": (
-        "ASCII", "DOTALL", "IGNORECASE", "MULTILINE", "VERBOSE", "compile",
+    "re": REGEX_FLAGS + (
+        "compile",
         "escape", "findall", "finditer", "fullmatch", "match", "search",
         "split", "sub", "subn",
     ),
@@ -64,6 +69,9 @@ CANDIDATE_NODES = EXPRESSION_NODES + (
     ast.For, ast.While, ast.Pass, ast.Break, ast.Continue, ast.Import,
     ast.ImportFrom, ast.alias,
 )
+MAX_RANGE_LENGTH = 100_000
+MAX_COMBINATORIC_INPUT = 10_000
+MAX_INTEGER_BITS = 16_384
 
 
 class UnsupportedSyntax(ValueError):
@@ -74,28 +82,35 @@ def public_name(name):
     return "__" not in name and name not in BLOCKED_NAMES
 
 
-def inspect_tree(root, supported_nodes):
+def inspect_tree(root, supported_nodes, bound_names=None):
+    needs_guards = False
     for node in ast.walk(root):
         if not isinstance(node, supported_nodes):
             raise UnsupportedSyntax
-        if isinstance(node, ast.Name) and not public_name(node.id):
-            raise UnsupportedSyntax
-        if isinstance(node, ast.arg) and not public_name(node.arg):
-            raise UnsupportedSyntax
-        if isinstance(node, ast.Attribute) and (
+        if isinstance(node, ast.Name):
+            if not public_name(node.id):
+                raise UnsupportedSyntax
+            if bound_names is not None and isinstance(node.ctx, ast.Store):
+                bound_names.add(node.id)
+        elif isinstance(node, ast.arg):
+            if not public_name(node.arg):
+                raise UnsupportedSyntax
+            if bound_names is not None:
+                bound_names.add(node.arg)
+        elif isinstance(node, ast.Attribute) and (
             node.attr not in PUBLIC_ATTRIBUTES or not isinstance(node.ctx, ast.Load)
         ):
             raise UnsupportedSyntax
-        if isinstance(node, ast.FunctionDef) and (
+        elif isinstance(node, ast.FunctionDef) and (
             not public_name(node.name) or node.decorator_list
         ):
             raise UnsupportedSyntax
-        if isinstance(node, ast.Import) and any(
+        elif isinstance(node, ast.Import) and any(
             alias.name not in MODULES or (alias.asname and not public_name(alias.asname))
             for alias in node.names
         ):
             raise UnsupportedSyntax
-        if isinstance(node, ast.ImportFrom) and (
+        elif isinstance(node, ast.ImportFrom) and (
             node.level or node.module not in MODULES
             or any(
                 alias.name not in MODULE_MEMBERS[node.module]
@@ -104,27 +119,151 @@ def inspect_tree(root, supported_nodes):
             )
         ):
             raise UnsupportedSyntax
+        elif isinstance(node, (ast.Pow, ast.LShift)):
+            needs_guards = True
+    return needs_guards
+
+
+class _RangeType(type):
+    def __instancecheck__(cls, value):
+        return isinstance(value, range)
+
+
+class _BoundedRange(metaclass=_RangeType):
+    count = range.count
+    index = range.index
+
+    def __new__(cls, *args):
+        values = range(*args)
+        try:
+            if len(values) <= MAX_RANGE_LENGTH:
+                return values
+        except OverflowError:
+            pass
+        raise ValueError("range exceeds verifier bounds")
+
+
+def _bounded_combinatoric(function, *args):
+    if any(value is not None and operator.index(value) > MAX_COMBINATORIC_INPUT for value in args):
+        raise ValueError("combinatoric input exceeds verifier bounds")
+    return function(*args)
+
+
+def _bounded_power(base, exp, mod=None):
+    if isinstance(base, int) and isinstance(exp, int):
+        bits = base.bit_length()
+        if mod is None:
+            if exp > MAX_INTEGER_BITS // max(bits, 1):
+                raise ValueError("power exceeds verifier bounds")
+        elif isinstance(mod, int) and (
+            bits > MAX_INTEGER_BITS or mod.bit_length() > MAX_INTEGER_BITS
+            or not -MAX_INTEGER_BITS <= exp <= MAX_INTEGER_BITS
+        ):
+            raise ValueError("modular power exceeds verifier bounds")
+    return pow(base, exp, mod)
+
+
+def _bounded_left_shift(value, shift):
+    if isinstance(value, int) and isinstance(shift, int) and shift > MAX_INTEGER_BITS - value.bit_length():
+        raise ValueError("left shift exceeds verifier bounds")
+    return operator.lshift(value, shift)
+
+
+def _restricted_regex(function, flags_index, /, *args, **kwargs):
+    flags = args[flags_index] if len(args) > flags_index else kwargs.get("flags", 0)
+    if operator.index(flags) & ~REGEX_FLAG_MASK:
+        raise ValueError("unsupported regex flags")
+    return function(*args, **kwargs)
+
+
+SCOPED_MODULES = {
+    module: {name: getattr(MODULES[module], name) for name in names}
+    for module, names in MODULE_MEMBERS.items()
+}
+for _name in ("factorial", "comb", "perm"):
+    SCOPED_MODULES["math"][_name] = partial(_bounded_combinatoric, getattr(math, _name))
+for _flags_index, _names in enumerate((
+    ("compile",), ("findall", "finditer", "fullmatch", "match", "search"), ("split",), ("sub", "subn"),
+), start=1):
+    for _name in _names:
+        SCOPED_MODULES["re"][_name] = partial(_restricted_regex, getattr(re, _name), _flags_index)
+PURE_BUILTINS.update(pow=_bounded_power, range=_BoundedRange)
+
+GUARDED_OPERATORS = {
+    ast.Pow: ("__verifier_power", _bounded_power),
+    ast.LShift: ("__verifier_left_shift", _bounded_left_shift),
+}
+GUARD_BINDINGS = dict(GUARDED_OPERATORS.values())
+
+
+def _operator_call(helper, left, right):
+    return ast.Call(func=ast.Name(id=helper, ctx=ast.Load()), args=[left, right], keywords=[])
+
+
+class _GuardOperations(ast.NodeTransformer):
+    def visit_BinOp(self, node):
+        self.generic_visit(node)
+        guard = GUARDED_OPERATORS.get(type(node.op))
+        if guard is None:
+            return node
+        helper, _ = guard
+        return ast.copy_location(_operator_call(helper, node.left, node.right), node)
+
+    def visit_AugAssign(self, node):
+        self.generic_visit(node)
+        guard = GUARDED_OPERATORS.get(type(node.op))
+        if guard is None:
+            return node
+        helper, _ = guard
+        target = node.target
+        if isinstance(target, ast.Name):
+            value = _operator_call(helper, ast.Name(id=target.id, ctx=ast.Load()), node.value)
+            return ast.copy_location(ast.Assign(targets=[target], value=value), node)
+
+        # An augmented subscript evaluates its receiver and index once, then reads
+        # the current value before evaluating the right-hand side.
+        receiver = "__verifier_receiver"
+        index = "__verifier_index"
+        read_target = ast.Subscript(
+            value=ast.Name(id=receiver, ctx=ast.Load()), slice=ast.Name(id=index, ctx=ast.Load()), ctx=ast.Load(),
+        )
+        write_target = ast.Subscript(value=read_target.value, slice=read_target.slice, ctx=ast.Store())
+        return [ast.copy_location(statement, node) for statement in (
+            ast.Assign(targets=[ast.Name(id=receiver, ctx=ast.Store())], value=target.value),
+            ast.Assign(targets=[ast.Name(id=index, ctx=ast.Store())], value=target.slice),
+            ast.Assign(targets=[write_target], value=_operator_call(helper, read_target, node.value)),
+            ast.Delete(targets=[ast.Name(id=receiver, ctx=ast.Del()), ast.Name(id=index, ctx=ast.Del())]),
+        )]
+
+
+def _compile(tree, filename, mode, needs_guards):
+    if needs_guards:
+        tree = ast.fix_missing_locations(_GuardOperations().visit(tree))
+    return compile(tree, filename, mode, optimize=0)
+
+
+def compile_expression(node):
+    needs_guards = any(isinstance(part, (ast.Pow, ast.LShift)) for part in ast.walk(node))
+    expression = ast.fix_missing_locations(ast.Expression(deepcopy(node) if needs_guards else node))
+    return _compile(expression, "<example>", "eval", needs_guards)
 
 
 def python_scope(printer):
-    modules = {
-        module: SimpleNamespace(**{
-            name: getattr(MODULES[module], name) for name in names
-        })
-        for module, names in MODULE_MEMBERS.items()
-    }
+    modules = {name: SimpleNamespace(**members) for name, members in SCOPED_MODULES.items()}
 
     def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
         if level or name not in modules:
             raise ImportError
         return modules[name]
 
-    return {"__builtins__": dict(PURE_BUILTINS, __import__=safe_import, print=printer), **modules}
+    return {
+        "__builtins__": dict(PURE_BUILTINS, __import__=safe_import, print=printer),
+        **GUARD_BINDINGS, **modules,
+    }
 
 
 @dataclass(frozen=True)
 class Assertion:
-    source: str
     code: object
     test: ast.expr
 
@@ -137,10 +276,9 @@ class Problem:
 
 
 class AssertionProblem(ValueError):
-    def __init__(self, reason, index=None, source=None):
+    def __init__(self, reason, index=None):
         self.reason = reason
         self.index = index
-        self.source = source
 
 
 def parse_assertions(raw):
@@ -160,22 +298,25 @@ def parse_assertions(raw):
         raise AssertionProblem("invalid-assertions") from None
     if not parsed.body or not all(isinstance(node, ast.Assert) for node in parsed.body):
         raise AssertionProblem("invalid-assertions")
-    return _build_problem(document, parsed.body)
+    return _build_problem(parsed.body)
 
 
-def _build_problem(document, nodes):
+def _build_problem(nodes):
     result = []
     calls_in_assertion = []
+    bindings_in_assertion = []
     for index, node in enumerate(nodes):
-        source = ast.get_source_segment(document, node) or ""
+        bound_names = set()
         try:
-            inspect_tree(node, EXPRESSION_NODES)
+            needs_guards = inspect_tree(node, EXPRESSION_NODES, bound_names)
             if isinstance(node.test, ast.Tuple):
                 raise UnsupportedSyntax
-            code = compile(ast.Module(body=[node], type_ignores=[]), "<assertion>", "exec", optimize=0)
+            tree = ast.Module(body=[deepcopy(node) if needs_guards else node], type_ignores=[])
+            code = _compile(tree, "<assertion>", "exec", needs_guards)
         except (UnsupportedSyntax, SyntaxError, ValueError):
-            raise AssertionProblem("unsupported-assertion", index, source) from None
-        result.append(Assertion(source, code, node.test))
+            raise AssertionProblem("unsupported-assertion", index) from None
+        result.append(Assertion(code, node.test))
+        bindings_in_assertion.append(bound_names)
         calls_in_assertion.append([
             item for item in ast.walk(node.test)
             if isinstance(item, ast.Call) and isinstance(item.func, ast.Name)
@@ -185,19 +326,21 @@ def _build_problem(document, nodes):
     custom_names = common.difference(PURE_BUILTINS, MODULES, {"print"})
     names = custom_names or common
     if len(names) != 1:
-        raise AssertionProblem("unsupported-assertion", 0, result[0].source)
+        raise AssertionProblem("unsupported-assertion", 0)
     entry = names.pop()
     arity = None
     for index, calls in enumerate(calls_in_assertion):
+        if entry in bindings_in_assertion[index]:
+            raise AssertionProblem("unsupported-assertion", index)
         for call in calls:
             if call.func.id != entry:
                 continue
             if call.keywords or any(isinstance(arg, ast.Starred) for arg in call.args):
-                raise AssertionProblem("unsupported-arguments", index, result[index].source)
+                raise AssertionProblem("unsupported-arguments", index)
             if arity is None:
                 arity = len(call.args)
             if arity != len(call.args):
-                raise AssertionProblem("unsupported-arguments", index, result[index].source)
+                raise AssertionProblem("unsupported-arguments", index)
     return Problem(entry, arity, tuple(result))
 
 
@@ -237,8 +380,13 @@ def compile_candidate(source, problem):
             or parameters.vararg or parameters.kwonlyargs or parameters.kwarg
         ):
             raise UnsupportedSyntax
+        needs_guards = False
         for node in parsed.body:
-            inspect_tree(node, CANDIDATE_NODES)
-        return compile(parsed, "<candidate>", "exec", optimize=0)
+            if isinstance(node, (ast.Import, ast.ImportFrom)) and any(
+                (alias.asname or alias.name) == problem.entry for alias in node.names
+            ):
+                raise UnsupportedSyntax
+            needs_guards = inspect_tree(node, CANDIDATE_NODES) or needs_guards
+        return _compile(parsed, "<candidate>", "exec", needs_guards)
     except (SyntaxError, ValueError, RecursionError):
         raise UnsupportedSyntax from None

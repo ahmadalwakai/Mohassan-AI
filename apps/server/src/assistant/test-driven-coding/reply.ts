@@ -1,21 +1,27 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access, mkdtemp, realpath, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import type { BrainState } from '../brain.js';
 import { parseTestDrivenCodingRequest, testDrivenCodingEnabled, type TestDrivenCodingRequest } from './request.js';
 
 const worker = fileURLToPath(new URL('./worker.py', import.meta.url));
+const pythonArgs = ['-I', '-B', '-S'];
 const maxConcurrentWorkers = 2;
 const workerWallMs = 2_500;
+const accountCooldownMs = 250;
+const busyAccounts = new Set<string>();
 let activeWorkers = 0;
+let interpreter: { configured: string; validated: Promise<string | null> } | undefined;
 
 const failureReason = z.enum([
   'unsupported-candidate', 'assertion-failed', 'assertion-error', 'time-limit', 'output-limit', 'memory-limit',
   'no-supported-examples', 'no-candidate-passed', 'invalid-request', 'invalid-assertions', 'unsupported-assertion', 'unsupported-arguments',
+  'internal-error',
 ]);
 const searchLimit = z.enum(['search-wall-time', 'search-cpu-time', 'search-evaluations', 'search-verifications']);
 const resultSchema = z.discriminatedUnion('status', [
@@ -55,11 +61,53 @@ export function bindTestDrivenCodingHash(state: Pick<BrainState, 'routing' | 're
   }
 }
 
-function runWorker(request: TestDrivenCodingRequest, cwd: string, signal: AbortSignal, timeout: number): Promise<Result> {
+async function isReadOnlyForService(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.W_OK);
+    return false;
+  } catch (error) {
+    return ['EACCES', 'EPERM', 'EROFS'].includes((error as NodeJS.ErrnoException).code ?? '');
+  }
+}
+
+async function validateInterpreter(configured: string): Promise<string | null> {
+  if (!isAbsolute(configured)) return null;
+  try {
+    const python = await realpath(configured);
+    const executable = await stat(python);
+    if (!executable.isFile() || executable.uid !== 0 || (executable.mode & 0o6000) !== 0 || !await isReadOnlyForService(python)) return null;
+    // Keep the validated executable out of paths the service can replace.
+    for (let dir = dirname(python); ; dir = dirname(dir)) {
+      const directory = await stat(dir);
+      if (directory.uid === process.geteuid?.() || !await isReadOnlyForService(dir)) return null;
+      if (dir === dirname(dir)) break;
+    }
+    const supported = await new Promise<boolean>(resolve => {
+      execFile(python, [...pythonArgs, '-c', 'import sys; print(*sys.version_info[:2])'], {
+        env: {}, timeout: workerWallMs, maxBuffer: 128, killSignal: 'SIGKILL',
+      }, (error, stdout) => {
+        const version = /^(\d+) (\d+)\n$/u.exec(stdout);
+        resolve(!error && !!version && (Number(version[1]) > 3 || (Number(version[1]) === 3 && Number(version[2]) >= 11)));
+      });
+    });
+    return supported ? python : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function initializeTestDrivenCoding(): Promise<string | null> {
+  if (!testDrivenCodingEnabled() || process.platform !== 'linux' || process.geteuid?.() === 0) return null;
+  const configured = process.env.TEST_DRIVEN_CODING_PYTHON ?? '/usr/bin/python3';
+  if (configured !== interpreter?.configured) interpreter = { configured, validated: validateInterpreter(configured) };
+  return interpreter.validated;
+}
+
+function runWorker(python: string, request: TestDrivenCodingRequest, cwd: string, signal: AbortSignal, timeout: number): Promise<Result> {
   return new Promise(resolve => {
-    const child = execFile('python3', ['-I', '-B', '-S', worker], {
+    const child = execFile(python, [...pythonArgs, worker], {
       cwd,
-      env: { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin' },
+      env: {},
       timeout,
       maxBuffer: 32 * 1024,
       killSignal: 'SIGKILL',
@@ -87,7 +135,7 @@ function runWorker(request: TestDrivenCodingRequest, cwd: string, signal: AbortS
 }
 
 export async function answerTestDrivenCoding(
-  text: string, options: { authorized: boolean; signal: AbortSignal; originalHash: string | undefined; scrub: (text: string) => string },
+  text: string, options: { accountId: string; authorized: boolean; signal: AbortSignal; originalHash: string | undefined; scrub: (text: string) => string },
 ): Promise<Reply> {
   const request = parseTestDrivenCodingRequest(text);
   const ar = /\p{Script=Arabic}/u.test(request?.description ?? text);
@@ -107,6 +155,7 @@ export async function answerTestDrivenCoding(
   );
   if (!testDrivenCodingEnabled()) return unavailableReply('disabled');
   if (process.platform !== 'linux') return unavailableReply('unsupported-platform');
+  if (process.geteuid?.() === 0) return unavailableReply('isolation-unavailable');
   if (options.signal.aborted) return unavailableReply('cancelled');
   // The chat controller binds the accepted, trimmed input before applying redaction.
   if (requestHash(text) !== options.originalHash) return blocked({ reason: 'request-hash-mismatch' },
@@ -117,7 +166,7 @@ export async function answerTestDrivenCoding(
     'Please include the Python function description and its assertions in one message.',
     'أرسل وصف دالة بايثون واختباراتها في رسالة واحدة.',
   );
-  if (activeWorkers >= maxConcurrentWorkers) return blocked({ reason: 'busy' },
+  if (activeWorkers >= maxConcurrentWorkers || busyAccounts.has(options.accountId)) return blocked({ reason: 'busy' },
     'The Python verification processes are busy. Please try again shortly.',
     'عمليات التحقق من بايثون مشغولة. حاول بعد قليل.',
   );
@@ -125,21 +174,26 @@ export async function answerTestDrivenCoding(
   let cwd: string | undefined;
   let result: Result;
   activeWorkers++;
+  busyAccounts.add(options.accountId);
   try {
+    const python = await initializeTestDrivenCoding();
+    if (options.signal.aborted) return unavailableReply('cancelled');
+    if (!python) return unavailableReply('worker-start-failed');
     cwd = await mkdtemp(join(tmpdir(), 'mohassan-python-'));
     const deadline = performance.now() + workerWallMs;
-    result = await runWorker(request, cwd, options.signal, workerWallMs);
+    result = await runWorker(python, request, cwd, options.signal, workerWallMs);
     const remaining = Math.floor(deadline - performance.now());
     // A diagnostic fallback can fail after a search timeout. All attempts share the same wall deadline.
     if (result.status === 'failed' && result.searchLimit === 'search-cpu-time' && !result.exampleTimeout
       && ['assertion-failed', 'assertion-error', 'no-candidate-passed'].includes(result.reason) && !options.signal.aborted && remaining > 0) {
       retriedLimit = result.searchLimit;
-      result = await runWorker(request, cwd, options.signal, remaining);
+      result = await runWorker(python, request, cwd, options.signal, remaining);
     }
   } catch {
     return unavailableReply(options.signal.aborted ? 'cancelled' : cwd ? 'worker-start-failed' : 'workspace-unavailable');
   } finally {
     activeWorkers--;
+    setTimeout(() => busyAccounts.delete(options.accountId), accountCooldownMs).unref();
     if (cwd) await rm(cwd, { recursive: true, force: true }).catch(() => {});
   }
   if (options.signal.aborted) return unavailableReply('cancelled');
@@ -148,6 +202,7 @@ export async function answerTestDrivenCoding(
     return result.reason === 'worker-wall-time' || result.reason === 'worker-output-limit'
       ? limitReply({ reason: result.reason, ...(retriedLimit && { searchLimit: retriedLimit }) }) : unavailableReply(result.reason);
   }
+  if (result.status === 'failed' && result.reason === 'internal-error') return unavailableReply(result.reason);
   if (result.status === 'passed') {
     const intro = ar ? 'اجتازت الدالة جميع الاختبارات المرفقة.' : 'The function passed all supplied assertions.';
     const fence = '```';
