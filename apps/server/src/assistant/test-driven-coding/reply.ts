@@ -10,6 +10,7 @@ import { parseTestDrivenCodingRequest, testDrivenCodingEnabled, type TestDrivenC
 
 const worker = fileURLToPath(new URL('./worker.py', import.meta.url));
 const maxConcurrentWorkers = 2;
+const workerWallMs = 2_500;
 let activeWorkers = 0;
 
 const failureReason = z.enum([
@@ -54,12 +55,12 @@ export function bindTestDrivenCodingHash(state: Pick<BrainState, 'routing' | 're
   }
 }
 
-function runWorker(request: TestDrivenCodingRequest, cwd: string, signal: AbortSignal): Promise<Result> {
+function runWorker(request: TestDrivenCodingRequest, cwd: string, signal: AbortSignal, timeout: number): Promise<Result> {
   return new Promise(resolve => {
     const child = execFile('python3', ['-I', '-B', '-S', worker], {
       cwd,
       env: { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin' },
-      timeout: 2_500,
+      timeout,
       maxBuffer: 32 * 1024,
       killSignal: 'SIGKILL',
       signal,
@@ -90,8 +91,9 @@ export async function answerTestDrivenCoding(
 ): Promise<Reply> {
   const request = parseTestDrivenCodingRequest(text);
   const ar = /\p{Script=Arabic}/u.test(request?.description ?? text);
+  let retriedLimit: 'search-cpu-time' | undefined;
   const blocked = (verification: CodingVerification, en: string, arabic: string): Reply => ({ status: 'blocked', text: ar ? arabic : en, verification });
-  const unavailableReply = (reason: CodingVerification['reason']) => blocked({ reason },
+  const unavailableReply = (reason: CodingVerification['reason']) => blocked({ reason, ...(retriedLimit && { searchLimit: retriedLimit }) },
     'I can’t verify Python assertions in an isolated process in this session.',
     'يتعذر عليّ التحقق من اختبارات بايثون داخل عملية معزولة في هذه المحادثة.',
   );
@@ -125,7 +127,15 @@ export async function answerTestDrivenCoding(
   activeWorkers++;
   try {
     cwd = await mkdtemp(join(tmpdir(), 'mohassan-python-'));
-    result = await runWorker(request, cwd, options.signal);
+    const deadline = performance.now() + workerWallMs;
+    result = await runWorker(request, cwd, options.signal, workerWallMs);
+    const remaining = Math.floor(deadline - performance.now());
+    // A diagnostic fallback can fail after a search timeout. All attempts share the same wall deadline.
+    if (result.status === 'failed' && result.searchLimit === 'search-cpu-time' && !result.exampleTimeout
+      && ['assertion-failed', 'assertion-error', 'no-candidate-passed'].includes(result.reason) && !options.signal.aborted && remaining > 0) {
+      retriedLimit = result.searchLimit;
+      result = await runWorker(request, cwd, options.signal, remaining);
+    }
   } catch {
     return unavailableReply(options.signal.aborted ? 'cancelled' : cwd ? 'worker-start-failed' : 'workspace-unavailable');
   } finally {
@@ -136,7 +146,7 @@ export async function answerTestDrivenCoding(
   if (result.status === 'unavailable') return unavailableReply(result.reason);
   if (result.status === 'worker-error') {
     return result.reason === 'worker-wall-time' || result.reason === 'worker-output-limit'
-      ? limitReply({ reason: result.reason }) : unavailableReply(result.reason);
+      ? limitReply({ reason: result.reason, ...(retriedLimit && { searchLimit: retriedLimit }) }) : unavailableReply(result.reason);
   }
   if (result.status === 'passed') {
     const intro = ar ? 'اجتازت الدالة جميع الاختبارات المرفقة.' : 'The function passed all supplied assertions.';
@@ -145,12 +155,13 @@ export async function answerTestDrivenCoding(
     // The controller redacts stored replies. Withhold anything that would change
     // the verified source or could be interpreted as a closing Markdown fence.
     if (result.source.includes(fence) || options.scrub(reply) !== reply) return unavailableReply('publication-withheld');
-    return { status: 'completed', text: reply, verification: { reason: 'passed' } };
+    return { status: 'completed', text: reply, verification: { reason: 'passed', ...(retriedLimit && { searchLimit: retriedLimit }) } };
   }
 
   const index = result.assertionIndex === undefined ? null : result.assertionIndex + 1;
+  const stoppedAt = result.searchLimit ?? retriedLimit;
   const verification: CodingVerification = {
-    reason: result.reason, ...(result.searchLimit && { searchLimit: result.searchLimit }),
+    reason: result.reason, ...(stoppedAt && { searchLimit: stoppedAt }),
     ...(result.exampleTimeout && { exampleTimeout: result.exampleTimeout }),
   };
   if (result.tried) {
