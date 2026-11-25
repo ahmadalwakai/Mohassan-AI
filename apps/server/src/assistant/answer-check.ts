@@ -1,3 +1,5 @@
+import { hasWrittenWorkPublicationHistory } from './selection/factual-claims.js';
+
 /**
  * Checks before an answer line is sent (docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md §7.4). Pure functions on text.
  *
@@ -30,9 +32,13 @@ const META_LINE = new RegExp([
   '^(?:المقال(?:ة|ه|ات) الرئيسي?[ةه]|مقال(?:ة|ه|ات) مفصل[ةه]|طالع [أا]يض[اًا]+|انظر [أا]يض[اًا]+)\\s*:', '^(?:main articles?|further information|see also)\\s*:',
   '\\bmay refer to\\b', '\\bmay also refer to\\b', '\\bfor other uses\\b', '\\bthis article is about\\b', '\\bnot to be confused with\\b', '\\bsee also\\b.*\\(disambiguation\\)',
   '\\bfrom wikipedia, the free encyclopedia\\b', '\\bjump to (?:navigation|content|search)\\b',
-  '^by [A-Z][\\w.-]+(?: [A-Z][\\w.-]+){0,3}\\b', '\\blast updated\\b', '\\bupdated (?:on )?\\d', '\\bpublished(?: on)?:? ', '\\bposted (?:on|by)\\b', '\\bmin(?:ute)?s? read\\b', 'آخر تحديث', 'تاريخ النشر', 'نُ?شر في \\d', 'بقلم ',
+  '^by [A-Z][\\w.-]+(?: [A-Z][\\w.-]+){0,3}\\b', '\\blast updated\\b', '\\bupdated (?:on )?\\d', '\\bposted (?:on|by)\\b', '\\bmin(?:ute)?s? read\\b', 'آخر تحديث', 'تاريخ النشر', 'نُ?شر في \\d', 'بقلم ',
 ].join('|'), 'iu');
-export function isMetaLine(line: string): boolean { return META_LINE.test(line.trim()); }
+const PUBLICATION_NOTICE = /\bpublished(?: on)?:? /iu;
+export function isMetaLine(line: string): boolean {
+  const text = line.trim();
+  return META_LINE.test(text) || PUBLICATION_NOTICE.test(text) && !hasWrittenWorkPublicationHistory(text);
+}
 
 /** Interface words a page shows around its text: never an answer. */
 const UI_TEXT = /^(?:share(?: this)?|read more|subscribe|sign in|log in|accept(?: all)?|cookies?|menu|search|اشترك|شارك|اقرأ المزيد|تسجيل الدخول|القائمة|بحث|موافق)\b/iu;

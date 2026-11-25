@@ -3,6 +3,7 @@ import type { AgentPage } from '@mohassan/browser';
 import { hostOf } from '../activity.js';
 import { isDisambiguationPage } from '../answer-check.js';
 import type { HandsPlan, HandsRead } from '../hands.js';
+import { selectPageFact } from './page-facts.js';
 import { acceptsLegacyCandidate, rankAnswer, rankCalibratedAnswer, type RankedCandidate, type SelectionDecision } from './ranker.js';
 
 type FoundAnswer = NonNullable<HandsPlan['found']>;
@@ -29,6 +30,7 @@ export function withAnswerSelectionMode<T>(mode: SelectionMode, run: () => T, ca
 }
 
 const sameQuote = (left: string, right: string) => left.replace(/\s+/gu, ' ').trim() === right.replace(/\s+/gu, ' ').trim();
+const configuredMode = () => replay.getStore()?.mode ?? (process.env.MOHASSAN_ANSWER_SELECTION === '1' ? 'combined' : 'legacy');
 
 function logComparison(scope: SelectionScope, baseline: Baseline, decision: SelectionDecision | undefined, choice: AnswerChoice, applied: boolean): void {
   const selected = decision?.selected;
@@ -53,7 +55,7 @@ function logComparison(scope: SelectionScope, baseline: Baseline, decision: Sele
 function decide(question: string, pages: readonly AgentPage[], baseline: Baseline, scope: SelectionScope, observe: boolean, live: boolean): AnswerChoice {
   const settings = replay.getStore();
   // Current-fact checks stay on the existing path until structured evidence can establish freshness.
-  const mode = live ? 'legacy' : settings?.mode ?? (process.env.MOHASSAN_ANSWER_SELECTION === '1' ? 'combined' : 'legacy');
+  const mode = live ? 'legacy' : configuredMode();
   const shadow = observe && !settings && !process.env.VITEST;
   const evaluate = (): AnswerChoice => {
     let decision: SelectionDecision | undefined;
@@ -65,7 +67,8 @@ function decide(question: string, pages: readonly AgentPage[], baseline: Baselin
         const selected = decision.selected;
         const source = selected ? pages.find(page => page.url === selected.url) : undefined;
         if (selected && source) choice = { kind: 'ranker', candidate: selected, page: source };
-        else if (mode === 'combined' && !selected && baseline && decision.reason !== 'unsupported-question') {
+        else if (mode === 'combined' && !selected && baseline
+          && decision.reason !== 'unsupported-question' && decision.reason !== 'conflicting-evidence') {
           const legacySource = pages.find(page => page.url === baseline.url);
           if (legacySource && acceptsLegacyCandidate(question, legacySource, baseline.text)) choice = { kind: 'validated-legacy' };
         } else if (mode === 'ranker-only' && !selected && decision.reason !== 'unsupported-question') {
@@ -113,7 +116,13 @@ export function selectSearchAnswer(
   };
 }
 
-export function selectOpenPageLines(page: AgentPage, question: string, legacy: string[], observe: boolean, live: boolean): string[] {
+export function selectOpenPageLines(page: AgentPage, question: string, legacy: string[], observe: boolean, live: boolean, strictFact = false): string[] {
+  if (configuredMode() === 'combined') {
+    if (page.documentStatus !== undefined && (page.documentStatus < 200 || page.documentStatus >= 300)) return [];
+    const fact = selectPageFact(page, question);
+    if (fact) return fact;
+  }
+  if (strictFact) return [];
   const baseline = legacy[0] ? { url: page.url, text: legacy[0] } : undefined;
   const choice = decide(question, [page], baseline, 'open-page', observe, live);
   if (choice.kind === 'legacy') return legacy;

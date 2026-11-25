@@ -1,4 +1,5 @@
 import { arabicBase, foldText } from '../../../../../packages/skills/src/stems.js';
+import { CAPITAL_CITY_COORDINATION, CAPITAL_CITY_COPULA, searchFactRequest, searchFactValue, WRITTEN_WORK_CREDIT, WRITTEN_WORK_LABEL, type SearchFactRequest } from './factual-claims.js';
 import { reasonScopeMatches } from './reason-scope.js';
 import { selectionTerms, stemOverlap, type SelectionTerm } from './word-forms.js';
 
@@ -13,6 +14,7 @@ export interface EntityQuery {
   effect?: readonly SelectionTerm[];
   setting?: readonly SelectionTerm[];
   question?: string;
+  fact?: SearchFactRequest;
 }
 
 export interface EntityEvidence {
@@ -131,6 +133,7 @@ function comparisonQuery(input: string, question: string, language: EntityQuery[
 const EN_ASK = /^(?:(?:explain|tell me) )?(?:why|when|where|who|whom|what(?:'s)?|which|how)(?:\s+(?:is|are|was|were|did|do|does|has|have|had|can|could|would|will|should))?\s+/u;
 const EN_REGION_ASK = /^(?:in|at) (?:what|which) (?:country|city|place|region|continent|part|area)(?: (?:of|in) (?:the )?(?:world|country|continent))? (?:is|was|are|were) /u;
 const AR_ASK = /^(?:اشرح )?(?:[وف])?(?:لماذا|ليش|ليه|متي|اين|وين|كيف|كم|ما|ماذا|من|مين|اي)(?:\s+(?:هو|هي|كان|كانت|يمكن))?\s+/u;
+const AR_LOCATION_ASK = /^(?:اين|وين|من وين) (?:(?:هو|هي|يقع|تقع|يوجد|توجد|موجوده?) )?(?:(?:مدينه|بلده|قريه|جزيره|منطقه|دوله) )?/u;
 const EN_RELATION_FRAME = /^(?:(?:organization|organisation|institution|company|agency|country|city|person|place)\s+)?(?:runs|operates|manages|discovered|painted|directed|composed|causes|caused|produces|manufactures|publishes|built|builds|leads)\s+/u;
 const AR_RELATION_FRAME = /^(?:الذي |التي )?(?:(?:ال)?(?:شرك[هت]|جه[هت]|منظم[هت]|دول[هت]|مدين[هت])\s+)?(?:يدير|تدير|اكتشف|رسم|الف|انتج|تنتج|ينتج|ينشر|تنشر|سبب|اسباب|بني|بنت)\s+/u;
 const EN_REASON_PREDICATE = /\s+(?:seems?|looks?|appears?|changes?|happens?|causes?|falls?|rises?|migrates?|needs?|moves?|forms?|shrinks?|grows?|flies|fly|flows?|rotates?|exists?|burns?|sinks?|floats?|went|goes?|runs?|turns?|stops?|freezes?|melts?|roams?|favou?red|(?:so )?(?:blue|red|green|white|black|dark|light|hot|cold|wet|dry|salty|round|flat|important|visible|dangerous|extinct))(?=\s|$)/u;
@@ -142,17 +145,21 @@ const EFFECT_FILLER = new Set(['did', 'had', 'has', 'does', 'so', 'more', 'this'
   'happen', 'happens', 'happened', 'occur', 'occurs', 'occurred', 'حدث', 'تحدث', 'يحدث', 'حدوث', 'وقوع']);
 const SETTING_ASK = /(?:^|\s)(?:within|across|throughout|during|in|شتاء|صيفا|شتا|في|خلال)(?=\s|$)/u;
 const SETTING_FILLER = new Set(['within', 'across', 'throughout', 'during', 'in', 'region', 'season', 'climate', 'مناخ', 'في', 'خلال', 'فصل', 'موسم']);
+const WORK_DESCRIPTOR = new RegExp(`^(?:the|an?) ${WRITTEN_WORK_LABEL} `, 'u');
 
 export function questionEntities(input: string): EntityQuery {
   const language = ARABIC.test(input) ? 'ar' : 'en';
   const arabic = language === 'ar';
   const question = clean(input);
+  const fact = searchFactRequest(input, language);
+  if (fact) return { subjects: [fact.subject], relation: fact.type, comparison: false, language, reason: false, definition: false, fact };
   const comparison = comparisonQuery(input, question, language);
   if (comparison) return { ...comparison, comparison: true, language, reason: false, definition: false };
 
   const reason = /^(?:explain |اشرح )?(?:why|what (?:caus(?:e[sd]?)|(?:is|are) (?:the )?(?:reasons?|causes?))|لماذا|ليش|ليه|ما (?:سبب|اسباب))(?=\s|$)/u.test(question);
   const definition = /^(?:what(?:'s| is| are)|who (?:is|was)|ما (?:هو|هي|معني|المقصود)|من (?:هو|هي)|ماذا يعني)(?=\s|$)/u.test(question);
-  let body = question.replace(EN_REGION_ASK, '').replace(arabic ? AR_ASK : EN_ASK, '');
+  const locationAsk = arabic ? AR_LOCATION_ASK.exec(question) : null;
+  let body = locationAsk ? question.slice(locationAsk[0].length) : question.replace(EN_REGION_ASK, '').replace(arabic ? AR_ASK : EN_ASK, '');
   if (arabic) body = body.replace(/^(?:معني|المقصود ب|يعني|تعريف)\s*/u, '');
   const possessive = !arabic ? POSSESSIVE_QUERY.exec(body) : null;
   const possessedRelation = possessive && findRelation(possessive[2]!, language);
@@ -171,6 +178,9 @@ export function questionEntities(input: string): EntityQuery {
     const before = trimSubject(body.slice(0, found.index)).replace(/\s+(?:did|does|do|gain(?:ed)?|got)$/u, '');
     const after = trimSubject(body.slice(found.index + found.text.length));
     subject = before || after;
+    if (!before && found.name === 'write' && !arabic) {
+      subject = trimSubject(body.slice(found.index + found.text.length).trim().replace(WORK_DESCRIPTOR, ''));
+    }
     if (!arabic && /^(?:does|did|do|has|have|was|is|were|are)\s+/u.test(after)) {
       subject = after.replace(/^(?:does|did|do|has|have|was|is|were|are)\s+/u, '').replace(/\s+(?:have|live|contain|hold|include|there)(?: .*)?$/u, '');
     }
@@ -282,6 +292,8 @@ function comparisonAgreement(query: EntityQuery, evidence: EntityEvidence): Enti
 }
 
 function makerAttribution(text: string, query: EntityQuery, subject: string): boolean {
+  const work = query.relation === 'write' ? WRITTEN_WORK_CREDIT.exec(text)?.groups?.work : undefined;
+  if (work) return nameWords(work).length === nameWords(subject).length && nameStarts(work, subject);
   const relation = findRelation(text, query.language, query.relation);
   if (!relation) {
     if (query.relation === 'invent' && /\bpatent (?:for|on) /u.test(text)) {
@@ -354,6 +366,9 @@ function otherAntecedent(previous: string | undefined, query: EntityQuery, title
 }
 
 export function entityAgreement(query: EntityQuery, evidence: EntityEvidence): EntityAgreement {
+  if (query.fact) return searchFactValue(query.fact, evidence.text)
+    ? agreement('match', 'assertion names the requested owner')
+    : agreement('conflict', 'requested owner or attribute is not asserted');
   if (query.comparison) return comparisonAgreement(query, evidence);
   const subject = query.subjects[0];
   if (!subject) return agreement('unknown', 'question has no named subject');
@@ -384,7 +399,10 @@ export function entityAgreement(query: EntityQuery, evidence: EntityEvidence): E
     return agreement('conflict', 'requested attribute is absent');
   }
   const before = relation ? text.slice(0, relation.index).trim() : '';
-  const after = relation ? text.slice(relation.index + relation.text.length).trim() : '';
+  let after = relation ? text.slice(relation.index + relation.text.length).trim() : '';
+  if (query.relation === 'capital' && relation && CAPITAL_CITY_COPULA.test(text.slice(0, relation.index))) {
+    after = after.replace(CAPITAL_CITY_COORDINATION, '');
+  }
   const explicitOwner = /^(?:of|for)\s+(?!\p{N})/u.test(after) || arabic && query.relation === 'capital' && !/ت(?:ه|ها)$/u.test(relation?.text ?? '');
   if (explicitOwner && relation && evidence.kind !== 'table' && !nameStarts(trimSubject(after), subject) && !nameStarts(before, subject)) {
     return agreement('conflict', 'attribute has a different explicit owner');

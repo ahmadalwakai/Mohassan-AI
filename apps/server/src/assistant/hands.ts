@@ -9,6 +9,7 @@ import type { WebSequel } from './web-sequence.js';
 import { splitReplyDirective, type ReplyField } from './reply-directive.js';
 import { returnedTo } from './return-to.js';
 import { selectOpenPageLines, selectSearchAnswer } from './selection/hands-selection.js';
+import { parseOpenPageRequest } from './selection/open-page-request.js';
 import { RESTRICTED_CASE } from './selection/reason-scope.js';
 
 export { returnedTo };
@@ -36,7 +37,7 @@ export type HandsStep =
   | { kind: 'back' }
   | { kind: 'news'; source: NewsSource; topic: string }
   /** «افتح X وأخبرني بـY»: after the page opens, Y is answered from that page's own text, quoted (pageAnswer). */
-  | { kind: 'ask_page'; question: string };
+ | { kind: 'ask_page'; question: string; strictFact?: boolean };
 
 export interface NewsSource { url: string; name: string }
 
@@ -333,6 +334,8 @@ function parseCommand(request: string): HandsStep[] | null {
   if (openAsk) return openAsk;
   const openRead = parseOpenAndRead(request);
   if (openRead) return openRead;
+  const pageFact = parseOpenPageRequest(address, question => SPLIT.test(question));
+  if (pageFact) return pageFact;
   const segments = tidy(request).split(SPLIT).map(part => part?.trim()).filter((part): part is string => Boolean(part));
   if (!segments.length || segments.length > 6) return null;
   const steps: HandsStep[] = [];
@@ -1784,7 +1787,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
       }
     }
     if (io.complete) {
-      const answer = step.kind === 'ask_page' && page ? pageAnswer(page, step.question, plan.lang ?? 'ar') : null;
+      const answer = step.kind === 'ask_page' && page ? pageAnswer(page, step.question, plan.lang ?? 'ar', false, step.strictFact) : null;
       const missing = step.kind === 'search' && (step.ask ? !plan.found?.lines.length
         : !plan.results?.length && (!page || !resultLinks(page, 1, step.query).length))
         || answer !== null && (!answer.parts.length || answer.missing.length > 0);
@@ -1830,7 +1833,11 @@ export interface PageAnswer { parts: PageAnswerPart[]; /** What the question ask
  * links or a version are read from the page's structure, so an Arabic question about an English page still finds them; any
  * other question takes the page's sentences that share its words (relevantLines). What was asked and not found is named.
  */
-export function pageAnswer(page: AgentPage, question: string, lang: 'ar' | 'en', observe = false): PageAnswer {
+export function pageAnswer(page: AgentPage, question: string, lang: 'ar' | 'en', observe = false, strictFact = false): PageAnswer {
+  if (strictFact) {
+    const quotes = selectOpenPageLines(page, question, [], observe, LIVE.test(question), true);
+    return { parts: quotes.length ? [{ label: null, quotes }] : [], missing: [] };
+  }
   const asked = fold(question);
   const ar = lang === 'ar';
   const text = page.text;
@@ -1962,7 +1969,7 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
     // The page's own words as quotes under the host's labels: the judge checks every quote against the page (kind «quote»).
     const en = (plan.lang ?? (/[؀-ۿ]/u.test(last.question) ? 'ar' : 'en')) === 'en';
     const name = `**${plainTitle(page.title) || hostOf(page.url)}** (${hostOf(page.url)})`;
-    const { parts, missing } = pageAnswer(page, last.question, en ? 'en' : 'ar', true);
+    const { parts, missing } = pageAnswer(page, last.question, en ? 'en' : 'ar', true, last.strictFact);
     if (!parts.length) return { status: 'partial', text: en
       ? `I opened ${name}, but found nothing on the page that answers “${last.question}”. The page is in the browser panel; say “read the page” and I will show its text.`
       : `فتحت ${name}، ولم أجد في نص الصفحة ما يجيب عن «${last.question}». الصفحة ظاهرة في لوحة المتصفح؛ قل «اقرأ الصفحة» لأعرض نصها.` };

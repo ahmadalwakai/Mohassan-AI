@@ -1,7 +1,8 @@
 import { foldText } from '../../../../../packages/skills/src/stems.js';
 import { figureKind, hasFigureOf, isMetaLine, isReasonQuestion, isUiText, questionLanguage, type FigureKind } from '../answer-check.js';
+import { CAPITAL_CITY_COORDINATION, CAPITAL_CITY_COPULA, creditedAuthor, PROPER_NAME, searchFactRequest, searchFactValue, WRITTEN_WORK_CREDIT, type SearchFactRequest } from './factual-claims.js';
 
-export type AnswerType = 'person' | 'organization' | 'place' | 'date' | 'quantity' | 'reason' | 'method' | 'definition' | 'comparison' | 'unknown';
+export type AnswerType = 'person' | 'organization' | 'place' | 'date' | 'quantity' | 'reason' | 'method' | 'definition' | 'comparison' | SearchFactRequest['type'] | 'unknown';
 
 export interface QuestionIntent {
   type: AnswerType;
@@ -23,6 +24,7 @@ export interface AnswerTypeEvidence {
   value: string;
   strength: 1 | 2 | 3;
   cue: string;
+  claimValue?: string;
 }
 
 const REQUEST_PREFIX = /^(?:(?:please )?(?:explain|describe|tell me|find out|show me)\s+(?:to me\s+)?|(?:من فضلك )?(?:اشرح|وضح|فسر|اخبرني|قل لي|بين)\s+(?:لي\s+)?)/u;
@@ -42,8 +44,10 @@ export function classifyQuestion(question: string): QuestionIntent {
   const language = questionLanguage(question);
   const query = foldText(question).trim().replace(REQUEST_PREFIX, '').replace(/[؟?!]+$/u, '').trim();
   const figure = figureKind(query);
+  const fact = searchFactRequest(query, language);
   let type: AnswerType = 'unknown';
-  if (isReasonQuestion(query) || /^(?:what (?:made|led to|caused)\b|(?:ما|اي)\s+(?:العوامل|الاسباب) التي ادت)/u.test(query)) type = 'reason';
+  if (fact) type = fact.type;
+  else if (isReasonQuestion(query) || /^(?:what (?:made|led to|caused)\b|(?:ما|اي)\s+(?:العوامل|الاسباب) التي ادت)/u.test(query)) type = 'reason';
   else if (COMPARISON_QUESTION.test(query) || COMPARISON_OPTIONS.test(query) || COMPARATIVE.test(query)) type = 'comparison';
   else if (DATE_QUESTION.test(query)) type = 'date';
   else if (QUANTITY_QUESTION.test(query)) type = 'quantity';
@@ -66,7 +70,6 @@ const MAKER_RELATIONS = [
   /\b(?:president|minister|mayor|governor|leader|chief executive|ceo|monarch|king|queen)\b|(?:^|\s)(?:ال)?(?:رئيس|وزير|حاكم|عمده|ملك|ملكه|قائد|مدير)(?=\s|$)/u,
 ] as const;
 
-const PROPER_NAME = /\p{Lu}[\p{L}\p{M}’'-]+(?:\s+(?:(?:de|del|van|von|al|bin|ibn)\s+)?(?:\p{Lu}[\p{L}\p{M}’'-]+|\p{Lu}\.))+/u;
 const NAMED_ACTOR = new RegExp(String.raw`^(?<name>${PROPER_NAME.source}|\p{Lu}\p{Ll}+)(?:\s*\([^)]*\))?\s+(?:first |co-)?(?:invented|wrote|founded|discovered|directed|designed|painted|composed|built|created|won|received|patented|was (?:awarded|credited)|is (?:credited|considered))\b`, 'u');
 const CREDITED_ACTORS = /^(?<names>[^.!?;]{3,180}?)\s+(?:ha(?:ve|s) (?:(?:all|both) )?been|were|are) (?:(?:all|both) )?credited with\b/u;
 const NAMED_RECIPIENT = new RegExp(String.raw`\b(?:by|(?:credited|awarded|granted) to)\s+(?:\p{Ll}[\p{L}-]*\s+){0,4}(?<name>${PROPER_NAME.source})`, 'u');
@@ -101,6 +104,7 @@ const LOCATION_EN = /\b(?:located|situated|based|born|died|held|established|foun
 const GEOGRAPHIC_IDENTITY = /\b(?:is|was) (?:an? |the )?(?:[a-z-]+ ){0,4}(?:country|island|city|town|region|province|state|continent|district|mountain|village) (?:in|of|on|near) (?:(?:the|northern|southern|western|eastern) )?\p{Lu}/u;
 const LOCATION_AR = /(?:^|\s)(?:[وف])?(?:يقع|تقع|يوجد|توجد|تقعان|يمتد|تمتد|ولد|ولدت|توفي|توفيت|مات|ماتت|اقيم|اقيمت|تاسس|تاسست|انشئ|انشئت)\s+(?:في|ب|داخل|بالقرب من|علي)\s*\S|(?:^|\s)(?:ال)?(?:عاصمه|عاصمت[هه]ا?|مقرها|مقره|مقر|مسقط راسه)(?=\s|$)/u;
 const AR_EVENT_LOCATION = /(?:^|\s)(?:[وف])?(?:ولد[ت]?|توفي[ت]?|مات[ت]?|اقيم[ت]?|تاسس[ت]?)(?:\s+\p{L}+){1,6}\s+(?:في|بمدينه|بمحافظه)\s+\p{L}/u;
+const NEGATED_LOCATION = /\b(?:not|never) (?:the |an? )?(?:capital|headquarters|located|situated|based|born)\b|(?:^|\s)(?:[وف])?(?:(?:لا|لم|لن) (?:يقع|تقع|يوجد|توجد)|(?:ليس|ليست) (?:في|بالقرب من|(?:ال)?عاصم[هت]))(?!\p{L})/u;
 
 const REASON_MARKER = /\b(?:because(?: of)?|due to(?! (?:be|start|arrive|begin|end|leave|open|close)\b)|caused by|as a result of|owing to|result(?:s|ed|ing)? from|stems? from|influenced by|attribut(?:ed|able) to|is why)\s+\S|(?:^|[\s،(])(?:و|ف)?لان(?:ه|ها|هم|هما|نا|ك)?\s+\S|(?:^|[\s،(])(?:و|ف)?(?:بسبب|كنتيجه|نتيجه(?: ل| عن)?|جراء|بفعل|علي اثر|يعود ذلك الي|يعود الي|تعود الي|يرجع الي|ترجع الي|يعزي الي|تعزي الي)\s+\S/u;
 const CAUSAL_PREDICATE = /\b(?:causes?|caused|leads? to|led to|results? in|resulted in|trigger(?:s|ed)|responsible for)\s+\S|\b(?:falls?|pulled|driven) (?:by|under (?:the influence of )?) ?gravity\b|(?:^|\s)(?:يسبب|تسبب|تسببت|سبب|ادت الي|ادي الي|يودي الي|تودي الي|ينجم عن|ينتج عن|تنتج عن|ناتج عن)\s+\S/u;
@@ -185,12 +189,17 @@ function organization(intent: QuestionIntent, candidate: AnswerTypeCandidate, li
 }
 
 function place(intent: QuestionIntent, candidate: AnswerTypeCandidate, line: string): AnswerTypeEvidence | null {
+  if (NEGATED_LOCATION.test(line)) return null;
   const event = EVENT_CUES.find(pattern => pattern.test(intent.question));
   const eventMatches = !event || event.test(line) || event.test(foldText(candidate.heading ?? ''));
   const namedField = field(candidate, LOCATION_LABEL);
   if (namedField && eventMatches) return evidence(namedField, 3, 'place-field');
   if (!eventMatches) return null;
-  const located = intent.language === 'ar' ? LOCATION_AR.test(line) || Boolean(event && AR_EVENT_LOCATION.test(line)) : LOCATION_EN.test(line) || !event && GEOGRAPHIC_IDENTITY.test(candidate.text);
+  const capital = /\bcapital(?: city)?\s+/u.exec(line);
+  const coordinatedCapital = capital && CAPITAL_CITY_COPULA.test(line.slice(0, capital.index))
+    && CAPITAL_CITY_COORDINATION.test(line.slice(capital.index + capital[0].length));
+  const located = intent.language === 'ar' ? LOCATION_AR.test(line) || Boolean(event && AR_EVENT_LOCATION.test(line))
+    : LOCATION_EN.test(line) || coordinatedCapital || !event && GEOGRAPHIC_IDENTITY.test(candidate.text);
   if (located && !/\b(?:born|died|founded) (?:in|on) \d|(?:^|\s)(?:ولد[ت]?|توفي[ت]?|تاسس[ت]?) في \d/u.test(line)) return evidence(candidate.text, 3, 'location-predicate');
   return null;
 }
@@ -269,6 +278,14 @@ function comparison(candidate: AnswerTypeCandidate, line: string): AnswerTypeEvi
 
 export function extractAnswerType(intent: QuestionIntent, candidate: AnswerTypeCandidate): AnswerTypeEvidence | null {
   if (!candidate.text.trim() || isMetaLine(candidate.text) || isUiText(candidate.text)) return null;
+  // Publication details can follow a prose attribution. Only admit the anchored by-clause, not a standalone byline.
+  if (intent.type === 'person' && intent.language === 'en' && MAKER_RELATIONS[1].test(intent.question)) {
+    const credit = WRITTEN_WORK_CREDIT.exec(candidate.text);
+    if (credit) {
+      const author = creditedAuthor(credit.groups!.credit);
+      return author && candidate.kind !== 'title' ? evidence(author, 3, 'person-role') : null;
+    }
+  }
   const source = candidate.kind === 'table' && candidate.cells?.length ? candidate.cells.join(' ') : candidate.text;
   const line = foldText(source).replace(/\s+/gu, ' ').trim();
   switch (intent.type) {
@@ -280,6 +297,11 @@ export function extractAnswerType(intent: QuestionIntent, candidate: AnswerTypeC
     case 'method': return method(candidate, line);
     case 'definition': return definition(intent, candidate, line);
     case 'comparison': return comparison(candidate, line);
+    case 'currency': case 'composition': {
+      const fact = searchFactRequest(intent.question, intent.language);
+      const claimValue = fact && candidate.kind !== 'title' ? searchFactValue(fact, candidate.text) : undefined;
+      return claimValue ? { ...evidence(candidate.text, 3, intent.type), claimValue } : null;
+    }
     case 'unknown': return null;
   }
 }
