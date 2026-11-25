@@ -157,7 +157,7 @@ export const SandboxTestResultSchema=z.object({
 export type SandboxTestResult=z.infer<typeof SandboxTestResultSchema>;
 export const RawCodingEditsSchema=z.object({summary:z.string().min(1).max(1200),edits:z.array(z.object({path:z.string().min(1).max(180),expectedHash:z.string().regex(/^[a-f0-9]{64}$/),content:z.string().max(64000)}).strict()).min(1).max(5)}).strict();
 export const CodingProposalSchema=z.object({summary:RawCodingEditsSchema.shape.summary,edits:z.array(RawCodingEditsSchema.shape.edits.element.omit({expectedHash:true})).min(1).max(5)}).strict();
-export const CodingEditsSchema=RawCodingEditsSchema.extend({model:z.string(),usage:z.object({inputTokens:z.number().int().nonnegative(),outputTokens:z.number().int().nonnegative()})});
+export const CodingEditsSchema=RawCodingEditsSchema.extend({model:z.string().optional(),usage:z.object({inputTokens:z.number().int().nonnegative(),outputTokens:z.number().int().nonnegative()}).optional()});
 export type CodingEdits=z.infer<typeof CodingEditsSchema>;
 export const CodingResultSchema=z.object({
   kind:z.literal('coding'),summary:z.string().min(1).max(1600),projectId:z.string(),baseCommit:z.string(),branch:z.string(),checkpoint:z.string().nullable(),worktreeRetained:z.boolean(),

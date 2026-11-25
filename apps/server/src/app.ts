@@ -150,7 +150,7 @@ export async function createApplication(config: AppConfig) {
   await windowsMigration(database.db);
   await googleAdsMigration(database.db);
   const auth = createAuth(database.db, {secret: config.authSecret, webOrigin: config.webOrigin, production: config.production});
-  const coding=await createCodingControl(database.db,{dataDir:config.codingDataDir,allowedRoots:config.codingAllowedRoots,apiKey:config.groqApiKey,model:config.groqReasoningModel,fetch:config.aiFetch,sandbox:config.sandboxRunner});
+  const coding=await createCodingControl(database.db,{dataDir:config.codingDataDir,allowedRoots:config.codingAllowedRoots,sandbox:config.sandboxRunner});
   let studio:Awaited<ReturnType<typeof createStudioControl>>;
   const studioLive=await createStudioLiveControl(database.db,{gatewayUrl:config.studioGatewayUrl,gatewaySecret:config.studioGatewaySecret,webOrigin:config.webOrigin,production:config.production,previewPort:config.studioPreviewPort,getSession:(ownerId,id)=>studio.detail(ownerId,id)});
   studio=await createStudioControl(database.db,{allowedRoots:config.codingAllowedRoots??[],sandbox:coding.sandbox,buildNext:studioLive.available?((snapshot,signal)=>studioLive.build(snapshot,signal)):undefined});
