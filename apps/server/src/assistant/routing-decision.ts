@@ -21,6 +21,7 @@ import { extractiveWritingEnabled } from './writing/request.js';
 import { assessRequestScope, maskRequestLiteralData, parseRequestScopeAssessment, requestCapabilityAllowed, requestScopeActionText, reviewPublicProjection, requestConstraintReply, type RequestScopeAssessment } from './request-scope.js';
 import { applyScratchRouting, runtimeScratchPolicy, type ScratchDecisionPolicy, type ScratchRoutingChoices } from './scratch-decisions.js';
 import { reviewRoutingRefusal } from './refusal/turn.js';
+import { parseTestDrivenCodingRequest, testDrivenCodingEnabled } from './test-driven-coding/request.js';
 
 /**
  * Read-only routing contract for the host to adopt, test and observe. A decision
@@ -33,7 +34,7 @@ export type RoutingCapability = (typeof routingCapabilities)[number];
 export const routedIntents = [...requestContextIntents.filter(intent => intent !== 'unknown'), 'image', 'media'] as const;
 export type RoutedIntent = Exclude<RequestContextIntent, 'unknown'> | 'image' | 'media';
 export type RequestRoute = RoutedIntent | 'reply' | 'clarify';
-export type RoutingHandler = 'resume' | 'clarify' | 'local_conversation' | 'local_computation' | 'local_status' | 'memory' | 'ads' | 'computer' | 'browser' | 'search' | 'writing' | 'planning' | 'coding' | 'reminder' | 'image' | 'media' | 'model' | 'unsupported';
+export type RoutingHandler = 'resume' | 'clarify' | 'local_conversation' | 'local_computation' | 'local_coding' | 'local_status' | 'memory' | 'ads' | 'computer' | 'browser' | 'search' | 'writing' | 'planning' | 'coding' | 'reminder' | 'image' | 'media' | 'model' | 'unsupported';
 export type RoutingReason = 'pending_answer' | 'missing_reference' | 'invalid_request' | 'local_conversation' | 'local_computation' | 'host_runtime_status' | 'explicit_handler' | 'context_destination' | 'deterministic_browser_plan' | 'public_lookup' | 'local_model_fallback' | 'missing_capability' | 'account_restriction' | 'unresolved_intent' | 'scratch_route' | 'scratch_speech_act' | 'scratch_refuse' | 'scratch_out_of_scope' | 'request_refused';
 
 const PendingQuestionSchema = z.object({
@@ -191,6 +192,21 @@ function decideRuleRequestRoute(input: RequestRoutingInput, choices: ScratchRout
     const nextState = decision.resolution.nextState ? parseRequestContextState({ ...decision.resolution.nextState, scope: 'private', sourceAssessment: supplied }) : null;
     return { ...decision, sourceAssessment: supplied, resolution: { ...decision.resolution, kind: 'new', scope: 'private', query: null,
       sourceAssessment: supplied, nextState, ambiguities: [] } };
+  }
+  const codingRequest = parseTestDrivenCodingRequest(input.text);
+  if (codingRequest) {
+    const decision = base('coding', 'coding', 'local_coding', 'explicit_handler');
+    const source: RequestScopeAssessment = { version: 1, source: 'supplied_content', operation: 'transform', scope: 'private',
+      destination: 'unknown', publicQueryEligible: false, reasons: ['supplied_transformation'] };
+    const description = resolveRequestContext(codingRequest.description, input.context, options);
+    const nextState = description.nextState
+      ? parseRequestContextState({ ...description.nextState, intent: 'coding', scope: 'private', sourceAssessment: source }) : null;
+    decision.sourceAssessment = source;
+    decision.resolution = { ...description, kind: 'new', intent: 'coding', scope: 'private', original: resolution.original,
+      resolved: resolution.resolved, query: null, sourceAssessment: source, nextState };
+    if (input.fullAccess === false) return { ...decision, availability: 'restricted', reason: 'account_restriction' };
+    if (!testDrivenCodingEnabled()) return { ...decision, availability: 'missing_capability', missingCapabilities: ['coding'], reason: 'missing_capability' };
+    return decision;
   }
   if (recognizeRuntimeStatusRequest(scopeRequest)) {
     const decision = base('chat', 'chat', 'local_status', 'host_runtime_status');
