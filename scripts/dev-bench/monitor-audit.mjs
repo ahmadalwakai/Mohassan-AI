@@ -28,7 +28,7 @@ export async function observeMonitors(item, observe) {
 }
 
 export function beginMonitorTurn() {
-  context.getStore()?.turns.push({ detection: [], management: [], proactive: [], offers: [] });
+  context.getStore()?.turns.push({ detection: [], management: [], proactive: [], context: [], offers: [] });
 }
 
 export function observeMonitorCard(card) {
@@ -54,8 +54,10 @@ export function sampleMonitorDecision(kind, decide, classify = true) {
   const before = performance.now();
   try {
     const result = decide();
-    turn[kind].push({ ms: performance.now() - before, matched: classify && Boolean(result),
-      ...(classify && result?.kind ? { kind: result.kind } : {}) });
+    const ms = performance.now() - before;
+    const decision = kind === 'context' ? result.decision : result?.kind;
+    const matched = kind === 'context' ? ['offer', 'propose', 'manage'].includes(decision) : Boolean(result);
+    turn[kind].push({ ms, matched: classify && matched, ...(classify && decision ? { kind: decision } : {}) });
     return result;
   } finally {
     scope.activeChecks.delete(kind);

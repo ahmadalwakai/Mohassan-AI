@@ -5,6 +5,9 @@ import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import type { ResolvedModel } from './registry.js';
 import { ModelRuntimeError, type ModelAdapter, type ModelAdapterContext } from './runtime.js';
+import {
+  isRecord, loadMonitorDecisionHead, monitorArtifactSha256, monitorDecisionModelId, MonitorDecisionPromotion, readMonitorArtifact,
+} from './monitor-decision.js';
 
 const textInput = z.object({ text: z.string().min(1).max(8_000) }).strict();
 const scratchInput = textInput.extend({ previousText: z.string().max(8_000).optional(), topK: z.number().int().min(0).max(16).optional() });
@@ -47,6 +50,33 @@ async function loadScratch(model: ResolvedModel, head: typeof scratchHeads[keyof
     run: input => {
       const { text, ...options } = inputAs(scratchInput, input);
       return classifier.predict(head, text, options);
+    },
+  };
+}
+
+async function loadMonitorHead(model: ResolvedModel): Promise<ModelAdapter> {
+  const manifestPin = requiredArtifact(model, 'manifest');
+  const weightsPin = requiredArtifact(model, 'weights');
+  const manifest: unknown = JSON.parse((await readMonitorArtifact(manifestPin.path)).toString('utf8'));
+  const weights = await readMonitorArtifact(weightsPin.path);
+  const weightsSha256 = monitorArtifactSha256(weights);
+  if (!isRecord(manifest) || manifest.trainingSource !== 'human' || manifest.weightsSha256 !== weightsSha256
+    || weightsPin.matchesPin !== true || weightsPin.sha256 !== weightsSha256) {
+    throw new ModelRuntimeError('incompatible', 'Unverified monitor head training manifest');
+  }
+  const head = loadMonitorDecisionHead(JSON.parse(weights.toString('utf8')));
+  const promotionPath = modelArtifact(model, 'promotion')?.path;
+  const promotion = promotionPath ? await readMonitorArtifact(promotionPath)
+    .then(content => MonitorDecisionPromotion.fromArtifact(JSON.parse(content.toString('utf8')), weightsSha256))
+    .catch(() => undefined) : undefined;
+  return {
+    health: () => true,
+    run: input => {
+      try {
+        return { ...head.predict(input), ...(promotion ? { promotion } : {}) };
+      } catch {
+        throw new ModelRuntimeError('invalid-input');
+      }
     },
   };
 }
@@ -122,6 +152,7 @@ export async function loadModelAdapter(model: ResolvedModel, context: ModelAdapt
   const { id } = model.entry;
   if (Object.hasOwn(scratchHeads, id)) return loadScratch(model, scratchHeads[id as keyof typeof scratchHeads]);
   switch (id) {
+    case monitorDecisionModelId: return loadMonitorHead(model);
     case 'refusal': {
       const { classifyLearnedRefusal, scoreLearnedRefusal } = await import('../../../apps/server/src/assistant/refusal/learned-classifier.js');
       return withText(text => {

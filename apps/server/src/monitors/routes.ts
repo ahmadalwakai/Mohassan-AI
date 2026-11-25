@@ -4,6 +4,7 @@ import type { Kysely } from 'kysely';
 import { z } from 'zod';
 import { monitorPaths } from './route-keys.js';
 import { monitorChat } from './chat.js';
+import { monitorRecordingSetting, recordMonitorAlertFeedback, setMonitorRecordingSetting } from './decision/records.js';
 
 const listQuery = z.object({ conversationId: z.uuid().optional() }).strict();
 const v2ListQuery = listQuery.extend({ control: z.literal('v2').optional() });
@@ -14,6 +15,8 @@ const v2Mutation = z.union([
   z.object({ proactiveOffers: z.boolean() }).strict(),
 ]);
 const emptyBody = z.object({}).strict();
+const recordingSetting = z.strictObject({ decisionRecording: z.boolean() });
+const alertFeedback = z.strictObject({ noticeId: z.uuid(), helpful: z.boolean() });
 const mutation = { config: { rateLimit: { max: 12, timeWindow: '1 minute' } } };
 
 export async function registerMonitorRuntime(app: FastifyInstance, db: Kysely<any>, owner: (request: FastifyRequest) => Promise<{ id: string }>) {
@@ -38,6 +41,19 @@ export async function registerMonitorRuntime(app: FastifyInstance, db: Kysely<an
     app.post<{ Params: { id: string } }>(monitorPaths[action], mutation, async request => {
       emptyBody.parse(request.body ?? {});
       return control.store.change((await owner(request)).id, z.uuid().parse(request.params.id), action);
+    });
+  }
+  if (control.v2) {
+    app.get(monitorPaths.decisionRecording, async request => monitorRecordingSetting(db, (await owner(request)).id));
+    app.post(monitorPaths.decisionRecording, mutation, async request => {
+      const { decisionRecording } = recordingSetting.parse(request.body);
+      return setMonitorRecordingSetting(db, (await owner(request)).id, decisionRecording);
+    });
+    app.post(monitorPaths.alertFeedback, mutation, async request => {
+      const { noticeId, helpful } = alertFeedback.parse(request.body);
+      const userId = (await owner(request)).id;
+      const recorded = await db.transaction().execute(tx => recordMonitorAlertFeedback(tx, userId, noticeId, helpful));
+      return { recorded };
     });
   }
   app.addHook('onReady', async () => { control.runtime.start(); });

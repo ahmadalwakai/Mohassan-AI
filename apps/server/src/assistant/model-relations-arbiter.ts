@@ -36,6 +36,7 @@ const execution = new AsyncLocalStorage<{ runId: string; replayTurn?: number }>(
 interface PendingObservation {
   decisions: ArbiterDecisionLog[];
   discover: Array<() => void>;
+  review: Array<() => Promise<ArbiterDecisionLog>>;
 }
 const pending = new Map<string, PendingObservation>();
 
@@ -43,7 +44,7 @@ function pendingObservation(runId: string): PendingObservation {
   const current = pending.get(runId);
   if (current) return current;
   if (pending.size >= 2048) pending.delete(pending.keys().next().value!);
-  const created: PendingObservation = { decisions: [], discover: [] };
+  const created: PendingObservation = { decisions: [], discover: [], review: [] };
   pending.set(runId, created);
   return created;
 }
@@ -64,14 +65,52 @@ export function withArbiterExecution<T>(runId: string, run: () => T): T {
   return execution.run({ runId, replayTurn: replay.getStore()?.turn }, run);
 }
 
-export function captureArbiterDecisions(runId: string): (() => ArbiterDecisionLog[]) | undefined {
+function detachObservation(runId: string): PendingObservation | undefined {
   const observation = pending.get(runId);
   if (!observation) return undefined;
   pending.delete(runId);
-  return () => replay.exit(() => execution.exit(() => {
+  return observation;
+}
+
+function discoverPending(observation: PendingObservation): ArbiterDecisionLog[] {
+  return replay.exit(() => execution.exit(() => {
     for (const discover of observation.discover.splice(0)) discover();
     return observation.decisions;
   }));
+}
+
+export function captureArbiterDecisions(runId: string): (() => ArbiterDecisionLog[]) | undefined {
+  const observation = detachObservation(runId);
+  return observation && (() => discoverPending(observation));
+}
+
+export function captureArbiterObservation(runId: string): (() => Promise<ArbiterDecisionLog[]>) | undefined {
+  const observation = detachObservation(runId);
+  if (!observation) return undefined;
+  return async () => {
+    const decisions = discoverPending(observation);
+    await replay.exit(() => execution.exit(async () => {
+      for (const review of observation.review.splice(0)) {
+        try {
+          const decision = await review();
+          if (decisions.length < 16) decisions.push(decision);
+        } catch { /* An advisory review has no publication authority. */ }
+      }
+    }));
+    return decisions;
+  };
+}
+
+export function deferArbiterReview(runId: string, review: () => Promise<ArbiterDecisionLog>) {
+  if (process.env.MOHASSAN_MODEL_RELATIONS === 'off') return;
+  const observation = pendingObservation(runId);
+  if (observation.review.length < 16) observation.review.push(review);
+}
+
+export function recordArbiterReview(runId: string, decision: ArbiterDecisionLog) {
+  if (process.env.MOHASSAN_MODEL_RELATIONS === 'off') return;
+  const decisions = pendingObservation(runId).decisions;
+  if (decisions.length < 16) decisions.push(decision);
 }
 
 export function takeArbiterDecisions(runId: string): ArbiterDecisionLog[] | undefined {

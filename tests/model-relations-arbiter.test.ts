@@ -4,12 +4,14 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  arbitrateComponent, beginArbiterReplayTurn, discoverArbiterClaims, hasArbiterExecution, takeArbiterDecisions, withArbiterExecution, withArbiterReplay,
+  arbitrateComponent, beginArbiterReplayTurn, captureArbiterObservation, deferArbiterReview, discoverArbiterClaims,
+  hasArbiterExecution, takeArbiterDecisions, withArbiterExecution, withArbiterReplay,
 } from '../apps/server/src/assistant/model-relations-arbiter.js';
 import { createModelRelationsObserver } from '../apps/server/src/assistant/model-relations-shadow.js';
 import { decideHostRequestRoute } from '../apps/server/src/assistant/routing-decision.js';
 import { ArbiterBrain, type ArbiterInput } from '../packages/model-relations/src/arbiter.js';
 import { ModelRelationsManager, type ArbiterDecisionLog, type ArbiterDecisionType } from '../packages/model-relations/src/manager.js';
+import { makeMonitorArbiterInput } from '../packages/model-relations/src/monitor-decision.js';
 import { modelRegistry } from '../packages/model-relations/src/registry.js';
 import { createModelRuntime, type ModelRunResult } from '../packages/model-relations/src/runtime.js';
 
@@ -143,6 +145,25 @@ describe('assistant arbitration hook', () => {
     expect(log).not.toContain(hostResult.reply);
     expect(log).not.toContain(replacement.reply);
     expect(takeArbiterDecisions(runId)).toBeUndefined();
+  });
+
+  it('runs monitor shadow after capture and keeps both decisions with their original turn', async () => {
+    vi.stubEnv('MOHASSAN_MODEL_RELATIONS', undefined);
+    const runId = 'monitor-arbiter-origin';
+    const input = makeMonitorArbiterInput({ language: 'ar', length: 40, conversationState: 'pending' }, { label: 'offer', score: 0.9 });
+    const { relations } = manager();
+    const review = vi.fn(async () => {
+      expect(hasArbiterExecution()).toBe(false);
+      return relations.arbitrate(input);
+    });
+    deferArbiterReview(runId, review);
+    deferArbiterReview(runId, review);
+    const complete = captureArbiterObservation(runId);
+    expect(review).not.toHaveBeenCalled();
+    expect(captureArbiterObservation(runId)).toBeUndefined();
+    const observations = await withArbiterExecution('another-turn', () => complete?.());
+    expect(review).toHaveBeenCalledTimes(2);
+    expect(observations).toMatchObject([{ type: 'monitor-context' }, { type: 'monitor-context' }]);
   });
 
   it('allows a scoped development replay despite the base observer setting', async () => {

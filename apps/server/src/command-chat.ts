@@ -61,6 +61,7 @@ import { admitManners } from './assistant/manners/chat.js';
 import { evaluateCapabilityReply } from './assistant/capability-reply.js';
 import { dispatchReminderTurn } from './reminders/chat-turn.js';
 import { installMonitorChat, type PreparedMonitorTurn } from './monitors/chat.js';
+import { recordMonitorChatFeedback } from './monitors/decision/records.js';
 import { answerRuntimeStatus } from './assistant/runtime-status.js';
 import { evaluateSelfQuestion, type SelfFacts } from './assistant/self-knowledge.js';
 import { evaluateLocalSequence } from './assistant/local-sequence.js';
@@ -2054,7 +2055,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const refusal = run.intent === 'task' && reviewWorkRefusal(request, state, currentExecution.full,
         { computer: Boolean(tools?.computer || config.desktop), memory: Boolean(tools?.memory) });
       if (refusal) { await finish(id, runId, state, refusal.text, 'blocked', undefined, undefined, true); return; }
-      const monitorTurn = monitor && run.intent === 'task' && !state.questionAnswer ? await monitor.forTurn({ ownerId, conversationId: id, runId, text: request, signal }) : null;
+      const monitorTurn = monitor && run.intent === 'task' && !state.questionAnswer ? await monitor.forTurn({ ownerId, conversationId: id, runId, text: request, signal, state }) : null;
       if (monitorTurn) { await finish(id, runId, state, monitorTurn.text, monitorTurn.status ?? (monitorTurn.proposal ? 'completed' : 'partial'), undefined, undefined, true, monitorTurn); return; }
       if (await completeQuestionRewrite(request, state, () => browser.dropHeld(ownerId, id),
         question => finish(id, runId, state, vault.scrub(id, clean(question)), 'completed'))) return;
@@ -4319,6 +4320,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const message = await db.selectFrom('chat_messages').select(['id', 'role']).where('id', '=', input.messageId).where('conversation_id', '=', id).executeTakeFirst();
     if (!message || message.role !== 'assistant') throw new BrowserError('CHAT_FEEDBACK_TARGET', 'هذا الرد غير موجود في المحادثة.', 404);
     await db.transaction().execute(async tx => {
+      await recordMonitorChatFeedback(tx, ownerId, id, input);
       await tx.deleteFrom('chat_events').where('conversation_id', '=', id).where('kind', '=', 'feedback').where(sql`data->>'messageId'`, '=', input.messageId).execute();
       await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: null, kind: 'feedback', message: input.verdict,
         data: JSON.stringify({ messageId: input.messageId, verdict: input.verdict, note: input.note ? clean(input.note) : null }) }).execute();

@@ -180,6 +180,13 @@ export function createMonitorChatV2Store(db: Kysely<any>, store: MonitorStore, n
       });
     },
 
+    async canOffer(userId: string, conversationId: string, topic: string) {
+      if (!await proactiveOffers(userId)) return false;
+      return !await db.selectFrom('smart_monitor_v2_offers').select('topic_key')
+        .where('user_id', '=', userId).where('conversation_id', '=', conversationId)
+        .where('topic_key', '=', hash(topic)).executeTakeFirst();
+    },
+
     async offerOnce(tx: Kysely<any>, userId: string, conversationId: string, topic: string, publish: () => Promise<boolean>) {
       await lockPreferences(tx, userId);
       if (!await proactiveOffers(userId, tx)) return false;

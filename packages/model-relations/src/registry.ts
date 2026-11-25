@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
+import { monitorDecisionModelId } from './monitor-decision.js';
 
 export type ModelState = 'absent' | 'experimental' | 'shadow' | 'active';
 export type ModelRuntimeKind = 'node-cpu' | 'python-worker' | 'gpu';
@@ -220,6 +221,16 @@ export const modelRegistry: readonly ModelEntry[] = [
   scratch('refusal', 'refusal', 'Refusal and scope classification', 'a0da1a0806622c98a20d8b7af1c29ff7055a5896c6c8b5e7cfba9a977d130e68'),
   scratch('follow-up', 'followUp', 'Follow-up classification', '8d00d3f4ab73e6efabf6c8fe08769cafb0cd843a994711b97725bbc6647a97c7',
     [gate('Capability v2 adoption receipt', 'packages/scratch-classifiers/V2-FOLLOWUP.md')]),
+  {
+    id: monitorDecisionModelId, version: 'context-v1', task: 'Classify the current conversation monitor decision',
+    owner: 'packages/model-relations/src/monitor-decision.ts',
+    artifacts: [artifact('manifest', '.data/monitor-decision/manifest.json'),
+      { ...artifact('weights', '.data/monitor-decision/weights.json'), pin: { reference: 'manifest', keys: ['weightsSha256'] } },
+      { ...artifact('promotion', '.data/monitor-decision/promotion.json'), optional: true }],
+    runtime: 'node-cpu', input: '{ frameFeatures: Record<string, number>; textFeatureIds: number[] }',
+    output: '{ label: string | null; score: number }', resources: cpu(8, 20), state: 'shadow',
+    gates: [], dataCard: 'docs/MONITOR-CONTEXT-DECISION-MODEL.md', license: internal, dependencies: [],
+  },
   {
     id: 'refusal', version: 'v1-exclusion-20261125', task: 'Flag unsafe and out-of-scope text', owner: `${assistantModule}refusal/learned-classifier.ts`,
     artifacts: [artifact('weights', `${assistantModule}refusal/learned-model.json`, 'e79b38d5d57bcb945dd9290627b3e6813a8a2d7924d73495c3c3649c11ab25bf')],

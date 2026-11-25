@@ -1,6 +1,7 @@
 """Add monitor observations to the development-only fixture runner."""
 
 from pathlib import Path
+from os.path import relpath
 import re
 import shutil
 
@@ -14,14 +15,14 @@ def add_once(source, before, after):
     return source.replace(before, after)
 
 
-def instrument_decision(path, name, kind, *, classify=True):
+def instrument_decision(path, name, kind, module, *, classify=True):
     source = path.read_text()
     internal_name = f'{name}WithoutBenchTiming'
     source, count = re.subn(rf'export function {name}(?=\()', f'function {internal_name}', source)
     if count != 1:
         raise ValueError(f'Monitor audit instrumentation could not find {name} in {path.name}')
     if 'import { sampleMonitorDecision }' not in source:
-        source = f"import {{ sampleMonitorDecision }} from '../../../../scripts/agent-capability-bench/{AUDIT_MODULE}';\n" + source
+        source = f"import {{ sampleMonitorDecision }} from '{relpath(module, path.parent)}';\n" + source
     classify_arg = '' if classify else ', false'
     path.write_text(source + f'\nexport function {name}(...args: Parameters<typeof {internal_name}>): ReturnType<typeof {internal_name}> {{\n'
                     f"  return sampleMonitorDecision('{kind}', () => {internal_name}(...args){classify_arg});\n}}\n")
@@ -29,13 +30,17 @@ def instrument_decision(path, name, kind, *, classify=True):
 
 def instrument_product(checkout):
     monitors = checkout / 'apps/server/src/monitors'
+    module = checkout / 'scripts/agent-capability-bench' / AUDIT_MODULE
     detection = monitors / 'detection.ts'
-    instrument_decision(detection, 'detectMonitorNeed', 'detection')
-    instrument_decision(detection, 'monitorHistoryMayMatter', 'detection', classify=False)
+    instrument_decision(detection, 'detectMonitorNeed', 'detection', module)
+    instrument_decision(detection, 'monitorHistoryMayMatter', 'detection', module, classify=False)
     intents = monitors / 'v2-chat-intents.ts'
     if intents.is_file():
-        instrument_decision(intents, 'parseMonitorManagement', 'management')
-        instrument_decision(intents, 'detectMonitorAnswerOffer', 'proactive')
+        instrument_decision(intents, 'parseMonitorManagement', 'management', module)
+        instrument_decision(intents, 'detectMonitorAnswerOffer', 'proactive', module)
+    reasoner = monitors / 'decision/reasoner.ts'
+    if reasoner.is_file():
+        instrument_decision(reasoner, 'reasonMonitorContext', 'context', module)
     network = checkout / 'packages/browser/src/network.ts'
     source = network.read_text()
     start_marker = '    const browser=options.browser===true;'
@@ -52,7 +57,7 @@ def instrument_product(checkout):
     options.signal?.throwIfAborted();
     return monitorFixtureRead(url);''' + source[stop:]
     network.write_text(f"import {{ monitorFixtureRead }} from '../../../scripts/agent-capability-bench/{AUDIT_MODULE}';\n" + source)
-    return [detection, network, *([intents] if intents.is_file() else [])]
+    return [detection, network, *(file for file in (intents, reasoner) if file.is_file())]
 
 
 def instrument_observer(path):

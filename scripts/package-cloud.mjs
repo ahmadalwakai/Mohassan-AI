@@ -7,6 +7,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const rootFiles = [
   'package.json', 'package-lock.json', 'tsconfig.json', 'vitest.config.ts',
   'playwright.config.ts', '.env.example',
+  ...['manifest.json', 'dev.jsonl', 'sealed.jsonl'].map(file => `tests/fixtures/agent-capability-bench/v2/exclusion/${file}`),
 ];
 const sourceDirectories = ['apps', 'packages', 'scripts'];
 const excludedNames = new Set([
