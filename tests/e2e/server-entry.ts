@@ -8,6 +8,10 @@ for(const key of ['DATA_DIR','CODING_DATA_DIR','CODING_ALLOWED_ROOTS','STUDIO_AI
   if(!relative||relative.startsWith('..')||path.isAbsolute(relative))throw new Error(`E2E_PATH_OUTSIDE_FIXTURE:${key}`);
 }
 if(process.env.DATABASE_URL||process.env.GROQ_API_KEY||process.env.MOHASSAN_LIVE_GROQ_KEY||process.env.STUDIO_GATEWAY_URL||process.env.STUDIO_GATEWAY_SECRET||process.argv.includes('--live'))throw new Error('E2E_LIVE_CONFIGURATION_DENIED');
+if(process.env.MOHASSAN_E2E_GITHUB_MONITOR==='1'){
+  const {installGitHubMonitorFixture}=await import('./github-monitor-fixture.js');
+  installGitHubMonitorFixture();
+}
 // Reject invalid direct invocations before importing any config/app module.
 const [{createApplication},{getConfig},{createMockGroq}]=await Promise.all([
   import('../../apps/server/src/app.js'),import('../../apps/server/src/config.js'),import('../fixtures/planning.js'),
