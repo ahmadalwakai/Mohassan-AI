@@ -49,13 +49,14 @@ describe('workspace members over disposable local state', () => {
   }
 
   beforeAll(async () => {
+    vi.stubEnv('MOHASSAN_MONITORS_ENABLED', '1');
     directory = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'mohassan-members-')));
     application = await createApplication({ authSecret: 'members-fixture-auth-secret-0000000001', internalSecret: secret, setupToken, webOrigin: origin, production: false, runWorker: false,
       codingAllowedRoots: [directory], browserProfileDir: join(directory, 'browser'), groqApiKey: 'synthetic-fixture-key-only', aiFetch: modelFetch, memberDailyRuns: 3, testRequestLimit: 2000 });
     expect((await app().inject({ method: 'POST', url: '/api/setup', headers: headers(''), payload: { ...owner, setupToken } })).statusCode).toBe(200);
     ownerCookie = (await login(owner)).cookie;
   }, 60000);
-  afterAll(async () => { await application?.app.close(); if (directory) await rm(directory, { recursive: true, force: true }); });
+  afterAll(async () => { vi.unstubAllEnvs(); await application?.app.close(); if (directory) await rm(directory, { recursive: true, force: true }); });
 
   it('lists only routes that exist', () => {
     for (const key of [...MEMBER_ROUTES, ...PUBLIC_ROUTES]) expect(application!.routes.has(key), key).toBe(true);

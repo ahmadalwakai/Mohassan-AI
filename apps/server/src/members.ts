@@ -6,6 +6,7 @@ import type { createAuth } from './auth.js';
 import { memberRunsToday as countMemberRuns } from './member-run-quota.js';
 import { NOTIFICATION_MEMBER_ROUTES } from './notifications-routes.js';
 import { REMINDER_MEMBER_ROUTES } from './reminders/route-keys.js';
+import { MONITOR_MEMBER_ROUTES } from './monitors/route-keys.js';
 import { conversationShareMemberRoutes, conversationSharePublicRoute } from './conversation-share-paths.js';
 import { MEMBER_DATA_ROUTES, readLimitedMemberAccess, signUpInvitedMember } from './member-administration.js';
 
@@ -40,6 +41,7 @@ export const MEMBER_ROUTES: ReadonlySet<string> = new Set([
   'GET /api/access',
   ...NOTIFICATION_MEMBER_ROUTES,
   ...REMINDER_MEMBER_ROUTES,
+  ...MONITOR_MEMBER_ROUTES,
   // The chat, including its own cloud browser (a profile per account).
   `GET ${chat}`, `POST ${chat}`, `GET ${chat}/:id`, `DELETE ${chat}/:id`, `GET ${chat}/:id/screen`,
   `GET ${chat}/:id/browser/activity`,

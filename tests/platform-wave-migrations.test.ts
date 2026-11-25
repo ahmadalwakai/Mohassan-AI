@@ -51,7 +51,7 @@ const platformIds = [
   ['039_conversation_shares', '038_conversation_shares'],
   ['040_member_data_rights', '037_member_data_rights'],
 ] as const;
-const currentIds = [...platformIds.map(([current]) => current), '041_long_run_checkpoints', '042_background_results'];
+const currentIds = [...platformIds.map(([current]) => current), '041_long_run_checkpoints', '042_background_results', '043_smart_monitors'];
 const agentIds = ['035_chat_conversation_review', '036_structured_memory'];
 
 // Ledger registrations in the base startup migrators, retrieved 2026-11-25.
@@ -119,7 +119,7 @@ it('records platform migrations in startup order, restarts unchanged, and adopts
     const first = await boot();
     expect(first.platformInserts).toEqual(currentIds);
     expect(first.appLedger.map(row => row.version)).toEqual([...baseIds, ...agentIds, ...currentIds].sort());
-    expect(first.authLedger.map(row => row.version)).toEqual(['001_auth', '002_members']);
+    expect(first.authLedger.map(row => row.version)).toEqual(['001_auth', '002_members', '003_member_run_quota']);
 
     const second = await boot(async db => {
       await db.transaction().execute(async tx => {

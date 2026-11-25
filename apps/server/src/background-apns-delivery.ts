@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { IosPushPayload } from '@mohassan/contracts';
 import { sendToApnsDevice, type ApnsSender, type IosPushDevice } from './apns.js';
 import { backgroundPayload, type BackgroundNotificationEvent } from './background-notification-payload.js';
@@ -12,7 +12,8 @@ function dueApnsDeliveries(db: Kysely<any>, now: Date) {
 
 export async function dispatchBackgroundApns(db: Kysely<any>, send: ApnsSender, isActive: (id: string) => Promise<boolean>, now: Date) {
   const due = await dueApnsDeliveries(db, now).select(['d.event_id', 'd.registration_id', 'n.user_id'])
-    .orderBy('d.next_at').limit(20).execute() as Array<{ event_id: string; registration_id: string; user_id: string }>;
+    .orderBy(sql`row_number() over (partition by n.user_id order by d.next_at, d.event_id, d.registration_id)`)
+    .orderBy('d.next_at').orderBy('d.event_id').orderBy('d.registration_id').limit(20).execute() as Array<{ event_id: string; registration_id: string; user_id: string }>;
   await Promise.all(due.map(async ({ event_id: eventId, registration_id: registrationId, user_id: userId }) => {
     const active = await isActive(userId);
     await db.transaction().execute(async tx => {
@@ -23,6 +24,7 @@ export async function dispatchBackgroundApns(db: Kysely<any>, send: ApnsSender, 
       if (!device) return;
       const event = await dueApnsDeliveries(tx, now).where('d.event_id', '=', eventId).where('d.registration_id', '=', registrationId)
         .select(['n.task_id', 'n.conversation_id', 'n.run_id', 'n.background_outcome', 'n.background_language', 'n.result_preview', 'd.attempts'])
+        .select(sql<string | null>`to_jsonb(n)->>'monitor_id'`.as('monitor_id'))
         .forUpdate('d').skipLocked().executeTakeFirst() as (BackgroundNotificationEvent & { attempts: number }) | undefined;
       if (!event) return;
 
@@ -33,10 +35,10 @@ export async function dispatchBackgroundApns(db: Kysely<any>, send: ApnsSender, 
         await delivery.set({ next_at: backgroundRetryAt(now) }).execute();
         return;
       }
-      const { title, body, runKind: kind, conversationId, runId } = backgroundPayload(event, preferences);
+      const { title, body, runKind: kind, conversationId, runId, monitorId } = backgroundPayload(event, preferences);
       const payload: IosPushPayload = {
         aps: { alert: { title, body }, sound: 'mohassan-done.caf', 'thread-id': conversationId },
-        conversationId, runId, kind,
+        conversationId, runId, kind, ...(monitorId && { monitorId }),
       };
       const result = await sendToApnsDevice(tx, send, device, payload, eventId);
       if (result === 'expired') return;

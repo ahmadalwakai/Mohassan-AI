@@ -5,6 +5,7 @@ import { completeBrief } from '@mohassan/sites';
 import { withoutChatRequestCommit } from '../../chat-request-ledger.js';
 import type { createCommandChatControl, CommandChatConfig } from '../../command-chat.js';
 import { withMemberChatDeletionFence } from '../../member-chat-deletion-fence.js';
+import { legacyMonitorHandledBySmartChat } from '../../monitors/chat.js';
 import { cleanRejectedChatCreate } from '../../rejected-chat-create.js';
 import { containsSensitiveCredentialText, redactSensitiveCredentialText as cleanup } from '../../sensitive-credential-text.js';
 import { classifySteering } from '../agent-run.js';
@@ -169,7 +170,7 @@ export async function withLongRunChat(db: Parameters<typeof createCommandChatCon
   runner.start();
 
   async function select(ownerId: string, text: string) {
-    if (!enabled) return null;
+    if (!enabled || legacyMonitorHandledBySmartChat(text)) return null;
     const full = config.fullAccess ? await config.fullAccess(ownerId) : true;
     if (reviewWorkRefusal(text, newBrainState(), full, { computer: Boolean(config.tools?.computer || config.desktop), memory: Boolean(config.tools?.memory) })) return null;
     return planLongRun(text, config, network, backgroundEnabled);
