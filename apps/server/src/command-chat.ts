@@ -44,6 +44,7 @@ import { addNamedDocumentInput, finishInlineDataFile, preferDocumentControl, rea
 import { PdfError, parsePageSelection } from '@mohassan/pdf';
 import type { DocumentControl, DocumentEdit, DocumentInput, StoredDocument } from './documents.js';
 import { evaluateLocalComputation } from './assistant/local-computation.js';
+import { blockAbstainedWordProblem } from './assistant/word-problem-chat.js';
 import { isPageReasoningRequest } from './assistant/reasoning/index.js';
 import { composeReferencedComputation, computationReference, computedRecord, evaluateReferencedComputation, latestComputedResult, missingReferenceQuestion, referencedValueFromAnswer, withReferencedValue } from './assistant/computation-reference.js';
 import { evaluateLocalRecall } from './assistant/local-recall.js';
@@ -2774,6 +2775,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           return;
         }
         if (computation && !(computation.status === 'partial' && hasChatModel())) {
+          const blocked = blockAbstainedWordProblem(computation, (text, status) => finish(id, runId, state, vault.scrub(id, text), status));
+          if (blocked) { await blocked; return; }
           await addStep(id, runId, computation.lang === 'ar' ? 'حساب محلي' : 'Local calculation');
           state.trail.push({ step: ++state.steps, action: 'calculate', result: clean(computation.evidence.map(item => item.quote).join('\n') || computation.text).slice(0, 1100), changed: false });
           observeChatLocalAnswer(state.supervision!, { source: 'computation', ...computation, startedAt: localStartedAt });
