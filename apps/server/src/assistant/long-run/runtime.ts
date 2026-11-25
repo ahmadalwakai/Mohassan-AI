@@ -394,6 +394,7 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
       if (!row || !state || row.status !== 'waiting_approval' || !permission || time >= state.longRun.deadline)
         throw new BrowserError('CHAT_APPROVAL_CHANGED', 'This approval is no longer pending.', 409);
       if (!await activeAccount(ports, row.owner_id, tx)) throw new BrowserError('CHAT_ACCOUNT_INACTIVE', 'هذا الحساب غير نشط.', 403);
+      await commitChatRequest(tx, ownerId, conversationId);
       const decision = recordDecision(state.agentRun, { approvalId, actorId: ownerId, conversationId, approved, at: time });
       if (decision.decision !== 'granted') {
         setStepAuthorization(state.agentRun, stepId(state.longRun.next), 'refused', time);
