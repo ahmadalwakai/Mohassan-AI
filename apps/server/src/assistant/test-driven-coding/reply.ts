@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import type { BrainState } from '../brain.js';
 import { parseTestDrivenCodingRequest, testDrivenCodingEnabled, type TestDrivenCodingRequest } from './request.js';
 
 const worker = fileURLToPath(new URL('./worker.py', import.meta.url));
@@ -22,6 +23,16 @@ const resultSchema = z.discriminatedUnion('status', [
 type Result = z.infer<typeof resultSchema>;
 type Reply = { status: 'completed' | 'blocked'; text: string };
 const unavailable: Result = { status: 'unavailable', reason: 'isolation-unavailable' };
+
+function requestHash(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
+}
+
+export function bindTestDrivenCodingHash(state: Pick<BrainState, 'routing' | 'requestOriginalHash'>, acceptedText: string): void {
+  if (state.routing?.handler === 'local_coding' && state.requestOriginalHash) {
+    state.requestOriginalHash = requestHash(acceptedText);
+  }
+}
 
 function runWorker(request: TestDrivenCodingRequest, cwd: string, signal: AbortSignal): Promise<Result> {
   return new Promise(resolve => {
@@ -70,7 +81,7 @@ export async function answerTestDrivenCoding(
   );
   if (!testDrivenCodingEnabled() || process.platform !== 'linux' || options.signal.aborted) return unavailableReply();
   // The chat controller binds the accepted, trimmed input before applying redaction.
-  if (createHash('sha256').update(text).digest('hex') !== options.originalHash) return blocked(
+  if (requestHash(text) !== options.originalHash) return blocked(
     'I couldn’t verify the original assertion text. Please resend the description and assertions with example data.',
     'تعذر التحقق من نص الاختبارات الأصلي. أعد إرسال الوصف والاختبارات ببيانات تجريبية.',
   );
