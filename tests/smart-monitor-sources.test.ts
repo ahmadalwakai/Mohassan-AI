@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { BrowserError, SafeNetwork, type SearchProvider } from '@mohassan/browser';
+import { BrowserError, SafeNetwork, type SafeResponse, type SearchProvider } from '@mohassan/browser';
 import type { MonitorSpec } from '@mohassan/contracts';
 import type { Kysely } from 'kysely';
 import { describe, expect, it, vi } from 'vitest';
@@ -202,7 +202,7 @@ describe('monitor public source transport', () => {
   it('rejects capability URLs in stored sources, redirects and search queries before sending them', async () => {
     const capabilityUrl = 'https://example.org/share/abcdefghijklmnopqrstuv';
     const network = new SafeNetwork();
-    const request = vi.spyOn(network, 'request').mockImplementation(async address => (
+    const request = vi.spyOn(network, 'request').mockImplementation(async (address): Promise<SafeResponse> => (
       address.endsWith('/robots.txt')
         ? { status: 404, url: address, headers: {}, body: Buffer.alloc(0) }
         : { status: 302, url: address, headers: { location: capabilityUrl }, body: Buffer.alloc(0) }
