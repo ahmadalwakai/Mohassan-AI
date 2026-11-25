@@ -9,8 +9,14 @@ import { parseAgeComparison, parseInverseProportion, parseInverseRate } from './
 import { parseAllocations } from './word-problem-allocations.js';
 import { parseRepeatedRates } from './word-problem-repeated-rates.js';
 import { parseItemCosts } from './word-problem-costs.js';
+import { searchCandidates } from './arithmetic-search-candidates.js';
+import { extractSearchProblem } from './arithmetic-search-quantities.js';
+import { selectArithmeticCandidate } from './arithmetic-search-ranker.js';
 
 const englishQuestion = /\b(?:how (?:many|much|far|long|old)|what (?:is|was|will be) (?:the |her |his |their )?(?:total|difference|average|sum|cost|number|price|amount|percentage|fraction|age)|(?:calculate|find|determine) (?:the |her |his |their )?)\b/iu;
+const extraSearchQuestion = /\b(?:how (?:fast|heavy|tall|wide|deep)|(?:at )?what (?:percent(?:age)?|fraction|rate|speed)|what (?:is|was) the (?:ratio|rate|speed|remainder))\b/iu;
+const searchQuestion = new RegExp(`${englishQuestion.source}|${extraSearchQuestion.source}`, 'iu');
+const searchLead = /^(?:(?:given that|assuming that|when|after|before|during|with|on|in|over|at|by|for)\b.+|so|then|therefore),?$/iu;
 const arabicQuestion = /(?<!\p{L})كم(?!\p{L})/u;
 const sentenceBoundary = /\.(?=\s|$)|[!;؛]/u;
 const externalAction = /^(?:(?:and |then |also |please |kindly |ثم )*)(?:search|look up|find online|open|visit|navigate|save|remember|send|email|publish|post|schedule|delete|run|execute|translate|summarize|write|ابحث|افتح|ارسل|أرسل|احفظ|انشر|ترجم|اكتب)(?!\p{L})/iu;
@@ -23,22 +29,28 @@ interface Problem {
   question: string;
 }
 
-function readProblem(request: string): Problem | null {
+function readProblem(request: string, forSearch = false): Problem | null {
   if (request.length > 1600) return null;
   const text = normalizeWordProblem(request);
   if (/^["«“]|\x60|https?:\/\/|\bwww\./iu.test(text)) return null;
   const body = text.replace(/[.?؟]$/u, '').trim();
   if (/[?؟]/u.test(body)) return null;
   const lang = /\p{Script=Arabic}/u.test(body) ? 'ar' : 'en';
-  const questionHead = lang === 'ar' ? arabicQuestion : englishQuestion;
+  const questionHead = lang === 'ar' ? arabicQuestion : forSearch ? searchQuestion : englishQuestion;
   const sentences = body.split(sentenceBoundary).map(sentence => sentence.trim()).filter(Boolean);
   const last = sentences.pop();
   const head = last && questionHead.exec(last);
   if (!last || !head || sentences.length > 7) return null;
   if (head.index) {
     const lead = last.slice(0, head.index).trim();
-    if (!/[,،]$/u.test(lead) || !/^(?:if |إذا |اذا |لو )/iu.test(lead)) return null;
-    sentences.push(lead.slice(0, -1).replace(/^(?:if|إذا|اذا|لو) /iu, '').trim());
+    if (/[,،]$/u.test(lead) && /^(?:if |إذا |اذا |لو )/iu.test(lead)) {
+      sentences.push(lead.slice(0, -1).replace(/^(?:if|إذا|اذا|لو) /iu, '').trim());
+    } else if (forSearch && lang === 'en' && searchLead.test(lead)) {
+      if (!/^(?:so|then|therefore),?$/iu.test(lead)) {
+        if (!lead.endsWith(',')) return null;
+        sentences.push(lead.slice(0, -1));
+      }
+    } else return null;
   }
   let question = last.slice(head.index);
   if (lang === 'en') {
@@ -52,6 +64,10 @@ function readProblem(request: string): Problem | null {
   if (!sentences.length || [...sentences, question].some(sentence =>
     sentence.split(/[,،] |\b(?:and then|and also|then) |(?:^| )ثم /iu).some(part => externalAction.test(part)))) return null;
   return { lang, statements: sentences, question };
+}
+
+export function readWordProblem(request: string): Problem | null {
+  return readProblem(request) ?? readProblem(request, true);
 }
 
 function display(expression: string): string {
@@ -98,9 +114,7 @@ function abstention(problem: Problem, ambiguous: boolean): LocalComputation | nu
 }
 
 /** Accept only complete parses. Different evaluable readings require clarification. */
-export function evaluateWordProblem(request: string): LocalComputation | null {
-  const problem = readProblem(request);
-  if (!problem) return null;
+function evaluateGrammar(problem: Problem): { result: Computed | null; ambiguous: boolean } {
   const { lang, statements, question } = problem;
   const parsers = lang === 'ar' ? [parseArabicWordProblem]
     : [parseTimedRate, parseGroups, parseEqualShare, parseEnglishRelations,
@@ -109,6 +123,36 @@ export function evaluateWordProblem(request: string): LocalComputation | null {
   const results = graphs.map(evaluateWordExpression);
   const first = results[0];
   const ambiguous = Boolean(first && results.some(result => result !== null && result.value !== first.value));
-  if (first && !ambiguous && results.every(result => result !== null)) return computedReply(lang, first);
-  return abstention(problem, ambiguous);
+  const result = first && !ambiguous && results.every(result => result !== null) ? first : null;
+  return { result, ambiguous };
+}
+
+export function evaluateWordProblemGrammar(request: string): LocalComputation | null {
+  const problem = readProblem(request);
+  if (!problem) return null;
+  const { result, ambiguous } = evaluateGrammar(problem);
+  return result ? computedReply(problem.lang, result) : abstention(problem, ambiguous);
+}
+
+function wordProblemCandidates(problem: Problem | null) {
+  return problem?.lang === 'en' ? searchCandidates(extractSearchProblem(problem.statements, problem.question)) : [];
+}
+
+/** Use the same candidates in the trainer and the runtime fallback. */
+export function searchCandidatesForWordProblem(request: string) {
+  const problem = readProblem(request);
+  const grammar = problem && evaluateGrammar(problem);
+  return grammar?.result || grammar?.ambiguous ? [] : wordProblemCandidates(problem ?? readProblem(request, true));
+}
+
+export function evaluateWordProblem(request: string): LocalComputation | null {
+  const problem = readProblem(request);
+  const grammar = problem && evaluateGrammar(problem);
+  if (problem && grammar?.result) return computedReply(problem.lang, grammar.result);
+  if (!grammar?.ambiguous) {
+    const selected = selectArithmeticCandidate(wordProblemCandidates(problem ?? readProblem(request, true)));
+    const searched = selected && evaluateWordExpression(selected.graph);
+    if (searched) return computedReply('en', searched);
+  }
+  return problem ? abstention(problem, Boolean(grammar?.ambiguous)) : null;
 }

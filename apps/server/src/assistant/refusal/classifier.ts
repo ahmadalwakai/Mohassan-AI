@@ -1,6 +1,7 @@
 import { publicSearchScan, publicSearchText } from '@mohassan/browser';
 import { isCurrentComputerReadRequest } from '../computer-request-language.js';
 import { documentTask } from '../documents.js';
+import { hasQuantitativeQuestion } from '../quantitative-question.js';
 import { maskRequestLiteralData } from '../request-constraints.js';
 import { assessRequestScope, requestScopeActionText, type RequestScopeAssessment } from '../request-scope.js';
 import { classifyLearnedRefusal } from './learned-classifier.js';
@@ -39,6 +40,10 @@ const arabicModal = /^(?:(?:هل )?(?:بامكانك|من الممكن|بتقد�
 const requestedObject = /^(?:i (?:need|want|would like)|i'd like) (?:my|our|the|a|an|your|their|his|her) /u;
 const greeting = /^(?:(?:hello|hey|hi|thanks|good morning|مرحبا|اهلا|هلا|هاي|سلام|السلام عليكم)[,،!؟.\s]+)(?=.)/u;
 const connectors = /(?<sequence>[؛;\r\n!?؟]+\s*|\s+\b(?:and then|then|afterwards)\b\s+|\s+(?:ثم|وبعدها|وبعدين|بعدها)\s+)|[.،,]\s+(?=\p{L})|\s+\b(?:but|also|and)\b\s+|\s+(?:لكن|ولكن|كمان)\s+|\s+و(?=\p{L})/giu;
+const modalStatement = /^(?:(?:or|but|if) )?(?:[a-z][\w'-]* ){1,6}(?:can|could|may|might|will|would|shall|should|must)(?: |$)/u;
+const modalAtEnd = /\b(?:can|could|may|might|will|would|shall|should|must)$/u;
+const coordinatingWord = /^\s*(?:and|also)\s*$/iu;
+const ownEffectOperand = /\b(?:my|our)\b|\b(?:for|to|as|on behalf of) (?:me|us)\b/u;
 const continuation = head("please|kindly|could you|can you|would you|do not|don't|never|avoid|open|click|press|tap|search|look|read|show|tell|ask|write|draft|delete|remove|erase|share|send|forward|give|run|start|find|edit|approve|publish|export|book|pay|purchase|buy|order|transfer|wire|bypass|skip|ignore|reveal|output|store|remember|enter|paste|type|solve|save|check|log|sign|access|make|steal|hack|build|لا|افتح|اضغط|ابحث|دور|اقرا|اعرض|اكتب|احذف|امسح|افش|اعطني|ابعث|ارسل(?:ه|ها|هم)?|ابعت(?:ه|ها|هم)?|انشر|شارك|ادفع|اشتري|اشتر|حول(?:ه|ها)?|احجز|تجاوز|تجاهل|طلع|احفظ|اكشف|ادخل|حط|املا|حل|وافق|سجل|اعمل|شغل|استخدم|اصنع|اخترق|اسرق");
 const actionHeads = [continuation, accountAction, harmfulAction, paymentAction, humanStepAction, sendAction,
   delayedScheduling, futureAction, ownerCapabilityAction, unsafeCircumvention, physicalAction, ...unsupportedActionHeads];
@@ -116,8 +121,8 @@ function explicitControlRefusal(raw: string, clause: string): RefusalDecision | 
   return reviewRefusalControl(label);
 }
 
-function outerClauses(value: string): OuterClause[] {
-  let masked = maskRequestLiteralData(value).replace(webAddress, url => ' '.repeat(url.length));
+function outerClauses(value: string, maskedInput: string, arithmetic: boolean): OuterClause[] {
+  let masked = maskedInput;
   // A colon after an explicit draft introduces its body. Commands there are
   // part of the message, just as commands inside a quotation are data.
   const delimiter = masked.search(/[:：]/u);
@@ -125,19 +130,34 @@ function outerClauses(value: string): OuterClause[] {
   const result: OuterClause[] = [];
   let start = 0;
   let describedAction = false;
+  let modalPremise = false;
   const collect = (end: number) => {
     const text = requestText(masked.slice(start, end));
-    if (text && !negativeLead.test(text)) result.push({ text, describedAction, controlRefusal: explicitControlRefusal(value.slice(start, end), text) });
+    if (text && !negativeLead.test(text)) result.push({
+      text, describedAction: describedAction || modalPremise, controlRefusal: explicitControlRefusal(value.slice(start, end), text),
+    });
   };
   for (const boundary of masked.matchAll(connectors)) {
     const end = boundary.index + boundary[0].length;
+    let nextModalPremise = false;
     if (!boundary.groups?.sequence) {
-      const tail = requestText(masked.slice(end));
+      const rawTail = masked.slice(end);
+      const tail = requestText(rawTail);
       if (!actionHeads.some(action => action.test(tail))) continue;
+      // A weak conjunction under a stated subject's modal is part of that
+      // premise. Explicit requests and sentence/sequence boundaries still split.
+      if (arithmetic && coordinatingWord.test(boundary[0]) && tail === normalizeRefusalText(rawTail)) {
+        const previous = normalizeRefusalText(masked.slice(start, boundary.index).split(/\.(?=\s)/u).at(-1) ?? '');
+        const operand = tail.split(/[?;!]|\.(?=\s)/u, 1)[0]!;
+        nextModalPremise = modalStatement.test(previous) && !actionHeads.some(action => action.test(previous))
+          && !ownEffectOperand.test(operand)
+          && (/^\s*and\b/iu.test(boundary[0]) || modalAtEnd.test(previous));
+      }
     }
     collect(boundary.index);
     describedAction = !boundary.groups?.sequence
       && (describedAction || guideQuestion.test(requestText(masked.slice(start, boundary.index))));
+    modalPremise = nextModalPremise;
     start = end;
   }
   collect(masked.length);
@@ -244,13 +264,16 @@ function classifyClause(clause: OuterClause, context: RefusalContext, scope: Req
   return null;
 }
 
-function classifyUnmatchedClause({ text, describedAction }: OuterClause, scope: RequestScopeAssessment): RefusalDecision | null {
+function classifyUnmatchedClause({ text, describedAction }: OuterClause, scope: RequestScopeAssessment, arithmetic: boolean): RefusalDecision | null {
   // A corpus label cannot override a resolved source or a supported operation.
   // Dialect questions may still have an unresolved source, so preserve their
   // informational path too. Explicit policy vetoes have already run.
   if (scope.source !== 'unresolved' || !['act', 'unknown'].includes(scope.operation)
     || scope.reasons.includes('unresolved_reference')
     || asksForExplanation.test(text) || explainer.test(text) || riskyInstruction.test(text) || isChatDelivery(text)) return null;
+  // The learned fallback has no operation signal in a mathematical premise.
+  // The explicit clause rules and credential checks have already run.
+  if (arithmetic && (describedAction || scope.operation === 'unknown' && !actionHeads.some(action => action.test(text)))) return null;
   const learned = classifyLearnedRefusal(text);
   if (!learned || documentTask(text)) return null;
   if (learned.code === 'unsafe') return refusal('unsafe', 'protect');
@@ -264,7 +287,10 @@ export function classifyRefusal(request: string, context: RefusalContext): Refus
   const scope = context.scope ?? assessRequestScope(request);
   if (scope.reasons.includes('invalid_input') || scope.reasons.includes('explicit_prohibition')) return null;
   if (hasCredentialMaterial(request, scope)) return refusal('secrets', 'secure_entry');
-  const clauses = outerClauses(scope.constraints?.safeActionText ?? requestScopeActionText(request));
+  const action = scope.constraints?.safeActionText ?? requestScopeActionText(request);
+  const masked = maskRequestLiteralData(action).replace(webAddress, url => ' '.repeat(url.length));
+  const arithmetic = hasQuantitativeQuestion(masked);
+  const clauses = outerClauses(action, masked, arithmetic);
   const isDraft = clauses.some(clause => askForDraft.test(clause.text));
   let found: RefusalDecision | null = null;
   for (const clause of clauses) {
@@ -273,7 +299,7 @@ export function classifyRefusal(request: string, context: RefusalContext): Refus
   }
   if (found) return found;
   for (const clause of clauses) {
-    const decision = classifyUnmatchedClause(clause, clauses.length === 1 ? scope : assessRequestScope(clause.text));
+    const decision = classifyUnmatchedClause(clause, clauses.length === 1 ? scope : assessRequestScope(clause.text), arithmetic);
     if (decision && (!found || priority.indexOf(decision.code) < priority.indexOf(found.code))) found = decision;
   }
   return found;
