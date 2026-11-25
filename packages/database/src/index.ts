@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { createServer } from "node:net";
 import { ensureChatConversationsTable } from "./chat-schema.ts";
 import { migrateNotifications } from "./notifications-migration.ts";
+import { databaseConnectionUrl } from "./connection-url.js";
 
 export interface DatabaseOptions {
   connectionString?: string;
@@ -79,7 +80,7 @@ async function acquireDirectoryLock(dataDir: string): Promise<() => Promise<void
 
 export async function createDatabase(options: DatabaseOptions = {}): Promise<DatabaseHandle> {
   if (options.connectionString) {
-    const target=new URL(options.connectionString);
+    const target = databaseConnectionUrl(options.connectionString);
     if(target.searchParams.get('sslmode')==='require')target.searchParams.set('sslmode','verify-full');
     const pool = new pg.Pool({
       connectionString: target.toString(),

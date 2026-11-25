@@ -201,4 +201,14 @@ describe('the client view', () => {
     expect(Object.keys(view.permissions[0]!)).not.toContain('actorId');
     expect(JSON.stringify(view)).not.toContain('owner-1');
   });
+
+  it('omits recognized credential material when showing an existing run ledger', () => {
+    const run = ledger();
+    const sample = 'sample-only-ledger-value';
+    addEvidence(run, { kind: 'observation', label: `Cookie: sample_session=${sample}` }, T0);
+    addEvidence(run, { kind: 'source', label: 'Public source', reference: 'https://example.test/reference' }, T0);
+    const view = projectRunView({ runId: RUN, status: 'running', ledger: run, createdAt: new Date(T0), updatedAt: new Date(T0) });
+    expect(JSON.stringify(view).includes(sample)).toBe(false);
+    expect(view?.evidence.map(evidence => evidence.label)).toEqual(['[REDACTED]', 'Public source']);
+  });
 });

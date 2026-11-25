@@ -54,7 +54,7 @@ export function robotsAllows(text:string,target:string,agent='MohassanAI-Researc
 export class RobotsPolicy {
   private cache=new Map<string,{until:number;text:string}>();
   constructor(private network:SafeNetwork,private now=Date.now){}
-  async assertAllowed(input:string,signal?:AbortSignal):Promise<void>{
+  async assertAllowed(input:string,signal?:AbortSignal,agent?:string):Promise<void>{
     signal?.throwIfAborted();
     const url=this.network.validate(input),cached=this.cache.get(url.origin);
     let text=cached&&cached.until>this.now()?cached.text:undefined;
@@ -73,6 +73,6 @@ export class RobotsPolicy {
       if(this.cache.size>=200)this.cache.delete(this.cache.keys().next().value!);
       this.cache.set(url.origin,{until:this.now()+3600000,text});
     }
-    if(!robotsAllows(text,url.href))throw new BrowserError('RESEARCH_ROBOTS_DENIED','سياسة الموقع لا تسمح بجلب هذا المصدر آليًا.',403);
+    if(!robotsAllows(text,url.href,agent))throw new BrowserError('RESEARCH_ROBOTS_DENIED','سياسة الموقع لا تسمح بجلب هذا المصدر آليًا.',403);
   }
 }

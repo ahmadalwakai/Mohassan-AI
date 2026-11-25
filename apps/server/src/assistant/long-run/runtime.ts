@@ -2,11 +2,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { BrowserError } from '@mohassan/browser';
 import { ChatApproveSchema, ChatSecureSubmitSchema, type NotificationKind } from '@mohassan/contracts';
 import { sql, type Kysely } from 'kysely';
+import { commitChatRequest } from '../../chat-request-ledger.js';
 import { recordBackgroundRunOutcome, recordNotificationOutcome } from '../../notifications-store.js';
 import {
   addEvidence, decideVerdict, enterPhase, settleStep, setStepAuthorization, startStep, tryEnterPhase,
 } from '../agent-run.js';
 import { checkPermission, consumePermission, recordDecision, requestPermission, type ActionMaterial } from '../permission-gate.js';
+import { nextLongRunDueAt } from './execution-guards.js';
 import {
   initialLongRunState, LONG_RUN_ACTIVE, LONG_RUN_LIMITS, LONG_RUN_WORKER, LongRunStateSchema, restoreLongRunState, say, stepId,
   type LongRunObservation, type LongRunPlan, type LongRunState, type LongRunStep,
@@ -21,6 +23,7 @@ export type LongRunResult =
   | { kind: 'input'; reason: 'sign_in' | 'credentials' | 'payment'; site: string };
 export interface LongRunPorts {
   accountActive?: (ownerId: string, tx: Kysely<any>) => Promise<boolean>;
+  reserveMemberRun?: (tx: Kysely<any>, ownerId: string, runId: string) => Promise<void>;
   execute: (input: { ownerId: string; conversationId: string; operation: LongRunStep; state: Readonly<LongRunState>; signal: AbortSignal }) => Promise<LongRunResult>;
 }
 
@@ -152,11 +155,6 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
     await finish(tx, row, state, time, 'blocked', say(state.longRun.language, ar, en));
   }
 
-  function sleepBeforeNext(state: LongRunState, time: number) {
-    const upcoming = state.longRun.steps[state.longRun.next];
-    state.longRun.dueAt = upcoming?.kind === 'monitor' ? time + upcoming.delayMs : time;
-  }
-
   async function admission(ownerId: string, conversationId: string, text: string, plan: LongRunPlan) {
     const time = now(), id = randomUUID();
     const state = initialLongRunState(id, plan, time);
@@ -173,6 +171,7 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
         lease_token: randomUUID(), worker_id: LONG_RUN_WORKER, lease_expires_at: legacyLease, state: JSON.stringify(state), created_at: new Date(time), updated_at: new Date(time) })
         .onConflict(conflict => conflict.doNothing()).returning('id').executeTakeFirst();
       if (!inserted) throw new BrowserError('CHAT_LONG_RUN_ACTIVE', say(plan.language, 'لديك مهمة طويلة جارية بالفعل. أوقفها قبل بدء مهمة أخرى.', 'You have an active long-running task. Stop it before starting another.'), 409);
+      await ports.reserveMemberRun?.(tx, ownerId, id);
       await message(tx, conversationId, text, plan.background ? time - 1 : time, 'user');
       if (plan.background) {
         await message(tx, conversationId, say(plan.language, 'سأعمل على هذا في الخلفية وأرسل لك النتيجة عند الانتهاء.',
@@ -182,6 +181,7 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
         ...(chat.title === 'محادثة جديدة' ? { title: text.slice(0, 100) } : {}),
         progress: say(plan.language, 'بدأت المهمة الطويلة.', 'Long-running task started.'), error: null, updated_at: new Date(time) })
         .where('id', '=', conversationId).execute();
+      await commitChatRequest(tx, ownerId, conversationId);
     });
     return id;
   }
@@ -313,7 +313,7 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
         state.siteId = result.id;
       }
       data.next++;
-      sleepBeforeNext(state, time);
+      data.dueAt = nextLongRunDueAt(data, time);
       const step = state.agentRun.plan!.steps[index]!;
       await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: row.conversation_id, run_id: row.id,
         kind: 'step', message: step.outcome, created_at: new Date(time) }).execute();
@@ -394,6 +394,7 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
       if (!row || !state || row.status !== 'waiting_approval' || !permission || time >= state.longRun.deadline)
         throw new BrowserError('CHAT_APPROVAL_CHANGED', 'This approval is no longer pending.', 409);
       if (!await activeAccount(ports, row.owner_id, tx)) throw new BrowserError('CHAT_ACCOUNT_INACTIVE', 'هذا الحساب غير نشط.', 403);
+      await commitChatRequest(tx, ownerId, conversationId);
       const decision = recordDecision(state.agentRun, { approvalId, actorId: ownerId, conversationId, approved, at: time });
       if (decision.decision !== 'granted') {
         setStepAuthorization(state.agentRun, stepId(state.longRun.next), 'refused', time);

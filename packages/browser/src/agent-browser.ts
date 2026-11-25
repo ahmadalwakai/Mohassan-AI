@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http';
 import { chromium, type BrowserContext, type ElementHandle, type Frame, type JSHandle, type Page, type Route } from 'playwright';
 import { decideEffect, type EffectActor } from './effect-policy.js';
 import { BrowserError, SafeNetwork } from './network.js';
+import { crossOriginReadHeaders } from './redirect-headers.js';
 import { AgentSessionCheckpointSchema, AgentPostconditionSchema, evidenceHash, safeResumeUrl, pagePostcondition, type AgentSessionCheckpoint, type AgentPostcondition, type AgentVerificationReport, type AgentVerificationCheck } from './session-state.js';
 
 export type AgentFieldKind = 'password' | 'otp' | 'card' | 'identifier' | 'text';
@@ -838,7 +839,7 @@ export class AgentBrowser {
           return;
         }
         if (!read || redirects === 5) throw new BrowserError('AGENT_EFFECT_UNKNOWN', 'حُجب تحويل طلب إرسال أو تجاوز حد التحويلات. راجع أثر الطلب.', 409);
-        if (new URL(next).origin !== new URL(target).origin) { headers = { ...headers }; delete headers.cookie; }
+        if (new URL(next).origin !== new URL(target).origin) headers = crossOriginReadHeaders(headers);
         target = next;
         continue;
       }

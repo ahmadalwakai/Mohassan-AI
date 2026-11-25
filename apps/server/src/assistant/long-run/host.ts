@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
 import { BrowserError, readableSource, RobotsPolicy, safeResumeUrl, SafeNetwork } from '@mohassan/browser';
-import { redactCredentialText } from '@mohassan/cognitive';
 import { ChatCreateSchema, ChatSendSchema } from '@mohassan/contracts';
-import { redactSecrets } from '@mohassan/providers';
 import { completeBrief } from '@mohassan/sites';
+import { withoutChatRequestCommit } from '../../chat-request-ledger.js';
 import type { createCommandChatControl, CommandChatConfig } from '../../command-chat.js';
 import { withMemberChatDeletionFence } from '../../member-chat-deletion-fence.js';
+import { legacyMonitorHandledBySmartChat } from '../../monitors/chat.js';
+import { cleanRejectedChatCreate } from '../../rejected-chat-create.js';
+import { containsSensitiveCredentialText, redactSensitiveCredentialText as cleanup } from '../../sensitive-credential-text.js';
 import { classifySteering } from '../agent-run.js';
 import { newBrainState } from '../brain.js';
 import { matchText } from '../mind/normalize.js';
@@ -16,19 +18,19 @@ import { decideResponsePolicy } from '../response-policy.js';
 import { monitoringRequest } from '../response-policy-signals.js';
 import { siteTask } from '../site-builder.js';
 import { backgroundTaskText } from './background-request.js';
+import { longRunDraftWriteFence } from './execution-guards.js';
 import { LONG_RUN_MIGRATION, migrateLongRuns } from './migration.js';
 import { createLongRunRuntime, LongRunTransientError, type LongRunPorts } from './runtime.js';
 import { LONG_RUN_LIMITS, LONG_RUN_WORKER, say, type LongRunPlan } from './state.js';
 
 const maxMonitorMs = 2 * 60 * 60_000;
-const cleanup = (text: string) => redactCredentialText(redactSecrets(text));
 const monitorAddress = /https?:\/\/[^\s<>"'«»]+/iu;
 const researchLead = /^(?:(?:please|kindly|من فضلك|لو سمحت)[,،\s]+)?(?:(?:research|investigate|search(?: (?:the web|online))?)\s+(?:deeply\s+|(?:for|about)\s+)?|(?:conduct|do|carry out|run) (?:an? )?(?:deep|thorough|systematic|comprehensive) (?:research|investigation|review|study) (?:on|about)\s+|(?:ابحث|استقص|حقق|ادرس)(?:\s+(?:بعمق|بشكل معمق))?\s+(?:عن|في)\s+)/iu;
 const researchTail = /\s+(?:(?:in depth|deeply|thoroughly|across sources|(?:from|using|with) (?:multiple|primary|public|several) sources)|(?:(?:من|باستخدام) )?مصادر (?:متعددة|متعدده|أولية|متنوعه|مختلفة|مختلفه)|بعمق)[.!؟?\s]*$/iu;
 const withoutCredentials = (text: string) => cleanup(text) === text && !assessRequestScope(text).reasons.includes('credential_material');
 
 function publicUrl(network: SafeNetwork, value: string) {
-  if (value.length > 2048 || /[<>()\s]/u.test(value)) return null;
+  if (value.length > 2048 || /[<>()\s]/u.test(value) || containsSensitiveCredentialText(value)) return null;
   try { return safeResumeUrl(network.validate(value).href); } catch { return null; }
 }
 
@@ -89,6 +91,7 @@ function adapter(config: CommandChatConfig, network: SafeNetwork): LongRunPorts 
   const robots = new RobotsPolicy(network);
   return {
     accountActive: config.accountActive,
+    reserveMemberRun: config.reserveMemberRun,
     async execute({ ownerId, conversationId, operation, state, signal }) {
       if (operation.kind === 'search') {
         try {
@@ -106,7 +109,8 @@ function adapter(config: CommandChatConfig, network: SafeNetwork): LongRunPorts 
         const role = config.sites.roleOf ? await config.sites.roleOf(ownerId) : undefined;
         if (role === null) return { kind: 'unavailable' };
         signal.throwIfAborted();
-        const site = await config.sites.createFromBrief(ownerId, draft.brief, { conversationId, role });
+        const draftWriteFence = longRunDraftWriteFence({ ownerId, conversationId, state, signal, accountActive: config.accountActive });
+        const site = await config.sites.createFromBrief(ownerId, draft.brief, { conversationId, role, draftWriteFence });
         signal.throwIfAborted();
         const errors = site.checks.checks.filter(item => !item.passed);
         const preview = config.sites.link?.(site.id);
@@ -166,7 +170,7 @@ export async function withLongRunChat(db: Parameters<typeof createCommandChatCon
   runner.start();
 
   async function select(ownerId: string, text: string) {
-    if (!enabled) return null;
+    if (!enabled || legacyMonitorHandledBySmartChat(text)) return null;
     const full = config.fullAccess ? await config.fullAccess(ownerId) : true;
     if (reviewWorkRefusal(text, newBrainState(), full, { computer: Boolean(config.tools?.computer || config.desktop), memory: Boolean(config.tools?.memory) })) return null;
     return planLongRun(text, config, network, backgroundEnabled);
@@ -199,12 +203,8 @@ export async function withLongRunChat(db: Parameters<typeof createCommandChatCon
       const input = ChatCreateSchema.parse(raw);
       const plan = input.goal && !input.images?.length ? await select(ownerId, input.goal) : null;
       if (!plan) return chat.create(ownerId, raw);
-      const conversation = await chat.create(ownerId, { browserAccount: input.browserAccount });
-      try { return await start(ownerId, conversation.id, input.goal!, plan); }
-      catch (error) {
-        if (error instanceof BrowserError && error.code === 'CHAT_LONG_RUN_ACTIVE') await chat.remove(ownerId, conversation.id);
-        throw error;
-      }
+      const conversation = await withoutChatRequestCommit(() => chat.create(ownerId, { browserAccount: input.browserAccount }));
+      return cleanRejectedChatCreate(db, ownerId, conversation.id, () => start(ownerId, conversation.id, input.goal!, plan));
     },
     async send(ownerId, conversationId, raw) {
       const input = ChatSendSchema.parse(raw);

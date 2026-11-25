@@ -1,4 +1,5 @@
 import { LONG_RUN_ACTIVE, LONG_RUN_WORKER, restoreLongRunState } from './state.js';
+import { redactSensitiveCredentialText } from '../../sensitive-credential-text.js';
 
 type Run = { id: string; worker_id: string | null; status: string; state: unknown; goal: string; created_at: Date | string };
 
@@ -10,7 +11,7 @@ export function backgroundRunView(run: Run | undefined, activeRunId: string | nu
   return {
     backgroundRun: {
       id: run.id,
-      task: run.goal.replace(/\s+/gu, ' ').trim().slice(0, 200),
+      task: redactSensitiveCredentialText(run.goal).replace(/\s+/gu, ' ').trim().slice(0, 200),
       step: step.outcome,
       startedAt: new Date(run.created_at).toISOString(),
       language: state.longRun.language,

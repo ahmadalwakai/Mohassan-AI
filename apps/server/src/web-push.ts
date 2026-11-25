@@ -1,6 +1,7 @@
 import { createECDH, ECDH } from 'node:crypto';
-import { sendNotification, WebPushError, type PushSubscription, type RequestOptions } from 'web-push';
+import { generateRequestDetails, type PushSubscription, type RequestOptions } from 'web-push';
 import type { NotificationPayload } from '@mohassan/contracts';
+import { deliverWebPushRequest } from './web-push-transport.js';
 
 export type VapidDetails = NonNullable<RequestOptions['vapidDetails']>;
 export type WebPushPayload = NotificationPayload | (Omit<NotificationPayload, 'kind' | 'conversationId'> & {
@@ -75,16 +76,14 @@ export function isBrowserPushSubscription(subscription: PushSubscription) {
 export async function sendWebPushNotification(config: VapidDetails, subscription: PushSubscription, payload: WebPushPayload) {
   if (!isBrowserPushSubscription(subscription)) return 'failed';
   try {
-    await sendNotification(subscription, JSON.stringify(payload), {
+    const request = generateRequestDetails(subscription, JSON.stringify(payload), {
       vapidDetails: config,
       contentEncoding: 'aes128gcm',
       TTL: 5 * 60,
-      timeout: 5_000,
       ...(payload.runId && { topic: payload.taskId.replace(/-/g, '') }),
     });
-    return 'delivered';
-  } catch (error) {
-    if (error instanceof WebPushError && (error.statusCode === 404 || error.statusCode === 410)) return 'expired';
+    return await deliverWebPushRequest(subscription.endpoint, request);
+  } catch {
     return 'failed';
   }
 }

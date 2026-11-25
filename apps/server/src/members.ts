@@ -3,8 +3,10 @@ import type { FastifyInstance } from 'fastify';
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import type { createAuth } from './auth.js';
+import { memberRunsToday as countMemberRuns } from './member-run-quota.js';
 import { NOTIFICATION_MEMBER_ROUTES } from './notifications-routes.js';
 import { REMINDER_MEMBER_ROUTES } from './reminders/route-keys.js';
+import { MONITOR_MEMBER_ROUTES } from './monitors/route-keys.js';
 import { conversationShareMemberRoutes, conversationSharePublicRoute } from './conversation-share-paths.js';
 import { MEMBER_DATA_ROUTES, readLimitedMemberAccess, signUpInvitedMember } from './member-administration.js';
 
@@ -39,6 +41,7 @@ export const MEMBER_ROUTES: ReadonlySet<string> = new Set([
   'GET /api/access',
   ...NOTIFICATION_MEMBER_ROUTES,
   ...REMINDER_MEMBER_ROUTES,
+  ...MONITOR_MEMBER_ROUTES,
   // The chat, including its own cloud browser (a profile per account).
   `GET ${chat}`, `POST ${chat}`, `GET ${chat}/:id`, `DELETE ${chat}/:id`, `GET ${chat}/:id/screen`,
   `GET ${chat}/:id/browser/activity`,
@@ -59,9 +62,6 @@ export const MEMBER_ROUTES: ReadonlySet<string> = new Set([
   'GET /api/sites', 'POST /api/sites', 'POST /api/sites/draft', 'GET /api/sites/:id', 'POST /api/sites/:id/brief', 'POST /api/sites/:id/commands', 'POST /api/sites/:id/undo', 'POST /api/sites/:id/regenerate',
   'POST /api/sites/:id/images', 'DELETE /api/sites/:id/images/:imageId', 'GET /api/sites/:id/export', 'DELETE /api/sites/:id',
 ]);
-
-/** Requests that start chat work, counted against a member's daily allowance. */
-export const MEMBER_QUOTA_ROUTES: ReadonlySet<string> = new Set([`POST ${chat}`, `POST ${chat}/:id/messages`]);
 
 export function routeKey(method: string, url: string | undefined) {
   return url ? `${method === 'HEAD' ? 'GET' : method} ${url}` : null;
@@ -110,9 +110,7 @@ export async function roleOf(db: Kysely<any>, userId: string): Promise<Workspace
 
 /** Chat work a member started in the last 24 hours. */
 export async function memberRunsToday(db: Kysely<any>, userId: string) {
-  const row = await db.selectFrom('chat_runs').select(eb => eb.fn.countAll<string>().as('count'))
-    .where('owner_id', '=', userId).where('created_at', '>', sql<Date>`now() - interval '24 hours'`).executeTakeFirst();
-  return Number(row?.count ?? 0);
+  return countMemberRuns(db, userId);
 }
 
 type User = { id: string; name: string; email: string };

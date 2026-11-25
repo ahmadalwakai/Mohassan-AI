@@ -12,6 +12,7 @@ import { createLongRunRuntime, LongRunTransientError, type LongRunPorts } from '
 import { LONG_RUN_LIMITS, restoreLongRunState, type LongRunPlan } from '../apps/server/src/assistant/long-run/state.js';
 import { migrateAuth } from '../apps/server/src/auth.js';
 import { migrateBackgroundResults } from '../apps/server/src/background-results-migration.js';
+import { createSitesControl } from '../apps/server/src/sites.js';
 
 const url = 'https://example.com/';
 const found = { kind: 'observed', observation: { url, title: 'Example', quote: 'Verified excerpt', hash: 'a'.repeat(64) } } as const;
@@ -212,6 +213,21 @@ describe('durable long-running response policy work', () => {
     expect(await notices(run.conversationId)).toEqual(['task_progress']);
   });
 
+  it('expires sleeping monitoring work at its wall deadline', async () => {
+    const execute = vi.fn<LongRunPorts['execute']>(async () => found);
+    const startedAt = time;
+    const run = await open(monitor, execute);
+    time = startedAt + LONG_RUN_LIMITS.wallMs - 1_000;
+    await run.runner.runOnce();
+    expect(await row(run.id)).toMatchObject({ status: 'running', steps: 1 });
+
+    time = startedAt + LONG_RUN_LIMITS.wallMs;
+    await run.runner.runOnce();
+    expect(await row(run.id)).toMatchObject({ status: 'blocked', steps: 1 });
+    expect(execute).toHaveBeenCalledOnce();
+    expect(await notices(run.conversationId)).toContain('task_failed');
+  });
+
   it('retries a transient error from its durable backoff after restart', async () => {
     const execute = vi.fn<LongRunPorts['execute']>(async () => found).mockRejectedValueOnce(new LongRunTransientError('temporary'));
     const run = await open(monitor, execute);
@@ -359,6 +375,80 @@ describe('durable long-running response policy work', () => {
       expect(await notices(started.id)).toEqual([]);
     } finally {
       await app.close();
+      await control.shutdown();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('fences a draft persistence attempt after the stop endpoint returns', { timeout: 12_000 }, async () => {
+    vi.stubEnv('MOHASSAN_LONG_RUN_ENABLED', '1');
+    vi.stubEnv('MOHASSAN_BACKGROUND_RESULTS_ENABLED', '1');
+    const browser = { setCheckpointStore() {}, hasPage: async () => false, close: async () => {} } as unknown as AgentBrowser;
+    const ownerId = randomUUID();
+    const app = Fastify();
+    const enteringSite = deferred<void>();
+    const allowPersistence = deferred<void>();
+    const persisted = deferred<boolean>();
+    const sites = await createSitesControl(database.db, { tokenSecret: 'fixture-key' });
+    const control = await createRefusalAwareCommandChat(database.db, { browser,
+      models: { fast: [], deep: [], vision: '' }, recordExperiences: false,
+      sites: {
+        async createFromBrief(id, brief, options) {
+          enteringSite.resolve();
+          await allowPersistence.promise;
+          try {
+            const saved = await sites.create(id, { brief, ...options });
+            persisted.resolve(true);
+            return saved;
+          } catch (error) {
+            persisted.resolve(false);
+            throw error;
+          }
+        },
+        command: sites.command, detail: sites.detail,
+      },
+    });
+    try {
+      // Handle stop with a different control so the scheduler cannot rely on a local abort.
+      await registerCommandChatRoutes(app, { control: { ...control, cancel: chat.cancel }, owner: async () => ({ id: ownerId }) });
+      const created = await app.inject({ method: 'POST', url: '/api/chat/conversations', payload: { goal: draftTitle } });
+      expect(created.statusCode).toBe(200);
+      const start = created.json();
+      await enteringSite.promise;
+
+      const stopped = await app.inject({ method: 'POST', url: `/api/chat/conversations/${start.id}/cancel`, payload: {} });
+      expect(stopped.statusCode).toBe(200);
+      expect(stopped.json().run.phase).toBe('cancelled');
+      allowPersistence.resolve();
+
+      expect(await persisted.promise).toBe(false);
+      expect(await sites.list(ownerId)).toEqual([]);
+      expect(await backgroundNotices(start.run.id)).toEqual([]);
+    } finally {
+      allowPersistence.resolve();
+      await app.close();
+      await control.shutdown();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('rolls back durable admission when the account has reached its daily limit', async () => {
+    vi.stubEnv('MOHASSAN_LONG_RUN_ENABLED', '1');
+    vi.stubEnv('MOHASSAN_BACKGROUND_RESULTS_ENABLED', '1');
+    const browser = { setCheckpointStore() {}, hasPage: async () => false, close: async () => {} } as unknown as AgentBrowser;
+    const ownerId = randomUUID();
+    const search = vi.fn(async () => []);
+    const reserveMemberRun = vi.fn(async () => { throw Object.assign(new Error('Daily limit reached.'), { code: 'MEMBER_DAILY_LIMIT' }); });
+    const control = await createRefusalAwareCommandChat(database.db, { browser, searchProvider: { name: 'fixture', search },
+      models: { fast: [], deep: [], vision: '' }, recordExperiences: false, reserveMemberRun });
+    try {
+      await expect(control.create(ownerId, { goal: 'Research tidal power in the background.' }))
+        .rejects.toMatchObject({ code: 'MEMBER_DAILY_LIMIT' });
+      expect(reserveMemberRun).toHaveBeenCalledOnce();
+      expect(search).not.toHaveBeenCalled();
+      expect(await database.db.selectFrom('chat_runs').select('id').where('owner_id', '=', ownerId).execute()).toEqual([]);
+      expect(await database.db.selectFrom('chat_conversations').select('id').where('owner_id', '=', ownerId).execute()).toEqual([]);
+    } finally {
       await control.shutdown();
       vi.unstubAllEnvs();
     }

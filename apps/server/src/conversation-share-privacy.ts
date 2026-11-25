@@ -1,5 +1,6 @@
 import type { ConversationPrivacyFinding, ConversationSnapshot } from '@mohassan/contracts';
 import { TOOL_ACTION } from './assistant/run-plans.js';
+import { containsSensitiveCredentialText } from './sensitive-credential-text.js';
 
 export type ConversationPrivateOrigin = Extract<ConversationPrivacyFinding['kind'], 'memory' | 'tool-output'>;
 type Kind = ConversationPrivacyFinding['kind'];
@@ -144,7 +145,7 @@ function urlMatches(text: string): { covered: Match[]; findings: Match[] } {
     try {
       const url = new URL(address.replace(/&amp;/giu, '&'), 'https://example.invalid');
       const params = new URLSearchParams(url.search.slice(1).replace(/;/gu, '&'));
-      if (url.username || url.password || [...params].some(([key, value]) => value && (TOKEN_KEY.test(key) || TOKEN_KEY_AR.test(scanView(key).text) || JWT.test(value)))) findings.push(capture);
+      if (url.username || url.password || [...params].some(([key, value]) => value && (TOKEN_KEY.test(key) || TOKEN_KEY_AR.test(scanView(key).text) || JWT.test(value)))) findings.push({ ...capture, opaque: true });
       // Decode query parameters, including PII written as URL-encoded text.
       // Remove the whole link because a partial URL can still carry the value.
       const kinds = new Set<Kind>();
@@ -176,6 +177,9 @@ function storedQuoteMatches(text: string, quotes: readonly string[]): Match[] {
 function detect(original: string, quotes: readonly string[]): Match[] {
   const { text, starts, ends } = scanView(original);
   const urls = urlMatches(text);
+  // Token-bearing URLs already have an opaque, precise finding. Check the rest for credential literals.
+  const residue = redact(text, urls.findings.filter(finding => finding.kind === 'token-url'));
+  if (containsSensitiveCredentialText(residue)) return [{ kind: 'credential', start: 0, end: original.length, opaque: true }];
   const hidden = matches(text, HIDDEN, 'tool-output').map(match => ({ ...match, opaque: true }));
   const found = [
     ...urls.findings,
@@ -185,7 +189,8 @@ function detect(original: string, quotes: readonly string[]): Match[] {
     ...literalQuoteMatches(text, MEMORY_QUOTE, 'memory'),
     ...literalQuoteMatches(text, TOOL_QUOTE, 'tool-output'),
     ...storedQuoteMatches(text, quotes),
-  ].filter(match => !hidden.some(other => overlaps(match, other))).concat(hidden);
+  ].filter(match => !hidden.some(other => overlaps(match, other))
+    && (match.opaque || !urls.findings.some(other => other.opaque && overlaps(match, other)))).concat(hidden);
   return found.map(match => ({ ...match, start: starts[match.start] ?? 0, end: ends[match.end - 1] ?? original.length }));
 }
 

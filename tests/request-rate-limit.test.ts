@@ -99,6 +99,17 @@ describe('verified account rate limits behind a shared service proxy', () => {
     expect((await request('', '/ordinary-a', { 'x-forwarded-for': '192.0.2.3' })).statusCode).toBe(429);
   });
 
+  it('isolates anonymous ingress addresses only behind the authenticated relay', async () => {
+    const { keyGenerator } = await fixture();
+    const key = (address: string, marker = serviceMarker) => keyGenerator({
+      ip: proxyIp, headers: { 'x-mohassan-internal': marker, 'x-mohassan-client-ip': address },
+    });
+    expect(await key('192.0.2.1')).not.toBe(await key('192.0.2.2'));
+    expect(await key('2001:DB8:0:0:0:0:0:1')).toBe(await key('2001:db8::1'));
+    expect(await key('192.0.2.1', 'unverified')).toBe(`ip:${proxyIp}`);
+    expect(await key('192.0.2.1, 192.0.2.2')).toBe(`ip:${proxyIp}`);
+  });
+
   it('rejects missing/incorrect service credentials without resolving a supplied session', async () => {
     const { app, request, userId, keyGenerator } = await fixture();
     for (const marker of ['', 'incorrect']) {

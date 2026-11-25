@@ -1,0 +1,53 @@
+.card {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-inline-start: 3px solid var(--accent);
+  border-radius: 10px;
+  background: var(--raised);
+  overflow-wrap: anywhere;
+}
+
+.heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 10px; }
+.status, .source, .detail { color: var(--soft); font-size: .85rem; }
+.readings { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0; }
+.readings > div { min-width: 6.5em; max-width: 100%; }
+.readings dt { color: var(--soft); font-size: .78rem; }
+.readings dd { margin: 0; color: var(--ink); font-size: .85rem; }
+.excerpt { padding-inline-start: 8px; border-inline-start: 2px solid var(--line); color: var(--soft); font-size: .85rem; }
+.error { color: var(--alert); font-size: .85rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.actions button, .dialog .dialogHeader button {
+  width: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 9px;
+  color: var(--ink);
+  background: var(--raised);
+  font-size: .85rem;
+}
+.actions button:hover, .dialog .dialogHeader button:hover { background: var(--hover); }
+.actions button.primary { border-color: var(--accent); color: var(--accent-ink); background: var(--accent); }
+.actions button.primary:hover { background: var(--accent-hover); }
+.actions button:disabled { opacity: .55; cursor: default; }
+
+.dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(560px, calc(100vw - 28px));
+  max-height: calc(100dvh - 28px);
+  padding: 0;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--ink);
+  background: var(--raised);
+  box-shadow: var(--shadow-lg);
+}
+.dialog::backdrop { background: rgb(20 18 14 / 42%); }
+.dialogHeader { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.dialogHeader h2 { font-weight: 600; }
+.dialogBody { display: grid; gap: 10px; padding: 12px 14px; }
+.dialog .actions button { width: auto; border: 1px solid var(--line); padding: 6px 9px; font-size: .85rem; }

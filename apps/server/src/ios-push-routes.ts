@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Kysely } from 'kysely';
 import { IosPushRegistrationSchema, IosPushTokenSchema } from '@mohassan/contracts';
-import { assertMemberFeatureAccess } from './member-deletion.js';
+import { checkPushRegistration } from './notification-security.js';
 import { registerIosPushDevice, unregisterIosPushDevice } from './ios-push-devices.js';
 
 const devices = '/api/push/devices';
@@ -13,7 +13,7 @@ export function registerIosPushRoutes(app: FastifyInstance, db: Kysely<any>, own
     const { id } = await owner(request);
     const input = IosPushRegistrationSchema.parse(request.body);
     const registered = await db.transaction().execute(async tx => {
-      await assertMemberFeatureAccess(tx, id);
+      await checkPushRegistration(tx, id, input);
       return registerIosPushDevice(tx as Kysely<any>, id, input);
     });
     if (!registered) return reply.code(409).send({ error: { code: 'PUSH_DEVICE_IN_USE', message: 'هذا الجهاز مرتبط بحساب آخر.' } });

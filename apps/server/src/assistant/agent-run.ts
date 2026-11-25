@@ -7,6 +7,7 @@ import {
   type RunPhase, type RunRisk, type RunVerdict, type TerminalRunPhase, type VerificationMethod, type VerificationResult,
 } from '@mohassan/contracts';
 import type { TaskCompletionReview, TaskSupervisorState } from './task-supervisor.js';
+import { redactLegacyLedgerProjection } from './ledger-privacy.js';
 
 /**
  * The run ledger: the runtime's own record of one chat run (docs/architecture/agent-execution.md). It holds the run's
@@ -460,7 +461,7 @@ export function projectRunView(input: { runId: string; status: string; ledger: u
   const verdict = mapped && isTerminalPhase(mapped.phase)
     ? ledger?.verdict?.status === mapped.phase ? ledger.verdict : { status: mapped.phase, reason: mapped.reason ?? 'recorded', decidedAt: ledger?.verdict?.decidedAt ?? updatedAt }
     : null;
-  const view = {
+  const view = redactLegacyLedgerProjection({
     id: input.runId, phase, path: ledger?.path ?? null,
     engine: { kind: modelCalls > 0 ? 'model' : 'rules', modelCalls: Math.max(0, Math.min(10_000, Math.trunc(modelCalls))) },
     context: ledger?.context ?? null, plan: ledger?.plan ?? null, evidence: ledger?.evidence ?? [],
@@ -468,7 +469,7 @@ export function projectRunView(input: { runId: string; status: string; ledger: u
     verification: ledger?.verification ?? null, verdict, repairs: ledger?.repairs ?? { used: 0, limit: 0 },
     steeredFrom: ledger?.steeredFrom && z.uuid().safeParse(ledger.steeredFrom).success ? ledger.steeredFrom : null,
     sequence: ledger?.sequence ?? 0, updatedAt: ledger && Date.parse(ledger.updatedAt) > Date.parse(updatedAt) ? ledger.updatedAt : updatedAt,
-  };
+  });
   const parsed = ChatRunViewSchema.safeParse(view);
   if (parsed.success) return parsed.data;
   // A view that does not validate is never sent half-built: only what the row itself proves.

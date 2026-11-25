@@ -13,6 +13,7 @@ export const NotificationPayloadSchema = z.object({
   conversationTitle: z.string().max(100).optional(),
   runId: z.uuid().optional(),
   runKind: BackgroundPushKindSchema.optional(),
+  monitorId: z.uuid().optional(),
   title: z.string().max(100).optional(),
   body: z.string().max(160).optional(),
   language: z.enum(['ar', 'en']).optional(),

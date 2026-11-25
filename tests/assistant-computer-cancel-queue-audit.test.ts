@@ -7,8 +7,9 @@ import { createDatabase, migrate } from '@mohassan/database';
 import { registerWindowsRoutes, windowsMigration } from '@mohassan/windows';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
 import { createAssistantTools } from '../apps/server/src/assistant/tools.js';
+import { migrateAuth } from '../apps/server/src/auth.js';
 
-const OWNER = 'isolated-cancel-queue-owner', COOKIE = 'synthetic-cancel-queue-session';
+const OWNER = 'isolated-cancel-queue-owner', SESSION_ID = 'synthetic-cancel-queue-session';
 const hash = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
 const unused = async (..._args: unknown[]): Promise<never> => { throw new Error('The cancellation audit reached an unrelated port.'); };
 const BLANK = { thought: null, plan: null, note: null, url: null, ref: null, text: null, submit: null, options: null, sensitive: null, outcome: null };
@@ -29,7 +30,9 @@ const fixtures: Fixture[] = [];
 
 /** Real controller/adapter/domain and PGlite queue; no connected companion or native input process. */
 async function fixture(options: { expireLeaseInQueue?: boolean } = {}): Promise<Fixture> {
-  const database = await createDatabase({}); await migrate(database.db); await windowsMigration(database.db);
+  const database = await createDatabase({}); await migrate(database.db); await migrateAuth(database.db); await windowsMigration(database.db);
+  await database.db.insertInto('user').values({ id: OWNER, name: OWNER, email: `${OWNER}@example.test` }).execute();
+  await database.db.insertInto('session').values({ id: SESSION_ID, userId: OWNER, token: randomUUID(), expiresAt: new Date(Date.now() + 60000) }).execute();
   await sql`CREATE TABLE fixture_computer_account(owner_id text PRIMARY KEY, active boolean NOT NULL)`.execute(database.db);
   await database.db.insertInto('fixture_computer_account').values({ owner_id: OWNER, active: true }).execute();
   const deviceId = randomUUID(), grantId = randomUUID(), targetKey = 'a'.repeat(64), epoch = randomUUID();
@@ -41,7 +44,7 @@ async function fixture(options: { expireLeaseInQueue?: boolean } = {}): Promise<
   await database.db.insertInto('windows_devices').values({ id: deviceId, owner_id: OWNER, name: 'Synthetic disconnected companion',
     key_hash: hash('synthetic-unused-device-key'), last_seen_at: new Date(), state: JSON.stringify(state),
     last_frame: JSON.stringify({ ...frame, receivedAt: new Date().toISOString() }) }).execute();
-  await database.db.insertInto('windows_grants').values({ id: grantId, owner_id: OWNER, device_id: deviceId, session_binding: hash(COOKIE),
+  await database.db.insertInto('windows_grants').values({ id: grantId, owner_id: OWNER, device_id: deviceId, session_binding: `session:${hash(SESSION_ID)}`,
     scope: 'control', target_key: targetKey, approval_nonce: epoch, expires_at: new Date(Date.now() + 30000) }).execute();
   let entered = false, release!: () => void, armed = true;
   const gate = new Promise<void>(resolve => { release = resolve; });
@@ -61,10 +64,9 @@ async function fixture(options: { expireLeaseInQueue?: boolean } = {}): Promise<
     const value = Reflect.get(target, property, target); return typeof value === 'function' ? value.bind(target) : value;
   } });
   const app = Fastify({ logger: false });
-  const native = await registerWindowsRoutes(app, { db: windowsDb, owner: async () => ({ id: OWNER }),
+  const native = await registerWindowsRoutes(app, { db: windowsDb, owner: async () => ({ id: OWNER, sessionId: SESSION_ID }),
     config: { webOrigin: 'http://127.0.0.1:3000', production: false, windowsEnabled: true } });
-  app.get('/fixture/session', request => { native.noteSession(OWNER, request); return { ok: true }; });
-  await app.ready(); await app.inject({ url: '/fixture/session', headers: { cookie: COOKIE } });
+  await app.ready();
   const tools = createAssistantTools({ memory: { search: unused, create: unused }, coding: { available: false, workspace: unused },
     studio: { workspace: unused, detail: unused }, studioChange: false,
     runtime: { createTask: unused, approve: unused, cancel: unused, detail: unused }, windows: native });
@@ -110,16 +112,16 @@ afterEach(async () => {
   for (const f of fixtures.splice(0)) { const closing = f.chat.shutdown(); f.release(); await closing; await f.app.close(); await f.database.close(); }
 });
 async function start(f: Fixture) {
-  const { id } = await f.chat.create(OWNER, { goal: 'Click the Confirm button in the current PC window.' });
+  const { id } = await f.native.runInSession(OWNER, SESSION_ID, () => f.chat.create(OWNER, { goal: 'Click the Confirm button in the current PC window.' }));
   await expect.poll(f.entered).toBe(true); expect(await f.commands()).toBe(0); return id;
 }
 
 describe('cancel during an already-entered native queue operation, with no companion input', () => {
   it('does not create a Windows command after cancellation committed before the queue transaction began', async () => {
-    const f = await fixture(), id = await start(f), before = await f.native.view(OWNER);
+    const f = await fixture(), id = await start(f), before = await f.native.runInSession(OWNER, SESSION_ID, () => f.native.view(OWNER));
     await f.chat.cancel(OWNER, id);
     expect(f.signals[0]?.aborted).toBe(true);
-    expect((await f.native.view(OWNER)).origin).toEqual(before.origin); // Grant/window consent is still valid.
+    expect((await f.native.runInSession(OWNER, SESSION_ID, () => f.native.view(OWNER))).origin).toEqual(before.origin);
     expect(Date.now() - Date.parse(f.frameCapturedAt)).toBeLessThan(2500);
     f.release(); await f.chat.settled(id);
     expect(await f.commands(), 'Only queued DB command count is observed; no native execution is connected.').toBe(0);

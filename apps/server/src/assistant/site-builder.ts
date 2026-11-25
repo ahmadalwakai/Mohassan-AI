@@ -1,6 +1,7 @@
 import type { SiteBrief, SiteDetail, SitePartialBrief, SiteWant } from '@mohassan/contracts';
 import { applyAnswers, commandExamples, completeBrief, isSiteRequest, MAX_ROUNDS, missingWants, siteQuestion, siteSentence, WANT_LABELS, type SiteQuestionField } from '@mohassan/sites';
 import type { WorkspaceRole } from '../members.js';
+import type { DraftWriteFence } from './long-run/execution-guards.js';
 
 /**
  * The website flow in the chat, with no model: the sentence is read, a card asks for whatever is missing
@@ -14,7 +15,7 @@ export interface SiteChatState {
   requestText: string;
 }
 export interface SitesChatPort {
-  createFromBrief(ownerId: string, brief: SiteBrief, options: { conversationId: string; role?: WorkspaceRole }): Promise<SiteDetail>;
+  createFromBrief(ownerId: string, brief: SiteBrief, options: { conversationId: string; role?: WorkspaceRole; draftWriteFence?: DraftWriteFence }): Promise<SiteDetail>;
   command(ownerId: string, siteId: string, input: { text: string; want?: SiteWant }): Promise<{ kind: 'patch' | 'undo' | 'ask' | 'unknown'; summary: string; want?: SiteWant; title?: string; detail: SiteDetail }>;
   detail(ownerId: string, siteId: string): Promise<SiteDetail>;
   roleOf?(ownerId: string): Promise<WorkspaceRole | null>;

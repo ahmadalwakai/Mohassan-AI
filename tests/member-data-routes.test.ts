@@ -103,6 +103,33 @@ describe('member data rights over the authenticated application', () => {
     expect(unsupportedAuth.json().error.code).toBe('AUTH_ACTION_DISABLED');
   });
 
+  it('delivers the session through HttpOnly cookies and omits credentials from auth JSON', async () => {
+    const { email, password } = accounts.bob;
+    const signedIn = await app().inject({ method: 'POST', url: '/api/auth/sign-in/email',
+      headers: headers(), payload: { email, password } });
+    expect(signedIn.statusCode).toBe(200);
+    const cookie = cookieOf(signedIn.headers['set-cookie']);
+    expect(Boolean(cookie)).toBe(true);
+    const setCookies = [signedIn.headers['set-cookie']].flat();
+    expect(setCookies.some(value => /;\s*httponly\b/i.test(value ?? ''))).toBe(true);
+    const signedInBody = signedIn.json();
+    expect.soft(Object.hasOwn(signedInBody, 'token')).toBe(false);
+    expect(signedInBody.user.id).toBe(bobId);
+
+    const current = await app().inject({ url: '/api/auth/get-session', headers: headers(cookie) });
+    expect(current.statusCode).toBe(200);
+    const currentBody = current.json();
+    expect.soft(Object.hasOwn(currentBody.session, 'token')).toBe(false);
+    expect(currentBody.user.id).toBe(bobId);
+
+    const session = await application!.database.db.selectFrom('session').select('token')
+      .where('id', '=', currentBody.session.id).executeTakeFirstOrThrow();
+    expect.soft(signedIn.body.includes(session.token)).toBe(false);
+    expect.soft(current.body.includes(session.token)).toBe(false);
+    expect((await app().inject({ method: 'POST', url: '/api/auth/sign-out', headers: headers(cookie), payload: {} })).statusCode).toBe(200);
+    expect((await app().inject({ url: '/api/auth/get-session', headers: headers(cookie) })).json() === null).toBe(true);
+  });
+
   it('limits session metadata and revocation to the signed-in account and its other sessions', async () => {
     const baseline = await app().inject({ url: '/api/member-data/sessions', headers: headers(alice) });
     const baselineSessions = AccountSessionsSchema.parse(baseline.json()).sessions;

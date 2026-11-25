@@ -3,8 +3,12 @@ import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { createDatabase, migrate } from '@mohassan/database';
 import { createApplication } from '../apps/server/src/app.ts';
-import { MEMBER_ROUTES, PUBLIC_ROUTES } from '../apps/server/src/members.ts';
+import { migrateAuth } from '../apps/server/src/auth.ts';
+import { commandChatMigration } from '../apps/server/src/command-chat.ts';
+import { MEMBER_ROUTES, PUBLIC_ROUTES, migrateMembers } from '../apps/server/src/members.ts';
+import { memberRunsToday, migrateMemberQuota } from '../apps/server/src/member-run-quota.ts';
 
 /** Members are invited people with cloud services only. Every other route must refuse them. */
 describe('workspace members over disposable local state', () => {
@@ -45,13 +49,14 @@ describe('workspace members over disposable local state', () => {
   }
 
   beforeAll(async () => {
+    vi.stubEnv('MOHASSAN_MONITORS_ENABLED', '1');
     directory = await realpath(await mkdtemp(join(await realpath(tmpdir()), 'mohassan-members-')));
     application = await createApplication({ authSecret: 'members-fixture-auth-secret-0000000001', internalSecret: secret, setupToken, webOrigin: origin, production: false, runWorker: false,
       codingAllowedRoots: [directory], browserProfileDir: join(directory, 'browser'), groqApiKey: 'synthetic-fixture-key-only', aiFetch: modelFetch, memberDailyRuns: 3, testRequestLimit: 2000 });
     expect((await app().inject({ method: 'POST', url: '/api/setup', headers: headers(''), payload: { ...owner, setupToken } })).statusCode).toBe(200);
     ownerCookie = (await login(owner)).cookie;
   }, 60000);
-  afterAll(async () => { await application?.app.close(); if (directory) await rm(directory, { recursive: true, force: true }); });
+  afterAll(async () => { vi.unstubAllEnvs(); await application?.app.close(); if (directory) await rm(directory, { recursive: true, force: true }); });
 
   it('lists only routes that exist', () => {
     for (const key of [...MEMBER_ROUTES, ...PUBLIC_ROUTES]) expect(application!.routes.has(key), key).toBe(true);
@@ -187,15 +192,48 @@ describe('workspace members over disposable local state', () => {
     expect((await app().inject({ url: `/api/chat/conversations/${own.json().id}`, headers: headers(memberCookie) })).statusCode).toBe(404);
   }, 60000);
 
-  it('stops a member at the daily allowance and leaves the owner unlimited', async () => {
-    const db = application!.database.db, conversationId = randomUUID();
-    await db.insertInto('chat_conversations').values({ id: conversationId, owner_id: memberId, title: 'quota fixture', status: 'idle' }).execute();
-    for (let index = 0; index < 2; index++) await db.insertInto('chat_runs').values({ id: randomUUID(), conversation_id: conversationId, owner_id: memberId, status: 'completed', goal: 'quota fixture', lease_token: randomUUID(), lease_expires_at: new Date(Date.now() - 1000) }).execute();
-    const limited = await app().inject({ method: 'POST', url: `/api/chat/conversations/${conversationId}/messages`, headers: headers(memberCookie), payload: { text: 'رسالة أخرى' } });
-    expect(limited.statusCode, limited.body).toBe(429); expect(limited.json().error.code).toBe('MEMBER_DAILY_LIMIT');
-    const access = (await app().inject({ url: '/api/access', headers: headers(memberCookie) })).json();
-    expect(access.quota).toEqual({ dailyRuns: 3, used: 3 });
-    expect((await app().inject({ method: 'POST', url: '/api/chat/conversations', headers: headers(), payload: {} })).statusCode).toBe(200);
+  it('enforces the daily allowance across conversations and preserves usage after deletion', async () => {
+    const memberHeaders = headers(memberCookie);
+    const quota = async () => (await app().inject({ url: '/api/access', headers: memberHeaders })).json().quota;
+    const createBlank = async () => {
+      const response = await app().inject({ method: 'POST', url: '/api/chat/conversations', headers: memberHeaders, payload: {} });
+      expect(response.statusCode).toBe(200);
+      return response.json().id as string;
+    };
+    expect(await quota()).toEqual({ dailyRuns: 3, used: 1 });
+    const conversations = [await createBlank(), await createBlank(), await createBlank()];
+    const start = (id: string) => ({ method: 'POST' as const, url: `/api/chat/conversations/${id}/messages`,
+      headers: { ...memberHeaders, 'idempotency-key': randomUUID() }, payload: { text: 'مرحبًا' } });
+    const requests = conversations.map(start);
+    const responses = await Promise.all(requests.map(request => app().inject(request)));
+    expect(responses.map(response => response.statusCode).sort()).toEqual([200, 200, 429]);
+    const admitted = responses.findIndex(response => response.statusCode === 200);
+    const denied = responses.findIndex(response => response.statusCode === 429);
+    expect(responses[denied]!.json().error.code).toBe('MEMBER_DAILY_LIMIT');
+    expect((await app().inject(requests[admitted]!)).statusCode).toBe(200);
+    expect(await quota()).toEqual({ dailyRuns: 3, used: 3 });
+
+    expect((await app().inject({ method: 'DELETE', url: `/api/chat/conversations/${conversations[admitted]}`, headers: memberHeaders })).statusCode).toBe(200);
+    expect(await quota()).toEqual({ dailyRuns: 3, used: 3 });
+    expect((await app().inject(requests[denied]!)).json().error.code).toBe('MEMBER_DAILY_LIMIT');
+    const listIds = async () => {
+      const response = await app().inject({ url: '/api/chat/conversations', headers: memberHeaders });
+      return response.json().conversations.map((conversation: { id: string }) => conversation.id).sort();
+    };
+    const beforeRejectedCreate = await listIds();
+    const rejectedCreate = await app().inject({ method: 'POST', url: '/api/chat/conversations', headers: memberHeaders, payload: { goal: 'مرحبًا' } });
+    expect(rejectedCreate.statusCode).toBe(429);
+    expect(await listIds()).toEqual(beforeRejectedCreate);
+    const ownerRun = await app().inject({ method: 'POST', url: '/api/chat/conversations', headers: headers(), payload: { goal: 'مرحبًا' } });
+    expect(ownerRun.statusCode).toBe(200);
+    await settle(ownerRun.json().id, ownerCookie);
+
+    const db = application!.database.db;
+    await db.updateTable('chat_request_keys').set({ created_at: new Date(Date.now() - 25 * 60 * 60 * 1000) })
+      .where('owner_id', '=', memberId).where('scope', '=', 'member-run').execute();
+    expect(await quota()).toEqual({ dailyRuns: 3, used: 0 });
+    expect((await app().inject(requests[denied]!)).statusCode).toBe(200);
+    expect(await quota()).toEqual({ dailyRuns: 3, used: 1 });
   });
 
   it('signs out a disabled member everywhere and lets the owner restore access', async () => {
@@ -215,4 +253,31 @@ describe('workspace members over disposable local state', () => {
     const ownerId = (await app().inject({ url: '/api/access', headers: headers() })).json().user.id;
     expect((await app().inject({ method: 'POST', url: `/api/members/${ownerId}/access`, headers: headers(), payload: { enabled: false } })).statusCode).toBe(404);
   });
+});
+
+it('backfills recent member usage once when migrating an existing database', async () => {
+  const store = await createDatabase();
+  const db = store.db;
+  try {
+    await migrateAuth(db);
+    await migrateMembers(db);
+    await migrate(db);
+    await commandChatMigration(db);
+    const userId = randomUUID(), conversationId = randomUUID();
+    const now = new Date(), yesterday = new Date(now.getTime() - 25 * 60 * 60 * 1000);
+    await db.insertInto('user').values({ id: userId, name: 'Quota migration fixture', email: 'quota@example.test' }).execute();
+    await db.insertInto('workspace_members').values({ user_id: userId, role: 'member' }).execute();
+    await db.insertInto('chat_conversations').values({ id: conversationId, owner_id: userId, title: 'Migration fixture' }).execute();
+    await db.insertInto('chat_runs').values([now, yesterday].map(createdAt => ({
+      id: randomUUID(), conversation_id: conversationId, owner_id: userId, status: 'completed', goal: 'Migration fixture',
+      lease_token: randomUUID(), lease_expires_at: createdAt, created_at: createdAt,
+    }))).execute();
+
+    await migrateMemberQuota(db);
+    await migrateMemberQuota(db);
+    expect(await memberRunsToday(db, userId)).toBe(1);
+    expect(await db.selectFrom('chat_request_keys').select('request_key').where('scope', '=', 'member-run').execute()).toHaveLength(1);
+  } finally {
+    await store.close();
+  }
 });

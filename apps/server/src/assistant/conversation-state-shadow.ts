@@ -1,6 +1,7 @@
 import { appendFile, mkdir, open } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { containsSensitiveCredentialText } from '../sensitive-credential-text.js';
 import { legacyShadowDecision, replayConversationTranscript, type ConversationTranscriptEntry } from './conversation-state-chat.js';
 import type { HandsPlan } from './hands.js';
 import type { RequestResolution } from './request-context.js';
@@ -140,7 +141,8 @@ export function createConversationShadow(options: { logFile: string; maxConversa
         if (!line.trim()) continue;
         try {
           const row = JSON.parse(line) as Partial<ConversationShadowLine>;
-          if (typeof row.conversationId !== 'string' || typeof row.turnId !== 'string' || typeof row.text !== 'string') continue;
+          if (typeof row.conversationId !== 'string' || typeof row.turnId !== 'string' || typeof row.text !== 'string'
+            || containsSensitiveCredentialText(row.text)) continue;
           const turns = found.get(row.conversationId) ?? [];
           turns.push({ id: row.turnId, text: row.text });
           found.set(row.conversationId, turns.slice(-SEED_TURNS));
@@ -170,6 +172,9 @@ export function createConversationShadow(options: { logFile: string; maxConversa
       state = withPending(state, input.pending ?? null);
       const started = performance.now();
       const understanding = understandTurn(state, input.text, input.turnId, { boundAnswer: input.boundAnswer });
+      // Keep the live result. A later replay must never quote a sensitive turn back into the journal.
+      if ([input.text, ...(input.history ?? []).map(turn => turn.text), ...(input.shown ?? []).map(item => item.label)]
+        .some(containsSensitiveCredentialText)) return understanding;
       const ms = Number((performance.now() - started).toFixed(3));
       const text = input.boundAnswer ? '' : input.text.slice(0, MAX_TEXT);
       const { type, confidence, reasons, reference, references, standalone, questionType } = understanding.decision;
@@ -229,8 +234,9 @@ export function createConversationShadow(options: { logFile: string; maxConversa
     },
     seed(conversationId, turns) {
       try {
-        remember(conversationId, rebuild(turns));
-        keep(conversationId, turns.map(turn => ({ id: turn.id, text: turn.text.slice(0, MAX_TEXT) })));
+        const replayable = turns.filter(turn => !containsSensitiveCredentialText(turn.text));
+        remember(conversationId, rebuild(replayable));
+        keep(conversationId, replayable.map(turn => ({ id: turn.id, text: turn.text.slice(0, MAX_TEXT) })));
       } catch { /* a forgotten conversation simply starts empty */ }
     },
     state: conversationId => states.get(conversationId),
