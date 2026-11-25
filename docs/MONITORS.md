@@ -296,6 +296,35 @@ docker run --pull=never --rm --network none --cap-drop ALL --security-opt no-new
 
 The held-out receipt has SHA-256 `8b9f4c322ab0b3abb7e28265c5079c2b64a6328f8f54b1d830450d99858959c0`.
 
+### Phase 2 three-arm development benchmark
+
+One offline coordinator invocation ran PR #95's arm C settings and smart monitors v2 in all arms. The base was `c88a38a3bb5f07186885af31cdc8c18174af12f1`. Both candidate arms used `82f3bdfb9a6fbfd9e913d300fbbbc00e73a85e5e`, first with the three source flags off and then with all three on. The coordinator and its separate comparator both exited **0**. The run used only the development sets. [PR #95 settings](INTEGRATION-WAVE-5-2026-11-25.md#three-arm-development-run) · [Development launcher](../scripts/dev-bench/README.md)
+
+| Set | Cases | Base | Candidate flags off | Candidate flags on | Flags-off verdict / scored-check / reply differences | Areas / languages / area-language groups | Flags-on group regressions |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| V1 | 240 | 176 | 176 | 176 | 0 / 0 / 0 | 14 / 2 / 28 | 0 |
+| V2 | 2,400 | 1,588 | 1,588 | 1,588 | 0 / 0 / 0 | 8 / 2 / 12 | 0 |
+
+The base, flags-off and flags-on arms each recorded zero detection matches, management matches, proactive matches, displayed offers and false offers. The development fixture review produced an empty monitoring-request allowlist. The functional tests cover positive intent, approval and offer cases.
+
+```bash
+/workspace/scratch/monitor-phase2-bench/three-arms \
+  82f3bdfb9a6fbfd9e913d300fbbbc00e73a85e5e \
+  /workspace/scratch/monitor-phase2-bench/receipts
+
+docker run --pull=never --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+  --user 1000:1000 --mount type=bind,source=/workspace,target=/workspace \
+  --workdir /workspace/Mohassan-AI mohassan-phase2-offline:local \
+  python3 -B scripts/dev-bench/compare.py \
+  --baseline /workspace/scratch/monitor-phase2-bench/receipts/a/receipt.json \
+  --flags-off /workspace/scratch/monitor-phase2-bench/receipts/b/receipt.json \
+  --flags-on /workspace/scratch/monitor-phase2-bench/receipts/c/receipt.json \
+  --monitor-requests /workspace/scratch/monitor-phase2-bench/reviewed-ids.json \
+  --output /workspace/scratch/monitor-phase2-bench/receipts/comparison.json
+```
+
+The coordinator summary has SHA-256 `94a11ea14b36d968cd724c46edb6c27781b943a3ece838bf98afe133e4a3ca74`. The comparison has SHA-256 `4ec965d891c504f3b52a0e6551768ba2ca6909f582a1295fc9e3452443a5898d`.
+
 ### Phase 2 offline verification
 
 Setup used Node 24.22.3 and the locked dependencies. The browser installer selected Chromium build 1248. Both setup commands exited **0**. The checks used local fixtures and mocks. The browser, typecheck and suite commands below ran in a Docker runtime assembled from the workspace's installed tools and libraries, with external networking disabled.
@@ -329,7 +358,7 @@ offline=(docker run --pull=never --rm --network none --cap-drop ALL --security-o
   /workspace/scratch/monitor-github-sources/api.github.com.2022-11-28.json
 ```
 
-All commands in this block exited **0**. The broad suite passed 202 tests across 15 files during development. On the frozen candidate, both typecheck projects and the focused six-suite rerun passed, including 57 tests. The browser runs passed 1/1 for GitHub approval and 2/2 for the existing monitor workflows. Earlier cold browser runs hit the inherited 45-second timeout. The passing runs used 120 seconds. The OpenAPI validator checked 17 unit and 14 simulation fixtures across seven GitHub REST operations.
+All commands in this block exited **0**. The broad suite passed 202 tests across 15 files during development. On the frozen candidate, both typecheck projects and the focused six-suite rerun passed, including 57 tests. The browser runs passed 1/1 for GitHub approval and 2/2 for the existing monitor workflows. The GitHub command passed again on the frozen source after benchmarking in 56.7 seconds. Earlier cold browser runs hit the inherited 45-second timeout. The passing runs used 120 seconds. The OpenAPI validator checked 17 unit and 14 simulation fixtures across seven GitHub REST operations.
 
 ## Enable the rollout
 
