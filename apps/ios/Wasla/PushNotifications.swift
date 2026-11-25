@@ -80,7 +80,12 @@ final class PushNotifications: ObservableObject {
         if !value {
             saveEnabled(false)
             stopRemoteDelivery()
-            scheduleSync()
+            _ = enqueue {
+                let removed = await self.removeTokens(for: current)
+                guard self.session?.client === current.client else { return }
+                self.registeredToken = nil
+                if removed, !self.enabled { self.problem = nil }
+            }
             return
         }
 
