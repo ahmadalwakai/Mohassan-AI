@@ -14,12 +14,13 @@
  *
  * Pure: this module only plans. The chat runs each web part through the hands and judges each answer on its own question.
  */
+import { feedbackSelectionScope } from '../feedback-selection.js';
 import { answerLocalPart, sequenceParts, type LocalSequenceDeps } from './local-sequence.js';
 import { buildFrame } from './mind/frame.js';
 import { ownFactQuestion } from './own-fact-question.js';
 import { entityWords, isFollowUp, notWebReason, parseHands, refersBack, tidy, topicWords, webQuestion, type HandsPlan, type HandsStep } from './hands.js';
 
-export interface WebSequenceAnswer { request: string; text: string; status: 'completed' | 'partial' | 'blocked' }
+export interface WebSequenceAnswer { request: string; text: string; status: 'completed' | 'partial' | 'blocked'; evidenceUrls?: string[] }
 export interface WebSequencePart {
   /** The owner's words for this part, exactly as written. */
   request: string;
@@ -97,7 +98,8 @@ export function startWebSequence(parts: readonly WebSequencePart[], lang: 'ar' |
  * of the page the answer was read from, so the next part can ask about it («كم عدد سكانها؟»).
  */
 export function continueWebSequence(sequel: WebSequel, answer: WebSequenceAnswer, named: string, lang: 'ar' | 'en'): { plan: HandsPlan } | { answers: WebSequenceAnswer[] } {
-  const answers = [...sequel.answers, answer];
+  const evidenceUrls = feedbackSelectionScope.getStore()?.citedHandSources(answer.text);
+  const answers = [...sequel.answers, evidenceUrls?.length ? { ...answer, evidenceUrls } : answer];
   let rest = sequel.rest, previous = sequel.asked;
   while (rest.length && rest[0]!.local) { answers.push(rest[0]!.local!); previous = rest[0]!.request; rest = rest.slice(1); }
   const next = rest[0];

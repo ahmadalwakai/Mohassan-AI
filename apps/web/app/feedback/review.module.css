@@ -1,0 +1,63 @@
+.page {
+  display: grid;
+  align-content: start;
+  gap: 1.25rem;
+  width: min(100% - 2rem, 58rem);
+  min-height: 100dvh;
+  margin-inline: auto;
+  padding-block: 2rem 4rem;
+}
+
+.heading, .queue { display: grid; gap: .75rem; }
+.heading h1 { font-size: clamp(1.65rem, 4vw, 2.5rem); }
+.heading a { justify-self: start; color: var(--green); }
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: .75rem;
+  margin: 0;
+}
+
+.metrics > div, .item, .empty, .error {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: .9rem;
+  padding: 1rem;
+}
+
+.metrics dd { margin: .3rem 0; font-size: 1.75rem; font-weight: 700; }
+.metrics small, .itemHeading time { color: var(--text); }
+.toolbar, .itemHeading, .policies li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .5rem 1rem;
+}
+
+.itemHeading h3 { overflow-wrap: anywhere; }
+.details { display: grid; grid-template-columns: minmax(6rem, max-content) minmax(0, 1fr); gap: .5rem 1rem; margin-block: 1rem; }
+.details dt { color: var(--text); }
+.details dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.sources, .policies { padding: 0; margin: 0; list-style: none; }
+.sources li + li, .policies li + li { margin-top: .5rem; }
+.sources a, .policies a { color: var(--green); overflow-wrap: anywhere; }
+.effects, .case { display: grid; gap: .6rem; padding-top: .75rem; border-top: 1px solid var(--line); }
+.effects h4 { margin: 0; }
+.case code { display: block; overflow-wrap: anywhere; }
+.case button { justify-self: start; }
+.actions, .controls { display: flex; flex-wrap: wrap; gap: .5rem; }
+.actions { border: 0; padding: 0; margin: 1rem 0 0; }
+.actions legend { margin-bottom: .5rem; font-weight: 700; }
+.page button { border: 1px solid var(--line); border-radius: .5rem; padding: .45rem .8rem; background: var(--surface); color: var(--green-dark); }
+.page button:hover:enabled, .page button[aria-pressed='true'] { background: var(--mint); border-color: var(--green); }
+.status:empty { display: none; }
+.status { color: var(--green-dark); }
+.error { color: #892735; }
+.error button { margin-top: .6rem; }
+
+@media (max-width: 540px) {
+  .details { grid-template-columns: 1fr; gap: .25rem; }
+  .details dd + dt { margin-top: .65rem; }
+}

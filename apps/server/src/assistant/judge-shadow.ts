@@ -1,3 +1,4 @@
+import { feedbackSelectionScope, restrictFeedbackJudge } from '../feedback-selection.js';
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { judge, type JudgeCode, type JudgeDecision, type JudgeInput, type JudgeVerdict, type ReplyKind } from './judge.js';
@@ -96,9 +97,11 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
   };
   return {
     logFile: options.logFile,
-    observe(input) {
+    observe(candidate) {
       try {
+        const input = restrictFeedbackJudge(candidate);
         const verdict = judge(input);
+        feedbackSelectionScope.getStore()?.judgeDecision(verdict.decision);
         const applied = Boolean(input.applyFix && verdict.decision === 'fix' && verdict.fixedReply?.trim())
           || Boolean(input.applyWithhold && verdict.decision === 'withhold' && verdict.withholdText?.trim());
         const keep = input.keepText !== false;
