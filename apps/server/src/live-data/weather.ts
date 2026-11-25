@@ -98,12 +98,12 @@ function forecastTable(headers: readonly string[], rows: string[][]): string {
   return [headers, headers.map(() => '---'), ...rows].map(row => `| ${row.join(' | ')} |`).join('\n');
 }
 
-export async function getWeather(scope: RequestScope, place: LivePlace, request: WeatherIntent, now = new Date()): Promise<string> {
+async function readWeather(scope: RequestScope, place: LivePlace, now: Date) {
   const { latitude, longitude, timezone } = place;
   // Open-Meteo starts forecast days at local midnight. Refresh a cache entry that spans midnight
   // so the first forecast date remains today's date and a full seven days are available.
   const date = localFormatter(timezone).format(now);
-  const { data, days, requestedAt } = await scope.withCache(`weather:${latitude}:${longitude}:${timezone}:${date}`, WEATHER_TTL_MS, async () => {
+  return scope.withCache(`weather:${latitude}:${longitude}:${timezone}:${date}`, WEATHER_TTL_MS, async () => {
     const url = new URL(FORECAST_URL);
     url.search = new URLSearchParams({
       latitude: String(latitude), longitude: String(longitude), timezone, timeformat: 'unixtime',
@@ -129,6 +129,18 @@ export async function getWeather(scope: RequestScope, place: LivePlace, request:
     return { data, days, requestedAt: now };
   });
 
+}
+
+export async function getCurrentWeatherMetric(scope: RequestScope, place: LivePlace, metric: 'temperature' | 'precipitation' | 'wind', now: Date) {
+  const { data } = await readWeather(scope, place, now);
+  const key = { temperature: 'temperature_2m', precipitation: 'precipitation', wind: 'wind_speed_10m' }[metric] as
+    'temperature_2m' | 'precipitation' | 'wind_speed_10m';
+  return { value: data.current[key], at: new Date(data.current.time * 1000).toISOString(), source: FORECAST_URL };
+}
+
+export async function getWeather(scope: RequestScope, place: LivePlace, request: WeatherIntent, now = new Date()): Promise<string> {
+  const { timezone } = place;
+  const { data, days, requestedAt } = await readWeather(scope, place, now);
   const { language, period } = request;
   const ar = language === 'ar';
   const local = localFormatter(timezone, true);
