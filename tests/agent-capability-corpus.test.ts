@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
@@ -20,7 +20,7 @@ const structuralExpectation: CapabilityExpectation = {
 
 // Parser-only sentinels. These values are never submitted to chat or used as benchmark data.
 function structuralRows(partition: 'd' | 's', caseCount: number): CapabilityCase[] {
-  const arabicVarieties = capabilityVarieties.filter(variety => variety !== 'english');
+  const arabicVarieties = capabilityVarieties.filter(variety => variety !== 'english' && variety !== 'unspecified');
   return Array.from({ length: caseCount }, (_, index) => {
     const area = capabilityAreas[index % capabilityAreas.length]!;
     const arabic = index < caseCount / 2;
@@ -39,6 +39,8 @@ function structuralRows(partition: 'd' | 's', caseCount: number): CapabilityCase
 }
 
 const partitionFile = (cases: CapabilityCase[]) => JSON.stringify({ schemaVersion: 1, cases });
+const v2SealedPayload = fileURLToPath(new URL('./fixtures/agent-capability-bench/v2/sealed/payload.json', import.meta.url));
+const v2SealedPathError = 'The v1 capability runner cannot read the v2 sealed release directory.';
 const partitionManifest = (cases: CapabilityCase[], bytes: string) => ({
   sha256: createHash('sha256').update(bytes).digest('hex'),
   caseCount: cases.length,
@@ -100,6 +102,29 @@ describe('capability corpus loading', () => {
       const development = await loadCapabilityCorpus(visible);
       expect(development).toEqual({ development: audit.development, manifest });
       await expect(loadCapabilityCorpus({ ...visible, sealed })).rejects.toThrow('Could not read the capability sealed file.');
+    });
+  });
+
+  it('rejects direct v2 release paths in all v1 inputs before reading the manifest', async () => {
+    await withCorpus(async paths => {
+      await writeFile(paths.manifest, 'Malformed v1 manifest sentinel.');
+      for (const option of ['manifest', 'development', 'sealed'] as const) {
+        await expect(loadCapabilityCorpus({ ...paths, [option]: v2SealedPayload })).rejects.toThrow(v2SealedPathError);
+      }
+      await expect(loadCapabilityCorpus({ ...paths, development: join(dirname(v2SealedPayload), 'missing.json') }))
+        .rejects.toThrow(v2SealedPathError);
+    });
+  });
+
+  it('rejects aliases to v2 release files and directories before reading any v1 input', async () => {
+    await withCorpus(async paths => {
+      const fileAlias = join(dirname(paths.manifest), 'file-alias.json');
+      const directoryAlias = join(dirname(paths.manifest), 'directory-alias');
+      await symlink(v2SealedPayload, fileAlias, 'file');
+      await symlink(dirname(v2SealedPayload), directoryAlias, 'dir');
+      await writeFile(paths.manifest, 'Malformed v1 manifest sentinel.');
+      await expect(loadCapabilityCorpus({ ...paths, development: fileAlias })).rejects.toThrow(v2SealedPathError);
+      await expect(loadCapabilityCorpus({ ...paths, sealed: join(directoryAlias, 'payload.json') })).rejects.toThrow(v2SealedPathError);
     });
   });
 

@@ -1,0 +1,1977 @@
+{
+  "schemaVersion": 1,
+  "attribution": "Wikipedia contributors credited through the article and its author history.",
+  "terms": "https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use#7._Licensing_of_Content",
+  "historicalLinks": "Article titles come from the source release. Current links can redirect after a page move.",
+  "licenses": {
+    "CC-BY-SA-3.0": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "CC-BY-SA-4.0": "https://creativecommons.org/licenses/by-sa/4.0/"
+  },
+  "sources": {
+    "canard": {
+      "source": "English Wikipedia excerpts carried by QuAC into CANARD.",
+      "license": "CC-BY-SA-4.0",
+      "excerptLicense": "CC-BY-SA-3.0",
+      "changes": "The benchmark reused excerpts from earlier turns as labeled dialogue history.",
+      "linkMethod": "Derived from the source article title. The dataset does not identify a specific Wikipedia revision.",
+      "articles": [
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/'03_Bonnie_%26_Clyde",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=%2703_Bonnie_%26_Clyde&action=history",
+          "caseIds": [
+            "human-a9e178bb91ab3946234a5cd9"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Abenaki",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Abenaki&action=history",
+          "caseIds": [
+            "human-5d693530cbf2189a43fb88fa"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Agnetha_F%C3%A4ltskog",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Agnetha_F%C3%A4ltskog&action=history",
+          "caseIds": [
+            "human-2e3a432aa80e95639c97d9f8"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Andy_Irvine_(musician)",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Andy_Irvine_%28musician%29&action=history",
+          "caseIds": [
+            "human-6db59e46a2befba5cd4f12f2"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Anna_Politkovskaya",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Anna_Politkovskaya&action=history",
+          "caseIds": [
+            "human-4946478843a31305be6c3667"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Atomic_Kitten",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Atomic_Kitten&action=history",
+          "caseIds": [
+            "human-8489600e9526a488a2ab0b38"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Betsy_DeVos",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Betsy_DeVos&action=history",
+          "caseIds": [
+            "human-317821dd46c06e2845b39623"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Billy_Hughes",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Billy_Hughes&action=history",
+          "caseIds": [
+            "human-ccf2d6da484b87ae31757754"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Bob_Dylan",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Bob_Dylan&action=history",
+          "caseIds": [
+            "human-77377be0152c8dc03919e0a2",
+            "human-8a1e288365ce4e0488cf291e"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Boris_Yeltsin",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Boris_Yeltsin&action=history",
+          "caseIds": [
+            "human-64b9493eb4ef1463222fe681"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Cecil_Rhodes",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Cecil_Rhodes&action=history",
+          "caseIds": [
+            "human-b82e231b3de2d64b91469712"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Chamillionaire",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Chamillionaire&action=history",
+          "caseIds": [
+            "human-80038be99e97c3c7e039a09a"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Chester_Brown",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Chester_Brown&action=history",
+          "caseIds": [
+            "human-6a940b1cdbd2e565d6a3fa93"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Clarice_Lispector",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Clarice_Lispector&action=history",
+          "caseIds": [
+            "human-f2e47936327d1bce906b638c"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Common_(rapper)",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Common_%28rapper%29&action=history",
+          "caseIds": [
+            "human-b8e558f9d288bf2137afe2a5"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Corbin_Bleu",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Corbin_Bleu&action=history",
+          "caseIds": [
+            "human-ae35a8a26482bfab564844af"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Culture_of_Turkey",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Culture_of_Turkey&action=history",
+          "caseIds": [
+            "human-db6d1d904c9306cd59df3db5"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Curtly_Ambrose",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Curtly_Ambrose&action=history",
+          "caseIds": [
+            "human-e3af383578531da27d492550"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Cyndi_Lauper",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Cyndi_Lauper&action=history",
+          "caseIds": [
+            "human-74eb4a92b9d5224c64aa21ba"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Dick_Butkus",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Dick_Butkus&action=history",
+          "caseIds": [
+            "human-6f121518d39027b02c51f94b"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Dominick_Argento",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Dominick_Argento&action=history",
+          "caseIds": [
+            "human-633f2982522a9743c8433170"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Dwayne_Johnson",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Dwayne_Johnson&action=history",
+          "caseIds": [
+            "human-4b2743b516dcb6fb07fa005e"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Epica_(band)",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Epica_%28band%29&action=history",
+          "caseIds": [
+            "human-e075fc88a26e15defd613449"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Evander_Holyfield",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Evander_Holyfield&action=history",
+          "caseIds": [
+            "human-c21dd66ab2c70878ea287de2"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Fausto_Coppi",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Fausto_Coppi&action=history",
+          "caseIds": [
+            "human-907c112debadd4bc0106719a"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Gene_Clark",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Gene_Clark&action=history",
+          "caseIds": [
+            "human-0c53a74c8e9d59720e7ebf20"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Groucho_Marx",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Groucho_Marx&action=history",
+          "caseIds": [
+            "human-ae04c3548baab6d49e50ce5c"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Henryk_G%C3%B3recki",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Henryk_G%C3%B3recki&action=history",
+          "caseIds": [
+            "human-5a80258f3f4a6fd6589b3384"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Jack_Nicklaus",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Jack_Nicklaus&action=history",
+          "caseIds": [
+            "human-0bd8856a7691cdf33233345b"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Jack_White",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Jack_White&action=history",
+          "caseIds": [
+            "human-32524015071e375e149b1c4f"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/James_Ussher",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=James_Ussher&action=history",
+          "caseIds": [
+            "human-1111ed253cfbad7a78856f86"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Jan_and_Dean",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Jan_and_Dean&action=history",
+          "caseIds": [
+            "human-62aa7776a28a923a7d1a264e"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Jascha_Heifetz",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Jascha_Heifetz&action=history",
+          "caseIds": [
+            "human-3ca2cf37ab554685bd58f919"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Jeanine_Pirro",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Jeanine_Pirro&action=history",
+          "caseIds": [
+            "human-32ba44fdc814e6d76c4ea9e7"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Jennifer_Capriati",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Jennifer_Capriati&action=history",
+          "caseIds": [
+            "human-184ccdc629fe009a87666890"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Joe_Greene",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Joe_Greene&action=history",
+          "caseIds": [
+            "human-bce46be14725d541f5487b10"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Joey_Yung",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Joey_Yung&action=history",
+          "caseIds": [
+            "human-734df6ed1ab49754a270eed8"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/John_Barrowman",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=John_Barrowman&action=history",
+          "caseIds": [
+            "human-e2c4decf11791c68dd64474d"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Jonathan_Miller",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Jonathan_Miller&action=history",
+          "caseIds": [
+            "human-31728cd5ed414bd36d114ee3"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Kal%C4%81kaua",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Kal%C4%81kaua&action=history",
+          "caseIds": [
+            "human-a0b92872bf41446f94a4e4ea"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Kasabian",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Kasabian&action=history",
+          "caseIds": [
+            "human-3411c04530f0b9c136e632f4",
+            "human-e9cdb8612f3dd242ebd2659b"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Keira_Knightley",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Keira_Knightley&action=history",
+          "caseIds": [
+            "human-3cf1b8f61da379e626501c38"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Kerry_Von_Erich",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Kerry_Von_Erich&action=history",
+          "caseIds": [
+            "human-201a992c33e02d799cbb7691"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Leo_Fender",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Leo_Fender&action=history",
+          "caseIds": [
+            "human-8c77ce2b676809a4340fd597"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Leonard_Nimoy",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Leonard_Nimoy&action=history",
+          "caseIds": [
+            "human-40f6a61f5cd4ac8e2ae5bdef"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Lil'_Kim",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Lil%27_Kim&action=history",
+          "caseIds": [
+            "human-7bf181375d9c0860f8a4925e"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Marco_Simoncelli",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Marco_Simoncelli&action=history",
+          "caseIds": [
+            "human-3cebc6988f3089e1dab77607"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Mary_Shelley",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Mary_Shelley&action=history",
+          "caseIds": [
+            "human-d5dff926883190b04450e342"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Mystique_(comics)",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Mystique_%28comics%29&action=history",
+          "caseIds": [
+            "human-fd196d950e5664768439101a"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Nicola_Sturgeon",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Nicola_Sturgeon&action=history",
+          "caseIds": [
+            "human-1af496bab5347681698b8cbe"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Paul_Verhoeven",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Paul_Verhoeven&action=history",
+          "caseIds": [
+            "human-69f123d9cd11a17229a3fb88"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Periyar_E._V._Ramasamy",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Periyar_E._V._Ramasamy&action=history",
+          "caseIds": [
+            "human-88025d5082f0f0d3b3907d98"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Peter_Tatchell",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Peter_Tatchell&action=history",
+          "caseIds": [
+            "human-0bf4b10bfe1b8f48d8f99cd4"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Pinky_and_the_Brain",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Pinky_and_the_Brain&action=history",
+          "caseIds": [
+            "human-bcab6de6e854d071b986a7e9"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Prince_Philip%2C_Duke_of_Edinburgh",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Prince_Philip%2C_Duke_of_Edinburgh&action=history",
+          "caseIds": [
+            "human-8195f09497826974fa483bb0"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Ray_Price_(musician)",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Ray_Price_%28musician%29&action=history",
+          "caseIds": [
+            "human-71eb474353d24c93f8b0f4ae"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Rihanna",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Rihanna&action=history",
+          "caseIds": [
+            "human-6101b898558135d8a17801b0"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Robert_Rauschenberg",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Robert_Rauschenberg&action=history",
+          "caseIds": [
+            "human-7ea7b7f7fdc28a3025d8c527"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Rohingya_people",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Rohingya_people&action=history",
+          "caseIds": [
+            "human-6c0fbd13cc3cb4302b126bfa"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Ronald_D._Moore",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Ronald_D._Moore&action=history",
+          "caseIds": [
+            "human-054015c726398053b8692557"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Rush_(band)",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Rush_%28band%29&action=history",
+          "caseIds": [
+            "human-a85da7b93cab6e4ffd06ec73"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Sakis_Rouvas",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Sakis_Rouvas&action=history",
+          "caseIds": [
+            "human-dc317c96d3fcd2cfb8ddb8a9"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Sanctus_Real",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Sanctus_Real&action=history",
+          "caseIds": [
+            "human-f20b7c2eeead3f87fdd6843b"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Sandy_Koufax",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Sandy_Koufax&action=history",
+          "caseIds": [
+            "human-1bf8311ba3e63f04a33c7cad"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Selena_Gomez",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Selena_Gomez&action=history",
+          "caseIds": [
+            "human-02c7d24a4e64c65ce88368b7"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Senses_Fail",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Senses_Fail&action=history",
+          "caseIds": [
+            "human-43d291feb9929fb1fbd4eef6"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Shahid_Kapoor",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Shahid_Kapoor&action=history",
+          "caseIds": [
+            "human-a4ca6f249c01153c813410df"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Skyhooks_(band)",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Skyhooks_%28band%29&action=history",
+          "caseIds": [
+            "human-b3a64959717fb139bee74899"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Slash_(musician)",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Slash_%28musician%29&action=history",
+          "caseIds": [
+            "human-827fb7484fbf3cf94abe5cfb"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Soul_Asylum",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Soul_Asylum&action=history",
+          "caseIds": [
+            "human-92c3ca0b3fe61167976be40b"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Stephen_Fry",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Stephen_Fry&action=history",
+          "caseIds": [
+            "human-40c23dda0c03c36bad1459bc"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Steve_Irwin",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Steve_Irwin&action=history",
+          "caseIds": [
+            "human-578c64a470d8710f0831ea40"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Styx_(band)",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Styx_%28band%29&action=history",
+          "caseIds": [
+            "human-65d0971983f00b8132a3fbbe"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Susilo_Bambang_Yudhoyono",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Susilo_Bambang_Yudhoyono&action=history",
+          "caseIds": [
+            "human-24b423cab4ddfca0ed4b442f"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Texas_(band)",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Texas_%28band%29&action=history",
+          "caseIds": [
+            "human-ac172470329792757a5a0df4"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/The_Cult",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=The_Cult&action=history",
+          "caseIds": [
+            "human-a717354a40033609aa5e7d07"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/The_Smashing_Pumpkins",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=The_Smashing_Pumpkins&action=history",
+          "caseIds": [
+            "human-439c6897ca8538e097ee6a01"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/The_Sweet",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=The_Sweet&action=history",
+          "caseIds": [
+            "human-cf38057a5e2b36a6c3fcc310"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/The_Untouchables_(1959_TV_series)",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=The_Untouchables_%281959_TV_series%29&action=history",
+          "caseIds": [
+            "human-dfb9e5dcf0afc751d39ddc91"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/The_Wiggles",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=The_Wiggles&action=history",
+          "caseIds": [
+            "human-ce443d3b70149d2632cd5daa"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Thomas_Aquinas",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Thomas_Aquinas&action=history",
+          "caseIds": [
+            "human-83acae18952f25ef6f4d46bc"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Train_(band)",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Train_%28band%29&action=history",
+          "caseIds": [
+            "human-a0beddc00fbf28e819ca92e0"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Tristan_Tzara",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Tristan_Tzara&action=history",
+          "caseIds": [
+            "human-5a1dda922c149fe3ba205f2d"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Troubadour",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Troubadour&action=history",
+          "caseIds": [
+            "human-7bd3edf26c8a8a0b7d87780f"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Varg_Vikernes",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Varg_Vikernes&action=history",
+          "caseIds": [
+            "human-f2aa44301b8b7967262ca0b6"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Waldorf_Astoria_New_York",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Waldorf_Astoria_New_York&action=history",
+          "caseIds": [
+            "human-0d1fe5747475ef703f76272d"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Wesley_Clark",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Wesley_Clark&action=history",
+          "caseIds": [
+            "human-0cc14aefc46c4ed66b088d65"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Will_Forte",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Will_Forte&action=history",
+          "caseIds": [
+            "human-211df99f34b880a6ddfbb880"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Windham_Wyndham-Quin%2C_4th_Earl_of_Dunraven_and_Mount-Earl",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Windham_Wyndham-Quin%2C_4th_Earl_of_Dunraven_and_Mount-Earl&action=history",
+          "caseIds": [
+            "human-6f10430a50b3a9f5aa3a2370"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Woodes_Rogers",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Woodes_Rogers&action=history",
+          "caseIds": [
+            "human-4f1dd44233829f26eb5f45d9"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Woodrow_Wilson",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Woodrow_Wilson&action=history",
+          "caseIds": [
+            "human-8dca79629d7f0baf37a28263"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Yogi_Berra",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Yogi_Berra&action=history",
+          "caseIds": [
+            "human-1ac0c6e18243171ea16b09e4"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Zulfikar_Ali_Bhutto",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Zulfikar_Ali_Bhutto&action=history",
+          "caseIds": [
+            "human-c2f3cb294f5bc965f6d7c49e"
+          ]
+        }
+      ]
+    },
+    "tydiqa": {
+      "source": "Wikipedia article excerpts from the TyDiQA-GoldP v1.1 development split.",
+      "license": "CC-BY-SA-3.0",
+      "changes": "The benchmark replays the archived passage from the source release and annotates the scored answer separately.",
+      "linkMethod": "The archived passage keeps the article URL derived from its title and language. The dataset does not identify a specific Wikipedia revision.",
+      "articles": [
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A2%D8%B3",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A2%D8%B3&action=history",
+          "caseIds": [
+            "human-54e16b88e583d8581e48ebef"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A3%D8%B1%D9%86%D9%88%D9%84%D8%AF_%D8%B4%D9%88%D8%A7%D8%B1%D8%B2%D9%86%D9%8A%D8%AC%D8%B1",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A3%D8%B1%D9%86%D9%88%D9%84%D8%AF_%D8%B4%D9%88%D8%A7%D8%B1%D8%B2%D9%86%D9%8A%D8%AC%D8%B1&action=history",
+          "caseIds": [
+            "human-8aa3077965bf18ecb6c9698d"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A3%D8%B5%D9%88%D9%84_%D8%BA%D9%8A%D8%B1_%D9%85%D9%84%D9%85%D9%88%D8%B3%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A3%D8%B5%D9%88%D9%84_%D8%BA%D9%8A%D8%B1_%D9%85%D9%84%D9%85%D9%88%D8%B3%D8%A9&action=history",
+          "caseIds": [
+            "human-691ac62ebe06904129644dea"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A3%D9%81%D9%8A%D9%88%D9%86%D9%8A",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A3%D9%81%D9%8A%D9%88%D9%86%D9%8A&action=history",
+          "caseIds": [
+            "human-3e15aa8a434114826f321902"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A3%D9%84%D8%A8%D8%B1%D8%AA_%D8%A3%D9%8A%D9%86%D8%B4%D8%AA%D8%A7%D9%8A%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A3%D9%84%D8%A8%D8%B1%D8%AA_%D8%A3%D9%8A%D9%86%D8%B4%D8%AA%D8%A7%D9%8A%D9%86&action=history",
+          "caseIds": [
+            "human-368486a3a1da20c17d4f04bc"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A3%D9%84%D9%81%D8%B1%D8%AF_%D9%86%D9%88%D8%A8%D9%84",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A3%D9%84%D9%81%D8%B1%D8%AF_%D9%86%D9%88%D8%A8%D9%84&action=history",
+          "caseIds": [
+            "human-90487fde37ce47835046eb81"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A3%D9%84%D9%83%D8%A7%D9%84%D8%A7_%D8%AF%D9%8A_%D8%A5%D9%8A%D9%86%D8%A7%D8%B1%D9%8A%D8%B3",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A3%D9%84%D9%83%D8%A7%D9%84%D8%A7_%D8%AF%D9%8A_%D8%A5%D9%8A%D9%86%D8%A7%D8%B1%D9%8A%D8%B3&action=history",
+          "caseIds": [
+            "human-dc196b368431b8793179422f"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A3%D9%84%D9%83%D9%85%D8%A7%D9%8A%D9%88%D9%86_%D8%A7%D9%84%D9%83%D8%B1%D9%88%D8%AA%D9%88%D9%86%D9%8A",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A3%D9%84%D9%83%D9%85%D8%A7%D9%8A%D9%88%D9%86_%D8%A7%D9%84%D9%83%D8%B1%D9%88%D8%AA%D9%88%D9%86%D9%8A&action=history",
+          "caseIds": [
+            "human-de52ae0617852629f3188b5e"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A3%D9%85%D9%84_%D8%AC%D8%B1%D8%A7%D8%AD",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A3%D9%85%D9%84_%D8%AC%D8%B1%D8%A7%D8%AD&action=history",
+          "caseIds": [
+            "human-f21b50ab3880b8929ceb0e29"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A3%D9%85%D9%8A%D8%B1%D9%8A_%D8%A8%D8%B1%D9%83%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A3%D9%85%D9%8A%D8%B1%D9%8A_%D8%A8%D8%B1%D9%83%D8%A9&action=history",
+          "caseIds": [
+            "human-f1e88e2b74ad0feb21d93b13"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A3%D9%8A%D8%B1%D9%84%D9%86%D8%AF%D8%A7_%D8%A7%D9%84%D8%B4%D9%85%D8%A7%D9%84%D9%8A%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A3%D9%8A%D8%B1%D9%84%D9%86%D8%AF%D8%A7_%D8%A7%D9%84%D8%B4%D9%85%D8%A7%D9%84%D9%8A%D8%A9&action=history",
+          "caseIds": [
+            "human-ccf3ebf6081f0836fb503965"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A5%D8%B1%D8%A8%D8%AF",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A5%D8%B1%D8%A8%D8%AF&action=history",
+          "caseIds": [
+            "human-2b149b78cea953054e9358cd"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A5%D8%B3%D9%83%D9%8A%D8%A7",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A5%D8%B3%D9%83%D9%8A%D8%A7&action=history",
+          "caseIds": [
+            "human-bec4bfe26e4090b33d9e5470"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A5%D8%B7%D8%A7%D8%B1_%D9%85%D8%B7%D8%A7%D8%B7%D9%8A",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A5%D8%B7%D8%A7%D8%B1_%D9%85%D8%B7%D8%A7%D8%B7%D9%8A&action=history",
+          "caseIds": [
+            "human-1771f389a68169aca4b55ce4"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D8%A8%D9%86_%D8%AD%D8%B2%D9%85_%D8%A7%D9%84%D8%A3%D9%86%D8%AF%D9%84%D8%B3%D9%8A",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D8%A8%D9%86_%D8%AD%D8%B2%D9%85_%D8%A7%D9%84%D8%A3%D9%86%D8%AF%D9%84%D8%B3%D9%8A&action=history",
+          "caseIds": [
+            "human-2a94978f3197beb3102c4ba1"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D8%AD%D8%AA%D9%84%D8%A7%D9%84_%D8%B9%D8%AF%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D8%AD%D8%AA%D9%84%D8%A7%D9%84_%D8%B9%D8%AF%D9%86&action=history",
+          "caseIds": [
+            "human-a658ba4787f38634984246e0"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%82%D8%AA%D8%B5%D8%A7%D8%AF_%D8%AA%D8%AD%D8%AA%D9%8A",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%82%D8%AA%D8%B5%D8%A7%D8%AF_%D8%AA%D8%AD%D8%AA%D9%8A&action=history",
+          "caseIds": [
+            "human-b0e0a8d092dcbe221bd1ec71"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D8%A3%D9%86%D8%AA%D8%B1%D9%86%D9%8A%D8%AA_%D9%81%D9%8A_%D8%A7%D9%84%D9%85%D8%BA%D8%B1%D8%A8",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D8%A3%D9%86%D8%AA%D8%B1%D9%86%D9%8A%D8%AA_%D9%81%D9%8A_%D8%A7%D9%84%D9%85%D8%BA%D8%B1%D8%A8&action=history",
+          "caseIds": [
+            "human-c9bfb8fe7939126b3ba48377"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D8%A5%D8%B3%D9%85%D8%A7%D8%B9%D9%8A%D9%84%D9%8A%D8%A9_(%D9%85%D8%AF%D9%8A%D9%86%D8%A9)",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D8%A5%D8%B3%D9%85%D8%A7%D8%B9%D9%8A%D9%84%D9%8A%D8%A9_%28%D9%85%D8%AF%D9%8A%D9%86%D8%A9%29&action=history",
+          "caseIds": [
+            "human-8d6f29edfbfa67821a4623fe"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D8%A5%D8%B9%D9%84%D8%A7%D9%86_%D8%A7%D9%84%D8%B9%D8%A7%D9%84%D9%85%D9%8A_%D9%84%D8%AD%D9%82%D9%88%D9%82_%D8%A7%D9%84%D8%A5%D9%86%D8%B3%D8%A7%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D8%A5%D8%B9%D9%84%D8%A7%D9%86_%D8%A7%D9%84%D8%B9%D8%A7%D9%84%D9%85%D9%8A_%D9%84%D8%AD%D9%82%D9%88%D9%82_%D8%A7%D9%84%D8%A5%D9%86%D8%B3%D8%A7%D9%86&action=history",
+          "caseIds": [
+            "human-554140c1af4b87e1aad085f7"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D8%A5%D9%85%D8%A7%D8%B1%D8%A7%D8%AA_%D8%A7%D9%84%D8%B9%D8%B1%D8%A8%D9%8A%D8%A9_%D8%A7%D9%84%D9%85%D8%AA%D8%AD%D8%AF%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D8%A5%D9%85%D8%A7%D8%B1%D8%A7%D8%AA_%D8%A7%D9%84%D8%B9%D8%B1%D8%A8%D9%8A%D8%A9_%D8%A7%D9%84%D9%85%D8%AA%D8%AD%D8%AF%D8%A9&action=history",
+          "caseIds": [
+            "human-7c0f6c562fa7866ad31308f4"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D8%A7%D8%AA%D8%AD%D8%A7%D8%AF_%D8%A7%D9%84%D8%AF%D9%88%D9%84%D9%8A_%D9%84%D9%83%D8%B1%D8%A9_%D8%A7%D9%84%D9%82%D8%AF%D9%85",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D8%A7%D8%AA%D8%AD%D8%A7%D8%AF_%D8%A7%D9%84%D8%AF%D9%88%D9%84%D9%8A_%D9%84%D9%83%D8%B1%D8%A9_%D8%A7%D9%84%D9%82%D8%AF%D9%85&action=history",
+          "caseIds": [
+            "human-58d4518dfaef54adb037ff25"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D8%AA%D9%82%D8%B3%D9%8A%D9%85_%D8%A7%D9%84%D8%A5%D8%AF%D8%A7%D8%B1%D9%8A_%D9%81%D9%8A_%D9%84%D9%8A%D8%A8%D9%8A%D8%B1%D9%8A%D8%A7",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D8%AA%D9%82%D8%B3%D9%8A%D9%85_%D8%A7%D9%84%D8%A5%D8%AF%D8%A7%D8%B1%D9%8A_%D9%81%D9%8A_%D9%84%D9%8A%D8%A8%D9%8A%D8%B1%D9%8A%D8%A7&action=history",
+          "caseIds": [
+            "human-08fc84a1381f853fe3880822"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D8%AF%D9%8A%D9%86_%D9%81%D9%8A_%D8%A7%D9%84%D9%8A%D8%A7%D8%A8%D8%A7%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D8%AF%D9%8A%D9%86_%D9%81%D9%8A_%D8%A7%D9%84%D9%8A%D8%A7%D8%A8%D8%A7%D9%86&action=history",
+          "caseIds": [
+            "human-30d075008fea228493cd5594"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D8%B3%D9%88%D9%82_(%D9%85%D8%A7%D9%84%D9%8A)",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D8%B3%D9%88%D9%82_%28%D9%85%D8%A7%D9%84%D9%8A%29&action=history",
+          "caseIds": [
+            "human-11f7c9246f65319d525be7ef"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D8%B5%D8%A7%D9%84%D8%AD_%D8%A3%D9%8A%D9%88%D8%A8",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D8%B5%D8%A7%D9%84%D8%AD_%D8%A3%D9%8A%D9%88%D8%A8&action=history",
+          "caseIds": [
+            "human-65b8fdd3f29e146f3ba704a9"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D8%B9%D8%B5%D8%B1_%D8%A7%D9%84%D8%A8%D8%B1%D9%88%D9%86%D8%B2%D9%8A",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D8%B9%D8%B5%D8%B1_%D8%A7%D9%84%D8%A8%D8%B1%D9%88%D9%86%D8%B2%D9%8A&action=history",
+          "caseIds": [
+            "human-78fc07ac6080cb6b4280cd6d"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D8%B9%D9%87%D8%AF_%D8%A7%D9%84%D8%AF%D9%88%D9%84%D9%8A_%D8%A7%D9%84%D8%AE%D8%A7%D8%B5_%D8%A8%D8%A7%D9%84%D8%AD%D9%82%D9%88%D9%82_%D8%A7%D9%84%D8%A7%D9%82%D8%AA%D8%B5%D8%A7%D8%AF%D9%8A%D8%A9_%D9%88%D8%A7%D9%84%D8%A7%D8%AC%D8%AA%D9%85%D8%A7%D8%B9%D9%8A%D8%A9_%D9%88%D8%A7%D9%84%D8%AB%D9%82%D8%A7%D9%81%D9%8A%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D8%B9%D9%87%D8%AF_%D8%A7%D9%84%D8%AF%D9%88%D9%84%D9%8A_%D8%A7%D9%84%D8%AE%D8%A7%D8%B5_%D8%A8%D8%A7%D9%84%D8%AD%D9%82%D9%88%D9%82_%D8%A7%D9%84%D8%A7%D9%82%D8%AA%D8%B5%D8%A7%D8%AF%D9%8A%D8%A9_%D9%88%D8%A7%D9%84%D8%A7%D8%AC%D8%AA%D9%85%D8%A7%D8%B9%D9%8A%D8%A9_%D9%88%D8%A7%D9%84%D8%AB%D9%82%D8%A7%D9%81%D9%8A%D8%A9&action=history",
+          "caseIds": [
+            "human-e3a90ee8f1bdbbf9e492ebf8"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D8%B9%D9%8A%D9%88%D9%86_(%D9%85%D8%AF%D9%8A%D9%86%D8%A9)",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D8%B9%D9%8A%D9%88%D9%86_%28%D9%85%D8%AF%D9%8A%D9%86%D8%A9%29&action=history",
+          "caseIds": [
+            "human-530553de815371b3efedecc8"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D9%81%D9%84%D8%A8%D9%8A%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D9%81%D9%84%D8%A8%D9%8A%D9%86&action=history",
+          "caseIds": [
+            "human-da2d01cb2773fd9544982b05"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D9%81%D9%84%D9%88%D8%AC%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D9%81%D9%84%D9%88%D8%AC%D8%A9&action=history",
+          "caseIds": [
+            "human-1361f2f621346ef6e240c547"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D9%82%D8%A7%D8%B1%D8%A9_%D8%A7%D9%84%D9%82%D8%B7%D8%A8%D9%8A%D8%A9_%D8%A7%D9%84%D8%AC%D9%86%D9%88%D8%A8%D9%8A%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D9%82%D8%A7%D8%B1%D8%A9_%D8%A7%D9%84%D9%82%D8%B7%D8%A8%D9%8A%D8%A9_%D8%A7%D9%84%D8%AC%D9%86%D9%88%D8%A8%D9%8A%D8%A9&action=history",
+          "caseIds": [
+            "human-099b75a909d88779cd066326"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D9%83%D9%85%D8%A9_%D8%A7%D9%84%D8%B9%D9%85%D8%A7%D9%86%D9%8A%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D9%83%D9%85%D8%A9_%D8%A7%D9%84%D8%B9%D9%85%D8%A7%D9%86%D9%8A%D8%A9&action=history",
+          "caseIds": [
+            "human-dfa26dc8493b0cfece0c5a4f"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D9%83%D9%88%D9%85%D9%8A%D8%AF%D9%8A%D8%A7_%D8%A7%D9%84%D8%A5%D9%84%D9%87%D9%8A%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D9%83%D9%88%D9%85%D9%8A%D8%AF%D9%8A%D8%A7_%D8%A7%D9%84%D8%A5%D9%84%D9%87%D9%8A%D8%A9&action=history",
+          "caseIds": [
+            "human-c1dec67b92403e75f12df07a"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D9%85%D9%88%D8%B2%D8%A9_%D8%A7%D9%84%D8%B2%D8%B1%D9%82%D8%A7%D8%A1",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D9%85%D9%88%D8%B2%D8%A9_%D8%A7%D9%84%D8%B2%D8%B1%D9%82%D8%A7%D8%A1&action=history",
+          "caseIds": [
+            "human-d92643a601670f9ec4be8bef"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A7%D9%84%D9%86%D8%A7%D8%B5%D8%B1_%D8%A8%D9%86_%D8%B4%D9%87%D8%B1%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A7%D9%84%D9%86%D8%A7%D8%B5%D8%B1_%D8%A8%D9%86_%D8%B4%D9%87%D8%B1%D8%A9&action=history",
+          "caseIds": [
+            "human-600b3ba2b8585e1e77291beb"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A8%D8%A7%D8%A6%D8%B9%D8%A9_%D8%A7%D9%84%D9%83%D8%A8%D8%B1%D9%8A%D8%AA",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A8%D8%A7%D8%A6%D8%B9%D8%A9_%D8%A7%D9%84%D9%83%D8%A8%D8%B1%D9%8A%D8%AA&action=history",
+          "caseIds": [
+            "human-5feaa204992dde4df66cfe8a"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A8%D8%A7%D8%A8_%D8%B2%D9%88%D9%8A%D9%84%D8%A9_(%D8%A7%D9%84%D9%82%D8%A7%D9%87%D8%B1%D8%A9)",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A8%D8%A7%D8%A8_%D8%B2%D9%88%D9%8A%D9%84%D8%A9_%28%D8%A7%D9%84%D9%82%D8%A7%D9%87%D8%B1%D8%A9%29&action=history",
+          "caseIds": [
+            "human-7059bc0686a7bd9ed29215b4"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A8%D8%A7%D9%88%D9%84%D9%88_%D9%83%D9%88%D9%8A%D9%84%D9%88",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A8%D8%A7%D9%88%D9%84%D9%88_%D9%83%D9%88%D9%8A%D9%84%D9%88&action=history",
+          "caseIds": [
+            "human-adf61e55e6118a87f7ef825c"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A8%D8%AE%D9%88%D8%B1",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A8%D8%AE%D9%88%D8%B1&action=history",
+          "caseIds": [
+            "human-3ff515050b496af7e4e48904"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A8%D8%B1%D9%88%D8%AA%D9%88%D9%83%D9%88%D9%84_(%D8%A7%D8%AA%D8%B5%D8%A7%D9%84%D8%A7%D8%AA)",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A8%D8%B1%D9%88%D8%AA%D9%88%D9%83%D9%88%D9%84_%28%D8%A7%D8%AA%D8%B5%D8%A7%D9%84%D8%A7%D8%AA%29&action=history",
+          "caseIds": [
+            "human-bfc7081bfd6744fa1196c47f"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A8%D8%B1%D9%88%D9%83%D8%AA%D8%B1_%D9%88%D8%BA%D8%A7%D9%85%D8%A8%D9%84",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A8%D8%B1%D9%88%D9%83%D8%AA%D8%B1_%D9%88%D8%BA%D8%A7%D9%85%D8%A8%D9%84&action=history",
+          "caseIds": [
+            "human-bae495af0298df8ca93124fe"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A8%D8%B7%D8%A7%D9%82%D8%A9_%D8%B0%D9%83%D9%8A%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A8%D8%B7%D8%A7%D9%82%D8%A9_%D8%B0%D9%83%D9%8A%D8%A9&action=history",
+          "caseIds": [
+            "human-83d2f16ac5a0d9d2e7798644"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A8%D9%86%D8%AC%D8%A7%D8%A8_(%D8%A7%D9%84%D9%87%D9%86%D8%AF)",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A8%D9%86%D8%AC%D8%A7%D8%A8_%28%D8%A7%D9%84%D9%87%D9%86%D8%AF%29&action=history",
+          "caseIds": [
+            "human-9b545e4ea05e59ccdf10e872"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A8%D9%88%D8%AA%D8%A7%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A8%D9%88%D8%AA%D8%A7%D9%86&action=history",
+          "caseIds": [
+            "human-248bdf0b5c06433c29bc8f0e"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A8%D9%88%D8%B1%D8%B4%D9%87",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A8%D9%88%D8%B1%D8%B4%D9%87&action=history",
+          "caseIds": [
+            "human-c20227083aa74ac987b387ec"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%A8%D9%88%D9%85%D8%A8%D9%8A",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%A8%D9%88%D9%85%D8%A8%D9%8A&action=history",
+          "caseIds": [
+            "human-337953d5a93915f1d509c0d1"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AA%D8%A7%D8%B1%D9%8A%D8%AE_%D8%A7%D9%84%D8%B3%D8%B9%D9%88%D8%AF%D9%8A%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AA%D8%A7%D8%B1%D9%8A%D8%AE_%D8%A7%D9%84%D8%B3%D8%B9%D9%88%D8%AF%D9%8A%D8%A9&action=history",
+          "caseIds": [
+            "human-f916ffd3f95164ca54210783"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AA%D8%A7%D8%B1%D9%8A%D8%AE_%D9%85%D8%B1%D8%B6_%D8%A7%D9%84%D8%A5%D9%8A%D8%AF%D8%B2",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AA%D8%A7%D8%B1%D9%8A%D8%AE_%D9%85%D8%B1%D8%B6_%D8%A7%D9%84%D8%A5%D9%8A%D8%AF%D8%B2&action=history",
+          "caseIds": [
+            "human-44fb115511b89a40bee91e0f"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AA%D8%A7%D9%8A%D9%85_(%D9%85%D8%AC%D9%84%D8%A9)",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AA%D8%A7%D9%8A%D9%85_%28%D9%85%D8%AC%D9%84%D8%A9%29&action=history",
+          "caseIds": [
+            "human-b66bc6bdd78c665060f7ee76"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AA%D9%88%D9%85%D8%A7%D8%B3_%D8%A3%D8%AF%D9%8A%D8%B3%D9%88%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AA%D9%88%D9%85%D8%A7%D8%B3_%D8%A3%D8%AF%D9%8A%D8%B3%D9%88%D9%86&action=history",
+          "caseIds": [
+            "human-4f3ff79efcafea25e1babbd2"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AC%D8%A7%D8%B3%D9%85_%D9%8A%D8%B9%D9%82%D9%88%D8%A8",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AC%D8%A7%D8%B3%D9%85_%D9%8A%D8%B9%D9%82%D9%88%D8%A8&action=history",
+          "caseIds": [
+            "human-96627760057dde135888cca3"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AC%D8%A7%D9%85%D8%B9%D8%A9_%D8%A7%D9%84%D8%A3%D9%86%D8%A7%D8%B6%D9%88%D9%84",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AC%D8%A7%D9%85%D8%B9%D8%A9_%D8%A7%D9%84%D8%A3%D9%86%D8%A7%D8%B6%D9%88%D9%84&action=history",
+          "caseIds": [
+            "human-83063fa1901d4e474db7f229"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AC%D8%A7%D9%85%D8%B9%D8%A9_%D8%A7%D9%84%D8%B9%D9%84%D9%88%D9%85_%D9%88%D8%A7%D9%84%D8%AA%D9%83%D9%86%D9%88%D9%84%D9%88%D8%AC%D9%8A%D8%A7_%D8%A7%D9%84%D8%A3%D8%B1%D8%AF%D9%86%D9%8A%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AC%D8%A7%D9%85%D8%B9%D8%A9_%D8%A7%D9%84%D8%B9%D9%84%D9%88%D9%85_%D9%88%D8%A7%D9%84%D8%AA%D9%83%D9%86%D9%88%D9%84%D9%88%D8%AC%D9%8A%D8%A7_%D8%A7%D9%84%D8%A3%D8%B1%D8%AF%D9%86%D9%8A%D8%A9&action=history",
+          "caseIds": [
+            "human-c5a58a61e07939b9c6542c7c"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AC%D8%A7%D9%85%D8%B9%D8%A9_%D8%A8%D8%A7%D8%B1%D9%8A%D8%B3_%D8%AF%D9%8A%D8%AF%D9%8A%D8%B1%D9%88",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AC%D8%A7%D9%85%D8%B9%D8%A9_%D8%A8%D8%A7%D8%B1%D9%8A%D8%B3_%D8%AF%D9%8A%D8%AF%D9%8A%D8%B1%D9%88&action=history",
+          "caseIds": [
+            "human-b20ebe229c054d196e0d6437"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AC%D8%A7%D9%85%D8%B9%D8%A9_%D9%81%D9%88%D8%B1%D8%AA%D8%B3%D8%A8%D9%88%D8%B1%D8%BA",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AC%D8%A7%D9%85%D8%B9%D8%A9_%D9%81%D9%88%D8%B1%D8%AA%D8%B3%D8%A8%D9%88%D8%B1%D8%BA&action=history",
+          "caseIds": [
+            "human-83003c3b1c854c615dd7e38c"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AC%D8%A7%D9%85%D8%B9%D8%A9_%D9%82%D8%B3%D9%86%D8%B7%D9%8A%D9%86%D8%A9_1_-%D9%85%D9%86%D8%AA%D9%88%D8%B1%D9%8A",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AC%D8%A7%D9%85%D8%B9%D8%A9_%D9%82%D8%B3%D9%86%D8%B7%D9%8A%D9%86%D8%A9_1_-%D9%85%D9%86%D8%AA%D9%88%D8%B1%D9%8A&action=history",
+          "caseIds": [
+            "human-5b8f232a70aff6417148c1d2"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AC%D8%A7%D9%85%D8%B9%D8%A9_%D9%87%D8%A7%D9%85%D8%A8%D9%88%D8%B1%D8%BA",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AC%D8%A7%D9%85%D8%B9%D8%A9_%D9%87%D8%A7%D9%85%D8%A8%D9%88%D8%B1%D8%BA&action=history",
+          "caseIds": [
+            "human-eeb2efe40fddc2d59a1e361b"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AC%D8%A7%D9%85%D8%B9_%D8%A7%D9%84%D8%B2%D9%8A%D8%AA%D9%88%D9%86%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AC%D8%A7%D9%85%D8%B9_%D8%A7%D9%84%D8%B2%D9%8A%D8%AA%D9%88%D9%86%D8%A9&action=history",
+          "caseIds": [
+            "human-d229ae51b18985e4b0a344e2"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AC%D8%B1%D9%8A%D8%AC%D9%88%D8%B1%D9%8A_%D8%A8%D9%86%D9%83%D9%88%D8%B3",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AC%D8%B1%D9%8A%D8%AC%D9%88%D8%B1%D9%8A_%D8%A8%D9%86%D9%83%D9%88%D8%B3&action=history",
+          "caseIds": [
+            "human-04da531f85432d75a2a401c9"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AC%D9%85%D8%A7%D8%B9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AC%D9%85%D8%A7%D8%B9&action=history",
+          "caseIds": [
+            "human-af79f5b940f2d0936c110acc"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AC%D9%85%D8%B9%D9%8A%D8%A9_%D8%A7%D9%84%D8%B1%D9%8A%D8%A7%D8%B6%D9%8A%D8%A7%D8%AA_%D8%A7%D9%84%D8%A3%D9%88%D8%B1%D9%88%D8%A8%D9%8A%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AC%D9%85%D8%B9%D9%8A%D8%A9_%D8%A7%D9%84%D8%B1%D9%8A%D8%A7%D8%B6%D9%8A%D8%A7%D8%AA_%D8%A7%D9%84%D8%A3%D9%88%D8%B1%D9%88%D8%A8%D9%8A%D8%A9&action=history",
+          "caseIds": [
+            "human-9a4e5ba0b291ff386b068e48"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AC%D9%85%D9%87%D9%88%D8%B1%D9%8A%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AC%D9%85%D9%87%D9%88%D8%B1%D9%8A%D8%A9&action=history",
+          "caseIds": [
+            "human-e82e8edddc23eaf89c603bea"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AC%D9%88_%D9%84%D9%88%D9%8A%D8%B3",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AC%D9%88_%D9%84%D9%88%D9%8A%D8%B3&action=history",
+          "caseIds": [
+            "human-ab892814f20062b2d7535b28"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AD%D8%A8%D8%A9_%D8%A7%D9%84%D8%A8%D8%B1%D9%83%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AD%D8%A8%D8%A9_%D8%A7%D9%84%D8%A8%D8%B1%D9%83%D8%A9&action=history",
+          "caseIds": [
+            "human-b8c349d420db67edd7bc3f0e"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AD%D8%B1%D8%A8_%D8%A3%D9%88%D8%BA%D8%A7%D8%AF%D9%8A%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AD%D8%B1%D8%A8_%D8%A3%D9%88%D8%BA%D8%A7%D8%AF%D9%8A%D9%86&action=history",
+          "caseIds": [
+            "human-7fb6a4700ab57106a01b4ee8"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AD%D8%B1%D9%83%D8%A9_8_%D8%B4%D8%A8%D8%A7%D8%B7_1963",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AD%D8%B1%D9%83%D8%A9_8_%D8%B4%D8%A8%D8%A7%D8%B7_1963&action=history",
+          "caseIds": [
+            "human-40fa1948b929ddda3972cc9a"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AD%D9%82%D9%88%D9%82_%D8%A7%D9%84%D8%A5%D9%86%D8%B3%D8%A7%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AD%D9%82%D9%88%D9%82_%D8%A7%D9%84%D8%A5%D9%86%D8%B3%D8%A7%D9%86&action=history",
+          "caseIds": [
+            "human-2e8487afeaecd1bbdad678ff"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AD%D9%86%D9%81%D9%8A%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AD%D9%86%D9%81%D9%8A%D8%A9&action=history",
+          "caseIds": [
+            "human-93d1248f27994cfb65bc3fb5"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AE%D8%B7%D9%84_%D9%86%D9%88%D9%85%D9%8A",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AE%D8%B7%D9%84_%D9%86%D9%88%D9%85%D9%8A&action=history",
+          "caseIds": [
+            "human-eb8d522e7ccd53fae15cff0d"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AE%D9%84%D9%8A%D8%A9_%D9%85%D8%AA%D8%B9%D8%A7%D8%AF%D9%84%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AE%D9%84%D9%8A%D8%A9_%D9%85%D8%AA%D8%B9%D8%A7%D8%AF%D9%84%D8%A9&action=history",
+          "caseIds": [
+            "human-5877f57d5dd645ae3d9729c9"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AE%D9%8A%D8%A8%D8%B1",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AE%D9%8A%D8%A8%D8%B1&action=history",
+          "caseIds": [
+            "human-1a5b256ff977159ce178a216"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AE%D9%8A%D9%88%D9%84_%D8%AB%D9%88%D8%B1%D9%88%D8%A8%D8%B1%D9%8A%D8%AF",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AE%D9%8A%D9%88%D9%84_%D8%AB%D9%88%D8%B1%D9%88%D8%A8%D8%B1%D9%8A%D8%AF&action=history",
+          "caseIds": [
+            "human-320de1f769885e3a4ecb489d"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AF%D8%A7%D8%B1%D8%A7_%D8%A7%D9%84%D8%A3%D9%88%D9%84",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AF%D8%A7%D8%B1%D8%A7_%D8%A7%D9%84%D8%A3%D9%88%D9%84&action=history",
+          "caseIds": [
+            "human-784f7674ce4f81613076f95c"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AF%D9%88%D8%A7%D9%85%D8%A9_%D9%86%D9%81%D8%A7%D9%8A%D8%A7%D8%AA_%D8%B4%D9%85%D8%A7%D9%84_%D8%A7%D9%84%D9%85%D8%AD%D9%8A%D8%B7_%D8%A7%D9%84%D9%87%D8%A7%D8%AF%D8%A6",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AF%D9%88%D8%A7%D9%85%D8%A9_%D9%86%D9%81%D8%A7%D9%8A%D8%A7%D8%AA_%D8%B4%D9%85%D8%A7%D9%84_%D8%A7%D9%84%D9%85%D8%AD%D9%8A%D8%B7_%D8%A7%D9%84%D9%87%D8%A7%D8%AF%D8%A6&action=history",
+          "caseIds": [
+            "human-3cc304066a4820ba1cb6c75f"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%AF%D9%8A%D9%8A%D8%BA%D9%88_%D9%81%D9%88%D8%B1%D9%84%D8%A7%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%AF%D9%8A%D9%8A%D8%BA%D9%88_%D9%81%D9%88%D8%B1%D9%84%D8%A7%D9%86&action=history",
+          "caseIds": [
+            "human-508fcff7489557ba8affb16f"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%B1%D8%A6%D9%8A%D8%B3_%D8%B3%D9%86%D8%BA%D8%A7%D9%81%D9%88%D8%B1%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%B1%D8%A6%D9%8A%D8%B3_%D8%B3%D9%86%D8%BA%D8%A7%D9%81%D9%88%D8%B1%D8%A9&action=history",
+          "caseIds": [
+            "human-384f7b6465e6d7941ac02d68"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%B1%D8%A7%D8%B3%D9%85_%D8%A5%D8%B4%D8%A7%D8%B1%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%B1%D8%A7%D8%B3%D9%85_%D8%A5%D8%B4%D8%A7%D8%B1%D8%A9&action=history",
+          "caseIds": [
+            "human-5ecd026ab506bd4b748b9f86"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%B1%D8%A7%D9%8A_(%D9%85%D9%88%D8%B3%D9%8A%D9%82%D9%89)",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%B1%D8%A7%D9%8A_%28%D9%85%D9%88%D8%B3%D9%8A%D9%82%D9%89%29&action=history",
+          "caseIds": [
+            "human-b6e271267c7eff2b34e553ab"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%B1%D8%AC%D9%81%D8%A7%D9%86_%D8%A8%D8%B7%D9%8A%D9%86%D9%8A",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%B1%D8%AC%D9%81%D8%A7%D9%86_%D8%A8%D8%B7%D9%8A%D9%86%D9%8A&action=history",
+          "caseIds": [
+            "human-01252c24ea49e43c28daca0b"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%B2%D9%8A%D9%86_%D8%A7%D9%84%D8%B9%D8%A7%D8%A8%D8%AF%D9%8A%D9%86_%D8%A8%D9%86_%D8%B9%D9%84%D9%8A",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%B2%D9%8A%D9%86_%D8%A7%D9%84%D8%B9%D8%A7%D8%A8%D8%AF%D9%8A%D9%86_%D8%A8%D9%86_%D8%B9%D9%84%D9%8A&action=history",
+          "caseIds": [
+            "human-36c5531bcf18e38162361b2c"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%B3%D9%83%D8%A7%D9%86_%D8%A7%D9%84%D8%B9%D8%B1%D8%A7%D9%82",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%B3%D9%83%D8%A7%D9%86_%D8%A7%D9%84%D8%B9%D8%B1%D8%A7%D9%82&action=history",
+          "caseIds": [
+            "human-31ebac74f9ed5e7db1d89be7"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%B3%D9%86%D8%AF_(%D9%88%D8%B1%D9%82%D8%A9_%D9%85%D8%A7%D9%84%D9%8A%D8%A9)",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%B3%D9%86%D8%AF_%28%D9%88%D8%B1%D9%82%D8%A9_%D9%85%D8%A7%D9%84%D9%8A%D8%A9%29&action=history",
+          "caseIds": [
+            "human-ff7390da796bc17afbd70f54"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%B3%D9%88%D9%82_%D8%A7%D9%84%D8%A3%D9%88%D8%B1%D8%A7%D9%82_%D8%A7%D9%84%D9%85%D8%A7%D9%84%D9%8A%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%B3%D9%88%D9%82_%D8%A7%D9%84%D8%A3%D9%88%D8%B1%D8%A7%D9%82_%D8%A7%D9%84%D9%85%D8%A7%D9%84%D9%8A%D8%A9&action=history",
+          "caseIds": [
+            "human-1a8bf892f0a42cb2112f2a0d"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%B4%D8%AC%D8%B1%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%B4%D8%AC%D8%B1%D8%A9&action=history",
+          "caseIds": [
+            "human-67adbbb08f831cabd4a1514a"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%B5%D8%AF%D8%A7%D9%85_%D8%AD%D8%B3%D9%8A%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%B5%D8%AF%D8%A7%D9%85_%D8%AD%D8%B3%D9%8A%D9%86&action=history",
+          "caseIds": [
+            "human-4218bd8bcf372ca18ddcf2be"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%B7%D8%A7%D8%A6%D8%B1%D8%A9_%D8%A8%D8%AF%D9%88%D9%86_%D8%B7%D9%8A%D8%A7%D8%B1",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%B7%D8%A7%D8%A6%D8%B1%D8%A9_%D8%A8%D8%AF%D9%88%D9%86_%D8%B7%D9%8A%D8%A7%D8%B1&action=history",
+          "caseIds": [
+            "human-991fbe8b13f45325df9f3f8a"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%B7%D9%88%D8%A7%D8%B4%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%B7%D9%88%D8%A7%D8%B4%D8%A9&action=history",
+          "caseIds": [
+            "human-ed7c0457994e7fc35dc58d03"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D8%B9%D8%B0%D8%B1%D8%A7%D8%A1",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D8%B9%D8%B0%D8%B1%D8%A7%D8%A1&action=history",
+          "caseIds": [
+            "human-51e1106e62d561fe0a317e4b"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%81%D8%B1%D8%A7%D9%86%D8%AB%D9%8A%D8%B3%D9%83%D9%88_%D9%81%D8%B1%D8%A7%D9%86%D9%83%D9%88",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%81%D8%B1%D8%A7%D9%86%D8%AB%D9%8A%D8%B3%D9%83%D9%88_%D9%81%D8%B1%D8%A7%D9%86%D9%83%D9%88&action=history",
+          "caseIds": [
+            "human-063b933138ba74e39e61c6de"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%81%D8%B1%D8%A7%D9%86%D9%83%D9%84%D9%8A%D9%86_%D8%B1%D9%88%D8%B2%D9%81%D9%84%D8%AA",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%81%D8%B1%D8%A7%D9%86%D9%83%D9%84%D9%8A%D9%86_%D8%B1%D9%88%D8%B2%D9%81%D9%84%D8%AA&action=history",
+          "caseIds": [
+            "human-1da1d246180409fa7e39cded"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%81%D8%B1%D8%B6_%D9%83%D9%81%D8%A7%D9%8A%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%81%D8%B1%D8%B6_%D9%83%D9%81%D8%A7%D9%8A%D8%A9&action=history",
+          "caseIds": [
+            "human-001658d5bf9e65501f0712f3"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%81%D9%87%D8%AF",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%81%D9%87%D8%AF&action=history",
+          "caseIds": [
+            "human-75150328f413f23f5bbadb48"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%81%D9%88%D9%84%D9%81%D8%BA%D8%A7%D9%86%D8%BA_%D8%A3%D9%85%D8%A7%D8%AF%D9%8A%D9%88%D8%B3_%D9%85%D9%88%D8%B2%D8%A7%D8%B1%D8%AA",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%81%D9%88%D9%84%D9%81%D8%BA%D8%A7%D9%86%D8%BA_%D8%A3%D9%85%D8%A7%D8%AF%D9%8A%D9%88%D8%B3_%D9%85%D9%88%D8%B2%D8%A7%D8%B1%D8%AA&action=history",
+          "caseIds": [
+            "human-26f044bb601e17f7dc459f02"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%81%D9%8A%D8%B3%D8%A8%D9%88%D9%83",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%81%D9%8A%D8%B3%D8%A8%D9%88%D9%83&action=history",
+          "caseIds": [
+            "human-dfe122b354d7d40c574d9136"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%82%D8%A7%D8%A6%D9%85%D8%A9_%D8%A3%D9%82%D8%B1%D8%A8_%D8%A7%D9%84%D9%86%D8%AC%D9%88%D9%85_%D8%A5%D9%84%D9%8A%D9%86%D8%A7",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%82%D8%A7%D8%A6%D9%85%D8%A9_%D8%A3%D9%82%D8%B1%D8%A8_%D8%A7%D9%84%D9%86%D8%AC%D9%88%D9%85_%D8%A5%D9%84%D9%8A%D9%86%D8%A7&action=history",
+          "caseIds": [
+            "human-9cc088358f77cf1ac894bfc4"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%82%D8%A7%D8%A6%D9%85%D8%A9_%D8%A7%D9%84%D9%88%D9%84%D8%A7%D9%8A%D8%A7%D8%AA_%D9%88%D8%A7%D9%84%D9%85%D9%86%D8%A7%D8%B7%D9%82_%D8%A7%D9%84%D8%A3%D9%85%D8%B1%D9%8A%D9%83%D9%8A%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%82%D8%A7%D8%A6%D9%85%D8%A9_%D8%A7%D9%84%D9%88%D9%84%D8%A7%D9%8A%D8%A7%D8%AA_%D9%88%D8%A7%D9%84%D9%85%D9%86%D8%A7%D8%B7%D9%82_%D8%A7%D9%84%D8%A3%D9%85%D8%B1%D9%8A%D9%83%D9%8A%D8%A9&action=history",
+          "caseIds": [
+            "human-ec0c144726700e30ed0f7a97"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%82%D8%A7%D8%A6%D9%85%D8%A9_%D9%86%D9%87%D8%A7%D8%A6%D9%8A%D8%A7%D8%AA_%D9%83%D8%A3%D8%B3_%D8%A7%D9%84%D8%B9%D8%A7%D9%84%D9%85",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%82%D8%A7%D8%A6%D9%85%D8%A9_%D9%86%D9%87%D8%A7%D8%A6%D9%8A%D8%A7%D8%AA_%D9%83%D8%A3%D8%B3_%D8%A7%D9%84%D8%B9%D8%A7%D9%84%D9%85&action=history",
+          "caseIds": [
+            "human-eabdd4f145e4a87a6cf338b6"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%82%D8%A7%D8%A8%D9%8A%D9%84_%D9%88%D9%87%D8%A7%D8%A8%D9%8A%D9%84",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%82%D8%A7%D8%A8%D9%8A%D9%84_%D9%88%D9%87%D8%A7%D8%A8%D9%8A%D9%84&action=history",
+          "caseIds": [
+            "human-ebd855785db8ea47625a101c"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%82%D8%A7%D8%B5%D8%B1",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%82%D8%A7%D8%B5%D8%B1&action=history",
+          "caseIds": [
+            "human-624e95b0581e6b01cb2e31d3"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%83%D8%A3%D8%B3_%D8%AF%D8%A8%D9%8A_%D8%A7%D9%84%D8%B9%D8%A7%D9%84%D9%85%D9%8A",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%83%D8%A3%D8%B3_%D8%AF%D8%A8%D9%8A_%D8%A7%D9%84%D8%B9%D8%A7%D9%84%D9%85%D9%8A&action=history",
+          "caseIds": [
+            "human-56c284d0d639fc02c285730e"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%83%D8%A7%D8%AA%D8%AF%D8%B1%D8%A7%D8%A6%D9%8A%D8%A9_%D8%B4%D8%A7%D8%B1%D8%AA%D8%B1",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%83%D8%A7%D8%AA%D8%AF%D8%B1%D8%A7%D8%A6%D9%8A%D8%A9_%D8%B4%D8%A7%D8%B1%D8%AA%D8%B1&action=history",
+          "caseIds": [
+            "human-fa5ac133a7ad365bfbcefc51"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%83%D8%A7%D9%84%D9%8A_(%D9%85%D8%AF%D9%8A%D9%86%D8%A9)",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%83%D8%A7%D9%84%D9%8A_%28%D9%85%D8%AF%D9%8A%D9%86%D8%A9%29&action=history",
+          "caseIds": [
+            "human-62514b28721b04b266cdf3fc"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%84%D9%82%D9%84%D9%82_%D8%A3%D8%A8%D9%8A%D8%B6",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%84%D9%82%D9%84%D9%82_%D8%A3%D8%A8%D9%8A%D8%B6&action=history",
+          "caseIds": [
+            "human-534a1cbcb248b9045fb70b7f"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D8%A7%D8%B1%D9%8A_%D8%AF%D9%88%D9%82%D8%A9_%D8%A8%D9%88%D8%B1%D8%BA%D9%88%D9%86%D9%8A%D8%A7",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D8%A7%D8%B1%D9%8A_%D8%AF%D9%88%D9%82%D8%A9_%D8%A8%D9%88%D8%B1%D8%BA%D9%88%D9%86%D9%8A%D8%A7&action=history",
+          "caseIds": [
+            "human-d9c5d8bf3e71637e683c1bc5"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D8%A7%D9%83%D8%B3%D9%85%D9%8A%D9%84%D9%8A%D8%A7%D9%86_%D8%B1%D9%88%D8%A8%D8%B3%D8%A8%D9%8A%D8%A7%D8%B1",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D8%A7%D9%83%D8%B3%D9%85%D9%8A%D9%84%D9%8A%D8%A7%D9%86_%D8%B1%D9%88%D8%A8%D8%B3%D8%A8%D9%8A%D8%A7%D8%B1&action=history",
+          "caseIds": [
+            "human-b588661c911790ba3f8a3d98"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D8%AA%D9%84%D8%A7%D8%B2%D9%85%D8%A9_%D9%83%D9%84%D8%A7%D9%8A%D9%86%D9%81%D9%8A%D9%84%D8%AA%D8%B1",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D8%AA%D9%84%D8%A7%D8%B2%D9%85%D8%A9_%D9%83%D9%84%D8%A7%D9%8A%D9%86%D9%81%D9%8A%D9%84%D8%AA%D8%B1&action=history",
+          "caseIds": [
+            "human-760ff01c54a991be7939957c"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D8%AD%D9%85%D8%AF_%D8%A7%D9%84%D8%A8%D9%88%D8%B9%D8%B2%D9%8A%D8%B2%D9%8A",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D8%AD%D9%85%D8%AF_%D8%A7%D9%84%D8%A8%D9%88%D8%B9%D8%B2%D9%8A%D8%B2%D9%8A&action=history",
+          "caseIds": [
+            "human-7e762fd5301ff33c27445e37"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D8%AD%D9%85%D9%88%D8%AF_%D8%A3%D8%AD%D9%85%D8%AF%D9%8A_%D9%86%D8%AC%D8%A7%D8%AF",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D8%AD%D9%85%D9%88%D8%AF_%D8%A3%D8%AD%D9%85%D8%AF%D9%8A_%D9%86%D8%AC%D8%A7%D8%AF&action=history",
+          "caseIds": [
+            "human-934562f89c4d9cdfba37af3e"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D8%B4%D8%B1%D9%88%D8%B9_%D9%85%D8%A7%D8%B1%D8%B4%D8%A7%D9%84",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D8%B4%D8%B1%D9%88%D8%B9_%D9%85%D8%A7%D8%B1%D8%B4%D8%A7%D9%84&action=history",
+          "caseIds": [
+            "human-050e9e998f2a9f2e99bfc98d"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D8%B4%D9%8A%D9%85%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D8%B4%D9%8A%D9%85%D8%A9&action=history",
+          "caseIds": [
+            "human-61b590f2665b117a0c0bce36"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D8%B9%D8%A7%D8%AF%D9%84%D8%A9_%D8%B4%D8%B1%D9%88%D8%AF%D9%86%D8%BA%D8%B1",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D8%B9%D8%A7%D8%AF%D9%84%D8%A9_%D8%B4%D8%B1%D9%88%D8%AF%D9%86%D8%BA%D8%B1&action=history",
+          "caseIds": [
+            "human-8ae92eb4d76c0f7bc13a3131"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D8%B9%D8%A7%D9%87%D8%AF%D8%A9_%D8%AC%D8%AF%D8%A9_(2000)",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D8%B9%D8%A7%D9%87%D8%AF%D8%A9_%D8%AC%D8%AF%D8%A9_%282000%29&action=history",
+          "caseIds": [
+            "human-1a49c47909d81b3c5dff8a31"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D8%B9%D8%AA%D9%85%D8%AF%D9%8A%D8%A9_%D8%B3%D8%A8%D9%8A%D8%B7%D9%84%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D8%B9%D8%AA%D9%85%D8%AF%D9%8A%D8%A9_%D8%B3%D8%A8%D9%8A%D8%B7%D9%84%D8%A9&action=history",
+          "caseIds": [
+            "human-4697ad37f54f0853cdfe392e"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D8%B9%D8%B1%D9%83%D8%A9_%D8%B3%D8%AA%D8%A7%D9%84%D9%8A%D9%86%D8%BA%D8%B1%D8%A7%D8%AF",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D8%B9%D8%B1%D9%83%D8%A9_%D8%B3%D8%AA%D8%A7%D9%84%D9%8A%D9%86%D8%BA%D8%B1%D8%A7%D8%AF&action=history",
+          "caseIds": [
+            "human-301d0efda2517203bf9eaf3e"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D9%82%D8%A7%D8%B7%D8%B9%D8%A9_%D8%AF%D8%A7%D9%88%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D9%82%D8%A7%D8%B7%D8%B9%D8%A9_%D8%AF%D8%A7%D9%88%D9%86&action=history",
+          "caseIds": [
+            "human-bbeaec143ab7c52a9ced50da"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D9%85%D9%84%D9%83%D8%A9_%D9%83%D9%88%D8%B4",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D9%85%D9%84%D9%83%D8%A9_%D9%83%D9%88%D8%B4&action=history",
+          "caseIds": [
+            "human-bb2b43f46586b19d513f0036"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D9%86%D8%A7%D9%88%D8%B1%D8%A9_%D9%81%D8%A7%D9%84%D9%8A%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D9%86%D8%A7%D9%88%D8%B1%D8%A9_%D9%81%D8%A7%D9%84%D9%8A%D9%86&action=history",
+          "caseIds": [
+            "human-1624bfba48d00b803e239488"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D9%86%D8%AA%D8%AE%D8%A8_%D8%A2%D9%8A%D8%B3%D9%84%D9%86%D8%AF%D8%A7_%D9%84%D9%83%D8%B1%D8%A9_%D8%A7%D9%84%D9%82%D8%AF%D9%85",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D9%86%D8%AA%D8%AE%D8%A8_%D8%A2%D9%8A%D8%B3%D9%84%D9%86%D8%AF%D8%A7_%D9%84%D9%83%D8%B1%D8%A9_%D8%A7%D9%84%D9%82%D8%AF%D9%85&action=history",
+          "caseIds": [
+            "human-5f406faad52fd96e8926760c"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D9%86%D8%AA%D8%AE%D8%A8_%D9%82%D8%B7%D8%B1_%D9%84%D9%83%D8%B1%D8%A9_%D8%A7%D9%84%D9%82%D8%AF%D9%85",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D9%86%D8%AA%D8%AE%D8%A8_%D9%82%D8%B7%D8%B1_%D9%84%D9%83%D8%B1%D8%A9_%D8%A7%D9%84%D9%82%D8%AF%D9%85&action=history",
+          "caseIds": [
+            "human-efb4acd31799d27044c9cbca"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D9%88%D9%86%D8%A7%D9%84%D9%8A%D8%B2%D8%A7",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D9%88%D9%86%D8%A7%D9%84%D9%8A%D8%B2%D8%A7&action=history",
+          "caseIds": [
+            "human-01cdf170331edf2d2f3824a0"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%85%D9%8A%D9%83%D9%8A%D9%84%D8%A7%D9%86%D8%AC%D9%8A%D9%84%D9%88",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%85%D9%8A%D9%83%D9%8A%D9%84%D8%A7%D9%86%D8%AC%D9%8A%D9%84%D9%88&action=history",
+          "caseIds": [
+            "human-291c424cfb433108d768764c"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%86%D8%A7%D8%B5%D8%B1_%D8%A7%D9%84%D8%B3%D9%86%D8%A8%D8%A7%D8%B7%D9%8A",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%86%D8%A7%D8%B5%D8%B1_%D8%A7%D9%84%D8%B3%D9%86%D8%A8%D8%A7%D8%B7%D9%8A&action=history",
+          "caseIds": [
+            "human-8aacf9fdf661759ef701c3e9"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%86%D8%A7%D9%86%D8%B3%D9%8A_%D8%B1%D9%8A%D8%BA%D8%A7%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%86%D8%A7%D9%86%D8%B3%D9%8A_%D8%B1%D9%8A%D8%BA%D8%A7%D9%86&action=history",
+          "caseIds": [
+            "human-d13a0fe1e79fc3ba9e9ca465"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%86%D8%A7%D9%88%D8%B3%D9%8A%D9%83%D8%A7_%D8%A3%D9%85%D9%8A%D8%B1%D8%A9_%D9%88%D8%A7%D8%AF%D9%8A_%D8%A7%D9%84%D8%B1%D9%8A%D8%A7%D8%AD",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%86%D8%A7%D9%88%D8%B3%D9%8A%D9%83%D8%A7_%D8%A3%D9%85%D9%8A%D8%B1%D8%A9_%D9%88%D8%A7%D8%AF%D9%8A_%D8%A7%D9%84%D8%B1%D9%8A%D8%A7%D8%AD&action=history",
+          "caseIds": [
+            "human-a5ea2d26ac42934649d63780"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%86%D8%A8%D9%88%D9%8A%D8%A9_%D9%85%D9%88%D8%B3%D9%89",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%86%D8%A8%D9%88%D9%8A%D8%A9_%D9%85%D9%88%D8%B3%D9%89&action=history",
+          "caseIds": [
+            "human-c6aef838cf7da131f10ede6c"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%86%D8%B8%D8%B1%D9%8A%D8%A9_%D8%A7%D9%84%D8%A3%D9%84%D8%B9%D8%A7%D8%A8",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%86%D8%B8%D8%B1%D9%8A%D8%A9_%D8%A7%D9%84%D8%A3%D9%84%D8%B9%D8%A7%D8%A8&action=history",
+          "caseIds": [
+            "human-582e3a432be60dcaa38c29ec"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%86%D8%B8%D8%B1%D9%8A%D8%A9_%D8%A7%D9%84%D8%AA%D8%B4%D8%BA%D9%8A%D9%84_%D8%A7%D9%84%D8%B0%D8%A7%D8%AA%D9%8A",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%86%D8%B8%D8%B1%D9%8A%D8%A9_%D8%A7%D9%84%D8%AA%D8%B4%D8%BA%D9%8A%D9%84_%D8%A7%D9%84%D8%B0%D8%A7%D8%AA%D9%8A&action=history",
+          "caseIds": [
+            "human-f889459fc5341ec5b32492fe"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%86%D8%B8%D9%85_%D8%AA%D8%AD%D8%AA_%D9%8A%D9%88%D9%85%D9%8A",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%86%D8%B8%D9%85_%D8%AA%D8%AD%D8%AA_%D9%8A%D9%88%D9%85%D9%8A&action=history",
+          "caseIds": [
+            "human-7ae45a600d8d9af04d6a22ec"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%86%D9%8A%D9%88%D8%AA%D8%B1%D9%88%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%86%D9%8A%D9%88%D8%AA%D8%B1%D9%88%D9%86&action=history",
+          "caseIds": [
+            "human-dbce1813a803a20d9261ecdf"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%87%D8%A7%D8%B1%D9%88%D9%84%D8%AF_%D9%85%D8%A7%D9%83%D9%85%D9%8A%D9%84%D8%A7%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%87%D8%A7%D8%B1%D9%88%D9%84%D8%AF_%D9%85%D8%A7%D9%83%D9%85%D9%8A%D9%84%D8%A7%D9%86&action=history",
+          "caseIds": [
+            "human-9ca2a254430e7fa5972cd21a"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%87%D8%A7%D9%84%D9%88%D8%AC%D9%8A%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%87%D8%A7%D9%84%D9%88%D8%AC%D9%8A%D9%86&action=history",
+          "caseIds": [
+            "human-de95af654d00a6a5fd1a13b2"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%87%D8%AC%D8%B1%D8%A9_(%D8%A5%D8%B3%D9%84%D8%A7%D9%85)",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%87%D8%AC%D8%B1%D8%A9_%28%D8%A5%D8%B3%D9%84%D8%A7%D9%85%29&action=history",
+          "caseIds": [
+            "human-43e432b6bf06923c1807d39f"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%87%D9%86%D8%AF%D8%B1%D9%8A%D9%83_%D8%A3%D9%86%D8%AA%D9%88%D9%86_%D9%84%D9%88%D8%B1%D9%86%D8%AA%D8%B3",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%87%D9%86%D8%AF%D8%B1%D9%8A%D9%83_%D8%A3%D9%86%D8%AA%D9%88%D9%86_%D9%84%D9%88%D8%B1%D9%86%D8%AA%D8%B3&action=history",
+          "caseIds": [
+            "human-511d33a18be6fa1cf75324ab"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%87%D9%86%D8%AF%D8%B3%D8%A9_%D8%AA%D8%AD%D9%84%D9%8A%D9%84%D9%8A%D8%A9",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%87%D9%86%D8%AF%D8%B3%D8%A9_%D8%AA%D8%AD%D9%84%D9%8A%D9%84%D9%8A%D8%A9&action=history",
+          "caseIds": [
+            "human-90d375c5681639921e52179a"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%87%D9%8A%D8%B1%D9%88%D8%AF%D9%88%D8%AA",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%87%D9%8A%D8%B1%D9%88%D8%AF%D9%88%D8%AA&action=history",
+          "caseIds": [
+            "human-32ce0f301f4f4fe0eb7e401e"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%88%D8%B1%D9%85_%D8%AD%D9%85%D9%8A%D8%AF",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%88%D8%B1%D9%85_%D8%AD%D9%85%D9%8A%D8%AF&action=history",
+          "caseIds": [
+            "human-4a9b30175ffa722cfc981fa7"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%88%D8%B2%D8%A7%D9%86",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%88%D8%B2%D8%A7%D9%86&action=history",
+          "caseIds": [
+            "human-0c7cd747e27a94957c3b317e"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%88%D9%81%D8%A7%D8%A9_%D8%A3%D8%AF%D9%88%D9%84%D9%81_%D9%87%D8%AA%D9%84%D8%B1",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%88%D9%81%D8%A7%D8%A9_%D8%A3%D8%AF%D9%88%D9%84%D9%81_%D9%87%D8%AA%D9%84%D8%B1&action=history",
+          "caseIds": [
+            "human-e938135b46b5de6e1c858c8f"
+          ]
+        },
+        {
+          "articleUrl": "https://ar.wikipedia.org/wiki/%D9%8A%D9%87%D9%88%D8%AF_%D8%A3%D8%B4%D9%83%D9%86%D8%A7%D8%B2",
+          "historyUrl": "https://ar.wikipedia.org/w/index.php?title=%D9%8A%D9%87%D9%88%D8%AF_%D8%A3%D8%B4%D9%83%D9%86%D8%A7%D8%B2&action=history",
+          "caseIds": [
+            "human-e741dd087d0839a092013e3d"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Agatha_Christie",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Agatha_Christie&action=history",
+          "caseIds": [
+            "human-4ca4dc97a30cd4ebf6a9d491"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Alps",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Alps&action=history",
+          "caseIds": [
+            "human-1f1208a13b57eae5132042d5"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Autoimmune_disease",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Autoimmune_disease&action=history",
+          "caseIds": [
+            "human-68242a059fb75f65da19a6f1"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Blood_fractionation",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Blood_fractionation&action=history",
+          "caseIds": [
+            "human-c010888dd1f379f7bc6317fd"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Bogot%C3%A1",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Bogot%C3%A1&action=history",
+          "caseIds": [
+            "human-6e4feb3535eeaac2dbcc4ae2"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Camel",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Camel&action=history",
+          "caseIds": [
+            "human-25245e96df4f724dfbedecca"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Celebrity",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Celebrity&action=history",
+          "caseIds": [
+            "human-17ce2d5fef1f33c74885aca0"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Cotton_gin",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Cotton_gin&action=history",
+          "caseIds": [
+            "human-6dbf17711a1375539d81bf72"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Diamond",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Diamond&action=history",
+          "caseIds": [
+            "human-0744d23458173915027887d6"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Dora_Sakayan",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Dora_Sakayan&action=history",
+          "caseIds": [
+            "human-d4eea36dc92e714ac11b4868"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Dubai",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Dubai&action=history",
+          "caseIds": [
+            "human-8c8025466ed4abb0b04b756e"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Economy_of_North_Korea",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Economy_of_North_Korea&action=history",
+          "caseIds": [
+            "human-07a3b73b280690f0f7216262"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Forearm",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Forearm&action=history",
+          "caseIds": [
+            "human-7bff40f16363d9eb2b109db5"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/H%C4%81ngi",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=H%C4%81ngi&action=history",
+          "caseIds": [
+            "human-335ae4be8d7cc61e1245f51e"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/History_of_the_Philadelphia_76ers",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=History_of_the_Philadelphia_76ers&action=history",
+          "caseIds": [
+            "human-e4189f51abc32059281955aa"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Lake_Baikal",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Lake_Baikal&action=history",
+          "caseIds": [
+            "human-29724746b6dd03a60417f186"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Languages_of_Monaco",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Languages_of_Monaco&action=history",
+          "caseIds": [
+            "human-f5f0356497b9fa9df5cbeef4"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/List_of_Everwood_episodes",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=List_of_Everwood_episodes&action=history",
+          "caseIds": [
+            "human-501def2bef24653562b77b1c"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/List_of_Mega_Man_video_games",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=List_of_Mega_Man_video_games&action=history",
+          "caseIds": [
+            "human-3005b33b4c7cd76647647637"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/List_of_lingua_francas",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=List_of_lingua_francas&action=history",
+          "caseIds": [
+            "human-eeeeb0722af6ae37dbf82a22"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Loews_Hotels",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Loews_Hotels&action=history",
+          "caseIds": [
+            "human-97d6ec0bcf5d98adfc50310e"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/London_Waterloo_station",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=London_Waterloo_station&action=history",
+          "caseIds": [
+            "human-c193e895264bcc95ded34201"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Mali_Empire",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Mali_Empire&action=history",
+          "caseIds": [
+            "human-7bdb8d03f41712ef7287b6f1"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Meiji_Restoration",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Meiji_Restoration&action=history",
+          "caseIds": [
+            "human-4b296e3a637d6934fad0f98d"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Mexican_Americans",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Mexican_Americans&action=history",
+          "caseIds": [
+            "human-242a46998665348b69fac491"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Mycoplasma_laboratorium",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Mycoplasma_laboratorium&action=history",
+          "caseIds": [
+            "human-f5a06908e3943c326a4c377e"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/National_Football_League",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=National_Football_League&action=history",
+          "caseIds": [
+            "human-0fb81f5178e65e71a7e8ab6a"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/New_Black_Panther_Party_voter_intimidation_case",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=New_Black_Panther_Party_voter_intimidation_case&action=history",
+          "caseIds": [
+            "human-f89f5aedcf5f28cc89a32e10"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Niccol%C3%B2_Paganini",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Niccol%C3%B2_Paganini&action=history",
+          "caseIds": [
+            "human-41a88c8798e91f6566eed54c"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Nostra_aetate",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Nostra_aetate&action=history",
+          "caseIds": [
+            "human-e713cbed070f7dde0faf7c59"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Polish%E2%80%93Lithuanian_Commonwealth",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Polish%E2%80%93Lithuanian_Commonwealth&action=history",
+          "caseIds": [
+            "human-98e42acbe460c014df865fd6"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Polygraph",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Polygraph&action=history",
+          "caseIds": [
+            "human-17655d48d0575930781492d3"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Pugachev's_Cobra",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Pugachev%27s_Cobra&action=history",
+          "caseIds": [
+            "human-e38ba16bab72fbdb45a268ad"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Radioactive_decay",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Radioactive_decay&action=history",
+          "caseIds": [
+            "human-08c8e94e7aa18f95d2e20afa"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Saint_Valentine's_Day_Massacre",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Saint_Valentine%27s_Day_Massacre&action=history",
+          "caseIds": [
+            "human-18125b32066c7a7282d2d102"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Self-cleaning_surfaces",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Self-cleaning_surfaces&action=history",
+          "caseIds": [
+            "human-1430fc18a0fefa521924e704"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Soap_opera",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Soap_opera&action=history",
+          "caseIds": [
+            "human-239db492d929a3c542ff0fc0"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Sport_in_Mexico",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Sport_in_Mexico&action=history",
+          "caseIds": [
+            "human-3e467c686ac167516d2fea5c"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Technology",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Technology&action=history",
+          "caseIds": [
+            "human-793264aa37c3d2e96c381228"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/The_Big_Bang_Theory_(season_12)",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=The_Big_Bang_Theory_%28season_12%29&action=history",
+          "caseIds": [
+            "human-143dcaca23f51b0c8f8838db"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Theatre_Royal%2C_Drury_Lane",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Theatre_Royal%2C_Drury_Lane&action=history",
+          "caseIds": [
+            "human-7fd000be38c5ed96b3c2ae30"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Tufts_University",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Tufts_University&action=history",
+          "caseIds": [
+            "human-a6d93b0ece2511224ddb47c3"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Vertebrate",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Vertebrate&action=history",
+          "caseIds": [
+            "human-15ec74bf3ec6d8e77ec30ee1"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/Warframe",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=Warframe&action=history",
+          "caseIds": [
+            "human-62b9259ca88b74c500fbc0ec"
+          ]
+        },
+        {
+          "articleUrl": "https://en.wikipedia.org/wiki/William_Penn",
+          "historyUrl": "https://en.wikipedia.org/w/index.php?title=William_Penn&action=history",
+          "caseIds": [
+            "human-a5f5298ac3337a95ec1df659"
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -39,6 +39,7 @@ const recordedDesktop = z.strictObject({
 
 export const caseFixtureSchema = z.strictObject({
   searches: z.array(recordedSearch).max(60).optional(), pages: z.array(recordedPage).max(60).optional(),
+  wikiArticleCoverage: z.literal('closed-replay').optional(),
   memories: z.array(z.strictObject({ title: text.max(80), content: text.max(4000) })).max(40).optional(),
   knowledge: z.array(z.strictObject({ title: text.max(300), text: text.max(20_000), source: text.max(500) })).max(40).optional(),
   desktop: z.array(recordedDesktop).max(20).optional(),
@@ -73,7 +74,7 @@ export interface CapabilityCaseInput {
 export interface CapabilityToolCall {
   tool: string;
   argument?: string;
-  outcome: 'recorded' | 'failed' | 'missing_fixture' | 'denied';
+  outcome: 'recorded' | 'failed' | 'missing_fixture' | 'denied' | 'unavailable';
 }
 export interface CapabilityTurnObservation {
   answer: string;
@@ -114,6 +115,8 @@ type RecordCall = (tool: string, outcome: CapabilityToolCall['outcome'], argumen
 type Database = Awaited<ReturnType<typeof createDatabase>>;
 type Documents = ReturnType<typeof createDocumentControl>;
 const normalizeQuery = (query: string) => query.normalize('NFC').trim().replace(/\s+/gu, ' ').toLowerCase();
+const isWikipediaArticle = (url: URL) => url.protocol === 'https:' && !url.username && !url.password && !url.port
+  && ['ar.wikipedia.org', 'en.wikipedia.org'].includes(url.hostname) && !url.search && !url.hash && url.pathname.startsWith('/wiki/');
 const fixturesOnly = () => new BrowserError('CAPABILITY_FIXTURE_ONLY', 'This action has no authorized fixture.', 403);
 const nowIso = () => new Date().toISOString();
 let observerActive = false;
@@ -142,16 +145,20 @@ function makeRecordedWeb(fixture: CapabilityCaseFixture, record: RecordCall) {
     });
   };
   const readPage: NonNullable<CommandChatConfig['readPage']> = async (url, signal) => {
-    const canonicalUrl = new URL(url).href;
-    const found = pages.get(canonicalUrl);
-    if (!found) { record('read', 'missing_fixture', url); return null; }
+    const target = new URL(url);
+    const found = pages.get(target.href);
+    if (!found) {
+      // A closed public QA replay contains only its archived articles. A direct probe can return no article.
+      record('read', fixture.wikiArticleCoverage && isWikipediaArticle(target) ? 'unavailable' : 'missing_fixture', url);
+      return null;
+    }
     if (found.robotsDenied) { record('read', 'recorded', url); return 'disallowed'; }
     record('read', 'recorded', url);
-    const response = await fetchPage(canonicalUrl, { signal });
+    const response = await fetchPage(target, { signal });
     if (!response.ok) return null;
     const body = await response.text();
-    const article = found.html ? readableSource(withoutFigures(body), canonicalUrl) : { title: found.title!, text: body };
-    return { url: canonicalUrl, title: article.title, text: article.text, status: response.status, fetchedAt: nowIso() };
+    const article = found.html ? readableSource(withoutFigures(body), target.href) : { title: found.title!, text: body };
+    return { url: target.href, title: article.title, text: article.text, status: response.status, fetchedAt: nowIso() };
   };
   let current: AgentPage | null = null;
   const history: AgentPage[] = [];
@@ -256,12 +263,14 @@ export function turnQuestionCount(request: string, replies: readonly string[], q
   return Math.max(questionMarks, question ? Math.max(1, question.fields?.length ?? 0) : 0);
 }
 
-function trailToolCalls(trail: readonly TrailEntry[]): CapabilityToolCall[] {
+function trailToolCalls(trail: readonly TrailEntry[], closedWiki: boolean): CapabilityToolCall[] {
   return trail.flatMap(({ action, result }) => {
     if (['asked the user', 'owner correction', 'permission gate', 'requested sign-in'].includes(action)) return [];
     const [tool, ...parts] = action.trim().split(/\s+/u);
     if (!tool) return [];
-    return [{ tool, ...(parts.length ? { argument: parts.join(' ') } : {}), outcome: /^failed:/iu.test(result) ? 'failed' : 'recorded' }];
+    const outcome = closedWiki && tool === 'read' && result === 'no readable text over HTTP' ? 'unavailable'
+      : /^failed:/iu.test(result) ? 'failed' : 'recorded';
+    return [{ tool, ...(parts.length ? { argument: parts.join(' ') } : {}), outcome }];
   });
 }
 
@@ -347,7 +356,7 @@ async function observeCase(database: Database, documents: Documents, item: Capab
         const replies = detail.messages.filter(message => message.role === 'assistant' && !oldMessages.has(message.id)).map(message => message.text);
         const resumedRun = previousRun?.id === run.id ? previousRun : undefined;
         const newTrail = (run.state.trail ?? []).slice(resumedRun?.state.trail.length ?? 0);
-        const toolCalls = trailToolCalls(newTrail);
+        const toolCalls = trailToolCalls(newTrail, fixture.wikiArticleCoverage === 'closed-replay');
         const boundaryCalls = calls.slice(offset);
         const assessment = run.state.requestResolution?.sourceAssessment;
         const evidence = detail.run.evidence;

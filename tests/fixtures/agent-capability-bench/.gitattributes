@@ -1,0 +1,10 @@
+# v2 reproduction checks the original v1 pins and every release file byte-for-byte.
+/development.json -text
+/holdout/sealed.json -text
+/v2/sealed/** -text
+/v2/sealed/payload.json -diff
+/v2/sealed/sampling-v2.seed -diff
+/v2/sealed/attribution/wikipedia-articles.json -diff
+/v2/sealed/attribution/*-LICENSE.* -whitespace
+/v2/sealed/attribution/*-NOTICE.* -whitespace
+/v2/sealed/attribution/MBPP-DATASET-CARD.md -whitespace
