@@ -29,10 +29,22 @@ const copy: Record<Language, Record<BackgroundOutcome, LocalizedText>> = {
   },
 };
 
+const monitorCopy: Record<Language, { completed: LocalizedText; approval: LocalizedText }> = {
+  ar: {
+    completed: { title: 'تحديث من المراقبة', body: 'افتح المحادثة للاطّلاع على التحديث.' },
+    approval: { title: 'توقفت المراقبة مؤقتًا', body: 'افتح المحادثة لمعرفة السبب.' },
+  },
+  en: {
+    completed: { title: 'Monitor update', body: 'Open the conversation to see the update.' },
+    approval: { title: 'Monitor paused', body: 'Open the conversation to see why.' },
+  },
+};
+
 export interface BackgroundNotificationEvent {
   task_id: string;
   conversation_id: string;
-  run_id: string;
+  run_id: string | null;
+  monitor_id?: string | null;
   background_outcome: BackgroundOutcome;
   background_language: Language;
   result_preview: string | null;
@@ -41,9 +53,12 @@ export interface BackgroundNotificationEvent {
 export function backgroundPayload(event: BackgroundNotificationEvent, preferences: NotificationPreferences) {
   const language = event.background_language;
   const outcome = event.background_outcome;
-  const { title, body } = copy[language][outcome];
+  const monitor = event.monitor_id;
+  const { title, body } = monitor && (outcome === 'completed' || outcome === 'approval')
+    ? monitorCopy[language][outcome] : copy[language][outcome];
   return {
-    ...backgroundKinds[outcome], taskId: event.task_id, runId: event.run_id, conversationId: event.conversation_id,
+    ...backgroundKinds[outcome], taskId: event.task_id, runId: event.run_id ?? event.task_id, conversationId: event.conversation_id,
+    ...(monitor && { monitorId: monitor }),
     title, body: outcome === 'completed' && preferences.showResultPreview && event.result_preview ? event.result_preview : body,
     language, sound: outcome === 'completed' && preferences.completionSound !== false,
   } satisfies NotificationPayload;

@@ -47,6 +47,9 @@ import { commandChatMigration, registerCommandChatRoutes } from './command-chat.
 import { createRefusalAwareCommandChat as createCommandChatControl } from './assistant/refusal/chat-control.js';
 import { migrateRemindersInTransaction } from './reminders/migration.js';
 import { registerReminderRuntime } from './reminders/runtime.js';
+import { registerMonitorRuntime } from './monitors/routes.js';
+import { migrateMonitors } from './monitors/migration.js';
+import { MonitorError } from './monitors/store.js';
 import { registerConversationShareRoutes } from './conversation-share.js';
 import { createImageReader } from './image-reader.js';
 import { createInferenceControl, registerInferenceRoutes, type InferenceConfig } from './inference.js';
@@ -253,7 +256,7 @@ export async function createApplication(config: AppConfig) {
   app.setErrorHandler((error: any, _request, reply) => {
     if (error instanceof z.ZodError) return reply.code(400).send({error: {code: 'VALIDATION_ERROR', message: 'تحقق من الحقول المطلوبة وطول المدخلات.'}});
     if (error instanceof StudioError) return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}});
-    if (error instanceof BrowserError) return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}});
+    if (error instanceof BrowserError || error instanceof MonitorError) return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}});
     if (error instanceof LearningContentError) return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}});
     if (error instanceof PdfError) return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}});
     if (error instanceof GoogleAdsError) { if (error.options.retryAfterSeconds) reply.header('Retry-After', String(error.options.retryAfterSeconds)); return reply.code(error.statusCode).send({error:{code:error.code,message:error.message}}); }
@@ -361,6 +364,7 @@ export async function createApplication(config: AppConfig) {
   await commandChatMigration(database.db, migrateRemindersInTransaction);
   const agentBrowser = await registerMemberDataRights(app, { db: database.db, auth, owner, role, config, adsAvailable: () => googleAds.configured, registerMemberRoutes, AgentBrowser, browserProfileDir: config.browserProfileDir ?? join(tmpdir(), `mohassan-browser-${randomUUID()}`) });
   await migrateBackgroundResults(database.db);
+  await migrateMonitors(database.db);
   const assistantTools=createAssistantTools({memory,coding,studio,studioChange:studioAi.available,runtime,windows,googleAds});
   const inference=await createInferenceControl(database.db,{...config.inference,groq:{apiKey:config.groqApiKey,fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b']},fetch:config.aiFetch});
   await registerInferenceRoutes(app,{control:inference,owner});
@@ -497,6 +501,7 @@ export async function createApplication(config: AppConfig) {
     }}:{}),
   });
   await registerReminderRuntime(app, { db: database.db, owner });
+  await registerMonitorRuntime(app, database.db, owner);
   await registerCommandChatRoutes(app,{control:chat,owner:async request=>{const user=await owner(request);windows.noteSession(user.id,request);return user;}});
   registerNotificationRoutes(app, { db: database.db, owner, isActive: async id => Boolean(await roleOf(database.db, id)), recoverChatRuns: chat.recoverExpired });
   registerConversationShareRoutes(app,{db:database.db,owner,role,webOrigin:config.webOrigin,internalSecret:config.internalSecret,fontsDir:config.documentsFontsDir});

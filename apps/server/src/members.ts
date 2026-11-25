@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { createAuth } from './auth.js';
 import { NOTIFICATION_MEMBER_ROUTES } from './notifications-routes.js';
 import { REMINDER_MEMBER_ROUTES } from './reminders/route-keys.js';
+import { MONITOR_MEMBER_ROUTES, monitorPaths } from './monitors/route-keys.js';
 import { conversationShareMemberRoutes, conversationSharePublicRoute } from './conversation-share-paths.js';
 import { MEMBER_DATA_ROUTES, readLimitedMemberAccess, signUpInvitedMember } from './member-administration.js';
 
@@ -39,6 +40,7 @@ export const MEMBER_ROUTES: ReadonlySet<string> = new Set([
   'GET /api/access',
   ...NOTIFICATION_MEMBER_ROUTES,
   ...REMINDER_MEMBER_ROUTES,
+  ...MONITOR_MEMBER_ROUTES,
   // The chat, including its own cloud browser (a profile per account).
   `GET ${chat}`, `POST ${chat}`, `GET ${chat}/:id`, `DELETE ${chat}/:id`, `GET ${chat}/:id/screen`,
   `GET ${chat}/:id/browser/activity`,
@@ -61,7 +63,7 @@ export const MEMBER_ROUTES: ReadonlySet<string> = new Set([
 ]);
 
 /** Requests that start chat work, counted against a member's daily allowance. */
-export const MEMBER_QUOTA_ROUTES: ReadonlySet<string> = new Set([`POST ${chat}`, `POST ${chat}/:id/messages`]);
+export const MEMBER_QUOTA_ROUTES: ReadonlySet<string> = new Set([`POST ${chat}`, `POST ${chat}/:id/messages`, `POST ${monitorPaths.base}`]);
 
 export function routeKey(method: string, url: string | undefined) {
   return url ? `${method === 'HEAD' ? 'GET' : method} ${url}` : null;

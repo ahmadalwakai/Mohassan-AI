@@ -132,13 +132,24 @@ function pegSources(table: ExchangeRateTable, codes: string[], language: Exchang
   return links;
 }
 
-export async function getRates(scope: RequestScope, request: ExchangeIntent): Promise<{ text: string; status: 'completed' | 'blocked' }> {
-  const { amount, from, to, language } = request;
-  const table = await scope.withCache('ecb:rates', ECB_CACHE_MS, async () => {
+async function readRateTable(scope: RequestScope): Promise<ExchangeRateTable> {
+  return scope.withCache('ecb:rates', ECB_CACHE_MS, async () => {
     const response = await scope.fetch(ECB_XML, { headers: { Accept: 'application/xml, text/xml' } });
     if (!response.ok) throw new Error(`ECB exchange-rate feed returned HTTP ${response.status}.`);
     return parseEcbRates(await response.text());
   });
+}
+
+export async function getRateValue(scope: RequestScope, from: string, to: string) {
+  const table = await readRateTable(scope);
+  const fromRate = euroQuote(table, from), toRate = euroQuote(table, to);
+  if (!fromRate || !toRate) return undefined;
+  return { value: convert('1', fromRate, toRate, 12), asOf: table.asOf, source: table.source };
+}
+
+export async function getRates(scope: RequestScope, request: ExchangeIntent): Promise<{ text: string; status: 'completed' | 'blocked' }> {
+  const { amount, from, to, language } = request;
+  const table = await readRateTable(scope);
   const disclaimer = `سعر مرجعي يومي من البنك المركزي الأوروبي بتاريخ ${table.asOf}، وليس سعر السوق اللحظي`;
   const source = `[${language === 'ar' ? 'بيانات البنك المركزي الأوروبي' : 'ECB reference data'}](${table.source})`;
   const fromRate = euroQuote(table, from);

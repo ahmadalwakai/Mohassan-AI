@@ -25,13 +25,13 @@ export interface RequestScope {
   withCache<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T>;
 }
 
-async function fetchPublicData(input: URL | string, init?: RequestInit): Promise<Response> {
+export async function fetchPublicData(input: URL | string, init?: RequestInit, transport = network): Promise<Response> {
   const url = new URL(input);
   if (SOURCE_PATHS.get(url.origin) !== url.pathname || url.username || url.password || url.hash) {
     throw new Error('Unrecognized live data endpoint.');
   }
   const accept = new Headers(init?.headers).get('accept') ?? 'application/json, application/xml';
-  const response = await network.request(url.href, {
+  const response = await transport.request(url.href, {
     allowedOrigins: [url.origin], signal: init?.signal ?? undefined, maxBytes: 256_000,
     allowAttachment: url.origin === 'https://www.ecb.europa.eu',
     headers: { accept },

@@ -69,7 +69,7 @@ export class SafeNetwork {
     const headers:Record<string,string>=browser?{}:{'user-agent':userAgent,'accept-encoding':'identity',accept:'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5'};
     for(const [key,value] of Object.entries(options.headers??{})){
       const name=key.toLowerCase();
-      if(browser?!name.startsWith(':')&&!CONNECTION_HEADERS.has(name):['accept','accept-language','content-type','cookie'].includes(name)&&value.length<16000)headers[name]=value;
+      if(browser?!name.startsWith(':')&&!CONNECTION_HEADERS.has(name):['accept','accept-language','content-type','cookie','if-none-match','if-modified-since'].includes(name)&&value.length<16000)headers[name]=value;
     }
     if(browser)headers['accept-encoding']='gzip, br';
     if(options.body)headers['content-length']=String(Buffer.byteLength(options.body));
