@@ -23,6 +23,7 @@ import {
 import { ADS_DRAFT_NOTE, ADS_SKILL_SLUG } from './assistant/ads-check.js';
 import { LIVE, PROVIDER_SPACING_MS, answerSubject, isBareAddress, isFollowUp, normalizeHandsPlan, notWebReason, parseHands, plainTitle, refersBack, runHands, siteQuestion, siteToOpen, tidy, topicWords, unnamedSite, webQuestion, type HandsIO, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
 import { liveLabel } from './assistant/activity.js';
+import { routeLiveDataChat } from './live-data/chat.js';
 import type { DesktopCommand, DesktopOutcome, ParsedDesktopCommand } from '@mohassan/desktop';
 import { searchRefusedReply, unsupportedReply, unsupportedRequest } from './assistant/unsupported-request.js';
 import { decideBrowserVisibility, deriveBrowserVisibility } from './assistant/browser-visibility.js';
@@ -2348,6 +2349,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await finish(id,runId,state,`أعدت قراءة الصفحة المحفوظة. ${restored.sameContent?'لم يتغير محتواها المرصود.':'تغيرت الصفحة؛ سأعتمد قراءتها الحالية في الطلب التالي.'} لم تُستأنف الإجراءات السابقة.`,'partial');
         return;
       }
+      if (run.intent === 'task' && !state.steps && await routeLiveDataChat({ request: actionRequest, evaluatedAt: effectiveSource.evaluatedAt, signal, trail: state.trail,
+        allowSource: requestCapabilityAllowed(constraints, 'public_search'), reply: (text, status) => finish(id, runId, state, vault.scrub(id, text), status),
+        ask: question => pause(id, runId, state, 'waiting_user', { question: JSON.stringify(question) }, question.prompt),
+        notice: text => runTransaction(id, runId, tx => addMessage(tx, id, 'assistant', text)) })) return;
       if (requestCapabilityAllowed(constraints, 'browser_navigation') && requestCapabilityAllowed(constraints, 'browser_action')
         && reviewBrowserRequestScope(request, 'browser_action', state.requestResolution ?? undefined).allowed) {
         if (await browser.hasPage(ownerId, id)) {
