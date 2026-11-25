@@ -374,6 +374,7 @@ export interface BrainState {
   resolvedRequest?: string | null;
   /** A letter waiting for the owner's answers to its one card of questions. Only code sets this. */
   writer?: import('./writer.js').WritingTask | null;
+  writingReadUrls?: string[];
   planner?: import('./planner.js').PlanningTask | null;
   /** A website being collected or edited in this conversation (packages/sites, no model). Only code sets this. */
   site?: import('./site-builder.js').SiteChatState | null;
