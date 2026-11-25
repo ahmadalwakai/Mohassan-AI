@@ -432,6 +432,28 @@ describe('durable long-running response policy work', () => {
     }
   });
 
+  it('rolls back durable admission when the account has reached its daily limit', async () => {
+    vi.stubEnv('MOHASSAN_LONG_RUN_ENABLED', '1');
+    vi.stubEnv('MOHASSAN_BACKGROUND_RESULTS_ENABLED', '1');
+    const browser = { setCheckpointStore() {}, hasPage: async () => false, close: async () => {} } as unknown as AgentBrowser;
+    const ownerId = randomUUID();
+    const search = vi.fn(async () => []);
+    const reserveMemberRun = vi.fn(async () => { throw Object.assign(new Error('Daily limit reached.'), { code: 'MEMBER_DAILY_LIMIT' }); });
+    const control = await createRefusalAwareCommandChat(database.db, { browser, searchProvider: { name: 'fixture', search },
+      models: { fast: [], deep: [], vision: '' }, recordExperiences: false, reserveMemberRun });
+    try {
+      await expect(control.create(ownerId, { goal: 'Research tidal power in the background.' }))
+        .rejects.toMatchObject({ code: 'MEMBER_DAILY_LIMIT' });
+      expect(reserveMemberRun).toHaveBeenCalledOnce();
+      expect(search).not.toHaveBeenCalled();
+      expect(await database.db.selectFrom('chat_runs').select('id').where('owner_id', '=', ownerId).execute()).toEqual([]);
+      expect(await database.db.selectFrom('chat_conversations').select('id').where('owner_id', '=', ownerId).execute()).toEqual([]);
+    } finally {
+      await control.shutdown();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('continues a durable task when the real HTTP client disconnects', { timeout: 12_000 }, async () => {
     vi.stubEnv('MOHASSAN_LONG_RUN_ENABLED', '1');
     vi.stubEnv('MOHASSAN_BACKGROUND_RESULTS_ENABLED', '1');

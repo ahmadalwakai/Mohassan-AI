@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { BrowserError } from '@mohassan/browser';
 import { ChatApproveSchema, ChatSecureSubmitSchema, type NotificationKind } from '@mohassan/contracts';
 import { sql, type Kysely } from 'kysely';
+import { commitChatRequest } from '../../chat-request-ledger.js';
 import { recordBackgroundRunOutcome, recordNotificationOutcome } from '../../notifications-store.js';
 import {
   addEvidence, decideVerdict, enterPhase, settleStep, setStepAuthorization, startStep, tryEnterPhase,
@@ -22,6 +23,7 @@ export type LongRunResult =
   | { kind: 'input'; reason: 'sign_in' | 'credentials' | 'payment'; site: string };
 export interface LongRunPorts {
   accountActive?: (ownerId: string, tx: Kysely<any>) => Promise<boolean>;
+  reserveMemberRun?: (tx: Kysely<any>, ownerId: string, runId: string) => Promise<void>;
   execute: (input: { ownerId: string; conversationId: string; operation: LongRunStep; state: Readonly<LongRunState>; signal: AbortSignal }) => Promise<LongRunResult>;
 }
 
@@ -169,6 +171,7 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
         lease_token: randomUUID(), worker_id: LONG_RUN_WORKER, lease_expires_at: legacyLease, state: JSON.stringify(state), created_at: new Date(time), updated_at: new Date(time) })
         .onConflict(conflict => conflict.doNothing()).returning('id').executeTakeFirst();
       if (!inserted) throw new BrowserError('CHAT_LONG_RUN_ACTIVE', say(plan.language, 'لديك مهمة طويلة جارية بالفعل. أوقفها قبل بدء مهمة أخرى.', 'You have an active long-running task. Stop it before starting another.'), 409);
+      await ports.reserveMemberRun?.(tx, ownerId, id);
       await message(tx, conversationId, text, plan.background ? time - 1 : time, 'user');
       if (plan.background) {
         await message(tx, conversationId, say(plan.language, 'سأعمل على هذا في الخلفية وأرسل لك النتيجة عند الانتهاء.',
@@ -178,6 +181,7 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
         ...(chat.title === 'محادثة جديدة' ? { title: text.slice(0, 100) } : {}),
         progress: say(plan.language, 'بدأت المهمة الطويلة.', 'Long-running task started.'), error: null, updated_at: new Date(time) })
         .where('id', '=', conversationId).execute();
+      await commitChatRequest(tx, ownerId, conversationId);
     });
     return id;
   }

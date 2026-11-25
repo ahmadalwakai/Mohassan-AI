@@ -4,8 +4,10 @@ import { redactCredentialText } from '@mohassan/cognitive';
 import { ChatCreateSchema, ChatSendSchema } from '@mohassan/contracts';
 import { redactSecrets } from '@mohassan/providers';
 import { completeBrief } from '@mohassan/sites';
+import { withoutChatRequestCommit } from '../../chat-request-ledger.js';
 import type { createCommandChatControl, CommandChatConfig } from '../../command-chat.js';
 import { withMemberChatDeletionFence } from '../../member-chat-deletion-fence.js';
+import { cleanRejectedChatCreate } from '../../rejected-chat-create.js';
 import { classifySteering } from '../agent-run.js';
 import { newBrainState } from '../brain.js';
 import { matchText } from '../mind/normalize.js';
@@ -90,6 +92,7 @@ function adapter(config: CommandChatConfig, network: SafeNetwork): LongRunPorts 
   const robots = new RobotsPolicy(network);
   return {
     accountActive: config.accountActive,
+    reserveMemberRun: config.reserveMemberRun,
     async execute({ ownerId, conversationId, operation, state, signal }) {
       if (operation.kind === 'search') {
         try {
@@ -201,12 +204,8 @@ export async function withLongRunChat(db: Parameters<typeof createCommandChatCon
       const input = ChatCreateSchema.parse(raw);
       const plan = input.goal && !input.images?.length ? await select(ownerId, input.goal) : null;
       if (!plan) return chat.create(ownerId, raw);
-      const conversation = await chat.create(ownerId, { browserAccount: input.browserAccount });
-      try { return await start(ownerId, conversation.id, input.goal!, plan); }
-      catch (error) {
-        if (error instanceof BrowserError && error.code === 'CHAT_LONG_RUN_ACTIVE') await chat.remove(ownerId, conversation.id);
-        throw error;
-      }
+      const conversation = await withoutChatRequestCommit(() => chat.create(ownerId, { browserAccount: input.browserAccount }));
+      return cleanRejectedChatCreate(db, ownerId, conversation.id, () => start(ownerId, conversation.id, input.goal!, plan));
     },
     async send(ownerId, conversationId, raw) {
       const input = ChatSendSchema.parse(raw);
