@@ -141,7 +141,7 @@ function matchingSource(raw: string): MatchingSource {
 
 type Recall = Extract<StructuredMemoryIntent, { kind: 'recall' }>;
 
-function recallIntent(text: string, interrogative: boolean): Recall | undefined {
+function recallIntent(text: string, interrogative: boolean, requireMemoryReference: boolean): Recall | undefined {
   if (RESIDENCE_QUESTION.test(text)) return { kind: 'recall', target: targetFor('user', 'address') };
   const location = LOCATION_QUESTION.exec(text);
   const place = location && subjectOf(location[1]!);
@@ -153,7 +153,9 @@ function recallIntent(text: string, interrogative: boolean): Recall | undefined 
   const phrase = framed.slice(prefix?.[0].length ?? 0, suffix?.index).replace(/^(?:هو|هي)\s+/u, '');
   const framedMemory = framed !== text || MEMORY_REMINDER.test(text);
   const action = MEMORY_ACTION.test(phrase) || PRIOR_MEMORY_INSTRUCTION.test(phrase);
-  const memory = framedMemory || action || MEMORY_REFERENCE.test(phrase);
+  const memoryReference = framed !== text || action || MEMORY_REFERENCE.test(phrase);
+  if (requireMemoryReference && !memoryReference) return undefined;
+  const memory = framedMemory || memoryReference;
   const target = resolveStructuredMemoryTarget(phrase)
     ?? (/^(?:ذكرني|قل لي)/u.test(text) ? resolveStructuredMemoryTarget(phrase.replace(/^ب/u, '')) : undefined);
   if (target) return { kind: 'recall', target, ...(memory ? { query: phrase } : {}) };
@@ -276,14 +278,14 @@ export function structuredMemoryInstruction(raw: string): string {
 }
 
 /** Recognize current input, or a previously stored assertion after its owner provenance was checked. */
-export function parseStructuredMemoryRequest(raw: string, { storedAssertion = false } = {}): StructuredMemoryIntent {
+export function parseStructuredMemoryRequest(raw: string, { storedAssertion = false, requireMemoryReference = false } = {}): StructuredMemoryIntent {
   if (hasStructuredMemorySecret(raw)) return { kind: 'secret' };
   if (raw.length > 1500 || /[\p{Cc}\p{Cf}\u2028\u2029\ud800-\udfff]/u.test(raw)) return { kind: 'none' };
   const source = matchingSource(structuredMemoryInstruction(raw));
   const courtesyEnd = COURTESY.exec(source.text)?.[0].length ?? 0;
   const text = source.text.slice(courtesyEnd).replace(/[.!?؟]+$/u, '').trimEnd();
   const interrogative = /[?؟]\s*$/u.test(source.text);
-  const recall = recallIntent(text, interrogative);
+  const recall = recallIntent(text, interrogative, requireMemoryReference);
   if (recall) return recall;
   if (interrogative || /[!?؟;؛]/u.test(text)) return { kind: 'none' };
 

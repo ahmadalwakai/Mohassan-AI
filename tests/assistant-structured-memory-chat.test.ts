@@ -160,7 +160,7 @@ describe('structured memory over the authenticated chat routes', () => {
   });
 
   it('asks for consent on a bare statement and keeps memory isolated between two members', async () => {
-    const { app, start, say, headers, items } = fixture;
+    const { app, start, say, headers, items, db } = fixture;
     const firstId = await start(first), secondId = await start(second);
     const bare = await say(first, firstId, company);
     expect(bare.text).toMatch(/حفظ هذه المعلومة/u);
@@ -184,6 +184,10 @@ describe('structured memory over the authenticated chat routes', () => {
     expect(recalled.text).toContain(companyPayload);
     expect(recalled.text).toContain(stored!.createdAt.slice(0, 10));
     expect(recalled.text).not.toContain(secondCompany);
+    const recalledWithoutReminder = await say(first, firstId, 'ذكّرني باسم شركتي من ذاكرتي.');
+    expect(recalledWithoutReminder.text).toContain(companyPayload);
+    expect(recalledWithoutReminder.detail.run?.plan?.steps).toMatchObject([{ capability: 'memory.read', state: 'verified' }]);
+    expect(await db.selectFrom('reminders').select('id').where('conversation_id', '=', firstId).execute()).toEqual([]);
   }, 20000);
 
   it('uses the conversation to resolve a correction and keeps the earlier literal version', async () => {

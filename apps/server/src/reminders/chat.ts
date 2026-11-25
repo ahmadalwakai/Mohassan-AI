@@ -4,6 +4,7 @@ import { ReminderTimeZoneSchema, type ChatQuestion, type ReminderRecurrence, typ
 import { evaluateCapabilityReply, type CapabilityReplyRouting } from '../assistant/capability-reply.js';
 import type { BrainState } from '../assistant/brain.js';
 import { analyzeCompoundRequest } from '../assistant/compound-request.js';
+import { parseStructuredMemoryRequest } from '../assistant/structured-memory-parser.js';
 import { ReminderError, type createReminderStore } from './storage.js';
 import { parseReminderDuration, parseReminderTime, shiftReminderTime } from './time.js';
 
@@ -195,6 +196,12 @@ export async function handleReminderChat(input: {
   if (analyzeCompoundRequest(text).kind !== 'single') return reply(copy(lang, 'أرسل أمر التذكير في رسالة منفصلة.', 'Send the reminder command in a separate message.'), 'blocked');
   if (head) {
     const body = trim(text.slice(head[0].length));
+    const reminderAction = /^(?:to|ان)(?=\s|$)/u.test(fold(body));
+    if (!reminderAction && parseStructuredMemoryRequest(text, { requireMemoryReference: true }).kind === 'recall') {
+      // Use UTC only to detect an explicit schedule before requesting the user's zone.
+      const timing = parseReminderTime(body, { now, timeZone: 'UTC' });
+      if (timing.kind === 'clarify' && timing.reason === 'missing' && !timing.span) return null;
+    }
     const timeZone = await store.getTimeZone(userId);
     return timeZone ? parseTime(body, timeZone) : ask({ kind: 'zone', body },
       copy(lang, 'ما منطقتك الزمنية؟ اكتب اسم IANA مثل Asia/Riyadh أو Europe/London وسأحفظه للتذكيرات القادمة.', 'What is your time zone? Enter an IANA name such as Europe/London or America/New_York and I’ll save it for future reminders.'));

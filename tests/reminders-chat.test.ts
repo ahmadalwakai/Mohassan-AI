@@ -111,6 +111,28 @@ describe('reminder commands through real chat runs', () => {
     expect(Date.parse(edited!.dueAt)).toBeGreaterThan(Date.parse(postponed!.dueAt));
   });
 
+  it('admits a reminder about a saved fact when an explicit time is supplied', async () => {
+    const user = await member('saved-fact-schedule');
+    const initial = await start(user, 'Remind me of the frame size you have on record in 2 hours.');
+    expect(initial.question?.prompt).toContain('IANA');
+    expect(await store.list(user)).toEqual([]);
+    const saved = await send(user, initial.id, timeZone, initial.question?.id);
+    expect(saved.question).toBeNull();
+    expect(saved.reply).toContain('Reminder set for');
+    expect(await store.list(user)).toMatchObject([{ text: 'of the frame size you have on record' }]);
+  });
+
+  it('asks for a time when a reminder is about an action on a saved item', async () => {
+    const user = await member('saved-item-action');
+    const initial = await start(user, 'Remind me to review the saved report.');
+    expect(initial.status).toBe('waiting_user');
+    expect(initial.question?.prompt).toContain('IANA');
+    const missingTime = await send(user, initial.id, timeZone, initial.question?.id);
+    expect(missingTime.status).toBe('waiting_user');
+    expect(missingTime.question?.prompt).toContain('When should I remind you?');
+    expect(await store.list(user)).toEqual([]);
+  });
+
   it('asks which matching reminder to cancel and accepts an Arabic-Indic selection', async () => {
     const user = await member('matches');
     await store.setTimeZone(user, timeZone);
