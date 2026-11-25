@@ -29,4 +29,19 @@ The normalized records keep the original source partition separately from the ki
 
 XQuAD was previously used as an independent benchmark. This kit allows group assignment of XQuAD and MLQA to training, development, or calibration. A score on either source after fitting is development evidence. The promotion gate uses a new owner-authored or owner-reviewed sealed set under the development plan. Run reports record which authorized public sources were used.
 
+The v2 capability benchmark exclusion registry is verified before a loader
+reads training material. Each loaded card records the manifest SHA-256 and
+its input and dropped row counts. Public data cards in run manifests contain
+these counts per dataset and task. `prefetch` prints the same counts before a
+training run. A match on any model-visible text field, native source ID, or
+verified alias drops the entire example before job splitting. Exact text
+checks use the registry's normalization. Near-duplicate analysis is a separate
+part of the capability audit.
+
+QuAC alias verification also reads the pinned CANARD release and records that
+file's provenance. A QuAC question receives the CANARD alias when its dialogue
+ID, question number and exact question text agree. MASSIVE retains the full
+locale and TyDi QA converts the secondary-task ID to the registry's advertised
+key. The filter records aggregate counts. [Capability v2 contamination audit](https://github.com/ahmadalwakai/Mohassan-AI/blob/a1e1cb020b7ba093885edbf501149e7b8252c0cb/docs/V2-CONTAMINATION-AUDIT-2026-11-25.md)
+
 The release files are fetched on demand. The loader reads the publisher data formats directly. It uses only the crowdworker ARCD files from SOQAL, the original MLQA files, and the manual AMI annotations.

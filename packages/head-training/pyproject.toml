@@ -13,4 +13,8 @@ select = ["E4", "E7", "E9", "F", "I", "UP"]
 python_version = "3.11"
 follow_imports = "silent"
 strict = true
-mypy_path = ["$MYPY_CONFIG_FILE_DIR/../execution-model", "$MYPY_CONFIG_FILE_DIR/../execution-pipeline"]
+mypy_path = [
+    "$MYPY_CONFIG_FILE_DIR/../execution-model",
+    "$MYPY_CONFIG_FILE_DIR/../execution-pipeline",
+    "$MYPY_CONFIG_FILE_DIR/../../scripts/agent-capability-bench/v2",
+]

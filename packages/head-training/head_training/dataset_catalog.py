@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from .v2_exclusion import ExclusionReceipt
+
 
 @dataclass(frozen=True)
 class SourceSpec:
@@ -22,6 +24,7 @@ class DatasetCard:
     files: tuple[SourceSpec, ...]
     notes: str
     approval: str = "Owner's 2026-11-25 head-training task authorizes public human-labelled supervision with verified licenses."
+    exclusion: ExclusionReceipt | None = None
 
 
 _CLINC = "828f8093932c8fe6ca7936c3d2e52903b1c523de"

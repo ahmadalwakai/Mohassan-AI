@@ -5,8 +5,10 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
-# The pinned packages are source packages in this checkout, not PyPI distributions.
-for _package in ("execution-pipeline", "execution-model"):
-    _source = str(REPOSITORY_ROOT / "packages" / _package)
+# Import the pinned source packages and capability exclusion library from this checkout.
+for _directory in (
+    "packages/execution-pipeline", "packages/execution-model", "scripts/agent-capability-bench/v2",
+):
+    _source = str(REPOSITORY_ROOT / _directory)
     if _source not in sys.path:
         sys.path.insert(0, _source)

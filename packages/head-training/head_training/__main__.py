@@ -50,7 +50,8 @@ def main(argv: Sequence[str] | None = None, *, root: Path = REPOSITORY_ROOT) -> 
             for name, task in sorted(sources):
                 dataset = load_dataset(name, task, settings.dataset_cache)
                 print(json.dumps({"dataset": name, "task": task, "examples": len(dataset.examples),
-                                  "fingerprint": dataset.fingerprint}, ensure_ascii=False))
+                                  "fingerprint": dataset.fingerprint,
+                                  "exclusion": asdict(dataset.exclusion)}, ensure_ascii=False))
             return 0
         command = [sys.executable, *sys.argv] if argv is None else [sys.executable, sys.argv[0], *argv]
 

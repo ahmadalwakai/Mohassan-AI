@@ -1,6 +1,7 @@
 # Data partitions and evaluator handoff
 
-The kit assigns related examples by source group and removes exact normalized
+The loaders first exclude matches to the pinned capability v2 registry. The
+kit then assigns related examples by source group and removes exact normalized
 matches from competing splits. Matching uses the prompt, history, and candidates
 regardless of candidate order. Upstream test groups and matching public inputs
 are withheld. Within the fitting material, calibration takes priority over

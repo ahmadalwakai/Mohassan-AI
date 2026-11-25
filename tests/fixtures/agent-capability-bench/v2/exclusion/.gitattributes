@@ -1,0 +1,3 @@
+# Published registry SHA-256 pins cover the exact bytes on every platform.
+*.json -text
+*.jsonl -text -diff

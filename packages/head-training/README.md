@@ -85,6 +85,11 @@ JSONL). Keep private files in ignored local storage. Each JSONL row supplies
 (zero-based indices). `history` is an optional sequence of prior turns or
 retrieved evidence. `split` is `train`, `dev`, `test` or `unsplit`. Reuse a
 `group` for examples from the same conversation, original document or template.
+For imported rows, include `source_id` and any `source_ids` aliases when the
+reviewer verified those identifiers. The card pins the approved row bytes, so
+these fields are covered by the same approval. Both owner and public loaders
+verify the published capability v2 registry and exclude matches before
+splitting. Reports record the registry pin and per-source drop counts.
 For H5, put the actual H4 evidence shown in `history` and use the owner's
 human sufficiency verdict as `label`. The training code omits a row when its
 full evidence would be truncated. For H3, H6 and H7, configure `slots`,

@@ -219,7 +219,7 @@ def test_tydi_reads_only_supported_languages_from_goldp_parquet(
     path = tmp_path / "temporary.parquet"
     data = [
         {
-            "id": f"{language}-1", "title": "Topic", "context": "Earlier. Zed won.", "question": "Who?",
+            "id": f"{language}-1-1", "title": "Topic", "context": "Earlier. Zed won.", "question": "Who?",
             "answers": {"answer_start": [9], "text": ["Zed"]},
         }
         for language in ("arabic", "english", "russian")

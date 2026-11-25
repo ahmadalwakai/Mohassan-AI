@@ -41,6 +41,7 @@ def _code_pins(root: Path) -> dict[str, str]:
         *sorted((root / "packages/execution-model/execution_model").glob("*.py")),
         root / "packages/execution-pipeline/execution_pipeline/pretrain.py",
         root / "packages/execution-pipeline/execution_pipeline/chat_diagnostics.py",
+        root / "scripts/agent-capability-bench/v2/exclusion.py",
     )
     return {path.relative_to(root).as_posix(): sha256_file(path) for path in paths if path.is_file()}
 
@@ -78,7 +79,7 @@ def _load_rows(job: Job, cache: Path, custody: set[Path]) -> tuple[list[Example]
         sources.append({"card": asdict(dataset.card), "fingerprint": dataset.fingerprint,
                         "provenance": [asdict(item) for item in dataset.provenance],
                         "loader_sha256": dataset.loader_sha256, "catalog_sha256": dataset.catalog_sha256,
-                        "label_map": labels, "selected_rows": selected, "source_rows": len(dataset.examples)})
+                        "label_map": labels, "selected_rows": selected, "source_rows": dataset.exclusion.input_rows})
     return examples, sources
 
 
