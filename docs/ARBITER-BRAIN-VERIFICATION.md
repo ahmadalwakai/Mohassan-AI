@@ -46,3 +46,41 @@ The detached release candidate reproduced the published development totals and e
 The initial v1 run scored 169/240 because the container UID's home resolved to `/` and the desktop fixture adapter could not normalize folder paths. A service account with a normal home restored the seven desktop passes. The same initial run's v2 split reproduced the published counts.
 
 The first v1 shadow replay at `4550e5a8ea3c2370d63b04aaa3ede624afca301c` matched all 240 baseline scorer signatures. It found 19 contested sites and scored all 38 forced choices. No alternative recovered a failing case. The 19 synchronous timings had a p95 of 1.088 ms, so extra candidate discovery was moved into existing post-publication observation for default shadow operation.
+
+## Shadow latency
+
+The measured implementation is `28e4ac347ce8febef37392c91f4eb273970f2bc9`. Default shadow queues additional candidate discovery and completes that work in the existing post-publication observer. A scoped replay collects synchronously so it can force an eligible choice before dispatch. The critical-path and replay timings use different boundaries.
+
+| Measurement | Samples | p95 |
+| --- | ---: | ---: |
+| Default shadow enqueue, warmed focused test | 4,000 | 0.003 ms |
+| Manager scoring with a test artifact, warmed focused test | 4,000 | 0.090 ms |
+| Default shadow publication hook, full v1 development | 279 | 0.147 ms |
+| Background arbitration in the default shadow v1 run | 19 | 0.600 ms |
+| Scoped v1 replay arbitration | 19 | 0.463 ms |
+
+The normal v1 shadow run matched every baseline scorer signature. Its owner summary recorded 17 compound-plan contests and two rewrite contests. Each reported an untrained scorer, with zero disagreements or changes. The final scoped replay also matched every v1 baseline scorer signature and reproduced all 38 forced outcomes. Fourteen alternatives lost an existing pass, two tied a pass, and three left an existing failure.
+
+The v1 normal shadow receipt is `2d3cd611cc195ddea25cfe43b734759f109e14470ac9beec5ecc46a1c6a02175`. The v1 scoped replay receipt is `33f19b9412d0f5c8393ef1e99de94be05dbbff453ae71b333a2d4e3a2302b3c3`. The v1 runs used a separate worktree and lower CPU priority while one v2 lane ran. Live promotion latency is unverified.
+
+## Merge notes
+
+- `apps/server/src/command-chat.ts` adds two lines and deletes one to bind arbiter observation to the existing run. This is the only held-file hook.
+- The branch adds no schema migration, benchmark payload, or model weights. The Mind C and pinned execution trees have empty diffs against the release candidate.
+
+## Benchmark commands
+
+The runner uses the published fixtures, adapters and scorer. The release baseline turns the relations manager off as documented. Replay uses the same wave flags, scorer and fixture services, with per-case in-process overrides. Each forced trial starts the full case again and checks that the declared claimant actually won at that turn and site. A case with several contested sites contributes at most one additional pass to the overall oracle. The oracle reports the best observed single forced choice per case.
+
+The following commands exited 0 for both baseline splits and for the v1 shadow and replay runs. The combined baseline run's initial v1 result was discarded after diagnosing the home-directory mismatch. Its v2 result is retained.
+
+```bash
+node scripts/arbiter-bench/prepare.mjs /workspace/Mohassan-Arbiter-Base
+docker run --rm --network none --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges --env PLAYWRIGHT_BROWSERS_PATH=/workspace/work/arbiter-bench/chromium --env TEST_DRIVEN_CODING_PYTHON=/usr/local/bin/python3 --volume /workspace:/workspace --workdir /workspace/Mohassan-Arbiter-Base mohassan-arbiter-bench node --import tsx /workspace/Mohassan-AI/scripts/arbiter-bench/run.mjs /workspace/Mohassan-Arbiter-Base base /workspace/work/arbiter-bench/rc-base
+docker run --rm --network none --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges --env PLAYWRIGHT_BROWSERS_PATH=/workspace/work/arbiter-bench/chromium --env TEST_DRIVEN_CODING_PYTHON=/usr/local/bin/python3 --volume /workspace:/workspace --workdir /workspace/Mohassan-Arbiter-Base mohassan-arbiter-bench nice -n 10 node --import tsx /workspace/Mohassan-AI/scripts/arbiter-bench/run.mjs /workspace/Mohassan-Arbiter-Base base /workspace/work/arbiter-bench/rc-base-v1 --v1
+node scripts/arbiter-bench/prepare.mjs /workspace/Mohassan-Arbiter-After --capture
+node scripts/arbiter-bench/prepare.mjs /workspace/Mohassan-Arbiter-Shadow --capture
+docker run --rm --network none --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges --env PLAYWRIGHT_BROWSERS_PATH=/workspace/work/arbiter-bench/chromium --env TEST_DRIVEN_CODING_PYTHON=/usr/local/bin/python3 --volume /workspace:/workspace --workdir /workspace/Mohassan-Arbiter-Shadow mohassan-arbiter-bench nice -n 10 node --import tsx /workspace/Mohassan-AI/scripts/arbiter-bench/run.mjs /workspace/Mohassan-Arbiter-Shadow shadow /workspace/work/arbiter-bench/final-shadow-v1 --v1
+docker run --rm --network none --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges --env PLAYWRIGHT_BROWSERS_PATH=/workspace/work/arbiter-bench/chromium --env TEST_DRIVEN_CODING_PYTHON=/usr/local/bin/python3 --volume /workspace:/workspace --workdir /workspace/Mohassan-Arbiter-Shadow mohassan-arbiter-bench nice -n 10 node --import tsx /workspace/Mohassan-AI/scripts/arbiter-bench/run.mjs /workspace/Mohassan-Arbiter-Shadow replay /workspace/work/arbiter-bench/final-replay-v1 --v1
+npm run -s models:shadow-summary -- /workspace/work/arbiter-bench/final-shadow-v1/default-shadow-log.jsonl
+```
