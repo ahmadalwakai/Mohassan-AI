@@ -195,4 +195,3 @@ export function createMonitorChatV2Store(db: Kysely<any>, store: MonitorStore, n
     },
   };
 }
-

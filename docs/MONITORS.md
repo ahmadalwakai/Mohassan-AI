@@ -103,7 +103,7 @@ The server accepts up to 12 calls per minute on each mutation route, matching th
 
 A public page is parsed with parse5. Schema.org JSON-LD and microdata supply Offer price, currency and availability, Event start date and status, and Product name. Visible-text extraction supplies a fallback. A user-selected visible anchor retains its identity when the page also contains structured data. Price summaries show the currency and whether a value is an old price, when the page supplies that evidence. Arabic and Persian digits and Arabic thousands and decimal separators are normalized before numeric comparisons. Hijri conversion uses the runtime's ICU Umm al-Qura calendar via `Intl.DateTimeFormat` and a search of its Gregorian days. Status mappings preserve distinctions between open, closed, out of stock and coming soon. [Schema.org Offer](https://schema.org/Offer) · [Schema.org Event](https://schema.org/Event) · [Schema.org Product](https://schema.org/Product) · [ECMA-402](https://tc39.es/ecma402/#datetimeformat-objects)
 
-A saved anchor records the label, value type, unit, currency, old-price marker, surrounding text and location. A type, currency, unit or old-price mismatch receives zero. Otherwise the score starts at 0.35 for the matching value pattern, adds 0.25 for a matching label, up to 0.30 for word-set overlap, and 0.10 for an unchanged location and extraction method. An exact unique match or a score of at least 0.84 with a lead of at least 0.16 resumes automatically and records the relocation. A score of at least 0.55 with two or more candidates produces one question with two to four source-backed choices. Lower confidence, or a single weak candidate, pauses the monitor and records one health notice within the existing allowance. These weights require corroborating label and surrounding text before automatic relocation. [Page reader](../apps/server/src/monitors/page-v2.ts) · [Choice rules](CLARIFICATION-CHOICES.md)
+A saved anchor records the label, value type, unit, currency, old-price marker, surrounding text and location. A type, currency, unit or old-price mismatch receives zero. Otherwise the score starts at 0.35 for the matching value pattern, adds 0.25 for a matching label, up to 0.30 for word-set overlap, and 0.10 for an unchanged location and extraction method. An exact unique match or a score of at least 0.84 with a lead of at least 0.16 resumes automatically and records the relocation. A score of at least 0.55 with two or more candidates produces one question with two to four source-backed choices. A composite preview with several ambiguous sources asks one question at a time. Lower confidence, or a single weak candidate, pauses the monitor and records one health notice within the existing allowance. These weights require corroborating label and surrounding text before automatic relocation. [Page reader](../apps/server/src/monitors/page-v2.ts) · [Choice rules](CLARIFICATION-CHOICES.md)
 
 New-item watches look for RSS and Atom autodiscovery links and a sitemap in HTML or robots.txt, falling back to `/sitemap.xml`. Discovery goes through the same HTTPS, robots, host reservation, redirect and conditional-request path as the watched page. It reads up to two child maps from an index. The XML tokenizer caps each document at 512 KiB, 24 levels, 12,000 tokens and 100 items. It accepts standard and numeric XML entities and rejects declarations and custom entities. The limits bound processing and stored validators per check. Feed captions take precedence for duplicate links and sitemap links are limited to descendants of the watched path. Minute-precision or finer publication timestamps can inform scheduling. [RSS](https://www.rssboard.org/rss-specification) · [Atom](https://www.rfc-editor.org/rfc/rfc4287) · [Sitemaps](https://www.sitemaps.org/protocol.html) · [XML](https://www.w3.org/TR/xml/)
 
@@ -119,9 +119,79 @@ Examples include “What are you monitoring for me?”, «أوقف مراقبة 
 
 Consider a change at time $t$ between checks at $a$ and $b$. Its detection delay is $b-t$. If $\lambda(t)$ is the expected change rate over time, the interval's expected sum of delays is $\int_a^b \lambda(t)(b-t)\,dt$. With the prefix integrals $M(t)=\int^t\lambda(s)\,ds$ and $S(t)=\int^t s\lambda(s)\,ds$, this is $b[M(b)-M(a)]-[S(b)-S(a)]$. With a uniform rate, the total is proportional to the sum of squared gaps. Even spacing minimizes that sum for a fixed number of checks and total time.
 
-The scheduler uses the prefix integrals in a fixed-count dynamic program on a grid no wider than 15 minutes. It plans about one day ahead, executes the first slot, and replans after each observation. It uses the source's existing urgent floor and six-hour quiet cap. The final hour before an explicit deadline receives reserved checks. Failure and confirmation retries share the same allowance. An untimestamped change can use one normal-interval follow-up probe when the remaining budget covers the quiet slots. A novel broad-text edit can use an early confirmation slot from the same hard budget. Repeated values that reverted before confirmation use the normal schedule. Brief weather threshold conditions retain the responsive v1 cadence until there are enough publication timestamps to forecast them.
+The scheduler uses the prefix integrals in a fixed-count dynamic program on a grid no wider than 15 minutes. It plans about one day ahead, executes the first slot, and replans after each observation. It uses the source's existing urgent floor and six-hour quiet cap. The final hour before an explicit deadline receives reserved checks. Failure and confirmation retries share the same allowance. An untimestamped change can use one normal-interval follow-up probe when the remaining budget covers the quiet slots. A novel broad-text edit can use an early confirmation slot from the same hard budget. Repeated values that reverted before confirmation use the normal schedule. Brief weather threshold conditions retain the responsive v1 cadence until there are enough publication timestamps to forecast them. Own background runs retain the v1 initial backoff until a state transition is observed. A new-item watch with at least three dated releases, a concentrated weekly phase and a quiet next day can use the six-hour gap. Those gates limit sparse-history predictions and preserve coverage for unexpected releases.
 
 The rate estimate divides the observed changes, including distinct feed or sitemap timestamps, by elapsed observation time plus one prior day. This regularization limits early spending. Timestamped releases contribute directly to 15-minute UTC daily and weekly bins. An undated change contributes across the bracket between the last confirmed sample and its observation, capped at six hours. Each contribution puts half its weight in its bin and a quarter in each neighboring bin to tolerate small timing shifts. Separate days or weeks are required before using their respective patterns. At most 75% of the baseline density comes from periodic patterns, preserving coverage at other times. Nearby changes add a short burst term with a six-hour half-life. The state lives on the individual monitor row owned by its account. [Scheduler](../apps/server/src/monitors/schedule-v2.ts)
+
+## Verification
+
+### Measurement protocol
+
+The simulator checks the pinned v1 checkout at `a453dc17a78f55c0cd3e5bf23f347843893bc3d2` against the candidate's production source adapters, evaluator and scheduler. It uses a virtual clock and in-process source fixtures. SHA-256 counter streams provide deterministic draws. The fixtures generate Poisson arrivals by inverse exponential sampling, jittered daily and weekly releases, and bursts with explicit spacings. They also generate rotating blocks, A/B changes, time stamps, threshold flaps, layout moves, price decoys, outage windows and redirects. The oracle records actual events independently of extraction and scheduling. [Generator](../scripts/monitor-simulation/fixtures.ts) · [Runner](../scripts/monitor-simulation/run.ts)
+
+Each trial covers one monitor-week. Checks count logical scheduled source reads. A feed check can issue conditional reads for several resources. Precision counts matched alerts over all condition alerts. Recall counts detected ground-truth opportunities. False alarms and checks are divided by enrolled monitor-weeks, including trials that ended early. Latency uses the event time and alert observation time. The table shows raw latency over detected events. The paired comparison uses only events both arms detect. The restricted comparison assigns each miss its time to expiry, accounting for changes in the detected population. Relocation success means reading the right value after a known layout move. An explicit relocation record is counted separately. The one-shot aggregate contains the eight classes with the same notification semantics. The recurring feed is reported separately because v1 stops after its first trigger.
+
+The first candidate was tuned on 32 seeds per source class. Its 64 held-out seeds per class were opened after freeze. The subsequent scheduler work was delegated to an agent with no access to those results, using the original tuning bank. The independent replication uses 128 fresh trials per class under the same generator, parameters, oracle and gates. Its 256-bit salt is generated after the second freeze and recorded with the results.
+
+### Held-out results
+
+The first snapshot `4415845` exited **1**. It improved both paired delay measures and overall recall, but run-source recall fell from 48/48 to 47/48 and one-shot checks increased from 12,463 to 12,641. Its per-class results are recorded below.
+
+```bash
+/workspace/scratch/monitor-bench-offline ./node_modules/.bin/tsx scripts/monitor-simulation/run.ts --baseline /workspace/scratch/monitor-baseline --bank held-out > /workspace/scratch/monitor-held-out.json
+```
+
+| Source | Matched opportunities | Precision | Recall | False alarms/week | Mean / p95 minutes | Checks/week | Relocation success |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| plain-page | 0 / 50 → 50 / 50 | 0.0% → 100.0% | 0.0% → 100.0% | 1.00 → 0.00 | — / — → 289.8 / 434.9 | 4.00 → 26.45 | — → — |
+| structured-offer | 32 / 64 → 50 / 64 | 65.3% → 100.0% | 50.0% → 78.1% | 0.27 → 0.00 | 160.3 / 345.0 → 104.2 / 250.0 | 30.72 → 27.02 | 16/35 → 35/35 |
+| arabic-page | 40 / 64 → 54 / 64 | 100.0% → 100.0% | 62.5% → 84.4% | 0.00 → 0.00 | 18.4 / 89.0 → 116.6 / 317.0 | 33.13 → 30.81 | 23/34 → 28/34 |
+| weekly-feed | 47 / 48 → 47 / 48 | 100.0% → 100.0% | 97.9% → 97.9% | 0.00 → 0.00 | 176.0 / 331.0 → 63.3 / 168.0 | 20.13 → 17.84 | — → — |
+| recurring-feed | 46 / 141 → 141 / 141 | 100.0% → 100.0% | 32.6% → 100.0% | 0.00 → 0.00 | 186.1 / 340.0 → 25.4 / 46.0 | 19.36 → 25.48 | — → — |
+| currency | 48 / 52 → 52 / 52 | 100.0% → 100.0% | 92.3% → 100.0% | 0.00 → 0.00 | 198.9 / 348.0 → 130.8 / 281.0 | 29.88 → 25.64 | — → — |
+| weather | 52 / 64 → 52 / 64 | 100.0% → 100.0% | 81.3% → 81.3% | 0.00 → 0.00 | 78.8 / 229.0 → 78.8 / 229.0 | 23.73 → 23.73 | — → — |
+| search | 48 / 48 → 48 / 48 | 100.0% → 100.0% | 100.0% → 100.0% | 0.00 → 0.00 | 178.8 / 345.0 → 171.9 / 331.0 | 20.63 → 19.81 | — → — |
+| run | 48 / 48 → 47 / 48 | 100.0% → 100.0% | 100.0% → 97.9% | 0.00 → 0.00 | 177.0 / 327.0 → 144.6 / 294.5 | 32.53 → 26.20 | — → — |
+| Shared one-shot total | 315 / 438 → 400 / 438 | 79.5% → 100.0% | 71.9% → 91.3% | 0.16 → 0.00 | 142.4 / 333.0 → 137.3 / 331.0 | 24.34 → 24.69 | 39/69 → 63/69 |
+
+For 271 events both arms detected, mean and p95 delay went from 161.65 / 336.00 to 115.04 / 292.00 minutes. Restricted mean and p95 went from 2,517.85 / 9,344.00 to 2,197.88 / 8,529.00 minutes. The candidate recorded 28 relocations.
+
+The independent replication at `ae662ed` exited **0**. Each source class matched or improved recall, and the one-shot total used 273 fewer checks. The scheduler used 5,897 versus 6,156 checks in the tuning bank before the replication salt was generated.
+
+```bash
+/workspace/scratch/monitor-bench-offline ./node_modules/.bin/tsx scripts/monitor-simulation/run.ts --baseline /workspace/scratch/monitor-baseline --bank held-out --replication 4df4e5fd7666511ada67cbd164b43a29587fa95657ce4302e13a0f7c414a1173 > /workspace/scratch/monitor-held-out-replication.json
+```
+
+| Source | Matched opportunities | Precision | Recall | False alarms/week | Mean / p95 minutes | Checks/week | Relocation success |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| plain-page | 0 / 102 → 99 / 102 | 0.0% → 100.0% | 0.0% → 97.1% | 1.00 → 0.00 | — / — → 306.8 / 463.5 | 4.00 → 24.17 | — → — |
+| structured-offer | 66 / 128 → 106 / 128 | 64.1% → 100.0% | 51.6% → 82.8% | 0.29 → 0.00 | 181.9 / 346.0 → 106.8 / 246.0 | 31.86 → 26.44 | 36/73 → 68/73 |
+| arabic-page | 80 / 128 → 113 / 128 | 100.0% → 100.0% | 62.5% → 88.3% | 0.00 → 0.00 | 28.9 / 109.0 → 115.9 / 303.0 | 32.68 → 28.95 | 41/61 → 51/61 |
+| weekly-feed | 97 / 98 → 98 / 98 | 100.0% → 100.0% | 99.0% → 100.0% | 0.00 → 0.00 | 158.1 / 335.0 → 72.6 / 211.0 | 22.41 → 19.26 | — → — |
+| recurring-feed | 99 / 300 → 294 / 300 | 100.0% → 100.0% | 33.0% → 98.0% | 0.00 → 0.00 | 197.0 / 349.0 → 23.2 / 43.0 | 18.94 → 23.09 | — → — |
+| currency | 107 / 109 → 109 / 109 | 100.0% → 100.0% | 98.2% → 100.0% | 0.00 → 0.00 | 189.1 / 351.0 → 143.4 / 292.0 | 29.24 → 25.13 | — → — |
+| weather | 113 / 128 → 113 / 128 | 100.0% → 100.0% | 88.3% → 88.3% | 0.00 → 0.00 | 88.0 / 295.0 → 88.0 / 295.0 | 23.45 → 23.45 | — → — |
+| search | 104 / 109 → 108 / 109 | 100.0% → 100.0% | 95.4% → 99.1% | 0.00 → 0.00 | 154.7 / 321.0 → 176.4 / 346.0 | 19.05 → 18.29 | — → — |
+| run | 101 / 106 → 106 / 106 | 100.0% → 100.0% | 95.3% → 100.0% | 0.00 → 0.00 | 169.3 / 340.0 → 191.2 / 347.6 | 32.54 → 27.41 | — → — |
+| Shared one-shot total | 668 / 908 → 852 / 908 | 80.2% → 100.0% | 73.6% → 93.8% | 0.16 → 0.00 | 139.3 / 330.0 → 148.8 / 352.5 | 24.40 → 24.14 | 77/134 → 119/134 |
+
+For the 597 events both arms detected, mean and p95 fell from 152.51 / 332.00 to 132.71 / 320.73 minutes. Restricted mean and p95 fell from 2,465.89 / 9,013.00 to 2,009.96 / 8,203.00 minutes. Raw mean and p95 rose across each arm's own set of detected events, which included 184 more detections in v2. The candidate recorded 51 relocations. The recurring watch detected 195 additional publication events and used 4.15 more checks per monitor-week.
+
+### Offline tests
+
+Node `24.22.3` and Playwright Chromium build `1248` were used. Setup downloaded locked packages from the npm registry and the pinned browser from Playwright. The verification commands ran with Docker networking disabled and loopback available to the web and API fixtures.
+
+```bash
+npm run typecheck
+npm run test -- tests/monitors-api.test.ts tests/monitors-detection.test.ts \
+  tests/monitors-web.test.ts tests/smart-monitor-runtime.test.ts tests/smart-monitor-sources.test.ts \
+  tests/smart-monitor-sources-v2.test.ts tests/smart-monitor-reasoning-v2.test.ts \
+  tests/smart-monitor-schedule-v2.test.ts tests/smart-monitor-chat-v2.test.ts
+env MOHASSAN_E2E_WEB_PORT=3114 MOHASSAN_E2E_SERVER_PORT=4114 npm_config_offline=true \
+  npm run test:e2e -- tests/e2e/smart-monitors.spec.ts tests/e2e/smart-monitors-v2.spec.ts
+```
+
+On the release snapshot, `npm run typecheck` exited **0**, and the nine affected Vitest suites passed **162/162**, including the Arabic fixtures, DTD and external-entity rejection, budget isolation and the existing build 15 APNs envelope. Both Playwright scenarios passed in the same offline environment, including price choice before activation and confirmation of a conversational stop. They exercise the browser with local fixtures.
 
 ## Enable the rollout
 
