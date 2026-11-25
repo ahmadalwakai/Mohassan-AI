@@ -105,12 +105,12 @@ describe('scratch classifier request decisions', () => {
     }
   });
 
-  it('can refuse an unsupported action when its only rule match is the nominal search fallback', () => {
-    const input = { text: 'Reroute the office phone', capabilities };
-    expect(decideRequestRoute(input, null)).toMatchObject({ sourceAssessment: { reasons: ['nominal_public_subject'] }, route: 'web_search' });
-    expect(decideRequestRoute(input, policy({ refusal: 'out_of_scope' }))).toMatchObject({
-      route: 'unsupported', reason: 'scratch_out_of_scope', publicQuery: null,
-    });
+  it('keeps a ready public lookup when its subject was recognized by the nominal fallback', () => {
+    const input = { text: 'Central European shipping update', capabilities };
+    const rule = decideRequestRoute(input, null);
+    expect(rule).toMatchObject({ route: 'web_search', handler: 'search', availability: 'ready', publicQuery: input.text,
+      sourceAssessment: { reasons: ['nominal_public_subject'], publicQueryEligible: true } });
+    expect(decideRequestRoute(input, policy({ refusal: 'out_of_scope', route: 'news', speechAct: 'smalltalk' }))).toEqual(rule);
   });
 
   it('lets a learned continuation use the existing public topic and slot resolver', () => {
