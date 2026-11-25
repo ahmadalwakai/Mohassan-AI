@@ -2,7 +2,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { AgentBrowser, SearchProvider } from '@mohassan/browser';
+import type { AgentBrowser, AgentPage, SearchProvider } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { createMemoryControl, memoryMigration } from '@mohassan/memory';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,9 +16,18 @@ const owner = 'isolated-plan-owner';
 const capitalUrl = 'https://geography.example.test/france';
 const priceUrl = 'https://prices.example.test/gold';
 const pageUrl = 'https://docs.example.test/guide';
+const ratesUrl = 'https://docs.example.test/admission';
+const balconyUrl = 'https://docs.example.test/balcony';
 const capital = 'باريس هي عاصمة فرنسا. تقع المدينة على ضفاف نهر السين في شمال البلاد. Paris is the capital of France.';
 const price = 'The price of gold is $100.00 per gram in USD.';
 const page = 'The station courtyard opens at seven. The entrance is on the north side of the building.';
+const rates = 'The admission price is $16 per guest. The gallery accepts card payments.';
+
+function observedRates(url: string): AgentPage {
+  return { id: url, url, title: 'Gallery admissions', text: rates, elements: [],
+    hash: 'recorded-rates', observedAt: new Date().toISOString(), documentStatus: 200,
+    signals: { captcha: false, password: false, otp: false, card: false }, scroll: { top: 0, height: 1, viewport: 1 } };
+}
 
 describe('compiled plans through command chat', () => {
   let database: Awaited<ReturnType<typeof createDatabase>>;
@@ -30,7 +39,7 @@ describe('compiled plans through command chat', () => {
   const search = vi.fn<SearchProvider['search']>();
   const readPage = vi.fn<NonNullable<CommandChatConfig['readPage']>>();
   const legacySave = vi.fn(async () => { throw new Error('Memory writes require an exact operation.'); });
-  const browserCall = vi.fn(async () => { throw new Error('Plan tools read through the configured public HTTP port.'); });
+  const browserCall = vi.fn<AgentBrowser['act']>();
 
   beforeAll(async () => {
     database = await createDatabase({});
@@ -63,11 +72,12 @@ describe('compiled plans through command chat', () => {
 
   beforeEach(() => {
     vi.stubEnv('MOHASSAN_PLAN_COMPILER', 'on');
+    browserCall.mockReset().mockRejectedValue(new Error('Unexpected browser call.'));
     search.mockReset().mockImplementation(async query => /gold/i.test(query)
       ? [{ title: 'Gold quote in USD', url: priceUrl, snippet: price }]
       : [{ title: 'Capital of France', url: capitalUrl, snippet: capital }]);
     readPage.mockReset().mockImplementation(async url => {
-      const text = new Map([[capitalUrl, capital], [priceUrl, price], [pageUrl, page]]).get(url);
+      const text = new Map([[capitalUrl, capital], [priceUrl, price], [pageUrl, page], [ratesUrl, rates], [balconyUrl, rates]]).get(url);
       return text ? { url, title: 'Verified fixture page', text, status: 200 } : null;
     });
   });
@@ -104,6 +114,62 @@ describe('compiled plans through command chat', () => {
     expect(single.text).toContain('391');
   });
 
+  it.each([
+    'Compute the difference between 2022-04-13 and 2022-06-23.',
+    'احسب فرق الأيام من ٢٠٢٢-٠٤-١٣ و٢٠٢٢-٠٦-٢٣؟',
+  ])('preserves the native calendar calculation for %s', async goal => {
+    const result = await ask(goal);
+    const state = result.run.state as BrainState;
+    expect(result.run.status, result.text).toBe('completed');
+    expect(result.text).toMatch(/\b71\b/u);
+    expect(state.routing?.route).toBe('compute');
+    expect(state.trail.map(entry => entry.action)).toContain('calculate');
+    expect(result.ledger.plan).toBeNull();
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it('preserves an invalid-date boundary for a single calendar request', async () => {
+    const result = await ask('Compute the difference between 2022-04-31 and 2022-06-23.');
+    expect(result.run.status, result.text).toBe('blocked');
+    expect(result.text).toContain('Gregorian date is invalid');
+    expect(result.ledger.plan).toBeNull();
+  });
+
+  it('executes a separate lookup when the conversion units are unknown', async () => {
+    const result = await ask('Convert 3 paces to cubits and find the capital of France.');
+    expect(result.run.status, result.text).toBe('partial');
+    expect(result.ledger.plan?.steps.map(step => step.state)).toEqual(['failed', 'verified']);
+    expect(search).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['Build a PDF titled Hall Guide containing ', 'Use the left path and open the side door.'],
+    ['Create a PDF titled Gate Guide\n', 'Check the signal, then open the north gate.'],
+    ['أنشئ ملف PDF بعنوان تعليمات الرواق ويحتوي على ', 'انتظر الضوء الأخضر ثم افتح النافذة.'],
+  ])('renders literal PDF body instructions with the document request for %s', async (prefix, body) => {
+    const render = vi.spyOn(documents.renderer, 'render');
+    const result = await ask(prefix + body);
+    const state = result.run.state as BrainState;
+    expect(result.run.status, result.text).toBe('completed');
+    expect(render).toHaveBeenCalledTimes(1);
+    expect(render.mock.calls[0]?.[0]).toContain(body);
+    expect(state.trail.map(entry => entry.action)).toEqual(expect.arrayContaining(['document_create', 'document_readback']));
+    expect(result.ledger.plan?.steps).toMatchObject([{ id: 'document-create', state: 'verified' }]);
+    expect(search).not.toHaveBeenCalled();
+    expect(readPage).not.toHaveBeenCalled();
+  });
+
+  it('executes a separate clause after a quoted PDF body', async () => {
+    const body = 'Close the western valve and open the vent.';
+    const render = vi.spyOn(documents.renderer, 'render');
+    const result = await ask(`Build a PDF titled Maintenance Guide containing "${body}". Then calculate 4 * 9.`);
+    expect(result.run.status, result.text).toBe('completed');
+    expect(render.mock.calls[0]?.[0]).toContain(body);
+    expect(result.text).toMatch(/=\s*36\b/u);
+    expect(result.ledger.plan?.steps.map(step => step.state)).toEqual(['verified', 'verified']);
+    expect(readPage).not.toHaveBeenCalled();
+  });
+
   it('logs each accepted message in shadow mode without tool effects or raw request text', async () => {
     vi.stubEnv('MOHASSAN_PLAN_COMPILER', 'shadow');
     const log = vi.spyOn(console, 'info').mockImplementation(() => {});
@@ -129,6 +195,39 @@ describe('compiled plans through command chat', () => {
     for (const step of steps) expect(result.ledger.evidence.some(evidence => evidence.stepId === step.id)).toBe(true);
     expect(result.ledger.modelCalls).toBe(0);
     expect(browserCall).not.toHaveBeenCalled();
+  });
+
+  it('records a checked browser navigation before a calculation that uses its figure', async () => {
+    browserCall.mockResolvedValueOnce({ page: observedRates(ratesUrl), changed: true });
+    const result = await ask(`Open ${ratesUrl}, read the admission price, then calculate the total for two guests.`);
+    expect(result.run.status, result.text).toBe('completed');
+    expect(result.text).toContain('32');
+    expect(browserCall).toHaveBeenCalledWith(owner, expect.any(String), { kind: 'open', text: ratesUrl }, expect.any(Object), undefined, undefined);
+    expect((result.run.state as BrainState).trail.map(entry => entry.action)).toEqual(['read', 'open', 'calculate']);
+    expect(result.ledger.plan?.steps.map(step => step.state)).toEqual(['verified', 'verified']);
+  });
+
+  it('serializes concurrent plan reads that share a browser page', async () => {
+    let navigating = false;
+    browserCall.mockImplementation(async (_owner, _conversation, action) => {
+      expect(navigating).toBe(false);
+      navigating = true;
+      await new Promise(resolve => setImmediate(resolve));
+      navigating = false;
+      return { page: observedRates(action.text!), changed: true };
+    });
+    const result = await ask(`Open ${ratesUrl} for the admission price, then open ${balconyUrl} for the admission price.`);
+    expect(result.run.status, result.text).toBe('completed');
+    expect(browserCall.mock.calls.map(([, , action]) => action.text).sort()).toEqual([ratesUrl, balconyUrl].sort());
+  });
+
+  it('records one local sequence for independently verified calculations', async () => {
+    const result = await ask('Compute 22 / 2, then calculate 7 × 9.');
+    expect(result.run.status, result.text).toBe('completed');
+    expect(result.text).toMatch(/\b11\b/);
+    expect(result.text).toMatch(/\b63\b/);
+    expect((result.run.state as BrainState).trail.map(entry => entry.action)).toEqual(['local_sequence']);
+    expect(result.ledger.plan?.steps.map(step => step.state)).toEqual(['verified', 'verified']);
   });
 
   it('passes a sourced numeric price to the local calculation', async () => {

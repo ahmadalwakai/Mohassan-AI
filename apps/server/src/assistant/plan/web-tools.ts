@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
+import { isIP } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
-  BrowserError, SafeNetwork, SearchEngine, compileQuery, excludesWikipedia, matchesSearchPhrases, publicSearchScan,
+  BrowserError, SafeNetwork, SearchEngine, compileQuery, excludesWikipedia, isPublicAddress, matchesSearchPhrases, publicSearchScan,
   publicSearchText, safeResumeUrl, type AgentPage, type SearchHit, type SearchProvider,
 } from '@mohassan/browser';
 import type { CommandChatConfig } from '../../command-chat.js';
@@ -14,14 +15,16 @@ import { extractPublicSearchQueries, mergePublicQueryTerms, reviewGeneratedPubli
 import { parseUserRequestConstraints, requestCapabilityAllowed, requestScopeActionText, reviewPublicProjection } from '../request-scope.js';
 import type { PlanAttempt, PlanToolResult } from './executor.js';
 import type { PlanStep, PlanValue, ResolvedStepInputs } from './types.js';
-import { webFigure } from './web-figures.js';
-import { planReadTarget } from './web-target.js';
+import { webFigure, webMeasureKind } from './web-figures.js';
+import { planReadMeasure, planReadTarget } from './web-target.js';
 
 export interface PlanWebToolContext {
   ownerId: string;
   request: string;
   search?: SearchProvider;
   readPage?: CommandChatConfig['readPage'];
+  openPage?: (url: string, signal: AbortSignal) => Promise<AgentPage>;
+  onWebAction?(tool: 'open' | 'read' | 'search', outcome: 'completed' | 'failed'): void;
   networkPolicy?: CommandChatConfig['networkPolicy'];
   active(): Promise<void>;
   signal: AbortSignal;
@@ -32,6 +35,7 @@ const ENTITY_OPERAND = /^[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N} .’'&-]{0,119}$/u;
 const OFFICIAL = /\bofficial\b|(?:رسمي|الرسمي)/iu;
 const LIVE_EXPLICIT = /\b(?:today|current|now|latest)\b|(?:اليوم|الآن|حاليًا|حاليا|أحدث)/iu;
 const MAX_SEARCH_RESULTS = 6;
+const LOCAL_HOST = /(?:^|\.)(?:localhost|local|internal|home|onion)$/iu;
 const ENTITY_NAME = String.raw`([\p{L}\p{M}][\p{L}\p{M}'’\-]*(?:\s+[\p{L}\p{M}][\p{L}\p{M}'’\-]*){0,4}?)`;
 const ENTITY_END = String.raw`(?=\s*(?:[.,;،؛،!؟\n]|$)|\s+(?:and|which|located|since|from|وهي|وهو|وتقع|التي|الذي)\b)`;
 const ENTITY_RELATIONS: ReadonlyArray<readonly [RegExp, readonly RegExp[]]> = [
@@ -65,6 +69,27 @@ function relatedQuotes(page: AgentPage, question: string): string[] {
       && topicCoverage(`${page.title} ${line}`, terms) >= Math.min(terms.length, 2)).slice(0, 20);
 }
 
+function measuredQuote(page: AgentPage, question: string, quotes: readonly string[]) {
+  const measure = webMeasureKind(question);
+  const terms = topicWords(question);
+  const candidates = new Set([...quotes, ...relatedQuotes(page, question)]);
+  if (measure) for (const line of page.text.split(/(?<=[.!?؟])\s+|\n/u)) {
+    const quote = line.trim();
+    if (quote.length <= 400 && webMeasureKind(quote) === measure) candidates.add(quote);
+  }
+  const figures = [...candidates].flatMap(quote => {
+    const figure = webFigure(question, quote);
+    if (!figure) return [];
+    const coverage = topicCoverage(quote, terms);
+    const sameMeasure = measure !== null && webMeasureKind(quote) === measure;
+    return coverage || sameMeasure ? [{ figure, quote, score: coverage * 2 + Number(sameMeasure) }] : [];
+  }).sort((left, right) => right.score - left.score);
+  const best = figures[0];
+  if (!best || figures.some(other => other.score === best.score
+    && (other.figure.value !== best.figure.value || other.figure.unit !== best.figure.unit))) return null;
+  return best;
+}
+
 function citation(title: string, url: string): string {
   const label = title.replace(/[\[\]<>\\]/gu, '').trim().slice(0, 160) || new URL(url).hostname;
   return `[${label}](${url})`;
@@ -83,7 +108,7 @@ function parsedSearch(request: string): Extract<NonNullable<ReturnType<typeof pa
   return steps?.length === 1 && steps[0]?.kind === 'search' ? steps[0] : undefined;
 }
 
-const lookupText = (request: string) => request.replace(/^(?:(?:please|kindly|من فضلك|لو سمحت)[،,\s]+)?(?:find\s+(?:out\s+)?(?:for\s+me\s+)?|(?:دور|فتش|إبحث|أبحث|ابحث)\s+(?:لي\s+)?(?:عن\s+)?)/iu, '').trim();
+const lookupText = (request: string) => request.replace(/^(?:(?:please|kindly|من فضلك|لو سمحت)[،,\s]+)?(?:find\s+(?:out\s+)?(?:for\s+me\s+)?|(?:دور|فتش|إبحث|أبحث|ابحث)\s+(?:لي\s+)?(?:(?:عن|على|علي)\s+)?)/iu, '').trim();
 
 function allowedOperand(value: PlanValue): string | null {
   if (value.type === 'number' && Number.isFinite(value.value)) return String(value.value);
@@ -92,7 +117,7 @@ function allowedOperand(value: PlanValue): string | null {
 }
 
 export function createPlanWebTools(context: PlanWebToolContext) {
-  const network = new SafeNetwork(context.networkPolicy);
+  const network = context.networkPolicy || context.search instanceof SearchEngine ? new SafeNetwork(context.networkPolicy) : null;
   const constraints = parseUserRequestConstraints(context.request);
   const searchSources = new Map<string, { hits: SearchHit[]; used: Set<string> }>();
   const readSources = new Map<string, string[]>();
@@ -108,20 +133,51 @@ export function createPlanWebTools(context: PlanWebToolContext) {
       const decoded = publicSearchScan(raw);
       if (!safeResumeUrl(raw) || context.scrub(raw) !== raw || publicSearchText(decoded) !== decoded) return null;
       if (extractPublicSearchQueries(url.href).length) return null;
-      return network.validate(url.href).href;
+      if (network) return network.validate(url.href).href;
+      // Injected transports own their network policy. Retain the request-level
+      // vetoes here before giving a declared public destination to a transport.
+      const host = url.hostname.replace(/^\[|\]$|\.$/gu, '');
+      if (url.protocol !== 'https:' || url.port || (isIP(host) ? !isPublicAddress(host) : !host.includes('.') || LOCAL_HOST.test(host))) return null;
+      return url.href;
     } catch { return null; }
   };
 
   async function readPage(url: string, signal: AbortSignal, live = false): Promise<AgentPage | null | 'disallowed'> {
     await context.active();
     signal.throwIfAborted();
-    const page = await context.readPage?.(url, signal, { live });
+    if (!context.readPage) return null;
+    let outcome: 'completed' | 'failed' = 'failed';
+    try {
+      const page = await context.readPage(url, signal, { live });
+      await context.active();
+      signal.throwIfAborted();
+      if (page === 'disallowed') return 'disallowed';
+      if (!page || safeUrl(page.url) !== url || page.status < 200 || page.status >= 300 || page.status === 202
+        || !readableOverHttp(page.text)) return null;
+      outcome = 'completed';
+      return observedPage({ ...page, title: context.scrub(page.title), text: context.scrub(page.text).slice(0, 40_000) });
+    } finally {
+      context.onWebAction?.('read', outcome);
+    }
+  }
+
+  async function openPage(url: string, signal: AbortSignal): Promise<boolean> {
     await context.active();
     signal.throwIfAborted();
-    if (page === 'disallowed') return 'disallowed';
-    if (!page || safeUrl(page.url) !== url || page.status < 200 || page.status >= 300 || page.status === 202
-      || !readableOverHttp(page.text)) return null;
-    return observedPage({ ...page, title: context.scrub(page.title), text: context.scrub(page.text).slice(0, 40_000) });
+    if (!context.openPage) return false;
+    let outcome: 'completed' | 'failed' = 'failed';
+    try {
+      const page = await context.openPage(url, signal);
+      await context.active();
+      signal.throwIfAborted();
+      const status = page.documentStatus;
+      if (safeUrl(page.url) !== url || status === undefined || status < 200 || status >= 300 || status === 202
+        || Object.values(page.signals).some(Boolean)) return false;
+      outcome = 'completed';
+      return true;
+    } finally {
+      context.onWebAction?.('open', outcome);
+    }
   }
 
   async function searchProvider(query: string, signal: AbortSignal): Promise<SearchHit[]> {
@@ -129,10 +185,16 @@ export function createPlanWebTools(context: PlanWebToolContext) {
     const search = async () => {
       await context.active();
       signal.throwIfAborted();
-      const hits = await port.search(query, MAX_SEARCH_RESULTS, signal, { ownerId: context.ownerId });
-      await context.active();
-      signal.throwIfAborted();
-      return hits;
+      let outcome: 'completed' | 'failed' = 'failed';
+      try {
+        const hits = await port.search(query, MAX_SEARCH_RESULTS, signal, { ownerId: context.ownerId });
+        await context.active();
+        signal.throwIfAborted();
+        outcome = 'completed';
+        return hits;
+      } finally {
+        context.onWebAction?.('search', outcome);
+      }
     };
     if (!(port instanceof SearchEngine)) return search();
     // The shared provider rejects overlapping admissions and holds a one-second cooldown.
@@ -165,7 +227,11 @@ export function createPlanWebTools(context: PlanWebToolContext) {
       }
     }
     const parsed = parsedSearch(request);
-    const raw = parsed?.query ?? (inputs.references.length ? lookupText(request) : lookupText(step.publicQuery ?? request));
+    const lookup = lookupText(request);
+    const measuredLookup = step.output === 'number' && webMeasureKind(lookup) && !originalOperand?.site;
+    const raw = measuredLookup
+      ? (parsed?.query ?? (lookup !== request ? lookup : lookupText(step.publicQuery ?? request))).replace(/^(?:the|a|an)\s+/iu, '').replace(/[.!?؟]+$/u, '')
+      : parsed?.query ?? (inputs.references.length ? lookup : lookupText(step.publicQuery ?? request));
     const host = originalOperand?.site ? URL.parse(originalOperand.site.url)?.hostname : null;
     // Scope comes only from the user's clause, never from a referenced entity or page.
     const scoped = host ? `${raw} site:${host}` : raw;
@@ -205,16 +271,15 @@ export function createPlanWebTools(context: PlanWebToolContext) {
     const answer = pageAnswer(page, question, lang);
     if (answer.missing.length) return { ok: false, reason: 'no_result' };
     const quotes = answer.parts.flatMap(part => part.quotes);
-    const typedQuotes = [...new Set([...quotes, ...relatedQuotes(page, question)])];
     if (step.output === 'number') {
-      for (const quote of typedQuotes) {
-        const figure = webFigure(question, quote);
-        if (figure) return { ok: true, value: { type: 'number', ...figure, label: page.title }, text: `${quote}\n${citation(page.title, page.url)}`,
-          evidence: { kind: 'source', label: page.title, reference: page.url, independent: true } };
-      }
-      return { ok: false, reason: 'no_result' };
+      const measured = measuredQuote(page, question, quotes);
+      if (!measured) return { ok: false, reason: 'no_result' };
+      return { ok: true, value: { type: 'number', ...measured.figure, label: page.title },
+        text: `${measured.quote}\n${citation(page.title, page.url)}`,
+        evidence: { kind: 'source', label: page.title, reference: page.url, independent: true } };
     }
     if (step.output === 'entity') {
+      const typedQuotes = [...new Set([...quotes, ...relatedQuotes(page, question)])];
       const name = entityRead(question, typedQuotes);
       if (!name) return { ok: false, reason: 'no_result' };
       return { ok: true, value: { type: 'entity', value: name, label: name }, text: `${name}\n${citation(page.title, page.url)}`,
@@ -282,7 +347,9 @@ export function createPlanWebTools(context: PlanWebToolContext) {
   }
 
   async function read(step: PlanStep, inputs: ResolvedStepInputs, attempt: PlanAttempt): Promise<PlanToolResult> {
-    if (!context.readPage) return { ok: false, reason: 'unavailable' };
+    const measurement = !inputs.references.length ? planReadMeasure(step.text) : null;
+    const navigate = measurement?.navigate && step.output === 'number';
+    if (!context.readPage || navigate && !context.openPage) return { ok: false, reason: 'unavailable' };
     if (!step.publicInput || !canRead(step.text)) return { ok: false, reason: 'restricted' };
     const literal = inputs.references.length ? null : planReadTarget(step.text);
     const admitted = inputs.references.flatMap(({ reference, value }) => {
@@ -299,9 +366,14 @@ export function createPlanWebTools(context: PlanWebToolContext) {
     previouslyRead.push(raw);
     const url = safeUrl(raw);
     if (!url) return { ok: false, reason: 'restricted' };
-    const page = await readPage(url, signalOf(attempt), LIVE_EXPLICIT.test(step.text));
+    const signal = signalOf(attempt);
+    const page = await readPage(url, signal, LIVE_EXPLICIT.test(step.text));
     if (page === 'disallowed') return { ok: false, reason: literal ? 'restricted' : 'no_result' };
+    // Use the unauthenticated reader for the value and the browser observation
+    // for the explicit navigation. A signed-in page is not a public operand.
+    if (navigate && !await openPage(url, signal)) return { ok: false, reason: 'no_result' };
     if (!page) return { ok: false, reason: 'no_result' };
+    if (step.output === 'number' && measurement) return resultFromPage(step, page, measurement.question);
     const lang = /\p{Script=Arabic}/u.test(step.text) ? 'ar' : 'en';
     const requested = pageAnswer(page, step.text, lang);
     if (requested.missing.length) return { ok: false, reason: 'no_result' };

@@ -15,7 +15,7 @@ import type { PlanAttempt, PlanToolResult, RunPlanTool } from './executor.js';
 import { createPlanDocumentTools } from './document-tools.js';
 import { runPlanComparison, runPlanComputation, valueText } from './local-tools.js';
 import type { PlanStep, ResolvedStepInputs } from './types.js';
-import { createPlanWebTools } from './web-tools.js';
+import { createPlanWebTools, type PlanWebToolContext } from './web-tools.js';
 
 type VerifiedNote = Extract<UserFactMemoryFlowState, { phase: 'verified' }>;
 type PlanCapability = Partial<Record<PlanStep['tool'], ForbiddenRequestCapability>>;
@@ -33,7 +33,7 @@ const SITE_FIELDS: Readonly<Record<string, string>> = {
   steps: 'steps|الخطوات', facts: 'facts|الحقائق', testimonials: 'testimonials|الشهادات',
 };
 
-export interface PlanToolContext {
+export interface PlanToolContext extends Pick<PlanWebToolContext, 'openPage' | 'onWebAction'> {
   ownerId: string;
   conversationId: string;
   runId: string;

@@ -1,10 +1,12 @@
-import type { SearchProvider } from '@mohassan/browser';
+import type { AgentPage, SearchProvider } from '@mohassan/browser';
 import type { Kysely } from 'kysely';
 import type { CommandChatConfig } from '../../command-chat.js';
 import type { RunLedger } from '../agent-run.js';
 import type { BrainState } from '../brain.js';
 import { analyzeCompoundRequest } from '../compound-request.js';
 import { createComputationMemoryReceipt } from '../computation-memory-receipt.js';
+import { evaluateLocalComputation } from '../local-computation.js';
+import { requestActionText } from '../request-context.js';
 import { requestScopeActionText } from '../request-scope.js';
 import { compilePlan, MAX_PLAN_STEPS } from './compiler.js';
 import { executePlan } from './executor.js';
@@ -43,6 +45,8 @@ interface ChatPlanContext {
   signal: AbortSignal;
   memoryLimit: number;
   active: () => Promise<void>;
+  navigate: (url: string) => Promise<AgentPage>;
+  keepPage: (page: AgentPage) => Promise<void>;
   scrub: (text: string) => string;
   ledger: () => RunLedger;
   checkpoint: () => Promise<void>;
@@ -57,9 +61,16 @@ export async function runCompiledChatPlan(context: ChatPlanContext): Promise<boo
   const { request, config, state, now, signal } = context;
   if (planMode() !== 'on' || state.steps || state.trail.length || state.agentRun?.plan || state.dropHeld) return false;
 
-  const plan = compilePlan(requestScopeActionText(request), { fullAccess: context.fullAccess, now,
+  const action = requestScopeActionText(request);
+  const plan = compilePlan(action, { fullAccess: context.fullAccess, now,
     capabilities: { browser: Boolean(config.readPage), search: true, memory: Boolean(config.tools?.memory) } });
   if (plan.steps.length < 2 || plan.steps.every(step => step.tool === 'unsupported')) return false;
+  // One calculation can contain punctuation and conjunctions in its operands.
+  // An unknown conversion unit can absorb a real follow-up, so require a successful conversion.
+  const calculation = evaluateLocalComputation(requestActionText(action), now);
+  const consumption = calculation?.consumption;
+  if (calculation && consumption?.complete && !calculation.compound?.pendingActions.length
+    && (consumption.kind !== 'conversion' || calculation.status === 'completed')) return false;
   if (plan.steps.length > MAX_PLAN_STEPS) {
     const message = plan.lang === 'ar' ? `قسّم طلبك إلى رسائل تضم كل منها ${MAX_PLAN_STEPS} خطوة أو أقل.`
       : `Split your request into messages with at most ${MAX_PLAN_STEPS} steps each.`;
@@ -76,10 +87,30 @@ export async function runCompiledChatPlan(context: ChatPlanContext): Promise<boo
       runId: context.runId, evaluatedAt: now.getTime() })) return false;
 
   const ledger = context.ledger();
+  const localSequence = plan.steps.every(step => step.tool === 'compute' && !step.dependsOn.length);
+  function recordTool(action: string, completed: boolean) {
+    state.trail.push({ step: state.trail.length + 1, action,
+      result: completed ? 'completed' : 'failed: operation did not complete',
+      changed: action === 'open' ? (completed ? true : null) : false });
+  }
+  let navigationTail: Promise<unknown> = Promise.resolve();
   let latestSiteStep = -1;
   const runTool = createPlanTools({ request, now, signal, ownerId: context.ownerId, conversationId: context.conversationId, runId: context.runId,
     fullAccess: context.fullAccess, originalRequestHash: state.requestOriginalHash,
     search: context.search, readPage: config.readPage, networkPolicy: config.networkPolicy, memory: config.tools?.memory,
+    openPage: (url, openSignal) => {
+      const navigation = navigationTail.then(async () => {
+        openSignal.throwIfAborted();
+        await context.active();
+        const page = await context.navigate(url);
+        openSignal.throwIfAborted();
+        await context.keepPage(page);
+        return page;
+      });
+      navigationTail = navigation.catch(() => undefined);
+      return navigation;
+    },
+    onWebAction: (tool, outcome) => recordTool(tool, outcome === 'completed'),
     documents: config.documents, sites: config.sites, active: context.active, scrub: context.scrub,
     memoryState: state, memoryLimit: context.memoryLimit, fenceMemory: context.fenceMemory,
     onSite: (siteId, stepId) => {
@@ -90,13 +121,21 @@ export async function runCompiledChatPlan(context: ChatPlanContext): Promise<boo
       state.sitePendingWant = null;
     },
   });
-  const result = await executePlan(plan, { runTool, ledger, signal, isInterruption: context.isInterruption,
+  const result = await executePlan(plan, { ledger, signal, isInterruption: context.isInterruption,
+    runTool: async (step, inputs, attempt) => {
+      const result = await runTool(step, inputs, attempt);
+      if (step.tool === 'compute' && !localSequence) recordTool('calculate', result.ok);
+      return result;
+    },
     checkpoint: async () => {
       signal.throwIfAborted();
-      state.steps = ledger.plan?.steps.reduce((count, step) => count + step.attempts, 0) ?? 0;
+      state.steps = Math.max(state.trail.length, ledger.plan?.steps.reduce((count, step) => count + step.attempts, 0) ?? 0);
       await context.checkpoint();
     },
   });
+  if (localSequence && result.steps.some(step => step.attempts > 0)) {
+    recordTool('local_sequence', result.status === 'completed');
+  }
   await context.publish(context.scrub(result.text), result.status);
   return true;
 }

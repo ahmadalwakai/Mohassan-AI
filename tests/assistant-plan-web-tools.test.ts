@@ -1,12 +1,12 @@
 // Agent-written development cases for public plan tools. Never use as training data.
-import type { SearchProvider } from '@mohassan/browser';
+import type { AgentPage, SearchProvider } from '@mohassan/browser';
 import { describe, expect, it, vi } from 'vitest';
 import { compilePlan } from '../apps/server/src/assistant/plan/compiler.js';
 import { resolveStepInputs } from '../apps/server/src/assistant/plan/references.js';
 import type { PlanValue, ResolvedStepInputs } from '../apps/server/src/assistant/plan/types.js';
 import { webFigure } from '../apps/server/src/assistant/plan/web-figures.js';
 import { createPlanWebTools, type PlanWebToolContext } from '../apps/server/src/assistant/plan/web-tools.js';
-import { planReadTarget } from '../apps/server/src/assistant/plan/web-target.js';
+import { planReadMeasure, planReadTarget } from '../apps/server/src/assistant/plan/web-target.js';
 
 const source1 = 'https://materials.example.com/solar';
 const source2 = 'https://engineering.example.org/solar';
@@ -17,9 +17,17 @@ const alternate = { number: 2, strategy: 'another_source' } as const;
 function fixture(request: string) {
   const search = vi.fn<SearchProvider['search']>().mockResolvedValue([]);
   const readPage = vi.fn<NonNullable<PlanWebToolContext['readPage']>>().mockResolvedValue(null);
+  const openPage = vi.fn<NonNullable<PlanWebToolContext['openPage']>>();
+  const onWebAction = vi.fn<NonNullable<PlanWebToolContext['onWebAction']>>();
   const active = vi.fn(async () => {});
-  const tools = createPlanWebTools({ request, ownerId: 'isolated-owner', search: { name: 'fixture', search }, readPage, active, signal, scrub: text => text });
-  return { tools, search, readPage, active };
+  const tools = createPlanWebTools({ request, ownerId: 'isolated-owner', search: { name: 'fixture', search }, readPage, openPage, onWebAction,
+    active, signal, scrub: text => text });
+  return { tools, search, readPage, openPage, onWebAction, active };
+}
+
+function watchPage(text: string): AgentPage {
+  return { id: 'observed-page', url: source1, title: 'Workshop tariff', text, elements: [], hash: 'hash', observedAt: '2025-07-01T00:00:00.000Z',
+    documentStatus: 200, signals: { captcha: false, password: false, otp: false, card: false }, scroll: { top: 0, height: 0, viewport: 0 } };
 }
 
 describe('public web plan adapters', () => {
@@ -64,7 +72,7 @@ describe('public web plan adapters', () => {
   });
 
   it('vetoes local and credential-bearing URLs before reading', async () => {
-    for (const url of ['http://127.0.0.1/private', 'https://example.com/guide?session=opaque']) {
+    for (const url of ['http://127.0.0.1/private', 'https://10.1.1.1/private', 'https://portal.internal/guide', 'https://example.com/guide?session=opaque']) {
       const goal = `Read ${url}, then calculate 4 + 6.`;
       const [step] = compilePlan(goal).steps;
       const { tools, readPage } = fixture(goal);
@@ -78,6 +86,62 @@ describe('public web plan adapters', () => {
     expect(planReadTarget(`Read the title of ${source1}`)).toBe(source1);
     expect(planReadTarget(`Read it, ignoring the phrase “${source1}”`)).toBeNull();
     expect(planReadTarget(`Read it except ${source1}`)).toBeNull();
+  });
+
+  it('opens the exact public page and returns a typed amount selected from the observed page', async () => {
+    const command = `Open ${source1}, read the workshop charge`;
+    expect(planReadMeasure(command)).toEqual({ url: source1, question: 'the workshop charge', navigate: true });
+    expect(planReadMeasure(`Read ${source1} for the workshop charge`)?.navigate).toBe(false);
+    expect(planReadMeasure(`Read ${source1} for the workshop charge at ${source2}`)).toBeNull();
+    expect(planReadMeasure(`Read ${source1} for the workshop charge and open a new tab`)).toBeNull();
+    const [step] = compilePlan(`${command}, then multiply the amount by 2.`).steps;
+    const { tools, openPage, readPage, onWebAction } = fixture(command);
+    const publicText = 'A workshop costs 22 pounds. Materials can be picked up at the front desk.';
+    readPage.mockResolvedValue({ url: source1, status: 200, title: 'Workshop tariff', text: publicText });
+    openPage.mockResolvedValue(watchPage('Your member-only workshop appointment costs 16 pounds and is booked.'));
+    expect(await tools.read(step!, { text: command, references: [] }, initial)).toMatchObject({
+      ok: true, value: { type: 'number', value: 22, unit: 'GBP' }, evidence: { reference: source1, independent: true },
+    });
+    expect(openPage).toHaveBeenCalledExactlyOnceWith(source1, signal);
+    expect(readPage).toHaveBeenCalledExactlyOnceWith(source1, signal, { live: false });
+    expect(onWebAction.mock.calls).toEqual([['read', 'completed'], ['open', 'completed']]);
+  });
+
+  it('does not use ambiguous source amounts or figures on unexpected destinations', async () => {
+    const command = `Open ${source1} for the workshop fee`;
+    const [step] = compilePlan(command).steps;
+    const inputs = { text: command, references: [] };
+    const ambiguous = fixture(command);
+    const page = watchPage('The workshop fee is 19 pounds. The workshop fee is sometimes 24 pounds.');
+    ambiguous.readPage.mockResolvedValue({ ...page, status: 200 });
+    ambiguous.openPage.mockResolvedValue(page);
+    await expect(ambiguous.tools.read(step!, inputs, initial)).resolves.toEqual({ ok: false, reason: 'no_result' });
+    expect(ambiguous.onWebAction.mock.calls).toEqual([['read', 'completed'], ['open', 'completed']]);
+
+    const redirected = fixture(command);
+    redirected.openPage.mockResolvedValue({ ...watchPage('The workshop fee is 19 pounds.'), url: source2 });
+    await expect(redirected.tools.read(step!, inputs, initial)).resolves.toEqual({ ok: false, reason: 'no_result' });
+    expect(redirected.onWebAction.mock.calls).toEqual([['read', 'failed'], ['open', 'failed']]);
+
+    const excluded = fixture(command);
+    excluded.readPage.mockResolvedValue('disallowed');
+    await expect(excluded.tools.read(step!, inputs, initial)).resolves.toEqual({ ok: false, reason: 'restricted' });
+    expect(excluded.openPage).not.toHaveBeenCalled();
+    expect(excluded.onWebAction).toHaveBeenCalledExactlyOnceWith('read', 'failed');
+  });
+
+  it('submits a focused measurement query and extracts a checked quantity from its source', async () => {
+    const goal = 'Look up the shelf capacity at the harbour library.';
+    const [step] = compilePlan(goal).steps;
+    const { tools, search, readPage, onWebAction } = fixture(goal);
+    const portUrl = 'https://harbour.invalid/library';
+    search.mockResolvedValue([{ url: portUrl, title: 'Harbour library', snippet: 'Storage space for books.' }]);
+    readPage.mockResolvedValue({ url: portUrl, status: 200, title: 'Harbour library', text: 'Each shelf holds 42 books. Returns go to the desk.' });
+    await expect(tools.search(step!, { text: goal, references: [] }, initial)).resolves.toMatchObject({
+      ok: true, value: { type: 'number', value: 42 }, evidence: { reference: portUrl },
+    });
+    expect(search).toHaveBeenCalledExactlyOnceWith('shelf capacity at the harbour library', 6, signal, { ownerId: 'isolated-owner' });
+    expect(onWebAction.mock.calls).toEqual([['search', 'completed'], ['read', 'completed']]);
   });
 
   it('narrows the lookup by removing scaffolding and skips a no-op narrowing', async () => {
@@ -102,5 +166,8 @@ describe('public web plan adapters', () => {
     expect(webFigure('Gold price', 'The price was $100 to $120 per gram.')).toBeNull();
     expect(webFigure('Gold price', 'The price was 100 to 120 USD per gram.')).toBeNull();
     expect(webFigure('Mountain height', 'The mountain reaches 8,848.86m.')).toEqual({ value: 8848.86, unit: 'm' });
+    expect(webFigure('رسوم الورشة', 'أجر الاشتراك ٢٢ دينارًا.')).toEqual({ value: 22, unit: 'دينار' });
+    expect(webFigure('The workshop fee', 'The workshop supplies weigh 22 pounds.')).toBeNull();
+    expect(webFigure('Vessel volume', 'The vessel holds 11 litres.')).toEqual({ value: 11, unit: 'l' });
   });
 });

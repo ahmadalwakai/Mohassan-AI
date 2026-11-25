@@ -45,6 +45,32 @@ describe('plan compiler source and reference contracts', () => {
     });
   });
 
+  it('attaches a measurement to its explicitly opened page before binding a quantity calculation', () => {
+    const [source, computation] = compilePlan(
+      'Open https://catalog.example.test/passes, read the admission price, then calculate the total for two passes.',
+    ).steps;
+    expect(source).toMatchObject({ tool: 'read', publicInput: true, output: 'number' });
+    expect(computation).toMatchObject({ tool: 'compute', dependsOn: [source?.id] });
+    expect(computation?.inputs.references).toEqual([{ stepId: source?.id, kind: 'number' }]);
+  });
+
+  it('keeps independent arithmetic separate from an earlier measured lookup', () => {
+    const [source, computation] = compilePlan(
+      'Search for the price of a train ticket, then calculate 9 + 4.',
+    ).steps;
+    expect(source).toMatchObject({ tool: 'search', output: 'number' });
+    expect(computation).toMatchObject({ tool: 'compute', dependsOn: [] });
+    expect(computation?.inputs.references).toEqual([]);
+  });
+
+  it('does not turn a separate search into a selector on an open page', () => {
+    const plan = compilePlan(
+      'Open https://catalog.example.test/passes, then search for concert ticket prices and calculate the total for four tickets.',
+    );
+    expect(plan.steps.map(step => step.tool)).toEqual(['read', 'search', 'compute']);
+    expect(plan.steps[2]?.dependsOn).toEqual([plan.steps[1]?.id]);
+  });
+
   it('retains an entity operand in the input of a later lookup', () => {
     const [first, second] = compilePlan('Find the capital of France, then look up what it is known for.').steps;
     expect(first?.output).toBe('entity');

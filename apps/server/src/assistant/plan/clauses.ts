@@ -1,4 +1,5 @@
 import { analyzeCompoundRequest, MAX_COMPOUND_REQUEST } from '../compound-request.js';
+import { documentTask } from '../documents.js';
 import { matchText } from '../mind/normalize.js';
 import { splitReplyDirective } from '../reply-directive.js';
 import { maskRequestLiteralData } from '../request-constraints.js';
@@ -9,6 +10,7 @@ const ARITHMETIC = /^\(?-?\d+(?:[.٫]\d+)?\s*(?:[+*/÷×^-]|plus\b|minus\b|times
 const PUNCTUATION = /^[\p{Z}\s،,:؛;]+|[\p{Z}\s،,؛;]+$/gu;
 const INTRO = /^(?:please|kindly|please do (?:these|the following)(?: (?:steps|tasks))?|do the following|here are the steps|الرجاء|من فضلك|لو سمحت|قم بالتالي|نفذ التالي|المطلوب|الخطوات)[\s:：.]*$/u;
 const BODY = /(?:\b(?:body|content|text)\s*[:：]|\b(?:saying|containing|with (?:this|the following|the) (?:text|content|body))\s*[:：]?|(?:بالنص|نصها|محتواها|المحتوي|النص)\s*[:：])\s*/giu;
+const BODY_REFERENCE = /^(?:it|that|this|(?:the|its) (?:content|text|result)|(?:النتيجه|الناتج|المحتوي|النص))(?:[.!?؟])?$/u;
 const CREATION = /^(?:write|draft|compose|create|make|generate|prepare|احفظ|اكتب|صغ|انشئ|اصنع|اعمل|سوي|جهز)(?!\p{L})/u;
 const CONTENT_OBJECT = /\b(?:pdf|letter|email|message|note)\b|(?:ملف|رساله|بريد|خطاب)/u;
 const NARRATIVE = /^(?:write|draft|compose|tell|rewrite|اكتب|الف|احك|اعد صياغه)\s+[\s\S]{0,140}?(?:story|fiction|scene|dialogue|play|poem|قصه|حكايه|حوار|مشهد|مسرحيه|قصيده)\s+(?:where|in which|whose|about|عن|حيث|فيها)(?!\p{L})/u;
@@ -20,7 +22,8 @@ export function actionHead(text: string): string {
 
 function looksLikeAction(text: string): boolean {
   const head = actionHead(text);
-  return ACTION.test(head) || ARITHMETIC.test(head);
+  return ACTION.test(head) || ARITHMETIC.test(head)
+    || /^(?:work out|اخصم)(?![\p{L}\p{N}])/u.test(head);
 }
 
 /** Keeps normalized matching offsets tied to the original clause. */
@@ -72,7 +75,12 @@ function beginsLiteralBody(text: string): boolean {
   const matching = actionHead(text);
   const visible = clauseMatchingText(matching);
   if (NARRATIVE.test(visible) || REPORTED_CONTENT.test(visible)) return true;
-  if (!CREATION.test(matching)) return false;
+  const document = documentTask(text);
+  const supplied = document?.kind === 'create' ? document.suppliedText?.trim() : undefined;
+  // Reuse the PDF parser's literal syntax, including localized markers and
+  // multiline bodies. A closed quote or reference still allows a later step.
+  if (supplied && text.trimEnd().endsWith(supplied) && clauseMatchingText(supplied).trim() && !BODY_REFERENCE.test(actionHead(supplied))) return true;
+  if (!CREATION.test(matching) && document?.kind !== 'create') return false;
   const colon = /[:：]/u.exec(visible);
   if (colon && CONTENT_OBJECT.test(visible.slice(0, colon.index))
     && !/(?:\b(?:to|from|title|subject)|(?:الى|من|العنوان|عنوان|الموضوع))\s*$/u.test(visible.slice(0, colon.index))
@@ -81,8 +89,7 @@ function beginsLiteralBody(text: string): boolean {
   // boundary does not turn words such as "then publish" into a new instruction.
   return [...visible.matchAll(BODY)].some(marker => {
     const after = matching.slice(marker.index + marker[0].trimEnd().length).trimStart();
-    return !/^["'«“‘`]/u.test(after)
-      && !/^(?:it|that|this|(?:the|its) (?:content|text|result)|(?:النتيجه|الناتج|المحتوي|النص))(?:[.!?؟])?$/u.test(after);
+    return !/^["'«“‘`]/u.test(after) && !BODY_REFERENCE.test(after);
   });
 }
 
@@ -113,6 +120,10 @@ export function splitPlanClauses(request: string): string[] {
         && !masked.slice(point.end, format.start).trim()) continue;
       const tail = masked.slice(point.end);
       if (!current || !looksLikeAction(tail) || beginsLiteralBody(current)) continue;
+      if (point.kind === 'separator' && original[point.end - 1] === '\n') {
+        const document = documentTask(current);
+        if (document?.kind === 'create' && !document.suppliedText) continue;
+      }
       if (!looksLikeAction(current) && !parts.length) continue;
       parts.push(current);
     }
