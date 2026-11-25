@@ -1,0 +1,2 @@
+{"id":"gen-ar","text":"٣","finished":true,"model":"Fixture Model Identity","checkpoint":"Fixture Checkpoint Identity"}
+{"id":"gen-en","text":"8","finished":true,"stop_reason":"eos","output_tokens":2}

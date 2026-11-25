@@ -11,6 +11,7 @@ import { Runtime } from '@mohassan/runtime';
 import { CreateTaskSchema, SetupSchema, WorkspaceSnapshotSchema, SkillBenchmarkSuiteSchema, type Integration } from '@mohassan/contracts';
 import { createAuth, createOwner, migrateAuth, recoverLocalSetupClaim } from './auth.js';
 import { MEMBER_QUOTA_ROUTES, MEMBER_ROUTES, PUBLIC_ROUTES, memberRunsToday, migrateMembers, registerMemberRoutes, roleOf, routeKey, type WorkspaceRole } from './members.js';
+import { handleMemberDataRequest, registerMemberDataRights } from './member-data-bootstrap.js';
 import { lockOwnerToolAccess } from './owner-tool-authorization.js';
 import { createRequestRateLimitKey } from './request-rate-limit.js';
 import { createAIControl } from './ai.js';
@@ -40,10 +41,14 @@ import { createSitesControl, registerSiteRoutes } from './sites.js';
 import { createVercelPublisher, noPublisher } from './sites-publish.js';
 import { createStudioLiveControl } from './studio-live.js';
 import { createBrowserTaskControl } from './browser-task.js';
-import { createCommandChatControl, registerCommandChatRoutes } from './command-chat.js';
+import { commandChatMigration, createCommandChatControl, registerCommandChatRoutes } from './command-chat.js';
+import { migrateRemindersInTransaction } from './reminders/migration.js';
+import { registerReminderRuntime } from './reminders/runtime.js';
+import { registerConversationShareRoutes } from './conversation-share.js';
 import { createImageReader } from './image-reader.js';
 import { createInferenceControl, registerInferenceRoutes, type InferenceConfig } from './inference.js';
 import { createExecutorControl, executorConfigFromEnv, registerExecutorRoutes, type ExecutorConfig } from './executor.js';
+import { serverModelWorkerHealth } from './model-worker.js';
 import { createAdsLab, createAdsModelWorker, registerAdsLabRoutes, type AdsLabConfig } from './ads-lab.js';
 import { createAdsModelChat } from './assistant/ads-model-chat.js';
 import type { Mind, MindDeps } from './assistant/mind/contract.js';
@@ -56,6 +61,7 @@ import { withoutFigures } from './assistant/readable-page.js';
 import { createChromeExtensionControl, registerChromeExtensionRoutes } from './chrome-extension.js';
 import { DesktopEngine } from '@mohassan/desktop';
 import { registerDesktopRoutes } from './desktop.js';
+import { registerTrainingMonitorRoutes } from './training-monitor/route.js';
 import { createGoogleAdsControl, googleAdsMigration, GoogleAdsError, type GoogleAdsConfig } from '@mohassan/google-ads';
 import { landingPageReader, registerGoogleAdsRoutes } from './google-ads.js';
 import { createSkillRuntime, skillGatewayTools } from './skill-runtime.js';
@@ -75,12 +81,16 @@ import { recordSkillGap, createSkillBenchmarkControl, createSkillForgeControl, c
 import { MAX_GITHUB_SKILLS, MAX_IMPORTED_VERSIONS_PER_OWNER } from '../../../packages/skills/src/import-store.js';
 import { buildSkillReaderIndex, createSkillReader, skillInstructionText } from './assistant/skill-reader.js';
 import { createSkillRemoteScheduler, registerSkillRemoteRoutes, type SkillRemoteSettings } from './skill-remote.js';
+import { registerBackupStatusRoute } from './backup-status.js';
+import { registerProductionMetrics } from './ops/metrics/index.js';
+import { registerNotificationRoutes } from './notifications-routes.js';
 
 /** Fallback window for the reader when no catalogue index is given (tests). The chat passes the catalogue index, which has no window. */
 const SKILL_READER_DISCOVERY = MAX_GITHUB_SKILLS + MAX_IMPORTED_VERSIONS_PER_OWNER + 50;
 
 export interface AppConfig {
   dataDir?: string; databaseUrl?: string; authSecret: string; internalSecret: string;
+  backupStatusDirectory?: string;
   setupToken: string; webOrigin: string; production: boolean; runWorker: boolean;
   groqApiKey?:string;groqModel?:string;groqReasoningModel?:string;aiFetch?:typeof fetch;
   codingDataDir?:string;codingAllowedRoots?:string[];sandboxRunner?:SandboxRunner;
@@ -115,6 +125,7 @@ export interface AppConfig {
   sites?:{vercelToken?:string;vercelTeamId?:string;publishTarget?:'vercel'|'none';fetch?:typeof fetch};
   /** The owner's own Windows session (desktop app): off on the cloud deployment and in tests unless enabled. */
   desktop?:{enabled:boolean;dataDir?:string;projectsRoot?:string;roots?:string[];screenshotsDir?:string};
+  trainingMonitorRoot?: string;
 }
 export function secretEqual(a: string, b: string) {
   const left = Buffer.from(a), right = Buffer.from(b);
@@ -144,7 +155,7 @@ export async function createApplication(config: AppConfig) {
   await windowsMigration(database.db);
   await googleAdsMigration(database.db);
   const auth = createAuth(database.db, {secret: config.authSecret, webOrigin: config.webOrigin, production: config.production});
-  const coding=await createCodingControl(database.db,{dataDir:config.codingDataDir,allowedRoots:config.codingAllowedRoots,apiKey:config.groqApiKey,model:config.groqReasoningModel,fetch:config.aiFetch,sandbox:config.sandboxRunner});
+  const coding=await createCodingControl(database.db,{dataDir:config.codingDataDir,allowedRoots:config.codingAllowedRoots,sandbox:config.sandboxRunner});
   let studio:Awaited<ReturnType<typeof createStudioControl>>;
   const studioLive=await createStudioLiveControl(database.db,{gatewayUrl:config.studioGatewayUrl,gatewaySecret:config.studioGatewaySecret,webOrigin:config.webOrigin,production:config.production,previewPort:config.studioPreviewPort,getSession:(ownerId,id)=>studio.detail(ownerId,id)});
   studio=await createStudioControl(database.db,{allowedRoots:config.codingAllowedRoots??[],sandbox:coding.sandbox,buildNext:studioLive.available?((snapshot,signal)=>studioLive.build(snapshot,signal)):undefined});
@@ -172,6 +183,7 @@ export async function createApplication(config: AppConfig) {
   type SessionUser = {id: string; name: string; email: string};
   const sessions = new WeakMap<object, Promise<SessionUser | null>>();
   const roles = new WeakMap<object, Promise<WorkspaceRole | null>>();
+  const metrics = await registerProductionMetrics(app, config.production, request => roles.get(request), database.db);
   const sessionUser = (request: {headers: Record<string, unknown>}) => {
     let found = sessions.get(request);
     if (!found) {
@@ -227,6 +239,7 @@ export async function createApplication(config: AppConfig) {
     if (!user) return reply.code(401).send({error: {code: 'UNAUTHORIZED', message: 'سجل الدخول للمتابعة.'}});
     const role = await roleFor(request, user.id);
     if (role === 'owner') return;
+    if (await handleMemberDataRequest(database.db, reply, key, user.id, role)) return;
     if (role !== 'member' || !MEMBER_ROUTES.has(key)) return reply.code(403).send({error: {code: 'MEMBER_FORBIDDEN', message: 'هذه الخدمة غير متاحة لحسابك.'}});
     if (MEMBER_QUOTA_ROUTES.has(key) && await memberRunsToday(database.db, user.id) >= memberDailyRuns) {
       return reply.code(429).send({error: {code: 'MEMBER_DAILY_LIMIT', message: `وصلت إلى حد ${memberDailyRuns} طلبًا خلال 24 ساعة. حاول لاحقًا.`}});
@@ -243,7 +256,8 @@ export async function createApplication(config: AppConfig) {
     const code = typeof error.statusCode === 'number' && error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500;
     return reply.code(code).send({error: {code: typeof error.code === 'string' && code < 500 ? error.code : 'INTERNAL_ERROR', message: code < 500 ? error.message : 'تعذر إكمال الطلب. أعد المحاولة.'}});
   });
-  app.get('/health', async () => ({status: 'ok'}));
+  metrics.registerRoutes();
+  app.get('/health', async () => ({status: 'ok', ...serverModelWorkerHealth(app)}));
   app.get('/api/setup', async () => {
     const user = await database.db.selectFrom('user').select('id').limit(1).executeTakeFirst();
     return {needsSetup: !user, setupAvailable: !config.production};
@@ -332,13 +346,15 @@ export async function createApplication(config: AppConfig) {
   // The desktop engine acts on this computer's own session; it never exists on the cloud server.
   const desktop=config.desktop?.enabled&&!config.production?new DesktopEngine({dataDir:config.desktop.dataDir??resolve('.data/desktop'),...(config.desktop.projectsRoot?{projectsRoot:config.desktop.projectsRoot}:{}),...(config.desktop.roots?.length?{roots:config.desktop.roots}:{}),...(config.desktop.screenshotsDir?{screenshotsDir:config.desktop.screenshotsDir}:{})}):null;
   await registerDesktopRoutes(app,{owner,engine:desktop});
+  const trainingMonitor = registerTrainingMonitorRoutes(app, config.trainingMonitorRoot);
   if(desktop)app.addHook('onClose',async()=>{await desktop.dispose();});
   const googleAds=createGoogleAdsControl(database.db,{...config.googleAds,webOrigin:config.webOrigin,fetchPage:config.googleAds?.fetchPage??landingPageReader(config.browser)});
   await registerGoogleAdsRoutes(app,{control:googleAds,owner});
   // Generated websites (no model): composed from a brief, previewed by token, exported as ZIP, published to Vercel when a token is set.
   const sites=await createSitesControl(database.db,{tokenSecret:config.internalSecret,publisher:config.sites?.publishTarget==='vercel'?createVercelPublisher({token:config.sites.vercelToken,teamId:config.sites.vercelTeamId,fetch:config.sites.fetch}):noPublisher});
   await registerSiteRoutes(app,{control:sites,owner,role});
-  await registerMemberRoutes(app,{db:database.db,auth,webOrigin:config.webOrigin,owner,role,dailyRuns:memberDailyRuns,adsAvailable:()=>googleAds.configured,imagesAvailable:()=>false,sitesAvailable:()=>true});
+  await commandChatMigration(database.db, migrateRemindersInTransaction);
+  const agentBrowser = await registerMemberDataRights(app, { db: database.db, auth, owner, role, config, adsAvailable: () => googleAds.configured, registerMemberRoutes, AgentBrowser, browserProfileDir: config.browserProfileDir ?? join(tmpdir(), `mohassan-browser-${randomUUID()}`) });
   const assistantTools=createAssistantTools({memory,coding,studio,studioChange:studioAi.available,runtime,windows,googleAds});
   const inference=await createInferenceControl(database.db,{...config.inference,groq:{apiKey:config.groqApiKey,fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b']},fetch:config.aiFetch});
   await registerInferenceRoutes(app,{control:inference,owner});
@@ -357,7 +373,6 @@ export async function createApplication(config: AppConfig) {
   if(adsChatWorker)app.addHook('onClose',async()=>{adsChatWorker.stop();});
   const adsWorker=adsChatWorker??config.adsModelWorker;
   const adsModel=adsWorker?createAdsModelChat({worker:adsWorker,fetchPage:config.googleAds?.fetchPage??landingPageReader(config.browser)}):undefined;
-  const agentBrowser=new AgentBrowser({profileDir:config.browserProfileDir??join(tmpdir(),`mohassan-browser-${randomUUID()}`),testOrigins:config.browser?.testOrigins,channel:config.browserChannel});
   const chromeExtension=await createChromeExtensionControl(database.db);
   registerChromeExtensionRoutes(app,{control:chromeExtension,owner});
   const adsSleep=config.googleAds?.sleep;
@@ -473,12 +488,16 @@ export async function createApplication(config: AppConfig) {
       return runtime.createTask(ownerId,{title:'تشغيل مهارة من المحادثة',goal:context.goal.slice(0,4000),capabilityId:'skill.run',autonomy:'assisted',skillInput:input},context.idempotencyKey,context.runId);
     }}:{}),
   });
+  await registerReminderRuntime(app, { db: database.db, owner });
   await registerCommandChatRoutes(app,{control:chat,owner:async request=>{const user=await owner(request);windows.noteSession(user.id,request);return user;}});
+  registerNotificationRoutes(app, { db: database.db, owner, isActive: async id => Boolean(await roleOf(database.db, id)), recoverChatRuns: chat.recoverExpired });
+  registerConversationShareRoutes(app,{db:database.db,owner,role,webOrigin:config.webOrigin,internalSecret:config.internalSecret,fontsDir:config.documentsFontsDir});
   await registerBrowserFileRoutes(app,{db:database.db,browser:agentBrowser,owner});
   await registerDocumentRoutes(app,{control:documents,owner,link:documentLink});
   await registerStudioAiRoutes(app,{control:studioAi,owner});
   await studio.reviews.register(app,owner);
   await studioLive.register(app,owner);
+  registerBackupStatusRoute(app, owner, config.backupStatusDirectory);
   app.get('/api/workspace', async (request) => {
     const user = await owner(request);
     const snapshot = await runtime.snapshot(user.id);
@@ -529,5 +548,5 @@ export async function createApplication(config: AppConfig) {
   app.addHook('onClose', async () => {clearInterval(benchmarkMaintenance);try{await skillRemoteScheduler?.stop();await skills.remote.shutdown();await benchmarkMaintenanceRun;await Promise.all([skillBenchmarks.shutdown(),skillForge.shutdown()]);}finally{try{await chat.shutdown();}finally{try{await runtime.stop();}finally{try{await browser.shutdown();}finally{try{await studioLive.close();}finally{await database.close();}}}}}});
   if (config.runWorker) runtime.start();
   await app.ready();
-  return {app, routes, runtime, database, auth,ai,coding,studio,studioAi,studioLive,browser,browserTask,memory,skills,chat,skillExecution,skillBenchmarks,skillForge,googleAds,inference,chromeExtension};
+  return {app, routes, runtime, database, auth,ai,coding,studio,studioAi,studioLive,browser,browserTask,memory,skills,chat,skillExecution,skillBenchmarks,skillForge,googleAds,inference,chromeExtension,trainingMonitor};
 }

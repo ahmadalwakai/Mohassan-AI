@@ -22,7 +22,7 @@ await migrate(database.db);
 await memoryMigration(database.db);
 await skillsMigration(database.db);
 const memory = createMemoryControl(database.db);
-const coding = await createCodingControl(database.db, {dataDir:config.codingDataDir,allowedRoots:config.codingAllowedRoots,apiKey:config.groqApiKey,model:config.groqReasoningModel,fetch:config.aiFetch,sandbox:config.sandboxRunner});
+const coding = await createCodingControl(database.db, {dataDir:config.codingDataDir,allowedRoots:config.codingAllowedRoots,sandbox:config.sandboxRunner});
 // Construction migrates/configures the adapter only. The API owns registration
 // of the separate preview listener; a standalone worker never binds that port.
 const live = await createStudioLiveControl(database.db, {gatewayUrl:config.studioGatewayUrl,gatewaySecret:config.studioGatewaySecret,webOrigin:config.webOrigin,production:config.production});

@@ -9,7 +9,10 @@ export class CodingError extends Error {
   constructor(public readonly code: string, message: string) { super(message); this.name = "CodingError"; }
 }
 
-export const limits = { files: 40, fileBytes: 64_000, totalBytes: 128_000, editsBytes: 64_000, diffBytes: 131_072 } as const;
+export const limits = {
+  files: 40, fileBytes: 64_000, totalBytes: 128_000, editsBytes: 64_000, diffBytes: 131_072,
+  contextFiles: 24,
+} as const;
 export const sha256 = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 const normalized = (path: string) => process.platform === "win32" ? resolve(path).toLowerCase() : resolve(path);
 
@@ -36,10 +39,20 @@ export function sensitivePath(path: string): boolean {
 
 export function editablePath(path: string): boolean {
   safeRelative(path);
-  return !sensitivePath(path) && /\.(?:[cm]?js|ts)$/i.test(path)
+  return !sensitivePath(path) && repairSourcePath(path)
     && !/(?:^|\/)(?:tests?|__tests__)(?:\/|$)/i.test(path)
     && !/\.(?:test|spec)\./i.test(path)
-    && !/(?:^|\/)(?:[^/]*\.config\.[^/]+|config\.[^/]+)$/i.test(path);
+    && !projectSettingsPath(path);
+}
+
+export function repairSourcePath(path: string): boolean {
+  return /\.(?:tsx?|[cm]?js|json)$/i.test(path);
+}
+
+export function projectSettingsPath(path: string): boolean {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  return /^(?:package(?:-lock)?|npm-shrinkwrap|[tj]sconfig(?:\.[^.]+)*)\.json$/i.test(name)
+    || /^(?:config\.|\.[a-z][a-z\d-]*rc(?:\.|$))|\.config\./i.test(name);
 }
 
 export function credentialLike(content: string): boolean {

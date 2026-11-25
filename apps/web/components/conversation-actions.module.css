@@ -1,0 +1,80 @@
+.actions, .row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.actions { flex: none; gap: 4px; }
+
+.trigger, .button, .primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--raised);
+  color: var(--ink);
+  font-size: .86rem;
+  white-space: nowrap;
+}
+
+.trigger { background: transparent; border-color: transparent; }
+.trigger:hover, .button:hover:not(:disabled) { background: var(--hover); }
+.primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+.dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(33rem, calc(100vw - 24px));
+  height: fit-content;
+  max-height: calc(100dvh - 24px);
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--raised);
+  color: var(--ink);
+  box-shadow: var(--shadow-lg);
+}
+
+.dialog::backdrop { background: rgb(20 18 14 / 42%); }
+.dialogBody, .section { display: grid; justify-items: start; gap: 8px; }
+.dialogBody { padding: 18px; gap: 14px; }
+.dialog h2 { font-size: 1.1rem; }
+.dialog h3 { font-size: .92rem; }
+.dialog p, .dialog li, .dialog label { line-height: 1.7; }
+.section { width: 100%; min-width: 0; }
+.section > .row { flex-wrap: wrap; }
+
+.hint { color: var(--soft); }
+.error { color: var(--alert); overflow-wrap: anywhere; }
+.findings, .shares { margin: 0; width: 100%; overflow-wrap: anywhere; }
+.findings { padding-inline-start: 1.5rem; max-height: min(12rem, 30dvh); overflow: auto; }
+.findings bdi, .shares small { display: block; color: var(--soft); }
+.shares { list-style: none; padding: 0; }
+.shares li {
+  border-block-start: 1px solid var(--line);
+  padding-block: 8px;
+  justify-content: space-between;
+}
+
+.section input, .section select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: var(--raised);
+  color: var(--ink);
+}
+
+.section input { width: min(21rem, 55vw); }
+.settings { padding: 0 21px 20px; display: grid; gap: 8px; }
+.settings label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+@media (max-width: 400px) {
+  .trigger { padding-inline: 5px; gap: 3px; }
+}

@@ -5,28 +5,39 @@ import { join, resolve } from "node:path";
 import { z } from "zod";
 import { CodingEditsSchema, CodingResultSchema, SandboxTestResultSchema, type CodingEdits, type CodingResult, type Project, type SandboxTestResult, type SkillSandboxReadiness } from "@mohassan/contracts";
 import { git } from "./git.ts";
-import { inspectProject, type ProjectFile } from "./project.ts";
-import { CodingError, assertNoLinks, boundedText, containsPath, credentialLike, editablePath, limits, safeRelative, sha256, snapshotHash, sourcePaths, type SnapshotFile } from "./security.ts";
+import { inspectProject, type ProjectFile, type ProjectInspection } from "./project.ts";
+import type { CodingContext, CodingModelReceipt, EditGenerator } from "./edit-generator.ts";
+import { sandboxDiagnosticPaths, selectContextFiles } from "./selection.ts";
+import { inspectTypeScript, repairTypeScript } from "./typescript-repair.ts";
+import { CodingError, assertNoLinks, boundedText, containsPath, credentialLike, limits, safeRelative, sha256, snapshotHash, sourcePaths, type SnapshotFile } from "./security.ts";
 
 export interface SandboxRunner {
   available(): Promise<{ available: boolean; provider: string | null; message: string }>;
-  run(request: { files: SnapshotFile[]; testFiles: string[]; syntaxFiles?: string[]; signal?: AbortSignal; timeoutMs?: number }): Promise<SandboxTestResult>;
+  run(request: {
+    files: SnapshotFile[];
+    testFiles: string[];
+    syntaxFiles?: string[];
+    jsonFiles?: string[];
+    typecheck?: { project?: string };
+    signal?: AbortSignal;
+    timeoutMs?: number;
+  }): Promise<SandboxTestResult>;
+  lintFix?(request: {
+    files: SnapshotFile[];
+    configPath: string;
+    fixFiles: string[];
+    formatting: boolean;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+  }): Promise<SandboxTestResult & { fixes: SnapshotFile[] }>;
   /** Optional diagnostic snapshot; absence never implies executable readiness. */
   executableReadiness?(): Promise<SkillSandboxReadiness>;
-}
-export interface CodingContext {
-  taskId: string;
-  goal: string;
-  baseCommit: string;
-  files: { path: string; content: string; hash: string; editable: boolean }[];
-  signal: AbortSignal;
-  onModelReceipt?: (receipt: { model: string; usage: { inputTokens: number; outputTokens: number } }) => Promise<void>;
 }
 export interface CodingEngineOptions {
   dataDir: string;
   allowedRoots?: readonly string[];
   sandbox: SandboxRunner;
-  generateEdits(context: CodingContext): Promise<CodingEdits>;
+  generateEdits: EditGenerator;
 }
 export interface CodingRequest {
   taskId: string;
@@ -35,7 +46,7 @@ export interface CodingRequest {
   project: Project;
   signal: AbortSignal;
   onProgress?: (stage: string, message: string) => Promise<void>;
-  onModelReceipt?: (receipt: { model: string; usage: { inputTokens: number; outputTokens: number } }) => Promise<void>;
+  onModelReceipt?: (receipt: CodingModelReceipt) => Promise<void>;
 }
 
 interface RunManifest {
@@ -106,6 +117,47 @@ function validReceipt(raw: unknown, files: SnapshotFile[], provider: string | nu
   return parsed.data;
 }
 
+function testRequest(files: SnapshotFile[], project: ProjectInspection, allowed: ReadonlySet<string>, signal: AbortSignal) {
+  return {
+    files: files.map(({ path, content }) => ({ path, content })),
+    testFiles: project.testFiles,
+    syntaxFiles: files.filter(({ path }) => /\.(?:[cm]?js|tsx?)$/i.test(path) && !/\.d\.ts$/i.test(path)).map(({ path }) => path),
+    jsonFiles: [...allowed].filter((path) => /\.json$/i.test(path)),
+    typecheck: project.typecheck,
+    signal,
+    timeoutMs: 20_000,
+  };
+}
+
+function repairTools(sandbox: SandboxRunner, provider: string | null, project: ProjectInspection,
+  files: CodingContext["files"], signal: AbortSignal): NonNullable<CodingContext["tools"]> {
+  const tools: NonNullable<CodingContext["tools"]> = {
+    repairTypeScript: () => repairTypeScript(files, signal, project.typecheck?.project),
+  };
+  const configPath = project.eslintConfig;
+  const lintFix = sandbox.lintFix?.bind(sandbox);
+  if (!lintFix || !configPath) return tools;
+  tools.fixESLint = async (fixFiles, proposed, formatting) => {
+    const snapshot = files.map(({ path, content }) => ({ path, content: proposed.get(path) ?? content }));
+    const result = await lintFix({ files: snapshot, configPath, fixFiles, formatting, signal, timeoutMs: 20_000 })
+      .catch((error: unknown) => {
+        if (error instanceof Error && "code" in error && error.code === "ESLINT_CONFIG_UNSUPPORTED") return null;
+        throw error;
+      });
+    if (!result) return [];
+    const receipt = validReceipt(result, snapshot, provider);
+    if (receipt.timedOut || (receipt.exitCode !== 0 && receipt.exitCode !== 1)) return [];
+    const selected = new Set(fixFiles);
+    const fixes = z.array(z.object({ path: z.string(), content: z.string() })).max(5).safeParse(result.fixes);
+    if (!fixes.success || new Set(fixes.data.map(({ path }) => path)).size !== fixes.data.length
+      || fixes.data.some(({ path, content }) => !selected.has(path) || Buffer.byteLength(content) > limits.fileBytes)) {
+      throw new CodingError("UNVERIFIED_SANDBOX", "تجاوزت نتيجة ESLint الملفات أو الحدود المرسلة إلى بيئة العزل.");
+    }
+    return fixes.data;
+  };
+  return tools;
+}
+
 async function worktreeFiles(path: string): Promise<SnapshotFile[]> {
   const paths = await sourcePaths(path);
   let size = 0;
@@ -167,7 +219,7 @@ export class CodingEngine {
     if (initial.baseCommit !== project.baseCommit) throw new CodingError("PROJECT_HEAD_CHANGED", "تغير HEAD منذ تسجيل المشروع؛ يلزم تحديث التسجيل قبل العمل.");
     const allowed = new Set(project.allowedPaths.map(safeRelative));
     if (!allowed.size || allowed.size > 5 || allowed.size !== project.allowedPaths.length
-      || [...allowed].some((path) => !editablePath(path) || !initial.files.some((file) => file.path === path))) {
+      || [...allowed].some((path) => !initial.candidateEditablePaths.includes(path))) {
       throw new CodingError("UNSAFE_EDIT_SCOPE", "نطاق التعديل يجب أن يحدد ملفات تنفيذ موجودة؛ الاختبارات والإعدادات محمية.");
     }
     const release = await projectLock(this.dataDir, initial.path, taskId);
@@ -176,7 +228,7 @@ export class CodingEngine {
       await progress("project_inspected", "فُحصت نقطة Git النظيفة ونطاق الملفات المسموح.");
       try { await lstat(paths.worktree); throw new CodingError("RUN_ALREADY_EXISTS", "بيئة هذه المحاولة محفوظة للمراجعة؛ أنشئ مهمة جديدة بدل الكتابة فوقها."); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-      const baseline = validReceipt(await abortable(() => this.options.sandbox.run({ files: initial.files.map(({ path, content }) => ({ path, content })), testFiles: initial.testFiles, syntaxFiles: initial.files.filter((file) => /\.(?:[cm]?js|ts)$/i.test(file.path)).map((file) => file.path), signal, timeoutMs: 20_000 }), signal), initial.files, sandbox.provider);
+      const baseline = validReceipt(await abortable(() => this.options.sandbox.run(testRequest(initial.files, initial, allowed, signal)), signal), initial.files, sandbox.provider);
       await progress("baseline_tested", "حُفظت نتيجة اختبارات الأساس داخل بيئة معزولة.");
       await assertNoLinks(paths.worktree); await mkdir(resolve(paths.worktree, ".."), { recursive: true });
       const branch = `mohassan/${taskId}`;
@@ -189,9 +241,23 @@ export class CodingEngine {
         await writeFile(target, file.content, { flag: "wx" });
       }
       await progress("worktree_created", "أُنشئت بيئة Git منفصلة من النسخة المحفوظة؛ ملفات المصدر لم تُعدل.");
-      await progress("edits_requested", "يجري طلب تعديل نصي محدود؛ لا يملك النموذج حق تشغيل أوامر.");
-      proposal = await abortable(() => this.options.generateEdits({ taskId, goal: request.goal, baseCommit: initial.baseCommit, signal, onModelReceipt: request.onModelReceipt,
-        files: initial.files.map((file) => ({ path: file.path, content: file.content, hash: file.hash, editable: allowed.has(file.path) })) }), signal);
+      const deterministic = this.options.generateEdits.mode === "deterministic";
+      await progress(deterministic ? "repair_requested" : "edits_requested",
+        deterministic ? "تبحث الأدوات المحلية عن إصلاح قابل للإثبات." : "يجري طلب تعديل نصي محدود.");
+      const allFiles = initial.files.map(({ path, content, hash }) => ({ path, content, hash, editable: allowed.has(path) }));
+      const { diagnosticPaths, imports } = inspectTypeScript(allFiles, signal, initial.typecheck?.project);
+      const files = selectContextFiles(allFiles, request.goal, [...diagnosticPaths, ...sandboxDiagnosticPaths(allFiles, baseline)], imports);
+      const rankedPaths = new Set(files.map(({ path }) => path));
+      const toolFiles = [...files, ...allFiles.filter(({ path }) => !rankedPaths.has(path))];
+      const outcome = await abortable(() => this.options.generateEdits({
+        taskId, goal: request.goal, baseCommit: initial.baseCommit, signal, onModelReceipt: request.onModelReceipt, files,
+        tools: deterministic ? repairTools(this.options.sandbox, sandbox.provider, initial, toolFiles, signal) : undefined,
+      }), signal);
+      proposal = outcome;
+      if (outcome && typeof outcome === "object" && "kind" in outcome && outcome.kind === "refused" && outcome.code === "NO_PROVEN_FIX" && typeof outcome.reason === "string"
+        && outcome.reason.length <= 1200 && !credentialLike(outcome.reason)) {
+        throw new CodingError(outcome.code, outcome.reason);
+      }
       const parsed = CodingEditsSchema.safeParse(proposal);
       if (!parsed.success) throw retainUsage(new CodingError("INVALID_EDITS", "رد التعديل لا يحقق العقد المحدود."), proposal);
       const edits = parsed.data;
@@ -201,7 +267,7 @@ export class CodingEngine {
       for (const edit of edits.edits) {
         safeRelative(edit.path);
         const before = initial.files.find((file) => file.path === edit.path);
-        if (!allowed.has(edit.path) || !editablePath(edit.path) || !before || edit.expectedHash !== before.hash
+        if (!allowed.has(edit.path) || !files.some((file) => file.path === edit.path && file.editable) || !before || edit.expectedHash !== before.hash
           || credentialLike(edit.content) || edit.content.includes("\0") || sha256(edit.content) === before.hash) {
           throw new CodingError("EDIT_SCOPE_OR_VERSION_MISMATCH", "تعديل خارج النطاق أو الاختبارات أو نسخة الملف؛ لم يطبق المقترح.");
         }
@@ -210,7 +276,10 @@ export class CodingEngine {
       }
       await progress("edits_validated", "اجتاز المقترح فحص المسارات وبصمات الملفات وحماية الاختبارات.");
       for (const edit of edits.edits) {
-        signal.throwIfAborted(); const target = join(paths.worktree, ...edit.path.split("/")); await assertNoLinks(target); await writeFile(target, edit.content);
+        signal.throwIfAborted();
+        const target = join(paths.worktree, ...edit.path.split("/"));
+        if (sha256(await boundedText(target)) !== edit.expectedHash) throw new CodingError("CONCURRENT_EDIT", "تغير ملف بيئة العمل قبل التطبيق؛ توقف التنفيذ.");
+        await writeFile(target, edit.content);
       }
       const tree = await stageEdits(paths.worktree, initial.files, edits.edits, signal);
       await progress("edits_applied", "طُبقت التغييرات في بيئة العمل المنفصلة فقط.");
@@ -218,7 +287,7 @@ export class CodingEngine {
       const expectedPaths = initial.files.map((file) => file.path).sort();
       if (JSON.stringify(changedSnapshot.map((file) => file.path).sort()) !== JSON.stringify(expectedPaths)) throw new CodingError("UNEXPECTED_FILES", "تغيرت مجموعة ملفات بيئة العمل دون تصريح.");
       await progress("tests_started", "بدأ فحص الصياغة والاختبارات المحمية داخل بيئة معزولة دون شبكة.");
-      const tests = validReceipt(await abortable(() => this.options.sandbox.run({ files: changedSnapshot, testFiles: initial.testFiles, syntaxFiles: changedSnapshot.filter((file) => /\.(?:[cm]?js|ts)$/i.test(file.path)).map((file) => file.path), signal, timeoutMs: 20_000 }), signal), changedSnapshot, sandbox.provider);
+      const tests = validReceipt(await abortable(() => this.options.sandbox.run(testRequest(changedSnapshot, initial, allowed, signal)), signal), changedSnapshot, sandbox.provider);
       await progress("tests_finished", "وصلت نتيجة الاختبارات مع بصمة الملفات ودليل العزل.");
       const compared = await treeDiff(paths.worktree, initial.baseCommit, tree, signal);
       let sourceUnchanged = false;
@@ -248,7 +317,7 @@ export class CodingEngine {
         changes: edits.edits.map((edit) => ({ path: edit.path, beforeHash: edit.expectedHash, afterHash: sha256(edit.content) })),
         baselineTests: baseline, tests, review: { passed: reviewPassed, checks },
         outcome: reviewPassed ? "ready_for_review" : testsPassed ? "review_failed" : "tests_failed",
-        model: edits.model, usage: edits.usage, sourceUnchanged, merged: false, verifiedAt: new Date().toISOString(),
+        model: edits.model ?? "deterministic-tools", usage: edits.usage ?? { inputTokens: 0, outputTokens: 0 }, sourceUnchanged, merged: false, verifiedAt: new Date().toISOString(),
       });
       await this.saveManifest(paths.manifest, { version: 1, taskId, ownerId: request.ownerId, projectId: project.id, sourcePath: initial.path,
         baseSnapshotHash: initial.snapshotHash, finalSnapshotHash: snapshotHash(afterSnapshot), fileHashes: afterSnapshot.map((file) => ({ path: file.path, hash: sha256(file.content) })), tree, result });
@@ -288,7 +357,7 @@ export class CodingEngine {
       if (compared.diff !== result.diff || sha256(compared.diff) !== result.diffHash
         || JSON.stringify(compared.paths) !== JSON.stringify(result.changes.map((change) => change.path).sort())) return null;
       for (const change of result.changes) {
-        if (!context.project.allowedPaths.includes(change.path) || !editablePath(change.path)
+        if (!context.project.allowedPaths.includes(change.path) || !source.candidateEditablePaths.includes(change.path)
           || source.files.find((file) => file.path === change.path)?.hash !== change.beforeHash
           || sha256(files.find((file) => file.path === change.path)!.content) !== change.afterHash) return null;
       }

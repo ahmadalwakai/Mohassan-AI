@@ -8,8 +8,12 @@ export * from './skill-forge';
 export * from './skill-run-gaps';
 export * from './skill-remote';
 export * from './skill-catalogue';
+export * from './reminders';
+export * from './member-data-rights';
 import { SkillRunInputSchema, SkillNodeBindingSchema, isBoundedSkillJson } from './skills';
 export * from './command-chat';
+export * from './live-data';
+export * from './conversation-share';
 export * from './agent-run';
 export * from './skills';
 export * from './google-ads';
@@ -17,6 +21,8 @@ export * from './chrome-extension';
 export * from './campaign-progress';
 export * from './ai-providers';
 export * from './sites';
+export * from './training-monitor';
+export * from './notifications';
 export { browserReadOrigins, detectBrowserOpenIntent, type BrowserOpenIntent } from './browser-intent';
 
 export const TaskStatusSchema = z.enum(['queued', 'running', 'waiting_approval', 'verifying', 'completed', 'failed', 'cancelled', 'paused']);
@@ -156,7 +162,7 @@ export const SandboxTestResultSchema=z.object({
 export type SandboxTestResult=z.infer<typeof SandboxTestResultSchema>;
 export const RawCodingEditsSchema=z.object({summary:z.string().min(1).max(1200),edits:z.array(z.object({path:z.string().min(1).max(180),expectedHash:z.string().regex(/^[a-f0-9]{64}$/),content:z.string().max(64000)}).strict()).min(1).max(5)}).strict();
 export const CodingProposalSchema=z.object({summary:RawCodingEditsSchema.shape.summary,edits:z.array(RawCodingEditsSchema.shape.edits.element.omit({expectedHash:true})).min(1).max(5)}).strict();
-export const CodingEditsSchema=RawCodingEditsSchema.extend({model:z.string(),usage:z.object({inputTokens:z.number().int().nonnegative(),outputTokens:z.number().int().nonnegative()})});
+export const CodingEditsSchema=RawCodingEditsSchema.extend({model:z.string().optional(),usage:z.object({inputTokens:z.number().int().nonnegative(),outputTokens:z.number().int().nonnegative()}).optional()});
 export type CodingEdits=z.infer<typeof CodingEditsSchema>;
 export const CodingResultSchema=z.object({
   kind:z.literal('coding'),summary:z.string().min(1).max(1600),projectId:z.string(),baseCommit:z.string(),branch:z.string(),checkpoint:z.string().nullable(),worktreeRetained:z.boolean(),
@@ -208,3 +214,4 @@ export const StudioSelectionMessageSchema = z.object({type:z.literal('mohassan:s
 export const StudioChangeEditsSchema=z.object({summary:z.string().min(1).max(1600),edits:z.array(z.object({path:z.string().min(1).max(180),content:z.string().max(64000)}).strict()).min(1).max(5)}).strict();
 export const StudioChangeResultSchema=z.object({kind:z.literal('studio_change'),summary:z.string().min(1).max(1600),sessionId:z.uuid(),proposalId:z.uuid(),baseRevision:z.string().regex(/^[a-f0-9]{64}$/),diff:z.string().max(131072),diffHash:z.string().regex(/^[a-f0-9]{64}$/),branch:z.string().max(140),checkpoint:z.string().regex(/^[a-f0-9]{40,64}$/).nullable(),changes:z.array(z.object({path:z.string(),beforeHash:z.string(),afterHash:z.string()})).max(5),review:z.object({passed:z.boolean(),checks:z.array(z.object({id:z.string(),passed:z.boolean(),message:z.string()})).min(1).max(20)}),outcome:z.enum(['ready_for_review','tests_failed','review_failed']),verification:z.object({passed:z.boolean(),provider:z.string().min(1).max(100),sourceHash:z.string().regex(/^[a-f0-9]{64}$/)}),baselineImageId:z.uuid().nullable(),candidateImageId:z.uuid().nullable(),visualDiff:z.object({changedPixels:z.number().int().nonnegative(),totalPixels:z.number().int().positive(),ratio:z.number().min(0).max(1)}).nullable(),model:z.string(),usage:z.object({inputTokens:z.number().int().nonnegative(),outputTokens:z.number().int().nonnegative()}),applied:z.literal(false),verifiedAt:z.iso.datetime()}).strict();
 export type StudioChangeResult=z.infer<typeof StudioChangeResultSchema>;
+export * from './production-metrics';
