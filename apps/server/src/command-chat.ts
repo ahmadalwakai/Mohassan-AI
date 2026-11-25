@@ -2470,7 +2470,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const intrinsicAllowed = !handsPlan && !state.site && !state.writer && !state.planner && !state.document && !state.adsBrief && freshRequest;
       const intrinsicStartedAt = Date.now();
       const intrinsicConversation = intrinsicAllowed ? evaluateLocalConversation(actionRequest) : null;
-      const intrinsicComputation = intrinsicAllowed ? evaluateLocalComputation(actionRequest, new Date(effectiveSource.evaluatedAt)) : null;
+      const intrinsicComputation = intrinsicAllowed ? evaluateLocalComputation(actionRequest, new Date(effectiveSource.evaluatedAt), { previousUserTurn: currentExecution.previousRequest ?? undefined }) : null;
       const feature = (configured: boolean, allowed = true) => ({ configured, accountAccess: allowed ? 'allowed' : 'denied', health: configured ? 'unverified' : 'unknown' });
       const intrinsicRuntime = intrinsicAllowed ? answerRuntimeStatus(actionRequest, {
         version: 1, app: 'Mohassan', source: 'host_runtime', accountFiltered: true,
@@ -4019,7 +4019,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (steeredHere) superseded = await supersedeRun(tx, ownerId, id, steering!, runId);
       const previousTurns = Number((await tx.selectFrom('chat_messages').select(eb => eb.fn.countAll<string | number>().as('n'))
         .where('conversation_id', '=', id).where('role', '=', 'user').executeTakeFirstOrThrow()).n);
-      const previousRun = await tx.selectFrom('chat_runs').select('state').where('conversation_id', '=', id).where('owner_id', '=', ownerId)
+      const previousRun = await tx.selectFrom('chat_runs').select(['state', 'goal']).where('conversation_id', '=', id).where('owner_id', '=', ownerId)
         .orderBy('created_at', 'desc').limit(1).executeTakeFirst();
       let previousContext = parseRequestContextState(previousRun?.state?.requestContext);
       if (!previousContext) {
@@ -4029,6 +4029,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       const chatModel = hasChatModel();
       const routing = decideRequestRoute({ text: clean(input.text), context: previousContext, turnId: runId, fullAccess: fullForRouting,
+        previousUserTurn: previousRun?.goal,
         capabilities: { browser: true, search: true, memory: Boolean(tools?.memory), adsModel: Boolean(config.adsModel),
           computer: Boolean(tools?.computer), coding: Boolean(tools?.work?.code), chatModel, writerModel: chatModel, planner: true } });
       const resolution = routing.resolution;

@@ -16,6 +16,10 @@ const page: AgentPage = {
   elements: [], signals: { captcha: false, password: false, otp: false, card: false },
   scroll: { top: 0, height: 1000, viewport: 800 }, observedAt: '2026-11-22T16:00:00.000Z',
 };
+const feePage: AgentPage = {
+  ...page, id: 'hire-rates', url: 'https://equipment.example/rates', title: 'Equipment hire rates', hash: 'hire-rates',
+  text: 'Hiring a canoe costs 14 pounds per hour. Hiring a kayak costs 19 pounds per hour.',
+};
 
 describe('extended reasoning in the existing chat routes', () => {
   let database: Awaited<ReturnType<typeof createDatabase>>;
@@ -25,9 +29,10 @@ describe('extended reasoning in the existing chat routes', () => {
   let judgeShadow: ReturnType<typeof createJudgeShadow>;
   const search = vi.fn(async () => { throw new Error('Reasoning must not send a search query.'); });
   const act = vi.fn(async (_owner: string, id: string, action: AgentAction) => {
-    if (action.kind !== 'open' || new URL(action.text!).href !== page.url) throw new Error('Unexpected browser action');
-    pages.set(id, page);
-    return { page, changed: true };
+    const opened = action.kind === 'open' && [page, feePage].find(candidate => new URL(action.text!).href === candidate.url);
+    if (!opened) throw new Error('Unexpected browser action');
+    pages.set(id, opened);
+    return { page: opened, changed: true };
   });
 
   beforeAll(async () => {
@@ -146,6 +151,41 @@ describe('extended reasoning in the existing chat routes', () => {
     expect(gap.text).toContain(page.url);
     expect(gap.run.status).not.toBe('completed');
     expect(act).toHaveBeenCalledTimes(1);
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it('plans one explicit open and compares figures in the returned page prose', async () => {
+    const request = `Please visit ${feePage.url}. Compare the hourly prices for a canoe and a kayak.`;
+    vi.stubEnv('MOHASSAN_REASONING', '0');
+    expect(parseHands(request)).toBeNull();
+    vi.stubEnv('MOHASSAN_REASONING', '1');
+    expect(parseHands(request)).toMatchObject([{ kind: 'open', url: feePage.url }, { kind: 'ask_page' }]);
+    expect(parseHands(`Visit ${feePage.url} and compare the prices, then send the result.`)).toBeNull();
+    expect(parseHands(`Visit ${feePage.url} and compare the prices, and click Rent.`)).toBeNull();
+    expect(parseHands(`Visit ${feePage.url} and compare the prices and rent the cheapest.`)).toBeNull();
+    expect(parseHands('Compare the prices on this page, and click Rent.')).toBeNull();
+    act.mockClear();
+    const { text, run } = await ask(request);
+    expect(run.status).toBe('completed');
+    expect(text).toContain('Hiring a canoe costs 14 pounds per hour.');
+    expect(text).toContain('Hiring a kayak costs 19 pounds per hour.');
+    expect(text).toContain(feePage.url);
+    expect(act).toHaveBeenCalledTimes(1);
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it('uses the previous user turn when the comparison explicitly points to those values', async () => {
+    vi.stubEnv('MOHASSAN_REASONING', '1');
+    const { id } = await ask('Saffron: Length: 8 m; Cedar: Length: 13 m');
+    act.mockClear();
+    search.mockClear();
+    const { text, run } = await ask('Using the figures above, which is longer: Saffron or Cedar?', id);
+    expect(run.status).toBe('completed');
+    expect(run.state.routing).toMatchObject({ route: 'compute', handler: 'local_computation' });
+    expect(text.split('\n')[0]).toContain('Cedar');
+    expect(text).toContain('Saffron: Length: 8 m');
+    expect(text).toContain('Cedar: Length: 13 m');
+    expect(act).not.toHaveBeenCalled();
     expect(search).not.toHaveBeenCalled();
   });
 });
