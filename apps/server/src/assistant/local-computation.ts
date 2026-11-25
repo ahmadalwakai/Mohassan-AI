@@ -1,6 +1,7 @@
 import { buildFrame } from './mind/frame.js';
 import { compute, type ComputationConsumption } from './mind/compute.js';
 import type { Claim, Evidence } from './mind/contract.js';
+import { evaluateLocalReasoning, type ReasoningContext } from './reasoning/index.js';
 import { analyzeCompoundRequest, type CompoundRequestAnalysis, type PendingActionKind } from './compound-request.js';
 import { splitReplyDirective, type ReplyDirective, type ReplyLanguage } from './reply-directive.js';
 
@@ -26,9 +27,9 @@ export interface LocalComputation {
  * local calculation. Unsupported expressions remain available to the ordinary
  * routing path; an understood but invalid calculation returns its exact boundary.
  */
-export function evaluateLocalComputation(request: string, now = new Date()): LocalComputation | null {
+export function evaluateLocalComputation(request: string, now = new Date(), reasoning?: ReasoningContext): LocalComputation | null {
   if (!request.trim() || request.length > 4000 || !Number.isFinite(now.getTime())) return null;
-  const whole = evaluateComputationText(request, now);
+  const whole = evaluateLocalReasoning(request, now, reasoning) ?? evaluateComputationText(request, now);
   if (whole) return whole;
   // «QA test 2026-11-23: Calculate 37 × 24 and reply with the result in one short Arabic sentence.» (live test, 2026-11-23):
   // the label in front and the closing instruction about the reply are not part of the calculation. Only the request

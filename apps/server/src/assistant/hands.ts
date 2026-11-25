@@ -8,6 +8,7 @@ import { isSiteRequest } from '@mohassan/sites';
 import type { WebSequel } from './web-sequence.js';
 import { splitReplyDirective, type ReplyField } from './reply-directive.js';
 import { returnedTo } from './return-to.js';
+import { evaluatePageReasoning, isPageReasoningRequest } from './reasoning/index.js';
 
 export { returnedTo };
 export { siteName };
@@ -329,6 +330,7 @@ function parseCommand(request: string): HandsStep[] | null {
   if (BARE_ADDRESS.test(address)) return [{ kind: 'open', url: address, name: address.replace(/^https?:\/\//iu, '').split(/[/?#]/u)[0] }, { kind: 'read', more: false }];
   const openAsk = parseOpenAndAsk(request);
   if (openAsk) return openAsk;
+  if (isPageReasoningRequest(request)) return [{ kind: 'ask_page', question: request.trim() }];
   const openRead = parseOpenAndRead(request);
   if (openRead) return openRead;
   const segments = tidy(request).split(SPLIT).map(part => part?.trim()).filter((part): part is string => Boolean(part));
@@ -1782,11 +1784,12 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
       }
     }
     if (io.complete) {
-      const answer = step.kind === 'ask_page' && page ? pageAnswer(page, step.question, plan.lang ?? 'ar') : null;
+      const ranked = step.kind === 'ask_page' && page ? evaluatePageReasoning(page, step.question, plan.lang ?? 'ar') : null;
+      const answer = !ranked && step.kind === 'ask_page' && page ? pageAnswer(page, step.question, plan.lang ?? 'ar') : null;
       const missing = step.kind === 'search' && (step.ask ? !plan.found?.lines.length
         : !plan.results?.length && (!page || !resultLinks(page, 1, step.query).length))
         || answer !== null && (!answer.parts.length || answer.missing.length > 0);
-      await io.complete(index, missing ? 'partial' : 'completed');
+      await io.complete(index, missing || ranked?.status === 'blocked' ? 'partial' : 'completed');
     }
   }
   return { kind: 'done', ...describe(plan, page) };
@@ -1959,6 +1962,8 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
   if (last.kind === 'ask_page') {
     // The page's own words as quotes under the host's labels: the judge checks every quote against the page (kind «quote»).
     const en = (plan.lang ?? (/[؀-ۿ]/u.test(last.question) ? 'ar' : 'en')) === 'en';
+    const ranked = evaluatePageReasoning(page, last.question, en ? 'en' : 'ar');
+    if (ranked) return { status: ranked.status, text: ranked.text };
     const name = `**${plainTitle(page.title) || hostOf(page.url)}** (${hostOf(page.url)})`;
     const { parts, missing } = pageAnswer(page, last.question, en ? 'en' : 'ar');
     if (!parts.length) return { status: 'partial', text: en
