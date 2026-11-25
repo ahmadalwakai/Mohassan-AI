@@ -5,6 +5,7 @@ import { Badge } from "@chakra-ui/react";
 import { AlertTriangle, Ban, Check, ChevronDown, CircleDashed, CircleHelp, ShieldCheck, X } from "lucide-react";
 import { reduceCampaignEvents, type CampaignEventStream, type CampaignProgress, type CampaignStepId, type CampaignStepStatus } from "@mohassan/contracts";
 import { AgentActivity } from "./agent-activity";
+import { observedTime } from "./run-view";
 import styles from "./campaign-card.module.css";
 
 const STEP_LABEL: Record<CampaignStepId, string> = {
@@ -44,6 +45,14 @@ export function CampaignCard({ stream, running }: { stream: CampaignEventStream 
       <h3>حملة Google Ads</h3>
       <Badge className={`${styles.badge} ${styles[outcome.tone]}`}>{outcome.text}</Badge>
     </header>
+    {progress.updatedAt ? <p className={styles.muted}><time dateTime={progress.updatedAt}>آخر تحديث مسجل: {observedTime(progress.updatedAt)}</time></p> : null}
+    {progress.account ? <dl className={styles.account} aria-label="الحساب المرصود">
+      <dt>الحساب</dt><dd><bdi>{progress.account.customerId}</bdi></dd>
+      <dt>العملة</dt><dd><bdi>{progress.account.currency}</bdi></dd>
+      <dt>المنطقة الزمنية</dt><dd><bdi>{progress.account.timeZone}</bdi></dd>
+      <dt>فترة البيانات</dt><dd><bdi>{progress.account.range.start} — {progress.account.range.end}</bdi></dd>
+      <dt>وقت القراءة</dt><dd><time dateTime={progress.account.checkedAt}>{observedTime(progress.account.checkedAt)}</time></dd>
+    </dl> : null}
     <p className={styles.sr} role="status" aria-live="polite">{outcome.text}</p>
     <ol className={styles.steps}>
       {progress.steps.map(step => <li key={step.id} className={`${styles.step} ${styles[`s_${step.status}`]}`}>
@@ -93,10 +102,11 @@ export function CampaignCard({ stream, running }: { stream: CampaignEventStream 
           <button type="button" aria-expanded={open === key} onClick={() => toggle(key)}>
             <span>{SCOPE[item.scope]} · <em>{AUTHORITY[item.authority]}</em> · {item.passed ? "نجح" : "فشل"}</span><ChevronDown size={14} aria-hidden="true" />
           </button>
-          {open === key ? <ul className={styles.detail}>{item.checks.map(check => <li key={check.id} className={check.passed ? styles.pass : styles.fail}><strong>{check.passed ? "✓" : "✗"}</strong> <span dir="auto">{check.detail}</span></li>)}</ul> : null}
+          {open === key ? <div className={styles.detail}><p className={styles.muted}><time dateTime={item.at}>وقت الفحص: {observedTime(item.at)}</time></p><ul>{item.checks.map(check => <li key={check.id} className={check.passed ? styles.pass : styles.fail}><strong>{check.passed ? "✓" : "✗"}</strong> <span dir="auto">{check.detail}</span></li>)}</ul></div> : null}
         </div>;
       })}
     </div> : null}
+    {progress.verifications.some(item => item.scope === "google_validate_only" && item.passed) ? <p className={styles.muted}>نجاح فحص Google يؤكد صحة الطلب فقط؛ لا يثبت أهلية الإعلان أو أداء الحملة.</p> : null}
 
     {progress.approval ? <p className={progress.approval.satisfied ? styles.muted : styles.warn}>{progress.approval.satisfied ? "شروط الإنشاء مفتوحة." : "شروط الإنشاء مغلقة"}{progress.approval.gates.filter(gate => !gate.passed).map(gate => ` — ${gate.detail}`).join("")}</p> : null}
 

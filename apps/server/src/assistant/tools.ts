@@ -87,7 +87,10 @@ export const EFFECT_KEYS = new Set(['Enter', 'Space', 'Delete']);
 /** Only the current owner's request authorizes account creation, never retrieved content. */
 export function requestsPausedCampaign(request:string):boolean {
   const text=request.normalize('NFKC').replace(/[أإآ]/g,'ا').toLowerCase();
-  if(/\b(?:do not|don't|never)\b|لا\s+(?:تنش|تعمل|تحفظ|تبن)|معاينة فقط|مسودة فقط|preview only|draft only/i.test(text))return false;
+  if(/\b(?:do not|don't|never)\s+(?:create|build|save|make|set up)\b|لا\s+(?:تنشئ|تنشي|تعمل|تحفظ|تبن)|معاينة فقط|مسودة فقط|preview only|draft only/i.test(text))return false;
+  // The established own-model entry point accepts this concrete imperative too.
+  // Quoted page instructions, questions and reporting requests do not match it.
+  if (/^(?:(?:please|can you|could you)\s+){0,2}(?:make|create|build|set up)\s+(?:(?:google|search)\s+)?ads\s+for\s+\S+/i.test(text.trim()) && !/[?؟]\s*$/u.test(text)) return true;
   const direct=/^(?:(?:please|can you|could you|i want you to)\s+){0,2}(?:create|build|save)\b/i.test(text.trim())||/^(?:(?:من فضلك|لو سمحت)\s+)?(?:(?:اريد|احتاج)(?:\s+منك)?\s+(?:ان\s+)?(?:تنشئ|انشاء|تبني|بناء|تحفظ|حفظ)|انشئ|انشاء|ابنِ?|ابني|احفظ)(?:\s|$)/u.test(text.trim());
   return direct&&/حمل[ةه]|\bcampaign\b/i.test(text)&&/حساب|google ads|جوجل ادز|غوغل ادز|\baccount\b/i.test(text);
 }
@@ -276,6 +279,16 @@ export function createAssistantTools({ memory, coding, studio, studioChange, run
         return [`Saved preview ${draft.id}. Nothing was sent to the account. The owner reviews, validates and approves it in the Google Ads section; you cannot publish.`, ...(draft.strategy?.recommendations ?? []).map(item => `${item.basis}: ${item.title}. ${item.reason}`), ...(draft.strategy?.blockers ?? []).map(item => `blocker: ${item}`)].join('\n');
       }),
       campaign: {
+        account: async (ownerId, expectedCustomerId) => {
+          if (expectedCustomerId) {
+            const connection = await googleAds.status(ownerId);
+            if (['disconnected', 'unauthorized', 'needs_account'].includes(connection.state)) throw new BrowserError('ADS_CONNECT_REQUIRED', 'يلزم تسجيل الدخول واختيار حساب Google Ads المحفوظ قبل قراءة النتيجة.', 409);
+            const selected = connection.account;
+            if (selected?.customerId !== expectedCustomerId) throw new BrowserError('ADS_ACCOUNT_CHANGED', 'الحساب المختار لا يطابق الحساب المطلوب؛ لم أقرأ تقرير حساب آخر.', 409);
+          }
+          const report = await googleAds.report(ownerId, 30, expectedCustomerId);
+          return { customerId: report.customerId, currency: report.currency, timeZone: report.timeZone, range: { start: report.range.start, end: report.range.end }, checkedAt: report.fetchedAt };
+        },
         parse: parseAdsDraft,
         landing: (url, signal) => googleAds.inspectLanding(url, signal),
         gates: async ownerId => (await googleAds.status(ownerId)).publishing,
@@ -283,10 +296,10 @@ export function createAssistantTools({ memory, coding, studio, studioChange, run
         createPaused: (ownerId, brief, key, authority, observer) => googleAds.createPausedCampaign(ownerId, brief, key, authority, observer),
         reconcile: (ownerId, draftId, revision) => googleAds.reconcile(ownerId, draftId, revision),
         discard: async (ownerId, draftId, revision) => { await googleAds.discard(ownerId, draftId, revision); },
-        lessons: { list: ownerId => googleAds.lessons.list(ownerId), record: (ownerId, entry) => googleAds.lessons.record(ownerId, entry) },
+        lessons: { list: (ownerId, customerId) => googleAds.lessons.list(ownerId, customerId), record: (ownerId, entry, customerId) => googleAds.lessons.record(ownerId, { ...entry, ...(customerId ? { customerId } : {}) }) },
       },
-      createPaused:(ownerId,text,request,key,assertActive,ownCommand)=>guarded(async()=>{
-        if(!ownCommand&&!requestsPausedCampaign(request))throw new BrowserError('ADS_CREATION_NOT_REQUESTED','يلزم طلبك الصريح لإنشاء حملة في الحساب؛ المعاينة وحدها لا تجيز ذلك.',403);
+      createPaused:(ownerId,text,request,key,assertActive,_ownCommand)=>guarded(async()=>{
+        if(!requestsPausedCampaign(request))throw new BrowserError('ADS_CREATION_NOT_REQUESTED','يلزم طلبك الصريح لإنشاء حملة في الحساب؛ المعاينة وحدها لا تجيز ذلك.',403);
         const draft=await googleAds.createPausedCampaign(ownerId,parseAdsDraft(text,request),key,{assertActive});
         return `Google Ads readback confirmed new campaign ${draft.campaignResourceName} in PAUSED state. Draft ${draft.id}. It is not running. Only the owner can approve launch separately. ${draft.verification?.checks.find(check=>check.id==='conversion_tracking')?.passed?'Conversion tracking verified.':'Conversion tracking must be verified before launch.'}`;
       }),

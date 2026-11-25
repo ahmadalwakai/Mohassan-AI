@@ -226,6 +226,12 @@ describe('API client', () => {
     await expect(makeClient(limited).mutate([{}], false, context)).rejects.toMatchObject({ code: 'GOOGLE_ADS_RATE_LIMITED' });
     expect(limited.calls.filter(call => call.url.includes('mutate'))).toHaveLength(1);
   });
+  it('rejects malformed account identifiers and cross-account resource operations before any request', async () => {
+    const mock = createMockGoogle(), client = makeClient(mock);
+    await expect(client.mutate([{ campaignOperation: { update: { resourceName: 'customers/9999999999/campaigns/77', status: 'ENABLED' }, updateMask: 'status' } }], false, context)).rejects.toMatchObject({ code: 'GOOGLE_ADS_ACCOUNT_CHANGED' });
+    await expect(client.mutate([{ campaignOperation: { create: {} } }], false, { ...context, customerId: '../other' })).rejects.toMatchObject({ code: 'GOOGLE_ADS_ACCOUNT_INVALID' });
+    expect(mock.calls).toHaveLength(0);
+  });
   it('explains Test-level projects and keeps Google\'s raw text out', async () => {
     const mock = createMockGoogle(); mock.state.testLevelProject = true;
     const error = await makeClient(mock).search('SELECT customer.id FROM customer LIMIT 1', context).catch(caught => caught as GoogleAdsError);
@@ -353,7 +359,9 @@ describe('evidence gates', () => {
     await write({ source: 'mock' });
     expect(passed(await evidenceGates(paths, CUSTOMER, false, now), 'live_read_check')).toBe(false);
   });
-  it('refuses a test account as a publishing target', async () => {
-    expect(passed(await evidenceGates(await files(), CUSTOMER, true), 'production_account')).toBe(false);
+  it('allows paused creation on a selected test account and labels its limitation', async () => {
+    const gates = await evidenceGates(await files(), CUSTOMER, true);
+    expect(passed(gates, 'account_support')).toBe(true);
+    expect(gates.find(gate => gate.id === 'account_support')?.detail).toContain('التفعيل محجوب');
   });
 });

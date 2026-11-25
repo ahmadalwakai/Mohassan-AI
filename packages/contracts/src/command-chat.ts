@@ -187,6 +187,8 @@ export const ChatConversationSchema = ChatConversationSummarySchema.extend({
   visibility: ChatBrowserVisibilitySchema.nullable().optional(),
   /** Structured events of the latest Google Ads campaign task in this conversation. Absent when there is none. */
   campaign: CampaignEventStreamSchema.nullable().optional(),
+  /** Read-only recovery of a persisted Ads write; bound to this exact previous run. */
+  campaignRecovery: z.object({ runId: z.uuid(), mode: z.literal('readback_only') }).strict().optional(),
   /**
    * An opaque mark of what this view shows. `GET /api/chat/conversations/:id?since=<version>&wait=<ms>` answers as soon as
    * the conversation's mark differs from it (or after the wait, at most 8 s). Absent from servers older than 2026-11-23.

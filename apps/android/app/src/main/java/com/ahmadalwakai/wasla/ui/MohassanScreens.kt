@@ -53,6 +53,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.ahmadalwakai.wasla.MohassanApproval
 import com.ahmadalwakai.wasla.MohassanConversation
+import com.ahmadalwakai.wasla.MohassanCampaignStream
 import com.ahmadalwakai.wasla.MohassanQuestion
 import com.ahmadalwakai.wasla.MohassanSecure
 import com.ahmadalwakai.wasla.MohassanStatus
@@ -70,6 +71,7 @@ import com.ahmadalwakai.wasla.mohassanTextFits
 import com.ahmadalwakai.wasla.mohassanWaiting
 import com.ahmadalwakai.wasla.openMohassan
 import com.ahmadalwakai.wasla.sendMohassan
+import com.ahmadalwakai.wasla.resumeMohassanCampaign
 
 /** Mohassan's chat: the thread, the working pill, and the cards that answer its questions and approvals. */
 @Composable
@@ -79,7 +81,7 @@ fun MohassanChatView(store: WaslaStore) {
     val conversation = store.mohassanConversation
     val pending = store.mohassanPendingText
     val waiting = store.mohassanWaiting
-    val scrollKey = (conversation?.messages?.size ?: 0) * 1_000 + (conversation?.steps?.size ?: 0) * 2 + (if (waiting) 1 else 0) + (if (pending == null) 0 else 500_000)
+    val scrollKey = (conversation?.messages?.size ?: 0) * 1_000 + (conversation?.steps?.size ?: 0) * 2 + (conversation?.campaign?.lastSeq ?: 0) + (if (waiting) 1 else 0) + (if (pending == null) 0 else 500_000)
     ChatScaffold(
         draft = draft,
         onDraftChange = { store.mohassanDraft = it },
@@ -108,6 +110,14 @@ fun MohassanChatView(store: WaslaStore) {
 private fun LazyListScope.conversationItems(store: WaslaStore, conversation: MohassanConversation) {
     items(conversation.messages, key = { "message-${it.id}" }) { message -> ChatTurn(message.role == "user", message.text) }
     if (conversation.working) item(key = "working") { WorkingSteps(conversation.progress ?: "موحسن يعمل…", conversation.steps.map { it.text }) }
+    conversation.campaign?.let { campaign -> item(key = "campaign-${campaign.taskId}") { CampaignEvidenceCard(campaign) } }
+    if (conversation.canReviewSavedCampaign) item(key = "campaign-recovery-${conversation.campaignRecovery?.runId}") {
+        ForestCard {
+            LabelRow(Icons.Outlined.VerifiedUser, "تحقق من نتيجة العملية السابقة")
+            Footnote("نقرأ العملية المحفوظة من حساب Google Ads ونقارنها بالمطلوب. هذه المراجعة للقراءة فقط؛ لا تعيد إنشاء الحملة أو إرسال طلب كتابة.")
+            ForestButton(onClick = { store.resumeMohassanCampaign() }, prominent = false, enabled = !store.mohassanBusy) { Text("مراجعة نتيجة العملية المحفوظة") }
+        }
+    }
     val question = conversation.question
     if (conversation.status == MohassanStatus.WAITING_USER && question != null) {
         item(key = "question-${question.id}") { if (question.hasFields) FieldsQuestionCard(store, question) else QuestionCard(store, question) }
@@ -124,6 +134,55 @@ private fun LazyListScope.conversationItems(store: WaslaStore, conversation: Moh
                 Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp)); Text("إيقاف")
             }
         }
+    }
+}
+
+/** Every label refers to a server event; local validation is never presented as a remote account effect. */
+@Composable
+private fun CampaignEvidenceCard(campaign: MohassanCampaignStream) {
+    val forest = Forest
+    val account = campaign.account
+    val verifications = campaign.verifications
+    val operations = campaign.operations
+    var expanded by rememberSaveable(campaign.taskId) { mutableStateOf(false) }
+    val scopes = mapOf("local_text" to "نص الإعلان", "landing_page" to "صفحة الهبوط", "draft_integrity" to "سلامة العمليات", "account" to "الحساب", "conversion_tracking" to "تتبع التحويلات", "google_validate_only" to "فحص Google دون إنشاء", "readback" to "قراءة الحساب بعد التنفيذ")
+    ForestCard {
+        LabelRow(Icons.Outlined.VerifiedUser, "أدلة مهمة Google Ads")
+        if (account != null) {
+            Text("الحساب: ${account.customerId}", style = MaterialTheme.typography.bodyMedium, color = forest.ink)
+            Footnote("العملة: ${account.currency} · المنطقة الزمنية: ${account.timeZone}")
+            Footnote("فترة البيانات: ${account.range.start} — ${account.range.end}")
+            Footnote("وقت قراءة الحساب: ${account.checkedAt}")
+        } else Footnote("لم تصل قراءة موثقة لعملة الحساب والمنطقة الزمنية بعد.")
+        campaign.completion?.let { completion ->
+            val text = when (completion.outcome) {
+                "draft_checked" -> "فُحصت المسودة فقط؛ لا يثبت ذلك إنشاء حملة في الحساب."
+                "paused_campaign_created", "paused_campaign_recovered" -> "سجّل الخادم تطابق حملة متوقفة من الحساب. لم يثبت أداء الحملة أو أهليتها بهذا الفحص."
+                else -> "نتيجة مسجلة من الخادم: ${completion.outcome}"
+            }
+            Text(text, style = MaterialTheme.typography.bodyMedium, color = forest.ink)
+        }
+        operations.forEach { operation ->
+            val label = when (operation.outcome) {
+                "confirmed_paused" -> "أكدت القراءة حملة متوقفة"
+                "confirmed_absent" -> "أكدت القراءة عدم وجود الحملة"
+                "mismatch" -> "القراءة لا تطابق المطلوب"
+                "rejected" -> "رفضت Google الطلب"
+                else -> "النتيجة غير محسومة؛ تحتاج قراءة الحساب"
+            }
+            Text(label, style = MaterialTheme.typography.bodyMedium, color = if (operation.outcome == "mismatch") forest.alert else forest.ink)
+            operation.campaignResourceName?.let { Footnote(it) }
+        }
+        if (verifications.isEmpty()) Footnote("لا توجد نتائج فحص مسجلة بعد.") else {
+            TextButton(onClick = { expanded = !expanded }, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)) { Text(if (expanded) "إخفاء نتائج الفحص" else "عرض نتائج الفحص (${verifications.size})") }
+            if (expanded) verifications.forEach { observation ->
+                val verification = observation.value
+                Text("${scopes[verification.scope] ?: verification.scope}: ${if (verification.passed) "نجح" else "لم ينجح"}", style = MaterialTheme.typography.bodyMedium, color = if (verification.passed) forest.ink else forest.alert)
+                Footnote("${if (verification.authority == "google_ads_api") "من Google Ads" else "فحص محلي"} · ${observation.at}")
+                verification.checks.forEach { check -> Footnote("${if (check.passed) "✓" else "✗"} ${check.detail}") }
+            }
+        }
+        if (verifications.any { it.value.scope == "google_validate_only" && it.value.passed }) Footnote("نجاح فحص Google يؤكد صحة الطلب فقط؛ لا يثبت أهلية الإعلان أو أداء الحملة.")
     }
 }
 

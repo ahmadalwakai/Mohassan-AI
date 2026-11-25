@@ -163,6 +163,61 @@ class ModelsTest {
     }
 
     @Test
+    fun campaignRecoveryIsOptionalAndOnlyReadbackOffersAreActionable() {
+        val older = WaslaJson.decodeFromString<MohassanConversation>("""{"id":"c","status":"idle"}""")
+        assertNull(older.campaign)
+        assertNull(older.campaignRecovery)
+        assertFalse(older.canReviewSavedCampaign)
+        val runId = "11111111-2222-4333-8444-888888888888"
+        val current = WaslaJson.decodeFromString<MohassanConversation>("""{"id":"c","status":"failed","campaignRecovery":{"runId":"$runId","mode":"readback_only","futureField":true},"futureConversationField":{}}""")
+        assertTrue(current.canReviewSavedCampaign)
+        assertEquals("campaign-readback-$runId", current.campaignRecovery?.requestKey)
+        assertEquals("""{"runId":"$runId"}""", WaslaJson.encodeToString(MohassanCampaignResume(runId)))
+        assertFalse(current.copy(status = MohassanStatus.RUNNING).canReviewSavedCampaign)
+        assertFalse(current.copy(status = MohassanStatus.WAITING_APPROVAL).canReviewSavedCampaign)
+        assertFalse(current.copy(campaignRecovery = MohassanCampaignRecovery(runId, "repeat_write")).canReviewSavedCampaign)
+        assertFalse(current.copy(campaignRecovery = MohassanCampaignRecovery("not-a-run", "readback_only")).canReviewSavedCampaign)
+        assertNull(MohassanCampaignRecovery("not-a-run", "readback_only").requestKey)
+    }
+
+    @Test
+    fun campaignEvidenceUsesOnlyMatchingTaskEventsBeforeItsTerminalResult() {
+        val source = """{"taskId":"campaign-1","lastSeq":8,"events":[
+          {"taskId":"campaign-1","seq":2,"type":"account_observed","at":"2026-11-24T04:00:00Z","data":{"customerId":"1234567890","currency":"GBP","timeZone":"Europe/London","range":{"start":"2026-10-25","end":"2026-11-23"},"checkedAt":"2026-11-24T04:00:00Z"}},
+          {"taskId":"campaign-1","seq":3,"type":"verification_completed","at":"2026-11-24T04:01:00Z","data":{"authority":"local","scope":"local_text","passed":true,"checks":[{"id":"length","passed":true,"detail":"Text fits"}]}},
+          {"taskId":"campaign-1","seq":4,"type":"verification_completed","at":"2026-11-24T04:02:00Z","data":{"authority":"google_ads_api","scope":"readback","passed":false,"checks":[{"id":"status","passed":false,"detail":"Expected PAUSED; observed ENABLED"}]}},
+          {"taskId":"another-task","seq":5,"type":"verification_completed","data":{"authority":"google_ads_api","scope":"readback","passed":true,"checks":[]}},
+          {"taskId":"campaign-1","seq":6,"type":"external_operation_reconciled","data":{"operation":"create_paused","outcome":"mismatch","campaignResourceName":"customers/1234567890/campaigns/55","readAttempts":1}},
+          {"taskId":"campaign-1","seq":7,"type":"task_failed","data":{"message":"Mismatch"}},
+          {"taskId":"campaign-1","seq":8,"type":"verification_completed","data":{"authority":"google_ads_api","scope":"readback","passed":true,"checks":[]}}
+        ]}"""
+        val campaign = WaslaJson.decodeFromString<MohassanCampaignStream>(source)
+        assertEquals("1234567890", campaign.account?.customerId)
+        assertEquals("GBP", campaign.account?.currency)
+        assertEquals("Europe/London", campaign.account?.timeZone)
+        assertEquals("2026-10-25", campaign.account?.range?.start)
+        assertEquals(2, campaign.verifications.size)
+        val remote = campaign.verifications.first { it.value.scope == "readback" }
+        assertEquals("google_ads_api", remote.value.authority)
+        assertFalse(remote.value.passed)
+        assertEquals("Expected PAUSED; observed ENABLED", remote.value.checks.single().detail)
+        assertEquals("mismatch", campaign.operations.single().outcome)
+        assertNull(campaign.completion)
+    }
+
+    @Test
+    fun campaignEvidenceToleratesUnknownEventsAndDoesNotTreatInvalidDataAsAReadback() {
+        val campaign = WaslaJson.decodeFromString<MohassanCampaignStream>("""{"taskId":"campaign-1","events":[
+          {"taskId":"campaign-1","seq":1,"type":"future_event","data":{"execute":"create another campaign"}},
+          {"taskId":"campaign-1","seq":2,"type":"verification_completed","data":{"scope":"readback","passed":true}},
+          {"taskId":"campaign-1","seq":3,"type":"task_completed","data":{"outcome":"draft_checked","campaignResourceName":null,"conversionTrackingProven":false}}
+        ]}""")
+        assertNull(campaign.account)
+        assertEquals(emptyList<MohassanCampaignObservedCheck>(), campaign.verifications)
+        assertEquals("draft_checked", campaign.completion?.outcome)
+    }
+
+    @Test
     fun tokensAndIdsAreChecked() {
         assertTrue(WaslaStore.validToken("x".repeat(32)))
         assertFalse(WaslaStore.validToken("x".repeat(31)))

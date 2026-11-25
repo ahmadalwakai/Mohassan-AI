@@ -32,6 +32,6 @@ export async function evidenceGates(files: GateFiles, customerId: string | null,
   return [
     { id: 'regression_runs', passed: regressionPassed, detail: regressionPassed ? `${runs} تشغيلًا متتاليًا ناجحًا لهذه النسخة من الكود` : regression?.sourceFingerprint && regression.sourceFingerprint !== fingerprint ? 'تغير الكود بعد آخر تشغيل. أعد npm run ads:regress.' : `يلزم ${REQUIRED_REGRESSION_RUNS} تشغيلًا متتاليًا ناجحًا (npm run ads:regress)` },
     { id: 'live_read_check', passed: livePassed, detail: livePassed ? `فحص قراءة حي ناجح في ${String(live.checkedAt).slice(0, 10)}` : 'يلزم فحص قراءة حي ناجح لهذا الحساب خلال 7 أيام (npm run ads:check -- --live)' },
-    { id: 'production_account', passed: Boolean(customerId) && !testAccount, detail: testAccount ? 'الحساب تجريبي؛ النشر الفعلي للحساب الحقيقي فقط' : customerId ? 'حساب إعلانات حقيقي' : 'لم يُختر حساب' },
+    { id: 'account_support', passed: Boolean(customerId), detail: testAccount ? 'حساب تجريبي: إنشاء متوقف للاختبار فقط؛ التفعيل محجوب' : customerId ? 'حساب إعلانات حقيقي؛ الإنشاء يبدأ متوقفًا' : 'لم يُختر حساب' },
   ];
 }

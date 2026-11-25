@@ -5,9 +5,7 @@ async function refresh() {
   const state = await call({ kind: 'popup-status' });
   el('origin').textContent = state.app?.origin ?? 'لم يُربط تبويب موحسن بعد.';
   if (state.binding) { el('customer').value = state.binding.customerId; el('currency').value = state.binding.currency; }
-  el('resume').hidden = !state.binding || !state.checkpoint;
-  el('resume-note').hidden = el('resume').hidden;
-  show(state.message ?? (state.binding ? 'الإضافة متصلة وتنتظر الحملة.' : 'اربط موحسن ثم تبويب Google Ads.'));
+  show(state.binding ? 'بيانات ربط التبويب محفوظة. تعبئة الحملات واستئنافها غير مدعومين؛ استخدم الربط الرسمي في موحسن.' : 'اربط موحسن لعرض حالة الربط. إنشاء الحملات يتم عبر الربط الرسمي.');
 }
 async function action(button, fn) { button.disabled = true; try { await fn(); await refresh(); } catch (error) { show(error.message); } finally { button.disabled = false; } }
 el('pair-app').addEventListener('click', () => action(el('pair-app'), async () => {
@@ -24,5 +22,4 @@ el('pair-ads').addEventListener('click', () => action(el('pair-ads'), async () =
   await call({ kind: 'pair-ads', tabId: tab?.id, customerId: el('customer').value.replace(/[-\s]/g, ''), currency: el('currency').value });
 }));
 el('stop').addEventListener('click', () => action(el('stop'), () => call({ kind: 'stop' })));
-el('resume').addEventListener('click', () => action(el('resume'), () => call({ kind: 'resume' })));
 refresh().catch(error => show(error.message));

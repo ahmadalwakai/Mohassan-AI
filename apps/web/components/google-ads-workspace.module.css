@@ -100,6 +100,12 @@
 .warning { background: #fdf3e0; color: #8a5a10; }
 
 .checks { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.readback { display: grid; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.readback summary { cursor: pointer; display: flex; align-items: center; min-height: 44px; font-size: 13px; color: var(--ink); }
+.readback summary:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.readback dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 10px; margin: 0; }
+.readback dd { margin: 0; overflow-wrap: anywhere; }
+.readbackMatch { background: var(--mint); color: var(--ink); }
 
 .exact dl { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 8px 14px; font-size: 12px; margin: 0; }
 .exact dt { color: var(--muted); }

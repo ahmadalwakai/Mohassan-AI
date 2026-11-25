@@ -109,6 +109,7 @@ export class GoogleAdsClient {
     catch { throw new GoogleAdsError('GOOGLE_ADS_UNAVAILABLE', 'تعذر الوصول إلى Google Ads. أعد المحاولة لاحقًا.', 503); }
     const body = await response.json().catch(() => null);
     if (!response.ok) throw classifyFailure(response.status, body, response);
+    if (body && typeof body === 'object' && !Array.isArray(body) && typeof body.requestId !== 'string' && response.headers.get('request-id')) body.requestId = response.headers.get('request-id');
     return body;
   }
 
@@ -149,7 +150,16 @@ export class GoogleAdsClient {
    * publishing controller decides what happens next, after reading the account.
    */
   async mutate(operations: MutateOperation[], validateOnly: boolean, context: CallContext & { customerId: string }): Promise<MutateResult> {
+    if (!/^\d{10}$/.test(context.customerId) || context.loginCustomerId && !/^\d{10}$/.test(context.loginCustomerId)) throw new GoogleAdsError('GOOGLE_ADS_ACCOUNT_INVALID', 'معرّف حساب الإعلانات غير صالح.', 400);
+    if (!Array.isArray(operations) || !operations.length || operations.length > 10000) throw new GoogleAdsError('GOOGLE_ADS_OPERATIONS_INVALID', 'عدد عمليات الإعلانات غير صالح.', 400);
+    const inspectNames = (value: unknown): void => {
+      if (typeof value === 'string' && /^customers\/\d{10}\//.test(value) && !value.startsWith(`customers/${context.customerId}/`)) throw new GoogleAdsError('GOOGLE_ADS_ACCOUNT_CHANGED', 'تشير العملية إلى مورد خارج حساب التنفيذ المفوّض.', 409);
+      if (Array.isArray(value)) for (const item of value) inspectNames(item);
+      else if (value && typeof value === 'object') for (const item of Object.values(value)) inspectNames(item);
+    };
+    inspectNames(operations);
     const body = await this.request(`customers/${context.customerId}/googleAds:mutate`, context, { method: 'POST', body: { mutateOperations: operations, partialFailure: false, validateOnly } });
+    if (body?.partialFailureError) throw new GoogleAdsError('GOOGLE_ADS_PARTIAL_RESPONSE', 'أعادت Google فشلًا جزئيًا غير متوقع؛ يلزم تسوية الحساب قبل أي إعادة.', 409);
     const names = (Array.isArray(body?.mutateOperationResponses) ? body.mutateOperationResponses : []).flatMap((item: any) => Object.values(item ?? {}).map((entry: any) => entry?.resourceName).filter((name: unknown): name is string => typeof name === 'string'));
     return { requestId: typeof body?.requestId === 'string' ? body.requestId : null, resourceNames: names };
   }

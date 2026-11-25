@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatConversation, ChatRunView } from '@mohassan/contracts';
-import { STAGE_LABELS, engineLabel, isNewerSnapshot, linkable, steerable, verdictBadge } from '../apps/web/components/run-view.js';
+import { STAGE_LABELS, engineLabel, isNewerSnapshot, linkable, observedTime, progressRetryDelay, runStepSummary, steerable, verdictBadge } from '../apps/web/components/run-view.js';
 
 /** The web's words for the server's run: the badge, the engine line, snapshot order and when a message steers. */
 const run = (extra: Partial<ChatRunView> = {}): ChatRunView => ({
@@ -55,5 +55,26 @@ describe('the run as the web shows it', () => {
     expect(linkable('document:123')).toBe(false);
     expect(linkable('javascript:alert(1)')).toBe(false);
     expect(linkable(null)).toBe(false);
+  });
+
+  it('keeps unknown, failed and skipped required steps in the unfinished summary', () => {
+    const step = { id: 'account', outcome: 'Read account', dependsOn: [], capability: 'ads.read', input: null, acceptance: ['Account matches'], verification: 'readback' as const, required: true, risk: 'read' as const, authorization: 'not_needed' as const, state: 'verified' as const, attempts: 1 };
+    const summary = runStepSummary(run({ plan: { version: 1, steps: [step, { ...step, id: 'write', state: 'unknown' }, { ...step, id: 'readback', state: 'failed' }, { ...step, id: 'next', state: 'skipped' }, { ...step, id: 'advice', required: false, state: 'pending' }] } }));
+    expect(summary.verified.map(item => item.id)).toEqual(['account']);
+    expect(summary.remaining.map(item => item.id)).toEqual(['write', 'readback', 'next']);
+    expect(runStepSummary(run())).toEqual({ verified: [], remaining: [] });
+  });
+
+  it('backs off a disconnected progress reader without delaying a normal read or busy-looping', () => {
+    expect(progressRetryDelay(0, false)).toBe(450);
+    expect(progressRetryDelay(1, false)).toBe(900);
+    expect(progressRetryDelay(3, false)).toBe(3600);
+    expect(progressRetryDelay(30, false)).toBe(8000);
+    expect(progressRetryDelay(1, true)).toBe(15000);
+  });
+
+  it('shows missing observation times as unavailable', () => {
+    expect(observedTime('invalid')).toBe('وقت الرصد غير متاح');
+    expect(observedTime('2026-11-24T04:00:00.000Z')).not.toBe('وقت الرصد غير متاح');
   });
 });

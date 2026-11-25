@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
 import { Ban, CircleAlert, CircleCheck, CircleDashed, ChevronDown, ExternalLink } from "lucide-react";
 import type { ChatRunView } from "@mohassan/contracts";
-import { AUTHORIZATION_LABELS, EVIDENCE_LABELS, PERMISSION_LABELS, STAGE_LABELS, STEP_STATE_LABELS, engineLabel, linkable, verdictBadge, type VerdictTone } from "./run-view";
+import { AUTHORIZATION_LABELS, EVIDENCE_LABELS, PERMISSION_LABELS, STAGE_LABELS, STEP_STATE_LABELS, engineLabel, linkable, observedTime, runStepSummary, verdictBadge, type VerdictTone } from "./run-view";
 import styles from "./run-status.module.css";
 
 const TONE_ICON: Record<VerdictTone, typeof CircleCheck> = { done: CircleCheck, partial: CircleDashed, blocked: CircleAlert, cancelled: Ban };
@@ -25,12 +25,18 @@ export function RunDetails({ run }: { run: ChatRunView }) {
   const [open, setOpen] = useState(false);
   const panel = useId();
   const badge = verdictBadge(run);
+  const summary = runStepSummary(run);
   return <div className={styles.details}>
+    {run.verdict && summary.verified.length + summary.remaining.length > 0 ? <p className={styles.line} data-testid="run-completion-summary">
+      تحقق {summary.verified.length} من {summary.verified.length + summary.remaining.length} خطوات مطلوبة.
+      {summary.remaining.length ? ` بقي ${summary.remaining.length} دون تحقق مكتمل.` : ""}
+    </p> : null}
     <button type="button" className={styles.toggle} aria-expanded={open} aria-controls={panel} onClick={() => setOpen(value => !value)} data-testid="run-details-toggle">
       <span>تفاصيل التنفيذ</span><ChevronDown size={14} className={open ? styles.flipped : ""} aria-hidden="true" />
     </button>
     {open ? <div id={panel} className={styles.panel} data-testid="run-details">
       <p className={styles.line}><strong>المرحلة:</strong> {STAGE_LABELS[run.phase]}{badge?.reason ? ` — ${badge.reason}` : ""}</p>
+      {run.context?.objective ? <p className={styles.line}><strong>الهدف:</strong> <bdi>{run.context.objective}</bdi></p> : null}
       <p className={styles.line} data-testid="run-engine">{engineLabel(run)}</p>
       {run.path ? <p className={styles.line}><strong>المسار:</strong> {run.path === "direct" ? "جواب مباشر دون أدوات خارجية" : "بحث أو تنفيذ بأدوات"}</p> : null}
       {run.context?.corrections.length ? <p className={styles.line}><strong>صحّحتَ:</strong> <bdi>{run.context.corrections.join("، ")}</bdi></p> : null}
@@ -54,17 +60,23 @@ export function RunDetails({ run }: { run: ChatRunView }) {
             {linkable(item.reference)
               ? <a dir="auto" className={styles.outcome} href={item.reference} target="_blank" rel="noopener noreferrer">{item.label}<ExternalLink size={12} aria-hidden="true" /></a>
               : <span dir="auto" className={styles.outcome}>{item.label}</span>}
+            <time className={styles.note} dateTime={item.observedAt}>رُصد: {observedTime(item.observedAt)}</time>
           </li>)}
         </ul>
       </section> : <p className={styles.line}>لا أدلة مسجلة لهذا الطلب.</p>}
       {run.verification?.criteria.length ? <section aria-label="الشروط">
         <h3 className={styles.heading}>الشروط</h3>
+        <p className={styles.note}><time dateTime={run.verification.checkedAt}>آخر فحص: {observedTime(run.verification.checkedAt)}</time></p>
         <ul className={styles.list}>
           {run.verification.criteria.map(item => <li key={item.id} className={styles.item}>
             <span className={`${styles.state} ${styles[item.status === "verified" ? "verified" : item.status === "failed" ? "failed" : "unknown"]}`}>{item.status === "verified" ? "تحقق" : item.status === "failed" ? "لم يتحقق" : item.status === "expired" ? "انتهت صلاحيته" : "غير مثبت"}</span>
             <span dir="auto" className={styles.outcome}>{item.label}{item.required ? "" : " (إرشادي، لا يمنع الإكمال)"}</span>
           </li>)}
         </ul>
+      </section> : null}
+      {run.verdict && summary.remaining.length ? <section aria-label="المتبقي دون تحقق">
+        <h3 className={styles.heading}>المتبقي دون تحقق</h3>
+        <ul className={styles.list}>{summary.remaining.map(step => <li key={step.id} className={styles.item}><span className={styles.state}>{STEP_STATE_LABELS[step.state]}</span><span dir="auto" className={styles.outcome}>{step.outcome}</span></li>)}</ul>
       </section> : null}
       {run.permissions.length ? <section aria-label="الموافقات">
         <h3 className={styles.heading}>الموافقات</h3>

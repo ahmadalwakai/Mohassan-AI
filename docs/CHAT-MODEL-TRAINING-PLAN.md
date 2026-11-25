@@ -320,3 +320,18 @@ Not audited: the terms of the models that originally generated or translated the
   Rule for the next gates: pause training, run the probes alone, resume.
 - Next stop rule at 300M: core chat passes 3 or fewer of 18 in either language stop the run.
 - Report: `artifacts/chat-training/v5/probes/gate-b-report-20261123.md`.
+
+### 8.7 300M result (2026-11-24): the run stops
+
+- Stop rule: **stop**. Core chat passes by the blind independent reader: Arabic 0/18, English 0/18 (stop at 3 or fewer).
+  Prose 0/20 and 0/20; the four known-hard probes fail. Chat replies ending with EOS: 11/20 and 11/20 (10/20 and 10/20 at 100M).
+- Validation loss still falls (Arabic 2.885 → 2.700 → 2.612, English 3.162 → 2.973 → 2.879 at 100M, 200M and 300M), but the
+  outputs do not answer: 55 of 80 hit the length limit in loops, and the 25 that finish invent identities or drift off topic.
+- The run stays paused at 300,008,192 positions with its STOP file; all checkpoints are kept. V5-3 needs a checkpoint that
+  passed Gate 3, so it does not start. The next step is the owner's decision.
+- Incident: a Dell SupportAssist disk snapshot stalled the GPU memory guard at 285.07M (07:56 UTC); about 85M positions were
+  redone from 200M. The Dell service was paused at the owner's word and restored after the stop.
+- Report: `artifacts/chat-training/v5/probes/gate-300m-report-20261124.md`.
+- **Owner override (12:47 UTC):** «اكمل التدريب». The run resumed from 300M toward 1B with the same config and code
+  (`artifacts/chat-training/v5/probes/gate-300m-owner-override-20261124.json`). The final Gate 3 and the V5-3 condition are
+  unchanged.

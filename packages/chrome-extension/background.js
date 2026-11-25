@@ -1,8 +1,8 @@
 const KEY = 'mohassan-bridge-v1';
+const ADS_TYPED_API_REQUIRED = 'تعبئة Google Ads عبر Chrome متوقفة. استخدم تكامل Google Ads الرسمي للتحقق من الحساب والنطاق وحفظ الحملة وقراءتها بعد التنفيذ.';
 let ticking = false, stopped = false, configuring = false, generation = 0;
 const read = async () => (await chrome.storage.local.get(KEY))[KEY] ?? { app: null, binding: null, message: 'اربط موحسن ثم تبويب Google Ads.', journal: null };
 const write = value => chrome.storage.local.set({ [KEY]: value });
-const checkpoint = journal => ({ jobId: journal.job.id, leaseId: journal.job.leaseId, progress: journal.progress ?? { done: [], snapshots: {} }, steps: journal.steps ?? [] });
 const validApp = value => { try { const url = new URL(value); return url.origin === value && (url.protocol === 'https:' || url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname)) && !url.hostname.endsWith('google.com'); } catch { return false; } };
 const adsUrl = value => { try { const u = new URL(value); return u.origin === 'https://ads.google.com' && /^\/aw\/campaigns\/new(?:\/|$)/.test(u.pathname); } catch { return false; } };
 async function ensureRelay(state) {
@@ -18,25 +18,15 @@ async function api(state, path, body) {
   return response.data;
 }
 async function adapter(tabId, method, payload) {
+  // Do not dispatch cached jobs or generic adapter methods, even against an older server.
+  // Inspect is the only page capability needed to maintain a read-only connection.
+  if (method !== 'inspect') throw new Error(ADS_TYPED_API_REQUIRED);
   const tab = await chrome.tabs.get(tabId);
   if (!adsUrl(tab.url)) throw new Error('افتح معالج حملة جديدة في تبويب Google Ads المختار.');
   await chrome.scripting.executeScript({ target: { tabId }, files: ['ads-adapter.js'] });
   const result = await chrome.scripting.executeScript({ target: { tabId }, func: (name, data) => globalThis.__mohassanAdsAdapter[name](data), args: [method, payload] });
   if (!result[0]?.result) throw new Error('تعذر قراءة معالج Google Ads.');
   return result[0].result;
-}
-function validJob(job, binding) {
-  const c = job?.campaign;
-  return job && /^[a-f0-9-]{36}$/.test(job.id) && typeof job.leaseId === 'string' && job.leaseId.length >= 16 && job.status === 'running' && job.clientId === binding.clientId && job.tabId === binding.tabId && job.customerId === binding.customerId && job.currency === binding.currency
-    && c && c.type === 'search' && c.customerId === binding.customerId && c.currency === binding.currency && typeof c.campaignName === 'string' && c.campaignName.length <= 160
-    && ['calls', 'bookings', 'leads'].includes(c.goal) && /^\d{1,6}(?:\.\d{1,2})?$/.test(c.dailyBudget) && Number(c.dailyBudget) > 0
-    && /^[A-Z]{2}$/.test(c.countryCode) && /^[a-z]{2}$/.test(c.adLanguage) && /^https?:\/\//.test(c.finalUrl)
-    && ['locations', 'keywords', 'negativeKeywords', 'headlines', 'descriptions', 'paths'].every(key => Array.isArray(c[key]) && c[key].length <= 50 && c[key].every(value => typeof value === 'string' && value.length <= 300));
-}
-async function report(state, journal, result) {
-  await api(state, `jobs/${journal.job.id}/result`, { clientId: state.binding.clientId, leaseId: journal.job.leaseId, status: result.status, message: result.message.slice(0, 1000), steps: result.steps.slice(-40) });
-  const latest = await read();
-  if (latest.journal?.job.id === journal.job.id) await write({ ...latest, journal: null, checkpoint: result.status === 'needs_attention' && latest.binding ? checkpoint(journal) : null, message: result.message });
 }
 async function tick() {
   if (ticking || configuring) return;
@@ -49,53 +39,13 @@ async function tick() {
     const afterHeartbeat = await read();
     if (stopped || tickGeneration !== generation || afterHeartbeat.binding?.clientId !== state.binding.clientId || afterHeartbeat.app?.tabId !== state.app.tabId || afterHeartbeat.app?.origin !== state.app.origin) return;
     state = afterHeartbeat;
-    // An acknowledged result may be retried, but a running job is NEVER executed again after a worker restart.
-    if (state.journal) {
-      const result = state.journal.result ?? { status: 'needs_attention', message: 'انقطع التنفيذ. راجع الحقول في Google Ads قبل بدء مهمة جديدة؛ لم تُعد الإضافة الخطوات تلقائياً.', steps: state.journal.steps ?? [] };
-      if (server.latestJob?.id === state.journal.job.id && server.latestJob.status === 'running') await report(state, state.journal, result);
-      else {
-        const current = await read();
-        if (stopped || tickGeneration !== generation || current.binding?.clientId !== state.binding.clientId) return;
-        await write({ ...current, journal: null, checkpoint: current.binding ? checkpoint(state.journal) : null, message: result.message });
-      }
-      return;
-    }
-    const claimed = await api(state, 'jobs/claim', { clientId: state.binding.clientId });
-    if (!claimed?.job) return;
-    if (!validJob(claimed.job, state.binding)) throw new Error('رفضت الإضافة مهمة لا تطابق التبويب أو الحساب المرتبط.');
-    const afterClaim = await read();
-    if (stopped || tickGeneration !== generation || afterClaim.binding?.clientId !== state.binding.clientId || afterClaim.app?.tabId !== state.app.tabId || afterClaim.app?.origin !== state.app.origin) {
-      await api(state, `jobs/${claimed.job.id}/result`, { clientId: state.binding.clientId, leaseId: claimed.job.leaseId, status: 'stopped', message: 'تغيّر الربط أو أُوقفت المهمة قبل أي تعديل في الصفحة.', steps: [] }).catch(() => {});
-      return;
-    }
-    const prior = state.checkpoint?.jobId === claimed.job.id && state.checkpoint.leaseId !== claimed.job.leaseId ? state.checkpoint : null;
-    const journal = { job: claimed.job, steps: prior?.steps ?? [], result: null, progress: prior?.progress ?? { done: [], snapshots: {} } };
-    state = { ...state, journal, message: 'تُملأ حقول الحملة في تبويب Google Ads المختار…' };
-    await write(state); // Write-ahead journal before ANY page mutation.
-    let progress = journal.progress, result;
-    for (let count = 0; count < 30; count++) {
-      const current = await read();
-      if (stopped || !current.binding || current.binding.clientId !== state.binding.clientId) { result = { status: 'stopped', message: 'أُوقف التنفيذ. راجع الحقول التي مُلئت قبل الإيقاف.', steps: journal.steps }; break; }
-      const live = await api(state, 'heartbeat', state.binding);
-      if (live.latestJob?.id !== claimed.job.id || live.latestJob.status !== 'running') { result = { status: 'stopped', message: 'أُوقفت المهمة من موحسن. لم تتابع الإضافة إلى الخطوة التالية.', steps: journal.steps }; break; }
-      const step = await adapter(state.binding.tabId, 'step', { campaign: claimed.job.campaign, progress, jobId: claimed.job.id, leaseId: claimed.job.leaseId });
-      journal.steps.push({ stage: step.stage ?? 'unknown', message: step.message, fields: step.fields ?? [] });
-      progress = step.progress ?? progress;
-      journal.progress = progress;
-      if (step.status !== 'continue') { result = { status: step.status, message: step.message, steps: journal.steps }; break; }
-      const afterStep = await read();
-      if (!afterStep.binding || stopped) { result = { status: 'stopped', message: 'أُوقف التنفيذ وفُصلت الإضافة.', steps: journal.steps }; break; }
-      await write({ ...afterStep, journal, message: step.message });
-      await new Promise(resolve => setTimeout(resolve, 900));
-    }
-    result ??= { status: 'needs_attention', message: 'وصلت المهمة إلى حد الخطوات. راجع صفحة Google Ads قبل المتابعة.', steps: journal.steps };
-    journal.result = result;
-    const finishing = await read();
-    if (!finishing.binding || stopped) { await write({ ...finishing, journal: null, checkpoint: null, message: result.message }); return; }
-    await write({ ...finishing, journal, message: result.message });
-    const live = await api(state, 'status');
-    if (live.latestJob?.id === claimed.job.id && live.latestJob.status === 'running') await report(state, journal, result);
-    else { const current = await read(); await write({ ...current, journal: null, checkpoint: current.binding ? checkpoint(journal) : null, message: result.message }); }
+    // Older servers may still return an active job. Cancel it; never claim, resume,
+    // acknowledge completion, or replay a locally stored journal/checkpoint.
+    const legacyJob = server.latestJob;
+    if (legacyJob && ['queued', 'running'].includes(legacyJob.status)) await api(state, `jobs/${legacyJob.id}/cancel`, {});
+    const current = await read();
+    if (stopped || tickGeneration !== generation || current.binding?.clientId !== state.binding.clientId) return;
+    await write({ ...current, journal: null, checkpoint: null, message: ADS_TYPED_API_REQUIRED });
   } catch (error) {
     if (tickGeneration !== generation) return;
     const state = await read();
@@ -105,8 +55,8 @@ async function tick() {
       await write({ ...state, binding: null, journal: null, message: 'فُصلت الإضافة من موحسن. أعد الربط من تبويب Google Ads للمتابعة.' });
       await chrome.alarms.clear('mohassan-bridge'); return;
     }
-    // Keep an uncertain journal until it can be reconciled with the server; never requeue.
-    await write({ ...state, message, ...(state.journal ? { journal: { ...state.journal, result: { status: 'needs_attention', message, steps: state.journal.steps ?? [] } } } : {}) });
+    // A failed cancellation is disclosed; no local execution data may become runnable.
+    await write({ ...state, journal: null, checkpoint: null, message: `${ADS_TYPED_API_REQUIRED} ${message}` });
   } finally { ticking = false; }
 }
 async function popup(message) {
@@ -129,7 +79,6 @@ async function popup(message) {
     if (!state.app || !/^\d{10}$/.test(message.customerId) || !/^[A-Z]{3}$/.test(message.currency) || !Number.isInteger(message.tabId)) throw new Error('اربط موحسن وأدخل رقم الحساب وعملته.');
     const inspected = await adapter(message.tabId, 'inspect', { customerId: message.customerId, currency: message.currency });
     if (!inspected.ok) throw new Error(inspected.message);
-    await adapter(message.tabId, 'resetStop', {});
     if (state.binding) await api(state, 'disconnect', { clientId: state.binding.clientId });
     const binding = { clientId: crypto.randomUUID(), tabId: message.tabId, customerId: message.customerId, currency: message.currency, extensionVersion: chrome.runtime.getManifest().version };
     await api(state, 'heartbeat', binding);
@@ -140,15 +89,7 @@ async function popup(message) {
     void tick(); return true;
   }
   if (message.kind === 'resume') {
-    if (ticking || state.journal || !state.binding || !state.checkpoint) throw new Error('لا توجد خطوة متوقفة يمكن متابعتها الآن.');
-    const status = await api(state, 'status');
-    if (status.latestJob?.id !== state.checkpoint.jobId || status.latestJob.status !== 'needs_attention') throw new Error('المهمة لم تعد تنتظر المراجعة.');
-    await api(state, `jobs/${state.checkpoint.jobId}/resume`, { clientId: state.binding.clientId });
-    await adapter(state.binding.tabId, 'resetStop', {});
-    if (configurationGeneration !== generation) throw new Error('أُوقفت المتابعة قبل اكتمالها.');
-    stopped = false;
-    await write({ ...state, message: 'استؤنفت المهمة من الصفحة الحالية بعد مراجعتك.' });
-    void tick(); return true;
+    throw new Error(ADS_TYPED_API_REQUIRED);
   }
   if (message.kind === 'stop') {
     generation++;
@@ -169,18 +110,8 @@ async function popup(message) {
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (sender.id !== chrome.runtime.id) return;
   if (message?.kind === 'adapter-check') {
-    read().then(async state => {
-      if (stopped || sender.frameId !== 0 || sender.tab?.id !== state.binding?.tabId || sender.origin !== 'https://ads.google.com' || state.journal?.job.id !== message.jobId || state.journal?.job.leaseId !== message.leaseId) return { allowed: false };
-      const status = await api(state, 'status');
-      const allowed = status.connected && status.latestJob?.id === message.jobId && status.latestJob.status === 'running' && status.latestJob.leaseId === message.leaseId;
-      const current = await read();
-      if (!allowed || stopped || !current.binding || current.journal?.job.leaseId !== message.leaseId) return { allowed: false };
-      if (message.progress && Array.isArray(message.progress.done) && message.progress.done.length <= 40 && JSON.stringify(message.progress).length < 20000) {
-        await write({ ...current, journal: { ...current.journal, progress: message.progress } });
-      }
-      return { allowed: true };
-    }).then(reply, () => reply({ allowed: false }));
-    return true;
+    reply({ allowed: false, message: ADS_TYPED_API_REQUIRED });
+    return;
   }
   if (message?.kind === 'relay-tick') {
     read().then(state => { if (sender.frameId === 0 && sender.tab?.id === state.app?.tabId && sender.origin === state.app.origin) void tick(); }).catch(() => {});

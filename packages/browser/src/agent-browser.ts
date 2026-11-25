@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdir } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { chromium, type BrowserContext, type ElementHandle, type Frame, type JSHandle, type Page, type Route } from 'playwright';
-import { decideEffect, type EffectActor } from './effect-policy.js';
+import { decideEffect, requiresGoogleAdsTypedApi, GOOGLE_ADS_TYPED_API_REQUIRED_MESSAGE, type EffectActor } from './effect-policy.js';
 import { BrowserError, SafeNetwork } from './network.js';
 import { AgentSessionCheckpointSchema, AgentPostconditionSchema, evidenceHash, safeResumeUrl, pagePostcondition, type AgentSessionCheckpoint, type AgentPostcondition, type AgentVerificationReport, type AgentVerificationCheck } from './session-state.js';
 
@@ -225,7 +226,7 @@ const MAX_CONVERSATION_PAGES = 4;
 const DEFAULT_IDLE_PAGE_MS = 30 * 60000;
 const MAX_FRAME_ELEMENTS = 220;
 const REF_PATTERN = /^(?:f\d+)?e\d+$/;
-const GESTURES = new Set<AgentAction['kind']>(['click', 'type', 'press', 'form']);
+const GESTURES = new Set<AgentAction['kind']>(['click', 'type', 'select', 'press', 'form']);
 const OWNER_FOLLOW_MS = 8000;
 const OWNER_LIMIT_MS = 120000;
 /** Quiet-network window after an action (proposed; Playwright's networkidle uses 500 ms) and the cap it never exceeds. */
@@ -438,6 +439,7 @@ export class AgentBrowser {
   private readonly network: SafeNetwork;
   private readonly frameModels = new WeakMap<Frame, Promise<JSHandle<FrameModel>>>();
   private readonly captureModelTokens = new WeakMap<JSHandle<FrameModel>, string>();
+  private readonly actionScope = new AsyncLocalStorage<NonNullable<ConversationPage['operation']>>();
   private nextRef = 0;
   private checkpointStore?: AgentBrowserOptions['onCheckpoint'];
   private readonly idlePageMs: number | null;
@@ -673,7 +675,7 @@ export class AgentBrowser {
         // iframe is an effect that the read rule below must not excuse.
         if (navigation && !topLevel && actor === 'agent' && decision.kind === 'allow' && !decision.consumesPermit) throw new BrowserError('AGENT_EFFECT_DENIED', 'حُجب تنقل إطار تلقائي بلا موافقة مطابقة. لم يُرسل الطلب.', 403);
         if (decision.kind === 'deny') {
-          if (operation && (decision.failsAction || topLevel)) throw new BrowserError(decision.code, 'حُجب إرسال أو تنقل تلقائي بلا موافقة مطابقة للوجهة والقيم. لم يُرسل الطلب.', decision.code === 'AGENT_EFFECT_UNKNOWN' ? 409 : 403);
+          if (operation && (decision.failsAction || topLevel)) throw new BrowserError(decision.code, decision.code === 'GOOGLE_ADS_TYPED_API_REQUIRED' ? GOOGLE_ADS_TYPED_API_REQUIRED_MESSAGE : 'حُجب إرسال أو تنقل تلقائي بلا موافقة مطابقة للوجهة والقيم. لم يُرسل الطلب.', decision.code === 'AGENT_EFFECT_UNKNOWN' ? 409 : 403);
           await route.abort('blockedbyclient').catch(() => {});
           return;
         }
@@ -755,7 +757,8 @@ export class AgentBrowser {
     const entry = await this.conversation(ownerId, conversationId);
     const held = entry.held;
     if (!held || held.effect.id !== heldId || held.effect.expiresAt <= Date.now()) throw new BrowserError('AGENT_APPROVAL_STALE', 'انتهت صلاحية الطلب المعلّق قبل الموافقة. لم يُرسل الطلب.', 409);
-    if (entry.operation) throw new BrowserError('AGENT_ACTION_BUSY', 'هناك إجراء جارٍ في هذه الصفحة.', 409);
+    if (requiresGoogleAdsTypedApi(held.effect.url, held.effect.method)) throw new BrowserError('GOOGLE_ADS_TYPED_API_REQUIRED', GOOGLE_ADS_TYPED_API_REQUIRED_MESSAGE, 403);
+    if (entry.operation || entry.mutations) throw new BrowserError('AGENT_ACTION_BUSY', 'هناك إجراء جارٍ في هذه الصفحة.', 409);
     entry.held = undefined;
     clearTimeout(held.timer);
     const { effect, route } = held;
@@ -801,6 +804,7 @@ export class AgentBrowser {
   }
 
   private async forward(entry: ConversationPage, route: Route, url: string, method: string, credentials: 'keep' | 'omit', operation: ConversationPage['operation'], consumed: boolean, initialPopup = false): Promise<void> {
+    if (requiresGoogleAdsTypedApi(url, method)) throw new BrowserError('GOOGLE_ADS_TYPED_API_REQUIRED', GOOGLE_ADS_TYPED_API_REQUIRED_MESSAGE, 403);
     const request = route.request(), navigation = request.isNavigationRequest(), topLevel = initialPopup || navigation && request.frame() === entry.page.mainFrame();
     const read = method === 'GET' || method === 'HEAD', body = request.postDataBuffer() ?? undefined;
     const active = async () => {
@@ -911,7 +915,7 @@ export class AgentBrowser {
     if (!entry) {
       if (capture) throw new BrowserError('AGENT_NO_PAGE', 'لا توجد صفحة مفتوحة لالتقاطها.', 409);
       if (owner.conversations.size >= MAX_CONVERSATION_PAGES) {
-        const candidate = [...owner.conversations.entries()].filter(([, item]) => !item.operation && !item.held && item.readers === 0 && (item.ownerInputUntil ?? 0) <= Date.now()).sort(([, a], [, b]) => a.lastUsed - b.lastUsed)[0];
+        const candidate = [...owner.conversations.entries()].filter(([, item]) => !item.operation && !item.held && item.readers === 0 && item.mutations === 0 && (item.ownerInputUntil ?? 0) <= Date.now()).sort(([, a], [, b]) => a.lastUsed - b.lastUsed)[0];
         if (!candidate) throw new BrowserError('AGENT_PAGE_LIMIT', 'جميع صفحات المتصفح مشغولة؛ انتظر انتهاء إجراء أو أغلق جلسة.', 409);
         const [oldestId, oldest] = candidate;
         owner.conversations.delete(oldestId);
@@ -938,16 +942,17 @@ export class AgentBrowser {
     }
     entry.lastUsed = Date.now();
     if (reserve) {
-      if (entry.operation) throw new BrowserError('AGENT_ACTION_BUSY', 'هناك إجراء جارٍ في هذه الصفحة.', 409);
+      if (entry.operation || entry.mutations) throw new BrowserError('AGENT_ACTION_BUSY', 'هناك إجراء جارٍ في هذه الصفحة.', 409);
       entry.operation = reserve;
     }
     return entry;
     } finally { release(); }
   }
 
-  /** Legacy direct action methods also exclude a concurrent evidence capture. */
+  /** Native input shares the action reservation, including legacy and owner input. */
   private async withMutation<T>(entry: ConversationPage, run: () => Promise<T>): Promise<T> {
     if (entry.captureReservation) throw new BrowserError('AGENT_CAPTURE_BUSY', 'يجري التقاط قراءة موثقة لهذه الصفحة؛ انتظر اكتمالها.', 409);
+    if (entry.mutations || entry.operation && this.actionScope.getStore() !== entry.operation) throw new BrowserError('AGENT_ACTION_BUSY', 'هناك إجراء جارٍ في هذه الصفحة؛ انتظر نتيجته قبل إجراء آخر.', 409);
     entry.mutations++;
     try { return await run(); } finally { entry.mutations--; }
   }
@@ -1273,6 +1278,7 @@ export class AgentBrowser {
         body = Buffer.concat(parts); headers['content-type'] = `multipart/form-data; boundary=${boundary}`;
       }
       const owner = await this.owner(ownerId, conversationId);
+      if (requiresGoogleAdsTypedApi(approved.url, approved.direction === 'upload' ? 'POST' : 'GET')) throw new BrowserError('GOOGLE_ADS_TYPED_API_REQUIRED', GOOGLE_ADS_TYPED_API_REQUIRED_MESSAGE, 403);
       let target = approved.url;
       const visited = new Set<string>();
       for (let redirects = 0; redirects <= 5; redirects++) {
@@ -1385,7 +1391,7 @@ export class AgentBrowser {
         case 'wait': return await this.wait(ownerId, conversationId, Number(action.text) || 2000);
         default: throw new BrowserError('AGENT_ACTION_INVALID','هذا الإجراء غير معروف.',400);
       } };
-      let result = await perform();
+      let result = await this.actionScope.run(operation, perform);
       if (entry.closed) throw new BrowserError('AGENT_PAGE_CLOSED', 'أُغلقت صفحة المحادثة.', 409);
       if (conditions) result = await this.verifyPostconditions(ownerId, conversationId, conditions, authority);
       if (operation.used && !operation.responded) entry.recovery.reviewRequired = true;

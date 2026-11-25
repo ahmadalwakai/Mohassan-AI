@@ -1,4 +1,4 @@
-import type { GoogleAdsBrief, GoogleAdsChangeSummary, GoogleAdsVerification, GoogleAdsVerificationCheck } from '@mohassan/contracts';
+import { GoogleAdsReadbackSchema, type GoogleAdsBrief, type GoogleAdsChangeSummary, type GoogleAdsVerification, type GoogleAdsVerificationCheck } from '@mohassan/contracts';
 import type { GoogleAdsClient, MutateOperation, CallContext } from './client.ts';
 import { canonicalJson, sha256 } from './crypto.ts';
 import { GoogleAdsError } from './errors.ts';
@@ -63,6 +63,73 @@ export interface VerifyInput {
   geoResourceNames: readonly string[]; maxDailyBudgetMicros: bigint; context: CallContext & { customerId: string };
   /** Only a creation-only PAUSED request may defer tracking; launch always checks it again. */
   allowUnprovenConversionsForPaused?: boolean;
+}
+
+export interface PublishedFieldEvidence { field: string; expected: string | null; actual: string | null; passed: boolean }
+export interface PublishedCampaignEvidence {
+  checkedAt: string; customerId: string; campaignResourceName: string; passed: boolean; fields: PublishedFieldEvidence[]; resourceNames: string[]; requestId: string | null;
+}
+
+/** Read every material field from Google after a write. Validation and mutate receipts are not read-back evidence. */
+export async function verifyPublishedCampaign(client: Pick<GoogleAdsClient, 'search'>, input: {
+  customerId: string; campaignResourceName: string; operations: readonly MutateOperation[];
+  expectedStatus: 'PAUSED' | 'ENABLED'; context: CallContext & { customerId: string };
+}): Promise<PublishedCampaignEvidence> {
+  const { customerId, campaignResourceName, context } = input;
+  if (context.customerId !== customerId || !new RegExp(`^customers/${customerId}/campaigns/\\d+$`).test(campaignResourceName)) {
+    throw new GoogleAdsError('GOOGLE_ADS_ACCOUNT_CHANGED', 'حساب التنفيذ لا يطابق الحساب المفوّض لهذه الحملة.', 409);
+  }
+  const intended = readOperations(customerId, input.operations);
+  const fields: PublishedFieldEvidence[] = [];
+  const value = (item: unknown): string | null => {
+    if (item === undefined || item === null) return null;
+    const text = typeof item === 'string' ? item : canonicalJson(item);
+    return text.length <= 4000 ? text : `sha256:${sha256(text)} (${text.length} characters)`;
+  };
+  const add = (field: string, expected: unknown, actual: unknown) => fields.push({ field, expected: value(expected), actual: value(actual), passed: canonicalJson(expected ?? null) === canonicalJson(actual ?? null) });
+  if (intended.problems.length || !intended.campaign || !intended.budget || !intended.adGroup || !intended.ad) {
+    throw new GoogleAdsError('GOOGLE_ADS_READBACK_INTENT', 'عمليات الحملة المخزنة غير مكتملة؛ لا يمكن إثبات النتيجة.', 409);
+  }
+  // Resource names are validated above, rather than interpolating page or model text into GAQL.
+  const where = `WHERE campaign.resource_name = '${campaignResourceName}'`;
+  const campaigns = await client.search(`SELECT campaign.resource_name, campaign.name, campaign.status, campaign.advertising_channel_type, campaign.bidding_strategy_type, campaign.contains_eu_political_advertising, campaign.campaign_budget, campaign.network_settings.target_google_search, campaign.network_settings.target_search_network, campaign.network_settings.target_content_network, campaign.network_settings.target_partner_search_network, campaign.geo_target_type_setting.positive_geo_target_type, campaign.geo_target_type_setting.negative_geo_target_type, campaign_budget.amount_micros, campaign_budget.delivery_method, campaign_budget.explicitly_shared FROM campaign ${where}`, context);
+  add('campaign.count', 1, campaigns.length);
+  const row = campaigns[0], campaign = row?.campaign, budget = row?.campaignBudget;
+  add('campaign.resourceName', campaignResourceName, campaign?.resourceName);
+  add('campaign.name', intended.campaign.name, campaign?.name);
+  add('campaign.status', input.expectedStatus, campaign?.status);
+  add('campaign.advertisingChannelType', intended.campaign.advertisingChannelType, campaign?.advertisingChannelType);
+  add('campaign.containsEuPoliticalAdvertising', intended.campaign.containsEuPoliticalAdvertising, campaign?.containsEuPoliticalAdvertising);
+  add('budget.resourceInAccount', true, typeof campaign?.campaignBudget === 'string' && new RegExp(`^customers/${customerId}/campaignBudgets/\\d+$`).test(campaign.campaignBudget));
+  const bidding = intended.campaign.manualCpc ? 'MANUAL_CPC' : intended.campaign.targetSpend ? 'TARGET_SPEND' : 'MAXIMIZE_CONVERSIONS';
+  add('campaign.biddingStrategyType', bidding, campaign?.biddingStrategyType);
+  for (const key of ['targetGoogleSearch', 'targetSearchNetwork', 'targetContentNetwork', 'targetPartnerSearchNetwork']) add(`campaign.networkSettings.${key}`, intended.campaign.networkSettings?.[key] ?? false, campaign?.networkSettings?.[key] ?? false);
+  for (const key of ['positiveGeoTargetType', 'negativeGeoTargetType']) add(`campaign.geoTargetTypeSetting.${key}`, intended.campaign.geoTargetTypeSetting?.[key], campaign?.geoTargetTypeSetting?.[key]);
+  add('budget.amountMicros', String(intended.budget.amountMicros), budget?.amountMicros === undefined ? null : String(budget.amountMicros));
+  add('budget.deliveryMethod', intended.budget.deliveryMethod, budget?.deliveryMethod);
+  add('budget.explicitlyShared', intended.budget.explicitlyShared, budget?.explicitlyShared ?? false);
+  const groups = await client.search(`SELECT ad_group.resource_name, ad_group.campaign, ad_group.name, ad_group.status, ad_group.type FROM ad_group ${where} AND ad_group.status != 'REMOVED'`, context);
+  add('adGroup.count', 1, groups.length);
+  const group = groups[0]?.adGroup;
+  add('adGroup.resourceInAccount', true, typeof group?.resourceName === 'string' && new RegExp(`^customers/${customerId}/adGroups/\\d+$`).test(group.resourceName));
+  add('adGroup.campaign', campaignResourceName, group?.campaign);
+  for (const key of ['name', 'status', 'type']) add(`adGroup.${key}`, intended.adGroup[key], group?.[key]);
+  const criteria = await client.search(`SELECT campaign_criterion.type, campaign_criterion.negative, campaign_criterion.location.geo_target_constant, campaign_criterion.keyword.text, campaign_criterion.keyword.match_type FROM campaign_criterion ${where} AND campaign_criterion.status != 'REMOVED'`, context);
+  const sorted = (items: unknown[]) => items.map(item => canonicalJson(item)).sort();
+  add('campaign.locations', sorted(intended.locations), sorted(criteria.filter(item => item.campaignCriterion?.type === 'LOCATION').map(item => item.campaignCriterion.location?.geoTargetConstant)));
+  add('campaign.negativeKeywords', sorted(intended.negatives), sorted(criteria.filter(item => item.campaignCriterion?.negative === true && item.campaignCriterion?.keyword).map(item => item.campaignCriterion.keyword)));
+  add('campaign.criteria.count', intended.locations.length + intended.negatives.length, criteria.length);
+  const keywords = await client.search(`SELECT ad_group_criterion.ad_group, ad_group_criterion.status, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type FROM ad_group_criterion ${where} AND ad_group_criterion.status != 'REMOVED'`, context);
+  add('adGroup.keywords', sorted(intended.keywords.map(keyword => ({ adGroup: group?.resourceName, status: 'ENABLED', keyword }))), sorted(keywords.map(item => ({ adGroup: item.adGroupCriterion?.adGroup, status: item.adGroupCriterion?.status, keyword: item.adGroupCriterion?.keyword }))));
+  const ads = await client.search(`SELECT ad_group_ad.ad_group, ad_group_ad.status, ad_group_ad.ad.final_urls, ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions, ad_group_ad.ad.responsive_search_ad.path1, ad_group_ad.ad.responsive_search_ad.path2 FROM ad_group_ad ${where} AND ad_group_ad.status != 'REMOVED'`, context);
+  add('ad.count', 1, ads.length);
+  const ad = ads[0]?.adGroupAd, rsa = ad?.ad?.responsiveSearchAd, expected = intended.ad.ad;
+  add('ad.adGroup', group?.resourceName ?? null, ad?.adGroup);
+  add('ad.status', intended.ad.status, ad?.status);
+  add('ad.finalUrls', expected.finalUrls, ad?.ad?.finalUrls);
+  for (const key of ['headlines', 'descriptions']) add(`ad.${key}`, sorted(expected.responsiveSearchAd[key].map((item: any) => item.text)), sorted((rsa?.[key] ?? []).map((item: any) => item.text)));
+  for (const key of ['path1', 'path2']) add(`ad.${key}`, expected.responsiveSearchAd[key] ?? '', rsa?.[key] ?? '');
+  return GoogleAdsReadbackSchema.parse({ checkedAt: new Date().toISOString(), customerId, campaignResourceName, passed: fields.every(field => field.passed), fields, resourceNames: [campaignResourceName, campaign?.campaignBudget, group?.resourceName].filter((name): name is string => typeof name === 'string'), requestId: null }) as PublishedCampaignEvidence;
 }
 
 export async function verifyConversionTracking(client: Pick<GoogleAdsClient, 'search'>, context: CallContext & { customerId: string }): Promise<GoogleAdsVerificationCheck> {

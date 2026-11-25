@@ -1,13 +1,13 @@
 <!doctype html>
 <html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>موحسن في Chrome</title><link rel="stylesheet" href="popup.css"></head>
 <body><main>
-  <header><span class="mark">م</span><div><h1>موحسن في Chrome</h1><p>حملة بحث، حتى صفحة المراجعة</p></div></header>
+  <header><span class="mark">م</span><div><h1>موحسن في Chrome</h1><p>حالة الاتصال وبيانات ربط التبويب</p></div></header>
   <p id="status" role="status" aria-live="polite">جارٍ قراءة الاتصال…</p>
   <section><h2>١ · اربط موحسن</h2><p>افتح موحسن وسجّل الدخول إليه في هذا المتصفح، ثم اضغط هنا من تبويبه.</p><button id="pair-app">استخدم هذا التبويب لموحسن</button><small id="origin"></small></section>
-  <section><h2>٢ · اختر حساب الإعلان</h2><p>سجّل الدخول إلى Google Ads بنفسك، واختر حسابك وافتح «حملة جديدة». ثم افتح الإضافة من ذلك التبويب.</p>
+  <section><h2>٢ · بيانات ربط تبويب الإعلان</h2><p>سجّل الدخول إلى Google Ads بنفسك واختر حسابك. بيانات الحساب والعملة التي تدخلها هنا تُحفظ للربط فقط؛ لا تثبت أن الإضافة قرأتها من Google.</p>
     <label for="customer">رقم حساب Google Ads</label><input id="customer" dir="ltr" inputmode="numeric" placeholder="123-456-7890" maxlength="12" autocomplete="off">
     <label for="currency">عملة الحساب</label><select id="currency"><option value="GBP">GBP — جنيه إسترليني</option><option value="USD">USD — دولار أمريكي</option><option value="EUR">EUR — يورو</option><option value="SAR">SAR — ريال سعودي</option><option value="AED">AED — درهم إماراتي</option><option value="EGP">EGP — جنيه مصري</option><option value="QAR">QAR — ريال قطري</option><option value="KWD">KWD — دينار كويتي</option><option value="BHD">BHD — دينار بحريني</option><option value="OMR">OMR — ريال عماني</option><option value="JOD">JOD — دينار أردني</option><option value="CAD">CAD — دولار كندي</option><option value="AUD">AUD — دولار أسترالي</option></select>
-    <button id="pair-ads" class="primary">اربط هذا التبويب وابدأ الانتظار</button>
+    <button id="pair-ads" class="primary">احفظ بيانات ربط هذا التبويب</button>
   </section>
-  <section class="limits"><p>بعد إجابتك عن بطاقة موحسن، تُملأ الحقول المعروفة في التبويب المختار. النشر والفوترة لك. أي اختلاف في الحساب أو الواجهة يوقف التنفيذ.</p><button id="resume" hidden>راجعت الخطوة، أكمل</button><p id="resume-note" hidden>أكمل الاختيار المطلوب في Google Ads أولاً. المتابعة لا تعيد النشر أو تبدأ حملة أخرى.</p><button id="stop" class="stop">إيقاف وفصل الإضافة</button></section>
+  <section class="limits"><p>تعبئة حملات Google Ads واستئنافها عبر الإضافة غير مدعومين. عد إلى موحسن واستخدم الربط الرسمي في المحادثة أو قسم Google Ads لإنشاء حملة متوقفة والتحقق منها عبر API.</p><button id="stop" class="stop">إيقاف وفصل الإضافة</button></section>
 </main><script src="popup.js" type="module"></script></body></html>

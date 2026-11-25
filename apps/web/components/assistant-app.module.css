@@ -159,6 +159,8 @@
   background: var(--raised); color: var(--soft); font-size: 13px;
 }
 .noticeBar .primary, .noticeBar .secondary { padding: 5px 10px; font-size: 13px; }
+.noticeBar span { min-width: 0; overflow-wrap: anywhere; }
+.noticeBar time { flex-basis: 100%; font-size: 12px; }
 .settingRow { display: flex; flex-direction: column; gap: 4px; padding: 8px 12px; color: var(--soft); font-size: 12px; }
 .settingRow select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--raised); color: var(--ink); font-size: 13px; }
 

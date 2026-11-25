@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 import { BrowserError } from '@mohassan/browser';
-import type { CampaignCheck, CampaignEventInput, CampaignField, CampaignIssue, CampaignStepStatus, GoogleAdsBrief, GoogleAdsDraft, GoogleAdsIssue, GoogleAdsLanding, GoogleAdsPublishing } from '@mohassan/contracts';
+import { CampaignAccountSchema, GoogleAdsReadbackSchema, type CampaignAccount, type CampaignCheck, type CampaignEventInput, type CampaignField, type CampaignIssue, type CampaignStepStatus, type GoogleAdsBrief, type GoogleAdsDraft, type GoogleAdsIssue, type GoogleAdsLanding, type GoogleAdsPublishing, type GoogleAdsReadback } from '@mohassan/contracts';
 import { ADS_LIMITS, MAX_CORRECTION_PASSES, adsLength, correctAdText, issueCategory, lessonAdvisesAgainst, validateAdText, validateBrief, type CorrectionObserver, type CorrectionPass, type CorrectionResult, type LessonVerifier, type PausedCreationObserver, type RecoveryLesson, type RewriteRequest, type TextInput } from '@mohassan/google-ads';
 import { adsApprovedText, adsFailText, adsItemsOf, adsLines, adsPassText, adsTextInput, parseAdsLines, type AdsCheckResult } from './ads-check.js';
 import { FAILURE_ACTIONS, backoffDelay, classifyFailure, type ClassifiedFailure } from './recovery.js';
+import { campaignRequestedAccountIds } from './campaign-authorization.js';
 
 /**
  * The campaign task as the chat runs it: check the text, correct what can be
@@ -13,18 +14,20 @@ import { FAILURE_ACTIONS, backoffDelay, classifyFailure, type ClassifiedFailure 
  * Google Ads control, behind its own gates, approval and single-use receipt.
  */
 export interface CampaignPorts {
+  /** Fresh authenticated account/report read. Stored connection metadata alone is insufficient. */
+  account(ownerId: string, expectedCustomerId?: string): Promise<CampaignAccount>;
   parse(text: string, request: string): GoogleAdsBrief;
   /** A read of the landing page, as validation reads it. */
   landing(url: string, signal?: AbortSignal): Promise<{ landing: GoogleAdsLanding; text: string }>;
   gates(ownerId: string): Promise<GoogleAdsPublishing>;
   drafts(ownerId: string): Promise<GoogleAdsDraft[]>;
-  createPaused(ownerId: string, brief: GoogleAdsBrief, idempotencyKey: string, authority: { assertActive(): Promise<void> }, observer: PausedCreationObserver): Promise<GoogleAdsDraft>;
+  createPaused(ownerId: string, brief: GoogleAdsBrief, idempotencyKey: string, authority: { assertActive(): Promise<void>; customerId?: string; currency?: string; timeZone?: string }, observer: PausedCreationObserver): Promise<GoogleAdsDraft>;
   /** Reads the account to settle a write whose result is unknown. Never writes to Google. */
   reconcile(ownerId: string, draftId: string, revision: number): Promise<GoogleAdsDraft>;
   discard(ownerId: string, draftId: string, revision: number): Promise<void>;
   lessons: {
-    list(ownerId: string): Promise<RecoveryLesson[]>;
-    record(ownerId: string, entry: { category: string; code: string; strategy: string; verifiedBy: LessonVerifier; succeeded: boolean }): Promise<void>;
+    list(ownerId: string, customerId?: string): Promise<RecoveryLesson[]>;
+    record(ownerId: string, entry: { category: string; code: string; strategy: string; verifiedBy: LessonVerifier; succeeded: boolean }, customerId?: string): Promise<void>;
   };
 }
 
@@ -42,6 +45,17 @@ export interface CampaignRunState {
   corrections: { list: keyof TextInput; before: string; after: string | null }[];
   /** How often each unresolved failure was seen in this task; repeats end it instead of looping. */
   seen: Record<string, number>;
+  /** Host-observed account and exact corrected request, retained across handoffs/restarts. */
+  account?: CampaignAccount;
+  intentHash?: string;
+  readback?: GoogleAdsReadback;
+  requestedCreation?: boolean;
+  /** Proposed material fields remain untrusted until matched to the owner's request/answers. */
+  proposal?: GoogleAdsBrief;
+  missingInputs?: import('./ads-model-chat.js').AdsField[];
+  inputRounds?: number;
+  verificationSkill?: import('./campaign-verification.js').CampaignVerificationSkill;
+  authorization?: NonNullable<import('./campaign-authorization.js').CampaignAuthorizationResult['scope']>;
 }
 export const newCampaignRunState = (): CampaignRunState => ({ serial: 0, open: false, attempt: 0, writeSent: false, draftId: null, corrections: [], seen: {} });
 
@@ -61,6 +75,10 @@ export interface CampaignContext {
   rewrite?: (request: RewriteRequest, signal?: AbortSignal) => Promise<string>;
   sleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
   random?: () => number;
+  readbackOnly?: boolean;
+  verifyCompletion?: (draft: GoogleAdsDraft) => Promise<import('./campaign-verification.js').CampaignCompletionVerification>;
+  authorizeBrief?: (brief: GoogleAdsBrief, account: CampaignAccount) => import('./campaign-authorization.js').CampaignAuthorizationResult;
+  expectedAccountIds?: readonly string[];
 }
 
 export const MAX_SAME_FAILURE = 3;
@@ -126,13 +144,14 @@ function landingChecks(url: string, landing: GoogleAdsLanding, issues: readonly 
 async function begin(ctx: CampaignContext) {
   if (ctx.state.open) return;
   Object.assign(ctx.state, { serial: ctx.state.serial + 1, open: true, seen: {} });
+  ctx.state.requestedCreation = ctx.createInAccount;
   await ctx.persist();
-  await ctx.emit(taskIdOf(ctx), { type: 'task_started', stepId: 'intent', status: 'passed', data: { kind: 'google_ads_search_campaign', createInAccount: ctx.createInAccount } }, 'task_started');
+  await ctx.emit(taskIdOf(ctx), { type: 'task_started', stepId: 'intent', status: 'passed', data: { kind: 'google_ads_search_campaign', createInAccount: ctx.createInAccount, ...(ctx.readbackOnly ? { mode: 'readback_only' as const } : {}) } }, 'task_started');
 }
 
 async function learn(ctx: CampaignContext, entry: { category: string; code: string; strategy: string; verifiedBy: LessonVerifier; succeeded: boolean }) {
   // Memory is an aid: failing to write a lesson must never fail the task.
-  try { await ctx.ports.lessons.record(ctx.ownerId, entry); } catch { ctx.signal.throwIfAborted(); }
+  try { await ctx.ports.lessons.record(ctx.ownerId, entry, ctx.state.account?.customerId); } catch { ctx.signal.throwIfAborted(); }
 }
 
 async function learnPass(ctx: CampaignContext, pass: CorrectionPass) {
@@ -152,7 +171,7 @@ const correctionObserver = (ctx: CampaignContext): CorrectionObserver => ({
 
 async function correct(ctx: CampaignContext, input: TextInput, validate: (candidate: TextInput) => GoogleAdsIssue[], evidence: string, adLanguage: string | null): Promise<CorrectionResult> {
   // History only reorders strategies that are allowed anyway; it cannot add one or lift a gate.
-  const lessons = await ctx.ports.lessons.list(ctx.ownerId).catch(() => [] as RecoveryLesson[]);
+  const lessons = await ctx.ports.lessons.list(ctx.ownerId, ctx.state.account?.customerId).catch(() => [] as RecoveryLesson[]);
   return correctAdText(input, {
     validate, evidence, adLanguage, signal: ctx.signal, observer: correctionObserver(ctx),
     ...(ctx.rewrite ? { rewrite: ctx.rewrite } : {}), skipRewrite: code => lessonAdvisesAgainst(lessons, code, 'model_rewrite'),
@@ -160,11 +179,47 @@ async function correct(ctx: CampaignContext, input: TextInput, validate: (candid
 }
 
 async function fail(ctx: CampaignContext, failure: Pick<ClassifiedFailure, 'category' | 'code' | 'message' | 'retryable' | 'retryAfterMs' | 'strategy'>, options: { reconciliationRequired?: boolean; action?: string } = {}) {
+  if (options.reconciliationRequired) ctx.state.readback = undefined;
   await ctx.emit(taskIdOf(ctx), { type: 'task_failed', stepId: 'outcome', status: options.reconciliationRequired ? 'unknown' : 'failed', data: {
     category: failure.category, code: failure.code, message: failure.message.slice(0, 600), action: (options.action ?? FAILURE_ACTIONS[failure.category]).slice(0, 400), retryable: failure.retryable,
     retryAfterSeconds: failure.retryAfterMs === null ? null : Math.ceil(failure.retryAfterMs / 1000), reconciliationRequired: options.reconciliationRequired === true, strategy: failure.strategy,
   } });
   ctx.state.open = false;
+  await ctx.persist();
+}
+
+async function observeAccount(ctx: CampaignContext, request?: string): Promise<CampaignAccount> {
+  try {
+    const ids = [...new Set([...campaignRequestedAccountIds(request ?? ''), ...(ctx.expectedAccountIds ?? [])])];
+    if (ids.length > 1 || ids[0] && ctx.state.account && ids[0] !== ctx.state.account.customerId) throw new BrowserError('ADS_ACCOUNT_CHANGED', 'الحساب المطلوب غير واضح أو لا يطابق حساب العملية المحفوظة.', 409);
+    return CampaignAccountSchema.parse(await ctx.ports.account(ctx.ownerId, ids[0] ?? ctx.state.account?.customerId));
+  }
+  catch (error) {
+    ctx.signal.throwIfAborted();
+    const failure = classifyFailure(error);
+    await fail(ctx, failure, { reconciliationRequired: ctx.state.writeSent });
+    if (failure.strategy === 'reauthenticate') throw new BrowserError('ADS_CONNECT_REQUIRED', 'يلزم تجديد تسجيل الدخول إلى Google Ads قبل المتابعة.', 409);
+    throw error;
+  }
+}
+
+async function authorizeBrief(ctx: CampaignContext, brief: GoogleAdsBrief, account: CampaignAccount) {
+  if (!ctx.authorizeBrief) return;
+  ctx.state.proposal = brief;
+  const authorization = ctx.authorizeBrief(brief, account);
+  await ctx.emit(taskIdOf(ctx), { type: 'verification_completed', stepId: 'approval', status: authorization.passed ? 'passed' : 'failed', data: { authority: 'local', scope: 'draft_integrity', passed: authorization.passed, checks: authorization.checks } });
+  if (!authorization.passed || !authorization.scope) {
+    ctx.state.missingInputs = [...new Set(authorization.issues.map(issue => issue.field === 'currency' ? 'budget' : issue.field).filter((field): field is import('./ads-model-chat.js').AdsField => ['url', 'service', 'locations', 'country', 'budget', 'goal'].includes(field)))];
+    const message = `لم يطابق الاقتراح نطاق طلبك أو تنقصه قيم مؤكدة: ${authorization.issues.map(issue => `${issue.field}: ${issue.message}`).join('; ')}`.slice(0, 600);
+    const fingerprint = hash(authorization.issues.map(issue => `${issue.field}:${issue.code}`).sort().join('|'));
+    const seen = ctx.state.seen[`scope:${fingerprint}`] = (ctx.state.seen[`scope:${fingerprint}`] ?? 0) + 1;
+    await ctx.emit(taskIdOf(ctx), { type: 'validation_failed', stepId: 'approval', status: 'failed', data: { authority: 'local', scope: 'draft_integrity', fingerprint, issues: authorization.issues.map(issue => ({ field: issue.field, code: issue.code, category: 'permissions', message: issue.message.slice(0, 400) })) } });
+    await ctx.persist();
+    if (seen >= MAX_SAME_FAILURE) await fail(ctx, { category: 'permissions', code: 'ADS_AUTHORIZATION_REQUIRED', message, retryable: false, retryAfterMs: null, strategy: 'ask_owner' });
+    throw new BrowserError('ADS_AUTHORIZATION_REQUIRED', message, 409);
+  }
+  ctx.state.authorization = authorization.scope;
+  ctx.state.missingInputs = undefined;
   await ctx.persist();
 }
 
@@ -237,31 +292,48 @@ type Settled = { outcome: 'confirmed_paused' | 'confirmed_absent' | 'mismatch' |
 async function reconcile(ctx: CampaignContext, pending: GoogleAdsDraft): Promise<Settled> {
   const emit = (event: CampaignEventInput) => ctx.emit(taskIdOf(ctx), event);
   await emit({ type: 'external_operation_started', stepId: 'readback', status: 'running', data: { operation: 'readback', mutates: false, attempt: 1 } });
-  let draft = pending, reads = 0;
+  let draft = pending, reads = 0, successfulRead = false;
   for (const delay of READBACK_DELAYS_MS) {
     await (ctx.sleep ?? defaultSleep)(delay, ctx.signal);
     await ctx.assertActive();
     reads += 1;
-    try { draft = await ctx.ports.reconcile(ctx.ownerId, draft.id, draft.revision); break; } catch (error) {
+    try { draft = await ctx.ports.reconcile(ctx.ownerId, draft.id, draft.revision); successfulRead = true; break; } catch (error) {
       ctx.signal.throwIfAborted();
       // Only a transient read failure is worth another read; sign-in or permission problems are not.
       if (!classifyFailure(error).retryable) break;
     }
   }
-  const outcome: Settled['outcome'] = draft.state === 'published' && draft.campaignResourceName ? 'confirmed_paused' : draft.state === 'draft' ? 'confirmed_absent' : draft.state === 'failed' ? 'mismatch' : 'reconciliation_required';
+  const outcome: Settled['outcome'] = !successfulRead ? 'reconciliation_required' : draft.state === 'published' && draft.campaignResourceName ? 'confirmed_paused' : draft.state === 'draft' ? 'confirmed_absent' : draft.state === 'failed' ? 'mismatch' : 'reconciliation_required';
   const status: CampaignStepStatus = outcome === 'confirmed_paused' ? 'passed' : outcome === 'reconciliation_required' ? 'unknown' : 'failed';
+  if (successfulRead) { ctx.state.readback = draft.readback; await ctx.persist(); }
   await emit({ type: 'external_operation_reconciled', stepId: 'readback', status, data: { operation: 'create_paused', outcome, campaignResourceName: draft.campaignResourceName, readAttempts: reads } });
-  await learn(ctx, { category: 'verification', code: 'GOOGLE_ADS_OUTCOME_UNKNOWN', strategy: 'reconcile_by_readback', verifiedBy: 'google_readback', succeeded: outcome !== 'reconciliation_required' });
+  if (successfulRead) await learn(ctx, { category: 'verification', code: 'GOOGLE_ADS_OUTCOME_UNKNOWN', strategy: 'reconcile_by_readback', verifiedBy: 'google_readback', succeeded: outcome !== 'reconciliation_required' });
   return { outcome, draft, reads };
 }
 
-const readbackChecks = (draft: GoogleAdsDraft): CampaignCheck[] => [
-  { id: 'campaign_identity', passed: true, detail: `the account returned ${draft.campaignResourceName} under the expected name ${JSON.stringify(draft.summary?.campaignName ?? '')}`.slice(0, 600) },
-  { id: 'status_paused', passed: true, detail: 'the account reports the campaign as PAUSED; it is not running and spends nothing' },
-  { id: 'daily_budget', passed: true, detail: `the account reports the approved daily budget of ${draft.summary?.dailyBudgetMicros ?? '?'} micros` },
-];
+export function campaignReadbackChecks(draft: GoogleAdsDraft): CampaignCheck[] {
+  const parsed = GoogleAdsReadbackSchema.safeParse(draft.readback);
+  if (!parsed.success) return [{ id: 'remote_fields', passed: false, detail: 'No field-level account readback was recorded. A successful call does not prove creation.' }];
+  const read = parsed.data, age = Date.now() - Date.parse(read.checkedAt);
+  return [
+    { id: 'campaign_identity', passed: read.customerId === draft.customerId && read.campaignResourceName === draft.campaignResourceName && Boolean(read.campaignResourceName), detail: `account ${read.customerId}, campaign ${read.campaignResourceName ?? 'missing'}` },
+    { id: 'readback_fresh', passed: age >= -30_000 && age <= 5 * 60_000, detail: `read at ${read.checkedAt}` },
+    { id: 'remote_fields', passed: read.passed && read.fields.length > 0 && read.fields.every(field => field.passed), detail: `${read.fields.filter(field => field.passed).length}/${read.fields.length} requested fields match the fresh account read` },
+    ...read.fields.filter(field => !field.passed).slice(0, 17).map((field, index) => ({ id: `mismatch_${index + 1}`, passed: false, detail: `${field.field}: expected ${field.expected ?? '(missing)'}, observed ${field.actual ?? '(missing)'}`.slice(0, 600) })),
+  ];
+}
 
 async function complete(ctx: CampaignContext, draft: GoogleAdsDraft, outcome: 'paused_campaign_created' | 'paused_campaign_recovered') {
+  ctx.state.readback = draft.readback;
+  const completion = ctx.verifyCompletion ? await ctx.verifyCompletion(draft) : null;
+  if (completion) ctx.state.verificationSkill = completion.skill;
+  const checks = completion?.checks ?? campaignReadbackChecks(draft);
+  if (completion) await ctx.emit(taskIdOf(ctx), { type: 'verification_completed', stepId: 'readback', status: completion.passed ? 'passed' : 'failed', data: { authority: 'google_ads_api', scope: 'readback', passed: completion.passed, checks } });
+  if (completion?.passed === false || !checks.every(check => check.passed) || ctx.state.account && draft.customerId !== ctx.state.account.customerId) {
+    await fail(ctx, { category: 'verification', code: 'ADS_CAMPAIGN_MISMATCH', message: 'لم تطابق القراءة الراجعة الحملة والحساب والحقول المطلوبة. لم أكرر الكتابة.', retryable: false, retryAfterMs: null, strategy: 'stop_and_report' });
+    throw new BrowserError('ADS_CAMPAIGN_MISMATCH', 'لم يثبت اكتمال الحملة بقراءة حديثة مطابقة من الحساب.', 409);
+  }
+  ctx.state.readback = draft.readback;
   const tracking = draft.verification?.checks.find(check => check.id === 'conversion_tracking')?.passed ?? null;
   await ctx.emit(taskIdOf(ctx), { type: 'task_completed', stepId: 'outcome', status: 'passed', data: { outcome, campaignResourceName: draft.campaignResourceName, conversionTrackingProven: tracking, launchRequiresApproval: true } });
   ctx.state.open = false;
@@ -272,7 +344,8 @@ async function complete(ctx: CampaignContext, draft: GoogleAdsDraft, outcome: 'p
 /** Ends the task for a write that was sent but could not be confirmed as the approved PAUSED campaign. */
 async function afterReconcile(ctx: CampaignContext, settled: Settled): Promise<string> {
   if (settled.outcome === 'confirmed_paused') {
-    await ctx.emit(taskIdOf(ctx), { type: 'verification_completed', stepId: 'readback', status: 'passed', data: { authority: 'google_ads_api', scope: 'readback', passed: true, checks: readbackChecks(settled.draft) } });
+    const checks = campaignReadbackChecks(settled.draft), passed = checks.every(check => check.passed);
+    await ctx.emit(taskIdOf(ctx), { type: 'verification_completed', stepId: 'readback', status: passed ? 'passed' : 'failed', data: { authority: 'google_ads_api', scope: 'readback', passed, checks } });
     return complete(ctx, settled.draft, 'paused_campaign_recovered');
   }
   const unknown = settled.outcome === 'reconciliation_required';
@@ -283,6 +356,22 @@ async function afterReconcile(ctx: CampaignContext, settled: Settled): Promise<s
       : ['ADS_CAMPAIGN_MISMATCH', 'وُجدت حملة بالاسم المتوقع لكنها لا تطابق ما وُوفق عليه. لم أغيّر شيئًا فيها.', 'راجع الحملة في Google Ads قبل أي طلب جديد.'];
   await fail(ctx, { category: 'verification', code, message, retryable: false, retryAfterMs: null, strategy: unknown ? 'reconcile_by_readback' : 'ask_owner' }, { reconciliationRequired: unknown, action });
   throw new BrowserError(code, message, 409);
+}
+
+/** Recovery deliberately has no mutation path: a new worker only reads the persisted operation. */
+export async function resumeCampaignReadback(ctx: CampaignContext): Promise<string> {
+  ctx.readbackOnly = true;
+  await begin(ctx);
+  const account = await observeAccount(ctx);
+  if (!ctx.state.account || account.customerId !== ctx.state.account.customerId || account.currency !== ctx.state.account.currency || account.timeZone !== ctx.state.account.timeZone) {
+    throw new BrowserError('ADS_ACCOUNT_CHANGED', 'لا يطابق الحساب الحالي حساب العملية المحفوظة؛ لم تُرسل كتابة.', 409);
+  }
+  await ctx.emit(taskIdOf(ctx), { type: 'account_observed', stepId: 'intent', status: 'passed', data: account });
+  const draft = (await ctx.ports.drafts(ctx.ownerId)).find(item => item.id === ctx.state.draftId);
+  if (!ctx.state.writeSent || !draft || draft.customerId !== account.customerId) throw new BrowserError('ADS_RECOVERY_UNAVAILABLE', 'لا توجد عملية خارجية محفوظة يمكن تسويتها بالقراءة.', 409);
+  if (['publishing', 'launching'].includes(draft.state) && Date.now() - Date.parse(draft.updatedAt) < IN_FLIGHT_MS) throw new BrowserError('ADS_WRITE_IN_PROGRESS', 'العملية السابقة ما زالت قيد التنفيذ. لم أكررها.', 409);
+  if (!['publishing', 'outcome_unknown', 'published'].includes(draft.state)) throw new BrowserError('ADS_RECOVERY_REVIEW_REQUIRED', 'حالة العملية المحفوظة تتطلب مراجعة في Google Ads؛ لم أغيّرها.', 409);
+  return afterReconcile(ctx, await reconcile(ctx, draft));
 }
 
 /**
@@ -303,8 +392,8 @@ async function settleEarlierWrites(ctx: CampaignContext, brief: GoogleAdsBrief):
   // A run that was stopped mid-write may have finished in the account without ever reporting it here.
   const recent = (await ctx.ports.drafts(ctx.ownerId)).find(draft => draft.state === 'published' && draft.campaignResourceName && sameCampaign(draft.brief, brief) && Date.now() - Date.parse(draft.updatedAt) < DUPLICATE_WINDOW_MS);
   if (recent) {
-    await ctx.emit(taskIdOf(ctx), { type: 'external_operation_reconciled', stepId: 'readback', status: 'passed', data: { operation: 'create_paused', outcome: 'confirmed_paused', campaignResourceName: recent.campaignResourceName, readAttempts: 0 } });
-    return complete(ctx, recent, 'paused_campaign_recovered');
+    // A locally saved success may have changed remotely since then. Re-read; never claim it from a receipt alone.
+    return afterReconcile(ctx, await reconcile(ctx, recent));
   }
   return null;
 }
@@ -341,8 +430,11 @@ function creationObserver(ctx: CampaignContext, attempt: number, correctedTexts:
       await emit({ type: 'external_operation_started', stepId: 'paused_creation', status: 'running', data: { operation: 'create_paused', mutates: true, attempt } }, stage);
     }
     if (stage === 'readback_confirmed' && draft) {
+      ctx.state.readback = draft.readback;
+      await ctx.persist();
       await emit({ type: 'external_operation_reconciled', stepId: 'paused_creation', status: 'passed', data: { operation: 'create_paused', outcome: 'confirmed_paused', campaignResourceName: draft.campaignResourceName, readAttempts: 1 } }, stage);
-      await emit({ type: 'verification_completed', stepId: 'readback', status: 'passed', data: { authority: 'google_ads_api', scope: 'readback', passed: true, checks: readbackChecks(draft) } }, `${stage}:checks`);
+      const checks = campaignReadbackChecks(draft), passed = checks.every(check => check.passed);
+      await emit({ type: 'verification_completed', stepId: 'readback', status: passed ? 'passed' : 'failed', data: { authority: 'google_ads_api', scope: 'readback', passed, checks } }, `${stage}:checks`);
     }
   } };
 }
@@ -357,10 +449,26 @@ function creationObserver(ctx: CampaignContext, attempt: number, correctedTexts:
 export async function createPausedCampaign(ctx: CampaignContext, text: string, request: string, baseKey: string): Promise<string> {
   await begin(ctx);
   const emit = (event: CampaignEventInput, key?: string) => ctx.emit(taskIdOf(ctx), event, key);
+  if (!ctx.createInAccount) throw new BrowserError('ADS_CREATION_NOT_REQUESTED', 'لم تطلب إنشاء حملة داخل الحساب.', 403);
+  const account = await observeAccount(ctx, request);
+  if (ctx.state.account && ['customerId', 'currency', 'timeZone'].some(field => ctx.state.account![field as 'customerId' | 'currency' | 'timeZone'] !== account[field as 'customerId' | 'currency' | 'timeZone'])) {
+    await fail(ctx, { category: 'permissions', code: 'ADS_ACCOUNT_CHANGED', message: 'تغير حساب الإعلانات أو عملته أو منطقته الزمنية منذ إعداد المهمة. يلزم مراجعة التغييرات للحساب الجديد.', retryable: false, retryAfterMs: null, strategy: 'ask_owner' });
+    throw new BrowserError('ADS_ACCOUNT_CHANGED', 'تغير الحساب المستهدف؛ لم تُرسل كتابة إلى الحساب الجديد.', 409);
+  }
+  ctx.state.account = account;
+  await ctx.persist();
+  await emit({ type: 'account_observed', stepId: 'intent', status: 'passed', data: account });
   if (ctx.state.writeSent) {
-    const message = 'أُرسل طلب إنشاء حملة في هذه المهمة من قبل. لا أرسل طلبًا ثانيًا في المهمة نفسها؛ راجع النتيجة ثم اطلب من جديد.';
-    await fail(ctx, { category: 'verification', code: 'ADS_WRITE_ALREADY_SENT', message, retryable: false, retryAfterMs: null, strategy: 'ask_owner' });
-    throw new BrowserError('ADS_WRITE_ALREADY_SENT', message, 409);
+    const previous = (await ctx.ports.drafts(ctx.ownerId)).find(draft => draft.id === ctx.state.draftId);
+    if (previous && ['published', 'outcome_unknown', 'publishing'].includes(previous.state)) {
+      if (previous.state === 'publishing' && Date.now() - Date.parse(previous.updatedAt) < IN_FLIGHT_MS) {
+        throw new BrowserError('ADS_WRITE_IN_PROGRESS', 'الكتابة السابقة ما زالت قيد التنفيذ؛ لم أرسل كتابة ثانية.', 409);
+      }
+      return afterReconcile(ctx, await reconcile(ctx, previous));
+    }
+    const message = 'أُرسل طلب إنشاء حملة في هذه المهمة من قبل. لا أرسل طلبًا ثانيًا؛ يلزم تسوية نتيجة الطلب السابق بالقراءة.';
+    await fail(ctx, { category: 'verification', code: 'ADS_RECONCILIATION_REQUIRED', message, retryable: false, retryAfterMs: null, strategy: 'reconcile_by_readback' }, { reconciliationRequired: true });
+    throw new BrowserError('ADS_RECONCILIATION_REQUIRED', message, 409);
   }
   let brief: GoogleAdsBrief;
   try { brief = ctx.ports.parse(text, request); } catch (error) {
@@ -371,6 +479,9 @@ export async function createPausedCampaign(ctx: CampaignContext, text: string, r
     throw error;
   }
   brief = applyCorrections(brief, ctx.state.corrections);
+  await authorizeBrief(ctx, brief, account);
+  ctx.state.intentHash = hash(JSON.stringify({ account: { customerId: account.customerId, currency: account.currency, timeZone: account.timeZone }, brief }));
+  await ctx.persist();
   const earlier = await settleEarlierWrites(ctx, brief);
   if (earlier) return earlier;
 
@@ -385,6 +496,8 @@ export async function createPausedCampaign(ctx: CampaignContext, text: string, r
   await emit({ type: 'step_started', stepId: 'local_validation', status: 'running', data: {} });
   const result = await correct(ctx, brief, validate, evidence, brief.adLanguage);
   const corrected: GoogleAdsBrief = { ...brief, ...result.input };
+  ctx.state.intentHash = hash(JSON.stringify({ account: { customerId: account.customerId, currency: account.currency, timeZone: account.timeZone }, brief: corrected }));
+  await ctx.persist();
   const correctedTexts = new Set(result.changes.flatMap(change => change.after ?? []));
   if (result.status !== 'clean') await emit({ type: 'draft_updated', stepId: 'draft', status: 'passed', data: { fields: fieldsOf(corrected, result.remaining, correctedTexts), keywords: corrected.keywords.length, negativeKeywords: corrected.negativeKeywords.length, source: 'corrected_draft' } });
   const textPassed = result.status !== 'unresolved';
@@ -401,6 +514,8 @@ export async function createPausedCampaign(ctx: CampaignContext, text: string, r
     throw new BrowserError('ADS_QUALITY_UNRESOLVED', `The campaign did not pass the quality check and nothing was written to the account. Fix these and call the tool again:\n${result.remaining.slice(0, 20).map(issue => `- ${issue.message}`).join('\n')}${changeNote(result) ? `\nAlready corrected and verified, keep them:\n${changeNote(result)}` : ''}`, 409);
   }
 
+  await authorizeBrief(ctx, corrected, account);
+
   const gates = await ctx.ports.gates(ctx.ownerId);
   await emit({ type: 'approval_required', stepId: 'approval', status: gates.available ? 'running' : 'failed', data: { kind: 'publication_gates', satisfied: gates.available, ownerRequested: true, gates: gates.gates.slice(0, 12).map(gate => ({ id: gate.id.slice(0, 60), passed: gate.passed, detail: gate.detail.slice(0, 600) })) } });
   if (!gates.available) {
@@ -409,7 +524,7 @@ export async function createPausedCampaign(ctx: CampaignContext, text: string, r
     throw new BrowserError('GOOGLE_ADS_PUBLISHING_CLOSED', message, 403);
   }
 
-  const lessons = await ctx.ports.lessons.list(ctx.ownerId).catch(() => [] as RecoveryLesson[]);
+  const lessons = await ctx.ports.lessons.list(ctx.ownerId, ctx.state.account?.customerId).catch(() => [] as RecoveryLesson[]);
   let retried: ClassifiedFailure | null = null;
   for (;;) {
     await ctx.assertActive();
@@ -418,7 +533,7 @@ export async function createPausedCampaign(ctx: CampaignContext, text: string, r
     await ctx.persist();
     let draft: GoogleAdsDraft | null = null, failure: ClassifiedFailure, cause: unknown;
     try {
-      draft = await ctx.ports.createPaused(ctx.ownerId, corrected, attempt === 1 ? baseKey : `${baseKey}-r${attempt}`, { assertActive: ctx.assertActive }, creationObserver(ctx, attempt, correctedTexts));
+      draft = await ctx.ports.createPaused(ctx.ownerId, corrected, attempt === 1 ? baseKey : `${baseKey}-r${attempt}`, { assertActive: ctx.assertActive, customerId: account.customerId, currency: account.currency, timeZone: account.timeZone }, creationObserver(ctx, attempt, correctedTexts));
       if (draft.state === 'published' && draft.campaignResourceName) {
         // Google's own validate-only pass is the stronger witness for the corrections that reached it.
         for (const change of result.changes.filter(item => item.verified)) await learn(ctx, { category: change.category, code: change.reasonCode, strategy: change.strategy, verifiedBy: 'google_validate_only', succeeded: true });
@@ -475,7 +590,8 @@ export async function createPausedCampaign(ctx: CampaignContext, text: string, r
 /** What to record when the conversation ends while a campaign task is still open. */
 export function campaignEndEvent(state: CampaignRunState | undefined, textApproved: boolean): CampaignEventInput | null {
   if (!state?.open) return null;
-  if (textApproved) return { type: 'task_completed', stepId: 'outcome', status: 'passed', data: { outcome: 'draft_checked', campaignResourceName: null, conversionTrackingProven: null, launchRequiresApproval: true } };
+  if (state.writeSent) return campaignFailureEvent(new BrowserError('ADS_RECONCILIATION_REQUIRED', 'لم تُحسم نتيجة الكتابة من الحساب.', 409), 'انتهى الرد قبل إثبات نتيجة الكتابة بقراءة مطابقة. لم أكرر الطلب.', true);
+  if (textApproved && !state.requestedCreation) return { type: 'task_completed', stepId: 'outcome', status: 'passed', data: { outcome: 'draft_checked', campaignResourceName: null, conversionTrackingProven: null, launchRequiresApproval: true } };
   return { type: 'task_failed', stepId: 'outcome', status: 'failed', data: { category: 'verification', code: 'ADS_TASK_INCOMPLETE', message: 'انتهى الرد قبل أن يجتاز نص الحملة الفحص. لم يُكتب شيء في حساب الإعلانات.', action: FAILURE_ACTIONS.verification, retryable: false, retryAfterSeconds: null, reconciliationRequired: false, strategy: 'ask_owner' } };
 }
 
@@ -494,6 +610,6 @@ export const campaignCancelEvent = (reason: 'owner_cancelled' | 'run_interrupted
 const unavailable = (): never => { throw new BrowserError('CHAT_TOOL_UNAVAILABLE', 'Google Ads غير مهيأ على هذا الخادم.', 409); };
 /** For a server without a Google Ads connection: the text check and its corrections still work, nothing else does. */
 export const TEXT_ONLY_PORTS: CampaignPorts = {
-  parse: unavailable, landing: unavailable, gates: unavailable, drafts: unavailable, createPaused: unavailable, reconcile: unavailable, discard: unavailable,
+  account: unavailable, parse: unavailable, landing: unavailable, gates: unavailable, drafts: unavailable, createPaused: unavailable, reconcile: unavailable, discard: unavailable,
   lessons: { list: async () => [], record: async () => undefined },
 };

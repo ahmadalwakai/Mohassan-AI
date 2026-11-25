@@ -83,3 +83,20 @@ export function isNewerSnapshot(current: ChatConversation | null, next: ChatConv
  */
 export const steerable = (status: ChatConversation["status"] | undefined, secureKind?: string | null) =>
   status === "running" || status === "waiting_approval" || status === "waiting_input" && secureKind === "hands_on";
+
+/** A disconnected progress reader retries reads only; it never replays a submission. */
+export function progressRetryDelay(failures: number, hidden: boolean): number {
+  return hidden ? 15_000 : Math.min(8_000, 450 * 2 ** Math.min(5, Math.max(0, failures)));
+}
+
+/** Required steps still need evidence unless the server explicitly marked them verified. */
+export function runStepSummary(run: ChatRunView) {
+  const required = run.plan?.steps.filter(step => step.required) ?? [];
+  return { verified: required.filter(step => step.state === "verified"), remaining: required.filter(step => step.state !== "verified") };
+}
+
+/** Invalid dates stay visibly unavailable instead of appearing to be fresh evidence. */
+export function observedTime(value: string): string {
+  const time = new Date(value);
+  return Number.isFinite(time.getTime()) ? time.toLocaleString("ar", { dateStyle: "medium", timeStyle: "short" }) : "وقت الرصد غير متاح";
+}

@@ -1,6 +1,9 @@
 .card { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--raised); color: var(--ink); box-shadow: var(--shadow-sm); font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
 .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .head h3 { font-size: 15px; font-weight: 600; }
+.account { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 12px; margin: 0; font-size: 12.5px; }
+.account dt { color: var(--soft); }
+.account dd { margin: 0; overflow-wrap: anywhere; }
 .badge { padding: 3px 10px; border-radius: 999px; font-size: 12.5px; white-space: normal; text-align: start; }
 .ok { color: var(--accent); }
 .live, .ok.badge { background: var(--accent-soft); color: var(--accent); }

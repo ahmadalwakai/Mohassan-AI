@@ -15,13 +15,13 @@ const secret = 'campaign-progress-internal-secret-000001', origin = 'http://127.
 const blank = { thought: null, plan: null, note: null, url: null, ref: null, text: null, submit: null, options: null, sensitive: null, outcome: null };
 const lines = (headline: string) => ['BUSINESS: MA Removals', 'SERVICE: House removals', 'GOAL: bookings', 'URL: https://maremovals.example.com/house', 'LOCATION: Glasgow', 'COUNTRY: gb', 'LANGUAGE: EN', 'BUDGET: 20', `H: ${headline}`, 'H: Local Movers Glasgow', 'H: Book Your Move', 'D: Careful house removals across Glasgow.', 'D: Book your move online in minutes.', 'P: removals/glasgow', 'K: "house removals glasgow"', 'N: jobs'].join('\n');
 const checkText = (headline: string) => lines(headline).split(String.fromCharCode(10)).filter(line => /^[HDPKN]:/.test(line)).join(String.fromCharCode(10));
-const goal = 'أنشئ حملة بحث في حساب Google Ads لنقل الأثاث في غلاسكو';
+const goal = 'Create a paused campaign in my Google Ads account for House removals in Glasgow; URL: https://maremovals.example.com/house; goal: bookings; budget GBP 20 per day.';
 
 describe('live campaign events from the assistant', () => {
   const open: Awaited<ReturnType<typeof createApplication>>[] = [], dirs: string[] = [];
   afterEach(async () => { await Promise.all(open.splice(0).map(item => item.app.close())); await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
 
-  async function scenario(script: Record<string, unknown>[], tweak: (google: ReturnType<typeof createMockGoogle>) => void = () => undefined, publishing = true) {
+  async function scenario(script: Record<string, unknown>[], tweak: (google: ReturnType<typeof createMockGoogle>) => void = () => undefined, publishing = true, taskGoal = goal) {
     const directory = await mkdtemp(join(tmpdir(), 'mohassan-campaign-'));
     dirs.push(directory);
     const sourceDir = join(directory, 'src');
@@ -56,14 +56,32 @@ describe('live campaign events from the assistant', () => {
     skill = (await post(`/api/skills/${skill.id}/inspect`, { expectedRevision: skill.revision })).json().skill;
     await post(`/api/skills/${skill.id}/activate`, { expectedRevision: skill.revision, approve: true });
     tweak(google);
-    const created = await post('/api/chat/conversations', { goal });
+    const created = await post('/api/chat/conversations', { goal: taskGoal });
     const id: string = created.json().id;
     await application.chat.settled(id);
     const events = async (after = 0): Promise<{ taskId: string | null; lastSeq: number; events: CampaignEvent[] }> => (await app.inject({ url: `/api/chat/conversations/${id}/campaign-events?after=${after}`, headers })).json();
     const detail = async () => (await app.inject({ url: `/api/chat/conversations/${id}`, headers })).json();
-    return { google, events, detail, app, headers, id };
+    return { google, events, detail, app, headers, id, application };
   }
   const writes = (google: ReturnType<typeof createMockGoogle>) => google.mutations.filter(item => !item.validateOnly);
+
+  it('asks for a missing material input and resumes with the actual owner answer before one verified write', async () => {
+    const missingBudget = goal.replace('; budget GBP 20 per day.', '.');
+    const f = await scenario([{ tool: 'ads_check', text: checkText('Glasgow House Removals') }, { tool: 'ads_create_paused', text: lines('Glasgow House Removals') },
+      { tool: 'ask_user', text: 'What budget and period do you authorize?' }, { tool: 'ads_create_paused', text: lines('Glasgow House Removals') }, { tool: 'answer', text: 'تم.', outcome: 'done' }], undefined, true, missingBudget);
+    const waiting = await f.detail();
+    expect(waiting.status).toBe('waiting_user'); expect(writes(f.google)).toHaveLength(0);
+    expect(waiting.question.fields.map((field: { id: string }) => field.id)).toEqual(['budget']);
+    expect(waiting.question.prompt).toContain('الاقتراح لم يُنفّذ');
+    const response = await f.app.inject({ method: 'POST', url: `/api/chat/conversations/${f.id}/messages`, headers: f.headers,
+      payload: { text: 'GBP 20 per day', questionId: waiting.question.id, answers: [{ fieldId: 'budget', value: 'GBP 20 per day' }] } });
+    expect(response.statusCode, response.body).toBe(200); await f.application.chat.settled(f.id);
+    const finished = await f.detail();
+    expect(finished.run.verdict.status, JSON.stringify(finished)).toBe('completed'); expect(writes(f.google)).toHaveLength(1);
+    const row = await f.application.database.db.selectFrom('chat_runs').select('state').where('id', '=', finished.run.id).executeTakeFirstOrThrow();
+    expect(row.state.adsAuthorizations).toContainEqual({ field: 'budget', value: 'GBP 20 per day' });
+    expect(row.state.campaign.authorization).toMatchObject({ customerId: CUSTOMER, currency: 'GBP', dailyBudget: '20' });
+  }, 120_000);
 
   it('corrects an overlong headline, creates one PAUSED campaign and reads it back', async () => {
     const { google, events, detail } = await scenario([{ tool: 'ads_check', text: checkText('Glasgow House Removals And Man Vans Today') }, { tool: 'ads_check', text: checkText('Glasgow House Removals') }, { tool: 'ads_create_paused', text: lines('Glasgow House Removals') }, { tool: 'answer', text: 'تم.', outcome: 'done' }]);
