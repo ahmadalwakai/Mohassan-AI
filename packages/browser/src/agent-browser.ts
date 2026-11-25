@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http';
 import { chromium, type BrowserContext, type ElementHandle, type Frame, type JSHandle, type Page, type Route } from 'playwright';
 import { decideEffect, type EffectActor } from './effect-policy.js';
 import { BrowserError, SafeNetwork } from './network.js';
+import { captureObservedLayout, rememberObservedLayout } from './observed-layout.js';
 import { AgentSessionCheckpointSchema, AgentPostconditionSchema, evidenceHash, safeResumeUrl, pagePostcondition, type AgentSessionCheckpoint, type AgentPostcondition, type AgentVerificationReport, type AgentVerificationCheck } from './session-state.js';
 
 export type AgentFieldKind = 'password' | 'otp' | 'card' | 'identifier' | 'text';
@@ -185,6 +186,7 @@ interface FrameSnapshot {
   url: string;
   title: string;
   text: string;
+  layout: ReturnType<typeof captureObservedLayout>;
   elements: AgentElement[];
   challenge: boolean;
   integrity: string;
@@ -345,6 +347,7 @@ const FRAME_MODEL_SCRIPT = String.raw`(() => {
     return {
       url: location.href, title: clean(document.title).slice(0, 200),
       text: (mainText.length > 400 ? mainText : bodyText).slice(0, 24000),
+      layout: (${captureObservedLayout.toString()})(mainText.length > 400 ? main : document.body),
       elements, challenge: challengeFrames.length > 0,
       // Kept on the host only as a hash; hidden values and passwords never enter the model snapshot.
       integrity: JSON.stringify(nodes.filter(node => node.matches('form,input,button,textarea,select,a[href]')).slice(0,1000).map(node => [node.tagName,node.id,node.name,node.type,node.form?.action,node.form?.method,node.getAttribute('formaction'),node.getAttribute('formmethod'),node.getAttribute('target'),node.href,node.value,node.checked,node.disabled])),
@@ -1157,7 +1160,7 @@ export class AgentBrowser {
     };
     const secrets=this.redactions(entry);
     const scrub=(value:unknown):unknown=>typeof value==='string'?secrets.reduce((text,secret)=>text.split(secret).join('[محجوب]'),value):Array.isArray(value)?value.map(scrub):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([key,item])=>[key,scrub(item)])):value;
-    return scrub(snapshot) as AgentPage;
+    return rememberObservedLayout(scrub(snapshot) as AgentPage, scrub(main.layout) as FrameSnapshot['layout']);
   }
 
   private async result(entry: ConversationPage, screenshot = true, moveToViewport = false): Promise<AgentActionResult> {

@@ -7,7 +7,9 @@
  * never served from here: the caller says so and the cache steps aside. Every entry keeps the time it was
  * fetched, so a reply can say how old its evidence is. Bounded, in memory, per server process.
  */
-export interface CachedPage { url: string; title: string; text: string; status: number; fetchedAt: string }
+import type { SelectionBlock } from './selection/page-structure.js';
+
+export interface CachedPage { url: string; title: string; text: string; status: number; fetchedAt: string; blocks?: readonly SelectionBlock[] }
 export type PageClass = 'encyclopedia' | 'documentation' | 'news' | 'other';
 
 /** Lifetimes proposed in the plan (§5.2 P4); the owner fixes them after the Phase 2 measurement. */

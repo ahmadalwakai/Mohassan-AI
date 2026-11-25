@@ -9,6 +9,7 @@ export * from './network.js';
 export * from './engine.js';
 export * from './research.js';
 export * from './agent-browser.js';
+export { observedLayout } from './observed-layout.js';
 export * from './session-state.js';
 export * from './files.js';
 export * from './search/engine.js';

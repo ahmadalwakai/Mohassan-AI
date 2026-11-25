@@ -23,6 +23,7 @@ import {
 import { ADS_DRAFT_NOTE, ADS_SKILL_SLUG } from './assistant/ads-check.js';
 import { LIVE, PROVIDER_SPACING_MS, answerSubject, isBareAddress, isFollowUp, normalizeHandsPlan, notWebReason, parseHands, plainTitle, refersBack, runHands, siteQuestion, siteToOpen, tidy, topicWords, unnamedSite, webQuestion, type HandsIO, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
 import { liveLabel } from './assistant/activity.js';
+import { rememberPageStructure, type SelectionBlock } from './assistant/selection/page-structure.js';
 import type { DesktopCommand, DesktopOutcome, ParsedDesktopCommand } from '@mohassan/desktop';
 import { searchRefusedReply, unsupportedReply, unsupportedRequest } from './assistant/unsupported-request.js';
 import { decideBrowserVisibility, deriveBrowserVisibility } from './assistant/browser-visibility.js';
@@ -138,7 +139,7 @@ export interface CommandChatConfig {
    * Absent in tests and fixtures without it: the browser reads the result instead, as before.
    */
   /** `live`: the page answers a changing fact (a price, the weather), so no cached copy may serve. */
-  readPage?: (url: string, signal: AbortSignal, options?: { live?: boolean }) => Promise<{ url: string; title: string; text: string; status: number; fetchedAt?: string } | 'disallowed' | null>;
+  readPage?: (url: string, signal: AbortSignal, options?: { live?: boolean }) => Promise<{ url: string; title: string; text: string; status: number; fetchedAt?: string; blocks?: readonly SelectionBlock[] } | 'disallowed' | null>;
   memoryContext?: (ownerId: string, goal: string) => Promise<unknown>;
   /** Read-only retrieval of the owner's active, evaluated knowledge documents. */
   knowledgeSearch?: (ownerId: string, query: string) => Promise<readonly LocalKnowledgeDocument[]>;
@@ -2941,6 +2942,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           const readPageObject: AgentPage = { id: result.url, url: result.url, title: result.title, text: result.text, elements: [],
             signals: { captcha: false, password: false, otp: false, card: false }, scroll: { top: 0, height: 0, viewport: 0 },
             hash: createHash('sha256').update(result.text).digest('hex'), observedAt: result.fetchedAt ?? new Date().toISOString(), documentStatus: result.status };
+          rememberPageStructure(readPageObject, result.blocks);
           currentExecution.readPages = [...(currentExecution.readPages ?? []).filter(item => item.url !== readPageObject.url).slice(-4), readPageObject];
           return { kind: 'page', page: readPageObject };
         } : undefined;

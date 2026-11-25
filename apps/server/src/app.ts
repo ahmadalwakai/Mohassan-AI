@@ -53,6 +53,7 @@ import { createConversationShadow } from './assistant/conversation-state-shadow.
 import { createJudgeShadow, judgeSettings } from './assistant/judge-shadow.js';
 import { createPageCache } from './assistant/page-cache.js';
 import { withoutFigures } from './assistant/readable-page.js';
+import { collectPageStructure, type SelectionBlock } from './assistant/selection/page-structure.js';
 import { createChromeExtensionControl, registerChromeExtensionRoutes } from './chrome-extension.js';
 import { DesktopEngine } from '@mohassan/desktop';
 import { registerDesktopRoutes } from './desktop.js';
@@ -453,8 +454,9 @@ export async function createApplication(config: AppConfig) {
     let body: string;
     try { body = new TextDecoder(charset, { fatal: true }).decode(response.body); } catch { return null; }
     // Captions are not the article's sentences; joined into the text they glued onto the next one (readable-page.ts).
-    const source = readableSource(withoutFigures(body), response.url);
-    return pageCache.put({ url: response.url, title: source.title, text: source.text, status: response.status }, options);
+    let blocks: SelectionBlock[] | undefined;
+    const source = readableSource(withoutFigures(body), response.url, bodyNode => { blocks = collectPageStructure(bodyNode); });
+    return pageCache.put({ url: response.url, title: source.title, text: source.text, status: response.status, blocks }, options);
   };
   // PDF files from the chat: stored under the data directory; local .pdf paths are read for the owner only, inside the coding roots.
   await migrateDocuments(database.db);

@@ -1,0 +1,3451 @@
+[
+  {
+    "id": "ar-africa-01",
+    "language": "ar",
+    "question": "كم تبلغ مساحة إفريقيا؟",
+    "pageIds": [
+      "ar-africa"
+    ],
+    "expected": [
+      [
+        "30.2 مليون كيلومتر مربع"
+      ]
+    ]
+  },
+  {
+    "id": "ar-africa-02",
+    "language": "ar",
+    "question": "أي محيط يحد إفريقيا من الغرب؟",
+    "pageIds": [
+      "ar-africa"
+    ],
+    "expected": [
+      [
+        "المحيط الأطلسي من الغرب"
+      ]
+    ]
+  },
+  {
+    "id": "ar-africa-03",
+    "language": "ar",
+    "question": "أيهما أكبر مساحة إفريقيا أم آسيا؟",
+    "pageIds": [
+      "ar-africa"
+    ],
+    "expected": [
+      [
+        "ثاني أكبر قارات العالم",
+        "بعد قارة آسيا"
+      ]
+    ]
+  },
+  {
+    "id": "ar-algeria-01",
+    "language": "ar",
+    "question": "متى استقلت الجزائر؟",
+    "pageIds": [
+      "ar-algeria"
+    ],
+    "expected": [
+      [
+        "3 جويلية 1962",
+        "استقلال الجزائر"
+      ],
+      [
+        "3 يوليو 1962",
+        "تاريخ التأسيس"
+      ]
+    ]
+  },
+  {
+    "id": "ar-algeria-02",
+    "language": "ar",
+    "question": "ما عاصمة الجزائر؟",
+    "pageIds": [
+      "ar-algeria"
+    ],
+    "expected": [
+      [
+        "عاصمتها",
+        "مدينة الجزائر"
+      ]
+    ]
+  },
+  {
+    "id": "ar-algeria-03",
+    "language": "ar",
+    "question": "كم ولاية في الجزائر؟",
+    "pageIds": [
+      "ar-algeria"
+    ],
+    "expected": [
+      [
+        "58 ولاية"
+      ]
+    ]
+  },
+  {
+    "id": "ar-algeria-04",
+    "language": "ar",
+    "question": "ما البحر الذي يحد الجزائر من الشمال؟",
+    "pageIds": [
+      "ar-algeria"
+    ],
+    "expected": [
+      [
+        "تطل شمالا",
+        "البحر الأبيض المتوسط"
+      ]
+    ]
+  },
+  {
+    "id": "ar-amazon-01",
+    "language": "ar",
+    "question": "في أي قارة يجري نهر الأمازون؟",
+    "pageIds": [
+      "ar-amazon"
+    ],
+    "expected": [
+      [
+        "نهر يقع في أمريكا الجنوبية"
+      ]
+    ]
+  },
+  {
+    "id": "ar-amazon-02",
+    "language": "ar",
+    "question": "لماذا لا تعبر جسور نهر الأمازون؟",
+    "pageIds": [
+      "ar-amazon"
+    ],
+    "expected": [
+      [
+        "الغابات الاستوائية المطيرة",
+        "الطرق بها قليلة"
+      ]
+    ]
+  },
+  {
+    "id": "ar-amazon-03",
+    "language": "ar",
+    "question": "هل الأمازون أطول من النيل بحسب الجمعية الجغرافية؟",
+    "pageIds": [
+      "ar-amazon"
+    ],
+    "expected": [
+      [
+        "ثاني أطول نهر في العالم بعد نهر النيل"
+      ]
+    ]
+  },
+  {
+    "id": "ar-arab-league-01",
+    "language": "ar",
+    "question": "ما جامعة الدول العربية؟",
+    "pageIds": [
+      "ar-arab-league"
+    ],
+    "expected": [
+      [
+        "منظمة إقليمية تضم دولا عربية"
+      ]
+    ]
+  },
+  {
+    "id": "ar-arab-league-02",
+    "language": "ar",
+    "question": "أين المقر الدائم لجامعة الدول العربية؟",
+    "pageIds": [
+      "ar-arab-league"
+    ],
+    "expected": [
+      [
+        "المقر الدائم",
+        "القاهرة"
+      ]
+    ]
+  },
+  {
+    "id": "ar-arab-league-03",
+    "language": "ar",
+    "question": "كم صوتا لكل دولة في مجلس الجامعة العربية؟",
+    "pageIds": [
+      "ar-arab-league"
+    ],
+    "expected": [
+      [
+        "لكل دولة عضو صوت واحد"
+      ]
+    ]
+  },
+  {
+    "id": "ar-baikal-01",
+    "language": "ar",
+    "question": "في أي منطقة من روسيا تقع بحيرة بايكال؟",
+    "pageIds": [
+      "ar-baikal"
+    ],
+    "expected": [
+      [
+        "جنوب سيبيريا في روسيا"
+      ]
+    ]
+  },
+  {
+    "id": "ar-baikal-02",
+    "language": "ar",
+    "question": "كم يبلغ عمق بحيرة بايكال؟",
+    "pageIds": [
+      "ar-baikal"
+    ],
+    "expected": [
+      [
+        "عمقها 1642 م"
+      ],
+      [
+        "عمقها 1,642 م"
+      ]
+    ]
+  },
+  {
+    "id": "ar-baikal-03",
+    "language": "ar",
+    "question": "ما اسم النهر الوحيد الذي يخرج من بحيرة بايكال؟",
+    "pageIds": [
+      "ar-baikal"
+    ],
+    "expected": [
+      [
+        "وهو نهر أنجارا"
+      ]
+    ]
+  },
+  {
+    "id": "ar-berlin-wall-01",
+    "language": "ar",
+    "question": "متى سقط جدار برلين؟",
+    "pageIds": [
+      "ar-berlin-wall"
+    ],
+    "expected": [
+      [
+        "فتح في 9 نوفمبر 1989"
+      ],
+      [
+        "9 نوفمبر عام 1989",
+        "زيارة ألمانيا الغربية"
+      ]
+    ]
+  },
+  {
+    "id": "ar-berlin-wall-02",
+    "language": "ar",
+    "question": "لماذا بني جدار برلين؟",
+    "pageIds": [
+      "ar-berlin-wall"
+    ],
+    "expected": [
+      [
+        "الغرض منه تحجيم المرور"
+      ]
+    ]
+  },
+  {
+    "id": "ar-berlin-wall-03",
+    "language": "ar",
+    "question": "متى بدأ بناء جدار برلين؟",
+    "pageIds": [
+      "ar-berlin-wall"
+    ],
+    "expected": [
+      [
+        "بدأ بناؤه في 13 أغسطس 1961"
+      ]
+    ]
+  },
+  {
+    "id": "ar-berlin-wall-04",
+    "language": "ar",
+    "question": "من صاغ وصف جدار العار؟",
+    "pageIds": [
+      "ar-berlin-wall"
+    ],
+    "expected": [
+      [
+        "ويلي براندت",
+        "جدار العار"
+      ]
+    ]
+  },
+  {
+    "id": "ar-cairo-01",
+    "language": "ar",
+    "question": "لماذا سميت القاهرة بهذا الاسم؟",
+    "pageIds": [
+      "ar-cairo"
+    ],
+    "expected": [
+      [
+        "ستقهر الدولة العباسية",
+        "القاهرة"
+      ],
+      [
+        "سماها بالقاهرة لتقهر الدنيا"
+      ],
+      [
+        "المريخ",
+        "الكوكب القاهر"
+      ]
+    ]
+  },
+  {
+    "id": "ar-cairo-02",
+    "language": "ar",
+    "question": "من أسس القاهرة الفاطمية؟",
+    "pageIds": [
+      "ar-cairo"
+    ],
+    "expected": [
+      [
+        "جوهر الصقلي",
+        "بناء العاصمة الجديدة"
+      ],
+      [
+        "جوهر الصقلي",
+        "حجر أساس المدينة"
+      ]
+    ]
+  },
+  {
+    "id": "ar-cairo-03",
+    "language": "ar",
+    "question": "متى تحتفل القاهرة بعيدها القومي؟",
+    "pageIds": [
+      "ar-cairo"
+    ],
+    "expected": [
+      [
+        "عيدها القومي",
+        "6 يوليو"
+      ]
+    ]
+  },
+  {
+    "id": "ar-cairo-04",
+    "language": "ar",
+    "question": "أين يوجد المكتب الإقليمي لمنظمة الصحة العالمية المذكور في صفحة القاهرة؟",
+    "pageIds": [
+      "ar-cairo",
+      "ar-world-health-organization"
+    ],
+    "expected": [
+      [
+        "القاهرة",
+        "المكتب الإقليمي",
+        "منظمة الصحة العالمية"
+      ]
+    ]
+  },
+  {
+    "id": "ar-earthquake-01",
+    "language": "ar",
+    "question": "لماذا تحدث الزلازل؟",
+    "pageIds": [
+      "ar-earthquake"
+    ],
+    "expected": [
+      [
+        "تنتج عن حركة الصفائح"
+      ],
+      [
+        "تكسر الصخور",
+        "تراكم إجهادات"
+      ],
+      [
+        "تحرك الصفائح القارية",
+        "حدوث هزات"
+      ],
+      [
+        "انزلاقات في طبقات القشرة"
+      ]
+    ]
+  },
+  {
+    "id": "ar-earthquake-02",
+    "language": "ar",
+    "question": "ما الزلزال؟",
+    "pageIds": [
+      "ar-earthquake"
+    ],
+    "expected": [
+      [
+        "الاهتزازات الارتجاجية المتتالية لسطح الأرض"
+      ]
+    ]
+  },
+  {
+    "id": "ar-earthquake-03",
+    "language": "ar",
+    "question": "أين توجد الأنشطة الزلزالية؟",
+    "pageIds": [
+      "ar-earthquake"
+    ],
+    "expected": [
+      [
+        "حدود الصفائح الصخرية"
+      ]
+    ]
+  },
+  {
+    "id": "ar-earthquake-04",
+    "language": "ar",
+    "question": "ما الاسم الذي يطلق على مركز الزلزال؟",
+    "pageIds": [
+      "ar-earthquake"
+    ],
+    "expected": [
+      [
+        "مركز الزلزال",
+        "البؤرة"
+      ]
+    ]
+  },
+  {
+    "id": "ar-egypt-01",
+    "language": "ar",
+    "question": "كم محافظة في مصر؟",
+    "pageIds": [
+      "ar-egypt"
+    ],
+    "expected": [
+      [
+        "27 محافظة"
+      ]
+    ]
+  },
+  {
+    "id": "ar-egypt-02",
+    "language": "ar",
+    "question": "أي دولة تحد مصر من الغرب؟",
+    "pageIds": [
+      "ar-egypt"
+    ],
+    "expected": [
+      [
+        "غربا",
+        "ليبيا"
+      ]
+    ]
+  },
+  {
+    "id": "ar-egypt-03",
+    "language": "ar",
+    "question": "أين يتركز أغلب سكان مصر؟",
+    "pageIds": [
+      "ar-egypt"
+    ],
+    "expected": [
+      [
+        "يتركز أغلب سكان مصر في وادي النيل"
+      ]
+    ]
+  },
+  {
+    "id": "ar-eiffel-01",
+    "language": "ar",
+    "question": "أين يقع برج إيفل؟",
+    "pageIds": [
+      "ar-eiffel"
+    ],
+    "expected": [
+      [
+        "باريس",
+        "شامب"
+      ],
+      [
+        "باريس",
+        "نهر السين"
+      ]
+    ]
+  },
+  {
+    "id": "ar-eiffel-02",
+    "language": "ar",
+    "question": "من أنشأ برج إيفل؟",
+    "pageIds": [
+      "ar-eiffel"
+    ],
+    "expected": [
+      [
+        "أنشئ من طرف غوستاف إيفل ومعاونيه"
+      ]
+    ]
+  },
+  {
+    "id": "ar-eiffel-03",
+    "language": "ar",
+    "question": "متى افتتح برج إيفل للجمهور؟",
+    "pageIds": [
+      "ar-eiffel"
+    ],
+    "expected": [
+      [
+        "افتتح للجماهير في 15 مايو 1889"
+      ]
+    ]
+  },
+  {
+    "id": "ar-eiffel-04",
+    "language": "ar",
+    "question": "كم يبلغ ارتفاع برج إيفل كما يرد في تعريفه؟",
+    "pageIds": [
+      "ar-eiffel"
+    ],
+    "expected": [
+      [
+        "ارتفاعه 330 مترا"
+      ]
+    ]
+  },
+  {
+    "id": "ar-ibn-khaldun-01",
+    "language": "ar",
+    "question": "أين ولد ابن خلدون؟",
+    "pageIds": [
+      "ar-ibn-khaldun"
+    ],
+    "expected": [
+      [
+        "ولد ابن خلدون في تونس"
+      ]
+    ]
+  },
+  {
+    "id": "ar-ibn-khaldun-02",
+    "language": "ar",
+    "question": "متى ولد ابن خلدون بالتاريخ الميلادي؟",
+    "pageIds": [
+      "ar-ibn-khaldun"
+    ],
+    "expected": [
+      [
+        "1332"
+      ]
+    ]
+  },
+  {
+    "id": "ar-ibn-khaldun-03",
+    "language": "ar",
+    "question": "ما اسم مقدمة كتاب تاريخ ابن خلدون؟",
+    "pageIds": [
+      "ar-ibn-khaldun"
+    ],
+    "expected": [
+      [
+        "مقدمة ابن خلدون"
+      ]
+    ]
+  },
+  {
+    "id": "ar-ibn-sina-01",
+    "language": "ar",
+    "question": "أين ولد ابن سينا؟",
+    "pageIds": [
+      "ar-ibn-sina"
+    ],
+    "expected": [
+      [
+        "قرية أفشنة بالقرب من بخارى"
+      ],
+      [
+        "أفشنة، بخارى"
+      ]
+    ]
+  },
+  {
+    "id": "ar-ibn-sina-02",
+    "language": "ar",
+    "question": "متى توفي ابن سينا ميلاديا؟",
+    "pageIds": [
+      "ar-ibn-sina"
+    ],
+    "expected": [
+      [
+        "1037"
+      ]
+    ]
+  },
+  {
+    "id": "ar-ibn-sina-03",
+    "language": "ar",
+    "question": "بأي لقب عُرف ابن سينا؟",
+    "pageIds": [
+      "ar-ibn-sina"
+    ],
+    "expected": [
+      [
+        "الشيخ الرئيس"
+      ],
+      [
+        "أمير الأطباء"
+      ]
+    ]
+  },
+  {
+    "id": "ar-japan-01",
+    "language": "ar",
+    "question": "كم محافظة في اليابان؟",
+    "pageIds": [
+      "ar-japan"
+    ],
+    "expected": [
+      [
+        "47 محافظة"
+      ]
+    ]
+  },
+  {
+    "id": "ar-japan-02",
+    "language": "ar",
+    "question": "أين تقع اليابان؟",
+    "pageIds": [
+      "ar-japan"
+    ],
+    "expected": [
+      [
+        "دولة جزرية تقع في شرق آسيا"
+      ]
+    ]
+  },
+  {
+    "id": "ar-japan-03",
+    "language": "ar",
+    "question": "ما نظام الحكم الذي أخذت به اليابان بعد دستور 1947؟",
+    "pageIds": [
+      "ar-japan"
+    ],
+    "expected": [
+      [
+        "1947",
+        "ملكي دستوري"
+      ]
+    ]
+  },
+  {
+    "id": "ar-japan-04",
+    "language": "ar",
+    "question": "أيهما أكبر مساحة اليابان أم بريطانيا؟",
+    "pageIds": [
+      "ar-japan"
+    ],
+    "expected": [
+      [
+        "تزيد مساحتها عن مساحة بريطانيا"
+      ]
+    ]
+  },
+  {
+    "id": "ar-japan-05",
+    "language": "ar",
+    "question": "أيهما أكبر مساحة اليابان أم جنوب إفريقيا؟",
+    "pageIds": [
+      "ar-japan",
+      "ar-africa"
+    ],
+    "expected": []
+  },
+  {
+    "id": "ar-light-01",
+    "language": "ar",
+    "question": "ما سرعة الضوء؟",
+    "pageIds": [
+      "ar-light"
+    ],
+    "expected": [
+      [
+        "299,792,458"
+      ],
+      [
+        "299792458"
+      ],
+      [
+        "299 792 458"
+      ]
+    ]
+  },
+  {
+    "id": "ar-light-02",
+    "language": "ar",
+    "question": "كم يستغرق ضوء الشمس ليصل إلى الأرض؟",
+    "pageIds": [
+      "ar-light"
+    ],
+    "expected": [
+      [
+        "من الشمس إلى الأرض",
+        "8.3 دقيقة"
+      ],
+      [
+        "يستغرق الضوء عند خروجه من الشمس حتى يصلنا 8 دقائق"
+      ]
+    ]
+  },
+  {
+    "id": "ar-light-03",
+    "language": "ar",
+    "question": "ماذا تسمى النسبة بين سرعة الضوء في الفراغ وسرعته في مادة ما؟",
+    "pageIds": [
+      "ar-light"
+    ],
+    "expected": [
+      [
+        "قرينة الانكسار"
+      ]
+    ]
+  },
+  {
+    "id": "ar-mariana-trench-01",
+    "language": "ar",
+    "question": "أين يوجد خندق ماريانا؟",
+    "pageIds": [
+      "ar-mariana-trench"
+    ],
+    "expected": [
+      [
+        "غرب المحيط الهادي",
+        "جزر ماريانا الشمالية"
+      ]
+    ]
+  },
+  {
+    "id": "ar-mariana-trench-02",
+    "language": "ar",
+    "question": "كم يبلغ أقصى عمق لخندق ماريانا؟",
+    "pageIds": [
+      "ar-mariana-trench"
+    ],
+    "expected": [
+      [
+        "11.03 كيلومتر"
+      ]
+    ]
+  },
+  {
+    "id": "ar-mariana-trench-03",
+    "language": "ar",
+    "question": "كم مترا يبقى فوق قمة إفرست لو وضعت في قاع خندق ماريانا؟",
+    "pageIds": [
+      "ar-mariana-trench",
+      "ar-mount-everest"
+    ],
+    "expected": [
+      [
+        "قمة جبل إفرست",
+        "2,076 مترا من الماء فوقها"
+      ]
+    ]
+  },
+  {
+    "id": "ar-messi-01",
+    "language": "ar",
+    "question": "كم عمر ميسي؟",
+    "pageIds": [
+      "ar-messi"
+    ],
+    "expected": [
+      [
+        "العمر 39 سنة"
+      ]
+    ]
+  },
+  {
+    "id": "ar-messi-02",
+    "language": "ar",
+    "question": "متى ولد ليونيل ميسي؟",
+    "pageIds": [
+      "ar-messi"
+    ],
+    "expected": [
+      [
+        "24 يونيو 1987"
+      ],
+      [
+        "24 يونيو سنة 1987"
+      ]
+    ]
+  },
+  {
+    "id": "ar-messi-03",
+    "language": "ar",
+    "question": "لأي ناد يلعب ميسي في الدوري الأمريكي؟",
+    "pageIds": [
+      "ar-messi"
+    ],
+    "expected": [
+      [
+        "إنتر ميامي"
+      ]
+    ]
+  },
+  {
+    "id": "ar-messi-04",
+    "language": "ar",
+    "question": "لماذا غادر ميسي برشلونة عام 2021؟",
+    "pageIds": [
+      "ar-messi"
+    ],
+    "expected": [
+      [
+        "الصعوبات المالية",
+        "غادر ميسي"
+      ]
+    ]
+  },
+  {
+    "id": "ar-messi-05",
+    "language": "ar",
+    "question": "كم كان عمر ميسي عند أول مباراة رسمية له مع برشلونة؟",
+    "pageIds": [
+      "ar-messi"
+    ],
+    "expected": [
+      [
+        "السابعة عشرة من عمره",
+        "أول مباراة رسمية"
+      ]
+    ]
+  },
+  {
+    "id": "ar-mount-everest-01",
+    "language": "ar",
+    "question": "كم يبلغ ارتفاع إفرست فوق سطح البحر تقريبا؟",
+    "pageIds": [
+      "ar-mount-everest"
+    ],
+    "expected": [
+      [
+        "8848 مترا عن سطح البحر"
+      ],
+      [
+        "8,848 مترا عن سطح البحر"
+      ],
+      [
+        "8,849 متر"
+      ]
+    ]
+  },
+  {
+    "id": "ar-mount-everest-02",
+    "language": "ar",
+    "question": "ضمن أي سلسلة جبلية يقع جبل إفرست؟",
+    "pageIds": [
+      "ar-mount-everest"
+    ],
+    "expected": [
+      [
+        "سلاسل جبال الهملايا"
+      ],
+      [
+        "جبال الهيمالايا"
+      ]
+    ]
+  },
+  {
+    "id": "ar-mount-everest-03",
+    "language": "ar",
+    "question": "من أول من تسلق قمة جبل إفرست؟",
+    "pageIds": [
+      "ar-mount-everest"
+    ],
+    "expected": [
+      [
+        "إدموند هيلاري وتنزينج نورجاي",
+        "قمة إفرست"
+      ],
+      [
+        "إدموند هيلاري",
+        "تنزينغ نورغاي"
+      ]
+    ]
+  },
+  {
+    "id": "ar-naguib-mahfouz-01",
+    "language": "ar",
+    "question": "من كتب أولاد حارتنا؟",
+    "pageIds": [
+      "ar-naguib-mahfouz"
+    ],
+    "expected": [
+      [
+        "ألف أكثر من ثلاثين رواية",
+        "أولاد حارتنا"
+      ],
+      [
+        "أولاد حارتنا",
+        "نجيب محفوظ"
+      ]
+    ]
+  },
+  {
+    "id": "ar-naguib-mahfouz-02",
+    "language": "ar",
+    "question": "متى توفي نجيب محفوظ؟",
+    "pageIds": [
+      "ar-naguib-mahfouz"
+    ],
+    "expected": [
+      [
+        "30 أغسطس 2006"
+      ]
+    ]
+  },
+  {
+    "id": "ar-naguib-mahfouz-03",
+    "language": "ar",
+    "question": "ما مهنة نجيب محفوظ؟",
+    "pageIds": [
+      "ar-naguib-mahfouz"
+    ],
+    "expected": [
+      [
+        "كاتب وروائي مصري"
+      ]
+    ]
+  },
+  {
+    "id": "ar-photosynthesis-01",
+    "language": "ar",
+    "question": "ما هو التمثيل الضوئي؟",
+    "pageIds": [
+      "ar-photosynthesis"
+    ],
+    "expected": [
+      [
+        "لتحويل الطاقة الضوئية إلى طاقة كيميائية"
+      ]
+    ]
+  },
+  {
+    "id": "ar-photosynthesis-02",
+    "language": "ar",
+    "question": "كيف تبدأ عملية البناء الضوئي؟",
+    "pageIds": [
+      "ar-photosynthesis"
+    ],
+    "expected": [
+      [
+        "تمتص الطاقة الضوئية",
+        "مراكز التفاعل"
+      ]
+    ]
+  },
+  {
+    "id": "ar-photosynthesis-03",
+    "language": "ar",
+    "question": "ما الغاز الذي ينتج ثانويا من التركيب الضوئي؟",
+    "pageIds": [
+      "ar-photosynthesis"
+    ],
+    "expected": [
+      [
+        "إطلاق الأكسجين",
+        "منتج ثانوي"
+      ]
+    ]
+  },
+  {
+    "id": "ar-pyramids-01",
+    "language": "ar",
+    "question": "أين يقع الهرم الأكبر؟",
+    "pageIds": [
+      "ar-pyramids"
+    ],
+    "expected": [
+      [
+        "يقع بمنطقة أهرام الجيزة في مصر"
+      ]
+    ]
+  },
+  {
+    "id": "ar-pyramids-02",
+    "language": "ar",
+    "question": "متى بني الهرم الأكبر؟",
+    "pageIds": [
+      "ar-pyramids"
+    ],
+    "expected": [
+      [
+        "2560 قبل الميلاد"
+      ],
+      [
+        "2560–2540 ق.م"
+      ]
+    ]
+  },
+  {
+    "id": "ar-pyramids-03",
+    "language": "ar",
+    "question": "أي من عجائب الدنيا السبع القديمة ما زال قائما؟",
+    "pageIds": [
+      "ar-pyramids"
+    ],
+    "expected": [
+      [
+        "الهرم الأكبر",
+        "الأثر الوحيد الباقي"
+      ]
+    ]
+  },
+  {
+    "id": "ar-rain-01",
+    "language": "ar",
+    "question": "اشرح لماذا تسقط الأمطار في جملتين قصيرتين",
+    "pageIds": [
+      "ar-rain"
+    ],
+    "expected": []
+  },
+  {
+    "id": "ar-rain-02",
+    "language": "ar",
+    "question": "لماذا تحدث الأمطار التضاريسية؟",
+    "pageIds": [
+      "ar-rain"
+    ],
+    "expected": [
+      [
+        "التقاء الرياح الرطبة",
+        "بمناطق مرتفعة"
+      ]
+    ]
+  },
+  {
+    "id": "ar-rain-03",
+    "language": "ar",
+    "question": "ما المطر؟",
+    "pageIds": [
+      "ar-rain"
+    ],
+    "expected": [
+      [
+        "قطرات الماء المتساقطة من السحاب"
+      ]
+    ]
+  },
+  {
+    "id": "ar-rain-04",
+    "language": "ar",
+    "question": "كيف تتشكل قطرات المطر داخل السحب؟",
+    "pageIds": [
+      "ar-rain"
+    ],
+    "expected": [
+      [
+        "تتحد قطيرات الماء الصغيرة في السحب"
+      ],
+      [
+        "القطرات تصطدم بالقطرات الصغرى",
+        "تضمها إليها"
+      ]
+    ]
+  },
+  {
+    "id": "ar-rain-05",
+    "language": "ar",
+    "question": "كم نوعا من الأمطار يذكر مطلع المقالة؟",
+    "pageIds": [
+      "ar-rain"
+    ],
+    "expected": [
+      [
+        "أنواع الأمطار ثلاثة"
+      ]
+    ]
+  },
+  {
+    "id": "ar-rain-06",
+    "language": "ar",
+    "question": "لماذا تسقط الأمطار شتاء في مناخ البحر المتوسط؟",
+    "pageIds": [
+      "ar-rain"
+    ],
+    "expected": [
+      [
+        "نظام البحر المتوسط",
+        "في فصل الشتاء",
+        "هبوب الرياح الغربية العكسية"
+      ]
+    ]
+  },
+  {
+    "id": "ar-red-sea-01",
+    "language": "ar",
+    "question": "لماذا سمي البحر الأحمر بهذا الاسم؟",
+    "pageIds": [
+      "ar-red-sea"
+    ],
+    "expected": [
+      [
+        "ترجمة مباشرة",
+        "إريثرا ثالاسا"
+      ],
+      [
+        "تسمية البحر",
+        "الحمراء اللون"
+      ],
+      [
+        "الأحمر هو اسم يشير إلى اتجاه الجنوب"
+      ]
+    ]
+  },
+  {
+    "id": "ar-red-sea-02",
+    "language": "ar",
+    "question": "ما الاسم العربي القديم للبحر الأحمر؟",
+    "pageIds": [
+      "ar-red-sea"
+    ],
+    "expected": [
+      [
+        "بحر القلزم"
+      ]
+    ]
+  },
+  {
+    "id": "ar-red-sea-03",
+    "language": "ar",
+    "question": "ما المضيق الذي يصل البحر الأحمر بخليج عدن؟",
+    "pageIds": [
+      "ar-red-sea"
+    ],
+    "expected": [
+      [
+        "باب المندب",
+        "خليج عدن"
+      ]
+    ]
+  },
+  {
+    "id": "ar-red-sea-04",
+    "language": "ar",
+    "question": "كم يبلغ متوسط عمق البحر الأحمر؟",
+    "pageIds": [
+      "ar-red-sea"
+    ],
+    "expected": [
+      [
+        "متوسط العمق 490 متر"
+      ]
+    ]
+  },
+  {
+    "id": "ar-salmon-01",
+    "language": "ar",
+    "question": "لماذا يهاجر سمك السلمون؟",
+    "pageIds": [
+      "ar-salmon"
+    ],
+    "expected": [
+      [
+        "المياه العذبة من أجل التكاثر"
+      ],
+      [
+        "الذي فقس فيه ليتكاثر"
+      ]
+    ]
+  },
+  {
+    "id": "ar-salmon-02",
+    "language": "ar",
+    "question": "أين يفقس السلمون المهاجر؟",
+    "pageIds": [
+      "ar-salmon"
+    ],
+    "expected": [
+      [
+        "تفقس في مياه الجداول العذبة"
+      ]
+    ]
+  },
+  {
+    "id": "ar-salmon-03",
+    "language": "ar",
+    "question": "ما الفصيلة التي ينتمي إليها سمك السلمون؟",
+    "pageIds": [
+      "ar-salmon"
+    ],
+    "expected": [
+      [
+        "عائلة السلمونيات"
+      ]
+    ]
+  },
+  {
+    "id": "ar-salmon-04",
+    "language": "ar",
+    "question": "في أي مرحلة يهاجر السلمون إلى المحيط؟",
+    "pageIds": [
+      "ar-salmon"
+    ],
+    "expected": [
+      [
+        "تهاجر إلى المحيطات عندما تبلغ سن البلوغ"
+      ]
+    ]
+  },
+  {
+    "id": "ar-sky-01",
+    "language": "ar",
+    "question": "ليش السماء زرقاء؟",
+    "pageIds": [
+      "ar-sky"
+    ],
+    "expected": [
+      [
+        "اللون المتبعثر",
+        "طاغيا عليه اللون الأزرق"
+      ]
+    ]
+  },
+  {
+    "id": "ar-sky-02",
+    "language": "ar",
+    "question": "ما سبب زرقة السماء؟",
+    "pageIds": [
+      "ar-sky"
+    ],
+    "expected": [
+      [
+        "اللون المتبعثر",
+        "طاغيا عليه اللون الأزرق"
+      ]
+    ]
+  },
+  {
+    "id": "ar-sky-03",
+    "language": "ar",
+    "question": "ما المقصود بالسماء؟",
+    "pageIds": [
+      "ar-sky"
+    ],
+    "expected": [
+      [
+        "فوق سطح الأرض",
+        "الغلاف الجوي"
+      ]
+    ]
+  },
+  {
+    "id": "ar-sky-04",
+    "language": "ar",
+    "question": "كيف تبدو قبة السماء للمراقب نهارا مقارنة بالليل؟",
+    "pageIds": [
+      "ar-sky"
+    ],
+    "expected": [
+      [
+        "تتسطح خلال النهار مقارنة بالليل"
+      ]
+    ]
+  },
+  {
+    "id": "ar-solar-eclipse-01",
+    "language": "ar",
+    "question": "كيف يحدث كسوف الشمس؟",
+    "pageIds": [
+      "ar-solar-eclipse"
+    ],
+    "expected": [
+      [
+        "الأرض والقمر والشمس على استقامة واحدة",
+        "القمر في المنتصف"
+      ]
+    ]
+  },
+  {
+    "id": "ar-solar-eclipse-02",
+    "language": "ar",
+    "question": "لماذا لا يحدث كسوف الشمس كل شهر قمري؟",
+    "pageIds": [
+      "ar-solar-eclipse"
+    ],
+    "expected": [
+      [
+        "ميل مدار القمر",
+        "5 درجات"
+      ],
+      [
+        "ظل القمر لا يسقط على الأرض إلا عندما يكون القمر في إحدى عقدتيه"
+      ]
+    ]
+  },
+  {
+    "id": "ar-solar-eclipse-03",
+    "language": "ar",
+    "question": "كم تدوم مرحلة الاستتار الكامل لقرص الشمس؟",
+    "pageIds": [
+      "ar-solar-eclipse"
+    ],
+    "expected": [
+      [
+        "دقيقتين إلى سبع دقائق"
+      ]
+    ]
+  },
+  {
+    "id": "ar-telephone-01",
+    "language": "ar",
+    "question": "ما هو الهاتف؟",
+    "pageIds": [
+      "ar-telephone"
+    ],
+    "expected": [
+      [
+        "جهاز يستخدم لنقل الصوت"
+      ]
+    ]
+  },
+  {
+    "id": "ar-telephone-02",
+    "language": "ar",
+    "question": "من صاحب فكرة الهاتف بحسب مقدمة المقالة؟",
+    "pageIds": [
+      "ar-telephone"
+    ],
+    "expected": [
+      [
+        "أنطونيو ميوتشي"
+      ]
+    ]
+  },
+  {
+    "id": "ar-telephone-03",
+    "language": "ar",
+    "question": "متى أقر الكونغرس الأمريكي بدور ميوتشي في فكرة الهاتف؟",
+    "pageIds": [
+      "ar-telephone"
+    ],
+    "expected": [
+      [
+        "11 يونيو",
+        "2002"
+      ]
+    ]
+  },
+  {
+    "id": "ar-tokyo-01",
+    "language": "ar",
+    "question": "على أي جزيرة تقع طوكيو؟",
+    "pageIds": [
+      "ar-tokyo"
+    ],
+    "expected": [
+      [
+        "تقع على الجهة الشرقية",
+        "هونشو"
+      ]
+    ]
+  },
+  {
+    "id": "ar-tokyo-02",
+    "language": "ar",
+    "question": "ما عاصمة اليابان؟",
+    "pageIds": [
+      "ar-tokyo",
+      "ar-japan"
+    ],
+    "expected": [
+      [
+        "طوكيو",
+        "عاصمة اليابان"
+      ],
+      [
+        "العاصمة طوكيو"
+      ]
+    ]
+  },
+  {
+    "id": "ar-tokyo-03",
+    "language": "ar",
+    "question": "متى أصبحت طوكيو عاصمة اليابان؟",
+    "pageIds": [
+      "ar-tokyo"
+    ],
+    "expected": [
+      [
+        "عاصمة اليابان منذ عام 1868"
+      ]
+    ]
+  },
+  {
+    "id": "ar-tokyo-04",
+    "language": "ar",
+    "question": "كم بلغ سكان منطقة طوكيو الكبرى سنة 2024؟",
+    "pageIds": [
+      "ar-tokyo"
+    ],
+    "expected": [
+      [
+        "41 مليون نسمة",
+        "2024"
+      ]
+    ]
+  },
+  {
+    "id": "ar-un-01",
+    "language": "ar",
+    "question": "أين مقر الأمم المتحدة؟",
+    "pageIds": [
+      "ar-un"
+    ],
+    "expected": [
+      [
+        "المقر الرئيسي للأمم المتحدة",
+        "نيويورك"
+      ]
+    ]
+  },
+  {
+    "id": "ar-un-02",
+    "language": "ar",
+    "question": "لماذا تأسست الأمم المتحدة؟",
+    "pageIds": [
+      "ar-un"
+    ],
+    "expected": [
+      [
+        "بهدف منع الحروب"
+      ],
+      [
+        "بالمحافظة على السلم والأمن الدوليين"
+      ]
+    ]
+  },
+  {
+    "id": "ar-un-03",
+    "language": "ar",
+    "question": "ما المنظمة التي خلفت عصبة الأمم؟",
+    "pageIds": [
+      "ar-un"
+    ],
+    "expected": [
+      [
+        "الأمم المتحدة",
+        "خلفا لعصبة الأمم"
+      ]
+    ]
+  },
+  {
+    "id": "ar-un-04",
+    "language": "ar",
+    "question": "كم دولة انضمت إلى الأمم المتحدة عند تأسيسها؟",
+    "pageIds": [
+      "ar-un"
+    ],
+    "expected": [
+      [
+        "عدد الدول الأعضاء عند تأسيس المنظمة 51"
+      ]
+    ]
+  },
+  {
+    "id": "ar-water-01",
+    "language": "ar",
+    "question": "ما الصيغة الكيميائية للماء؟",
+    "pageIds": [
+      "ar-water"
+    ],
+    "expected": [
+      [
+        "H2O"
+      ],
+      [
+        "H₂O"
+      ]
+    ]
+  },
+  {
+    "id": "ar-water-02",
+    "language": "ar",
+    "question": "كم من سطح الأرض يغطيه الماء؟",
+    "pageIds": [
+      "ar-water"
+    ],
+    "expected": [
+      [
+        "يغطي 71% من سطحها"
+      ]
+    ]
+  },
+  {
+    "id": "ar-water-03",
+    "language": "ar",
+    "question": "كيف يتغير الماء في الدورة المائية؟",
+    "pageIds": [
+      "ar-water"
+    ],
+    "expected": [
+      [
+        "تبخر ونتح",
+        "تكثيف فهطول ثم جريان"
+      ]
+    ]
+  },
+  {
+    "id": "ar-world-health-organization-01",
+    "language": "ar",
+    "question": "أين يقع المقر الرئيسي لمنظمة الصحة العالمية؟",
+    "pageIds": [
+      "ar-world-health-organization"
+    ],
+    "expected": [
+      [
+        "جنيف",
+        "سويسرا"
+      ]
+    ]
+  },
+  {
+    "id": "ar-world-health-organization-02",
+    "language": "ar",
+    "question": "متى أُنشئت منظمة الصحة العالمية؟",
+    "pageIds": [
+      "ar-world-health-organization"
+    ],
+    "expected": [
+      [
+        "7 أبريل 1948"
+      ]
+    ]
+  },
+  {
+    "id": "ar-world-health-organization-03",
+    "language": "ar",
+    "question": "كم مكتبا إقليميا لمنظمة الصحة العالمية؟",
+    "pageIds": [
+      "ar-world-health-organization"
+    ],
+    "expected": [
+      [
+        "ستة مكاتب إقليمية"
+      ],
+      [
+        "6 مكاتب إقليمية"
+      ]
+    ]
+  },
+  {
+    "id": "ar-wwii-01",
+    "language": "ar",
+    "question": "ما أسباب الحرب العالمية الثانية؟",
+    "pageIds": [
+      "ar-wwii"
+    ],
+    "expected": [
+      [
+        "قامت ألمانيا باجتياح بولندا"
+      ],
+      [
+        "غزو بولندا"
+      ],
+      [
+        "معاهدة فرساي",
+        "الحرب"
+      ],
+      [
+        "السلام المنقوص لسنة 1919",
+        "لأسباب العميقة للحرب العالمية الثانية"
+      ]
+    ]
+  },
+  {
+    "id": "ar-wwii-02",
+    "language": "ar",
+    "question": "متى بدأت الحرب العالمية الثانية؟",
+    "pageIds": [
+      "ar-wwii"
+    ],
+    "expected": [
+      [
+        "الأول من سبتمبر",
+        "1939"
+      ],
+      [
+        "1 سبتمبر 1939"
+      ]
+    ]
+  },
+  {
+    "id": "ar-wwii-03",
+    "language": "ar",
+    "question": "ما الحلفان العسكريان اللذان تنازعا في الحرب العالمية الثانية؟",
+    "pageIds": [
+      "ar-wwii"
+    ],
+    "expected": [
+      [
+        "قوات الحلفاء ودول المحور"
+      ]
+    ]
+  },
+  {
+    "id": "ar-wwii-04",
+    "language": "ar",
+    "question": "كم راح ضحية الحرب العالمية الثانية بحسب تقديرات المقالة؟",
+    "pageIds": [
+      "ar-wwii"
+    ],
+    "expected": [
+      [
+        "50 و85 مليون قتيل"
+      ]
+    ]
+  },
+  {
+    "id": "en-africa-asia-area",
+    "language": "en",
+    "question": "Which is larger by land area, Africa or Asia?",
+    "pageIds": [
+      "en-africa"
+    ],
+    "expected": [
+      [
+        "second-largest",
+        "continent after Asia"
+      ]
+    ]
+  },
+  {
+    "id": "en-africa-countries",
+    "language": "en",
+    "question": "How many fully recognised sovereign states are in Africa?",
+    "pageIds": [
+      "en-africa"
+    ],
+    "expected": [
+      [
+        "54 fully recognised sovereign states"
+      ],
+      [
+        "54 recognised states"
+      ]
+    ]
+  },
+  {
+    "id": "en-africa-definition",
+    "language": "en",
+    "question": "What is Africa?",
+    "pageIds": [
+      "en-africa"
+    ],
+    "expected": [
+      [
+        "second-largest",
+        "continent after Asia"
+      ]
+    ]
+  },
+  {
+    "id": "en-africa-poverty-cause",
+    "language": "en",
+    "question": "Why does Africa have relatively low wealth per capita?",
+    "pageIds": [
+      "en-africa"
+    ],
+    "expected": [
+      [
+        "attributed this",
+        "geography",
+        "colonialism"
+      ]
+    ]
+  },
+  {
+    "id": "en-algeria-01",
+    "language": "en",
+    "question": "What is the capital of Algeria?",
+    "pageIds": [
+      "en-algeria"
+    ],
+    "expected": [
+      [
+        "capital",
+        "Algiers"
+      ]
+    ]
+  },
+  {
+    "id": "en-algeria-02",
+    "language": "en",
+    "question": "What are Algeria’s official languages?",
+    "pageIds": [
+      "en-algeria"
+    ],
+    "expected": [
+      [
+        "Official languages",
+        "Arabic",
+        "Amazigh"
+      ]
+    ]
+  },
+  {
+    "id": "en-algeria-03",
+    "language": "en",
+    "question": "On what date does Algeria mark its independence?",
+    "pageIds": [
+      "en-algeria"
+    ],
+    "expected": [
+      [
+        "Independence",
+        "5 July 1962"
+      ]
+    ]
+  },
+  {
+    "id": "en-amazon-definition",
+    "language": "en",
+    "question": "What is the Amazon River?",
+    "pageIds": [
+      "en-amazon"
+    ],
+    "expected": [
+      [
+        "largest river in the world by discharge"
+      ]
+    ]
+  },
+  {
+    "id": "en-amazon-length",
+    "language": "en",
+    "question": "How long is the Amazon River?",
+    "pageIds": [
+      "en-amazon"
+    ],
+    "expected": [
+      [
+        "6,575 km"
+      ]
+    ]
+  },
+  {
+    "id": "en-amazon-mouth",
+    "language": "en",
+    "question": "Where does the Amazon River empty?",
+    "pageIds": [
+      "en-amazon"
+    ],
+    "expected": [
+      [
+        "Atlantic Ocean"
+      ]
+    ]
+  },
+  {
+    "id": "en-amazon-nile-comparison",
+    "language": "en",
+    "question": "Which river is definitively longer, the Amazon River or the Nile?",
+    "pageIds": [
+      "en-amazon"
+    ],
+    "expected": []
+  },
+  {
+    "id": "en-arab-league-country-hq",
+    "language": "en",
+    "question": "Where is the Arab League headquartered?",
+    "pageIds": [
+      "en-arab-league"
+    ],
+    "expected": [
+      [
+        "Headquarters",
+        "Cairo"
+      ],
+      [
+        "headquarters",
+        "Cairo"
+      ]
+    ]
+  },
+  {
+    "id": "en-arab-league-date",
+    "language": "en",
+    "question": "When was the Arab League formed?",
+    "pageIds": [
+      "en-arab-league"
+    ],
+    "expected": [
+      [
+        "formed in Cairo on 22 March 1945"
+      ]
+    ]
+  },
+  {
+    "id": "en-arab-league-definition",
+    "language": "en",
+    "question": "What is the Arab League?",
+    "pageIds": [
+      "en-arab-league"
+    ],
+    "expected": [
+      [
+        "regional organisation in the Arab world"
+      ]
+    ]
+  },
+  {
+    "id": "en-arab-league-members",
+    "language": "en",
+    "question": "How many member countries are in the Arab League?",
+    "pageIds": [
+      "en-arab-league"
+    ],
+    "expected": [
+      [
+        "22 members"
+      ]
+    ]
+  },
+  {
+    "id": "en-baikal-definition",
+    "language": "en",
+    "question": "What is Lake Baikal?",
+    "pageIds": [
+      "en-baikal"
+    ],
+    "expected": [
+      [
+        "rift lake",
+        "deepest lake in the world"
+      ]
+    ]
+  },
+  {
+    "id": "en-baikal-depth",
+    "language": "en",
+    "question": "What is the maximum depth of Lake Baikal?",
+    "pageIds": [
+      "en-baikal"
+    ],
+    "expected": [
+      [
+        "1,642",
+        "depth"
+      ]
+    ]
+  },
+  {
+    "id": "en-baikal-inscribed",
+    "language": "en",
+    "question": "When was Lake Baikal declared a UNESCO World Heritage Site?",
+    "pageIds": [
+      "en-baikal"
+    ],
+    "expected": [
+      [
+        "World Heritage Site in 1996"
+      ],
+      [
+        "Inscription",
+        "1996"
+      ]
+    ]
+  },
+  {
+    "id": "en-baikal-location",
+    "language": "en",
+    "question": "Where is Lake Baikal?",
+    "pageIds": [
+      "en-baikal"
+    ],
+    "expected": [
+      [
+        "southern Siberia, Russia"
+      ],
+      [
+        "Location",
+        "Siberia, Russia"
+      ]
+    ]
+  },
+  {
+    "id": "en-berlin-wall-01",
+    "language": "en",
+    "question": "When did the Berlin Wall fall?",
+    "pageIds": [
+      "en-berlin-wall"
+    ],
+    "expected": [
+      [
+        "9 November 1989",
+        "visit"
+      ],
+      [
+        "Demolished",
+        "9 November 1989"
+      ],
+      [
+        "fell",
+        "9 November 1989"
+      ]
+    ]
+  },
+  {
+    "id": "en-berlin-wall-02",
+    "language": "en",
+    "question": "Why was the Berlin Wall built?",
+    "pageIds": [
+      "en-berlin-wall"
+    ],
+    "expected": [
+      [
+        "primary intention",
+        "prevent East German citizens from fleeing to the West"
+      ]
+    ]
+  },
+  {
+    "id": "en-berlin-wall-03",
+    "language": "en",
+    "question": "Who started building the Berlin Wall?",
+    "pageIds": [
+      "en-berlin-wall"
+    ],
+    "expected": [
+      [
+        "Construction of the Berlin Wall",
+        "government of the GDR"
+      ],
+      [
+        "Construction of the Berlin Wall",
+        "German Democratic Republic"
+      ]
+    ]
+  },
+  {
+    "id": "en-berlin-wall-04",
+    "language": "en",
+    "question": "What did the Berlin Wall separate?",
+    "pageIds": [
+      "en-berlin-wall"
+    ],
+    "expected": [
+      [
+        "separating it from East Berlin",
+        "West Berlin",
+        "German Democratic Republic"
+      ]
+    ]
+  },
+  {
+    "id": "en-cairo-01",
+    "language": "en",
+    "question": "Why is Cairo called the city of a thousand minarets?",
+    "pageIds": [
+      "en-cairo"
+    ],
+    "expected": [
+      [
+        "city of a thousand minarets",
+        "preponderance of Islamic architecture"
+      ]
+    ]
+  },
+  {
+    "id": "en-cairo-02",
+    "language": "en",
+    "question": "When was Cairo founded?",
+    "pageIds": [
+      "en-cairo"
+    ],
+    "expected": [
+      [
+        "Cairo was founded in 969"
+      ],
+      [
+        "Last major foundation",
+        "969",
+        "Cairo"
+      ]
+    ]
+  },
+  {
+    "id": "en-cairo-03",
+    "language": "en",
+    "question": "How many people live in Cairo proper?",
+    "pageIds": [
+      "en-cairo"
+    ],
+    "expected": [
+      [
+        "more than 9.8 million people"
+      ],
+      [
+        "Capital city",
+        "9,801,536"
+      ]
+    ]
+  },
+  {
+    "id": "en-cairo-04",
+    "language": "en",
+    "question": "In which city is the Arab League headquartered?",
+    "pageIds": [
+      "en-cairo",
+      "en-arab-league"
+    ],
+    "expected": [
+      [
+        "headquarters of the Arab League",
+        "Cairo"
+      ],
+      [
+        "Headquarters",
+        "Cairo"
+      ]
+    ]
+  },
+  {
+    "id": "en-earthquake-01",
+    "language": "en",
+    "question": "What causes earthquakes?",
+    "pageIds": [
+      "en-earthquake"
+    ],
+    "expected": [
+      [
+        "Earthquakes are primarily caused by geological faults"
+      ],
+      [
+        "shaking",
+        "sudden release of energy",
+        "seismic waves"
+      ],
+      [
+        "tectonic movements along faults",
+        "earthquakes"
+      ],
+      [
+        "earthquakes",
+        "tectonic movements along faults"
+      ]
+    ]
+  },
+  {
+    "id": "en-earthquake-02",
+    "language": "en",
+    "question": "What is an earthquake?",
+    "pageIds": [
+      "en-earthquake"
+    ],
+    "expected": [
+      [
+        "shaking of the Earth",
+        "seismic waves"
+      ]
+    ]
+  },
+  {
+    "id": "en-earthquake-03",
+    "language": "en",
+    "question": "What is the epicenter of an earthquake?",
+    "pageIds": [
+      "en-earthquake"
+    ],
+    "expected": [
+      [
+        "ground level directly above it",
+        "epicenter"
+      ]
+    ]
+  },
+  {
+    "id": "en-earthquake-04",
+    "language": "en",
+    "question": "How strong was the 1960 Valdivia earthquake?",
+    "pageIds": [
+      "en-earthquake"
+    ],
+    "expected": [
+      [
+        "1960 Valdivia earthquake",
+        "9.5 magnitude"
+      ]
+    ]
+  },
+  {
+    "id": "en-egypt-01",
+    "language": "en",
+    "question": "What is the official language of Egypt?",
+    "pageIds": [
+      "en-egypt"
+    ],
+    "expected": [
+      [
+        "Official languages",
+        "Arabic"
+      ]
+    ]
+  },
+  {
+    "id": "en-egypt-02",
+    "language": "en",
+    "question": "Who is Egypt’s prime minister?",
+    "pageIds": [
+      "en-egypt"
+    ],
+    "expected": [
+      [
+        "Prime Minister",
+        "Mostafa Madbouly"
+      ]
+    ]
+  },
+  {
+    "id": "en-egypt-03",
+    "language": "en",
+    "question": "What is the largest city in Egypt?",
+    "pageIds": [
+      "en-egypt",
+      "en-cairo"
+    ],
+    "expected": [
+      [
+        "largest city",
+        "Cairo"
+      ],
+      [
+        "Cairo",
+        "largest city"
+      ]
+    ]
+  },
+  {
+    "id": "en-eiffel-01",
+    "language": "en",
+    "question": "Where is the Eiffel Tower?",
+    "pageIds": [
+      "en-eiffel"
+    ],
+    "expected": [
+      [
+        "Eiffel Tower",
+        "Champ de Mars",
+        "Paris"
+      ],
+      [
+        "Location",
+        "Paris, France"
+      ]
+    ]
+  },
+  {
+    "id": "en-eiffel-02",
+    "language": "en",
+    "question": "Who is the Eiffel Tower named after?",
+    "pageIds": [
+      "en-eiffel"
+    ],
+    "expected": [
+      [
+        "named after the engineer Gustave Eiffel"
+      ]
+    ]
+  },
+  {
+    "id": "en-eiffel-03",
+    "language": "en",
+    "question": "How tall is the Eiffel Tower including its tip?",
+    "pageIds": [
+      "en-eiffel"
+    ],
+    "expected": [
+      [
+        "Tip",
+        "330 m"
+      ],
+      [
+        "330 metres",
+        "tall"
+      ]
+    ]
+  },
+  {
+    "id": "en-eiffel-04",
+    "language": "en",
+    "question": "Why is the Eiffel Tower called the Iron Lady?",
+    "pageIds": [
+      "en-eiffel"
+    ],
+    "expected": [
+      [
+        "Iron Lady",
+        "use of wrought iron"
+      ]
+    ]
+  },
+  {
+    "id": "en-everest-first-climb",
+    "language": "en",
+    "question": "Who first climbed Mount Everest?",
+    "pageIds": [
+      "en-mount-everest"
+    ],
+    "expected": [
+      [
+        "Edmund Hillary",
+        "Tenzing Norgay"
+      ]
+    ]
+  },
+  {
+    "id": "en-everest-first-date",
+    "language": "en",
+    "question": "When was Mount Everest first climbed?",
+    "pageIds": [
+      "en-mount-everest"
+    ],
+    "expected": [
+      [
+        "29 May 1953"
+      ]
+    ]
+  },
+  {
+    "id": "en-everest-height",
+    "language": "en",
+    "question": "How tall is Mount Everest?",
+    "pageIds": [
+      "en-mount-everest"
+    ],
+    "expected": [
+      [
+        "8,848.86 m"
+      ]
+    ]
+  },
+  {
+    "id": "en-everest-measure-method",
+    "language": "en",
+    "question": "How was Mount Everest's height measured in 2020?",
+    "pageIds": [
+      "en-mount-everest"
+    ],
+    "expected": [
+      [
+        "joint survey",
+        "Nepalese and Chinese authorities"
+      ]
+    ]
+  },
+  {
+    "id": "en-ibn-khaldun-01",
+    "language": "en",
+    "question": "Where was Ibn Khaldun born?",
+    "pageIds": [
+      "en-ibn-khaldun"
+    ],
+    "expected": [
+      [
+        "Born",
+        "Tunis"
+      ],
+      [
+        "born",
+        "Tunis"
+      ]
+    ]
+  },
+  {
+    "id": "en-ibn-khaldun-02",
+    "language": "en",
+    "question": "What is Ibn Khaldun’s best-known book?",
+    "pageIds": [
+      "en-ibn-khaldun"
+    ],
+    "expected": [
+      [
+        "best-known book",
+        "Muqaddimah"
+      ]
+    ]
+  },
+  {
+    "id": "en-ibn-khaldun-03",
+    "language": "en",
+    "question": "How long did Ibn Khaldun take to write his best-known book?",
+    "pageIds": [
+      "en-ibn-khaldun"
+    ],
+    "expected": [
+      [
+        "Muqaddimah",
+        "wrote in six months"
+      ]
+    ]
+  },
+  {
+    "id": "en-ibn-khaldun-04",
+    "language": "en",
+    "question": "When did Ibn Khaldun die?",
+    "pageIds": [
+      "en-ibn-khaldun"
+    ],
+    "expected": [
+      [
+        "17 March 1406"
+      ]
+    ]
+  },
+  {
+    "id": "en-ibn-sina-01",
+    "language": "en",
+    "question": "Who was Avicenna?",
+    "pageIds": [
+      "en-ibn-sina"
+    ],
+    "expected": [
+      [
+        "Ibn Sina",
+        "Avicenna",
+        "philosopher and physician"
+      ]
+    ]
+  },
+  {
+    "id": "en-ibn-sina-02",
+    "language": "en",
+    "question": "Who wrote The Canon of Medicine?",
+    "pageIds": [
+      "en-ibn-sina"
+    ],
+    "expected": [
+      [
+        "Avicenna",
+        "The Canon of Medicine"
+      ],
+      [
+        "Notable works",
+        "The Canon of Medicine"
+      ]
+    ]
+  },
+  {
+    "id": "en-ibn-sina-03",
+    "language": "en",
+    "question": "Where did Avicenna die?",
+    "pageIds": [
+      "en-ibn-sina"
+    ],
+    "expected": [
+      [
+        "Died",
+        "Hamadan"
+      ],
+      [
+        "died",
+        "Hamadan"
+      ]
+    ]
+  },
+  {
+    "id": "en-ibn-sina-04",
+    "language": "en",
+    "question": "Which languages did Avicenna use to write his scientific and philosophical works?",
+    "pageIds": [
+      "en-ibn-sina"
+    ],
+    "expected": [
+      [
+        "philosophical and scientific works in Arabic",
+        "Persian"
+      ]
+    ]
+  },
+  {
+    "id": "en-japan-01",
+    "language": "en",
+    "question": "What is the capital of Japan?",
+    "pageIds": [
+      "en-japan"
+    ],
+    "expected": [
+      [
+        "capital",
+        "Tokyo"
+      ],
+      [
+        "Tokyo",
+        "capital"
+      ]
+    ]
+  },
+  {
+    "id": "en-japan-02",
+    "language": "en",
+    "question": "What is Japan’s population in 2026?",
+    "pageIds": [
+      "en-japan",
+      "en-tokyo"
+    ],
+    "expected": [
+      [
+        "population of almost 123 million as of 2026"
+      ]
+    ]
+  },
+  {
+    "id": "en-japan-03",
+    "language": "en",
+    "question": "How many prefectures are in Japan?",
+    "pageIds": [
+      "en-japan"
+    ],
+    "expected": [
+      [
+        "47 administrative prefectures"
+      ]
+    ]
+  },
+  {
+    "id": "en-japan-04",
+    "language": "en",
+    "question": "In what region of the world is Japan?",
+    "pageIds": [
+      "en-japan"
+    ],
+    "expected": [
+      [
+        "island country in East Asia"
+      ]
+    ]
+  },
+  {
+    "id": "en-light-01",
+    "language": "en",
+    "question": "What is the speed of light in a vacuum in metres per second?",
+    "pageIds": [
+      "en-light"
+    ],
+    "expected": [
+      [
+        "metres per second",
+        "299792458"
+      ],
+      [
+        "299,792,458 metres per second"
+      ],
+      [
+        "299 792 458 metres per second"
+      ]
+    ]
+  },
+  {
+    "id": "en-light-02",
+    "language": "en",
+    "question": "How long does light take to travel from the Moon to Earth?",
+    "pageIds": [
+      "en-light"
+    ],
+    "expected": [
+      [
+        "from Moon to Earth",
+        "1.3 s"
+      ]
+    ]
+  },
+  {
+    "id": "en-light-03",
+    "language": "en",
+    "question": "How many metres per second does light travel in liquid benzene at 20 °C?",
+    "pageIds": [
+      "en-light"
+    ],
+    "expected": []
+  },
+  {
+    "id": "en-mariana-depth",
+    "language": "en",
+    "question": "How deep is the Mariana Trench at its deepest point?",
+    "pageIds": [
+      "en-mariana-trench"
+    ],
+    "expected": [
+      [
+        "10,935",
+        "Challenger Deep"
+      ]
+    ]
+  },
+  {
+    "id": "en-mariana-location",
+    "language": "en",
+    "question": "Where is the Mariana Trench located?",
+    "pageIds": [
+      "en-mariana-trench"
+    ],
+    "expected": [
+      [
+        "western Pacific Ocean"
+      ],
+      [
+        "Ocean/sea sources",
+        "Pacific Ocean"
+      ]
+    ]
+  },
+  {
+    "id": "en-mariana-name",
+    "language": "en",
+    "question": "Why is the Mariana Trench called the Mariana Trench?",
+    "pageIds": [
+      "en-mariana-trench"
+    ],
+    "expected": [
+      [
+        "named after",
+        "Mariana Islands"
+      ]
+    ]
+  },
+  {
+    "id": "en-messi-01",
+    "language": "en",
+    "question": "How old is Lionel Messi?",
+    "pageIds": [
+      "en-messi"
+    ],
+    "expected": [
+      [
+        "age 39"
+      ]
+    ]
+  },
+  {
+    "id": "en-messi-02",
+    "language": "en",
+    "question": "Where was Messi born?",
+    "pageIds": [
+      "en-messi"
+    ],
+    "expected": [
+      [
+        "Place of birth",
+        "Rosario"
+      ],
+      [
+        "born",
+        "Rosario"
+      ]
+    ]
+  },
+  {
+    "id": "en-messi-03",
+    "language": "en",
+    "question": "What position does Lionel Messi play?",
+    "pageIds": [
+      "en-messi"
+    ],
+    "expected": [
+      [
+        "Position",
+        "Forward"
+      ],
+      [
+        "plays as a forward"
+      ]
+    ]
+  },
+  {
+    "id": "en-messi-04",
+    "language": "en",
+    "question": "How tall is Messi?",
+    "pageIds": [
+      "en-messi"
+    ],
+    "expected": [
+      [
+        "Height",
+        "1.70 m"
+      ]
+    ]
+  },
+  {
+    "id": "en-naguib-mahfouz-01",
+    "language": "en",
+    "question": "When was Naguib Mahfouz born?",
+    "pageIds": [
+      "en-naguib-mahfouz"
+    ],
+    "expected": [
+      [
+        "11 December 1911"
+      ]
+    ]
+  },
+  {
+    "id": "en-naguib-mahfouz-02",
+    "language": "en",
+    "question": "Who won the 1988 Nobel Prize in Literature?",
+    "pageIds": [
+      "en-naguib-mahfouz"
+    ],
+    "expected": [
+      [
+        "Naguib Mahfouz",
+        "1988 Nobel Prize in Literature"
+      ]
+    ]
+  },
+  {
+    "id": "en-naguib-mahfouz-03",
+    "language": "en",
+    "question": "Where was Naguib Mahfouz born?",
+    "pageIds": [
+      "en-naguib-mahfouz"
+    ],
+    "expected": [
+      [
+        "Born",
+        "Cairo"
+      ],
+      [
+        "was born",
+        "Cairo"
+      ]
+    ]
+  },
+  {
+    "id": "en-naguib-mahfouz-04",
+    "language": "en",
+    "question": "Who did Naguib Mahfouz marry?",
+    "pageIds": [
+      "en-naguib-mahfouz"
+    ],
+    "expected": [
+      [
+        "Spouse",
+        "Atiyatullah Ibrahim"
+      ]
+    ]
+  },
+  {
+    "id": "en-photosynthesis-01",
+    "language": "en",
+    "question": "What is photosynthesis?",
+    "pageIds": [
+      "en-photosynthesis"
+    ],
+    "expected": [
+      [
+        "biological processes",
+        "light energy",
+        "chemical energy"
+      ]
+    ]
+  },
+  {
+    "id": "en-photosynthesis-02",
+    "language": "en",
+    "question": "How does photosynthesis convert carbon dioxide into carbohydrates?",
+    "pageIds": [
+      "en-photosynthesis"
+    ],
+    "expected": [
+      [
+        "carbon fixation",
+        "convert carbon dioxide into carbohydrates"
+      ]
+    ]
+  },
+  {
+    "id": "en-photosynthesis-03",
+    "language": "en",
+    "question": "What gas is released during oxygenic photosynthesis?",
+    "pageIds": [
+      "en-photosynthesis"
+    ],
+    "expected": [
+      [
+        "releases oxygen"
+      ]
+    ]
+  },
+  {
+    "id": "en-photosynthesis-04",
+    "language": "en",
+    "question": "Which pigment absorbs light in plants during photosynthesis?",
+    "pageIds": [
+      "en-photosynthesis"
+    ],
+    "expected": [
+      [
+        "these pigments are chlorophylls"
+      ]
+    ]
+  },
+  {
+    "id": "en-pyramids-01",
+    "language": "en",
+    "question": "Where is the Great Pyramid of Giza?",
+    "pageIds": [
+      "en-pyramids"
+    ],
+    "expected": [
+      [
+        "Location",
+        "Giza, Egypt"
+      ],
+      [
+        "pyramid",
+        "Giza, Egypt"
+      ]
+    ]
+  },
+  {
+    "id": "en-pyramids-02",
+    "language": "en",
+    "question": "Who is thought to have been the architect of the Great Pyramid?",
+    "pageIds": [
+      "en-pyramids"
+    ],
+    "expected": [
+      [
+        "Architect",
+        "Hemiunu",
+        "presumed"
+      ]
+    ]
+  },
+  {
+    "id": "en-pyramids-03",
+    "language": "en",
+    "question": "How tall was the Great Pyramid originally?",
+    "pageIds": [
+      "en-pyramids"
+    ],
+    "expected": [
+      [
+        "Original:",
+        "146.6 m"
+      ],
+      [
+        "146.6 metres",
+        "original"
+      ],
+      [
+        "originally stood",
+        "146.6"
+      ]
+    ]
+  },
+  {
+    "id": "en-pyramids-04",
+    "language": "en",
+    "question": "What material was used to build the Great Pyramid of Giza?",
+    "pageIds": [
+      "en-pyramids"
+    ],
+    "expected": [
+      [
+        "Material",
+        "Limestone",
+        "granite"
+      ],
+      [
+        "limestone",
+        "granite"
+      ]
+    ]
+  },
+  {
+    "id": "en-rain-01",
+    "language": "en",
+    "question": "Explain why rain falls in two short Arabic sentences.",
+    "pageIds": [
+      "en-rain"
+    ],
+    "expected": [
+      [
+        "condensed from atmospheric water vapor",
+        "fall by gravity"
+      ],
+      [
+        "cause of rain production",
+        "weather fronts"
+      ]
+    ]
+  },
+  {
+    "id": "en-rain-02",
+    "language": "en",
+    "question": "What is rain?",
+    "pageIds": [
+      "en-rain"
+    ],
+    "expected": [
+      [
+        "precipitation",
+        "droplets of water"
+      ]
+    ]
+  },
+  {
+    "id": "en-rain-03",
+    "language": "en",
+    "question": "How do raindrops in clouds grow through coalescence?",
+    "pageIds": [
+      "en-rain"
+    ],
+    "expected": [
+      [
+        "water droplets fuse to create larger water droplets"
+      ],
+      [
+        "water droplets collide",
+        "producing larger droplets"
+      ]
+    ]
+  },
+  {
+    "id": "en-rain-04",
+    "language": "en",
+    "question": "Why does rain become acidic?",
+    "pageIds": [
+      "en-rain"
+    ],
+    "expected": [
+      [
+        "Rain becomes acidic",
+        "sulfuric",
+        "nitric"
+      ]
+    ]
+  },
+  {
+    "id": "en-rain-05",
+    "language": "en",
+    "question": "Why is rainfall favored across southern Asia during the monsoon?",
+    "pageIds": [
+      "en-rain"
+    ],
+    "expected": [
+      [
+        "Within Asia",
+        "due to the monsoon advecting moisture",
+        "Indian Ocean"
+      ]
+    ]
+  },
+  {
+    "id": "en-red-sea-01",
+    "language": "en",
+    "question": "Where is the Red Sea?",
+    "pageIds": [
+      "en-red-sea"
+    ],
+    "expected": [
+      [
+        "Arabian Peninsula",
+        "Africa"
+      ],
+      [
+        "Location",
+        "North Africa",
+        "East Africa",
+        "West Asia"
+      ]
+    ]
+  },
+  {
+    "id": "en-red-sea-02",
+    "language": "en",
+    "question": "How deep is the Red Sea on average?",
+    "pageIds": [
+      "en-red-sea"
+    ],
+    "expected": [
+      [
+        "Average depth",
+        "490 m"
+      ],
+      [
+        "average depth",
+        "490 m"
+      ]
+    ]
+  },
+  {
+    "id": "en-red-sea-03",
+    "language": "en",
+    "question": "What strait connects the Red Sea with the Gulf of Aden?",
+    "pageIds": [
+      "en-red-sea"
+    ],
+    "expected": [
+      [
+        "Bab-el-Mandeb Strait",
+        "Gulf of Aden"
+      ]
+    ]
+  },
+  {
+    "id": "en-salmon-01",
+    "language": "en",
+    "question": "Why do salmon return to their freshwater birthplace?",
+    "pageIds": [
+      "en-salmon"
+    ],
+    "expected": [
+      [
+        "return to their freshwater birthplace to reproduce"
+      ]
+    ]
+  },
+  {
+    "id": "en-salmon-02",
+    "language": "en",
+    "question": "How do salmon find their home stream?",
+    "pageIds": [
+      "en-salmon"
+    ],
+    "expected": [
+      [
+        "Homing behavior",
+        "olfactory memory"
+      ]
+    ]
+  },
+  {
+    "id": "en-salmon-03",
+    "language": "en",
+    "question": "What family are salmon in?",
+    "pageIds": [
+      "en-salmon"
+    ],
+    "expected": [
+      [
+        "family Salmonidae"
+      ],
+      [
+        "Family:",
+        "Salmonidae"
+      ]
+    ]
+  },
+  {
+    "id": "en-salmon-04",
+    "language": "en",
+    "question": "Which country produces the most farmed salmon?",
+    "pageIds": [
+      "en-salmon"
+    ],
+    "expected": [
+      [
+        "Norway",
+        "largest producer of farmed salmon"
+      ]
+    ]
+  },
+  {
+    "id": "en-sky-01",
+    "language": "en",
+    "question": "Why is the sky blue?",
+    "pageIds": [
+      "en-sky"
+    ],
+    "expected": [
+      [
+        "appears blue",
+        "scatter shorter wavelengths"
+      ],
+      [
+        "the sky is blue",
+        "Rayleigh scattering"
+      ],
+      [
+        "blue",
+        "Rayleigh scattering"
+      ]
+    ]
+  },
+  {
+    "id": "en-sky-02",
+    "language": "en",
+    "question": "What is the sky?",
+    "pageIds": [
+      "en-sky"
+    ],
+    "expected": [
+      [
+        "unobstructed view upward",
+        "surface of the Earth"
+      ]
+    ]
+  },
+  {
+    "id": "en-sky-03",
+    "language": "en",
+    "question": "What do astronomers call the sky?",
+    "pageIds": [
+      "en-sky"
+    ],
+    "expected": [
+      [
+        "astronomy",
+        "celestial sphere"
+      ]
+    ]
+  },
+  {
+    "id": "en-sky-04",
+    "language": "en",
+    "question": "Where does the English word sky come from?",
+    "pageIds": [
+      "en-sky"
+    ],
+    "expected": [
+      [
+        "word sky",
+        "Old Norse"
+      ]
+    ]
+  },
+  {
+    "id": "en-solar-eclipse-01",
+    "language": "en",
+    "question": "How does a solar eclipse happen?",
+    "pageIds": [
+      "en-solar-eclipse"
+    ],
+    "expected": [
+      [
+        "Moon passes between Earth and the Sun"
+      ]
+    ]
+  },
+  {
+    "id": "en-solar-eclipse-02",
+    "language": "en",
+    "question": "Why isn’t there a solar eclipse every new moon?",
+    "pageIds": [
+      "en-solar-eclipse"
+    ],
+    "expected": [
+      [
+        "Moon’s orbit is tilted",
+        "usually misses Earth"
+      ],
+      [
+        "Moon's orbit is tilted",
+        "usually misses Earth"
+      ]
+    ]
+  },
+  {
+    "id": "en-solar-eclipse-03",
+    "language": "en",
+    "question": "How many solar eclipses can there be in a year?",
+    "pageIds": [
+      "en-solar-eclipse"
+    ],
+    "expected": [
+      [
+        "at least two",
+        "up to five",
+        "solar eclipses each year"
+      ]
+    ]
+  },
+  {
+    "id": "en-solar-eclipse-04",
+    "language": "en",
+    "question": "What is a total solar eclipse?",
+    "pageIds": [
+      "en-solar-eclipse"
+    ],
+    "expected": [
+      [
+        "total eclipse",
+        "disk of the Sun is fully obscured by the Moon"
+      ]
+    ]
+  },
+  {
+    "id": "en-telephone-01",
+    "language": "en",
+    "question": "Who invented the telephone?",
+    "pageIds": [
+      "en-telephone"
+    ],
+    "expected": [
+      [
+        "Alexander Graham Bell",
+        "patent"
+      ],
+      [
+        "Alexander Graham Bell",
+        "credited with the invention of the telephone"
+      ]
+    ]
+  },
+  {
+    "id": "en-telephone-02",
+    "language": "en",
+    "question": "What is a telephone?",
+    "pageIds": [
+      "en-telephone"
+    ],
+    "expected": [
+      [
+        "telecommunications device",
+        "conduct a conversation"
+      ]
+    ]
+  },
+  {
+    "id": "en-telephone-03",
+    "language": "en",
+    "question": "How does a telephone transmit someone’s voice?",
+    "pageIds": [
+      "en-telephone"
+    ],
+    "expected": [
+      [
+        "transmitter converts the sound waves",
+        "electrical signals"
+      ],
+      [
+        "converts sound",
+        "electronic signals"
+      ]
+    ]
+  },
+  {
+    "id": "en-telephone-04",
+    "language": "en",
+    "question": "Who invented the sailing device called a telephone in 1844?",
+    "pageIds": [
+      "en-telephone"
+    ],
+    "expected": [
+      [
+        "sailing vessels",
+        "Captain John Taylor",
+        "1844"
+      ]
+    ]
+  },
+  {
+    "id": "en-tokyo-01",
+    "language": "en",
+    "question": "Where is Tokyo?",
+    "pageIds": [
+      "en-tokyo"
+    ],
+    "expected": [
+      [
+        "Country",
+        "Japan"
+      ],
+      [
+        "capital and most populous city of Japan"
+      ],
+      [
+        "Tokyo Bay",
+        "Honshu"
+      ]
+    ]
+  },
+  {
+    "id": "en-tokyo-02",
+    "language": "en",
+    "question": "What was Tokyo called before it was renamed?",
+    "pageIds": [
+      "en-tokyo"
+    ],
+    "expected": [
+      [
+        "Tokyo, originally known as Edo"
+      ],
+      [
+        "Edo",
+        "renamed Tokyo"
+      ]
+    ]
+  },
+  {
+    "id": "en-tokyo-03",
+    "language": "en",
+    "question": "How many people lived in Tokyo proper in 2023?",
+    "pageIds": [
+      "en-tokyo"
+    ],
+    "expected": [
+      [
+        "population of the city proper",
+        "over 14 million",
+        "2023"
+      ]
+    ]
+  },
+  {
+    "id": "en-tokyo-04",
+    "language": "en",
+    "question": "Which organization administers Tokyo’s special wards?",
+    "pageIds": [
+      "en-tokyo"
+    ],
+    "expected": [
+      [
+        "Tokyo Metropolitan Government administers Tokyo",
+        "23 special wards"
+      ]
+    ]
+  },
+  {
+    "id": "en-trench-baikal-depth",
+    "language": "en",
+    "question": "Which is deeper, the Mariana Trench or Lake Baikal?",
+    "pageIds": [
+      "en-mariana-trench",
+      "en-baikal"
+    ],
+    "expected": []
+  },
+  {
+    "id": "en-un-01",
+    "language": "en",
+    "question": "Where are the United Nations headquarters?",
+    "pageIds": [
+      "en-un"
+    ],
+    "expected": [
+      [
+        "headquarters",
+        "New York City"
+      ]
+    ]
+  },
+  {
+    "id": "en-un-02",
+    "language": "en",
+    "question": "How many member states does the United Nations have?",
+    "pageIds": [
+      "en-un"
+    ],
+    "expected": [
+      [
+        "193 member states"
+      ]
+    ]
+  },
+  {
+    "id": "en-un-03",
+    "language": "en",
+    "question": "When was the United Nations Charter signed?",
+    "pageIds": [
+      "en-un"
+    ],
+    "expected": [
+      [
+        "Charter",
+        "26 June 1945"
+      ]
+    ]
+  },
+  {
+    "id": "en-un-04",
+    "language": "en",
+    "question": "Which organization issues the World Health Report?",
+    "pageIds": [
+      "en-un",
+      "en-world-health-organization"
+    ],
+    "expected": [
+      [
+        "official publication",
+        "World Health Report"
+      ]
+    ]
+  },
+  {
+    "id": "en-water-boils",
+    "language": "en",
+    "question": "What is the boiling point of water?",
+    "pageIds": [
+      "en-water"
+    ],
+    "expected": [
+      [
+        "99.98",
+        "211.96"
+      ],
+      [
+        "100 °C",
+        "boil"
+      ]
+    ]
+  },
+  {
+    "id": "en-water-definition",
+    "language": "en",
+    "question": "What is water?",
+    "pageIds": [
+      "en-water"
+    ],
+    "expected": [
+      [
+        "water is an inorganic compound",
+        "H2O"
+      ]
+    ]
+  },
+  {
+    "id": "en-water-solvent-name",
+    "language": "en",
+    "question": "Why is water called the universal solvent?",
+    "pageIds": [
+      "en-water"
+    ],
+    "expected": [
+      [
+        "strong polarity",
+        "universal solvent"
+      ]
+    ]
+  },
+  {
+    "id": "en-water-three-states",
+    "language": "en",
+    "question": "Why can water exist in three states on Earth?",
+    "pageIds": [
+      "en-water"
+    ],
+    "expected": [
+      [
+        "Earth's surface temperature and pressure",
+        "triple point"
+      ]
+    ]
+  },
+  {
+    "id": "en-world-health-organization-01",
+    "language": "en",
+    "question": "What is the World Health Organization?",
+    "pageIds": [
+      "en-world-health-organization"
+    ],
+    "expected": [
+      [
+        "specialized agency of the United Nations",
+        "international public health"
+      ]
+    ]
+  },
+  {
+    "id": "en-world-health-organization-02",
+    "language": "en",
+    "question": "Where is the World Health Organization based?",
+    "pageIds": [
+      "en-world-health-organization"
+    ],
+    "expected": [
+      [
+        "Headquarters",
+        "Geneva, Switzerland"
+      ],
+      [
+        "headquartered in Geneva, Switzerland"
+      ]
+    ]
+  },
+  {
+    "id": "en-world-health-organization-03",
+    "language": "en",
+    "question": "When was the World Health Organization established?",
+    "pageIds": [
+      "en-world-health-organization"
+    ],
+    "expected": [
+      [
+        "Formation",
+        "7 April 1948"
+      ],
+      [
+        "established on 7 April 1948"
+      ]
+    ]
+  },
+  {
+    "id": "en-world-health-organization-04",
+    "language": "en",
+    "question": "Who is the director-general of the World Health Organization?",
+    "pageIds": [
+      "en-world-health-organization"
+    ],
+    "expected": [
+      [
+        "Director-General",
+        "Tedros Adhanom Ghebreyesus"
+      ]
+    ]
+  },
+  {
+    "id": "en-wwii-01",
+    "language": "en",
+    "question": "When did World War II start?",
+    "pageIds": [
+      "en-wwii"
+    ],
+    "expected": [
+      [
+        "1 September 1939"
+      ]
+    ]
+  },
+  {
+    "id": "en-wwii-02",
+    "language": "en",
+    "question": "What were the causes of World War II?",
+    "pageIds": [
+      "en-wwii"
+    ],
+    "expected": [
+      [
+        "causes of World War II",
+        "unresolved tensions",
+        "fascism"
+      ]
+    ]
+  },
+  {
+    "id": "en-wwii-03",
+    "language": "en",
+    "question": "How many people were killed in World War II?",
+    "pageIds": [
+      "en-wwii"
+    ],
+    "expected": [
+      [
+        "deaths of 60 to 75 million people"
+      ]
+    ]
+  },
+  {
+    "id": "en-wwii-04",
+    "language": "en",
+    "question": "What two sides fought in World War II?",
+    "pageIds": [
+      "en-wwii"
+    ],
+    "expected": [
+      [
+        "Allies",
+        "Axis powers"
+      ]
+    ]
+  }
+]
