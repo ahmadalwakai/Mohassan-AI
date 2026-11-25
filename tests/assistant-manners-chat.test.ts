@@ -10,6 +10,7 @@ describe('manners in the chat controller', () => {
   const owner = 'manners-fixture-owner';
   const flag = 'MOHASSAN_SMALL_TALK_MANNERS';
   const search = vi.fn<SearchProvider['search']>(async () => []);
+  const bindAccount = vi.fn(async () => {});
   const act = vi.fn(async () => { throw new Error('Unexpected browser action'); });
   const judge = vi.fn<JudgeShadow['observe']>(() => null);
   let database: Awaited<ReturnType<typeof createDatabase>>;
@@ -18,7 +19,7 @@ describe('manners in the chat controller', () => {
   beforeAll(async () => {
     database = await createDatabase();
     await migrate(database.db);
-    const browser = { setCheckpointStore() {}, async bindAccount() {}, async hasPage() { return false; }, act, async close() {} } as unknown as AgentBrowser;
+    const browser = { setCheckpointStore() {}, bindAccount, async hasPage() { return false; }, act, async close() {} } as unknown as AgentBrowser;
     control = await createCommandChatControl(database.db, {
       models: { fast: [], deep: [], vision: '' }, browser,
       searchProvider: { name: 'manners-fixture-search', search },
@@ -63,9 +64,27 @@ describe('manners in the chat controller', () => {
     expect(detail.question).toBeNull();
     expect(run).toMatchObject({ status: 'completed', steps: 0, state: { routing: { route: 'chat', handler: 'local_conversation' } } });
     expect(reply).toMatch(/\p{Script=Arabic}/u);
+    expect(bindAccount).not.toHaveBeenCalled();
     expect(search).not.toHaveBeenCalled();
     expect(act).not.toHaveBeenCalled();
     expect(judge).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reply, applyWithhold: false }));
+  });
+
+  it('publishes the greeting at admission while the normal task is still running', async () => {
+    let release = () => {};
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    bindAccount.mockImplementationOnce(() => blocked);
+    const goal = 'Hello! Calculate 19 × 4.';
+    const admitted = await control.create(owner, { goal });
+    try {
+      expect(admitted.status).toBe('running');
+      expect(admitted.messages).toEqual([expect.objectContaining({ role: 'user', text: goal }),
+        expect.objectContaining({ role: 'assistant', text: expect.stringMatching(/^(?:Hi|Hello)/u) })]);
+    } finally {
+      release();
+      await control.settled(admitted.id);
+    }
+    expect((await control.detail(owner, admitted.id)).messages.at(-1)?.text).toContain('76');
   });
 
   it.each([

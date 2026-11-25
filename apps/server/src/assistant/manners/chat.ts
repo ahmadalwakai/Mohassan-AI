@@ -1,10 +1,16 @@
-import type { ChatCapabilities } from '@mohassan/contracts';
-import { createHash } from 'node:crypto';
+import type { AsyncLocalStorage } from 'node:async_hooks';
+import { createHash, randomUUID } from 'node:crypto';
+import type { AgentBrowser } from '@mohassan/browser';
+import type { ChatCapabilities, ChatSendSchema } from '@mohassan/contracts';
+import { sql, type Kysely } from 'kysely';
+import type { z } from 'zod';
+import { tryEnterPhase } from '../agent-run.js';
+import type { BrainState } from '../brain.js';
 import { parseUserRequestConstraints } from '../request-constraints.js';
 import { parseRequestContextState, resolveRequestContext } from '../request-context.js';
 import type { RequestRoutingInput, RequestRoutingDecision } from '../routing-decision.js';
 import type { RequestScopeAssessment } from '../request-scope.js';
-import { detectManners } from './detect.js';
+import { detectManners, type MannersDetection } from './detect.js';
 import { renderMannersClause, renderMannersReply } from './replies.js';
 
 const enabled = () => process.env.MOHASSAN_SMALL_TALK_MANNERS === '1';
@@ -20,12 +26,13 @@ export function prepareMannersTurn(text: string, eligible: boolean) {
     console.info(JSON.stringify({ event: 'small_talk_manners_shadow', active, act: detection.act,
       language: detection.language, dialect: detection.dialect, mixed: request !== null }));
   } catch { /* Observation must not interrupt a turn. */ }
-  if (!active || !request) return null;
+  if (!active) return null;
   const before = parseUserRequestConstraints(text);
+  if (request === null) return before ? null : { detection, request };
   const after = parseUserRequestConstraints(request);
   if (before && (!after || before.prohibitions.length > after.prohibitions.length ||
     before.forbiddenCapabilities.some(capability => !after.forbiddenCapabilities.includes(capability)))) return null;
-  return { request, clause: (facts: ChatCapabilities, turnId: string) => renderMannersClause(detection, facts, turnId) };
+  return { detection, request };
 }
 
 /** Keep legacy exact-literal rejection when schema trimming changed the raw turn. */
@@ -57,18 +64,73 @@ export function standaloneMannersRoute(input: RequestRoutingInput): RequestRouti
       pendingQuestionId: null, nextState: prior } };
 }
 
-export async function standaloneMannersReply(text: string, turnId: string, capabilities: () => Promise<ChatCapabilities>) {
-  const detection = standaloneManners(text);
-  if (!detection) return null;
-  return renderMannersReply(detection, detection.act === 'capabilities' ? await capabilities() : undefined, turnId).text;
+type Input = z.infer<typeof ChatSendSchema>;
+type MessageWriter = (tx: Kysely<any>, id: string, role: 'user' | 'assistant', text: string) => Promise<void>;
+type Dispatch = (ownerId: string, id: string, runId: string, token: string) => Promise<void>;
+type LocalExecution = { ownerId: string; id: string; runId: string; token: string; controller: AbortController; full: boolean; request: string; state: BrainState };
+
+interface Admission {
+  db: Kysely<any>;
+  ownerId: string;
+  input: Input;
+  requestOriginalHash: string | undefined;
+  eligible: boolean;
+  addMessage: MessageWriter;
+  dispatch: Dispatch;
+  execution: Pick<AsyncLocalStorage<LocalExecution>, 'run'>;
+  finish(id: string, runId: string, state: BrainState, text: string, status: 'completed', proof?: undefined, memoryPublication?: undefined, prejudged?: boolean): Promise<void>;
+  judgeReply(id: string, runId: string, reply: string, status: string): unknown;
+  capabilitiesFor(ownerId: string): Promise<ChatCapabilities>;
+  fullAccess?: (ownerId: string) => Promise<boolean>;
+  closing(): boolean;
+  RunEnded: new () => Error;
+  AccountAccessEnded: new () => Error;
+  interruptInactiveAccount(id: string, runId: string): Promise<void>;
+  assertActive(): Promise<void>;
+  browser: Pick<AgentBrowser, 'dropHeld'>;
 }
 
-/** Publish the clause and answer separately so task formatting and verified answer bytes are preserved. */
-export async function publishMannersReply(state: { mannersClause?: string }, text: string | undefined,
-  add: (text: string, afterClause?: boolean) => Promise<void>): Promise<boolean> {
-  const clause = state.mannersClause;
-  if (clause) await add(clause);
-  if (text !== undefined) await add(text, Boolean(clause));
-  if (clause) delete state.mannersClause;
-  return Boolean(clause);
+async function completeSocialRun(admission: Admission, detection: MannersDetection, ownerId: string, id: string, runId: string, token: string) {
+  if (admission.closing()) return admission.dispatch(ownerId, id, runId, token);
+  const full = await admission.fullAccess?.(ownerId) ?? true;
+  const facts = detection.act === 'capabilities' ? await admission.capabilitiesFor(ownerId) : undefined;
+  const reply = renderMannersReply(detection, facts, runId).text;
+  const run = await admission.db.selectFrom('chat_runs').select(['goal', 'state']).where('id', '=', runId)
+    .where('conversation_id', '=', id).where('owner_id', '=', ownerId).where('lease_token', '=', token)
+    .where('status', '=', 'running').executeTakeFirst();
+  if (!run) return;
+  const state: BrainState = run.state;
+  tryEnterPhase(state.agentRun, 'understanding', Date.now());
+  await admission.execution.run({ ownerId, id, runId, token, request: run.goal, state, full, controller: new AbortController() }, async () => {
+    try {
+      await admission.assertActive();
+      if (state.dropHeld) {
+        await admission.browser.dropHeld(ownerId, id);
+        state.dropHeld = false;
+      }
+      admission.judgeReply(id, runId, reply, 'completed');
+      await admission.finish(id, runId, state, reply, 'completed', undefined, undefined, true);
+    } catch (error) {
+      if (error instanceof admission.AccountAccessEnded) return admission.interruptInactiveAccount(id, runId);
+      if (!(error instanceof admission.RunEnded)) throw error;
+    }
+  });
+}
+
+/** Interpose only at admission. The task's reply, pauses, checks and dispatch use the normal controller. */
+export async function admitManners<T>(admission: Admission,
+  proceed: (input: Input, requestOriginalHash: string | undefined, addMessage: MessageWriter, dispatch: Dispatch) => Promise<T>): Promise<T> {
+  const { input, requestOriginalHash, addMessage, dispatch } = admission;
+  const turn = prepareMannersTurn(input.text, admission.eligible);
+  if (!turn) return proceed(input, requestOriginalHash, addMessage, dispatch);
+  if (turn.request === null) return proceed(input, requestOriginalHash, addMessage,
+    (...target) => completeSocialRun(admission, turn.detection, ...target));
+
+  const facts = turn.detection.act === 'capabilities' ? await admission.capabilitiesFor(admission.ownerId) : undefined;
+  const clause = renderMannersClause(turn.detection, facts, randomUUID());
+  return proceed({ ...input, text: turn.request }, mannersRequestHash(requestOriginalHash, input.text, turn.request), async (tx, id, role) => {
+    await addMessage(tx, id, role, input.text);
+    await tx.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role: 'assistant', text: clause,
+      created_at: sql`CURRENT_TIMESTAMP + interval '1 microsecond'` }).execute();
+  }, dispatch);
 }

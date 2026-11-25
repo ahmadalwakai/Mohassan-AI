@@ -44,7 +44,7 @@ import { composeReferencedComputation, computationReference, computedRecord, eva
 import { evaluateLocalRecall } from './assistant/local-recall.js';
 import { ownFactQuestion } from './assistant/own-fact-question.js';
 import { evaluateLocalConversation } from './assistant/local-conversation.js';
-import { mannersRequestHash, prepareMannersTurn, publishMannersReply, standaloneMannersReply } from './assistant/manners/chat.js';
+import { admitManners } from './assistant/manners/chat.js';
 import { evaluateCapabilityReply } from './assistant/capability-reply.js';
 import { answerRuntimeStatus } from './assistant/runtime-status.js';
 import { evaluateSelfQuestion, type SelfFacts } from './assistant/self-knowledge.js';
@@ -770,9 +770,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     });
   }
 
-  async function addMessage(connection: Kysely<any>, id: string, role: 'user' | 'assistant', text: string, afterClause = false) {
-    await connection.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role, text: clean(text),
-      ...(afterClause ? { created_at: sql`CURRENT_TIMESTAMP + interval '1 microsecond'` } : {}) }).execute();
+  async function addMessage(connection: Kysely<any>, id: string, role: 'user' | 'assistant', text: string) {
+    await connection.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role, text: clean(text) }).execute();
   }
 
   async function addStep(id: string, runId: string, text: string) {
@@ -1293,9 +1292,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const current = await tx.selectFrom('chat_conversations').select(['status', 'active_run_id']).where('id', '=', id).forUpdate().executeTakeFirstOrThrow();
       if (current.active_run_id !== runId || current.status !== 'running') throw new RunEnded();
       await tx.updateTable('chat_conversations').set({ status, progress: null, updated_at: new Date(), ...fields }).where('id', '=', id).execute();
-      const acknowledged = await publishMannersReply(state, say || undefined, (text, ordered) => addMessage(tx, id, 'assistant', text, ordered));
-      await tx.updateTable('chat_runs').set({ status, lease_expires_at:sql`CURRENT_TIMESTAMP + interval '10 minutes'`, updated_at: new Date(),
-        ...(acknowledged ? { state: JSON.stringify(vault.scrubValue(id, state, clean)) } : {}) }).where('id', '=', runId).execute();
+      await tx.updateTable('chat_runs').set({ status, lease_expires_at:sql`CURRENT_TIMESTAMP + interval '10 minutes'`, updated_at: new Date() }).where('id', '=', runId).execute();
+      if (say) await addMessage(tx, id, 'assistant', say);
     });
     if (say) judgeReply(id, runId, say, status);
   }
@@ -1440,7 +1438,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           enforced: state.supervision?.contract.mode === 'enforced' || Boolean(memoryPublication),
           criterionLabels: Object.fromEntries((state.supervision?.contract.criteria ?? []).map(item => [item.id, criterionLabel(ledger, item.id, item.description)])) }).status;
       });
-      await publishMannersReply(state, finalText, (text, ordered) => addMessage(tx, id, 'assistant', text, ordered));
+      await addMessage(tx, id, 'assistant', finalText);
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',
         data: JSON.stringify({ contractHash: state.supervision?.contract.hash, review: state.completionReview }) }).execute();
@@ -2314,22 +2312,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         return;
       }
-      const manners = run.intent === 'task' && !state.steps && !state.trail.length && !state.clarifiedRequest
-        ? await standaloneMannersReply(request, runId, () => capabilitiesFor(ownerId)) : null;
       const conversation=await owned(ownerId,id);
-      if (!manners || state.dropHeld) {
-        await browser.bindAccount(ownerId,id,conversation.browser_account??null);
-        if(conversation.browser_checkpoint)await browser.bindRecoveryCheckpoint(ownerId,id,conversation.browser_checkpoint);
-      }
+      await browser.bindAccount(ownerId,id,conversation.browser_account??null);
+      if(conversation.browser_checkpoint)await browser.bindRecoveryCheckpoint(ownerId,id,conversation.browser_checkpoint);
       if(state.dropHeld) {
         await browser.dropHeld(ownerId,id);
         state.dropHeld=false;
         await saveState(runId,state);
-      }
-      if (manners) {
-        judgeReply(id, runId, manners, 'completed');
-        await finish(id, runId, state, manners, 'completed', undefined, undefined, true);
-        return;
       }
       const personalSignIn = PERSONAL_SIGN_IN.test(request.replace(/[\u064b-\u065f\u0670]/g, '').replace(/[أإآ]/g, 'ا'));
       const earlier = await db.selectFrom('chat_messages').select(['role', 'text']).where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(HISTORY_MESSAGES + 1).execute();
@@ -3919,7 +3908,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
 
   async function send(ownerId: string, id: string, raw: unknown, intent:'task'|'restore_browser'|'review_browser'='task',expectedCheckpointToken?:string) {
     if(closing)throw new BrowserError('CHAT_SHUTTING_DOWN','الخدمة تتوقف الآن. حاول بعد قليل.',503);
-    const originalTextHash = originalInputHash(raw, 'text');
+    const requestOriginalHash = originalInputHash(raw, 'text');
     const input = ChatSendSchema.parse(raw);
     const row = await owned(ownerId, id);
     if (input.questionId && (row.status !== 'waiting_user' || row.question?.id !== input.questionId)) {
@@ -3938,10 +3927,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       input.text = input.answers.map((answer, index) => fields.length > 1 ? `${index + 1}. ${answer.value}` : answer.value).join('\n');
       if (input.text.length > 4000) throw new BrowserError('CHAT_ANSWER_TOO_LONG', 'اختصر الإجابات إلى أربعة آلاف حرف.', 400);
     }
-    const displayedText = input.text;
-    const manners = prepareMannersTurn(displayedText, intent === 'task' && !input.answers && row.status !== 'waiting_user');
-    if (manners) input.text = manners.request;
-    const requestOriginalHash = mannersRequestHash(originalTextHash, displayedText, manners?.request);
+    return admitManners({ db, ownerId, input, requestOriginalHash, eligible: intent === 'task' && !input.answers && row.status !== 'waiting_user', addMessage, dispatch,
+      execution, finish, judgeReply, capabilitiesFor, fullAccess: config.fullAccess, closing: () => closing, RunEnded, AccountAccessEnded, interruptInactiveAccount, assertActive, browser },
+    async (input, requestOriginalHash, addMessage, dispatch) => {
     const verificationIntent = intent === 'task' && !input.answers ? recognizeMemoryVerificationRequest(clean(input.text)) : null;
     const noteVerificationIntent = intent === 'task' && !input.answers ? recognizeUserFactMemoryVerificationRequest(clean(input.text)) : null;
     if ((verificationIntent || noteVerificationIntent) && (row.status === 'running' || WAITING_STATUSES.includes(row.status))) {
@@ -4049,7 +4037,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const noteVerificationSupervisor = userFactMemoryVerification
         ? createUserFactMemoryVerificationSupervisor(clean(input.text), noteVerificationBinding, userFactMemoryVerification.source) : null;
       const initialState: BrainState = { ...newBrainState(), requestContext: resolution.nextState, requestResolution: resolution,
-        ...(manners ? { mannersClause: manners.clause(sessionCapabilities, runId) } : {}),
         ...(!input.answers && requestOriginalHash ? { requestOriginalHash } : {}),
         // The conversation's website, so a later sentence edits it instead of starting a search.
         ...(previousRun?.state?.siteId ? { siteId: previousRun.state.siteId, sitePendingWant: previousRun.state.sitePendingWant ?? null } : {}),
@@ -4072,7 +4059,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             limitations: [...new Set([...routing.missingCapabilities, ...(sessionCapabilities.chatModel ? [] : ['chatModel'])])].slice(0, 12) } }),
         // A request the page tried to send, held for the corrected run's approval, is dropped: it belonged to the old objective.
         ...((superseded as { held: boolean } | null)?.held ? { dropHeld: true } : {}) };
-      await addMessage(tx, id, 'user', displayedText);
+      await addMessage(tx, id, 'user', input.text);
       await tx.insertInto('chat_runs').values({ id: runId, conversation_id: id, owner_id: ownerId, status: 'running', intent, goal: clean(input.text), steps: 0, lease_token:token,worker_id:instanceId,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, state: JSON.stringify(initialState), created_at: createdAt }).execute();
       await tx.updateTable('chat_conversations').set({ status: 'running', active_run_id: runId, question: null, approval: null, secure: null, error: null, progress: 'يفهم طلبك…', updated_at: new Date() }).where('id', '=', id).execute();
       // The browser level the request asks for (plan §6.1), logged with its reason and time after the run row it refers to. detail() re-derives the current level from the rows.
@@ -4091,6 +4078,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     }
     await dispatch(ownerId, id, runId,token);
     return detail(ownerId, id);
+    });
   }
 
   const IMAGE_TTL_MS = 6 * 60 * 60 * 1000, IMAGE_QUOTA_PER_DAY = 60, IMAGE_MAX_BYTES = 5 * 1024 * 1024;

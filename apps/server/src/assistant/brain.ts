@@ -282,7 +282,6 @@ export interface BrainState {
   clarifiedRequest?: string;
   /** Exact persisted user message, resolved by the host before choosing a relative-date reference. */
   clarifiedRequestSource?: import('./effective-request-source.js').ClarifiedRequestSource;
-  mannersClause?: string;
   /** Host hash of the current user's pre-schema/pre-redaction bytes; never model-provided. */
   requestOriginalHash?: string;
   requestClarification?: { attempts: number };
