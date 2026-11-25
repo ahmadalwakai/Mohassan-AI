@@ -19,6 +19,7 @@
         A10000000000000000000012 /* PushNotificationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* PushNotificationModels.swift */; };
         A10000000000000000000013 /* PushNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* PushNotifications.swift */; };
         A10000000000000000000014 /* MonitorModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* MonitorModels.swift */; };
+        A10000000000000000000015 /* MonitorViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* MonitorViews.swift */; };
 /* End PBXBuildFile section */
 /* Begin PBXFileReference section */
         A20000000000000000000001 /* WaslaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaslaApp.swift; sourceTree = "<group>"; };
@@ -38,13 +39,14 @@
         A2000000000000000000000F /* PushNotificationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotificationModels.swift; sourceTree = "<group>"; };
         A20000000000000000000010 /* PushNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotifications.swift; sourceTree = "<group>"; };
         A20000000000000000000011 /* MonitorModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitorModels.swift; sourceTree = "<group>"; };
+        A20000000000000000000012 /* MonitorViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitorViews.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 /* Begin PBXFrameworksBuildPhase section */
         A30000000000000000000001 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 /* Begin PBXGroup section */
         A40000000000000000000001 = {isa = PBXGroup; children = (A40000000000000000000002, A40000000000000000000003); sourceTree = "<group>"; };
-        A40000000000000000000002 /* Wasla */ = {isa = PBXGroup; children = (A20000000000000000000001, A20000000000000000000002, A20000000000000000000003, A20000000000000000000004, A20000000000000000000005, A2000000000000000000000B, A2000000000000000000000F, A20000000000000000000010, A20000000000000000000011, A20000000000000000000006, A20000000000000000000008, A20000000000000000000009, A2000000000000000000000A, A2000000000000000000000C, A2000000000000000000000D, A2000000000000000000000E); path = Wasla; sourceTree = "<group>"; };
+        A40000000000000000000002 /* Wasla */ = {isa = PBXGroup; children = (A20000000000000000000001, A20000000000000000000002, A20000000000000000000003, A20000000000000000000004, A20000000000000000000005, A2000000000000000000000B, A2000000000000000000000F, A20000000000000000000010, A20000000000000000000011, A20000000000000000000012, A20000000000000000000006, A20000000000000000000008, A20000000000000000000009, A2000000000000000000000A, A2000000000000000000000C, A2000000000000000000000D, A2000000000000000000000E); path = Wasla; sourceTree = "<group>"; };
         A40000000000000000000003 /* Products */ = {isa = PBXGroup; children = (A20000000000000000000007); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 /* Begin PBXNativeTarget section */
@@ -54,7 +56,7 @@
         A80000000000000000000001 /* Project object */ = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 1600; LastUpgradeCheck = 1600; TargetAttributes = {A50000000000000000000001 = {CreatedOnToolsVersion = 16.0; SystemCapabilities = {com.apple.Push = {enabled = 1; }; }; }; }; }; buildConfigurationList = A90000000000000000000001; compatibilityVersion = "Xcode 14.0"; developmentRegion = ar; hasScannedForEncodings = 0; knownRegions = (ar, en, Base); mainGroup = A40000000000000000000001; productRefGroup = A40000000000000000000003; projectDirPath = ""; projectRoot = ""; targets = (A50000000000000000000001); };
 /* End PBXProject section */
 /* Begin PBXSourcesBuildPhase section */
-        A60000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000010, A10000000000000000000012, A10000000000000000000013, A10000000000000000000014); runOnlyForDeploymentPostprocessing = 0; };
+        A60000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000010, A10000000000000000000012, A10000000000000000000013, A10000000000000000000014, A10000000000000000000015); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 /* Begin PBXResourcesBuildPhase section */
         A70000000000000000000001 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000006, A10000000000000000000007, A10000000000000000000008, A10000000000000000000009, A10000000000000000000011); runOnlyForDeploymentPostprocessing = 0; };

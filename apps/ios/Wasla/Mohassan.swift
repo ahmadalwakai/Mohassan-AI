@@ -28,6 +28,7 @@ extension WaslaStore {
             guard epoch == sessionEpoch else { return }
             chatList = list.conversations
             if let found = list.capabilities { capabilities = found }
+            monitorListCapability = list.capabilities?.smartMonitors == true
             requestKeys = list.requestKeys == true
         } catch { if epoch == sessionEpoch { show(error) } }
     }
@@ -743,6 +744,13 @@ struct ChatView: View {
         if conversation.status == ChatStatus.waitingInput, let secure = conversation.secure {
             SecureCard(request: secure, busy: store.secureBusy || cardsLocked) { action, values in store.secure(action, values: values) }
                 .id(secure.id)
+        }
+        if conversation.capabilities?.smartMonitors == true, let proposal = conversation.monitorProposal, proposal.status == .proposed {
+            MonitorApprovalCard(monitor: proposal, busy: store.monitorActionIDs.contains(proposal.id),
+                                problem: store.monitorActionProblems[proposal.id]) { action in
+                store.changeMonitor(proposal, action: action)
+            }
+            .id(proposal.id)
         }
         if !conversation.working, let error = conversation.error, !error.isEmpty {
             Card {
