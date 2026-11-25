@@ -53,7 +53,7 @@ export interface SelectionDecision {
   selected: RankedCandidate | null;
   ranked: readonly RankedCandidate[];
   threshold: number;
-  reason: 'selected' | 'unsupported-question' | 'no-evidence' | 'below-threshold';
+  reason: 'selected' | 'unsupported-question' | 'no-evidence' | 'below-threshold' | 'conflicting-evidence';
 }
 
 const MAX_PAGE_CHARS = 60_000;
@@ -182,6 +182,9 @@ export function decidePreparedAnswer({ intent, candidates }: PreparedSelection, 
   const ranked = candidates.map(candidate => ({ ...candidate, ...score(candidate.features) }));
   // Stable sort preserves the original page and quote order for equal scores.
   ranked.sort((left, right) => Number(right.eligible) - Number(left.eligible) || right.score - left.score);
+  const claimValues = new Set(ranked.flatMap(candidate =>
+    candidate.eligible && candidate.features.type?.claimValue ? [candidate.features.type.claimValue] : []));
+  if (claimValues.size > 1) return { intent, selected: null, ranked, threshold, reason: 'conflicting-evidence' };
   const top = ranked.find(candidate => candidate.eligible);
   const selected = top && top.score >= threshold ? top : null;
   return { intent, selected, ranked, threshold, reason: selected ? 'selected' : top ? 'below-threshold' : 'no-evidence' };
