@@ -12,7 +12,7 @@ describe('fixed local replies', () => {
     ['ar', 'identity', 'من طوّرك يا موحسن؟', 'أحمد الوكاع'],
     ['en', 'identity', 'Who developed this application?', 'Ahmad Alwakai'],
     ['ar', 'identity', 'اذكر اسمك', 'موحسن', 'موحسن'],
-    ['en', 'identity', 'What are you called?', 'Mohassan', 'Mohassan'],
+    ['en', 'identity', 'Tell me the name you are called by.', 'Mohassan', 'Mohassan'],
     ['ar', 'smalltalk', 'حياك الله! السلام عليكم.', 'وعليكم السلام'],
     ['ar', 'smalltalk', 'تسلم، مشكور يا صاحبي.', 'العفو'],
     ['en', 'smalltalk', 'Much appreciated, thanks!', 'welcome'],

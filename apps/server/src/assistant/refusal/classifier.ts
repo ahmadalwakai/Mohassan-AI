@@ -1,7 +1,9 @@
 import { publicSearchScan, publicSearchText } from '@mohassan/browser';
 import { isCurrentComputerReadRequest } from '../computer-request-language.js';
+import { documentTask } from '../documents.js';
 import { maskRequestLiteralData } from '../request-constraints.js';
 import { assessRequestScope, requestScopeActionText, type RequestScopeAssessment } from '../request-scope.js';
+import { classifyLearnedRefusal } from './learned-classifier.js';
 import * as pattern from './patterns.js';
 import { reviewRefusalControl, reviewRefusalDestination } from './permissions.js';
 import type { RefusalAlternative, RefusalCode, RefusalDecision } from './types.js';
@@ -28,9 +30,14 @@ const priority: readonly RefusalCode[] = [
 
 const negativeLead = head("do not|don't|never|avoid|without|no need to|لا|ممنوع|بلاش|بدون|من غير|دون|تجنب|متعملش");
 const requestLead = /^(?:(?:i (?:want|need|would like) (?:you )?to|i'd like (?:you )?to|let's|help me|try to|go ahead(?: and)?|(?:and )?then|afterwards|you (?:must|should)|اريد(?: منك)?(?: ان)?|احتاج منك(?: ان)?|ابي|ابغي|بدي|عايز|عاوز|محتاجك|خل(?:يك|ينا)|ساعدني(?: (?:في|علي|اني|ان))?|ياريت|يا ريت|جرب|ثم|وبعدها|وبعدين|بعدها|من فضلك|لو سمحت|رجاء)[,،\s]+)+/u;
+const delegatedLead = /^(?:(?:i (?:was wondering|wonder) if(?: you (?:can|could|would|will))?|(?:is it|would it be) possible (?:for you )?to|be (?:able|willing) to)[,\s]+)+/u;
+const arabicModal = /^(?:(?:هل )?(?:بامكانك|من الممكن)) (?:ان )?/u;
+const requestedObject = /^(?:i (?:need|want|would like)|i'd like) (?:my|our|the|a|an|your|their|his|her) /u;
 const greeting = /^(?:(?:hello|hey|hi|thanks|good morning|مرحبا|اهلا|هلا|هاي|السلام عليكم)[,،!؟.\s]+)(?=.)/u;
-const connectors = /[؛;\n!?؟](?=\s|\p{L})\s*|[.،,]\s+(?=\p{L})|\s+\b(?:and then|then|afterwards|but|also|and)\b\s+|\s+(?:ثم|وبعدها|وبعدين|بعدها|لكن|ولكن|كمان)\s+|\s+و(?=\p{L})/giu;
+const connectors = /(?<sequence>[؛;\r\n!?؟]+\s*|\s+\b(?:and then|then|afterwards)\b\s+|\s+(?:ثم|وبعدها|وبعدين|بعدها)\s+)|[.،,]\s+(?=\p{L})|\s+\b(?:but|also|and)\b\s+|\s+(?:لكن|ولكن|كمان)\s+|\s+و(?=\p{L})/giu;
 const continuation = head("please|kindly|could you|can you|would you|do not|don't|never|avoid|open|click|press|tap|search|look|read|show|tell|ask|write|draft|delete|remove|erase|share|send|forward|give|run|start|find|edit|approve|publish|export|book|pay|purchase|buy|order|transfer|wire|bypass|skip|ignore|reveal|output|store|remember|enter|paste|type|solve|save|check|log|sign|access|make|steal|hack|build|لا|افتح|اضغط|ابحث|دور|اقرا|اعرض|اكتب|احذف|امسح|افش|اعطني|ابعث|ارسل(?:ه|ها|هم)?|ابعت(?:ه|ها|هم)?|انشر|شارك|ادفع|اشتري|اشتر|حول(?:ه|ها)?|احجز|تجاوز|تجاهل|طلع|احفظ|اكشف|ادخل|حط|املا|حل|وافق|سجل|اعمل|شغل|استخدم|اصنع|اخترق|اسرق");
+const actionHeads = [continuation, accountAction, harmfulAction, paymentAction, humanStepAction, sendAction,
+  delayedScheduling, futureAction, ownerCapabilityAction, unsafeCircumvention, physicalAction];
 const uiTarget = head('click|tap|press|select|choose|tick|confirm|approve|submit|اضغط|انقر|دوس|اختار|اكد|وافق|اعتمد');
 const quotedOperand = /^["'«“`](?<label>[^"'»”`\r\n]{1,120})["'»”`]/u;
 const uiOperandLead = /^(?:(?:on|the|button(?: labeled| labelled)?|علي|زر|الزر|خيار)\s+)+/u;
@@ -62,9 +69,19 @@ const knownOwnMemory = words('my memory|our memory|my saved (?:notes|records)|ذ
 const publicSecretExample = words('example|placeholder|redacted|fake|sample|illustrative|synthetic|dummy|مثال|تجريبي|وهمي|افتراضي');
 const directSecretField = words('password field|passcode field|verification code field|خانه (?:كلمه المرور|رمز التحقق)');
 const locateField = head('(?:show|tell) (?:me|us) where|find the location of|وريني وين|اعرض مكان|دلني علي');
+const asksForExplanation = head('explain|describe|اشرح|فسر|وضح');
 
 function requestText(value: string): string {
-  return normalizeRefusalText(normalizeRefusalText(value).replace(greeting, '').replace(requestLead, ''));
+  const text = normalizeRefusalText(normalizeRefusalText(value).replace(greeting, '').replace(delegatedLead, ''));
+  const action = normalizeRefusalText(text.replace(requestLead, '').replace(delegatedLead, ''));
+  const modal = arabicModal.exec(action);
+  if (!modal) return action;
+  const operand = normalizeRefusalText(action.slice(modal[0].length));
+  if (!operand.startsWith('ت')) return operand;
+  // After an explicit modal, the second-person present can carry the same
+  // instruction as an imperative. Convert only recognised action heads.
+  const stem = operand.slice(1);
+  return [stem, `ا${stem}`].find(candidate => actionHeads.some(head => head.test(candidate))) ?? operand;
 }
 
 interface OuterClause {
@@ -96,9 +113,10 @@ function outerClauses(value: string): OuterClause[] {
   };
   for (const boundary of masked.matchAll(connectors)) {
     const end = boundary.index + boundary[0].length;
-    const tail = requestText(masked.slice(end));
-    if (![continuation, accountAction, harmfulAction, paymentAction, humanStepAction, sendAction,
-      delayedScheduling, futureAction, ownerCapabilityAction].some(action => action.test(tail))) continue;
+    if (!boundary.groups?.sequence) {
+      const tail = requestText(masked.slice(end));
+      if (!actionHeads.some(action => action.test(tail))) continue;
+    }
     collect(boundary.index);
     start = end;
   }
@@ -144,7 +162,8 @@ function classifyClause(text: string, context: RefusalContext, scope: RequestSco
   const followsExplanatoryForm = explainer.test(text) || descriptionOfSecret.test(text) || secretWritingContent.test(text)
     || locateField.test(text) && directSecretField.test(text);
   const asksToHandleSecret = !followsExplanatoryForm && !sharedDataOnly.test(text) && secretTarget.test(text)
-    && (secretAction.test(text) || (genericAction.test(text) || transferAction.test(text)) && !paymentTarget.test(text));
+    && (secretAction.test(text) || requestedObject.test(text) && secretTarget.exec(text.replace(requestedObject, ''))?.index === 0
+      || (genericAction.test(text) || transferAction.test(text)) && !paymentTarget.test(text));
   if (asksToHandleSecret) return refusal('secrets', 'secure_entry');
 
   const capability = context.capabilities;
@@ -157,7 +176,8 @@ function classifyClause(text: string, context: RefusalContext, scope: RequestSco
     && (!publicMaterial.test(assistedAction) && !nonActionTerms.test(assistedAction)
       || privateAccountInspection.test(assistedAction) || privateMaterial.test(assistedAction));
   if (asksOtherAccount) return refusal('other_account', 'own_account');
-  if (disclosureAction.test(text) && privateMaterial.test(text) && externalDisclosure.test(text)) {
+  if (disclosureAction.test(text) && externalDisclosure.test(text) && (privateMaterial.test(text)
+    || assessRequestScope(text).reasons.includes('prior_conversation_reference'))) {
     return refusal('unsafe', 'private_output');
   }
 
@@ -200,6 +220,21 @@ function classifyClause(text: string, context: RefusalContext, scope: RequestSco
   return null;
 }
 
+function classifyUnmatchedClause(text: string, scope: RequestScopeAssessment): RefusalDecision | null {
+  // A corpus label cannot override a resolved source or a supported operation.
+  // Dialect questions may still have an unresolved source, so preserve their
+  // informational path too. Explicit policy vetoes have already run.
+  if (scope.source !== 'unresolved' || !['act', 'unknown'].includes(scope.operation)
+    || scope.reasons.includes('unresolved_reference')
+    || asksForExplanation.test(text) || explainer.test(text) || riskyInstruction.test(text)) return null;
+  const learned = classifyLearnedRefusal(text);
+  if (!learned || documentTask(text)) return null;
+  if (learned.code === 'unsafe') return refusal('unsafe', 'protect');
+  // CLINC's scope is smaller than the assistant's. An unknown operation may
+  // still be an information request, so require an action for a scope veto.
+  return scope.operation === 'act' ? refusal('no_capability', 'public_info') : null;
+}
+
 /** Pure veto over every outer operation, including tails after a valid prefix. */
 export function classifyRefusal(request: string, context: RefusalContext): RefusalDecision | null {
   const scope = context.scope ?? assessRequestScope(request);
@@ -210,6 +245,11 @@ export function classifyRefusal(request: string, context: RefusalContext): Refus
   let found: RefusalDecision | null = null;
   for (const clause of clauses) {
     const decision = clause.controlRefusal ?? classifyClause(clause.text, context, scope, isDraft);
+    if (decision && (!found || priority.indexOf(decision.code) < priority.indexOf(found.code))) found = decision;
+  }
+  if (found) return found;
+  for (const clause of clauses) {
+    const decision = classifyUnmatchedClause(clause.text, clauses.length === 1 ? scope : assessRequestScope(clause.text));
     if (decision && (!found || priority.indexOf(decision.code) < priority.indexOf(found.code))) found = decision;
   }
   return found;
