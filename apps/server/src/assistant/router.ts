@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { containsSensitiveCredentialText } from '../sensitive-credential-text.js';
 import { appendFile, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
@@ -202,8 +203,9 @@ export function createShadowRouter(options: { modelDir: string; logFile: string;
         const started = performance.now();
         const [choice] = ranked(entry.text);
         if (!choice) return;
-        const line = { at: (options.now?.() ?? new Date()).toISOString(), conversation: entry.conversationId, text: entry.text.slice(0, 500),
-          previous: entry.previous?.slice(0, 200) ?? null, pendingQuestion: entry.pendingQuestion, rules: rulesRoute(entry.text, entry.previous),
+        const keepText = ![entry.text, entry.previous].some(containsSensitiveCredentialText);
+        const line = { at: (options.now?.() ?? new Date()).toISOString(), conversation: entry.conversationId, text: keepText ? entry.text.slice(0, 500) : '',
+          previous: keepText ? entry.previous?.slice(0, 200) ?? null : null, pendingQuestion: entry.pendingQuestion, rules: rulesRoute(entry.text, entry.previous),
           model: choice.route, confidence: Number(choice.score.toFixed(3)), ms: Number((performance.now() - started).toFixed(2)) };
         await appendFile(options.logFile, `${JSON.stringify(line)}\n`, 'utf8');
       }).catch(() => undefined);

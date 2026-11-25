@@ -38,6 +38,19 @@ describe('conversation state v2 shadow', () => {
     await shadow.flush();
   });
 
+  it('omits credential-bearing inputs from the replay journal without discarding their live decision', async () => {
+    const shadow = createConversationShadow({ logFile: join(directory, 'credential.jsonl') });
+    const sample = 'conversation-replay-fixture-content';
+    const held = shadow.observe({ conversationId: 'fixture-conversation', turnId: 'credential-turn',
+      text: `Cookie: fixture_session=${sample}` });
+    expect(held).not.toBeNull();
+    shadow.observe({ conversationId: 'fixture-conversation', turnId: 'ordinary-turn', text: 'What is the capital of Japan?' });
+    await shadow.flush();
+    const contents = await readFile(shadow.logFile, 'utf8');
+    expect(contents.includes(sample)).toBe(false);
+    expect(JSON.parse(contents)).toMatchObject({ turnId: 'ordinary-turn', text: 'What is the capital of Japan?' });
+  });
+
   it('seeds a forgotten conversation from stored user turns only and evicts the oldest conversations', async () => {
     const shadow = createConversationShadow({ logFile: join(directory, 'seed.jsonl'), maxConversations: 2 });
     shadow.seed('old', [{ id: 'u1', text: 'متى مباراة الهلال؟' }]);
