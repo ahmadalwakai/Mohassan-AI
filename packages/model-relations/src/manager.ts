@@ -200,8 +200,14 @@ export class ModelRelationsManager {
     if (!Number.isFinite(this.maxTurnMs) || this.maxTurnMs < 1) throw new RangeError('Model relations turn budget must be positive');
   }
 
+  canApplyArbiter(type: ArbiterDecisionType): boolean {
+    const flag = arbiterFlags[type];
+    return this.env.MOHASSAN_MODEL_RELATIONS !== 'off' && this.promoted.has(type)
+      && this.env[flag] === '1' && this.env[`${flag}_KILL`] !== '1';
+  }
+
   /** Selects an already available claim without asking any model to run or loading an artifact. */
-  arbitrate(input: ArbiterInput, options: { forced?: string; protected?: boolean } = {}): ArbiterDecisionLog {
+  arbitrate(input: ArbiterInput, options: { forced?: string; protected?: boolean; shadowOnly?: boolean } = {}): ArbiterDecisionLog {
     const started = performance.now();
     const { type, precedence, claimants } = input;
     const flag = Object.hasOwn(arbiterFlags, type) ? arbiterFlags[type as ArbiterDecisionType] : undefined;
@@ -211,15 +217,15 @@ export class ModelRelationsManager {
       ...(explanation?.length ? { explanation } : {}),
     });
     if (options.protected) return decision(precedence, precedence, 'protected');
-    if (options.forced && flag && claimants.some(claim => claim.component === options.forced)) {
+    if (!options.shadowOnly && options.forced && flag && claimants.some(claim => claim.component === options.forced)) {
       return decision(options.forced, options.forced, 'forced');
     }
     if (this.env.MOHASSAN_MODEL_RELATIONS === 'off') return decision(precedence, precedence, 'off');
+    if (flag && this.env[`${flag}_KILL`] === '1') return decision(precedence, precedence, 'killed');
     const pick = this.arbiter.choose(input);
     const proposed = pick.proposedChoice ?? pick.choice;
-    const reason = flag && this.env[`${flag}_KILL`] === '1' ? 'killed'
-      : pick.choice === precedence ? pick.reason
-      : !flag || !this.promoted.has(type as ArbiterDecisionType) || this.env[flag] !== '1' ? 'shadow' : pick.reason;
+    const reason = pick.choice === precedence ? pick.reason
+      : options.shadowOnly || !flag || !this.canApplyArbiter(type as ArbiterDecisionType) ? 'shadow' : pick.reason;
     const selected = reason === 'higher-pass-likelihood' ? pick.choice : precedence;
     return decision(selected, proposed, reason, pick.confidence, pick.threshold, pick.reasons);
   }

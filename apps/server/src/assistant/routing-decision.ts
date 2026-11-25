@@ -25,7 +25,7 @@ import { startsFactualQuestion } from './public-question-syntax.js';
 import { applyScratchRouting, runtimeScratchPolicy, type ScratchDecisionPolicy, type ScratchRoutingChoices } from './scratch-decisions.js';
 import { reviewRoutingRefusal } from './refusal/turn.js';
 import { parseTestDrivenCodingRequest, testDrivenCodingEnabled } from './test-driven-coding/request.js';
-import { arbiterEnabled, arbitrateComponent } from './model-relations-arbiter.js';
+import { arbiterEnabled, arbitrateComponent, discoverArbiterClaims } from './model-relations-arbiter.js';
 
 /**
  * Read-only routing contract for the host to adopt, test and observe. A decision
@@ -169,23 +169,25 @@ export function decideHostRequestRoute(input: RequestRoutingInput): RequestRouti
   const policy = runtimeScratchPolicy();
   const baseline = policy ? applyScratchRouting(input, rule, policy, choices => decideRuleRequestRoute(input, choices), true) : rule;
   if (first.done || baseline !== rule || baseline.resolution.constraints) return baseline;
-  const started = performance.now();
-  try {
-    const alternatives = new Map<RoutingComponent, RoutingClaim>();
-    let next = rules.next();
-    while (!next.done) {
-      if (next.value.component !== first.value.component && !alternatives.has(next.value.component)) alternatives.set(next.value.component, next.value);
-      next = rules.next();
+  return discoverArbiterClaims('routing', baseline, input.turnId, shadowLog => {
+    const started = performance.now();
+    try {
+      const alternatives = new Map<RoutingComponent, RoutingClaim>();
+      let next = rules.next();
+      while (!next.done) {
+        if (next.value.component !== first.value.component && !alternatives.has(next.value.component)) alternatives.set(next.value.component, next.value);
+        next = rules.next();
+      }
+      const last = next.value;
+      if (last.reason === 'request_refused' || last.availability === 'restricted' || last.resolution.constraints) return baseline;
+      const terminal = terminalRoutingComponent(last);
+      if (terminal && terminal !== first.value.component) alternatives.set(terminal, offer(terminal, last));
+      return arbitrateComponent('routing', { text: input.text, runId: input.turnId, conversationState: baseline.resolution.kind, started, shadowLog },
+        first.value, [...alternatives.values()]);
+    } catch {
+      return baseline;
     }
-    const last = next.value;
-    if (last.reason === 'request_refused' || last.availability === 'restricted' || last.resolution.constraints) return baseline;
-    const terminal = terminalRoutingComponent(last);
-    if (terminal && terminal !== first.value.component) alternatives.set(terminal, offer(terminal, last));
-    return arbitrateComponent('routing', { text: input.text, runId: input.turnId, conversationState: baseline.resolution.kind, started },
-      first.value, [...alternatives.values()]);
-  } catch {
-    return baseline;
-  }
+  });
 }
 
 function decideRuleRequestRoute(input: RequestRoutingInput, choices: ScratchRoutingChoices = {}): RequestRoutingDecision {
@@ -193,7 +195,6 @@ function decideRuleRequestRoute(input: RequestRoutingInput, choices: ScratchRout
   return first.done ? first.value : first.value.result;
 }
 
-/** The host starts with the same first yield. Shadow can read later, already authorized claims. */
 function* routingClaims(input: RequestRoutingInput, choices: ScratchRoutingChoices = {}): Generator<RoutingClaim, RequestRoutingDecision> {
   const manners = standaloneMannersRoute(input);
   if (manners) yield offer('small-talk', manners);

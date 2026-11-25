@@ -6,7 +6,7 @@ import { evaluateLocalReasoning, type ReasoningContext } from './reasoning/index
 import { analyzeCompoundRequest, type CompoundRequestAnalysis, type PendingActionKind } from './compound-request.js';
 import { splitReplyDirective, type ReplyDirective, type ReplyLanguage } from './reply-directive.js';
 import { evaluateWordProblem } from './word-problem.js';
-import { arbiterEnabled, arbitrateComponent, hasArbiterExecution } from './model-relations-arbiter.js';
+import { arbiterEnabled, arbitrateComponent, discoverArbiterClaims, hasArbiterExecution } from './model-relations-arbiter.js';
 
 /** A local calculation is a reusable capability, independent of the experimental Mind route. */
 export interface LocalComputation {
@@ -38,17 +38,19 @@ export function evaluateLocalComputation(request: string, now = new Date(), reas
   const contestedReasoning = reasoning && Object.hasOwn(reasoning, 'previousUserTurn') && hasArbiterExecution() && arbiterEnabled();
   const choose = (ranked: LocalComputation, native: () => LocalComputation | null): LocalComputation => {
     if (!contestedReasoning) return ranked;
-    const started = performance.now();
-    try {
-      const computation = native();
-      if (!computation) return ranked;
-      return arbitrateComponent<LocalComputation>('local-computation', { text: request, started,
-        conversationState: reasoning?.previousUserTurn ? 'with-history' : 'new' },
-      { component: 'reasoning-engine', label: ranked.status, result: ranked },
-      [{ component: 'local-calculator', label: computation.status, result: computation }]);
-    } catch {
-      return ranked;
-    }
+    return discoverArbiterClaims('local-computation', ranked, undefined, shadowLog => {
+      const started = performance.now();
+      try {
+        const computation = native();
+        if (!computation) return ranked;
+        return arbitrateComponent<LocalComputation>('local-computation', { text: request, started, shadowLog,
+          conversationState: reasoning?.previousUserTurn ? 'with-history' : 'new' },
+        { component: 'reasoning-engine', label: ranked.status, result: ranked },
+        [{ component: 'local-calculator', label: computation.status, result: computation }]);
+      } catch {
+        return ranked;
+      }
+    });
   };
   if (beforeWork) {
     const ranked = evaluateLocalReasoning(beforeWork, now, reasoning);

@@ -33,7 +33,20 @@ interface ReplayTrace {
 
 const replay = new AsyncLocalStorage<ReplayTrace>();
 const execution = new AsyncLocalStorage<{ runId: string; replayTurn?: number }>();
-const pending = new Map<string, ArbiterDecisionLog[]>();
+interface PendingObservation {
+  decisions: ArbiterDecisionLog[];
+  discover: Array<() => void>;
+}
+const pending = new Map<string, PendingObservation>();
+
+function pendingObservation(runId: string): PendingObservation {
+  const current = pending.get(runId);
+  if (current) return current;
+  if (pending.size >= 2048) pending.delete(pending.keys().next().value!);
+  const created: PendingObservation = { decisions: [], discover: [] };
+  pending.set(runId, created);
+  return created;
+}
 
 /** In-process development runner only. The server has no request field for overrides. */
 export function withArbiterReplay<T>(options: { overrides: readonly ArbiterReplayRule[] }, run: (trace: ReplayTrace) => T): T {
@@ -51,10 +64,30 @@ export function withArbiterExecution<T>(runId: string, run: () => T): T {
   return execution.run({ runId, replayTurn: replay.getStore()?.turn }, run);
 }
 
-export function takeArbiterDecisions(runId: string): ArbiterDecisionLog[] | undefined {
-  const decisions = pending.get(runId);
+export function captureArbiterDecisions(runId: string): (() => ArbiterDecisionLog[]) | undefined {
+  const observation = pending.get(runId);
+  if (!observation) return undefined;
   pending.delete(runId);
-  return decisions;
+  return () => {
+    for (const discover of observation.discover.splice(0)) discover();
+    return observation.decisions;
+  };
+}
+
+export function takeArbiterDecisions(runId: string): ArbiterDecisionLog[] | undefined {
+  return captureArbiterDecisions(runId)?.();
+}
+
+/** The observer owns extra claimant discovery until a decision type has live authority. */
+export function discoverArbiterClaims<T>(type: ArbiterDecisionType, precedence: T, runId: string | undefined,
+  discover: (shadowLog?: ArbiterDecisionLog[]) => T): T {
+  if (replay.getStore() || modelRelationsManager.canApplyArbiter(type)) return discover();
+  const id = runId ?? execution.getStore()?.runId;
+  if (id && process.env.MOHASSAN_MODEL_RELATIONS !== 'off') {
+    const observation = pendingObservation(id);
+    if (observation.discover.length < 16) observation.discover.push(() => { discover(observation.decisions); });
+  }
+  return precedence;
 }
 
 export function arbiterEnabled(): boolean {
@@ -73,6 +106,7 @@ export function arbitrateComponent<T>(type: ArbiterDecisionType, context: {
   runId?: string;
   protected?: boolean;
   started?: number;
+  shadowLog?: ArbiterDecisionLog[];
   modelStates?: ArbiterInput['modelStates'];
 }, precedence: Claim<T>, alternatives: readonly Claim<T>[]): T {
   const started = context.started ?? performance.now();
@@ -93,14 +127,10 @@ export function arbitrateComponent<T>(type: ArbiterDecisionType, context: {
   const turnId = active?.replayTurn ?? trace?.turn ?? 0;
   const occurrence = trace ? 1 + trace.decisions.filter(decision => decision.turnId === turnId && decision.type === type).length : 1;
   const forced = trace?.overrides.find(rule => rule.turnId === turnId && rule.type === type && (rule.occurrence ?? 1) === occurrence)?.component;
-  const decision = modelRelationsManager.arbitrate(input, { forced, protected: context.protected });
+  const decision = modelRelationsManager.arbitrate(input, { forced, protected: context.protected, shadowOnly: Boolean(context.shadowLog) });
   decision.elapsedMs = performance.now() - started;
   if (trace) trace.decisions.push({ ...decision, turnId, occurrence });
-  if (runId && process.env.MOHASSAN_MODEL_RELATIONS !== 'off') {
-    if (pending.size >= 2048 && !pending.has(runId)) pending.delete(pending.keys().next().value!);
-    const decisions = pending.get(runId) ?? [];
-    if (decisions.length < 16) decisions.push(decision);
-    pending.set(runId, decisions);
-  }
+  const decisions = context.shadowLog ?? (runId && process.env.MOHASSAN_MODEL_RELATIONS !== 'off' ? pendingObservation(runId).decisions : undefined);
+  if (decisions && decisions.length < 16) decisions.push(decision);
   return candidates.find(candidate => candidate.component === decision.selected)?.result ?? precedence.result;
 }

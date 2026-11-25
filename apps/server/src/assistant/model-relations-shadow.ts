@@ -5,7 +5,7 @@ import type { ModelRelationsManager, TurnObservation } from '../../../../package
 import type { BrainState } from './brain.js';
 import { judge, type JudgeEvidence } from './judge.js';
 import { detectManners } from './manners/detect.js';
-import { modelRelationsManager, takeArbiterDecisions } from './model-relations-arbiter.js';
+import { captureArbiterDecisions, modelRelationsManager } from './model-relations-arbiter.js';
 import { afterStructuredMemoryPublication } from './structured-memory-turn.js';
 
 type Page = { text: string; url: string; title: string };
@@ -39,14 +39,14 @@ export function createModelRelationsObserver(options: {
     const resolution = state?.requestResolution;
     const arithmeticValue = state?.computed?.value;
     const pages = [...(execution.readPages ?? []), ...(execution.page ? [execution.page] : [])];
-    const arbiter = takeArbiterDecisions(runId);
+    const arbiter = captureArbiterDecisions(runId);
     let schedulingMs = 0;
     const schedule = () => setImmediate(() => {
       const work = async () => {
         const evidence = pageEvidence(pages);
         const question = resolution?.resolved ?? text;
         const observation: TurnObservation = {
-          id, text, previousText, arbiter,
+          id, text, previousText, arbiter: arbiter?.(),
           baseline: {
             route: imageReadMs === undefined ? routing?.route ?? 'unsupported' : 'image',
             refusal: routing?.reason === 'scratch_out_of_scope' ? 'out_of_scope'
