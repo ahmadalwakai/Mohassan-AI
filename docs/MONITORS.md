@@ -237,7 +237,7 @@ On the release snapshot, `npm run typecheck` exited **0**, and the nine affected
 
 ## Phase 2 sources
 
-Each source has an independent rollout flag and uses v2 proposals, choices, scheduling, evidence and delivery. Both `MOHASSAN_MONITORS_ENABLED=1` and `MOHASSAN_MONITORS_V2=1` are required. The source flags default to off. Turning one off suspends its checks and new approvals. The original expiry still applies.
+Each source has an independent rollout flag and uses v2 proposals, choices, scheduling, evidence and delivery. Sources require `MOHASSAN_MONITORS_V2=1` and an account admitted by `MOHASSAN_MONITORS_ENABLED=owner` or `1`. The source flags default to off. Turning one off suspends its checks and new approvals. The original expiry still applies.
 
 | Flag | Watches | Normal / urgent starting interval |
 | --- | --- | --- |
