@@ -7,6 +7,7 @@ import {
   addEvidence, decideVerdict, enterPhase, settleStep, setStepAuthorization, startStep, tryEnterPhase,
 } from '../agent-run.js';
 import { checkPermission, consumePermission, recordDecision, requestPermission, type ActionMaterial } from '../permission-gate.js';
+import { nextLongRunDueAt } from './execution-guards.js';
 import {
   initialLongRunState, LONG_RUN_ACTIVE, LONG_RUN_LIMITS, LONG_RUN_WORKER, LongRunStateSchema, restoreLongRunState, say, stepId,
   type LongRunObservation, type LongRunPlan, type LongRunState, type LongRunStep,
@@ -150,11 +151,6 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
 
   async function blocked(tx: Kysely<any>, row: Row, state: LongRunState, time: number, ar: string, en: string) {
     await finish(tx, row, state, time, 'blocked', say(state.longRun.language, ar, en));
-  }
-
-  function sleepBeforeNext(state: LongRunState, time: number) {
-    const upcoming = state.longRun.steps[state.longRun.next];
-    state.longRun.dueAt = upcoming?.kind === 'monitor' ? time + upcoming.delayMs : time;
   }
 
   async function admission(ownerId: string, conversationId: string, text: string, plan: LongRunPlan) {
@@ -313,7 +309,7 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
         state.siteId = result.id;
       }
       data.next++;
-      sleepBeforeNext(state, time);
+      data.dueAt = nextLongRunDueAt(data, time);
       const step = state.agentRun.plan!.steps[index]!;
       await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: row.conversation_id, run_id: row.id,
         kind: 'step', message: step.outcome, created_at: new Date(time) }).execute();

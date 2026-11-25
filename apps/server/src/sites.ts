@@ -8,6 +8,7 @@ import { applyAnswers, applyPatch, checkSite, completeBrief, composeSite, conten
 import { noPublisher, PublishError, type SitePublisher } from './sites-publish.js';
 import { createSitePreviewReader } from './site-preview.js';
 import type { WorkspaceRole } from './members.js';
+import type { DraftWriteFence } from './assistant/long-run/execution-guards.js';
 
 /**
  * Generated websites: the brief is the source of truth, the composed text files are the snapshot the
@@ -122,7 +123,7 @@ export async function createSitesControl(db: Kysely<any>, config: SitesConfig) {
     const rows = await db.selectFrom('sites').selectAll().where('owner_id', '=', ownerId).orderBy('updated_at', 'desc').limit(limits.ownerSites).execute() as SiteRow[];
     return rows.map(summary);
   }
-  async function create(ownerId: string, input: { brief: unknown; conversationId?: string | null; role?: WorkspaceRole }): Promise<SiteDetail> {
+  async function create(ownerId: string, input: { brief: unknown; conversationId?: string | null; role?: WorkspaceRole; draftWriteFence?: DraftWriteFence }): Promise<SiteDetail> {
     const brief = SiteBriefSchema.parse(input.brief);
     const built = build(brief, []);
     const id = randomUUID();
@@ -131,7 +132,10 @@ export async function createSitesControl(db: Kysely<any>, config: SitesConfig) {
       const count = await tx.selectFrom('sites').select(eb => eb.fn.countAll<string>().as('n')).where('owner_id', '=', ownerId).executeTakeFirstOrThrow();
       const cap = input.role === 'member' ? limits.memberSites : limits.ownerSites;
       if (Number(count.n) >= cap) throw new SiteError('SITE_QUOTA', `بلغ الحساب حدّه من المواقع (${cap}). احذف موقعاً قديماً أولاً.`, 409);
-      return tx.insertInto('sites').values({ id, owner_id: ownerId, conversation_id: input.conversationId ?? null, slug, brief: JSON.stringify(brief), files: JSON.stringify(built.text), files_hash: built.filesHash, checks: JSON.stringify(built.checks), history: '[]', revision: 1, generator_version: GENERATOR_VERSION, status: 'ready', created_at: now(), updated_at: now() }).returningAll().executeTakeFirstOrThrow() as Promise<SiteRow>;
+      const assertLive = await input.draftWriteFence?.(tx);
+      const inserted = await tx.insertInto('sites').values({ id, owner_id: ownerId, conversation_id: input.conversationId ?? null, slug, brief: JSON.stringify(brief), files: JSON.stringify(built.text), files_hash: built.filesHash, checks: JSON.stringify(built.checks), history: '[]', revision: 1, generator_version: GENERATOR_VERSION, status: 'ready', created_at: now(), updated_at: now() }).returningAll().executeTakeFirstOrThrow() as SiteRow;
+      assertLive?.();
+      return inserted;
     });
     return detailOf(row);
   }

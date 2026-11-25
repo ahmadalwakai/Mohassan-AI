@@ -16,6 +16,7 @@ import { decideResponsePolicy } from '../response-policy.js';
 import { monitoringRequest } from '../response-policy-signals.js';
 import { siteTask } from '../site-builder.js';
 import { backgroundTaskText } from './background-request.js';
+import { longRunDraftWriteFence } from './execution-guards.js';
 import { LONG_RUN_MIGRATION, migrateLongRuns } from './migration.js';
 import { createLongRunRuntime, LongRunTransientError, type LongRunPorts } from './runtime.js';
 import { LONG_RUN_LIMITS, LONG_RUN_WORKER, say, type LongRunPlan } from './state.js';
@@ -106,7 +107,8 @@ function adapter(config: CommandChatConfig, network: SafeNetwork): LongRunPorts 
         const role = config.sites.roleOf ? await config.sites.roleOf(ownerId) : undefined;
         if (role === null) return { kind: 'unavailable' };
         signal.throwIfAborted();
-        const site = await config.sites.createFromBrief(ownerId, draft.brief, { conversationId, role });
+        const draftWriteFence = longRunDraftWriteFence({ ownerId, conversationId, state, signal, accountActive: config.accountActive });
+        const site = await config.sites.createFromBrief(ownerId, draft.brief, { conversationId, role, draftWriteFence });
         signal.throwIfAborted();
         const errors = site.checks.checks.filter(item => !item.passed);
         const preview = config.sites.link?.(site.id);
