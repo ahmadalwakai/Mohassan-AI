@@ -1,7 +1,7 @@
 import type { Lang } from '../mind/contract.js';
 import { matchText } from '../mind/normalize.js';
 import { maskRequestLiteralData } from '../request-constraints.js';
-import { isEverydayManners } from './everyday.js';
+import { englishAssistantAddress, isEverydayManners, normalizeEnglishThanks } from './everyday.js';
 import { isMannersLanguageDirective, selectMannersLanguage } from './language.js';
 import { speechActRules, type MannersDetail, type MannersDialect, type SpeechAct, type SpeechActRule } from './speech-acts.js';
 
@@ -28,6 +28,7 @@ const DECORATION = /^[\s\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_I
 const URL = /(?:https?:\/\/|www\.)[^\s<>"'«»]+/giu;
 const NAME = /^(?:[\s,،]+)(?:(?:(?:يا|آ|ya)\s+)?(?:موحسن|موحسان|محسن|mohassan|mohasan|muhassan|يا\s+(?:غالي|صديقي|صديق|باشا|زول|معلم|استاذ)|ya\s+(?:zalameh|zool|akhi)|(?:my\s+)?(?:friend|assistant|mate|pal))|(?:يا\s+)?["“«][\p{L}\p{M}]+(?:[ -][\p{L}\p{M}]+){0,2}["”»])(?=$|[\s.!?؟،,؛;:：—–])/iu;
 const OTHER_NAME = /^(?:[\s,،]+)(?:(?:يا|آ)\s+[\p{L}\p{M}]+|\p{Lu}[\p{L}\p{M}]+(?:[ -]\p{Lu}[\p{L}\p{M}]+)?)(?=\s*(?:$|[.!?؟،,؛;:：—–]))/u;
+const ENGLISH_ADDRESS = new RegExp(String.raw`^[\s,]+${englishAssistantAddress}(?=\s*(?:$|[.!?,;:—–]))`, 'iu');
 const ADDITIVE = /^(?:and|also|and also|as well as|وكمان|وكذلك|وايضا|وأيضا|وأيضًا|و)(?=\s|[،,])(?:\s|[،,])+/iu;
 // Heads let unpunctuated greetings split from requests. Separated clauses can
 // fall through to the existing router even if their heads are unfamiliar here.
@@ -37,9 +38,10 @@ const STRICT_TRAILING = /[،,؛;]|(?:[!?؟\r\n.]|[—–])(?=\s|$)/gu;
 const OTHER_COMMAND = /^(?:go|close|cancel|stop|start|pause|resume|continue|proceed|launch|install|run|exit|move|copy|export|set|enable|disable|remove|edit|add|print|turn|press)\b/iu;
 const MATH_START = /^[+-]?(?:\d+|\.\d+)\s*[-+×÷*/^]\s*[+-]?(?:\d+|\.\d+)/u;
 const LEADING_COURTESY = /^(?:please|kindly|من فضلك|لو سمحت)[\s,،:]+/iu;
-const LEADING_ADDRESS = /^(?:(?:mohassan|موحسن|يا موحسن)\s+|(?:(?:ai |virtual )?assistant|ai|bot|mohassan|يا موحسن)\s*[,،:]\s*)/iu;
+const LEADING_ADDRESS = new RegExp(String.raw`^\s*(?:(?:${englishAssistantAddress}|mohassan|يا موحسن)\s*[,،:]\s*|(?:${englishAssistantAddress}|mohassan|موحسن|يا موحسن)\s+)`, 'iu');
 const LEADING_DISCOURSE = /^(?:well|okay|ok|all right|alright)\s*[,]\s*/iu;
 const TRAILING_COURTESY = /^(?:please|kindly|من فضلك|لو سمحت|ارجوك)[\s.!?؟،,]*$/u;
+const ENGLISH_ALTERNATIVE_SEPARATOR = /[,:](?=\s*(?:as|or|are(?:n[’']?t)? you)\b)/giu;
 const MAX_SOCIAL_CLAUSES = 6;
 
 function normalized(text: string): string {
@@ -47,30 +49,39 @@ function normalized(text: string): string {
 }
 
 function firstSocialSpan(original: string, view: string, from: number): SocialSpan | null {
-  const tail = view.slice(from);
+  // Keep punctuation in the outer view: a colon may delimit literal input.
+  const tail = view.slice(from).replace(ENGLISH_ALTERNATIVE_SEPARATOR, ' ');
   let best: SocialSpan | null = null;
   let count = 0;
   let previousEnd = from;
   let start = from;
   for (const word of tail.matchAll(WORD)) {
     const position = from + word.index;
-    const gap = view.slice(previousEnd, position);
+    const gap = tail.slice(previousEnd - from, word.index);
     if (++count > 24 || (count === 1 ? !DECORATION.test(original.slice(from, position)) : !/^\s+$/u.test(gap))) break;
     if (count === 1) start = position;
     previousEnd = position + word[0].length;
-    const phrase = normalized(view.slice(start, previousEnd)).replace(/(?<=[a-z])-(?=[a-z])/gu, ' ');
-    const rule = speechActRules.find(candidate => candidate.pattern.test(phrase));
+    const phrase = normalized(tail.slice(start - from, previousEnd - from)).replace(/(?<=[a-z])-(?=[a-z])/gu, ' ');
+    const rule = speechActRules.find(candidate => candidate.pattern.test(phrase))
+      ?? everydayThanksWithSpellingVariant(phrase);
     if (rule) best = { rule, end: previousEnd };
   }
   if (!best) return null;
   const rest = original.slice(best.end);
   const otherName = OTHER_NAME.exec(rest)?.[0] ?? '';
   const nameText = otherName.replace(/^[\s،,]+/u, '');
-  const name = NAME.exec(rest)?.[0] ?? (!isRequest(nameText) && !OTHER_COMMAND.test(nameText) ? otherName : '');
+  const name = ENGLISH_ADDRESS.exec(rest)?.[0] ?? NAME.exec(rest)?.[0]
+    ?? (!isRequest(nameText) && !OTHER_COMMAND.test(nameText) ? otherName : '');
   const end = best.end + name.length;
   const addressedSalam = name && normalized(view.slice(start, best.end)) === 'سلام' && DECORATION.test(original.slice(end));
   const rule = addressedSalam ? { ...best.rule, act: 'farewell' as const, detail: undefined } : best.rule;
   return { rule, end };
+}
+
+function everydayThanksWithSpellingVariant(phrase: string): SpeechActRule | undefined {
+  const corrected = normalizeEnglishThanks(phrase);
+  return corrected === phrase ? undefined
+    : speechActRules.find(rule => rule.act === 'thanks' && rule.language === 'en' && rule.pattern.test(corrected));
 }
 
 function strongerAct(current: SpeechActRule, next: SpeechActRule): SpeechActRule {
