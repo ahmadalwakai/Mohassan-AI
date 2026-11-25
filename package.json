@@ -27,6 +27,7 @@
     "ai:check": "tsx scripts/check-ai.ts",
     "coding:check": "tsx scripts/check-coding.ts",
     "assistant:check": "tsx scripts/check-assistant.ts",
+    "assistant:capability-bench": "node --import tsx scripts/agent-capability-bench/run.ts",
     "learning:eval": "tsx scripts/learning-eval.ts",
     "ads:check": "tsx scripts/check-google-ads-api.ts",
     "ads:setup": "tsx scripts/check-google-ads-setup.ts",
