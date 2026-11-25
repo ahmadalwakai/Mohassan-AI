@@ -18,6 +18,7 @@ const titles: Record<NotificationKind, string> = {
   task_completed: 'اكتملت المهمة',
   needs_you: 'تحتاجك خطوة',
   task_failed: 'تعذّر الإكمال',
+  task_progress: 'تقدّم العمل',
 };
 const conversationIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const syncPath = '/api/notifications/sync';
