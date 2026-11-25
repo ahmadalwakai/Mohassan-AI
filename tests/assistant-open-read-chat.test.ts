@@ -116,4 +116,30 @@ describe('open a website and show what it says, through the real chat controller
     expect(done.reply).toMatch(/^From \*\*Field Notes\*\* \(field-notes\.test\):\n\n> Field Notes/u);
     expect(done.status).toBe('completed');
   });
+
+  it('asks for the unnamed destination before trying browser actions and resumes from the address', async () => {
+    const asked = await ask('Kindly open the web page for us.');
+    expect(asked.status).toBe('waiting_user');
+    expect(asked.detail.question?.fields?.map(field => field.id)).toEqual(['site']);
+    expect(actions).toEqual([]);
+    expect(queries).toEqual([]);
+    await control.send(OWNER, asked.id, { text: fieldNotes.url, questionId: asked.detail.question!.id });
+    const done = await result(asked.id);
+    expect(done.detail.run?.id).toBe(asked.detail.run?.id);
+    expect(done.status).toBe('completed');
+    expect(actions.map(action => [action.kind, action.text])).toEqual([['open', fieldNotes.url]]);
+    expect(queries).toEqual([]);
+  });
+
+  it('reads an explicitly referenced live page without navigating or asking', async () => {
+    const opened = await ask('https://field-notes.test');
+    actions.length = 0;
+    await control.send(OWNER, opened.id, { text: 'Visit this webpage and display its text.' });
+    const read = await result(opened.id);
+    expect(read.status).toBe('completed');
+    expect(read.detail.question).toBeFalsy();
+    expect(read.reply).toContain('Each note names the place and the date.');
+    expect(actions).toEqual([]);
+    expect(queries).toEqual([]);
+  });
 });

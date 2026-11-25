@@ -5,6 +5,8 @@ import type { RoutedIntent } from '../routing-decision.js';
 
 type Language = 'ar' | 'en';
 export type ClarificationKind = 'entity' | 'date' | 'account' | 'file' | 'route';
+type OperandKind = Exclude<ClarificationKind, 'route'>;
+type OpenKind = OperandKind | 'request' | 'conversion';
 type Reason = 'entity_matches' | 'close_routes' | 'missing_slot';
 
 export interface ClarificationChoice {
@@ -17,7 +19,7 @@ export interface ClarificationChoice {
 }
 
 export interface ClarificationPlan {
-  kind: ClarificationKind;
+  kind: ClarificationKind | 'request' | 'conversion';
   reason: Reason;
   subject?: string;
   language: Language;
@@ -76,7 +78,15 @@ export function decideClarification(input: {
 export function clarificationCard(plan: ClarificationPlan): ChatQuestion {
   const options = plan.candidates.map(({ label }, index) => ({ id: `choice_${index + 1}`, label }));
   return { id: randomUUID(), prompt: plan.prompt, options, fields: [{ id: 'choice', prompt: plan.prompt,
-    suggestions: options.map(({ label }) => ({ label })), placeholder: plan.language === 'ar' ? 'غير ذلك…' : 'Other…' }] };
+    suggestions: options.map(({ label }) => ({ label })), placeholder: options.length
+      ? plan.language === 'ar' ? 'غير ذلك…' : 'Other…'
+      : plan.language === 'ar' ? 'اكتب التوضيح' : 'Enter the missing detail' }] };
+}
+
+export function openClarification(kind: OpenKind, language: Language, subject?: string, prompt?: string): ClarificationPlan {
+  const subjectPrompt = language === 'ar' ? 'ما اسم الشخص أو الموضوع الذي تقصده؟' : 'Which subject do you mean?';
+  return { kind, reason: 'missing_slot', language, ...(subject ? { subject } : {}), candidates: [],
+    prompt: prompt ?? (kind === 'request' || kind === 'entity' || kind === 'conversion' ? subjectPrompt : prompts[kind][language]) };
 }
 
 export function legacyClarificationNeeded(resolution: RequestResolution | null | undefined): boolean {
@@ -93,15 +103,4 @@ export function missingClarificationSlot(text: string, resolution?: RequestResol
   if (/^(?:please\s+)?(?:open|read|show|summari[sz]e|inspect|find)\s+(?:(?:the|my|this|that)\s+)?(?:file|document|pdf)(?: on my (?:computer|pc))?\s*[.!?؟]?$/iu.test(folded)
     || /^(?:افتح|اقرا|اعرض|لخص|ابحث عن)\s+(?:الملف|المستند|ملفي|مستندي)(?:\s+على\s+جهازي)?\s*[.!?؟]?$/u.test(folded)) return 'file';
   return null;
-}
-
-export function missingClarificationDetail(kind: ClarificationKind, language: Language): string {
-  const instructions: Record<ClarificationKind, Record<Language, string>> = {
-    entity: { en: 'Include the subject in the request so I can continue.', ar: 'اذكر اسم الموضوع في الطلب لأتمكن من المتابعة.' },
-    date: { en: 'Include the date in the request so I can continue.', ar: 'اذكر التاريخ في الطلب لأتمكن من المتابعة.' },
-    account: { en: 'Include the account name in the request so I can continue.', ar: 'اذكر اسم الحساب في الطلب لأتمكن من المتابعة.' },
-    file: { en: 'Include the file name or path in the request so I can continue.', ar: 'اذكر اسم الملف أو مساره في الطلب لأتمكن من المتابعة.' },
-    route: { en: 'Specify the action you want me to take.', ar: 'حدّد الإجراء الذي تريدني أن أنفّذ.' },
-  };
-  return instructions[kind][language];
 }

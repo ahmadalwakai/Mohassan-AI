@@ -130,7 +130,7 @@ function unique(candidates: readonly (ClarificationCandidate | null)[]): Clarifi
 /** Conversation candidates come from preceding owner turns and the current explicit subject. */
 export function conversationClarificationCandidates(input: ConversationSourceInput): ClarificationCandidate[] {
   const { kind, text } = input;
-  const reference = input.reference ?? clarificationEntityReference(text);
+  const { reference = clarificationEntityReference(text) } = input;
   const personQuestion = kind === 'entity' && PERSON_QUESTION.test(normalizeRequest(text).text);
   const candidates: (ClarificationCandidate | null)[] = [];
   if (kind === 'entity' && reference && DESCRIPTOR.test(reference)) {
@@ -212,7 +212,7 @@ function pageLabels(page: ClarificationPage, reference: string, hits: readonly S
 
 /** Use an actual listed variant, not merely similarly named search results. */
 async function publicCandidates(input: LookupSourceInput, signal: AbortSignal): Promise<ClarificationCandidate[]> {
-  const reference = input.reference ?? clarificationEntityReference(input.text);
+  const { reference = clarificationEntityReference(input.text) } = input;
   if (input.kind !== 'entity' || !reference || !input.search || !input.readPage || DESCRIPTOR.test(reference) || !includesName(input.text, reference)) return [];
   const hits = (await input.search(reference, 6, signal)).slice(0, 6);
   const personQuestion = PERSON_QUESTION.test(normalizeRequest(input.text).text);
@@ -229,7 +229,7 @@ async function publicCandidates(input: LookupSourceInput, signal: AbortSignal): 
 
 async function memoryCandidates(input: LookupSourceInput): Promise<ClarificationCandidate[]> {
   if (!input.memory) return [];
-  const reference = input.reference ?? clarificationEntityReference(input.text);
+  const { reference = clarificationEntityReference(input.text) } = input;
   const fallback = /\p{Script=Arabic}/u.test(input.text)
     ? { account: 'حساب', file: 'ملف', date: 'تاريخ' }
     : { account: 'account', file: 'file', date: 'date' };
