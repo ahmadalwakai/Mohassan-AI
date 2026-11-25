@@ -64,6 +64,7 @@ import { isCampaignRequest } from './assistant/campaign-request.js';
 import { armProgressPause, createProgressRecovery, restoreProgressRecovery, resumeBrowserProgressAutomatically, resumeProgressAfterRetry, reviewProgressRecovery, type ProgressRecoveryContext } from './assistant/progress-recovery.js';
 import { rebindBrowserAction, reserveBrowserRecovery, transientBrowserFailure, type BrowserRecoveryEntry } from './assistant/browser-recovery.js';
 import { bootstrapRequestContext, parseRequestContextState, requestActionText, resolveRequestContext } from './assistant/request-context.js';
+import { bindResponsePolicyChannel, chatResponsePolicyInput, readResponsePolicyHistory, shapeCompletedChatReply } from './assistant/response-policy-runtime.js';
 import { createChatSupervisor, observeChatCapture, observeChatLocalAnswer, observeChatTool, resumeChatSupervisor, reviewChatAnswer } from './assistant/chat-supervision.js';
 import { createComputationMemoryReceipt, restoreComputationMemoryReceipt } from './assistant/computation-memory-receipt.js';
 import { migrateConversationShares } from './conversation-share-migration.js';
@@ -1406,6 +1407,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   /** `prejudged`: the text is a message of several answers, each already judged on its own question (web-sequence.ts). */
   async function finish(id: string, runId: string, state: BrainState, text: string, status: 'completed' | 'partial' | 'blocked',
       proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall', prejudged = false) {
+    if (!prejudged && !proof && !memoryPublication && state.supervision?.contract.mode !== 'enforced') text = shapeCompletedChatReply(text, execution.getStore()?.request, status);
     // The judge sees the reply first: logged in shadow for everyone; for the owner's account its fix, or its fixed withhold
     // sentence, is what goes on. Memory publications keep their own stricter checks and are never changed here.
     const judged = prejudged || !config.judgeShadow ? { text, withheld: false } : await reviewJudgedReply(work => runTransaction(id, runId, work), { id, runId, clean, allowApply: !memoryPublication && state.supervision?.contract.mode !== 'enforced' }, () => judgeReply(id, runId, text, status, !memoryPublication));
@@ -2366,7 +2368,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await saveState(runId,state);
       }
       const personalSignIn = PERSONAL_SIGN_IN.test(request.replace(/[\u064b-\u065f\u0670]/g, '').replace(/[أإآ]/g, 'ا'));
-      const earlier = await db.selectFrom('chat_messages').select(['role', 'text']).where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(HISTORY_MESSAGES + 1).execute();
+      const earlier = await readResponsePolicyHistory({ db, ownerId, conversationId: id, state, policy: chatResponsePolicyInput(request, state), recentLimit: HISTORY_MESSAGES + 1, scrub: text => vault.scrub(id, clean(text)) });
       const history = earlier.reverse().slice(0, -1).map((entry) => ({ role: entry.role, text: clean(entry.text) }));
       currentExecution.previousRequest = history.filter(entry => entry.role === 'user').at(-1)?.text ?? null;
       if (run.intent === 'task' && (state.routing?.route === 'clarify' || state.clarifiedRequest)
@@ -4523,6 +4525,7 @@ export async function registerCommandChatRoutes(app: FastifyInstance, { control,
   type Conversation = { Params: { id: string } };
   // An optional Idempotency-Key makes a changing call safe to resend: the phone resends with the same key after a lost reply.
   const keyed = async <T>(request: { headers: Record<string, unknown>; body?: unknown }, scope: string, run: (ownerId: string) => Promise<T>) => {
+    run = bindResponsePolicyChannel(run, request.headers);
     const ownerId = (await owner(request)).id;
     const header = request.headers['idempotency-key'];
     if (header === undefined) return run(ownerId);

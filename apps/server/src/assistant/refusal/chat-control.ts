@@ -1,6 +1,7 @@
 import { ChatCreateSchema, ChatSendSchema } from '@mohassan/contracts';
 import { createCommandChatControl, type CommandChatConfig } from '../../command-chat.js';
 import { assessRequestScope } from '../request-scope.js';
+import { withLongRunChat } from '../long-run/host.js';
 import { classifyRefusal } from './classifier.js';
 import { logRefusalDecision, refusalPolicyEnabled } from './settings.js';
 
@@ -18,7 +19,7 @@ export async function createRefusalAwareCommandChat(db: Parameters<typeof create
     return false;
   };
 
-  return { ...chat,
+  return withLongRunChat(db, config, { ...chat,
     async create(ownerId: string, raw: unknown = {}) {
       const input = ChatCreateSchema.safeParse(raw);
       if (input.success && input.data.images?.length && await refusedCaption(ownerId, input.data.goal)) {
@@ -33,5 +34,5 @@ export async function createRefusalAwareCommandChat(db: Parameters<typeof create
       }
       return chat.send(ownerId, id, raw);
     },
-  };
+  });
 }
