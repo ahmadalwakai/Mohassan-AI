@@ -4,7 +4,7 @@ import type { ImageReading } from '@mohassan/vision';
 import { composeImageReply, readingForTrail } from './assistant/image-reading.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { FastifyInstance } from 'fastify';
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 import { z } from 'zod';
 import {
   ChatApproveSchema, ChatBrowserActivitySchema, ChatConversationSchema, ChatCreateSchema, ChatFeedbackSchema, ChatKeyboardSchema, ChatPointerSchema, ChatQuestionSchema, ChatRespondSchema,
@@ -45,6 +45,7 @@ import { evaluateLocalRecall } from './assistant/local-recall.js';
 import { ownFactQuestion } from './assistant/own-fact-question.js';
 import { evaluateLocalConversation } from './assistant/local-conversation.js';
 import { evaluateCapabilityReply } from './assistant/capability-reply.js';
+import { handleReminderChat, hasReminderQuestion, type ChatReminderStore, type ReminderChatPublication } from './reminders/chat.js';
 import { answerRuntimeStatus } from './assistant/runtime-status.js';
 import { evaluateSelfQuestion, type SelfFacts } from './assistant/self-knowledge.js';
 import { evaluateLocalSequence } from './assistant/local-sequence.js';
@@ -113,6 +114,7 @@ export interface DesktopChatPort {
 }
 
 export interface CommandChatConfig {
+  reminders?: ChatReminderStore;
   /** False for a member: no projects, studio, computer or skill runs. Absent means full access. */
   fullAccess?: (ownerId: string) => Promise<boolean>;
   /** Current account access, checked using the same fenced transaction. Must not open a nested transaction. */
@@ -671,7 +673,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if (config.accountActive && !await config.accountActive(current.ownerId, tx)) throw new AccountAccessEnded();
     return {conversation,run,current};
   }
-  async function runTransaction<T>(id: string, runId: string, work: (tx: Kysely<any>) => Promise<T>): Promise<T> {
+  async function runTransaction<T>(id: string, runId: string, work: (tx: Transaction<any>) => Promise<T>): Promise<T> {
     return db.transaction().execute(async tx => { await lockedExecution(tx,id,runId); return work(tx); });
   }
   async function assertActive() { const current = execution.getStore(); if (!current) throw new RunEnded(); await runTransaction(current.id,current.runId,async()=>{}); }
@@ -1377,7 +1379,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
 
   /** `prejudged`: the text is a message of several answers, each already judged on its own question (web-sequence.ts). */
   async function finish(id: string, runId: string, state: BrainState, text: string, status: 'completed' | 'partial' | 'blocked',
-      proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall', prejudged = false) {
+      proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall', prejudged = false, reminderPublication?: ReminderChatPublication) {
     // The judge sees the reply first: logged in shadow for everyone; for the owner's account its fix, or its fixed withhold
     // sentence, is what goes on. Memory publications keep their own stricter checks and are never changed here.
     const judged = prejudged ? { text, withheld: false } : judgeReply(id, runId, text, status, !memoryPublication);
@@ -1400,6 +1402,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // Native memory handlers explicitly require their current review without
       // changing historical advisory contract hashes or generic chat policy.
       let finalText = text, finalStatus = status;
+      if (reminderPublication) { const result = await reminderPublication(tx); finalText = vault.scrub(id, clean(result.text)); finalStatus = result.status; }
       if (state.supervision) {
         state.completionReview = reviewChatAnswer(state.supervision, finalText);
         if ((state.supervision.contract.mode === 'enforced' || memoryPublication) && finalStatus === 'completed' && !state.completionReview.allowCompletion) {
@@ -1981,6 +1984,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return;
       }
       const request = effectiveSource.request;
+      const reminder = config.reminders && await handleReminderChat({ store: config.reminders, db, state, userId: ownerId, conversationId: id, runId, request, routing: state.routing, now: new Date(effectiveSource.evaluatedAt), transact: task => runTransaction(id, runId, task) });
+      if (reminder && 'question' in reminder) { await pause(id, runId, state, 'waiting_user', { question: JSON.stringify(reminder.question) }, reminder.question.prompt); return; }
+      if (reminder) { await finish(id, runId, state, '', 'completed', undefined, undefined, true, reminder.publish); return; }
       const actionContract = compileActionCompletionContract({ runId, request });
       if (state.actionCompletion !== undefined) {
         const restored = restoreActionCompletionLedger(state.actionCompletion, { runId, request });
@@ -3960,7 +3966,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         state.requestResolution = resolution;
         if (resolution.nextState) state.requestContext = resolution.nextState;
-        if ((state.writer || state.planner || state.document || state.site) && row.question) state.questionAnswer = { questionId: row.question.id, text: clean(input.text),
+        if ((state.writer || state.planner || state.document || state.site || hasReminderQuestion(state)) && row.question) state.questionAnswer = { questionId: row.question.id, text: clean(input.text),
           ...(input.answers ? { fields: Object.fromEntries(input.answers.map(answer => [answer.fieldId, clean(answer.value)])) } : {}) };
         state.trail.push({ step: state.steps, action: 'asked the user', result: `user answered: ${clean(input.text).slice(0, 400)}`, changed: true });
         state.failures = 0;
@@ -4002,7 +4008,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const chatModel = hasChatModel();
       const routing = decideRequestRoute({ text: clean(input.text), context: previousContext, turnId: runId, fullAccess: fullForRouting,
         capabilities: { browser: true, search: true, memory: Boolean(tools?.memory), adsModel: Boolean(config.adsModel),
-          computer: Boolean(tools?.computer), coding: Boolean(tools?.work?.code), chatModel, writerModel: chatModel, planner: true } });
+          computer: Boolean(tools?.computer), coding: Boolean(tools?.work?.code), chatModel, writerModel: chatModel, planner: true, reminders: Boolean(config.reminders) } });
       const resolution = routing.resolution;
       const previousSource: RequestScopeAssessment | null = previousContext?.sourceAssessment ?? (previousContext ? {
         version: 1, source: previousContext.scope === 'public' ? 'public_lookup' : previousContext.scope === 'private' ? 'prior_conversation' : 'unresolved',
