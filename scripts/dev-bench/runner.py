@@ -64,7 +64,7 @@ OVERRIDES = {
 APPLY_ADAPTERS = """
 import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-const [adapterFile, observer, version] = process.argv.slice(1);
+const [adapterFile, observer, version] = process.argv.slice(2);
 const { adaptObserver } = await import(pathToFileURL(adapterFile).href);
 const adapters = ['review', 'memory', ...(version === 'v2' ? ['clarification'] : [])];
 const source = readFileSync(observer, 'utf8');
@@ -207,16 +207,33 @@ def toolchain(
         inputs[f"executable/{name}"] = digest(path)
         versions[name] = subprocess.check_output([str(path), *args], env=environment, text=True).strip()
 
-    chromium = subprocess.check_output(
-        ["node", "--input-type=module", "-e", "import { chromium } from 'playwright'; console.log(chromium.executablePath());"],
+    browsers = subprocess.check_output(
+        ["node", "--input-type=module", "-e", """
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+const require = createRequire(import.meta.url);
+const core = dirname(require.resolve('playwright-core/package.json'));
+const { registry } = require(join(core, 'lib/coreBundle.js')).registry;
+for (const browser of ['chromium', 'chromium-headless-shell']) {
+  console.log(registry.findExecutable(browser).executablePath());
+}
+"""],
         cwd=checkout, env=environment, text=True,
-    ).strip()
-    chromium_path = Path(chromium)
-    if not chromium_path.is_file():
-        raise ValueError("Install the lockfile's Playwright Chromium build before running the benchmark")
-    inputs["executable/chromium"] = digest(chromium_path)
-    versions["chromium"] = subprocess.check_output([chromium, "--version"], env=environment, text=True).strip()
-    versions["chromiumBuild"] = next((part for part in chromium_path.parts if part.startswith("chromium-")), None)
+    ).splitlines()
+    for name, browser in zip(("chromium", "chromium-headless-shell"), browsers, strict=True):
+        path = Path(browser)
+        if not path.is_file():
+            raise ValueError("Install the lockfile's Playwright Chromium and headless shell before the benchmark")
+        inputs[f"executable/{name}"] = digest(path)
+        versions[name] = subprocess.check_output([browser, "--version"], env=environment, text=True).strip()
+    versions["chromiumBuild"] = Path(browsers[0]).parent.parent.name
+    libraries = subprocess.check_output(["ldconfig", "-p"], env=environment, text=True)
+    for line in libraries.splitlines():
+        if line.strip().startswith("libseccomp.so.2 ") and " => " in line:
+            inputs["library/libseccomp.so.2"] = digest(Path(line.rsplit(" => ", 1)[1]))
+            break
+    else:
+        raise ValueError("Development benchmark requires libseccomp.so.2")
     return versions
 
 
@@ -279,7 +296,7 @@ def run_arm(
                 mounted += install_inputs(repo, checkout, ADAPTERS, (adapter_path,), inputs, version)
                 runner = checkout / BENCH / "run.ts"
                 observe = checkout / BENCH / "observe.ts"
-                subprocess.run(["node", "--input-type=module", "-e", APPLY_ADAPTERS,
+                subprocess.run(["node", "--input-type=module", "-e", APPLY_ADAPTERS, "dev-bench-adapter",
                                 str(checkout / adapter_path), str(observe), version],
                                cwd=checkout, env=environment, check=True)
                 instrument_runner(runner, version)
