@@ -1,0 +1,23 @@
+[Unit]
+Description=Verify the newest Mohassan PostgreSQL backup with a temporary restore
+Requires=postgresql@18-main.service
+After=postgresql@18-main.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=/
+ExecStart=/usr/local/sbin/mohassan-db-restore-drill
+TimeoutStartSec=1h
+TimeoutStopSec=2min
+KillMode=mixed
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/backups/mohassan/daily /var/lib/mohassan-backup-status

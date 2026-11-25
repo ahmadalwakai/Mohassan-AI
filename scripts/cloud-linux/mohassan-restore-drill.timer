@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule the weekly Mohassan PostgreSQL restore drill
+
+[Timer]
+OnCalendar=Sun *-*-* 05:00:00 UTC
+Persistent=true
+Unit=mohassan-restore-drill.service
+
+[Install]
+WantedBy=timers.target
