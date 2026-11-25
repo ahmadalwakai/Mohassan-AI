@@ -1,11 +1,13 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { AgentBrowser } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
+import { parseDesktopCommand } from '@mohassan/desktop';
 import { inspectCascade } from '../apps/server/src/assistant/deliberation/cascade.js';
 import { projectRunDeliberation } from '../apps/server/src/assistant/deliberation/run-ledger.js';
 import { configureDeliberation } from '../apps/server/src/assistant/deliberation/settings.js';
 import { decideRequestRoute } from '../apps/server/src/assistant/routing-decision.js';
-import { createCommandChatControl, type CommandChatConfig } from '../apps/server/src/command-chat.js';
+import { gateRefusalText } from '../apps/server/src/assistant/run-plans.js';
+import { createCommandChatControl, type CommandChatConfig, type DesktopChatPort } from '../apps/server/src/command-chat.js';
 import corpus from './fixtures/deliberation/clinc150.json';
 
 // Existing repository regression messages and CLINC150 utterances.
@@ -101,6 +103,95 @@ describe('phase 1 deliberation on command chat', () => {
     expect(deliberation).toMatchObject({ chosen: { action: 'abstain' }, enforced: true });
     expect(external).toEqual([]);
     expect(browserCalls).toEqual([]);
+  });
+
+  it('lets the configured desktop parser identify and dispatch a local read', async () => {
+    const goal = 'Inspect my local bench inventory.';
+    expect(parseDesktopCommand(goal)).toBeNull();
+    const command = { kind: 'file_list', path: 'instrument-locker' } as const;
+    const execute = vi.fn<DesktopChatPort['execute']>(async () => ({ status: 'completed', text: 'Found an instrument index.' }));
+    const { request, external, browserCalls } = await isolated({ desktop: {
+      parse: text => text === goal ? { command, text, mutating: false, lang: 'en' } : null,
+      describe: () => 'Read the inventory directory', execute,
+    } }, { enabled: true });
+
+    const { detail, deliberation, status } = await request(goal);
+    expect(status).toBe('completed');
+    expect(detail.messages.at(-1)?.text).toContain('Found an instrument index.');
+    expect(deliberation).toMatchObject({ enforced: false, legacy: { action: 'act', handler: 'desktop', route: 'pc' } });
+    expect(execute).toHaveBeenCalledExactlyOnceWith(command, expect.objectContaining({ approved: false }));
+
+    const rejected = 'List files in Documents.';
+    expect(parseDesktopCommand(rejected)).not.toBeNull();
+    const refused = await request(rejected);
+    expect(refused.deliberation?.candidates.map(candidate => candidate.handler)).not.toContain('desktop');
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(external).toEqual([]);
+    expect(browserCalls).toEqual([]);
+  });
+
+  it('keeps a recognized desktop mutation on the host approval path', async () => {
+    const execute = vi.fn<DesktopChatPort['execute']>(async (_command, { approved }) => approved
+      ? { status: 'completed', text: 'Moved the preset to the recycle bin.' }
+      : { status: 'needs_approval', text: 'This needs approval.', approval: {
+        prompt: 'Move the outdated preset to the recycle bin?', detail: 'The file will stay recoverable.', label: 'Move preset',
+      } });
+    const { request, read, control, external } = await isolated({ desktop: {
+      parse: parseDesktopCommand, describe: () => 'Move the preset to the recycle bin', execute,
+    } }, { enabled: true });
+
+    const waiting = await request('Delete the file stale-preset.ini in Documents.');
+    expect(waiting.detail.status).toBe('waiting_approval');
+    expect(waiting.detail.question).toBeNull();
+    expect(waiting.deliberation).toMatchObject({ enforced: false, legacy: { action: 'act', handler: 'desktop', route: 'pc' } });
+    expect(execute).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ kind: 'file_delete', path: 'stale-preset.ini' }),
+      expect.objectContaining({ approved: false }));
+    const { approval } = waiting.detail;
+    if (!approval) throw new Error('Expected a desktop approval card.');
+    await control.approve(owner, waiting.detail.id, { approvalId: approval.id, approved: true });
+
+    const finished = await read(waiting.detail.id);
+    expect(finished.status).toBe('completed');
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'file_delete', path: 'stale-preset.ini' }),
+      expect.objectContaining({ approved: true }));
+    expect(external).toEqual([]);
+  });
+
+  it('explains an account restriction without dispatching a tool', async () => {
+    const execute = vi.fn<DesktopChatPort['execute']>(async () => { throw new Error('A restricted account cannot use this adapter.'); });
+    const { request, external, browserCalls } = await isolated({ fullAccess: async () => false, desktop: {
+      parse: parseDesktopCommand, describe: () => 'Read the local settings file', execute,
+    } }, { enabled: true });
+
+    const { detail, deliberation, status } = await request('Read the file panel-layout.txt on my computer.');
+    expect(status).toBe('blocked');
+    expect(detail.question).toBeNull();
+    expect(detail.messages.at(-1)?.text).toBe(gateRefusalText('actor_not_allowed', 'en'));
+    expect(deliberation).toMatchObject({ enforced: true, chosen: { action: 'abstain' }, reasons: ['restricted'] });
+    expect(execute).not.toHaveBeenCalled();
+    expect(external).toEqual([]);
+    expect(browserCalls).toEqual([]);
+  });
+
+  it('leaves document fields and document-specific limits to the host', async () => {
+    const documentIO = vi.fn(async () => { throw new Error('These PDF requests need an answer before any I/O.'); });
+    const { request, external } = await isolated({ documents: {
+      control: { create: documentIO, edit: documentIO, list: documentIO, content: documentIO, readLocal: documentIO, info: documentIO },
+      link: id => `/api/documents/${id}/content`,
+    } }, { enabled: true });
+
+    const draft = await request('Make a PDF about instrument maintenance.');
+    expect(draft.detail.status).toBe('waiting_user');
+    expect(draft.detail.question?.fields?.map(field => field.id)).toEqual(['title', 'content', 'style']);
+    expect(draft.deliberation).toMatchObject({ enforced: false });
+
+    const edit = await request('Delete pages from the latest PDF.');
+    expect(edit.status).toBe('blocked');
+    expect(edit.detail.messages.at(-1)?.text).toContain('Name their numbers');
+    expect(edit.deliberation).toMatchObject({ enforced: false });
+    expect(documentIO).not.toHaveBeenCalled();
+    expect(external).toEqual([]);
   });
 
   it('keeps a mixed private sequence out of public search', async () => {

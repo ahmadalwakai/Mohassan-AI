@@ -1,4 +1,4 @@
-import { parseDesktopCommand } from '@mohassan/desktop';
+import type { DesktopChatPort } from '../../command-chat.js';
 import { shorterRequest } from '../answer-reshape.js';
 import { looksEnglishRequest } from '../ads-model-chat.js';
 import { directRoute, type BrainState } from '../brain.js';
@@ -48,7 +48,8 @@ export interface CascadeInput {
   state?: Partial<BrainState>;
   history?: readonly CascadeTurn[];
   previousStates?: readonly Partial<BrainState>[];
-  configured?: Partial<Record<'desktop' | 'computer' | 'documents' | 'sites' | 'memory' | 'knowledge' | 'skills' | 'inventory' | 'ads' | 'mind' | 'chatModel', boolean>>;
+  configured?: Partial<Record<'computer' | 'documents' | 'sites' | 'memory' | 'knowledge' | 'skills' | 'inventory' | 'ads' | 'mind' | 'chatModel', boolean>>;
+  desktop?: Pick<DesktopChatPort, 'parse'>;
   fullAccess?: boolean;
   pendingCard?: boolean;
   browserPage?: boolean;
@@ -141,8 +142,8 @@ export function inspectCascade(input: CascadeInput): { predicates: PredicateCand
   match('verify_memory', verify, { eligible: verify?.allowed === true && requestCapabilityAllowed(allowed, 'memory_read') });
   match('save_fact', fact.candidate, { eligible: requestCapabilityAllowed(allowed, 'memory_write'),
     legacy: !configured.chatModel || fact.status !== 'ready' || fact.statementKind !== 'current_declaration' });
-  const desktop = configured.desktop && desktopFresh && !configured.chatModel && fullAccess && !/https?:\/\/|\bwww\./iu.test(action)
-    ? parseDesktopCommand(action) : null;
+  const desktop = desktopFresh && !configured.chatModel && fullAccess && !/https?:\/\/|\bwww\./iu.test(action)
+    ? input.desktop?.parse(action) : null;
   match('desktop', desktop && requestCapabilityAllowed(allowed, desktop.mutating ? 'computer_action' : 'computer_read'));
   match('local_computer', !configured.chatModel && planLocalComputerRead(text), { eligible: fullAccess && !!configured.computer });
   match('browser_review', input.hostIntent === 'review_browser');
