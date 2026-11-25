@@ -66,7 +66,7 @@ function concentration(histogram: Float64Array, window: number, samples: number)
   return Math.max(0, (peak / samples - uniform) / (1 - uniform));
 }
 
-function forecast(state: MonitorScheduleState | null | undefined, now: number): ((at: number) => number) | undefined {
+function forecast(state: MonitorScheduleState | null | undefined, now: number) {
   if (!state || (!state.publications.length && !state.windows.length)) return;
   const daily = new Float64Array(day / phaseStep);
   const weekly = new Float64Array(week / phaseStep);
@@ -96,16 +96,25 @@ function forecast(state: MonitorScheduleState | null | undefined, now: number): 
   const dailyWeight = days.size >= 2 ? 0.75 * (1 - weeklyStrength) * concentration(daily, 4 * hour / phaseStep, samples) : 0;
   if (!weeklyWeight && !dailyWeight && recent < 2) return;
   const uniformWeight = 1 - dailyWeight - weeklyWeight;
-  return at => {
+  const density = (at: number) => {
     const dailyDensity = dailyWeight ? dailyWeight * daily[phaseBin(at, day)] * daily.length / samples : 0;
     const weeklyDensity = weeklyWeight ? weeklyWeight * weekly[phaseBin(at, week)] * weekly.length / samples : 0;
     // Two nearby changes are enough to consider a short burst, with a half-life of one quiet interval.
     const burst = recent > 1 ? Math.min(1, (recent - 1) / 2) * 2 ** (-(at - now) / recentHorizon) : 0;
     return uniformWeight + dailyDensity + weeklyDensity + burst;
   };
+  // Require three timestamped releases across two weekly cycles before deferring exploratory checks.
+  const publicationSpan = (state.publications.at(-1) ?? now) - (state.publications[0] ?? now);
+  const trustedWeekly = recent < 2 && state.publications.length >= 3 && publicationSpan >= 2 * week - day && weeklyStrength >= 0.75;
+  const currentBin = phaseBin(now, week);
+  let quietWeekly = trustedWeekly;
+  for (let offset = 0; quietWeekly && offset <= day / phaseStep; offset++) {
+    quietWeekly = weekly[(currentBin + offset) % weekly.length] <= samples / weekly.length;
+  }
+  return { density, quietWeekly };
 }
 
-function quietAllowance(lifetime: number, initial: number): number {
+function crossingAllowance(lifetime: number, initial: number): number {
   let elapsed = 0;
   let count = 0;
   let interval = initial;
@@ -178,8 +187,11 @@ export function nextPredictiveMonitorCheck(spec: ScheduleSpec, at: Date, {
   }
   if (hardRemaining <= 0 || end - now <= floor) return result(end);
   // A brief weather excursion can revert before the next check. Use the responsive cadence until publication timing is known.
-  if (spec.source.kind === 'weather' && (spec.condition?.kind === 'crossing' || spec.condition?.kind === 'threshold')
-    && (state?.publications.length ?? 0) < 2) {
+  const crossing = spec.condition?.kind === 'crossing' || spec.condition?.kind === 'threshold';
+  const transientWeather = spec.source.kind === 'weather' && crossing && (state?.publications.length ?? 0) < 2;
+  // A queued run can complete before a cadence can be learned. Keep its initial backoff until a transition is observed.
+  const coldRun = spec.source.kind === 'run' && !state?.changes;
+  if (transientWeather || coldRun) {
     return nextMonitorCheck(spec, at, priorIntervalMs ?? spec.timing.initialIntervalMs, { changed: !checksUsed || failed || changed, expiry });
   }
   if (deadlineWindow <= now) return result(now + Math.max(floor, Math.floor((latestCheck - now) / hardRemaining)));
@@ -188,7 +200,9 @@ export function nextPredictiveMonitorCheck(spec: ScheduleSpec, at: Date, {
   const minimumChecks = Math.ceil((planningEnd - now) / MONITOR_LIMITS.maxIntervalMs);
   const deadlineChecks = Math.max(0, Math.floor((latestCheck - deadlineWindow) / floor));
   const availableBeforeDeadline = Math.max(1, hardRemaining - Math.min(deadlineChecks, Math.max(0, hardRemaining - minimumChecks)));
-  const quiet = quietAllowance(spec.timing.lifetimeMs, spec.timing.initialIntervalMs);
+  // A measured crossing can disappear between reads. Keep its quick-start checks as additional planning capacity.
+  const quiet = crossing ? crossingAllowance(spec.timing.lifetimeMs, spec.timing.initialIntervalMs)
+    : Math.ceil(spec.timing.lifetimeMs / MONITOR_LIMITS.maxIntervalMs) + 1;
   const reserve = Math.max(0, spec.timing.maxChecks - quiet);
   const history = state?.publications.filter(time => time < state.firstAt) ?? [];
   const historyExposure = state && history.length > 1 ? state.firstAt - history[0] : 0;
@@ -206,10 +220,13 @@ export function nextPredictiveMonitorCheck(spec: ScheduleSpec, at: Date, {
   if (state?.windows.at(-1)?.to === now && remaining > minimumChecks) {
     return result(Math.min(deadlineWindow, now + spec.timing.initialIntervalMs));
   }
+  const prediction = forecast(state, now);
+  if (spec.condition?.kind === 'new-item' && prediction?.quietWeekly) {
+    return result(Math.min(planningEnd, now + MONITOR_LIMITS.maxIntervalMs));
+  }
   const gap = Math.max(floor, Math.min(MONITOR_LIMITS.maxIntervalMs, Math.floor((planningEnd - now) / remaining)));
   const count = Math.min(remaining, Math.ceil(day / gap));
   const horizon = Math.min(planningEnd, now + gap * count);
-  const density = forecast(state, now);
-  const due = density ? planFirstCheck(now, horizon, count, floor, density) : now + gap;
+  const due = prediction ? planFirstCheck(now, horizon, count, floor, prediction.density) : now + gap;
   return result(Math.min(deadlineWindow, due));
 }

@@ -39,7 +39,7 @@ describe('predictive smart monitor schedules', () => {
     expect(confirmed.lastAt).toBe(offset(3 * hour).getTime());
   });
 
-  it('uses the same quiet-work allowance as v1 and visits the entire lifetime within the six-hour cap', () => {
+  it('saves quiet checks and visits the entire lifetime within the six-hour cap', () => {
     const spec = pageSpec();
     const expiry = monitorExpiry(spec.timing, now);
     let at = now;
@@ -65,9 +65,10 @@ describe('predictive smart monitor schedules', () => {
       legacyInterval = next.intervalMs;
       legacyChecks++;
     }
-    expect(checks).toBe(legacyChecks);
+    expect(checks).toBeLessThan(legacyChecks);
     expect(at.getTime()).toBeGreaterThanOrEqual(legacyAt.getTime());
     expect(at.getTime()).toBeLessThan(expiry.getTime());
+    expect(expiry.getTime() - at.getTime()).toBeLessThanOrEqual(MONITOR_LIMITS.maxIntervalMs);
   });
 
   it('moves work near a learned publication phase and reduces that preference on other weekdays', () => {
@@ -85,6 +86,7 @@ describe('predictive smart monitor schedules', () => {
     expect(daily).toBeLessThan(weeklyTomorrow);
     expect(weeklyToday).toBeGreaterThan(publication);
     expect(weeklyToday).toBeLessThan(weeklyTomorrow);
+    expect(weeklyTomorrow - now.getTime()).toBe(MONITOR_LIMITS.maxIntervalMs);
     // A forecast from one monitor never influences the next monitor's cold start.
     expect(nextPredictiveMonitorCheck(spec, now, { expiry, checksUsed: 0 }).intervalMs).toBe(spec.timing.initialIntervalMs);
   });
@@ -139,6 +141,25 @@ describe('predictive smart monitor schedules', () => {
       current = next.dueAt;
       priorIntervalMs = next.intervalMs;
       state = learnMonitorSchedule(state, current, { changed });
+    }
+  });
+
+  it('preserves the early backoff of a run before any status change is known', () => {
+    const spec: MonitorSpec = {
+      ...pageSpec(), source: { kind: 'run', runId: '00000000-0000-4000-8000-000000000001' },
+      condition: { kind: 'equals', value: 'completed' }, read: { kind: 'status' }, timing: monitorTiming('run', 'normal', { now }),
+    };
+    const expiry = monitorExpiry(spec.timing, now);
+    let at = now;
+    let priorIntervalMs = spec.timing.initialIntervalMs;
+    let state = learnMonitorSchedule(undefined, now, { changed: false });
+    for (let checksUsed = 0; checksUsed < 5; checksUsed++) {
+      const expected = nextMonitorCheck(spec, at, priorIntervalMs, { changed: !checksUsed, expiry });
+      const next = nextPredictiveMonitorCheck(spec, at, { state, expiry, checksUsed, priorIntervalMs });
+      expect(next).toEqual(expected);
+      at = next.dueAt;
+      priorIntervalMs = next.intervalMs;
+      state = learnMonitorSchedule(state, at, { changed: false });
     }
   });
 });
