@@ -7,6 +7,13 @@ import { expect, it } from 'vitest';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const development = join(root, 'tests/fixtures/agent-capability-bench/development.json');
 const base = '2d171b0dce3ab9eac4721aee0a6b6d0f436d2a64';
+// These two files were absent from the follow-up base and arrived in the
+// earlier small-talk merge. Count only occurrences beyond that reviewed revision.
+const mannersBase = 'f50520112a23632ec4f6e4a121018077d1c422be';
+const mannersPaths = new Set([
+  'apps/server/src/assistant/manners/replies.ts',
+  'tests/fixtures/manners-development.ts',
+]);
 const benchmarkTests = new Set([
   'tests/agent-capability-corpus.test.ts',
   'tests/agent-capability-observe.test.ts',
@@ -65,7 +72,8 @@ it.skipIf(!existsSync(development))('does not introduce frozen development case 
     if (!matches.length) continue;
 
     // Some inputs already occur in the base. Count only occurrences introduced by this work.
-    const previous = spawnSync('git', ['show', `${base}:${path}`], {
+    const sourceBase = mannersPaths.has(path) ? mannersBase : base;
+    const previous = spawnSync('git', ['show', `${sourceBase}:${path}`], {
       cwd: root,
       encoding: 'utf8',
       maxBuffer: bytes.length * 2 + 1024 * 1024,

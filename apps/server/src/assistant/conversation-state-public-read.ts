@@ -40,8 +40,9 @@ export function planPublicConversationRead(input: {
   // Jurisdiction-wide attributes inherit the place asked about, even if the previous answer named its capital.
   const jurisdiction = topic?.property === 'capital' && attribute && (LOCATIVE.test(request) || implicitPlural || samePropertySubject
     || decision.type === 'follow_up' && decision.reasons.includes('explicit_reference'));
+  // A generic list title can be part of a specific subject's name.
   const referencesSubject = decision.type === 'follow_up' && decision.references.length === 1
-    && decision.references.every(reference => contains(words(reference.text), title));
+    && decision.references.every(reference => words(reference.text) === title);
   const workKind = WORK_KIND.exec(request)?.slice(1).find(Boolean);
   const describesSubject = (workKind || WORK_EVENT.test(request)) && found.lines.some(line => {
     const evidence = typeof line === 'string' ? words(line) : '';
