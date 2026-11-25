@@ -24,8 +24,7 @@ async function showPush(data) {
       || typeof payload.runId !== 'string' || !conversationIdPattern.test(payload.runId) || !payload.conversationId)) return;
 
   const url = `/api/notifications/events/${encodeURIComponent(payload.taskId)}`;
-  const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' }).catch(() => null);
-  if (response?.status !== 204) return;
+  if (!await ownsNotification(url, Boolean(payload.runKind))) return;
 
   if (payload.runKind) return showBackgroundPush(payload, title, url);
   await self.registration.showNotification(title, {
@@ -35,6 +34,20 @@ async function showPush(data) {
     dir: 'rtl',
     lang: 'ar',
   });
+}
+
+async function ownsNotification(url, background) {
+  const attempts = background ? 3 : 1;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const response = await fetch(url, {
+      credentials: 'same-origin', cache: 'no-store',
+      ...(background && typeof AbortSignal.timeout === 'function' && { signal: AbortSignal.timeout(3_000) }),
+    }).catch(() => null);
+    if (response?.status === 204) return true;
+    if (response && response.status < 500 && response.status !== 429) return false;
+    if (attempt + 1 < attempts) await new Promise(resolve => setTimeout(resolve, 500 * 2 ** attempt));
+  }
+  return false;
 }
 
 async function showBackgroundPush(payload, fallbackTitle, eventPath) {

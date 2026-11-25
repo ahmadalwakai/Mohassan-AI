@@ -24,7 +24,7 @@ function startWorker({
   const showNotification = vi.fn();
   const fetch = vi.fn(async () => ({ status }));
   runInNewContext(workerScript, {
-    URL, Response, fetch,
+    URL, Response, AbortSignal, setTimeout, fetch,
     self: {
       location: { origin },
       clients: { matchAll: async () => windows, openWindow },
@@ -127,6 +127,20 @@ describe('web push worker', () => {
     await restarted.dispatch('push', push);
     expect(restarted.fetch).toHaveBeenCalledOnce();
     expect(restarted.showNotification).not.toHaveBeenCalled();
+  });
+
+  it('retries a background notification ownership check when the server is restarting', async () => {
+    const worker = startWorker();
+    worker.fetch.mockResolvedValueOnce({ status: 503 });
+    const push = { data: { json: () => ({ ...task, runId: taskId, runKind: 'run-blocked' }) } };
+    await worker.dispatch('push', push);
+    expect(worker.fetch).toHaveBeenCalledTimes(2);
+    expect(worker.showNotification).toHaveBeenCalledOnce();
+
+    const unauthorized = startWorker({ status: 404 });
+    await unauthorized.dispatch('push', push);
+    expect(unauthorized.fetch).toHaveBeenCalledOnce();
+    expect(unauthorized.showNotification).not.toHaveBeenCalled();
   });
 });
 
