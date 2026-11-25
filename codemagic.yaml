@@ -18,6 +18,7 @@ workflows:
           mkdir -p "$CM_BUILD_DIR/build/checks"
           xcrun --sdk macosx swiftc \
             -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
+            "$CM_BUILD_DIR/apps/ios/Wasla/MonitorModels.swift" \
             "$CM_BUILD_DIR/apps/ios/Wasla/Models.swift" \
             "$CM_BUILD_DIR/apps/ios/Tools/CloudChecks.swift" \
             -o "$CM_BUILD_DIR/build/checks/cloud-checks"
@@ -98,6 +99,7 @@ workflows:
           mkdir -p "$CM_BUILD_DIR/build/checks"
           xcrun --sdk macosx swiftc \
             -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
+            "$CM_BUILD_DIR/apps/ios/Wasla/MonitorModels.swift" \
             "$CM_BUILD_DIR/apps/ios/Wasla/Models.swift" \
             "$CM_BUILD_DIR/apps/ios/Tools/CloudChecks.swift" \
             -o "$CM_BUILD_DIR/build/checks/cloud-checks"

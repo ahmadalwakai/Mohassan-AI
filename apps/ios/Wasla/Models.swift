@@ -218,6 +218,23 @@ struct ChatBrowser: Decodable {
 struct ChatCapabilities: Decodable, Equatable {
     let chatModel: Bool
     let available: [String]
+    let smartMonitors: Bool?
+
+    init(chatModel: Bool, available: [String], smartMonitors: Bool? = nil) {
+        self.chatModel = chatModel
+        self.available = available
+        self.smartMonitors = smartMonitors
+    }
+
+    private enum CodingKeys: String, CodingKey { case chatModel, available, smartMonitors }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        chatModel = try container.decode(Bool.self, forKey: .chatModel)
+        available = try container.decode([String].self, forKey: .available)
+        smartMonitors = try? container.decode(Bool.self, forKey: .smartMonitors)
+    }
+
     static let labels: [String: String] = [
         "computation": "الحساب", "web": "البحث في الويب", "browser": "فتح الصفحات وقراءتها", "memory": "الذاكرة", "knowledge": "مستنداتك المحفوظة",
         "documents": "ملفات PDF", "sites": "بناء المواقع", "skills": "المهارات المفعّلة", "planner": "تخطيط الأسبوع", "letters": "قوالب الرسائل",
@@ -255,6 +272,35 @@ struct ChatConversation: Decodable, Identifiable {
     /// A mark of this view; `?since=<version>&wait=<ms>` answers once it changes. Absent from older servers.
     let version: String?
     let olderMessages: Int?
+    var monitorProposal: MonitorCard?
+    var monitors: [MonitorCard]?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, status, updatedAt, messages, question, approval, secure, browser, progress, steps, error
+        case capabilities, version, olderMessages, monitorProposal, monitors
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        status = try container.decode(String.self, forKey: .status)
+        updatedAt = try container.decode(String.self, forKey: .updatedAt)
+        messages = try container.decode([ChatMessage].self, forKey: .messages)
+        question = try container.decodeIfPresent(ChatQuestion.self, forKey: .question)
+        approval = try container.decodeIfPresent(ChatApproval.self, forKey: .approval)
+        secure = try container.decodeIfPresent(ChatSecure.self, forKey: .secure)
+        browser = try container.decodeIfPresent(ChatBrowser.self, forKey: .browser)
+        progress = try container.decodeIfPresent(String.self, forKey: .progress)
+        steps = try container.decode([ChatStep].self, forKey: .steps)
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+        capabilities = try container.decodeIfPresent(ChatCapabilities.self, forKey: .capabilities)
+        version = try container.decodeIfPresent(String.self, forKey: .version)
+        olderMessages = try container.decodeIfPresent(Int.self, forKey: .olderMessages)
+        monitorProposal = try? container.decode(MonitorCard.self, forKey: .monitorProposal)
+        monitors = try? container.decodeMonitorCards(forKey: .monitors)
+    }
+
     var working: Bool { status == ChatStatus.running }
     /// A card answers the assistant now: a question, an approval or a secure step.
     var waiting: Bool { [ChatStatus.waitingUser, ChatStatus.waitingApproval, ChatStatus.waitingInput].contains(status) }
