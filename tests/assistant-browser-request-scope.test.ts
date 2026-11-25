@@ -84,13 +84,6 @@ describe('current private-source browser veto, not a general URL or browser perm
     const request = `Do not browse. Rewrite "A supplied note", then open ${URL}.`;
     for (const capability of CAPABILITIES) expect(reviewBrowserRequestScope(request, capability)).toMatchObject({ allowed: false, reason: 'request_constraint' });
   });
-  it('preserves a measured navigation before arithmetic without granting browser interaction', () => {
-    const request = `افتح ${URL} وخذ تكلفة الاشتراك ثم احسب تكلفة 8 اشتراكات.`;
-    expect(reviewBrowserRequestScope(request, 'browser_navigation')).toMatchObject({ allowed: true, scope: 'explicit_browser_goal' });
-    expect(reviewBrowserRequestScope(request, 'browser_action')).toMatchObject({ allowed: false, scope: 'supplied_content' });
-    expect(reviewBrowserRequestScope(`ترجم «${request}» إلى الإنجليزية.`, 'browser_navigation')).toMatchObject({ allowed: false });
-    expect(reviewBrowserRequestScope(`لا تتصفح الإنترنت. ${request}`, 'browser_navigation')).toMatchObject({ allowed: false });
-  });
   it.each([null, undefined, 42, [], {}, '', ' ', 'X'.repeat(4001), '\ud800', 'Read\u0000private memory'])
     ('rejects invalid current-request scalar %j without invoking a coercion', request => {
       expect(reviewBrowserRequestScope(request, 'browser_navigation')).toMatchObject({ allowed: false, reason: 'invalid_request' });

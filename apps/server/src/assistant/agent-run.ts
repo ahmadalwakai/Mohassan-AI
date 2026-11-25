@@ -301,17 +301,17 @@ export function setStepAuthorization(ledger: RunLedger, id: string, authorizatio
 }
 
 /** Records host-observed evidence once (same kind, reference and label); the oldest give way past the bound. */
-export function addEvidence(ledger: RunLedger, input: { stepId?: string | null; kind: EvidenceKind; label: string; reference?: string | null; observedAt?: number; independent?: boolean }, at: number, scope?: 'step'): EvidenceRecord | null {
+export function addEvidence(ledger: RunLedger, input: { stepId?: string | null; kind: EvidenceKind; label: string; reference?: string | null; observedAt?: number; independent?: boolean }, at: number): EvidenceRecord | null {
   const label = clip(input.label.replace(/\s+/gu, ' ').trim(), 200);
   if (!label) return null;
   const reference = input.reference ? clip(input.reference, 500) : null;
-  const existing = ledger.evidence.find(item => item.kind === input.kind && item.reference === reference && item.label === label && (scope !== 'step' || item.stepId === (input.stepId ?? null)));
+  const existing = ledger.evidence.find(item => item.kind === input.kind && item.reference === reference && item.label === label);
   if (existing) return existing;
   // Only the host's own deterministic checks and observations can be independent; a tool's report, a user's
   // statement and model text never are, whatever the caller says.
   const independent = Boolean(input.independent) && ['observation', 'computation', 'readback', 'source'].includes(input.kind);
   const record = EvidenceRecordSchema.parse({
-    id: createHash('sha256').update(`${ledger.runId}\n${input.kind}\n${reference ?? ''}\n${label}${scope === 'step' ? `\n${input.stepId ?? ''}` : ''}`).digest('hex').slice(0, 16),
+    id: createHash('sha256').update(`${ledger.runId}\n${input.kind}\n${reference ?? ''}\n${label}`).digest('hex').slice(0, 16),
     stepId: input.stepId ?? null, kind: input.kind, label, reference, observedAt: iso(input.observedAt ?? at), independent,
   });
   ledger.evidence.push(record);
