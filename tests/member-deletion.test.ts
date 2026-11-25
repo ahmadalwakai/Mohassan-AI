@@ -246,9 +246,11 @@ describe('member deletion', () => {
       expect(await db().selectFrom('chat_messages').select('id').where('conversation_id', '=', conversationId).execute()).toHaveLength(0);
       expect(await db().selectFrom('chat_messages').select('id').where('conversation_id', '=', otherConversation).execute()).toHaveLength(1);
       for (const [table, row] of Object.entries(platform.exportedRows)) {
-        const accountColumn = 'sharer_id' in row ? 'sharer_id' : 'user_id';
+        const accountColumn = 'owner_id' in row ? 'owner_id' : 'sharer_id' in row ? 'sharer_id' : 'user_id';
         expect(await db().selectFrom(table).select(accountColumn).where(accountColumn, '=', purgedId).execute(), table).toEqual([]);
       }
+      expect(await db().selectFrom('memory_structured_operations').select('run_id')
+        .where('owner_id', '=', purgedId).execute()).toEqual([]);
       expect(await db().selectFrom('user').select('id').where('id', '=', purgedId).executeTakeFirst()).toBeDefined();
       expect((await db().selectFrom('member_deletion_requests').select('started_at').where('user_id', '=', purgedId).executeTakeFirstOrThrow()).started_at).toBeTruthy();
       expect(await db().selectFrom('session').select('id').where('userId', '=', purgedId).execute()).toHaveLength(0);

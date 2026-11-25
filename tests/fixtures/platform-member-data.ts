@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
+import { createMemoryControl } from '@mohassan/memory';
 
 // Fixtures use the source schemas for the three features (retrieved 2026-11-25).
 // https://github.com/ahmadalwakai/Mohassan-AI/blob/ae8b33121f312fce5a75e32fb7a21ac64946d7b6/packages/database/src/notifications-migration.ts
@@ -20,7 +21,19 @@ export async function addPlatformMemberData(db: Kysely<any>, userId: string, con
   const keys = { p256dh: randomBytes(32).toString('base64url'), auth: randomBytes(16).toString('base64url') };
   const text = `Reminder fixture for ${userId}`;
   const title = `Share fixture for ${userId}`;
+  const memory = await createMemoryControl(db).create(userId, {
+    layer: 'semantic', title: 'Structured memory fixture', content: `Memory fixture for ${userId}`,
+  });
+  const memoryVersion = {
+    item_id: memory.id, owner_id: userId, conversation_id: conversationId,
+    subject: 'fixture', property: 'stored fact', value: memory.content,
+  };
   await db.transaction().execute(async tx => {
+    await tx.insertInto('memory_structured_versions').values(memoryVersion).execute();
+    await tx.insertInto('memory_structured_operations').values({
+      owner_id: userId, run_id: randomUUID(), conversation_id: conversationId,
+      intent_hash: createHash('sha256').update(memory.id).digest('hex'), outcome: 'saved', item_id: memory.id,
+    }).execute();
     await tx.insertInto('notification_preferences').values({ user_id: userId, hide_title: true }).execute();
     await tx.insertInto('push_subscriptions').values({ id: pushId, user_id: userId, endpoint, ...keys, label: 'Fixture' }).execute();
     await tx.insertInto('notification_tabs').values({ user_id: userId, tab_id: tabId, visible: false, expires_at: now }).execute();
@@ -47,6 +60,7 @@ export async function addPlatformMemberData(db: Kysely<any>, userId: string, con
     token, dueAt, deliveryKey, pushId, taskId, shareId,
     secrets: [token, tokenHash, endpoint, ...Object.values(keys)],
     exportedRows: {
+      memory_structured_versions: memoryVersion,
       notification_preferences: { user_id: userId, hide_title: true },
       push_subscriptions: { user_id: userId, id: pushId },
       notification_tabs: { user_id: userId, tab_id: tabId },

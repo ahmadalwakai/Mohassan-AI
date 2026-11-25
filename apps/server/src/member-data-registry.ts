@@ -143,6 +143,8 @@ export const memberDataRegistry: readonly AccountDataTable[] = [
   owned('memory_skill_versions', 'id family_id owner_id version revision name description manifest manifest_hash status evidence_ids created_at updated_at'),
   owned('memory_skill_families', 'id owner_id name active_skill_id revision'),
   owned('memory_exact_operations', false),
+  owned('memory_structured_operations', false),
+  owned('memory_structured_versions', 'item_id owner_id conversation_id subject property value valid_since valid_until'),
   owned('memory_feedback', 'id owner_id task_id kind comment rating persisted_preference created_at'),
   owned('memory_items', 'id root_id owner_id version layer title content status confidence confidence_kind task_id expires_at created_at updated_at'),
   owned('memory_evidence', 'id owner_id kind description task_id event_id content_hash trust status observed_at expires_at'),
