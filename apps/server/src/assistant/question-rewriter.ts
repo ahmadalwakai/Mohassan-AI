@@ -1,7 +1,3 @@
-import { rewriteEnglishEllipsis } from './followup-english-ellipsis.js';
-import { buildEnglishReferentResolver } from './followup-english-referents.js';
-import { maskRequestLiteralData } from './request-constraints.js';
-
 export interface QuestionHistoryTurn {
   question: string;
   answer?: string;
@@ -109,26 +105,22 @@ function englishEntity(reference: string, context: EnglishContext, question: str
   return questionNames[0] || specificSection || article || answerNames[0] || names[0] || '';
 }
 
-function resolveEnglishReferences(question: string, context: EnglishContext, focus?: ReturnType<typeof buildEnglishReferentResolver>): string {
+function resolveEnglishReferences(question: string, context: EnglishContext): string {
   const quotations = Array.from(question.matchAll(/["“][^"”]+["”]/gu));
-  const outer = focus ? maskRequestLiteralData(question) : question;
   const introduced = new Set<string>();
   return question.replace(ENGLISH_REFERENCE, (raw: string, position: number) => {
-    if (outer.slice(position, position + raw.length) !== raw
-      || quotations.some(match => position > match.index && position < match.index + match[0].length)) return raw;
+    if (quotations.some(match => position > match.index && position < match.index + match[0].length)) return raw;
     const reference = raw.toLowerCase();
     const before = question.slice(0, position);
     const after = question.slice(position + raw.length);
-    const focused = focus?.(reference, before, after);
-    if (focused === '') return raw;
     // Relative clauses, complementizers and demonstrative determiners have a stated referent.
     if (reference === 'that' && (/^['’]s\b/iu.test(after)
       || /\b(?:say|said|think|thought|know|knew|believe|believed|mean|meant|show|showed|ensure)\s+$/iu.test(before))) return raw;
-    if (!focused && DEMONSTRATIVE.test(reference) && /^\s+\p{L}/u.test(after)
+    if (DEMONSTRATIVE.test(reference) && /^\s+\p{L}/u.test(after)
       && !/^\s+(?:is|are|was|were|do|does|did|mean|happen(?:ed)?|cause[d]?|start(?:ed)?|end(?:ed)?|affect(?:ed)?|change[d]?|lead|led|help(?:ed)?)\b/iu.test(after)) return raw;
     if (reference === 'it' && (/^\s+(?:raining|snowing|safe|possible|necessary|true|likely|important)\b/iu.test(after)
       || /\b(?:is|was|would)\s+$/iu.test(before) && /^\s+\p{L}+\s+(?:to|that)\b/iu.test(after))) return raw;
-    const entity = focused ?? englishEntity(reference, context, question);
+    const entity = englishEntity(reference, context, question);
     if (!entity) return raw;
     const family = DEMONSTRATIVE.test(reference) ? reference
       : MASCULINE.test(reference) ? 'he' : PERSONAL.test(reference) ? 'she' : PLURAL.test(reference) ? 'they' : 'it';
@@ -246,7 +238,7 @@ function arabicEllipsis(question: string, previous: string, answer: string): str
 }
 
 /** Apply deterministic edits to a single question using the preceding question and answer turns. */
-export function rewriteFollowUpQuestion(question: string, history: QuestionHistory, useV2 = process.env.MOHASSAN_FOLLOWUP_V2 === '1'): string {
+export function rewriteFollowUpQuestion(question: string, history: QuestionHistory): string {
   const original = question.trim();
   const candidate = original.replace(QUESTION_END, '');
   if (!candidate || candidate.length > 700 || /[?؟\r\n]/u.test(candidate)) return original;
@@ -257,13 +249,9 @@ export function rewriteFollowUpQuestion(question: string, history: QuestionHisto
     const revised = arabicEllipsis(bare, resolveArabicReferences(previous, entity), answer) || resolveArabicReferences(candidate, entity);
     return revised !== candidate ? `${revised.replace(/^[وف](?=متى|أين|اين|كيف|لماذا|كم|ماذا|ما\s|هل|من\s)/u, '')}؟` : original;
   }
-  const englishV2 = useV2 && !/\p{Script=Arabic}/u.test(candidate);
-  const expanded = englishV2 ? rewriteEnglishEllipsis(candidate, history) : null;
-  if (!expanded && !ENGLISH_LEAD.test(candidate) && !/^(?:(?:and|but)\s+)?(?:after\s+(?:that|this)|next|then\s+what)$/iu.test(candidate)) return original;
+  if (!ENGLISH_LEAD.test(candidate) && !/^(?:(?:and|but)\s+)?(?:after\s+(?:that|this)|next|then\s+what)$/iu.test(candidate)) return original;
   const context = englishContext(history);
-  const target = expanded?.replace(QUESTION_END, '') ?? candidate;
-  const focus = englishV2 ? buildEnglishReferentResolver(target, history) : undefined;
-  const revised = (!expanded && englishEllipsis(candidate, context)) || resolveEnglishReferences(target, context, focus);
+  const revised = englishEllipsis(candidate, context) || resolveEnglishReferences(candidate, context);
   if (revised === candidate) return original;
   return `${withoutEnglishConjunction(revised)}?`;
 }

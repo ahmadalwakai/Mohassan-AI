@@ -1,7 +1,6 @@
 import type { Kysely } from 'kysely';
 import { analyzeCompoundRequest } from './compound-request.js';
 import { recognizeEverydayClarification } from './everyday-clarification.js';
-import { isEnglishYearFollowup } from './followup-english-ellipsis.js';
 import { webQuestion } from './hands.js';
 import { reviewGeneratedPublicQuery } from './public-query-provenance.js';
 import { parseQuestionRewriteRequest } from './question-rewrite-request.js';
@@ -59,10 +58,8 @@ async function readTurns(db: Kysely<any>, conversationId: string): Promise<Quest
 export async function routeWithQuestionHistory(db: Kysely<any>, conversationId: string, publicTerms: unknown, allowLive: boolean,
   input: RequestRoutingInput) {
   const fallback = () => allowLive ? decideHostRequestRoute(input) : decideRequestRoute(input);
-  const useV2 = process.env.MOHASSAN_FOLLOWUP_V2 === '1';
   if (!allowLive || process.env.MOHASSAN_QUESTION_REWRITER !== '1' || input.pendingQuestion
-    || !(questionStart.test(input.text) || useV2 && isEnglishYearFollowup(input.text))
-    || splitReplyDirective(input.text).directive) return fallback();
+    || !questionStart.test(input.text) || splitReplyDirective(input.text).directive) return fallback();
   const previous = parseRequestContextState(input.context)?.sourceAssessment;
   if (previous?.source !== 'public_lookup' || previous.operation !== 'lookup' || !previous.publicQueryEligible) return fallback();
   if (recognizeEverydayClarification(input.text, input.previousTurns === undefined || input.previousTurns > 0)) return fallback();
@@ -76,21 +73,12 @@ export async function routeWithQuestionHistory(db: Kysely<any>, conversationId: 
   if (original.reason === 'request_refused' || original.reason === 'scratch_refuse' || original.reason === 'scratch_out_of_scope'
     || original.availability === 'restricted') return original;
   const turns = await readTurns(db, conversationId);
-  const project = (question: string) => {
-    if (question === input.text || !reviewGeneratedPublicQuery(input.text, question, publicTerms).eligible
-      || !reviewPublicProjection(input.text, question, scopeOptions).eligible) return null;
-    const routed = decideRequestRoute({ ...input, text: question });
-    return routed.route === 'web_search' && routed.handler === 'search' && routed.sourceAssessment.publicQueryEligible
-      ? { routed, question } : null;
-  };
-  const proposed = rewriteFollowUpQuestion(input.text, { turns }, useV2);
-  let approved = project(proposed);
-  if (!approved && useV2) {
-    const legacy = rewriteFollowUpQuestion(input.text, { turns }, false);
-    if (legacy !== proposed) approved = project(legacy);
-  }
-  if (!approved) return original;
-  const { routed, question } = approved;
+  const question = rewriteFollowUpQuestion(input.text, { turns });
+  if (question === input.text || !reviewGeneratedPublicQuery(input.text, question, publicTerms).eligible
+    || !reviewPublicProjection(input.text, question, scopeOptions).eligible) return original;
+
+  const routed = decideRequestRoute({ ...input, text: question });
+  if (routed.route !== 'web_search' || routed.handler !== 'search' || !routed.sourceAssessment.publicQueryEligible) return original;
   const source: typeof current = { ...current, reasons: ['inherited_source'] };
   const resolution = { ...routed.resolution, kind: 'follow_up' as const, original: input.text.replace(/\s+/gu, ' ').trim(),
     query: question, sourceAssessment: source };
