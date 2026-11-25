@@ -21,6 +21,7 @@ import { BrowserFilesPanel } from './browser-files-panel';
 import { DocumentsPanel } from './documents-panel';
 import { BrowserViewport } from './browser-viewport';
 import { CampaignCard } from "./campaign-card";
+import { TrainingMonitorMenuItem } from "./training-monitor-menu-item";
 
 const ADS_WORDS = /حمل[ةت]|حملات|إعلان|اعلان|google ads|campaign|\bads?\b|advertis|ppc/i;
 import { ActivityLine, AgentActivity } from "./agent-activity";
@@ -689,6 +690,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
             <select value={setting} onChange={(event) => chooseSetting(event.target.value as PanelSetting)}>{PANEL_SETTINGS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
           </label>
           {onOpenTool ? <button onClick={() => { setMenuOpen(false); onOpenTool("desktop"); }}><Laptop size={15} />سطح المكتب</button> : null}
+          {onOpenTool ? <TrainingMonitorMenuItem /> : null}
           <button onClick={() => { setMenuOpen(false); onAdvanced(); }}><Settings2 size={15} />الأدوات المتقدمة</button>
           <button onClick={onSignOut}><LogOut size={15} />تسجيل الخروج</button>
         </div> : null}
