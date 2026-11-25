@@ -174,6 +174,7 @@ export class ModelRelationsManager {
 
   async inspect(turn: TurnObservation): Promise<TurnDecisionLog> {
     const started = performance.now();
+    const deadline = { at: started + this.maxTurnMs, expired: false };
     const stages: StageObservation[] = [];
     const { baseline } = turn;
     const request = turn.text.slice(0, 8000);
@@ -193,7 +194,7 @@ export class ModelRelationsManager {
       return decision;
     };
     const ask = (decision: StageObservation, id: string, input: unknown, decode: Decode, allowed?: readonly string[]) =>
-      this.ask(decision, id, input, decode, text => value(decision.stage, text, allowed), started + this.maxTurnMs);
+      this.ask(decision, id, input, decode, text => value(decision.stage, text, allowed), deadline);
     const complete = (arbitration: TurnDecisionLog['arbitration']): TurnDecisionLog => {
       this.turns++;
       return { event: 'model_relations_turn', mode: 'shadow', turnHash: this.hash('turn', turn.id),
@@ -263,7 +264,7 @@ export class ModelRelationsManager {
       : undefined) ?? baseline.answer;
 
     const judgeStage = stage('reply-judge', baseline.judge, judgeLabels);
-    if (this.options.judge && answer && question && performance.now() - started < this.maxTurnMs) {
+    if (this.options.judge && answer && question && !deadline.expired && performance.now() < deadline.at) {
       const judging = performance.now();
       const context = { previous, status: baseline.status, evidence };
       try {
@@ -286,19 +287,23 @@ export class ModelRelationsManager {
   }
 
   private async ask(decision: StageObservation, id: string, input: unknown, decode: Decode,
-    value: (text: string) => DecisionValue, deadline: number): Promise<string | undefined> {
+    value: (text: string) => DecisionValue, deadline: { at: number; expired: boolean }): Promise<string | undefined> {
     const started = performance.now();
+    const attempted = started < deadline.at && !deadline.expired;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let outcome: Outcome;
     let result: string | null | undefined;
     try {
-      if (started >= deadline) outcome = 'timeout';
+      if (!attempted) outcome = 'timeout';
       else {
         const timeout = new Promise<ModelRunResult>(resolve => {
-          timer = setTimeout(() => resolve({ ok: false, reason: 'timeout', elapsedMs: performance.now() - started }), Math.ceil(deadline - started));
+          timer = setTimeout(() => {
+            deadline.expired = true;
+            resolve({ ok: false, reason: 'timeout', elapsedMs: performance.now() - started });
+          }, Math.ceil(deadline.at - started));
         });
         const run = await Promise.race([this.runtime.run(id, input), timeout]);
-        if (performance.now() >= deadline) outcome = 'timeout';
+        if (deadline.expired || performance.now() >= deadline.at) outcome = 'timeout';
         else if (!run.ok) outcome = run.reason;
         else {
           result = decode(run.output);
@@ -307,7 +312,7 @@ export class ModelRelationsManager {
       }
     } catch { outcome = 'unhealthy'; }
     finally { clearTimeout(timer); }
-    this.record(decision, id, outcome, started < deadline, performance.now() - started, result == null ? undefined : value(result));
+    this.record(decision, id, outcome, attempted, performance.now() - started, result == null ? undefined : value(result));
     return result ?? undefined;
   }
 
