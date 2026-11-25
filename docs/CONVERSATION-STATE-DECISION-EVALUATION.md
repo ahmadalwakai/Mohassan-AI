@@ -6,7 +6,9 @@ The offline runner uses human-written dialogue for development and evaluation. I
 
 Leave `MOHASSAN_CONVERSATION_SHADOW` unset for legacy routing with paired diagnostics in development. Set it to `decide` to use the new decision. The existing `0` setting disables diagnostics. Normal committed worker tasks capture bounded transcript history and log paired legacy and v2 decisions in development. Logs include the legacy route and candidate query, the v2 type, confidence, reason codes, reference source, and agreement when both sides have a standalone query. The worker captures history before deferred logging. Direct card, approval and secure responses and image-only sends lack the dedicated paired observer in this patch. The comparison omits assistant-derived v2 text.
 
-The resolver replays a bounded transcript. An assistant name can enter a public query only when the visible answer and its originating public read support it. Each inserted reference is checked against that boundary. The original request still supplies execution permissions and any restrictions on search. The judge uses the existing lookup lane. Standalone question handoff to the judge remains unverified.
+The resolver replays a bounded transcript. An assistant name can enter a public query only when the visible answer and its originating public read support it. Each inserted reference is checked against that boundary. The original request still supplies execution permissions and any restrictions on search. When transcript lookup fails, the latest turn does not match, or v2 cannot produce a vetted lookup plan, the worker falls back to its existing lookup behavior.
+
+The draft was verified with isolated tests and offline evaluation. Live providers, a deployed worker, and standalone question handoff to the judge remain unverified. The judge uses the existing lookup lane.
 
 ## Sources and coverage
 
@@ -29,7 +31,7 @@ The freeze manifest was committed as `eea4c15` before resolver edits. The scorer
 
 ## Scoring
 
-“Before” uses the published seven-way resolver at `fb8e452`. “After” uses the follow-up resolver changes. Both process the same turns from each frozen partition. The runner still emits the restricted legacy v2 fields as context for the comparisons with `c2a0ff7`. This is a parser comparison. It measures neither search results nor the downstream answer.
+“Before” uses the published seven-way resolver at `fb8e452`. “After” is frozen candidate `9ebfdd1f1b9b2fdbe2a7a2d3d70d8348894a02f0`. Both process the same turns from each frozen partition. The runner still emits the restricted legacy v2 fields as context for the comparisons with `c2a0ff7`. This is a parser comparison. It measures neither search results nor the downstream answer.
 
 - **Turn type.** For COD, Arabic-TOD and Multi3WOZ, score source dialogue acts that map directly to five of the seven types. Examples are the initial intent, a user slot supplying the prior system's requested slot, an affirmation after an explicit confirmation, and a question after an offer or information. Unmapped and mixed-intent acts are excluded. Corrections and refinements have no reliable act mapping in these sources. In the selected CANARD rows, the crowdworker rewrite introduces a single literal name that already appeared in the dialogue, which marks a contextual follow-up.
 - **Reference resolution.** CANARD expects the single added proper name that appeared in a prior utterance. This conservative extraction is a deterministic proxy for antecedent annotation. Arabic-TOD expects the previous agent's single named offer when the user's next turn asks for a different property and the subsequent agent response records the same offered item. The reference must match the full name.
@@ -49,17 +51,35 @@ The development review found named entities lost during extraction, including mu
 
 ## Results
 
-The published resolver scored 1,801/2,995 (60.1%) on development turn type, 112/1,013 (11.1%) on reference resolution, and 25/904 (2.8%) on exact standalone rewriting across 821 dialogue instances. The candidate and held-out scores will be recorded after the candidate is frozen.
+The frozen comparison scored 821 development and 328 held-out dialogue instances. Both runs exited 0. Aggregate turn-type accuracy passed the non-regression gate in both partitions, and the source-level turn-type counts also held or improved.
+
+| Dataset and metric | Development before | Development after | Held-out before | Held-out after |
+| --- | ---: | ---: | ---: | ---: |
+| Overall turn type | 1,801/2,995 (60.1%) | 2,015/2,995 (67.3%) | 687/1,141 (60.2%) | 774/1,141 (67.8%) |
+| COD Arabic turn type | 346/490 (70.6%) | 346/490 (70.6%) | 151/202 (74.8%) | 151/202 (74.8%) |
+| COD English turn type | 286/490 (58.4%) | 290/490 (59.2%) | 123/202 (60.9%) | 124/202 (61.4%) |
+| Multi3WOZ regional-marker Arabic turn type | 26/41 (63.4%) | 26/41 (63.4%) | 3/3 (100.0%) | 3/3 (100.0%) |
+| Arabic-TOD mixed turn type | 519/1,070 (48.5%) | 601/1,070 (56.2%) | 183/389 (47.0%) | 216/389 (55.5%) |
+| CANARD English turn type | 624/904 (69.0%) | 752/904 (83.2%) | 227/345 (65.8%) | 280/345 (81.2%) |
+| Overall reference resolution | 112/1,013 (11.1%) | 249/1,013 (24.6%) | 23/385 (6.0%) | 72/385 (18.7%) |
+| Arabic-TOD mixed reference resolution | 16/109 (14.7%) | 94/109 (86.2%) | 3/40 (7.5%) | 33/40 (82.5%) |
+| CANARD English reference resolution | 96/904 (10.6%) | 155/904 (17.1%) | 20/345 (5.8%) | 39/345 (11.3%) |
+| CANARD English exact standalone rewrite | 25/904 (2.8%) | 45/904 (5.0%) | 10/345 (2.9%) | 14/345 (4.1%) |
+
+The candidate improved extraction of venue names and typed person, place and organization mentions, preferred recent compatible references, and resolved additional possessive and demonstrative forms. It also completed property and predicate fragments while retaining their interrogatives. Exact standalone rewrite rates remain low, and the regional held-out turn-type denominator is three. Reference and rewrite rates for regional Arabic remain unmeasured.
 
 ## Reproduce
 
-Clone the four source repositories outside Mohassan and check out the revisions above. Extract the Arabic dialogue JSON from the Multi3WOZ archive. The commands below use fixed scratch paths.
+Clone the four source repositories outside Mohassan and check out the revisions above. Extract the Arabic dialogue JSON from the Multi3WOZ archive. The commands below use the same scratch paths as the completed runs.
 
 ```bash
 unzip -p /tmp/mohassan-multi3woz-source/data.zip data/Arabic/data.json > /tmp/mohassan-multi3woz-arabic.json
 git worktree add --detach /workspace/work/mohassan-decision-baseline fb8e45289dd3a7b607d9c7c7b7188bf08c2c70f0
 cp -al node_modules /workspace/work/mohassan-decision-baseline/node_modules
-npx --no-install tsx scripts/conversation-state/decision-eval.ts --cod /tmp/mohassan-cod-source --canard /tmp/mohassan-canard-source/data/release/test.json --arabic-tod /tmp/mohassan-arabic-tod/Dataset/ar_test.json --dialect-dialogues /tmp/mohassan-multi3woz-arabic.json --baseline-dir /workspace/work/mohassan-decision-baseline --split development --diagnostics /tmp/mohassan-dev-failures.jsonl
+
+npx --no-install tsx scripts/conversation-state/decision-eval.ts --cod /tmp/mohassan-cod-source --canard /tmp/mohassan-canard-source/data/release/test.json --arabic-tod /tmp/mohassan-arabic-tod/Dataset/ar_test.json --dialect-dialogues /tmp/mohassan-multi3woz-arabic.json --baseline-dir /workspace/work/mohassan-decision-baseline --split development > /tmp/mohassan-dev-final.json
+
+npx --no-install tsx scripts/conversation-state/decision-eval.ts --cod /tmp/mohassan-cod-source --canard /tmp/mohassan-canard-source/data/release/test.json --arabic-tod /tmp/mohassan-arabic-tod/Dataset/ar_test.json --dialect-dialogues /tmp/mohassan-multi3woz-arabic.json --baseline-dir /workspace/work/mohassan-decision-baseline --split held-out --frozen-commit 9ebfdd1f1b9b2fdbe2a7a2d3d70d8348894a02f0 > /tmp/mohassan-held-out-final.json
 ```
 
-For the held-out comparison, use `--split held-out --frozen-commit <full candidate commit SHA>` in place of `--split development --diagnostics /tmp/mohassan-dev-failures.jsonl`. The runner returns a failing exit code if aggregate turn-type accuracy decreases within the evaluated partition.
+Run the held-out command from a worktree checked out at the candidate SHA. The report commit can be newer. The optional `--diagnostics <file>` flag writes row-level output for development only. The runner returns a failing exit code if aggregate turn-type accuracy decreases within the evaluated partition.
