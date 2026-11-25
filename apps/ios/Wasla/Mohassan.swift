@@ -745,12 +745,25 @@ struct ChatView: View {
             SecureCard(request: secure, busy: store.secureBusy || cardsLocked) { action, values in store.secure(action, values: values) }
                 .id(secure.id)
         }
-        if conversation.capabilities?.smartMonitors == true, let proposal = conversation.monitorProposal, proposal.status == .proposed {
-            MonitorApprovalCard(monitor: proposal, busy: store.monitorActionIDs.contains(proposal.id),
-                                problem: store.monitorActionProblems[proposal.id]) { action in
-                store.changeMonitor(proposal, action: action)
+        if conversation.capabilities?.smartMonitors == true {
+            let proposal = conversation.monitorProposal
+            let monitors = (proposal.map { [$0] } ?? []) + (conversation.monitors ?? []).filter { $0.id != proposal?.id }
+            ForEach(monitors) { monitor in
+                let busy = store.monitorActionIDs.contains(monitor.id)
+                let problem = store.monitorActionProblems[monitor.id]
+                Group {
+                    if monitor.id == proposal?.id, monitor.status == .proposed {
+                        MonitorApprovalCard(monitor: monitor, busy: busy, problem: problem) { action in
+                            store.changeMonitor(monitor, action: action)
+                        }
+                    } else {
+                        ConversationMonitorCard(monitor: monitor, busy: busy, problem: problem) { action in
+                            store.changeMonitor(monitor, action: action)
+                        }
+                    }
+                }
+                .id(monitor.id)
             }
-            .id(proposal.id)
         }
         if !conversation.working, let error = conversation.error, !error.isEmpty {
             Card {

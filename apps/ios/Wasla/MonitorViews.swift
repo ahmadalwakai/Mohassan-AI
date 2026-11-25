@@ -2,7 +2,6 @@ import Foundation
 import SwiftUI
 
 struct MonitorApprovalCard: View {
-    @Environment(\.dynamicTypeSize) private var typeSize
     let monitor: MonitorCard
     let busy: Bool
     let problem: String?
@@ -29,10 +28,7 @@ struct MonitorApprovalCard: View {
             }
             if busy { MonitorSaving() }
             if let problem { MonitorProblem(message: problem) }
-            let layout = typeSize.isAccessibilitySize
-                ? AnyLayout(VStackLayout(spacing: 8))
-                : AnyLayout(HStackLayout(spacing: 8))
-            layout {
+            MonitorButtonRow {
                 Button("ابدأ المراقبة") { onAction(.approve) }
                     .buttonStyle(ForestButton())
                 Button("لا، شكرًا") { onAction(.stop) }
@@ -40,6 +36,117 @@ struct MonitorApprovalCard: View {
             }
             .disabled(busy)
         }
+    }
+}
+
+struct ConversationMonitorCard: View {
+    let monitor: MonitorCard
+    let busy: Bool
+    let problem: String?
+    let onAction: (MonitorAction) -> Void
+
+    var body: some View {
+        Card {
+            MonitorHeading(monitor: monitor)
+            VStack(alignment: .leading, spacing: 9) {
+                MonitorFact(label: "المصدر", value: MonitorCopy.source(monitor.spec.source))
+                MonitorFact(label: "آخر فحص", value: MonitorCopy.date(monitor.lastCheckedAt))
+                MonitorFact(label: "القراءة الحالية", value: MonitorCopy.observation(monitor.current))
+                MonitorFact(label: "الفحص التالي", value: MonitorCopy.date(monitor.nextCheckAt))
+            }
+            if let note = monitor.note?.nonEmpty {
+                Text(note).font(Forest.font(.footnote)).foregroundStyle(Forest.softText)
+            }
+            MonitorControls(monitor: monitor, busy: busy, problem: problem, onAction: onAction)
+        }
+    }
+}
+
+private struct MonitorHeading: View {
+    let monitor: MonitorCard
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                title
+                Spacer(minLength: 0)
+                statusChip
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                title
+                statusChip
+            }
+        }
+    }
+
+    private var title: some View {
+        Text(monitor.spec.title)
+            .font(Forest.font(.subheadline, weight: .semibold))
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private var statusChip: some View {
+        let highlighted = monitor.status == .active || monitor.status == .completed
+        return Text(MonitorCopy.status(monitor.status))
+            .font(Forest.font(.caption, weight: .semibold))
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .foregroundStyle(highlighted ? Forest.accent : Forest.softText)
+            .background(highlighted ? Forest.accentSoft : Forest.soft, in: Capsule())
+    }
+}
+
+private struct MonitorControls: View {
+    @State private var stopConfirm = false
+    let monitor: MonitorCard
+    let busy: Bool
+    let problem: String?
+    let onAction: (MonitorAction) -> Void
+
+    var body: some View {
+        let actions = monitor.status.actions
+        if busy { MonitorSaving() }
+        if let problem { MonitorProblem(message: problem) }
+        if monitor.status == .active || monitor.status == .paused {
+            MonitorButtonRow {
+                if actions.contains(.pause) {
+                    Button("إيقاف مؤقت") { onAction(.pause) }
+                        .buttonStyle(ForestButton(prominent: false))
+                }
+                if actions.contains(.resume) {
+                    Button("استئناف") { onAction(.resume) }
+                        .buttonStyle(ForestButton(prominent: false))
+                }
+                if actions.contains(.stop) {
+                    Button("إيقاف المراقبة", role: .destructive) {
+                        if MonitorAction.stop.requiresConfirmation(for: monitor.status) {
+                            stopConfirm = true
+                        } else {
+                            onAction(.stop)
+                        }
+                    }
+                    .buttonStyle(ForestButton(prominent: false))
+                    .confirmationDialog("إيقاف هذه المراقبة؟", isPresented: $stopConfirm, titleVisibility: .visible) {
+                        Button("إيقاف المراقبة", role: .destructive) { onAction(.stop) }
+                    } message: {
+                        Text(monitor.spec.title)
+                    }
+                }
+            }
+            .disabled(busy)
+        }
+    }
+}
+
+private struct MonitorButtonRow<Content: View>: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 8))
+        layout { content }
     }
 }
 
@@ -101,6 +208,18 @@ private struct MonitorProblem: View {
 private enum MonitorCopy {
     static let unavailable = "غير متاح"
     private static let arabic = Locale(identifier: "ar")
+
+    static func status(_ status: MonitorStatus) -> String {
+        switch status {
+        case .proposed: return "بانتظار الموافقة"
+        case .active: return "نشطة"
+        case .paused: return "متوقفة مؤقتًا"
+        case .stopped: return "متوقفة"
+        case .completed: return "تحقّق الشرط"
+        case .expired: return "انتهت المدة"
+        case .unknown: return "حالة غير معروفة"
+        }
+    }
 
     static func source(_ source: MonitorSource) -> String {
         switch source.kind {
@@ -178,8 +297,8 @@ private enum MonitorCopy {
         let reading: String
         switch current.value {
         case .text(let text): reading = current.excerpt.nonEmpty ?? text
-        case .number(let value): reading = current.excerpt.nonEmpty ?? number(value)
-        case .boolean(let present): reading = current.excerpt.nonEmpty ?? (present ? "موجود" : "غير موجود")
+        case .number(let value): reading = number(value)
+        case .boolean(let present): reading = present ? "موجود" : "غير موجود"
         case .items(let items):
             reading = current.excerpt.nonEmpty ?? (items.isEmpty ? "لا نتائج" : items.prefix(3).joined(separator: "، "))
         case .unknown: reading = current.excerpt
