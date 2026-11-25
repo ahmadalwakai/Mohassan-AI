@@ -11,6 +11,10 @@ import { splitReplyDirective, type ReplyField } from './reply-directive.js';
 import { returnedTo } from './return-to.js';
 import { evaluatePageReasoning, isPageReasoningRequest, planComparisonPage } from './reasoning/index.js';
 import { resolveUnnamedSite, type UnnamedSite } from './clarify/website.js';
+import { reviewHandsRefusal, reviewRefusalControl, reviewRefusalDestination, reviewRefusalField } from './refusal/permissions.js';
+import { refusalReply } from './refusal/replies.js';
+import { refusalPolicyEnabled } from './refusal/settings.js';
+import type { RefusalDecision } from './refusal/types.js';
 
 export { returnedTo };
 export { siteName };
@@ -1391,6 +1395,11 @@ const NO_PAGE = 'لا توجد صفحة مفتوحة في هذه المحادث�
 /** Runs the plan from `plan.next`. The caller persists `plan` in the run state before any pause. */
 export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutcome> {
   normalizeHandsPlan(plan);
+  const enforceRefusal = refusalPolicyEnabled();
+  const refused = (decision: RefusalDecision): HandsOutcome => ({ kind: 'done', status: 'blocked',
+    text: refusalReply(decision, plan.lang === 'en' ? '' : 'العربية').text });
+  const planRefusal = enforceRefusal && reviewHandsRefusal(plan.steps);
+  if (planRefusal) return refused(planRefusal);
   const first = plan.steps[0];
   const publicPageRead = plan.steps.length === 1 && first?.kind === 'ask_page' && first.conversationPage?.readPublic;
   let page = publicPageRead ? null : await io.page();
@@ -1404,9 +1413,11 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     return io.settle(next);
   };
   /** A native form: a GET is just an address to open; anything else waits for the owner. */
-  const submit = async (action: AgentAction, label: string): Promise<AgentPage | null | 'none'> => {
+  const submit = async (action: AgentAction, label: string): Promise<AgentPage | null | 'none' | RefusalDecision> => {
     const permit = await io.prepare(action).catch(() => null);
     if (!permit) return 'none';
+    const effectRefusal = enforceRefusal && reviewRefusalDestination(permit.url, permit.method);
+    if (effectRefusal) return effectRefusal;
     if (permit.method === 'GET') return go({ kind: 'open', text: permit.url }, label);
     await io.approve(action, permit, label);
     return null;
@@ -1565,7 +1576,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           if ('failed' in found) return { kind: 'done', status: 'blocked', text: searchFailed(step.query, found.failed, plan.lang) };
           searched = found.results;
         } else {
-          let reached: AgentPage | null | 'none';
+          let reached: AgentPage | null | 'none' | RefusalDecision;
           if (template) reached = await go({ kind: 'open', text: template }, `البحث عن ${step.query}`);
           else {
             reached = await submit({ kind: 'type', ref: box!.ref, text: step.query, submit: true }, `البحث عن «${step.query}»`);
@@ -1575,6 +1586,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             }
           }
           if (!reached) return { kind: 'paused' };
+          if ('code' in reached) return refused(reached);
           page = reached;
           // Some sites draw their results after the page loads: look again, three times at most.
           for (let look = 0; look < 3 && queryOf(page.url) && !resultLinks(page, 1, step.query).length; look++) {
@@ -1710,11 +1722,14 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           return { kind: 'done', status: 'partial', text: `لم أجد ${step.ordinal ? `النتيجة رقم ${step.ordinal}` : `«${step.target}»`} في ${hostOf(page.url)}.${near ? ` مما أراه في الصفحة: ${near}.` : ''}` };
         }
         const label = tidy(element.label).slice(0, 80) || step.target;
+        const effectRefusal = enforceRefusal && (reviewRefusalControl(label)
+          || (element.role === 'link' && element.href ? reviewRefusalDestination(element.href) : null));
+        if (effectRefusal) return refused(effectRefusal);
         const reason = sensitiveAction(label);
         if (reason) return { kind: 'done', status: 'partial', text: `«${label}» يبدو ${reason}، فلن أضغطه بنفسي. اضغطه أنت من لوحة المتصفح إن أردت، ثم قل لي «تابع».` };
         await io.step(`الضغط على «${label.slice(0, 50)}»`);
         plan.next = index + 1;
-        let reached: AgentPage | null | 'none';
+        let reached: AgentPage | null | 'none' | RefusalDecision;
         if (element.role === 'link' && element.href && !/^https?:/i.test(element.href)) return { kind: 'done', status: 'partial', text: `«${label}» ليس رابط صفحة ويب (${element.href.split(':')[0]})، فلم أفتحه.` };
         if (element.role === 'link' && element.href) reached = await go({ kind: 'open', text: realUrl(element.href) }, label);
         else {
@@ -1722,6 +1737,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           if (reached === 'none') reached = await go({ kind: 'click', ref: element.ref }, label);
         }
         if (!reached) return { kind: 'paused' };
+        if ('code' in reached) return refused(reached);
         page = reached;
         break;
       }
@@ -1729,6 +1745,8 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         if (!page) return { kind: 'done', status: 'blocked', text: NO_PAGE };
         const field = findField(page, step.field);
         if (!field) return { kind: 'done', status: 'partial', text: `لم أجد ${step.field ? `خانة «${step.field}»` : 'خانة كتابة'} في ${hostOf(page.url)}.` };
+        const effectRefusal = enforceRefusal && reviewRefusalField(field.label, step.text);
+        if (effectRefusal) return refused(effectRefusal);
         await io.step(`كتابة «${step.text.slice(0, 40)}»`);
         plan.next = index + 1;
         page = await io.act({ kind: 'type', ref: field.ref, text: step.text });

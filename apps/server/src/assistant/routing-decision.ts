@@ -20,6 +20,7 @@ import { usesAlignedEvidence } from './writing/multisource/types.js';
 import { extractiveWritingEnabled } from './writing/request.js';
 import { assessRequestScope, maskRequestLiteralData, parseRequestScopeAssessment, requestCapabilityAllowed, requestScopeActionText, reviewPublicProjection, requestConstraintReply, type RequestScopeAssessment } from './request-scope.js';
 import { applyScratchRouting, runtimeScratchPolicy, type ScratchDecisionPolicy, type ScratchRoutingChoices } from './scratch-decisions.js';
+import { reviewRoutingRefusal } from './refusal/turn.js';
 
 /**
  * Read-only routing contract for the host to adopt, test and observe. A decision
@@ -33,7 +34,7 @@ export const routedIntents = [...requestContextIntents.filter(intent => intent !
 export type RoutedIntent = Exclude<RequestContextIntent, 'unknown'> | 'image' | 'media';
 export type RequestRoute = RoutedIntent | 'reply' | 'clarify';
 export type RoutingHandler = 'resume' | 'clarify' | 'local_conversation' | 'local_computation' | 'local_status' | 'memory' | 'ads' | 'computer' | 'browser' | 'search' | 'writing' | 'planning' | 'coding' | 'reminder' | 'image' | 'media' | 'model' | 'unsupported';
-export type RoutingReason = 'pending_answer' | 'missing_reference' | 'invalid_request' | 'local_conversation' | 'local_computation' | 'host_runtime_status' | 'explicit_handler' | 'context_destination' | 'deterministic_browser_plan' | 'public_lookup' | 'local_model_fallback' | 'missing_capability' | 'account_restriction' | 'unresolved_intent' | 'scratch_route' | 'scratch_speech_act' | 'scratch_refuse' | 'scratch_out_of_scope';
+export type RoutingReason = 'pending_answer' | 'missing_reference' | 'invalid_request' | 'local_conversation' | 'local_computation' | 'host_runtime_status' | 'explicit_handler' | 'context_destination' | 'deterministic_browser_plan' | 'public_lookup' | 'local_model_fallback' | 'missing_capability' | 'account_restriction' | 'unresolved_intent' | 'scratch_route' | 'scratch_speech_act' | 'scratch_refuse' | 'scratch_out_of_scope' | 'request_refused';
 
 const PendingQuestionSchema = z.object({
   id: z.string().min(1).max(80),
@@ -156,6 +157,8 @@ function decideRuleRequestRoute(input: RequestRoutingInput, choices: ScratchRout
   const scopeOptions = { contextKind: resolution.kind, previous: previousScope };
   const scopeRequest = resolution.resolved === null ? input.text : requestActionText(requestScopeActionText(resolution.resolved));
   const sourceAssessment = assessRequestScope(input.text, scopeOptions);
+  const refusal = reviewRoutingRefusal(input, resolution, sourceAssessment, previousContext);
+  if (refusal) return refusal;
   const explicitPublicSource = sourceAssessment.source === 'public_lookup'
     && sourceAssessment.reasons.some(reason => reason === 'explicit_public_lookup' || reason === 'public_document_reference');
   const has = (capability: RoutingCapability) => input.capabilities?.[capability] === true;
