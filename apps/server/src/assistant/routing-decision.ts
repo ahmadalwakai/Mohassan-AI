@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { standaloneMannersRoute } from './manners/chat.js';
 import { directRoute } from './brain.js';
 import { isCampaignRequest } from './campaign-request.js';
+import { recognizeEverydayClarification } from './everyday-clarification.js';
 import { parseHands, type HandsStep } from './hands.js';
 import { evaluateLocalComputation, type LocalComputation } from './local-computation.js';
 import { evaluateLocalConversation } from './local-conversation.js';
@@ -40,6 +41,8 @@ export interface RequestRoutingInput {
   text: string;
   /** Host-persisted user state only, parsed by resolveRequestContext. */
   context?: unknown;
+  /** Actual conversation history when the host has a turn count. */
+  previousTurns?: number;
   previousScope?: unknown;
   pendingQuestion?: z.infer<typeof PendingQuestionSchema>;
   capabilities?: Partial<Record<RoutingCapability, boolean>>;
@@ -116,6 +119,11 @@ export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDe
     return { ...base('chat', 'chat', 'local_conversation', 'local_conversation'), resolution, ...(reply ? { localReply: reply } : {}) };
   }
   if (resolution.kind === 'answer') return base('reply', resolution.intent === 'unknown' && pending.success ? pending.data.route ?? 'unknown' : resolution.intent, 'resume', 'pending_answer');
+  if (recognizeEverydayClarification(input.text, input.previousTurns === undefined ? previousContext !== null : input.previousTurns > 0)) {
+    const decision = clarify('missing_reference');
+    return { ...decision, resolution: { ...decision.resolution, kind: 'ambiguous', query: null,
+      ambiguities: [...new Set([...resolution.ambiguities, 'missing_reference' as const])], nextState: previousContext } };
+  }
   if (recognizeRuntimeStatusRequest(scopeRequest)) {
     const decision = base('chat', 'chat', 'local_status', 'host_runtime_status');
     const localSource: RequestScopeAssessment = { version: 1, source: 'unresolved', operation: 'converse', scope: 'unknown', destination: 'unknown', publicQueryEligible: false, reasons: ['non_lookup_operation'] };

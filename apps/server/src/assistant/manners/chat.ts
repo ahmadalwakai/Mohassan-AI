@@ -6,22 +6,24 @@ import { sql, type Kysely } from 'kysely';
 import type { z } from 'zod';
 import { tryEnterPhase } from '../agent-run.js';
 import type { BrainState } from '../brain.js';
+import { recognizeEverydayClarification } from '../everyday-clarification.js';
 import { parseUserRequestConstraints } from '../request-constraints.js';
 import { parseRequestContextState, resolveRequestContext } from '../request-context.js';
 import type { RequestRoutingInput, RequestRoutingDecision } from '../routing-decision.js';
 import type { RequestScopeAssessment } from '../request-scope.js';
 import { detectManners, type MannersDetection } from './detect.js';
+import { isEverydayManners } from './everyday.js';
 import { renderMannersClause, renderMannersReply } from './replies.js';
 
 const enabled = () => process.env.MOHASSAN_SMALL_TALK_MANNERS === '1';
 
 /** Split the outer turn before the task's provenance, scope and constraints are compiled. */
 export function prepareMannersTurn(text: string, eligible: boolean) {
-  if (!eligible) return null;
+  if (!eligible || recognizeEverydayClarification(text, false)) return null;
   const detection = detectManners(text);
   if (!detection) return null;
-  const active = enabled();
   const request = detection.request;
+  const active = enabled() || request === null && isEverydayManners(detection);
   try {
     console.info(JSON.stringify({ event: 'small_talk_manners_shadow', active, act: detection.act,
       language: detection.language, dialect: detection.dialect, mixed: request !== null }));
@@ -42,9 +44,9 @@ export function mannersRequestHash(originalHash: string | undefined, displayed: 
 }
 
 function standaloneManners(text: string) {
-  if (!enabled()) return null;
   const detection = detectManners(text);
-  return detection && detection.request === null && !parseUserRequestConstraints(text) ? detection : null;
+  return detection && detection.request === null && (enabled() || isEverydayManners(detection))
+    && !parseUserRequestConstraints(text) ? detection : null;
 }
 
 export function standaloneMannersRoute(input: RequestRoutingInput): RequestRoutingDecision | null {
