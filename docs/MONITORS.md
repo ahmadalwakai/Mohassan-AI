@@ -2,6 +2,8 @@
 
 تلتقط المراقبة الذكية طلبات المتابعة بالعربية والإنجليزية وتقترح خطة تعرض المصدر والقيمة الحالية وشرط التنبيه. تبدأ الفحوص بعد موافقتك، وتتباعد عند استقرار المصدر. عند تحقق الشرط يصلك تنبيه واحد وتجد الدليل في المحادثة. إذا تكرر تعذّر الوصول إلى المصدر أو اختفى الجزء المراد متابعته، تتوقف المراقبة مؤقتًا وتخبرك بالسبب. يمكنك إدارة المراقبات من المحادثة أو من «المراقبات» في الإعدادات. تفعيل الميزة بيد صاحب الخدمة.
 
+في الإصدار الثاني تقرأ المراقبات البيانات المنظّمة وموجزات النشر، وتطلب منك تحديد القيمة عند الالتباس. يمكنك جمع عدة شروط ومتابعة الاتجاهات وطلب ملخّص يومي. تتعلّم كل مراقبة توقيت تغيّر مصدرها، وتعرض التنبيهات القيمة قبل التغيّر وبعده. الإصدار الثاني اختياري ومطفأ افتراضيًا.
+
 ## From chat to notification
 
 1. The detector evaluates Arabic and English requests with deterministic rules. An explicit request gets a proposal for approval. A user who says they are waiting for a public change, or repeats the same public status question in the conversation, gets an offer. A run that cannot finish because a verified public page is unavailable or its publication status is pending can offer to watch for availability or publication and to continue the task when the user asks. The detector uses recent user turns to resolve references such as “this page” and asks for details when the target or condition is ambiguous.
@@ -93,6 +95,34 @@ When a trigger or health pause is committed, the same database transaction recor
 
 The server accepts up to 12 calls per minute on each mutation route, matching the secure chat route limit for interactive actions. Each route requires a session and enforces account ownership. [Member permissions](../apps/server/src/members.ts) · [Routes](../apps/server/src/monitors/routes.ts)
 
+## Smart monitors v2
+
+`MOHASSAN_MONITORS_V2=1` enables v2 when `MOHASSAN_MONITORS_ENABLED=1`. New v2 monitors have an explicit v2 specification. Existing v1 monitors keep their original check path. Turning v2 off takes those monitors out of the scheduler and the v1 UI. Their original expiry still applies.
+
+### Extraction and confirmation
+
+A public page is parsed with parse5. Schema.org JSON-LD and microdata supply Offer price, currency and availability, Event start date and status, and Product name. Visible-text extraction supplies a fallback. A user-selected visible anchor retains its identity when the page also contains structured data. Price summaries show the currency and whether a value is an old price, when the page supplies that evidence. Arabic and Persian digits and Arabic thousands and decimal separators are normalized before numeric comparisons. Hijri conversion uses the runtime's ICU Umm al-Qura calendar via `Intl.DateTimeFormat` and a search of its Gregorian days. Status mappings preserve distinctions between open, closed, out of stock and coming soon. [Schema.org Offer](https://schema.org/Offer) · [Schema.org Event](https://schema.org/Event) · [Schema.org Product](https://schema.org/Product) · [ECMA-402](https://tc39.es/ecma402/#datetimeformat-objects)
+
+A saved anchor records the label, value type, unit, currency, old-price marker, surrounding text and location. A type, currency, unit or old-price mismatch receives zero. Otherwise the score starts at 0.35 for the matching value pattern, adds 0.25 for a matching label, up to 0.30 for word-set overlap, and 0.10 for an unchanged location and extraction method. An exact unique match or a score of at least 0.84 with a lead of at least 0.16 resumes automatically and records the relocation. A score of at least 0.55 with two or more candidates produces one question with two to four source-backed choices. Lower confidence, or a single weak candidate, pauses the monitor and records one health notice within the existing allowance. These weights require corroborating label and surrounding text before automatic relocation. [Page reader](../apps/server/src/monitors/page-v2.ts) · [Choice rules](CLARIFICATION-CHOICES.md)
+
+New-item watches look for RSS and Atom autodiscovery links and a sitemap in HTML or robots.txt, falling back to `/sitemap.xml`. Discovery goes through the same HTTPS, robots, host reservation, redirect and conditional-request path as the watched page. It reads up to two child maps from an index. The XML tokenizer caps each document at 512 KiB, 24 levels, 12,000 tokens and 100 items. It accepts standard and numeric XML entities and rejects declarations and custom entities. The limits bound processing and stored validators per check. Feed captions take precedence for duplicate links and sitemap links are limited to descendants of the watched path. Minute-precision or finer publication timestamps can inform scheduling. [RSS](https://www.rssboard.org/rss-specification) · [Atom](https://www.rfc-editor.org/rfc/rfc4287) · [Sitemaps](https://www.sitemaps.org/protocol.html) · [XML](https://www.w3.org/TR/xml/)
+
+### Conditions, evidence and conversation
+
+Up to three sources can form an AND or OR. A sequence has exactly two sources and requires a later confirmed B after a confirmed A within the specified window. Each source has a freshness limit. The default is six hours plus one scheduler poll so a normal quiet check can confirm a sample before it ages out. Sources are checked in order and each scheduled source read uses one check. A conditional 304 can revalidate a prior read. A broad HTML edit requires three agreeing observations at least an hour apart to reduce alerts from rotating content. Anchored and structured reads can confirm sooner. Trends use either a previous confirmed value inside a time window, or consecutive directional readings. [Conditions and limits](../packages/contracts/src/monitors.ts) · [Evaluation](../apps/server/src/monitors/evaluation-v2.ts)
+
+New-item watches can run once, alert on successive checks that find new items, or combine notices at the next UTC day boundary. Item identity is tracked even if the source changes order. Digests are durable and can be published without another source fetch. The existing budgets cap checks and notices across normal operation, digests and health pauses. A recurring monitor completes when its last allowed trigger or digest is committed. Trigger evidence shows before and after, signed absolute and percent change where defined, the observation time in UTC, an excerpt and a link. It uses the conversation's language. The notification outbox retains the existing APNs envelope and generic lock-screen default. [Evidence](../apps/server/src/monitors/delivery-v2.ts) · [Runtime](../apps/server/src/monitors/runtime.ts)
+
+Examples include “What are you monitoring for me?”, «أوقف مراقبة الدولار», «غيّر الحد إلى 3.65» and «أرسل لي ملخصًا يوميًا بدل كل تنبيه». Changes require separate confirmation. An ambiguous name can prompt a choice before the confirmation card. Answer-based offers require a verified public source and agreement between the answer and its evidence on the pending state. Offers are capped at one per topic in each conversation and do not appear during refusals, small talk or clarification. The account's monitoring settings can turn them off. [Conversation controls](../apps/server/src/monitors/chat.ts)
+
+### Predictive scheduling
+
+Consider a change at time $t$ between checks at $a$ and $b$. Its detection delay is $b-t$. If $\lambda(t)$ is the expected change rate over time, the interval's expected sum of delays is $\int_a^b \lambda(t)(b-t)\,dt$. With the prefix integrals $M(t)=\int^t\lambda(s)\,ds$ and $S(t)=\int^t s\lambda(s)\,ds$, this is $b[M(b)-M(a)]-[S(b)-S(a)]$. With a uniform rate, the total is proportional to the sum of squared gaps. Even spacing minimizes that sum for a fixed number of checks and total time.
+
+The scheduler uses the prefix integrals in a fixed-count dynamic program on a grid no wider than 15 minutes. It plans about one day ahead, executes the first slot, and replans after each observation. It uses the source's existing urgent floor and six-hour quiet cap. The final hour before an explicit deadline receives reserved checks. Failure and confirmation retries share the same allowance. An untimestamped change can use one normal-interval follow-up probe when the remaining budget covers the quiet slots. A novel broad-text edit can use an early confirmation slot from the same hard budget. Repeated values that reverted before confirmation use the normal schedule. Brief weather threshold conditions retain the responsive v1 cadence until there are enough publication timestamps to forecast them.
+
+The rate estimate divides the observed changes, including distinct feed or sitemap timestamps, by elapsed observation time plus one prior day. This regularization limits early spending. Timestamped releases contribute directly to 15-minute UTC daily and weekly bins. An undated change contributes across the bracket between the last confirmed sample and its observation, capped at six hours. Each contribution puts half its weight in its bin and a quarter in each neighboring bin to tolerate small timing shifts. Separate days or weeks are required before using their respective patterns. At most 75% of the baseline density comes from periodic patterns, preserving coverage at other times. Nearby changes add a short burst term with a six-hour half-life. The state lives on the individual monitor row owned by its account. [Scheduler](../apps/server/src/monitors/schedule-v2.ts)
+
 ## Enable the rollout
 
 1. Deploy the server and web changes. On the managed Linux VM, set `MOHASSAN_MONITORS_ENABLED=1` in `/etc/mohassan/server.env` and run `sudo systemctl restart mohassan.service`. Apply the same setting to each API replica running monitor work.
@@ -100,7 +130,18 @@ The server accepts up to 12 calls per minute on each mutation route, matching th
 3. Verify that a completed monitor opens the right conversation and shows the evidence. Use a browser subscribed to Web Push and a registered iPhone with APNs configured to check closed-app delivery in those environments. [Existing background delivery setup](BACKGROUND-RESULTS.md)
 4. To turn the feature off, unset the flag or set it to `0` and restart the API. Detection, new approvals and smart checks stop. Stored monitors retain their original expiry. The existing two-hour monitor is available with its own rollout setting. [Wave 5 flags](INTEGRATION-WAVE-5-2026-11-25.md#flags)
 
+Set `MOHASSAN_MONITORS_V2=1` alongside the original flag to try the v2 controls and new-monitor workflow. Set only the v2 flag to `0` to return to v1 chat behavior.
+
 ## Merge notes
+
+### V2, stacked on PR #98
+
+- `044_smart_monitors_v2` adds `v2_state` and `v2_digest_due_at` to `smart_monitors`. `045_smart_monitor_conversation_controls` adds the account preference, per-topic offer receipt and confirmation action tables. The existing startup hook applies both after `043`. [Migration ledger](MIGRATION-LEDGER-2026-11-25.md)
+- `apps/server/src/command-chat.ts` projects the optional capability, accepts the management result status and calls the answer-offer check after the final verdict. This is the only v2 change in a server file that overlaps PR #97's areas.
+- `packages/contracts/src/command-chat.ts` adds the optional v2 capability.
+- `apps/web/components/assistant-app.tsx` mounts the conversation controls and passes the capability to monitor settings. `apps/web/components/smart-monitors.tsx` mounts candidate choices and offer settings. `apps/web/components/monitors-client.ts` shares the existing monitor endpoint and change events with the new controls.
+
+### V1, in PR #98
 
 - `043_smart_monitors` applies after `042_background_results`. It adds `smart_monitors`, per-account budget and shared host-slot tables, and the optional monitor link in the existing notification outbox. The additive migration can stay applied when the rollout is off. [Migration ledger](MIGRATION-LEDGER-2026-11-25.md)
 - `apps/server/src/app.ts` handles monitor errors, applies the migration and registers the flag-gated routes and scheduler.

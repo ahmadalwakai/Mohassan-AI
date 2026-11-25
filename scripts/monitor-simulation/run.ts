@@ -148,7 +148,8 @@ async function simulate(fixture: Scenario, advanced: typeof v2): Promise<Outcome
         learned = advanced.schedule.learnMonitorSchedule(learned, at, { changed: evaluated.changed, publicationTimes: result.publicationTimes });
       }
       next = advanced.schedule.nextPredictiveMonitorCheck(spec, at, { state: learned, expiry, checksUsed: outcome.checks,
-        priorIntervalMs: next.intervalMs, changed: evaluated.changed, needsConfirmation: evaluated.needsConfirmation });
+        priorIntervalMs: next.intervalMs, changed: evaluated.changed, needsConfirmation: evaluated.needsConfirmation,
+        confirmNoEarlierThan: evaluated.confirmNoEarlierThan });
     } else {
       const evaluated = baselineEvaluation.evaluateMonitor(spec, v1Evaluation, observation, { revalidated });
       v1Evaluation = evaluated.state;
@@ -157,10 +158,18 @@ async function simulate(fixture: Scenario, advanced: typeof v2): Promise<Outcome
     }
     if (alert) {
       outcome.deliveries.push({ at: clock, observation: alert });
-      active = Boolean(recurring);
+      active = Boolean(recurring && outcome.deliveries.length < spec.timing.maxNotifications);
     }
   }
   return outcome;
+}
+
+function delaySummary(values: readonly number[]) {
+  const sorted = [...values].sort((left, right) => left - right);
+  return {
+    meanDelayMinutes: sorted.length ? sorted.reduce((sum, time) => sum + time, 0) / sorted.length : null,
+    p95DelayMinutes: sorted[Math.ceil(sorted.length * 0.95) - 1] ?? null,
+  };
 }
 
 class Scores {
@@ -178,11 +187,12 @@ class Scores {
   healthPauses = 0;
   previewFailures = 0;
   delays: number[] = [];
+  restrictedDelays: number[] = [];
 
   record(fixture: Scenario, outcome: Outcome) {
     this.monitors++;
     const recurring = fixture.sourceClass === 'recurring-feed';
-    const matched = new Set<number>();
+    const matched = new Map<number, number>();
     for (const alert of outcome.deliveries) {
       const matches = fixture.truth.flatMap((event, index) => !matched.has(index) && matchesEvent(event, alert.at, alert.observation) ? [index] : []);
       if (!matches.length) {
@@ -191,13 +201,23 @@ class Scores {
       }
       this.trueAlerts++;
       for (const index of matches) {
-        matched.add(index);
-        this.delays.push((alert.at - fixture.truth[index].at) / minute);
+        const delay = (alert.at - fixture.truth[index].at) / minute;
+        matched.set(index, delay);
+        this.delays.push(delay);
       }
     }
     // For one-shot watches any genuine occurrence can satisfy the watch. Multiple threshold excursions are not separate alert obligations.
     const opportunities = recurring ? fixture.truth.length : Math.min(1, fixture.truth.length);
     const trueEvents = recurring ? matched.size : Math.min(1, matched.size);
+    if (recurring) {
+      fixture.truth.forEach((event, index) => this.restrictedDelays.push(matched.get(index) ?? (fixture.end - event.at) / minute));
+    } else if (fixture.truth[0]) {
+      // For a one-shot monitor, cap time after the first qualifying opportunity at trial end.
+      // The cap keeps false or missing alerts from making an arm look faster.
+      const first = fixture.truth[0].at;
+      const detection = Math.min(fixture.end, ...[...matched].map(([index, delay]) => fixture.truth[index].at + delay * minute));
+      this.restrictedDelays.push((detection - first) / minute);
+    }
     this.opportunities += opportunities;
     this.trueEvents += trueEvents;
     this.missedEvents += opportunities - trueEvents;
@@ -208,18 +228,17 @@ class Scores {
     this.clarifications += outcome.clarifications;
     this.healthPauses += outcome.healthPauses;
     this.previewFailures += outcome.previewFailures;
+    return matched;
   }
 
   summary() {
     const ratio = (count: number, total: number) => total ? count / total : null;
-    const sorted = [...this.delays].sort((left, right) => left - right);
     return {
       monitors: this.monitors, opportunities: this.opportunities, trueEvents: this.trueEvents, missedEvents: this.missedEvents,
       trueAlerts: this.trueAlerts, falseAlerts: this.falseAlerts,
       precision: ratio(this.trueAlerts, this.trueAlerts + this.falseAlerts), recall: ratio(this.trueEvents, this.opportunities),
       falseAlarmsPerMonitorWeek: ratio(this.falseAlerts, this.monitors),
-      meanDelayMinutes: ratio(sorted.reduce((sum, time) => sum + time, 0), sorted.length),
-      p95DelayMinutes: sorted[Math.ceil(sorted.length * 0.95) - 1] ?? null,
+      ...delaySummary(this.delays), restrictedDelay: delaySummary(this.restrictedDelays),
       checks: this.checks, checksPerMonitorWeek: ratio(this.checks, this.monitors),
       layoutChanges: this.moves, restored: this.restored, relocationSuccess: ratio(this.restored, this.moves),
       relocationsRecorded: this.relocationsRecorded, clarifications: this.clarifications,
@@ -228,29 +247,45 @@ class Scores {
   }
 }
 
+type PairedDelays = { v1: number[]; v2: number[] };
+const pairedSummary = ({ v1, v2 }: PairedDelays) => ({ matchingEvents: v1.length, v1: delaySummary(v1), v2: delaySummary(v2) });
 const totals = { v1: new Scores(), v2: new Scores() };
+const sharedPaired: PairedDelays = { v1: [], v2: [] };
 const comparison = [];
 for (const sourceClass of classes) {
   const first = new Scores();
   const second = new Scores();
+  const paired: PairedDelays = { v1: [], v2: [] };
+  const recurring = sourceClass === 'recurring-feed';
   for (let trial = 0; trial < seedCounts[bank]; trial++) {
     const fixture = createScenario(bank, trial, sourceClass);
     const old = await simulate(fixture, undefined);
-    first.record(fixture, old);
-    if (sourceClass !== 'recurring-feed') totals.v1.record(fixture, old);
+    const oldDelays = first.record(fixture, old);
+    if (!recurring) totals.v1.record(fixture, old);
     if (v2) {
       const current = await simulate(fixture, v2);
-      second.record(fixture, current);
-      if (sourceClass !== 'recurring-feed') totals.v2.record(fixture, current);
+      const currentDelays = second.record(fixture, current);
+      if (!recurring) totals.v2.record(fixture, current);
+      for (const [event, oldDelay] of oldDelays) {
+        const currentDelay = currentDelays.get(event);
+        if (currentDelay === undefined) continue;
+        paired.v1.push(oldDelay);
+        paired.v2.push(currentDelay);
+        if (!recurring) {
+          sharedPaired.v1.push(oldDelay);
+          sharedPaired.v2.push(currentDelay);
+        }
+      }
     }
   }
-  comparison.push({ sourceClass, v1: first.summary(), ...(v2 && { v2: second.summary() }) });
+  comparison.push({ sourceClass, v1: first.summary(), ...(v2 && { v2: second.summary(), paired: pairedSummary(paired) }) });
 }
-const shared = { v1: totals.v1.summary(), ...(v2 && { v2: totals.v2.summary() }) };
+const paired = pairedSummary(sharedPaired);
+const shared = { v1: totals.v1.summary(), ...(v2 && { v2: totals.v2.summary(), paired }) };
 const gates = v2 && {
   noRecallLossByClass: comparison.every(row => row.v2!.trueEvents >= row.v1.trueEvents),
-  lowerMeanDelay: shared.v2!.meanDelayMinutes !== null && shared.v1.meanDelayMinutes !== null && shared.v2!.meanDelayMinutes < shared.v1.meanDelayMinutes,
-  lowerP95Delay: shared.v2!.p95DelayMinutes !== null && shared.v1.p95DelayMinutes !== null && shared.v2!.p95DelayMinutes < shared.v1.p95DelayMinutes,
+  lowerPairedMeanDelay: paired.v2.meanDelayMinutes !== null && paired.v1.meanDelayMinutes !== null && paired.v2.meanDelayMinutes < paired.v1.meanDelayMinutes,
+  lowerPairedP95Delay: paired.v2.p95DelayMinutes !== null && paired.v1.p95DelayMinutes !== null && paired.v2.p95DelayMinutes < paired.v1.p95DelayMinutes,
   equalOrFewerChecks: shared.v2!.checks <= shared.v1.checks,
 };
 console.log(JSON.stringify({ baseline: baselineCommit, head: git(process.cwd(), 'rev-parse', 'HEAD'), bank, seeds: seedCounts[bank], parameters,

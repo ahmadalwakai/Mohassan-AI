@@ -198,15 +198,13 @@ export function nextPredictiveMonitorCheck(spec: ScheduleSpec, at: Date, {
   const extra = Math.min(reserve, Math.floor(rate * spec.timing.lifetimeMs));
   const remaining = Math.min(availableBeforeDeadline, Math.max(1, quiet + extra - checksUsed, minimumChecks));
   if (failed && remaining > minimumChecks) return result(Math.min(deadlineWindow, now + spec.timing.initialIntervalMs));
-  if (needsConfirmation && remaining > minimumChecks) {
+  // An unconfirmed observation cannot raise the learned rate. Allow it to spend the hard reserve to become evidence.
+  if (needsConfirmation && availableBeforeDeadline > minimumChecks) {
     return result(Math.min(deadlineWindow, now + MONITOR_LIMITS.maxIntervalMs, confirmNoEarlierThan ?? now + floor));
   }
   if (!checksUsed && (state?.publications.length ?? 0) < 2) return result(Math.min(deadlineWindow, now + spec.timing.initialIntervalMs));
-  const recentChange = state?.windows.at(-1);
-  const sinceChange = recentChange ? now - recentChange.to : Infinity;
-  if (sinceChange <= spec.timing.initialIntervalMs && remaining > minimumChecks) {
-    const burstProbe = spec.timing.initialIntervalMs * (sinceChange === 0 ? 1 : 2);
-    return result(Math.min(deadlineWindow, now + Math.min(burstProbe, MONITOR_LIMITS.maxIntervalMs)));
+  if (state?.windows.at(-1)?.to === now && remaining > minimumChecks) {
+    return result(Math.min(deadlineWindow, now + spec.timing.initialIntervalMs));
   }
   const gap = Math.max(floor, Math.min(MONITOR_LIMITS.maxIntervalMs, Math.floor((planningEnd - now) / remaining)));
   const count = Math.min(remaining, Math.ceil(day / gap));

@@ -307,7 +307,7 @@ export function createScenario(bank: SeedBank, trial: number, sourceClass: Sourc
 export function matchesEvent(event: TruthEvent, at: number, observation: MonitorObservation): boolean {
   if (event.at > at || at >= event.until) return false;
   const { expected } = event;
-  if (typeof expected === 'number') return typeof observation.value === 'number' && Math.abs(observation.value - expected) < 1e-8;
+  if (typeof expected === 'number') return observation.value === expected;
   if (typeof expected === 'boolean') return observation.value === expected;
   if (Array.isArray(observation.value)) return observation.value.includes(expected) && observation.excerpt.includes(expected);
   return typeof observation.value === 'string' && observation.value.includes(expected) && observation.excerpt.includes(expected);
