@@ -9,7 +9,7 @@ import keyword
 import math
 import re
 from string import Template
-from time import monotonic
+from time import process_time
 
 
 # The grammar uses the intersection of these types across all observed inputs.
@@ -26,7 +26,7 @@ EVALUATION_GLOBALS = {"__builtins__": BASIC_BUILTINS, "math": math, "re": re}
 EVALUATION_ERRORS = (ArithmeticError, AttributeError, LookupError, RecursionError, TypeError, ValueError, re.error)
 MAX_SIZE = 5
 MAX_EVALUATIONS = 18_000
-MAX_SEARCH_SECONDS = 0.5
+MAX_SEARCH_CPU_SECONDS = 0.5
 MAX_PER_RULE_AND_SIZE = 256
 MAX_VERIFICATIONS = 24
 MAX_COLLECTION_SIZE = 256
@@ -396,7 +396,8 @@ def synthesize(
     examples = tuple(examples)
     if not examples:
         return None
-    deadline = monotonic() + MAX_SEARCH_SECONDS
+    # The parent still enforces a wall-clock cap for the entire worker.
+    deadline = process_time() + MAX_SEARCH_CPU_SECONDS
     observations, expected = zip(*examples)
     arity = len(observations[0])
     if any(len(args) != arity for args in observations):
@@ -464,8 +465,8 @@ def synthesize(
                 if result := verify_term(term):
                     return result
         for production in rules:
-            if monotonic() >= deadline:
-                return report_failure("search-wall-time")
+            if process_time() >= deadline:
+                return report_failure("search-cpu-time")
             for operands in islice(_combinations(production, size, pools), MAX_PER_RULE_AND_SIZE):
                 inputs = frozenset().union(*(operand.inputs for operand in operands))
                 if arity and not inputs:
@@ -474,8 +475,8 @@ def synthesize(
                     return report_failure("search-evaluations")
                 if verifications >= MAX_VERIFICATIONS:
                     return report_failure("search-verifications")
-                if evaluations % 64 == 0 and monotonic() >= deadline:
-                    return report_failure("search-wall-time")
+                if evaluations % 64 == 0 and process_time() >= deadline:
+                    return report_failure("search-cpu-time")
                 evaluations += 1
                 try:
                     values = tuple(production.evaluate(*args) for args in zip(*(term.values for term in operands)))

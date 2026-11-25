@@ -2,10 +2,13 @@
 
 from pathlib import Path
 import sys
+from time import sleep
 import unittest
+from unittest.mock import patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps/server/src/assistant/test-driven-coding"))
+import synthesis
 from synthesis import synthesize
 
 
@@ -34,6 +37,29 @@ class PythonSynthesisTest(unittest.TestCase):
             "gap", "Find the absolute difference of two measurements.",
             [((91, 123), 32), ((74, 52), 22), ((-17, 17), 34)], "abs(arg1 - arg2)",
         )
+
+    def test_off_cpu_delay_does_not_spend_the_search_budget(self):
+        literal_constants = synthesis._literal_constants
+
+        def constants_after_pause(description):
+            sleep(synthesis.MAX_SEARCH_CPU_SECONDS + 0.125)
+            return literal_constants(description)
+
+        with patch.object(synthesis, "_literal_constants", constants_after_pause):
+            self.check_synthesis(
+                "adjust_total", "Add both inventory corrections.",
+                [((29, -17), 12), ((8, 38), 46), ((-11, -5), -16)], "arg1 + arg2",
+            )
+
+    def test_reports_exhausted_search_cpu_budget(self):
+        reasons = []
+        with patch.object(synthesis, "process_time", side_effect=[0, synthesis.MAX_SEARCH_CPU_SECONDS]):
+            value = synthesize(
+                "adjust_total", "Add both inventory corrections.", [((9, 5), 14)],
+                lambda source: False, on_limit=reasons.append,
+            )
+        self.assertIsNone(value)
+        self.assertEqual(reasons, ["search-cpu-time"])
 
     def test_text_and_slicing(self):
         self.check_synthesis(

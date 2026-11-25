@@ -88,7 +88,7 @@ import { decideRequestRoute } from './assistant/routing-decision.js';
 import { observePlanMessage, runCompiledChatPlan } from './assistant/plan/chat.js';
 import { clarificationAnswers, clarifyCommand } from './assistant/clarify/host.js';
 import { reviewWorkRefusal } from './assistant/refusal/turn.js';
-import { answerTestDrivenCoding, bindTestDrivenCodingHash } from './assistant/test-driven-coding/reply.js';
+import { answerTestDrivenCoding, bindTestDrivenCodingHash, publishTestDrivenCoding } from './assistant/test-driven-coding/reply.js';
 import { describeSearchDestination, extractPublicSearchQueries, isSearchEntryElement, mergePublicQueryTerms, reviewGeneratedPublicQuery } from './assistant/public-query-provenance.js';
 import { reviewExplicitPublicBrowserQuery } from './assistant/browser-public-query.js';
 import { ADS_REWRITE_JSON_SCHEMA, ADS_REWRITE_SCHEMA_NAME, ADS_REWRITE_SYSTEM, buildRewritePrompt, type RewriteRequest } from '@mohassan/google-ads';
@@ -2082,10 +2082,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       const codingReply = run.intent === 'task' && !state.steps && !state.trail.length && state.routing?.handler === 'local_coding'
         ? await answerTestDrivenCoding(request, { authorized: fullReach() && state.routing.availability !== 'restricted', signal, originalHash: state.requestOriginalHash, scrub: text => vault.scrub(id, clean(text)) }) : null;
-      if (codingReply) {
-        state.codingVerification = codingReply.verification;
-        return finish(id, runId, state, codingReply.text, codingReply.status, undefined, undefined, true);
-      }
+      if (codingReply) return publishTestDrivenCoding(state, codingReply,
+        (text, status) => finish(id, runId, state, text, status, undefined, undefined, true));
       if (noteVerificationIntent) {
         const unavailable = () => /\p{Script=Arabic}/u.test(request)
           ? 'لم أتمكن من التحقق من حالة محاولة حفظ هذه الملاحظة الآن.'

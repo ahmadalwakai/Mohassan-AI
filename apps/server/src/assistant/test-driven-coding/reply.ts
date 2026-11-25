@@ -38,6 +38,12 @@ export interface CodingVerification {
 }
 type Reply = { status: 'completed' | 'blocked'; text: string; verification: CodingVerification };
 
+export function publishTestDrivenCoding(state: Pick<BrainState, 'codingVerification'>, reply: Reply,
+  finish: (text: string, status: Reply['status']) => Promise<void>): Promise<void> {
+  state.codingVerification = reply.verification;
+  return finish(reply.text, reply.status);
+}
+
 function requestHash(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
