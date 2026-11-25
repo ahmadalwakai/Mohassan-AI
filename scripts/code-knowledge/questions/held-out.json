@@ -1,0 +1,540 @@
+[
+  {
+    "id": 3207219,
+    "question": "How do I list all files of a directory?",
+    "type": "how-to",
+    "source": {
+      "url": "https://stackoverflow.com/questions/3207219/how-do-i-list-all-files-of-a-directory",
+      "author": {
+        "name": "duhhunjonn",
+        "url": "https://stackoverflow.com/users/385652/duhhunjonn"
+      },
+      "license": "CC BY-SA 3.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+      "revision": {
+        "url": "https://stackoverflow.com/revisions/3207219/7",
+        "date": "2017-05-28",
+        "author": {
+          "name": "Peter Mortensen",
+          "url": "https://stackoverflow.com/users/63550/peter-mortensen"
+        },
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/"
+      },
+      "lastEdit": "2017-10-22"
+    },
+    "expected": [
+      [
+        "listdir",
+        "scandir",
+        "iterdir",
+        "glob"
+      ]
+    ]
+  },
+  {
+    "id": 46867517,
+    "question": "How to read file with async/await properly?",
+    "type": "how-to",
+    "source": {
+      "url": "https://stackoverflow.com/questions/46867517/how-to-read-file-with-async-await-properly",
+      "author": {
+        "name": "Jeremy Dicaire",
+        "url": "https://stackoverflow.com/users/473908/jeremy-dicaire"
+      },
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "revision": {
+        "url": "https://stackoverflow.com/revisions/46867517/1",
+        "date": "2017-10-21",
+        "author": {
+          "name": "Jeremy Dicaire",
+          "url": "https://stackoverflow.com/users/473908/jeremy-dicaire"
+        },
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/"
+      },
+      "lastEdit": "2021-07-11"
+    },
+    "expected": [
+      [
+        "readFile"
+      ],
+      [
+        "fs/promises",
+        "fs.promises",
+        "await readFile",
+        "await fs.readFile",
+        "promisify"
+      ]
+    ]
+  },
+  {
+    "id": 21035762,
+    "question": "Python read JSON file and modify",
+    "type": "how-to",
+    "source": {
+      "url": "https://stackoverflow.com/questions/21035762/python-read-json-file-and-modify",
+      "author": {
+        "name": "codeBarer",
+        "url": "https://stackoverflow.com/users/2250263/codebarer"
+      },
+      "license": "CC BY-SA 3.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+      "revision": {
+        "url": "https://stackoverflow.com/revisions/21035762/1",
+        "date": "2014-01-10",
+        "author": {
+          "name": "codeBarer",
+          "url": "https://stackoverflow.com/users/2250263/codebarer"
+        },
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/"
+      },
+      "lastEdit": "2016-07-19"
+    },
+    "expected": [
+      [
+        "json.load",
+        "json.loads",
+        "load(fp",
+        "loads(s"
+      ]
+    ]
+  },
+  {
+    "id": 14168433,
+    "question": "Node.js Error: connect ECONNREFUSED",
+    "type": "error",
+    "source": {
+      "url": "https://stackoverflow.com/questions/14168433/node-js-error-connect-econnrefused",
+      "author": {
+        "name": "ian",
+        "url": "https://stackoverflow.com/users/109859/ian"
+      },
+      "license": "CC BY-SA 3.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+      "revision": {
+        "url": "https://stackoverflow.com/revisions/14168433/1",
+        "date": "2013-01-05",
+        "author": {
+          "name": "ian",
+          "url": "https://stackoverflow.com/users/109859/ian"
+        },
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/"
+      },
+      "lastEdit": "2013-01-05"
+    },
+    "expected": [
+      [
+        "service that is inactive",
+        "actively refused",
+        "not listening",
+        "server is not running",
+        "start the server",
+        "remote host refused"
+      ]
+    ]
+  },
+  {
+    "id": 37502163,
+    "question": "getter setter Maximum call stack size exceeded Error",
+    "type": "error",
+    "source": {
+      "url": "https://stackoverflow.com/questions/37502163/getter-setter-maximum-call-stack-size-exceeded-error",
+      "author": {
+        "name": "Roli Agrawal",
+        "url": "https://stackoverflow.com/users/2622513/roli-agrawal"
+      },
+      "license": "CC BY-SA 3.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+      "revision": {
+        "url": "https://stackoverflow.com/revisions/37502163/1",
+        "date": "2016-05-28",
+        "author": {
+          "name": "Roli Agrawal",
+          "url": "https://stackoverflow.com/users/2622513/roli-agrawal"
+        },
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/"
+      },
+      "lastEdit": "2016-05-28"
+    },
+    "expected": [
+      [
+        "different property",
+        "another property",
+        "different name",
+        "_name",
+        "backing field",
+        "backing property"
+      ]
+    ]
+  },
+  {
+    "id": 17506947,
+    "question": "Local variable referenced before assignment in Python",
+    "type": "error",
+    "source": {
+      "url": "https://stackoverflow.com/questions/17506947/local-variable-referenced-before-assignment-in-python",
+      "author": {
+        "name": "Or Halimi",
+        "url": "https://stackoverflow.com/users/2556996/or-halimi"
+      },
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "revision": {
+        "url": "https://stackoverflow.com/revisions/17506947/6",
+        "date": "2017-06-24",
+        "author": {
+          "name": "Ashwini Chaudhary",
+          "url": "https://stackoverflow.com/users/846892/ashwini-chaudhary"
+        },
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/"
+      },
+      "lastEdit": "2021-05-01"
+    },
+    "expected": [
+      [
+        "global statement",
+        "global declaration",
+        "nonlocal statement",
+        "global count",
+        "assigning a value to",
+        "local to that function"
+      ]
+    ]
+  },
+  {
+    "id": 40528557,
+    "question": "How does `Array.from({length: 5}, (v, i) => i)` work?",
+    "type": "api-usage",
+    "source": {
+      "url": "https://stackoverflow.com/questions/40528557/how-does-array-fromlength-5-v-i-i-work",
+      "author": {
+        "name": "Emile Paffard-Wray",
+        "url": "https://stackoverflow.com/users/4167261/emile-paffard-wray"
+      },
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "revision": {
+        "url": "https://stackoverflow.com/revisions/40528557/3",
+        "date": "2019-02-20",
+        "author": {
+          "name": "LeoTM",
+          "url": "https://stackoverflow.com/users/1998086/leotm"
+        },
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+      },
+      "lastEdit": "2019-02-20"
+    },
+    "expected": [
+      [
+        "Array.from"
+      ],
+      [
+        "map function",
+        "mapFn",
+        "mapping function",
+        "map function to call",
+        "length: 5"
+      ]
+    ]
+  },
+  {
+    "id": 63940438,
+    "question": "How to use pathlib to process paths that begin with ~?",
+    "type": "api-usage",
+    "source": {
+      "url": "https://stackoverflow.com/questions/63940438/how-to-use-pathlib-to-process-paths-that-begin-with",
+      "author": {
+        "name": "Human",
+        "url": "https://stackoverflow.com/users/4457885/human"
+      },
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "revision": {
+        "url": "https://stackoverflow.com/revisions/63940438/1",
+        "date": "2020-09-17",
+        "author": {
+          "name": "Human",
+          "url": "https://stackoverflow.com/users/4457885/human"
+        },
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+      },
+      "lastEdit": "2020-09-17"
+    },
+    "expected": [
+      [
+        "expanduser"
+      ]
+    ]
+  },
+  {
+    "id": 46918570,
+    "question": "How to use keyof while changing the fieldnames?",
+    "type": "api-usage",
+    "source": {
+      "url": "https://stackoverflow.com/questions/46918570/how-to-use-keyof-while-changing-the-fieldnames",
+      "author": {
+        "name": "pubkey",
+        "url": "https://stackoverflow.com/users/3443137/pubkey"
+      },
+      "license": "CC BY-SA 3.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+      "revision": {
+        "url": "https://stackoverflow.com/revisions/46918570/1",
+        "date": "2017-10-24",
+        "author": {
+          "name": "pubkey",
+          "url": "https://stackoverflow.com/users/3443137/pubkey"
+        },
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/"
+      },
+      "lastEdit": "2017-10-24"
+    },
+    "expected": [
+      [
+        "key remapping",
+        "Key Remapping",
+        "as clause",
+        "as NewKeyType",
+        "as `",
+        "[K in keyof T as"
+      ]
+    ]
+  },
+  {
+    "id": 21607692,
+    "question": "Understanding the Event Loop",
+    "type": "concept",
+    "source": {
+      "url": "https://stackoverflow.com/questions/21607692/understanding-the-event-loop",
+      "author": {
+        "name": "Tarik",
+        "url": "https://stackoverflow.com/users/44852/tarik"
+      },
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "revision": {
+        "url": "https://stackoverflow.com/revisions/21607692/1",
+        "date": "2014-02-06",
+        "author": {
+          "name": "Tarik",
+          "url": "https://stackoverflow.com/users/44852/tarik"
+        },
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/"
+      },
+      "lastEdit": "2022-02-07"
+    },
+    "expected": [
+      [
+        "queue",
+        "queues"
+      ],
+      [
+        "call stack",
+        "Call stack",
+        "execution stack",
+        "message queue",
+        "pending jobs",
+        "run-to-completion"
+      ]
+    ]
+  },
+  {
+    "id": 2709821,
+    "question": "What is the purpose of the `self` parameter? Why is it needed?",
+    "type": "concept",
+    "source": {
+      "url": "https://stackoverflow.com/questions/2709821/what-is-the-purpose-of-the-self-parameter-why-is-it-needed",
+      "author": {
+        "name": "richzilla",
+        "url": "https://stackoverflow.com/users/301032/richzilla"
+      },
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "revision": {
+        "url": "https://stackoverflow.com/revisions/2709821/20",
+        "date": "2022-09-05",
+        "author": {
+          "name": "Karl Knechtel",
+          "url": "https://stackoverflow.com/users/523612/karl-knechtel"
+        },
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+      },
+      "lastEdit": "2022-09-05"
+    },
+    "expected": [
+      [
+        "instance"
+      ],
+      [
+        "first argument",
+        "first parameter",
+        "self parameter"
+      ]
+    ]
+  },
+  {
+    "id": 12720585,
+    "question": "What is \"Structural Typing for Interfaces\" in TypeScript",
+    "type": "concept",
+    "source": {
+      "url": "https://stackoverflow.com/questions/12720585/what-is-structural-typing-for-interfaces-in-typescript",
+      "author": {
+        "name": "Eran Medan",
+        "url": "https://stackoverflow.com/users/239168/eran-medan"
+      },
+      "license": "CC BY-SA 3.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+      "revision": {
+        "url": "https://stackoverflow.com/revisions/12720585/1",
+        "date": "2012-10-04",
+        "author": {
+          "name": "Eran Medan",
+          "url": "https://stackoverflow.com/users/239168/eran-medan"
+        },
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/"
+      },
+      "lastEdit": "2012-10-04"
+    },
+    "expected": [
+      [
+        "same shape",
+        "structural types",
+        "Structural typing",
+        "structural typing",
+        "structural subtyping",
+        "based on their members"
+      ]
+    ]
+  },
+  {
+    "id": 12218483,
+    "question": "difference between null and undefined in JavaScript?",
+    "type": "comparison",
+    "source": {
+      "url": "https://stackoverflow.com/questions/12218483/difference-between-null-and-undefined-in-javascript",
+      "author": {
+        "name": "Ankur",
+        "url": "https://stackoverflow.com/users/662250/ankur"
+      },
+      "license": "CC BY-SA 3.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+      "revision": {
+        "url": "https://stackoverflow.com/revisions/12218483/1",
+        "date": "2012-08-31",
+        "author": {
+          "name": "Ankur",
+          "url": "https://stackoverflow.com/users/662250/ankur"
+        },
+        "license": "CC BY-SA 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/"
+      },
+      "lastEdit": "2017-07-18"
+    },
+    "expected": [
+      [
+        "null"
+      ],
+      [
+        "undefined"
+      ],
+      [
+        "strict equality",
+        "type coercion",
+        "are considered equal",
+        "loose equality",
+        "abstract equality"
+      ]
+    ]
+  },
+  {
+    "id": 1436703,
+    "question": "What is the difference between __str__ and __repr__?",
+    "type": "comparison",
+    "source": {
+      "url": "https://stackoverflow.com/questions/1436703/what-is-the-difference-between-str-and-repr",
+      "author": {
+        "name": "Casebash",
+        "url": "https://stackoverflow.com/users/165495/casebash"
+      },
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "revision": {
+        "url": "https://stackoverflow.com/revisions/1436703/8",
+        "date": "2021-02-16",
+        "author": {
+          "name": "nbro",
+          "url": "https://stackoverflow.com/users/3924118/nbro"
+        },
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+      },
+      "lastEdit": "2022-04-01"
+    },
+    "expected": [
+      [
+        "__str__"
+      ],
+      [
+        "__repr__"
+      ],
+      [
+        "official",
+        "informal",
+        "unambiguous",
+        "string representation"
+      ]
+    ]
+  },
+  {
+    "id": 4589732,
+    "question": "What are the pros and cons of fs.createReadStream vs fs.readFile in node.js?",
+    "type": "comparison",
+    "source": {
+      "url": "https://stackoverflow.com/questions/4589732/what-are-the-pros-and-cons-of-fs-createreadstream-vs-fs-readfile-in-node-js",
+      "author": {
+        "name": "Kent Brewster",
+        "url": "https://stackoverflow.com/users/1151280/kent-brewster"
+      },
+      "license": "CC BY-SA 2.5",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.5/",
+      "revision": {
+        "url": "https://stackoverflow.com/revisions/4589732/1",
+        "date": "2011-01-04",
+        "author": {
+          "name": "Kent Brewster",
+          "url": "https://stackoverflow.com/users/1151280/kent-brewster"
+        },
+        "license": "CC BY-SA 2.5",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.5/"
+      },
+      "lastEdit": "2011-01-04"
+    },
+    "expected": [
+      [
+        "createReadStream"
+      ],
+      [
+        "readFile"
+      ],
+      [
+        "buffer",
+        "Buffer",
+        "memory",
+        "chunk",
+        "chunks"
+      ]
+    ]
+  }
+]
