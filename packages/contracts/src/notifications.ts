@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BackgroundPushKindSchema } from './ios-push';
 
 export const NOTIFICATION_AFTER_MS = 20_000;
 
@@ -10,6 +11,12 @@ export const NotificationPayloadSchema = z.object({
   taskId: z.uuid(),
   conversationId: z.uuid().nullable(),
   conversationTitle: z.string().max(100).optional(),
+  runId: z.uuid().optional(),
+  runKind: BackgroundPushKindSchema.optional(),
+  title: z.string().max(100).optional(),
+  body: z.string().max(160).optional(),
+  language: z.enum(['ar', 'en']).optional(),
+  sound: z.boolean().optional(),
 }).strict();
 export type NotificationPayload = z.infer<typeof NotificationPayloadSchema>;
 
@@ -22,6 +29,8 @@ const timeZone = z.string().min(1).max(100).refine(value => {
 export const NotificationPreferencesSchema = z.object({
   quietHours: z.object({ start: localTime, end: localTime, timeZone }).strict().nullable(),
   hideTitle: z.boolean(),
+  completionSound: z.boolean().optional(),
+  showResultPreview: z.boolean().optional(),
 }).strict();
 export type NotificationPreferences = z.infer<typeof NotificationPreferencesSchema>;
 export type NotificationQuietHours = NonNullable<NotificationPreferences['quietHours']>;

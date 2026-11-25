@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BackgroundRunSchema } from './background-run';
 import { CampaignEventStreamSchema } from './campaign-progress';
 import { ChatRunViewSchema } from './agent-run';
 
@@ -199,6 +200,7 @@ export const ChatConversationSchema = ChatConversationSummarySchema.extend({
    * (agent-run.ts). Null when the conversation has no run; absent from servers older than 2026-11-23.
    */
   run: ChatRunViewSchema.nullable().optional(),
+  backgroundRun: BackgroundRunSchema.optional(),
 }).strict();
 
 export type ChatConversation = z.infer<typeof ChatConversationSchema>;
