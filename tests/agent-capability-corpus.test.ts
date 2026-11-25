@@ -20,7 +20,7 @@ const structuralExpectation: CapabilityExpectation = {
 
 // Parser-only sentinels. These values are never submitted to chat or used as benchmark data.
 function structuralRows(partition: 'd' | 's', caseCount: number): CapabilityCase[] {
-  const arabicVarieties = capabilityVarieties.filter(variety => variety !== 'english');
+  const arabicVarieties = capabilityVarieties.filter(variety => variety !== 'english' && variety !== 'unspecified');
   return Array.from({ length: caseCount }, (_, index) => {
     const area = capabilityAreas[index % capabilityAreas.length]!;
     const arabic = index < caseCount / 2;

@@ -12,7 +12,8 @@ export const capabilityAreas = [
   'document-file', 'coding', 'google-ads', 'desktop', 'memory', 'clarification', 'refusal',
 ] as const;
 export const capabilityLanguages = ['ar', 'en'] as const;
-export const capabilityVarieties = ['msa', 'gulf', 'levantine', 'egyptian', 'iraqi', 'english', 'mixed'] as const;
+const developmentVarieties = ['msa', 'gulf', 'levantine', 'egyptian', 'iraqi', 'english', 'mixed'] as const;
+export const capabilityVarieties = [...developmentVarieties, 'unspecified'] as const;
 
 const nonblank = z.string().min(1).max(4000).refine(value => value.trim().length > 0);
 const label = z.string().regex(/^[a-z][a-z0-9_.:-]{0,95}$/u);
@@ -88,7 +89,9 @@ export const capabilityCaseSchema = z.object({
   }
 });
 
-const corpusSchema = z.object({ schemaVersion: z.literal(1), cases: z.array(capabilityCaseSchema).min(1) }).strict();
+const corpusSchema = z.object({
+  schemaVersion: z.literal(1), cases: z.array(capabilityCaseSchema.refine(item => item.variety !== 'unspecified')).min(1),
+}).strict();
 const partitionSchema = z.object({
   sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   caseCount: z.number().int().positive(),
@@ -160,7 +163,7 @@ function normalizeInput(value: string): string {
   return value.normalize('NFC').trim().replace(/\s+/gu, ' ').toLowerCase();
 }
 
-function validateDistinct(cases: readonly CapabilityCase[]): void {
+export function validateDistinct(cases: readonly CapabilityCase[]): void {
   const ids = new Set<string>();
   const inputs = new Set<string>();
   for (const item of cases) {
@@ -185,7 +188,7 @@ export async function loadCapabilityCorpus(paths: {
   validateBalance(manifest);
   const development = await loadPartition(paths.development, 'development', manifest.development);
   const missingAreas = capabilityAreas.filter(area => !development.some(item => item.area === area));
-  const missingVarieties = capabilityVarieties.filter(variety => !development.some(item => item.variety === variety));
+  const missingVarieties = developmentVarieties.filter(variety => !development.some(item => item.variety === variety));
   if (missingAreas.length || missingVarieties.length) {
     throw new CapabilityCorpusError(`Missing development coverage for: ${[...missingAreas, ...missingVarieties].join(', ')}.`);
   }
