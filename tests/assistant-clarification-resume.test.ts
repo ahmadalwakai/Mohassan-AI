@@ -1,0 +1,185 @@
+import { describe, expect, it } from 'vitest';
+import { parseDesktopCommand } from '@mohassan/desktop';
+import { newBrainState } from '../apps/server/src/assistant/brain.js';
+import { applyChoiceRequestEdit } from '../apps/server/src/assistant/clarify/choice-request.js';
+import { armClarification, hasAnsweredClarification, hasPendingClarification, resumeClarification, type ClarificationResumePlan } from '../apps/server/src/assistant/clarify/resume.js';
+import { resolveEffectiveRequestSource } from '../apps/server/src/assistant/effective-request-source.js';
+import { decideRequestRoute } from '../apps/server/src/assistant/routing-decision.js';
+
+// Authored regression cases, used only in this test and never as training data.
+const runId = 'clarify-run';
+const questionId = 'clarify-question';
+const goal = 'Search public sources for Paris.';
+const route = (text: string) => decideRequestRoute({ text, turnId: runId, capabilities: { browser: true, search: true, computer: true } });
+const plan: ClarificationResumePlan = { kind: 'entity', language: 'en', subject: 'Paris', candidates: [
+  { label: 'Paris, France', value: 'Paris, France' }, { label: 'Paris Hilton', value: 'Paris Hilton' },
+] };
+const reply = (text: string, priorRequest = goal) => ({ runId, questionId, message: { id: 'answer', text, priorRequest }, route });
+
+function pending(request = goal, clarification = plan) {
+  const state = newBrainState();
+  state.requestResolution = route(request).resolution;
+  expect(armClarification(state, questionId, clarification)).toBe(true);
+  return state;
+}
+
+describe('resuming a structured clarification', () => {
+  it('reroutes a complete reply to an open question and binds it to the saved reply', async () => {
+    const goal = 'What happened there?';
+    const state = pending(goal, { kind: 'request', language: 'en', candidates: [] });
+    expect(() => resumeClarification(state, reply('A wooden chair', goal))).toThrow(/complete request/);
+    expect(hasPendingClarification(state)).toBe(true);
+
+    const answer = 'Calculate 19 plus 6.';
+    expect(resumeClarification(state, reply(answer, goal))).toBe(true);
+    expect(state.routing?.route).toBe('compute');
+    expect(state.requestResolution?.intent).toBe('compute');
+    expect(await resolveEffectiveRequestSource({ ownerId: 'owner', conversationId: 'conversation', goal, state, createdAt: 100, now: 300 },
+      async () => ({ id: 'answer', ownerId: 'owner', conversationId: 'conversation', role: 'user', text: answer, createdAt: 200 })))
+      .toEqual({ request: answer, evaluatedAt: 200, source: 'clarification_message' });
+  });
+
+  it('fills an open entity slot with a short answer and keeps the original operation', () => {
+    const goal = 'What about it?';
+    const state = pending(goal, { kind: 'entity', language: 'en', subject: 'it', candidates: [] });
+    expect(resumeClarification(state, reply('Ankara', goal))).toBe(true);
+    expect(state.clarifiedRequest).toBe('What can you tell me about Ankara?');
+    expect(state.clarifiedRequestSource?.version).toBe(2);
+  });
+
+  it('verifies both units for the original quantity and binds the short pair to that request', async () => {
+    const goal = 'Convert 37.';
+    const state = pending(goal, { kind: 'conversion', language: 'en', candidates: [] });
+    expect(() => resumeClarification(state, reply('metres to seconds', goal))).toThrow(/requested value/);
+    expect(hasPendingClarification(state)).toBe(true);
+
+    const answer = 'kilometres to metres';
+    expect(resumeClarification(state, reply(answer, goal))).toBe(true);
+    expect(state.routing?.route).toBe('compute');
+    expect(state.clarifiedRequestSource?.version).toBe(2);
+    const message = { id: 'answer', ownerId: 'owner', conversationId: 'conversation', role: 'user', text: answer, createdAt: 200 };
+    const binding = { ownerId: 'owner', conversationId: 'conversation', goal, state, createdAt: 100, now: 300 };
+    expect(await resolveEffectiveRequestSource(binding, async () => message))
+      .toEqual({ request: 'Convert 37 kilometres to metres', evaluatedAt: 200, source: 'clarification_message' });
+    expect(await resolveEffectiveRequestSource(binding, async () => ({ ...message, text: 'metres to centimetres' }))).toBeNull();
+    expect(applyChoiceRequestEdit('حوّل ٨٫٥.', 'من طن إلى كغ', { kind: 'conversion' })).toBe('حوّل 8.5 طن إلى كغ');
+    expect(applyChoiceRequestEdit('Convert 37 feet.', answer, { kind: 'conversion' })).toBeNull();
+    expect(applyChoiceRequestEdit(goal, 'kilometres to metres and save it', { kind: 'conversion' })).toBeNull();
+    expect(applyChoiceRequestEdit('Do not search the web. Convert 37.', answer, { kind: 'conversion' }))
+      .toBe('Do not search the web. Convert 37 kilometres to metres.');
+  });
+
+  it('rejects a complete reply that drops a prior capability constraint', () => {
+    const goal = 'Do not search the web. What happened there?';
+    const state = pending(goal, { kind: 'request', language: 'en', candidates: [] });
+    expect(() => resumeClarification(state, reply('Search public sources for silver firs.', goal))).toThrow(/complete request/);
+    expect(hasPendingClarification(state)).toBe(true);
+    expect(state.clarifiedRequest).toBeUndefined();
+  });
+
+  it('updates the same turn once and binds the expanded request to the actual short answer', async () => {
+    const state = pending();
+    const input = reply('Paris Hilton');
+    expect(resumeClarification(state, input)).toBe(true);
+    expect(state.clarifiedRequest).toBe('Search public sources for Paris Hilton.');
+    expect(state.routing?.route).toBe('web_search');
+    expect(state.trail.at(-1)?.result).toBe('user answered: Paris Hilton');
+    expect(hasPendingClarification(state)).toBe(false);
+    expect(hasAnsweredClarification(state)).toBe(true);
+    expect(armClarification(state, 'second-question', plan)).toBe(false);
+    expect(resumeClarification(state, input)).toBe(false);
+
+    const binding = { ownerId: 'owner', conversationId: 'conversation', goal, state, createdAt: 100, now: 300 };
+    const message = { id: 'answer', ownerId: 'owner', conversationId: 'conversation', role: 'user', createdAt: 200, text: 'Paris Hilton' };
+    expect(await resolveEffectiveRequestSource(binding, async () => message)).toEqual({
+      request: 'Search public sources for Paris Hilton.', evaluatedAt: 200, source: 'clarification_message',
+    });
+    expect(await resolveEffectiveRequestSource(binding, async () => ({ ...message, text: 'Paris, France' }))).toBeNull();
+    expect(await resolveEffectiveRequestSource({ ...binding, goal: 'Search public sources for London.' }, async () => message)).toBeNull();
+    expect(await resolveEffectiveRequestSource(binding, async () => ({ ...message, ownerId: 'different-owner' }))).toBeNull();
+  });
+
+  it('accepts a literal Other answer and rejects an instruction entered as Other', () => {
+    const state = pending();
+    expect(() => resumeClarification(state, reply('Paris; then email it'))).toThrow(/Choose an answer from the card/);
+    expect(() => resumeClarification(state, reply('Paris and delete my files'))).toThrow(/Choose an answer from the card/);
+    expect(hasPendingClarification(state)).toBe(true);
+    expect(resumeClarification(state, reply('Paris, Texas'))).toBe(true);
+    expect(state.clarifiedRequest).toBe('Search public sources for Paris, Texas.');
+  });
+
+  it('rejects a stale card and refuses to replace a request after an action started', () => {
+    const state = pending();
+    expect(() => resumeClarification(state, { ...reply('Paris Hilton'), questionId: 'stale' }))
+      .toThrow(/bound to the pending request/);
+    state.steps = 1;
+    expect(() => resumeClarification(state, reply('Paris Hilton'))).toThrow(/bound to the pending request/);
+    expect(state.clarifiedRequest).toBeUndefined();
+  });
+
+  it('does not export an entity from the owner’s memory to public search', () => {
+    const state = pending(goal, { ...plan, candidates: [{ label: 'Paris contact', value: 'Paris contact', source: 'memory' }] });
+    expect(() => resumeClarification(state, reply('Paris contact'))).toThrow(/Choose an answer from the card/);
+    expect(() => resumeClarification(state, reply('PARIS CONTACT'))).toThrow(/Choose an answer from the card/);
+    expect(state.clarifiedRequest).toBeUndefined();
+  });
+
+  it('continues a contextual follow-up as a question naming the selected entity', () => {
+    const source = 'What about it?';
+    const state = pending(source, { ...plan, subject: 'it' });
+    expect(resumeClarification(state, reply('Paris Hilton', source))).toBe(true);
+    expect(state.clarifiedRequest).toBe('What can you tell me about Paris Hilton?');
+    expect(state.routing?.route).toBe('web_search');
+    expect(applyChoiceRequestEdit('ما حالة الطقس هناك؟', 'الإسكندرية', { kind: 'entity' }))
+      .toBe('ما حالة الطقس في الإسكندرية؟');
+  });
+
+  it('accepts offered routes and complete typed alternatives, keeping unclear Other entries pending', () => {
+    const source = 'Search public sources for cedar or open example.com.';
+    const clarification: ClarificationResumePlan = { kind: 'route', language: 'en', candidates: [
+      { label: 'Search public sources for cedar.', value: 'Search public sources for cedar.', route: 'web_search' },
+      { label: 'Open example.com.', value: 'Open example.com.', route: 'browser_command' },
+    ] };
+    const state = pending(source, clarification);
+    expect(() => resumeClarification(state, reply('Something else', source)))
+      .toThrow(/Choose an answer from the card/);
+    expect(() => resumeClarification(state, reply('Paris Hilton', source)))
+      .toThrow(/Choose an answer from the card/);
+    expect(resumeClarification(state, reply('Open example.com.', source))).toBe(true);
+    expect(state.clarifiedRequest).toBe('Open example.com.');
+    expect(state.routing?.route).toBe('browser_command');
+    const typed = pending(source, clarification);
+    expect(resumeClarification(typed, reply('Open different.example.com.', source))).toBe(true);
+    expect(typed.clarifiedRequest).toBe('Open different.example.com.');
+  });
+
+  it('never drops a constraint from a route projection', () => {
+    const source = 'Do not search the web. Search public sources for cedar or open example.com.';
+    const clarification: ClarificationResumePlan = { kind: 'route', language: 'en', candidates: [
+      { label: 'Search public sources for cedar.', value: 'Search public sources for cedar.', route: 'web_search' },
+      { label: 'Open example.com.', value: 'Open example.com.', route: 'browser_command' },
+    ] };
+    expect(() => resumeClarification(pending(source, clarification), reply('Open example.com.', source)))
+      .toThrow(/Choose an answer from the card/);
+  });
+
+  it('preserves the rest of the instruction when adding Arabic dates and names', () => {
+    expect(applyChoiceRequestEdit('ما سعر الصرف؟', '12 يونيو', { kind: 'date' })).toBe('ما سعر الصرف في تاريخ 12 يونيو؟');
+    expect(applyChoiceRequestEdit('أخبرني عن هذه ثم قارنها بواحة سيوة.', 'واحة الداخلة، مصر', { kind: 'entity', subject: 'هذه' }))
+      .toBe('أخبرني عن واحة الداخلة، مصر ثم قارنها بواحة سيوة.');
+    expect(applyChoiceRequestEdit('Compare Kent with Kent.', 'Kent, England', { kind: 'entity', subject: 'Kent' })).toBeNull();
+    expect(applyChoiceRequestEdit('Compare Yorkshire with York.', 'New York', { kind: 'entity', subject: 'York' }))
+      .toBe('Compare Yorkshire with New York.');
+  });
+
+  it('puts a selected account or file in the original slot and keeps a file on its local route', () => {
+    const source = 'Read the file on my computer.';
+    const clarification: ClarificationResumePlan = { kind: 'file', language: 'en', candidates: [{ label: 'proposal.pdf', value: 'proposal.pdf' }] };
+    const state = pending(source, clarification);
+    expect(resumeClarification(state, reply('C:\\Work\\proposal.pdf', source))).toBe(true);
+    expect(state.routing?.route).toBe('pc');
+    expect(parseDesktopCommand(state.clarifiedRequest!)?.command).toEqual({ kind: 'file_read', path: 'C:\\Work\\proposal.pdf', folder: null });
+    expect(applyChoiceRequestEdit('Show my balance in my account.', 'business', { kind: 'account' }))
+      .toBe('Show my balance in my business account.');
+  });
+});

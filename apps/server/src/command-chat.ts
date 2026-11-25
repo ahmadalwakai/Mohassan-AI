@@ -85,6 +85,7 @@ import { isEntireLiteralRequest, parseUserRequestConstraints, requestCapabilityA
 import { evaluateLocalKnowledge, isKnowledgeDocumentRequest, type LocalKnowledgeDocument } from './assistant/local-knowledge.js';
 import { decideRequestRoute } from './assistant/routing-decision.js';
 import { observePlanMessage, runCompiledChatPlan } from './assistant/plan/chat.js';
+import { clarificationAnswers, clarifyCommand } from './assistant/clarify/host.js';
 import { describeSearchDestination, extractPublicSearchQueries, isSearchEntryElement, mergePublicQueryTerms, reviewGeneratedPublicQuery } from './assistant/public-query-provenance.js';
 import { reviewExplicitPublicBrowserQuery } from './assistant/browser-public-query.js';
 import { ADS_REWRITE_JSON_SCHEMA, ADS_REWRITE_SCHEMA_NAME, ADS_REWRITE_SYSTEM, buildRewritePrompt, type RewriteRequest } from '@mohassan/google-ads';
@@ -2658,7 +2659,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // finishes the same request (state.pendingOpen above). In production on 2026-11-23 the sentence itself was searched for,
       // and the search guard refused it as private information. Before the general clarifier below, which would ask what
       // «its» in «show me its content» refers to instead of which website.
-      const unnamed = freshRequest && !handsPlan && !documentWork && !hasChatModel() && state.routing?.route !== 'pc' ? unnamedSite(actionRequest) : null;
+      const unnamed = freshRequest && !handsPlan && !documentWork && !hasChatModel() && state.routing?.route !== 'pc' ? unnamedSite(actionRequest, page ? plan => { handsPlan = plan; } : undefined) : null;
       if (unnamed) {
         state.pendingOpen = unnamed;
         const card = siteQuestion(unnamed);
@@ -2667,6 +2668,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           options: [{ id: 'stop', label: unnamed.lang === 'ar' ? 'توقف هنا' : 'Stop here' }], fields: card.fields } satisfies ChatQuestion) }, card.prompt);
         return;
       }
+      if (await clarifyCommand({ config, id, ownerId, runId, request, actionRequest, state, history, signal, constraints, search, fullAccess: fullReach(), chatModel: hasChatModel(), eligible: freshRequest && !handsPlan && !documentWork && !intrinsicRuntime && !intrinsicConversation && !intrinsicSelf && !intrinsicComputation && !intrinsicSequence, active, assertPublicSearch, pause }, async () => {
       if (freshRequest && !documentWork && !intrinsicRuntime && !intrinsicConversation && !intrinsicSelf && !intrinsicComputation && !intrinsicSequence
         && !(page && !hasChatModel() && isPageReasoningRequest(actionRequest))
         && state.requestResolution?.kind === 'ambiguous' && state.requestResolution.ambiguities.some(reason =>
@@ -2682,6 +2684,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await pause(id, runId, state, 'waiting_user', { question: JSON.stringify({ id: randomUUID(), prompt, options: [] } satisfies ChatQuestion) }, prompt);
         return;
       }
+      return false; })) return;
       // Deterministic arithmetic, units and calendar operations are shared brain
       // capabilities. They must run before the web fallback, without enabling the
       // experimental Mind route or spending a model request.
@@ -4455,8 +4458,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   return {
-    create, list, detail, send, respond, approve, secureSubmit, cancel, remove, screen, browserActivity, shutdown,restoreBrowser,reviewBrowser, uploadImage, image: imageBytes, feedback, once,
+    create, list, detail, approve, secureSubmit, cancel, remove, screen, browserActivity, shutdown,restoreBrowser,reviewBrowser, uploadImage, image: imageBytes, feedback, once,
     ...protectStructuredMemoryIngress({ create, send, once }),
+    ...clarificationAnswers({ db, config, hasChatModel, resume, send, respond }),
     imagesAvailable: () => Boolean(config.imageReader?.available),
     pointer: (ownerId: string, id: string, raw: unknown) => { const input = ChatPointerSchema.parse(raw); return handsOn(ownerId, id, () => browser.pointer(ownerId, id, input.x, input.y)); },
     keyboard: (ownerId: string, id: string, raw: unknown) => { const input = ChatKeyboardSchema.parse(raw); return handsOn(ownerId, id, () => browser.keyboard(ownerId, id, input)); },

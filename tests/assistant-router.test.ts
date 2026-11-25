@@ -110,6 +110,10 @@ describe('shadow router', () => {
     await vi.waitFor(async () => expect(existsSync(logFile)).toBe(true));
     const line = JSON.parse((await readFile(logFile, 'utf8')).trim());
     expect(line).toMatchObject({ at: '2026-11-20T12:00:00.000Z', conversation: 'c1', rules: 'web_search', model: 'ads', pendingQuestion: false });
+    const candidates = shadow.candidates?.('I run a barbershop and want more bookings') ?? [];
+    expect(candidates).toHaveLength(4);
+    expect(candidates[0]).toEqual({ route: 'ads', score: expect.closeTo(line.confidence, 3) });
+    expect(candidates.map(candidate => candidate.score)).toEqual(candidates.map(candidate => candidate.score).sort((a, b) => b - a));
   });
 
   it('stays silent when the model files are missing', async () => {
