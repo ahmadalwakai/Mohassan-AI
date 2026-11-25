@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { assessRequestScope, reviewPublicProjection } from '../apps/server/src/assistant/request-scope.js';
+import { decideRequestRoute } from '../apps/server/src/assistant/routing-decision.js';
 
 /**
  * A dot inside a token is not sentence punctuation. Measured on 2026-11-22 (0-baseline §8.2): «Node.js latest version»
@@ -22,5 +23,12 @@ describe('nominal public subjects with dots inside tokens', () => {
   it('keeps acting requests and private references out of public lookup', () => {
     expect(assessRequestScope('احجز لي طاولة في مطعم')).toMatchObject({ source: 'unresolved', operation: 'act' });
     expect(assessRequestScope('ما هي ملاحظاتي عن العميل')).toMatchObject({ scope: 'private' });
+  });
+
+  it('recognizes a standalone Iraqi Arabic fact question and preserves private scope', () => {
+    const question = 'شنو لون الياقوت؟';
+    expect(assessRequestScope(question)).toMatchObject({ source: 'public_lookup', operation: 'lookup' });
+    expect(decideRequestRoute({ text: question, capabilities: { search: true } })).toMatchObject({ route: 'web_search' });
+    expect(assessRequestScope('شنو اسم شركتي؟')).toMatchObject({ source: 'prior_conversation', scope: 'private' });
   });
 });

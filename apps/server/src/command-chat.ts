@@ -2004,7 +2004,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         if (level.level === 4) { await finish(id, runId, state, level.reason, 'blocked'); return; }
       }
       const actionRequest = requestActionText(requestScopeActionText(request));
-      const conversationTurn = await enterConversationTurn({ db, ownerId, conversationId: id, turnId: runId, text: request, intent: run.intent, state, active, shadow: config.conversationShadow, chatModel: hasChatModel() });
+      const conversationTurn = await enterConversationTurn({ db, ownerId, conversationId: id, turnId: runId, text: request, intent: run.intent, state, active, shadow: config.conversationShadow, chatModel: hasChatModel(), canReadPublicPage: Boolean(config.readPage) });
       const computationMemoryBinding = { ownerId, conversationId: id, runId, evaluatedAt: effectiveSource.evaluatedAt };
       const computationMemoryReceipt = createComputationMemoryReceipt(request, computationMemoryBinding);
       const userFactAssessment = assessUserFactMemoryRequest(request);
@@ -2442,6 +2442,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       // The browser's hands without a model: plain commands run on the observed page.
       let handsPlan = state.hands ?? null;
+      if (conversationTurn?.pageRead) handsPlan ??= conversationTurn.plan;
       // The fuller name a return to an earlier subject is searched under («ألبرت أينشتاين» for «ارجع إلى أينشتاين: …»). Its
       // words come from the titles of public pages this conversation read, so its search is checked as a generated query:
       // every word must be in the request or in those public receipts (state.publicQueryTerms).
@@ -2996,7 +2997,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         // rain falls») is judged on what was searched: judged on the whole request, the right Rain answer was withheld as
         // «subject_missing» in the live check of 2026-11-23.
         const searched = plan.steps.at(-1);
-        const reshaped = !plan.sequel && searched?.kind === 'search' && searched.ask && searched.reply
+        const reshaped = searched?.kind === 'ask_page' && searched.conversationPage ? { question: searched.question, previous: currentExecution.previousRequest ?? null } : !plan.sequel && searched?.kind === 'search' && searched.ask && searched.reply
           ? { question: searched.query, previous: currentExecution.previousRequest ?? null } : undefined;
         const judgedAs = plan.sequel ? { question: plan.sequel.asked, previous: plan.sequel.previous } : reshaped;
         let outcome: HandsOutcome;
