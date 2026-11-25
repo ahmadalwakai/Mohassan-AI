@@ -20,6 +20,7 @@ import { usesAlignedEvidence } from './writing/multisource/types.js';
 import { extractiveWritingEnabled } from './writing/request.js';
 import { assessRequestScope, maskRequestLiteralData, parseRequestScopeAssessment, requestCapabilityAllowed, requestScopeActionText, reviewPublicProjection, requestConstraintReply, type RequestScopeAssessment } from './request-scope.js';
 import { applyScratchRouting, runtimeScratchPolicy, type ScratchDecisionPolicy, type ScratchRoutingChoices } from './scratch-decisions.js';
+import type { RequestUnderstandingView } from './understanding/index.js';
 
 /**
  * Read-only routing contract for the host to adopt, test and observe. A decision
@@ -43,6 +44,7 @@ const PendingQuestionSchema = z.object({
 
 export interface RequestRoutingInput {
   text: string;
+  understanding?: RequestUnderstandingView;
   /** Host-persisted user state only, parsed by resolveRequestContext. */
   context?: unknown;
   previousScope?: unknown;
@@ -141,7 +143,7 @@ function decideRuleRequestRoute(input: RequestRoutingInput, choices: ScratchRout
   const manners = standaloneMannersRoute(input);
   if (manners) return manners;
   const pending = PendingQuestionSchema.safeParse(input.pendingQuestion);
-  const options: RequestContextOptions = { turnId: input.turnId, learnedFollowUp: choices.followUp,
+  const options: RequestContextOptions = { turnId: input.turnId, learnedFollowUp: choices.followUp, understanding: input.understanding,
     ...(pending.success ? { pendingQuestion: { id: pending.data.id, fields: pending.data.fields } } : {}) };
   const resolution = resolveRequestContext(input.text, input.context, options);
   const previousContext = parseRequestContextState(input.context);
@@ -153,8 +155,8 @@ function decideRuleRequestRoute(input: RequestRoutingInput, choices: ScratchRout
     publicQueryEligible: false, reasons: ['inherited_source'],
   } : null;
   const previousScope = input.previousScope ?? retainedScope ?? legacyPrivateScope ?? inferredScope ?? undefined;
-  const scopeOptions = { contextKind: resolution.kind, previous: previousScope };
-  const scopeRequest = resolution.resolved === null ? input.text : requestActionText(requestScopeActionText(resolution.resolved));
+  const scopeOptions = { contextKind: resolution.kind, previous: previousScope, understanding: resolution.understanding };
+  const scopeRequest = resolution.resolved === null ? input.text : requestActionText(requestScopeActionText(resolution.resolved, resolution.understanding));
   const sourceAssessment = assessRequestScope(input.text, scopeOptions);
   const explicitPublicSource = sourceAssessment.source === 'public_lookup'
     && sourceAssessment.reasons.some(reason => reason === 'explicit_public_lookup' || reason === 'public_document_reference');
