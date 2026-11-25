@@ -3,6 +3,7 @@ import { compute, type ComputationConsumption } from './mind/compute.js';
 import type { Claim, Evidence } from './mind/contract.js';
 import { analyzeCompoundRequest, type CompoundRequestAnalysis, type PendingActionKind } from './compound-request.js';
 import { splitReplyDirective, type ReplyDirective, type ReplyLanguage } from './reply-directive.js';
+import { evaluateWordProblem } from './word-problem.js';
 
 /** A local calculation is a reusable capability, independent of the experimental Mind route. */
 export interface LocalComputation {
@@ -18,6 +19,8 @@ export interface LocalComputation {
   /** Host may use the verified step separately while continuing the full request. */
   primaryText?: string;
   pendingNote?: string;
+  /** A word problem was understood as arithmetic but had no reliable expression. */
+  abstained?: true;
 }
 
 /**
@@ -30,6 +33,8 @@ export function evaluateLocalComputation(request: string, now = new Date()): Loc
   if (!request.trim() || request.length > 4000 || !Number.isFinite(now.getTime())) return null;
   const whole = evaluateComputationText(request, now);
   if (whole) return whole;
+  const wordProblem = evaluateWordProblem(request);
+  if (wordProblem) return wordProblem;
   // «QA test 2026-11-23: Calculate 37 × 24 and reply with the result in one short Arabic sentence.» (live test, 2026-11-23):
   // the label in front and the closing instruction about the reply are not part of the calculation. Only the request
   // between them is calculated, and only when it is a complete calculation on its own; the reply then follows the
