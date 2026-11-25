@@ -13,6 +13,7 @@ const root = fileURLToPath(new URL('../../../', import.meta.url));
 const workerPath = join(root, 'packages', 'execution-integration', 'model_worker', 'worker.py');
 const modelPackage = join(root, 'packages', 'execution-model');
 const prompts = [[1, 2, 3], [4, 5, 6]];
+const scoringOptions = [[[7], [8, 9], [8, 10, 11]], [[7], [8], [9]]];
 const maxNewTokens = 6;
 const makeCheckpoint = `
 from hashlib import sha256
@@ -33,7 +34,7 @@ model = ExecutionModel(config).eval()
 checkpoint = Path(sys.argv[2])
 torch.save({'config': config.to_dict(), 'model_state': model.state_dict()}, checkpoint)
 trunk_pin = sha256(checkpoint.read_bytes()).hexdigest()
-heads = {'lm': {'kind': 'generate'}}
+heads = {'lm': {'kind': 'generate'}, 'options': {'kind': 'score-options'}}
 torch.manual_seed(42)
 for kind, width in [('classify', 3), ('pointer', 1)]:
     directory = checkpoint.parent / kind
@@ -44,8 +45,16 @@ for kind, width in [('classify', 3), ('pointer', 1)]:
         'manifestSha256': sha256((directory / 'sidecar.json').read_bytes()).hexdigest(),
     }}
 generation = GenerationConfig(max_new_tokens=int(sys.argv[3]))
-reference = [generate(model, prompt, generation).token_ids for prompt in json.loads(sys.argv[4])]
-print(json.dumps({'heads': heads, 'reference': reference}))
+prompts, options = [json.loads(value) for value in sys.argv[4:6]]
+reference = [generate(model, prompt, generation).token_ids for prompt in prompts]
+with torch.inference_mode():
+    option_scores = [
+        [sum(model(torch.tensor([prompt + option[:index]])).logits[0, -1].log_softmax(-1)[target].item()
+             for index, target in enumerate(option))
+         for option in continuations]
+        for prompt, continuations in zip(prompts, options)
+    ]
+print(json.dumps({'heads': heads, 'reference': reference, 'optionScores': option_scores}))
 `;
 
 const environment: Record<string, string> = {};
@@ -69,6 +78,7 @@ describe.skipIf(!python)('permanent model worker with a random dense checkpoint'
   let config: string;
   let sha256: string;
   let reference: number[][];
+  let optionReference: number[][];
 
   const identity = () => ({ modelId: 'random-dense-fixture', tokenizerId: 'fixture-token-ids', checkpointId: `sha256:${sha256}` });
 
@@ -78,9 +88,11 @@ describe.skipIf(!python)('permanent model worker with a random dense checkpoint'
     config = join(folder, 'worker.json');
     const output = execFileSync(resolve(python!), [
       '-I', '-B', '-c', makeCheckpoint, modelPackage, checkpoint, String(maxNewTokens), JSON.stringify(prompts),
+      JSON.stringify(scoringOptions),
     ], { encoding: 'utf8', env: environment, stdio: ['ignore', 'pipe', 'pipe'], timeout: 20_000 });
-    const fixture = JSON.parse(output) as { heads: Record<string, unknown>; reference: number[][] };
+    const fixture = JSON.parse(output) as { heads: Record<string, unknown>; reference: number[][]; optionScores: number[][] };
     reference = fixture.reference;
+    optionReference = fixture.optionScores;
     sha256 = createHash('sha256').update(await readFile(checkpoint)).digest('hex');
     await writeFile(config, JSON.stringify({
       identity: identity(),
@@ -129,7 +141,9 @@ describe.skipIf(!python)('permanent model worker with a random dense checkpoint'
       const ready = await waitForReady(worker);
       expect(ready.startupMs).toBeGreaterThan(0);
       expect(ready.ready).toMatchObject({
-        identity: identity(), device: 'cpu', heads: { lm: 'generate', classify: 'classify', pointer: 'pointer' },
+        identity: identity(), device: 'cpu',
+        heads: { lm: 'generate', classify: 'classify', pointer: 'pointer', options: 'score-options' },
+        configSha256: createHash('sha256').update(await readFile(config)).digest('hex'),
       });
       const single = await generate(worker, prompts[0]);
       const batched = await Promise.all(prompts.map(prompt => generate(worker, prompt)));
@@ -162,6 +176,36 @@ describe.skipIf(!python)('permanent model worker with a random dense checkpoint'
       await worker.stop();
     }
     expect(worker.status.state).toBe('stopped');
+  });
+
+  it('scores closed continuations deterministically and matches direct causal log probabilities', async () => {
+    const worker = startWorker();
+    try {
+      await waitForReady(worker);
+      const score = (inputIds: number[], options: number[][]) => worker.request({
+        operation: 'score-options', head: 'options', input: { inputIds, options },
+      });
+      const initial = await score(prompts[0], scoringOptions[0]);
+      const concurrent = await Promise.all(prompts.map((prompt, index) => score(prompt, scoringOptions[index])));
+      expect(concurrent[0]).toEqual(initial);
+      for (const [requestIndex, result] of concurrent.entries()) {
+        const scores = result.scores as number[];
+        expect(scores).toHaveLength(scoringOptions[requestIndex].length);
+        for (const [optionIndex, value] of scores.entries()) {
+          expect(value).toBeCloseTo(optionReference[requestIndex][optionIndex], 5);
+        }
+      }
+      await expect(score(prompts[0], [[1], [1]])).rejects.toMatchObject({ code: 'invalid_request' });
+      await expect(score(prompts[0], [[1], [256]])).rejects.toMatchObject({ code: 'invalid_request' });
+      await expect(score(prompts[0], [[1], Array(maxNewTokens + 1).fill(2)])).rejects.toMatchObject({ code: 'invalid_request' });
+      await expect(score(Array(32).fill(1), [[2], [3]])).rejects.toMatchObject({ code: 'invalid_request' });
+      await expect(worker.request({
+        operation: 'score-options', head: 'lm', input: { inputIds: prompts[0], options: [[2], [3]] },
+      })).rejects.toMatchObject({ code: 'unsupported_capability' });
+      expect(worker.status.state).toBe('ready');
+    } finally {
+      await worker.stop();
+    }
   });
 
   it('observes a genuine worker crash and serves again after a fresh load', async () => {

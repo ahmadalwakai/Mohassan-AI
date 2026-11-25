@@ -17,12 +17,13 @@ const STARTUP_ERRORS = [
 ] as const;
 
 export type ModelWorkerStartupError = (typeof STARTUP_ERRORS)[number];
-export type ModelWorkerHead = 'classify' | 'pointer' | 'generate';
-export type ModelWorkerOperation = 'classify' | 'score' | 'select' | 'generate';
+export type ModelWorkerHead = 'classify' | 'pointer' | 'generate' | 'score-options';
+export type ModelWorkerOperation = 'classify' | 'score' | 'select' | 'generate' | 'score-options';
 export type ModelWorkerResult = { [key: string]: TransportJson };
 export interface ModelWorkerToken {
   readonly token: number;
   readonly index: number;
+  readonly text?: string;
 }
 
 export interface ModelWorkerParity {
@@ -36,6 +37,8 @@ export interface ModelWorkerParity {
 
 export interface PermanentModelWorkerReady {
   readonly identity: ModelIdentity;
+  readonly text?: true;
+  readonly configSha256?: string;
   readonly heads: Readonly<Record<string, ModelWorkerHead>>;
   readonly limits: Readonly<{
     maxBatchSize: number;
@@ -80,10 +83,13 @@ export function parseWorkerReadiness(
     if (!code) throw new ModelTransportError('invalid_model_output');
     return { kind: 'startup_error', code };
   }
-  keys(frame, ['protocol', 'kind', 'identity', 'heads', 'limits', 'startupMs', 'device', 'parity']);
+  keys(frame, ['protocol', 'kind', 'identity', 'heads', 'limits', 'startupMs', 'device', 'parity', 'configSha256', 'text']);
+  const { configSha256, text } = frame;
   if (frame.kind !== 'ready' || !record(frame.heads) || !record(frame.limits)
     || !record(frame.parity) || typeof frame.startupMs !== 'number'
     || !Number.isFinite(frame.startupMs) || frame.startupMs < 0
+    || (configSha256 !== undefined && (typeof configSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(configSha256)))
+    || (text !== undefined && text !== true)
     || (frame.device !== 'cpu' && frame.device !== 'cuda')) {
     throw new ModelTransportError('invalid_model_output');
   }
@@ -92,7 +98,8 @@ export function parseWorkerReadiness(
 
   const heads: Record<string, ModelWorkerHead> = Object.create(null);
   for (const [name, operation] of Object.entries(frame.heads)) {
-    if (!id(name) || (operation !== 'classify' && operation !== 'pointer' && operation !== 'generate')) {
+    if (!id(name) || (operation !== 'classify' && operation !== 'pointer'
+      && operation !== 'generate' && operation !== 'score-options')) {
       throw new ModelTransportError('invalid_model_output');
     }
     heads[name] = operation;
@@ -109,6 +116,8 @@ export function parseWorkerReadiness(
     kind: 'ready',
     ready: Object.freeze({
       identity: pinned,
+      ...(configSha256 === undefined ? {} : { configSha256 }),
+      ...(text === true ? { text } : {}),
       heads: Object.freeze(heads),
       limits: Object.freeze({ maxBatchSize, maxBatchWaitMs, maxPending, maxInputBytes, maxOutputBytes, maxOutputTokens, maxTimeoutMs }),
       startupMs: frame.startupMs,
@@ -119,7 +128,7 @@ export function parseWorkerReadiness(
 }
 
 export type ModelWorkerResponse =
-  | { kind: 'token'; requestId: string; token: number; index: number }
+  | ({ kind: 'token'; requestId: string } & ModelWorkerToken)
   | { kind: 'result'; requestId: string; result: ModelWorkerResult }
   | { kind: 'error'; requestId: string; code: (typeof PEER_ERRORS)[number] };
 
@@ -129,10 +138,11 @@ export function parseWorkerResponse(frame: Record<string, unknown>): ModelWorker
   const envelope = ['protocol', 'kind', 'requestId'];
   switch (kind) {
     case 'token':
-      keys(frame, [...envelope, 'token', 'index']);
+      keys(frame, [...envelope, 'token', 'index', 'text']);
       if (!integer(frame.token, 0, Number.MAX_SAFE_INTEGER)
-        || !integer(frame.index, 0, Number.MAX_SAFE_INTEGER)) break;
-      return { kind, requestId, token: frame.token, index: frame.index };
+        || !integer(frame.index, 0, Number.MAX_SAFE_INTEGER)
+        || (frame.text !== undefined && (typeof frame.text !== 'string' || /\p{Surrogate}/u.test(frame.text)))) break;
+      return { kind, requestId, token: frame.token, index: frame.index, ...(frame.text === undefined ? {} : { text: frame.text }) };
     case 'result':
       keys(frame, [...envelope, 'result']);
       if (!record(frame.result)) break;

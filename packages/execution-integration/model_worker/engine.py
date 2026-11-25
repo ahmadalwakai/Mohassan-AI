@@ -9,6 +9,7 @@ from typing import Any
 
 import torch
 from torch import Tensor, nn
+from torch.nn import functional as F
 
 from execution_model.errors import ExecutionModelError, InvalidRequestError, NumericalError
 from execution_model.generation import GenerationConfig
@@ -21,12 +22,19 @@ from .checkpoints import (
 )
 from .decoding import CACHE_AFTER_TOKENS, GenerateInput, GenerationBatch, TokenStep
 from .quantization import apply_quantization, use_int8
+from .text import TextCodec, load_text_codec
 
 
 @dataclass(frozen=True)
 class DenseInput:
     input_ids: tuple[int, ...]
     candidates: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class OptionsInput:
+    input_ids: tuple[int, ...]
+    options: tuple[tuple[int, ...], ...]
 
 
 def _integer(value: Any, minimum: int, maximum: int) -> int:
@@ -68,7 +76,7 @@ class DenseHead:
     projection: nn.Sequential | None = None
     eos: int | None = None
 
-    def prepare(self, operation: str, payload: Any, max_output: int) -> DenseInput | GenerateInput:
+    def prepare(self, operation: str, payload: Any, max_output: int) -> DenseInput | GenerateInput | OptionsInput:
         required = {"inputIds"}
         optional: set[str] = set()
         if operation == "generate":
@@ -76,6 +84,8 @@ class DenseHead:
             optional = {"temperature", "topK", "topP", "seed"}
         elif operation in ("score", "select"):
             required.add("candidatePositions")
+        elif operation == "score-options":
+            required.add("options")
         data = fields(payload, required, optional, "invalid_request")
         config = self.trunk.config
         ids = _integers(data["inputIds"], config.max_context_length, config.vocab_size - 1)
@@ -85,35 +95,67 @@ class DenseHead:
             ))
         if operation == "classify":
             return DenseInput(ids)
+        if operation == "score-options":
+            options = data["options"]
+            if type(options) is not list or not 2 <= len(options) <= 16:
+                raise EngineError("invalid_request")
+            limit = min(config.max_context_length - len(ids), max_output, 16)
+            continuations = tuple(_integers(option, limit, config.vocab_size - 1) for option in options)
+            if len(set(continuations)) != len(continuations) or sum(map(len, continuations)) > 64:
+                raise EngineError("invalid_request")
+            return OptionsInput(ids, continuations)
         candidates = _integers(data["candidatePositions"], len(ids), len(ids) - 1)
         if len(candidates) != len(set(candidates)):
             raise EngineError("invalid_request")
         return DenseInput(ids, candidates)
 
-    def batch_key(self, value: DenseInput | GenerateInput) -> int:
+    def batch_key(self, value: DenseInput | GenerateInput | OptionsInput) -> int:
         return len(value.input_ids)
 
-    def logits(self, values: list[DenseInput] | list[GenerateInput]) -> list[Tensor]:
+    def logits(self, values: list[DenseInput] | list[GenerateInput] | list[OptionsInput]) -> list[Tensor]:
+        if isinstance(values[0], OptionsInput):
+            return [self._option_scores(value) for value in values]
         ids = torch.tensor([value.input_ids for value in values], dtype=torch.long,
                            device=self.trunk.token_embedding.weight.device)
         if self.projection is None:
             result = self.trunk(ids, last_token_only=True).logits[:, -1]
             return list(result.unbind())
-        hidden = self.trunk.embedding_dropout(self.trunk.token_embedding(ids))
-        valid = torch.ones_like(ids, dtype=torch.bool)
-        positions = torch.arange(ids.shape[1], device=ids.device).expand_as(ids)
-        for block in self.trunk.blocks:
-            hidden = block(hidden, valid, positions)
+        hidden = self._all_hidden_states(ids)
         if self.operations == ("classify",):
             result = self.projection(self.trunk.final_norm(hidden[:, -1]))
             return list(result.unbind())
         result = self.projection(self.trunk.final_norm(hidden)).squeeze(-1)
         return [row[list(value.candidates)] for row, value in zip(result, values)]
 
-    def prediction(self, _value: DenseInput | GenerateInput, logits: Tensor) -> int:
+    def _all_hidden_states(self, ids: Tensor) -> Tensor:
+        hidden = self.trunk.embedding_dropout(self.trunk.token_embedding(ids))
+        valid = torch.ones_like(ids, dtype=torch.bool)
+        positions = torch.arange(ids.shape[1], device=ids.device).expand_as(ids)
+        for block in self.trunk.blocks:
+            hidden = block(hidden, valid, positions)
+        return hidden
+
+    def _option_scores(self, value: OptionsInput) -> Tensor:
+        embedding = self.trunk.token_embedding.weight
+        if all(len(option) == 1 for option in value.options):
+            prefix = torch.tensor([value.input_ids], dtype=torch.long, device=embedding.device)
+            logits = self.trunk(prefix, last_token_only=True).logits[0, -1]
+            return logits.log_softmax(-1)[[option[0] for option in value.options]]
+
+        scores = []
+        for option in value.options:
+            ids = torch.tensor([(*value.input_ids, *option[:-1])], dtype=torch.long, device=embedding.device)
+            # Only the last prompt position and the continuation need vocabulary logits.
+            suffix = self._all_hidden_states(ids)[0, len(value.input_ids) - 1:]
+            logits = F.linear(self.trunk.final_norm(suffix), embedding)
+            targets = torch.tensor(option, dtype=torch.long, device=embedding.device).unsqueeze(-1)
+            scores.append(logits.log_softmax(-1).gather(-1, targets).sum())
+        return torch.stack(scores)
+
+    def prediction(self, _value: DenseInput | GenerateInput | OptionsInput, logits: Tensor) -> int:
         return int(logits.argmax())
 
-    def result(self, operation: str, value: DenseInput, logits: Tensor) -> dict:
+    def result(self, operation: str, value: DenseInput | OptionsInput, logits: Tensor) -> dict:
         if operation == "classify":
             return {"logits": logits.tolist(), "classIndex": self.prediction(value, logits)}
         output = {"scores": logits.tolist()}
@@ -187,12 +229,14 @@ class RoutedGeneration:
 
 class WorkerEngine:
     def __init__(self, heads: dict[str, DenseHead | GoalTaggerHead], device: torch.device,
-                 checkpoint_sha256: str, max_output_tokens: int, lease: GpuLease | None = None) -> None:
+                 checkpoint_sha256: str, max_output_tokens: int, lease: GpuLease | None = None,
+                 text: TextCodec | None = None) -> None:
         self.heads = heads
         self.device = device
         self.checkpoint_sha256 = checkpoint_sha256
         self.max_output_tokens = max_output_tokens
         self.lease = lease
+        self.text = text
         self.quantized_heads: set[str] = set()
         self.parity_report: dict[str, dict] = {}
 
@@ -202,12 +246,17 @@ class WorkerEngine:
             self.lease.close()
             self.lease = None
 
-    def prepare(self, operation: str, head: str, payload: Any) -> DenseInput | GenerateInput | dict:
+    def prepare(self, operation: str, head: str, payload: Any) -> DenseInput | GenerateInput | OptionsInput | dict:
         if head not in self.heads or operation not in self.heads[head].operations:
             raise EngineError("unsupported_capability")
+        if operation in ("generate", "score-options") and type(payload) is dict and "text" in payload:
+            if self.text is None or "inputIds" in payload:
+                raise EngineError("invalid_request")
+            payload = dict(payload)
+            payload["inputIds"] = self.text.encode(payload.pop("text"))
         return self.heads[head].prepare(operation, payload, self.max_output_tokens)
 
-    def batch_key(self, operation: str, head: str, value: DenseInput | GenerateInput | dict) -> tuple:
+    def batch_key(self, operation: str, head: str, value: DenseInput | GenerateInput | OptionsInput | dict) -> tuple:
         cache = isinstance(value, GenerateInput) and value.config.max_new_tokens > CACHE_AFTER_TOKENS
         return operation, head, self.heads[head].batch_key(value), cache
 
@@ -239,6 +288,8 @@ def _dense_heads(base_dir: Path, trunk: ExecutionModel, digest: str, descriptors
         kind = spec["kind"]
         if kind == "generate" and "sidecar" not in spec:
             heads[name] = DenseHead(trunk, ("generate",), eos=eos)
+        elif kind == "score-options" and "sidecar" not in spec:
+            heads[name] = DenseHead(trunk, ("score-options",))
         elif kind in ("classify", "pointer") and "sidecar" in spec:
             operations = ("classify",) if kind == "classify" else ("score", "select")
             heads[name] = DenseHead(trunk, operations, load_projection(base_dir, spec, trunk, digest))
@@ -247,7 +298,8 @@ def _dense_heads(base_dir: Path, trunk: ExecutionModel, digest: str, descriptors
     return heads
 
 
-def load_engine(config: dict, *, base_dir: Path, max_output_tokens: int) -> WorkerEngine:
+def load_engine(config: dict, *, base_dir: Path, max_output_tokens: int,
+                tokenizer_id: str | None = None) -> WorkerEngine:
     spec = fields(config.get("checkpoint"), {"path", "sha256"},
                   {"format", "manifestSha256", "tokenizerId"}, "invalid_config")
     path, digest = local_path(base_dir, spec["path"]), pin(spec["sha256"])
@@ -258,8 +310,9 @@ def load_engine(config: dict, *, base_dir: Path, max_output_tokens: int) -> Work
         raise EngineError("invalid_config")
     device, lease = acquire_device(config.get("device", "cpu"))
     try:
+        text = None
         if format_name == "goal-tagger":
-            if "heads" in config or "eosTokenId" in config:
+            if "heads" in config or "eosTokenId" in config or "tokenizer" in config:
                 raise EngineError("invalid_config")
             trunk, vocabulary = load_goal_tagger(path, digest)
             heads = {"goal-tagger": GoalTaggerHead(trunk, vocabulary, ("score", "select"))}
@@ -274,6 +327,9 @@ def load_engine(config: dict, *, base_dir: Path, max_output_tokens: int) -> Work
                 trunk, eos = load_dense_inference(path, digest, spec)
             else:
                 trunk = load_dense_training(path, digest)
+            if "tokenizer" in config:
+                text = load_text_codec(base_dir, config["tokenizer"], tokenizer_id, trunk.config.vocab_size)
+                eos = text.tokenizer.eos_token_id
             if "eosTokenId" in config:
                 configured = config["eosTokenId"]
                 if (type(configured) is not int or not 0 <= configured < trunk.config.vocab_size
@@ -285,7 +341,7 @@ def load_engine(config: dict, *, base_dir: Path, max_output_tokens: int) -> Work
         for head in heads.values():
             if head.projection is not None:
                 head.projection.to(device)
-        engine = WorkerEngine(heads, device, digest, max_output_tokens, lease)
+        engine = WorkerEngine(heads, device, digest, max_output_tokens, lease, text)
         try:
             engine.parity_report = apply_quantization(engine, config.get("quantization"))
         except ValueError as error:

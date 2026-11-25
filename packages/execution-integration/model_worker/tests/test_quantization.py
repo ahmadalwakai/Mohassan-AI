@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from model_worker.decoding import GenerationBatch
 from model_worker.engine import DenseHead, WorkerEngine
-from model_worker.quantization import _RoutedLinear, apply_quantization
+from model_worker.quantization import _INT8, _RoutedLinear, apply_quantization
 
 from execution_model.config import ModelConfig
 from execution_model.model import ExecutionModel
@@ -180,4 +180,24 @@ def test_int8_refuses_changed_tokens_between_cache_modes(monkeypatch: pytest.Mon
     report = apply_quantization(engine, {"lm": _generation()})
     assert report["lm"]["reason"] == "cache_tokens_changed"
     assert report["lm"]["greedyTokenAgreement"] == 1.0
+    assert not engine.quantized_heads
+
+
+def test_int8_refuses_changed_closed_list_choice(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = _engine()
+    engine.heads["options"] = DenseHead(engine.heads["lm"].trunk, ("score-options",))
+
+    def changed_choice(_head: DenseHead, _value) -> torch.Tensor:
+        return torch.tensor([-2.0, -1.0] if _INT8.get() else [-1.0, -2.0])
+
+    monkeypatch.setattr(DenseHead, "_option_scores", changed_choice)
+    report = apply_quantization(engine, {
+        "options": {
+            "thresholds": {"minTop1Agreement": 0, "maxAbsoluteLogitDifference": 2},
+            "probes": [{"operation": "score-options", "payload": {"inputIds": [4, 8], "options": [[17], [32]]}}],
+        },
+    })
+
+    assert report["options"]["reason"] == "selection_changed"
+    assert not report["options"]["adopted"]
     assert not engine.quantized_heads

@@ -162,6 +162,7 @@ export interface CommandChatConfig {
    * the assistant keeps its original Groq-only path.
    */
   inference?: { routerFor(tier: ModelTier): InferenceRouter | null; active(): boolean };
+  ownModel?: import('./assistant/own-model-reply.js').OwnModelReply;
   /** Bounded execution lease; injectable for isolated recovery tests. */
   leaseMs?: number;
   /** An isolated evaluator can pace requests without spending provider timeout on its queue. */
@@ -2323,6 +2324,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const earlier = await db.selectFrom('chat_messages').select(['role', 'text']).where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(HISTORY_MESSAGES + 1).execute();
       const history = earlier.reverse().slice(0, -1).map((entry) => ({ role: entry.role, text: clean(entry.text) }));
       currentExecution.previousRequest = history.filter(entry => entry.role === 'user').at(-1)?.text ?? null;
+      if (config.ownModel && run.intent === 'task' && run.attempt === 1 && !state.steps)
+        void config.ownModel.observe({ request: vault.scrub(id, request), earlierUserTurns: history.filter(entry => entry.role === 'user').map(entry => vault.scrub(id, entry.text)), route: state.routing?.route, signal });
       let page: AgentPage | null = null;
       // Preflight recovery reads spend budget, but do not execute the requested
       // hands plan or turn a new command into an already-handled continuation.
@@ -3059,6 +3062,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         // Every pause path saves the run state, plan included, before it stops.
         if (outcome.kind === 'paused') return;
+        if (config.ownModel && outcome.status === 'completed') outcome.text = await config.ownModel.phrase({
+          plan, reply: vault.scrub(id, outcome.text), status: outcome.status, evidence: judgeEvidence(currentExecution),
+          question: judgedAs?.question ?? request, previous: judgedAs ? judgedAs.previous : currentExecution.previousRequest, signal,
+        });
         settleHandsPart(ledgerOf(state, runId), handsPrefix, outcome.status, Date.now());
         state.handsResults = plan.results;
         state.handsFound = plan.found;
