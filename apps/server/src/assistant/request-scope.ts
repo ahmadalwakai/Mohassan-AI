@@ -3,6 +3,7 @@ import { parseUserRequestConstraints, isEntireLiteralRequest, maskRequestLiteral
 export { parseUserRequestConstraints, isEntireLiteralRequest, requestCapabilityAllowed, requestConstraintReply, maskRequestLiteralData, UserRequestConstraintsSchema, type UserRequestConstraints, type ForbiddenRequestCapability } from './request-constraints.js';
 import { publicSearchScan, publicSearchText } from '@mohassan/browser';
 import { isCurrentComputerReadRequest } from './computer-request-language.js';
+import { questionCoreferenceText, startsFactualQuestion } from './public-question-syntax.js';
 
 /** Source classification is independent of tool availability and model output. */
 export const requestSources = ['public_lookup', 'prior_conversation', 'local_state', 'supplied_content', 'unresolved'] as const;
@@ -67,18 +68,12 @@ const LOCAL_ACT = /^(?:افتح|شغل|اغلق|كبر|صغر|اضغط|انقر|
 const REFERENCE = /(?:^|\s)(?:عنه|عنها|فيه|فيها|له|لها|(?:هذا|هذه|ذلك|تلك)(?!\s+(?:الاسبوع|الشهر|العام|الصباح|المساء|اليوم))|نفسه|نفسها|المقصود|اقصده|اقصدها|الذي اعنيه|التي اعنيها)(?=\s|[\p{P}]|$)|\b(?:it|its|(?:this|that)(?!\s+(?:week|month|year|morning|evening|afternoon|day))|them|there|the same|the (?:one|document|file|item) i mean)\b/iu;
 const FOLLOW = /^(?:(?:طيب|طب|تمام|حسنا)[،,\s]+|(?:what|how) about\b|and\s+|(?:اجعلها|اجعله|خليها|خليه|خلها|خله|بدلها|بدله)(?=\s|[\p{P}]|$))/iu;
 const CLITIC_REFERENCE = /^(?:افتح|اغلق|احذف|ارسل|احفظ|غير|بدل|كبر|صغر|اقرا|اعرض|انقل|اختصر|لخص|ترجم|صحح|اعد صياغت)(?:ه|ها|هم|هن)(?:لي|لنا)?(?=\s|[\p{P}]|$)/iu;
-// «لماذا» and its spoken forms open a question as "why" does. They were missing from the Arabic words, so «لماذا السماء
-// زرقاء؟» matched nothing, ended as `missing_target`, and the search guard refused it before any search, while "Why is the
-// sky blue?" and «ما سبب زرقة السماء؟» were searched (reproduced 2026-11-23). They count only with words after them: a
-// bare «لماذا؟» names nothing to look up and stays unresolved, as it was. «لمَ» is left out: folded it is «لم», the
-// particle of «لم أجد الملف».
-const FACT_QUESTION = /^(?:(?:ما|ماذا|كم|كيف|متي|اين|وين|من|مين|هل|اي|وش|شو|ايش)(?=\s|[\p{P}]|$)|(?:لماذا|ليش|ليه)(?=\s+[\p{L}\p{N}]))|^(?:what|who|when|where|why|how|which|is|are|does|do|can|will)\b/iu;
 // «Explain why rain falls», «describe how vaccines work», «اشرح لماذا تسقط الأمطار»: a question about the world asked as
 // an instruction to explain. Until 2026-11-23 it matched no question form, ended as `missing_target`, and the search
 // guard refused «Explain why rain falls in two short Arabic sentences.» as possibly private (live test). A reference or an
 // owned record in it («explain why my account was blocked») is still found first and keeps the request private.
 const EXPLAIN_QUESTION = /^(?:explain|describe|tell me|teach me)(?:\s+(?:to me|for me|briefly|simply|in simple terms))?\s+(?:why|how|what|when|where|which|who)\s+[\p{L}\p{N}]|^(?:اشرح|وضح|فسر|بين|علمني)(?:\s+لي)?\s+(?:لماذا|ليش|ليه|كيف|ما|ماذا|متي|اين|من|سبب)\s+[\p{L}\p{N}]/iu;
-const isQuestion = (text: string) => FACT_QUESTION.test(text) || EXPLAIN_QUESTION.test(text);
+const isQuestion = (text: string) => startsFactualQuestion(text) || EXPLAIN_QUESTION.test(text);
 const NEWS = /(?:^|\s)(?:اخبار|الاخبار|طقس|الطقس|سعر الصرف|صرف العملات)(?=\s|[\p{P}]|$)|\b(?:news|headlines|weather|exchange rate)\b/iu;
 const CONVERSE = /^(?:مرحبا|اهلا|هلا|شكرا|تسلم|السلام عليكم|hi|hello|hey|thanks|thank you|good morning|good evening)(?=\s|[\p{P}]|$)/iu;
 const SOCIAL_QUESTION = /^(?:كيف حالك|كيفك|كيف الحال|how are you|how do you do|how are you doing)[.!?؟]*$/iu;
@@ -104,7 +99,7 @@ export function requestScopeActionText(value: string): string {
     if (!greeting || !/^(?:(?:مرحبا|اهلا|هلا|شكرا|تسلم|السلام عليكم)(?:\s+يا\s+[\p{L}]{1,30})?|(?:hello|hi|hey|thanks|thank you|good morning|good evening)(?:\s+[\p{L}]{1,30})?)$/iu.test(fold(greeting[1]))) break;
     const rest = stripLead(fold(greeting[2]));
     if (SOCIAL_QUESTION.test(rest)) break;
-    if (![FACT_QUESTION, EXPLAIN_QUESTION, PUBLIC_ACTION, FIND_PUBLIC_FACT, TRANSFORM, DESCRIBE_CONTENT, DESCRIBE_LOCAL, LOCAL_ACT, UNKNOWN_ACTION, NEWS, MEMORY_ACTION, NAVIGATE].some(pattern => pattern.test(rest))) break;
+    if (!isQuestion(rest) && ![PUBLIC_ACTION, FIND_PUBLIC_FACT, TRANSFORM, DESCRIBE_CONTENT, DESCRIBE_LOCAL, LOCAL_ACT, UNKNOWN_ACTION, NEWS, MEMORY_ACTION, NAVIGATE].some(pattern => pattern.test(rest))) break;
     text = greeting[2].trim();
   }
   return text;
@@ -186,7 +181,7 @@ export function assessRequestScope(value: string, options: RequestScopeOptions =
   if (!explicitPublic && numbers.length > 0 && NUMERIC_OPERATION.test(outer) && !EXCHANGE.test(outer) && !NEWS.test(outer)) return make('supplied_content', 'compute', 'compute', ['numeric_operation']);
 
   const parsedPrevious = options.previous === undefined ? null : parseRequestScopeAssessment(options.previous);
-  const reference = REFERENCE.test(outer) || FOLLOW.test(outer) || CLITIC_REFERENCE.test(outer);
+  const reference = REFERENCE.test(questionCoreferenceText(outer)) || FOLLOW.test(outer) || CLITIC_REFERENCE.test(outer);
   const independentQuestion = (isQuestion(outer) || NEWS.test(outer)) && !reference && options.contextKind !== 'answer';
   const selfContainedPublic = (explicitPublic || findPublicFact) && !reference || hasPublicDocument || independentQuestion;
   if (selfContainedPublic) return make('public_lookup', navigation ? 'act' : transformation ? 'transform' : 'lookup', navigation ? 'browser_command' : 'web_search', [hasPublicDocument ? 'public_document_reference' : explicitPublic ? 'explicit_public_lookup' : 'public_subject', 'explicit_new_task']);

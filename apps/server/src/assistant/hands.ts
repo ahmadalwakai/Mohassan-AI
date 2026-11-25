@@ -1,13 +1,14 @@
 import { AgentEffectHeld, BrowserError, compileQuery, publicSearchScan, publicSearchText, safeResumeUrl, type AgentAction, type AgentElement, type AgentPage, type AgentRequestPermit, type SearchHit } from '@mohassan/browser';
 import { directRoute, namedSite, sensitiveAction } from './brain.js';
 import { hostOf, readingLabel, siteName } from './activity.js';
-import { checkAnswerLine, figureKind, isDisambiguationPage, isDisambiguationTitle, isMetaLine, isReasonQuestion, questionLanguage } from './answer-check.js';
+import { checkAnswerLine, figureKind, hasAnswerNumber, isDisambiguationPage, isDisambiguationTitle, isMetaLine, isReasonQuestion, questionLanguage } from './answer-check.js';
 import { releaseLines, releaseQuestion } from './releases.js';
 import { isCampaignRequest } from './campaign-request.js';
 import { isSiteRequest } from '@mohassan/sites';
 import type { WebSequel } from './web-sequence.js';
 import { splitReplyDirective, type ReplyField } from './reply-directive.js';
 import { returnedTo } from './return-to.js';
+import { explicitFactualEvidence } from './factual-evidence.js';
 
 export { returnedTo };
 export { siteName };
@@ -940,9 +941,9 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     .replace(/\s*\[\s*([.!?؟])$/u, '$1')
     .replace(/\s+([.،,؛;:!?؟)\]»])/gu, '$1')
     .replace(/([(\[«])\s+/gu, '$1'), labels);
-  // A sentence ends at . ! ? ؟ unless the dot sits inside a number (2.5, 1.3), or at a line break.
+  // Keep decimal points, name initials and common title and calendar abbreviations inside their sentence.
   const text = readableText(page.text);
-  const sentences = [...text.matchAll(/(?:[^.!?؟\n]|(?<=\d)\.(?=\d))+(?:[.!?؟]+|\n|$)/gu)];
+  const sentences = [...text.matchAll(/(?:[^.!?؟\n]|(?<=\p{Nd})\.(?=\p{Nd})|(?<=(?<!\p{L})(?:\p{Lu}|Dr|Prof|Mr|Mrs|Ms|St|Maj|Gen|Lt|Col))\.(?=[ \t]+\p{Lu})|(?<=(?<!\p{L})ق)\.(?=[ \t]*(?:هـ|م)(?!\p{L})))+(?:[.!?؟]+|\n|$)/gu)];
   for (const [index, match] of sentences.entries()) {
     let line = cleanSentence(match[0]);
     const opening = subjectStart ? [...line.matchAll(subjectStart)].at(-1) : undefined;
@@ -985,7 +986,7 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
       if (lead) glued = false;
     }
     const count = glued ? 40 : line.split(' ').length;
-    const hasNumber = /[\d٠-٩]/u.test(line);
+    const hasNumber = hasAnswerNumber(line);
     if (count < (hasNumber ? 3 : 5) || line.length > (lead ? LEAD_MAX_CHARS : 400) || seen.has(line) || (wantsNumber && !hasNumber)) continue;
     // A sentence that asks («ما تاريخ الذكاء الاصطناعي؟») is a heading or a contents entry, never an answer.
     if (/[؟?]\s*$/u.test(line)) continue;
@@ -1020,7 +1021,7 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
       + (peopleAsk && POPULATION_NOUN.test(folded) ? 2 : 0) + (opensWithSubject?.test(folded) ? 2 : 0) + (makerAsk && MAKER_STATEMENT.test(folded) ? 2 : 0) + (reasonAsk && reasonAnswers(question, line) ? 3 : 0), at, year, glued, lead });
   }
   // «كم تستغرق …» is answered by a number: sentences without one only look related.
-  if (numberAnswer && !scored.some(item => /[\d٠-٩]/u.test(item.line))) return [];
+  if (numberAnswer && !scored.some(item => hasAnswerNumber(item.line))) return [];
   // Among equals the newest year wins («إحصاء 2024» over «إحصاء 2014»), except for a date: there it is the page order.
   const best = scored.sort((a, b) => b.score - a.score || (numberAnswer && kind !== 'date' ? b.year - a.year : 0) || a.at - b.at).slice(0, limit);
   return (bestFirst ? best : best.sort((a, b) => a.at - b.at)).map(item => item.lead ? item.line : wholeWords(item.line, 300));
@@ -1424,7 +1425,9 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
   /** Articles opened by the subject's own name (Wikipedia resolves its redirects): the subject's article whatever its title. */
   const ownUrls = new Set<string>();
   const ownPage = (page: { url: string; title: string }, entity: readonly string[]) => ownUrls.has(withoutHash(page.url)) || isOwnArticle(page.title, entity);
-  const engine = async (query: string): Promise<{ results: { title: string; url: string }[] } | { failed: string } | 'unavailable'> => {
+  type SearchResult = { title: string; url: string };
+  type SearchBatch = { results: SearchResult[]; retrySubject?: () => Promise<SearchResult[]> };
+  const engine = async (query: string, ask = false): Promise<SearchBatch | { failed: string } | 'unavailable'> => {
     const publicQuery = query.normalize('NFKC').replace(/\p{Cf}/gu, '');
     const decoded = publicSearchScan(publicQuery);
     if (publicSearchText(publicQuery) !== publicQuery || publicSearchText(decoded) !== decoded || (decoded.match(/https?:\/\/\S+/gi) ?? []).some(url => safeResumeUrl(url) === null)) {
@@ -1503,14 +1506,18 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
       results = await lookup(narrower);
       looked.add(fold(narrower));
     }
-    // When the article could not be opened by name, one more search by the subject's name finds it (looked up only when missing).
-    if (!named && searchable.length && !live && !results.some(hit => isOwnArticle(hit.title, searchable))) {
-      if (surface && !looked.has(fold(surface))) {
+    // A subject-name retry can recover its article when the first hits don't answer. Read the
+    // existing hits first for questions, so a relevant source can save another provider round trip.
+    if (!named && searchable.length && !live && surface && !looked.has(fold(surface))
+      && !results.some(hit => isOwnArticle(hit.title, searchable))) {
+      const retrySubject = async () => {
         await io.step(`البحث عن مقالة «${surface.slice(0, 60)}»`);
         await pause(PROVIDER_SPACING_MS);
-        const own = (await lookup(surface)).filter(hit => isOwnArticle(hit.title, searchable));
-        if (own.length) results = [...own, ...results.filter(hit => !own.some(item => withoutHash(item.url) === withoutHash(hit.url)))];
-      }
+        return (await lookup(surface)).filter(hit => isOwnArticle(hit.title, searchable));
+      };
+      if (ask && results.length) return { results, retrySubject };
+      const own = await retrySubject();
+      if (own.length) results = [...own, ...results.filter(hit => !own.some(item => withoutHash(item.url) === withoutHash(hit.url)))];
     }
     return results.length ? { results } : providerFailure ? { failed: providerFailure } : 'unavailable';
   };
@@ -1541,7 +1548,8 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         const scoped = step.here || index > 0 && plan.steps[index - 1].kind === 'open';
         const box = !template && page && scoped ? findSearchBox(page) : undefined;
         if (!template && !box && step.here) return { kind: 'done', status: 'partial', text: page ? `لم أجد خانة بحث في ${hostOf(page.url)}. الصفحة ظاهرة في لوحة المتصفح؛ قل «ابحث عن ${step.query} في الإنترنت» لأبحث خارجها.` : NO_PAGE };
-        let searched: { title: string; url: string }[] | undefined;
+        let searched: SearchResult[] | undefined;
+        let retrySubject: SearchBatch['retrySubject'];
         // «What is the latest version of Node.js?» is read from the product's own release page first (releases.ts): the
         // search only finds old forum threads for it. When that page cannot be read or no longer states a version, the
         // general search runs as before.
@@ -1560,10 +1568,11 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         }
         if (!template && !box) {
           // The shared engine over HTTP: a results list and no browser page.
-          const found = await engine(step.query);
+          const found = await engine(step.query, step.ask);
           if (found === 'unavailable') return { kind: 'done', status: 'blocked', text: noSearchSource(step.query, plan.lang) };
           if ('failed' in found) return { kind: 'done', status: 'blocked', text: searchFailed(step.query, found.failed, plan.lang) };
           searched = found.results;
+          retrySubject = found.retrySubject;
         } else {
           let reached: AgentPage | null | 'none';
           if (template) reached = await go({ kind: 'open', text: template }, `البحث عن ${step.query}`);
@@ -1583,17 +1592,18 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           }
         }
         if (searched) plan.results = searched;
-        if (step.ask) {
+        const tried = new Set<string>();
+        const readResults = async (results: SearchResult[], candidates = results) => {
           // A question wants its answer, not a list: read the top results until one page answers in its own words.
           // A page the judge already refused for this question is neither read again nor offered again (plan.rejected, set by the
           // chat's correction step).
           const refused = new Set((plan.rejected ?? []).map(withoutHash));
-          const results = (searched ?? resultLinks(page!, 6, step.query).map(item => ({ title: tidy(item.element.label).slice(0, 90).replace(/[[\]]/g, ''), url: item.url })))
-            .filter(item => !refused.has(withoutHash(item.url)));
-          plan.results = results;
+          const eligible = results.filter(item => !refused.has(withoutHash(item.url)));
+          plan.results = eligible;
+          const unread = candidates.filter(item => !refused.has(withoutHash(item.url)) && !tried.has(withoutHash(item.url)));
           // Open only the results whose titles name the question's topic best: «إمداد المياه» is not «المياه البيضاء».
           const topic = topicWords(step.query);
-          const ranked = results.map((item, at) => ({ item, at, score: topic.length ? titleScore(item.title, topic) : 1 }));
+          const ranked = unread.map((item, at) => ({ item, at, score: topic.length ? titleScore(item.title, topic) : 1 }));
           const top = Math.max(0, ...ranked.map(entry => entry.score));
           const best = top > 0 ? ranked.filter(entry => entry.score === top).sort((a, b) => a.at - b.at).map(entry => entry.item) : [];
           // The subject's own article («أستراليا» for «ما عاصمة أستراليا») comes first, even when another
@@ -1610,23 +1620,32 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           // lexically and can list «سفارة أستراليا في واشنطن» before «أستراليا». A results page's links are ranked by title.
           // A disambiguation page lists subjects and answers none.
           // The article opened by the subject's own name (engine) is read first, whatever its title («الساد» for «المياه البيضاء»).
-          const byName = results.filter(item => ownUrls.has(withoutHash(item.url)));
-          const fitting = [...new Set(searched ? [...byName, ...subject, ...results] : [...subject, ...best])].filter(item => !isDisambiguationTitle(item.title)).slice(0, 3);
+          const byName = unread.filter(item => ownUrls.has(withoutHash(item.url)));
+          const fitting = [...new Set(searched ? [...byName, ...subject, ...unread] : [...subject, ...best])].filter(item => !isDisambiguationTitle(item.title)).slice(0, 3);
           // Engine results are read over HTTP, all together, so no browser opens for a question. A page that
           // gives no readable text (built by JavaScript, not HTML, timed out) is opened in the hidden browser instead.
           const reads: (HandsRead | null)[] = searched && io.read && fitting.length
             ? (await io.step(readingLabel(fitting.map(item => item.url))), await Promise.all(fitting.map(item => io.read!(item.url).catch((): HandsRead => ({ kind: 'unreadable' })))))
             : fitting.map(() => null);
           for (const [index, item] of fitting.entries()) {
+            tried.add(withoutHash(item.url));
             const read = reads[index];
             if (read?.kind === 'disallowed') continue;
+            const explicit = read?.kind === 'page' && !LIVE.test(step.query) && !isDisambiguationPage(read.page)
+              ? explicitFactualEvidence(read.page, step.query) : undefined;
+            if (explicit?.kind === 'unanswered') continue;
+            if (explicit?.kind === 'answer' && read?.kind === 'page') {
+              const { url, title, observedAt } = read.page;
+              plan.found = { url, title: tidy(title) || hostOf(url), lines: [explicit.quote], readAt: observedAt };
+              break;
+            }
             let opened: AgentPage;
             if (read?.kind === 'page' && readableOverHttp(read.page.text)) opened = read.page;
             else {
               await io.step(read ? `فتح ${hostOf(item.url)} في المتصفح` : `قراءة ${hostOf(item.url)}`);
               const current = page;
               const shown = searched && current && withoutHash(current.url) === withoutHash(item.url) ? current : await go({ kind: 'open', text: item.url }, `فتح ${hostOf(item.url)}`);
-              if (!shown) return { kind: 'paused' };
+              if (!shown) return false;
               page = shown;
               opened = shown;
             }
@@ -1685,6 +1704,21 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
                 }
               }
               break;
+            }
+          }
+          return true;
+        };
+        if (step.ask) {
+          const results = searched ?? resultLinks(page!, 6, step.query).map(item => ({
+            title: tidy(item.element.label).slice(0, 90).replace(/[[\]]/g, ''), url: item.url,
+          }));
+          if (!await readResults(results)) return { kind: 'paused' };
+          if (!plan.found && retrySubject) {
+            const own = await retrySubject();
+            if (own.length) {
+              const retryUrls = new Set(own.map(item => withoutHash(item.url)));
+              const combined = [...own, ...results.filter(item => !retryUrls.has(withoutHash(item.url)))];
+              if (!await readResults(combined, own)) return { kind: 'paused' };
             }
           }
         }
