@@ -10,10 +10,12 @@ import { classifySteering } from '../agent-run.js';
 import { newBrainState } from '../brain.js';
 import { matchText } from '../mind/normalize.js';
 import { reviewWorkRefusal } from '../refusal/turn.js';
+import { splitReplyDirective } from '../reply-directive.js';
 import { assessRequestScope, parseUserRequestConstraints, requestCapabilityAllowed, reviewPublicProjection } from '../request-scope.js';
 import { decideResponsePolicy } from '../response-policy.js';
 import { monitoringRequest } from '../response-policy-signals.js';
 import { siteTask } from '../site-builder.js';
+import { backgroundTaskText } from './background-request.js';
 import { LONG_RUN_MIGRATION, migrateLongRuns } from './migration.js';
 import { createLongRunRuntime, LongRunTransientError, type LongRunPorts } from './runtime.js';
 import { LONG_RUN_LIMITS, LONG_RUN_WORKER, say, type LongRunPlan } from './state.js';
@@ -47,12 +49,15 @@ function monitorDelays(text: string): number[] | null {
   return delays;
 }
 
-export function planLongRun(text: string, config: Pick<CommandChatConfig, 'searchProvider' | 'sites'>, network: SafeNetwork): LongRunPlan | null {
+export function planLongRun(text: string, config: Pick<CommandChatConfig, 'searchProvider' | 'sites'>, network: SafeNetwork, backgroundEnabled = false): LongRunPlan | null {
   const constraints = parseUserRequestConstraints(text);
-  const decision = decideResponsePolicy({ text, constraints });
+  const safeAction = constraints?.safeActionText ?? text;
+  const request = backgroundEnabled ? backgroundTaskText(splitReplyDirective(safeAction).body) : { task: safeAction, requested: false };
+  const decision = decideResponsePolicy({ text, constraints, backgroundRequested: request.requested, ...(backgroundEnabled ? { currentLength: 'long' } : {}) });
   if (decision.workMode !== 'long_running' || !withoutCredentials(text)) return null;
   const { language } = decision;
-  const action = constraints?.safeActionText ?? text;
+  const action = request.task;
+  const plan = (steps: LongRunPlan['steps']): LongRunPlan => ({ language, steps, ...(backgroundEnabled ? { background: { replyLength: decision.length } } : {}) });
   if (monitoringRequest(matchText(action))) {
     const address = monitorAddress.exec(action)?.[0].replace(/[.,،;؛!?؟]+$/u, '');
     if (!address || assessRequestScope(action).scope === 'private' || !requestCapabilityAllowed(constraints, 'browser_navigation')) return null;
@@ -61,14 +66,14 @@ export function planLongRun(text: string, config: Pick<CommandChatConfig, 'searc
     if (!url || !delays) throw new BrowserError('CHAT_LONG_MONITOR_LIMIT', say(language,
       'حدّد عنوان HTTPS عامًا ومدة مراقبة حتى ساعتين، بفاصل يسمح بـ 12 فحصًا أو أقل.',
       'Give a public HTTPS URL and a monitoring duration of up to two hours, with an interval that allows at most 12 checks.'), 400);
-    return { language, steps: delays.map(delayMs => ({ kind: 'monitor', url, delayMs })) };
+    return plan(delays.map(delayMs => ({ kind: 'monitor', url, delayMs })));
   }
   if (config.searchProvider && researchLead.test(action) && requestCapabilityAllowed(constraints, 'public_search')
       && requestCapabilityAllowed(constraints, 'browser_navigation') && assessRequestScope(action).scope !== 'private') {
     const query = action.replace(researchLead, '').replace(researchTail, '').replace(/[.!؟?\s]+$/u, '');
     const explicitPublicQuery = say(language, `ابحث عن ${query}`, `Search for ${query}`);
     if (!query || query.length > 500 || !reviewPublicProjection(explicitPublicQuery, query).eligible) return null;
-    return { language, steps: [{ kind: 'search', query }, ...[0, 1, 2, 3].map(index => ({ kind: 'read_source' as const, index }))] };
+    return plan([{ kind: 'search', query }, ...[0, 1, 2, 3].map(index => ({ kind: 'read_source' as const, index }))]);
   }
   const site = config.sites && siteTask(action);
   // Keep the existing clarification flow for incomplete content. This adapter
@@ -77,7 +82,7 @@ export function planLongRun(text: string, config: Pick<CommandChatConfig, 'searc
   const completion = completeBrief(site.partial, { requestText: site.requestText });
   if ('missing' in completion) return null;
   const approval = /\b(?:ask|get (?:my )?(?:permission|approval)|confirm with me) before\b|(?:استاذن|استأذن|اطلب موافقتي|اسالني|اسألني) قبل/iu.test(action);
-  return { language, steps: [{ kind: 'prepare_site', brief: completion.brief }, { kind: 'build_site', approval }] };
+  return plan([{ kind: 'prepare_site', brief: completion.brief }, { kind: 'build_site', approval }]);
 }
 
 function adapter(config: CommandChatConfig, network: SafeNetwork): LongRunPorts {
@@ -153,6 +158,7 @@ type Chat = Awaited<ReturnType<typeof createCommandChatControl>>;
 /** Layers durable execution onto the same conversation, stop and approval routes. */
 export async function withLongRunChat(db: Parameters<typeof createCommandChatControl>[0], config: CommandChatConfig, chat: Chat): Promise<Chat> {
   const enabled = process.env.MOHASSAN_LONG_RUN_ENABLED === '1';
+  const backgroundEnabled = process.env.MOHASSAN_BACKGROUND_RESULTS_ENABLED === '1';
   if (enabled) await migrateLongRuns(db);
   else if (!await db.selectFrom('schema_migrations').select('version').where('version', '=', LONG_RUN_MIGRATION).executeTakeFirst()) return chat;
   const network = new SafeNetwork(config.networkPolicy);
@@ -163,11 +169,15 @@ export async function withLongRunChat(db: Parameters<typeof createCommandChatCon
     if (!enabled) return null;
     const full = config.fullAccess ? await config.fullAccess(ownerId) : true;
     if (reviewWorkRefusal(text, newBrainState(), full, { computer: Boolean(config.tools?.computer || config.desktop), memory: Boolean(config.tools?.memory) })) return null;
-    return planLongRun(text, config, network);
+    return planLongRun(text, config, network, backgroundEnabled);
   }
 
   async function start(ownerId: string, conversationId: string, text: string, plan: LongRunPlan) {
     await runner.admission(ownerId, conversationId, cleanup(text), plan);
+    if (plan.background) {
+      try { return await chat.detail(ownerId, conversationId); }
+      finally { runner.wake(); }
+    }
     runner.wake();
     return chat.detail(ownerId, conversationId);
   }

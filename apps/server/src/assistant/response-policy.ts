@@ -33,6 +33,7 @@ export interface ResponsePolicyInput {
   recentTurns?: number;
   historyConflict?: boolean;
   resumingLongWork?: boolean;
+  backgroundRequested?: boolean;
   currentLength?: ReplyLength;
   /** A concrete next action supported by the current result, supplied by the host. */
   concreteNextStep?: string | null;
@@ -84,7 +85,7 @@ function workMode(input: ResponsePolicyInput, text: string, constraints: UserReq
   if (!text || interactiveOnly.test(text) || follow === 'ask' || socialOnly || input.clarification === 'pending'
     || input.route === 'clarify' || input.route === 'unsupported' || constraints?.standalone || constraints?.ambiguous) return 'interactive';
   const implementation = ['coding', 'planning'].some(kind => kind === input.route || kind === input.intent);
-  if (input.resumingLongWork || Boolean(input.previousTurns && resumeWork(text)) || backgroundWork(text) || monitoringRequest(text) || deepResearch(text) || substantialBuild(text, implementation)) {
+  if (input.resumingLongWork || Boolean(input.previousTurns && resumeWork(text)) || input.backgroundRequested || backgroundWork(text) || monitoringRequest(text) || deepResearch(text) || substantialBuild(text, implementation)) {
     return 'long_running';
   }
   return 'interactive';
