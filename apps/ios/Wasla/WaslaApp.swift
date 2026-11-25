@@ -25,6 +25,7 @@ enum AppAppearance: String, CaseIterable, Identifiable {
 
 @main
 struct WaslaApp: App {
+    @UIApplicationDelegateAdaptor(PushNotificationDelegate.self) private var pushDelegate
     @StateObject private var store = WaslaStore()
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(AppAppearance.storageKey) private var appearance: AppAppearance = .dark
@@ -33,12 +34,16 @@ struct WaslaApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(store)
+                .environmentObject(store.pushNotifications)
                 .environment(\.layoutDirection, .rightToLeft)
                 .font(Forest.font())
                 .foregroundStyle(Forest.ink)
                 .tint(Forest.accent)
                 .preferredColorScheme(appearance.colorScheme)
-                .task { await store.start() }
+                .task {
+                    store.pushNotifications.attach(to: store)
+                    await store.start()
+                }
                 .onChange(of: scenePhase) { _, phase in store.sceneChanged(active: phase == .active) }
         }
     }
