@@ -14,6 +14,13 @@
     <key>CFBundleLocalizations</key><array><string>ar</string></array>
     <key>ITSAppUsesNonExemptEncryption</key><false/>
     <key>LSRequiresIPhoneOS</key><true/>
+    <key>UIAppFonts</key>
+    <array>
+        <string>Fonts/Alexandria-Regular.ttf</string>
+        <string>Fonts/Alexandria-Medium.ttf</string>
+        <string>Fonts/Alexandria-SemiBold.ttf</string>
+        <string>Fonts/Alexandria-Bold.ttf</string>
+    </array>
     <key>UIApplicationSupportsIndirectInputEvents</key><true/>
     <key>UILaunchScreen</key><dict/>
     <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>

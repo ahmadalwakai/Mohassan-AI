@@ -2,23 +2,52 @@ import SwiftUI
 import UIKit
 import SafariServices
 
-// The web workspace's palette (apps/web/components/assistant-app.module.css), light and dark.
+// Forest pairs use the same teal hue in both appearances.
 enum Forest {
     private static func pair(_ light: UInt32, _ dark: UInt32) -> Color {
         Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light) })
     }
-    static let background = pair(0xFAF9F6, 0x1E1D1B)   // --page
-    static let panel = pair(0xF4F2ED, 0x181715)        // --panel
-    static let surface = pair(0xFFFFFF, 0x292825)      // --raised
-    static let ink = pair(0x22201C, 0xEDEBE5)          // --ink
-    static let softText = pair(0x6B675F, 0xA6A298)     // --soft
-    static let faint = pair(0x9A968C, 0x77746C)        // --faint
-    static let line = pair(0xE7E4DC, 0x34322D)         // --line
-    static let soft = pair(0xEFECE4, 0x2E2C28)         // --user / --hover
-    static let accent = pair(0x1F6F5C, 0x4FB596)       // --accent
-    static let accentSoft = pair(0xE3EFE9, 0x1F3A31)   // --accent-soft
-    static let onAccent = pair(0xFFFFFF, 0x0F1F1A)     // --accent-ink
-    static let alert = pair(0xA33A2C, 0xEE9383)        // --alert
+    static let background = pair(0xF7F6F2, 0x141816)
+    static let panel = pair(0xEEEFE9, 0x1A201D)
+    static let surface = pair(0xFFFFFF, 0x212925)
+    static let ink = pair(0x202823, 0xF2F4F0)
+    static let softText = pair(0x53625B, 0xACB9B1)
+    static let faint = softText
+    static let line = pair(0xD2DCD5, 0x3A4A42)
+    static let controlBorder = pair(0x78877F, 0x718379)
+    static let soft = pair(0xE8EEE8, 0x26332D)
+    static let accent = pair(0x216852, 0x72CBB0)
+    static let accentSoft = pair(0xDFEEE6, 0x23453A)
+    static let onAccent = pair(0xFFFFFF, 0x10291F)
+    static let alert = pair(0xA33A2C, 0xEE9383)
+
+    static func font(_ style: Font.TextStyle = .body, weight: Font.Weight = .regular) -> Font {
+        let name: String
+        switch weight {
+        case .bold, .heavy, .black: name = "Alexandria-Bold"
+        case .semibold: name = "Alexandria-SemiBold"
+        case .medium: name = "Alexandria-Medium"
+        default: name = "Alexandria-Regular"
+        }
+
+        let size: CGFloat
+        switch style {
+        case .largeTitle: size = 32
+        case .title: size = 27
+        case .title2: size = 22
+        case .title3: size = 19
+        case .headline, .body: size = 16
+        case .callout: size = 15
+        case .subheadline: size = 14
+        case .footnote: size = 13
+        case .caption: size = 12
+        case .caption2: size = 11
+        default: size = 16
+        }
+
+        guard UIFont(name: name, size: size) != nil else { return .system(style, weight: weight) }
+        return .custom(name, size: size, relativeTo: style)
+    }
 }
 extension UIColor {
     convenience init(hex: UInt32) {
@@ -27,40 +56,42 @@ extension UIColor {
 }
 func dismissKeyboard() { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
 
-/// The web's .primary / .secondary buttons.
 struct ForestButton: ButtonStyle {
     var prominent = true
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.body.weight(.medium))
-            .frame(maxWidth: .infinity, minHeight: 24)
-            .padding(.vertical, 10).padding(.horizontal, 14)
-            .background(prominent ? (enabled ? Forest.accent : Forest.soft) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
-            .overlay { if !prominent { RoundedRectangle(cornerRadius: 10).stroke(Forest.line) } }
+            .font(Forest.font(.body, weight: .semibold))
+            .padding(.vertical, 11).padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .background(prominent ? (enabled ? Forest.accent : Forest.soft) : Forest.surface, in: RoundedRectangle(cornerRadius: 15))
+            .overlay {
+                if !prominent {
+                    RoundedRectangle(cornerRadius: 15).strokeBorder(Forest.controlBorder)
+                        .allowsHitTesting(false)
+                }
+            }
             .foregroundStyle(prominent ? (enabled ? Forest.onAccent : Forest.faint) : (enabled ? Forest.ink : Forest.faint))
-            .opacity(configuration.isPressed ? 0.75 : 1)
+            .opacity(configuration.isPressed ? 0.84 : 1)
     }
 }
-/// The web's .card: raised, a hairline border, a soft shadow.
 struct Card<Content: View>: View {
     @ViewBuilder var content: Content
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) { content }
-            .padding(.vertical, 16).padding(.horizontal, 18)
+        VStack(alignment: .leading, spacing: 14) { content }
+            .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Forest.surface, in: RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(Forest.line))
-            .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
+            .background(Forest.surface, in: RoundedRectangle(cornerRadius: 20))
+            .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Forest.line).allowsHitTesting(false))
     }
 }
 struct ScreenTitle: View {
     let title: String
     let subtitle: String
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 28, weight: .medium))
-            Text(subtitle).font(.subheadline).foregroundStyle(Forest.softText)
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(Forest.font(.title, weight: .semibold)).accessibilityAddTraits(.isHeader)
+            Text(subtitle).font(Forest.font(.subheadline)).foregroundStyle(Forest.softText).lineSpacing(4)
         }.frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 4)
     }
 }
