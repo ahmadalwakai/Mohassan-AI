@@ -48,6 +48,14 @@ python3 -B scripts/dev-bench/compare.py \
 
 When a repeated baseline proves that a reply value varies, supply `--baseline-repeat` with that baseline's coordinated receipt and `--reply-masks` with a JSON array. Each entry names `version`, `caseId`, 1-based `turn`, and a `values` object with the exact `baseline`, `baselineRepeat` and `flagsOff` literals. Each literal must occur once in its specified reply. The comparator requires identical surrounding text and records hashes of the masked values.
 
+## Smart monitor comparison
+
+Run the three arms together with `--offline --audit-monitors` in a network-disabled container. Apply [PR #95's arm C settings](../../docs/INTEGRATION-WAVE-5-2026-11-25.md#three-arm-development-run) and `MOHASSAN_MONITORS_ENABLED=1` to every arm. Set `MOHASSAN_MONITORS_V2=0` on the pinned monitor baseline and the candidate's flags-off arm, and set it to `1` on the same candidate commit in the flags-on arm.
+
+The audit uses a deterministic UUID stream scoped to each fixture and a fixed recorded-source timestamp. It keeps the native scorer, runs the production decisions, and serves monitor reads from the case's recorded pages. Temporary worktrees record the instrumented file hashes. No holdout data is materialized.
+
+Add `--monitor-requests /path/to/reviewed-ids.json` to the comparison command. The file maps `v1` and `v2` to arrays of published case IDs whose users ask for monitoring. Review the actual case turns before classifying requests, including quoted and private-source requests. The comparison checks identical case verdicts, scored turn details and replies between the first two arms and checks every group for score loss in the enabled arm. It fails on any published offer in the enabled arm outside the reviewed IDs. It reports matching IDs and turn numbers, plus nearest-rank p50 and p95 decision time summed per turn when the checker ran.
+
 ## Historical PR #89 controls
 
 In a separate detached checkout at `7f9c417f2e06b77c26eb6ff677d06e3457da650b`, install that lockfile and run its own `scripts/response-policy/development-bench.mjs` with `prepare OUTPUT` followed by `off OUTPUT 4`. To reproduce the browser-missing run, use a normal account without a default Playwright browser install and leave `PLAYWRIGHT_BROWSERS_PATH` unset for those two commands. Then run the controls from that checkout:

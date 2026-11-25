@@ -21,7 +21,7 @@ syncBuiltinESMExports();
 export const monitorFixtureTime = () => fixtureTime;
 
 export async function observeMonitors(item, observe) {
-  const scope = { id: item.id, ordinal: 0, pages: new Map(), turns: [] };
+  const scope = { id: item.id, ordinal: 0, pages: new Map(), turns: [], activeChecks: new Set() };
   for (const page of item.fixture?.pages ?? []) scope.pages.set(new URL(page.url).href, page);
   const observation = await context.run(scope, () => observe(item));
   return { observation, monitorAudit: scope.turns };
@@ -38,14 +38,28 @@ export function observeMonitorCard(card) {
   }
 }
 
-export function sampleMonitorDecision(kind, decide) {
-  const turn = context.getStore()?.turns.at(-1);
-  if (!turn) return decide();
+export function monitorFixtureSearch(provider) {
+  const scope = context.getStore();
+  if (!scope) return provider;
+  scope.searchProvider = provider;
+  // The monitor service lives for the fixture database, which is shared by the lane.
+  return { name: provider.name, search: (...args) => context.getStore().searchProvider.search(...args) };
+}
+
+export function sampleMonitorDecision(kind, decide, classify = true) {
+  const scope = context.getStore();
+  const turn = scope?.turns.at(-1);
+  if (!turn || scope.activeChecks.has(kind)) return decide();
+  scope.activeChecks.add(kind);
   const before = performance.now();
-  const result = decide();
-  turn[kind].push({ ms: performance.now() - before, matched: Boolean(result),
-    ...(result?.kind ? { kind: result.kind } : {}) });
-  return result;
+  try {
+    const result = decide();
+    turn[kind].push({ ms: performance.now() - before, matched: classify && Boolean(result),
+      ...(classify && result?.kind ? { kind: result.kind } : {}) });
+    return result;
+  } finally {
+    scope.activeChecks.delete(kind);
+  }
 }
 
 export function monitorFixtureRead(url) {

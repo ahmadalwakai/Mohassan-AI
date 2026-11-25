@@ -91,6 +91,19 @@ describe('v2 condition evaluation', () => {
     expect(evaluate(4.5, [page(after, 'Edition B', 4.5)]).notice?.evidence[0].after.excerpt).toBe(after);
   });
 
+  it('confirms previously rejected alternatives on normal cadence without scheduling a fast recheck', () => {
+    const evaluate = track({ ...base, read: { kind: 'main' } });
+    const page = (text: string, hours: number) => ({ index: 0, observation: {
+      ...observation(text, hours).observation, blocks: [{ key: 'main', text }],
+    } });
+    evaluate(0, [page('First', 0)]);
+    expect(evaluate(1, [page('Second', 1)]).needsConfirmation).toBe(true);
+    evaluate(2, [page('First', 2)]);
+    expect(evaluate(3, [page('Second', 3)]).needsConfirmation).toBe(false);
+    expect(evaluate(5, [page('Second', 5)]).notice).toBeUndefined();
+    expect(evaluate(7, [page('Second', 7)]).notice?.evidence[0].after.value).toBe('Second');
+  });
+
   it('uses any valid baseline within the rolling window and calculates before/after evidence', () => {
     const spec: MonitorSpec = { ...base, v2: { freshnessMs: hour, trend: { kind: 'percent-window', direction: 'fall', percent: 2, windowMs: 24 * hour } } };
     const evaluate = track(spec);

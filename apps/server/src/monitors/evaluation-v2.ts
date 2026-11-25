@@ -1,12 +1,15 @@
+import { createHash } from 'node:crypto';
 import { monitorV2Targets, type MonitorSpec, type MonitorTrend, type MonitorV2Target } from '@mohassan/contracts';
 import { evaluateMonitor, type MonitorEvaluationState, type MonitorObservation, type WatchedBlock } from './evaluation.js';
-import { matchMonitorText, phraseIndex } from './page.js';
+import { matchMonitorText, MAX_BLOCKS, phraseIndex } from './page.js';
 import { MONITOR_LIMITS, nextMonitorBudgetDay } from './schedule.js';
 
 const maximumSamples = Math.ceil(MONITOR_LIMITS.maxLifetimeMs / MONITOR_LIMITS.maxIntervalMs) + 24 + 1;
 // Page-wide candidates need samples from three different hours before an unlabelled variant can confirm.
 const independentTextReadMs = 60 * 60_000;
 const independentTextSamples = 3;
+// Keep up to two alternate fingerprints per original page's block capacity.
+const maximumKnownAlternates = 2 * MAX_BLOCKS;
 
 export interface MonitorV2Evidence {
   index: number;
@@ -36,6 +39,7 @@ interface SourceState {
   event?: MonitorV2Evidence;
   trend?: TrendState;
   textConfirmation?: TextConfirmation[];
+  knownAlternates?: string[];
 }
 
 interface TextConfirmation {
@@ -43,6 +47,7 @@ interface TextConfirmation {
   normalized: string | null;
   time: number;
   samples: number;
+  alternate?: boolean;
 }
 
 interface QueuedNotice extends Omit<MonitorV2Notice, 'digest'> { dueAt: number }
@@ -96,26 +101,33 @@ function independentTextChange(prior: SourceState, sample: MonitorObservation, i
   const current = new Map(sample.blocks?.map(block => [block.key, block.text]));
   const stable = new Map(prior.confirmed?.blocks?.map(block => [block.key, block.text]));
   const pending = new Map(prior.textConfirmation?.map(item => [item.key, item]));
+  const known = new Set(prior.knownAlternates);
   const textConfirmation: TextConfirmation[] = [];
   const blocks: WatchedBlock[] = [];
-  let edit: { before?: string; after?: string } | undefined;
+  let edit: { before?: string; after?: string; alternate?: boolean } | undefined;
   const time = timestamp(sample);
-  for (const key of new Set([...current.keys(), ...stable.keys()])) {
+  const fingerprint = (key: string, value: string | null) => createHash('sha256').update(JSON.stringify([key, value])).digest('hex');
+  for (const key of new Set([...current.keys(), ...stable.keys(), ...pending.keys()])) {
     const before = stable.get(key);
     const after = current.get(key);
     const normalized = after === undefined ? null : matchMonitorText(after);
+    const earlier = pending.get(key);
+    if (earlier && earlier.normalized !== normalized) {
+      const rejected = fingerprint(key, earlier.normalized);
+      known.delete(rejected);
+      known.add(rejected);
+    }
     if (normalized === (before === undefined ? null : matchMonitorText(before))) {
       if (after !== undefined) blocks.push({ key, text: after });
       continue;
     }
-    const earlier = pending.get(key);
-    const next = earlier?.normalized !== normalized ? { key, normalized, time, samples: 1 }
+    const next = earlier?.normalized !== normalized ? { key, normalized, time, samples: 1, alternate: known.has(fingerprint(key, normalized)) }
       : time >= earlier.time + independentTextReadMs ? { ...earlier, time, samples: earlier.samples + 1 } : earlier;
     if (next.samples < independentTextSamples) {
       textConfirmation.push(next);
       if (before !== undefined) blocks.push({ key, text: before });
     } else {
-      edit ??= { before, after };
+      if (!edit || edit.alternate && !next.alternate) edit = { before, after, alternate: next.alternate };
       if (after !== undefined) blocks.push({ key, text: after });
     }
   }
@@ -125,7 +137,8 @@ function independentTextChange(prior: SourceState, sample: MonitorObservation, i
     { ...prior.confirmed!, value: edit.before ?? '', excerpt: edit.before?.slice(0, 320) ?? '' },
     { ...confirmed, value: edit.after ?? '', excerpt: edit.after?.slice(0, 320) ?? sample.excerpt });
   return { source: { evaluation: { ...prior.evaluation, blocks: undefined, firstCheck: false, observation: sample },
-    confirmed, textConfirmation, event: hit ?? prior.event, evidence: hit ?? prior.evidence }, changed: Boolean(hit), hit };
+    confirmed, textConfirmation, knownAlternates: [...known].slice(-maximumKnownAlternates),
+    event: hit ?? prior.event, evidence: hit ?? prior.evidence }, changed: Boolean(hit), hit };
 }
 
 function addSample(target: MonitorV2Target, index: number, prior: SourceState | null, sample: MonitorObservation) {
@@ -261,7 +274,7 @@ export function evaluateMonitorV2(
   } : undefined;
   const state: MonitorV2EvaluationState = { sources, sequenceStart, matched,
     queue: notice ? queue.filter(item => item.dueAt > now) : queue };
-  const independentTimes = sources.flatMap(source => source?.textConfirmation?.map(item => item.time + independentTextReadMs) ?? []);
+  const independentTimes = sources.flatMap(source => source?.textConfirmation?.flatMap(item => item.alternate ? [] : item.time + independentTextReadMs) ?? []);
   const confirmNoEarlierThan = independentTimes.length ? Math.min(...independentTimes) : undefined;
   const needsConfirmation = Boolean(confirmNoEarlierThan) || sources.some(source =>
     source?.pending || source?.evaluation.blocks?.some(block => !block.volatile && block.pending !== undefined));
