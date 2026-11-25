@@ -84,7 +84,7 @@ import { actionOperandHash, actionRequestHash, compileActionCompletionContract, 
   restoreActionCompletionLedger, reviewActionCompletion, type ActionCompletionEventInput, type ActionCompletionKind } from './assistant/action-completion.js';
 import { isEntireLiteralRequest, parseUserRequestConstraints, requestCapabilityAllowed, requestConstraintReply, requestScopeActionText, reviewPublicProjection, type ForbiddenRequestCapability, type RequestScopeAssessment, type UserRequestConstraints } from './assistant/request-scope.js';
 import { evaluateLocalKnowledge, isKnowledgeDocumentRequest, type LocalKnowledgeDocument } from './assistant/local-knowledge.js';
-import { decideRequestRoute } from './assistant/routing-decision.js';
+import { completeQuestionRewrite, questionRewriteHandsPlan, routeWithQuestionHistory } from './assistant/question-rewrite-chat.js';
 import { observePlanMessage, runCompiledChatPlan } from './assistant/plan/chat.js';
 import { clarificationAnswers, clarifyCommand } from './assistant/clarify/host.js';
 import { reviewWorkRefusal } from './assistant/refusal/turn.js';
@@ -2015,6 +2015,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const refusal = run.intent === 'task' && reviewWorkRefusal(request, state, currentExecution.full,
         { computer: Boolean(tools?.computer || config.desktop), memory: Boolean(tools?.memory) });
       if (refusal) { await finish(id, runId, state, refusal.text, 'blocked', undefined, undefined, true); return; }
+      if (await completeQuestionRewrite(request, state, () => browser.dropHeld(ownerId, id),
+        question => finish(id, runId, state, vault.scrub(id, clean(question)), 'completed'))) return;
       // Level 4 (plan §6.1): a member asked for the computer's browser. One line with the reason and the alternative; no browser starts.
       if (!currentExecution.full) {
         const level = decideBrowserVisibility({ request, route: state.routing?.route ?? null, role: 'member' });
@@ -2883,7 +2885,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           earlierUserTurns: history.filter(entry => entry.role === 'user').map(entry => entry.text),
           pending: Boolean(conversation.question || conversation.secure) || conversation.status === 'waiting_approval',
         }) : null;
-        const conversationAsk = conversationQuery ? webQuestion(conversationQuery) : null;
+        const conversationAsk = questionRewriteHandsPlan(state.routing?.reason, contextualQuery, conversationQuery);
         // A pronoun follow-up («وكم عدد سكانها؟» after an answer read from the Tokyo article) asks about the thing the last answer
         // named, not about the words of the last question: «كم عدد سكانها طوكيو», where «كم عدد سكانها عاصمة اليابان» read Hokkaido (2026-11-22).
         // The item the answer named stands for its page when narrower («نهر النيل» read from «نهر»): answerSubject in hands.ts.
@@ -4045,7 +4047,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         previousContext = bootstrapRequestContext(previousMessages.reverse().map(message => ({ id: message.id, text: clean(message.text) })));
       }
       const chatModel = hasChatModel();
-      const routing = decideRequestRoute({ text: clean(input.text), context: previousContext, turnId: runId, fullAccess: fullForRouting, previousTurns,
+      const routing = await routeWithQuestionHistory(tx, id, previousRun?.state?.publicQueryTerms, intent === 'task' && !input.images?.length && !steeredHere, { text: clean(input.text), context: previousContext, turnId: runId, fullAccess: fullForRouting, previousTurns,
         previousUserTurn: previousRun?.goal,
         capabilities: { browser: true, search: true, memory: Boolean(tools?.memory), adsModel: Boolean(config.adsModel),
           computer: Boolean(tools?.computer), coding: Boolean(tools?.work?.code), chatModel, writerModel: chatModel, planner: true } });
