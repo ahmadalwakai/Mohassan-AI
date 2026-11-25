@@ -189,3 +189,102 @@ npm test -- --maxWorkers=2 --reporter=dot tests/followup-english-ellipsis.test.t
 Typecheck exited 0 for the root and web projects. The focused suite exited 0 with 110 tests across nine files, including four Arabic rollout-on tests. An initial run identified a capitalized preposition in the date reconstruction and the final run verified the fix.
 
 The separate CANARD run scored 685 exact and 787 normalized substring matches at base and with the feature flag off. With the feature flag on it scored 684 exact and 786 normalized substring matches. The commands, context-dependent subset and input hashes are in the evaluation data card. [CANARD evaluation](QUESTION-REWRITER-CANARD.md#follow-up-v2-measurement)
+
+## Benchmark commands
+
+The checkout used Git, Node 24.22.3, npm 11.19.1, Python 3.12.14 and Chromium 156.0.8078.4. The Docker image built from the committed recipe had ID `sha256:cdf6851e462e071097852f8a65bf444378655422f421618d0502361e198848e9`. Each setup command exited 0.
+
+```bash
+git fetch origin 12cedfe592aab40cdd47ee00d05ea86a6d2bae89 a130b239d9e6d2b1f6728128019d24bb26e9293f a258b3d47e39b5a2c03c71d4a9eb01107ae3d97f 0dfff7c54d3658a02cf878ff11faac7f630a6c10 a1e1cb020b7ba093885edbf501149e7b8252c0cb
+docker build -t mohassan-wave5-bench:2026-11-25 scripts/dev-bench
+npm_config_cache=/workspace/work/followup-bench/npm-cache npm ci --no-audit --no-fund
+PLAYWRIGHT_BROWSERS_PATH=/workspace/work/followup-bench/chromium npm_config_cache=/workspace/work/followup-bench/npm-cache npx --no-install playwright install chromium
+```
+
+The diagnosis run exited 0 with 176/240 on V1 and 1,588/2,400 on V2, including 18/18 and 46/240 in their respective follow-up areas. The exact command was the following.
+
+```bash
+docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+  --mount type=bind,source=/workspace/Mohassan-AI,target=/workspace/Mohassan-AI \
+  --mount type=bind,source=/workspace/work/followup-bench,target=/workspace/work/followup-bench \
+  --workdir /workspace/Mohassan-AI \
+  --env PLAYWRIGHT_BROWSERS_PATH=/workspace/work/followup-bench/chromium \
+  --env npm_config_cache=/workspace/work/followup-bench/npm-cache \
+  mohassan-wave5-bench:2026-11-25 python3 -B scripts/dev-bench/run.py --workers 2 --offline \
+  --output /workspace/work/followup-bench/diagnosis \
+  --arm a=201321031293999003bb0ae55a29dbd250ac96ce \
+  --set a:MOHASSAN_ARITHMETIC_SEARCH=1 --set a:TEST_DRIVEN_CODING_PYTHON=/usr/local/bin/python3.12 \
+  --set a:MOHASSAN_MODEL_RELATIONS=shadow \
+  --set a:MOHASSAN_REPLY_POLICY_ENABLED=1 --set a:MOHASSAN_CONTEXT_POLICY_ENABLED=1 \
+  --set a:MOHASSAN_LONG_RUN_ENABLED=1 --set a:MOHASSAN_BACKGROUND_RESULTS_ENABLED=1 \
+  --set a:MOHASSAN_ARBITER_ROUTING=1 --set a:MOHASSAN_ARBITER_QUESTION_REWRITE=1 \
+  --set a:MOHASSAN_ARBITER_LOCAL_COMPUTATION=1 --set a:MOHASSAN_ARBITER_COMPOUND_PLAN=1
+```
+
+The coordinated run used one launcher invocation with the same Wave 5 flags on all arms and the arbiter in shadow. The launcher inherits the Wave 4 flags, including `MOHASSAN_QUESTION_REWRITER=1`, from its base profile. The command used this wrapper.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# != 2 || ! "$2" =~ ^[0-9a-f]{40}$ ]]; then
+  printf 'Usage: %s NEW_OUTPUT_DIRECTORY HEAD_SHA\n' "$0" >&2
+  exit 2
+fi
+benchmark_dir=/workspace/work/followup-bench
+repository=/workspace/Mohassan-AI
+output=$1
+head_commit=$2
+base_commit=201321031293999003bb0ae55a29dbd250ac96ce
+settings=()
+for arm in a b c; do
+  settings+=(
+    --set "$arm:MOHASSAN_ARITHMETIC_SEARCH=1"
+    --set "$arm:TEST_DRIVEN_CODING_PYTHON=/usr/local/bin/python3.12"
+    --set "$arm:MOHASSAN_MODEL_RELATIONS=shadow"
+  )
+  for flag in REPLY_POLICY_ENABLED CONTEXT_POLICY_ENABLED LONG_RUN_ENABLED \
+    BACKGROUND_RESULTS_ENABLED ARBITER_ROUTING ARBITER_QUESTION_REWRITE \
+    ARBITER_LOCAL_COMPUTATION ARBITER_COMPOUND_PLAN; do
+    settings+=(--set "$arm:MOHASSAN_${flag}=1")
+  done
+done
+
+docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --user 1000:1000 \
+  --mount "type=bind,source=$repository,target=$repository" \
+  --mount "type=bind,source=$benchmark_dir,target=$benchmark_dir" \
+  --workdir "$repository" \
+  --env "PLAYWRIGHT_BROWSERS_PATH=$benchmark_dir/chromium" \
+  --env "npm_config_cache=$benchmark_dir/npm-cache" \
+  mohassan-wave5-bench:2026-11-25 python3 -B scripts/dev-bench/run.py --workers 2 --offline \
+  --output "$output" --arm "a=$base_commit" --arm "b=$head_commit" --arm "c=$head_commit" \
+  "${settings[@]}" --set b:MOHASSAN_FOLLOWUP_V2=0 --set c:MOHASSAN_FOLLOWUP_V2=1
+```
+
+```bash
+bash /workspace/work/followup-bench/run-final.sh /workspace/work/followup-bench/final 8237ef54f84d1013e0929df5f16bb24ca3761269
+```
+
+## Source guards
+
+The original guard baselines predate the required integration base. I ran the original commands on the detached base at `201321031293999003bb0ae55a29dbd250ac96ce` and on the measured product at `8237ef54f84d1013e0929df5f16bb24ca3761269`. The first two commands each exited 1 on both checkouts. The synthetic check passed and the source check reported the same 12 inherited occurrences across 10 paths. The development-only case-text command exited 1 on both checkouts, with identical sets of 67 path/hash pairs and 142 occurrences above its historical baseline, plus 159 preexisting pairs. It scanned 2,400 development cases and 2,361 base files or 2,368 product files.
+
+```bash
+git worktree add --detach /workspace/work/followup-bench/guard-base 201321031293999003bb0ae55a29dbd250ac96ce
+
+# From each checkout
+python3 -B -m unittest discover -s tests -p test_v2_case_strings.py -v
+python3 -B -m unittest discover -s tests -p test_v2_source_leakage.py -v
+python3 -B tests/no-v2-case-text.test.py --development-only --allow-baseline-matches \
+  --benchmark-root /workspace/work/followup-bench/guard-inputs
+```
+
+The same guard logic with the integration base supplied in memory passed on the measured product. The first two modules passed 4/4. The third exited 0 with zero new matches over 2,400 development cases and 2,368 files. It reported 225 existing path/hash pairs and `strict_passed: false` from those existing matches. The first invocation follows the release-relative method in [PR #89's report](RESPONSE-POLICY.md). The hash-based scans used both hash registries. The raw case-text scan opened only the development payload.
+
+```bash
+python3 -B -c 'import sys, unittest; sys.path.insert(0, "tests"); import test_v2_source_leakage as scan, test_v2_case_strings as fields; base="201321031293999003bb0ae55a29dbd250ac96ce"; scan.BASE=scan.WAVE_2_BASE=fields.BASELINE=fields.WAVE_2_BASE=base; suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromModule(module) for module in (scan, fields)); sys.exit(not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful())'
+python3 -B -c 'import runpy, sys; guard=runpy.run_path("tests/no-v2-case-text.test.py"); guard["audit"].__globals__["BASELINE"]="201321031293999003bb0ae55a29dbd250ac96ce"; sys.exit(guard["main"]())' \
+  --development-only --allow-baseline-matches --benchmark-root /workspace/work/followup-bench/guard-inputs
+```
+
+The scratch guard input directory contains `scripts/agent-capability-bench/v2/exclusion.py` from the measured source and only `manifest.json` and `payload.json` under `tests/fixtures/agent-capability-bench/v2/dev/` from the published development commit `12cedfe592aab40cdd47ee00d05ea86a6d2bae89`. The development payload SHA-256 is `6eda0e7052611d10fc87da4e3e8f3f30cfb64452c198eab20041b5da577508d1`.
