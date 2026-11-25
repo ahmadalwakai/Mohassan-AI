@@ -100,7 +100,7 @@ describe('the assistant reaching the real modules', () => {
         available: async () => ({ available: true, provider: 'unit-fixture', message: 'injected unit test only' }),
         run: async request => {
           await holdSandbox;
-          return { exitCode: request.files.some(file => file.path === 'src/sum.mjs' && file.content.includes('a - b')) ? 1 : 0, stdout: 'unit fixture receipt; no project code is executed here', stderr: '', timedOut: false, durationMs: 1, provider: 'unit-fixture', network: 'denied', isolation: 'appcontainer', isolationVerified: true, snapshotHash: snapshotHash(request.files) };
+          return { exitCode: request.files.some(file => file.path === 'src/sum.ts' && file.content.includes('rightHandVaule')) ? 1 : 0, stdout: 'unit fixture receipt; no project code is executed here', stderr: '', timedOut: false, durationMs: 1, provider: 'unit-fixture', network: 'denied', isolation: 'appcontainer', isolationVerified: true, snapshotHash: snapshotHash(request.files) };
         },
       },
     });
@@ -254,8 +254,9 @@ describe('the assistant reaching the real modules', () => {
       expect(prompts.at(-1)).toContain('nothing was merged');
       const detail = await application.runtime.detail(owner(), task!.id);
       expect(detail.task.status).toBe('completed');
+      expect(detail.modelRuns).toEqual([]);
       const project = (await application.coding.workspace(owner())).projects[0]!;
-      expect(await readFile(join(project.path, 'src', 'sum.mjs'), 'utf8')).toContain('a - b');
+      expect(await readFile(join(project.path, 'src', 'sum.ts'), 'utf8')).toContain('rightHandVaule');
     });
     it('cancels the task when the owner refuses', async () => {
       script = [change()];
