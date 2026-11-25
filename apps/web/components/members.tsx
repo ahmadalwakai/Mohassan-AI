@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { Button, Spinner } from "@chakra-ui/react";
 import { ArrowRight, Check, Copy, LogOut, MessageCircle, UserPlus } from "lucide-react";
 import dynamic from "next/dynamic";
+import { OwnerMemberHistory } from "./member-audit";
 import styles from "./members.module.css";
 
 const GoogleAdsWorkspace = dynamic(() => import("./google-ads-workspace").then(module => module.GoogleAdsWorkspace));
@@ -187,6 +188,7 @@ export function MembersPanel({ offline }: { offline: boolean }) {
         <Button className={styles.secondary} disabled={busy || offline} onClick={() => { void act(() => api(`/api/members/invites/${invite.id}/revoke`, {})); }}>إلغاء</Button>
       </li>)}</ul>
     </section> : null}
+    <OwnerMemberHistory members={data?.members} offline={offline} />
   </div>;
 }
 

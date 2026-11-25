@@ -488,6 +488,8 @@ export class AgentBrowser {
     return account ? `account:${JSON.stringify([ownerId, account])}` : `default:${ownerId}`;
   }
 
+  protected memberProfileState() { return { root: this.options.profileDir, owners: this.owners, accounts: this.accounts, recoveryBindings: this.recoveryBindings, hash: hashOf }; }
+
   /** Server-owned account selection, before opening a conversation. Never supplied by a page/model. */
   async bindAccount(ownerId: string, conversationId: string, accountId: string | null): Promise<void> {
     if (accountId !== null && !/^[a-zA-Z0-9_-]{1,128}$/.test(accountId)) throw new BrowserError('AGENT_ACCOUNT_INVALID', 'معرّف الحساب غير صالح.');

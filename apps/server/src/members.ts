@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import type { createAuth } from './auth.js';
+import { MEMBER_DATA_ROUTES, readLimitedMemberAccess, signUpInvitedMember } from './member-administration.js';
 
 /**
  * Members are people the owner invites. They use cloud services only (chat,
@@ -29,6 +30,7 @@ const chat = '/api/chat/conversations';
 const files = '/api/browser/files/:conversationId';
 const ads = '/api/google-ads';
 export const MEMBER_ROUTES: ReadonlySet<string> = new Set([
+  ...MEMBER_DATA_ROUTES,
   'GET /api/access',
   // The chat, including its own cloud browser (a profile per account).
   `GET ${chat}`, `POST ${chat}`, `GET ${chat}/:id`, `DELETE ${chat}/:id`, `GET ${chat}/:id/screen`,
@@ -128,6 +130,7 @@ export async function registerMemberRoutes(app: FastifyInstance, options: Member
   };
 
   app.get('/api/access', async (request) => {
+    const limited = await readLimitedMemberAccess(db, await options.owner(request)); if (limited) return limited;
     const user = await options.owner(request), role = await options.role(request);
     const services = role === 'owner' ? ['all'] : ['chat', 'memory', ...(options.adsAvailable() ? ['ads'] : []), ...(options.imagesAvailable() ? ['images'] : []), ...(options.sitesAvailable?.() ? ['sites'] : [])];
     const used = role === 'member' ? await memberRunsToday(db, user.id) : 0;
@@ -205,7 +208,7 @@ export async function registerMemberRoutes(app: FastifyInstance, options: Member
     if (!Number(claimed.numUpdatedRows)) throw failure(409, 'INVITE_IN_USE', 'تُستخدم هذه الدعوة الآن.');
     let userId: string;
     try {
-      const result = await auth.api.signUpEmail({ body: { name: input.name, email: invite.email, password: input.password } });
+      const result = await signUpInvitedMember(db, auth, { name: input.name, email: invite.email, password: input.password });
       userId = result.user.id;
     } catch (error) {
       await db.updateTable('workspace_invites').set({ claimed_at: null }).where('id', '=', invite.id).where('consumed_by', 'is', null).execute();
