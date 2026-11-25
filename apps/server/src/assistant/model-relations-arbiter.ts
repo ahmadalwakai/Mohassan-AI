@@ -68,10 +68,10 @@ export function captureArbiterDecisions(runId: string): (() => ArbiterDecisionLo
   const observation = pending.get(runId);
   if (!observation) return undefined;
   pending.delete(runId);
-  return () => {
+  return () => replay.exit(() => execution.exit(() => {
     for (const discover of observation.discover.splice(0)) discover();
     return observation.decisions;
-  };
+  }));
 }
 
 export function takeArbiterDecisions(runId: string): ArbiterDecisionLog[] | undefined {

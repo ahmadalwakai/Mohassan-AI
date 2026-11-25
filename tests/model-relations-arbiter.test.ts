@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  arbitrateComponent, beginArbiterReplayTurn, discoverArbiterClaims, takeArbiterDecisions, withArbiterExecution, withArbiterReplay,
+  arbitrateComponent, beginArbiterReplayTurn, discoverArbiterClaims, hasArbiterExecution, takeArbiterDecisions, withArbiterExecution, withArbiterReplay,
 } from '../apps/server/src/assistant/model-relations-arbiter.js';
 import { createModelRelationsObserver } from '../apps/server/src/assistant/model-relations-shadow.js';
 import { decideHostRequestRoute } from '../apps/server/src/assistant/routing-decision.js';
@@ -192,9 +192,12 @@ describe('assistant arbitration hook', () => {
     const inspect = vi.fn(relations.inspect.bind(relations));
     const observe = createModelRelationsObserver({ env: {}, logFile, inspector: async () => ({ inspect }) });
     const runId = 'arbiter-reused-run';
+    const executionStates: boolean[] = [];
     const queue = (text: string) => {
-      const discover = vi.fn((shadowLog?: ArbiterDecisionLog[]) =>
-        arbitrateComponent('local-computation', { ...context, text, shadowLog }, hostClaim, otherClaims));
+      const discover = vi.fn((shadowLog?: ArbiterDecisionLog[]) => {
+        executionStates.push(hasArbiterExecution());
+        return arbitrateComponent('local-computation', { ...context, text, shadowLog }, hostClaim, otherClaims);
+      });
       expect(withArbiterExecution(runId, () => discoverArbiterClaims('local-computation', hostResult, undefined, discover))).toBe(hostResult);
       expect(discover).not.toHaveBeenCalled();
       return discover;
@@ -203,7 +206,7 @@ describe('assistant arbitration hook', () => {
       const first = 'Copper roof tiles';
       const second = 'ألواح نحاسية على السطح';
       const firstDiscovery = queue(first);
-      observe(runId, undefined, { token: 'lease-one', request: first }, 'First result', 'completed');
+      withArbiterExecution(runId, () => observe(runId, undefined, { token: 'lease-one', request: first }, 'First result', 'completed'));
       const secondDiscovery = queue(second);
       observe(runId, undefined, { token: 'lease-two', request: second }, 'Second result', 'completed');
       expect(firstDiscovery).not.toHaveBeenCalled();
@@ -211,6 +214,7 @@ describe('assistant arbitration hook', () => {
       await vi.waitFor(async () => expect((await readFile(logFile, 'utf8')).trim().split('\n')).toHaveLength(2));
       expect(firstDiscovery).toHaveBeenCalledOnce();
       expect(secondDiscovery).toHaveBeenCalledOnce();
+      expect(executionStates).toEqual([false, false]);
       expect(inspect.mock.calls.map(([turn]) => [turn.id, turn.arbiter?.map(decision => [decision.language, decision.length])])).toEqual([
         [`${runId}:lease-one`, [['en', first.length]]],
         [`${runId}:lease-two`, [['ar', second.length]]],
