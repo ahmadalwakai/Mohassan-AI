@@ -15,6 +15,15 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = "f50520112a23632ec4f6e4a121018077d1c422be"
+WAVE_2_BASE = "ee22b23041284a801f50f5930a875565c6f11785"
+# These files carried inherited matches in wave 2. Keep comparing occurrence counts.
+WAVE_2_SOURCES = frozenset({
+    "apps/server/src/assistant/review/language.ts",
+    "packages/scratch-classifiers/data/label-map.json",
+    "scripts/conversation-state/decision-eval.ts",
+    "tests/conversation-state-decides-chat.test.ts",
+    "tests/conversation-state-decisions.test.ts",
+})
 AUDIT = ROOT / "scripts/agent-capability-bench/v2"
 if not (AUDIT / "exclusion.py").is_file():
     raise RuntimeError("Run the source leakage check in a scratch merge with test/v2-contamination-audit.")
@@ -91,6 +100,7 @@ class SourceLeakageTest(unittest.TestCase):
     def test_source_tree_adds_no_case_strings(self):
         exclusions = Exclusions.load()
         git("cat-file", "-e", f"{BASE}^{{commit}}")
+        git("cat-file", "-e", f"{WAVE_2_BASE}^{{commit}}")
         paths = git("ls-files", "-z", "--cached", "--others", "--exclude-standard").stdout
         hits = {}
         for name in sorted(set(paths.decode("utf-8").split("\0")) - {""}):
@@ -100,8 +110,8 @@ class SourceLeakageTest(unittest.TestCase):
             current = matching_digests(source.read_bytes(), exclusions)
             if not current:
                 continue
-            # Preserve incidental overlap already present in the pinned PR #40 base.
-            original = git("show", f"{BASE}:{name}", check=False)
+            revision = WAVE_2_BASE if name in WAVE_2_SOURCES else BASE
+            original = git("show", f"{revision}:{name}", check=False)
             inherited = matching_digests(original.stdout, exclusions) if original.returncode == 0 else Counter()
             introduced = current - inherited
             if introduced:
