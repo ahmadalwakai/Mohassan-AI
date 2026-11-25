@@ -3,6 +3,12 @@ import { expect, test } from '@playwright/test';
 import type { ChatConversation, MonitorAlert, MonitorCard, MonitorAlertFeedback } from '@mohassan/contracts';
 import { signInAsFixtureOwner } from './helpers';
 
+test.beforeAll(async ({ request }) => {
+  test.setTimeout(300_000);
+  // Compile the first offline Next page before timing the feedback interaction.
+  expect((await request.get('/', { timeout: 240_000 })).ok()).toBe(true);
+});
+
 test('rates the same monitor alert in the conversation and monitor card', async ({ page }) => {
   test.setTimeout(120_000);
   const now = new Date().toISOString();
