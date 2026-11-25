@@ -1,3 +1,4 @@
+import type { RequestUnderstandingView } from './understanding/index.js';
 import { analyzeCompoundRequest } from './compound-request.js';
 import { resolveRequestContext, type RequestContextState, type RequestResolution, type RequestSlotKind } from './request-context.js';
 
@@ -740,17 +741,18 @@ function pushCorrection(next: ConversationStateV2, record: CorrectionRecord): vo
   next.corrections = [...next.corrections, record].slice(-MAX_CORRECTIONS);
 }
 
-export function understandTurn(state: ConversationStateV2, text: string, turnId: string): TurnUnderstanding {
+export function understandTurn(state: ConversationStateV2, text: string, turnId: string, understanding?: RequestUnderstandingView): TurnUnderstanding {
+  const parserText = understanding?.parserText ?? text;
   const pendingQuestion = state.pending?.kind === 'question_card' ? { id: state.pending.id, fields: state.pending.fields } : undefined;
   // «من فضلك»، "could you tell me" and a trailing "please" are dropped before any reading; the question mark is kept.
-  const rawWords = wordsOf(text);
+  const rawWords = wordsOf(parserText);
   const stripped = stripPoliteness(rawWords, rawWords.map(fold));
   const mark = /[؟?]\s*$/u.exec(text.trim())?.[0]?.trim() ?? '';
   // One-letter typos in closed word lists («tomorow», «الاثلثة» while results are shown); v1 reads the corrected words too.
   const typos = correctTypos(stripped.words, stripped.folded, { results: state.results.length > 0 });
-  const polished = stripped.words.length === rawWords.length && !typos.corrected.length ? text : `${typos.words.join(' ')}${mark}`;
+  const polished = stripped.words.length === rawWords.length && !typos.corrected.length ? parserText : `${typos.words.join(' ')}${mark}`;
   const rawWhole = fold(strip(text));
-  let v1 = resolveRequestContext(polished, state.base, { turnId, pendingQuestion });
+  let v1 = resolveRequestContext(understanding ? text : polished, state.base, { turnId, pendingQuestion, understanding });
   // v1 withholds a phrase that is not phrased as a question once it ends in a question mark («آخر تقرير للبنك الدولي عن التضخم؟»,
   // "find train … tomorrow?") as missing_target, and gives the same words a query without the mark. The mark adds no meaning there.
   if (mark && v1.kind === 'new' && !v1.query && v1.sourceAssessment?.reasons.includes('missing_target')) {
@@ -760,7 +762,7 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
   const words = typos.words;
   const folded = typos.folded;
   const whole = fold(strip(polished));
-  const arabic = isArabic(text);
+  const arabic = isArabic(parserText);
   const top = state.topics.at(-1) ?? null;
   const topForms = top?.property ? PROPERTY_BY_NAME.get(top.property) ?? null : null;
   const next = structuredClone(state);
@@ -1058,7 +1060,7 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
   const aboutSelf = ABOUT_ASSISTANT.test(whole) || ABOUT_ASSISTANT.test(rawWhole) || CONTINUE_START.test(whole) || APPROVE.test(whole) && words.length <= 3
     || actsOnArtifact(folded, whole);
   const publicLookup = !privateNow && !aboutSelf && v1.scope === 'public' && ['web_search', 'news'].includes(v1.intent);
-  // «ايه هي عاصمة كندا؟»: v1 knows no dialect question word and leaves no query, but a named property of a named entity is a public lookup.
+  // In legacy mode, a dialect question may leave v1 without a query. A named property of a named entity can still be a public lookup.
   const composed = !privateNow && !aboutSelf && !publicLookup && Boolean(hit && !hit.pronoun && entity) && ['web_search', 'news', 'unknown'].includes(v1.intent)
     && v1.sourceAssessment?.scope !== 'private';
   const lookup = publicLookup || composed;
