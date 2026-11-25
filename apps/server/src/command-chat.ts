@@ -77,6 +77,7 @@ import { actionOperandHash, actionRequestHash, compileActionCompletionContract, 
 import { isEntireLiteralRequest, parseUserRequestConstraints, requestCapabilityAllowed, requestConstraintReply, requestScopeActionText, reviewPublicProjection, type ForbiddenRequestCapability, type RequestScopeAssessment, type UserRequestConstraints } from './assistant/request-scope.js';
 import { evaluateLocalKnowledge, isKnowledgeDocumentRequest, type LocalKnowledgeDocument } from './assistant/local-knowledge.js';
 import { decideRequestRoute } from './assistant/routing-decision.js';
+import { reviewWorkRefusal } from './assistant/refusal/turn.js';
 import { describeSearchDestination, extractPublicSearchQueries, isSearchEntryElement, mergePublicQueryTerms, reviewGeneratedPublicQuery } from './assistant/public-query-provenance.js';
 import { reviewExplicitPublicBrowserQuery } from './assistant/browser-public-query.js';
 import { ADS_REWRITE_JSON_SCHEMA, ADS_REWRITE_SCHEMA_NAME, ADS_REWRITE_SYSTEM, buildRewritePrompt, type RewriteRequest } from '@mohassan/google-ads';
@@ -1997,6 +1998,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       currentExecution.request = request; currentExecution.constraints = constraints; currentExecution.state = state;
       // The run ledger: the worker starts (or resumes, after a card or an approval) by understanding the request.
       ledgerSafe(state, runId, ledger => tryEnterPhase(ledger, 'understanding', Date.now()));
+      const refusal = run.intent === 'task' && reviewWorkRefusal(request, state, currentExecution.full,
+        { computer: Boolean(tools?.computer || config.desktop), memory: Boolean(tools?.memory) });
+      if (refusal) { await finish(id, runId, state, refusal.text, 'blocked', undefined, undefined, true); return; }
       // Level 4 (plan §6.1): a member asked for the computer's browser. One line with the reason and the alternative; no browser starts.
       if (!currentExecution.full) {
         const level = decideBrowserVisibility({ request, route: state.routing?.route ?? null, role: 'member' });
