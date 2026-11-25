@@ -118,7 +118,7 @@ export function createLongRunRuntime(db: Kysely<any>, ports: LongRunPorts, optio
   async function notifyBackground(tx: Kysely<any>, row: Row, state: LongRunState, time: number,
     outcome: 'completed' | 'approval' | 'sign-in' | 'payment' | 'failed', preview?: string) {
     await recordBackgroundRunOutcome(tx, { runId: row.id, userId: row.owner_id, conversationId: row.conversation_id, startedAt: row.created_at,
-      outcome, language: state.longRun.language, ...(preview ? { preview } : {}) }, new Date(time));
+      outcome, step: state.longRun.next, language: state.longRun.language, ...(preview ? { preview } : {}) }, new Date(time));
   }
 
   async function save(tx: Kysely<any>, row: Row, state: LongRunState, time: number, status: string = row.status) {

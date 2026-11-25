@@ -182,11 +182,11 @@ export async function recordNotificationOutcome(db: Database, outcome: {
 
 export async function recordBackgroundRunOutcome(db: Database, event: {
   runId: string; userId: string; conversationId: string; startedAt: Date; outcome: BackgroundOutcome;
-  language: BackgroundNotificationEvent['background_language']; preview?: string;
+  language: BackgroundNotificationEvent['background_language']; preview?: string; step?: number;
 }, now = new Date()) {
   const { runId, userId, conversationId, startedAt, outcome, language } = event;
   const { kind } = backgroundKinds[outcome];
-  const key = createHash('sha256').update(`${runId}/notification/${outcome}`).digest('hex');
+  const key = createHash('sha256').update(`${runId}/notification/${outcome}/${event.step ?? 0}`).digest('hex');
   const taskId = kind !== 'needs_you' ? runId
     : `${key.slice(0, 8)}-${key.slice(8, 12)}-4${key.slice(13, 16)}-8${key.slice(17, 20)}-${key.slice(20, 32)}`;
   const preview = outcome === 'completed' && event.preview?.trim().split(/\r?\n/u, 1)[0]?.trim().slice(0, 160) || null;

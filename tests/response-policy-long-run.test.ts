@@ -174,9 +174,23 @@ describe('durable long-running response policy work', () => {
     expect(await backgroundNotices(approval.id)).toMatchObject([{ background_outcome: 'approval', result_preview: null }]);
     await chat.cancel(approval.ownerId, approval.conversationId);
 
-    const signIn = await open({ ...monitor, background: { replyLength: 'long' } }, async () => ({ kind: 'input', reason: 'sign_in', site: url }));
+    const signIn = await open({ language: 'en', background: { replyLength: 'long' }, steps: [
+      { kind: 'search', query: 'public references' }, { kind: 'read_source', index: 0 }, { kind: 'read_source', index: 1 },
+    ] }, async ({ operation }) => operation.kind === 'search' ? { kind: 'searched', urls: [url, 'https://second.example.test/'] }
+      : { kind: 'input', reason: 'sign_in', site: url });
+    await signIn.runner.runOnce();
     await signIn.runner.runOnce();
     expect(await backgroundNotices(signIn.id)).toMatchObject([{ background_outcome: 'sign-in', result_preview: null }]);
+    const firstPrompt = (await chat.detail(signIn.ownerId, signIn.conversationId)).secure!;
+    await signIn.runner.respondToInput(signIn.ownerId, signIn.conversationId, { action: 'done', requestId: firstPrompt.id });
+    await signIn.runner.runOnce();
+    expect(await backgroundNotices(signIn.id)).toHaveLength(1);
+    const retriedPrompt = (await chat.detail(signIn.ownerId, signIn.conversationId)).secure!;
+    await signIn.runner.respondToInput(signIn.ownerId, signIn.conversationId, { action: 'skip', requestId: retriedPrompt.id });
+    await signIn.runner.runOnce();
+    expect(await backgroundNotices(signIn.id)).toMatchObject([
+      { background_outcome: 'sign-in', result_preview: null }, { background_outcome: 'sign-in', result_preview: null },
+    ]);
     await chat.cancel(signIn.ownerId, signIn.conversationId);
 
     const failed = await open({ ...monitor, background: { replyLength: 'long' } }, async () => ({ kind: 'unavailable' }));
