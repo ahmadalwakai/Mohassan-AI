@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 // @ts-expect-error The standalone Node script has no TypeScript declaration.
-import { comparePulls, conflictingFiles, git, inspectPull, migrationCollisions, parseNumstat, parseRemoteRefs, suggestOrder } from '../scripts/pr-merge-map.mjs';
+import { alternativePairs, comparePulls, conflictingFiles, git, inspectPull, migrationCollisions, parseNumstat, parseRemoteRefs, suggestOrder } from '../scripts/pr-merge-map.mjs';
 
 let repo: string;
 let base: string;
@@ -113,20 +113,47 @@ describe('PR merge map', () => {
   it('flags held edits above five lines and reports pinned paths and added docs', () => {
     const result = branch(1, 'a', {
       'apps/server/src/app.ts': 'one\ntwo\nthree\nfour\nfive\n',
-      'apps/web/components/new.ts': 'one\ntwo\nthree\nfour\nfive\n',
+      'apps/web/components/new.ts': 'one\ntwo\nthree\nfour\nfive\nsix\n',
       'docs/map.md': 'notes\n',
       'packages/execution-model/src/model.ts': 'model\n',
       'packages/execution-pipeline/src/run.ts': 'pipeline\n',
     });
     expect(result).toMatchObject({
-      mergeBase: base, added: 13, removed: 1, docs: ['docs/map.md'],
+      mergeBase: base, added: 14, removed: 1, docs: ['docs/map.md'],
       held: [
         { path: 'apps/server/src/app.ts', added: 5, removed: 1, overLimit: true },
-        { path: 'apps/web/components/new.ts', added: 5, removed: 0, overLimit: false },
       ],
+      newInHeldFolders: ['apps/web/components/new.ts'],
       pinned: ['packages/execution-model/src/model.ts', 'packages/execution-pipeline/src/run.ts'],
     });
     expect(result.files.size).toBe(5);
     expect(result.commits.size).toBe(1);
   });
+  it('checks held paths against the fixed snapshot even when the comparison base advances', () => {
+    const path = 'packages/browser/src/observed-layout.ts';
+    const earlier = branch(1, 'earlier', { [path]: 'later addition\n' });
+    const head = branch(2, 'change', { [path]: 'one\ntwo\nthree\nfour\nfive\nsix\n' }, earlier.head);
+    expect(inspectPull(repo, earlier.head, head, new Map(), base)).toMatchObject({
+      held: [],
+      newInHeldFolders: [path],
+    });
+  });
+
+  it('keeps the named alternative with fewer conflicts against earlier picks', () => {
+    const wave = branch(1, 'integration/wave', { 'shared.txt': 'wave\n' });
+    const original = branch(2, 'feat/task', { 'shared.txt': 'original\n' });
+    const alternative = branch(3, 'feat/task-alt', { 'independent.txt': 'alternative\n' });
+    const unmatched = branch(4, 'feat/other-alt', { 'other.txt': 'other\n' });
+    const pulls = [wave, original, alternative, unmatched];
+    expect(comparePulls(original, alternative).duplicate).toBe(false);
+    expect(alternativePairs(pulls)).toEqual([{ a: 2, b: 3 }]);
+    const conflicts = [{ a: 1, b: 2, files: conflictingFiles(repo, wave.head, original.head) }];
+    expect(conflicts[0].files).toEqual(['shared.txt']);
+    const { steps, skippedAlternatives } = suggestOrder(pulls, [], conflicts);
+    expect(steps.map((step: { number: number }) => step.number)).toEqual([1, 3, 4]);
+    expect(skippedAlternatives).toEqual([{ number: 2, kept: 3, conflicts: 1 }]);
+    expect(steps[1].newConflicts).toEqual([]);
+    expect(suggestOrder(pulls, [], []).skippedAlternatives).toEqual([{ number: 3, kept: 2, conflicts: 0 }]);
+  });
+
 });

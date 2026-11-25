@@ -4,11 +4,13 @@ import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 
 const baseBranch = 'feat/skill-engine';
+const heldBase = 'c2a0ff765071657cf200b5ee7d12fabaad738c0b';
 const trainingWarning = 'merge only after the v5 training run has finished';
-const held = /^(?:(?:apps\/web\/components|packages\/(?:google-ads\/src|browser\/src|chrome-extension|providers\/src)|apps\/android)\/|apps\/server\/src\/(?:app|chrome-extension|command-chat|config|inference|members|assistant\/(?:ads-model-chat|agent-run|brain|campaign-run|tools|hands))\.ts$|packages\/contracts\/src\/(?:ai-providers|campaign-progress|command-chat|google-ads)\.ts$|docs\/(?:CHAT-MODEL-TRAINING-PLAN|CHROME-EXTENSION|FREELLMAPI|GOOGLE-ADS)\.md$|tests\/(?:(?:ads-own-campaign-chat|campaign-progress-chat|chrome-extension-api|chrome-extension-transport|run-view|google-ads[^/]*)\.test\.ts|fixtures\/google-ads-mock\.ts|e2e\/chrome-extension-panel\.spec\.ts)$)/;
+const heldFolder = /^(?:apps\/web\/components|packages\/(?:google-ads\/src|browser\/src|chrome-extension|providers\/src)|apps\/android)\//;
+const held = /^(?:apps\/server\/src\/(?:app|chrome-extension|command-chat|config|inference|members|assistant\/(?:ads-model-chat|agent-run|brain|campaign-run|tools|hands))\.ts$|packages\/contracts\/src\/(?:ai-providers|campaign-progress|command-chat|google-ads)\.ts$|docs\/(?:CHAT-MODEL-TRAINING-PLAN|CHROME-EXTENSION|FREELLMAPI|GOOGLE-ADS)\.md$|tests\/(?:(?:ads-own-campaign-chat|campaign-progress-chat|chrome-extension-api|chrome-extension-transport|run-view|google-ads[^/]*)\.test\.ts|fixtures\/google-ads-mock\.ts|e2e\/chrome-extension-panel\.spec\.ts)$)/;
 const pinned = /^packages\/execution-(?:pipeline|model)\//;
 
-export function git(cwd, args, { input, statuses = [0] } = {}) {
+export function git(cwd, args, { input, statuses = [0], statusOnly = false } = {}) {
   const result = spawnSync('git', args, {
     cwd, input, encoding: 'utf8', maxBuffer: 128 * 1024 * 1024,
     env: { ...process.env, LC_ALL: 'C', GIT_NO_REPLACE_OBJECTS: '1' },
@@ -17,7 +19,7 @@ export function git(cwd, args, { input, statuses = [0] } = {}) {
   if (!statuses.includes(result.status)) {
     throw new Error(`git ${args[0]} failed (status ${result.status ?? result.signal})`);
   }
-  return result.stdout;
+  return statusOnly ? result.status : result.stdout;
 }
 
 export function parseRemoteRefs(output) {
@@ -56,7 +58,12 @@ function migrationIds(cwd, revision) {
     .filter(value => value[0] === value.at(-1)).map(value => value.slice(1, -1)));
 }
 
-export function inspectPull(cwd, base, pull, migrationCache = new Map()) {
+function pathExists(cwd, revision, path) {
+  return git(cwd, ['cat-file', '-e', `${revision}:${path}`],
+    { statuses: [0, 1, 128], statusOnly: true }) === 0;
+}
+
+export function inspectPull(cwd, base, pull, migrationCache = new Map(), heldRevision = base, heldPathCache = new Map()) {
   const { head } = pull;
   const mergeBase = git(cwd, ['merge-base', base, head]).trim();
   const commits = new Set(git(cwd, ['rev-list', `${base}..${head}`]).trim().split('\n').filter(Boolean));
@@ -70,14 +77,26 @@ export function inspectPull(cwd, base, pull, migrationCache = new Map()) {
     if (!migrationCache.has(revision)) migrationCache.set(revision, migrationIds(cwd, revision));
   }
   const migrations = [...migrationCache.get(head)].filter(id => !migrationCache.get(mergeBase).has(id)).sort();
+  const heldEdits = [];
+  const newInHeldFolders = [];
+  for (const file of changes) {
+    const inHeldFolder = heldFolder.test(file.path);
+    if (!inHeldFolder && !held.test(file.path)) continue;
+    if (!heldPathCache.has(file.path)) {
+      heldPathCache.set(file.path, pathExists(cwd, heldRevision, file.path));
+    }
+    if (heldPathCache.get(file.path)) {
+      heldEdits.push({ ...file, overLimit: file.added !== null && file.added + file.removed > 5 });
+    } else if (inHeldFolder && pathExists(cwd, head, file.path)) {
+      newInHeldFolders.push(file.path);
+    }
+  }
   return {
     ...pull, mergeBase, commits, files, docs, patchId, migrations,
     added: changes.reduce((sum, file) => sum + (file.added ?? 0), 0),
     removed: changes.reduce((sum, file) => sum + (file.removed ?? 0), 0),
     binary: changes.filter(file => file.added === null).length,
-    held: changes.filter(file => held.test(file.path)).map(file => ({
-      ...file, overLimit: file.added !== null && file.added + file.removed > 5,
-    })),
+    held: heldEdits, newInHeldFolders,
     pinned: [...files].filter(path => pinned.test(path)),
   };
 }
@@ -138,13 +157,43 @@ function conflictClusters(conflicts) {
   return clusters.sort((a, b) => b.members.length - a.members.length || b.pairs - a.pairs || a.members[0] - b.members[0]);
 }
 
-export function suggestOrder(pulls, containment, conflicts, holds = new Set()) {
+export function alternativePairs(pulls) {
+  const byBranch = new Map();
+  const pairs = new Map();
+  for (const pull of pulls) {
+    for (const name of pull.branches) {
+      if (!byBranch.has(name)) byBranch.set(name, []);
+      byBranch.get(name).push(pull.number);
+    }
+  }
+  for (const [name, alternatives] of byBranch) {
+    if (!name.endsWith('-alt')) continue;
+    for (const original of byBranch.get(name.slice(0, -4)) ?? []) {
+      for (const alternative of alternatives) {
+        if (alternative === original) continue;
+        const [a, b] = [original, alternative].sort((a, b) => a - b);
+        pairs.set(`${a}/${b}`, { a, b });
+      }
+    }
+  }
+  return [...pairs.values()].sort((x, y) => x.a - y.a || x.b - y.b);
+}
+
+export function suggestOrder(pulls, containment, conflicts, holds = new Set(), alternatives = alternativePairs(pulls)) {
   const integration = pull => pull.branches.some(name => name.startsWith('integration/'));
   const preference = (a, b) => Number(integration(b)) - Number(integration(a)) || a.number - b.number;
   const pending = new Map(pulls.map(pull => [pull.number, pull]));
   const coveredBy = new Map();
   const selected = new Set();
   const steps = [];
+  const skippedAlternatives = [];
+  const alternativesByPR = new Map(pulls.map(({ number }) => [number, []]));
+  for (const { a, b } of alternatives) {
+    alternativesByPR.get(a).push(b);
+    alternativesByPR.get(b).push(a);
+  }
+  const conflictsAgainstPicks = number => conflicts.filter(({ a, b }) =>
+    (a === number && selected.has(b)) || (b === number && selected.has(a)));
   let cumulative = 0;
 
   for (const pull of pulls) {
@@ -154,27 +203,34 @@ export function suggestOrder(pulls, containment, conflicts, holds = new Set()) {
     const eligible = [...pending.values()].filter(pull => !containment.some(({ child, parent, equal }) => (
       child === pull.number && pending.has(parent) && (!equal || preference(pending.get(parent), pull) < 0)
     )));
-    const candidates = eligible.map(pull => ({
-      pull,
-      conflicts: conflicts.filter(({ a, b }) =>
-        (a === pull.number && selected.has(b)) || (b === pull.number && selected.has(a))),
-    })).sort((a, b) => Number(integration(b.pull)) - Number(integration(a.pull))
-      || a.conflicts.length - b.conflicts.length || a.pull.number - b.pull.number);
-    const [{ pull, conflicts: newConflicts }] = candidates;
+    const scores = new Map(eligible.map(({ number }) => [number, conflictsAgainstPicks(number)]));
+    const rank = (a, b) => scores.get(a).length - scores.get(b).length || a - b;
+    const candidates = eligible.filter(({ number }) => alternativesByPR.get(number)
+      .every(other => !scores.has(other) || rank(number, other) < 0));
+    const [pull] = candidates.sort((a, b) => Number(integration(b)) - Number(integration(a))
+      || rank(a.number, b.number));
+    const newConflicts = scores.get(pull.number);
     pending.delete(pull.number);
-    selected.add(pull.number);
     const covered = containment.filter(({ parent, child }) => parent === pull.number && pending.has(child))
       .map(({ child }) => child).sort((a, b) => a - b);
     for (const child of covered) {
       pending.delete(child);
       coveredBy.set(child, pull.number);
     }
+    for (const kept of [pull.number, ...covered]) {
+      for (const other of alternativesByPR.get(kept)) {
+        if (pending.delete(other)) {
+          skippedAlternatives.push({ number: other, kept, conflicts: conflictsAgainstPicks(other).length });
+        }
+      }
+    }
+    selected.add(pull.number);
     cumulative += newConflicts.length;
     const frontier = conflicts.filter(({ a, b }) =>
       (selected.has(a) && pending.has(b)) || (selected.has(b) && pending.has(a)));
     steps.push({ number: pull.number, covered, newConflicts, cumulative, frontier });
   }
-  return { steps, coveredBy };
+  return { steps, coveredBy, skippedAlternatives };
 }
 
 function analyze(cwd, pulls) {
@@ -217,7 +273,8 @@ function report({ pulls, base, version, taken, analysis, holds, excludeBranch })
   })).filter(pull => pull.edits.length);
   const largeEditCount = largeEdits.reduce((sum, pull) => sum + pull.edits.length, 0);
   const clusters = conflictClusters(conflicts);
-  const { steps, coveredBy } = suggestOrder(pulls, containment, conflicts, holds);
+  const alternatives = alternativePairs(pulls);
+  const { steps, coveredBy, skippedAlternatives } = suggestOrder(pulls, containment, conflicts, holds, alternatives);
   const parents = new Map();
   for (const { child, parent } of containment) {
     if (!parents.has(child)) parents.set(child, []);
@@ -232,6 +289,7 @@ function report({ pulls, base, version, taken, analysis, holds, excludeBranch })
     '',
     `- عدد طلبات السحب: ${pulls.length}. عدد الأزواج المفحوصة: ${pairCount}، منها ${conflicts.length} متعارضة و${duplicates.length} متشابهة. عدد الطلبات المحتواة: ${parents.size}.`,
     `- الأزواج المتشابهة: ${list(duplicates.map(entry => `${pair(entry)} (${(100 * entry.overlap).toFixed(1)}%${entry.samePatch ? '، معرّف الرقعة مطابق' : ''})`), 'لا يوجد')}.`,
+    `- البدائل حسب أسماء الفروع (يُختار واحد من كل زوج): ${list(alternatives.map(pair), 'لا يوجد')}.`,
     `- الطلبات المحتواة والفروع التي تضمّها: ${list([...parents].sort(([a], [b]) => a - b)
       .map(([child, containers]) => `${pr(child)} ← ${containers.sort((a, b) => a - b).map(pr).join(' / ')}`), 'لا يوجد')}.`,
     `- الطلبات التي تمس مسارات التدريب المثبّتة (${pinnedPulls.length}): ${list(pinnedPulls.map(pull => pr(pull.number)), 'لا يوجد')}. شرط الدمج لهذه المسارات هو انتهاء تشغيل التدريب v5.`,
@@ -247,13 +305,15 @@ function report({ pulls, base, version, taken, analysis, holds, excludeBranch })
     '- Source: Git refs retrieved from [ahmadalwakai/Mohassan-AI](https://github.com/ahmadalwakai/Mohassan-AI) at the snapshot time above. Git PR head refs provide neither open/draft state nor target branch. This map measures the advertised heads against the same comparison base.',
     '- Commits are those reachable from the head and outside the comparison base. File stats use the merge-base diff. Rename detection is disabled to count both affected paths. Binary files have no line counts. A migration collision means multiple PRs add IDs with the same three-digit prefix, including repeated full IDs and copies inherited through containment.',
     '',
+    `Held-file edits count paths present at \`${heldBase}\`. Paths newly present in held folders appear in a separate informational column.`,
+    '',
     '## Per PR',
     '',
-    '| PR | Matching remote branches | Head | Merge base | Commits | Files | Lines +/− | Binary files | Docs added | Migration IDs added | Held files +/− | Training-pinned paths |',
-    '| --- | --- | --- | --- | ---: | ---: | --- | ---: | --- | --- | --- | --- |',
+    '| PR | Matching remote branches | Head | Merge base | Commits | Files | Lines +/− | Binary files | Docs added | Migration IDs added | Held files +/− | New files in held folders (info) | Training-pinned paths |',
+    '| --- | --- | --- | --- | ---: | ---: | --- | ---: | --- | --- | --- | --- | --- |',
   ];
   for (const pull of pulls) {
-    lines.push(`| ${pr(pull.number)} | ${list(pull.branches.map(code), 'No matching remote branch')} | ${code(pull.head)} | ${code(pull.mergeBase)} | ${pull.commits.size} | ${pull.files.size} | +${pull.added}/−${pull.removed} | ${pull.binary} | ${files(pull.docs)} | ${files(pull.migrations)} | ${list(pull.held.map(heldEdit))} | ${pull.pinned.length ? `${files(pull.pinned)} — **${trainingWarning}**` : '—'} |`);
+    lines.push(`| ${pr(pull.number)} | ${list(pull.branches.map(code), 'No matching remote branch')} | ${code(pull.head)} | ${code(pull.mergeBase)} | ${pull.commits.size} | ${pull.files.size} | +${pull.added}/−${pull.removed} | ${pull.binary} | ${files(pull.docs)} | ${files(pull.migrations)} | ${list(pull.held.map(heldEdit))} | ${files(pull.newInHeldFolders)} | ${pull.pinned.length ? `${files(pull.pinned)} — **${trainingWarning}**` : '—'} |`);
   }
   lines.push('', '## Conflicting pairs', '', '| PR heads | Conflicting files |', '| --- | --- |');
   for (const entry of conflicts) lines.push(`| ${pair(entry)} | ${files(entry.files)} |`);
@@ -261,6 +321,8 @@ function report({ pulls, base, version, taken, analysis, holds, excludeBranch })
   lines.push(
     '', '## Suggested merge order', '',
     'Select containing PRs before their children, preferring eligible integration branches. Among equally preferred candidates, select the PR with the fewest conflicting pairs against earlier picks, breaking ties by PR number. Equal commit sets share a single pick. Covered PRs need no separate merge once their parent lands.',
+    '',
+    'When both named alternatives are eligible, keep the one with fewer conflicts against earlier picks and break ties by PR number. An alternative already covered by a containing pick needs no separate merge. The excluded alternative’s count uses the picks before that decision.',
     '',
     'New conflicts list the pairs introduced by the pick. The cumulative column counts unresolved pairs from this and all earlier rows. The last column lists remaining conflicts between picked and pending PRs. The conflict table above gives the files for each pair. Pairwise results are an ordering heuristic. Actual sequential merges and conflict resolutions can change those results. Near-duplicate pairs without containment still require an owner decision.',
     '',
@@ -270,6 +332,12 @@ function report({ pulls, base, version, taken, analysis, holds, excludeBranch })
   for (const [index, step] of steps.entries()) {
     const pull = pulls.find(pull => pull.number === step.number);
     lines.push(`| ${index + 1} | ${pr(step.number)}${pull.pinned.length ? ` — **${trainingWarning}**` : ''} | ${list(step.covered.map(pr))} | ${list(step.newConflicts.map(pair))} | ${step.cumulative} | ${list(step.frontier.map(pair))} |`);
+  }
+  if (skippedAlternatives.length) {
+    lines.push('', '### Alternatives excluded from the order', '');
+    for (const { number, kept, conflicts } of skippedAlternatives.sort((a, b) => a.number - b.number)) {
+      lines.push(`- ${pr(number)} not merged: alternative of ${pr(kept)} (${conflicts} conflicting pairs against earlier picks).`);
+    }
   }
   const alreadyInBase = pulls.filter(pull => !pull.commits.size).map(pull => pr(pull.number));
   if (alreadyInBase.length) lines.push('', `Already in the comparison base: ${list(alreadyInBase)}.`);
@@ -310,7 +378,9 @@ function main() {
   git(cwd, ['-c', 'fetch.writeCommitGraph=false', 'fetch', '--no-tags', '--no-recurse-submodules',
     '--no-write-fetch-head', '--refmap=', 'origin', `refs/heads/${baseBranch}`, ...pulls.map(pull => pull.ref)]);
   const migrationCache = new Map();
-  const inspected = pulls.map(pull => inspectPull(cwd, base, pull, migrationCache));
+  git(cwd, ['cat-file', '-e', `${heldBase}^{commit}`]);
+  const heldPathCache = new Map();
+  const inspected = pulls.map(pull => inspectPull(cwd, base, pull, migrationCache, heldBase, heldPathCache));
   const analysis = analyze(cwd, inspected);
   writeFileSync(values.output, report({ pulls: inspected, base, version, taken, analysis, holds, excludeBranch }));
   console.log(`Wrote ${values.output} for ${pulls.length} PR heads (${analysis.pairCount} pairs in ${analysis.seconds.toFixed(2)} s)`);
