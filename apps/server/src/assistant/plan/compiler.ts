@@ -9,6 +9,7 @@ import { assessRequestScope } from '../request-scope.js';
 import { decideRequestRoute, type RequestRoutingDecision, type RequestRoutingInput } from '../routing-decision.js';
 import { siteTask } from '../site-builder.js';
 import { writingTask } from '../writer.js';
+import { extractiveWritingEnabled } from '../writing/request.js';
 import { actionHead, clauseMatchingText, splitPlanClauses } from './clauses.js';
 import { planReferences } from './references.js';
 import { parseSourceComputation } from './source-computation.js';
@@ -156,9 +157,11 @@ function canProject(text: string, tool: PlanTool, route: RequestRoutingDecision,
 export function compilePlan(text: string, options: RouteOptions = {}): CompiledPlan {
   const lang = normalizeRequest(text).lang;
   const split = splitPlanClauses(text);
-  // Opening one named page to answer a question on that page is a single
-  // lookup. Preserve additional clauses for the normal dependency compiler.
-  const clauses = split.length === 2 && planConversationPageRead(text)
+  const writing = split.length === 2 && extractiveWritingEnabled() ? writingTask(text, 'extractive') : null;
+  const writesFromOnePage = writing?.opensSource && writing.source.kind === 'urls' && writing.source.urls.length === 1;
+  // Opening one named page to answer a question or compare its contents is a
+  // single source-backed task. Additional clauses keep their own dependencies.
+  const clauses = split.length === 2 && (writesFromOnePage || planConversationPageRead(text))
     ? [text] : expandComparisonClauses(attachPageSelectors(split));
   const steps: PlanStep[] = [];
   const constraints = parseUserRequestConstraints(text);

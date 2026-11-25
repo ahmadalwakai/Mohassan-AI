@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { splitPlanClauses } from '../apps/server/src/assistant/plan/clauses.js';
 import { compilePlan } from '../apps/server/src/assistant/plan/compiler.js';
 import { resolveStepInputs } from '../apps/server/src/assistant/plan/references.js';
@@ -50,6 +50,18 @@ describe('plan compiler source and reference contracts', () => {
     'افتح https://archive.example.test/music واعرض اسم الفرقة الموسيقية.',
   ])('compiles a question about an explicitly opened page as one lookup for %s', text => {
     expect(compilePlan(text).steps).toMatchObject([{ tool: 'read', text }]);
+  });
+
+  it('leaves a same-page comparison to the enabled extractive writing handler', () => {
+    const text = 'Read https://catalog.example.test/supplies and compare the weights of the carbon handle and the steel handle.';
+    try {
+      vi.stubEnv('MOHASSAN_EXTRACTIVE_WRITING', '0');
+      expect(compilePlan(text).steps.map(step => step.tool)).toEqual(['read', 'compare']);
+      vi.stubEnv('MOHASSAN_EXTRACTIVE_WRITING', '1');
+      expect(compilePlan(text).steps).toMatchObject([{ tool: 'read', text }]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('attaches a measurement to its explicitly opened page before binding a quantity calculation', () => {
