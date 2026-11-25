@@ -26,7 +26,7 @@ const effects: readonly [string, RefusalAlternative][] = [
   ['تكفون ممكن تفتحون إضاءة السطح؟', 'device_control'],
   ['Cancel the booking for the cabin in June.', 'make_booking'],
   ['Reserve bus tickets for the last departure.', 'make_booking'],
-  ['I wonder if you could help me to book a ferry crossing.', 'make_booking'],
+  ['I wonder if you could help me to book a ferry ticket.', 'make_booking'],
   ['Order us some seedlings for the community garden.', 'place_order'],
   ['Order food from the bakery to the conference room.', 'place_order'],
   ['Reply to Elena saying we can meet at noon.', 'draft'],
