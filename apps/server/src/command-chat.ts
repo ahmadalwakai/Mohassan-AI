@@ -2082,7 +2082,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       const codingReply = run.intent === 'task' && !state.steps && !state.trail.length && state.routing?.handler === 'local_coding'
         ? await answerTestDrivenCoding(request, { authorized: fullReach() && state.routing.availability !== 'restricted', signal, originalHash: state.requestOriginalHash, scrub: text => vault.scrub(id, clean(text)) }) : null;
-      if (codingReply) return finish(id, runId, state, codingReply.text, codingReply.status, undefined, undefined, true);
+      if (codingReply) {
+        state.codingVerification = codingReply.verification;
+        return finish(id, runId, state, codingReply.text, codingReply.status, undefined, undefined, true);
+      }
       if (noteVerificationIntent) {
         const unavailable = () => /\p{Script=Arabic}/u.test(request)
           ? 'لم أتمكن من التحقق من حالة محاولة حفظ هذه الملاحظة الآن.'

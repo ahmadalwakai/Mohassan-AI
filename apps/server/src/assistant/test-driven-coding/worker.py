@@ -121,7 +121,7 @@ def _sample_value(value, depth=0):
     return False
 
 
-def _examples(problem):
+def _examples(problem, on_timeout):
     def evaluate(node):
         if any(isinstance(part, ast.Name) and part.id == problem.entry for part in ast.walk(node)):
             raise ValueError
@@ -136,6 +136,9 @@ def _examples(problem):
         try:
             with _attempt_deadline():
                 example = (tuple(evaluate(node) for node in inputs), evaluate(expected))
+        except TimeLimit:
+            on_timeout()
+            continue
         except Exception:
             # Non-literal test forms still run unchanged in the final verifier.
             continue
@@ -143,9 +146,17 @@ def _examples(problem):
 
 
 def _solve(description, problem):
-    examples = tuple(_examples(problem))
+    limits = {}
+
+    def example_timeout():
+        limits["exampleTimeout"] = True
+
+    def search_limit(reason):
+        limits["searchLimit"] = reason
+
+    examples = tuple(_examples(problem, example_timeout))
     if not examples:
-        return _failed("no-supported-examples", assertion=problem.assertions[0].source, tried=0)
+        return {**_failed("no-supported-examples", assertion=problem.assertions[0].source, tried=0), **limits}
 
     tried = 0
     verified_source = None
@@ -162,12 +173,12 @@ def _solve(description, problem):
             best_failure = result
         return False
 
-    candidate = synthesize(problem.entry, description, examples, verify)
+    candidate = synthesize(problem.entry, description, examples, verify, on_limit=search_limit)
     if candidate is not None and candidate == verified_source:
         return {"status": "passed", "source": verified_source, "tried": tried}
     if best_failure is not None:
-        return {**best_failure, "tried": tried}
-    return _failed("no-candidate-passed", assertion=problem.assertions[0].source, tried=tried)
+        return {**best_failure, "tried": tried, **limits}
+    return {**_failed("no-candidate-passed", assertion=problem.assertions[0].source, tried=tried), **limits}
 
 
 def _request():

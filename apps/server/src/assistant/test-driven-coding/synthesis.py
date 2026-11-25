@@ -387,6 +387,8 @@ def synthesize(
     description: str,
     examples: Iterable[Example],
     verify: Callable[[str], bool],
+    *,
+    on_limit: Callable[[str], None] | None = None,
 ) -> str | None:
     """Return the first size-ordered candidate accepted by the supplied verifier."""
     if not name.isidentifier() or keyword.iskeyword(name):
@@ -426,7 +428,9 @@ def synthesize(
         for kind in term.types:
             pools[size, kind].append(term)
 
-    def report_failure():
+    def report_failure(limit=None):
+        if limit is not None and on_limit is not None:
+            on_limit(limit)
         if verifications == 0 and diagnostic is not None:
             # Let the sandbox identify a concrete original assertion failure.
             # A successful full verification is also valid if pruning was stricter.
@@ -461,15 +465,17 @@ def synthesize(
                     return result
         for production in rules:
             if monotonic() >= deadline:
-                return report_failure()
+                return report_failure("search-wall-time")
             for operands in islice(_combinations(production, size, pools), MAX_PER_RULE_AND_SIZE):
                 inputs = frozenset().union(*(operand.inputs for operand in operands))
                 if arity and not inputs:
                     continue
-                if evaluations >= MAX_EVALUATIONS or verifications >= MAX_VERIFICATIONS:
-                    return report_failure()
+                if evaluations >= MAX_EVALUATIONS:
+                    return report_failure("search-evaluations")
+                if verifications >= MAX_VERIFICATIONS:
+                    return report_failure("search-verifications")
                 if evaluations % 64 == 0 and monotonic() >= deadline:
-                    return report_failure()
+                    return report_failure("search-wall-time")
                 evaluations += 1
                 try:
                     values = tuple(production.evaluate(*args) for args in zip(*(term.values for term in operands)))

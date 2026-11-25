@@ -57,6 +57,7 @@ describe('routing requests that supply Python assertions', () => {
       originalHash: createHash('sha256').update(prompt).digest('hex'), scrub: text => text,
     });
     expect(reply.status).toBe('blocked');
+    expect(reply.verification).toEqual({ reason: 'worker-start-failed' });
     expect(reply.text).toContain('can’t verify Python assertions');
     expect(reply.text).not.toMatch(/\bdef\s+\w+/u);
   });
@@ -93,13 +94,14 @@ describe.skipIf(process.platform !== 'linux')('verified code through the command
     expect(run.state.routing).toMatchObject({ route: 'coding', handler: 'local_coding' });
     expect(detail.run?.engine.modelCalls).toBe(0);
     expect(forbiddenIO).not.toHaveBeenCalled();
-    return { status: run.status, text: detail.messages.at(-1)?.text };
+    return { status: run.status, text: detail.messages.at(-1)?.text, verification: run.state.codingVerification };
   }
 
   it('publishes a verified function when enabled', async () => {
     vi.stubEnv('TEST_DRIVEN_CODING_ENABLED', 'true');
     const result = await ask(` ${prompt}\n`);
     expect(result.status).toBe('completed');
+    expect(result.verification).toEqual({ reason: 'passed' });
     expect(result.text).toContain('passed all supplied assertions');
     expect(result.text).toMatch(/```python\ndef combine_amounts\([^)]*\):\n/u);
   });
@@ -109,13 +111,14 @@ describe.skipIf(process.platform !== 'linux')('verified code through the command
     const contradicts = 'Write a Python function that offsets an integer.\nassert displace(28) == 31\nassert displace(28) == 32';
     const rejected = await ask(contradicts);
     expect(rejected.status).toBe('blocked');
+    expect(rejected.verification).toEqual({ reason: 'assertion-failed' });
     expect(rejected.text).toContain('assertion');
     expect(rejected.text).toContain('Please share');
     expect(rejected.text).not.toMatch(/\bdef\s+\w+/u);
 
     vi.stubEnv('TEST_DRIVEN_CODING_ENABLED', 'false');
     expect(await ask(prompt)).toEqual({
-      status: 'blocked', text: 'I can’t verify Python assertions in an isolated process in this session.',
+      status: 'blocked', text: 'I can’t verify Python assertions in an isolated process in this session.', verification: { reason: 'disabled' },
     });
   });
 
@@ -124,6 +127,7 @@ describe.skipIf(process.platform !== 'linux')('verified code through the command
     const request = prompt.replace('assert combine_amounts(13, -4)', 'assert False\nassert combine_amounts(13, -4)');
     const result = await ask(request);
     expect(result.status).toBe('blocked');
+    expect(result.verification).toEqual({ reason: 'assertion-failed' });
     expect(result.text).toContain('assertion 1');
     expect(result.text).not.toMatch(/\bdef\s+\w+/u);
   });
@@ -132,6 +136,7 @@ describe.skipIf(process.platform !== 'linux')('verified code through the command
     vi.stubEnv('TEST_DRIVEN_CODING_ENABLED', 'true');
     const result = await ask(prompt.replace('== 9', '== 9 # password=example-placeholder'));
     expect(result.status).toBe('blocked');
+    expect(result.verification).toEqual({ reason: 'request-hash-mismatch' });
     expect(result.text).toContain('original assertion text');
     expect(result.text).not.toMatch(/\bdef\s+\w+/u);
   });
