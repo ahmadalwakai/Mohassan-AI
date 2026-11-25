@@ -5,6 +5,36 @@ export interface BenchmarkPrediction {
   confidence: number;
 }
 
+export interface BenchmarkRunObservation {
+  waitingForQuestion: boolean;
+  calls: readonly ('web_search' | 'browser_command')[];
+  trail: readonly string[];
+  ledgerPath: string | null;
+  verifiedDirectReply?: boolean;
+  status: string;
+}
+
+export function observeBenchmarkRun(observation: BenchmarkRunObservation) {
+  if (observation.waitingForQuestion) return { decision: { kind: 'ask' }, source: 'question_card' } as const;
+  const fromTool = observation.calls[0];
+  if (fromTool) return { decision: { kind: 'act', route: fromTool }, source: 'tool_attempt' } as const;
+  if (observation.trail.includes('calculate')) return { decision: { kind: 'act', route: 'compute' }, source: 'computation_trail' } as const;
+  if (observation.trail.includes('local_sequence')) return { decision: { kind: 'act', route: 'compound' }, source: 'sequence_trail' } as const;
+  if (observation.status === 'completed' && (observation.ledgerPath === 'direct' || observation.verifiedDirectReply)) {
+    return { decision: { kind: 'act', route: 'chat' }, source: 'completed_direct' } as const;
+  }
+  if (observation.status === 'blocked' || observation.status === 'partial') {
+    return { decision: { kind: 'abstain' }, source: 'ended_without_action' } as const;
+  }
+  return null;
+}
+
+export function effectiveBenchmarkPrediction(
+  decision: BenchmarkDecision, proposal: BenchmarkPrediction, enforced: boolean,
+): BenchmarkPrediction {
+  return { decision, confidence: enforced && sameDecision(decision, proposal.decision) ? proposal.confidence : 1 };
+}
+
 interface BenchmarkObservation extends BenchmarkPrediction {
   expected: BenchmarkDecision;
 }

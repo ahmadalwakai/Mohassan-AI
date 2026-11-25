@@ -7,7 +7,7 @@ import { isCampaignRequest } from '../campaign-request.js';
 import { computationReference, evaluateReferencedComputation, latestComputedResult, withReferencedValue } from '../computation-reference.js';
 import { createComputationMemoryReceipt } from '../computation-memory-receipt.js';
 import { documentTask } from '../documents.js';
-import { isFollowUp, notWebReason, parseHands, tidy, topicWords, unnamedSite, webQuestion, type HandsPlan, type HandsStep } from '../hands.js';
+import { isFollowUp, notWebReason, parseHands, tidy, topicWords, unnamedSite, webQuestion, type HandsStep } from '../hands.js';
 import { projectInventoryFormat } from '../inventory.js';
 import { planLocalComputerRead } from '../local-computer-read.js';
 import { evaluateLocalComputation } from '../local-computation.js';
@@ -20,10 +20,9 @@ import { buildFrame } from '../mind/frame.js';
 import { ownFactQuestion } from '../own-fact-question.js';
 import { planningTask } from '../planner.js';
 import { publicConversationFollowup } from '../public-conversation-followup.js';
-import { reviewGeneratedPublicQuery } from '../public-query-provenance.js';
 import { requestActionText } from '../request-context.js';
 import { assessRequestScope, isEntireLiteralRequest, parseUserRequestConstraints, requestCapabilityAllowed, requestScopeActionText,
-  reviewPublicProjection, type RequestScopeAssessment } from '../request-scope.js';
+  type RequestScopeAssessment } from '../request-scope.js';
 import type { RequestRoutingDecision } from '../routing-decision.js';
 import { recognizeRuntimeStatusRequest } from '../runtime-status.js';
 import { evaluateSelfQuestion } from '../self-knowledge.js';
@@ -77,31 +76,19 @@ export function missingReference(input: Pick<RequestRoutingDecision, 'resolution
     reason === 'missing_reference' || reason === 'missing_question' || reason === 'unclear_replacement');
 }
 
-/** Admit a sequence only when its own clauses establish the public scope. */
-export function deliberationWebSequence(request: string, deps: LocalSequenceDeps): HandsPlan | null {
-  if (!requestCapabilityAllowed(parseUserRequestConstraints(request), 'public_search') || assessRequestScope(request).scope === 'private') return null;
+/** Count a sequence only when its clauses establish the public scope. */
+function hasPublicSequence(request: string, deps: LocalSequenceDeps): boolean {
+  if (!requestCapabilityAllowed(parseUserRequestConstraints(request), 'public_search') || assessRequestScope(request).scope === 'private') return false;
   const parts = planWebSequence(requestActionText(requestScopeActionText(request)), deps);
-  if (!parts) return null;
+  if (!parts) return false;
   let previous: RequestScopeAssessment | undefined;
   for (const part of parts) {
     if (part.local) continue;
     const source = assessRequestScope(part.request, previous ? { contextKind: 'follow_up', previous } : {});
-    if (!source.publicQueryEligible) return null;
+    if (!source.publicQueryEligible) return false;
     previous = source;
   }
-  return startWebSequence(parts, /\p{Script=Arabic}/u.test(request) ? 'ar' : 'en');
-}
-
-export function sequenceQueryAllowed(request: string, plan: HandsPlan, query: string, terms: readonly string[]): boolean {
-  const part = plan.sequel;
-  if (!part || query.length > 500 || !requestCapabilityAllowed(parseUserRequestConstraints(request), 'public_search')) return false;
-  let previous: RequestScopeAssessment | undefined;
-  for (const answer of part.answers) {
-    const source = assessRequestScope(answer.request, previous ? { contextKind: 'follow_up', previous } : {});
-    if (source.publicQueryEligible) previous = source;
-  }
-  return reviewPublicProjection(part.asked, query, previous ? { contextKind: 'follow_up', previous } : {}).eligible
-    && reviewGeneratedPublicQuery(request, query, terms).eligible;
+  return Boolean(startWebSequence(parts, /\p{Script=Arabic}/u.test(request) ? 'ar' : 'en'));
 }
 
 /**
@@ -233,7 +220,7 @@ export function inspectCascade(input: CascadeInput): { predicates: PredicateCand
     ? (conversationQuery && webQuestion(conversationQuery)) || webQuestion(contextualQuery ?? action, contextualQuery ? [] : earlierAsks) : null;
   const publicLookup = steps?.length === 1 && steps[0]?.kind === 'search' && !steps[0].site && !input.browserPage ? steps : asked;
   const hands = state.hands?.steps ?? steps ?? asked ?? state.webFallback;
-  const vettedSequence = planEligible && !privateRequest ? deliberationWebSequence(text, { now, self: selfFacts }) : null;
+  const vettedSequence = planEligible && !privateRequest && hasPublicSequence(text, { now, self: selfFacts });
   const legacySequence = asked && !steps && !contextualQuery && planWebSequence(action, { now, self: selfFacts });
   if (publicLookup && !requestCapabilityAllowed(allowed, 'public_search')) match('unsupported', true, { outcome: 'abstain' });
   const adsReady = fullAccess && !!configured.ads && !(configured.memory && memoryRecallFormat(text));

@@ -33,8 +33,7 @@ describe('chat messages with images', () => {
     database = await createDatabase({});
     await migrateAuth(database.db); await migrate(database.db); await memoryMigration(database.db);
     const imageReader = { available: true, modelId: 'f'.repeat(64), async read(bytes: Uint8Array) { reads.push(bytes.byteLength); return reading(['السعر 150 ريال', 'التسليم خلال 3 أيام']); } };
-    control = await createCommandChatControl(database.db, { browser, recordExperiences: false, models: { fast: [], deep: [], vision: '' }, imageReader,
-      fullAccess: async account => account === OWNER });
+    control = await createCommandChatControl(database.db, { browser, recordExperiences: false, models: { fast: [], deep: [], vision: '' }, imageReader });
     withoutReader = await createCommandChatControl(database.db, { browser, recordExperiences: false, models: { fast: [], deep: [], vision: '' } });
   });
   afterAll(async () => { await control.shutdown?.(); await withoutReader.shutdown?.(); await database.close?.(); });
@@ -56,7 +55,7 @@ describe('chat messages with images', () => {
     await expect(control.uploadImage(OWNER, { mimeType: 'image/jpeg', data: await png() })).rejects.toMatchObject({ code: 'CHAT_IMAGE_INVALID' });
   });
 
-  it('answers from the image and records an owner-visible review without queuing a run', async () => {
+  it('answers a question about an attached image from the reading, without any run', async () => {
     const upload = await control.uploadImage(OWNER, { mimeType: 'image/png', data: await png() });
     const before = reads.length;
     const conversation = await control.create(OWNER, { goal: 'كم السعر؟', images: [upload.id] });
@@ -69,24 +68,9 @@ describe('chat messages with images', () => {
     expect(conversation.messages[1].text).toContain('150 ريال');
     const again = await control.detail(OWNER, conversation.id);
     expect(again.messages[0].images).toEqual([{ id: upload.id, width: 80, height: 40 }]);
-    expect(again.run?.deliberation).toMatchObject({
-      chosen: { action: 'act', route: 'image', handler: 'image_attachment' }, legacy: { action: 'act', route: 'image' }, enforced: false,
-      disagrees: false, review: { revision: 'none', findings: [] },
-    });
-    expect(JSON.stringify(again.run?.deliberation)).not.toMatch(/كم السعر|التسليم|150 ريال/u);
-    expect(await database.db.selectFrom('chat_runs').select('id').where('conversation_id', '=', conversation.id).execute()).toEqual([]);
     // A used image no longer expires, so the thumbnail stays with the message.
     const row = await database.db.selectFrom('chat_images').select(['expires_at', 'conversation_id']).where('id', '=', upload.id).executeTakeFirstOrThrow();
     expect(row.expires_at).toBeNull(); expect(row.conversation_id).toBe(conversation.id);
-  });
-
-  it('records the image decision for member messages and omits it from their run view', async () => {
-    const image = await control.uploadImage(OTHER, { mimeType: 'image/png', data: await png() });
-    const conversation = await control.create(OTHER, { goal: 'كم السعر؟', images: [image.id] });
-    expect(conversation.messages.at(-1)?.text).toContain('150 ريال');
-    expect(conversation.run).toBeNull();
-    expect(await database.db.selectFrom('chat_events').select('id').where('conversation_id', '=', conversation.id)
-      .where('kind', '=', 'attachment_deliberation').execute()).toHaveLength(1);
   });
 
   it('accepts images alone and names the message after them', async () => {
@@ -100,8 +84,6 @@ describe('chat messages with images', () => {
     const followUp = await control.send(OWNER, conversation.id, { text: 'متى التسليم؟', images: [second.id] });
     expect(followUp.messages).toHaveLength(4);
     expect(followUp.messages[3].text).toContain('التسليم خلال 3 أيام');
-    expect(followUp.run?.id).not.toBe(conversation.run?.id);
-    expect(followUp.run?.deliberation?.chosen).toMatchObject({ route: 'image' });
     expect(first).toBeDefined();
   });
 

@@ -3,11 +3,8 @@ import sharp from 'sharp';
 import type { ImageReading } from '@mohassan/vision';
 import { composeImageReply, readingForTrail } from './assistant/image-reading.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { latestAttachmentRun, prepareAttachmentDeliberation, recordAttachmentDeliberation } from './assistant/deliberation/attachment-deliberation.js';
-import { beginChatDeliberation, dispatchFor, dispatchGate, dispatchPermit, observeHandler, persistFailedDeliberation, recordBoundDeliberation } from './assistant/deliberation/chat-dispatch.js';
-import { deliberationWebSequence, handlerForHands, sequenceQueryAllowed } from './assistant/deliberation/cascade.js';
+import { beginChatDeliberation, observeFinalDeliberation } from './assistant/deliberation/chat-dispatch.js';
 import type { FastifyInstance } from 'fastify';
-import { protectCachedDeliberation } from './assistant/deliberation/run-ledger.js';
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import {
@@ -195,8 +192,6 @@ export interface CommandChatConfig {
   chromeExtension?: Pick<ChromeExtensionControl, 'status' | 'queueCampaign'>;
   /** Mohassan's own router model in shadow: logs its route next to the rules' route and changes nothing. */
   shadowRouter?: ShadowRouter;
-  deliberationEnabled?: boolean;
-  deliberationMemoryHit?: (ownerId: string, query: string) => Promise<boolean>;
   /** Conversation state v2 in shadow (docs/HANDOVER-2026-11-22-CONVERSATION-STATE-V2.md): logs its understanding of each turn and changes nothing. */
   conversationShadow?: ConversationShadow;
   /** The judge («الحَكَم») in shadow (docs/HANDOVER-2026-11-22-JUDGE-SHADOW.md): records a verdict on each reply the owner sees and changes nothing. */
@@ -1040,8 +1035,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const saved=AgentSessionCheckpointSchema.safeParse(row.browser_checkpoint);
     const checkpoint=saved.success?saved.data:null;
     const page = (row.browser_state??(checkpoint?{url:checkpoint.resumeUrl??'about:blank',title:'جلسة محفوظة',observedAt:checkpoint.observedAt??checkpoint.savedAt,version:checkpoint.pageHash??'saved'}:null)) as { url: string; title: string; observedAt: string; version: string } | null;
-    const fullRunView = config.fullAccess ? await config.fullAccess(ownerId) : true;
-    const attachmentRun = await latestAttachmentRun(db, id, fullRunView, lastRun?.created_at);
     return ChatConversationSchema.parse({
       id, title: row.title, status: row.status, browserAccount: row.browser_account ?? null,
       messages: messages.map((item) => ({ id: item.id, role: item.role, text: item.text, createdAt: iso(item.created_at), ...messageImages(item.images) })),
@@ -1054,15 +1047,15 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       updatedAt: iso(row.updated_at), configured: hasChatModel(), capabilities: await capabilitiesFor(ownerId),
       // The browser level (plan §6.1) is read from the rows above, never stored apart from them: the UI opens the panel by itself only at 3.
       visibility: deriveBrowserVisibility({ request: messages.findLast(item => item.role === 'user')?.text ?? '', route: lastRun?.state?.routing?.route ?? null,
-        role: fullRunView ? 'owner' : 'member', hasPage: Boolean(page), status: row.status,
+        role: (config.fullAccess ? await config.fullAccess(ownerId) : true) ? 'owner' : 'member', hasPage: Boolean(page), status: row.status,
         secure: row.secure ?? null, approval: row.approval ?? null, firstStep: steps[0]?.message ?? null, decidedAt: iso(row.updated_at) }),
       ...(version ? { version } : {}),
       ...(olderMessages ? { olderMessages } : {}),
       // The latest run as the runtime committed it (assistant/agent-run.ts); its row status is the authority for the verdict.
-      run: attachmentRun ?? (lastRun ? projectRunView({ runId: lastRun.id, status: lastRun.status, ledger: lastRun.state?.agentRun, createdAt: lastRun.created_at, updatedAt: lastRun.updated_at, includeDeliberation: fullRunView,
+      run: lastRun ? projectRunView({ runId: lastRun.id, status: lastRun.status, ledger: lastRun.state?.agentRun, createdAt: lastRun.created_at, updatedAt: lastRun.updated_at,
         // Model calls are counted in the ledger; only a run recorded before ledgers existed is counted from its receipts.
         ...(lastRun.state?.agentRun ? {} : { modelCalls: Number((await db.selectFrom('chat_model_receipts').select(eb => eb.fn.countAll<string | number>().as('n'))
-          .where('run_id', '=', lastRun.id).where('status', '=', 'succeeded').executeTakeFirstOrThrow()).n) }) }) : null),
+          .where('run_id', '=', lastRun.id).where('status', '=', 'succeeded').executeTakeFirstOrThrow()).n) }) }) : null,
     });
   }
 
@@ -1294,8 +1287,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       ledgerSafe(state, runId, ledger => tryEnterPhase(ledger, 'awaiting_approval', pausedAt));
     } else ledgerSafe(state, runId, ledger => tryEnterPhase(ledger, 'awaiting_input', pausedAt));
     ledgerSafe(state, runId, ledger => collectStateEvidence(ledger, state, pausedAt));
-    dispatchFor(state)?.observePause(status);
-    if (say) dispatchFor(state)?.review(say, 'partial', [], true);
     await saveState(runId, state);
     await runTransaction(id,runId,async (tx) => {
       const current = await tx.selectFrom('chat_conversations').select(['status', 'active_run_id']).where('id', '=', id).forUpdate().executeTakeFirstOrThrow();
@@ -1361,7 +1352,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if (!current?.request) return unchanged;
     try {
       const evidence = judgeEvidence(current);
-      const applyFix = Boolean(allowChange && config.judgeFixForOwner && current.full && !(current.state && dispatchFor(current.state)?.enabled));
+      const applyFix = Boolean(allowChange && config.judgeFixForOwner && current.full);
       const applyWithhold = Boolean(allowChange && config.judgeWithholdForOwner && current.full);
       const verdict = config.judgeShadow.observe({ conversationId: id, runId, question: asked?.question ?? current.request, previous: asked ? asked.previous : current.previousRequest ?? null, reply, status,
         applyFix, applyWithhold, keepText: config.judgeLogText !== 'owner' || Boolean(current.full), ...(evidence.length ? { evidence } : {}) });
@@ -1437,8 +1428,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // The runtime's verdict (assistant/agent-run.ts), committed with the reply in this transaction: it can lower the
       // status the path concluded (a required plan step failed, never ran or has an unknown effect; an enforced criterion
       // is unmet), never raise it. The path is direct when the run used no tool.
-      const deliberationReview = dispatchFor(state)?.review(finalText, finalStatus, judgeEvidence(execution.getStore()!), Boolean(proof || memoryPublication));
-      if (deliberationReview) ({ text: finalText, status: finalStatus } = deliberationReview);
+      observeFinalDeliberation(state, finalText, finalStatus, judgeEvidence(execution.getStore()!));
       const verdictAt = Date.now();
       ledgerSafe(state, runId, ledger => {
         collectStateEvidence(ledger, state, verdictAt);
@@ -1989,7 +1979,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const state: BrainState = { ...newBrainState(), ...(run.state ?? {}) };
       const effectiveSource = await effectiveSourceForRun(run);
       if (!effectiveSource) {
-        ledgerSafe(state, runId, ledger => recordBoundDeliberation(ledger, 'ledger_blocked'));
         await finish(id, runId, state, 'لم أتحقق من مصدر طلب التوضيح ووقته. أعد كتابة الطلب في مهمة جديدة.', 'blocked');
         return;
       }
@@ -2010,15 +1999,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       currentExecution.request = request; currentExecution.constraints = constraints; currentExecution.state = state;
       // The run ledger: the worker starts (or resumes, after a card or an approval) by understanding the request.
       ledgerSafe(state, runId, ledger => tryEnterPhase(ledger, 'understanding', Date.now()));
-      const { dispatch: deliberation, ended } = await beginChatDeliberation({ db, config, ownerId, conversationId: id, runId, hostIntent: run.intent, state,
-        text: request, evaluatedAt: effectiveSource.evaluatedAt, fullAccess: currentExecution.full, chatModel: hasChatModel(), historyLimit: HISTORY_MESSAGES,
-        ledger: change => ledgerSafe(state, runId, change), save: () => saveState(runId, state), finish: text => finish(id, runId, state, text, 'blocked'),
-        ask: (text, question) => pause(id, runId, state, 'waiting_user', { question: JSON.stringify(question) }, text) });
-      if (ended) return;
+      if (await beginChatDeliberation({ db, config, ownerId, conversationId: id, runId, runIntent: run.intent, source: effectiveSource, state,
+        fullAccess: currentExecution.full, chatModel: hasChatModel(), historyLimit: HISTORY_MESSAGES }, { ledger: change => ledgerSafe(state, runId, change), save: () => saveState(runId, state),
+        reply: (text, question) => question ? pause(id, runId, state, 'waiting_user', { question: JSON.stringify(question) }, text) : finish(id, runId, state, text, 'blocked') })) return;
       // Level 4 (plan §6.1): a member asked for the computer's browser. One line with the reason and the alternative; no browser starts.
       if (!currentExecution.full) {
         const level = decideBrowserVisibility({ request, route: state.routing?.route ?? null, role: 'member' });
-        if (level.level === 4) { observeHandler(state, 'member_browser_blocked', 'abstain'); await finish(id, runId, state, level.reason, 'blocked'); return; }
+        if (level.level === 4) { await finish(id, runId, state, level.reason, 'blocked'); return; }
       }
       const actionRequest = requestActionText(requestScopeActionText(request));
       const computationMemoryBinding = { ownerId, conversationId: id, runId, evaluatedAt: effectiveSource.evaluatedAt };
@@ -2052,7 +2039,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         : localComputerSupervisor ? restoreTaskSupervisor(state.supervision, localComputerSupervisor.contract, { now: Date.now() }) ?? localComputerSupervisor
         : resumeChatSupervisor(runId, request, state.supervision, state.requestResolution, Date.now(), computationMemoryBinding);
       if ((constraints?.standalone || constraints?.ambiguous) && !verificationIntent?.allowed && !noteVerificationIntent?.allowed) {
-        observeHandler(state, 'request_constraint', constraints?.ambiguous ? 'abstain' : 'act');
         const acknowledgement = requestConstraintReply(constraints, /[\u0600-\u06ff]/u.test(request) ? 'ar' : 'en');
         await finish(id, runId, state, acknowledgement?.text ?? (/[\u0600-\u06ff]/u.test(request)
           ? 'لم أنفّذ أي أداة. أعد صياغة الطلب وحدّد الإجراء الذي تسمح به.'
@@ -2060,7 +2046,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return;
       }
       if (isEntireLiteralRequest(request)) {
-        observeHandler(state, 'literal_clarification', 'ask');
         const attempts = (state.clarificationAttempts ?? 0) + 1;
         state.clarificationAttempts = attempts;
         const ar = /[\u0600-\u06ff]/u.test(request);
@@ -2074,13 +2059,12 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return;
       }
       if (!restoreActionCompletionLedger(state.actionCompletion, { runId, request })) {
-        observeHandler(state, 'ledger_blocked', 'abstain');
         const reviewed = reviewActionCompletion(state.actionCompletion, { runId, request, outcome: 'blocked' });
         state.actionCompletionReview = reviewed;
         await finish(id, runId, state, reviewed.replacement?.text ?? 'لم أتحقق من سجل إجراءات صالح لهذا الطلب.', 'blocked');
         return;
       }
-      if (noteVerificationIntent && dispatchGate(state, 'verify_note')) {
+      if (noteVerificationIntent) {
         const unavailable = () => /\p{Script=Arabic}/u.test(request)
           ? 'لم أتمكن من التحقق من حالة محاولة حفظ هذه الملاحظة الآن.'
           : 'I could not verify the current memory status of that note-save attempt.';
@@ -2131,7 +2115,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await finish(id, runId, state, rendered, status, undefined, 'saved_note');
         return;
       }
-      if (verificationIntent && dispatchGate(state, 'verify_memory')) {
+      if (verificationIntent) {
         const unavailable = () => /\p{Script=Arabic}/u.test(request)
           ? 'لم أتمكن من التحقق من حالة محاولة الحفظ هذه في الذاكرة الآن.'
           : 'I could not verify the current memory status of that save attempt.';
@@ -2183,7 +2167,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await finish(id, runId, state, rendered, status, undefined, 'saved_result');
         return;
       }
-      if (userFactAssessment.candidate && !(legacyMemoryStatement?.scope === 'legacy_adapter_ack_only' && legacyMemoryStatement.eligible) && dispatchGate(state, 'save_fact')) {
+      if (userFactAssessment.candidate && !(legacyMemoryStatement?.scope === 'legacy_adapter_ack_only' && legacyMemoryStatement.eligible)) {
         const ar = /\p{Script=Arabic}/u.test(request);
         const freshLiteral = !state.site && !state.writer && !state.planner && !state.document && !state.adsBrief && !state.hands && !state.pendingTask && !state.pendingComputer && !state.pendingDesktop
           && state.computationMemory === undefined && (!state.steps && state.trail.every(entry => entry.action === 'asked the user') || state.userFactMemory !== undefined);
@@ -2283,11 +2267,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // A web address belongs to Mohassan's own browser (plan §6: it opens there at level 2 or 3), never to the computer's shell:
       // on 2026-11-22 eight real «افتح https://…» requests ended in «تعذر تشغيل powershell.exe» through the desktop path.
       const desktopParsed = config.desktop && desktopFresh && !hasChatModel() && fullReach() && !/https?:\/\/|\bwww\./iu.test(actionRequest) ? config.desktop.parse(actionRequest) : null;
-      if (desktopParsed && requestCapabilityAllowed(constraints, desktopParsed.mutating ? 'computer_action' : 'computer_read') && dispatchGate(state, 'desktop')) {
+      if (desktopParsed && requestCapabilityAllowed(constraints, desktopParsed.mutating ? 'computer_action' : 'computer_read')) {
         await runDesktopCommand(desktopParsed.command, desktopParsed.lang, false);
         return;
       }
-      if (localComputerPlan && dispatchGate(state, 'local_computer')) {
+      if (localComputerPlan) {
         const ar = localComputerPlan.language === 'ar';
         if (state.site || state.writer || state.planner || state.document || state.adsBrief || state.hands || state.pendingTask || state.pendingComputer || state.pendingDesktop
           || state.steps || !state.trail.every(entry => entry.action === 'asked the user')) {
@@ -2333,10 +2317,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return;
       }
       const conversation=await owned(ownerId,id);
-      if (deliberation?.usesBrowser() !== false || state.dropHeld) {
-        await browser.bindAccount(ownerId,id,conversation.browser_account??null);
-        if(conversation.browser_checkpoint)await browser.bindRecoveryCheckpoint(ownerId,id,conversation.browser_checkpoint);
-      }
+      await browser.bindAccount(ownerId,id,conversation.browser_account??null);
+      if(conversation.browser_checkpoint)await browser.bindRecoveryCheckpoint(ownerId,id,conversation.browser_checkpoint);
       if(state.dropHeld) {
         await browser.dropHeld(ownerId,id);
         state.dropHeld=false;
@@ -2351,7 +2333,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // hands plan or turn a new command into an already-handled continuation.
       const freshBeforeBrowser = !state.steps;
       if(run.intent==='review_browser') {
-        observeHandler(state, 'browser_review');
         if(await browser.hasPage(ownerId,id))await browser.acknowledgeRecovery(ownerId,id,authority());
         else await browser.acknowledgeCheckpoint(ownerId,id,conversation.browser_checkpoint,authority());
         await runTransaction(id,runId,async tx=>{
@@ -2362,7 +2343,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return;
       }
       if(run.intent==='restore_browser') {
-        observeHandler(state, 'browser_restore');
         if(await browser.hasPage(ownerId,id))throw new BrowserError('CHAT_BROWSER_ALREADY_LIVE','جلسة المتصفح مفتوحة بالفعل.',409);
         const restored=await browser.restoreSession(ownerId,id,conversation.browser_checkpoint,authority());
         if(restored.status==='review_required') {
@@ -2373,7 +2353,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await finish(id,runId,state,`أعدت قراءة الصفحة المحفوظة. ${restored.sameContent?'لم يتغير محتواها المرصود.':'تغيرت الصفحة؛ سأعتمد قراءتها الحالية في الطلب التالي.'} لم تُستأنف الإجراءات السابقة.`,'partial');
         return;
       }
-      if (deliberation?.usesBrowser() !== false && requestCapabilityAllowed(constraints, 'browser_navigation') && requestCapabilityAllowed(constraints, 'browser_action')
+      if (requestCapabilityAllowed(constraints, 'browser_navigation') && requestCapabilityAllowed(constraints, 'browser_action')
         && reviewBrowserRequestScope(request, 'browser_action', state.requestResolution ?? undefined).allowed) {
         if (await browser.hasPage(ownerId, id)) {
           page = (await observeBrowser(ownerId, id)).page;
@@ -2400,7 +2380,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // approve route, a retry, a reconnect), a pending action runs only when the owner's recorded yes covers its exact
       // details, for this account, conversation and run. Otherwise nothing runs and the run ends blocked.
       if ((state.pendingAction || state.pendingHeld || state.pendingTask || state.pendingComputer || state.pendingDesktop) && !await admitPending(id, runId, state, request)) return;
-      if (state.pendingAction || state.pendingHeld || state.pendingTask || state.pendingComputer || state.pendingDesktop) observeHandler(state, 'pending_action');
       const admittedBrowserStep = state.pendingAction || state.pendingHeld
         ? restoreRunLedger(state.agentRun, runId)?.permissions.findLast(item => item.decision === 'consumed')?.stepId : null;
       if (state.pendingAction) {
@@ -2453,7 +2432,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
       }
       if (state.desktopRefused) {
-        observeHandler(state, 'desktop_refused', 'abstain');
         state.desktopRefused = false;
         await finish(id, runId, state, /[؀-ۿ]/u.test(request) ? 'حسنًا، لم أنفّذ هذا الإجراء على جهازك.' : 'Understood. I did not perform that action on your computer.', 'blocked');
         return;
@@ -2474,7 +2452,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // A clarification has performed no tools; only the owner's reply is in its
       // trace. It can re-enter the normal route without replaying any action.
       const requestTrail = state.trail.filter(entry => !entry.action.startsWith('browser_recovery '));
-      const freshRequest = freshBeforeBrowser && (!requestTrail.length || Boolean(state.clarifiedRequest || deliberation?.confirmed) && requestTrail.every(entry => entry.action === 'asked the user'));
+      const freshRequest = freshBeforeBrowser && (!requestTrail.length || Boolean(state.clarifiedRequest) && requestTrail.every(entry => entry.action === 'asked the user'));
       const intrinsicAllowed = !handsPlan && !state.site && !state.writer && !state.planner && !state.document && !state.adsBrief && freshRequest;
       const intrinsicStartedAt = Date.now();
       const intrinsicConversation = intrinsicAllowed ? evaluateLocalConversation(actionRequest) : null;
@@ -2497,8 +2475,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         documents: Boolean(config.documents), sites: Boolean(config.sites), skills: Boolean(config.skillAnswer), ads: Boolean(config.adsModel) && fullReach(),
         imageReading: Boolean(config.imageReader?.available), pc: Boolean(tools?.computer) && fullReach(), planner: true, letters: true,
       };
-      const deliberatedSequence = deliberation?.selects('web_sequence') ? deliberationWebSequence(request, { now: new Date(effectiveSource.evaluatedAt), self: selfFacts }) : null;
-      if (deliberatedSequence && dispatchGate(state, 'web_sequence')) { await runHandsPlan(deliberatedSequence); return; }
       const intrinsicSelf = intrinsicAllowed && !intrinsicRuntime && !intrinsicConversation ? evaluateSelfQuestion(actionRequest, selfFacts) : null;
       // Several requests in one message, each answered by the host itself (assistant/local-sequence.ts): «كم حاصل 17 × 23؟ ثم
       // اذكر ما الأدوات التي تستطيع استخدامها» once ended in «لم أنفّذ هذا الطلب» (rq039). Null unless every part is a local answer.
@@ -2513,11 +2489,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // With a model, skills reach the prompt instead. Skill text is shown, never executed, and grants nothing.
       const trySkill = async (mode: SkillReadMode): Promise<boolean> => {
         if (!config.skillAnswer || hasChatModel() || !freshRequest || !requestCapabilityAllowed(constraints, 'knowledge_read')) return false;
-        if (!dispatchPermit(state, 'skill')) return false;
         const read = await config.skillAnswer(ownerId, actionRequest, { mode, signal });
         await active();
         if (!read) return false;
-        observeHandler(state, 'skill');
         await addStep(id, runId, read.lang === 'ar' ? `قراءة مهارة: ${read.skill.name}` : `Read skill: ${read.skill.name}`);
         state.trail.push({ step: ++state.steps, action: 'skill_read', result: clean(`${read.skill.slug} ${read.skill.version} (${mode}); matched: ${read.terms.join(', ')}`).slice(0, 400), changed: false });
         await finish(id, runId, state, vault.scrub(id, read.text), 'completed');
@@ -2545,7 +2519,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const sitePort = config.sites;
         if (state.site && state.questionAnswer) { state.site = siteAnswers(state.site, state.questionAnswer.fields ?? {}); state.questionAnswer = undefined; }
         const siteFlow = state.site ?? (freshRequest ? siteTask(request) : null);
-        if (siteFlow && dispatchGate(state, 'site_build')) {
+        if (siteFlow) {
           const lang = siteFlow.partial.lang;
           const card = siteCard(siteFlow);
           if (card) {
@@ -2562,10 +2536,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           await finish(id, runId, state, vault.scrub(id, built.text), built.status);
           return;
         }
-        if (state.siteId && freshRequest && dispatchPermit(state, 'site_edit')) {
+        if (state.siteId && freshRequest) {
           const turn = await siteCommandTurn(sitePort, ownerId, state.siteId, request, state.sitePendingWant);
           if (turn.handled) {
-            observeHandler(state, 'site_edit');
             state.sitePendingWant = turn.pendingWant ?? null;
             await addStep(id, runId, 'تعديل الموقع');
             await finish(id, runId, state, vault.scrub(id, turn.text), 'completed');
@@ -2584,7 +2557,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // تجريبي» is not an unresolved reference (live test of 2026-11-23, which asked «ما الشيء الذي تقصده؟» instead).
       const documentWork = config.documents ? (state.document ?? (freshRequest
         ? documentTask(request, { hasDocuments: history.some(entry => entry.role === 'assistant' && entry.text.includes('/api/documents/')) }) : null)) : null;
-      if (state.pendingComputation && !handsPlan && dispatchGate(state, 'pending_calculation')) {
+      if (state.pendingComputation && !handsPlan) {
         const pending = state.pendingComputation;
         state.pendingComputation = null;
         const answer = clean(state.trail.findLast(entry => entry.action === 'asked the user')?.result.replace(/^user answered: /u, '') ?? '');
@@ -2607,7 +2580,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       // The owner named the website the card asked for: open it (and read it out, when the request asked to see it), as the
       // same request. An answer that names no address or known site is said so, and nothing is opened.
-      if (state.pendingOpen && !handsPlan && dispatchGate(state, 'pending_open')) {
+      if (state.pendingOpen && !handsPlan) {
         const pending = state.pendingOpen;
         state.pendingOpen = null;
         const answer = clean(state.trail.findLast(entry => entry.action === 'asked the user')?.result.replace(/^user answered: /u, '') ?? '');
@@ -2622,14 +2595,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       if (intrinsicAllowed && !intrinsicComputation && !intrinsicSequence && !intrinsicSelf && !intrinsicRuntime && !intrinsicConversation && !computationMemoryReceipt) {
         const reference = computationReference(actionRequest);
-        if (reference && dispatchPermit(state, 'calculation_reference')) {
+        if (reference) {
           const earlier = await db.selectFrom('chat_runs').select('state').where('conversation_id', '=', id).where('owner_id', '=', ownerId)
             .where('id', '!=', runId).orderBy('created_at', 'desc').limit(8).execute();
           await active();
           const previous = latestComputedResult(earlier.map(row => row.state));
           const result = previous ? evaluateReferencedComputation(withReferencedValue(actionRequest, reference, previous.value), computedAt) : null;
           if (previous && result?.status === 'completed') {
-            observeHandler(state, 'calculation_reference');
             const composed = composeReferencedComputation(result, { value: previous.value, line: previous.line, from: 'conversation' });
             await addStep(id, runId, composed.lang === 'ar' ? 'حساب على الناتج السابق' : 'Calculation on the previous result');
             state.trail.push({ step: ++state.steps, action: 'calculate', changed: false,
@@ -2641,7 +2613,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           }
           // Asked only when the request is a calculation once a number stands in for the reference: «Add 2 eggs to it» is not.
           if (!previous && evaluateReferencedComputation(withReferencedValue(actionRequest, reference, '1'), computedAt)?.status === 'completed') {
-            observeHandler(state, 'calculation_reference', 'ask');
             const question = missingReferenceQuestion(actionRequest, reference);
             state.pendingComputation = { request: actionRequest, phrase: reference.phrase, lang: question.lang };
             await addStep(id, runId, question.lang === 'ar' ? 'سؤال عن النتيجة المقصودة' : 'Which result is meant');
@@ -2654,7 +2625,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         // «اختصر جوابك السابق في جملة واحدة», "make it shorter": the previous answer's own opening and its source, quoted
         // (assistant/answer-reshape.ts). Refused as an unfollowable reference before 2026-11-23.
         const shorter = shorterRequest(actionRequest);
-        if (shorter && dispatchGate(state, 'earlier_answer')) {
+        if (shorter) {
           const previousAnswer = history.findLast(entry => entry.role === 'assistant')?.text ?? null;
           const shortened = previousAnswer ? shorterAnswer(previousAnswer, shorter) : null;
           // The page the answer was read from stays the conversation's page, so «اشرح أكثر» next reads more of it.
@@ -2674,8 +2645,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // and the search guard refused it as private information. Before the general clarifier below, which would ask what
       // «its» in «show me its content» refers to instead of which website.
       const unnamed = freshRequest && !handsPlan && !documentWork && !hasChatModel() && state.routing?.route !== 'pc' ? unnamedSite(actionRequest) : null;
-      if (unnamed && dispatchPermit(state, 'unnamed_site')) {
-        observeHandler(state, 'unnamed_site', 'ask');
+      if (unnamed) {
         state.pendingOpen = unnamed;
         const card = siteQuestion(unnamed);
         await addStep(id, runId, unnamed.lang === 'ar' ? 'سؤال عن الموقع المقصود' : 'Which website is meant');
@@ -2684,8 +2654,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return;
       }
       if (freshRequest && !documentWork && !intrinsicRuntime && !intrinsicConversation && !intrinsicSelf && !intrinsicComputation && !intrinsicSequence && state.requestResolution?.kind === 'ambiguous' && state.requestResolution.ambiguities.some(reason =>
-        reason === 'missing_reference' || reason === 'missing_question' || reason === 'unclear_replacement') && dispatchPermit(state, 'missing_reference')) {
-        observeHandler(state, 'missing_reference', 'ask');
+        reason === 'missing_reference' || reason === 'missing_question' || reason === 'unclear_replacement')) {
         const attempts = (state.clarificationAttempts ?? 0) + 1;
         state.clarificationAttempts = attempts;
         if (attempts > 2) {
@@ -2703,30 +2672,29 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // A PDF request never reaches the memory or knowledge readers: «Title: Sample Document» is not a question about the owner's documents.
       if (!handsPlan && !state.site && !state.writer && !state.planner && !state.document && !state.adsBrief && freshRequest && !documentWork) {
         const localStartedAt = intrinsicStartedAt;
-        if (intrinsicRuntime && dispatchGate(state, 'runtime_status')) {
+        if (intrinsicRuntime) {
           await finish(id, runId, state, intrinsicRuntime.text, 'completed');
           return;
         }
         const conversationReply = intrinsicConversation;
-        if (conversationReply && dispatchGate(state, 'local_conversation')) {
+        if (conversationReply) {
           await finish(id, runId, state, conversationReply.text, 'completed');
           return;
         }
         // Before the single question about the assistant: «من صنعك؟ ثم ما قدراتك؟» is answered whole, not by its first part.
-        if (intrinsicSequence && dispatchGate(state, 'local_sequence')) {
-          deliberation?.rememberParts(intrinsicSequence.parts);
+        if (intrinsicSequence) {
           await addStep(id, runId, intrinsicSequence.lang === 'ar' ? 'أجوبة محلية بالترتيب' : 'Local answers in order');
           state.trail.push({ step: ++state.steps, action: 'local_sequence', changed: false,
             result: clean(intrinsicSequence.parts.map(part => `${part.source} (${part.status}): ${part.evidence.map(item => item.quote).join(' | ') || 'fixed text'}`).join('\n')).slice(0, 1100) });
           await finish(id, runId, state, vault.scrub(id, intrinsicSequence.text), intrinsicSequence.status);
           return;
         }
-        if (intrinsicSelf && dispatchGate(state, 'self_question')) {
+        if (intrinsicSelf) {
           await finish(id, runId, state, intrinsicSelf.text, 'completed');
           return;
         }
         const computation = intrinsicComputation;
-        if (computationMemoryReceipt && dispatchGate(state, 'computation_memory')) {
+        if (computationMemoryReceipt) {
           await addStep(id, runId, /[\u0600-\u06ff]/u.test(request) ? 'حساب وحفظ النتيجة' : 'Calculate and save result');
           const outcome = await runComputationMemoryFlow({ request, binding: computationMemoryBinding, persisted: state.computationMemory,
             policy: { accountAllowed: requestCapabilityAllowed(constraints, 'memory_write'), quota: { used: state.memorySaves ?? 0, limit: MAX_MEMORY_SAVES } } }, {
@@ -2771,7 +2739,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           await finish(id, runId, state, rendered, status, undefined, 'saved_result');
           return;
         }
-        if (computation && !(computation.status === 'partial' && hasChatModel()) && dispatchGate(state, 'local_computation')) {
+        if (computation && !(computation.status === 'partial' && hasChatModel())) {
           await addStep(id, runId, computation.lang === 'ar' ? 'حساب محلي' : 'Local calculation');
           state.trail.push({ step: ++state.steps, action: 'calculate', result: clean(computation.evidence.map(item => item.quote).join('\n') || computation.text).slice(0, 1100), changed: false });
           observeChatLocalAnswer(state.supervision!, { source: 'computation', ...computation, startedAt: localStartedAt });
@@ -2797,7 +2765,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const nativeUnformattedPreference = nativePreferenceQuestion && memoryRecallFormat(request) === null;
         const tryKnowledge = async (): Promise<boolean> => {
           if (!localReadAllowed || !noChatModel || !config.knowledgeSearch || !requestCapabilityAllowed(constraints, 'knowledge_read')) return false;
-          if (!dispatchPermit(state, 'knowledge')) return false;
           const learned = await evaluateLocalKnowledge(actionRequest, {
             knowledge: async query => {
               const documents = await config.knowledgeSearch!(ownerId, query);
@@ -2808,7 +2775,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           if (!learned || !['completed', 'partial', 'blocked'].includes(learned.status)) return false;
           // Nothing in the owner's documents: a how-to about their own project, store or team is still answered by an active skill that covers it.
           if (learned.status === 'blocked' && !documentFirst && await trySkill('personal')) return true;
-          observeHandler(state, 'knowledge');
           await addStep(id, runId, 'knowledge_search');
           state.trail.push({ step: ++state.steps, action: 'knowledge_search', result: clean(learned.evidence.map(item => `${item.sourceRef ?? item.title ?? ''}: ${item.quote}`).join('\n') || learned.text).slice(0, 1100), changed: false });
           observeChatLocalAnswer(state.supervision!, { source: 'knowledge-verifier', ...learned, startedAt: localStartedAt, contextTopic: state.requestResolution?.topic ?? undefined });
@@ -2817,7 +2783,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         };
         const documentFirst = isKnowledgeDocumentRequest(actionRequest);
         if (documentFirst && await tryKnowledge()) return;
-        if (localReadAllowed && tools?.memory && (noChatModel || nativeUnformattedPreference) && requestCapabilityAllowed(constraints, 'memory_read') && dispatchPermit(state, 'memory_recall')) {
+        if (localReadAllowed && tools?.memory && (noChatModel || nativeUnformattedPreference) && requestCapabilityAllowed(constraints, 'memory_read')) {
           const resolution = state.requestResolution;
           const recallContext = resolution?.scope === 'private' && resolution.intent === 'memory' && resolution.topic
             ? { intent: 'memory' as const, topic: resolution.topic }
@@ -2835,7 +2801,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           if (remembered && (remembered.status === 'completed' || remembered.status === 'blocked' || remembered.status === 'partial')) {
             if (remembered.status === 'blocked' && !documentFirst && await tryKnowledge()) return;
             if (remembered.status === 'blocked' && !documentFirst && await trySkill('personal')) return;
-            observeHandler(state, 'memory_recall');
             await addStep(id, runId, 'memory_search');
             state.trail.push({ step: ++state.steps, action: 'memory_search', result: clean(remembered.evidence.map(item => item.quote).join('\n') || remembered.text).slice(0, 1100), changed: false });
             observeChatLocalAnswer(state.supervision!, { source: 'memory-read', ...remembered, startedAt: memoryReadStartedAt,
@@ -2863,8 +2828,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         if (!steps && !privateRequest && !notWebReason(tidy(actionRequest))) {
           const unsupported = unsupportedRequest(actionRequest, earlierAsks)
             ?? (state.routing?.handler === 'unsupported' ? { kind: 'generic' as const, lang: /[؀-ۿ]/u.test(request) ? 'ar' as const : 'en' as const } : null);
-          if (unsupported && dispatchPermit(state, 'unsupported')) {
-            observeHandler(state, 'unsupported', 'abstain');
+          if (unsupported) {
             await addStep(id, runId, unsupported.lang === 'ar' ? 'طلب خارج القدرات الحالية' : 'Outside current capabilities');
             await finish(id, runId, state, vault.scrub(id, unsupportedReply(unsupported)), 'blocked');
             return;
@@ -2911,8 +2875,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const lookup = steps?.length === 1 && steps[0].kind === 'search' && !steps[0].site && !page ? steps : asked;
         // The request itself forbids the web search and nothing local answered it: say so, instead of starting a search the
         // gate then stops as a failed run with no reply.
-        if (lookup && !requestCapabilityAllowed(constraints, 'public_search') && dispatchPermit(state, handlerForHands(lookup))) {
-          observeHandler(state, 'unsupported', 'abstain');
+        if (lookup && !requestCapabilityAllowed(constraints, 'public_search')) {
           await addStep(id, runId, /[؀-ۿ]/u.test(request) ? 'لم يُجرَ بحث: الطلب يمنعه' : 'No search: the request forbids it');
           await finish(id, runId, state, forbiddenByRequestReply(request, 'search'), 'blocked');
           return;
@@ -2936,7 +2899,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           handsPlan = { steps: (steps ?? asked)!, next: 0, lang };
         }
       }
-      if (handsPlan && dispatchGate(state, handsPlan.sequel ? 'web_sequence' : handlerForHands(handsPlan.steps))) {
+      if (handsPlan) {
         await runHandsPlan(handsPlan);
         return;
       }
@@ -3000,9 +2963,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           },
           search: async (query, limit) => {
             await active();
-            if (!deliberatedSequence || !sequenceQueryAllowed(request, plan, query, state.publicQueryTerms ?? [])) {
-              assertPublicSearch(request, query, state, Boolean(returnName && query.includes(returnName)));
-            }
+            assertPublicSearch(request, query, state, Boolean(returnName && query.includes(returnName)));
             // The shared engine reports each provider's failure: a search whose providers did not answer is a failed request
             // (RESEARCH_PROVIDERS_FAILED), told apart from one that answered with nothing about the question (2026-11-23).
             const engine = search as Partial<Pick<SearchEngine, 'execute'>>;
@@ -3048,9 +3009,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           // anything is sent. One retry only; when the second reading is not accepted either, the first stands and the
           // judge withholds it with its reason, as before.
           const asking = plan.steps.at(-1);
-          const canRevise = outcome.kind === 'done' && asking?.kind === 'search' && asking.ask && plan.found?.url && !plan.found.official && !plan.rejected?.length && deliberation?.mayRevise() !== false;
-          const findings = canRevise && outcome.kind === 'done' ? deliberation?.findReadRevision(vault.scrub(id, outcome.text), outcome.status, judgeEvidence(currentExecution), judgedAs) : null;
-          const refusal = canRevise && outcome.kind === 'done' ? judgeWouldWithhold(vault.scrub(id, outcome.text), outcome.status, judgedAs) ?? findings : null;
+          const refusal = outcome.kind === 'done' && asking?.kind === 'search' && asking.ask && plan.found?.url && !plan.found.official && !plan.rejected?.length
+            ? judgeWouldWithhold(vault.scrub(id, outcome.text), outcome.status, judgedAs) : null;
           // The run ledger counts the correction against the run's repair limit (CommandChatConfig.limits.repairsPerRun);
           // the same refusal twice on one step is not corrected a third time (agent-run.ts beginRepair).
           let repairAllowed = false;
@@ -3060,7 +3020,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             repairAllowed = beginRepair(ledger, { stepId: handsStepId(handsPrefix, plan.steps.length - 1), signature: `judge:${refusal.join(',')}` }, Date.now()).allowed;
           }
           if (refusal && plan.found && repairAllowed) {
-            deliberation?.noteReadRevision(findings ?? []);
             const firstFound = plan.found, firstResults = plan.results;
             reopenHandsReadStep(ledgerOf(state, runId), plan, handsPrefix, plan.steps.length - 1, Date.now());
             plan.rejected = [firstFound.url];
@@ -3072,8 +3031,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             await active();
             const again = await runHands(plan, io);
             if (again.kind === 'paused') return;
-            if (again.status === 'completed' && plan.found && !judgeWouldWithhold(vault.scrub(id, again.text), again.status, judgedAs)
-              && !deliberation?.findReadRevision(vault.scrub(id, again.text), again.status, judgeEvidence(currentExecution), judgedAs, true)) outcome = again;
+            if (again.status === 'completed' && plan.found && !judgeWouldWithhold(vault.scrub(id, again.text), again.status, judgedAs)) outcome = again;
             else {
               rejectHandsReadResult(ledgerOf(state, runId), plan, handsPrefix, plan.steps.length - 1, Date.now());
               plan.found = firstFound; plan.results = firstResults;
@@ -3127,7 +3085,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             return;
           }
           state.hands = null;
-          deliberation?.rememberParts(next.answers);
           const joined = joinSequence(next.answers);
           await finish(id, runId, state, joined.text, joined.status, undefined, undefined, true);
           return;
@@ -3142,7 +3099,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       // PDF files without a model (assistant/documents.ts): one card for a new file, then Chromium renders the owner's
       // words through a fixed theme; edits run pdf-lib on files from this conversation or on a path the owner names.
-      if (documentWork && config.documents && dispatchGate(state, 'document')) {
+      if (documentWork && config.documents) {
         if (documentWork.kind === 'unsupported') {
           await finish(id, runId, state, unsupportedDocumentReply(documentWork), 'blocked');
           return;
@@ -3241,10 +3198,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (!hasChatModel()) {
         // «create a campaign for <site> selling …» is a campaign for the Ads path below, never a letter (campaign-request.ts).
         const writing = state.writer ?? (freshRequest && !isCampaignRequest(request) ? writingTask(request) : null);
-        if (writing && 'unsupported' in writing && dispatchPermit(state, 'writing')) {
+        if (writing && 'unsupported' in writing) {
           // An article, a post or a CV needs a model to write in full; an active skill still gives its method and outline.
           if (await trySkill('writing')) return;
-          observeHandler(state, 'writing', 'abstain');
           await finish(id, runId, state, unsupportedWriting(writing), 'blocked');
           return;
         }
@@ -3258,7 +3214,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             ? `توقفت عن ${card === 'letter' ? 'كتابة الرسالة' : 'ترتيب الخطة'}: رسالتك الأخيرة طلب حملة إعلانية جديد، لا جواب عن أسئلتها. أرسل طلب الحملة مرة أخرى لأبدأه طلبًا جديدًا.`
             : `I stopped the ${card === 'letter' ? 'letter' : 'week plan'}: your last message is a new advertising campaign request, not an answer to its questions. Send the campaign request again and I will start it as a new request.`, 'blocked');
         };
-        if (writing && !('unsupported' in writing) && dispatchGate(state, 'writing')) {
+        if (writing) {
           const answer = state.writer ? state.questionAnswer?.text ?? state.trail.findLast(entry => entry.action === 'asked the user')?.result.replace(/^user answered: /, '') : undefined;
           if (state.writer && newCampaignInstead(answer)) {
             state.writer = null;
@@ -3281,7 +3237,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         // A week plan without a model: one card of questions, then the owner's tasks spread over the days.
         const planning = state.planner ?? (!state.writer && freshRequest ? planningTask(request) : null);
-        if (planning && dispatchGate(state, 'planning')) {
+        if (planning) {
           const answer = state.planner ? state.questionAnswer?.text ?? state.trail.findLast(entry => entry.action === 'asked the user')?.result.replace(/^user answered: /, '') : undefined;
           if (state.planner && newCampaignInstead(answer)) {
             state.planner = null;
@@ -3304,7 +3260,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
       }
       const route = !state.steps || freshRequest ? directRoute(actionRequest) : null;
-      if (route && freshRequest && dispatchGate(state, route.screenshot ? 'browser_capture' : 'browser_direct')) {
+      if (route && freshRequest) {
         const openedAt = Date.now();
         await addStep(id, runId, `فتح ${route.name}`);
         await setProgress(id, `يفتح ${route.name}…`);
@@ -3314,7 +3270,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         state.trail.push({ step: 0, action: `open ${route.url}`, result: `opened ${page.url}`, changed: true });
         observeChatTool(state.supervision!, { tool: 'open', startedAt: openedAt, result: `opened ${page.url}`, page });
       }
-      if (route?.finishes && page && dispatchGate(state, route.screenshot ? 'browser_capture' : 'browser_direct')) {
+      if (route?.finishes && page) {
         const initialSettled = await instincts(ownerId, id, runId, state, page, signal, personalSignIn);
         if (!initialSettled) return;
         let settled: AgentPage = initialSettled;
@@ -3360,7 +3316,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return;
       }
       const inventoryFormat = tools?.work?.inventory && fullReach() ? projectInventoryFormat(request) : null;
-      if (inventoryFormat && tools?.work?.inventory && dispatchGate(state, 'inventory')) {
+      if (inventoryFormat && tools?.work?.inventory) {
         assertWorkRequestScope(request, 'workspace_read', state);
         await requireCurrentOwnerAccess();
         await addStep(id, runId, 'قراءة مشاريع البرمجة');
@@ -3375,14 +3331,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return;
       }
 
-      if (config.adsModel && fullReach() && !(tools?.memory && memoryRecallFormat(request)) && dispatchPermit(state, 'ads')) {
+      if (config.adsModel && fullReach() && !(tools?.memory && memoryRecallFormat(request))) {
         const step = async (label: string) => { await active(); await addStep(id, runId, label); await setProgress(id, `${liveLabel(label)}…`); };
         // The brain asks everything it is missing in one message, then continues alone after the
         // owner's answer: the run resumes here with the saved facts and the answer text.
         const answer = state.adsBrief ? [...state.trail].reverse().find(entry => entry.action === 'asked the user')?.result.replace(/^user answered: /, '') : undefined;
         const reply = state.adsCampaign ? null : await config.adsModel.handle(request, { signal, step }, state.adsBrief && answer ? { brief: state.adsBrief, answer } : undefined);
         if (reply) {
-          observeHandler(state, 'ads');
           await active();
           state.trail.push({ step: ++state.steps, action: 'ads_model', result: `own Ads model: ${reply.status}`, changed: false });
           state.adsBrief = null;
@@ -3402,7 +3357,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             return;
           }
         }
-        if (state.adsCampaign) observeHandler(state, 'ads');
         if (state.adsCampaign && config.chromeExtension) {
           const connection = await config.chromeExtension.status(ownerId);
           await active();
@@ -3461,7 +3415,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           return;
         }
       }
-      if (config.mind && config.mindDeps && fullReach() && dispatchGate(state, 'mind')) {
+      if (config.mind && config.mindDeps && fullReach()) {
         const mindState: BrainState & { mindFrame?: Frame; mindTimings?: Record<string, number> } = state;
         const step = async (label: string) => {
           await active();
@@ -3510,7 +3464,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         return;
       }
-      if (!hasChatModel() && state.webFallback?.length && dispatchGate(state, pendingSequence?.sequel ? 'web_sequence' : handlerForHands(state.webFallback))) {
+      if (!hasChatModel() && state.webFallback?.length) {
         // Nothing before this claimed the request (not Ads, no mind): search the web instead of stopping.
         const steps = state.webFallback;
         state.webFallback = null;
@@ -3524,9 +3478,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         // live test of 2026-11-23 «QA test …: Calculate 37 × 24 …» reached the software-testing skill by the words «QA» and «test».
         const statedOperation = state.routing?.intent === 'compute' || state.routing?.intent === 'browser_command' || Boolean(computationReference(actionRequest));
         if (!ownFact && !statedOperation && await trySkill('fallback')) return;
-        const unavailableDispatch = deliberation?.unavailable();
-        if (unavailableDispatch) { await finish(id, runId, state, unavailableDispatch, 'blocked'); return; }
-        observeHandler(state, 'exhausted', 'abstain');
         const unavailable = evaluateCapabilityReply(actionRequest, state.routing, {
           handlersExhausted: true, purpose: 'capability_question',
           execution: !state.steps && !state.trail.length ? 'not_started' : 'unconfirmed',
@@ -3537,9 +3488,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           unavailable?.status === 'completed' ? 'completed' : unavailable?.status === 'partial' ? 'partial' : 'blocked');
         return;
       }
-      const unavailableDispatch = deliberation?.unavailable();
-      if (unavailableDispatch && !dispatchPermit(state, 'model')) { await finish(id, runId, state, unavailableDispatch, 'blocked'); return; }
-      observeHandler(state, 'model');
       const recallFormat = tools?.memory && requestCapabilityAllowed(constraints, 'memory_read')
         && state.requestResolution?.sourceAssessment?.operation !== 'transform' ? memoryRecallFormat(request) : null;
       let recallEvidence: readonly string[] = [];
@@ -3895,7 +3843,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           : error instanceof ProviderError ? chatModelFailure(error).message
             : 'حدث خطأ أثناء العمل. أرسل «تابع» وسأحاول مجددًا.';
       await runTransaction(id,runId,async tx=>{
-        await persistFailedDeliberation(tx, runId, execution.getStore()?.state);
         await tx.updateTable('chat_conversations').set({ status: 'failed', active_run_id: null, progress: null, error: message, updated_at: new Date() }).where('id', '=', id).execute();
         await tx.updateTable('chat_runs').set({ status: 'failed', updated_at: new Date() }).where('id', '=', runId).execute();
         await recordTerminalRun(tx, runId, 'failed');
@@ -3953,7 +3900,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const message = { id: randomUUID(), createdAt: new Date(), text: clean(say) };
       await tx.insertInto('chat_messages').values({ id: message.id, conversation_id: id, role: 'user', text: message.text, created_at: message.createdAt }).execute();
       await change(state, tx, { ...message, createdAt: message.createdAt.getTime(), ...(priorSource ? { priorRequest: priorSource.request } : {}) });
-      if (expected.stop) ledgerSafe(state, runId, ledger => recordBoundDeliberation(ledger, 'stop_run', message.text.length));
       await tx.updateTable('chat_runs').set({ status:expected.stop?'cancelled':'running', state: JSON.stringify(state),lease_token:token,attempt:run.attempt+1,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, updated_at: new Date() }).where('id', '=', runId).execute();
       await tx.updateTable('chat_conversations').set({ status:expected.stop?'idle':'running',active_run_id:expected.stop?null:runId, question: null, approval: null, secure: null, error: null, progress:expected.stop?null:'يتابع العمل…', updated_at: new Date() }).where('id', '=', id).execute();
       if (expected.stop) await recordTerminalRun(tx, runId, 'cancelled');
@@ -4032,7 +3978,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     // A sign-in or code card is not steered: its values belong in its own fields, never in a chat message.
     const steerableRow = (status: string, secure: { kind?: string } | null | undefined) => status === 'running' || status === 'waiting_approval' || status === 'waiting_input' && secure?.kind === 'hands_on';
     const steering = intent === 'task' && !input.answers && row.active_run_id && steerableRow(String(row.status), row.secure) ? String(row.active_run_id) : null;
-    if (steering && classifySteering(clean(input.text)) === 'stop') return cancel(ownerId, id, { runId: steering, length: clean(input.text).length });
+    if (steering && classifySteering(clean(input.text)) === 'stop') return cancel(ownerId, id);
     if (!steering && (row.status === 'running' || WAITING_STATUSES.includes(row.status))) throw new BrowserError('CHAT_BUSY', 'أكمل ما ينتظر ردك، أو أوقف العمل قبل إرسال طلب جديد.', 409);
     let superseded: Awaited<ReturnType<typeof supersedeRun>> | null = null;
     const runId = randomUUID();
@@ -4192,7 +4138,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const rows = await db.selectFrom('chat_images').select(['id', 'width', 'height', 'data_base64', 'content_hash']).where('owner_id', '=', ownerId).where('id', 'in', unique).execute();
     if (rows.length !== unique.length) throw new BrowserError('CHAT_IMAGE_MISSING', 'إحدى الصور لم تعد موجودة؛ أعد إرفاقها.', 409);
     const ordered = unique.map(imageId => rows.find(item => item.id === imageId)!);
-    const deliberation = prepareAttachmentDeliberation(text, config.shadowRouter);
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(new Error('IMAGE_READ_TIMEOUT')), 140_000);
     const readings: ImageReading[] = [];
@@ -4216,7 +4161,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (!current) throw notFound();
       if (current.status === 'running' || WAITING_STATUSES.includes(current.status)) throw new BrowserError('CHAT_BUSY', 'بدأت مهمة أخرى في هذه المحادثة أثناء قراءة الصورة.', 409);
       const now = Date.now();
-      await recordAttachmentDeliberation(tx, id, deliberation, reply, now + 1, config.deliberationEnabled === true);
       await tx.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role: 'user', text: userText, images: JSON.stringify(attached), created_at: new Date(now) }).execute();
       await tx.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role: 'assistant', text: reply.text, created_at: new Date(now + 1) }).execute();
       await tx.updateTable('chat_images').set({ conversation_id: id, expires_at: null }).where('id', 'in', unique).where('owner_id', '=', ownerId).execute();
@@ -4354,14 +4298,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     {status:'waiting_input',field:'secure',requestId:input.requestId,afterClaim:()=>{if(input.action==='submit')vault.put(id,secure.site,input.values!);}});
   }
 
-  async function cancel(ownerId: string, id: string, steering?: { runId: string; length: number }) {
+  async function cancel(ownerId: string, id: string) {
     await owned(ownerId, id);
     let cancelledToken:string|undefined;
     let cancelledController:AbortController|undefined;
     let cancelledState:unknown;
     await db.transaction().execute(async (tx) => {
       const row=await tx.selectFrom('chat_conversations').selectAll().where('id','=',id).where('owner_id','=',ownerId).forUpdate().executeTakeFirstOrThrow();
-      if (steering && row.active_run_id !== steering.runId) throw new BrowserError('CHAT_RESUME_CONFLICT', 'تغيّر الطلب الجاري قبل إيقافه.', 409);
       await tx.updateTable('chat_conversations').set({ status: 'idle', active_run_id: null, question: null, approval: null, secure: null, progress: null, error: null, updated_at: new Date() }).where('id', '=', id).where('owner_id', '=', ownerId).execute();
       if (row.active_run_id) {
         const run=await tx.selectFrom('chat_runs').select(['lease_token','state']).where('id','=',row.active_run_id).forUpdate().executeTakeFirstOrThrow();
@@ -4371,8 +4314,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         if(active&&active.runId===row.active_run_id&&active.token===cancelledToken)cancelledController=active.controller;
         // The run ledger ends with the run: unfinished steps and every unused approval are invalidated (agent-run.ts).
         const stopped: BrainState = { ...newBrainState(), ...(run.state ?? {}) };
-        const stoppedLedger = ledgerOf(stopped, row.active_run_id);
-        recordBoundDeliberation(stoppedLedger, 'stop_run', steering?.length);
+        const stoppedLedger = restoreRunLedger(stopped.agentRun, row.active_run_id);
         if (stoppedLedger) { try { cancelLedger(stoppedLedger, 'owner_cancelled', Date.now()); stopped.agentRun = stoppedLedger; } catch (error) { if (!(error instanceof RunLedgerError)) throw error; } }
         await tx.updateTable('chat_runs').set({ status: 'cancelled',lease_token:randomUUID(),...(stoppedLedger ? { state: JSON.stringify(stopped) } : {}),updated_at: new Date() }).where('id', '=', row.active_run_id).execute();
         if (config.chromeExtension) await stopChromeJobsForRun(tx, ownerId, row.active_run_id);
@@ -4472,7 +4414,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (!row) throw new BrowserError('CHAT_REQUEST_IN_PROGRESS', 'ما زال الطلب نفسه قيد التنفيذ. تحقّق بعد لحظة.', 409);
       if (row.body_hash !== bodyHash) throw new BrowserError('CHAT_REQUEST_KEY_REUSED', 'استُخدم مفتاح الطلب نفسه لطلب مختلف.', 409);
       if (row.status !== 'done') throw new BrowserError('CHAT_REQUEST_IN_PROGRESS', 'ما زال الطلب نفسه قيد التنفيذ. تحقّق بعد لحظة.', 409);
-      return protectCachedDeliberation((typeof row.response === 'string' ? JSON.parse(row.response) : row.response) as T, config.fullAccess, ownerId);
+      return (typeof row.response === 'string' ? JSON.parse(row.response) : row.response) as T;
     }
     try {
       const result = await run();

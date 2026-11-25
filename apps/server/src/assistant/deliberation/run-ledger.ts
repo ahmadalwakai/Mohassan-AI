@@ -53,12 +53,3 @@ export function projectRunDeliberation(ledger: RunLedger | null, owner: boolean)
   });
   return { ...(deliberation ? { deliberation } : {}), ...(earlierDeliberation.length ? { earlierDeliberation } : {}) };
 }
-
-/** A replayed chat request can hold a response from before the current account lost owner access. */
-export async function protectCachedDeliberation<T>(response: T, fullAccess: ((ownerId: string) => Promise<boolean>) | undefined, ownerId: string): Promise<T> {
-  if (!fullAccess || !response || typeof response !== 'object' || !('run' in response)) return response;
-  const run = response.run;
-  if (!run || typeof run !== 'object' || !('deliberation' in run || 'earlierDeliberation' in run) || await fullAccess(ownerId)) return response;
-  const { deliberation: _trace, earlierDeliberation: _prior, ...publicRun } = run as Record<string, unknown>;
-  return { ...response, run: publicRun };
-}

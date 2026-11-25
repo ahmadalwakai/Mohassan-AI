@@ -75,6 +75,7 @@ export const ThoughtRecordSchema = z.strictObject({
   legacyObserved: z.boolean().optional(),
   disagrees: z.boolean().optional(),
   enforced: z.boolean().optional(),
+  routePreference: DecisionRouteSchema.optional(),
   review: DeliberationReviewSchema.optional(),
 });
 export type ThoughtRecord = z.infer<typeof ThoughtRecordSchema>;

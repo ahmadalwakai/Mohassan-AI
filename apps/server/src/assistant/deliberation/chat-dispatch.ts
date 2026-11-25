@@ -1,64 +1,66 @@
 import { randomUUID } from 'node:crypto';
 import type { ChatQuestion } from '@mohassan/contracts';
 import { fulfilWant, siteCommand } from '@mohassan/sites';
-import { sql, type Kysely } from 'kysely';
+import type { Kysely } from 'kysely';
+import type { CommandChatConfig } from '../../command-chat.js';
 import { restoreActionCompletionLedger } from '../action-completion.js';
 import type { RunLedger } from '../agent-run.js';
 import type { BrainState } from '../brain.js';
-import type { ConversationShadow } from '../conversation-state-shadow.js';
+import type { EffectiveRequestSource } from '../effective-request-source.js';
 import type { JudgeEvidence } from '../judge.js';
 import { projectPreferredLanguageMemoryQuery } from '../preferred-language-fact.js';
-import { decideRequestRoute } from '../routing-decision.js';
-import type { ShadowRouter } from '../router.js';
-import type { SitesChatPort } from '../site-builder.js';
-import type { WebSequenceAnswer } from '../web-sequence.js';
+import { decideRequestRoute, projectDeliberationRoute, type RequestRoutingDecision } from '../routing-decision.js';
 import { handlerRoutes, type CascadeHandler } from './cascade-handlers.js';
 import { inspectCascade, type CascadeInput, type CascadeTurn } from './cascade.js';
 import { conversationEvidence } from './conversation-evidence.js';
-import { deliberate } from './decision.js';
+import { deliberate, sameDecision } from './decision.js';
+import { reviewDeliberationResult } from './review.js';
 import { recordDeliberation } from './run-ledger.js';
-import { deliberationReadFindings, reviewDeliberationResult, type ReviewFindingCode } from './review.js';
+import { deliberationSettings } from './settings.js';
 import type { DecisionOutcome, DecisionRoute, Deliberation, RouterCandidate } from './types.js';
 
-interface DispatchConfig {
-  deliberationEnabled?: boolean;
-  deliberationMemoryHit?: (ownerId: string, query: string) => Promise<boolean>;
-  shadowRouter?: ShadowRouter;
-  conversationShadow?: ConversationShadow;
-  desktop?: unknown;
-  documents?: unknown;
-  sites?: Pick<SitesChatPort, 'detail'>;
-  knowledgeSearch?: unknown;
-  skillAnswer?: unknown;
-  adsModel?: unknown;
-  mind?: unknown;
-  mindDeps?: unknown;
-  tools?: { memory?: unknown; computer?: unknown; work?: { inventory?: unknown; code?: unknown } };
-}
-interface DispatchInput {
+interface Intake {
   db: Kysely<any>;
-  config: DispatchConfig;
+  config: CommandChatConfig;
   ownerId: string;
   conversationId: string;
   runId: string;
-  hostIntent: string;
-  text: string;
-  evaluatedAt: number;
+  runIntent: string;
+  source: EffectiveRequestSource;
   state: BrainState;
   fullAccess: boolean;
   chatModel: boolean;
   historyLimit: number;
-  ledger: (change: (ledger: RunLedger) => void) => void;
+}
+interface WorkCallbacks {
+  ledger(change: (ledger: RunLedger) => void): void;
+  save(): Promise<void>;
+  reply(text: string, question?: ChatQuestion): Promise<void>;
+}
+interface Prepared {
+  result: Deliberation;
+  routing: RequestRoutingDecision;
+  canSteer: boolean;
+  choice: CascadeHandler | null;
+  turnId: string;
+  previousRequest: string | null;
+  missingLocation: boolean;
+}
+interface ShadowReview {
+  prepared: Prepared;
+  input: Intake;
+  callbacks: WorkCallbacks;
 }
 
-const activeDispatches = new WeakMap<BrainState, ChatDispatch>();
-const choices = 'deliberation-';
-const forcedPaths = new Set<CascadeHandler>([
-  'member_browser_blocked', 'request_constraint', 'literal_clarification', 'ledger_blocked', 'verify_note',
-  'verify_memory', 'save_fact', 'browser_review', 'browser_restore', 'pending_action', 'desktop_refused',
+const workReviews = new WeakMap<BrainState, ShadowReview>();
+const optionPrefix = 'deliberation-';
+const authorityHandlers = new Set<CascadeHandler>([
+  'member_browser_blocked', 'request_constraint', 'literal_clarification', 'ledger_blocked',
+  'verify_note', 'verify_memory', 'save_fact', 'browser_review', 'browser_restore', 'pending_action', 'desktop_refused',
 ]);
-
-export const dispatchFor = (state: BrainState) => activeDispatches.get(state);
+const nativeChoiceHandlers = new Set<CascadeHandler>([
+  'local_conversation', 'local_computation', 'self_question', 'runtime_status', 'local_sequence', 'planning', 'writing',
+]);
 
 const routeLabels: Partial<Record<DecisionRoute, readonly [string, string]>> = {
   web_search: ['البحث عن معلومة عامة', 'Look up public information'],
@@ -81,279 +83,191 @@ const routeLabels: Partial<Record<DecisionRoute, readonly [string, string]>> = {
   inventory: ['عرض المشاريع', 'Show projects'],
 };
 
-const sameOutcome = (first: DecisionOutcome, second: DecisionOutcome) => first.action === second.action
-  && (first.action !== 'act' || second.action === 'act' && first.route === second.route
-    && (!first.handler || !second.handler || first.handler === second.handler));
-
-class ChatDispatch {
-  private actual?: DecisionOutcome;
-  private parts?: readonly WebSequenceAnswer[];
-  private readRevision?: readonly ReviewFindingCode[];
-
-  constructor(private readonly input: DispatchInput, private readonly result: Deliberation,
-    readonly enabled: boolean, readonly confirmed: boolean, private readonly previousRequest: string | null,
-    private readonly missingLocation: boolean, private readonly turnId: string,
-    private readonly selected: DecisionOutcome = result.outcome) {}
-
-  write() {
-    const legacy = this.enabled ? this.result.trace.legacy : this.actual ?? this.result.trace.legacy;
-    this.input.ledger(ledger => recordDeliberation(ledger, {
-      ...this.result.trace, chosen: this.selected, legacy, enforced: this.enabled, legacyObserved: !this.enabled && !!this.actual,
-      ...(legacy ? { disagrees: !sameOutcome(this.selected, legacy) } : {}),
-    }, Date.now(), { turnId: this.turnId }));
-  }
-
-  permits(handler: CascadeHandler) {
-    if (!this.enabled) return true;
-    return this.selected.action === 'act' && handlerRoutes[handler] === this.selected.route
-      && (!this.selected.handler || this.selected.handler === handler);
-  }
-
-  selects(handler: CascadeHandler) { return this.enabled && this.permits(handler); }
-
-  usesBrowser() {
-    if (!this.enabled) return true;
-    const selected = this.selected;
-    return selected.action === 'act' && (['web_search', 'browser_command', 'capture', 'news', 'ads'].includes(selected.route)
-      || selected.handler === 'web_sequence' || selected.handler === 'mind' || selected.handler === 'model');
-  }
-
-  enter(handler: CascadeHandler, action: DecisionOutcome['action'] = 'act') {
-    if (!this.permits(handler)) return false;
-    this.observe(handler, action);
-    return true;
-  }
-
-  observe(handler: CascadeHandler, action: DecisionOutcome['action'] = 'act') {
-    if (this.actual) return;
-    this.actual = action === 'act' ? { action, handler, route: handlerRoutes[handler] } : { action };
-    this.write();
-  }
-
-  observePause(status: string) {
-    if (status !== 'waiting_user') return;
-    this.actual = { action: 'ask' };
-    this.write();
-  }
-
-  observeFailure() {
-    if (!this.actual) this.observe('ledger_blocked', 'abstain');
-  }
-
-  async intercept(respond: (text: string, question?: ChatQuestion) => Promise<void>) {
-    if (!this.enabled || this.selected.action === 'act') return false;
-    const ar = /\p{Script=Arabic}/u.test(this.input.text);
-    if (this.selected.action === 'abstain') {
-      await respond(ar ? 'لم أجد إجراءً متاحًا يطابق طلبك.' : 'I could not identify an available action that matches your request.');
-      return true;
-    }
-    const options = new Map<DecisionRoute, { id: string; label: string }>();
-    for (const candidate of this.result.candidates) {
-      const label = routeLabels[candidate.route]?.[ar ? 0 : 1];
-      if (!label || !candidate.eligible || !isCascadeHandler(candidate.handler) || options.has(candidate.route)) continue;
-      options.set(candidate.route, { id: choices + candidate.handler, label });
-      if (options.size === 4) break;
-    }
-    const prompt = this.missingLocation
-      ? ar ? 'لأي موقع تريد معرفة الطقس؟ اذكره عند إعادة كتابة طلب الطقس.' : 'Which location should I use? Include it when you restate the weather request.'
-      : options.size > 1 ? ar ? 'أيّ من هذه الخيارات تقصد؟' : 'Which of these options did you mean?'
-      : ar ? 'ما الإجراء أو الموضوع الذي تقصده تحديدًا؟' : 'Which action or subject do you mean?';
-    const question: ChatQuestion = { id: randomUUID(), prompt, options: [...options.values()] };
-    this.input.state.requestClarification = { attempts: (this.input.state.clarificationAttempts ?? 0) + 1 };
-    this.input.state.clarificationAttempts = this.input.state.requestClarification.attempts;
-    await respond(prompt, question);
-    return true;
-  }
-
-  unavailable() {
-    if (!this.enabled || this.actual) return null;
-    return /\p{Script=Arabic}/u.test(this.input.text) ? 'لم أتمكن من تنفيذ الإجراء المحدد.' : 'I could not carry out the selected action.';
-  }
-
-  rememberParts(parts: readonly WebSequenceAnswer[]) { this.parts = parts; }
-
-  findReadRevision(reply: string, status: 'completed' | 'partial' | 'blocked', evidence: readonly JudgeEvidence[],
-    asked?: { question: string; previous: string | null }, retry = false) {
-    if (!this.enabled || this.selected.action !== 'act' || this.readRevision && !retry) return null;
-    return deliberationReadFindings({
-      request: asked?.question ?? this.input.text, previousRequest: asked ? asked.previous : this.previousRequest,
-      reading: asked ? undefined : this.reading(),
-      decision: 'act', reply, status, evidence,
-    });
-  }
-
-  noteReadRevision(findings: readonly ReviewFindingCode[] = []) { this.readRevision = findings; }
-  mayRevise() { return !this.enabled || !this.readRevision; }
-
-  review(reply: string, status: 'completed' | 'partial' | 'blocked', evidence: readonly JudgeEvidence[], protectedReply = false) {
-    const checked = reviewDeliberationResult({
-      request: this.input.text, previousRequest: this.previousRequest, reading: this.reading(),
-      decision: this.enabled ? this.selected.action : this.actual?.action ?? this.selected.action,
-      reply, status, evidence, completion: this.input.state.completionReview,
-      parts: this.parts, readRevision: this.readRevision, protectedReply,
-    }, this.enabled);
-    this.result.trace.review = checked.record;
-    this.write();
-    return checked;
-  }
-
-  private reading() {
-    const route = this.selected.action === 'act' ? this.selected.route : undefined;
-    return this.result.readings.find(reading => reading.route === route) ?? this.result.readings[0];
-  }
-}
-
-function isCascadeHandler(value: unknown): value is CascadeHandler {
+function cascadeHandler(value: unknown): value is CascadeHandler {
   return typeof value === 'string' && Object.hasOwn(handlerRoutes, value);
 }
 
-async function prepareChatDispatch(input: DispatchInput): Promise<ChatDispatch | undefined> {
-  const { db, state, config, ownerId, conversationId, runId, text } = input;
+function selectedChoice(state: BrainState, enabled: boolean): CascadeHandler | null {
+  if (!enabled || !state.requestClarification || state.steps || !state.trail.length ||
+    !state.trail.every(entry => entry.action === 'asked the user') || !state.lastChoice?.startsWith(optionPrefix)) return null;
+  const handler = state.lastChoice.slice(optionPrefix.length);
+  return cascadeHandler(handler) ? handler : null;
+}
+
+async function prepare(input: Intake, enabled: boolean): Promise<Prepared> {
+  const { db, state, config, ownerId, conversationId, runId } = input;
+  const text = input.source.request;
+  const [recentMessages, recentRuns] = await Promise.all([
+    db.selectFrom('chat_messages as m').innerJoin('chat_conversations as c', 'c.id', 'm.conversation_id')
+      .select(['m.id', 'm.role', 'm.text']).where('m.conversation_id', '=', conversationId).where('c.owner_id', '=', ownerId)
+      .orderBy('m.created_at', 'desc').orderBy('m.role', 'desc').limit(input.historyLimit + 1).execute(),
+    db.selectFrom('chat_runs').select(['state', 'status']).where('owner_id', '=', ownerId).where('conversation_id', '=', conversationId)
+      .where('id', '!=', runId).orderBy('created_at', 'desc').limit(8).execute(),
+  ]);
+  const history = recentMessages.slice(1).reverse().filter(row => row.role === 'user' || row.role === 'assistant') as CascadeTurn[];
+  const previous = history.findLast(turn => turn.role === 'user') ?? null;
+  const previousStates = recentRuns.map(row => row.state).filter(Boolean) as BrainState[];
+  const turnId = typeof recentMessages[0]?.id === 'string' ? recentMessages[0].id : runId;
+  const configured: NonNullable<CascadeInput['configured']> = {
+    desktop: !!config.desktop, computer: !!config.tools?.computer, documents: !!config.documents, sites: !!config.sites,
+    memory: !!config.tools?.memory, knowledge: !!config.knowledgeSearch, skills: !!config.skillAnswer,
+    inventory: !!config.tools?.work?.inventory, ads: !!config.adsModel, mind: !!(config.mind && config.mindDeps), chatModel: input.chatModel,
+  };
+  const now = new Date(input.source.evaluatedAt);
+  const routed = decideRequestRoute({ text, now, context: previousStates[0]?.requestContext, turnId, fullAccess: input.fullAccess,
+    capabilities: { browser: true, search: true, memory: configured.memory, adsModel: configured.ads, computer: configured.computer,
+      coding: !!config.tools?.work?.code, chatModel: input.chatModel, writerModel: input.chatModel, planner: true } });
+  const routing = { ...routed, ...(state.clarifiedRequest ? {} : state.routing), resolution: state.requestResolution ?? routed.resolution };
+  const approvedPath = !!(state.pendingAction || state.pendingHeld || state.pendingTask || state.pendingComputer || state.pendingDesktop || state.desktopRefused);
+  const pendingCard = !!(state.questionAnswer || state.site || state.writer || state.planner || state.document || state.adsBrief
+    || state.pendingComputation || state.pendingOpen || state.requestResolution?.kind === 'answer' || approvedPath);
+  const choice = selectedChoice(state, enabled);
+  let memoryHit = !!(routing.resolution.topic && recentRuns.some(row => row.status === 'completed'
+    && row.state?.requestResolution?.topic === routing.resolution.topic
+    && row.state.trail?.some((entry: BrainState['trail'][number]) => entry.action === 'memory_search' && entry.changed === false && entry.result.length > 0)));
+  const actionLedger = restoreActionCompletionLedger(state.actionCompletion, { runId, request: text });
+  let siteMatch = false;
+  if (config.sites && state.siteId && !state.site && !state.steps && state.trail.every(entry => entry.action === 'asked the user')) {
+    try {
+      const { brief } = await config.sites.detail(ownerId, state.siteId);
+      siteMatch = !!siteCommand(text, brief) || !!(state.sitePendingWant && !/[؟?]\s*$/u.test(text.trim())
+        && fulfilWant(brief, state.sitePendingWant.want, text));
+    } catch {
+      siteMatch = !!state.sitePendingWant && !/[؟?]\s*$/u.test(text.trim());
+    }
+  }
+  const inspected = inspectCascade({ text, routing, now, state, history, previousStates, configured, fullAccess: input.fullAccess,
+    pendingCard, hostIntent: input.runIntent, ownerId, conversationId, runId, confirmed: !!choice,
+    actionLedgerValid: !!actionLedger, memoryHit, siteMatch });
+  const { memoryHit: readMemoryHit } = deliberationSettings(db);
+  if (readMemoryHit && inspected.predicates.some(candidate => candidate.handler === 'memory_recall' && candidate.eligible)) {
+    try {
+      const query = projectPreferredLanguageMemoryQuery(text) ?? routing.resolution.topic ?? text;
+      memoryHit = await readMemoryHit(ownerId, query);
+    } catch { /* Missing hints leave the underlying route evidence intact. */ }
+  }
+  const context = conversationEvidence(text, turnId, config.conversationShadow?.state(conversationId),
+    history.filter(turn => turn.role === 'user'), pendingCard ? { id: turnId, kind: 'question_card' } : null);
+  let b0: readonly RouterCandidate[] | undefined;
+  try { b0 = config.shadowRouter?.topCandidates?.(text); } catch { /* The optional shadow head may be unreadable. */ }
+  const result = deliberate({ text, routing, ...inspected, ...context, b0, memoryHit, pendingCard,
+    choiceRoute: choice ? handlerRoutes[choice] : undefined, choiceHandler: choice ?? undefined });
+  const currentText = recentMessages[0]?.role === 'user' ? String(recentMessages[0].text) : text;
+  if (currentText !== text) for (const reading of result.trace.readings) {
+    reading.spans = [
+      { turn: 'current', start: 0, end: Math.min(currentText.length, 4000) },
+      ...(previous?.text === text ? reading.spans.filter(span => span.turn === 'current').map(span => ({ ...span, turn: 'previous' as const })) : []),
+    ];
+  }
+  const canSteer = !!(enabled && !pendingCard && !state.hands && !state.steps && actionLedger && !actionLedger.events.length
+    && !actionLedger.fault && input.runIntent === 'task' && !state.computationMemory && !state.userFactMemory && !state.adsCampaign
+    && !state.securePageHash && state.trail.every(entry => entry.action === 'asked the user')
+    && !inspected.predicates.some(candidate => cascadeHandler(candidate.handler) && authorityHandlers.has(candidate.handler)));
+  return { result, routing, canSteer, choice, turnId, previousRequest: previous?.text ?? null, missingLocation: context.missingLocation };
+}
+
+function questionFor(prepared: Prepared, text: string): ChatQuestion {
+  const arabic = /\p{Script=Arabic}/u.test(text);
+  const options = new Map<DecisionRoute, { id: string; label: string }>();
+  for (const candidate of prepared.result.candidates) {
+    const label = routeLabels[candidate.route]?.[arabic ? 0 : 1];
+    if (!label || !candidate.eligible || !cascadeHandler(candidate.handler) || options.has(candidate.route)) continue;
+    options.set(candidate.route, { id: optionPrefix + candidate.handler, label });
+    if (options.size === 4) break;
+  }
+  const prompt = prepared.missingLocation
+    ? arabic ? 'لأي موقع تريد معرفة الطقس؟ اذكره عند إعادة كتابة طلب الطقس.' : 'Which location should I use? Include it when you restate the weather request.'
+    : options.size > 1 ? arabic ? 'أيّ من هذه الخيارات تقصد؟' : 'Which of these options did you mean?'
+    : arabic ? 'ما الإجراء أو الموضوع الذي تقصده تحديدًا؟ أعد كتابة الطلب كاملاً.' : 'Which action or subject do you mean? Restate the full request.';
+  return { id: randomUUID(), prompt, options: [...options.values()] };
+}
+
+function writeTrace(prepared: Prepared, callbacks: WorkCallbacks) {
+  callbacks.ledger(ledger => recordDeliberation(ledger, prepared.result.trace, Date.now(), { turnId: prepared.turnId }));
+}
+
+function canUseChoice(choice: CascadeHandler, selected: DecisionOutcome, legacy: DecisionOutcome | undefined) {
+  return nativeChoiceHandlers.has(choice) && selected.action === 'act' && selected.handler === choice
+    && !!legacy && sameDecision(selected, legacy, true);
+}
+
+/** One intake before the unchanged worker cascade. Only explicit opt-in can intervene. */
+export async function beginChatDeliberation(input: Intake, callbacks: WorkCallbacks): Promise<boolean> {
+  let prepared: Prepared;
+  try { prepared = await prepare(input, deliberationSettings(input.db).enabled === true); }
+  catch { return false; }
+  const { result, routing, canSteer, choice } = prepared;
+  const text = input.source.request;
+  const arabic = /\p{Script=Arabic}/u.test(text);
+  let response: { text: string; question?: ChatQuestion } | undefined;
+  result.trace.enforced = false;
+  result.trace.legacyObserved = false;
+  if (canSteer) {
+    if (choice) {
+      // The original worker cannot guarantee an alternative branch bypasses an earlier match.
+      // Only a choice already on its verified legacy lane can resume without a rewritten request.
+      if (canUseChoice(choice, result.outcome, result.trace.legacy)) {
+        input.state.trail = [];
+        input.state.lastChoice = null;
+        input.state.requestClarification = undefined;
+      } else {
+        const prompt = arabic ? 'كيف تريد صياغة الطلب الكامل لهذا الخيار؟' : 'How would you state the full request for this option?';
+        response = { text: prompt, question: { id: randomUUID(), prompt, options: [] } };
+        result.trace.chosen = { action: 'ask' };
+        result.trace.reasons = ['missing_context'];
+        result.trace.changeEvidence = ['explicit_destination', 'clarified_choice'];
+        if (result.trace.legacy) result.trace.disagrees = !sameDecision(result.trace.chosen, result.trace.legacy, true);
+      }
+    }
+    if (!response && result.outcome.action === 'act') {
+      const projected = input.fullAccess ? projectDeliberationRoute(routing, result.outcome) : routing;
+      if (projected !== routing) {
+        const { route, intent, handler, availability, missingCapabilities, reason } = projected;
+        input.state.routing = { route, intent, handler, availability, missingCapabilities, reason };
+        result.trace.routePreference = route;
+      }
+    } else if (!response && result.outcome.action === 'ask') {
+      const question = questionFor(prepared, text);
+      response = { text: question.prompt, question };
+    } else if (!response) {
+      response = { text: arabic ? 'لم أجد إجراءً متاحًا يطابق طلبك.' : 'I could not identify an available action that matches your request.' };
+    }
+  }
+  if (response?.question && (input.state.clarificationAttempts ?? 0) >= 2) {
+    response = { text: arabic ? 'لم يتضح المطلوب بعد التوضيح. ابدأ طلبًا جديدًا وحدّد الإجراء المقصود.'
+      : 'The requested action is still unclear. Start a new request and state the action you intend.' };
+    result.trace.chosen = { action: 'abstain' };
+    result.trace.reasons = ['missing_context'];
+    result.trace.changeEvidence = ['explicit_destination'];
+    if (result.trace.legacy) result.trace.disagrees = !sameDecision(result.trace.chosen, result.trace.legacy, true);
+  }
+  if (response && response.question) {
+    const attempts = (input.state.clarificationAttempts ?? 0) + 1;
+    input.state.clarificationAttempts = attempts;
+    input.state.requestClarification = { attempts };
+    input.state.lastChoice = null;
+  }
+  result.trace.enforced = !!response;
+  workReviews.set(input.state, { prepared, input, callbacks });
+  writeTrace(prepared, callbacks);
+  await callbacks.save();
+  if (!response) return false;
+  if (response.question) observeFinalDeliberation(input.state, response.text, 'partial', []);
+  await callbacks.reply(response.text, response.question);
+  return true;
+}
+
+/** Review is advisory in this phase and shares the worker's fenced terminal write. */
+export function observeFinalDeliberation(state: BrainState, text: string, status: 'completed' | 'partial' | 'blocked', evidence: readonly JudgeEvidence[]) {
+  const registered = workReviews.get(state);
+  if (!registered) return;
+  const { prepared, input, callbacks } = registered;
+  const { result } = prepared;
   try {
-    const [recentMessages, recentRuns] = await Promise.all([
-      db.selectFrom('chat_messages as m').innerJoin('chat_conversations as c', 'c.id', 'm.conversation_id')
-        .select(['m.id', 'm.role', 'm.text']).where('m.conversation_id', '=', conversationId).where('c.owner_id', '=', ownerId)
-        .orderBy('m.created_at', 'desc').orderBy('m.role', 'desc').limit(input.historyLimit + 1).execute(),
-      db.selectFrom('chat_runs').select(['state', 'status']).where('owner_id', '=', ownerId).where('conversation_id', '=', conversationId)
-        .where('id', '!=', runId).orderBy('created_at', 'desc').limit(8).execute(),
-    ]);
-    const history = recentMessages.slice(1).reverse().filter(row => row.role === 'user' || row.role === 'assistant') as CascadeTurn[];
-    const previousStates = recentRuns.map(row => row.state).filter(Boolean) as BrainState[];
-    const previous = history.findLast(turn => turn.role === 'user') ?? null;
-    const currentTurnId = typeof recentMessages[0]?.id === 'string' ? recentMessages[0].id : runId;
-    const configured: NonNullable<CascadeInput['configured']> = {
-      desktop: !!config.desktop, computer: !!config.tools?.computer, documents: !!config.documents, sites: !!config.sites,
-      memory: !!config.tools?.memory, knowledge: !!config.knowledgeSearch, skills: !!config.skillAnswer,
-      inventory: !!config.tools?.work?.inventory, ads: !!config.adsModel, mind: !!(config.mind && config.mindDeps), chatModel: input.chatModel,
-    };
-    const now = new Date(input.evaluatedAt);
-    const routed = decideRequestRoute({ text, now, context: previousStates[0]?.requestContext, turnId: currentTurnId, fullAccess: input.fullAccess,
-      capabilities: { browser: true, search: true, memory: configured.memory, adsModel: configured.ads, computer: configured.computer,
-        coding: !!config.tools?.work?.code, chatModel: input.chatModel, writerModel: input.chatModel, planner: true } });
-    const routing = { ...routed, ...(state.clarifiedRequest ? {} : state.routing), resolution: state.requestResolution ?? routed.resolution };
-    const approvedPath = !!(state.pendingAction || state.pendingHeld || state.pendingTask || state.pendingComputer || state.pendingDesktop || state.desktopRefused);
-    const pendingCard = !!(state.questionAnswer || state.site || state.writer || state.planner || state.document || state.adsBrief
-      || state.pendingComputation || state.pendingOpen || state.requestResolution?.kind === 'answer' || approvedPath);
-    const confirmedHandler = state.lastChoice?.startsWith(choices) ? state.lastChoice.slice(choices.length) : undefined;
-    const confirmed = input.config.deliberationEnabled === true && isCascadeHandler(confirmedHandler)
-      && !state.steps && state.trail.every(entry => entry.action === 'asked the user');
-    let memoryHit = !!(routing.resolution.topic && recentRuns.some(row => row.status === 'completed'
-      && row.state?.requestResolution?.topic === routing.resolution.topic
-      && row.state.trail?.some((entry: BrainState['trail'][number]) => entry.action === 'memory_search' && entry.changed === false && entry.result.length > 0)));
-    const actionLedgerValid = Boolean(restoreActionCompletionLedger(state.actionCompletion, { runId, request: text }));
-    let siteMatch = false;
-    if (config.sites && state.siteId && !state.site && !state.steps && state.trail.every(entry => entry.action === 'asked the user')) {
-      try {
-        const { brief } = await config.sites.detail(ownerId, state.siteId);
-        siteMatch = !!siteCommand(text, brief) || !!(state.sitePendingWant && !/[؟?]\s*$/u.test(text.trim())
-          && fulfilWant(brief, state.sitePendingWant.want, text));
-      } catch {
-        // Pending site content remains local if its brief could not be read.
-        siteMatch = !!state.sitePendingWant && !/[؟?]\s*$/u.test(text.trim());
-      }
-    }
-    const inspected = inspectCascade({ text, routing, now, state, history, previousStates, configured, fullAccess: input.fullAccess,
-      pendingCard, hostIntent: input.hostIntent, ownerId, conversationId, runId, confirmed, actionLedgerValid, memoryHit, siteMatch });
-    if (config.deliberationMemoryHit && inspected.predicates.some(candidate => candidate.handler === 'memory_recall' && candidate.eligible)) {
-      try {
-        const query = projectPreferredLanguageMemoryQuery(text) ?? routing.resolution.topic ?? text;
-        memoryHit = await config.deliberationMemoryHit(ownerId, query);
-      } catch { /* The optional read-only memory hint does not settle a route. */ }
-    }
-    const context = conversationEvidence(text, currentTurnId, config.conversationShadow?.state(conversationId),
-      history.filter(turn => turn.role === 'user'), pendingCard ? { id: currentTurnId, kind: 'question_card' } : null);
-    let b0: readonly RouterCandidate[] | undefined;
-    try { b0 = config.shadowRouter?.topCandidates?.(text); } catch { /* A shadow head may be unreadable. */ }
-    const result = deliberate({ text, routing, ...inspected, ...context, b0, memoryHit, pendingCard,
-      choiceRoute: confirmed && isCascadeHandler(confirmedHandler) ? handlerRoutes[confirmedHandler] : undefined,
-      choiceHandler: confirmed ? confirmedHandler : undefined });
-    const currentText = recentMessages[0]?.role === 'user' ? String(recentMessages[0].text) : text;
-    if (currentText !== text) {
-      for (const reading of result.trace.readings) {
-        reading.spans = [
-          { turn: 'current', start: 0, end: Math.min(currentText.length, 4000) },
-          ...(previous?.text === text ? reading.spans.filter(span => span.turn === 'current').map(span => ({ ...span, turn: 'previous' as const })) : []),
-        ];
-      }
-    }
-    const forced = inspected.legacy.action === 'act' && isCascadeHandler(inspected.legacy.handler) && forcedPaths.has(inspected.legacy.handler);
-    const enable = config.deliberationEnabled === true && !forced && !pendingCard && !approvedPath && !state.hands && !state.steps
-      && actionLedgerValid && input.hostIntent === 'task' && !state.computationMemory
-      && !state.userFactMemory && !state.adsCampaign && !state.securePageHash
-      && !inspected.predicates.some(candidate => ['member_browser_blocked', 'request_constraint', 'literal_clarification'].includes(candidate.handler))
-      && (state.trail.every(entry => entry.action === 'asked the user'));
-    let chosen = result.outcome;
-    if (confirmed) {
-      state.lastChoice = null;
-      state.requestClarification = undefined;
-      if (chosen.action !== 'act' || chosen.handler !== confirmedHandler) {
-        chosen = { action: 'abstain' };
-        result.trace.reasons = ['missing_capability'];
-        result.trace.changeEvidence = ['missing_capability'];
-        result.trace.confidence = 1;
-      }
-    }
-    const dispatch = new ChatDispatch(input, result, enable, confirmed, previous?.text ?? null, context.missingLocation, currentTurnId, chosen);
-    activeDispatches.set(state, dispatch);
-    dispatch.write();
-    return dispatch;
-  } catch {
-    // Observation must never change the default execution path.
-    return undefined;
-  }
-}
-
-export async function beginChatDeliberation(input: DispatchInput & {
-  save: () => Promise<void>;
-  ask: (text: string, question: ChatQuestion) => Promise<void>;
-  finish: (text: string) => Promise<void>;
-}): Promise<{ dispatch: ChatDispatch | undefined; ended: boolean }> {
-  const dispatch = await prepareChatDispatch(input);
-  if (!dispatch) {
-    const safelyStoppable = input.config.deliberationEnabled === true && input.hostIntent === 'task'
-      && !input.state.steps && !input.state.trail.length && !input.state.computationMemory && !input.state.userFactMemory;
-    if (!safelyStoppable) return { dispatch, ended: false };
-    input.ledger(ledger => recordBoundDeliberation(ledger, 'ledger_blocked', input.text.length));
-    await input.finish(/\p{Script=Arabic}/u.test(input.text) ? 'لم أتمكن من التحقق من المسار المناسب لهذا الطلب.' : 'I could not verify a suitable action for this request.');
-    return { dispatch, ended: true };
-  }
-  await input.save();
-  const ended = await dispatch.intercept((text, question) => question ? input.ask(text, question) : input.finish(text));
-  return { dispatch, ended };
-}
-
-export function dispatchGate(state: BrainState, handler: CascadeHandler) {
-  return dispatchFor(state)?.enter(handler) ?? true;
-}
-
-export function dispatchPermit(state: BrainState, handler: CascadeHandler) {
-  return dispatchFor(state)?.permits(handler) ?? true;
-}
-
-export function observeHandler(state: BrainState, handler: CascadeHandler, action: DecisionOutcome['action'] = 'act') {
-  dispatchFor(state)?.observe(handler, action);
-}
-
-export async function persistFailedDeliberation(tx: Kysely<any>, runId: string, state: BrainState | undefined) {
-  if (!state || !dispatchFor(state)) return;
-  dispatchFor(state)?.observeFailure();
-  if (!state.agentRun?.deliberation) return;
-  const { deliberation, earlierDeliberation } = state.agentRun;
-  await tx.updateTable('chat_runs').set({
-    state: sql`jsonb_set(coalesce(state, '{}'::jsonb), '{agentRun}',
-      coalesce(state->'agentRun', '{}'::jsonb) || ${JSON.stringify({ deliberation, earlierDeliberation })}::jsonb, true)`,
-  }).where('id', '=', runId).execute();
-}
-
-export function recordBoundDeliberation(ledger: RunLedger, handler: 'stop_run' | 'ledger_blocked', length = 0) {
-  const route = handlerRoutes[handler];
-  const stopping = handler === 'stop_run';
-  const chosen: DecisionOutcome = stopping ? { action: 'act', route, handler } : { action: 'abstain' };
-  recordDeliberation(ledger, {
-    version: 1, enforced: false, chosen, legacy: chosen, disagrees: false, confidence: 1, legacyObserved: true,
-    candidates: [{ route, handler, score: 1, evidence: ['cascade_match'] }],
-    reasons: [stopping ? 'clarified_choice' : 'scope_conflict'],
-    changeEvidence: [stopping ? 'pending_card' : 'request_scope'],
-    readings: [{ route, scope: 'unknown', spans: length > 0 ? [{ turn: 'current', start: 0, end: Math.min(4000, length) }] : [] }],
-  }, Date.now(), { newTurn: true });
+    const selected = result.trace.chosen;
+    const reading = selected.action === 'act' ? result.readings.find(item => item.route === selected.route) : undefined;
+    result.trace.review = reviewDeliberationResult({ request: input.source.request, reading, decision: selected.action,
+      reply: text, status, previousRequest: prepared.previousRequest, evidence, completion: state.completionReview }, false).record;
+    writeTrace(prepared, callbacks);
+  } catch { /* Diagnostic review never affects publication. */ }
 }

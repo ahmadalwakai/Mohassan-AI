@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -6,8 +6,9 @@ import { describe, expect, it } from 'vitest';
 import type { AgentBrowser } from '@mohassan/browser';
 import { MAX_EARLIER_THOUGHT_RECORDS, type ThoughtRecord } from '@mohassan/contracts';
 import { createDatabase, migrate } from '@mohassan/database';
-import { createRunLedger, projectRunView, restoreRunLedger } from '../apps/server/src/assistant/agent-run.js';
-import { recordDeliberation } from '../apps/server/src/assistant/deliberation/run-ledger.js';
+import { createRunLedger, restoreRunLedger } from '../apps/server/src/assistant/agent-run.js';
+import { projectRunDeliberation, recordDeliberation } from '../apps/server/src/assistant/deliberation/run-ledger.js';
+import { installDeliberationRunView } from '../apps/server/src/assistant/deliberation/run-view.js';
 import { createCommandChatControl, registerCommandChatRoutes } from '../apps/server/src/command-chat.js';
 import { RunDeliberation } from '../apps/web/components/run-deliberation.js';
 
@@ -65,13 +66,12 @@ describe('run deliberation privacy and retention', () => {
   it('drops a malformed stored record without losing a valid run ledger or sharing it in the run view', () => {
     const ledger = createRunLedger({ runId: RUN_ID, at: AT, path: 'action' });
     ledger.deliberation = { ...record, candidates: [{ ...record.candidates[0], handler: 'unknown-private-token' }] };
-    const view = projectRunView({ runId: RUN_ID, status: 'completed', ledger, includeDeliberation: true,
-      createdAt: new Date(AT), updatedAt: new Date(AT) });
-    expect(view?.path).toBe('action');
-    expect(view).not.toHaveProperty('deliberation');
+    const restored = restoreRunLedger(ledger, RUN_ID);
+    expect(restored?.path).toBe('action');
+    expect(projectRunDeliberation(restored, true)).not.toHaveProperty('deliberation');
   });
 
-  it('projects a stored record only for owners and rechecks access for a keyed response replay', async () => {
+  it('projects a stored record only on authenticated owner GET responses and rechecks access', async () => {
     const database = await createDatabase({});
     const app = Fastify();
     let allowed = true;
@@ -82,9 +82,11 @@ describe('run deliberation privacy and retention', () => {
       models: { fast: [], deep: [], vision: '' }, recordExperiences: false,
     });
     try {
-      await registerCommandChatRoutes(app, { control, owner: async request => ({ id: String(request.headers['fixture-user']) }) });
       const owner = 'fixture-owner';
       const member = 'fixture-member';
+      const authenticate: Parameters<typeof installDeliberationRunView>[2] = async request => ({ id: String(request.headers['fixture-user']) });
+      installDeliberationRunView(app, database.db, authenticate, async id => id === owner && allowed ? 'owner' : 'member');
+      await registerCommandChatRoutes(app, { control, owner: authenticate });
       const seed = async (principal: string, runId: string) => {
         const { id } = await control.create(principal);
         const ledger = createRunLedger({ runId, at: AT });
@@ -105,13 +107,24 @@ describe('run deliberation privacy and retention', () => {
       expect(memberView.json().run).not.toHaveProperty('earlierDeliberation');
       expect((await app.inject({ url: ownerUrl, headers: { 'fixture-user': member } })).statusCode).toBe(404);
 
-      const cached = await control.once(owner, 'test', 'fixture-key', null, async () => ownerView.json());
-      expect(cached.run).toHaveProperty('deliberation');
+      const conversationId = ownerUrl.split('/').at(-1)!;
+      const detail = await control.detail(owner, conversationId);
+      expect(detail).not.toHaveProperty('run.deliberation');
       allowed = false;
-      const replay = await control.once(owner, 'test', 'fixture-key', null, async () => { throw new Error('unexpected re-execution'); });
-      expect(replay).toMatchObject({ run: { id: RUN_ID } });
-      expect(replay).not.toHaveProperty('run.deliberation');
-      expect(replay).not.toHaveProperty('run.earlierDeliberation');
+      const downgraded = await app.inject({ url: ownerUrl, headers: { 'fixture-user': owner } });
+      expect(downgraded.statusCode).toBe(200);
+      expect(downgraded.json()).toMatchObject({ run: { id: RUN_ID } });
+      expect(downgraded.json()).not.toHaveProperty('run.deliberation');
+      expect(downgraded.json()).not.toHaveProperty('run.earlierDeliberation');
+
+      const key = 'previous-version-replay';
+      await database.db.insertInto('chat_request_keys').values({ owner_id: owner, request_key: key, scope: 'create',
+        body_hash: createHash('sha256').update('create\n{}').digest('hex'), status: 'done', response: ownerView.body }).execute();
+      const replay = await app.inject({ method: 'POST', url: '/api/chat/conversations', headers: { 'fixture-user': owner, 'idempotency-key': key }, payload: {} });
+      expect(replay.statusCode).toBe(200);
+      expect(replay.json()).toMatchObject({ run: { id: RUN_ID } });
+      expect(replay.json()).not.toHaveProperty('run.deliberation');
+      expect(replay.json()).not.toHaveProperty('run.earlierDeliberation');
     } finally {
       await app.close();
       await control.shutdown();
@@ -128,6 +141,7 @@ describe('run deliberation privacy and retention', () => {
     expect(markup).toContain('وضع المراقبة');
     expect(markup).toContain('مراجعة الجواب');
     expect(markup).toContain('القرارات السابقة في المهمة');
+    expect(renderToStaticMarkup(createElement(RunDeliberation, { record: { ...record, routePreference: 'compute' } }))).toContain('ترجيح المسار');
     expect(renderToStaticMarkup(createElement(RunDeliberation, {}))).toBe('');
   });
 });

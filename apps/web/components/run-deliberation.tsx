@@ -1,4 +1,4 @@
-import type { DecisionOutcome, DecisionReason, EvidenceCode, ReviewFindingCode, ThoughtRecord } from "@mohassan/contracts";
+import type { ChatRunView, DecisionOutcome, DecisionReason, EvidenceCode, ReviewFindingCode, ThoughtRecord } from "@mohassan/contracts";
 import styles from "./run-status.module.css";
 
 const actions = { act: "تنفيذ", ask: "طلب توضيح", abstain: "امتناع" } as const;
@@ -23,6 +23,12 @@ const findings: Record<ReviewFindingCode, string> = {
   format_json: "تنسيق JSON غير مطابق",
 };
 
+type RunWithDeliberation = ChatRunView & ({ deliberation: ThoughtRecord } | { earlierDeliberation: [ThoughtRecord, ...ThoughtRecord[]] });
+
+export function hasRunDeliberation(run: ChatRunView | null | undefined): run is RunWithDeliberation {
+  return Boolean(run?.deliberation || run?.earlierDeliberation?.length);
+}
+
 function Decision({ outcome }: { outcome: DecisionOutcome }) {
   return <>{actions[outcome.action]}{outcome.action === "act" ? <> · <bdi dir="ltr">
     {outcome.route}{outcome.handler && outcome.handler !== outcome.route ? ` · ${outcome.handler}` : ""}
@@ -32,7 +38,8 @@ function Decision({ outcome }: { outcome: DecisionOutcome }) {
 function DecisionRecord({ record }: { record: ThoughtRecord }) {
   return <>
     <p className={styles.line}><strong><Decision outcome={record.chosen} /></strong> · ثقة {Math.round(record.confidence * 100)}٪</p>
-    {record.enforced === false ? <p className={styles.line}>في وضع المراقبة، اتّبع التنفيذ المسار المعتاد.</p> : null}
+    {record.routePreference ? <p className={styles.line}>ترجيح المسار <bdi dir="ltr">{record.routePreference}</bdi></p>
+      : record.enforced === false ? <p className={styles.line}>في وضع المراقبة، اتّبع التنفيذ المسار المعتاد.</p> : null}
     {record.reasons.length ? <p className={styles.line}>{record.reasons.map(reason => reasons[reason]).join("، ")}</p> : null}
     {record.legacy ? <p className={styles.line}>
       {record.legacyObserved === false ? "المسار المعتاد المقدّر" : "المسار المعتاد"} <Decision outcome={record.legacy} />{record.disagrees ? " · مختلف عن القرار" : ""}

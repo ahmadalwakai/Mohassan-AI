@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fitDecisionTemperature, measureDecisions, sameDecision } from '../apps/server/src/assistant/deliberation/benchmark-metrics.js';
+import { effectiveBenchmarkPrediction, fitDecisionTemperature, measureDecisions, observeBenchmarkRun, sameDecision, type BenchmarkRunObservation } from '../apps/server/src/assistant/deliberation/benchmark-metrics.js';
 import corpus from './fixtures/deliberation/clinc150.json';
 
 const ask = { kind: 'ask' } as const;
@@ -37,6 +37,28 @@ describe('deliberation benchmark scoring', () => {
     const fit = fitDecisionTemperature(rows, (margin, temperature) => 0.5 + margin / temperature, [1, 2, 4]);
     expect(fit.temperature).toBe(4);
     expect(fit.meanNegativeLogLikelihood).toBeCloseTo(-(Math.log(0.6) + Math.log(0.4)) / 2);
+  });
+
+  it('uses runtime indicators to observe a decision even if the mocked tool produced no result', () => {
+    const observation: BenchmarkRunObservation = { waitingForQuestion: false, calls: [], trail: [], ledgerPath: 'direct', status: 'blocked' };
+    expect(observeBenchmarkRun(observation)).toEqual({ decision: abstain, source: 'ended_without_action' });
+    expect(observeBenchmarkRun({ ...observation, calls: ['web_search'] })).toEqual({ decision: search, source: 'tool_attempt' });
+    expect(observeBenchmarkRun({ ...observation, waitingForQuestion: true })).toEqual({ decision: ask, source: 'question_card' });
+    expect(observeBenchmarkRun({ ...observation, status: 'completed', trail: ['calculate'] })).toEqual({
+      decision: { kind: 'act', route: 'compute' }, source: 'computation_trail',
+    });
+    expect(observeBenchmarkRun({ ...observation, status: 'completed' })).toEqual({ decision: chat, source: 'completed_direct' });
+    expect(observeBenchmarkRun({ ...observation, status: 'completed', ledgerPath: 'action' })).toBeNull();
+    expect(observeBenchmarkRun({ ...observation, status: 'completed', ledgerPath: 'action', verifiedDirectReply: true })).toEqual({
+      decision: chat, source: 'completed_direct',
+    });
+  });
+
+  it('uses deliberation confidence only when the flag enforced the observed decision', () => {
+    const proposal = { decision: ask, confidence: 0.6 };
+    expect(effectiveBenchmarkPrediction(ask, proposal, true)).toEqual(proposal);
+    expect(effectiveBenchmarkPrediction(chat, proposal, true)).toEqual({ decision: chat, confidence: 1 });
+    expect(effectiveBenchmarkPrediction(ask, proposal, false)).toEqual({ decision: ask, confidence: 1 });
   });
 
   it('keeps distinct development and benchmark messages with complete labels', () => {
