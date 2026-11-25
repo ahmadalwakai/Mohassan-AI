@@ -1,0 +1,419 @@
+{
+  "contractCommit": "a453dc17a78f55c0cd3e5bf23f347843893bc3d2",
+  "list": {
+    "monitors": [
+      {
+        "id": "00000000-0000-4000-8000-000000000011",
+        "conversationId": "00000000-0000-4000-8000-000000000001",
+        "spec": {
+          "source": {
+            "kind": "currency",
+            "base": "USD",
+            "quote": "SAR"
+          },
+          "read": {
+            "kind": "number"
+          },
+          "condition": {
+            "kind": "crossing",
+            "direction": "below",
+            "value": 3.7,
+            "hysteresis": 0.01
+          },
+          "timing": {
+            "urgency": "normal",
+            "lifetimeMs": 604800000,
+            "initialIntervalMs": 3600000,
+            "maxChecks": 52,
+            "maxNotifications": 3
+          },
+          "language": "ar",
+          "message": "تحقق شرط المراقبة",
+          "title": "سعر الدولار مقابل الريال"
+        },
+        "status": "proposed",
+        "current": {
+          "value": 3.75,
+          "excerpt": "3.75 SAR",
+          "observedAt": "2026-11-25T12:00:00.000Z"
+        },
+        "lastCheckedAt": "2026-11-25T12:00:00.000Z",
+        "nextCheckAt": null,
+        "expiresAt": "2026-11-25T12:30:00.000Z",
+        "offer": "explicit"
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000013",
+        "conversationId": "00000000-0000-4000-8000-000000000001",
+        "spec": {
+          "source": {
+            "kind": "page",
+            "url": "https://example.org/enrolment"
+          },
+          "read": {
+            "kind": "phrase",
+            "phrase": "التسجيل مفتوح"
+          },
+          "condition": {
+            "kind": "appears"
+          },
+          "timing": {
+            "urgency": "normal",
+            "lifetimeMs": 604800000,
+            "initialIntervalMs": 3600000,
+            "maxChecks": 52,
+            "maxNotifications": 3
+          },
+          "language": "ar",
+          "message": "تحقق شرط المراقبة",
+          "title": "إعلان التسجيل"
+        },
+        "status": "paused",
+        "current": {
+          "value": false,
+          "excerpt": "العبارة غير موجودة",
+          "observedAt": "2026-11-25T12:00:00.000Z"
+        },
+        "lastCheckedAt": "2026-11-25T12:00:00.000Z",
+        "nextCheckAt": null,
+        "expiresAt": "2026-12-02T12:00:00.000Z",
+        "offer": "implicit",
+        "note": "تعذّر الوصول إلى المصدر عدة مرات."
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000016",
+        "conversationId": "00000000-0000-4000-8000-000000000001",
+        "spec": {
+          "source": {
+            "kind": "run",
+            "runId": "00000000-0000-4000-8000-000000000002"
+          },
+          "read": {
+            "kind": "status"
+          },
+          "condition": {
+            "kind": "change"
+          },
+          "timing": {
+            "urgency": "normal",
+            "lifetimeMs": 604800000,
+            "initialIntervalMs": 3600000,
+            "maxChecks": 52,
+            "maxNotifications": 3
+          },
+          "language": "ar",
+          "message": "تحقق شرط المراقبة",
+          "title": "حالة المهمة"
+        },
+        "status": "expired",
+        "current": null,
+        "lastCheckedAt": null,
+        "nextCheckAt": null,
+        "expiresAt": "2026-11-25T12:00:00.000Z",
+        "offer": "agent-initiated"
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000012",
+        "conversationId": "00000000-0000-4000-8000-000000000001",
+        "spec": {
+          "source": {
+            "kind": "page",
+            "url": "https://example.org/enrolment",
+            "anchor": "التسجيل"
+          },
+          "read": {
+            "kind": "status",
+            "label": "حالة التسجيل"
+          },
+          "condition": {
+            "kind": "contains",
+            "value": "مفتوح"
+          },
+          "timing": {
+            "urgency": "normal",
+            "lifetimeMs": 604800000,
+            "initialIntervalMs": 3600000,
+            "maxChecks": 52,
+            "maxNotifications": 3
+          },
+          "language": "ar",
+          "message": "تحقق شرط المراقبة",
+          "title": "موعد التسجيل"
+        },
+        "status": "active",
+        "current": {
+          "value": "مغلق",
+          "excerpt": "التسجيل مغلق",
+          "observedAt": "2026-11-25T12:00:00.000Z"
+        },
+        "lastCheckedAt": "2026-11-25T12:00:00.000Z",
+        "nextCheckAt": "2026-11-25T13:00:00.000Z",
+        "expiresAt": "2026-12-02T12:00:00.000Z"
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000015",
+        "conversationId": "00000000-0000-4000-8000-000000000001",
+        "spec": {
+          "source": {
+            "kind": "search",
+            "query": "بدء التسجيل"
+          },
+          "read": {
+            "kind": "items"
+          },
+          "condition": {
+            "kind": "new-item"
+          },
+          "timing": {
+            "urgency": "normal",
+            "lifetimeMs": 604800000,
+            "initialIntervalMs": 3600000,
+            "maxChecks": 52,
+            "maxNotifications": 3
+          },
+          "language": "ar",
+          "message": "تحقق شرط المراقبة",
+          "title": "نتائج البحث عن التسجيل"
+        },
+        "status": "completed",
+        "current": {
+          "value": [
+            "https://example.org/result"
+          ],
+          "excerpt": "ظهرت نتيجة جديدة.",
+          "observedAt": "2026-11-25T12:00:00.000Z"
+        },
+        "lastCheckedAt": "2026-11-25T12:00:00.000Z",
+        "nextCheckAt": null,
+        "expiresAt": "2026-12-02T12:00:00.000Z"
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000014",
+        "conversationId": "00000000-0000-4000-8000-000000000001",
+        "spec": {
+          "source": {
+            "kind": "weather",
+            "location": "دمشق",
+            "latitude": 33.51,
+            "longitude": 36.29,
+            "metric": "temperature"
+          },
+          "read": {
+            "kind": "number"
+          },
+          "condition": {
+            "kind": "threshold",
+            "direction": "above",
+            "value": 32,
+            "hysteresis": 1
+          },
+          "timing": {
+            "urgency": "normal",
+            "lifetimeMs": 604800000,
+            "initialIntervalMs": 3600000,
+            "maxChecks": 52,
+            "maxNotifications": 3
+          },
+          "language": "ar",
+          "message": "تحقق شرط المراقبة",
+          "title": "الحرارة في دمشق"
+        },
+        "status": "stopped",
+        "current": {
+          "value": 27,
+          "excerpt": "27 °C",
+          "observedAt": "2026-11-25T12:00:00.000Z"
+        },
+        "lastCheckedAt": "2026-11-25T12:00:00.000Z",
+        "nextCheckAt": null,
+        "expiresAt": "2026-12-02T12:00:00.000Z"
+      }
+    ]
+  },
+  "approval": {
+    "proposalId": "00000000-0000-4000-8000-000000000011"
+  },
+  "future": {
+    "unknownStatus": {
+      "id": "00000000-0000-4000-8000-000000000012",
+      "conversationId": "00000000-0000-4000-8000-000000000001",
+      "spec": {
+        "source": {
+          "kind": "page",
+          "url": "https://example.org/enrolment",
+          "anchor": "التسجيل"
+        },
+        "read": {
+          "kind": "status",
+          "label": "حالة التسجيل"
+        },
+        "condition": {
+          "kind": "contains",
+          "value": "مفتوح"
+        },
+        "timing": {
+          "urgency": "normal",
+          "lifetimeMs": 604800000,
+          "initialIntervalMs": 3600000,
+          "maxChecks": 52,
+          "maxNotifications": 3
+        },
+        "language": "ar",
+        "message": "تحقق شرط المراقبة",
+        "title": "موعد التسجيل"
+      },
+      "status": "waiting-for-provider",
+      "current": {
+        "value": "مغلق",
+        "excerpt": "التسجيل مغلق",
+        "observedAt": "2026-11-25T12:00:00.000Z"
+      },
+      "lastCheckedAt": "2026-11-25T12:00:00.000Z",
+      "nextCheckAt": "2026-11-25T13:00:00.000Z",
+      "expiresAt": "2026-12-02T12:00:00.000Z"
+    },
+    "unknownSource": {
+      "id": "00000000-0000-4000-8000-000000000011",
+      "conversationId": "00000000-0000-4000-8000-000000000001",
+      "spec": {
+        "source": {
+          "kind": "public-data-feed",
+          "url": [
+            "https://example.org/feed"
+          ]
+        },
+        "read": {
+          "kind": "number"
+        },
+        "condition": {
+          "kind": "crossing",
+          "direction": "below",
+          "value": 3.7,
+          "hysteresis": 0.01
+        },
+        "timing": {
+          "urgency": "normal",
+          "lifetimeMs": 604800000,
+          "initialIntervalMs": 3600000,
+          "maxChecks": 52,
+          "maxNotifications": 3
+        },
+        "language": "ar",
+        "message": "تحقق شرط المراقبة",
+        "title": "سعر الدولار مقابل الريال"
+      },
+      "status": "proposed",
+      "current": {
+        "value": 3.75,
+        "excerpt": "3.75 SAR",
+        "observedAt": "2026-11-25T12:00:00.000Z"
+      },
+      "lastCheckedAt": "2026-11-25T12:00:00.000Z",
+      "nextCheckAt": null,
+      "expiresAt": "2026-11-25T12:30:00.000Z",
+      "offer": "explicit"
+    },
+    "unknownCondition": {
+      "id": "00000000-0000-4000-8000-000000000011",
+      "conversationId": "00000000-0000-4000-8000-000000000001",
+      "spec": {
+        "source": {
+          "kind": "currency",
+          "base": "USD",
+          "quote": "SAR"
+        },
+        "read": {
+          "kind": "number"
+        },
+        "condition": {
+          "kind": "stable-for",
+          "value": {
+            "minutes": 50
+          },
+          "hysteresis": [
+            30,
+            60
+          ]
+        },
+        "timing": {
+          "urgency": "normal",
+          "lifetimeMs": 604800000,
+          "initialIntervalMs": 3600000,
+          "maxChecks": 52,
+          "maxNotifications": 3
+        },
+        "language": "ar",
+        "message": "تحقق شرط المراقبة",
+        "title": "سعر الدولار مقابل الريال"
+      },
+      "status": "proposed",
+      "current": {
+        "value": 3.75,
+        "excerpt": "3.75 SAR",
+        "observedAt": "2026-11-25T12:00:00.000Z"
+      },
+      "lastCheckedAt": "2026-11-25T12:00:00.000Z",
+      "nextCheckAt": null,
+      "expiresAt": "2026-11-25T12:30:00.000Z",
+      "offer": "explicit"
+    },
+    "unknownFields": {
+      "id": "00000000-0000-4000-8000-000000000012",
+      "conversationId": "00000000-0000-4000-8000-000000000001",
+      "spec": {
+        "source": {
+          "kind": "page",
+          "url": "https://example.org/enrolment",
+          "anchor": "التسجيل"
+        },
+        "read": {
+          "kind": "status",
+          "label": "حالة التسجيل"
+        },
+        "condition": {
+          "kind": "contains",
+          "value": "مفتوح"
+        },
+        "timing": {
+          "urgency": "normal",
+          "lifetimeMs": 604800000,
+          "initialIntervalMs": 3600000,
+          "maxChecks": 52,
+          "maxNotifications": 3
+        },
+        "language": "ar",
+        "message": "تحقق شرط المراقبة",
+        "title": "موعد التسجيل",
+        "notes": [
+          "extra"
+        ]
+      },
+      "status": "active",
+      "current": {
+        "value": "مغلق",
+        "excerpt": "التسجيل مغلق",
+        "observedAt": "2026-11-25T12:00:00.000Z"
+      },
+      "lastCheckedAt": "2026-11-25T12:00:00.000Z",
+      "nextCheckAt": "2026-11-25T13:00:00.000Z",
+      "expiresAt": "2026-12-02T12:00:00.000Z",
+      "previewFormat": "extended"
+    },
+    "malformedCard": {
+      "id": "00000000-0000-4000-8000-000000000013",
+      "conversationId": "00000000-0000-4000-8000-000000000001",
+      "spec": null,
+      "status": "paused",
+      "current": {
+        "value": false,
+        "excerpt": "العبارة غير موجودة",
+        "observedAt": "2026-11-25T12:00:00.000Z"
+      },
+      "lastCheckedAt": "2026-11-25T12:00:00.000Z",
+      "nextCheckAt": null,
+      "expiresAt": "2026-12-02T12:00:00.000Z",
+      "offer": "implicit",
+      "note": "تعذّر الوصول إلى المصدر عدة مرات."
+    }
+  }
+}

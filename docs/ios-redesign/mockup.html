@@ -169,10 +169,10 @@
     .draft { display: flex; flex: 1; align-items: center; min-height: 44px; color: var(--ink); font-size: 16px; padding-inline: 4px; }
     .caret { height: 20px; width: 1.7px; margin-inline-start: 1px; background: var(--accent); }
     .phone[data-screen="notification-banner"] .thread { padding-block-start: 46px; }
-    .phone[data-screen="notification-banner"] .composer { margin-block-end: 24px; }
-    .phone[data-screen="notification-banner"] .compose-card { border-color: var(--line); }
-    .phone[data-screen="notification-banner"] .send { background: var(--soft); color: var(--muted); }
-    .phone[data-screen="notification-banner"] .draft { color: var(--muted); }
+    .phone.idle-chat .composer { margin-block-end: 24px; }
+    .phone.idle-chat .compose-card { border-color: var(--line); }
+    .phone.idle-chat .send { background: var(--soft); color: var(--muted); }
+    .phone.idle-chat .draft { color: var(--muted); }
     .notification-banner {
       position: absolute;
       inset: 56px 10px auto;
@@ -201,7 +201,7 @@
     .key.space { flex: 5; font: 400 14px/1.2 Alexandria, sans-serif; color: var(--system-ink); }
     .keyboard-footer { direction: ltr; display: flex; justify-content: space-between; padding: 2px 23px; }
     .keyboard-footer .icon { width: 20px; height: 20px; }
-    .phone[data-screen="conversations"], .phone[data-screen="settings"], .phone[data-screen="notification-settings"] { background: var(--system-shelf); }
+    .phone:is([data-screen="conversations"], [data-screen="settings"], [data-screen="notification-settings"], [data-screen="monitor-settings"]) { background: var(--system-shelf); }
     .sheet { flex: 1 1 auto; min-height: 0; overflow: hidden; border-radius: 26px 26px 0 0; background: var(--background); }
     .sheet .bar { min-height: 56px; }
     .done { min-width: 52px; min-height: 36px; margin-inline-end: 5px; padding: 5px 13px; border: 0; border-radius: 20px; background: var(--accent-soft); color: var(--accent); font-size: 14px; font-weight: 600; }
@@ -244,8 +244,8 @@
     .segments { display: flex; padding: 3px; gap: 3px; background: var(--background); border-radius: 13px; }
     .segments span { display: grid; flex: 1; place-items: center; min-height: 44px; padding-inline: 4px; border: 1px solid transparent; border-radius: 10px; text-align: center; color: var(--muted); font-size: 12px; font-weight: 600; }
     .segments [aria-current="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
-    .phone[data-screen="notification-settings"] .sheet { display: flex; flex-direction: column; }
-    .phone[data-screen="notification-settings"] .settings { overflow-y: auto; scrollbar-width: none; }
+    .phone:is([data-screen="notification-settings"], [data-screen="monitor-settings"]) .sheet { display: flex; flex-direction: column; }
+    .phone:is([data-screen="notification-settings"], [data-screen="monitor-settings"]) .settings { overflow-y: auto; scrollbar-width: none; }
     .notification-settings-card .settings-row { justify-content: space-between; min-height: 50px; }
     .notification-settings-card p { margin-block-start: 12px; }
     .notification-switch {
@@ -278,6 +278,58 @@
     }
     .notification-switch[aria-checked="true"]::before { border-color: var(--accent); background: var(--accent); }
     .notification-switch[aria-checked="true"]::after { inset-inline-end: 22px; }
+    .monitor-card {
+      display: grid;
+      gap: 14px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--surface);
+    }
+    .monitor-heading { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
+    .monitor-heading h4 { font-size: 16px; font-weight: 600; }
+    [data-screen="monitor-conversation"] .monitor-heading h4 { font-size: 14px; }
+    .monitor-heading .icon { color: var(--accent); }
+    .monitor-label { display: flex; align-items: center; gap: 8px; }
+    .monitor-title { font-size: 16px; font-weight: 500; }
+    .monitor-facts { display: grid; gap: 9px; margin: 0; }
+    .monitor-fact { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 3px 12px; }
+    .monitor-fact dt { color: var(--muted); font-size: 13px; }
+    .monitor-fact dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 14px; font-weight: 500; }
+    .monitor-observed-at { display: block; margin-block-start: 3px; color: var(--muted); font-size: 12px; }
+    .monitor-actions { display: flex; gap: 8px; }
+    .monitor-action {
+      flex: 1;
+      min-height: 48px;
+      padding: 8px 10px;
+      border: 1px solid var(--control-line);
+      border-radius: 15px;
+      background: var(--surface);
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .monitor-action.primary { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+    .monitor-action.destructive { color: var(--alert); }
+    .monitor-chip {
+      padding: 5px 10px;
+      border-radius: 16px;
+      color: var(--muted);
+      background: var(--soft);
+      font-size: 12px;
+      font-weight: 600;
+      text-align: center;
+    }
+    .monitor-chip:is(.active, .completed) { color: var(--accent); background: var(--accent-soft); }
+    .monitor-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+    .monitor-open {
+      width: 100%;
+      min-height: 44px;
+      padding: 0;
+      border: 0;
+      background: none;
+      text-align: start;
+    }
+    .monitor-open > .monitor-name { flex: 1; font-weight: 600; }
     @media (max-width: 1260px) { .devices { justify-content: center; } }
     @media (max-width: 450px) { .gallery { padding-block-start: 28px; } }
   </style>
@@ -302,6 +354,7 @@
     <symbol id="return" viewBox="0 0 24 24"><path d="M20 5v5a3 3 0 0 1-3 3H5m4-4-4 4 4 4"/></symbol>
     <symbol id="globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M4 8h16M4 16h16"/></symbol>
     <symbol id="mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M6 12a6 6 0 0 0 12 0m-6 6v3m-3 0h6"/></symbol>
+    <symbol id="monitor" viewBox="0 0 24 24"><path d="M3 12h4l3-6 4 12 3-6h4"/><circle cx="12" cy="12" r="10"/></symbol>
   </svg>
 
   <main class="gallery">
@@ -458,13 +511,100 @@
     </section>
   </template>
 
+  <template id="monitor-approval">
+    <p class="user-turn">راقب صفحة ورشة التصوير ونبّهني عند فتح التسجيل.</p>
+    <article class="reply" aria-label="رد موحسن"><p>أستطيع متابعة حالة التسجيل وإرسال تنبيه عند فتحه.</p></article>
+    <article class="monitor-card" aria-label="مقترح مراقبة">
+      <header class="monitor-heading">
+        <h4 class="monitor-label"><svg class="icon" aria-hidden="true"><use href="#monitor"/></svg>مقترح مراقبة</h4>
+      </header>
+      <p class="monitor-title">حالة التسجيل في ورشة التصوير</p>
+      <dl class="monitor-facts">
+        <div class="monitor-fact"><dt>المصدر</dt><dd><bdi>https://workshops.example/register</bdi></dd></div>
+        <div class="monitor-fact"><dt>ما يُراقَب</dt><dd>حالة التسجيل</dd></div>
+        <div class="monitor-fact">
+          <dt>القراءة الحالية</dt>
+          <dd>التسجيل مغلق<time class="monitor-observed-at" datetime="2026-11-25T09:41:00Z">٢٥ نوفمبر، ٩:٤١ ص</time></dd>
+        </div>
+        <div class="monitor-fact"><dt>شرط التنبيه</dt><dd>عندما تتضمّن القراءة «التسجيل مفتوح»</dd></div>
+        <div class="monitor-fact"><dt>الفاصل الأول بين الفحوص</dt><dd>١٥ دقيقة</dd></div>
+        <div class="monitor-fact"><dt>مدة المراقبة</dt><dd>٧ أيام</dd></div>
+      </dl>
+      <div class="monitor-actions">
+        <button class="monitor-action primary" type="button">ابدأ المراقبة</button>
+        <button class="monitor-action" type="button">لا، شكرًا</button>
+      </div>
+    </article>
+  </template>
+
+  <template id="monitor-conversation">
+    <p class="user-turn">راقب صفحة ورشة التصوير ونبّهني عند فتح التسجيل.</p>
+    <article class="reply" aria-label="رد موحسن"><p>بدأت مراقبة حالة التسجيل في ورشة التصوير.</p></article>
+    <article class="monitor-card" aria-label="مراقبة حالة التسجيل في ورشة التصوير">
+      <header class="monitor-heading">
+        <h4>حالة التسجيل في ورشة التصوير</h4>
+        <span class="monitor-chip active">نشطة</span>
+      </header>
+      <dl class="monitor-facts">
+        <div class="monitor-fact"><dt>المصدر</dt><dd><bdi>https://workshops.example/register</bdi></dd></div>
+        <div class="monitor-fact"><dt>آخر فحص</dt><dd><time datetime="2026-11-25T09:41:00Z">٢٥ نوفمبر، ٩:٤١ ص</time></dd></div>
+        <div class="monitor-fact"><dt>القراءة الحالية</dt><dd>التسجيل مغلق</dd></div>
+        <div class="monitor-fact"><dt>الفحص التالي</dt><dd><time datetime="2026-11-25T09:56:00Z">٢٥ نوفمبر، ٩:٥٦ ص</time></dd></div>
+      </dl>
+      <div class="monitor-actions">
+        <button class="monitor-action" type="button">إيقاف مؤقت</button>
+        <button class="monitor-action destructive" type="button">إيقاف المراقبة</button>
+      </div>
+    </article>
+  </template>
+
+  <template id="monitor-settings">
+    <section class="settings-section" aria-label="المراقبات">
+      <h4>المراقبات</h4>
+      <ul class="monitor-list">
+        <li class="monitor-card">
+          <button class="monitor-open settings-row" type="button" aria-label="افتح محادثة حالة التسجيل في ورشة التصوير">
+            <span class="monitor-name title">حالة التسجيل في ورشة التصوير</span>
+            <span class="monitor-chip active">نشطة</span>
+            <svg class="icon chevron" aria-hidden="true"><use href="#chevron"/></svg>
+          </button>
+          <div class="monitor-actions">
+            <button class="monitor-action" type="button">إيقاف مؤقت</button>
+            <button class="monitor-action destructive" type="button">إيقاف المراقبة</button>
+          </div>
+        </li>
+        <li class="monitor-card">
+          <button class="monitor-open settings-row" type="button" aria-label="افتح محادثة سعر الدولار مقابل الريال">
+            <span class="monitor-name title">سعر الدولار مقابل الريال</span>
+            <span class="monitor-chip">متوقفة مؤقتًا</span>
+            <svg class="icon chevron" aria-hidden="true"><use href="#chevron"/></svg>
+          </button>
+          <div class="monitor-actions">
+            <button class="monitor-action" type="button">استئناف</button>
+            <button class="monitor-action destructive" type="button">إيقاف المراقبة</button>
+          </div>
+        </li>
+        <li class="monitor-card">
+          <button class="monitor-open settings-row" type="button" aria-label="افتح محادثة درجة الحرارة في دمشق">
+            <span class="monitor-name title">درجة الحرارة في دمشق</span>
+            <span class="monitor-chip completed">تحقّق الشرط</span>
+            <svg class="icon chevron" aria-hidden="true"><use href="#chevron"/></svg>
+          </button>
+        </li>
+      </ul>
+    </section>
+  </template>
+
   <script>
     const screens = [
       ['chat', 'المحادثة', 'chat'],
       ['conversations', 'المحادثات', 'conversations'],
       ['settings', 'الإعدادات', 'settings'],
       ['notification-banner', 'إشعار اكتمال المهمة', 'chat'],
-      ['notification-settings', 'إعدادات الإشعارات', 'settings']
+      ['notification-settings', 'إعدادات الإشعارات', 'settings'],
+      ['monitor-approval', 'مقترح مراقبة', 'chat'],
+      ['monitor-conversation', 'مراقبة في المحادثة', 'chat'],
+      ['monitor-settings', 'المراقبات في الإعدادات', 'settings']
     ];
     for (const theme of document.querySelectorAll('[data-theme]')) {
       for (const [screen, label, template] of screens) {
@@ -477,20 +617,29 @@
         home.className = 'home';
         home.setAttribute('aria-hidden', 'true');
         phone.append(document.getElementById('status').content.cloneNode(true), document.getElementById(template).content.cloneNode(true), home);
-        if (screen === 'notification-banner') {
+        if (template === 'chat' && screen !== 'chat') {
+          phone.classList.add('idle-chat');
           phone.querySelector('.keyboard').remove();
           phone.querySelector('.draft').textContent = 'اكتب رسالتك…';
           phone.querySelector('.send').disabled = true;
+        }
+        if (screen === 'notification-banner') {
           phone.append(document.getElementById(screen).content.cloneNode(true));
         }
-        if (screen === 'notification-settings') {
+        if (screen === 'monitor-approval' || screen === 'monitor-conversation') {
+          phone.querySelector('.turns').replaceChildren(document.getElementById(screen).content.cloneNode(true));
+        }
+        if (screen === 'notification-settings' || screen === 'monitor-settings') {
           const settings = phone.querySelector('.settings');
-          settings.children[1].after(document.getElementById(screen).content.cloneNode(true));
+          settings.children[1].after(document.getElementById('notification-settings').content.cloneNode(true));
           const notificationSwitch = settings.querySelector('.notification-switch');
           notificationSwitch.addEventListener('click', () => {
             const enabled = notificationSwitch.getAttribute('aria-checked') === 'false';
             notificationSwitch.setAttribute('aria-checked', String(enabled));
           });
+          if (screen === 'monitor-settings') {
+            settings.children[2].after(document.getElementById(screen).content.cloneNode(true));
+          }
         }
         caption.textContent = label;
         figure.append(phone, caption);
@@ -499,6 +648,13 @@
         if (selected) selected.setAttribute('aria-current', 'true');
       }
     }
+    document.fonts.ready.then(() => {
+      for (const phone of document.querySelectorAll('[data-screen="monitor-settings"]')) {
+        const settings = phone.querySelector('.settings');
+        const monitorSection = settings.querySelector('.monitor-list').closest('section');
+        settings.scrollTop = monitorSection.offsetTop - settings.offsetTop - 18;
+      }
+    });
     for (const row of document.querySelectorAll('[data-keys]')) {
       const keys = row.dataset.keys.split(' ').map(letter => {
         const key = document.createElement('span');

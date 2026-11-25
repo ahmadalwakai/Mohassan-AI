@@ -40,6 +40,15 @@ final class WaslaStore: ObservableObject {
     var watchID = 0
     var chatEpoch = 0
 
+    // Smart monitors. The server owns the schedule and observations.
+    @Published var monitorListCapability = false
+    @Published private(set) var accountMonitors: [MonitorCard]?
+    @Published private(set) var monitorListLoading = false
+    @Published private(set) var monitorListProblem: String?
+    @Published private(set) var monitorActionIDs: Set<String> = []
+    @Published private(set) var monitorActionProblems: [String: String] = [:]
+    private var monitorListRevision = 0
+
     // Windows remote control. Logic below.
     @Published private(set) var windows: WindowsOverview?
     @Published private(set) var windowsProblem: String?
@@ -137,6 +146,9 @@ final class WaslaStore: ObservableObject {
         account = .signedOut
         pendingPushRoute = nil; visibleChatConversationID = nil
         conversation = nil; chatList = []; capabilities = nil; requestKeys = false
+        monitorListCapability = false
+        accountMonitors = nil; monitorListLoading = false; monitorListProblem = nil
+        monitorActionIDs = []; monitorActionProblems = [:]
         pending = nil; savePending(); sending = false; secureBusy = false
         attachments = []; uploading = false; images = [:]; draft = ""
         windows = nil; windowsProblem = nil; remoteWanted = false; remoteBusy = false; remoteDeviceID = nil
@@ -165,6 +177,126 @@ final class WaslaStore: ObservableObject {
         }
         if let failure = error as? WaslaError, case .signedOut = failure { signedOutByServer(); return }
         errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+}
+
+// MARK: - Smart monitors
+
+extension WaslaStore {
+    var smartMonitorsAvailable: Bool {
+        if let conversation { return conversation.capabilities?.smartMonitors == true }
+        return monitorListCapability
+    }
+
+    func loadMonitors() async {
+        guard let client, smartMonitorsAvailable, !monitorListLoading else { return }
+        let epoch = sessionEpoch
+        monitorListLoading = true
+        monitorListProblem = nil
+        defer { if epoch == sessionEpoch { monitorListLoading = false } }
+
+        while !Task.isCancelled, epoch == sessionEpoch, smartMonitorsAvailable {
+            let revision = monitorListRevision
+            do {
+                let reply: MonitorList = try await client.get("/api/chat/monitors")
+                guard !Task.isCancelled, epoch == sessionEpoch, smartMonitorsAvailable else { return }
+                // A decision may have returned while this list read was in flight.
+                guard revision == monitorListRevision else { continue }
+                accountMonitors = MonitorDecision.settingsOrder(reply.monitors)
+            } catch {
+                guard !Task.isCancelled, epoch == sessionEpoch, smartMonitorsAvailable else { return }
+                if let failure = error as? WaslaError, case .signedOut = failure { show(failure); return }
+                monitorListProblem = monitorErrorText(error)
+            }
+            return
+        }
+    }
+
+    func changeMonitor(_ card: MonitorCard, action: MonitorAction) {
+        guard let client, smartMonitorsAvailable, card.status.actions.contains(action),
+              UUID(uuidString: card.id) != nil, UUID(uuidString: card.conversationId) != nil,
+              monitorActionIDs.insert(card.id).inserted else { return }
+        monitorActionProblems.removeValue(forKey: card.id)
+        let epoch = sessionEpoch
+        let key = UUID().uuidString.lowercased()
+        let base = "/api/chat/monitors"
+        let path = action == .approve ? base : "\(base)/\(card.id)/\(action.rawValue)"
+
+        Task {
+            guard epoch == self.sessionEpoch else { return }
+            defer { if epoch == self.sessionEpoch { self.monitorActionIDs.remove(card.id) } }
+            do {
+                let body = action == .approve ? try JSONEncoder().encode(MonitorApprove(proposalId: card.id)) : Data("{}".utf8)
+                let reply = try await client.send(path, method: "POST", body: body, key: key)
+                guard epoch == self.sessionEpoch else { return }
+                let changed = try JSONDecoder().decode(MonitorCard.self, from: reply.data)
+                guard changed.id == card.id, changed.conversationId == card.conversationId else { throw WaslaError.invalidResponse }
+                self.applyMonitorChange(changed)
+            } catch {
+                guard epoch == self.sessionEpoch else { return }
+                let message = self.monitorErrorText(error, action: action)
+                switch SendOutcome.of(error) {
+                case .signedOut:
+                    self.show(error)
+                case .notDone:
+                    if card.status == .proposed, self.visibleChatConversationID == card.conversationId {
+                        self.errorMessage = message
+                    } else {
+                        self.monitorActionProblems[card.id] = message
+                    }
+                    if let failure = error as? WaslaError, case .server(_, _, let code) = failure,
+                       code == "MONITOR_NOT_PROPOSED" || code == "MONITOR_STATUS_CONFLICT" {
+                        await self.refreshMonitorState(conversationID: card.conversationId, epoch: epoch)
+                    }
+                case .inProgress, .unknown:
+                    // These routes return a card but do not record request keys in the pinned server.
+                    // Read the state after an uncertain reply so a replay cannot overwrite a later decision.
+                    self.monitorActionProblems[card.id] = "لم يتأكد حفظ القرار. راجع حالة المراقبة قبل إعادة المحاولة."
+                    if self.visibleChatConversationID == card.conversationId, card.status == .proposed {
+                        self.errorMessage = self.monitorActionProblems[card.id]
+                    }
+                    await self.refreshMonitorState(conversationID: card.conversationId, epoch: epoch)
+                }
+            }
+        }
+    }
+
+    private func refreshMonitorState(conversationID: String, epoch: Int) async {
+        // A list read started before this decision may contain the previous state.
+        monitorListRevision += 1
+        if conversation?.id == conversationID {
+            stopWatching()
+            await refreshConversation(conversationID)
+            guard epoch == sessionEpoch else { return }
+            watch()
+        }
+        if accountMonitors != nil { await loadMonitors() }
+    }
+
+    private func applyMonitorChange(_ card: MonitorCard) {
+        monitorListRevision += 1
+        if var cards = accountMonitors {
+            if let index = cards.firstIndex(where: { $0.id == card.id }) { cards[index] = card }
+            else { cards.insert(card, at: 0) }
+            accountMonitors = MonitorDecision.settingsOrder(cards)
+        }
+        guard var detail = conversation, detail.id == card.conversationId,
+              detail.capabilities?.smartMonitors == true else { return }
+        // Discard a held snapshot that may have been read before the decision.
+        stopWatching()
+        if detail.monitorProposal?.id == card.id, card.status != .proposed { detail.monitorProposal = nil }
+        var cards = detail.monitors ?? []
+        if let index = cards.firstIndex(where: { $0.id == card.id }) { cards[index] = card }
+        else if card.status != .proposed { cards.insert(card, at: 0) }
+        detail.monitors = cards
+        present(detail)
+    }
+
+    private func monitorErrorText(_ error: Error, action: MonitorAction? = nil) -> String {
+        if let failure = error as? WaslaError, case .server(let status, _, let code) = failure {
+            return MonitorDecision.errorText(status: status, code: code, action: action)
+        }
+        return MonitorDecision.errorText(status: 0, code: nil, action: action)
     }
 }
 

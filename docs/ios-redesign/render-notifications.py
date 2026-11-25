@@ -32,7 +32,7 @@ with ThreadingHTTPServer(("127.0.0.1", 0), partial(MockupHandler, directory=root
             const faces = await document.fonts.load('700 16px Alexandria', 'إشعارات المهام');
             return faces.length > 0 && faces.every(face => face.status === 'loaded');
         }""")
-        expect(page.locator(".phone")).to_have_count(10)
+        expect(page.locator('.phone[data-screen^="notification-"]')).to_have_count(4)
 
         for theme in ("dark", "light"):
             for scene in ("notification-banner", "notification-settings"):

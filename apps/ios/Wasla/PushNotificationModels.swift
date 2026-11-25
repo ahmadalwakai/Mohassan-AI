@@ -33,6 +33,7 @@ struct PushNotificationRoute: Equatable, Sendable {
     let conversationID: String
     let runID: String
     let kind: Kind
+    let monitorID: String?
 
     static func decode(_ userInfo: [AnyHashable: Any]) -> Self? {
         guard let conversationID = userInfo["conversationId"] as? String,
@@ -41,7 +42,17 @@ struct PushNotificationRoute: Equatable, Sendable {
               !runID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let value = userInfo["kind"] as? String,
               let kind = Kind(rawValue: value) else { return nil }
-        return Self(conversationID: conversationID, runID: runID, kind: kind)
+        let monitorID: String? = (userInfo["monitorId"] as? String).flatMap { id in
+            id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : id
+        }
+        return Self(conversationID: conversationID, runID: runID, kind: kind, monitorID: monitorID)
+    }
+
+    func monitorScrollTarget(assistantMessageIDs: [String], visibleMonitorIDs: [String]) -> String? {
+        guard let monitorID else { return nil }
+        // The server uses the monitor event ID for both the result message and the push run ID.
+        if assistantMessageIDs.contains(runID) { return runID }
+        return visibleMonitorIDs.contains(monitorID) ? monitorID : nil
     }
 
     func showsForegroundBanner(notificationsEnabled: Bool, visibleConversationID: String?) -> Bool {

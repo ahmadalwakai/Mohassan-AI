@@ -28,6 +28,7 @@ extension WaslaStore {
             guard epoch == sessionEpoch else { return }
             chatList = list.conversations
             if let found = list.capabilities { capabilities = found }
+            monitorListCapability = list.capabilities?.smartMonitors == true
             requestKeys = list.requestKeys == true
         } catch { if epoch == sessionEpoch { show(error) } }
     }
@@ -533,7 +534,12 @@ struct ChatView: View {
             return .handled
         })
         .sheet(isPresented: $listShown) { ConversationListView(onOpen: openConversation) }
-        .sheet(isPresented: $settingsShown) { SettingsView() }
+        .sheet(isPresented: $settingsShown) {
+            SettingsView { id in
+                settingsShown = false
+                openConversation(id)
+            }
+        }
         .sheet(isPresented: $remoteShown) { RemoteControlView() }
         .sheet(isPresented: $screenShown) { BrowserScreenView() }
         .sheet(item: $browsing) { SafariView(url: $0.url).ignoresSafeArea() }
@@ -674,6 +680,17 @@ struct ChatView: View {
     }
 
     private func scrollTarget(for route: PushNotificationRoute, in conversation: ChatConversation) -> String? {
+        if route.monitorID != nil {
+            let assistantMessageIDs = conversation.messages.compactMap { $0.mine ? nil : $0.id }
+            var visibleMonitorIDs: [String] = []
+            if conversation.capabilities?.smartMonitors == true {
+                visibleMonitorIDs = conversation.monitors?.map(\.id) ?? []
+                if let proposal = conversation.monitorProposal { visibleMonitorIDs.append(proposal.id) }
+            }
+            if let target = route.monitorScrollTarget(assistantMessageIDs: assistantMessageIDs, visibleMonitorIDs: visibleMonitorIDs) {
+                return target
+            }
+        }
         if route.kind == .blocked {
             if conversation.status == ChatStatus.waitingApproval, let approval = conversation.approval { return approval.id }
             if conversation.status == ChatStatus.waitingInput, let secure = conversation.secure { return secure.id }
@@ -743,6 +760,26 @@ struct ChatView: View {
         if conversation.status == ChatStatus.waitingInput, let secure = conversation.secure {
             SecureCard(request: secure, busy: store.secureBusy || cardsLocked) { action, values in store.secure(action, values: values) }
                 .id(secure.id)
+        }
+        if conversation.capabilities?.smartMonitors == true {
+            let proposal = conversation.monitorProposal
+            let monitors = (proposal.map { [$0] } ?? []) + (conversation.monitors ?? []).filter { $0.id != proposal?.id }
+            ForEach(monitors) { monitor in
+                let busy = store.monitorActionIDs.contains(monitor.id)
+                let problem = store.monitorActionProblems[monitor.id]
+                Group {
+                    if monitor.id == proposal?.id, monitor.status == .proposed {
+                        MonitorApprovalCard(monitor: monitor, busy: busy, problem: problem) { action in
+                            store.changeMonitor(monitor, action: action)
+                        }
+                    } else {
+                        ConversationMonitorCard(monitor: monitor, busy: busy, problem: problem) { action in
+                            store.changeMonitor(monitor, action: action)
+                        }
+                    }
+                }
+                .id(monitor.id)
+            }
         }
         if !conversation.working, let error = conversation.error, !error.isEmpty {
             Card {
