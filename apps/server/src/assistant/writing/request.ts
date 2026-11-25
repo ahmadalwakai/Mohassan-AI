@@ -62,7 +62,7 @@ const PROCESS_QUESTION = /^how (?:does|do|did)\b/iu;
 const PROCESS_SUFFIX = /\s+(?:work(?:s)?|operat(?:e|es)|function(?:s)?)$/iu;
 const WHY_QUESTION = /^(?:why(?:\s+(?:does|do|did|is|are|was|were))?|what causes|لماذا|ليش|ليه|ما (?:سبب|[أا]سباب))(?=\s+[\p{L}\p{N}])\s+/iu;
 const HOW_QUESTION = /^(?:how(?:\s+(?:does|do|did|is|are|was|were|can|could|would|should))?|كيف|[إا]زاي|(?:شو|وش|[أا]يش|ما) (?:هي )?الطريق[هة])(?=\s+[\p{L}\p{N}])\s+/iu;
-const NON_EXPLANATION = /^(?:how (?:about|much|many|long|far|old|often|soon|tall|high|deep|wide|large|big|fast|heavy)\b|how (?:does|do|did|can|could|would|should) you\b|how are you\b|كيف (?:حالك|حالكم|[أا]شغل المتصفح|[أا]فتح المتصفح)(?!\p{L}))/iu;
+const NON_EXPLANATION = /^(?:how (?:about|much|many|long|far|old|often|soon|tall|high|deep|wide|large|big|fast|heavy|strong|weak|cold|hot|warm|humid|windy|wet|dry)\b|how (?:does|do|did|can|could|would|should) you\b|how are you\b|كيف (?:حالك|حالكم|[أا]شغل المتصفح|[أا]فتح المتصفح)(?!\p{L}))/iu;
 const UNBOUND_QUESTION_SUBJECT = /^(?:it|this|that|them|they|there|هذه|هذا|تلك|ذلك)(?!\p{L})/iu;
 const IMPERSONAL_QUESTION = /^(?:why|how)\s+(?:is|was)\s+it\s+[a-z]+\s+(?:for [a-z][a-z -]{1,50}? )?to\s+[a-z]/iu;
 const OWNED_QUESTION = /(?<!\p{L})(?:my|our|mine|ours|لدينا|عندنا|(?:ال)?خاص[هة]? (?:بي|بنا)|تخصني)(?!\p{L})/iu;

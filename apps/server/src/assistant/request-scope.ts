@@ -5,7 +5,7 @@ import { publicSearchScan, publicSearchText } from '@mohassan/browser';
 import { isCurrentComputerReadRequest } from './computer-request-language.js';
 import { explicitKnowledgeDocumentRequest, requestsKnowledgeSummary } from './knowledge-document-request.js';
 import { parseQuestionRewriteRequest } from './question-rewrite-request.js';
-import { questionCoreferenceText, startsFactualQuestion } from './public-question-syntax.js';
+import { factualNumberText, questionCoreferenceText, startsFactualQuestion } from './public-question-syntax.js';
 
 /** Source classification is independent of tool availability and model output. */
 export const requestSources = ['public_lookup', 'prior_conversation', 'local_state', 'supplied_content', 'unresolved'] as const;
@@ -75,7 +75,10 @@ const CLITIC_REFERENCE = /^(?:افتح|اغلق|احذف|ارسل|احفظ|غي�
 // guard refused «Explain why rain falls in two short Arabic sentences.» as possibly private (live test). A reference or an
 // owned record in it («explain why my account was blocked») is still found first and keeps the request private.
 const EXPLAIN_QUESTION = /^(?:explain|describe|tell me|teach me)(?:\s+(?:to me|for me|briefly|simply|in simple terms))?\s+(?:why|how|what|when|where|which|who)\s+[\p{L}\p{N}]|^(?:اشرح|وضح|فسر|بين|علمني)(?:\s+لي)?\s+(?:لماذا|ليش|ليه|كيف|ما|ماذا|متي|اين|من|سبب)\s+[\p{L}\p{N}]/iu;
-const isQuestion = (text: string) => startsFactualQuestion(text) || EXPLAIN_QUESTION.test(text);
+function isQuestion(text: string): boolean {
+  const allowStatement = !TRANSFORM.test(text) && !LOCAL_ACT.test(text) && !UNKNOWN_ACTION.test(text);
+  return startsFactualQuestion(text, allowStatement) || EXPLAIN_QUESTION.test(text);
+}
 const NEWS = /(?:^|\s)(?:اخبار|الاخبار|طقس|الطقس|سعر الصرف|صرف العملات)(?=\s|[\p{P}]|$)|\b(?:news|headlines|weather|exchange rate)\b/iu;
 const CONVERSE = /^(?:مرحبا|اهلا|هلا|شكرا|تسلم|السلام عليكم|hi|hello|hey|thanks|thank you|good morning|good evening)(?=\s|[\p{P}]|$)/iu;
 const SOCIAL_QUESTION = /^(?:كيف حالك|كيفك|كيف الحال|how are you|how do you do|how are you doing)[.!?؟]*$/iu;
@@ -186,8 +189,8 @@ export function assessRequestScope(value: string, options: RequestScopeOptions =
   if (createsLetter && !REFERENCE.test(withoutDeliveryReference) && !CLITIC_REFERENCE.test(withoutDeliveryReference)) {
     return make('supplied_content', 'transform', 'writing', ['new_content_request']);
   }
-  const numbers = text.match(NUMBER) ?? [];
-  if (!explicitPublic && numbers.length > 0 && NUMERIC_OPERATION.test(outer) && !EXCHANGE.test(outer) && !NEWS.test(outer)) return make('supplied_content', 'compute', 'compute', ['numeric_operation']);
+  const numericText = factualNumberText(outer);
+  if (!explicitPublic && (numericText.match(NUMBER)?.length ?? 0) > 0 && NUMERIC_OPERATION.test(numericText) && !EXCHANGE.test(outer) && !NEWS.test(outer)) return make('supplied_content', 'compute', 'compute', ['numeric_operation']);
 
   const parsedPrevious = options.previous === undefined ? null : parseRequestScopeAssessment(options.previous);
   const reference = REFERENCE.test(questionCoreferenceText(outer)) || FOLLOW.test(outer) || CLITIC_REFERENCE.test(outer);

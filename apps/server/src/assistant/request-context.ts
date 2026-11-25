@@ -3,7 +3,7 @@ import { returnedTo } from './return-to.js';
 import { explicitKnowledgeDocumentRequest } from './knowledge-document-request.js';
 import { parseQuestionRewriteRequest } from './question-rewrite-request.js';
 import { assessRequestScope, parseRequestScopeAssessment, requestOperationText, RequestScopeAssessmentSchema, reviewPublicProjection, parseUserRequestConstraints, maskRequestLiteralData, isEntireLiteralRequest, type UserRequestConstraints, type RequestScopeAssessment } from './request-scope.js';
-import { questionCoreferenceText } from './public-question-syntax.js';
+import { factualNumberText, questionCoreferenceText, startsFactualQuestion } from './public-question-syntax.js';
 
 /**
  * A small, deterministic context boundary, not a replacement language model.
@@ -107,6 +107,7 @@ const trimPunctuation = (text: string) => text.replace(/^[\s,،;؛:!?؟.]+|[\s,�
 const key = (text: string) => fold(trimPunctuation(text));
 const PRIVATE = /(?:^|\s)(?:اسمي|شركتي|حسابي|عملائي|موقعي|متجري|بريدي|رسائلي|ايميلي|ملفاتي|ملاحظاتي|كلم[هة] (?:السر|المرور)|بياناتي)(?=\s|$)|\bmy (?:password|account|files|notes|email|messages|customers|company|memory)\b/iu;
 const MEMORY = /(?:^|\s)(?:تذكر|تتذكر|احفظ|ذاكرتك|ذاكرتي|الذاكره|ملاحظاتي)(?=\s|$)|\b(?:remember|recall|memor(?:y|ies)|my notes)\b/iu;
+const ASSISTANT_MEMORY_REQUEST = /\b(?:do|did|can|could|will|would) you (?:remember|recall)\b|(?:^|\s)(?:تتذكر|ذاكرتك)(?=\s|$)/iu;
 // Ownership plus a storage relation denotes private retrieval regardless of the
 // particular property being requested (company, booking, membership, etc.).
 const STORED_PERSONAL = /\b(?:my|our)\s+(?:(?:own|personal|private)\s+)?(?:saved|stored|recorded|remembered)\s+\p{L}/iu;
@@ -133,7 +134,7 @@ const POINTER = /(?:^|\s)(?:سعر[هها]{1,2}|موعد[هها]{1,2}|اسم[ه�
 // «ما هو X» / «من هي X»: the pronoun is the question's copula when a subject follows it,
 // so it is not a pointer to an earlier topic. «من هو؟» and «ما هو سعره؟» keep their pointer test.
 const COPULA_QUESTION = /^(?:ما|من|ماذا|متي|متى|اين|وين|كيف|كم)\s+(?:هو|هي)\s+(?=[^\s?!؟.])/iu;
-const pointsBack = (text: string) => POINTER.test(questionCoreferenceText(text).replace(COPULA_QUESTION, ''));
+const pointsBack = (text: string) => POINTER.test(trimPunctuation(questionCoreferenceText(fold(text))).replace(COPULA_QUESTION, ''));
 const MODIFIER = /^(?:اجعلها|اجعله|خليها|خليه|خلها|خله|عدلها|عدله|بدلها|بدله|make it|change it|change that|set it|keep it)(?=\s|$)/iu;
 const QUESTION_ONLY = /^(?:و?هو|و?هي|عنه|عنها|it|that|them|what about it|how about it)[?!؟.]*$/iu;
 const PROPERTY = /^(?:(?:كم|ما|ماذا|متي|متى|هل|what(?:'s| is| are)?|how (?:much|many)|when(?:'s| is)?|is|are)\s+)*(سعر|اسعار|موعد|مبارا[ةه]|مباريات|نتيج[ةه]|نتائج|طقس|درج[ةه] الحرار[ةه]|مواصفات|تكلف[ةه]|طول|ارتفاع|عمر|price|prices|cost|weather|temperature|match|matches|score|scores|specifications?|height|age)(?=\s|$)/iu;
@@ -175,17 +176,23 @@ function privateIntent(intent: RequestContextIntent) {
 }
 
 function classify(text: string): RequestContextIntent {
-  const normalized = lexicalText(requestOperationText(requestActionText(text)));
+  const action = requestOperationText(requestActionText(text));
+  const normalized = lexicalText(action);
   if (explicitKnowledgeDocumentRequest(normalized)) return 'memory';
-  if (MEMORY.test(normalized)) return 'memory';
+  const memory = MEMORY.test(normalized);
+  const ads = ADS.test(normalized);
+  // A capability word within a question can name the subject rather than the host capability.
+  const topical = (memory || ads) && startsFactualQuestion(action) && !ASSISTANT_MEMORY_REQUEST.test(normalized)
+    && assessRequestScope(text).reasons.includes('public_subject');
+  if (memory && !topical) return 'memory';
   if (HOST_LOCAL.test(normalized)) return 'pc';
   if (STORED_PERSONAL.test(normalized)) return 'memory';
   if (REMINDER.test(normalized)) return 'reminder';
-  if (ADS.test(normalized) || AD_PRODUCTION.test(normalized)) return 'ads';
+  if ((ads && !topical) || AD_PRODUCTION.test(normalized)) return 'ads';
   if (PC.test(normalized)) return 'pc';
   if (CODING.test(normalized)) return 'coding';
   if (PLANNING.test(normalized)) return 'planning';
-  if (COMPUTE.test(normalized)) return 'compute';
+  if (COMPUTE.test(lexicalText(factualNumberText(action)))) return 'compute';
   if (BROWSER.test(normalized)) return 'browser_command';
   if (WRITING.test(normalized)) return 'writing';
   if (UNSUPPORTED.test(normalized)) return 'unsupported';
@@ -394,7 +401,7 @@ function resolveRequestContextBase(request: string, previousValue?: unknown, opt
     result.kind = 'ambiguous'; result.scope = 'unknown'; ambiguities.push('unclear_replacement'); return result;
   }
   const found = explicitSlots(correction.text, intent === 'ads' || previous?.intent === 'ads');
-  const follow = correction.correction || FOLLOW_LEAD.test(original) || CORRECTION.test(fold(original)) || pointsBack(fold(trimPunctuation(original)))
+  const follow = correction.correction || FOLLOW_LEAD.test(original) || CORRECTION.test(fold(original)) || pointsBack(original)
     || /^(?:بكرة|غدا|غدًا|tomorrow|tonight)(?:[؟?!.])?$/iu.test(original);
   const bareAnswer = intent !== 'compute' && !startsNewAction(requestActionText(original)) && !BROWSER.test(fold(original)) && !WRITING.test(fold(original)) && !REMINDER.test(fold(original))
     && !MEMORY.test(fold(original)) && !CODING.test(fold(original)) && !/^(?:ابحث|search|look up|ما |ماذا |كم |كيف |هل |what |when |where |how )/iu.test(fold(original));
@@ -433,7 +440,7 @@ function resolveRequestContextBase(request: string, previousValue?: unknown, opt
   const learned = previous?.scope === 'public' && previous.topic && !correction.correction && !CORRECTION.test(fold(original))
     && !['memory', 'ads', 'pc', 'reminder', 'planning', 'coding', 'browser_command', 'writing', 'compute', 'unsupported', 'chat'].includes(intent)
     ? options.learnedFollowUp : undefined;
-  const canFollow = learned === 'follow_up' || (ruleFollow && (learned !== 'new' || pointsBack(fold(trimPunctuation(original)))));
+  const canFollow = learned === 'follow_up' || (ruleFollow && (learned !== 'new' || pointsBack(original)));
   if (canFollow) {
     result.kind = 'follow_up';
     if (!previous?.topic || ['chat', 'unknown', 'unsupported'].includes(previous.intent)) {

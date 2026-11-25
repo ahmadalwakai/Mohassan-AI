@@ -15,6 +15,7 @@
  */
 import { performance } from 'node:perf_hooks';
 import { checkAnswerLine, figureKind, hasFigureOf, isMetaLine } from './answer-check.js';
+import { factualPassage, formatFactualPassage } from './factual-evidence.js';
 import { entityWords, fold, isFollowUp, refersBack, topicWords } from './hands.js';
 import { buildFrame } from './mind/frame.js';
 import { applyReplyFixes, checkReply, questionLanguage, type ReplyFindingCode } from './reply-check.js';
@@ -467,6 +468,12 @@ export function judge(input: JudgeInput): JudgeVerdict {
     const context: RelevanceContext = { question: asked, topic, cues, titleWords, answerType: frame.answerType, lang };
     const scored = own.map(item => ({ ...item, relevance: relevance(item.text, context, item.raw) }));
     const first = scored[0]!;
+    const sources = first.raw.includes('**') ? sourceUrls(reply) : [];
+    const extracted = sources.length > 0 && input.evidence?.some(item => {
+      if (item.kind !== 'page' || !item.title || !item.url || !sources.includes(pageKey(item.url))) return false;
+      const answer = factualPassage({ text: item.text, title: item.title }, asked);
+      return answer && formatFactualPassage(answer) === first.raw;
+    });
     lead = { line: first.line, text: first.text, score: first.relevance.score };
     const top = [...scored].sort((a, b) => b.relevance.score - a.relevance.score || a.line - b.line)[0]!;
     best = { line: top.line, text: top.text, score: top.relevance.score };
@@ -477,15 +484,15 @@ export function judge(input: JudgeInput): JudgeVerdict {
     for (const reason of check.reasons) {
       if (reason === 'meta_line') add('lead_meta', first.line, first.text, lang === 'ar' ? 'السطر الأول عن الصفحة لا عن الموضوع' : 'The first line is about the page, not the subject', bylineFixed ? 'review' : 'block');
       else if (reason === 'ui_text') add('lead_ui', first.line, first.text, lang === 'ar' ? 'السطر الأول من واجهة الموقع' : 'The first line is interface text');
-      else if (reason === 'needs_number') add('lead_needs_number', first.line, first.text, anyNumber
+      else if (reason === 'needs_number' && !extracted) add('lead_needs_number', first.line, first.text, anyNumber
         ? (lang === 'ar' ? 'سؤال عددي والسطر الأول بلا رقم، ورقم في سطر لاحق' : 'A number question whose first line has no number; a later line has one')
         : (lang === 'ar' ? 'سؤال عددي ولا رقم في أي سطر' : 'A number question with no number in any line'), anyNumber ? 'review' : 'block');
       else if (reason === 'needs_name') add('lead_needs_name', first.line, first.text, lang === 'ar' ? 'سؤال عن شخص والسطر الأول بلا اسم' : 'A who question whose first line names nobody');
       // 'language' is covered by language_mismatch over the whole reply; 'off_topic' is decided below with the page's title.
     }
-    if (topic.length && first.relevance.topicHits === 0) {
+    if (!extracted && topic.length && first.relevance.topicHits === 0) {
       add('lead_off_topic', first.line, first.text, lang === 'ar' ? `لا يذكر السطر الأول أي كلمة من الموضوع (${topic.join('، ')})` : `The first line names none of the subject words (${topic.join(', ')})`);
-    } else {
+    } else if (!extracted) {
       const subject = questionSubject(asked, ownTopic, lang);
       const named = (word: string) => mentions(fold(first.text), word)
         || titleWords.some(title => mentions(title, word) || title.length >= 4 && mentions(word, title));
@@ -498,7 +505,7 @@ export function judge(input: JudgeInput): JudgeVerdict {
     if (frame.answerType === 'definition' && frame.intent === 'fact_question' && !SUPERLATIVE.test(asked) && !first.relevance.typed) {
       add('definition_form_missing', first.line, first.text, lang === 'ar' ? 'سؤال تعريف والسطر الأول ليس بصيغة «X هو …»' : 'A definition question whose first line is not «X is …»');
     }
-    if (DURATION_QUESTION.test(asked) && !scored.some(item => item.relevance.typed)) {
+    if (!extracted && DURATION_QUESTION.test(asked) && !scored.some(item => item.relevance.typed)) {
       add('duration_unit_missing', first.line, first.text, lang === 'ar' ? 'سؤال عن مدة ولا سطر فيه رقم مع وحدة زمن' : 'A how-long question with no line holding a number and a time unit');
     }
     // A lead is replaced only when it is itself defective: cut from its context, about the page, naming nothing of the
@@ -511,7 +518,7 @@ export function judge(input: JudgeInput): JudgeVerdict {
     // artifacts/agent-gaps-2026-11-22/audit-head-3959084/wiring-probe-after-1.json).
     const countedLead = figureKind(asked) === 'people' && first.relevance.topicHits > 0 && hasFigureOf('people', first.text);
     const defectiveLead = first.relevance.fragment || first.relevance.meta || first.relevance.topicHits === 0 || !first.relevance.phrase && !first.relevance.answerForm && !countedLead;
-    if (defectiveLead && top.line !== first.line && top.relevance.score - first.relevance.score >= JUDGE_THRESHOLDS.leadNotBestMargin
+    if (!extracted && defectiveLead && top.line !== first.line && top.relevance.score - first.relevance.score >= JUDGE_THRESHOLDS.leadNotBestMargin
       && checkAnswerLine(asked, top.text).ok) {
       dropOldLead = first.relevance.meta;
       add('lead_not_best', first.line, first.text, lang === 'ar'
