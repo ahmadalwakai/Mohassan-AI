@@ -1,4 +1,5 @@
 import type { Page } from 'playwright';
+import { rememberPremiumOwnerValue } from './browser-live-premium.js';
 
 export interface BrowserTakeoverInput {
   text?: string;
@@ -40,7 +41,7 @@ export async function applyBrowserTakeoverInput(
         if (active instanceof HTMLElement && active.isContentEditable) return active.textContent?.slice(0, 2000) ?? '';
         return '';
       }).catch(() => '');
-      if (value) { remember(value); break; }
+      if (value) { rememberPremiumOwnerValue(redactions, value); break; }
     }
   }
   if (input.key) await page.keyboard.press(input.key).catch(() => {});

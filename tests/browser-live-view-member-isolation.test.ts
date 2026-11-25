@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentBrowser } from '@mohassan/browser';
+import { browserPremiumBriefPath } from '@mohassan/contracts';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApplication } from '../apps/server/src/app.ts';
 
@@ -116,6 +117,17 @@ describe('browser live view routes enforce conversation ownership', () => {
     expect((await inject('GET', `${memberWaiting.path}/screen`)).statusCode).toBe(401);
     expect(screen.mock.calls).toEqual([[memberSession.accountId, memberWaiting.id], [ownerSession.accountId, ownerWaiting.id]]);
     expect(activity.mock.calls).toEqual([[memberSession.accountId, memberWaiting.id]]);
+  });
+
+  it('lets signed-in members preview a browser task without creating a conversation', async () => {
+    const payload = { text: 'افتح https://example.test/login' };
+    const before = (await inject('GET', conversations, memberSession.cookie)).json().conversations;
+    expect((await inject('POST', browserPremiumBriefPath, '', payload)).statusCode).toBe(401);
+    const preview = await inject('POST', browserPremiumBriefPath, memberSession.cookie, payload);
+    expect(preview.statusCode).toBe(200);
+    expect(preview.headers['cache-control']).toBe('no-store');
+    expect(preview.json()).toMatchObject({ sites: ['example.test'], needs: ['login', 'code'], requiresStart: true });
+    expect((await inject('GET', conversations, memberSession.cookie)).json().conversations).toEqual(before);
   });
 
   it('rejects take-over input, continuation and cancellation for the owner’s runs', async () => {

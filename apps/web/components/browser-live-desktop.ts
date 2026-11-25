@@ -1,7 +1,7 @@
 import type { BrowserLiveCorner, BrowserLiveMode } from "@mohassan/contracts";
 
 type DesktopBridge = {
-  update(input: { corner: BrowserLiveCorner; mode: BrowserLiveMode }): Promise<void>;
+  update(input: { corner: BrowserLiveCorner; mode: BrowserLiveMode; expanded?: boolean }): Promise<void>;
   cornerAt(input: { x: number; y: number }): Promise<BrowserLiveCorner | null>;
   enabled(): Promise<boolean>;
   onEnabledChanged(listener: (enabled: boolean) => void): () => void;

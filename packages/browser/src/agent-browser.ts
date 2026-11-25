@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { chromium, type BrowserContext, type ElementHandle, type Frame, type JSHandle, type Page, type Route } from 'playwright';
 import { activeBrowserRedactions, applyBrowserTakeoverInput, type BrowserTakeoverInput } from './browser-takeover-input.js';
+import { capturePremiumBrowserFrame, readBrowserPremiumPage } from './browser-live-premium.js';
 import { decideEffect, type EffectActor } from './effect-policy.js';
 import { BrowserError, SafeNetwork } from './network.js';
 import { AgentSessionCheckpointSchema, AgentPostconditionSchema, evidenceHash, safeResumeUrl, pagePostcondition, type AgentSessionCheckpoint, type AgentPostcondition, type AgentVerificationReport, type AgentVerificationCheck } from './session-state.js';
@@ -1122,7 +1123,7 @@ export class AgentBrowser {
     const secrets=this.redactions(entry);
     const mask=entry.page.frames().filter(frame=>!frame.isDetached()).flatMap(frame=>[frame.locator('input[type="password"],input[autocomplete="one-time-code"],input[autocomplete^="cc-"]'),...secrets.map(secret=>frame.getByText(secret,{exact:false}))]);
     // Never reuse an old, possibly sensitive capture when masking fails.
-    entry.shot = await entry.page.screenshot({ type: 'jpeg', quality: 62, timeout: 5000, mask }).catch(() => null);
+    await capturePremiumBrowserFrame(entry, mask);
   }
 
   private redactions(entry: ConversationPage): string[] { return activeBrowserRedactions(entry.redactions); }
@@ -1653,6 +1654,8 @@ export class AgentBrowser {
     });
   }
 
+  async premiumPage(ownerId: string, conversationId: string, selectRef?: (page: AgentPage) => string | undefined, includeFavicon = false) {
+    return readBrowserPremiumPage((await this.owners.get(this.profileKey(ownerId, conversationId))?.catch(() => null))?.conversations.get(conversationId), entry => this.read(entry, false), (entry, ref) => this.withTarget(entry, ref, target => target.boundingBox()), selectRef, includeFavicon); }
   /** Newest view of the page for the person following along. */
   async screen(ownerId: string, conversationId: string): Promise<Buffer | null> {
     if (!await this.hasPage(ownerId, conversationId)) return null;

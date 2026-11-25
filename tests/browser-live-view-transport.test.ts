@@ -45,6 +45,15 @@ describe('browser live transport', () => {
     }), conversationId)).toMatchObject({ caption: 'Current step' });
   });
 
+  it('carries premium site, geometry and narration into the existing live snapshot', () => {
+    const browserPremium: NonNullable<ChatConversation['browserPremium']> = {
+      site: { domain: 'example.test' }, target: { x: 0.1, y: 0.2, width: 0.4, height: 0.2 },
+      steps: [{ id: 'fixture-step', kind: 'handover' }],
+    };
+    expect(browserLiveSnapshot(detail({ browserPremium }), conversationId)?.premium).toEqual(browserPremium);
+    expect(browserLiveSnapshot(detail(), conversationId)?.premium).toBeUndefined();
+  });
+
   it.each([
     ['login', 'needs_login', 'سجّل الدخول'],
     ['code', 'needs_code', 'أدخل رمز التحقق'],

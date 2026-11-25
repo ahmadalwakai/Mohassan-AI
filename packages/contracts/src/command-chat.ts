@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { CampaignEventStreamSchema } from './campaign-progress';
 import { ChatRunViewSchema } from './agent-run';
 import { BrowserLiveWheelSchema, browserTakeoverKeys } from './browser-live-view';
+import { BrowserPremiumMetadataSchema } from './browser-premium';
 
 export const ChatStatusSchema = z.enum(['idle', 'running', 'waiting_user', 'waiting_input', 'waiting_approval', 'failed', 'cancelled']);
 
@@ -186,6 +187,7 @@ export const ChatConversationSchema = ChatConversationSummarySchema.extend({
   capabilities: ChatCapabilitiesSchema.optional(),
   /** Absent for conversations recorded before the browser levels existed. */
   visibility: ChatBrowserVisibilitySchema.nullable().optional(),
+  browserPremium: BrowserPremiumMetadataSchema.optional(),
   /** Structured events of the latest Google Ads campaign task in this conversation. Absent when there is none. */
   campaign: CampaignEventStreamSchema.nullable().optional(),
   /**

@@ -20,6 +20,7 @@ import { takeoverInput } from "./takeover-input";
 import { BrowserFilesPanel } from './browser-files-panel';
 import { DocumentsPanel } from './documents-panel';
 import { useBrowserLiveHint } from "./browser-live-host";
+import { useBrowserPremiumBrief } from "./browser-premium-preflight";
 import { BrowserViewport } from './browser-viewport';
 import { CampaignCard } from "./campaign-card";
 
@@ -477,6 +478,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
   const steering = Boolean(selectedId) && steerable(status, conversation?.secure?.kind);
   const canSend = !busy && uploading === 0 && (steering ? draft.trim().length > 0 && attachments.length === 0
     : !running && !blocked && (draft.trim().length > 0 || attachments.length > 0));
+  const browserBrief = useBrowserPremiumBrief({ text: draft, active: canSend && !steering, conversationId: selectedId, pageUrl: conversation?.browser?.url, inputKey: [browserAccount, ...attachments.map((item) => item.id)].join(":") }, setError);
   // The brain's questions take the input's place, one at a time, as in Claude.
   const asking = answering && !!conversation?.question?.fields?.length;
 
@@ -550,6 +552,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
     event?.preventDefault();
     if (!canSend) return;
     if(!selectedId&&browserAccount.trim()&&!/^[a-zA-Z0-9_-]{1,128}$/.test(browserAccount.trim())){setError('استخدم حروفًا إنجليزية وأرقامًا وشرطة لاسم حساب المتصفح.');return;}
+    if (!await browserBrief.beforeSend()) return;
     // Send the actual input bytes. The server owns display trimming and must
     // detect any change before promising to save a literal note exactly.
     const text = draft;
@@ -659,6 +662,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
   </form>;
 
   return <div className={styles.app}>
+    {browserBrief.dialog}
     {sidebarOpen ? <button className={styles.scrim} aria-label="إغلاق القائمة" onClick={() => setSidebarOpen(false)} /> : null}
     <nav className={`${styles.sidebar} ${sidebarOpen ? styles.sidebarOpen : ""}`} aria-label="المحادثات">
       <div className={styles.brandRow}>

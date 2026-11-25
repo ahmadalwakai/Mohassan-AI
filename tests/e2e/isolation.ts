@@ -134,7 +134,7 @@ export async function stopOwnedChildren(children: OwnedChild[]): Promise<void> {
   }));
 }
 
-export async function startIsolatedE2E(options: { localBrain?: boolean } = {}): Promise<{ directory: string; stop(): Promise<void> }> {
+export async function startIsolatedE2E(options: { localBrain?: boolean; prepareWeb?: (fixture: E2EFixture) => Promise<void> } = {}): Promise<{ directory: string; stop(): Promise<void> }> {
   // Never reuse, kill, or contact an existing local server on these fixture ports.
   await requireFreePort(E2E_SERVER_PORT); await requireFreePort(E2E_WEB_PORT);
   const fixture = await createE2EFixture();
@@ -156,6 +156,7 @@ export async function startIsolatedE2E(options: { localBrain?: boolean } = {}): 
     throw new Error('E2E_READINESS_TIMEOUT');
   };
   try {
+    await options.prepareWeb?.(fixture);
     const api = spawnOwned(['--import', pathToFileURL(path.join(repository, 'node_modules', 'tsx', 'dist', 'loader.mjs')).href, path.join(repository, 'tests', 'e2e', 'server-entry.ts')], fixture.directory, fixture.environment, true);
     children.push(api);
     await new Promise<void>((resolve,reject)=>{

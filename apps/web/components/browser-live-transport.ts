@@ -22,6 +22,7 @@ export function browserLiveSnapshot(detail: ChatConversation, conversationId: st
     conversationId, runId: detail.run?.id ?? null, status: detail.status, title: detail.browser.title,
     caption: detail.progress ?? detail.steps.at(-1)?.text ?? visibility.reason,
     visibility, secure: detail.secure, approval: detail.approval,
+    ...(detail.browserPremium ? { premium: detail.browserPremium } : {}),
   };
 }
 

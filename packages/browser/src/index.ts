@@ -9,6 +9,7 @@ export * from './network.js';
 export * from './engine.js';
 export * from './research.js';
 export * from './agent-browser.js';
+export { BrowserHumanStepError, browserHumanStep, browserHumanStepTimeout, detectBrowserHumanStep, isBrowserPaymentConfirmation, waitForBrowserHumanProgress, type BrowserHumanStep } from './browser-hands-human.js';
 export * from './session-state.js';
 export * from './files.js';
 export * from './search/engine.js';

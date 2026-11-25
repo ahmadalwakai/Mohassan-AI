@@ -27,6 +27,7 @@ import type { DesktopCommand, DesktopOutcome, ParsedDesktopCommand } from '@moha
 import { searchRefusedReply, unsupportedReply, unsupportedRequest } from './assistant/unsupported-request.js';
 import { decideBrowserVisibility, deriveBrowserVisibility } from './assistant/browser-visibility.js';
 import { completeBrowserLiveInput } from './assistant/browser-live-handoff.js';
+import { browserHandoverResumed, projectBrowserPremium, watchPremiumBrowserHandover } from './assistant/browser-premium.js';
 import type { ShadowRouter } from './assistant/router.js';
 import type { ConversationShadow } from './assistant/conversation-state-shadow.js';
 import { publicConversationFollowup } from './assistant/public-conversation-followup.js';
@@ -1049,6 +1050,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       visibility: deriveBrowserVisibility({ request: messages.findLast(item => item.role === 'user')?.text ?? '', route: lastRun?.state?.routing?.route ?? null,
         role: (config.fullAccess ? await config.fullAccess(ownerId) : true) ? 'owner' : 'member', hasPage: Boolean(page), status: row.status,
         secure: row.secure ?? null, approval: row.approval ?? null, firstStep: steps[0]?.message ?? null, decidedAt: iso(row.updated_at) }),
+      browserPremium: await projectBrowserPremium({ browser, ownerId, conversationId: id, pageUrl: page?.url, status: row.status, secure: row.secure ?? null, run: lastRun, steps }),
       ...(version ? { version } : {}),
       ...(olderMessages ? { olderMessages } : {}),
       // The latest run as the runtime committed it (assistant/agent-run.ts); its row status is the authority for the verdict.
@@ -1311,6 +1313,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if(secure.kind!=='hands_on'&&current&&await browser.hasPage(current.ownerId,id))state.securePageHash=(await browser.observe(current.ownerId,id)).page.hash;
     else state.securePageHash=null;
     await pause(id, runId, state, 'waiting_input', { secure: JSON.stringify({ id: randomUUID(), ...secure }) }, secure.prompt);
+    execution.exit(() => watchPremiumBrowserHandover({ db, browser, current, conversationId: id, runId, secure, settled: async () => workers.get(id), canWait: async ownerId => !closing && (!config.accountActive || await config.accountActive(ownerId, db)), resume: (ownerId, requestId) => resume(ownerId, id, runId, async (next, tx) => { completeBrowserLiveInput(next, 'done'); next.awaitingAuthResult = false; await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId, kind: 'step', message: browserHandoverResumed }).execute(); }, '', { status: 'waiting_input', field: 'secure', requestId }) }));
   }
 
   async function pauseBrowserAction(id: string, runId: string, state: BrainState, pending: NonNullable<BrainState['pendingAction']>) {
@@ -3894,7 +3897,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // Insert the accepted reply in this same transaction. A rejected change
       // rolls it back; its DB-owned identity/time can anchor a new primary.
       const message = { id: randomUUID(), createdAt: new Date(), text: clean(say) };
-      await tx.insertInto('chat_messages').values({ id: message.id, conversation_id: id, role: 'user', text: message.text, created_at: message.createdAt }).execute();
+      if (say) await tx.insertInto('chat_messages').values({ id: message.id, conversation_id: id, role: 'user', text: message.text, created_at: message.createdAt }).execute();
       await change(state, tx, { ...message, createdAt: message.createdAt.getTime(), ...(priorSource ? { priorRequest: priorSource.request } : {}) });
       await tx.updateTable('chat_runs').set({ status:expected.stop?'cancelled':'running', state: JSON.stringify(state),lease_token:token,attempt:run.attempt+1,lease_expires_at:sql`CURRENT_TIMESTAMP + ${leaseMs} * interval '1 millisecond'`, updated_at: new Date() }).where('id', '=', runId).execute();
       await tx.updateTable('chat_conversations').set({ status:expected.stop?'idle':'running',active_run_id:expected.stop?null:runId, question: null, approval: null, secure: null, error: null, progress:expected.stop?null:'يتابع العمل…', updated_at: new Date() }).where('id', '=', id).execute();

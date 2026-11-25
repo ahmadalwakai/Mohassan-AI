@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import type { BrowserLiveSnapshot, ChatConversation, ChatConversationSummary } from "@mohassan/contracts";
 import { browserLiveDesktop } from "./browser-live-desktop";
 import { browserLiveAttention, browserLiveSnapshot } from "./browser-live-transport";
-import { BrowserLiveView } from "./browser-live-view";
+import { BrowserLiveView } from "./browser-premium-view";
 import { isNewerSnapshot } from "./run-view";
 
 const discoveryInterval = 4_000;

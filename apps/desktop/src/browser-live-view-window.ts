@@ -7,25 +7,35 @@ const SIZES = {
   medium: { width: 560, height: 500 },
   pill: { width: 320, height: 64 },
 } as const;
+const EXPANDED_SIZE = { width: 1120, height: 860 };
 
 export interface BrowserLiveViewWindowState {
   corner: typeof CORNERS[number];
   mode: keyof typeof SIZES | 'closed';
+  expanded?: boolean;
 }
 
 function parseState(value: unknown): BrowserLiveViewWindowState | null {
   if (typeof value !== 'object' || value === null) return null;
-  const { corner, mode } = value as Partial<BrowserLiveViewWindowState>;
+  const { corner, mode, expanded } = value as Partial<BrowserLiveViewWindowState>;
   if (!corner || !CORNERS.includes(corner)) return null;
   if (mode !== 'closed' && (typeof mode !== 'string' || !Object.hasOwn(SIZES, mode))) return null;
-  return { corner, mode };
+  if (expanded !== undefined && typeof expanded !== 'boolean') return null;
+  return { corner, mode, expanded: expanded === true && (mode === 'small' || mode === 'medium') };
 }
 
-function cornerBounds(area: Rectangle, state: BrowserLiveViewWindowState & { mode: keyof typeof SIZES }): Rectangle {
+function viewBounds(area: Rectangle, state: BrowserLiveViewWindowState & { mode: keyof typeof SIZES }): Rectangle {
   const insetX = Math.min(12, Math.floor((area.width - 1) / 2));
   const insetY = Math.min(12, Math.floor((area.height - 1) / 2));
-  const width = Math.min(SIZES[state.mode].width, area.width - insetX * 2);
-  const height = Math.min(SIZES[state.mode].height, area.height - insetY * 2);
+  const size = state.expanded ? EXPANDED_SIZE : SIZES[state.mode];
+  const width = Math.min(size.width, area.width - insetX * 2);
+  const height = Math.min(size.height, area.height - insetY * 2);
+  if (state.expanded) return {
+    x: area.x + Math.floor((area.width - width) / 2),
+    y: area.y + Math.floor((area.height - height) / 2),
+    width,
+    height,
+  };
   return {
     x: state.corner.endsWith('right') ? area.x + area.width - width - insetX : area.x + insetX,
     y: state.corner.startsWith('bottom') ? area.y + area.height - height - insetY : area.y + insetY,
@@ -67,7 +77,7 @@ export function registerBrowserLiveViewWindow(options: Options) {
 
   function reposition() {
     if (!miniWindow || !state || state.mode === 'closed') return;
-    miniWindow.setBounds(cornerBounds(workArea(miniWindow), { corner: state.corner, mode: state.mode }));
+    miniWindow.setBounds(viewBounds(workArea(miniWindow), { ...state, mode: state.mode }));
     if (!miniWindow.isVisible()) miniWindow.showInactive();
   }
 

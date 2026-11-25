@@ -35,6 +35,7 @@ async function send(page: Page, text: string): Promise<string> {
     && /\/api\/chat\/conversations(?:\/[^/]+\/messages)?$/.test(new URL(response.url()).pathname));
   await page.getByRole('textbox', { name: 'رسالتك' }).fill(text);
   await page.getByRole('button', { name: 'إرسال', exact: true }).click();
+  if (text.includes('/login')) await page.getByTestId('browser-premium-brief').getByRole('button', { name: 'ابدأ', exact: true }).click();
   const response = await accepted;
   expect(response.ok(), await response.text()).toBe(true);
   return (await response.json()).id as string;

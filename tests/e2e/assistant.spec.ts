@@ -101,8 +101,9 @@ test('a task runs from one message through sign-in, a code and an approval', asy
     await page.getByLabel('البريد أو اسم المستخدم').fill('owner@example.test');
     await page.getByLabel('كلمة المرور').fill(PASSWORD);
     await submitSecureForm.click();
-    await expect(page.getByLabel('رمز التحقق')).toBeVisible({ timeout: 30000 });
-    await page.getByLabel('رمز التحقق').fill(CODE);
+    const code = chat.getByRole('textbox', { name: 'رمز التحقق', exact: true });
+    await expect(code).toBeVisible({ timeout: 30000 });
+    await code.fill(CODE);
     await submitSecureForm.click();
 
     await expect(chat.getByRole('button', { name: 'موافق', exact: true })).toBeVisible({ timeout: 30000 });
