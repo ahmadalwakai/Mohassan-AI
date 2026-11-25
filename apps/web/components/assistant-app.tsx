@@ -35,7 +35,7 @@ import { AssistantNotifications, NOTICE_AFTER_MS, declineNoticeOffer, noticeKind
 import { RemindersSettings } from "./reminders-settings";
 import { BackgroundRunCard } from "./background-run-card";
 import { ConversationMonitors, MonitorSettings } from "./smart-monitors";
-import { ConversationMessageFeedback } from "../features/monitor-feedback/alert-feedback";
+import { ConversationMessageFeedback } from "../lib/monitor-feedback/alert-feedback";
 import styles from "./assistant-app.module.css";
 
 /** Plan §5.2 P5: the first useful progress line should show within half a second; a local answer is ready in ~30 ms. */

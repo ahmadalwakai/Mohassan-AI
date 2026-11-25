@@ -5,7 +5,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { MonitorCard, MonitorSpec } from "@mohassan/contracts";
 import { changeMonitor, followMonitorChanges, listMonitors, mergeMonitors, type MonitorAction } from "./monitors-client";
 import styles from "./smart-monitors.module.css";
-import { MonitorCardAlertFeedback } from "../features/monitor-feedback/alert-feedback";
+import { MonitorCardAlertFeedback } from "../lib/monitor-feedback/alert-feedback";
 
 const copy = {
   ar: {
