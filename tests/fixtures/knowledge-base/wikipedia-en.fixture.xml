@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/" version="0.11" xml:lang="en">
+  <siteinfo>
+    <sitename>Wikipedia offline-index test fixture</sitename>
+    <dbname>enwiki</dbname>
+  </siteinfo>
+  <page>
+    <title>Amber Point</title>
+    <ns>0</ns>
+    <id>41</id>
+    <revision>
+      <id>105</id>
+      <timestamp>2024-03-01T12:13:14Z</timestamp>
+      <contributor><username>Test contributor</username><id>9</id></contributor>
+      <model>wikitext</model>
+      <format>text/x-wiki</format>
+      <text xml:space="preserve">{{Short description|Hand-built test article}}
+[[File:Amber Point.jpg|thumb|Category only]]
+{{Infobox settlement
+| name = Amber Point
+| population = 1700
+| population = 1800&lt;ref name="fixture"&gt;A fake source | reference_only = fictional&lt;/ref&gt;
+| location = [[Fixture County#Locations|Fixture County]]
+| area_total = {{convert|10|km2|abbr=on}}
+| empty =
+| replaced = canceled
+| replaced =
+&lt;!-- | commented_out = do not index --&gt;
+}}
+'''Amber Point''' is a coastal fixture near [[Test Bay|the harbor]].
+A &amp; B are [[Sample Alpha|locations]] in the '''Amber Point''' fixture.
+== History ==
+A body-only lighthouse.
+{{Infobox outside lead|not_indexed=hidden}}
+</text>
+    </revision>
+  </page>
+  <page>
+    <title>Ochre Point</title>
+    <ns>0</ns>
+    <id>42</id>
+    <revision>
+      <id>106</id>
+      <timestamp>2024-03-03T20:00:00Z</timestamp>
+      <text xml:space="preserve">'''Ochre Point''' is another coastal fixture. Its two residents once visited Amber Point.
+== Geography ==
+A fictional location.
+</text>
+    </revision>
+  </page>
+  <page>
+    <title>Redirected Amber Point</title>
+    <ns>0</ns>
+    <id>43</id>
+    <redirect title="Amber Point" />
+    <revision>
+      <id>107</id>
+      <timestamp>2024-03-03T20:00:00Z</timestamp>
+      <text xml:space="preserve">#REDIRECT [[Amber Point]]</text>
+    </revision>
+  </page>
+  <page>
+    <title>Talk:Neighborhood discussion</title>
+    <ns>1</ns>
+    <id>44</id>
+    <revision>
+      <id>108</id>
+      <timestamp>2024-03-03T20:00:00Z</timestamp>
+      <text xml:space="preserve">This outside-namespace talk page mentions Amber Point.</text>
+    </revision>
+  </page>
+</mediawiki>
