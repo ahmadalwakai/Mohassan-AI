@@ -13,11 +13,11 @@ import {
   SkillRunInputSchema, type SkillRunInput, type SkillGapObservation,
 } from '@mohassan/contracts';
 import { AgentEffectHeld, AgentSessionCheckpointSchema, BrowserError, SearchEngine, SafeNetwork, type AgentPostcondition, type AgentAction, type AgentAuthority, type AgentActionResult, type AgentBrowser, type AgentCaptureResult, type AgentPage, type NetworkPolicy, type SearchProvider } from '@mohassan/browser';
-import { GroqProvider, ProviderError, redactSecrets, classifyProviderFallback, waitForRetryAfter, validatedRetryAfterMs, type InferenceRouter, type ModelProvider } from '@mohassan/providers';
+import { GroqProvider, ProviderError, classifyProviderFallback, waitForRetryAfter, validatedRetryAfterMs, type InferenceRouter, type ModelProvider } from '@mohassan/providers';
 import { unfenceJson } from './inference.js';
 import { rememberRemovedConversationProfile } from './member-profile-storage.js';
 import { withMemberChatDeletionFence } from './member-chat-deletion-fence.js';
-import { redactCredentialText } from '@mohassan/cognitive';
+import { redactSensitiveCredentialText as clean } from './sensitive-credential-text.js';
 import { classifyExperience, escapedContextLength, recordExperience, type ExperienceInput } from '@mohassan/learning';
 import {
   boundedDecisionJsonSchema, decisionJsonSchema, decisionSchema, recoverDecision, ModelPool, buildPrompt, chooseTier, cookieRejectButton, directRoute, estimateTokens, newBrainState,
@@ -272,7 +272,6 @@ const PERSONAL_SIGN_IN_STOP = 'توقفت عند صفحة تسجيل الدخو�
 const GRANT_NEEDED_PROMPT = 'أحتاج إلى رؤية نافذة على كمبيوترك. افتح «التحكم بالكمبيوتر» من الأدوات المتقدمة، واربط الجهاز، واختر النافذة، وامنح إذنًا مؤقتًا، ثم اضغط «أكملت». ستُقرأ عناصر النافذة. وقد تُرسل العناصر أو الصورة إلى مزوّد النموذج المهيأ لهذه المحادثة إذا احتاجها الرد.';
 const LOCAL_READ_GRANT_PROMPT = 'افتح «التحكم بالكمبيوتر» من الأدوات المتقدمة، واربط الجهاز، واختر نافذة، وامنح إذن قراءة مؤقتًا، ثم اضغط «أكملت». سأقرأ عنوان النافذة والعناصر النصية المتاحة فيها.';
 
-const clean = (value: string) => redactCredentialText(redactSecrets(value));
 /** Capture only a digest, before schema trimming or redaction can change literal note bytes. */
 function originalInputHash(raw: unknown, field: 'text' | 'goal'): string | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;

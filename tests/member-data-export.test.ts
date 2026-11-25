@@ -187,13 +187,16 @@ describe('signed-in account exports', () => {
       summary: JSON.stringify(summary), error: `Fixture resource customers/${adsSecrets.customer_id}/campaigns/1`,
     }).execute();
     const apiKey = `fixture-api-field-${account.id}`;
+    const privateConfig = `fixture-private-config-${account.id}`;
+    const copiedCookie = `fixture-cookie-value-${account.id}`;
     await db().insertInto('chat_events').values({
       id: randomUUID(), conversation_id: conversationId, kind: 'progress', message: 'Export fixture event',
-      data: JSON.stringify({ detail: { apiKey, field: 'Safe fixture value', text: `Connected as ${adsSecrets.login_customer_id}` } }),
+      data: JSON.stringify({ detail: { apiKey, webPushVapidPrivateKey: privateConfig, diagnostic: `Cookie: sample_session=${copiedCookie}`,
+        field: 'Safe fixture value', text: `Connected as ${adsSecrets.login_customer_id}` } }),
     }).execute();
 
     return { message, png, imageId, siteImageId, document, documentId, documentName, files, adsName, campaign: summary!.campaignName, platform,
-      secrets: [...Object.values(oauthSecrets), ...Object.values(adsSecrets), ...platform.secrets, apiKey, credential.password as string],
+      secrets: [...Object.values(oauthSecrets), ...Object.values(adsSecrets), ...platform.secrets, apiKey, privateConfig, copiedCookie, credential.password as string],
     };
   }
 

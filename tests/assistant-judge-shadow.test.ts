@@ -44,4 +44,34 @@ describe('judge shadow', () => {
     expect(shadow.observe({ conversationId: 'c2', runId: 'r1', question: undefined as unknown as string, reply: undefined as unknown as string })).not.toBeUndefined();
     await shadow.flush();
   });
+
+  it.each([
+    ['question', 'Cookie: __Secure-better-auth.session_token='],
+    ['previous', 'x-mohassan-internal: '],
+    ['reply', 'Authorization: Basic '],
+    ['reply', 'better-auth.session_token='],
+    ['reply', 'Set-Cookie: application_session='],
+    ['question', 'APNS_KEY_PATH='],
+    ['previous', 'WEB_PUSH_VAPID_PRIVATE_KEY='],
+    ['reply', 'password: '],
+  ] as const)('keeps the verdict while omitting credential material from the logged %s (%s)', async (field, prefix) => {
+    const fixture = 'sample-value-for-log-tests';
+    const shadow = createJudgeShadow({ logFile: join(directory, `credential-${prefix.replace(/[^a-z]/gi, '')}.jsonl`) });
+    const verdict = shadow.observe({
+      conversationId: 'c5', runId: 'r1', question: 'How many people live in Morocco?',
+      previous: 'What is its capital?', reply: 'About 37 million.',
+      [field]: `${prefix}${fixture}`,
+    });
+    expect(verdict).not.toBeNull();
+    await shadow.flush();
+    const raw = await readFile(shadow.logFile, 'utf8');
+    expect(raw.includes(fixture)).toBe(false);
+    const line: JudgeShadowLine = JSON.parse(raw);
+    expect(line).toMatchObject({
+      decision: verdict!.decision, codes: verdict!.codes, textKept: false,
+      question: '', previous: null, reply: '', withholdText: null, fixedReply: null,
+    });
+    expect(line.findings.every(finding => !finding.excerpt && !finding.detail)).toBe(true);
+    expect([line.lead, line.best].every(quote => !quote?.text)).toBe(true);
+  });
 });
