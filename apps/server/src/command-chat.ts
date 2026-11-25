@@ -35,7 +35,7 @@ import { continueWebSequence, joinSequence, planWebSequence, startWebSequence } 
 import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
 import { composePlan, planningQuestion, planningTask } from './assistant/planner.js';
 import type { SkillReader, SkillReadMode } from './assistant/skill-reader.js';
-import { createTruthReplyJudge } from './assistant/truth-publication.js';
+import { publishTruthReply } from './assistant/truth-publication.js';
 import { buildSiteReply, siteAnswers, siteCard, siteCommandTurn, siteTask, type SitesChatPort } from './assistant/site-builder.js';
 import { composeDocumentSpec, documentCreatedReply, documentEditedReply, documentInfoReply, documentQuestion, documentRequestGaps, documentTask, noSourceReply, unsupportedDocumentReply, type DocumentEditTask, type DocumentOperation } from './assistant/documents.js';
 import { PdfError, parsePageSelection } from '@mohassan/pdf';
@@ -447,7 +447,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     ...(tools?.computer ? ['computer_view', 'computer_click', 'computer_type', 'computer_key'] as const : []),
   ];
   type Execution = { ownerId: string; id: string; runId: string; token: string; controller: AbortController; full: boolean;
-    request?: string; previousRequest?: string | null; constraints?: UserRequestConstraints | null; state?: BrainState; page?: AgentPage; truthModelAnswer?: boolean;
+    request?: string; previousRequest?: string | null; constraints?: UserRequestConstraints | null; state?: BrainState; page?: AgentPage;
     /** Pages this run read over HTTP (the last five, in memory only): the judge in shadow compares the reply's sentences with them. */
     readPages?: AgentPage[] };
   /** Tools that reach the owner's machine, projects or task runtime. */
@@ -1287,7 +1287,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       ledgerSafe(state, runId, ledger => tryEnterPhase(ledger, 'awaiting_approval', pausedAt));
     } else ledgerSafe(state, runId, ledger => tryEnterPhase(ledger, 'awaiting_input', pausedAt));
     ledgerSafe(state, runId, ledger => collectStateEvidence(ledger, state, pausedAt));
-    if (say) await judgeReply(id, runId, say, status);
     await saveState(runId, state);
     await runTransaction(id,runId,async (tx) => {
       const current = await tx.selectFrom('chat_conversations').select(['status', 'active_run_id']).where('id', '=', id).forUpdate().executeTakeFirstOrThrow();
@@ -1296,6 +1295,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       await tx.updateTable('chat_runs').set({ status, lease_expires_at:sql`CURRENT_TIMESTAMP + interval '10 minutes'`, updated_at: new Date() }).where('id', '=', runId).execute();
       if (say) await addMessage(tx, id, 'assistant', say);
     });
+    if (say) judgeReply(id, runId, say, status);
   }
 
   /** The owner sees the campaign draft before any request to connect or sign in: once, then never repeated. */
@@ -1345,10 +1345,26 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       .map(page => ({ kind: 'page' as const, url: page.url, title: page.title, text: page.text.slice(0, 200_000) }));
   }
   /** `asked`: one part of a message of several questions is judged on its own question, with the part before it as the previous turn. */
-  const judgeReply = createTruthReplyJudge(config, () => execution.getStore(), judgeEvidence, (question, current) => {
-    assertPublicSearch(current.request!, question, current.state!, true);
-    assertBrowserRequestScope(current.request!, 'browser_navigation', current.state);
-  }, (id, reply) => vault.scrub(id, reply));
+  function judgeReply(id: string, runId: string, reply: string, status: string, allowChange = false, asked?: { question: string; previous: string | null }): { text: string; withheld: boolean } {
+    const unchanged = { text: reply, withheld: false };
+    if (!config.judgeShadow) return unchanged;
+    const current = execution.getStore();
+    if (!current?.request) return unchanged;
+    try {
+      const evidence = judgeEvidence(current);
+      const applyFix = Boolean(allowChange && config.judgeFixForOwner && current.full);
+      const applyWithhold = Boolean(allowChange && config.judgeWithholdForOwner && current.full);
+      const checked = publishTruthReply(config, current, { conversationId: id, runId, reply, status, question: asked?.question ?? current.request,
+        previous: asked ? asked.previous : current.previousRequest ?? null, applyFix, applyWithhold, keepText: config.judgeLogText !== 'owner' || current.full, ...(evidence.length ? { evidence } : {}) },
+        { allowChange, assertPublicSearch, assertBrowserRequestScope, scrub: text => vault.scrub(id, text) });
+      if (checked) return checked;
+      const verdict = config.judgeShadow.observe({ conversationId: id, runId, question: asked?.question ?? current.request, previous: asked ? asked.previous : current.previousRequest ?? null, reply, status,
+        applyFix, applyWithhold, keepText: config.judgeLogText !== 'owner' || Boolean(current.full), ...(evidence.length ? { evidence } : {}) });
+      if (applyWithhold && verdict?.decision === 'withhold' && verdict.withholdText?.trim()) return { text: verdict.withholdText, withheld: true };
+      if (applyFix && verdict?.decision === 'fix' && verdict.fixedReply?.trim()) return { text: verdict.fixedReply, withheld: false };
+    } catch { /* The judge never stops a run. */ }
+    return unchanged;
+  }
   /**
    * Whether the judge would withhold this answer when it is sent, asked before sending and without a log line: the
    * correction step of the task cycle reads another page instead of sending a refusal. Only where a withhold would be
@@ -1369,7 +1385,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall', prejudged = false) {
     // The judge sees the reply first: logged in shadow for everyone; for the owner's account its fix, or its fixed withhold
     // sentence, is what goes on. Memory publications keep their own stricter checks and are never changed here.
-    const judged = prejudged ? { text, withheld: false } : await judgeReply(id, runId, text, status, !memoryPublication);
+    const judged = prejudged ? { text, withheld: false } : judgeReply(id, runId, text, status, !memoryPublication);
     text = judged.text;
     // A withheld answer is not a completed task.
     if (judged.withheld && status === 'completed') status = 'partial';
@@ -2620,10 +2636,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           state.trail.push({ step: ++state.steps, action: 'shorten_previous_answer', changed: false, result: clean(shortened ?? 'no earlier answer').slice(0, 1100) });
           // A quote of the previous answer, which the judge saw when it was sent: judged again against «اختصر جوابك», it was
           // withheld as «the page does not talk about your question» (long-after turn 17, 2026-11-23).
-          const text = vault.scrub(id, shortened ?? noPreviousAnswer(shorter.lang));
-          const status = shortened ? 'completed' : 'blocked';
-          await judgeReply(id, runId, text, status);
-          await finish(id, runId, state, text, status, undefined, undefined, true);
+          await finish(id, runId, state, vault.scrub(id, shortened ?? noPreviousAnswer(shorter.lang)), shortened ? 'completed' : 'blocked', undefined, undefined, true);
           return;
         }
       }
@@ -2986,8 +2999,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         // «subject_missing» in the live check of 2026-11-23.
         const searched = plan.steps.at(-1);
         const reshaped = !plan.sequel && searched?.kind === 'search' && searched.ask && searched.reply
-          ? { question: searched.query, previous: currentExecution.previousRequest ?? null }
-          : searched?.kind === 'ask_page' ? { question: request, previous: currentExecution.previousRequest ?? null, pageQuestion: searched.question } : undefined;
+          ? { question: searched.query, previous: currentExecution.previousRequest ?? null } : undefined;
         const judgedAs = plan.sequel ? { question: plan.sequel.asked, previous: plan.sequel.previous } : reshaped;
         let outcome: HandsOutcome;
         try {
@@ -3059,7 +3071,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           // This answer is one part of several: judged on its own question, then the next part is asked about the page it
           // was read from, and the reply goes out once with every part in the order asked.
           const lang = plan.lang ?? (/\p{Script=Arabic}/u.test(request) ? 'ar' : 'en');
-          const judged = await judgeReply(id, runId, vault.scrub(id, outcome.text), outcome.status, true, judgedAs);
+          const judged = judgeReply(id, runId, vault.scrub(id, outcome.text), outcome.status, true, judgedAs);
           const next = continueWebSequence(plan.sequel, { request: plan.sequel.asked, text: judged.text, status: judged.withheld && outcome.status === 'completed' ? 'partial' : outcome.status },
             plan.found?.title ? plainTitle(plan.found.title) : '', lang);
           if ('plan' in next) {
@@ -3079,7 +3091,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         state.hands = null;
         if (reshaped) {
-          const judged = await judgeReply(id, runId, vault.scrub(id, outcome.text), outcome.status, true, reshaped);
+          const judged = judgeReply(id, runId, vault.scrub(id, outcome.text), outcome.status, true, reshaped);
           await finish(id, runId, state, judged.text, judged.withheld && outcome.status === 'completed' ? 'partial' : outcome.status, undefined, undefined, true);
           return;
         }
@@ -3684,7 +3696,6 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           const outcome = decision.outcome === 'done' ? 'done' : decision.outcome === 'blocked' ? 'blocked' : 'partial';
           const reviewed = reviewActionCompletion(state.actionCompletion, { runId, request, outcome, answerHash: taskEvidenceHash(text) });
           state.actionCompletionReview = reviewed;
-          currentExecution.truthModelAnswer = reviewed.allowDone;
           await finish(id, runId, state, reviewed.allowDone ? text : vault.scrub(id, reviewed.replacement?.text ?? 'لم أتحقق من إتمام الطلب.'),
             reviewed.allowDone ? outcome === 'blocked' ? 'blocked' : outcome === 'done' ? 'completed' : 'partial' : reviewed.replacement?.status ?? 'blocked');
           return;
@@ -4151,9 +4162,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (current.status === 'running' || WAITING_STATUSES.includes(current.status)) throw new BrowserError('CHAT_BUSY', 'بدأت مهمة أخرى في هذه المحادثة أثناء قراءة الصورة.', 409);
       const now = Date.now();
       await tx.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role: 'user', text: userText, images: JSON.stringify(attached), created_at: new Date(now) }).execute();
-      const replyId = randomUUID();
-      await judgeReply(id, replyId, reply.text, 'completed', false, { question: userText, previous: null });
-      await tx.insertInto('chat_messages').values({ id: replyId, conversation_id: id, role: 'assistant', text: reply.text, created_at: new Date(now + 1) }).execute();
+      await tx.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role: 'assistant', text: reply.text, created_at: new Date(now + 1) }).execute();
       await tx.updateTable('chat_images').set({ conversation_id: id, expires_at: null }).where('id', 'in', unique).where('owner_id', '=', ownerId).execute();
       const title = current.title === 'محادثة جديدة' || current.title === 'قراءة صورة' ? { title: (shown || (reply.language === 'ar' ? 'قراءة صورة' : 'Image reading')).slice(0, 100) } : {};
       await tx.updateTable('chat_conversations').set({ status: 'idle', error: null, progress: null, updated_at: new Date(), ...title }).where('id', '=', id).execute();

@@ -114,59 +114,81 @@ function sourceAgreement(fragments: Fragment[], pages: readonly TruthPage[]) {
   return { status, sources: [...sources], single: [...single], conflicts: [...conflicts] };
 }
 
+export interface PreparedTruth {
+  verdict: TruthVerdict;
+  withLookup?: () => Promise<TruthVerdict>;
+}
+
+/** The initial verdict uses pages already read. A supplemental read starts only when its caller asks for it. */
+function withCorroboration(
+  verdict: TruthVerdict,
+  lookup: TruthInput['lookup'],
+  supporting: readonly TruthPage[],
+  corroborate: (page: TruthPage) => TruthVerdict,
+): PreparedTruth {
+  if (!lookup || verdict.source !== 'single_source') return { verdict };
+  let pending: Promise<TruthVerdict> | undefined;
+  const evaluate = async (): Promise<TruthVerdict> => {
+    let extra: TruthPage | null = null;
+    try { extra = await lookup(supporting); } catch { /* Keep the verdict based on the pages already read. */ }
+    return { ...(extra ? corroborate(extra) : verdict), lookup: true };
+  };
+  return { verdict, withLookup: () => pending ??= evaluate() };
+}
+
 /** The release renderer derives its version and UTC timestamp by parsing the quoted directory entry. */
-async function judgeOfficialRelease(input: TruthInput, page: TruthPage, policy: TruthPolicy, measured: TruthVerdict): Promise<TruthVerdict | null> {
+function prepareOfficialRelease(input: TruthInput, page: TruthPage, policy: TruthPolicy, measured: TruthVerdict): PreparedTruth | null {
   const source = releaseQuestion(input.question);
   if (!source || pageKey(page.url) !== pageKey(source.page)) return null;
-  if (LTS.test(input.question)) return withheld('wrong_relation', measured);
+  if (LTS.test(input.question)) return { verdict: withheld('wrong_relation', measured) };
   const fact = source.parse(page.quote);
-  if (!fact) return withheld('unsupported_claim', measured);
+  if (!fact) return { verdict: withheld('unsupported_claim', measured) };
   const arabic = /\p{Script=Arabic}/u.test(input.question);
   const line = releaseLines(source, fact, arabic ? 'ar' : 'en')[0]!;
-  if (!input.reply.split('\n').includes(line)) return withheld('unsupported_claim', measured);
+  if (!input.reply.split('\n').includes(line)) return { verdict: withheld('unsupported_claim', measured) };
 
   const title = arabic ? 'المصدر' : 'Source';
   const conversion = arabic ? 'تحويل التاريخ والوقت من السطر المقتبس إلى صيغة UTC.' : 'Date and time converted from the quoted entry to UTC format.';
   const checked = `${line}\n\n> ${fact.evidence}\n\n${conversion}\n\n**${title}:** ${sourceLinks([page.url])}`;
-  if (policy === 'agreement') return { ...measured, decision: 'fix', replacement: checked };
-  let extra: TruthPage | null = null;
-  if (input.lookup) {
-    try { extra = await input.lookup([page]); } catch { /* Keep the verified directory as the primary source. */ }
-  }
-  const candidates = [...input.pages, ...(extra ? [extra] : [])].filter(item => independentTruthPages(page, item));
-  const peers = candidates.flatMap(item => {
-    const parsed = source.parse(item.quote);
-    if (!parsed) return [];
-    const entry = item.quote.split('\n').find(line => line.includes(parsed.evidence));
-    const context = [item.title, entry].filter(Boolean).join(' ');
-    return LATEST_RELEASE.test(context) && context.toLowerCase().includes(source.product.toLowerCase())
-      ? [{ ...parsed, url: item.url }] : [];
-  });
-  const conflict = peers.find(peer => peer.version !== fact.version || peer.publishedAt !== fact.publishedAt);
-  const checkedSources = { ...measured, lookup: Boolean(input.lookup) };
-  if (conflict) return withheld('source_conflict', { ...checkedSources, source: 'conflict' }, [page.url, conflict.url]);
-  if (peers.length) return { ...checkedSources, decision: 'fix', source: 'confirmed', replacement: `${checked}\n\n${sourceLinks(peers.map(peer => peer.url))}` };
-  const single = { ...checkedSources, source: 'single_source' as const };
-  if (policy === 'require_two') return withheld('single_source', single);
-  return { ...single, decision: 'fix', codes: ['single_source'],
-    replacement: `${arabic ? 'وفق مصدر واحد:' : 'According to one source:'}\n\n${checked}` };
+  const initial = { ...measured, decision: 'fix' as const, replacement: checked };
+  if (policy === 'agreement') return { verdict: initial };
+
+  const finalize = (pages: readonly TruthPage[]): TruthVerdict => {
+    const peers = pages.filter(item => independentTruthPages(page, item)).flatMap(item => {
+      const parsed = source.parse(item.quote);
+      if (!parsed) return [];
+      const entry = item.quote.split('\n').find(line => line.includes(parsed.evidence));
+      const context = [item.title, entry].filter(Boolean).join(' ');
+      return LATEST_RELEASE.test(context) && context.toLowerCase().includes(source.product.toLowerCase())
+        ? [{ ...parsed, url: item.url }] : [];
+    });
+    const conflict = peers.find(peer => peer.version !== fact.version || peer.publishedAt !== fact.publishedAt);
+    if (conflict) return withheld('source_conflict', { ...measured, source: 'conflict' }, [page.url, conflict.url]);
+    if (peers.length) return { ...initial, source: 'confirmed', replacement: `${checked}\n\n${sourceLinks(peers.map(peer => peer.url))}` };
+    const single = { ...measured, source: 'single_source' as const };
+    if (policy === 'require_two') return withheld('single_source', single);
+    return { ...initial, source: 'single_source', codes: ['single_source'],
+      replacement: `${arabic ? 'وفق مصدر واحد:' : 'According to one source:'}\n\n${checked}` };
+  };
+
+  return withCorroboration(finalize(input.pages), input.lookup, [page], extra => finalize([...input.pages, extra]));
 }
 
-export async function judgeTruth(input: TruthInput, policy: TruthPolicy = TRUTH_POLICY): Promise<TruthVerdict> {
+export function prepareTruth(input: TruthInput, policy: TruthPolicy = TRUTH_POLICY): PreparedTruth {
   const result: TruthVerdict = {
     decision: 'send', codes: [], source: 'not_needed', lookup: false, measured: false, repaired: false, replacement: null,
   };
-  if (input.scope === 'other') return { ...result, codes: ['outside_scope'] };
-  if (input.scope === 'ungrounded_fact') return withheld('evidence_unavailable', result);
+  if (input.scope === 'other') return { verdict: { ...result, codes: ['outside_scope'] } };
+  if (input.scope === 'ungrounded_fact') return { verdict: withheld('evidence_unavailable', result) };
 
   const primaryUrl = input.primaryUrl ?? citedTruthUrl(input.reply);
   const initialPages = input.pages.filter(page => page.quote.trim());
   const primary = primaryUrl ? initialPages.filter(page => pageKey(page.url) === pageKey(primaryUrl)) : initialPages;
-  if (!primary.length) return withheld('evidence_unavailable', result);
+  if (!primary.length) return { verdict: withheld('evidence_unavailable', result) };
 
   const measured = { ...result, measured: true };
   if (primaryUrl && primary.length === 1) {
-    const official = await judgeOfficialRelease(input, primary[0]!, policy, measured);
+    const official = prepareOfficialRelease(input, primary[0]!, policy, measured);
     if (official) return official;
   }
   const arabic = /\p{Script=Arabic}/u.test(input.question);
@@ -175,53 +197,49 @@ export async function judgeTruth(input: TruthInput, policy: TruthPolicy = TRUTH_
   const grounded = { ...measured, codes: uniqueCodes(findings) };
   const answers = inspection.fragments.filter(item => !item.finding && item.answering);
   if (!inspection.supportedAnswer || !answers.length) {
-    return withheld(findings[0] ?? 'wrong_relation', grounded);
+    return { verdict: withheld(findings[0] ?? 'wrong_relation', grounded) };
   }
 
   // The first surviving answer has to lead. Supported background can remain after it.
   const lead = answers[0]!;
   const kept = [lead, ...inspection.fragments.filter(item => item !== lead && !item.finding)];
   const repaired = findings.length > 0 || inspection.fragments[0] !== lead;
-  let replacement = repaired ? supportedReply(kept, input, arabic) : withoutSourceNote(input.reply);
-  let source: TruthSourceStatus = 'not_needed';
-  let lookup = false;
-  if (policy !== 'agreement' && kept.some(item => item.quantities.length)) {
-    const claimsText = kept.map(item => item.text).join('\n\n');
-    const recheck = (pages: readonly TruthPage[]) => {
-      const reassessed = inspectTruth(input.question, claimsText, pages);
-      const claims = reassessed.fragments.filter(item => !item.finding);
-      // Corroboration cannot erase a claim that was already inspected against the primary.
-      return claims.length === kept.length ? claims : kept;
-    };
-    let pages = initialPages;
-    let agreement = sourceAgreement(recheck(pages), pages);
-    if (agreement.status === 'single_source' && input.lookup) {
-      lookup = true;
-      const supporting = primary.filter(page => agreement.sources.includes(page.url));
-      let extra: TruthPage | null = null;
-      try { extra = await input.lookup(supporting.length ? supporting : primary); } catch { /* Attribute to the primary source. */ }
-      if (extra) {
-        const primaryPages = supporting.length ? supporting : primary;
-        if (primaryPages.some(page => independentTruthPages(page, extra))) {
-          pages = [...pages, extra];
-          agreement = sourceAgreement(recheck(pages), pages);
-        }
-      }
-    }
-    source = agreement.status;
-    const corroborated = { ...grounded, source, lookup };
-    if (source === 'conflict') return withheld('source_conflict', corroborated, agreement.conflicts);
+  const originalReplacement = repaired ? supportedReply(kept, input, arabic) : withoutSourceNote(input.reply);
+  function finalize(agreement?: ReturnType<typeof sourceAgreement>): TruthVerdict {
+    let replacement = originalReplacement;
+    const source = agreement?.status ?? 'not_needed';
+    const corroborated = { ...grounded, source };
+    if (agreement && source === 'conflict') return withheld('source_conflict', corroborated, agreement.conflicts);
     if (source === 'single_source') {
       if (policy === 'require_two') return withheld('single_source', corroborated);
       replacement = `${arabic ? 'وفق مصدر واحد:' : 'According to one source:'}\n\n${replacement}`;
+      corroborated.codes = uniqueCodes([...grounded.codes, source]);
     }
-    if (source === 'confirmed') {
+    if (agreement && source === 'confirmed') {
       const label = arabic ? 'مصادر مستقلة تؤكد القيم' : 'Independent sources confirm the values';
       replacement += `\n\n**${label}:** ${sourceLinks(agreement.sources)}`;
     }
+    if (replacement === input.reply.trim()) return corroborated;
+    return { ...corroborated, decision: 'fix', replacement, repaired };
   }
 
-  const codes = source === 'single_source' ? uniqueCodes([...grounded.codes, source]) : grounded.codes;
-  if (replacement === input.reply.trim()) return { ...grounded, codes, source, lookup };
-  return { ...grounded, decision: 'fix', codes, source, lookup, replacement, repaired };
+  if (policy === 'agreement' || !kept.some(item => item.quantities.length)) return { verdict: finalize() };
+  const claimsText = kept.map(item => item.text).join('\n\n');
+  const recheck = (pages: readonly TruthPage[]) => {
+    const reassessed = inspectTruth(input.question, claimsText, pages);
+    const claims = reassessed.fragments.filter(item => !item.finding);
+    // Corroboration cannot erase a claim that was already inspected against the primary.
+    return sourceAgreement(claims.length === kept.length ? claims : kept, pages);
+  };
+  const agreement = recheck(initialPages);
+  const verdict = finalize(agreement);
+  const supporting = primary.filter(page => agreement.sources.includes(page.url));
+  const primaryPages = supporting.length ? supporting : primary;
+  return withCorroboration(verdict, input.lookup, primaryPages, extra =>
+    primaryPages.some(page => independentTruthPages(page, extra)) ? finalize(recheck([...initialPages, extra])) : verdict);
+}
+
+export async function judgeTruth(input: TruthInput, policy: TruthPolicy = TRUTH_POLICY): Promise<TruthVerdict> {
+  const prepared = prepareTruth(input, policy);
+  return prepared.withLookup ? prepared.withLookup() : prepared.verdict;
 }
