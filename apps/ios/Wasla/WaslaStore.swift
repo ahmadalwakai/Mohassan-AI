@@ -14,12 +14,15 @@ final class WaslaStore: ObservableObject {
     @Published var errorMessage: String?
     @Published var foreground = true
     let origin = CloudDefaults.load()
+    let pushNotifications = PushNotifications.shared
     private(set) var client: CloudClient?
     /// Bumped whenever the session changes; answers that belong to an older session are dropped.
     private(set) var sessionEpoch = 0
 
     // The chat. Logic in Mohassan.swift.
     @Published var chatList: [ChatSummary] = []
+    @Published var pendingPushRoute: PushNotificationRoute?
+    var visibleChatConversationID: String?
     @Published var conversation: ChatConversation?
     @Published var capabilities: ChatCapabilities?
     /// The server runs a resent request once when it carries the same key (`requestKeys` in the list).
@@ -61,14 +64,17 @@ final class WaslaStore: ObservableObject {
     var signedIn: Bool { account == .signedIn }
 
     func start() async {
+        defer { if !signedIn { pendingPushRoute = nil } }
         // The app's earlier version talked to the PC directly; its pairing and saved requests mean nothing now.
         await SessionVault.shared.forgetLegacyPairing()
         for key in ["wasla.server.identity", "wasla.pending.image", "wasla.last.image", "wasla.mohassan.request"] { defaults.removeObject(forKey: key) }
         do {
             guard let cookie = try await SessionVault.shared.read() else { account = .signedOut; return }
-            client = CloudClient(origin: origin, cookie: cookie)
+            let signedInClient = CloudClient(origin: origin, cookie: cookie)
+            client = signedInClient
             email = defaults.string(forKey: emailKey)
             account = .signedIn
+            pushNotifications.connect(signedInClient, email: email)
             restorePending()
             await loadChatList()
             guard signedIn else { return }
@@ -90,11 +96,13 @@ final class WaslaStore: ObservableObject {
             let (cookie, reply) = try await CloudClient(origin: origin, cookie: nil).signIn(email: address, password: password)
             try await SessionVault.shared.save(cookie)
             sessionEpoch += 1
-            client = CloudClient(origin: origin, cookie: cookie)
+            let signedInClient = CloudClient(origin: origin, cookie: cookie)
+            client = signedInClient
             let shown = reply.user?.email ?? address
             email = shown
             defaults.set(shown, forKey: emailKey)
             account = .signedIn
+            pushNotifications.connect(signedInClient, email: email)
             await loadChatList()
             guard signedIn else { return }
             Task { await self.loadWindows() }
@@ -105,13 +113,16 @@ final class WaslaStore: ObservableObject {
     /// Ends the session here and on the server; the server also ends this session's Windows grants.
     func signOut() async {
         let old = client
+        let cleanup = pushNotifications.disconnect(unregister: true)
         endSession()
+        await cleanup?.value
         await old?.signOut()
     }
 
     /// The server no longer knows this session (it expired, or was ended elsewhere).
     func signedOutByServer() {
         guard account == .signedIn else { return }
+        pushNotifications.disconnect(unregister: false)
         endSession()
         errorMessage = WaslaError.signedOut.localizedDescription
     }
@@ -124,6 +135,7 @@ final class WaslaStore: ObservableObject {
         pairingTask?.cancel(); pairingTask = nil
         client = nil
         account = .signedOut
+        pendingPushRoute = nil; visibleChatConversationID = nil
         conversation = nil; chatList = []; capabilities = nil; requestKeys = false
         pending = nil; savePending(); sending = false; secureBusy = false
         attachments = []; uploading = false; images = [:]; draft = ""
@@ -137,6 +149,7 @@ final class WaslaStore: ObservableObject {
     func sceneChanged(active: Bool) {
         foreground = active
         guard signedIn else { return }
+        if active { pushNotifications.refreshSettings() }
         chatSceneChanged(active: active)
         remoteSceneChanged(active: active)
     }

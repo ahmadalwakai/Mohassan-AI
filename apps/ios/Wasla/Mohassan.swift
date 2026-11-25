@@ -58,9 +58,32 @@ extension WaslaStore {
         let epoch = sessionEpoch, screen = chatEpoch
         do {
             let detail: ChatConversation = try await client.get("/api/chat/conversations/\(id)")
-            guard epoch == sessionEpoch, screen == chatEpoch else { return }
+            guard !Task.isCancelled, epoch == sessionEpoch, screen == chatEpoch else { return }
             present(detail)
         } catch { if epoch == sessionEpoch, screen == chatEpoch { show(error) } }
+    }
+
+    func openPushConversation(_ route: PushNotificationRoute) async {
+        guard signedIn, !sending, !Task.isCancelled else { return }
+        if conversation?.id == route.conversationID {
+            await refreshPushConversation(route.conversationID)
+        } else {
+            await openConversation(route.conversationID)
+        }
+    }
+
+    func refreshVisiblePushConversation(_ route: PushNotificationRoute) async {
+        guard foreground, signedIn, visibleChatConversationID == route.conversationID,
+              conversation?.id == route.conversationID else { return }
+        await refreshPushConversation(route.conversationID)
+    }
+
+    private func refreshPushConversation(_ id: String) async {
+        let epoch = sessionEpoch, screen = chatEpoch
+        // A long-poll begun before delivery could return a snapshot older than this read.
+        stopWatching()
+        await refreshConversation(id)
+        if epoch == sessionEpoch, screen == chatEpoch { watch() }
     }
 
     /// Shows a conversation the server returned, and keeps following it.
@@ -459,6 +482,15 @@ struct ChatView: View {
     @State private var browsing: BrowserDestination?
     @State private var picks: [PhotosPickerItem] = []
     @State private var openingConversation: UUID?
+    @State private var notificationScroll: ChatScrollRequest?
+    private static let failureAnchor = "run-failure"
+
+    private var visibleConversationID: String? {
+        guard !listShown, !settingsShown, !remoteShown, !screenShown, browsing == nil,
+              !approveConfirm, !dropConfirm else { return nil }
+        return store.conversation?.id
+    }
+
     private var clean: String { store.draft.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var scrollKey: Int {
         let conversation = store.conversation
@@ -484,6 +516,7 @@ struct ChatView: View {
     }
 
     var body: some View {
+        let pushRoute = store.sending ? nil : store.pendingPushRoute
         NavigationStack {
             VStack(spacing: 0) {
                 chatBar
@@ -508,6 +541,11 @@ struct ChatView: View {
             Button("اتركه", role: .destructive) { store.dropPending() }
         } message: {
             Text("قد يكون الخادم استلمه. تركه هنا لا يوقف شيئًا هناك، ويعود نصك إلى الصندوق. راجع المحادثة قبل أن ترسل من جديد.")
+        }
+        .onChange(of: visibleConversationID, initial: true) { _, id in store.visibleChatConversationID = id }
+        .onDisappear { store.visibleChatConversationID = nil }
+        .task(id: pushRoute) {
+            if let pushRoute { await openPushConversation(pushRoute) }
         }
         .onChange(of: picks) { _, items in
             guard !items.isEmpty else { return }
@@ -582,6 +620,7 @@ struct ChatView: View {
             working: store.conversation?.working == true,
             sending: store.sending,
             scrollKey: scrollKey,
+            scrollRequest: notificationScroll,
             showComposer: !store.asking,
             notice: notice,
             tools: store.imagesAvailable ? AnyView(photoButton) : nil,
@@ -609,6 +648,40 @@ struct ChatView: View {
             await store.openConversation(id)
             if openingConversation == loadingID { openingConversation = nil }
         }
+    }
+
+    private func openPushConversation(_ route: PushNotificationRoute) async {
+        guard !Task.isCancelled, store.pendingPushRoute == route, !store.sending else { return }
+        let epoch = store.sessionEpoch, loadingID = UUID()
+        openingConversation = loadingID
+        listShown = false
+        settingsShown = false
+        remoteShown = false
+        screenShown = false
+        browsing = nil
+        approveConfirm = false
+        dropConfirm = false
+        dismissKeyboard()
+
+        await store.openPushConversation(route)
+
+        let stillOpening = openingConversation == loadingID
+        if stillOpening { openingConversation = nil }
+        guard !Task.isCancelled, epoch == store.sessionEpoch, store.pendingPushRoute == route else { return }
+        store.pendingPushRoute = nil
+        guard stillOpening, let conversation = store.conversation, conversation.id == route.conversationID else { return }
+        notificationScroll = ChatScrollRequest(target: scrollTarget(for: route, in: conversation))
+    }
+
+    private func scrollTarget(for route: PushNotificationRoute, in conversation: ChatConversation) -> String? {
+        if route.kind == .blocked {
+            if conversation.status == ChatStatus.waitingApproval, let approval = conversation.approval { return approval.id }
+            if conversation.status == ChatStatus.waitingInput, let secure = conversation.secure { return secure.id }
+            if conversation.status == ChatStatus.waitingUser, let question = conversation.question,
+               conversation.fieldsQuestion != nil || !question.phoneOptions.isEmpty { return question.id }
+        }
+        if route.kind != .completed, !conversation.working, conversation.error?.isEmpty == false { return Self.failureAnchor }
+        return conversation.messages.last { !$0.mine }?.id
     }
 
     private var photoButton: some View {
@@ -646,6 +719,7 @@ struct ChatView: View {
                              messageId: message.mine ? nil : message.id, showsActions: message.id == latestReplyID)
                 }
             }
+            .id(message.id)
             .transition(reduceMotion ? .identity : .opacity)
         }
         if let browser = conversation.browser { BrowserLine(browser: browser) { screenShown = true } }
@@ -659,9 +733,13 @@ struct ChatView: View {
                     .id(fieldsQuestion.id)
             } else if !question.phoneOptions.isEmpty {
                 optionsCard(question)
+                    .id(question.id)
             }
         }
-        if conversation.status == ChatStatus.waitingApproval, let approval = conversation.approval { approvalCard(approval) }
+        if conversation.status == ChatStatus.waitingApproval, let approval = conversation.approval {
+            approvalCard(approval)
+                .id(approval.id)
+        }
         if conversation.status == ChatStatus.waitingInput, let secure = conversation.secure {
             SecureCard(request: secure, busy: store.secureBusy || cardsLocked) { action, values in store.secure(action, values: values) }
                 .id(secure.id)
@@ -674,6 +752,7 @@ struct ChatView: View {
                     .accessibilityAddTraits(.isHeader)
                 Text(error).font(Forest.font(.subheadline)).foregroundStyle(Forest.ink)
             }
+            .id(Self.failureAnchor)
         }
         if conversation.waiting {
             Button(role: .destructive) { store.cancelRun() } label: { Label("إيقاف", systemImage: "stop.fill") }

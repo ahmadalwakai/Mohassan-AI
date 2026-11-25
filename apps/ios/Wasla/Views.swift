@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 import UIKit
 import SafariServices
 
@@ -98,6 +99,11 @@ struct ScreenTitle: View {
 }
 // MARK: - Chat layout
 
+struct ChatScrollRequest: Equatable {
+    let target: String?
+    private let id = UUID()
+}
+
 /// A thread that scrolls under a composer pinned above the keyboard. Sending clears focus, so the keyboard closes;
 /// dragging the thread closes it too. While Mohassan works, an empty box shows «stop» and a typed one shows «send».
 struct ChatScaffold<Thread: View>: View {
@@ -110,6 +116,7 @@ struct ChatScaffold<Thread: View>: View {
     let working: Bool
     let sending: Bool
     let scrollKey: Int
+    let scrollRequest: ChatScrollRequest?
     var showComposer = true
     /// Why sending is off or what it does now; the draft stays in the box.
     var notice: String? = nil
@@ -121,13 +128,14 @@ struct ChatScaffold<Thread: View>: View {
     var onStop: (() -> Void)? = nil
     let thread: Thread
 
-    init(draft: Binding<String>, placeholder: String, tooLong: Bool, canSend: Bool, working: Bool, sending: Bool, scrollKey: Int, showComposer: Bool = true,
+    init(draft: Binding<String>, placeholder: String, tooLong: Bool, canSend: Bool, working: Bool, sending: Bool, scrollKey: Int,
+         scrollRequest: ChatScrollRequest? = nil, showComposer: Bool = true,
          notice: String? = nil, tools: AnyView? = nil, tray: AnyView? = nil, onSend: @escaping () -> Bool, onStop: (() -> Void)? = nil,
          @ViewBuilder thread: () -> Thread) {
         _draft = draft
         self.placeholder = placeholder; self.tooLong = tooLong; self.canSend = canSend; self.working = working
         self.sending = sending
-        self.scrollKey = scrollKey; self.showComposer = showComposer; self.notice = notice; self.tools = tools; self.tray = tray
+        self.scrollKey = scrollKey; self.scrollRequest = scrollRequest; self.showComposer = showComposer; self.notice = notice; self.tools = tools; self.tray = tray
         self.onSend = onSend; self.onStop = onStop
         self.thread = thread()
     }
@@ -149,19 +157,25 @@ struct ChatScaffold<Thread: View>: View {
             .simultaneousGesture(TapGesture().onEnded {
                 if focused { focused = false; dismissKeyboard() }
             })
-            .onChange(of: scrollKey) { _, _ in scrollToBottom(proxy) }
+            .onChange(of: scrollKey) { _, _ in scroll(proxy) }
+            .task(id: scrollRequest) {
+                guard let scrollRequest else { return }
+                await Task.yield()
+                guard !Task.isCancelled else { return }
+                scroll(proxy, to: scrollRequest.target ?? "bottom", anchor: scrollRequest.target == nil ? .bottom : .top)
+            }
             .task(id: focused) {
                 guard focused else { return }
                 do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
-                scrollToBottom(proxy)
+                scroll(proxy)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { if showComposer { composer } }
         }
     }
 
-    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+    private func scroll(_ proxy: ScrollViewProxy, to target: String = "bottom", anchor: UnitPoint = .bottom) {
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
-            proxy.scrollTo("bottom", anchor: .bottom)
+            proxy.scrollTo(target, anchor: anchor)
         }
     }
 
@@ -831,6 +845,8 @@ struct SignInView: View {
 
 struct SettingsView: View {
     @EnvironmentObject private var store: WaslaStore
+    @EnvironmentObject private var pushNotifications: PushNotifications
+    @Environment(\.openURL) private var openURL
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage(AppAppearance.storageKey) private var appearance: AppAppearance = .dark
@@ -867,6 +883,9 @@ struct SettingsView: View {
                             }
                         }
                     }
+                    settingsSection("الإشعارات") {
+                        notificationSettings
+                    }
                     settingsSection("ما يعمل الآن") {
                         settingsNote(store.capabilities?.localModeText ?? (store.capabilities == nil ? "لم تُقرأ قدرات هذه الجلسة بعد." : "نموذج لغوي متصل، والردود الحرة متاحة."))
                     }
@@ -884,6 +903,74 @@ struct SettingsView: View {
             } message: { Text("تبقى محادثاتك على الخادم. ويتوقف أي تحكم بالكمبيوتر من هذا الهاتف.") }
         }
         .environment(\.layoutDirection, .rightToLeft)
+    }
+
+    private var notificationSettings: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Card {
+                VStack(spacing: 8) {
+                    Toggle(isOn: Binding(get: { pushNotifications.enabled }, set: { pushNotifications.setEnabled($0) })) {
+                        HStack(spacing: 12) {
+                            rowIcon("bell")
+                            Text("إشعارات المهام").font(Forest.font(.subheadline, weight: .medium))
+                        }
+                    }
+                    .tint(Forest.accent)
+                    .frame(minHeight: 44)
+                    .disabled(pushNotifications.requestingPermission)
+                    Rectangle().fill(Forest.line).frame(height: 1).accessibilityHidden(true)
+                    notificationSystemRow("الصوت", value: soundSetting, icon: "speaker.wave.2")
+                    Rectangle().fill(Forest.line).frame(height: 1).accessibilityHidden(true)
+                    notificationSystemRow("عرض أول سطر على شاشة القفل", value: previewSetting, icon: "lock")
+                }
+            }
+            Text("يصلك إشعار عند اكتمال المهمة أو عند الحاجة إلى تدخّلك. يضبط iOS الصوت ومعاينات شاشة القفل.")
+                .font(Forest.font(.footnote)).foregroundStyle(Forest.softText)
+                .lineSpacing(5).padding(.horizontal, 2)
+            if pushNotifications.settings?.authorizationStatus == .denied {
+                Text("اسمح بإشعارات موحسن في إعدادات iOS ثم فعّلها هنا.")
+                    .font(Forest.font(.footnote)).foregroundStyle(Forest.softText).padding(.horizontal, 2)
+            }
+            if let problem = pushNotifications.problem {
+                Text(problem).font(Forest.font(.footnote)).foregroundStyle(Forest.alert)
+                    .padding(.horizontal, 2)
+            }
+        }
+    }
+
+    private var soundSetting: String? {
+        guard let feature = pushNotifications.settings?.soundSetting else { return nil }
+        return feature == .enabled ? "مفعّل" : "موقوف"
+    }
+
+    private var previewSetting: String? {
+        switch pushNotifications.settings?.showPreviewsSetting {
+        case .some(.always): return "ظاهر"
+        case .some(.whenAuthenticated): return "بعد فتح القفل"
+        case .some(.never): return "مخفي"
+        default: return nil
+        }
+    }
+
+    private func notificationSystemRow(_ title: String, value: String?, icon: String) -> some View {
+        Button {
+            if let url = URL(string: UIApplication.openNotificationSettingsURLString) { openURL(url) }
+        } label: {
+            HStack(spacing: 12) {
+                rowIcon(icon)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(Forest.font(.subheadline, weight: .medium)).foregroundStyle(Forest.ink)
+                    if let value {
+                        Text(value).font(Forest.font(.footnote)).foregroundStyle(Forest.softText)
+                    }
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.forward").foregroundStyle(Forest.softText).accessibilityHidden(true)
+            }
+            .frame(minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("يفتح إعدادات إشعارات موحسن في iOS")
     }
 
     private var appearancePicker: some View {
