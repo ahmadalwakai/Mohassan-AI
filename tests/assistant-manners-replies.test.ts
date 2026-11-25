@@ -92,7 +92,7 @@ describe('manners reply rendering', () => {
 
   it('answers identity honestly, with the name alone when asked', () => {
     expect(renderMannersReply(detection('identity')).text).toBe('I’m Mohassan, a digital assistant.');
-    expect(renderMannersReply(detection('identity', { detail: 'human' })).text).toMatch(/^No, I’m Mohassan/u);
+    expect(renderMannersReply(detection('identity', { detail: 'human' })).text).toMatch(/an AI assistant.*not a person/u);
     expect(renderMannersReply(detection('identity', { language: 'ar', detail: 'name' })).text).toBe('موحسن');
     expect(renderMannersReply(detection('identity', { detail: 'creator' })).text).toContain('Ahmad Alwakai');
   });

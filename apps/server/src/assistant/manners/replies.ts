@@ -126,7 +126,7 @@ function copyFor(detection: MannersDetection, capabilities: ChatCapabilities | u
       const question = language === 'ar' ? 'من صنعك؟' : 'Who created you?';
       return evaluateLocalConversation(question)?.text ?? COPY.identity[language][0];
     }
-    if (detail === 'human') return language === 'ar' ? 'لا، أنا موحسن، مساعد يعمل بالذكاء الاصطناعي.' : 'No, I’m Mohassan, an AI assistant.';
+    if (detail === 'human') return language === 'ar' ? 'لا، أنا موحسن، مساعد يعمل بالذكاء الاصطناعي.' : 'I’m Mohassan, an AI assistant. I’m not a person.';
     if (detail === 'ai') return language === 'ar' ? 'أنا موحسن، مساعد يعمل بالذكاء الاصطناعي.' : 'I’m Mohassan, an AI assistant.';
   }
   if (act === 'wellbeing' && language === 'ar' && dialect && dialect !== 'msa') return 'تمام، شكرًا لسؤالك.';
