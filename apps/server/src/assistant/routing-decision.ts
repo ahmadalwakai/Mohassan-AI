@@ -14,6 +14,7 @@ import {
 } from './request-context.js';
 import { writingTask } from './writer.js';
 import { assessRequestScope, parseRequestScopeAssessment, requestScopeActionText, reviewPublicProjection, requestConstraintReply, type RequestScopeAssessment } from './request-scope.js';
+import { applyScratchRouting, runtimeScratchPolicy, type ScratchDecisionPolicy, type ScratchRoutingChoices } from './scratch-decisions.js';
 
 /**
  * Read-only routing contract for the host to adopt, test and observe. A decision
@@ -27,7 +28,7 @@ export const routedIntents = [...requestContextIntents.filter(intent => intent !
 export type RoutedIntent = Exclude<RequestContextIntent, 'unknown'> | 'image' | 'media';
 export type RequestRoute = RoutedIntent | 'reply' | 'clarify';
 export type RoutingHandler = 'resume' | 'clarify' | 'local_conversation' | 'local_computation' | 'local_status' | 'memory' | 'ads' | 'computer' | 'browser' | 'search' | 'writing' | 'planning' | 'coding' | 'reminder' | 'image' | 'media' | 'model' | 'unsupported';
-export type RoutingReason = 'pending_answer' | 'missing_reference' | 'invalid_request' | 'local_conversation' | 'local_computation' | 'host_runtime_status' | 'explicit_handler' | 'context_destination' | 'deterministic_browser_plan' | 'public_lookup' | 'local_model_fallback' | 'missing_capability' | 'account_restriction' | 'unresolved_intent';
+export type RoutingReason = 'pending_answer' | 'missing_reference' | 'invalid_request' | 'local_conversation' | 'local_computation' | 'host_runtime_status' | 'explicit_handler' | 'context_destination' | 'deterministic_browser_plan' | 'public_lookup' | 'local_model_fallback' | 'missing_capability' | 'account_restriction' | 'unresolved_intent' | 'scratch_route' | 'scratch_speech_act' | 'scratch_refuse' | 'scratch_out_of_scope';
 
 const PendingQuestionSchema = z.object({
   id: z.string().min(1).max(80),
@@ -71,10 +72,14 @@ const frameIntent = (intent: ReturnType<typeof buildFrame>['intent']): RoutedInt
   write: 'writing', ads: 'ads', coding: 'coding', computer: 'pc',
 } as Partial<Record<ReturnType<typeof buildFrame>['intent'], RoutedIntent>>)[intent] ?? null;
 
-/** No I/O, model calls, public search fallback for private requests or state mutation. */
-export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDecision {
+export function decideRequestRoute(input: RequestRoutingInput, policy: ScratchDecisionPolicy | null = runtimeScratchPolicy()): RequestRoutingDecision {
+  const rule = decideRuleRequestRoute(input);
+  return policy ? applyScratchRouting(input, rule, policy, choices => decideRuleRequestRoute(input, choices)) : rule;
+}
+
+function decideRuleRequestRoute(input: RequestRoutingInput, choices: ScratchRoutingChoices = {}): RequestRoutingDecision {
   const pending = PendingQuestionSchema.safeParse(input.pendingQuestion);
-  const options: RequestContextOptions = { turnId: input.turnId,
+  const options: RequestContextOptions = { turnId: input.turnId, learnedFollowUp: choices.followUp,
     ...(pending.success ? { pendingQuestion: { id: pending.data.id, fields: pending.data.fields } } : {}) };
   const resolution = resolveRequestContext(input.text, input.context, options);
   const previousContext = parseRequestContextState(input.context);
@@ -125,12 +130,12 @@ export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDe
 
   const action = scopeRequest;
   const now = input.now ?? new Date();
-  const localConversation = evaluateLocalConversation(action);
   const localComputation = evaluateLocalComputation(action, now);
+  const localConversation = evaluateLocalConversation(action, choices.smalltalk && !localComputation ? { reason: 'scratch_speech_act' } : undefined);
   // These helpers match complete standalone requests; they do not consume a
   // greeting followed by an action, a quoted calculation or a multi-action task.
   if (localConversation) {
-    const decision = base('chat', 'chat', 'local_conversation', 'local_conversation');
+    const decision = base('chat', 'chat', 'local_conversation', choices.smalltalk ? 'scratch_speech_act' : 'local_conversation');
     const localSource: RequestScopeAssessment = { version: 1, source: 'unresolved', operation: 'converse', scope: 'unknown', destination: 'unknown', publicQueryEligible: false, reasons: ['non_lookup_operation'] };
     const retainedAcknowledgement = resolution.intent === 'chat' && resolution.nextState !== null && resolution.nextState.intent !== 'chat';
     const nextState = retainedAcknowledgement ? structuredClone(resolution.nextState) : decision.resolution.nextState
@@ -157,6 +162,11 @@ export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDe
         provenance: [{ field: 'topic', sourceTurnId: currentId, relation: 'current' }, ...slots.map(slot => ({ field: slot.kind, sourceTurnId: slot.sourceTurnId, relation: 'current' as const }))],
       } };
   }
+  if (choices.refusal) {
+    const decision = base('unsupported', 'unsupported', 'unsupported', choices.refusal === 'refuse' ? 'scratch_refuse' : 'scratch_out_of_scope');
+    const localReply = evaluateLocalConversation(action, decision);
+    return { ...decision, availability: 'missing_capability', ...(localReply && { localReply }) };
+  }
   if (resolution.kind === 'ambiguous') return clarify('missing_reference');
   if (sourceAssessment.reasons.includes('unresolved_reference')) return clarify('missing_reference');
 
@@ -165,7 +175,7 @@ export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDe
   const writer = writingTask(action), planner = planningTask(action);
   if (frame.missing.some(field => field === 'expression' || field === 'memory_content')
     || resolution.intent === 'browser_command' && frame.missing.includes('website') && !steps && !direct) return clarify('missing_reference');
-  if (resolution.intent === 'web_search' && frame.intent === 'unknown' && frame.missing.includes('question') && sourceAssessment.source === 'unresolved' && !steps) {
+  if (!choices.route && resolution.intent === 'web_search' && frame.intent === 'unknown' && frame.missing.includes('question') && sourceAssessment.source === 'unresolved' && !steps) {
     return has('chatModel') ? base('chat', 'chat', 'model', 'local_model_fallback') : clarify('missing_reference');
   }
   let intent: RoutedIntent | 'unknown' = resolution.intent;
@@ -201,6 +211,8 @@ export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDe
   else if (sourceAssessment.source === 'prior_conversation' && ['web_search', 'unknown'].includes(intent)) intent = 'memory';
   else if (explicitPublicSource && sourceAssessment.operation === 'lookup') intent = 'web_search';
   else if (explicitPublicSource && sourceAssessment.operation === 'act' && sourceAssessment.destination === 'browser_command') intent = 'browser_command';
+
+  if (choices.route) { intent = choices.route; reason = 'scratch_route'; }
 
   const withCapability = (route: RoutedIntent, handler: RoutingHandler, required: readonly RoutingCapability[], modelFallback = false): RequestRoutingDecision => {
     const decision = base(route, route, handler, reason);
@@ -247,8 +259,9 @@ export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDe
       if (!reviewPublicProjection(input.text, query, scopeOptions).eligible) return has('chatModel')
         ? base(intent, intent, 'model', 'local_model_fallback') : clarify('unresolved_intent');
       decision.publicQuery = query;
-      if (steps) decision.browserSteps = structuredClone(steps);
-      return { ...decision, reason: decision.availability === 'ready' ? 'public_lookup' : decision.reason };
+      const browserSteps = steps ?? (choices.route === 'news' ? parseHands(action, true) : null);
+      if (browserSteps) decision.browserSteps = structuredClone(browserSteps);
+      return { ...decision, reason: decision.availability === 'ready' && !choices.route ? 'public_lookup' : decision.reason };
     }
     case 'unsupported': return { ...base('unsupported', 'unsupported', 'unsupported', reason), availability: 'missing_capability' };
     default: return has('chatModel') ? base('chat', 'chat', 'model', 'local_model_fallback') : clarify('unresolved_intent');

@@ -1,0 +1,32 @@
+{
+  "clinc150.json": {
+    "url": "https://raw.githubusercontent.com/clinc/oos-eval/828f8093932c8fe6ca7936c3d2e52903b1c523de/data/data_full.json",
+    "sha256": "36923c3705a59e08fe9c3883d8bc2dd966ef93e22cb78ac41171782a698d56e0",
+    "license": "CC-BY-3.0"
+  },
+  "massive.tar.gz": {
+    "url": "https://amazon-massive-nlu-dataset.s3.amazonaws.com/amazon-massive-dataset-1.0.tar.gz",
+    "sha256": "7df623fd2d300a4d235d6ee5bd396c9a28258d3a0ccb29abdb054506eba153f8",
+    "license": "CC-BY-4.0"
+  },
+  "canard.zip": {
+    "url": "https://api.drum.lib.umd.edu/server/api/core/bitstreams/7bce2c7e-9df3-4134-a5cc-78d0784c5f45/content",
+    "sha256": "ec5fa4c580b5b3759401d691d6035fdc5caf5c481d4a735410e86b8664288110",
+    "license": "CC-BY-SA-4.0"
+  },
+  "arbanking77.csv": {
+    "url": "https://raw.githubusercontent.com/SinaLab/ArBanking77/2e3a5639e254bc28828ed0af6d3059d64d3b97fc/data/Banking77_full_corpus.csv",
+    "sha256": "38863ae4093840f2418d76613d0c2134295fc78f1116361fa9ff00680b1309c1",
+    "license": "CC-BY-SA-4.0"
+  },
+  "aya-arb.jsonl": {
+    "url": "https://huggingface.co/datasets/CohereLabs/aya_redteaming/resolve/5a16fee03c19d681b4f3527b6a750e1ed4d434c7/aya_arb.jsonl",
+    "sha256": "df0fee38ea7018318ff80383943fb90df11456607cffe4791b3e717033038898",
+    "license": "Apache-2.0"
+  },
+  "aya-eng.jsonl": {
+    "url": "https://huggingface.co/datasets/CohereLabs/aya_redteaming/resolve/5a16fee03c19d681b4f3527b6a750e1ed4d434c7/aya_eng.jsonl",
+    "sha256": "08104abe7a3d84218941df35a4195096f991751a8512355ee16dd9116035f2c5",
+    "license": "Apache-2.0"
+  }
+}
