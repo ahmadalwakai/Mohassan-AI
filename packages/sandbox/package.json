@@ -1,1 +1,1 @@
-{"name":"@mohassan/sandbox","version":"0.1.0","private":true,"type":"module","exports":"./src/index.ts"}
+{"name":"@mohassan/sandbox","version":"0.1.0","private":true,"type":"module","exports":"./src/index.ts","dependencies":{"eslint":"9.39.5","typescript":"5.9.3"}}
