@@ -33,6 +33,7 @@ import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { judge as judgeAnswer } from './assistant/judge.js';
 import { continueWebSequence, joinSequence, planWebSequence, startWebSequence } from './assistant/web-sequence.js';
 import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
+import { runExtractiveWriting, type WritingPageReader } from './assistant/writing/host.js';
 import { composePlan, planningQuestion, planningTask } from './assistant/planner.js';
 import type { SkillReader, SkillReadMode } from './assistant/skill-reader.js';
 import { buildSiteReply, siteAnswers, siteCard, siteCommandTurn, siteTask, type SitesChatPort } from './assistant/site-builder.js';
@@ -138,7 +139,7 @@ export interface CommandChatConfig {
    * Absent in tests and fixtures without it: the browser reads the result instead, as before.
    */
   /** `live`: the page answers a changing fact (a price, the weather), so no cached copy may serve. */
-  readPage?: (url: string, signal: AbortSignal, options?: { live?: boolean }) => Promise<{ url: string; title: string; text: string; status: number; fetchedAt?: string } | 'disallowed' | null>;
+  readPage?: WritingPageReader;
   memoryContext?: (ownerId: string, goal: string) => Promise<unknown>;
   /** Read-only retrieval of the owner's active, evaluated knowledge documents. */
   knowledgeSearch?: (ownerId: string, query: string) => Promise<readonly LocalKnowledgeDocument[]>;
@@ -2323,6 +2324,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const earlier = await db.selectFrom('chat_messages').select(['role', 'text']).where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(HISTORY_MESSAGES + 1).execute();
       const history = earlier.reverse().slice(0, -1).map((entry) => ({ role: entry.role, text: clean(entry.text) }));
       currentExecution.previousRequest = history.filter(entry => entry.role === 'user').at(-1)?.text ?? null;
+      if (run.intent !== 'review_browser' && run.intent !== 'restore_browser' && await runExtractiveWriting({ db, config, ownerId, id, runId, request, state, signal, search, active, previousText: currentExecution.previousRequest, full: currentExecution.full,
+        observe: async () => await browser.hasPage(ownerId, id) ? (await observeBrowser(ownerId, id)).page : null, scrub: text => vault.scrub(id, clean(text)),
+        finish: (text, status) => finish(id, runId, state, text, status, undefined, undefined, true) })) return;
       let page: AgentPage | null = null;
       // Preflight recovery reads spend budget, but do not execute the requested
       // hands plan or turn a new command into an already-handled continuation.

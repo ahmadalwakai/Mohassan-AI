@@ -2,6 +2,7 @@ import { notWebReason, tidy } from './hands.js';
 import { matchText, normalizeRequest } from './mind/normalize.js';
 import { requestActionText } from './request-context.js';
 import { requestOperationText, requestScopeActionText } from './request-scope.js';
+import { parseExtractiveWriting, type ExtractiveWritingTask } from './writing/request.js';
 
 /**
  * Letters and emails without a model: one card asks who it is for, what kind it is, what to say and who signs it,
@@ -94,7 +95,10 @@ function requestsDelivery(instruction: string): boolean {
 }
 
 /** What a writing request is, or null when it is not one. */
-export function writingTask(request: string): WritingDecision | null {
+export function writingTask(request: string): WritingDecision | null;
+export function writingTask(request: string, mode: 'extractive'): ExtractiveWritingTask | null;
+export function writingTask(request: string, mode?: 'extractive'): WritingDecision | ExtractiveWritingTask | null {
+  if (mode === 'extractive') return parseExtractiveWriting(request);
   if (typeof request !== 'string' || !request.trim() || request.length > MAX_WRITING_INPUT) return null;
   const action = requestActionText(requestScopeActionText(request));
   const body = suppliedBody(request);

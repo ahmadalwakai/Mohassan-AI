@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import styles from "./assistant-app.module.css";
+import { MarkdownTable, markdownTableAt, renderEscapedInline } from "./markdown-table";
 
 /** Renders the assistant's replies. It builds React elements only, so a reply can never inject HTML. */
 
@@ -17,7 +18,7 @@ const LINKS = new RegExp(String.raw`\[([^\]\n]+)\]\((${ADDRESS})\)`, "g");
 const RULE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
 
 function inline(text: string): ReactNode[] {
-  return text.split(INLINE).map((part, index) => {
+  return renderEscapedInline(text, INLINE, (part, index) => {
     if (part.startsWith("**") && part.endsWith("**") && part.length > 4) return <strong key={index}>{part.slice(2, -2)}</strong>;
     if (part.startsWith("`") && part.endsWith("`") && part.length > 2) return <code key={index}>{part.slice(1, -1)}</code>;
     const link = LINK.exec(part);
@@ -65,6 +66,8 @@ export function Markdown({ text }: { text: string }) {
       index++;
       continue;
     }
+    const table = markdownTableAt(lines, index);
+    if (table) { blocks.push(<MarkdownTable key={blocks.length} table={table} inline={inline} />); index = table.next; continue; }
     const heading = /^(#{1,3})\s+(.+)$/.exec(line);
     if (heading) {
       blocks.push(<h3 key={blocks.length} className={styles.replyHeading}>{inline(heading[2])}</h3>);
@@ -90,7 +93,7 @@ export function Markdown({ text }: { text: string }) {
       continue;
     }
     const paragraph: string[] = [];
-    while (index < lines.length && lines[index].trim() && !lines[index].trimStart().startsWith("```") && !/^#{1,3}\s/.test(lines[index]) && !ordered.test(lines[index]) && !bullet.test(lines[index]) && !/^\s*>/.test(lines[index]) && !RULE.test(lines[index])) paragraph.push(lines[index++]);
+    while (index < lines.length && lines[index].trim() && !lines[index].trimStart().startsWith("```") && !/^#{1,3}\s/.test(lines[index]) && !ordered.test(lines[index]) && !bullet.test(lines[index]) && !/^\s*>/.test(lines[index]) && !RULE.test(lines[index]) && !markdownTableAt(lines, index)) paragraph.push(lines[index++]);
     blocks.push(<p key={blocks.length} dir="auto">{inline(paragraph.join("\n"))}</p>);
   }
   return <div className={styles.reply}>{blocks}</div>;

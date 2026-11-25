@@ -13,6 +13,7 @@ import {
   parseRequestContextState, type RequestContextIntent, type RequestContextOptions, type RequestResolution,
 } from './request-context.js';
 import { writingTask } from './writer.js';
+import { extractiveWritingEnabled } from './writing/request.js';
 import { assessRequestScope, parseRequestScopeAssessment, requestScopeActionText, reviewPublicProjection, requestConstraintReply, type RequestScopeAssessment } from './request-scope.js';
 
 /**
@@ -157,6 +158,7 @@ export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDe
         provenance: [{ field: 'topic', sourceTurnId: currentId, relation: 'current' }, ...slots.map(slot => ({ field: slot.kind, sourceTurnId: slot.sourceTurnId, relation: 'current' as const }))],
       } };
   }
+  if (extractiveWritingEnabled() && writingTask(input.text, 'extractive')) return base('writing', 'writing', 'writing', 'explicit_handler');
   if (resolution.kind === 'ambiguous') return clarify('missing_reference');
   if (sourceAssessment.reasons.includes('unresolved_reference')) return clarify('missing_reference');
 
