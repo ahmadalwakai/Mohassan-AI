@@ -1,0 +1,1188 @@
+{
+  "anomalies": [
+    {
+      "dataset": "massive-ar-SA",
+      "detector": "explicit",
+      "family": "recommendation",
+      "intent": "recommendation_movies",
+      "reasoner": "none",
+      "sourceId": "massive:ar-SA:13181"
+    },
+    {
+      "dataset": "massive-en-US",
+      "detector": "explicit",
+      "family": "calendar",
+      "intent": "calendar_set",
+      "reasoner": "none",
+      "sourceId": "massive:en-US:7847"
+    }
+  ],
+  "clockCases": 1116,
+  "clockMonitorViolations": 0,
+  "codeSha256": {
+    "apps/server/src/assistant/response-policy.ts": "e43116c42cf5c0e9b45c287ed60a6ac2cbbb3d97ae8b3843a2839cfb5765be26",
+    "apps/server/src/monitors/decision/frame.ts": "fc0313095115970c5dc4cd04a486e60243844c2f1096c73cd56a50c5730e701e",
+    "apps/server/src/monitors/decision/reasoner.ts": "2de6f4d0b9b05136f2a2519e9ab662f879373aa8d3819cfab8b40d2b6b6112d9",
+    "apps/server/src/monitors/decision/signals.ts": "e673bae7c1324f96707b4bca5b58f2c5a759c18d0ea4e22f2ca72515e9323a31",
+    "apps/server/src/monitors/detection.ts": "7f719d60075688718cd1b069e1c1ecbb8dcc1338ec8a6fb0f823b5a487122547",
+    "apps/server/src/monitors/v2-chat-intents.ts": "2c188f229322f62c6327ba1537c33122b72f9e1e466c17f86471ddb8cd17c6bb",
+    "packages/scratch-classifiers/data_guard.py": "a73516fc55c0a3ebe3bd16d11dce96a4b16408009a66ab2d5ce621c503b11ab3",
+    "packages/scratch-classifiers/monitor_corpora.py": "64e64974a60cbacaccc1a41da20e9136e3a91dfdf9235412bcf4d9b65043dc34",
+    "scripts/monitor-decision/audit-human.ts": "beaa5dc54d41bbe98231aa69818858dfb1b9047bdf1063280a601055fc7d92ee",
+    "scripts/monitor-decision/audit_human.py": "374f0d44fddec2273c80cf71b695e5715aca720477c7fb082859f514e920d94e"
+  },
+  "datasets": {
+    "clinc150": {
+      "families": {
+        "accept_reservations": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "account_blocked": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "alarm": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 17
+        },
+        "application_status": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "apr": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "are_you_a_bot": {
+          "cases": 2,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "balance": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "bill_balance": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "bill_due": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "book_flight": {
+          "cases": 22,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "book_hotel": {
+          "cases": 28,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "calculator": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "calendar": {
+          "cases": 60,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 1
+        },
+        "calories": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "cancel": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "cancel_reservation": {
+          "cases": 17,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "car_rental": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "card_declined": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "carry_on": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "change_accent": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "change_ai_name": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "change_language": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "change_speed": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "change_user_name": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "change_volume": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "confirm_reservation": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "cook_time": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "credit_limit": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "credit_limit_change": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "credit_score": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "current_location": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "damaged_card": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "date": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "definition": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "direct_deposit": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "directions": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "distance": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "do_you_have_pets": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "exchange_rate": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "expiration_date": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "find_phone": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "flight_status": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "flip_coin": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "food_last": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "freeze_account": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "fun_fact": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "gas": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "gas_type": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "greeting": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "how_busy": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "how_old_are_you": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "improve_credit_score": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "income": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "ingredient_substitution": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "ingredients_list": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "insurance": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "insurance_change": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "interest_rate": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "international_fees": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "international_visa": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "jump_start": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "last_maintenance": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "lost_luggage": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "make_call": {
+          "cases": 15,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "maybe": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "meal_suggestion": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "meaning_of_life": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "measurement_conversion": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "meeting_schedule": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "min_payment": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "mpg": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "new_card": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "next_holiday": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "next_song": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "no": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "nutrition_info": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "oil_change_how": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "oil_change_when": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "oos": {
+          "cases": 988,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "order": {
+          "cases": 16,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "order_checks": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "order_status": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "pay_bill": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "payday": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "pin_change": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "play_music": {
+          "cases": 10,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "plug_type": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "pto_balance": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "pto_request": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "pto_request_status": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "pto_used": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "recipe": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "redeem_rewards": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "reminder": {
+          "cases": 60,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 8
+        },
+        "repeat": {
+          "cases": 8,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "replacement_card_duration": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "report_fraud": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "report_lost_card": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "reset_settings": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "restaurant_reservation": {
+          "cases": 20,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "restaurant_reviews": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "restaurant_suggestion": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "rewards_balance": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "roll_dice": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "rollover_401k": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "routing": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "schedule_maintenance": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "schedule_meeting": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "share_location": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "shopping_list": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "shopping_list_update": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "smart_home": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "spelling": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "spending_history": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "sync_device": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "taxes": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "tell_joke": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "text": {
+          "cases": 6,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "time": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "timer": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 10
+        },
+        "timezone": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "tire_change": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "tire_pressure": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "todo_list": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "todo_list_update": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "traffic": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "transactions": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "transfer": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "translate": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "travel_alert": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "travel_notification": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "travel_suggestion": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "uber": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "update_playlist": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "user_name": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "vaccines": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "w2": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "weather": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "what_are_your_hobbies": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "what_can_i_ask_you": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "what_song": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "where_are_you_from": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "whisper_mode": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "who_do_you_work_for": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "who_made_you": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "yes": {
+          "cases": 30,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        }
+      },
+      "total": {
+        "cases": 5242,
+        "detectorMonitor": 0,
+        "reasonerMonitor": 0,
+        "reasonerReminder": 36
+      }
+    },
+    "massive-ar-SA": {
+      "families": {
+        "alarm": {
+          "cases": 96,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 3
+        },
+        "audio": {
+          "cases": 62,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "calendar": {
+          "cases": 402,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 13
+        },
+        "cooking": {
+          "cases": 72,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "datetime": {
+          "cases": 99,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "email": {
+          "cases": 200,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "general": {
+          "cases": 189,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "iot": {
+          "cases": 104,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "lists": {
+          "cases": 142,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "music": {
+          "cases": 81,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "news": {
+          "cases": 124,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "play": {
+          "cases": 150,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "qa": {
+          "cases": 288,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "recommendation": {
+          "cases": 94,
+          "detectorMonitor": 1,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "social": {
+          "cases": 62,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "takeaway": {
+          "cases": 46,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "transport": {
+          "cases": 87,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "weather": {
+          "cases": 156,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        }
+      },
+      "total": {
+        "cases": 2454,
+        "detectorMonitor": 1,
+        "reasonerMonitor": 0,
+        "reasonerReminder": 16
+      }
+    },
+    "massive-en-US": {
+      "families": {
+        "alarm": {
+          "cases": 96,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 23
+        },
+        "audio": {
+          "cases": 62,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "calendar": {
+          "cases": 402,
+          "detectorMonitor": 1,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 37
+        },
+        "cooking": {
+          "cases": 72,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "datetime": {
+          "cases": 99,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "email": {
+          "cases": 200,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "general": {
+          "cases": 187,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "iot": {
+          "cases": 105,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "lists": {
+          "cases": 142,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "music": {
+          "cases": 81,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "news": {
+          "cases": 124,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "play": {
+          "cases": 150,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "qa": {
+          "cases": 288,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "recommendation": {
+          "cases": 94,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "social": {
+          "cases": 62,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "takeaway": {
+          "cases": 46,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "transport": {
+          "cases": 87,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        },
+        "weather": {
+          "cases": 156,
+          "detectorMonitor": 0,
+          "reasonerMonitor": 0,
+          "reasonerReminder": 0
+        }
+      },
+      "total": {
+        "cases": 2453,
+        "detectorMonitor": 1,
+        "reasonerMonitor": 0,
+        "reasonerReminder": 60
+      }
+    }
+  },
+  "exclusionManifestSha256": "de192bdc7203e1aa24fa06b216d3976f4ea77ec103e085a4019af7a60c2f3054",
+  "partitions": [
+    "test",
+    "oos_test"
+  ],
+  "reasonerPerTurnMs": {
+    "p50": 0.22766600000068138,
+    "p95": 0.6084290000007968,
+    "samples": 10149,
+    "warmupCount": 256
+  },
+  "rowsExcluded": {
+    "clinc150/oos_test": 12,
+    "clinc150/test": 246,
+    "massive-ar-SA/test": 520,
+    "massive-en-US/test": 521
+  },
+  "schemaVersion": 1,
+  "sources": {
+    "clinc150.json": {
+      "license": "CC-BY-3.0",
+      "sha256": "36923c3705a59e08fe9c3883d8bc2dd966ef93e22cb78ac41171782a698d56e0",
+      "url": "https://raw.githubusercontent.com/clinc/oos-eval/828f8093932c8fe6ca7936c3d2e52903b1c523de/data/data_full.json"
+    },
+    "massive.tar.gz": {
+      "license": "CC-BY-4.0",
+      "sha256": "7df623fd2d300a4d235d6ee5bd396c9a28258d3a0ccb29abdb054506eba153f8",
+      "url": "https://amazon-massive-nlu-dataset.s3.amazonaws.com/amazon-massive-dataset-1.0.tar.gz"
+    }
+  }
+}

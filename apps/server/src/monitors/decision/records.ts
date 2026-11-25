@@ -90,7 +90,7 @@ export async function readPriorMonitorDecisions(db: Kysely<any>, userId: string,
   const rows = await db.selectFrom('smart_monitors').select(['approved_at', 'spec']).where('user_id', '=', userId)
     .where('conversation_id', '=', conversationId).where(sql<boolean>`(approved_at IS NOT NULL OR status = 'stopped')`)
     .orderBy('created_at', 'desc').orderBy('id').limit(MONITOR_LIMITS.listLimit).execute() as Pick<MonitorRow, 'approved_at' | 'spec'>[];
-  return rows.map(({ approved_at, spec }) => ({
+  return rows.reverse().map(({ approved_at, spec }) => ({
     decision: approved_at ? 'accepted' as const : 'declined' as const,
     topic: spec.title, ...(spec.source.kind === 'page' && { sourceUrl: spec.source.url }),
   }));
