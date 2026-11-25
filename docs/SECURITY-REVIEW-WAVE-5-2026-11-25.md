@@ -358,3 +358,9 @@ python3 -B scripts/dev-bench/compare.py \
 | Review | `b9ecd26b8e3037a3f095042d5b7e0ddb1508239fe0c9818fd471ee120f32786e` |
 
 `sha256sum scripts/dev-bench/Dockerfile` returned `03417f8e64d499bbda87143555e090af9463ca72afccdb16b9a888ef8768a761`. The image's `dpkg-query -W` check exited 0 for all 26 Debian packages named in the Dockerfile. It reported libseccomp `2.5.4-1+deb12u1`, Git `1:2.39.5-0+deb12u3`, and NSS `2:3.87.1-1+deb12u4`.
+
+### Branch verification
+
+`git merge-base --is-ancestor 201321031293999003bb0ae55a29dbd250ac96ce HEAD` exited 0 for the named starting point. The same command for PR #9's `1bb51dd998c790db4894d17780585f054dd27384` exited 1. `git diff --exit-code 257b27b0cc8bdf8fb1a48ce48c7a78ef3bc054ac HEAD -- . ':(exclude)docs/SECURITY-REVIEW-WAVE-5-2026-11-25.md'` exited 0. Only the report differs from the measured head.
+
+During the review, `git ls-remote origin refs/heads/integration/wave-5-2026-11-25 refs/heads/security/wave-5-review` showed the target moving to `9507ea4e5fcc09abb186b1bbab183904d0787693`. `gh pr view 97 --repo ahmadalwakai/Mohassan-AI --json number,isDraft,headRefOid,baseRefName,mergeable,mergeStateStatus,url` reported the draft as mergeable with the named target. The tests and paired benchmark cover the requested PR #95 snapshot and this review's code. A combined validation with the later target remains open.
