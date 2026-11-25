@@ -61,6 +61,7 @@ import { assessUserFactMemoryRequest, createUserFactMemoryReceipt } from './assi
 import { restoreUserFactMemoryFlowState, runUserFactMemoryFlow } from './assistant/user-fact-memory-flow.js';
 import { completeUserFactMemory, createUserFactMemorySupervisor } from './assistant/user-fact-memory-completion.js';
 import { assessLegacyMemoryStatement } from './assistant/legacy-memory-statement.js';
+import { handleStructuredMemoryTurn, protectStructuredMemoryIdempotencyBody, protectStructuredMemoryInput, type StructuredMemoryPublication } from './assistant/structured-memory-turn.js';
 import { reviewComputerRequestScope, type ComputerRequestAction } from './assistant/computer-request-scope.js';
 import { reviewBrowserRequestScope, type BrowserRequestCapability } from './assistant/browser-request-scope.js';
 import { reviewWorkRequestScope, type WorkRequestCapability } from './assistant/work-request-scope.js';
@@ -671,8 +672,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if (config.accountActive && !await config.accountActive(current.ownerId, tx)) throw new AccountAccessEnded();
     return {conversation,run,current};
   }
-  async function runTransaction<T>(id: string, runId: string, work: (tx: Kysely<any>) => Promise<T>): Promise<T> {
-    return db.transaction().execute(async tx => { await lockedExecution(tx,id,runId); return work(tx); });
+  async function runTransaction<T>(id: string, runId: string, work: (tx: Kysely<any>) => Promise<T>, beforeFence?: StructuredMemoryPublication['lock']): Promise<T> {
+    return db.transaction().execute(async tx => { if (beforeFence) await beforeFence(tx); await lockedExecution(tx,id,runId); return work(tx); });
   }
   async function assertActive() { const current = execution.getStore(); if (!current) throw new RunEnded(); await runTransaction(current.id,current.runId,async()=>{}); }
   /** Internal lifecycle cleanup, never a way to perform tools after revocation. */
@@ -1377,7 +1378,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
 
   /** `prejudged`: the text is a message of several answers, each already judged on its own question (web-sequence.ts). */
   async function finish(id: string, runId: string, state: BrainState, text: string, status: 'completed' | 'partial' | 'blocked',
-      proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall', prejudged = false) {
+      proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall', prejudged = false, structured?: StructuredMemoryPublication) {
     // The judge sees the reply first: logged in shadow for everyone; for the owner's account its fix, or its fixed withhold
     // sentence, is what goes on. Memory publications keep their own stricter checks and are never changed here.
     const judged = prejudged ? { text, withheld: false } : judgeReply(id, runId, text, status, !memoryPublication);
@@ -1399,7 +1400,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // the matching state, review event and terminal status together.
       // Native memory handlers explicitly require their current review without
       // changing historical advisory contract hashes or generic chat policy.
-      let finalText = text, finalStatus = status;
+      let { text: finalText, status: finalStatus }: { text: string; status: typeof status } = structured ? await structured.resolve(tx) : { text, status };
       if (state.supervision) {
         state.completionReview = reviewChatAnswer(state.supervision, finalText);
         if ((state.supervision.contract.mode === 'enforced' || memoryPublication) && finalStatus === 'completed' && !state.completionReview.allowCompletion) {
@@ -1441,13 +1442,14 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',
         data: JSON.stringify({ contractHash: state.supervision?.contract.hash, review: state.completionReview }) }).execute();
+      if (structured) await structured.revalidate(tx);
       await tx.updateTable('chat_conversations').set({ status: 'idle', active_run_id: null, progress: null, error: null, updated_at: new Date() }).where('id', '=', id).execute();
       await tx.updateTable('chat_runs').set({ status: finalStatus, state: JSON.stringify(vault.scrubValue(id, state, clean)), updated_at: new Date() }).where('id', '=', runId).execute();
       await recordTerminalRun(tx, runId, finalStatus, proof);
       if (config.recordSkillGap && finalStatus !== 'completed') {
         await config.recordSkillGap(tx, { ownerId: execution.getStore()!.ownerId, chatRunId: runId, outcome: finalStatus, signal: state.gapSignal ?? null });
       }
-    });
+    }, structured?.lock);
     const current=execution.getStore();if(current)forgetVault(id,current.token);
   }
 
@@ -2002,6 +2004,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const level = decideBrowserVisibility({ request, route: state.routing?.route ?? null, role: 'member' });
         if (level.level === 4) { await finish(id, runId, state, level.reason, 'blocked'); return; }
       }
+      if (await handleStructuredMemoryTurn({ ownerId, conversationId: id, runId, source: effectiveSource, originalRequestHash: state.requestOriginalHash,
+        constraints, state, task: run.intent === 'task', memoryAvailable: Boolean(tools?.memory), quota: MAX_MEMORY_SAVES, scrub: text => vault.scrub(id, clean(text)),
+        revalidate: tx => lockedExecution(tx, id, runId), publish: publication => finish(id, runId, state, '', 'blocked', undefined, undefined, true, publication) })) return;
       const actionRequest = requestActionText(requestScopeActionText(request));
       const computationMemoryBinding = { ownerId, conversationId: id, runId, evaluatedAt: effectiveSource.evaluatedAt };
       const computationMemoryReceipt = createComputationMemoryReceipt(request, computationMemoryBinding);
@@ -3907,6 +3912,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
 
   async function send(ownerId: string, id: string, raw: unknown, intent:'task'|'restore_browser'|'review_browser'='task',expectedCheckpointToken?:string) {
     if(closing)throw new BrowserError('CHAT_SHUTTING_DOWN','الخدمة تتوقف الآن. حاول بعد قليل.',503);
+    raw = protectStructuredMemoryInput(raw);
     const requestOriginalHash = originalInputHash(raw, 'text');
     const input = ChatSendSchema.parse(raw);
     const row = await owned(ownerId, id);
@@ -4167,6 +4173,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
 
   async function create(ownerId: string, raw: unknown = {}) {
     if(closing)throw new BrowserError('CHAT_SHUTTING_DOWN','الخدمة تتوقف الآن. حاول بعد قليل.',503);
+    raw = protectStructuredMemoryInput(raw, 'goal');
     const input = ChatCreateSchema.parse(raw);
     const id = randomUUID();
     await db.transaction().execute(async tx => {
@@ -4397,7 +4404,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
    * A failed first call frees its key. Keys live 24 hours. Callers without a key run as before.
    */
   async function once<T>(ownerId: string, scope: string, key: string, body: unknown, run: () => Promise<T>): Promise<T> {
-    const bodyHash = createHash('sha256').update(`${scope}\n${JSON.stringify(body ?? null)}`).digest('hex');
+    const bodyHash = createHash('sha256').update(`${scope}\n${JSON.stringify(protectStructuredMemoryIdempotencyBody(body, scope) ?? null)}`).digest('hex');
     await db.deleteFrom('chat_request_keys').where('created_at', '<', new Date(Date.now() - 24 * 3_600_000)).execute();
     const claimed = await db.insertInto('chat_request_keys')
       .values({ owner_id: ownerId, request_key: key, scope, body_hash: bodyHash, status: 'running' })
