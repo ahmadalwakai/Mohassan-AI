@@ -46,6 +46,7 @@ export interface RequestRoutingInput {
   fullAccess?: boolean;
   now?: Date;
   turnId?: string;
+  previousUserTurn?: string;
 }
 
 export interface RequestRoutingDecision {
@@ -126,7 +127,7 @@ export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDe
   const action = scopeRequest;
   const now = input.now ?? new Date();
   const localConversation = evaluateLocalConversation(action);
-  const localComputation = evaluateLocalComputation(action, now);
+  const localComputation = evaluateLocalComputation(action, now, { previousUserTurn: input.previousUserTurn });
   // These helpers match complete standalone requests; they do not consume a
   // greeting followed by an action, a quoted calculation or a multi-action task.
   if (localConversation) {
