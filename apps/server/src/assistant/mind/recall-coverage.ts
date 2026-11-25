@@ -7,6 +7,7 @@
 import { memoryRecallFormat } from '../memory-recall.js';
 import { parsePreferredLanguageFact, recognizePreferredLanguageRequest } from '../preferred-language-fact.js';
 import type { Evidence } from './contract.js';
+import { explicitKnowledgeDocumentRequest, knowledgeQuestionText } from '../knowledge-document-request.js';
 
 export interface RecallCoverageEvidence {
   quote: string;
@@ -50,6 +51,7 @@ const PROPERTY_WORDS: Record<string, readonly string[]> = {
   quantity: ['quantity', 'quantities', 'count', 'counts', 'عدد', 'كميه'],
   color: ['color', 'colors', 'colour', 'colours', 'لون', 'الوان'],
   length: ['length', 'height', 'طول', 'ارتفاع'],
+  weight: ['weight', 'mass', 'وزن'],
   duration: ['duration', 'مده', 'يستغرق', 'تستغرق'],
 };
 const SUBJECT_WORDS: Record<string, readonly string[]> = {
@@ -82,6 +84,15 @@ const propertyByWord = new Map<string, string>();
 const subjectByWord = new Map<string, string>();
 for (const [property, words] of Object.entries(PROPERTY_WORDS)) for (const word of words) propertyByWord.set(normalize(word), property);
 for (const [subject, words] of Object.entries(SUBJECT_WORDS)) for (const word of words) subjectByWord.set(normalize(word), subject);
+
+// An evaluated document can express a field as a domain term or a short phrase.
+// Fold both the request and the quote's label before checking semantic coverage.
+function documentFieldTerms(text: string) {
+  return normalize(text)
+    .replace(/\b(?:due date|(?:last|final) day|deadline)\b|(?<!\p{L})(?:اخر|اول)\s+يوم(?!\p{L})(?:\s+ل(?=\p{L}{3}))?/gu, ' date ')
+    .replace(/\b(?:rent|rental charge)\b|(?<!\p{L})(?:ال)?ايجار(?!\p{L})/gu, ' price ')
+    .replace(/\b(?:weight|mass)\b|(?<!\p{L})(?:ال)?وزن(?!\p{L})/gu, ' weight ');
+}
 
 function forms(word: string) {
   const base = word.replace(/^(?:وال|بال|لل|ال)(?=\p{L}{3})/u, '');
@@ -222,7 +233,7 @@ const INSTRUCTION = /\b(?:ignore|disregard|override|bypass)\b[^.!?؟]*(?:instruc
 // verification of a model's scalar/JSON proposal retain the same restriction.
 const NUMERIC_QUALIFIER = /(?<![\p{L}\p{N}_-])(?:not|no|never|(?:isn|aren|wasn|weren)['’]t|less than|fewer than|more than|greater than|at least|at most|up to|over|under|about|around|approximately|roughly|nearly|between|minimum|maximum|or fewer|or less|or more|if|unless|maybe|perhaps|ليس|ليست|لا|لم|لن|غير|اقل من|اكثر من|علي الاقل|علي الاكثر|بحد ادني|بحد اقصي|حوالي|نحو|تقريبا|قرابه|بين|ربما|قد|اذا|لو|بشرط)(?![\p{L}\p{N}_-])/u;
 const NUMERIC_BOUND = /[<>≤≥≠≈~]|\p{Nd}\s*(?:[-–—]|to|الي|الى)\s*[+-]?\p{Nd}/u;
-const NUMERIC_PROPERTIES = new Set(['budget', 'amount', 'price', 'capacity', 'quantity', 'length', 'duration']);
+const NUMERIC_PROPERTIES = new Set(['budget', 'amount', 'price', 'capacity', 'quantity', 'length', 'weight', 'duration']);
 
 function qualifiedNumericAssertion(quote: string): boolean {
   const relation = COPULA.exec(quote), colon = quote.indexOf(':');
@@ -264,7 +275,7 @@ interface EvidenceScope {
   explicitSubject: Set<string>;
   atoms?: { property: string; subject: Set<string>; explicitSubject: Set<string> }[];
 }
-function evidenceScope(item: RecallCoverageEvidence): EvidenceScope | null {
+function evidenceScope(item: RecallCoverageEvidence, documentFields: boolean): EvidenceScope | null {
   // Only a host-labelled memory quote can provide this special self field.
   // The leaf preserves the source statement/value bytes and rejects other
   // owners, programming/client fields, reports, and literal command bodies.
@@ -280,7 +291,8 @@ function evidenceScope(item: RecallCoverageEvidence): EvidenceScope | null {
   }
   const relation = COPULA.exec(quote);
   const colon = quote.indexOf(':');
-  const label = relation ? quote.slice(0, relation.index) : colon >= 0 ? quote.slice(0, colon) : quote;
+  const originalLabel = relation ? quote.slice(0, relation.index) : colon >= 0 ? quote.slice(0, colon) : quote;
+  const label = documentFields ? documentFieldTerms(originalLabel) : originalLabel;
   const fields = properties(label);
   const tail = relation ? quote.slice(relation.index + relation[0].length) : '';
   if (/^(?:located|based|situated)\s+(?:in|at)\b/iu.test(tail)) fields.push('location');
@@ -302,11 +314,15 @@ export function assessRecallCoverage(request: string, evidence: readonly RecallC
   if (!request.trim() || request.length > MAX_REQUEST || evidence.length > MAX_EVIDENCE
     || options.contextTopic && options.contextTopic.length > MAX_REQUEST
     || evidence.some(item => typeof item.quote !== 'string' || item.quote.length > 4000 || item.title && item.title.length > 500)) return empty;
-  const wanted = requirements(request, options.contextTopic);
+  const documentFields = evidence.length > 0 && evidence.every(item => item.source === 'knowledge') && explicitKnowledgeDocumentRequest(request);
+  const question = documentFields ? documentFieldTerms(knowledgeQuestionText(request)) : request;
+  const wanted = requirements(question, options.contextTopic);
   if (!wanted) return empty;
   const subjects = [...new Set(wanted.flatMap(item => item.subject))];
   if (wanted.length > MAX_PROPERTIES || subjects.length > MAX_SUBJECT_TERMS) return empty;
-  const scopes = evidence.map(item => INSTRUCTION.test(item.quote) || item.title && INSTRUCTION.test(item.title) ? null : evidenceScope(item));
+  const scopes = evidence.map(item => INSTRUCTION.test(item.quote) || item.title && INSTRUCTION.test(item.title) ? null : evidenceScope(item, documentFields));
+  const sameTerm = (left: string, right: string) => left === right || documentFields && /\p{Script=Arabic}{3,}/u.test(left)
+    && (left === `ل${right}` || right === `ل${left}`);
   const matches = wanted.map(requirement => ({
     property: requirement.property ?? 'unspecified',
     evidenceIndices: scopes.flatMap((scope, index) => {
@@ -316,9 +332,10 @@ export function assessRecallCoverage(request: string, evidence: readonly RecallC
       // Hall, or an office address inside a warehouse handbook).
       const alignments = scope.atoms && requirement.property ? scope.atoms.filter(atom => atom.property === requirement.property) : [scope];
       return alignments.some(alignment => {
-        if (!requirement.subject.every(term => alignment.subject.has(term))) return false;
-        const metadataNeeded = requirement.subject.some(term => !alignment.explicitSubject.has(term));
-        return !(metadataNeeded && requirement.subject.length && [...alignment.explicitSubject].some(term => !requirement.subject.includes(term)));
+        const hasTerm = (terms: ReadonlySet<string>, term: string) => terms.has(term) || documentFields && [...terms].some(other => sameTerm(term, other));
+        if (!requirement.subject.every(term => hasTerm(alignment.subject, term))) return false;
+        const metadataNeeded = requirement.subject.some(term => !hasTerm(alignment.explicitSubject, term));
+        return !(metadataNeeded && requirement.subject.length && [...alignment.explicitSubject].some(term => !requirement.subject.some(other => sameTerm(term, other))));
       }) ? [index] : [];
     }),
   }));

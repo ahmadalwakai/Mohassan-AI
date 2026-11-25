@@ -40,6 +40,7 @@ import { composePlan, planningQuestion, planningTask } from './assistant/planner
 import type { SkillReader, SkillReadMode } from './assistant/skill-reader.js';
 import { buildSiteReply, siteAnswers, siteCard, siteCommandTurn, siteTask, type SitesChatPort } from './assistant/site-builder.js';
 import { composeDocumentSpec, documentCreatedReply, documentEditedReply, documentInfoReply, documentQuestion, documentRequestGaps, documentTask, noSourceReply, unsupportedDocumentReply, type DocumentEditTask, type DocumentOperation } from './assistant/documents.js';
+import { addNamedDocumentInput, finishInlineDataFile, preferDocumentControl, readDocumentRequest } from './assistant/document-reader.js';
 import { PdfError, parsePageSelection } from '@mohassan/pdf';
 import type { DocumentControl, DocumentEdit, DocumentInput, StoredDocument } from './documents.js';
 import { evaluateLocalComputation } from './assistant/local-computation.js';
@@ -423,6 +424,7 @@ export async function commandChatMigration(db: Kysely<any>) {
 }
 
 export async function createCommandChatControl(db: Kysely<any>, config: CommandChatConfig) {
+  config = preferDocumentControl(config);
   await commandChatMigration(db);
   const browser = config.browser;
   const providers = new Map<string, ModelProvider>();
@@ -2270,6 +2272,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       };
       const desktopFresh = !state.site && !state.writer && !state.planner && !state.adsBrief && !state.hands && !state.pendingTask && !state.pendingComputer && !state.pendingDesktop
         && !state.steps && state.trail.every(entry => entry.action === 'asked the user');
+      if (desktopFresh && !state.document && await finishInlineDataFile(request, text => finish(id, runId, state, vault.scrub(id, text), 'completed'))) return;
       // A web address belongs to Mohassan's own browser (plan §6: it opens there at level 2 or 3), never to the computer's shell:
       // on 2026-11-22 eight real «افتح https://…» requests ended in «تعذر تشغيل powershell.exe» through the desktop path.
       const desktopParsed = config.desktop && desktopFresh && !hasChatModel() && fullReach() && !/https?:\/\/|\bwww\./iu.test(actionRequest) ? config.desktop.parse(actionRequest) : null;
@@ -3111,6 +3114,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // PDF files without a model (assistant/documents.ts): one card for a new file, then Chromium renders the owner's
       // words through a fixed theme; edits run pdf-lib on files from this conversation or on a path the owner names.
       if (documentWork && config.documents) {
+        if (documentWork.kind === 'read') return await readDocumentRequest(documentWork, config.documents.control, { ownerId, conversationId: id, localFiles: fullReach(), constraints, signal, state }).then(reply => finish(id, runId, state, vault.scrub(id, reply.text), reply.status));
         if (documentWork.kind === 'unsupported') {
           await finish(id, runId, state, unsupportedDocumentReply(documentWork), 'blocked');
           return;
@@ -3160,6 +3164,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           const inputs: DocumentInput[] = [];
           for (const source of task.sources) {
             if (source.kind === 'path') {
+              if (await addNamedDocumentInput(documents.control, ownerId, id, source.path, inputs, constraints)) continue;
               if (!localFiles) {
                 await finish(id, runId, state, ar ? 'قراءة الملفات من الجهاز متاحة لحساب المالك فقط. ارفع الملف من لوحة المستندات ثم أعد الطلب.' : 'Reading files from the computer is only available to the owner account. Upload the file from the documents panel and ask again.', 'blocked');
                 return;

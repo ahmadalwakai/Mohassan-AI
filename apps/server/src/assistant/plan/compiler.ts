@@ -72,6 +72,7 @@ function classify(text: string, route: RequestRoutingDecision): PlanTool {
   if (ownFactQuestion(text) || RECALL.test(head)) return 'recall';
   if (route.intent === 'memory') return route.sourceAssessment.operation === 'lookup' ? 'recall' : 'unsupported';
   const document = documentTask(text);
+  if (document?.kind === 'read') return 'unsupported';
   if (document && document.kind !== 'unsupported' || ARABIC_CONVERSION.test(head) && PDF_OBJECT.test(head)) return 'pdf';
   if (siteTask(text)) return 'site';
   const writing = writingTask(text);

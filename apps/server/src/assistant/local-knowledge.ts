@@ -2,6 +2,8 @@ import { buildFrame } from './mind/frame.js';
 import { recall } from './mind/recall.js';
 import { fixedReply, type LocalReply } from './mind/limits.js';
 import { matchText } from './mind/normalize.js';
+import { explicitKnowledgeDocumentRequest, knowledgeSummaryRequest, mentionsKnowledgeDocument, requestsKnowledgeSummary } from './knowledge-document-request.js';
+import { summarizeKnowledgeDocument } from './knowledge-summary.js';
 
 export interface LocalKnowledgeDocument { title: string; text: string; source: string }
 export interface LocalKnowledgeDeps {
@@ -28,8 +30,6 @@ const COPY = {
   },
 } as const;
 
-const DOCUMENT = /\b(?:documents?|files?|guides?|manuals?|handbooks?|knowledge base|uploaded|imported|evaluated records?|internal records?)\b|(?:مستند|وثيق|وثايق|وثائق|ملف|ملفات|دليل|كتيب|قاعده المعرفه|المرفوع|المستورد|السجلات الداخليه)/iu;
-const LOCAL_DOCUMENT = /\b(?:my|our|local|private|internal|saved|uploaded|imported|evaluated)\b[^.!?؟\n]{0,100}\b(?:documents?|files?|guides?|manuals?|handbooks?|records?|knowledge base)\b|\b(?:documents?|files?|records?)\b[^.!?؟\n]{0,60}\b(?:uploaded|imported|evaluated|saved)\b|(?:مستنداتي|مستنداتنا|وثائقي|وثائقنا|ملفاتي|ملفاتنا|دليلي|دليلنا|مستندي|ملفي|وثيقتي)(?!\p{L})|(?:مستند|وثيقه|ملف|دليل|سجل)[^.!?؟\n]{0,80}(?:الخاص|الداخلي|المحفوظ|المقيم|المرفوع|المستورد)|(?:المستندات|الوثائق|الملفات|السجلات)\s+(?:المقيمه|المحفوظه|الداخليه|المرفوعه|المستورده)/iu;
 const RECORDED_SOURCE = /\b(?:according to|from|in|within|listed|stated|recorded|documented|specified|reported)\b|(?<!\p{L})(?:حسب|في|من|ورد|مذكور|مدون|مسجل|المحدد)(?!\p{L})/iu;
 const MEMORY_ONLY = /\b(?:from memory|in memory|my memory|our memory|saved notes?|my notes?)\b|(?:ذاكرتي|ذاكرتنا|ذاكرتك|من الذاكره|في الذاكره|ملاحظاتي|ملاحظاتنا)/iu;
 const FRESH = /\b(?:right now|currently|current|today|latest|at present|this (?:week|month|year))\b|(?<!\p{L})(?:الان|حاليا|اليوم|احدث|هذا (?:الاسبوع|الشهر|العام))(?!\p{L})/iu;
@@ -40,16 +40,16 @@ const DEVICE_QUERY = /\b(?:my (?:computer|pc|desktop|screen)|(?:open|active|curr
 const WEB_REQUEST = /\b(?:search|look up|check|browse)\b[^.!?؟\n]{0,80}\b(?:online|internet|web)\b|\b(?:from|on) the (?:web|internet)\b|(?:ابحث|تحقق|تصفح)[^.!?؟\n]{0,60}(?:الويب|الانترنت|النت)(?!\p{L})/iu;
 
 /** Select document retrieval before personal memory only when a document is named. */
-export const isKnowledgeDocumentRequest = (request: string): boolean => DOCUMENT.test(matchText(request));
+export const isKnowledgeDocumentRequest = mentionsKnowledgeDocument;
 
 // Matching is performed on a folded copy; returned evidence remains verbatim.
 const ROLE_DIRECTIVE = /(?:^|[\r\n\u0085\u2028\u2029])\s*(?:system|developer|assistant|instruction|النظام|المطور|المساعد|تعليمات)\s*[:：]|```[ \t]*(?:system|developer|assistant|instructions?)\b|<\|(?:system|developer|assistant|im_start|im_end)|<\/?(?:system|developer|assistant)>/iu;
 const OVERRIDE_DIRECTIVE = /\b(?:ignore|disregard|override|bypass|forget)\b[^.!?؟\r\n]{0,180}\b(?:instructions?|user|developer|system|prompt|previous|request|rules?)\b|(?:تجاهل|تخط|انس|اهمل)[^.!?؟\r\n]{0,180}(?:التعليمات|المستخدم|المطور|النظام|الرساله|الطلب|القواعد|السابق)/iu;
 const OUTPUT_DIRECTIVE = /(?:^|[.!?؟؛;。\r\n\u0085\u2028\u2029])\s*(?:(?:you|the assistant)\s+(?:must|should|will)\s+(?:answer|reply|output|print|say|reveal|execute|send)|(?:answer|reply|output|print|say|reveal|execute|send|delete|click|submit)\b|(?:يجب عليك|على المساعد|علي المساعد)\s*(?:ان\s+)?(?:تجيب|ترد|تطبع|تكشف|تنفذ|ترسل)|(?:اطبع|اكشف|نفذ|ارسل|احذف|انقر)(?!\p{L}))/iu;
 
-function instructionLike(value: string): boolean {
+function instructionLike(value: string, checkOutput = true): boolean {
   const text = matchText(value).replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/gu, '');
-  return ROLE_DIRECTIVE.test(text) || OVERRIDE_DIRECTIVE.test(text) || OUTPUT_DIRECTIVE.test(text);
+  return ROLE_DIRECTIVE.test(text) || OVERRIDE_DIRECTIVE.test(text) || checkOutput && OUTPUT_DIRECTIVE.test(text);
 }
 
 function limit(value: number | undefined, fallback: number, minimum: number, maximum: number): number {
@@ -69,7 +69,7 @@ function selectedDocuments(raw: readonly LocalKnowledgeDocument[], options: Loca
     if (!item || typeof item.title !== 'string' || typeof item.text !== 'string' || typeof item.source !== 'string') continue;
     const title = item.title.trim(), source = item.source.trim();
     if (!title || title.length > 300 || !source || source.length > 500 || !item.text.trim() || item.text.length > maxDocumentChars
-        || /[\u0000-\u001f\u007f]/u.test(title + source) || instructionLike(title) || instructionLike(source) || instructionLike(item.text)) continue;
+        || /[\u0000-\u001f\u007f]/u.test(title + source) || instructionLike(title, false) || instructionLike(source) || instructionLike(item.text)) continue;
     if (total + item.text.length > maxTotalChars) continue;
     const identity = `${source}\u0000${title}\u0000${item.text}`;
     if (seen.has(identity)) continue;
@@ -116,20 +116,24 @@ export async function evaluateLocalKnowledge(request: string, deps: LocalKnowled
   if (typeof request !== 'string' || !request.trim() || request.length > 4000) return null;
   const frame = buildFrame(request);
   const folded = matchText(frame.text);
-  const documentRequest = DOCUMENT.test(folded);
-  if (frame.urls.length || CODE_FILE.test(folded) || WEB_REQUEST.test(folded) || !documentRequest && DEVICE_QUERY.test(folded) || frame.missing.length
-      || !['fact_question', 'memory_recall'].includes(frame.intent) || MEMORY_ONLY.test(folded) && !documentRequest) return null;
-  const localOnly = frame.personal || LOCAL_DOCUMENT.test(folded);
+  const documentRequest = isKnowledgeDocumentRequest(folded);
+  const explicitDocument = explicitKnowledgeDocumentRequest(request);
+  if (frame.urls.length || CODE_FILE.test(folded) || WEB_REQUEST.test(folded) || DEVICE_QUERY.test(folded)
+      || !explicitDocument && (frame.missing.length || !['fact_question', 'memory_recall'].includes(frame.intent))
+      || MEMORY_ONLY.test(folded) && !documentRequest) return null;
+  const localOnly = frame.personal || explicitDocument;
+  const summary = explicitDocument ? knowledgeSummaryRequest(request) : null;
   const recordedRequest = documentRequest && RECORDED_SOURCE.test(folded) && !FRESH.test(folded);
   const dynamic = frame.timeSensitive || TIME_VARYING_PUBLIC.test(folded) && !HISTORICAL.test(folded);
   if (dynamic && !localOnly && !recordedRequest) return null;
-  const raw = await retrieve(deps, frame.text, signal, limit(options.timeoutMs, 2000, 1, 10_000));
   const copy = COPY[frame.lang];
+  if (explicitDocument && requestsKnowledgeSummary(request) && !summary) return fixedReply(copy.missing, 'blocked', 'not_found');
+  const raw = await retrieve(deps, summary?.title ?? frame.text, signal, limit(options.timeoutMs, 2000, 1, 10_000));
   if (!raw) return localOnly ? fixedReply(copy.unavailable, 'blocked') : null;
   const documents = selectedDocuments(raw, options);
   if (!documents.length) return localOnly ? fixedReply(copy.missing, 'blocked', 'not_found') : null;
-  const reply = await recall({ ...frame, personal: false, intent: 'fact_question' }, request,
-    { knowledge: async () => documents }, signal, { source: 'knowledge' });
+  const reply = summary ? summarizeKnowledgeDocument(summary, documents, frame.lang)
+    : await recall({ ...frame, personal: false, intent: 'fact_question' }, request, { knowledge: async () => documents }, signal, { source: 'knowledge' });
   signal.throwIfAborted();
   if (!reply?.evidence.length) return localOnly ? fixedReply(copy.missing, 'blocked', 'not_found') : null;
   // Preserve the original host provenance and verify every excerpt against the

@@ -97,8 +97,8 @@ export function createPlanDocumentTools(context: PlanDocumentContext) {
       ? step.text.replace(/(?<!\p{L})حو[ّ]?ل(?:ها|ه)(?=\s+(?:إلى|الى)\s)/u, 'حوّل هذا النص')
       : step.text;
     const task = documentTask(parserInput, { hasDocuments: inputs.references.some(input => input.value.type === 'file') });
-    if (!task || task.kind === 'unsupported') return { ok: false, reason: 'unavailable' };
-    if (task.kind === 'edit') return edit(task, inputs.references, signal);
+    if (task?.kind === 'edit') return edit(task, inputs.references, signal);
+    if (task?.kind !== 'create') return { ok: false, reason: 'unavailable' };
     // Results are document body data. Parse the original instruction first so
     // webpage wording cannot rename the file, specify a local path or add work.
     const referenceContent = inputs.references.map(({ value }) => valueText(value)).join('\n\n');

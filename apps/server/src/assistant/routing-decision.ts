@@ -3,6 +3,7 @@ import { standaloneMannersRoute } from './manners/chat.js';
 import { directRoute } from './brain.js';
 import { isCampaignRequest } from './campaign-request.js';
 import { parseHands, type HandsStep } from './hands.js';
+import { evaluateInlineDataFile } from './inline-data-file.js';
 import { evaluateLocalComputation, type LocalComputation } from './local-computation.js';
 import { evaluateLocalConversation } from './local-conversation.js';
 import { recognizeRuntimeStatusRequest } from './runtime-status.js';
@@ -118,6 +119,15 @@ export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDe
     return { ...base('chat', 'chat', 'local_conversation', 'local_conversation'), resolution, ...(reply ? { localReply: reply } : {}) };
   }
   if (resolution.kind === 'answer') return base('reply', resolution.intent === 'unknown' && pending.success ? pending.data.route ?? 'unknown' : resolution.intent, 'resume', 'pending_answer');
+  if (evaluateInlineDataFile(input.text) !== null) {
+    const decision = base('writing', 'writing', 'writing', 'explicit_handler');
+    const supplied: RequestScopeAssessment = { version: 1, source: 'supplied_content', operation: 'transform', scope: 'private',
+      destination: 'writing', publicQueryEligible: false, reasons: ['supplied_transformation'],
+      ...(resolution.constraints ? { constraints: resolution.constraints } : {}) };
+    const nextState = decision.resolution.nextState ? parseRequestContextState({ ...decision.resolution.nextState, scope: 'private', sourceAssessment: supplied }) : null;
+    return { ...decision, sourceAssessment: supplied, resolution: { ...decision.resolution, kind: 'new', scope: 'private', query: null,
+      sourceAssessment: supplied, nextState, ambiguities: [] } };
+  }
   if (recognizeRuntimeStatusRequest(scopeRequest)) {
     const decision = base('chat', 'chat', 'local_status', 'host_runtime_status');
     const localSource: RequestScopeAssessment = { version: 1, source: 'unresolved', operation: 'converse', scope: 'unknown', destination: 'unknown', publicQueryEligible: false, reasons: ['non_lookup_operation'] };

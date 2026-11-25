@@ -70,6 +70,11 @@ describe('plan compiler source and reference contracts', () => {
     });
   });
 
+  it('keeps a local document read out of the compiled PDF write tool', () => {
+    const plan = compilePlan('Read "Workshop roster.pdf", then calculate 9 + 4.');
+    expect(plan.steps.map(step => step.tool)).toEqual(['unsupported', 'compute']);
+  });
+
   it.each([
     'Open https://archive.example.test/music and show me the rehearsal venue.',
     'افتح https://archive.example.test/music واعرض اسم الفرقة الموسيقية.',
