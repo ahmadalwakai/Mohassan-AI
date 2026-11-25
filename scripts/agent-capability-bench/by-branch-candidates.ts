@@ -167,7 +167,19 @@ export const candidates: readonly Candidate[] = [
       stackedComparison: { comparison: 'enabled PR #32', overall: 16, areas: { clarification: 16 } },
     },
   },
+  {
+    branch: 'e2e/calculation-end-to-end',
+    pr: 60,
+    stackedOn: 26,
+    optional: true,
+    flags: { MOHASSAN_REASONING: '1' },
+    v1: {
+      comparison: 'enabled PR #26, which matched the v1 development baseline',
+      overall: 7,
+      areas: { calculation: 7 },
+    },
+  },
 ];
 
-// These optional refs were absent when freezing the measured candidate set.
-export const optionalBranches = ['integration/wave-1', 'e2e/calculation-end-to-end'] as const;
+// This optional ref was absent when freezing the measured candidate set.
+export const optionalBranches = ['integration/wave-1'] as const;
