@@ -325,4 +325,132 @@ describe('durable smart monitor runtime', () => {
     expect(await byId(id)).toMatchObject({ status: 'expired', nextCheckAt: null });
     expect(await events()).toEqual([]);
   });
+  function runtimeV2(read: Parameters<typeof createMonitorRuntime>[1]['read']) {
+    const v2Store = createMonitorStore(database.db, { now, v2: true });
+    const worker = createMonitorRuntime(database.db, { read, store: v2Store }, { now, v2: true });
+    const card = async (id: string, userId = member) =>
+      MonitorCardSchema.parse((await v2Store.list(userId)).find(item => item.id === id));
+    return { v2Store, worker, card };
+  }
+
+  it('fences each composite source check and commits evidence after both fresh observations match', async () => {
+    const other = { kind: 'page', url: 'https://second.example.org/cart' } as const;
+    const base = pageSpec(now());
+    const freshnessMs = 6 * hour;
+    const spec = MonitorSpecSchema.parse({ ...base, v2: {
+      freshnessMs, combine: { kind: 'and' }, additional: [{ source: other, read: base.read, condition: base.condition, freshnessMs }],
+    } });
+    const observed = observe(3.8);
+    const read = vi.fn(async (target: MonitorSpec) => {
+      const url = target.source.kind === 'page' ? target.source.url : '';
+      return { kind: 'value', observation: { ...observe(url === source.url ? 3.6 : 3.65), url } } as const;
+    });
+    const { v2Store, worker, card } = runtimeV2(read);
+    const { id } = await v2Store.propose(member, { conversationId: memberConversation, spec, observation: observed,
+      v2Preview: { samples: [{ index: 0, observation: observed }, { index: 1, observation: { ...observed, url: other.url } }],
+        caches: [null, null] } });
+    goto((await v2Store.approve(member, id)).nextCheckAt);
+    await runtime(read).runOnce();
+    expect(read).not.toHaveBeenCalled();
+    expect(await store.list(member)).toEqual([]);
+    await worker.runOnce();
+    expect(await events()).toEqual([]);
+    goto((await card(id)).nextCheckAt);
+    await worker.runOnce();
+    expect(read.mock.calls.map(([target]) => target.source)).toEqual([source, other]);
+    expect(await card(id)).toMatchObject({ status: 'completed', current: { value: 3.6 } });
+    expect(await v2Store.list(owner)).toEqual([]);
+    expect(await database.db.selectFrom('smart_monitor_budgets').select('checks').where('user_id', '=', member).executeTakeFirst())
+      .toEqual({ checks: 2 });
+    const [message] = await messages();
+    for (const part of ['Before · 3.8', 'After · 3.6', 'Absolute change', 'Percent change', 'Observed', source.url, other.url]) {
+      expect(message.text).toContain(part);
+    }
+  });
+
+  it('requires a current choice from the owner and pauses once on low confidence', async () => {
+    const labels = ['Current price', 'Member price'];
+    const candidates = [3.75, 3.90].map((number, index) => ({
+      id: `choice-${index}`, label: labels[index], observation: observe(number),
+      anchor: { key: labels[index], label: labels[index], context: labels[index], pattern: { kind: 'number', currency: 'USD' },
+        origin: 'visible' as const },
+    }));
+    const { v2Store, worker, card } = runtimeV2(async () => ({ kind: 'unsafe-target', url: source.url, confidence: 0 }));
+    const spec = { ...pageSpec(now()), v2: { freshnessMs: 6 * hour } };
+    const proposed = await v2Store.propose(member, { conversationId: memberConversation, spec, observation: null,
+      v2Preview: { samples: [], caches: [null], clarification: { index: 0, candidates } } });
+    expect(proposed.clarification?.choices).toEqual([
+      { id: 'choice-0', label: 'Current price', value: 3.75 }, { id: 'choice-1', label: 'Member price', value: 3.90 },
+    ]);
+    await expect(v2Store.approve(member, proposed.id)).rejects.toMatchObject({ code: 'MONITOR_PREVIEW_REQUIRED' });
+    await expect(v2Store.choose(owner, proposed.id, 'choice-1')).rejects.toMatchObject({ code: 'MONITOR_NOT_FOUND' });
+    await expect(v2Store.choose(member, proposed.id, 'choice-1')).resolves.toMatchObject({ status: 'proposed', current: { value: 3.90 } });
+    await expect(v2Store.choose(member, proposed.id, 'choice-0')).rejects.toMatchObject({ code: 'MONITOR_CHOICE_STALE' });
+    goto((await v2Store.approve(member, proposed.id)).nextCheckAt);
+    await worker.runOnce();
+    await worker.runOnce();
+    expect(await card(proposed.id)).toMatchObject({ status: 'paused', nextCheckAt: null,
+      note: expect.stringContaining('couldn’t safely identify') });
+    expect(await events()).toHaveLength(1);
+  });
+
+  it('publishes a durable daily digest at rollover with no source check due', async () => {
+    const observed = { ...observe(0), value: ['A'], itemKeys: ['a'] };
+    const spec = MonitorSpecSchema.parse({ ...pageSpec(now()), read: { kind: 'items' }, condition: { kind: 'new-item' },
+      v2: { freshnessMs: 6 * hour, delivery: 'daily' } });
+    const read = vi.fn(async () => ({ kind: 'value',
+      observation: { ...observe(0), value: ['B', 'A'], itemKeys: ['b', 'a'] },
+    }) satisfies MonitorReadResult);
+    const { v2Store, worker } = runtimeV2(read);
+    const { id } = await v2Store.propose(member, { conversationId: memberConversation, spec, observation: observed,
+      v2Preview: { samples: [{ index: 0, observation: observed }], caches: [null] } });
+    goto((await v2Store.approve(member, id)).nextCheckAt);
+    await worker.runOnce();
+    expect(await events()).toEqual([]);
+    await database.db.updateTable('smart_monitors').set({ next_check_at: new Date(baseline + 24 * hour) }).where('id', '=', id).execute();
+    goto('2026-11-26T00:00:00.000Z');
+    await worker.runOnce();
+    await worker.runOnce();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(await events()).toHaveLength(1);
+    expect(await messages()).toEqual([expect.objectContaining({ text: expect.stringContaining('Daily monitor digest') })]);
+  });
+
+  it('stops reading a recurring monitor after its last allowed trigger', async () => {
+    const observed = { ...observe(0), value: ['A'], itemKeys: ['a'] };
+    const spec = MonitorSpecSchema.parse({ ...pageSpec(now()), read: { kind: 'items' }, condition: { kind: 'new-item' },
+      v2: { freshnessMs: 6 * hour, delivery: 'each' } });
+    let sample = 0;
+    const read = vi.fn(async (): Promise<MonitorReadResult> => {
+      const item = String(++sample);
+      return { kind: 'value', observation: { ...observe(0), value: [item], itemKeys: [item] } };
+    });
+    const { v2Store, worker, card } = runtimeV2(read);
+    const pending = await v2Store.propose(member, { conversationId: memberConversation, spec, observation: observed,
+      v2Preview: { samples: [{ index: 0, observation: observed }], caches: [null] } });
+    let active = await v2Store.approve(member, pending.id);
+    for (let check = 0; check < MONITOR_LIMITS.maxNotifications; check++) {
+      goto(active.nextCheckAt);
+      await worker.runOnce();
+      active = await card(pending.id);
+    }
+    expect(active).toMatchObject({ status: 'completed', nextCheckAt: null });
+    clock += hour;
+    await worker.runOnce();
+    expect(read).toHaveBeenCalledTimes(MONITOR_LIMITS.maxNotifications);
+    expect(await events()).toHaveLength(MONITOR_LIMITS.maxNotifications);
+  });
+  it('keeps existing v1 monitors on the v1 read path with both flags enabled', async () => {
+    const { id } = await proposal();
+    const read = vi.fn(async () => value(3.65));
+    const { worker } = runtimeV2(read);
+    goto((await store.approve(member, id)).nextCheckAt);
+    await worker.runOnce();
+    expect(read).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ source }),
+      expect.not.objectContaining({ v2: true }));
+    expect(await byId(id)).toMatchObject({ status: 'completed', current: { value: 3.65 } });
+    expect(await database.db.selectFrom('smart_monitors').select('v2_state').where('id', '=', id).executeTakeFirst())
+      .toEqual({ v2_state: null });
+  });
+
 });
