@@ -95,8 +95,13 @@ const monitor = start(String.raw`monitor|watch|keep (?:watching|checking|trackin
 const frequency = /\b(?:every|until|next|hourly|daily|overnight|periodically|continuously|repeatedly|notify me (?:if|when)|for \d+ (?:minutes?|hours?|days?|weeks?))\b|(?:كل|حتي|الي ان|لمده|خلال|يوميا|دوريا|باستمرار|نبهني (?:اذا|عند)|بلغني (?:اذا|عند))(?!\p{L})/u;
 const temporalLead = /^(?:for the next|over the next|for) [^,،]{1,48}(?:minutes?|hours?|days?|weeks?)[,،]\s+|^(?:لمده|خلال) [^,،]{1,48}[,،]\s+/u;
 const cadence = /\b(?:repeatedly|periodically|continuously|hourly|daily|overnight|until|notify (?:me|us) (?:when|if)|every (?:\p{N}+ |\p{L}+ )?(?:minutes?|hours?|days?|weeks?))\b|(?:لمده|كل (?:\S+ ){0,2}(?:دقيقه|دقائق|ساعه|ساعات|ايام)|نبهني (?:اذا|عند)|اخبرني (?:عندما|اذا)|بلغني (?:اذا|عند))(?!\p{L})/u;
-export const monitoringRequest = (text: string) => monitor.test(text.replace(temporalLead, ''))
-  && frequency.test(text) && cadence.test(text);
+const sustainedMonitor = start(String.raw`monitor|watch|keep (?:watching|checking|tracking|an eye on)|track|راقب|تابع|استمر في (?:مراقبه|متابعه|فحص)`);
+const monitoringDuration = /\b(?:for (?:the next )?|over the next )(?:a|an|one|two|\d+) (?:minutes?|hours?)\b|(?:لمده|خلال) (?:[0-9٠-٩]+ )?(?:دقيقه|دقائق|ساعه|ساعتين|ساعات)(?!\p{L})/u;
+export const monitoringRequest = (text: string) => {
+  const command = text.replace(temporalLead, '');
+  return monitor.test(command) && (frequency.test(text) && cadence.test(text)
+    || sustainedMonitor.test(command) && monitoringDuration.test(text));
+};
 const research = start(String.raw`research|investigate|synthesi[sz]e|(?:give|provide|prepare|produce|write) (?:me )?(?:an? )?(?:deep|comprehensive|in[ -]depth|systematic) (?:research|study|review)|(?:conduct|do|carry out|run) (?:an? )?(?:deep|thorough|systematic|comprehensive) (?:research|investigation|review|study)|ابحث|حقق|ادرِ?س|استقص|اجمع|(?:اعمل|سو|سوي|جهز) (?:بحثا?|دراسه)|اجري (?:بحثا?|دراسه)`);
 const researchDepth = /\b(?:deep|comprehensive|systematic|thorough(?:ly)?|in[ -]depth|multiple sources|across sources|literature review|audit trail|primary sources)\b|(?:بعمق|معمق(?:ا|ه)?|بحث شامل|دراسه شامله|مراجعه شامله|متعمق|مصادر متعدده|عده مصادر|مصادر اوليه|مصادر مختلفه)/u;
 export const deepResearch = (text: string) => research.test(text) && researchDepth.test(text);

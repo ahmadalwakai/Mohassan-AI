@@ -32,9 +32,10 @@ function publicUrl(network: SafeNetwork, value: string) {
 
 function monitorDelays(text: string): number[] | null {
   const normalized = matchText(text)
-    .replace(/\bfor (?:an|one) hour\b/gu, 'for 1 hour').replace(/\bfor two hours\b/gu, 'for 2 hours')
+    .replace(/\b(?:for the next|over the next) /gu, 'for ')
+    .replace(/\bfor (?:a|an|one) (minute|hour)\b/gu, 'for 1 $1').replace(/\bfor two (minutes|hours)\b/gu, 'for 2 $1')
     .replace(/لمده ساعتين/u, 'لمده 2 ساعه').replace(/لمده ساعه(?!\p{L})/u, 'لمده 1 ساعه');
-  const duration = /(?:\bfor |لمده )(\d+)\s*(minutes?|hours?|دقيقه|دقائق|ساعه|ساعات)(?!\p{L})/u.exec(normalized);
+  const duration = /(?:\bfor |لمده |خلال )(\d+)\s*(minutes?|hours?|دقيقه|دقائق|ساعه|ساعات)(?!\p{L})/u.exec(normalized);
   if (!duration) return null;
   const milliseconds = ([, count, units]: RegExpExecArray) => Number(count) * (/(?:^h|ساع)/u.test(units!) ? 60 : 1) * 60_000;
   const durationMs = milliseconds(duration);

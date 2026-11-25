@@ -3,6 +3,7 @@ import { sql } from 'kysely';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDatabase } from '@mohassan/database';
 import { buildPrompt, newBrainState } from '../apps/server/src/assistant/brain.js';
+import { resolveRequestContext } from '../apps/server/src/assistant/request-context.js';
 import { readResponsePolicyHistory, responsePolicyEarlierContext } from '../apps/server/src/assistant/response-policy-context.js';
 import { bindResponsePolicyChannel, chatResponsePolicyInput, shapeCompletedChatReply } from '../apps/server/src/assistant/response-policy-runtime.js';
 
@@ -111,5 +112,9 @@ describe('response policy context assembly', () => {
     const state = {};
     expect(await load(state, 'Summarize this conversation. Use only the current message.')).toHaveLength(1);
     expect(responsePolicyEarlierContext(state)).toBeUndefined();
+    const previous = resolveRequestContext('Weather in London today', undefined, { turnId: 'old-turn' }).nextState;
+    const current = 'What about tomorrow? Use only the current message.';
+    expect(resolveRequestContext(current, previous).query).toBeNull();
+    expect(resolveRequestContext(current, previous).provenance.some(item => item.sourceTurnId === 'old-turn')).toBe(false);
   });
 });

@@ -4,6 +4,7 @@ import { explicitKnowledgeDocumentRequest } from './knowledge-document-request.j
 import { parseQuestionRewriteRequest } from './question-rewrite-request.js';
 import { assessRequestScope, parseRequestScopeAssessment, requestOperationText, RequestScopeAssessmentSchema, reviewPublicProjection, parseUserRequestConstraints, maskRequestLiteralData, isEntireLiteralRequest, type UserRequestConstraints, type RequestScopeAssessment } from './request-scope.js';
 import { factualNumberText, questionCoreferenceText, startsFactualQuestion } from './public-question-syntax.js';
+import { noHistory } from './response-policy-signals.js';
 
 /**
  * A small, deterministic context boundary, not a replacement language model.
@@ -545,6 +546,8 @@ function previousSource(state: RequestContextState | null): RequestScopeAssessme
 
 /** Apply the shared source boundary after reference resolution, before exposing a public query. */
 export function resolveRequestContext(request: string, previousValue?: unknown, options: RequestContextOptions = {}): RequestResolution {
+  if (process.env.MOHASSAN_CONTEXT_POLICY_ENABLED === '1' && typeof request === 'string' && !options.pendingQuestion
+    && noHistory.test(lexicalText(maskRequestLiteralData(request)))) previousValue = undefined;
   if (!options.pendingQuestion && typeof request === 'string' && parseQuestionRewriteRequest(request)) {
     const previous = parseRequestContextState(previousValue);
     const revision = previous && previous.revision < 1_000_000_000 ? previous.revision + 1 : 1;
