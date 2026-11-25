@@ -80,8 +80,11 @@ describe('page cache: evidence read over HTTP is reused by site kind', () => {
     expect(cache.get('https://missing.example/')).toBeNull();
   });
 
-  it.each([{ 'cache-control': 'max-age=600, private' }, { 'cache-control': 'no-store' }, { 'cache-control': 's-maxage=0' },
-    { 'cache-control': 'no-cache="x-fixture"' }, { vary: '*' }, { 'set-cookie': 'fixture=value' }])('does not share a private response %p', responseHeaders => {
+  const privateResponseHeaders: Record<string, string>[] = [
+    { 'cache-control': 'max-age=600, private' }, { 'cache-control': 'no-store' }, { 'cache-control': 's-maxage=0' },
+    { 'cache-control': 'no-cache="x-fixture"' }, { vary: '*' }, { 'set-cookie': 'fixture=value' },
+  ];
+  it.each(privateResponseHeaders)('does not share a private response %p', responseHeaders => {
     const cache = createPageCache();
     const url = 'https://example.com/public-looking';
     expect(cache.put(page(url), { responseHeaders }).text).toBeTruthy();

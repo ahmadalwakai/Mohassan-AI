@@ -1,4 +1,5 @@
 import { lookup } from 'node:dns/promises';
+import type { LookupAddress, LookupAllOptions } from 'node:dns';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { boundedGit } from './git.ts';
 import { remoteFetch, remoteHead } from './git-remote.ts';
@@ -7,7 +8,7 @@ vi.mock('node:dns/promises', () => ({ lookup: vi.fn() }));
 vi.mock('./git.ts', () => ({ boundedGit: vi.fn() }));
 
 const git = vi.mocked(boundedGit);
-const dns = vi.mocked(lookup);
+const dns = vi.mocked<(hostname: string, options: LookupAllOptions) => Promise<LookupAddress[]>>(lookup);
 const commit = 'a'.repeat(40);
 const capabilities = 'http.curloptResolve\nhttp.followRedirects\n';
 const operations = [remoteHead, remoteFetch];
