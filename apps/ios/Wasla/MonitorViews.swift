@@ -169,7 +169,7 @@ private struct MonitorControls: View {
         let actions = monitor.status.actions
         if busy { MonitorSaving() }
         if let problem { MonitorProblem(message: problem) }
-        if monitor.status == .active || monitor.status == .paused {
+        if actions.contains(.stop) {
             MonitorButtonRow {
                 if actions.contains(.pause) {
                     Button("إيقاف مؤقت") { onAction(.pause) }
@@ -179,20 +179,18 @@ private struct MonitorControls: View {
                     Button("استئناف") { onAction(.resume) }
                         .buttonStyle(ForestButton(prominent: false))
                 }
-                if actions.contains(.stop) {
-                    Button("إيقاف المراقبة", role: .destructive) {
-                        if MonitorAction.stop.requiresConfirmation(for: monitor.status) {
-                            stopConfirm = true
-                        } else {
-                            onAction(.stop)
-                        }
+                Button(monitor.status == .proposed ? "رفض الاقتراح" : "إيقاف المراقبة", role: .destructive) {
+                    if MonitorAction.stop.requiresConfirmation(for: monitor.status) {
+                        stopConfirm = true
+                    } else {
+                        onAction(.stop)
                     }
-                    .buttonStyle(ForestButton(prominent: false))
-                    .confirmationDialog("إيقاف هذه المراقبة؟", isPresented: $stopConfirm, titleVisibility: .visible) {
-                        Button("إيقاف المراقبة", role: .destructive) { onAction(.stop) }
-                    } message: {
-                        Text(monitor.spec.title)
-                    }
+                }
+                .buttonStyle(ForestButton(prominent: false))
+                .confirmationDialog("إيقاف هذه المراقبة؟", isPresented: $stopConfirm, titleVisibility: .visible) {
+                    Button("إيقاف المراقبة", role: .destructive) { onAction(.stop) }
+                } message: {
+                    Text(monitor.spec.title)
                 }
             }
             .disabled(busy)
