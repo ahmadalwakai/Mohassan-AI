@@ -37,7 +37,7 @@ beforeEach(async () => {
 
 afterAll(async () => { await database?.close(); });
 
-function apply(text: string, scope = runScope()) {
+function apply(text: string, scope: Parameters<typeof applyStructuredMemory>[1] = runScope()) {
   const intent = parseStructuredMemoryRequest(text);
   if (!('target' in intent)) throw new Error('Fixture could not be parsed.');
   return database.db.transaction().execute(async tx => {
@@ -139,4 +139,54 @@ it('rejects secret material even when handed a previously parsed target', async 
     await applyStructuredMemory(tx, runScope(), { ...intent, statement: credentialStatement });
   })).rejects.toThrow('STRUCTURED_MEMORY_READBACK_FAILED');
   expect((await createMemoryControl(database.db).workspace(ownerId)).items).toEqual([]);
+});
+
+it('recalls a reordered fact label only from active owner evidence and requires every requested field', async () => {
+  const operations: string[] = [];
+  const onOperation = (operation: string) => operations.push(operation);
+  const request = 'Remember that my greenhouse vent opening time is 09:10.';
+  const lookup = 'From my memory, tell me my opening time for the greenhouse vent.';
+  expect(await apply(request, { ...runScope(), onOperation })).toMatchObject({ kind: 'saved' });
+  expect(operations).toEqual(['write', 'reconcile']);
+  operations.length = 0;
+  expect(await apply(lookup, { ...runScope(), onOperation })).toMatchObject({ kind: 'recalled', fact: { value: '09:10' } });
+  expect(operations).toEqual(['search']);
+  expect(await apply(lookup, runScope(otherId))).toEqual({ kind: 'missing' });
+  expect(await apply('From my memory, what opening time and color did I save for my greenhouse vent?')).toEqual({ kind: 'missing' });
+  const item = (await createMemoryControl(database.db).workspace(ownerId)).items[0]!;
+  await database.db.updateTable('memory_items').set({ expires_at: new Date(Date.now() - 1000) }).where('id', '=', item.id).execute();
+  expect(await apply(lookup)).toEqual({ kind: 'missing' });
+});
+
+it('leaves equally supported subjects ambiguous and disregards words in a fact value', async () => {
+  await apply('Remember that my train boarding day is Saturday.');
+  await apply('Remember that my ferry boarding day is Monday.');
+  expect(await apply('Which boarding day is in my memory?')).toEqual({ kind: 'ambiguous' });
+  await apply('Keep in mind that my cactus is named Fern.');
+  expect(await apply('From my memory, what name did I save for my fern?')).toEqual({ kind: 'missing' });
+});
+
+it('recalls an unindexed user assertion from memory created before open descriptors', async () => {
+  const memory = createMemoryControl(database.db);
+  await memory.create(ownerId, { layer: 'semantic', title: 'Personal note', content: 'Our studio back entrance is on Cedar Avenue.' });
+  const query = 'From my memory, tell me the back entrance for the studio.';
+  expect(await apply(query)).toMatchObject({ kind: 'recalled', fact: { value: 'on Cedar Avenue' } });
+  expect(await apply(query, runScope(otherId))).toEqual({ kind: 'missing' });
+});
+
+it('verifies a repeated forget without deleting any replacement', async () => {
+  const operations: string[] = [];
+  const scope = { ...runScope(), onOperation: (operation: string) => operations.push(operation) };
+  await apply('Keep in mind that my cactus is named Lichen.');
+  const deletion = "Forget my cactus's name.";
+  expect(await apply(deletion, scope)).toEqual({ kind: 'forgotten' });
+  expect(operations).toEqual(['forget', 'reconcile']);
+  operations.length = 0;
+  expect(await apply(deletion, scope)).toEqual({ kind: 'forgotten' });
+  expect(operations).toEqual(['reconcile']);
+  operations.length = 0;
+  await apply('Keep in mind that my cactus is named Thorn.');
+  expect(await apply(deletion, scope)).toEqual({ kind: 'changed' });
+  expect(operations).toEqual([]);
+  expect(await apply("What is my cactus's name from my memory?")).toMatchObject({ kind: 'recalled', fact: { value: 'Thorn' } });
 });

@@ -136,6 +136,29 @@ describe('structured memory over the authenticated chat routes', () => {
     second = await fixture.inviteMember('Structured memory member B');
   }, 60000);
 
+  it('publishes verified operations for an open-ended fact throughout its lifetime', async () => {
+    const { start, say, items, db } = fixture;
+    const id = await start(first);
+    const saved = await say(first, id, 'Please remember that my bicycle frame size is Medium. احفظها.');
+    expect(saved.text).toMatch(/^I saved/u);
+    expect(saved.detail.run?.verification?.status).toBe('verified');
+    expect(saved.detail.run?.plan?.steps).toMatchObject([{ capability: 'memory.write', state: 'verified' }]);
+    expect(saved.detail.run?.evidence).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'readback', independent: true })]));
+    const stored = await db.selectFrom('chat_runs').select('state').where('id', '=', saved.run.id).executeTakeFirstOrThrow();
+    expect(stored.state.trail.map(({ action }: { action: string }) => action)).toEqual(['memory_write_exact', 'memory_reconcile_exact']);
+
+    const recalled = await say(first, id, 'Which frame size did I ask you to keep in mind?');
+    expect(recalled.text).toContain('Medium');
+    expect(recalled.detail.run?.plan?.steps).toMatchObject([{ capability: 'memory.read', state: 'verified' }]);
+    const corrected = await say(first, id, 'Change my bicycle frame size to Large.');
+    expect(corrected.run.status).toBe('completed');
+    expect((await say(first, id, 'Remind me of the frame size you have on record.')).text).toContain('Large');
+    const deleted = await say(first, id, 'Forget my bicycle frame size.');
+    expect(deleted.detail.run?.verification?.status).toBe('verified');
+    expect((await say(first, id, 'Which frame size did I ask you to keep in mind?')).run.status).toBe('blocked');
+    expect((await items(first)).some(item => /bicycle frame size/u.test(item.content))).toBe(false);
+  });
+
   it('asks for consent on a bare statement and keeps memory isolated between two members', async () => {
     const { app, start, say, headers, items } = fixture;
     const firstId = await start(first), secondId = await start(second);
@@ -406,6 +429,11 @@ it('defaults to the existing literal-note path and shadows a structured candidat
   const statement = exactResidence.slice('Remember that '.length);
   const legacy = (await items(ownerCookie)).find(item => item.content === statement);
   expect(legacy).toBeDefined();
+  await say(ownerCookie, id, 'Remember that my Blue Haven bicycle frame size is Medium.');
+  const shadowEvent = info.mock.calls.findLast(entry => JSON.stringify(entry).includes('structured_memory_shadow'));
+  expect(shadowEvent).toBeDefined();
+  expect(JSON.parse(shadowEvent![0])).toMatchObject({ kind: 'statement', property: 'descriptor' });
+  expect(JSON.stringify(shadowEvent)).not.toMatch(/blue haven|medium/iu);
   vi.stubEnv('MOHASSAN_STRUCTURED_MEMORY', '1');
   const recalled = await say(ownerCookie, id, liveQuestion);
   expect(recalled.run.status).toBe('completed');
