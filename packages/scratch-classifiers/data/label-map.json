@@ -1,0 +1,25 @@
+{
+  "clinc150": [
+    {"source": ["oos"], "labels": {"refusal": "out_of_scope"}},
+    {"source": ["greeting", "goodbye", "thank_you", "what_is_your_name", "who_made_you", "are_you_a_bot"], "labels": {"route": "chat", "speechAct": "smalltalk", "refusal": "allow"}},
+    {"source": ["calculator"], "labels": {"route": "compute", "speechAct": "request", "refusal": "allow"}},
+    {"source": ["reminder", "reminder_update"], "labels": {"route": "reminder", "speechAct": "request", "refusal": "allow"}},
+    {"source": ["translate"], "labels": {"route": "writing", "speechAct": "request", "refusal": "allow"}},
+    {"source": ["calories", "cook_time", "definition", "ingredient_substitution", "ingredients_list", "nutrition_info", "recipe", "restaurant_reviews", "spelling", "weather"], "labels": {"route": "web_search", "speechAct": "request", "refusal": "allow"}},
+    {"source": ["book_flight", "book_hotel", "car_rental", "make_call", "order_checks", "pay_bill", "play_music", "restaurant_reservation", "text", "transfer", "uber"], "labels": {"route": "unsupported", "speechAct": "request", "refusal": "out_of_scope"}}
+  ],
+  "massive": [
+    {"source": ["general_greet"], "labels": {"route": "chat", "speechAct": "smalltalk", "refusal": "allow"}},
+    {"source": ["news_query"], "labels": {"route": "news", "speechAct": "request", "refusal": "allow"}},
+    {"source": ["qa_maths", "datetime_convert"], "labels": {"route": "compute", "speechAct": "request", "refusal": "allow"}},
+    {"source": ["alarm_set", "alarm_remove", "alarm_query"], "labels": {"route": "reminder", "speechAct": "request", "refusal": "allow"}},
+    {"source": ["cooking_recipe", "cooking_query", "qa_definition", "qa_factoid", "recommendation_locations", "recommendation_events", "recommendation_movies", "takeaway_query", "transport_traffic", "weather_query"], "labels": {"route": "web_search", "speechAct": "request", "refusal": "allow"}},
+    {"source": ["email_sendemail", "play_audiobook", "play_music", "play_podcasts", "play_radio", "takeaway_order", "transport_taxi"], "labels": {"route": "unsupported", "speechAct": "request", "refusal": "out_of_scope"}},
+    {"source": ["audio_volume_down", "audio_volume_up", "audio_volume_mute", "calendar_query", "calendar_set", "calendar_remove", "email_query", "email_querycontact", "email_addcontact", "iot_cleaning", "iot_coffee", "iot_hue_lightchange", "iot_hue_lightdim", "iot_hue_lightoff", "iot_hue_lighton", "iot_hue_lightup", "iot_wemo_off", "iot_wemo_on", "lists_createoradd", "lists_query", "lists_remove", "qa_currency"], "labels": {"speechAct": "request"}}
+  ],
+  "arbanking77": [
+    {"source": ["activate my card", "balance not updated after bank transfer", "balance not updated after cheque or cash deposit", "cancel transfer", "card arrival", "card linking", "card payment not recognised", "change pin", "direct debit payment not recognised", "edit personal details", "pending card payment", "pending cash withdrawal", "pending top up", "pending transfer", "pin blocked", "terminate account", "transaction charged twice", "transfer not received by recipient"], "labels": {"route": "unsupported", "speechAct": "request", "refusal": "out_of_scope"}}
+  ],
+  "massiveExcludedIds": ["1957", "2942"],
+  "ayaGlobalHarm": ["Bullying & Harassment", "Hate Speech", "Non-consensual sexual content", "Violence, Threats & Incitement"]
+}

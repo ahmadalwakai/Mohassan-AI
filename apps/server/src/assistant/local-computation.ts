@@ -1,8 +1,11 @@
 import { buildFrame } from './mind/frame.js';
 import { compute, type ComputationConsumption } from './mind/compute.js';
+import { calculationBodyBeforeWork } from './mind/computation-consumption.js';
 import type { Claim, Evidence } from './mind/contract.js';
+import { evaluateLocalReasoning, type ReasoningContext } from './reasoning/index.js';
 import { analyzeCompoundRequest, type CompoundRequestAnalysis, type PendingActionKind } from './compound-request.js';
 import { splitReplyDirective, type ReplyDirective, type ReplyLanguage } from './reply-directive.js';
+import { evaluateWordProblem } from './word-problem.js';
 
 /** A local calculation is a reusable capability, independent of the experimental Mind route. */
 export interface LocalComputation {
@@ -18,6 +21,8 @@ export interface LocalComputation {
   /** Host may use the verified step separately while continuing the full request. */
   primaryText?: string;
   pendingNote?: string;
+  /** A word problem was understood as arithmetic but had no reliable expression. */
+  abstained?: true;
 }
 
 /**
@@ -26,10 +31,17 @@ export interface LocalComputation {
  * local calculation. Unsupported expressions remain available to the ordinary
  * routing path; an understood but invalid calculation returns its exact boundary.
  */
-export function evaluateLocalComputation(request: string, now = new Date()): LocalComputation | null {
+export function evaluateLocalComputation(request: string, now = new Date(), reasoning?: ReasoningContext): LocalComputation | null {
   if (!request.trim() || request.length > 4000 || !Number.isFinite(now.getTime())) return null;
-  const whole = evaluateComputationText(request, now);
+  const beforeWork = calculationBodyBeforeWork(request);
+  if (beforeWork) {
+    return evaluateLocalReasoning(beforeWork, now, reasoning)
+      ?? evaluateComputationText(request, now, beforeWork);
+  }
+  const whole = evaluateLocalReasoning(request, now, reasoning) ?? evaluateComputationText(request, now);
   if (whole) return whole;
+  const wordProblem = evaluateWordProblem(request);
+  if (wordProblem) return wordProblem;
   // «QA test 2026-11-23: Calculate 37 × 24 and reply with the result in one short Arabic sentence.» (live test, 2026-11-23):
   // the label in front and the closing instruction about the reply are not part of the calculation. Only the request
   // between them is calculated, and only when it is a complete calculation on its own; the reply then follows the
@@ -57,10 +69,10 @@ function shapedReply(result: LocalComputation, directive: ReplyDirective): Local
   return { ...result, lang, text: sentence, claims: [{ text: sentence, support: [reply.id], status: 'confirmed' }], evidence: [...result.evidence, reply] };
 }
 
-function evaluateComputationText(request: string, now: Date): LocalComputation | null {
-  const compound = analyzeCompoundRequest(request);
-  if (compound.kind === 'invalid' || compound.kind === 'unsupported_tail') return null;
-  const frame = buildFrame(compound.kind === 'compound' ? compound.primary.text : request);
+function evaluateComputationText(request: string, now: Date, body = request): LocalComputation | null {
+  const compound = analyzeCompoundRequest(body);
+  if (compound.kind === 'invalid' || compound.kind === 'unsupported_tail' || body !== request && compound.kind !== 'single') return null;
+  const frame = buildFrame(compound.kind === 'compound' ? compound.primary.text : body);
   if (frame.intent !== 'compute' || frame.missing.length) return null;
   // Formatting is an outer instruction too; quoted/body data cannot invent it.
   if (compound.kind === 'compound') frame.valueOnly ||= buildFrame(compound.outerText).valueOnly;

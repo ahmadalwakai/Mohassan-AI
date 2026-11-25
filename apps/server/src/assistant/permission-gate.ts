@@ -6,6 +6,8 @@ import { PermissionRecordSchema, RUN_CAPABILITIES, isRunCapability, type Permiss
 import { desktopCapability } from './run-plans.js';
 import type { ComputerStep } from './tools.js';
 import type { WorkTool } from './brain.js';
+import { reviewActionMaterialRefusal } from './refusal/permissions.js';
+import { refusalPolicyEnabled } from './refusal/settings.js';
 
 /**
  * The one server-side permission gate of the chat runtime (docs/architecture/agent-execution.md). Every action that
@@ -158,7 +160,9 @@ export function checkPermission(ledger: RunLedger, input: { material: unknown; a
   if (!material.success) return { decision: 'deny', reason: 'invalid_arguments', fingerprint: null };
   const fingerprint = actionFingerprint(material.data);
   if (!input.actorAllowed) return { decision: 'deny', reason: 'actor_not_allowed', fingerprint };
-  if (!input.platformAllowed) return { decision: 'deny', reason: 'platform_restricted', fingerprint };
+  if (!input.platformAllowed || refusalPolicyEnabled() && reviewActionMaterialRefusal(material.data)) {
+    return { decision: 'deny', reason: 'platform_restricted', fingerprint };
+  }
   const mine = ledger.permissions.filter(item => item.actorId === input.actorId && item.conversationId === input.conversationId && item.runId === input.runId);
   if (input.approvalId) {
     const named = mine.find(item => item.id === input.approvalId);

@@ -1,3 +1,5 @@
+import { isDisambiguationPage } from './answer-check.js';
+
 /**
  * Evidence cache for pages read over HTTP (docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md §5.2, P4).
  *
@@ -7,7 +9,7 @@
  * never served from here: the caller says so and the cache steps aside. Every entry keeps the time it was
  * fetched, so a reply can say how old its evidence is. Bounded, in memory, per server process.
  */
-export interface CachedPage { url: string; title: string; text: string; status: number; fetchedAt: string }
+export interface CachedPage { url: string; title: string; text: string; status: number; fetchedAt: string; links?: readonly string[] }
 export type PageClass = 'encyclopedia' | 'documentation' | 'news' | 'other';
 
 /** Lifetimes proposed in the plan (§5.2 P4); the owner fixes them after the Phase 2 measurement. */
@@ -63,7 +65,10 @@ export function createPageCache(options: { now?: () => number; maxEntries?: numb
     },
     /** Stores a readable page under its class's lifetime; a live fact, an empty page or an oversized one is not kept. */
     put(page: Omit<CachedPage, 'fetchedAt'> & { fetchedAt?: string }, options: { live?: boolean } = {}): CachedPage {
-      const stored: CachedPage = { ...page, text: page.text.slice(0, MAX_TEXT_CHARS), fetchedAt: page.fetchedAt ?? new Date(now()).toISOString() };
+      const { links, ...content } = page;
+      const disambiguationLinks = links && isDisambiguationPage(page) ? links.slice(0, 100).filter(link => link.length <= 1024) : undefined;
+      const stored: CachedPage = { ...content, ...(disambiguationLinks?.length ? { links: disambiguationLinks } : {}),
+        text: page.text.slice(0, MAX_TEXT_CHARS), fetchedAt: page.fetchedAt ?? new Date(now()).toISOString() };
       const key = pageCacheKey(page.url);
       if (options.live || !key || !stored.text.trim() || page.status >= 400) return stored;
       if (entries.size >= limit) entries.delete(entries.keys().next().value!);

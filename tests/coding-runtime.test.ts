@@ -25,6 +25,58 @@ describe('coding task authorization, results and usage persistence',()=>{
     expect((await runtime.snapshot('owner')).tasks[0]?.result).toBeNull();
     expect((await store.db.selectFrom('approvals').select('scope').executeTakeFirstOrThrow()).scope).toBe('coding:change');
   });
+  it('records authorized tool-backed repair progress without creating a model run',async()=>{
+    let calls=0;
+    const runtime=new Runtime(store.db,options(async(_goal,context)=>{
+      calls++;
+      await context.onProgress?.('repair_requested','ignored');
+      return {...resultFixture(),model:'deterministic-tools',usage:{inputTokens:0,outputTokens:0}};
+    }));
+    expect(runtime.getCapabilities().find(capability=>capability.id==='coding.change')?.requiredScopes).toEqual(['code:read','code:write','code:run']);
+    const task=await runtime.createTask('owner',input,'local-coding-request');
+    await runtime.tick();
+    expect(calls).toBe(0);
+    await runtime.approve('owner',task.id);
+    await runtime.tick();
+    const detail=await runtime.detail('owner',task.id);
+    expect(detail.task).toMatchObject({status:'completed',result:{outcome:'ready_for_review',model:'deterministic-tools'}});
+    expect(detail.events).toContainEqual(expect.objectContaining({type:'repair_requested',message:expect.stringContaining('الأدوات المحلية')}));
+    expect(detail.modelRuns).toEqual([]);
+  });
+  it('makes a tool refusal terminal and shows a safe Arabic reason',async()=>{
+    let calls=0;
+    const runtime=new Runtime(store.db,options(async(_goal,context)=>{
+      calls++;
+      await context.onProgress?.('repair_requested','ignored');
+      throw Object.assign(new Error('untrusted tool details'),{code:'NO_PROVEN_FIX'});
+    }));
+    const task=await runtime.createTask('owner',input,'no-proven-repair');
+    await runtime.approve('owner',task.id);
+    await runtime.tick();
+    await runtime.tick();
+    const detail=await runtime.detail('owner',task.id);
+    expect(detail.task).toMatchObject({status:'failed',error:expect.stringContaining('إصلاحًا يمكن إثباته')});
+    expect(detail.events.at(-1)).toMatchObject({type:'task_failed',message:detail.task.error});
+    expect(detail.modelRuns).toEqual([]);
+    expect(calls).toBe(1);
+    expect(await store.db.selectFrom('coding_runs').select(['status','error_code']).executeTakeFirstOrThrow()).toEqual({status:'failed',error_code:'NO_PROVEN_FIX'});
+    expect(JSON.stringify(detail)).not.toContain('untrusted tool details');
+  });
+  it('keeps an interrupted tool-backed repair behind fresh approval',async()=>{
+    let calls=0;
+    const runtime=new Runtime(store.db,options(async()=>{calls++;return resultFixture();}));
+    const task=await runtime.createTask('owner',input,'interrupted-local-repair');
+    await runtime.approve('owner',task.id);
+    const lease=randomUUID();
+    await store.db.updateTable('tasks').set({status:'running',attempt:1,lease_token:lease,lease_expires_at:new Date(0)}).where('id','=',task.id).execute();
+    await store.db.insertInto('coding_runs').values({id:randomUUID(),task_id:task.id,project_id:projectId,attempt:1,lease_token:lease,status:'started',result:null,result_committed:false,error_code:null,finished_at:null}).execute();
+    await runtime.tick();
+    const detail=await runtime.detail('owner',task.id);
+    expect(detail.task).toMatchObject({status:'waiting_approval',error:expect.stringContaining('انقطعت مهمة البرمجة')});
+    expect(detail.modelRuns).toEqual([]);
+    expect(calls).toBe(0);
+    expect(await store.db.selectFrom('coding_runs').select(['status','error_code']).executeTakeFirstOrThrow()).toEqual({status:'unknown',error_code:'WORKER_LEASE_EXPIRED'});
+  });
   it('retains failed-test diffs for review without claiming completed or retrying',async()=>{
     let calls=0;const runtime=new Runtime(store.db,options(async()=>{calls++;return {...resultFixture(),outcome:'tests_failed',checkpoint:null,tests:{...resultFixture().tests,exitCode:1},review:{passed:false,checks:[{id:'tests',passed:false,message:'اختبار لم ينجح.'}]}};}));
     const task=await runtime.createTask('owner',input,'failed-code-request');await runtime.approve('owner',task.id);await runtime.tick();await runtime.tick();

@@ -284,6 +284,7 @@ export interface BrainState {
   clarifiedRequestSource?: import('./effective-request-source.js').ClarifiedRequestSource;
   /** Host hash of the current user's pre-schema/pre-redaction bytes; never model-provided. */
   requestOriginalHash?: string;
+  codingVerification?: import('./test-driven-coding/reply.js').CodingVerification;
   requestClarification?: { attempts: number };
   clarificationAttempts?: number;
   /** Full bounded answer for deterministic templates; diagnostic trails are abbreviated. */
@@ -374,6 +375,7 @@ export interface BrainState {
   resolvedRequest?: string | null;
   /** A letter waiting for the owner's answers to its one card of questions. Only code sets this. */
   writer?: import('./writer.js').WritingTask | null;
+  writingReadUrls?: string[];
   planner?: import('./planner.js').PlanningTask | null;
   /** A website being collected or edited in this conversation (packages/sites, no model). Only code sets this. */
   site?: import('./site-builder.js').SiteChatState | null;

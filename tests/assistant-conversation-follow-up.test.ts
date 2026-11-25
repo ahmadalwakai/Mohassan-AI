@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentBrowser, SearchHit, SearchOutcome, SearchProvider } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
@@ -119,6 +119,7 @@ describe('a conversation that goes on, through the real chat controller', () => 
   });
   afterAll(async () => { await control?.shutdown(); await database?.close(); });
   beforeEach(() => { queries.length = 0; reads.length = 0; });
+  afterEach(() => vi.unstubAllEnvs());
 
   async function turn(text: string, id?: string) {
     const conversation = id ? (await control.send(OWNER, id, { text }), id) : (await control.create(OWNER, { goal: text })).id;
@@ -136,12 +137,16 @@ describe('a conversation that goes on, through the real chat controller', () => 
     expect(next.reply).toContain('1955');
   });
 
-  it('«وكم طوله؟» after the longest river asks about the Nile, not about rivers', async () => {
+  it('looks up the named river for «وكم طوله؟» rather than reading the generic list again', async () => {
+    vi.stubEnv('MOHASSAN_CONVERSATION_SHADOW', 'decide');
     const first = await turn('ما هو أطول نهر في العالم؟');
     expect(first.reply).toContain('نهر النيل');
     queries.length = 0;
+    reads.length = 0;
     const next = await turn('وكم طوله؟', first.id);
     expect(queries.join(' | ')).toContain('النيل');
+    expect(reads).toContain(wiki('نهر النيل'));
+    expect(reads).not.toContain(wiki('نهر'));
     expect(next.reply).toContain('6650');
     expect(next.reply).not.toContain('الدانوب');
   });

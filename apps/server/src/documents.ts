@@ -114,9 +114,10 @@ export function createDocumentControl(db: Kysely<any>, options: DocumentControlO
       return store(ownerId, conversationId, name, bytes, 'edited', null);
     },
     info: (bytes: Uint8Array, signal?: AbortSignal) => pdfInfo(bytes, { signal }),
-    async list(ownerId: string, conversationId?: string, limit = 50): Promise<StoredDocument[]> {
+    async list(ownerId: string, conversationId?: string, limit = 50, name?: string): Promise<StoredDocument[]> {
       let query = db.selectFrom('pdf_documents').selectAll().where('owner_id', '=', ownerId);
       if (conversationId) query = query.where('conversation_id', '=', conversationId);
+      if (name !== undefined) query = query.where('name', '=', name.normalize('NFC'));
       return (await query.orderBy('created_at', 'desc').orderBy('id', 'desc').limit(Math.min(50, Math.max(1, limit))).execute()).map(publicRow);
     },
     get,

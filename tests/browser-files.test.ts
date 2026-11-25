@@ -4,11 +4,12 @@ import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative, isAbsolute } from 'node:path';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
-import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PNG } from 'pngjs';
 import { createDatabase, migrate } from '@mohassan/database';
 import { AgentBrowser, BrowserError, BROWSER_FILE_MAX_BYTES, SafeNetwork, inspectBrowserFile, type AgentAuthority } from '@mohassan/browser';
+import { migrateAuth } from '../apps/server/src/auth.js';
+import { commandChatMigration } from '../apps/server/src/command-chat.js';
 import { registerBrowserFileRoutes } from '../apps/server/src/browser-files.js';
 
 const auth = (): AgentAuthority => ({ signal: new AbortController().signal, assertActive: async () => {}, dispatched: async permit => permit.id, completed: async () => {} });
@@ -43,8 +44,10 @@ beforeAll(async () => {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing address');
   origin = `http://127.0.0.1:${address.port}`;
-  store = await createDatabase(); await migrate(store.db);
-  await sql`CREATE TABLE chat_conversations(id text PRIMARY KEY,owner_id text NOT NULL,status text NOT NULL,active_run_id text,browser_account text)`.execute(store.db);
+  store = await createDatabase();
+  await migrateAuth(store.db);
+  await migrate(store.db);
+  await commandChatMigration(store.db);
   browser = new AgentBrowser({ profileDir: root, testOrigins: [origin], channel: null });
   app = Fastify({ bodyLimit: 16384 });
   app.setErrorHandler((error: any, _req: FastifyRequest, reply: FastifyReply) => reply.code(error.statusCode ?? 400).send({ error: { code: error.code ?? 'INVALID', message: error.message } }));
@@ -62,7 +65,7 @@ afterAll(async () => {
 
 async function conversation(account: string = 'files-common', page = '/files') {
   const id = randomUUID();
-  await store.db.insertInto('chat_conversations').values({ id, owner_id: ownerId, status: 'idle', browser_account: account }).execute();
+  await store.db.insertInto('chat_conversations').values({ id, owner_id: ownerId, title: 'Browser files fixture', status: 'idle', browser_account: account }).execute();
   await browser.bindAccount(ownerId, id, account);
   await browser.act(ownerId, id, { kind: 'open', text: origin + page }, auth());
   return id;

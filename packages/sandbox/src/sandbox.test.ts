@@ -111,6 +111,50 @@ describe.skipIf(process.platform !== 'win32')('real Windows AppContainer + Job b
     expect(result.stdout).toContain('pass 1');
   });
 
+  it('runs the pinned TypeScript check and validates TSX syntax and JSON before the frozen Node tests', async () => {
+    const files: SandboxFile[] = [
+      { path: 'tsconfig.json', content: '{"compilerOptions":{"types":[],"strict":true,"composite":true},"files":["src/math.ts"]}' },
+      { path: 'src/math.ts', content: 'export const value: number = 3;' },
+      { path: 'src/view.tsx', content: 'throw new Error("TSX must not execute");\nexport const view = <span />;' },
+      { path: 'data.json', content: '{"value":3}' },
+      { path: 'math.test.mjs', content: "import test from 'node:test';import assert from 'node:assert/strict';import {value} from './src/math.ts';test('number',()=>assert.equal(value,3));" },
+    ];
+    const run = { files, testFiles: ['math.test.mjs'], syntaxFiles: ['src/view.tsx'], jsonFiles: ['data.json'], typecheck: { project: 'tsconfig.json' }, timeoutMs: 10_000 };
+    const passed = await sandbox.run(run);
+    expect(passed).toMatchObject({ exitCode: 0, isolationVerified: true, snapshotHash: snapshotHash(files) });
+    expect(passed.stdout).toContain('pass 1');
+    const brokenTypes = files.map(file => file.path === 'src/math.ts' ? { ...file, content: 'export const value: number = "wrong";' } : file);
+    const rejectedTypes = await sandbox.run({ ...run, files: brokenTypes });
+    expect(rejectedTypes.exitCode).not.toBe(0);
+    expect(rejectedTypes.stdout).toContain('TS2322');
+    const brokenJson = files.map(file => file.path === 'data.json' ? { ...file, content: '{"value":}' } : file);
+    const rejectedJson = await sandbox.run({ ...run, files: brokenJson });
+    expect(rejectedJson.exitCode).not.toBe(0);
+    expect(rejectedJson.stderr).toContain('SyntaxError');
+    const brokenTsx = files.map(file => file.path === 'src/view.tsx' ? { ...file, content: 'export const view = <span;' } : file);
+    const rejectedTsx = await sandbox.run({ ...run, files: brokenTsx });
+    expect(rejectedTsx.exitCode).not.toBe(0);
+    expect(rejectedTsx.stderr).toContain('TS1003');
+  }, 60_000);
+
+  it('runs ESLint --fix on private copies and limits layout fixes to requested formatting', async () => {
+    const files: SandboxFile[] = [
+      { path: 'eslint.config.mjs', content: 'export default [{rules:{"prefer-const":"error","semi":["error","always"]}}];' },
+      { path: 'src/math.mjs', content: 'let value = 3\nexport { value }\n' },
+    ];
+    const lint = { files, configPath: 'eslint.config.mjs', fixFiles: ['src/math.mjs'], formatting: false };
+    const repaired = await sandbox.lintFix(lint);
+    expect(repaired).toMatchObject({
+      exitCode: 1, isolationVerified: true, snapshotHash: snapshotHash(files),
+      fixes: [{ path: 'src/math.mjs', content: 'const value = 3\nexport { value }\n' }],
+    });
+    const formatted = await sandbox.lintFix({ ...lint, formatting: true });
+    expect(formatted).toMatchObject({
+      exitCode: 0, isolationVerified: true, snapshotHash: snapshotHash(files),
+      fixes: [{ path: 'src/math.mjs', content: 'const value = 3;\nexport { value };\n' }],
+    });
+  }, 60_000);
+
   it('enforces the single-process Job limit in a repository-owned fixture without Node permissions', async () => {
     const files = [{ path: 'process.test.mjs', content: "import test from 'node:test';import assert from 'node:assert/strict';import{spawn}from 'node:child_process';test('child blocked',async()=>{const blocked=await new Promise(resolve=>{try{const child=spawn(process.execPath,['-e','process.exit(0)'],{stdio:'ignore'});child.once('error',()=>resolve(true));child.once('exit',code=>resolve(code!==0));}catch(error){resolve(['UNKNOWN','EAGAIN','EPERM','EACCES'].includes(error.code));}});assert.equal(blocked,true);});" }];
     const result = await (sandbox as unknown as { execute(input: SandboxRunInput, probe: boolean, enforceNodePermissions: boolean): Promise<SandboxTestResult> }).execute({ files, testFiles: ['process.test.mjs'], timeoutMs: 4000 }, false, false);

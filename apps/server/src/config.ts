@@ -6,6 +6,7 @@ import { inferenceConfigFromEnv, withoutExternalAI } from './inference.js';
 import { executorConfigFromEnv } from './executor.js';
 import { adsLabConfigFromEnv } from './ads-lab.js';
 import { skillRemoteConfigFromEnv } from './skill-remote.js';
+import { localTrainingMonitorRoot } from './training-monitor/route.js';
 export function getConfig(): AppConfig {
   return {
     // SKILL_REMOTE_*: invalid values leave the GitHub source off with a reported problem; they never stop the server.
@@ -35,5 +36,6 @@ export function getConfig(): AppConfig {
     sites:{vercelToken:process.env.VERCEL_TOKEN||undefined,vercelTeamId:process.env.VERCEL_TEAM_ID||undefined,publishTarget:process.env.SITES_PUBLISH_TARGET==='none'?'none':process.env.VERCEL_TOKEN?'vercel':'none'},
     // The owner's own Windows session: files, projects, programs, windows and input. Never on the cloud deployment.
     desktop:{enabled:process.platform==='win32'&&process.env.NODE_ENV!=='production'&&process.env.DESKTOP_ENGINE!=='false',dataDir:process.env.DESKTOP_DATA_DIR||resolve('.data/desktop'),projectsRoot:process.env.DESKTOP_PROJECTS_ROOT||undefined,roots:process.env.DESKTOP_ALLOWED_ROOTS?.split(delimiter).filter(Boolean),screenshotsDir:process.env.DESKTOP_SCREENSHOTS_DIR||undefined},
+    trainingMonitorRoot: localTrainingMonitorRoot(process.env, process.env.WEB_ORIGIN ?? 'http://127.0.0.1:3000', process.cwd()),
   };
 }

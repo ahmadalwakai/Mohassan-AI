@@ -6,6 +6,8 @@ import { normalizeHandsPlan, type HandsPlan, type HandsStep } from './hands.js';
 import type { ForbiddenRequestCapability } from './request-constraints.js';
 import type { RoutingHandler } from './routing-decision.js';
 import type { GateDecision } from './permission-gate.js';
+import { reviewHandsRefusal } from './refusal/permissions.js';
+import { refusalPolicyEnabled } from './refusal/settings.js';
 
 /**
  * Typed plans for the run ledger (agent-run.ts), built from the plans the runtime actually executes: the browser's
@@ -58,6 +60,9 @@ export function planFromHands(plan: HandsPlan, prefix: string): PlanStep[] {
  */
 export function recordHandsPlan(ledger: RunLedger, plan: HandsPlan, at: number): string {
   normalizeHandsPlan(plan);
+  if (refusalPolicyEnabled() && reviewHandsRefusal(plan.steps)) {
+    throw new RunLedgerError('RUN_PLAN_INVALID', 'A step in the complete browser plan is restricted by the refusal policy.');
+  }
   const prefix = handsPlanPrefix(plan);
   const steps = planFromHands(plan, prefix);
   if (ledger.plan?.steps.some(step => step.id.startsWith(prefix))) {
@@ -260,7 +265,7 @@ export function verifyStoredPdf(stored: { id: string; size: number; hash: string
 }
 
 /** Handlers that answer from the request and local knowledge, with no external action. */
-const DIRECT_HANDLERS: ReadonlySet<RoutingHandler> = new Set(['local_conversation', 'local_computation', 'local_status']);
+const DIRECT_HANDLERS: ReadonlySet<RoutingHandler> = new Set(['local_conversation', 'local_computation', 'local_coding', 'local_status']);
 export const pathOfHandler = (handler: RoutingHandler | undefined): RunPath | null => !handler || handler === 'clarify' || handler === 'resume' ? null
   : DIRECT_HANDLERS.has(handler) ? 'direct' : 'action';
 

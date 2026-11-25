@@ -38,6 +38,18 @@ describe('read-only routing decision contract', () => {
     expect(decision).toMatchObject({ route: 'memory', handler: 'memory', availability: 'ready', reason: 'context_destination', publicQuery: null, resolution: { scope: 'private', intent: 'memory' } });
   });
 
+  it('keeps an Iraqi Arabic factual question and its follow-up on the public lookup route', () => {
+    const capabilities = { browser: true, search: true };
+    const initial = 'شنو ارتفاع برج وادي السرو؟';
+    const first = route(initial, { capabilities, turnId: 'tower-question' });
+    expect(first).toMatchObject({ route: 'web_search', handler: 'search', publicQuery: initial,
+      resolution: { kind: 'new', nextState: { scope: 'public', sourceAssessment: { source: 'public_lookup' } } } });
+    const followUp = route('وما عنوانه؟', { capabilities, context: first.resolution.nextState });
+    expect(followUp).toMatchObject({ route: 'web_search', handler: 'search',
+      resolution: { kind: 'follow_up', scope: 'public' }, sourceAssessment: { reasons: ['inherited_source'] } });
+    expect(followUp.publicQuery).toContain('وادي السرو');
+  });
+
   it('routes a host-owned pending answer to resume without granting action permission', () => {
     const context = bootstrapRequestContext([{ text: 'Prepare a campaign for a bicycle repair shop in York.' }]);
     const decision = route('GBP 30 per day', { context, pendingQuestion: { id: 'budget-question', route: 'ads', fields: ['budget'] } });
@@ -107,6 +119,43 @@ describe('read-only routing decision contract', () => {
     expect(route('Calculate')).toMatchObject({ route: 'clarify', availability: 'needs_context' });
     expect(route('x'.repeat(8001))).toMatchObject({ route: 'clarify', availability: 'needs_context', reason: 'invalid_request' });
     expect(route('Yes', { pendingQuestion: { id: '' } })).toMatchObject({ route: 'clarify', reason: 'invalid_request' });
+  });
+
+  it.each([
+    'في أي مدينة أُنشئ معهد الخزف الوطني؟',
+    'ماهي مهنة فريدة الشاذلي؟',
+    'ما اسم الحي الذي يوجد فيه مرصد الأفق؟',
+    'At which observatory was the Blue Heron satellite first tracked?',
+    'What is the name of the river that crosses Greywick?',
+    'How many public fountains are there in Greywick?',
+    'How long did it take to restore Alder Hall?',
+    'When did the play "This Little Lantern" premiere?',
+  ])('uses the original question for a self-contained public lookup: %s', text => {
+    const decision = route(text, { capabilities: { search: true, browser: true } });
+    expect(decision).toMatchObject({ route: 'web_search', handler: 'search', availability: 'ready', publicQuery: text,
+      resolution: { kind: 'new', scope: 'public' }, sourceAssessment: { source: 'public_lookup', operation: 'lookup' } });
+  });
+
+  it.each([
+    'Where is that observatory?',
+    'Where can I find that glasses case?',
+    'How many public fountains are there?',
+    'How long did it take to restore it?',
+    'Is "That" correct?',
+    'ما حجم الملف الذي تكلمنا عنه؟',
+  ])('still asks for an unresolved reference: %s', text => {
+    expect(route(text, { capabilities: { search: true, browser: true } })).toMatchObject({ route: 'clarify', publicQuery: null });
+  });
+
+  it('does not treat a prepositional question about an owned record or visible surface as public', () => {
+    const options = { capabilities: { search: true, browser: true, memory: true, computer: true } };
+    expect(route('In which folder is my saved report?', options)).toMatchObject({ route: 'memory', publicQuery: null });
+    expect(route('ما اسم المرصد الذي ذكرته لك في حديثنا؟', options)).toMatchObject({ route: 'memory', publicQuery: null });
+    expect(route('Where is the error displayed on my screen?', options)).toMatchObject({ route: 'pc', publicQuery: null });
+  });
+
+  it('does not treat an imperative beginning with have as a question', () => {
+    expect(route('Have the note printed.', { capabilities: { search: true, browser: true } }).publicQuery).toBeNull();
   });
 
   it('does not mutate host-persisted context and reconciles a specialist destination', () => {

@@ -1,10 +1,12 @@
 import { analyzeCompoundRequest } from './compound-request.js';
+import { decideConversationTurn, type ConversationTurnDecision } from './conversation-state-decisions.js';
+import { extendConversationEntities, type ConversationEntity } from './conversation-state-entities.js';
 import { resolveRequestContext, type RequestContextState, type RequestResolution, type RequestSlotKind } from './request-context.js';
 
 /**
  * Conversation state v2 (docs/RESPONSE-QUALITY-PLAN-2026-11-22.md, phase 1).
- * Full-state integration remains in shadow. public-conversation-followup.ts uses bounded user-only replay
- * to refine already-authorized public follow-up queries under additional source and action guards.
+ * The conversation decision uses bounded transcript replay. The original understanding is retained for
+ * the public follow-up helper, compatibility with earlier reports, and shadow comparison.
  *
  * It wraps the v1 request context and keeps v1's boundary:
  * - only user turns are instructions;
@@ -61,8 +63,10 @@ export interface ConversationStateV2 {
   corrections: CorrectionRecord[];
   pending: PendingStep | null;
   schedule: Schedule | null;
+  entities: ConversationEntity[];
+  lastAnswerTurnId: string | null;
 }
-export interface TurnUnderstanding {
+interface LegacyTurnUnderstanding {
   type: TurnType;
   entity: string | null;
   property: PropertyName | null;
@@ -84,6 +88,20 @@ export interface TurnUnderstanding {
   corrected?: { from: string; to: string }[];
   v1: RequestResolution;
   next: ConversationStateV2;
+}
+
+export interface TurnUnderstanding extends LegacyTurnUnderstanding {
+  decision: ConversationTurnDecision;
+}
+
+export function withAssistantAnswer(state: ConversationStateV2, text: string, turnId: string,
+    options: { publicLookup?: boolean } = {}): ConversationStateV2 {
+  if (!text.trim()) return state;
+  return {
+    ...state,
+    lastAnswerTurnId: turnId,
+    entities: extendConversationEntities(state.entities, { text, turnId, role: 'assistant', ...options }),
+  };
 }
 
 interface PropertyForms {
@@ -307,7 +325,7 @@ const label = (text: string) => clean(text).slice(0, MAX_LABEL);
 const bareWord = (word: string) => word.replace(/^[وفب](?=.{2})/u, '').replace(/^ال(?=.{2})/u, '');
 
 export function emptyConversationState(): ConversationStateV2 {
-  return { version: CONVERSATION_STATE_VERSION, base: null, topics: [], results: [], corrections: [], pending: null, schedule: null };
+  return { version: CONVERSATION_STATE_VERSION, base: null, topics: [], results: [], corrections: [], pending: null, schedule: null, entities: [], lastAnswerTurnId: null };
 }
 
 /** Host-owned data from the reply just shown (answer entity, list items). Never treated as an instruction. */
@@ -740,7 +758,31 @@ function pushCorrection(next: ConversationStateV2, record: CorrectionRecord): vo
   next.corrections = [...next.corrections, record].slice(-MAX_CORRECTIONS);
 }
 
-export function understandTurn(state: ConversationStateV2, text: string, turnId: string): TurnUnderstanding {
+export function understandTurn(state: ConversationStateV2, text: string, turnId: string,
+    options: { boundAnswer?: boolean } = {}): TurnUnderstanding {
+  const legacy = understandLegacyTurn(state, text, turnId);
+  const decision = decideConversationTurn({
+    text, legacy, entities: state.entities, previousTopic: state.topics.at(-1),
+    pending: state.pending, hasPreviousAnswer: state.lastAnswerTurnId !== null, ...options,
+  });
+  const topic = legacy.next.topics.at(-1);
+  const ownTopic = topic?.sourceTurnId === turnId && topic.entity && topic.entityOrigin === 'user'
+    && (decision.type === 'new_request' || decision.type === 'correction' || legacy.type === 'follow_up_entity') ? topic : null;
+  const property = ownTopic?.property ? PROPERTY_BY_NAME.get(ownTopic.property) : null;
+  const entity = ownTopic?.entity;
+  const previousEntity = state.topics.at(-1)?.entity;
+  const priorKind = legacy.type === 'follow_up_entity' && previousEntity
+    ? state.entities.find(item => item.kind !== 'other' && fold(item.text) === fold(previousEntity))?.kind : undefined;
+  const kind = property && placeEntity(property) ? 'place' : priorKind;
+  const publicLookup = legacy.v1.sourceAssessment?.source === 'public_lookup' && legacy.v1.sourceAssessment.operation === 'lookup'
+    && legacy.v1.sourceAssessment.publicQueryEligible;
+  legacy.next.entities = extendConversationEntities(state.entities, {
+    text, turnId, role: 'user', publicLookup, ...(entity ? { topic: { text: entity, kind }, place: ownTopic?.place, time: ownTopic?.time } : {}),
+  });
+  return { ...legacy, decision };
+}
+
+function understandLegacyTurn(state: ConversationStateV2, text: string, turnId: string): LegacyTurnUnderstanding {
   const pendingQuestion = state.pending?.kind === 'question_card' ? { id: state.pending.id, fields: state.pending.fields } : undefined;
   // «من فضلك»، "could you tell me" and a trailing "please" are dropped before any reading; the question mark is kept.
   const rawWords = wordsOf(text);
@@ -773,7 +815,7 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
   // v1 extracted this turn's own place and time operands; they are hints for splitting the entity, never instructions.
   const hints: SlotHint[] = v1.slots.filter(slot => slot.sourceTurnId === turnId && (slot.kind === 'place' || slot.kind === 'time'))
     .map(slot => ({ kind: slot.kind as 'place' | 'time', value: slot.value }));
-  const result = (type: TurnType, fields: Partial<Omit<TurnUnderstanding, 'type' | 'v1' | 'next'>> = {}): TurnUnderstanding => ({
+  const result = (type: TurnType, fields: Partial<Omit<LegacyTurnUnderstanding, 'type' | 'v1' | 'next'>> = {}): LegacyTurnUnderstanding => ({
     type, entity: null, property: null, place: null, time: null, query: null, assumption: null, needs: null,
     ...(typos.corrected.length ? { corrected: typos.corrected } : {}), ...fields, v1, next,
   });

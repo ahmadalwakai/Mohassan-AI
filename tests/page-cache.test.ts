@@ -62,6 +62,15 @@ describe('page cache: evidence read over HTTP is reused by site kind', () => {
     expect(cache.get('https://missing.example/')).toBeNull();
   });
 
+  it('keeps bounded links only for disambiguation pages', () => {
+    const cache = createPageCache();
+    const links = ['https://en.wikipedia.org/wiki/Paris,_Texas', `https://example.com/${'x'.repeat(1024)}`];
+    expect(cache.put({ ...page('https://en.wikipedia.org/wiki/Paris'), links }).links).toBeUndefined();
+    const variants = { ...page('https://en.wikipedia.org/wiki/Paris_(disambiguation)'), title: 'Paris (disambiguation)', links };
+    cache.put(variants);
+    expect(cache.get(variants.url)?.links).toEqual([links[0]]);
+  });
+
   it('drops the least recently used page when full and trims oversized text', () => {
     const cache = createPageCache({ now: () => 0, maxEntries: 2 });
     cache.put(page('https://a.example/'));

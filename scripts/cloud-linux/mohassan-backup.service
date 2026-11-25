@@ -18,4 +18,4 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/var/backups/mohassan/daily
+ReadWritePaths=/var/backups/mohassan/daily /var/lib/mohassan-backup-status /var/lib/mohassan-backup-pull/newest

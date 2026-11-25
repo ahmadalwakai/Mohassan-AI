@@ -1,0 +1,3 @@
+{"id":"task-ar","text":"حفظت عدد السجلات في الملف النصي.","status":"completed","final_state_path":"final-state.json","output_file":"output.txt"}
+{"id":"task-en-refusal","text":"I cannot export private notes without permission.","status":"refused"}
+{"id":"task-en-missing","text":"Done.","status":"completed"}
