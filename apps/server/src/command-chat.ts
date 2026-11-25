@@ -82,6 +82,7 @@ import { actionOperandHash, actionRequestHash, compileActionCompletionContract, 
 import { isEntireLiteralRequest, parseUserRequestConstraints, requestCapabilityAllowed, requestConstraintReply, requestScopeActionText, reviewPublicProjection, type ForbiddenRequestCapability, type RequestScopeAssessment, type UserRequestConstraints } from './assistant/request-scope.js';
 import { evaluateLocalKnowledge, isKnowledgeDocumentRequest, type LocalKnowledgeDocument } from './assistant/local-knowledge.js';
 import { decideRequestRoute } from './assistant/routing-decision.js';
+import { observePlanMessage, runCompiledChatPlan } from './assistant/plan/chat.js';
 import { describeSearchDestination, extractPublicSearchQueries, isSearchEntryElement, mergePublicQueryTerms, reviewGeneratedPublicQuery } from './assistant/public-query-provenance.js';
 import { reviewExplicitPublicBrowserQuery } from './assistant/browser-public-query.js';
 import { ADS_REWRITE_JSON_SCHEMA, ADS_REWRITE_SCHEMA_NAME, ADS_REWRITE_SYSTEM, buildRewritePrompt, type RewriteRequest } from '@mohassan/google-ads';
@@ -2062,6 +2063,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await pause(id, runId, state, 'waiting_user', { question: JSON.stringify({ id: randomUUID(), prompt, options: [] } satisfies ChatQuestion) }, prompt);
         return;
       }
+      if (run.intent === 'task' && run.attempt === 1 && !verificationIntent && !noteVerificationIntent && await runCompiledChatPlan({ request, config, search, state, ownerId, conversationId: id, runId, fullAccess: currentExecution.full, now: new Date(effectiveSource.evaluatedAt), signal, memoryLimit: MAX_MEMORY_SAVES, active, navigate: async url => (await actBrowser(ownerId, id, { kind: 'open', text: url }, authority())).page, keepPage: page => keepPage(id, page), scrub: text => vault.scrub(id, clean(text)), ledger: () => ledgerOf(state, runId), checkpoint: () => saveState(runId, state), fenceMemory: async tx => { await lockedExecution(tx, id, runId); }, validActionLedger: () => Boolean(restoreActionCompletionLedger(state.actionCompletion, { runId, request })), isInterruption: error => error instanceof RunEnded, publish: (text, status) => finish(id, runId, state, text, status, undefined, undefined, true) })) return;
       if (!restoreActionCompletionLedger(state.actionCompletion, { runId, request })) {
         const reviewed = reviewActionCompletion(state.actionCompletion, { runId, request, outcome: 'blocked' });
         state.actionCompletionReview = reviewed;
@@ -3913,6 +3915,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       await tx.updateTable('chat_conversations').set({ status:expected.stop?'idle':'running',active_run_id:expected.stop?null:runId, question: null, approval: null, secure: null, error: null, progress:expected.stop?null:'يتابع العمل…', updated_at: new Date() }).where('id', '=', id).execute();
       if (expected.stop) await recordTerminalRun(tx, runId, 'cancelled');
     });
+    observePlanMessage(clean(say));
     if(expected.stop){if(previousToken)forgetVault(id,previousToken);return detail(ownerId,id);}
     expected.afterClaim?.();
     await dispatch(ownerId, id, runId, token,true);
@@ -4082,6 +4085,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     });
     // The corrected run is committed; the old worker stops at once (its lease token already changed, so it can no longer
     // write), and a prepared task nobody approved is withdrawn.
+    if (intent === 'task') observePlanMessage(clean(input.text));
     const replaced = superseded as Awaited<ReturnType<typeof supersedeRun>> | null;
     if (replaced) {
       const active = controllers.get(id);
@@ -4180,6 +4184,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const title = current.title === 'محادثة جديدة' || current.title === 'قراءة صورة' ? { title: (shown || (reply.language === 'ar' ? 'قراءة صورة' : 'Image reading')).slice(0, 100) } : {};
       await tx.updateTable('chat_conversations').set({ status: 'idle', error: null, progress: null, updated_at: new Date(), ...title }).where('id', '=', id).execute();
     });
+    observePlanMessage(userText);
     return detail(ownerId, id);
   }
 

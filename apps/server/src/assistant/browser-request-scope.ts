@@ -1,6 +1,7 @@
 import type { RequestResolution } from './request-context.js';
 import { analyzeCompoundRequest } from './compound-request.js';
 import { isCurrentComputerReadRequest } from './computer-request-language.js';
+import { planReadMeasure } from './plan/web-target.js';
 import { assessRequestScope, parseRequestScopeAssessment, parseUserRequestConstraints, requestCapabilityAllowed,
   maskRequestLiteralData, requestOperationText, requestScopeActionText, type RequestScopeAssessment } from './request-scope.js';
 
@@ -62,14 +63,14 @@ function directBrowserClause(text: string): boolean {
 }
 
 /** A narrow current OUTER instruction, independent of retrieved/model/page data. */
-function hasOuterBrowserGoal(request: string): boolean {
+function hasOuterBrowserGoal(request: string, measuredNavigation: boolean): boolean {
   const actionText = requestScopeActionText(request), analysis = analyzeCompoundRequest(actionText);
   if (analysis.kind === 'invalid') return false;
   const outer = requestOperationText(analysis.outerText).replace(COURTESY, '');
   if (REPORT.test(outer) || NARRATIVE.test(outer)) return false;
   // The complete primary clause must itself be a browser request. A quoted URL
   // or reported sentence is not promoted into an outer command.
-  if (directBrowserClause(analysis.primary.text)) return true;
+  if (directBrowserClause(analysis.primary.text) || measuredNavigation && planReadMeasure(analysis.primary.text)?.navigate) return true;
   if (analysis.kind !== 'compound') return false;
   const primaryOuter = requestOperationText(analysis.outerText.slice(analysis.primary.start, analysis.primary.end)).replace(COURTESY, '');
   if (REPORT.test(primaryOuter) || NARRATIVE.test(primaryOuter) || REPORTED_BODY.test(primaryOuter)
@@ -134,7 +135,10 @@ export function reviewBrowserRequestScope(request: unknown, capability: BrowserR
           && (source.operation === 'unknown' || source.operation === 'lookup')) scope = 'private_memory_lookup';
     }
     if (!scope) return result(true, 'unscoped', 'outside_scoped_sources');
-    if (hasOuterBrowserGoal(request)) return result(true, 'explicit_browser_goal', 'explicit_outer_browser_goal');
+    // A later arithmetic clause can classify the whole turn as supplied computation.
+    // Preserve navigation to a literal public page requested in its own primary clause.
+    const measuredNavigation = capability === 'browser_navigation' && scope === 'supplied_content' && source.operation === 'compute';
+    if (hasOuterBrowserGoal(request, measuredNavigation)) return result(true, 'explicit_browser_goal', 'explicit_outer_browser_goal');
     return result(false, scope, scope);
   } catch { return result(false, 'unscoped', 'invalid_request'); }
 }
