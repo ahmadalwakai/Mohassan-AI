@@ -3,6 +3,7 @@ import { parseUserRequestConstraints, isEntireLiteralRequest, maskRequestLiteral
 export { parseUserRequestConstraints, isEntireLiteralRequest, requestCapabilityAllowed, requestConstraintReply, maskRequestLiteralData, UserRequestConstraintsSchema, type UserRequestConstraints, type ForbiddenRequestCapability } from './request-constraints.js';
 import { publicSearchScan, publicSearchText } from '@mohassan/browser';
 import { isCurrentComputerReadRequest } from './computer-request-language.js';
+import { explicitKnowledgeDocumentRequest, requestsKnowledgeSummary } from './knowledge-document-request.js';
 
 /** Source classification is independent of tool availability and model output. */
 export const requestSources = ['public_lookup', 'prior_conversation', 'local_state', 'supplied_content', 'unresolved'] as const;
@@ -160,10 +161,13 @@ export function assessRequestScope(value: string, options: RequestScopeOptions =
   quoted.lastIndex = 0;
   const suppliedLanguageQuestion = /^(?:how (?:do|can|would) (?:i|you) (?:say|translate|write)\s+supplied_literal\s+(?:in|into)\s+[\p{L}][\p{L} -]{0,40}|what does\s+(?:(?:the|this)\s+)?(?:(?:phrase|sentence|text)\s+)?supplied_literal\s+mean|what is\s+(?:the\s+)?translation of\s+supplied_literal(?:\s+(?:in|into)\s+[\p{L}][\p{L} -]{0,40})?)[.!?؟]*$/iu.test(literalEnvelope.replace(/\s+/gu, ' ').trim());
   if (suppliedLanguageQuestion && !hasPublicDocument) return make('supplied_content', 'transform', 'writing', ['supplied_transformation']);
+  const currentComputerRead = isCurrentComputerReadRequest(actionText);
+  if (!hasPublicDocument && !explicitPublic && !currentComputerRead && explicitKnowledgeDocumentRequest(actionText)
+      && (!transformation || requestsKnowledgeSummary(actionText))) return make('prior_conversation', 'lookup', 'memory', ['owned_record']);
   if (transformation && !hasPublicDocument && (delimiter || quotedPayload || !descriptiveContent && PROVIDED.test(outer) && CONTENT_OBJECT.test(outer))) {
     return make('supplied_content', 'transform', 'writing', ['supplied_transformation']);
   }
-  if (isCurrentComputerReadRequest(actionText)) return make('local_state', 'lookup', 'pc', ['visible_local_surface']);
+  if (currentComputerRead) return make('local_state', 'lookup', 'pc', ['visible_local_surface']);
   const memoryAction = MEMORY_ACTION.test(outer), owned = OWNED_RECORD.test(outer), prior = PRIOR_RELATION.test(outer);
   const describeLocal = DESCRIBE_LOCAL.test(outer);
   const local = LOCAL_SURFACE.test(outer) && (LOCAL_ANCHOR.test(outer) || describeLocal

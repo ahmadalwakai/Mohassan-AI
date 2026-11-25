@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { returnedTo } from './return-to.js';
+import { explicitKnowledgeDocumentRequest } from './knowledge-document-request.js';
 import { assessRequestScope, parseRequestScopeAssessment, requestOperationText, RequestScopeAssessmentSchema, reviewPublicProjection, parseUserRequestConstraints, maskRequestLiteralData, isEntireLiteralRequest, type UserRequestConstraints, type RequestScopeAssessment } from './request-scope.js';
 
 /**
@@ -172,6 +173,7 @@ function privateIntent(intent: RequestContextIntent) {
 
 function classify(text: string): RequestContextIntent {
   const normalized = lexicalText(requestOperationText(requestActionText(text)));
+  if (explicitKnowledgeDocumentRequest(normalized)) return 'memory';
   if (MEMORY.test(normalized)) return 'memory';
   if (HOST_LOCAL.test(normalized)) return 'pc';
   if (STORED_PERSONAL.test(normalized)) return 'memory';

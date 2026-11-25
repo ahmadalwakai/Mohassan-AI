@@ -74,4 +74,24 @@ describe('evaluated knowledge in the main conversation', () => {
     expect(detail.messages.at(-1)?.text).not.toContain('Nora Vale');
     expect(search).not.toHaveBeenCalled();
   });
+
+  it('routes an explicit summary locally and verifies quotes against the named source', async () => {
+    documents = [{ title: 'Moss Track handbook', source: 'knowledge:moss:4#0', text: 'The lower trail opens at dawn. Staff inspect the bridge weekly.' }];
+    const { detail, run: result } = await run('Summarize our uploaded Moss Track handbook in two sentences.');
+    expect(result.status).toBe('completed');
+    expect(result.state.completionReview.status).toBe('verified');
+    expect(result.state.trail).toMatchObject([{ action: 'knowledge_search' }]);
+    expect(detail.messages.at(-1)?.text).toContain('Staff inspect the bridge weekly');
+    expect(memory).not.toHaveBeenCalled();
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it('keeps a dialect request for an evaluated document away from public search and memory', async () => {
+    documents = [{ title: 'تقرير أمين المكتبة', source: 'knowledge:library:2#0', text: 'الاسم المعتمد لأمين المكتبة هو هدى خالد.' }];
+    const { detail, run: result } = await run('من تقريري المخزن، خبرني عن اسم أمين المكتبة.');
+    expect(result.status).toBe('completed');
+    expect(detail.messages.at(-1)?.text).toContain('هدى خالد');
+    expect(memory).not.toHaveBeenCalled();
+    expect(search).not.toHaveBeenCalled();
+  });
 });

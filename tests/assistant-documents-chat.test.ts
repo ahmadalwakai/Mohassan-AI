@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AgentBrowser } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
+import { describeDesktopCommand, parseDesktopCommand, type DesktopCommand } from '@mohassan/desktop';
 import { migrateAuth } from '../apps/server/src/auth.js';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
 import { createDocumentControl, migrateDocuments, type DocumentControl } from '../apps/server/src/documents.js';
@@ -20,6 +21,7 @@ describe('PDF files from the chat', () => {
   let member: Awaited<ReturnType<typeof createCommandChatControl>>;
   let dir: string, root: string;
   let browserCalls = 0;
+  const desktopCalls: DesktopCommand[] = [];
 
   beforeAll(async () => {
     database = await createDatabase({});
@@ -29,7 +31,15 @@ describe('PDF files from the chat', () => {
     documents = createDocumentControl(database.db, { dir, allowedRoots: async ownerId => ownerId === OWNER ? [root] : [] });
     const browserIO = async () => { browserCalls++; throw new Error('The browser must not be used for PDF work.'); };
     const browser = { setCheckpointStore() {}, async bindAccount() {}, async hasPage() { return false; }, async close() {}, act: browserIO, observe: browserIO, screen: browserIO, prepareAction: browserIO } as unknown as AgentBrowser;
-    const shared = { browser, recordExperiences: false as const, models: { fast: [], deep: [], vision: '' }, documents: { control: documents, link: (id: string) => `http://web.test/api/documents/${id}/content` } };
+    const desktop = new class {
+      parse(text: string) { return parseDesktopCommand(text); }
+      describe(command: DesktopCommand, language: 'ar' | 'en') { return describeDesktopCommand(command, language); }
+      async execute(command: DesktopCommand) {
+        desktopCalls.push(command);
+        return { status: 'completed' as const, text: 'Desktop file contents were returned.' };
+      }
+    }();
+    const shared = { browser, desktop, recordExperiences: false as const, models: { fast: [], deep: [], vision: '' }, documents: { control: documents, link: (id: string) => `http://web.test/api/documents/${id}/content` } };
     owner = await createCommandChatControl(database.db, shared);
     member = await createCommandChatControl(database.db, { ...shared, fullAccess: async () => false });
   });
@@ -113,6 +123,45 @@ describe('PDF files from the chat', () => {
     expect(fresh.messages.at(-1)!.text).toContain('**جديد.pdf**');
   });
 
+  it('reads, summarizes and edits the named PDF from this conversation, even when another PDF is newer', { timeout: 120_000 }, async () => {
+    const body = 'Inspect the equipment each morning. Leave the side door clear. Log any outages in the register. Send a copy of the report to the caretaker.';
+    const { id } = await owner.create(OWNER, { goal: `Create a file named "Building guide.pdf" with the text: ${body}` });
+    const created = await settle(owner, OWNER, id);
+    expect(created.question).toBeNull();
+    expect(created.messages.at(-1)!.text).toContain('Building guide.pdf');
+
+    await owner.send(OWNER, id, { text: 'Generate a PDF titled Delivery note with this text: Stack the tiles in the garage.' });
+    expect((await settle(owner, OWNER, id)).messages.at(-1)!.text).toContain('Delivery note.pdf');
+
+    await owner.send(OWNER, id, { text: 'Read the file "Building guide.pdf".' });
+    const read = (await settle(owner, OWNER, id)).messages.at(-1)!.text;
+    expect(read).toContain('Text from the file');
+    expect(read).toContain('Send a copy of the report to the caretaker.');
+    expect(read).not.toContain('tiles');
+
+    await owner.send(OWNER, id, { text: 'Summarize "Building guide.pdf".' });
+    const summary = (await settle(owner, OWNER, id)).messages.at(-1)!.text;
+    expect(summary).toContain('Summary using excerpts from the file');
+    expect(summary).toContain('Leave the side door clear.');
+    expect(summary).not.toContain('caretaker');
+
+    await owner.send(OWNER, id, { text: 'Rotate "Building guide.pdf" 180 degrees.' });
+    const edited = (await settle(owner, OWNER, id)).messages.at(-1)!.text;
+    expect(edited).toContain('Building guide rotated.pdf');
+    expect(edited).toContain('From: Building guide.pdf');
+    expect(browserCalls).toBe(0);
+    expect(desktopCalls).toHaveLength(0);
+
+    await owner.send(OWNER, id, { text: 'Read the file instructions.txt.' });
+    expect((await settle(owner, OWNER, id)).messages.at(-1)!.text).toContain('Desktop file contents were returned.');
+    expect(desktopCalls).toEqual([{ kind: 'file_read', path: 'instructions.txt', folder: null }]);
+
+    const unrelated = await owner.create(OWNER, { goal: 'Read "Building guide.pdf".' });
+    const unavailable = (await settle(owner, OWNER, unrelated.id)).messages.at(-1)!.text;
+    expect(unavailable).toContain('could not find the requested PDF');
+    expect(unavailable).not.toContain('equipment');
+  });
+
   it('reads an owner path inside the allowed roots, refuses paths outside them and refuses them for members', { timeout: 120_000 }, async () => {
     const [source] = await documents.list(OWNER);
     const file = path.join(root, 'عقد.pdf');
@@ -126,6 +175,9 @@ describe('PDF files from the chat', () => {
     const denied = await settle(owner, OWNER, id);
     expect(denied.status).toBe('idle');
     expect(denied.messages.at(-1)!.text).toContain('خارج المجلدات المسموح');
+
+    const veto = await owner.create(OWNER, { goal: `Read the file "${file}". Do not read my computer.` });
+    expect((await settle(owner, OWNER, veto.id)).messages.at(-1)!.text).not.toContain('Text from the file');
 
     const fromMember = await member.create(MEMBER, { goal: `احذف الصفحة 1 من ملف «${file}»` });
     const refused = await settle(member, MEMBER, fromMember.id);

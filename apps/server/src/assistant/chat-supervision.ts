@@ -9,6 +9,8 @@ import { requestActionText, type RequestResolution } from './request-context.js'
 import { requestScopeActionText } from './request-scope.js';
 import { memoryRecallFormat, verifyMemoryRecall } from './memory-recall.js';
 import { assessRecallCoverage } from './mind/recall.js';
+import { explicitKnowledgeDocumentRequest, knowledgeSummaryRequest, matchesKnowledgeTitle } from './knowledge-document-request.js';
+import { knowledgeQuoteClaim } from './knowledge-summary.js';
 import {
   compileTaskSupervisor, createTaskSupervisor, observeTaskStep, restoreTaskSupervisor,
   reviewTaskCompletion, taskEvidenceHash,
@@ -36,6 +38,10 @@ export function createChatSupervisor(id: string, request: string, resolution?: R
     description: 'Read-only owner-scoped reconciliation confirms the exact computed payload is actively persisted with its original provenance.',
   }] });
   const frame = buildFrame(actionRequest);
+  if (explicitKnowledgeDocumentRequest(actionRequest)) return createTaskSupervisor({ id, objective: request, now, mode: 'advisory', criteria: [{
+    id: 'document-answer', kind: 'answer_evidence', target: `knowledge:${taskEvidenceHash(request)}`,
+    description: 'The answer uses independently matched excerpts from the requested stored document.',
+  }] });
   if (frame.intent === 'memory_recall' || resolution?.kind === 'follow_up' && resolution.intent === 'memory') {
     return compileTaskSupervisor({ id, objective: request, mode: 'advisory', now,
       operation: { kind: 'memory_recall', target: `memory:${taskEvidenceHash(request)}` } });
@@ -129,6 +135,8 @@ export function observeChatLocalAnswer(state: TaskSupervisorState, input: {
   const criterion = state.contract.criteria.find(item => item.kind === 'answer_evidence');
   if (!criterion) return;
   const now = input.now ?? Date.now();
+  const objective = actionRequestForCoverage(state.contract.objective);
+  const summary = input.source === 'knowledge-verifier' && explicitKnowledgeDocumentRequest(objective) ? knowledgeSummaryRequest(objective) : null;
   const alignedClaims = input.claims.map(claim => claim.text).join('\n') === input.text;
   const sourceAlignment = input.source === 'computation'
     ? input.claims.every(claim => claim.support.some(id => input.evidence.some(item => item.id === id
@@ -139,11 +147,13 @@ export function observeChatLocalAnswer(state: TaskSupervisorState, input: {
       if (format && verifyMemoryRecall(claim.text, format, quotes) === claim.text) return true;
       if (verifyMemoryRecall(claim.text, { kind: 'value' }, quotes) === claim.text) return true;
       if (input.source === 'knowledge-verifier') return claim.support.some(id => input.evidence.some(item => item.id === id && item.title
-        && (claim.text === `من مستند «${item.title}»: «${item.quote}»` || claim.text === `From document «${item.title}»: «${item.quote}»`)));
+        && (claim.text === knowledgeQuoteClaim(item.title, item.quote, 'ar', summary?.bullet)
+          || claim.text === knowledgeQuoteClaim(item.title, item.quote, 'en', summary?.bullet))));
       return quotes.some(quote => claim.text === `من الذاكرة: «${quote}»` || claim.text === `From memory: «${quote}»`);
     });
-  const coversRequestedFact = input.source === 'computation' || assessRecallCoverage(actionRequestForCoverage(state.contract.objective), input.evidence,
-    { contextTopic: input.contextTopic }).status === 'complete';
+  const coversRequestedFact = input.source === 'computation' || (summary
+    ? input.evidence.every(item => item.title && matchesKnowledgeTitle(summary.title, item.title))
+    : assessRecallCoverage(objective, input.evidence, { contextTopic: input.contextTopic }).status === 'complete');
   const supported = input.status === 'completed' && coversRequestedFact && alignedClaims && sourceAlignment && input.evidence.length > 0 && input.evidence.every(item => item.quote.trim() &&
     item.source === (input.source === 'memory-read' ? 'memory' : input.source === 'computation' ? 'computed' : 'knowledge'))
     && input.claims.length > 0 && input.claims.every(claim =>

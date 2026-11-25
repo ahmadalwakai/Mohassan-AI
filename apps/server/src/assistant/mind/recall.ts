@@ -34,7 +34,8 @@ const COPY = {
 } as const;
 
 const QUOTE_END = /[\r\n\u0085\u2028\u2029!?؟。؛;]|(?<!\d)\.|\.(?!\d)/u;
-const INSTRUCTION = /\b(?:ignore|disregard|override|forget|bypass)\b[^.!?؟\r\n]*(?:\b(?:instructions?|user|developer|system|prompt|previous|request)\b)|^(?:\s*(?:assistant|system|developer|instruction)\s*:|\s*(?:ignore|disregard|reveal|say|output|execute|click|submit|send|open|delete)\b)|(?:تجاهل|تخط|انس|اضرب)[^.!?؟\r\n]*(?:التعليمات|السائل|المستخدم|الطلب|الرسالة|السابق)|^\s*(?:تجاهل|اذكر|اطبع|اكشف|نفذ|انقر|ارسل|افتح|احذف)(?!\p{L})/iu;
+const META_INSTRUCTION = /\b(?:ignore|disregard|override|forget|bypass)\b[^.!?؟\r\n]*\b(?:instructions?|user|developer|system|prompt|previous|request)\b|^\s*(?:assistant|system|developer|instruction)\s*:|(?:تجاهل|تخط|انس|اضرب)[^.!?؟\r\n]*(?:التعليمات|السائل|المستخدم|الطلب|الرسالة|السابق)/iu;
+const OUTPUT_INSTRUCTION = /^\s*(?:ignore|disregard|reveal|say|output|execute|click|submit|send|open|delete)\b|^\s*(?:تجاهل|اذكر|اطبع|اكشف|نفذ|انقر|ارسل|افتح|احذف)(?!\p{L})/iu;
 const RECORD_DATE = /^(\d{4}-\d{2}-\d{2})\s*[:–—]\s*/u;
 const MEMORY_REQUEST = /\b(?:(?:my|your|saved) memor(?:y|ies)|(?:from|in) memory|saved notes?|my notes?|recall)\b|(?:في الذاكر[ةه]|من الذاكر[ةه]|ذاكرتي|ذاكرتك|ملاحظاتي|محفوظ)/iu;
 const DOCUMENT_REQUEST = /\b(?:document|file|guide|manual|handbook)\b|(?:مستند|دليل|ملف|وثيقة|وثيقه)/iu;
@@ -96,7 +97,7 @@ function safeQuote(text: string) {
   // The evidence contract bounds verbatim quotes. If the leading span is too long, cut at a word boundary.
   // This bound comes from the contract. Congestion-based tuning has not been measured.
   const bounded = text.length > 320 ? text.slice(0, 320).replace(/\S*$/u, '').trimEnd() : text;
-  return Boolean(bounded) && !INSTRUCTION.test(bounded) ? bounded : null;
+  return bounded && !META_INSTRUCTION.test(bounded) && !OUTPUT_INSTRUCTION.test(bounded) ? bounded : null;
 }
 
 function relevantMemories(notes: readonly string[], focus: ReadonlySet<string>): Candidate[] {
@@ -113,7 +114,7 @@ function relevantMemories(notes: readonly string[], focus: ReadonlySet<string>):
 
 function relevantDocuments(documents: Awaited<ReturnType<NonNullable<MindDeps['knowledge']>>>, focus: ReadonlySet<string>): Candidate[] {
   return documents.flatMap(doc => {
-    if (!doc.title || INSTRUCTION.test(doc.title)) return [];
+    if (!doc.title || META_INSTRUCTION.test(doc.title)) return [];
     const titleTerms = terms(doc.title);
     const titleScore = overlap(focus, titleTerms);
     const contentFocus = new Set([...focus].filter(term => !titleTerms.has(term)));
