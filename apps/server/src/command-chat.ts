@@ -44,6 +44,7 @@ import { composeReferencedComputation, computationReference, computedRecord, eva
 import { evaluateLocalRecall } from './assistant/local-recall.js';
 import { ownFactQuestion } from './assistant/own-fact-question.js';
 import { evaluateLocalConversation } from './assistant/local-conversation.js';
+import { admitManners } from './assistant/manners/chat.js';
 import { evaluateCapabilityReply } from './assistant/capability-reply.js';
 import { answerRuntimeStatus } from './assistant/runtime-status.js';
 import { evaluateSelfQuestion, type SelfFacts } from './assistant/self-knowledge.js';
@@ -3926,6 +3927,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       input.text = input.answers.map((answer, index) => fields.length > 1 ? `${index + 1}. ${answer.value}` : answer.value).join('\n');
       if (input.text.length > 4000) throw new BrowserError('CHAT_ANSWER_TOO_LONG', 'اختصر الإجابات إلى أربعة آلاف حرف.', 400);
     }
+    return admitManners({ db, ownerId, input, requestOriginalHash, eligible: intent === 'task' && !input.answers && row.status !== 'waiting_user', addMessage, dispatch,
+      execution, finish, judgeReply, capabilitiesFor, fullAccess: config.fullAccess, closing: () => closing, RunEnded, AccountAccessEnded, interruptInactiveAccount, assertActive, browser },
+    async (input, requestOriginalHash, addMessage, dispatch) => {
     const verificationIntent = intent === 'task' && !input.answers ? recognizeMemoryVerificationRequest(clean(input.text)) : null;
     const noteVerificationIntent = intent === 'task' && !input.answers ? recognizeUserFactMemoryVerificationRequest(clean(input.text)) : null;
     if ((verificationIntent || noteVerificationIntent) && (row.status === 'running' || WAITING_STATUSES.includes(row.status))) {
@@ -4074,6 +4078,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     }
     await dispatch(ownerId, id, runId,token);
     return detail(ownerId, id);
+    });
   }
 
   const IMAGE_TTL_MS = 6 * 60 * 60 * 1000, IMAGE_QUOTA_PER_DAY = 60, IMAGE_MAX_BYTES = 5 * 1024 * 1024;
