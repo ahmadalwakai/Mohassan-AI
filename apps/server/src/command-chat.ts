@@ -36,7 +36,9 @@ import { publicConversationFollowup } from './assistant/public-conversation-foll
 import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { judge as judgeAnswer } from './assistant/judge.js';
 import { observeImageRelations, observeModelRelations } from './assistant/model-relations-shadow.js';
+import { withArbiterExecution } from './assistant/model-relations-arbiter.js';
 import { ensureChatConversationsTable, reviewJudgedReply } from './assistant/review/publication.js';
+import { backgroundRunView } from './assistant/long-run/view.js';
 import { continueWebSequence, joinSequence, planWebSequence, startWebSequence } from './assistant/web-sequence.js';
 import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
 import { runExtractiveWriting, type WritingPageReader } from './assistant/writing/host.js';
@@ -65,6 +67,7 @@ import { isCampaignRequest } from './assistant/campaign-request.js';
 import { armProgressPause, createProgressRecovery, restoreProgressRecovery, resumeBrowserProgressAutomatically, resumeProgressAfterRetry, reviewProgressRecovery, type ProgressRecoveryContext } from './assistant/progress-recovery.js';
 import { rebindBrowserAction, reserveBrowserRecovery, transientBrowserFailure, type BrowserRecoveryEntry } from './assistant/browser-recovery.js';
 import { bootstrapRequestContext, parseRequestContextState, requestActionText, resolveRequestContext } from './assistant/request-context.js';
+import { bindResponsePolicyChannel, chatResponsePolicyInput, readResponsePolicyHistory, shapeCompletedChatReply } from './assistant/response-policy-runtime.js';
 import { createChatSupervisor, observeChatCapture, observeChatLocalAnswer, observeChatTool, resumeChatSupervisor, reviewChatAnswer } from './assistant/chat-supervision.js';
 import { createComputationMemoryReceipt, restoreComputationMemoryReceipt } from './assistant/computation-memory-receipt.js';
 import { migrateConversationShares } from './conversation-share-migration.js';
@@ -1049,7 +1052,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     // The mark is read before the lists, so the lists are never older than it: a change in between only makes the next
     // held request (chat-wait.ts) answer at once.
     const version = await conversationVersion(db, ownerId, id);
-    const lastRun = await db.selectFrom('chat_runs').select(['id', 'state', 'status', 'created_at', 'updated_at']).where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(1).executeTakeFirst();
+    const lastRun = await db.selectFrom('chat_runs').select(['id', 'state', 'status', 'created_at', 'updated_at', 'worker_id', 'goal']).where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(1).executeTakeFirst();
     // The newest 300 messages. Until 2026-11-23 these were the first 300, so a conversation past 300 messages kept its new
     // questions and answers in the database and never showed them.
     const [newest, steps] = await Promise.all([
@@ -1080,6 +1083,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         secure: row.secure ?? null, approval: row.approval ?? null, firstStep: steps[0]?.message ?? null, decidedAt: iso(row.updated_at) }),
       ...(version ? { version } : {}),
       ...(olderMessages ? { olderMessages } : {}),
+      ...backgroundRunView(lastRun, row.active_run_id),
       // The latest run as the runtime committed it (assistant/agent-run.ts); its row status is the authority for the verdict.
       run: lastRun ? projectRunView({ runId: lastRun.id, status: lastRun.status, ledger: lastRun.state?.agentRun, createdAt: lastRun.created_at, updatedAt: lastRun.updated_at,
         // Model calls are counted in the ledger; only a run recorded before ledgers existed is counted from its receipts.
@@ -1410,6 +1414,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   /** `prejudged`: the text is a message of several answers, each already judged on its own question (web-sequence.ts). */
   async function finish(id: string, runId: string, state: BrainState, text: string, status: 'completed' | 'partial' | 'blocked',
       proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall', prejudged = false) {
+    if (!prejudged && !proof && !memoryPublication && state.supervision?.contract.mode !== 'enforced') text = shapeCompletedChatReply(text, execution.getStore()?.request, status);
     // The judge sees the reply first: logged in shadow for everyone; for the owner's account its fix, or its fixed withhold
     // sentence, is what goes on. Memory publications keep their own stricter checks and are never changed here.
     const judged = prejudged || !config.judgeShadow ? { text, withheld: false } : await reviewJudgedReply(work => runTransaction(id, runId, work), { id, runId, clean, allowApply: !memoryPublication && state.supervision?.contract.mode !== 'enforced' }, () => judgeReply(id, runId, text, status, !memoryPublication));
@@ -2372,7 +2377,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await saveState(runId,state);
       }
       const personalSignIn = PERSONAL_SIGN_IN.test(request.replace(/[\u064b-\u065f\u0670]/g, '').replace(/[أإآ]/g, 'ا'));
-      const earlier = await db.selectFrom('chat_messages').select(['role', 'text']).where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(HISTORY_MESSAGES + 1).execute();
+      const earlier = await readResponsePolicyHistory({ db, ownerId, conversationId: id, state, policy: chatResponsePolicyInput(request, state), recentLimit: HISTORY_MESSAGES + 1, scrub: text => vault.scrub(id, clean(text)) });
       const history = earlier.reverse().slice(0, -1).map((entry) => ({ role: entry.role, text: clean(entry.text) }));
       currentExecution.previousRequest = history.filter(entry => entry.role === 'user').at(-1)?.text ?? null;
       if (config.ownModel && run.intent === 'task' && run.attempt === 1 && !state.steps)
@@ -3951,7 +3956,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     controllers.set(id, {runId,token,controller});
     if(!preserveVault){const prior=vaultOwners.get(id);if(prior)forgetVault(id,prior);}
     vaultOwners.set(id,token);
-    const worker = execution.run({ownerId,id,runId,token,controller,full},()=>work(ownerId, id, runId, controller)).catch(() => {});
+    const worker = execution.run({ownerId,id,runId,token,controller,full},()=>withArbiterExecution(runId, () => work(ownerId, id, runId, controller))).catch(() => {});
     workers.set(id, worker);
     void worker.finally(() => { if (workers.get(id) === worker) workers.delete(id); });
   }
@@ -4539,6 +4544,7 @@ export async function registerCommandChatRoutes(app: FastifyInstance, { control,
   type Conversation = { Params: { id: string } };
   // An optional Idempotency-Key makes a changing call safe to resend: the phone resends with the same key after a lost reply.
   const keyed = async <T>(request: { headers: Record<string, unknown>; body?: unknown }, scope: string, run: (ownerId: string) => Promise<T>) => {
+    run = bindResponsePolicyChannel(run, request.headers);
     const ownerId = (await owner(request)).id;
     const header = request.headers['idempotency-key'];
     if (header === undefined) return run(ownerId);

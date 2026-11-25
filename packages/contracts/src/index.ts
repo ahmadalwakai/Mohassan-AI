@@ -23,6 +23,7 @@ export * from './ai-providers';
 export * from './sites';
 export * from './training-monitor';
 export * from './notifications';
+export * from './ios-push';
 export { browserReadOrigins, detectBrowserOpenIntent, type BrowserOpenIntent } from './browser-intent';
 
 export const TaskStatusSchema = z.enum(['queued', 'running', 'waiting_approval', 'verifying', 'completed', 'failed', 'cancelled', 'paused']);

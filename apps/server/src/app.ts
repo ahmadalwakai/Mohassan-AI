@@ -88,6 +88,7 @@ import { createSkillRemoteScheduler, registerSkillRemoteRoutes, type SkillRemote
 import { registerBackupStatusRoute } from './backup-status.js';
 import { registerProductionMetrics } from './ops/metrics/index.js';
 import { registerNotificationRoutes } from './notifications-routes.js';
+import { migrateBackgroundResults } from './background-results-migration.js';
 
 /** Fallback window for the reader when no catalogue index is given (tests). The chat passes the catalogue index, which has no window. */
 const SKILL_READER_DISCOVERY = MAX_GITHUB_SKILLS + MAX_IMPORTED_VERSIONS_PER_OWNER + 50;
@@ -359,6 +360,7 @@ export async function createApplication(config: AppConfig) {
   await registerSiteRoutes(app,{control:sites,owner,role});
   await commandChatMigration(database.db, migrateRemindersInTransaction);
   const agentBrowser = await registerMemberDataRights(app, { db: database.db, auth, owner, role, config, adsAvailable: () => googleAds.configured, registerMemberRoutes, AgentBrowser, browserProfileDir: config.browserProfileDir ?? join(tmpdir(), `mohassan-browser-${randomUUID()}`) });
+  await migrateBackgroundResults(database.db);
   const assistantTools=createAssistantTools({memory,coding,studio,studioChange:studioAi.available,runtime,windows,googleAds});
   const inference=await createInferenceControl(database.db,{...config.inference,groq:{apiKey:config.groqApiKey,fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b']},fetch:config.aiFetch});
   await registerInferenceRoutes(app,{control:inference,owner});

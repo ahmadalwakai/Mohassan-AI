@@ -80,6 +80,7 @@ export async function sendWebPushNotification(config: VapidDetails, subscription
       contentEncoding: 'aes128gcm',
       TTL: 5 * 60,
       timeout: 5_000,
+      ...(payload.runId && { topic: payload.taskId.replace(/-/g, '') }),
     });
     return 'delivered';
   } catch (error) {

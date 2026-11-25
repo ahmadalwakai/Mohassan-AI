@@ -1,0 +1,60 @@
+{"id":"en-01","language":"en","text":"Convert 38 kilometres to miles.","turnCount":0,"expected":{"followUp":"none","context":"recent","work":"inline"}}
+{"id":"en-02","language":"en","text":"Book a haircut for me next Tuesday.","turnCount":0,"clarification":"blocking","expected":{"followUp":"clarify","context":"recent","work":"inline"}}
+{"id":"en-03","language":"en","text":"Tell me how to back up my bookmarks, then suggest one thing I should do next.","turnCount":2,"expected":{"followUp":"next_step","context":"recent","work":"inline"}}
+{"id":"en-04","language":"en","text":"Which supplier did I rule out at the beginning of this conversation?","turnCount":42,"expected":{"followUp":"none","context":"full","work":"inline"}}
+{"id":"en-05","language":"en","text":"Summarize this paper in three sentences.","turnCount":17,"expected":{"followUp":"none","context":"recent","work":"inline"}}
+{"id":"en-06","language":"en","text":"Recap the decisions we made throughout this chat and group them by owner.","turnCount":25,"expected":{"followUp":"none","context":"full","work":"inline"}}
+{"id":"en-07","language":"en","text":"Set an alert for the application deadline.","turnCount":3,"clarification":"blocking","expected":{"followUp":"clarify","context":"recent","work":"inline"}}
+{"id":"en-08","language":"en","text":"Monitor the municipal road closures every two hours until tonight and report changes.","turnCount":0,"expected":{"followUp":"none","context":"recent","work":"autonomous"}}
+{"id":"en-09","language":"en","text":"What would I need to monitor bridge closures? Give me a quick explanation.","turnCount":0,"expected":{"followUp":"none","context":"recent","work":"inline"}}
+{"id":"en-10","language":"en","text":"You have two different dates from me in this thread. Check what I finally confirmed.","turnCount":31,"expected":{"followUp":"none","context":"full","work":"inline"}}
+{"id":"en-11","language":"en","text":"What is the difference between a debit card and a prepaid card? End with a single practical next step.","turnCount":0,"expected":{"followUp":"next_step","context":"recent","work":"inline"}}
+{"id":"en-12","language":"en","text":"Build the greenhouse inventory app from the requirements we settled on, and run its tests in the background.","turnCount":19,"expected":{"followUp":"none","context":"recent","work":"autonomous"}}
+{"id":"en-13","language":"en","text":"Can you build desktop apps?","turnCount":32,"expected":{"followUp":"none","context":"recent","work":"inline"}}
+{"id":"en-14","language":"en","text":"Continue the unfinished accessibility audit from where we left off early in this conversation.","turnCount":51,"expected":{"followUp":"none","context":"full","work":"autonomous"}}
+{"id":"en-15","language":"en","text":"Put the previous reply in plain language.","turnCount":11,"expected":{"followUp":"none","context":"recent","work":"inline"}}
+{"id":"en-16","language":"en","text":"Keep watching fares until tomorrow and let me know if they go below 140 pounds.","turnCount":2,"clarification":"blocking","expected":{"followUp":"clarify","context":"recent","work":"inline"}}
+{"id":"en-17","language":"en","text":"Give a deep research comparison of four battery-recycling methods, using independent studies and a cost table.","turnCount":0,"expected":{"followUp":"none","context":"recent","work":"autonomous"}}
+{"id":"en-18","language":"en","text":"What was the name of the very first document I mentioned here?","turnCount":39,"expected":{"followUp":"none","context":"full","work":"inline"}}
+{"id":"en-19","language":"en","text":"Explain this error and give me one check I can run to confirm the cause.","turnCount":2,"expected":{"followUp":"next_step","context":"recent","work":"inline"}}
+{"id":"en-20","language":"en","text":"Restart the book-indexing job we paused in this thread last week and continue until the final report is ready.","turnCount":48,"expected":{"followUp":"none","context":"full","work":"autonomous"}}
+{"id":"en-21","language":"en","text":"Delete the duplicate entry.","turnCount":0,"clarification":"blocking","expected":{"followUp":"clarify","context":"recent","work":"inline"}}
+{"id":"en-22","language":"en","text":"What causes the northern lights? No follow-up question or offer, please.","turnCount":19,"expected":{"followUp":"none","context":"recent","work":"inline"}}
+{"id":"en-23","language":"en","text":"For the next three hours, check the library reservation page every 20 minutes and notify me when room B opens.","turnCount":0,"expected":{"followUp":"none","context":"recent","work":"autonomous"}}
+{"id":"en-24","language":"en","text":"Look back over this entire conversation for the open questions, then suggest one priority for me.","turnCount":23,"expected":{"followUp":"next_step","context":"full","work":"inline"}}
+{"id":"en-25","language":"en","text":"Where is the nearest public charging point?","turnCount":0,"clarification":"blocking","expected":{"followUp":"clarify","context":"recent","work":"inline"}}
+{"id":"en-26","language":"en","text":"How is that different from the option you just described?","turnCount":8,"expected":{"followUp":"none","context":"recent","work":"inline"}}
+{"id":"en-27","language":"en","text":"Make the project status sheet we outlined and check the formulas across all tabs. Work on it while I am away.","turnCount":6,"expected":{"followUp":"none","context":"recent","work":"autonomous"}}
+{"id":"en-28","language":"en","text":"What's a good first step for replacing a lost travel pass?","turnCount":0,"expected":{"followUp":"none","context":"recent","work":"inline"}}
+{"id":"en-29","language":"en","text":"Go through our earlier conflicting requirements and tell me what you need me to decide first.","turnCount":37,"clarification":"blocking","expected":{"followUp":"clarify","context":"full","work":"inline"}}
+{"id":"en-30","language":"en","text":"Draft a short thank-you message for a neighbour who watered my plants.","turnCount":22,"expected":{"followUp":"none","context":"recent","work":"inline"}}
+{"id":"ar-01","language":"ar","text":"كم ملي لتر في نصف لتر؟","turnCount":0,"expected":{"followUp":"none","context":"recent","work":"inline"}}
+{"id":"ar-02","language":"ar","text":"احجز لي طاولة يوم الخميس.","turnCount":0,"clarification":"blocking","expected":{"followUp":"clarify","context":"recent","work":"inline"}}
+{"id":"ar-03","language":"ar","text":"وضح لي كيف أرتب صور الجوال، وبعدين اقترح علي خطوة عملية واحدة.","turnCount":2,"expected":{"followUp":"next_step","context":"recent","work":"inline"}}
+{"id":"ar-04","language":"ar","text":"شنو اسم الجمعية اللي ذكرتها بأول هالمحادثة؟","turnCount":43,"expected":{"followUp":"none","context":"full","work":"inline"}}
+{"id":"ar-05","language":"ar","text":"لخّص لي المقال اللي فوق في ثلاث جمل.","turnCount":16,"expected":{"followUp":"none","context":"recent","work":"inline"}}
+{"id":"ar-06","language":"ar","text":"اعمل لي ملخص لكل القرارات في هذه المحادثة من بدايتها.","turnCount":32,"expected":{"followUp":"none","context":"full","work":"inline"}}
+{"id":"ar-07","language":"ar","text":"ذكّرني أقدم على المنحة.","turnCount":2,"clarification":"blocking","expected":{"followUp":"clarify","context":"recent","work":"inline"}}
+{"id":"ar-08","language":"ar","text":"راقب إعلانات تذاكر المعرض كل ساعة حتى مساء اليوم وبلغني لو نزلت دفعة جديدة.","turnCount":1,"expected":{"followUp":"none","context":"recent","work":"autonomous"}}
+{"id":"ar-09","language":"ar","text":"إيش أحتاج عشان أراقب استهلاك الكهرباء؟ جواب سريع.","turnCount":1,"expected":{"followUp":"none","context":"recent","work":"inline"}}
+{"id":"ar-10","language":"ar","text":"قلت لك سعرين مختلفين في هالمحادثة. راجع كلامي وشوف أي واحد اعتمدته.","turnCount":28,"expected":{"followUp":"none","context":"full","work":"inline"}}
+{"id":"ar-11","language":"ar","text":"اشرح الفرق بين السيرة المختصرة والطويلة، واختم باقتراح خطوة واحدة أقدر أسويها اليوم.","turnCount":0,"expected":{"followUp":"next_step","context":"recent","work":"inline"}}
+{"id":"ar-12","language":"ar","text":"ابنِ تطبيق جرد الأدوات وجرّب التصدير والاستيراد فيه، واشتغل في الخلفية لين تخلص.","turnCount":3,"expected":{"followUp":"none","context":"recent","work":"autonomous"}}
+{"id":"ar-13","language":"ar","text":"هل يمكنك إنشاء تطبيق للأيباد؟","turnCount":26,"expected":{"followUp":"none","context":"recent","work":"inline"}}
+{"id":"ar-14","language":"ar","text":"كمّل دراسة تكاليف الشحن اللي وقفناها في بداية المحادثة، لحد ما يجهز التقرير.","turnCount":49,"expected":{"followUp":"none","context":"full","work":"autonomous"}}
+{"id":"ar-15","language":"ar","text":"أعد صياغة إجابتك السابقة بلهجة عراقية.","turnCount":12,"expected":{"followUp":"none","context":"recent","work":"inline"}}
+{"id":"ar-16","language":"ar","text":"تابع إذا نزل سعر التذكرة عن ٣٠ دينار وبلغني.","turnCount":0,"clarification":"blocking","expected":{"followUp":"clarify","context":"recent","work":"inline"}}
+{"id":"ar-17","language":"ar","text":"سوّ بحث معمّق عن أربع تقنيات لتحلية المياه، مع مقارنة دراسات مستقلة وتوثيق مصادرها.","turnCount":0,"expected":{"followUp":"none","context":"recent","work":"autonomous"}}
+{"id":"ar-18","language":"ar","text":"شو كان عنوان أول كتاب حكيت لك عنه في الدردشة؟","turnCount":45,"expected":{"followUp":"none","context":"full","work":"inline"}}
+{"id":"ar-19","language":"ar","text":"فسّر لي هالخطأ واقترح اختبار واحد أتأكد فيه من السبب.","turnCount":3,"expected":{"followUp":"next_step","context":"recent","work":"inline"}}
+{"id":"ar-20","language":"ar","text":"استأنف تدقيق الفواتير اللي أوقفناه الأسبوع الماضي في هذه المحادثة، وكمّل حتى تسلّم التقرير.","turnCount":47,"expected":{"followUp":"none","context":"full","work":"autonomous"}}
+{"id":"ar-21","language":"ar","text":"امسح الملف المكرر.","turnCount":0,"clarification":"blocking","expected":{"followUp":"clarify","context":"recent","work":"inline"}}
+{"id":"ar-22","language":"ar","text":"ليش نبات الصبار يخزّن مي؟ أعطني الجواب وبس.","turnCount":18,"expected":{"followUp":"none","context":"recent","work":"inline"}}
+{"id":"ar-23","language":"ar","text":"افحص صفحة تسجيل النادي كل عشرين دقيقة لمدة ساعتين وأخبرني عندما يظهر مكان شاغر.","turnCount":0,"expected":{"followUp":"none","context":"recent","work":"autonomous"}}
+{"id":"ar-24","language":"ar","text":"ارجع لكل كلامنا من بداية المحادثة وحدد الأمور المعلّقة، وبعدها اقترح أولوية واحدة.","turnCount":24,"expected":{"followUp":"next_step","context":"full","work":"inline"}}
+{"id":"ar-25","language":"ar","text":"وين أقرب محطة مترو؟","turnCount":0,"clarification":"blocking","expected":{"followUp":"clarify","context":"recent","work":"inline"}}
+{"id":"ar-26","language":"ar","text":"وش الفرق بينه وبين الخيار اللي شرحتَه للتو؟","turnCount":8,"expected":{"followUp":"none","context":"recent","work":"inline"}}
+{"id":"ar-27","language":"ar","text":"جهّز لوحة متابعة المخزون وجرّبها على كل الملفات، وخلّ الشغل يكمل وأنا غايب.","turnCount":6,"expected":{"followUp":"none","context":"recent","work":"autonomous"}}
+{"id":"ar-28","language":"ar","text":"شو أول خطوة أعملها إذا ضاع مني اشتراك الباص؟","turnCount":0,"expected":{"followUp":"none","context":"recent","work":"inline"}}
+{"id":"ar-29","language":"ar","text":"راجع التعليمات المتعارضة اللي أعطيتك إياها في هالمحادثة واسألني عن أهم قرار ناقص.","turnCount":36,"clarification":"blocking","expected":{"followUp":"clarify","context":"full","work":"inline"}}
+{"id":"ar-30","language":"ar","text":"اكتب رسالة شكر قصيرة لجاري لأنه سقى الزرع.","turnCount":20,"expected":{"followUp":"none","context":"recent","work":"inline"}}

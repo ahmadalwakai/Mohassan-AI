@@ -102,4 +102,24 @@ describe('model commands', () => {
         fallbacks: 1, disagreementRate: 0.5 }],
     });
   });
+
+  it('reports arbiter disagreements separately from actual changes', async () => {
+    const log = join(scratch, 'shadow.jsonl');
+    const rows = [
+      { precedence: 'writer', proposed: 'planner', selected: 'writer', reason: 'shadow', elapsedMs: 0.4 },
+      { precedence: 'writer', proposed: 'planner', selected: 'planner', reason: 'higher-pass-likelihood', elapsedMs: 0.2 },
+      { precedence: 'writer', proposed: 'writer', selected: 'writer', reason: 'killed', elapsedMs: 0.1 },
+    ].map(decision => JSON.stringify({
+      event: 'model_relations_turn', mode: 'shadow', stages: [], arbiter: [{ type: 'compound-plan', ...decision }],
+    }));
+    await writeFile(log, rows.join('\n') + '\n');
+
+    const result = run('shadow-summary', log);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).arbiter).toEqual([{
+      type: 'compound-plan', contested: 3, disagreements: 2, changed: 1, disagreementRate: 2 / 3,
+      reasons: { shadow: 1, 'higher-pass-likelihood': 1, killed: 1 },
+      disagreementsByChoice: { 'writer → planner': 2 }, p95Ms: 0.4,
+    }]);
+  });
 });

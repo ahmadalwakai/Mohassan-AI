@@ -94,14 +94,15 @@ interface Admission {
 
 async function completeSocialRun(admission: Admission, detection: MannersDetection, ownerId: string, id: string, runId: string, token: string) {
   if (admission.closing()) return admission.dispatch(ownerId, id, runId, token);
-  const full = await admission.fullAccess?.(ownerId) ?? true;
-  const facts = detection.act === 'capabilities' ? await admission.capabilitiesFor(ownerId) : undefined;
-  const reply = renderMannersReply(detection, facts, runId).text;
   const run = await admission.db.selectFrom('chat_runs').select(['goal', 'state']).where('id', '=', runId)
     .where('conversation_id', '=', id).where('owner_id', '=', ownerId).where('lease_token', '=', token)
     .where('status', '=', 'running').executeTakeFirst();
   if (!run) return;
   const state: BrainState = run.state;
+  if (state.routing && state.routing.handler !== 'local_conversation') return admission.dispatch(ownerId, id, runId, token);
+  const full = await admission.fullAccess?.(ownerId) ?? true;
+  const facts = detection.act === 'capabilities' ? await admission.capabilitiesFor(ownerId) : undefined;
+  const reply = renderMannersReply(detection, facts, runId).text;
   tryEnterPhase(state.agentRun, 'understanding', Date.now());
   await admission.execution.run({ ownerId, id, runId, token, request: run.goal, state, full, controller: new AbortController() }, async () => {
     try {

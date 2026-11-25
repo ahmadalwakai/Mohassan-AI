@@ -14,6 +14,7 @@ import {
   subscribeThisBrowser, unsubscribeDevice, type NotificationControls,
 } from './notification-client';
 import { noticePermission } from './task-notices';
+import { BackgroundNotificationPreferences } from './background-notification-preferences';
 import chatStyles from './assistant-app.module.css';
 import styles from './notification-settings.module.css';
 
@@ -137,6 +138,7 @@ export function NotificationSettings({ viewerId }: { viewerId: string }) {
           <fieldset disabled={busy}>
             <legend>الخصوصية</legend>
             <label className={styles.check}><input type="checkbox" checked={preferences.hideTitle} onChange={event => setPreferences({ ...preferences, hideTitle: event.target.checked })} />إخفاء عنوان المحادثة من الإشعارات</label>
+            <BackgroundNotificationPreferences preferences={preferences} onChange={setPreferences} />
           </fieldset>
           <button type="submit" className={styles.action} disabled={busy}>حفظ الإعدادات</button>
         </form>

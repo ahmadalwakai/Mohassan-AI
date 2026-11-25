@@ -1,11 +1,17 @@
 import { createECDH, randomBytes, randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApplication } from '../apps/server/src/app.ts';
+import { dispatchBackgroundApns } from '../apps/server/src/background-apns-delivery.ts';
+import type { ApnsSender } from '../apps/server/src/apns.ts';
 import { dispatchPushNotifications } from '../apps/server/src/notifications-routes.ts';
 import {
-  claimNotification, isQuietHours, ownsPushNotification, recordNotificationOutcome, saveNotificationPreferences, syncNotifications,
+  claimNotification, isQuietHours, ownsPushNotification, recordBackgroundRunOutcome, recordNotificationOutcome, saveNotificationPreferences, syncNotifications,
 } from '../apps/server/src/notifications-store.ts';
 import type { NotificationKind, NotificationPayload, PushDevice } from '@mohassan/contracts';
+import type { BackgroundOutcome } from '../apps/server/src/background-notification-payload.ts';
 import { generateVAPIDKeys } from 'web-push';
 
 const send = vi.hoisted(() => vi.fn(async (_endpoint: string, _payload: NotificationPayload) => 'delivered' as const));
@@ -47,6 +53,7 @@ describe('quiet hours', () => {
 
 describe('authenticated notifications', () => {
   let application: Awaited<ReturnType<typeof createApplication>>;
+  let dataDir: string;
   let ownerCookie = '', memberCookie = '', ownerId = '', memberId = '';
   const db = () => application.database.db;
   const url = (suffix: string) => `/api/notifications/${suffix}`;
@@ -54,6 +61,12 @@ describe('authenticated notifications', () => {
   const cookieOf = (cookies: string | string[] | undefined) => [cookies].flat().filter(Boolean).map(value => value!.split(';')[0]).join('; ');
   const now = new Date('2026-01-10T12:00:00Z');
   const later = new Date(now.getTime() + 3_000);
+  const backgroundTime = new Date('2090-01-10T12:00:00Z');
+  const backgroundReady = new Date(backgroundTime.getTime() + 3_000);
+  const setupToken = 'notification-setup-token-fixture-2026';
+  const start = () => createApplication({ authSecret: 'notification-test-auth-secret-2026', internalSecret: secret,
+    setupToken, webOrigin: origin, production: false, runWorker: false, dataDir });
+  const active = async () => true;
   async function login(credentials: typeof owner) {
     const result = await application.app.inject({ method: 'POST', url: '/api/auth/sign-in/email', headers: headers(), payload: credentials });
     expect(result.statusCode, result.body).toBe(200);
@@ -76,15 +89,25 @@ describe('authenticated notifications', () => {
       startedAt: new Date(happenedAt.getTime() - elapsed) }, happenedAt);
     return taskId;
   }
+  async function background(userId: string, conversationId: string, initial: BackgroundOutcome = 'completed') {
+    const runId = randomUUID();
+    const startedAt = new Date(backgroundTime.getTime() - 1_000);
+    await db().insertInto('chat_runs').values({ id: runId, owner_id: userId, conversation_id: conversationId,
+      status: 'completed', goal: 'Private task', lease_token: randomUUID(), lease_expires_at: backgroundTime, created_at: startedAt }).execute();
+    const record = (outcome: BackgroundOutcome) => recordBackgroundRunOutcome(db(), {
+      runId, userId, conversationId, startedAt, outcome, language: 'en', preview: 'Private first line\nPrivate second line',
+    }, backgroundTime);
+    await record(initial);
+    return { runId, record };
+  }
 
   beforeAll(async () => {
     const vapid = generateVAPIDKeys();
     vi.stubEnv('WEB_PUSH_VAPID_PUBLIC_KEY', vapid.publicKey);
     vi.stubEnv('WEB_PUSH_VAPID_PRIVATE_KEY', vapid.privateKey);
     vi.stubEnv('WEB_PUSH_VAPID_SUBJECT', 'mailto:notifications@example.test');
-    const setupToken = 'notification-setup-token-fixture-2026';
-    application = await createApplication({ authSecret: 'notification-test-auth-secret-2026', internalSecret: secret,
-      setupToken, webOrigin: origin, production: false, runWorker: false });
+    dataDir = await mkdtemp(join(tmpdir(), 'mohassan-notification-db-'));
+    application = await start();
     const setup = await application.app.inject({ method: 'POST', url: '/api/setup', headers: headers(), payload: { ...owner, setupToken } });
     expect(setup.statusCode, setup.body).toBe(200);
     ownerCookie = await login(owner);
@@ -102,11 +125,12 @@ describe('authenticated notifications', () => {
 
   afterAll(async () => {
     await application?.app.close();
+    if (dataDir) await rm(dataDir, { recursive: true, force: true });
     vi.unstubAllEnvs();
   });
 
   beforeEach(async () => {
-    for (const table of ['chat_notifications', 'notification_tabs', 'notification_preferences', 'push_subscriptions']) {
+    for (const table of ['chat_notifications', 'notification_tabs', 'notification_preferences', 'push_subscriptions', 'ios_push_devices']) {
       await db().deleteFrom(table).execute();
     }
     send.mockClear();
@@ -289,4 +313,122 @@ describe('authenticated notifications', () => {
     expect(devices.find(device => device.id === selected.id)).toMatchObject({ failureCount: 1, lastSuccessAt: null });
     expect(devices.find(device => device.id === alternate.id)).toMatchObject({ failureCount: 1, lastSuccessAt: null });
   });
+
+  it('keeps blocked and failed messages distinct and omits the result and conversation title by default', async () => {
+    const id = await conversation(memberId), tabId = randomUUID();
+    const run = await background(memberId, id, 'approval');
+    await run.record('approval');
+    await run.record('sign-in');
+    await run.record('failed');
+    await run.record('completed');
+    const { pending } = await syncNotifications(db(), memberId, { tabId, state: 'visible' }, backgroundReady);
+    expect(pending).toHaveLength(3);
+    expect(pending.map(event => [event.runKind, event.title])).toEqual(expect.arrayContaining([
+      ['run-blocked', 'Task needs approval'], ['run-blocked', 'Task needs sign-in'], ['run-failed', 'Task could not finish'],
+    ]));
+    for (const payload of pending) {
+      expect(payload).toMatchObject({ runId: run.runId, conversationId: id, sound: false });
+      expect(payload.conversationTitle).toBeUndefined();
+      expect(payload.body).not.toMatch(/Private|عنوان/);
+    }
+  });
+
+  it('defers quiet-hour background notices and releases unacknowledged tab claims after the lease', async () => {
+    const id = await conversation(memberId), firstTab = randomUUID(), secondTab = randomUUID();
+    const { runId } = await background(memberId, id);
+    await saveNotificationPreferences(db(), memberId, { hideTitle: false, completionSound: false, showResultPreview: true,
+      quietHours: { start: '12:00', end: '13:00', timeZone: 'UTC' } });
+    expect((await syncNotifications(db(), memberId, { tabId: firstTab, state: 'visible' }, backgroundReady)).pending).toEqual([]);
+    expect(await claimNotification(db(), memberId, runId, 'tab', backgroundReady, firstTab)).toBeNull();
+
+    const resumed = new Date('2090-01-10T13:00:01Z');
+    await syncNotifications(db(), memberId, { tabId: firstTab, state: 'visible' }, resumed);
+    await syncNotifications(db(), memberId, { tabId: secondTab, state: 'visible' }, resumed);
+    expect(await claimNotification(db(), memberId, runId, 'tab', resumed, firstTab)).toMatchObject({
+      runKind: 'run-completed', body: 'Private first line', sound: false,
+    });
+    await syncNotifications(db(), memberId, { tabId: firstTab, state: 'closed' }, resumed);
+    expect(await claimNotification(db(), memberId, runId, 'tab', resumed, secondTab)).toBeNull();
+    const expired = new Date(resumed.getTime() + 25_001);
+    expect((await syncNotifications(db(), memberId, { tabId: secondTab, state: 'visible' }, expired)).pending).toHaveLength(1);
+    expect(await claimNotification(db(), memberId, runId, 'tab', expired, secondTab)).toMatchObject({ runId });
+    await syncNotifications(db(), memberId, { tabId: secondTab, state: 'closed' }, expired);
+    await claimNotification(db(), memberId, runId, 'tab', expired, secondTab, true);
+    expect((await syncNotifications(db(), memberId, { tabId: firstTab, state: 'visible' }, expired)).pending).toEqual([]);
+  });
+
+  it('delivers APNs independently of web state and retries only the device which failed', async () => {
+    const id = await conversation(memberId), tabId = randomUUID();
+    for (const [token, environment] of [['aa', 'sandbox'], ['bb', 'production']]) {
+      const response = await application.app.inject({ method: 'POST', url: '/api/push/devices', headers: headers(memberCookie),
+        payload: { platform: 'ios', token: token.repeat(32), environment, appVersion: '1.0' } });
+      expect(response.statusCode, response.body).toBe(204);
+    }
+    const { runId } = await background(memberId, id);
+    await syncNotifications(db(), memberId, { tabId, state: 'visible' }, backgroundReady);
+    await claimNotification(db(), memberId, runId, 'tab', backgroundReady, tabId);
+    await claimNotification(db(), memberId, runId, 'tab', backgroundReady, tabId, true);
+    let retry = false;
+    const transport = vi.fn<ApnsSender>(async device => device.environment === 'production' && !retry ? 'failed' : 'delivered');
+    await dispatchBackgroundApns(db(), transport, active, backgroundReady);
+    expect(transport.mock.calls.map(([device]) => device.environment).sort()).toEqual(['production', 'sandbox']);
+    retry = true;
+    await dispatchBackgroundApns(db(), transport, active, backgroundReady);
+    expect(transport).toHaveBeenCalledTimes(2);
+    await dispatchBackgroundApns(db(), transport, active, new Date(backgroundReady.getTime() + 60_000));
+    expect(transport).toHaveBeenCalledTimes(3);
+    expect(transport).toHaveBeenLastCalledWith(expect.objectContaining({ environment: 'production' }), {
+      aps: { alert: { title: 'Task completed', body: 'Your task is complete.' }, sound: 'mohassan-done.caf', 'thread-id': id },
+      conversationId: id, runId, kind: 'run-completed',
+    }, runId);
+  });
+
+  it('persists the first browser target before sending and lets a visible tab recover from a failed push', async () => {
+    const selected = subscription('background-first-target');
+    const alternate = await subscribe(memberCookie, subscription('background-alternate-target'));
+    const preferred = await subscribe(memberCookie, selected);
+    await db().updateTable('push_subscriptions').set({ failure_count: 3 }).where('id', '=', alternate.id).execute();
+    const id = await conversation(memberId);
+    const { runId } = await background(memberId, id);
+    const rejected = vi.fn(async (_device: { endpoint: string }, _payload: NotificationPayload): Promise<'failed'> => { throw new Error('Interrupted mock worker'); });
+    await expect(dispatchPushNotifications(db(), rejected, active, backgroundReady)).rejects.toThrow('Interrupted mock worker');
+    await db().updateTable('push_subscriptions').set({ failure_count: 5 }).where('id', '=', preferred.id).execute();
+    const failed = vi.fn(async (_device: { endpoint: string }, _payload: NotificationPayload) => 'failed' as const);
+    await dispatchPushNotifications(db(), failed, active, backgroundReady);
+    expect(failed).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ endpoint: selected.endpoint }), expect.objectContaining({ runId }));
+
+    const tabId = randomUUID();
+    expect((await syncNotifications(db(), memberId, { tabId, state: 'visible' }, backgroundReady)).pending).toHaveLength(1);
+    expect(await claimNotification(db(), memberId, runId, 'tab', backgroundReady, tabId)).toMatchObject({ runId });
+    await claimNotification(db(), memberId, runId, 'tab', backgroundReady, tabId, true);
+    await dispatchPushNotifications(db(), failed, active, new Date(backgroundReady.getTime() + 60_000));
+    expect(failed).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers a pending web completion after restarting the server and sends one generic result', async () => {
+    const device = subscription('durable-background-push');
+    await subscribe(memberCookie, device);
+    const id = await conversation(memberId);
+    const { runId, record } = await background(memberId, id);
+    const tabId = randomUUID();
+    await syncNotifications(db(), memberId, { tabId, state: 'visible' }, backgroundTime);
+    await syncNotifications(db(), memberId, { tabId, state: 'closed' }, backgroundTime);
+    await application.app.close();
+    application = await start();
+
+    await record('completed');
+    // Pending background results survive the legacy five-minute window.
+    const postRestart = new Date(backgroundReady.getTime() + 3_600_000);
+    const transport = vi.fn(async (_device: { endpoint: string }, _payload: NotificationPayload) => 'delivered' as const);
+    await Promise.all([dispatchPushNotifications(db(), transport, active, postRestart), dispatchPushNotifications(db(), transport, active, postRestart)]);
+    await dispatchPushNotifications(db(), transport, active, postRestart);
+    expect(transport).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ endpoint: device.endpoint }), {
+      taskId: runId, runId, kind: 'task_completed', runKind: 'run-completed', title: 'Task completed', body: 'Your task is complete.',
+      conversationId: id, language: 'en', sound: true,
+    });
+    expect(await ownsPushNotification(db(), memberId, runId, postRestart)).toBe(true);
+    expect(await ownsPushNotification(db(), ownerId, runId, postRestart)).toBe(false);
+    expect(await db().selectFrom('chat_notifications').select(['task_id', 'delivery']).where('run_id', '=', runId).execute())
+      .toEqual([{ task_id: runId, delivery: 'push' }]);
+  }, 40_000);
 });

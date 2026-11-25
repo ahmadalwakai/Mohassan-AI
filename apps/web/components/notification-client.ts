@@ -13,11 +13,13 @@ import type {
   PushUnsubscribeResponse,
 } from '@mohassan/contracts';
 import { declineNoticeOffer, noticeOfferOpen, noticePermission, requestNoticePermission } from './task-notices';
+import { announceBackgroundViewer, claimOpenBackgroundNotifications } from './background-notification-client';
 
 const titles: Record<NotificationKind, string> = {
   task_completed: 'اكتملت المهمة',
   needs_you: 'تحتاجك خطوة',
   task_failed: 'تعذّر الإكمال',
+  task_progress: 'تقدّم العمل',
 };
 const conversationIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const syncPath = '/api/notifications/sync';
@@ -184,6 +186,7 @@ export function useTaskNotifications(viewerId?: string): NotificationControls {
   const offer = !!viewerId && offerViewer === viewerId && !offerHandled;
 
   useEffect(() => {
+    announceBackgroundViewer(viewerId);
     if (!viewerId || !globalThis.crypto?.randomUUID) return;
     const activeViewer = viewerId;
     let tabId = crypto.randomUUID();
@@ -217,8 +220,9 @@ export function useTaskNotifications(viewerId?: string): NotificationControls {
         const result = await notificationPost<NotificationSyncResponse>(syncPath, body, signal);
         if (signal.aborted || pageClosed) return;
         if (result.backgroundTask && !offerHandled && noticeOfferOpen()) setOfferViewer(activeViewer);
+        await claimOpenBackgroundNotifications(result.pending, { viewerId: activeViewer, tabId: body.tabId, signal, request: notificationRequest });
         if (!document.hidden || noticePermission() !== 'granted') return;
-        for (const { taskId } of result.pending) {
+        for (const { taskId } of result.pending.filter(event => !event.runKind)) {
           if (!document.hidden || pageClosed || signal.aborted) break;
           const { notification } = await notificationPost<NotificationClaimResponse>(
             `/api/notifications/events/${encodeURIComponent(taskId)}/claim`, { tabId: body.tabId }, signal,
