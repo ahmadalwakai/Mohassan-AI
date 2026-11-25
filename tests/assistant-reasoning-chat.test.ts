@@ -94,6 +94,42 @@ describe('extended reasoning in the existing chat routes', () => {
     expect(search).not.toHaveBeenCalled();
   });
 
+  it('certifies spoken arithmetic through the local calculator', async () => {
+    vi.stubEnv('MOHASSAN_REASONING', '1');
+    for (const [request, equation] of [
+      ['أحسب لنا ناتج ١٧ ضرب ٤', '17 * 4 = 68'],
+      ['احسبلي ٢٥ في المئة من ٧٢', '25 % * 72 = 18'],
+      ['لو ضربنا سبعة في ١٢، كام الناتج؟', '(7) * (12) = 84'],
+      ['If we divide twenty-four by eight, what is the result?', '(24) / (8) = 3'],
+      ['قديش يوم بين ٢٠٢٠-٠٢-٢٧ و٢٠٢٠-٠٣-٠١؟', 'من 2020-02-27 إلى 2020-03-01 = 3 يوم'],
+      ['ما هو تاريخ ٤ أيام بعد ٢٠٢٠-٠٢-٢٧؟', '2020-02-27 + 4 ايام = 2020-03-02'],
+      ['A rectangle is 70 centimetres long and 40 centimetres wide. Calculate its area.', '70 × 40 = 2800 cm²'],
+    ]) {
+      const { text, run } = await ask(request);
+      expect(run.status).toBe('completed');
+      expect(text).toContain(equation);
+      expect(run.state.trail).toMatchObject([{ action: 'calculate' }]);
+      expect(run.state.supervision?.contract.criteria).toMatchObject([{ id: 'computed-answer' }]);
+    }
+    expect(act).not.toHaveBeenCalled();
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it('shows the evaluator’s intermediate steps when asked and preserves exact consumption', async () => {
+    const request = 'Compute (9 minus 2) times 6 plus 4, and show your work, thanks.';
+    const result = evaluateLocalComputation(request);
+    expect(result?.consumption).toMatchObject({ complete: true, sourceLength: request.length, remainder: [] });
+    expect(result?.evidence.at(-1)).toMatchObject({ source: 'computed', value: '46', quote: result?.text });
+    const { text, run } = await ask(request);
+    expect(run.status).toBe('completed');
+    expect(text).toContain('9 − 2 = 7\n7 × 6 = 42\n42 + 4 = 46');
+    const arabic = evaluateLocalComputation('احسب ١٢٫٥٪ من ٥٦، ووضحلي الخطوات');
+    expect(arabic?.text).toContain('12.5 ÷ 100 = 0.125\n0.125 × 56 = 7');
+    expect(evaluateLocalComputation('Compute (1 / 7) × 7, show the steps.')?.text).toContain('1 ÷ 7 ≈ 0.142857142857143');
+    expect(evaluateLocalComputation('Compute -((4 - 2) × 3), show the steps.')?.text).toMatch(/ = -6$/u);
+    expect(evaluateLocalComputation('Compute (8 + 2) × 9 then email it, and show the steps.')).toBeNull();
+  });
+
   it('ranks observed page fields and cites the values through the browser route', async () => {
     vi.stubEnv('MOHASSAN_REASONING', '1');
     const { id, text, run } = await ask('Open https://lengths.example and tell me which is longer on the page: Pine or Birch?');

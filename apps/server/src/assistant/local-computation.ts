@@ -1,5 +1,6 @@
 import { buildFrame } from './mind/frame.js';
 import { compute, type ComputationConsumption } from './mind/compute.js';
+import { calculationBodyBeforeWork } from './mind/computation-consumption.js';
 import type { Claim, Evidence } from './mind/contract.js';
 import { evaluateLocalReasoning, type ReasoningContext } from './reasoning/index.js';
 import { analyzeCompoundRequest, type CompoundRequestAnalysis, type PendingActionKind } from './compound-request.js';
@@ -29,6 +30,11 @@ export interface LocalComputation {
  */
 export function evaluateLocalComputation(request: string, now = new Date(), reasoning?: ReasoningContext): LocalComputation | null {
   if (!request.trim() || request.length > 4000 || !Number.isFinite(now.getTime())) return null;
+  const beforeWork = calculationBodyBeforeWork(request);
+  if (beforeWork) {
+    return evaluateLocalReasoning(beforeWork, now, reasoning)
+      ?? evaluateComputationText(request, now, beforeWork);
+  }
   const whole = evaluateLocalReasoning(request, now, reasoning) ?? evaluateComputationText(request, now);
   if (whole) return whole;
   // «QA test 2026-11-23: Calculate 37 × 24 and reply with the result in one short Arabic sentence.» (live test, 2026-11-23):
@@ -58,10 +64,10 @@ function shapedReply(result: LocalComputation, directive: ReplyDirective): Local
   return { ...result, lang, text: sentence, claims: [{ text: sentence, support: [reply.id], status: 'confirmed' }], evidence: [...result.evidence, reply] };
 }
 
-function evaluateComputationText(request: string, now: Date): LocalComputation | null {
-  const compound = analyzeCompoundRequest(request);
-  if (compound.kind === 'invalid' || compound.kind === 'unsupported_tail') return null;
-  const frame = buildFrame(compound.kind === 'compound' ? compound.primary.text : request);
+function evaluateComputationText(request: string, now: Date, body = request): LocalComputation | null {
+  const compound = analyzeCompoundRequest(body);
+  if (compound.kind === 'invalid' || compound.kind === 'unsupported_tail' || body !== request && compound.kind !== 'single') return null;
+  const frame = buildFrame(compound.kind === 'compound' ? compound.primary.text : body);
   if (frame.intent !== 'compute' || frame.missing.length) return null;
   // Formatting is an outer instruction too; quoted/body data cannot invent it.
   if (compound.kind === 'compound') frame.valueOnly ||= buildFrame(compound.outerText).valueOnly;

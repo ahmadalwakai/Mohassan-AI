@@ -142,8 +142,8 @@ function convert(input: string, lang: Lang): ReasoningResult | null {
   return approximate(lang, `${label(date, source, lang)} ≈ ${label(result, target, lang)}`, iso(result));
 }
 
-const between = /^(?:how many days (?:are there )?between|(?:what is|calculate|compute) (?:the )?(?:date difference|difference in days|difference|days) between|days between|كم (?:عدد )?(?:يوم|يوما|(?:ال)?ايام) بين|(?:احسب )?(?:فرق الايام|فرق التاريخين|الفارق) بين) (.+?) (?:and |و *)(.+)$/u;
-const fromTo = /^(?:how many days (?:are there )?from|days from|كم (?:يوم|يوما|ايام) من|احسب (?:الايام|عدد الايام) من) (.+?) (?:to|until|الي|حتي) (.+)$/u;
+const between = /^(?:how many days (?:are there )?between|(?:what is|calculate|compute) (?:the )?(?:date difference|difference in days|difference|days) between|days between|(?:كم|كام|قديش|اديش|شكد|اشكد) (?:عدد )?(?:يوم|يوما|(?:ال)?ايام) بين|(?:احسب )?(?:فرق الايام|فرق التاريخين|الفارق) بين) (.+?) (?:and |و *)(.+)$/u;
+const fromTo = /^(?:how many days (?:are there )?from|days from|(?:كم|كام|قديش|اديش|شكد|اشكد) (?:يوم|يوما|ايام) من|احسب (?:الايام|عدد الايام) من) (.+?) (?:to|until|الي|حتي) (.+)$/u;
 const withinHijri = / (?:in (?:the )?(?:hijri|islamic(?: civil)?) calendar|بالتقويم الهجري)$/u;
 
 function difference(input: string, lang: Lang): ReasoningResult | null {
@@ -170,7 +170,7 @@ function difference(input: string, lang: Lang): ReasoningResult | null {
 const englishRamadanLead = String.raw`(?:(?:how many )?days(?: (?:are )?(?:left|remaining))? (?:until|till|to) +)`;
 const arabicRamadanLead = String.raw`(?:(?:كم (?:يوم|يوما|ايام)(?: (?:باقي|متبقي))?|(?:كم|كام|قديش|شكد) (?:باقي|بقي|ضايل|متبقي|فاضل|ضل)(?: (?:يوم|ايام))?|(?:باقي|فاضل) (?:كم|كام) يوم) (?:(?:علي|الي|حتي) +|ل *))`;
 const ramadanDays = new RegExp(String.raw`^(?:${englishRamadanLead}|${arabicRamadanLead})(?:(?:the )?(?:start|beginning) of |(?:بدايه|اول) )?(?:next |ال)?(?:ramadhan?|ramadan|رمضان)(?: (?:المقبل|الجاي|القادم))?(?: +(\d{1,4})(?: *${HIJRI})?)?$`, 'u');
-const dateDistance = /^(?:how many days(?: (?:are )?(?:left|remaining))?|days|كم (?:يوم|يوما|ايام)(?: (?:باقي|متبقي))?) (until|till|since|الي|حتي|علي|منذ) (.+)$/u;
+const dateDistance = /^(?:how many days(?: (?:are )?(?:left|remaining))?|days|(?:كم|كام|قديش|اديش|شكد|اشكد) (?:يوم|يوما|ايام)(?: (?:باقي|متبقي))?) (until|till|since|الي|حتي|علي|منذ) (.+)$/u;
 
 function distance(input: string, lang: Lang, now: Date): ReasoningResult | null {
   const ramadan = ramadanDays.exec(input);

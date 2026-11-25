@@ -37,9 +37,14 @@ export function evaluateLocalReasoning(request: string, now: Date, context: Reas
   if (!context.pages?.length && !context.evidence?.length && isPageReasoningRequest(body)) return null;
 
   // The specialised grammars consume the whole request, including sentences in
-  // a word problem. Explicit compound actions still belong to the host planner.
+  // a word problem. A single calculation question after its stated data is
+  // part of the problem when that grammar can consume both clauses.
   const compound = analyzeCompoundRequest(body);
-  if (compound.kind === 'invalid' || compound.kind === 'compound') return null;
+  if (compound.kind === 'invalid') return null;
+  if (compound.kind === 'compound') {
+    return compound.pendingActions.length === 1 && compound.pendingActions[0].kind === 'compute'
+      && !compound.forbiddenActions.length && !compound.formatting.length ? reasonWordProblem(body, lang) : null;
+  }
   return reasonCalendar(body, lang, now)
     ?? reasonCurrency(body, lang, context.rates)
     ?? reasonComparison(body, lang, context.evidence, context.pages)
