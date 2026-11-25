@@ -80,9 +80,9 @@ The first failed check in the earliest failing turn assigns each of the 953 fail
 | `gsm8k` | 1,319 | 1,319 | 0 | 0 / 110 | — |
 | `mbpp` | 427 | 241 | 186 | 0 / 85 | `non-test-split` 170, `test-needs-imports` 13, `no-direct-entry-point` 3 |
 
-## Commands and checks
+## Original private-staging commands and checks
 
-The following commands built the release twice on the task branch. Each import verified the pinned source bytes. The three `cmp` checks exited 0. The sampler found zero exact normalized input overlaps with either pinned v1 partition among the admitted rows. The inventory command downloaded the public artifacts before the two builds. The custody paths below refer to the private audit workspace.
+These historical commands built the release twice on the task branch. Each import verified the pinned source bytes. The three `cmp` checks exited 0. The sampler found zero exact normalized input overlaps with either pinned v1 partition among the admitted rows. The inventory command downloaded the public artifacts before the two builds. The custody paths below refer to the private audit workspace.
 
 ```bash
 node --import tsx scripts/agent-capability-bench/v2/import.ts --cache /workspace/work/mohassan-public-source-cache --inventory true
@@ -111,6 +111,71 @@ On the task branch, `npm run typecheck` exited 0 for the root and web projects. 
 PLAYWRIGHT_BROWSERS_PATH=/workspace/work/mohassan-playwright npm test -- tests/agent-capability-*.test.ts tests/controller-assessment.test.ts tests/assistant-local-computation-chat.test.ts tests/assistant-live-test-repairs-chat.test.ts tests/assistant-documents-chat.test.ts tests/assistant-campaign-request-chat.test.ts tests/assistant-desktop-chat.test.ts tests/assistant-judge-production.test.ts tests/assistant-context-chat.test.ts tests/assistant-local-memory-chat.test.ts tests/public-conversation-followup.test.ts
 ```
 
-## Custody
+## Committed release verification
 
-The release payload, attribution bundle, seed, receipt and raw log are staged in an access-restricted directory outside the checkout. The public branch supplies the manifest, import recipe and aggregate report. Transfer into a durable custodian store remains unverified. [Custodian procedure](CAPABILITY-BENCH-V2-DATA.md#custodian-procedure)
+Commit `74290d7039615f3215ec7281d79415bbbee80d2a` packages the original payload and binary seed with source notices and a Wikipedia contributor index. The manifest pins all 18 files. All seven benchmark sources are redistributable with the included terms. Zero sources and zero cases were excluded for redistribution. The v1 loader rejects direct and symbolic-link paths into the v2 seal before opening corpus data. [Release README and honor rule](../tests/fixtures/agent-capability-bench/v2/sealed/README.md) · [Source licenses](../tests/fixtures/agent-capability-bench/v2/sealed/attribution/ATTRIBUTION.md)
+
+Both imports exited 0. Every `cmp` and directory comparison exited 0. These compare each rebuilt file to the tracked checkout and then to the files independently exported from Git. The first rebuild fetched pinned sources and notices into a fresh cache, and the second verified the cached bytes.
+
+```bash
+set -euo pipefail
+seal=tests/fixtures/agent-capability-bench/v2/sealed
+check=/workspace/work/mohassan-v2-redistribution-check
+install -d -m 700 "$check"
+for build in first second; do
+  node --import tsx scripts/agent-capability-bench/v2/import.ts --cache "$check/source-cache" --seed "$seal/sampling-v2.seed" --out "$check/$build" > "$check/$build.log"
+  cmp scripts/agent-capability-bench/v2/manifest.json "$check/$build/manifest.json"
+  while IFS= read -r -d '' file; do
+    cmp "$file" "$check/$build/release/${file#"$seal"/}"
+  done < <(git ls-files -z -- "$seal")
+  printf '%s rebuild matched the committed manifest and all 18 release files\n' "$build"
+done
+diff -qr "$check/first/release" "$check/second/release" && cmp "$check/first/manifest.json" "$check/second/manifest.json"
+
+bundle=/workspace/work/mohassan-v2-git-bundle/tests/fixtures/agent-capability-bench/v2/sealed
+git show 74290d7:scripts/agent-capability-bench/v2/manifest.json > "$check/manifest.from-git.json"
+for build in first second; do
+  diff -qr "$bundle" "$check/$build/release"
+  cmp "$check/manifest.from-git.json" "$check/$build/manifest.json"
+done
+```
+
+A fresh detached worktree supplied the `c2a0ff7` product. The benchmark scripts and complete release bundle were exported from the packaging commit. After both rebuilds matched, the committed-payload baseline was run once.
+
+```bash
+git worktree add --detach /workspace/work/mohassan-capability-committed-baseline c2a0ff7
+(cd /workspace/work/mohassan-capability-committed-baseline && npm ci --cache /workspace/work/npm-cache --no-audit --no-fund --prefer-offline)
+git archive 74290d7 scripts/agent-capability-bench | tar -x -C /workspace/work/mohassan-capability-committed-baseline
+mkdir -p /workspace/work/mohassan-v2-git-bundle
+git archive 74290d7 tests/fixtures/agent-capability-bench/v2/sealed | tar -x -C /workspace/work/mohassan-v2-git-bundle
+cd /workspace/work/mohassan-capability-committed-baseline
+umask 077
+TZ=Europe/London PLAYWRIGHT_BROWSERS_PATH=/workspace/work/mohassan-playwright node --import tsx scripts/agent-capability-bench/run.ts --version 2 --baseline true --sealed /workspace/work/mohassan-v2-git-bundle/tests/fixtures/agent-capability-bench/v2/sealed/payload.json --output /workspace/work/mohassan-v2-redistribution-check/baseline-c2a0ff7-committed.json > /workspace/work/mohassan-v2-redistribution-check/baseline-c2a0ff7-committed.log 2>&1
+```
+
+### Baseline result from the committed release
+
+The rerun passed **247/1,200 cases (20.6%, Wilson 95% CI 18.4%–23.0%)**. Pass counts, Wilson intervals and failure-stage counts matched the original receipt in every reported group.
+
+The run exited 0 and took 367.6 s from `2026-11-25T03:08:33.323Z` to `2026-11-25T03:14:40.889Z`. The aggregate receipt SHA-256 is `a70bf1a8f9fcdad996da253de2361186426db0446822c6dd8019bb5f9ec93e6b`. The payload SHA-256 remains `6ab7dac41ba54eccf0a48fd0958eada651e0c0fcb3a1156913bd6b9fdb25abbf`.
+
+### Follow-up checks
+
+`npm run typecheck` exited 0 for the root and web projects. The affected suites passed **190/190 tests across 20 files**, including the v1 development access guard and the v2 bundle checks.
+
+```bash
+PLAYWRIGHT_BROWSERS_PATH=/workspace/work/mohassan-playwright npm test -- tests/agent-capability-*.test.ts tests/controller-assessment.test.ts tests/assistant-local-computation-chat.test.ts tests/assistant-live-test-repairs-chat.test.ts tests/assistant-documents-chat.test.ts tests/assistant-campaign-request-chat.test.ts tests/assistant-desktop-chat.test.ts tests/assistant-judge-production.test.ts tests/assistant-context-chat.test.ts tests/assistant-local-memory-chat.test.ts tests/public-conversation-followup.test.ts
+```
+
+The following Git checkout check also exited 0. It verified the pinned release bytes stay intact when Git is configured to convert line endings.
+
+```bash
+check=/workspace/work/mohassan-v2-redistribution-check
+seal=tests/fixtures/agent-capability-bench/v2/sealed
+manifest=scripts/agent-capability-bench/v2/manifest.json
+git ls-files -z -- "$seal" "$manifest" tests/fixtures/agent-capability-bench/development.json tests/fixtures/agent-capability-bench/holdout/sealed.json | git -c core.autocrlf=true checkout-index -z --stdin --prefix="$check/crlf-checkout/"
+diff -qr "$seal" "$check/crlf-checkout/$seal"
+for file in "$manifest" tests/fixtures/agent-capability-bench/development.json tests/fixtures/agent-capability-bench/holdout/sealed.json; do
+  cmp "$file" "$check/crlf-checkout/$file"
+done
+```
