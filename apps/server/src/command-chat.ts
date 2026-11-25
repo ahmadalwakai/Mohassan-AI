@@ -1,3 +1,4 @@
+import * as feedbackLoop from './feedback-runtime.js';
 import { createHash, randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import type { ImageReading } from '@mohassan/vision';
@@ -1399,7 +1400,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // the matching state, review event and terminal status together.
       // Native memory handlers explicitly require their current review without
       // changing historical advisory contract hashes or generic chat policy.
-      let finalText = text, finalStatus = status;
+      let { text: finalText, status: finalStatus } = await feedbackLoop.preparePublication(tx, execution.getStore(), text, status);
       if (state.supervision) {
         state.completionReview = reviewChatAnswer(state.supervision, finalText);
         if ((state.supervision.contract.mode === 'enforced' || memoryPublication) && finalStatus === 'completed' && !state.completionReview.allowCompletion) {
@@ -1437,7 +1438,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           enforced: state.supervision?.contract.mode === 'enforced' || Boolean(memoryPublication),
           criterionLabels: Object.fromEntries((state.supervision?.contract.criteria ?? []).map(item => [item.id, criterionLabel(ledger, item.id, item.description)])) }).status;
       });
-      await addMessage(tx, id, 'assistant', finalText);
+      await feedbackLoop.publish(tx, id, execution.getStore(), clean(finalText), finalStatus);
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',
         data: JSON.stringify({ contractHash: state.supervision?.contract.hash, review: state.completionReview }) }).execute();
@@ -3871,7 +3872,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     controllers.set(id, {runId,token,controller});
     if(!preserveVault){const prior=vaultOwners.get(id);if(prior)forgetVault(id,prior);}
     vaultOwners.set(id,token);
-    const worker = execution.run({ownerId,id,runId,token,controller,full},()=>work(ownerId, id, runId, controller)).catch(() => {});
+    const worker = execution.run({ownerId,id,runId,token,controller,full},()=>feedbackLoop.run(db, execution.getStore()!, text => clean(vault.scrub(id, text)), () => work(ownerId, id, runId, controller))).catch(() => {});
     workers.set(id, worker);
     void worker.finally(() => { if (workers.get(id) === worker) workers.delete(id); });
   }
@@ -4206,6 +4207,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const message = await db.selectFrom('chat_messages').select(['id', 'role']).where('id', '=', input.messageId).where('conversation_id', '=', id).executeTakeFirst();
     if (!message || message.role !== 'assistant') throw new BrowserError('CHAT_FEEDBACK_TARGET', 'هذا الرد غير موجود في المحادثة.', 404);
     await db.transaction().execute(async tx => {
+      await feedbackLoop.captureFeedback(tx, { userId: ownerId, conversationId: id, messageId: input.messageId, verdict: input.verdict, note: input.note ? clean(input.note) : null });
       await tx.deleteFrom('chat_events').where('conversation_id', '=', id).where('kind', '=', 'feedback').where(sql`data->>'messageId'`, '=', input.messageId).execute();
       await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: null, kind: 'feedback', message: input.verdict,
         data: JSON.stringify({ messageId: input.messageId, verdict: input.verdict, note: input.note ? clean(input.note) : null }) }).execute();

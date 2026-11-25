@@ -14,6 +14,7 @@
  * Every threshold here is a proposal for the owner, labelled as such. Nothing here is a model.
  */
 import { performance } from 'node:perf_hooks';
+import { restrictFeedbackJudge } from '../feedback-selection.js';
 import { checkAnswerLine, figureKind, hasFigureOf, isMetaLine } from './answer-check.js';
 import { entityWords, fold, isFollowUp, refersBack, topicWords } from './hands.js';
 import { buildFrame } from './mind/frame.js';
@@ -426,7 +427,8 @@ export function isFragment(text: string, lang: 'ar' | 'en'): boolean {
   return false;
 }
 
-export function judge(input: JudgeInput): JudgeVerdict {
+export function judge(candidate: JudgeInput): JudgeVerdict {
+  const input = restrictFeedbackJudge(candidate);
   const started = performance.now();
   const question = input.question ?? '';
   const reply = input.reply ?? '';

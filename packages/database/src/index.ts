@@ -5,6 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
+import { migrateFeedback } from "./feedback-migration.ts";
 
 export interface DatabaseOptions {
   connectionString?: string;
@@ -368,6 +369,7 @@ export async function migrate(db: Kysely<any>): Promise<void> {
       )`.execute(tx);
       await tx.insertInto('schema_migrations').values({ version: '026_experiences' }).execute();
     }
+    await migrateFeedback(tx);
   });
 }
 

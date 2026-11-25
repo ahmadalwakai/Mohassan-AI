@@ -1,3 +1,4 @@
+import { allowsFeedbackEvidence, feedbackBlockedReply, feedbackSelectionScope, selectFeedbackEvidence } from '../feedback-selection.js';
 import { AgentEffectHeld, BrowserError, compileQuery, publicSearchScan, publicSearchText, safeResumeUrl, type AgentAction, type AgentElement, type AgentPage, type AgentRequestPermit, type SearchHit } from '@mohassan/browser';
 import { directRoute, namedSite, sensitiveAction } from './brain.js';
 import { hostOf, readingLabel, siteName } from './activity.js';
@@ -1393,6 +1394,19 @@ const NO_PAGE = 'لا توجد صفحة مفتوحة في هذه المحادث�
 /** Runs the plan from `plan.next`. The caller persists `plan` in the run state before any pause. */
 export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutcome> {
   normalizeHandsPlan(plan);
+  const feedback = feedbackSelectionScope.getStore();
+  feedback?.startHands();
+  const policy = await feedback?.policy();
+  const allowed = (url: string) => !policy || allowsFeedbackEvidence(policy, url);
+  const readEvidence = async (url: string): Promise<HandsRead> => {
+    if (!allowed(url)) return { kind: 'disallowed' };
+    const result = await io.read!(url);
+    return result.kind === 'page' && !allowed(result.page.url) ? { kind: 'disallowed' } : result;
+  };
+  const blockedEvidence = (): HandsOutcome => ({ kind: 'done', status: 'partial', text: feedbackBlockedReply(plan.lang !== 'en') });
+  for (const answer of plan.sequel?.answers ?? []) {
+    for (const url of answer.evidenceUrls ?? []) feedback?.handSource(url, true);
+  }
   let page = await io.page();
   const go = async (action: AgentAction, label: string): Promise<AgentPage | null> => {
     let next: AgentPage;
@@ -1477,7 +1491,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     // → «شاي أخضر», measured 2026-11-22), so the article is read while the search runs, not searched for after it: the search
     // lookup cost 1.1 to 1.9 s a question (the engine's one-second spacing, then the search). The page reader caches it.
     const direct = subject.length && !live && surface.trim() && io.read
-      ? io.read(articleUrl(surface, questionLanguage(query))).catch((): HandsRead => ({ kind: 'unreadable' })) : null;
+      ? readEvidence(articleUrl(surface, questionLanguage(query))).catch((): HandsRead => ({ kind: 'unreadable' })) : null;
     let results = await lookup(query);
     const openedByName = direct ? await direct : null;
     const named = openedByName?.kind === 'page' && readableOverHttp(openedByName.page.text) && !isDisambiguationPage(openedByName.page) ? openedByName.page : null;
@@ -1548,7 +1562,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         const release = !template && !box && step.ask && io.read ? releaseQuestion(step.query) : null;
         if (release) {
           await io.step(readingLabel([release.page]));
-          const read = await io.read!(release.page).catch((): HandsRead => ({ kind: 'unreadable' }));
+          const read = await readEvidence(release.page).catch((): HandsRead => ({ kind: 'unreadable' }));
           const official = read.kind === 'page' ? read.page : null;
           const fact = official ? release.parse(official.text) : null;
           if (official && fact) {
@@ -1589,7 +1603,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           // chat's correction step).
           const refused = new Set((plan.rejected ?? []).map(withoutHash));
           const results = (searched ?? resultLinks(page!, 6, step.query).map(item => ({ title: tidy(item.element.label).slice(0, 90).replace(/[[\]]/g, ''), url: item.url })))
-            .filter(item => !refused.has(withoutHash(item.url)));
+            .filter(item => !refused.has(withoutHash(item.url)) && allowed(item.url));
           plan.results = results;
           // Open only the results whose titles name the question's topic best: «إمداد المياه» is not «المياه البيضاء».
           const topic = topicWords(step.query);
@@ -1611,11 +1625,12 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           // A disambiguation page lists subjects and answers none.
           // The article opened by the subject's own name (engine) is read first, whatever its title («الساد» for «المياه البيضاء»).
           const byName = results.filter(item => ownUrls.has(withoutHash(item.url)));
-          const fitting = [...new Set(searched ? [...byName, ...subject, ...results] : [...subject, ...best])].filter(item => !isDisambiguationTitle(item.title)).slice(0, 3);
+          const candidates = [...new Set(searched ? [...byName, ...subject, ...results] : [...subject, ...best])].filter(item => !isDisambiguationTitle(item.title));
+          const fitting = (policy ? selectFeedbackEvidence(policy, candidates) : candidates).slice(0, 3);
           // Engine results are read over HTTP, all together, so no browser opens for a question. A page that
           // gives no readable text (built by JavaScript, not HTML, timed out) is opened in the hidden browser instead.
           const reads: (HandsRead | null)[] = searched && io.read && fitting.length
-            ? (await io.step(readingLabel(fitting.map(item => item.url))), await Promise.all(fitting.map(item => io.read!(item.url).catch((): HandsRead => ({ kind: 'unreadable' })))))
+            ? (await io.step(readingLabel(fitting.map(item => item.url))), await Promise.all(fitting.map(item => readEvidence(item.url).catch((): HandsRead => ({ kind: 'unreadable' })))))
             : fitting.map(() => null);
           for (const [index, item] of fitting.entries()) {
             const read = reads[index];
@@ -1630,7 +1645,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
               page = shown;
               opened = shown;
             }
-            if (isDisambiguationPage(opened)) continue;
+            if (!allowed(opened.url) || isDisambiguationPage(opened)) continue;
             // The answer line must carry what the question asks for (a number, a name, the question's language), or the next page is tried.
             // For a subject's attribute («كم عدد سكان مصر») the line names the subject, unless the page is the subject's own article:
             // «عدد سكان المدينة … 1500 نسمة» from «القصير (مصر)» is not Egypt's population.
@@ -1746,11 +1761,13 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         if (!page) {
           // The last answer was read over HTTP, so «اقرأ المزيد» opens that page in the browser first.
           if (!plan.found?.url) return { kind: 'done', status: 'blocked', text: NO_PAGE };
+          if (!allowed(plan.found.url)) return blockedEvidence();
           await io.step(`فتح ${hostOf(plan.found.url)}`);
           const opened = await go({ kind: 'open', text: plan.found.url }, `فتح ${hostOf(plan.found.url)}`);
           if (!opened) return { kind: 'paused' };
           page = opened;
         }
+        if (!allowed(page.url)) return blockedEvidence();
         await io.step('قراءة الصفحة');
         plan.next = index + 1;
         const offset = step.more && plan.read?.url === page.url ? plan.read.offset : 0;
@@ -1776,6 +1793,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
       case 'ask_page': {
         // Nothing to run: the answer is read from the page the previous step opened, when the reply is built (describe).
         if (!page) return { kind: 'done', status: 'blocked', text: NO_PAGE };
+        if (!allowed(page.url)) return blockedEvidence();
         await io.step(plan.lang === 'en' ? 'Reading the answer on the page' : 'قراءة الجواب من الصفحة');
         plan.next = index + 1;
         break;
@@ -1788,6 +1806,21 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         || answer !== null && (!answer.parts.length || answer.missing.length > 0);
       await io.complete(index, missing ? 'partial' : 'completed');
     }
+  }
+  const last = plan.steps.at(-1);
+  if (last?.kind === 'search' && last.ask) {
+    if (plan.found) {
+      feedback?.handSource(plan.found.url, true);
+      if (plan.found.second) feedback?.handSource(plan.found.second.url, true);
+    }
+  } else if (page && last?.kind !== 'type' && !(last?.kind === 'search' && plan.results?.length)) {
+    const answersFromPage = last?.kind === 'read' || last?.kind === 'ask_page' || last?.kind === 'news';
+    if (!allowed(page.url)) return answersFromPage ? blockedEvidence() : { kind: 'done', ...describe(plan, page, false) };
+    const described = describe(plan, page);
+    if (feedback && (last?.kind === 'news' || /^> \S/mu.test(described.text))) {
+      feedback.handSource(page.url, false, answersFromPage ? undefined : describe(plan, page, false).text);
+    }
+    return { kind: 'done', ...described };
   }
   return { kind: 'done', ...describe(plan, page) };
 }
@@ -1887,7 +1920,7 @@ export function isWholeDetail(line: string): boolean {
 }
 
 /** The reply is built only from what the pages show: titles, links and quoted sentences. A question answered over HTTP needs no open page. */
-export function describe(plan: HandsPlan, page: AgentPage | null): { text: string; status: 'completed' | 'partial' | 'blocked' } {
+export function describe(plan: HandsPlan, page: AgentPage | null, includeExcerpt = true): { text: string; status: 'completed' | 'partial' | 'blocked' } {
   const last = plan.steps[plan.steps.length - 1];
   if (last.kind === 'search' && last.ask && plan.results) {
     const list = (items: { title: string; url: string }[]) => items.map((item, index) => `${index + 1}. [${shownTitle(item.title)}](${item.url}) — ${siteName(item.url)}`).join('\n');
@@ -2002,7 +2035,7 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
   else if (en) lead = `I reached ${where}:`;
   const from = isRead && plan.read?.url === page.url ? plan.read.start : 0;
   const part = excerpt(page, from, isRead ? READ_WINDOW : 500);
-  const quote = part.lines.length ? `\n\n${part.lines.map(line => `> ${line}`).join('\n>\n')}` : en ? '\n\nI found no readable text in the visible part of the page.' : '\n\nلم أجد نصًا مقروءًا في الجزء الظاهر من الصفحة.';
+  const quote = !includeExcerpt ? '' : part.lines.length ? `\n\n${part.lines.map(line => `> ${line}`).join('\n>\n')}` : en ? '\n\nI found no readable text in the visible part of the page.' : '\n\nلم أجد نصًا مقروءًا في الجزء الظاهر من الصفحة.';
   const tail = isRead ? (part.more ? en ? '\n\nSay “read more” and I will go on.' : '\n\nقل «اقرأ المزيد» لأكمل.' : '')
     : en ? '\n\nSay “read the page” to read more, or “click …”.' : '\n\nقل «اقرأ الصفحة» لأقرأ أكثر، أو «اضغط على …».';
   return { status: 'completed', text: `${lead}${quote}${tail}` };

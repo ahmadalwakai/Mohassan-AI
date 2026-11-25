@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ArrowUp, Check, ChevronDown, Copy, ExternalLink, Globe, ImagePlus, KeyRound, Laptop, LogOut, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, Settings2, ShieldAlert, SquarePen, Square, Trash2, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, Copy, ExternalLink, Globe, ImagePlus, KeyRound, Laptop, LogOut, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, Settings2, ShieldAlert, SquarePen, Square, ThumbsDown, Trash2, X } from "lucide-react";
 import type { ChatCapabilities, ChatConversation as Conversation, ChatConversationSummary as Summary, ChatSecureRequest } from "@mohassan/contracts";
 
 /** What each capability the server reports is called on the banner (2026-11-23: the banner listed a fixed three before). */
@@ -690,6 +690,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
           </label>
           {onOpenTool ? <button onClick={() => { setMenuOpen(false); onOpenTool("desktop"); }}><Laptop size={15} />سطح المكتب</button> : null}
           <button onClick={() => { setMenuOpen(false); onAdvanced(); }}><Settings2 size={15} />الأدوات المتقدمة</button>
+          <button onClick={() => window.location.assign("/feedback")}><MessageSquare size={15} />ملاحظات الإجابات</button>
           <button onClick={onSignOut}><LogOut size={15} />تسجيل الخروج</button>
         </div> : null}
         <button className={styles.profile} aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}><span>{firstName.charAt(0)}</span><strong dir="auto">{name}</strong></button>
@@ -802,7 +803,7 @@ function FeedbackButtons({ conversationId, messageId }: { conversationId: string
   }
   const labels = { useful: "مفيد", wrong: "خطأ", incomplete: "ناقص" } as const;
   return <div className={styles.feedback} role="group" aria-label="تقييم الرد">
-    {(["useful", "wrong", "incomplete"] as const).map((value) => <button key={value} type="button" className={`${styles.copyReply} ${verdict === value ? styles.chosen : ""}`} aria-pressed={verdict === value} onClick={() => void send(value)}>{labels[value]}</button>)}
+    {(["useful", "wrong", "incomplete"] as const).map((value) => <button key={value} type="button" className={`${styles.copyReply} ${verdict === value ? styles.chosen : ""}`} aria-pressed={verdict === value} onClick={() => void send(value)}>{value === "wrong" ? <ThumbsDown size={13} aria-hidden="true" /> : null}{labels[value]}</button>)}
     {noting ? <form className={styles.feedbackNote} onSubmit={(event) => { event.preventDefault(); void send(verdict!, note); setNoting(false); }}>
       <input dir="auto" value={note} maxLength={500} placeholder="ما الذي كان خطأ أو ناقصًا؟ (اختياري)" onChange={(event) => setNote(event.target.value)} />
       <button type="submit" className={styles.secondary}>حفظ</button>

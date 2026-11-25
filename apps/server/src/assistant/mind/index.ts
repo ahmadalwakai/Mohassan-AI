@@ -1,3 +1,4 @@
+import { recordFeedbackMind, restrictFeedbackMind } from '../../feedback-selection.js';
 import { BrowserError } from '@mohassan/browser';
 import type { Frame, Mind, MindDeps, MindReply } from './contract.js';
 import { buildFrame } from './frame.js';
@@ -115,7 +116,7 @@ export function createMind(): Mind {
       const frame = buildFrame(input);
       if (resume) frame.lang = resume.frame.lang;
       const parsed = performance.now();
-      const { observed, context } = observeDependencies(deps);
+      const { observed, context } = observeDependencies(await restrictFeedbackMind(deps));
       const outcome = await chooseReply(frame, input, observed, signal, Boolean(resume), started + EVIDENCE_LIMIT_MS);
       signal.throwIfAborted();
       const resolved = performance.now();
@@ -124,6 +125,7 @@ export function createMind(): Mind {
       else context.comparisonReads = outcome.comparisonReads;
       const timings = { frame: parsed - started, reply: resolved - parsed };
       const checked = critiqueReply(composeReply({ ...outcome.reply, frame, timings }), context);
+      recordFeedbackMind(checked);
       return { ...checked, timings: { ...timings, critic: performance.now() - resolved } };
     },
   };
