@@ -1,13 +1,12 @@
 import { createHash } from 'node:crypto';
 import { BrowserError, readableSource, RobotsPolicy, safeResumeUrl, SafeNetwork } from '@mohassan/browser';
-import { redactCredentialText } from '@mohassan/cognitive';
 import { ChatCreateSchema, ChatSendSchema } from '@mohassan/contracts';
-import { redactSecrets } from '@mohassan/providers';
 import { completeBrief } from '@mohassan/sites';
 import { withoutChatRequestCommit } from '../../chat-request-ledger.js';
 import type { createCommandChatControl, CommandChatConfig } from '../../command-chat.js';
 import { withMemberChatDeletionFence } from '../../member-chat-deletion-fence.js';
 import { cleanRejectedChatCreate } from '../../rejected-chat-create.js';
+import { containsSensitiveCredentialText, redactSensitiveCredentialText as cleanup } from '../../sensitive-credential-text.js';
 import { classifySteering } from '../agent-run.js';
 import { newBrainState } from '../brain.js';
 import { matchText } from '../mind/normalize.js';
@@ -24,14 +23,13 @@ import { createLongRunRuntime, LongRunTransientError, type LongRunPorts } from '
 import { LONG_RUN_LIMITS, LONG_RUN_WORKER, say, type LongRunPlan } from './state.js';
 
 const maxMonitorMs = 2 * 60 * 60_000;
-const cleanup = (text: string) => redactCredentialText(redactSecrets(text));
 const monitorAddress = /https?:\/\/[^\s<>"'«»]+/iu;
 const researchLead = /^(?:(?:please|kindly|من فضلك|لو سمحت)[,،\s]+)?(?:(?:research|investigate|search(?: (?:the web|online))?)\s+(?:deeply\s+|(?:for|about)\s+)?|(?:conduct|do|carry out|run) (?:an? )?(?:deep|thorough|systematic|comprehensive) (?:research|investigation|review|study) (?:on|about)\s+|(?:ابحث|استقص|حقق|ادرس)(?:\s+(?:بعمق|بشكل معمق))?\s+(?:عن|في)\s+)/iu;
 const researchTail = /\s+(?:(?:in depth|deeply|thoroughly|across sources|(?:from|using|with) (?:multiple|primary|public|several) sources)|(?:(?:من|باستخدام) )?مصادر (?:متعددة|متعدده|أولية|متنوعه|مختلفة|مختلفه)|بعمق)[.!؟?\s]*$/iu;
 const withoutCredentials = (text: string) => cleanup(text) === text && !assessRequestScope(text).reasons.includes('credential_material');
 
 function publicUrl(network: SafeNetwork, value: string) {
-  if (value.length > 2048 || /[<>()\s]/u.test(value)) return null;
+  if (value.length > 2048 || /[<>()\s]/u.test(value) || containsSensitiveCredentialText(value)) return null;
   try { return safeResumeUrl(network.validate(value).href); } catch { return null; }
 }
 
