@@ -1,11 +1,14 @@
 import { sql, type Kysely } from 'kysely';
 
-export const MONITOR_ALERT_FEEDBACK_MIGRATION = '044_monitor_alert_feedback';
+export const MONITOR_ALERT_FEEDBACK_MIGRATION = '047_monitor_alert_feedback';
 
 export async function migrateMonitorAlertFeedback(db: Kysely<any>) {
   await db.transaction().execute(async tx => {
     await sql`LOCK TABLE schema_migrations IN EXCLUSIVE MODE`.execute(tx);
     if (await tx.selectFrom('schema_migrations').select('version').where('version', '=', MONITOR_ALERT_FEEDBACK_MIGRATION).executeTakeFirst()) return;
+    const legacy = await tx.updateTable('schema_migrations').set({ version: MONITOR_ALERT_FEEDBACK_MIGRATION })
+      .where('version', '=', '044_monitor_alert_feedback').returning('version').executeTakeFirst();
+    if (legacy) return;
 
     await sql`CREATE TABLE monitor_alert_feedback (
       user_id text NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,

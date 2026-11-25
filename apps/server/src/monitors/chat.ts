@@ -1,5 +1,5 @@
 import { BrowserError, SafeNetwork, SearchEngine } from '@mohassan/browser';
-import type { MonitorOffer, MonitorSpec } from '@mohassan/contracts';
+import { MONITOR_V2_DEFAULT_FRESHNESS_MS, monitorV2Targets, type MonitorOffer, type MonitorSpec } from '@mohassan/contracts';
 import type { Kysely } from 'kysely';
 import { assessRequestScope, requestCapabilityAllowed, reviewPublicProjection } from '../assistant/request-scope.js';
 import { monitoringRequest } from '../assistant/response-policy-signals.js';
@@ -10,19 +10,28 @@ import { migrateMonitorAlertFeedback } from '../monitors-phase1/feedback-migrati
 import { addMonitorCardAlerts, conversationMonitorAlerts } from '../monitors-phase1/feedback.js';
 import { detectMonitorNeed, monitorHistoryMayMatter, safeMonitorRequest, type MonitorNeed } from './detection.js';
 import { monitorAccountAllowed, type EnabledMonitorRollout } from '../monitors-phase1/rollout.js';
-import { monitorRollout } from './flag.js';
+import { monitorContainsCredentials } from './credential-privacy.js';
+import { monitorRollout, smartMonitorsV2Enabled } from './flag.js';
 import { migrateMonitors } from './migration.js';
 import { observePage } from './page.js';
 import { createMonitorRuntime } from './runtime.js';
+import { monitorTiming } from './schedule.js';
 import { createMonitorReader, type MonitorReadResult } from './sources.js';
 import { generateMonitorSpec, monitorNeedReply } from './spec.js';
 import { createMonitorStore, MonitorError } from './store.js';
+import { detectMonitorAnswerOffer, parseMonitorManagement, type MonitorAnswerPage } from './v2-chat-intents.js';
+import { createMonitorChatV2Store, prepareMonitorManagement } from './v2-chat-store.js';
+import type { MonitorV2Preview } from './v2-runtime-types.js';
+import { prepareMonitorV2Preview } from './v2-runtime.js';
+import { generateMonitorV2Spec } from './v2-spec.js';
 
 type Configuration = Pick<CommandChatConfig, 'networkPolicy' | 'searchProvider'>;
 type SourceValue = Extract<MonitorReadResult, { kind: 'value' }>;
 export interface PreparedMonitorTurn {
   text: string;
-  proposal?: { spec: MonitorSpec; observation: SourceValue['observation']; cache?: SourceValue['cache']; offer: MonitorOffer; note: string };
+  status?: 'completed' | 'partial';
+  management?: NonNullable<Awaited<ReturnType<typeof prepareMonitorManagement>>['management']>;
+  proposal?: { spec: MonitorSpec; observation: SourceValue['observation'] | null; cache?: SourceValue['cache']; offer: MonitorOffer; note: string; v2Preview?: MonitorV2Preview };
 }
 interface Turn {
   ownerId: string;
@@ -36,6 +45,7 @@ interface BlockedTurn extends Turn {
   pages: readonly { url: string; documentStatus?: number; text?: string }[];
   error?: unknown;
 }
+type AnswerTurn = Turn & { pages: readonly MonitorAnswerPage[] };
 
 const localized = (language: MonitorNeed['language'], ar: string, en: string) => language === 'ar' ? ar : en;
 const address = /https:\/\/[^\s<>"'«»]+/iu;
@@ -54,7 +64,7 @@ function eligible(text: string) {
   return Boolean(safeMonitorRequest(text));
 }
 
-function scopedSource(need: MonitorNeed, spec: MonitorSpec) {
+function scopedSource(need: MonitorNeed, spec: Pick<MonitorSpec, 'source'>) {
   const scope = assessRequestScope(need.text);
   if (spec.source.kind === 'page') return requestCapabilityAllowed(scope.constraints ?? null, 'browser_navigation');
   if (spec.source.kind === 'search') {
@@ -67,7 +77,8 @@ function scopedSource(need: MonitorNeed, spec: MonitorSpec) {
 export async function legacyMonitorHandledBySmartChat(db: Kysely<any>, ownerId: string, text: string) {
   const control = monitorChat(db);
   if (!control || !await control.availableTo(ownerId)) return false;
-  return monitoringRequest(matchText(text)) || detectMonitorNeed({ text })?.kind === 'explicit';
+  return monitoringRequest(matchText(text)) || detectMonitorNeed({ text })?.kind === 'explicit'
+    || control.v2 && Boolean(parseMonitorManagement(text));
 }
 
 function blockedSource(turn: BlockedTurn) {
@@ -93,7 +104,9 @@ function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: Enab
   const reader = createMonitorReader({ db, network, searchProvider });
   const store = createMonitorStore(db, { rollout });
   const runtime = createMonitorRuntime(db, { read: reader.read, store, rollout });
-  const availableTo = (ownerId: string) => monitorAccountAllowed(db, ownerId, rollout);
+  const availableTo = (ownerId: string, tx = db) => monitorAccountAllowed(tx, ownerId, rollout);
+  const v2 = smartMonitorsV2Enabled();
+  const chatV2 = createMonitorChatV2Store(db, store);
   let initializing: Promise<void> | undefined;
   let ready = false;
   const initialize = (schemaReady = false) => {
@@ -108,12 +121,13 @@ function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: Enab
   };
 
   async function prepare(need: MonitorNeed, turn: Turn, blocked = false): Promise<PreparedMonitorTurn | null> {
-    const spec = generateMonitorSpec(need);
-    if (!spec || !scopedSource(need, spec)) {
+    const spec = v2 ? generateMonitorV2Spec(need) : generateMonitorSpec(need);
+    const sources = spec && (v2 ? monitorV2Targets(spec) : [spec]);
+    if (!spec || !sources?.every(source => scopedSource(need, source))) {
       return blocked ? null : { text: monitorNeedReply(need) };
     }
-    if (spec.source.kind === 'page') {
-      try { network.validate(spec.source.url); }
+    for (const { source } of sources) if (source.kind === 'page') {
+      try { network.validate(source.url); }
       catch {
         return need.kind === 'explicit' ? { text: localized(need.language, 'أرسل رابط HTTPS عامًّا يمكن قراءته.', 'Send a readable public HTTPS address.') } : null;
       }
@@ -122,7 +136,20 @@ function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: Enab
     let preview: MonitorReadResult;
     try {
       await store.reservePreview(turn.ownerId, turn.conversationId);
-      preview = await reader.read(spec, { ownerId: turn.ownerId, signal: turn.signal, reserveHost: store.reserveHost, extendHost: store.extendHost, preview: true });
+      const options = { ownerId: turn.ownerId, signal: turn.signal, reserveHost: store.reserveHost, extendHost: store.extendHost, preview: true };
+      if (v2) {
+        const prepared = await prepareMonitorV2Preview(reader.read, spec, options);
+        if ('preview' in prepared) {
+          const v2Preview = prepared.preview;
+          const note = v2Preview.clarification
+            ? localized(need.language, 'اختر القيمة التي تريد مراقبتها.', 'Choose the value you want to watch.') : monitorNeedReply(need, spec);
+          return { text: note, proposal: { spec, observation: v2Preview.samples.find(sample => sample.index === 0)?.observation ?? null,
+            offer: need.kind, note, v2Preview } };
+        }
+        preview = prepared.result;
+      } else {
+        preview = await reader.read(spec, options);
+      }
     } catch (error) {
       turn.signal?.throwIfAborted();
       if (!(error instanceof BrowserError || error instanceof MonitorError)) throw error;
@@ -139,7 +166,8 @@ function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: Enab
   }
 
   return {
-    initialize, runtime, store, availableTo,
+    initialize, runtime, store, availableTo, v2,
+    v2State: chatV2.state, confirmAction: chatV2.confirm, setProactiveOffers: chatV2.setProactiveOffers,
     async view(ownerId: string, conversationId: string) {
       if (!ready || !await availableTo(ownerId)) return {};
       const [listed, alerts] = await Promise.all([store.list(ownerId, conversationId), conversationMonitorAlerts(db, ownerId, conversationId)]);
@@ -150,23 +178,56 @@ function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: Enab
         ...(alerts.length ? { monitorAlerts: alerts.map(({ alert }) => alert) } : {}) };
     },
     async forTurn(turn: Turn) {
-      if (!monitorHistoryMayMatter(turn.text) || !await availableTo(turn.ownerId) || !eligible(turn.text)) return null;
+      if (!(v2 || monitorHistoryMayMatter(turn.text)) || !await availableTo(turn.ownerId)) return null;
+      if (v2) {
+        const management = parseMonitorManagement(turn.text);
+        if (management && !monitorContainsCredentials(turn.text)) {
+          await initialize();
+          return prepareMonitorManagement(store, turn.ownerId, turn.conversationId, management);
+        }
+      }
+      if (!monitorHistoryMayMatter(turn.text) || !eligible(turn.text)) return null;
       const messages = await db.selectFrom('chat_messages as m').innerJoin('chat_conversations as c', 'c.id', 'm.conversation_id')
         .select(['m.role', 'm.text']).where('c.id', '=', turn.conversationId).where('c.owner_id', '=', turn.ownerId)
         .orderBy('m.created_at', 'desc').orderBy('m.id', 'desc').limit(13).execute();
       const latest = messages.findIndex(message => message.role === 'user' && message.text === turn.text);
       if (latest >= 0) messages.splice(latest, 1);
       const need = detectMonitorNeed({ text: turn.text, history: messages.reverse() });
-      return need ? prepare(need, turn) : null;
+      return need && (!v2 || need.kind === 'explicit') ? prepare(need, turn) : null;
     },
     async forBlockedTurn(turn: BlockedTurn) {
-      if (!address.test(turn.text) || !await availableTo(turn.ownerId) || !eligible(turn.text)) return null;
+      if (v2 || !address.test(turn.text) || !await availableTo(turn.ownerId) || !eligible(turn.text)) return null;
       const blocked = blockedSource(turn);
       if (!blocked) return null;
       const need = detectMonitorNeed({ text: turn.text, blocked });
       return need ? prepare(need, turn, true) : null;
     },
+    async publishAnswerOffer(tx: Kysely<any>, turn: AnswerTurn, answer: string) {
+      if (!v2 || !ready || !await availableTo(turn.ownerId, tx)) return '';
+      const offer = detectMonitorAnswerOffer(turn.text, answer, turn.pages);
+      if (!offer || monitorContainsCredentials(turn.text) || monitorContainsCredentials(offer.excerpt)) return '';
+      const { ownerId, conversationId } = turn;
+      const { language, url, title } = offer;
+      const note = localized(language, 'أتريد أن أراقب هذه الصفحة وأنبّهك عندما تتغيّر الحالة؟', 'Would you like me to watch this page and let you know when the status changes?');
+      const now = new Date();
+      const spec: MonitorSpec = { source: { kind: 'page', url }, read: { kind: 'status', label: offer.label },
+        condition: { kind: 'equals', value: offer.after }, language, title, message: note,
+        timing: monitorTiming('page', 'normal', { now }), v2: { freshnessMs: MONITOR_V2_DEFAULT_FRESHNESS_MS } };
+      const observation = { value: offer.before, excerpt: offer.excerpt, url, observedAt: offer.observedAt ?? now.toISOString() };
+      const didOffer = await chatV2.offerOnce(tx, ownerId, conversationId, offer.topic, async () => {
+        try {
+          const card = await store.propose(ownerId, { conversationId, spec, observation, offer: 'agent-initiated', note,
+            v2Preview: { samples: [{ index: 0, observation }], caches: [null] } }, tx);
+          return card.status === 'proposed';
+        } catch (error) {
+          if (!(error instanceof MonitorError)) throw error;
+          return false;
+        }
+      });
+      return didOffer ? `\n\n${note}` : '';
+    },
     async publish(tx: Kysely<any>, ownerId: string, conversationId: string, turn: PreparedMonitorTurn) {
+      if (v2 && turn.management && await availableTo(ownerId, tx)) await chatV2.publishAction(tx, ownerId, conversationId, turn.management);
       if (!turn.proposal) return null;
       try {
         await store.propose(ownerId, { conversationId, ...turn.proposal }, tx);

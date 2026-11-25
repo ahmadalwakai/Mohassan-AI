@@ -36,6 +36,7 @@ export function isolatedE2EEnvironment(directory: string, ambient: NodeJS.Proces
     // Installed browser binaries are read-only dependencies, never profiles or credentials.
     PLAYWRIGHT_BROWSERS_PATH: process.platform === 'win32' ? path.join(homedir(), 'AppData', 'Local', 'ms-playwright') : path.join(homedir(), '.cache', 'ms-playwright'),
     NEXT_TELEMETRY_DISABLED: '1', DO_NOT_TRACK: '1', CI: '1',
+    NEXT_FONT_GOOGLE_MOCKED_RESPONSES: path.join(repository, 'tests', 'e2e', 'offline-google-fonts.cjs'),
     MOHASSAN_ISOLATED_TEST: 'true', MOHASSAN_E2E_ROOT: directory,
     DATA_DIR: path.join(directory, 'database'), DATABASE_URL: '',
     CODING_DATA_DIR: path.join(directory, 'coding'), CODING_ALLOWED_ROOTS: path.join(directory, 'approved-root'),

@@ -3,6 +3,8 @@ import { sql, type Kysely } from 'kysely';
 import type { WorkspaceRole } from '../members.js';
 import { recordBackgroundRunOutcome } from '../notifications-store.js';
 import type { MonitorMetricEvent } from '../ops/metrics/monitor-events.js';
+import { monitorV2EvidenceMessage } from './delivery-v2.js';
+import type { MonitorV2Notice } from './evaluation-v2.js';
 import type { MonitorObservation } from './evaluation.js';
 import { nextMonitorBudgetDay } from './schedule.js';
 import { spendMonitorBudget, type MonitorNotice, type MonitorRow } from './store.js';
@@ -23,10 +25,19 @@ export function monitorTrigger(row: MonitorRow, observation: MonitorObservation,
   return { eventId: noticeId(row), outcome: 'completed', message, happenedAt: at.toISOString() };
 }
 
-export function monitorHealth(row: MonitorRow, failure: 'unreachable' | 'missing', at: Date): MonitorNotice {
+export function monitorV2Trigger(row: MonitorRow, notice: MonitorV2Notice, at: Date): MonitorNotice {
+  return { eventId: noticeId(row), outcome: 'completed',
+    message: monitorV2EvidenceMessage(row.spec, notice, row.conversation_id), happenedAt: at.toISOString() };
+}
+
+export function monitorHealth(row: MonitorRow, failure: 'unreachable' | 'missing' | 'unsafe-target' | 'clarify', at: Date): MonitorNotice {
   const detail = failure === 'missing'
     ? say(row, 'I lost track of the watched part. It disappeared from the source.', 'فقدتُ أثر الجزء المُراقَب. لم أعد أجده في المصدر.')
-    : say(row, 'The source repeatedly failed to respond.', 'تعذّر الوصول إلى المصدر في عدة محاولات.');
+    : failure === 'unsafe-target'
+      ? say(row, 'I couldn’t safely identify the value to watch after the page changed.', 'تعذّر تحديد القيمة التي أراقبها بثقة بعد تغيّر الصفحة.')
+      : failure === 'clarify'
+        ? say(row, 'Choose the value to watch in the conversation to continue.', 'اختر القيمة التي تريد مراقبتها من المحادثة للمتابعة.')
+        : say(row, 'The source repeatedly failed to respond.', 'تعذّر الوصول إلى المصدر في عدة محاولات.');
   const message = `${say(row, 'Monitor paused', 'توقفت المراقبة مؤقتًا')} — ${escapeMarkdown(row.spec.title)}\n\n${detail}`;
   return { eventId: noticeId(row), outcome: 'approval', message, happenedAt: at.toISOString() };
 }

@@ -5,6 +5,7 @@ from collections import Counter
 from dataclasses import dataclass
 from hashlib import sha256
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -20,6 +21,8 @@ class Case:
     language: str
     passed: bool
     replies: tuple[str, ...]
+    checks: tuple[object, ...] = ()
+    monitor_audit: tuple[dict, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -59,7 +62,11 @@ def read_receipt(path: Path) -> Receipt:
                 isinstance(reply, str) for reply in replies
             ):
                 raise ValueError(f"{path} {version} case {case_id} has an invalid verdict or replies")
-            cases.append(Case(case_id, area, language, passed, tuple(replies)))
+            audit = score.get("monitorAudit")
+            checks = (score.get("failures"), [{key: value for key, value in turn.items() if key != "latencyMs"}
+                                              for turn in score.get("turns", [])])
+            cases.append(Case(case_id, area, language, passed, tuple(replies), checks,
+                              tuple(audit) if audit is not None else None))
             seen.add(case_id)
         cases_by_version[version] = cases
     return Receipt(
@@ -85,6 +92,42 @@ def groups(cases: list[Case]) -> dict[tuple[str, ...], dict[str, int]]:
 
 def coverage(cases: list[Case]) -> list[tuple[str, str, str]]:
     return [(case.id, case.area, case.language) for case in cases]
+
+
+def summarize_monitor_audit(versions, requested_cases):
+    categories = ("detection", "management", "proactive")
+    per_turn = {category: [] for category in categories}
+    matches = {category: [] for category in (*categories, "offers", "falseOffers")}
+    for version, cases in versions.items():
+        for case in cases:
+            if case.monitor_audit is None:
+                raise ValueError("Monitor audit was not enabled for every arm")
+            hits = {category: [] for category in matches}
+            for index, turn in enumerate(case.monitor_audit, start=1):
+                for category in categories:
+                    samples = turn[category]
+                    if samples:
+                        per_turn[category].append(sum(sample["ms"] for sample in samples))
+                    if any(sample["matched"] for sample in samples):
+                        hits[category].append(index)
+                if turn["offers"]:
+                    hits["offers"].append(index)
+                    if (version, case.id) not in requested_cases:
+                        hits["falseOffers"].append(index)
+            for category, turns in hits.items():
+                if turns:
+                    matches[category].append({"version": version, "caseId": case.id, "turns": turns})
+    return {
+        "counts": {category: len(cases) for category, cases in matches.items()},
+        "matches": matches,
+        "turns": sum(len(case.monitor_audit) for cases in versions.values() for case in cases),
+        "timing": {
+            category: {"measuredTurns": len(samples), **{
+                percentile: sorted(samples)[math.ceil(rank * len(samples)) - 1] if samples else None
+                for percentile, rank in (("p50Ms", 0.50), ("p95Ms", 0.95))
+            }} for category, samples in per_turn.items()
+        },
+    }
 
 
 def outside_literal(reply: str, value: str) -> tuple[str, str]:
@@ -158,12 +201,23 @@ def compare(
     flags_on: Receipt,
     repeated: Receipt | None = None,
     masks: list | None = None,
+    monitor_requests: set[tuple[str, str]] | None = None,
 ) -> dict:
     if flags_off.commit != flags_on.commit:
         raise ValueError("The two feature-flag arms must measure the same commit")
     if masks is not None and repeated is None:
         raise ValueError("Reply masks require a baseline repeat")
     comparison_inputs = {"baseline": baseline, "flagsOff": flags_off, "flagsOn": flags_on}
+    if monitor_requests is not None:
+        settings = [receipt.source["settings"] for receipt in comparison_inputs.values()]
+        profiles = [{key: value for key, value in arm.items() if key != "MOHASSAN_MONITORS_V2"} for arm in settings]
+        if (profiles[0] != profiles[1] or profiles[0] != profiles[2]
+                or profiles[0].get("MOHASSAN_MONITORS_ENABLED") != "1"
+                or [arm.get("MOHASSAN_MONITORS_V2", "0") for arm in settings] != ["0", "0", "1"]):
+            raise ValueError("Monitor audit requires the same profile with v1 enabled and v2 on only for flagsOn")
+        known_cases = {(version, case.id) for version, cases in baseline.versions.items() for case in cases}
+        if not monitor_requests <= known_cases:
+            raise ValueError("Monitor request labels must refer to published development case IDs")
     if repeated is not None:
         same_source = all(
             key in baseline.source and baseline.source[key] == repeated.source.get(key)
@@ -192,12 +246,15 @@ def compare(
         off_cases = flags_off.versions[version]
         on_cases = flags_on.versions[version]
         verdict_differences = []
+        check_differences = []
         reply_differences = []
         for before, after in zip(originals, off_cases, strict=True):
             if before.passed != after.passed:
                 verdict_differences.append(
                     {"caseId": before.id, "baseline": before.passed, "flagsOff": after.passed}
                 )
+            if monitor_requests is not None and before.checks != after.checks:
+                check_differences.append(before.id)
             different_turns = [
                 index
                 for index, (expected, actual) in enumerate(
@@ -237,13 +294,16 @@ def compare(
         versions[version] = {
             "casesCompared": len(originals),
             "flagsOffVerdictDifferences": verdict_differences,
+            **({"flagsOffCheckDifferences": check_differences} if monitor_requests is not None else {}),
             "flagsOffReplyDifferences": reply_differences,
             "groups": compared_groups,
             "flagsOnRegressions": regressions,
             "repeatVerdictDifferences": repeat_verdict_differences,
             "repeatReplyDifferences": repeat_reply_differences,
-            "passed": not (verdict_differences or reply_differences or regressions or repeat_verdict_differences),
+            "passed": not (verdict_differences or check_differences or reply_differences or regressions or repeat_verdict_differences),
         }
+    audits = ({name: summarize_monitor_audit(receipt.versions, monitor_requests)
+               for name, receipt in comparison_inputs.items()} if monitor_requests is not None else {})
     return {
         "schemaVersion": 1,
         "inputs": {
@@ -252,7 +312,9 @@ def compare(
         },
         "replyMasks": list(proof.values()),
         "versions": versions,
-        "passed": all(version["passed"] for version in versions.values()),
+        **({"monitorAudit": audits} if audits else {}),
+        "passed": all(version["passed"] for version in versions.values())
+        and (not audits or audits["flagsOn"]["counts"]["falseOffers"] == 0),
     }
 
 
@@ -263,6 +325,8 @@ def main() -> int:
     parser.add_argument("--flags-on", required=True, type=Path)
     parser.add_argument("--baseline-repeat", type=Path)
     parser.add_argument("--reply-masks", type=Path)
+    parser.add_argument("--monitor-requests", type=Path,
+                        help="audit monitors with a JSON object listing reviewed monitoring-request case IDs by version")
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     try:
@@ -270,6 +334,9 @@ def main() -> int:
             *(read_receipt(path) for path in (args.baseline, args.flags_off, args.flags_on)),
             repeated=read_receipt(args.baseline_repeat) if args.baseline_repeat else None,
             masks=json.loads(args.reply_masks.read_bytes()) if args.reply_masks else None,
+            monitor_requests={(version, case_id)
+                              for version, ids in json.loads(args.monitor_requests.read_bytes()).items() for case_id in ids}
+            if args.monitor_requests else None,
         )
         with os.fdopen(os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as output:
             json.dump(report, output, indent=2)

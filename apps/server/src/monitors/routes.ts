@@ -8,6 +8,13 @@ import { monitorChat } from './chat.js';
 import { MonitorError, type ReserveMonitorApproval } from './store.js';
 
 const listQuery = z.object({ conversationId: z.uuid().optional() }).strict();
+const v2ListQuery = listQuery.extend({ control: z.literal('v2').optional() });
+const v2Mutation = z.union([
+  MonitorApproveSchema,
+  z.object({ proposalId: z.uuid(), candidateId: z.string().min(1).max(128) }).strict(),
+  z.object({ actionId: z.uuid(), approved: z.boolean().optional(), targetId: z.uuid().optional() }).strict(),
+  z.object({ proactiveOffers: z.boolean() }).strict(),
+]);
 const emptyBody = z.object({}).strict();
 
 export async function registerMonitorRuntime(app: FastifyInstance, db: Kysely<any>,
@@ -23,14 +30,20 @@ export async function registerMonitorRuntime(app: FastifyInstance, db: Kysely<an
   const mutation = { onRequest: access, config: { rateLimit: { max: 12, timeWindow: '1 minute' } } };
   registerMonitorAlertFeedbackRoute(app, db, owner, mutation);
   app.get(monitorPaths.base, { onRequest: access }, async request => {
-    const { conversationId } = listQuery.parse(request.query);
-    const { id } = await owner(request);
-    return MonitorListSchema.parse({ monitors: await withMonitorCardAlerts(db, id, await control.store.list(id, conversationId)) });
+    const query = (control.v2 ? v2ListQuery : listQuery).parse(request.query);
+    const ownerId = (await owner(request)).id;
+    if ('control' in query && query.control === 'v2') return control.v2State(ownerId, query.conversationId);
+    return MonitorListSchema.parse({ monitors: await withMonitorCardAlerts(db, ownerId, await control.store.list(ownerId, query.conversationId)) });
   });
   app.post(monitorPaths.base, mutation, async request => {
-    const { proposalId } = MonitorApproveSchema.parse(request.body);
-    const { id } = await owner(request);
-    const [card] = await withMonitorCardAlerts(db, id, [await control.store.approve(id, proposalId, reserveApproval)]);
+    const body = (control.v2 ? v2Mutation : MonitorApproveSchema).parse(request.body);
+    const ownerId = (await owner(request)).id;
+    if ('actionId' in body) return control.confirmAction(ownerId, body.actionId, body.approved ?? true, body.targetId);
+    if ('proactiveOffers' in body) return control.setProactiveOffers(ownerId, body.proactiveOffers);
+    const result = 'candidateId' in body && typeof body.candidateId === 'string'
+      ? await control.store.choose(ownerId, body.proposalId, body.candidateId)
+      : await control.store.approve(ownerId, body.proposalId, reserveApproval);
+    const [card] = await withMonitorCardAlerts(db, ownerId, [result]);
     return card;
   });
   for (const action of ['pause', 'resume', 'stop'] as const) {

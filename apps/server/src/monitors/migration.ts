@@ -1,4 +1,5 @@
 import { sql, type Kysely } from 'kysely';
+import { migrateMonitorsV2InTransaction } from './migration-v2.js';
 
 export const MONITOR_MIGRATION = '043_smart_monitors';
 
@@ -6,7 +7,10 @@ export const MONITOR_MIGRATION = '043_smart_monitors';
 export async function migrateMonitors(db: Kysely<any>) {
   await db.transaction().execute(async tx => {
     await sql`LOCK TABLE schema_migrations IN EXCLUSIVE MODE`.execute(tx);
-    if (await tx.selectFrom('schema_migrations').select('version').where('version', '=', MONITOR_MIGRATION).executeTakeFirst()) return;
+    if (await tx.selectFrom('schema_migrations').select('version').where('version', '=', MONITOR_MIGRATION).executeTakeFirst()) {
+      await migrateMonitorsV2InTransaction(tx);
+      return;
+    }
     await sql`CREATE TABLE smart_monitors (
       id uuid PRIMARY KEY,
       user_id text NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
@@ -56,5 +60,6 @@ export async function migrateMonitors(db: Kysely<any>) {
     await sql`ALTER TABLE chat_notifications ADD COLUMN monitor_id uuid REFERENCES smart_monitors(id) ON DELETE CASCADE`.execute(tx);
     await sql`CREATE INDEX chat_notifications_monitor_idx ON chat_notifications(monitor_id) WHERE monitor_id IS NOT NULL`.execute(tx);
     await tx.insertInto('schema_migrations').values({ version: MONITOR_MIGRATION }).execute();
+    await migrateMonitorsV2InTransaction(tx);
   });
 }
