@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentPage } from '@mohassan/browser';
 import { entitySurface, entityWords, relevantLines, topicWords, wikiTerms } from '../apps/server/src/assistant/hands.js';
-import { checkAnswerLine } from '../apps/server/src/assistant/answer-check.js';
+import { checkAnswerLine, isMetaLine } from '../apps/server/src/assistant/answer-check.js';
 
 const page = (title: string, text: string): AgentPage => ({ id: title, url: `https://en.wikipedia.org/wiki/${encodeURIComponent(title)}`, title: `${title} - Wikipedia`, text, elements: [],
   signals: { captcha: false, password: false, otp: false, card: false }, scroll: { top: 0, height: 0, viewport: 0 }, hash: title, observedAt: '2026-11-22T22:36:00.000Z', documentStatus: 200 });
@@ -37,6 +37,17 @@ describe('the subject a question names', () => {
     expect(entitySurface('كم عدد سكان مصر؟', ['مصر'])).toBe('مصر');
     expect(entitySurface('ما عاصمة المملكة العربية السعودية؟', ['مملكه', 'عربيه', 'سعوديه'])).toBe('المملكة العربية السعودية');
   });
+
+  it('takes the Iraqi Arabic question lead out of the public subject', () => {
+    const question = 'شنو لون الياقوت؟';
+    expect(topicWords(question)).toEqual(['لون', 'ياقوت']);
+    expect(wikiTerms(question)).toBe('لون الياقوت');
+  });
+});
+
+it('keeps a short complete statement that names the subject and the requested property', () => {
+  const penguin = page('البطريق', 'لون ريش البطريق\nمعلومات عن البطريق. ريش البطريق لونه أسود.');
+  expect(relevantLines(penguin, 'ما لون ريش البطريق؟', 3, true)).toEqual(['ريش البطريق لونه أسود.']);
 });
 
 describe('the sentence that names the maker of a work', () => {
@@ -61,10 +72,27 @@ describe('the sentence that names the maker of a work', () => {
     expect(lead).toBe('Hamlet (/ˈhæmlɪt/) is a tragedy written by William Shakespeare sometime between 1599 and 1601.');
   });
 
+  it('counts a work described by its type and creator as authorship evidence', () => {
+    const summer = page('Summer', 'Summer is a novel by Edith Wharton.');
+    const [lead] = relevantLines(summer, 'Who wrote Summer?', 3, true);
+    expect(lead).toBe('Summer is a novel by Edith Wharton.');
+    expect(checkAnswerLine('Who wrote Summer?', lead!).ok).toBe(true);
+  });
+
   it('does not change how a question that is not about a maker reads the same page', () => {
     const hamlet = page('Hamlet', 'Hamlet Title page Author William Shakespeare Language English. Hamlet is a tragedy written by William Shakespeare sometime between 1599 and 1601. Hamlet was first performed around 1600.');
     const lines = relevantLines(hamlet, 'When was Hamlet first performed?', 3, true);
     expect(lines.some(line => line.startsWith('Hamlet Title page'))).toBe(false);
     expect(lines[0]).toContain('first performed');
   });
+});
+
+it('recognizes publication metadata without dropping a publication fact', () => {
+  const line = 'Treasure Island was published in book form in 1883.';
+  const book = page('Treasure Island', line);
+  const question = 'When did Treasure Island get published?';
+  expect(relevantLines(book, question, 3, true)).toEqual([line]);
+  expect(checkAnswerLine(question, line).ok).toBe(true);
+  expect(isMetaLine('Published on November 14, 1883')).toBe(true);
+  expect(isMetaLine('Published: 1883-11-14')).toBe(true);
 });

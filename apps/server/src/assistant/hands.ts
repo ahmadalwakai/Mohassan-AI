@@ -4,6 +4,7 @@ import { hostOf, readingLabel, siteName } from './activity.js';
 import { checkAnswerLine, figureKind, isDisambiguationPage, isDisambiguationTitle, isMetaLine, isReasonQuestion, questionLanguage } from './answer-check.js';
 import { releaseLines, releaseQuestion } from './releases.js';
 import { isCampaignRequest } from './campaign-request.js';
+import { matchesConversationPage, readConversationPageLines, type ConversationPageRead } from './conversation-state-page.js';
 import { isSiteRequest } from '@mohassan/sites';
 import type { WebSequel } from './web-sequence.js';
 import { splitReplyDirective, type ReplyField } from './reply-directive.js';
@@ -34,7 +35,7 @@ export type HandsStep =
   | { kind: 'back' }
   | { kind: 'news'; source: NewsSource; topic: string }
   /** «افتح X وأخبرني بـY»: after the page opens, Y is answered from that page's own text, quoted (pageAnswer). */
-  | { kind: 'ask_page'; question: string };
+  | { kind: 'ask_page'; question: string; conversationPage?: ConversationPageRead };
 
 export interface NewsSource { url: string; name: string }
 
@@ -517,7 +518,7 @@ export function withTopic(text: string, earlier: readonly string[]): string {
 const URL_LIKE = /https?:\/\/|\bwww\.|\b[\w-]+\.(?:com|net|org|io|co|uk|sa|ae|dev|app)\b/i;
 
 /** Question words carry no topic: dropped before matching a page's sentences to the question. */
-const ASK_WORDS = new Set(['كم', 'متي', 'وين', 'اين', 'من', 'ما', 'ماذا', 'هل', 'ليش', 'لماذا', 'كيف', 'شو', 'ايش', 'وش', 'قديش', 'اديش', 'هو', 'هي', 'في', 'عن', 'على', 'علي',
+const ASK_WORDS = new Set(['كم', 'متي', 'وين', 'اين', 'من', 'ما', 'ماذا', 'هل', 'ليش', 'لماذا', 'كيف', 'شو', 'شنو', 'ايش', 'وش', 'قديش', 'اديش', 'هو', 'هي', 'في', 'عن', 'على', 'علي',
   'what', "what's", 'whats', 'when', 'where', 'who', "who's", 'how', 'which', 'is', 'are', 'was', 'were', 'does', 'do', 'did', 'why', 'the', 'in', 'of', 'for', 'a',
   'اليوم', 'الان', 'الآن', 'حاليا', 'now', 'today', 'current', 'currently', 'latest', 'اخر', 'احدث']);
 
@@ -901,7 +902,7 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
   // on the Japanese («… ولديهم إحساس حقيقي بالفن», 2026-11-23).
   const verbs = new Map(words.filter(word => EVENT_VERBS.has(word)).map(word => [word, new RegExp(`(?:^|[^\\p{L}])[وف]?${word}(?:ت|وا)?(?![\\p{L}])`, 'u')]));
   const has = (text: string, word: string) => (verbs.get(word)?.test(text) ?? text.includes(word)) || peopleAsk && PEOPLE_STEMS.has(word) && PEOPLE_FORMS.some(form => text.includes(form))
-    || makerAsk && MAKER_STEMS.has(word) && MAKER_FORMS.some(form => text.includes(form));
+    || makerAsk && MAKER_STEMS.has(word) && (MAKER_STATEMENT.test(text) || MAKER_FORMS.some(form => text.includes(form)));
   // A date question is answered by the dates its subject's article opens with: «الحرب العالمية الثانية هي حرب دولية بدأت في
   // الأول من سبتمبر من عام 1939…», "World War II … (1 September 1939 – 2 September 1945)". Later sentences carry the dates of
   // other events, and the newest of them ranked first: «upon his death in 2016, the German Foreign Office tweeted…» for "When
@@ -986,7 +987,11 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     }
     const count = glued ? 40 : line.split(' ').length;
     const hasNumber = /[\d٠-٩]/u.test(line);
-    if (count < (hasNumber ? 3 : 5) || line.length > (lead ? LEAD_MAX_CHARS : 400) || seen.has(line) || (wantsNumber && !hasNumber)) continue;
+    const folded = fold(line);
+    // A short, complete sentence can state a fact when it names both the page's subject and the requested property.
+    const shortStatement = count >= 3 && count < 5 && /[.!]$/u.test(line) && titled.length > 0
+      && titled.length < words.length && words.every(word => has(folded, word));
+    if (count < (hasNumber || shortStatement ? 3 : 5) || line.length > (lead ? LEAD_MAX_CHARS : 400) || seen.has(line) || (wantsNumber && !hasNumber)) continue;
     // A sentence that asks («ما تاريخ الذكاء الاصطناعي؟») is a heading or a contents entry, never an answer.
     if (/[؟?]\s*$/u.test(line)) continue;
     // Lines about the page, not the subject: hatnotes, bylines, headers (plan §7.4; 0-baseline §8.3 sent these as answers).
@@ -994,7 +999,6 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     if ((line.match(NAVBOX) ?? []).length >= 2) continue;
     // Infobox cells («معلومات عامة … تعديل مصدري - تعديل») read like a sentence once the toolbar is gone.
     if (WIKI_INFOBOX.test(line) || CITATION.test(line)) continue;
-    const folded = fold(line);
     // A run of the page's own menu labels is navigation, not an answer.
     const menuWords = labels.length ? folded.split(' ').filter(word => labelSet.has(word)).length : 0;
     if (menuWords / count > 0.3) continue;
@@ -1393,7 +1397,9 @@ const NO_PAGE = 'لا توجد صفحة مفتوحة في هذه المحادث�
 /** Runs the plan from `plan.next`. The caller persists `plan` in the run state before any pause. */
 export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutcome> {
   normalizeHandsPlan(plan);
-  let page = await io.page();
+  const first = plan.steps[0];
+  const publicPageRead = plan.steps.length === 1 && first?.kind === 'ask_page' && first.conversationPage?.readPublic;
+  let page = publicPageRead ? null : await io.page();
   const go = async (action: AgentAction, label: string): Promise<AgentPage | null> => {
     let next: AgentPage;
     try { next = await io.act(action); }
@@ -1774,15 +1780,31 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         break;
       }
       case 'ask_page': {
-        // Nothing to run: the answer is read from the page the previous step opened, when the reply is built (describe).
+        const context = step.conversationPage;
+        if (publicPageRead && context?.expectedUrl && safeResumeUrl(context.expectedUrl) === context.expectedUrl && io.read) {
+          const result = await io.read(context.expectedUrl);
+          page = result.kind === 'page' ? result.page : null;
+        }
+        if (context && page && !matchesConversationPage(page, context)) page = null;
+        if (context && !page) return { kind: 'done', status: 'blocked', text: plan.lang === 'en'
+          ? 'I could not verify the page this question refers to. Send its link to continue.'
+          : 'لم أتحقق من الصفحة التي يشير إليها السؤال. أرسل رابطها للمتابعة.' };
         if (!page) return { kind: 'done', status: 'blocked', text: NO_PAGE };
         await io.step(plan.lang === 'en' ? 'Reading the answer on the page' : 'قراءة الجواب من الصفحة');
+        if (context) {
+          delete plan.found;
+          const text = page.text;
+          const lines = structuralPageQuestion(step.question, context)
+            ? pageAnswer(page, step.question, plan.lang ?? 'ar').parts.flatMap(part => part.quotes).filter(line => text.includes(line)).slice(0, 5)
+            : readConversationPageLines(page, step.question);
+          if (lines.length) plan.found = { url: page.url, title: page.title, lines, readAt: page.observedAt };
+        }
         plan.next = index + 1;
         break;
       }
     }
     if (io.complete) {
-      const answer = step.kind === 'ask_page' && page ? pageAnswer(page, step.question, plan.lang ?? 'ar') : null;
+      const answer = step.kind === 'ask_page' && page ? plannedPageAnswer(plan, page, step) : null;
       const missing = step.kind === 'search' && (step.ask ? !plan.found?.lines.length
         : !plan.results?.length && (!page || !resultLinks(page, 1, step.query).length))
         || answer !== null && (!answer.parts.length || answer.missing.length > 0);
@@ -1823,6 +1845,21 @@ const LATEST = /\b(?:latest|newest|current)\b|(?:أحدث|احدث|آخر|اخر
 
 export interface PageAnswerPart { label: string | null; quotes: string[] }
 export interface PageAnswer { parts: PageAnswerPart[]; /** What the question asked of the page's structure that the page does not show. */ missing: string[] }
+
+function structuralPageQuestion(question: string, context: ConversationPageRead): boolean {
+  if (context.readPublic) return false;
+  const asked = fold(question);
+  return [HEADING_ASK, FIRST_SENTENCE_ASK, LINK_ASK, VERSION_ASK].some(pattern => pattern.test(asked));
+}
+
+function plannedPageAnswer(plan: HandsPlan, page: AgentPage, step: Extract<HandsStep, { kind: 'ask_page' }>): PageAnswer {
+  const context = step.conversationPage;
+  if (!context) return pageAnswer(page, step.question, plan.lang ?? 'ar');
+  if (!matchesConversationPage(page, context)) return { parts: [], missing: [] };
+  if (structuralPageQuestion(step.question, context)) return pageAnswer(page, step.question, plan.lang ?? 'ar');
+  const lines = plan.found?.url === page.url ? plan.found.lines.filter(line => page.text.includes(line)) : [];
+  return { parts: lines.length ? [{ label: null, quotes: lines }] : [], missing: [] };
+}
 /**
  * The answer to a question about an opened page, in the page's own words: each quote is text found on the page. A heading,
  * links or a version are read from the page's structure, so an Arabic question about an English page still finds them; any
@@ -1959,8 +1996,12 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
   if (last.kind === 'ask_page') {
     // The page's own words as quotes under the host's labels: the judge checks every quote against the page (kind «quote»).
     const en = (plan.lang ?? (/[؀-ۿ]/u.test(last.question) ? 'ar' : 'en')) === 'en';
-    const name = `**${plainTitle(page.title) || hostOf(page.url)}** (${hostOf(page.url)})`;
-    const { parts, missing } = pageAnswer(page, last.question, en ? 'en' : 'ar');
+    const title = plainTitle(page.title) || hostOf(page.url);
+    const name = last.conversationPage ? `[${shownTitle(title)}](${page.url})` : `**${title}** (${hostOf(page.url)})`;
+    const { parts, missing } = plannedPageAnswer({ ...plan, lang: en ? 'en' : 'ar' }, page, last);
+    if (!parts.length && last.conversationPage) return { status: 'partial', text: en
+      ? `I read ${name} and found no matching answer.`
+      : `قرأت ${name} ولم أجد جوابًا مطابقًا.` };
     if (!parts.length) return { status: 'partial', text: en
       ? `I opened ${name}, but found nothing on the page that answers “${last.question}”. The page is in the browser panel; say “read the page” and I will show its text.`
       : `فتحت ${name}، ولم أجد في نص الصفحة ما يجيب عن «${last.question}». الصفحة ظاهرة في لوحة المتصفح؛ قل «اقرأ الصفحة» لأعرض نصها.` };
