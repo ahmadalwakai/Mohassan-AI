@@ -2,6 +2,8 @@ import type { NotificationClaimResponse, NotificationPayload } from '@mohassan/c
 
 export const backgroundNoticeEvent = 'mohassan-background-notice';
 export const backgroundViewerEvent = 'mohassan-background-viewer';
+// The service worker uses the same receipts when a tab closes during delivery.
+const backgroundPushReceipts = 'mohassan-background-push-v1';
 
 export interface OpenBackgroundNotice {
   viewerId: string;
@@ -12,20 +14,43 @@ export function announceBackgroundViewer(viewerId?: string): void {
   window.dispatchEvent(new CustomEvent(backgroundViewerEvent, { detail: viewerId }));
 }
 
+interface OpenBackgroundClaim {
+  viewerId: string;
+  tabId: string;
+  signal: AbortSignal;
+  request: (path: string, init: RequestInit) => Promise<NotificationClaimResponse>;
+}
+
+async function rememberNotice(receipts: Cache, key: string) {
+  await receipts.put(key, new Response(null, { status: 204 }));
+  const entries = await receipts.keys();
+  await Promise.all(entries.slice(0, Math.max(0, entries.length - 512)).map(entry => receipts.delete(entry)));
+}
+
 export async function claimOpenBackgroundNotifications(
   pending: NotificationPayload[],
-  viewerId: string,
-  signal: AbortSignal,
-  claim: (taskId: string) => Promise<NotificationClaimResponse>,
+  { viewerId, tabId, signal, request }: OpenBackgroundClaim,
 ): Promise<void> {
+  if (!pending.some(event => event.runKind)) return;
+  const receipts = await window.caches?.open(backgroundPushReceipts).catch(() => null);
   for (const { taskId, runKind } of pending) {
     if (signal.aborted) return;
     if (!runKind) continue;
-    const { notification } = await claim(taskId);
+    const eventPath = `/api/notifications/events/${encodeURIComponent(taskId)}`;
+    const claimPath = `${eventPath}/claim`;
+    const { notification } = await request(claimPath, { method: 'POST', body: JSON.stringify({ tabId }), signal });
     if (signal.aborted) return;
-    if (notification?.runKind) {
-      window.dispatchEvent(new CustomEvent<OpenBackgroundNotice>(backgroundNoticeEvent, { detail: { viewerId, notification } }));
+    if (!notification?.runKind) continue;
+    const key = new URL(eventPath, window.location.origin).href;
+    const seen = await receipts?.match(key).catch(() => null);
+    if (signal.aborted) return;
+    if (!seen) {
+      const delivery = new CustomEvent<OpenBackgroundNotice>(backgroundNoticeEvent, { cancelable: true, detail: { viewerId, notification } });
+      // A mounted banner confirms that it accepted the notice by canceling this event.
+      if (window.dispatchEvent(delivery)) continue;
+      if (receipts) await rememberNotice(receipts, key).catch(() => {});
     }
+    await request(claimPath, { method: 'POST', body: JSON.stringify({ tabId, acknowledge: true }), keepalive: true }).catch(() => {});
   }
 }
 

@@ -65,6 +65,6 @@ export const NotificationSyncRequestSchema = z.object({
 export type NotificationSyncRequest = z.infer<typeof NotificationSyncRequestSchema>;
 export interface NotificationSyncResponse { backgroundTask: boolean; pending: NotificationPayload[] }
 
-export const NotificationClaimRequestSchema = z.object({ tabId: z.uuid() }).strict();
+export const NotificationClaimRequestSchema = z.object({ tabId: z.uuid(), acknowledge: z.literal(true).optional() }).strict();
 export type NotificationClaimRequest = z.infer<typeof NotificationClaimRequestSchema>;
 export interface NotificationClaimResponse { notification: NotificationPayload | null }

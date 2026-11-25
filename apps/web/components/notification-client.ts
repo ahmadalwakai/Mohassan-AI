@@ -220,7 +220,7 @@ export function useTaskNotifications(viewerId?: string): NotificationControls {
         const result = await notificationPost<NotificationSyncResponse>(syncPath, body, signal);
         if (signal.aborted || pageClosed) return;
         if (result.backgroundTask && !offerHandled && noticeOfferOpen()) setOfferViewer(activeViewer);
-        await claimOpenBackgroundNotifications(result.pending, activeViewer, signal, taskId => notificationPost(`/api/notifications/events/${encodeURIComponent(taskId)}/claim`, { tabId: body.tabId }, signal));
+        await claimOpenBackgroundNotifications(result.pending, { viewerId: activeViewer, tabId: body.tabId, signal, request: notificationRequest });
         if (!document.hidden || noticePermission() !== 'granted') return;
         for (const { taskId } of result.pending.filter(event => !event.runKind)) {
           if (!document.hidden || pageClosed || signal.aborted) break;

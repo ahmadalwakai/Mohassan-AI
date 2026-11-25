@@ -16,6 +16,7 @@ const completed: NotificationPayload = {
   kind: 'task_completed',
   runKind: 'run-completed',
 };
+const tabId = '81452432-a51b-421b-8c2b-d4631489eed9';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -92,16 +93,32 @@ describe('completion chime autoplay', () => {
 });
 
 describe('open page delivery', () => {
-  it('claims background events and only publishes server-confirmed notices', async () => {
+  const claimPath = `/api/notifications/events/${completed.taskId}/claim`;
+
+  function setupTab(receipts = new Map<string, Response>()) {
     const target = new EventTarget();
-    const notices = vi.fn();
+    const origin = 'https://mohassan.example';
+    const open = vi.fn(async () => ({
+      match: async (key: string) => receipts.get(key),
+      put: async (key: string, response: Response) => receipts.set(key, response),
+      keys: async () => [...receipts.keys()],
+      delete: async (key: string) => receipts.delete(key),
+    }));
+    vi.stubGlobal('window', Object.assign(target, { location: { origin }, caches: { open } }));
+    return { target, open, receipts, receiptKey: `${origin}/api/notifications/events/${completed.taskId}` };
+  }
+
+  it('claims background events and only publishes server-confirmed notices', async () => {
+    const { target, open, receipts, receiptKey } = setupTab();
+    const notices = vi.fn((event: Event) => event.preventDefault());
     const viewer = vi.fn();
     target.addEventListener(backgroundNoticeEvent, notices);
     target.addEventListener(backgroundViewerEvent, viewer);
-    vi.stubGlobal('window', target);
     const abort = new AbortController();
     const claimed = { ...completed, title: 'Task complete', body: 'Your task is complete.' };
-    const claim = vi.fn(async (id: string) => ({ notification: id === completed.taskId ? claimed : null }));
+    const request = vi.fn(async (path: string, init: RequestInit) => ({
+      notification: path === claimPath && !init.keepalive ? claimed : null,
+    }));
 
     announceBackgroundViewer('member');
     expect(viewer.mock.calls[0]?.[0].detail).toBe('member');
@@ -109,23 +126,50 @@ describe('open page delivery', () => {
       { ...completed, taskId: 'legacy', runKind: undefined },
       { ...completed, taskId: 'claimed-elsewhere' },
       completed,
-    ], 'member', abort.signal, claim);
-    expect(claim.mock.calls).toEqual([['claimed-elsewhere'], [completed.taskId]]);
+    ], { viewerId: 'member', tabId, signal: abort.signal, request });
+    expect(request.mock.calls.map(([path]) => path)).toEqual(['/api/notifications/events/claimed-elsewhere/claim', claimPath, claimPath]);
+    expect(request).toHaveBeenLastCalledWith(claimPath, { method: 'POST', body: JSON.stringify({ tabId, acknowledge: true }), keepalive: true });
     expect(notices).toHaveBeenCalledOnce();
-    expect(notices.mock.calls[0]?.[0].detail).toEqual({ viewerId: 'member', notification: claimed });
+    expect((notices.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({ viewerId: 'member', notification: claimed });
+    expect(open).toHaveBeenCalledWith('mohassan-background-push-v1');
+    expect(await receipts.get(receiptKey)?.text()).toBe('');
   });
 
-  it('drops a claimed result after its page connection is closed', async () => {
-    const target = new EventTarget();
+  it('leaves an abandoned claim unacknowledged when its page connection closes', async () => {
+    const { target, receipts } = setupTab();
     const notices = vi.fn();
     target.addEventListener(backgroundNoticeEvent, notices);
-    vi.stubGlobal('window', target);
     const abort = new AbortController();
-    await claimOpenBackgroundNotifications([completed], 'member', abort.signal, async () => {
+    const request = vi.fn(async () => {
       abort.abort();
       return { notification: completed };
     });
+    await claimOpenBackgroundNotifications([completed], { viewerId: 'member', tabId, signal: abort.signal, request });
     expect(notices).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledOnce();
+    expect(receipts.size).toBe(0);
+  });
+
+  it('retries an acknowledgement after a missed response without displaying the result again', async () => {
+    const first = setupTab();
+    const notices = vi.fn((event: Event) => event.preventDefault());
+    first.target.addEventListener(backgroundNoticeEvent, notices);
+    const request = vi.fn()
+      .mockResolvedValueOnce({ notification: completed })
+      .mockRejectedValueOnce(new Error('Connection lost'))
+      .mockResolvedValueOnce({ notification: completed })
+      .mockResolvedValueOnce({ notification: null });
+    const claim = { viewerId: 'member', tabId, signal: new AbortController().signal, request };
+    await claimOpenBackgroundNotifications([completed], claim);
+    expect(notices).toHaveBeenCalledOnce();
+
+    const reopened = setupTab(first.receipts);
+    const duplicate = vi.fn();
+    reopened.target.addEventListener(backgroundNoticeEvent, duplicate);
+    await claimOpenBackgroundNotifications([completed], claim);
+    expect(duplicate).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledTimes(4);
+    expect(request).toHaveBeenLastCalledWith(claimPath, { method: 'POST', body: JSON.stringify({ tabId, acknowledge: true }), keepalive: true });
   });
 
   it('renders the background task, current step, elapsed time, and stop control', () => {

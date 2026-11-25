@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { X } from 'lucide-react';
 import type { NotificationPayload } from '@mohassan/contracts';
 import {
@@ -26,9 +27,11 @@ export function BackgroundNotificationBanner() {
 
     function notify(event: Event) {
       const { viewerId: recipient, notification } = (event as CustomEvent<OpenBackgroundNotice>).detail;
-      if (recipient !== viewerId || delivered.has(notification.taskId)) return;
+      if (recipient !== viewerId) return;
+      event.preventDefault();
+      if (delivered.has(notification.taskId)) return;
       delivered.add(notification.taskId);
-      setNotices(current => [...current, notification]);
+      flushSync(() => setNotices(current => [...current, notification]));
       void chime.play(shouldPlayCompletionSound(notification));
     }
 
