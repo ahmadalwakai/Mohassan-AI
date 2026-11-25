@@ -15,8 +15,11 @@ export async function routeLiveDataChat({ request, evaluatedAt, signal, trail, a
 }): Promise<boolean> {
   const intent = recognizeLiveData(request);
   if (!intent || trail.some(entry => entry.action !== 'asked the user')) return false;
+  const needsLocation = intent.kind === 'prayer' || intent.kind === 'weather';
+  // Leave requests with an external-source veto to the normal constrained chat path.
+  if (!allowSource && (needsLocation || intent.kind === 'exchange')) return false;
   const ar = intent.language === 'ar';
-  if ((intent.kind === 'prayer' || intent.kind === 'weather') && !intent.place && allowSource) {
+  if (needsLocation && !intent.place) {
     if (!trail.length) {
       const prompt = ar ? 'ما المدينة التي تريدها؟ يمكنك كتابة اسم البلد معها.' : 'Which city would you like? You can include its country.';
       await ask({ id: randomUUID(), prompt, options: [{ id: 'stop', label: ar ? 'توقف هنا' : 'Stop here' }] });
