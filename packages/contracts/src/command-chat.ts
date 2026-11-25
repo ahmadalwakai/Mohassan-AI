@@ -171,6 +171,7 @@ export const chatCapabilityIds = ['computation', 'web', 'browser', 'memory', 'kn
 export const ChatCapabilitiesSchema = z.object({
   chatModel: z.boolean(),
   smartMonitors: z.boolean().optional(),
+  smartMonitorsV2: z.boolean().optional(),
   available: z.array(z.enum(chatCapabilityIds)).max(chatCapabilityIds.length),
 }).strict();
 export type ChatCapabilities = z.infer<typeof ChatCapabilitiesSchema>;
