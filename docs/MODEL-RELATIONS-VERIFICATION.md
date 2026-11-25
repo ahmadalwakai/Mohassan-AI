@@ -158,9 +158,79 @@ python3 -B "$bench/latency.py" shadow
 
 The baseline V1 and V2 runners and both receipt validators completed successfully. The baseline launcher exited 2 after writing both receipts because its cleanup script was edited while the launcher was still running. The independent receipt gate exited 0. The corrected launcher completed the later runs.
 
-The paired end-to-end latency difference with shadow disabled remains unverified. The scheduling and background timings above come directly from the shadow observations.
+### Independent Linux replay
 
-## Implementation checks
+A second checkout ran v1 development on the base and twice on the measured
+product SHA, once with shadow and once with `MOHASSAN_MODEL_RELATIONS=off`.
+Each run used the pinned v1 runner with the review and memory adapters.
+All three runs scored 176/240 with identical signatures for all 240 cases.
+The same-commit pair matched 279 timed turns by case and turn order.
+
+| V1 end-to-end, 279 turns | Median (ms) | p95 (ms) |
+| --- | ---: | ---: |
+| Off | 81.04 | 901.23 |
+| Shadow | 73.30 | 597.55 |
+| Paired turn deltas, shadow minus off | −2.42 | 33.30 |
+
+The two runs were sequential and include fixture, database, browser and host
+timing variation. The publication-hook measurements above isolate the
+synchronous manager work. A same-commit v2 off/shadow latency comparison
+remains unverified.
+
+The second checkout also ran the eight-lane v2 development baseline. It
+scored 1,583/2,400 on the unchanged Wave 4 SHA, with 105/155 coding passes
+compared with 108/155 in the retained baseline. Every other area held. The
+second baseline is an environment reproducibility limitation. The paired
+v2 gate above used the original measured environment.
+
+```bash
+audit=/workspace/work/relations-audit
+"$audit/v1" d4654f4f9e9ce7f142c4376c95a5dd4fe0fbc7b2 baseline
+"$audit/v2" d4654f4f9e9ce7f142c4376c95a5dd4fe0fbc7b2 baseline-v2
+"$audit/v1" 20f50aceefad0bdae860a6fc5cdc2a28ed2cb7bc shadow shadow
+"$audit/v1" 20f50aceefad0bdae860a6fc5cdc2a28ed2cb7bc shadow-control off
+```
+
+## Affected suites
+
+Root and web typecheck passed. The serial Vitest run passed 205 tests
+across 22 suites, including real CPU worker startup, inference and trunk
+pin rejection using local fixtures. It skipped the B0 Python-logit
+comparison because the owner's parity export was absent. An earlier
+two-worker run missed the server startup test deadline. The serial retry
+passed that test. The Python input encoding test passed, and the permanent
+worker's Python suite passed 37 tests with one Windows-only skip.
+
+```bash
+npm run typecheck
+npm test -- packages/model-relations/src/cli.test.ts
+python3 -B -m unittest discover -s packages/model-relations/src -p test_encode_input.py -v
+
+MODEL_WORKER_TEST_PYTHON=/workspace/work/relations-audit/venv/bin/python \
+CUDA_VISIBLE_DEVICES='' PLAYWRIGHT_BROWSERS_PATH=/workspace/work/chromium \
+npm test -- --maxWorkers=1 --reporter=dot \
+  packages/model-relations/src \
+  packages/execution-integration/src/permanent-worker.test.ts \
+  packages/execution-integration/src/permanent-worker.e2e.test.ts \
+  tests/model-relations-shadow.test.ts tests/assistant-router.test.ts \
+  tests/assistant-refusal-arithmetic.test.ts tests/assistant-arithmetic-search-candidates.test.ts \
+  tests/assistant-arithmetic-search-quantities.test.ts tests/assistant-arithmetic-search-training.test.ts \
+  tests/assistant-scratch-decisions.test.ts tests/assistant-word-problem.test.ts \
+  tests/assistant-word-problem-chat.test.ts tests/model-worker-server.test.ts \
+  tests/own-model-chat.test.ts tests/own-model-gates.test.ts tests/own-model-phrasing.test.ts \
+  tests/own-model-provider.test.ts tests/own-model-reply.test.ts
+
+CUDA_VISIBLE_DEVICES='' /workspace/work/relations-audit/venv/bin/python \
+  -B -m pytest -p no:cacheprovider -q packages/execution-integration/model_worker/tests
+```
+
+The direct CLI test passed all five cases. The catalog and health commands
+reported 47 entries, six healthy CPU models and 41 absent models. The
+installed-artifact hash update changes the CLI only, so the product
+benchmark SHA remains the measured shadow revision above. Product
+arbitration stayed in shadow and the sealed benchmarks were skipped.
+
+## Implementation checks in the benchmark checkout
 
 Root and web typecheck passed with `nice -n 10 npm run typecheck`. The registry listed 47 model entries with `npm run -s models:list`. The inventory health run with `npm run -s models:health` returned six healthy CPU artifacts and 41 absent entries. The Linux runbook records the refusal and arithmetic CLI probes. The following commands exercised the recorded V1 shadow decisions, the isolated worker and the final shadow deadline fix.
 

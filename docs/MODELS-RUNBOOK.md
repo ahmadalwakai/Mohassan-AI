@@ -30,8 +30,10 @@ npm run models:run -- <model-id> <input.json>
 npm run models:latency -- <model-id> <input.json> [iterations]
 ```
 
-The list shows each model's artifact paths, available SHA-256 pins,
-contracts, budgets and state. Missing required files give the model the
+The list shows each model's artifact paths, observed SHA-256 digests for
+installed files, available expected pins, contracts, budgets and state.
+Reading large checkpoint files to compute their digests can take time.
+Missing required files give the model the
 state `absent`. The other states describe the model's intended use
 when present. Health loads or warms a candidate with
 its own loader. A check of the whole inventory reports absent files in JSON
@@ -304,14 +306,14 @@ Use the source and receipt to identify the exact owner copy.
 
 | Command | Result |
 | --- | --- |
-| `npm run -s models:list` | Exit 0. Listed 38 models. |
-| `npm run -s models:health` | Exit 0. Six checked-in CPU artifacts warmed successfully, and 32 models were reported as absent. |
+| `npm run -s models:list` | Exit 0. Listed 47 models and computed digests for all 10 installed artifact references. |
+| `npm run -s models:health` | Exit 0. Six checked-in CPU models warmed successfully, and 41 models were reported as absent. |
 | `npm run models:health -- refusal` | Exit 0. |
 | `npm run models:run -- refusal "$probe"` | Exit 0. The example returned `allow`. |
 | `npm run models:latency -- refusal "$probe" 20` | Exit 0. Reported cold time and 20 warm samples. |
 | `npm run models:run -- arithmetic <input.json>` | Exit 0. The checked-in ribbon problem returned `(8 * 14) / 4` with value `28`. |
 | `npm run models:shadow-summary -- <copied-log.jsonl>` | Exit 0 against a two-record fixture and against two local turns emitted by the manager. |
-| `npm test -- packages/model-relations/src/cli.test.ts` | 4 tests passed, including absent worker, input and file-based disagreement summary. |
+| `npm test -- packages/model-relations/src/cli.test.ts` | 5 tests passed, covering installed artifact digests, absence, valid and invalid inputs, latency and disagreement summaries. |
 
 Actual inference with owner-only checkpoints, exports and GPU is unverified.
 PowerShell commands and the optional server `GET /health` worker report are

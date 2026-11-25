@@ -96,10 +96,12 @@ async function main([command, modelId, inputPath, iterationsArg, ...extra]: read
     return 0;
   }
   if (command === 'list' && modelId === undefined) {
-    print(await Promise.all(modelRegistry.map(async entry => {
-      const { state, artifacts } = await resolveModel(entry, process.cwd(), process.env, false);
-      return { ...entry, state, artifacts };
-    })));
+    const inventory = [];
+    for (const entry of modelRegistry) {
+      const { state, artifacts } = await resolveModel(entry, process.cwd());
+      inventory.push({ ...entry, state, artifacts });
+    }
+    print(inventory);
     return 0;
   }
   if (command === 'shadow-summary' && inputPath === undefined) {

@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,7 +24,7 @@ describe('model commands', () => {
     return spawnSync(process.execPath, ['--import', 'tsx', cli, ...args], {
       cwd: root,
       encoding: 'utf8',
-      env: { ...process.env, MOHASSAN_MODEL_WORKER_CONFIG: join(scratch, 'missing-worker.json') },
+      env: { ...process.env, MOHASSAN_MODEL_WORKER_CONFIG: join(scratch, 'missing-worker.json'), MOHASSAN_OCR_MODEL_DIR: scratch },
       timeout: 15_000,
     });
   }
@@ -33,12 +34,26 @@ describe('model commands', () => {
     expect(list.status).toBe(0);
     expect(JSON.parse(list.stdout)).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'refusal', state: expect.stringMatching(/^(experimental|shadow|active)$/u) }),
-      expect.objectContaining({ id: 'chat-v5', state: 'absent' }),
+      expect.objectContaining({ id: 'google-ads-pointer', state: 'absent' }),
     ]));
 
-    const health = run('health', 'chat-v5');
+    const health = run('health', 'google-ads-pointer');
     expect(health.status).toBe(1);
     expect(JSON.parse(health.stdout)).toMatchObject({ ok: false, reason: 'absent' });
+  });
+
+  it('lists the observed digest of an installed artifact without a declared pin', async () => {
+    const weights = Buffer.from('local OCR artifact');
+    await writeFile(join(scratch, 'manifest.json'), '{}');
+    await writeFile(join(scratch, 'weights.bin'), weights);
+
+    const list = run('list');
+    expect(list.status, list.stderr).toBe(0);
+    expect(JSON.parse(list.stdout).find((entry: { id: string }) => entry.id === 'ocr')).toMatchObject({
+      artifacts: expect.arrayContaining([expect.objectContaining({
+        role: 'weights', present: true, expectedSha256: null, sha256: createHash('sha256').update(weights).digest('hex'),
+      })]),
+    });
   });
 
   it('checks, runs and measures a checked-in model from a BOM-prefixed JSON input', async () => {
