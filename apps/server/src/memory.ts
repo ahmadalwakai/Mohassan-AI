@@ -1,23 +1,27 @@
 import type { FastifyInstance } from 'fastify';
 import type { Kysely } from 'kysely';
 import { z } from 'zod';
-import { createMemoryControl, MemoryFeedbackSchema, memoryMigration } from '@mohassan/memory';
+import { createMemoryControl, MemoryCorrectionSchema, MemoryCreateSchema, MemoryFeedbackSchema, MemoryMutationSchema, memoryMigration } from '@mohassan/memory';
 import { ExperienceFeedbackError, ExperienceFeedbackSchema, experienceSourceKinds, recordExperienceFeedback } from '@mohassan/learning';
+import { migrateStructuredMemory } from './assistant/structured-memory-migration.js';
+import { checkStructuredMemoryFields } from './assistant/structured-memory-turn.js';
 export { memoryMigration } from '@mohassan/memory';
 
 export async function registerMemoryRoutes(app:FastifyInstance,{db,owner}: {db:Kysely<any>;owner:(request:any)=>Promise<{id:string}>;config?:unknown}){
-  await memoryMigration(db);const memory=createMemoryControl(db);
+  await memoryMigration(db);
+  await migrateStructuredMemory(db);
+  const memory=createMemoryControl(db);
   app.get('/api/memory',async request=>memory.workspace((await owner(request)).id));
   app.post('/api/memory/search',async request=>memory.search((await owner(request)).id,request.body));
-  app.post('/api/memory/items',async request=>memory.create((await owner(request)).id,request.body));
+  app.post('/api/memory/items',async request=>memory.create((await owner(request)).id,checkStructuredMemoryFields(MemoryCreateSchema.parse(request.body))));
   app.get<{Params:{id:string}}>('/api/memory/items/:id',async request=>memory.detail((await owner(request)).id,z.uuid().parse(request.params.id)));
-  app.post<{Params:{id:string}}>('/api/memory/items/:id/correct',async request=>memory.correct((await owner(request)).id,z.uuid().parse(request.params.id),request.body));
-  app.post<{Params:{id:string}}>('/api/memory/items/:id/revoke',async request=>memory.revoke((await owner(request)).id,z.uuid().parse(request.params.id),request.body));
-  app.post<{Params:{id:string}}>('/api/memory/items/:id/delete',async request=>memory.remove((await owner(request)).id,z.uuid().parse(request.params.id),request.body));
+  app.post<{Params:{id:string}}>('/api/memory/items/:id/correct',async request=>memory.correct((await owner(request)).id,z.uuid().parse(request.params.id),checkStructuredMemoryFields(MemoryCorrectionSchema.parse(request.body))));
+  app.post<{Params:{id:string}}>('/api/memory/items/:id/revoke',async request=>memory.revoke((await owner(request)).id,z.uuid().parse(request.params.id),checkStructuredMemoryFields(MemoryMutationSchema.parse(request.body))));
+  app.post<{Params:{id:string}}>('/api/memory/items/:id/delete',async request=>memory.remove((await owner(request)).id,z.uuid().parse(request.params.id),checkStructuredMemoryFields(MemoryMutationSchema.parse(request.body))));
   app.post('/api/memory/sync',async request=>{z.object({}).strict().parse(request.body??{});return memory.sync((await owner(request)).id);});
   app.post('/api/memory/feedback', async request => {
     const ownerId = (await owner(request)).id;
-    const input = MemoryFeedbackSchema.parse(request.body);
+    const input = checkStructuredMemoryFields(MemoryFeedbackSchema.parse(request.body));
     const feedback = await memory.feedback(ownerId, input);
     if (input.rating !== undefined) {
       try {
