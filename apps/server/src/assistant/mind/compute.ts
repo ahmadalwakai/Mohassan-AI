@@ -1,3 +1,4 @@
+import { computeHijri, inspectHijri } from '../../live-data/calendar-answer.js';
 import type { Frame } from './contract.js';
 import { fixedReply, type LocalReply } from './limits.js';
 import { evaluateArithmeticExpression, type ArithmeticStep } from '../calculator.js';
@@ -6,7 +7,7 @@ import { arithmeticExpression } from './arithmetic-language.js';
 import { finishComputationConsumption, prepareComputationSource, type ComputationConsumption, type ComputationKind, type PreparedComputationSource } from './computation-consumption.js';
 export type { ComputationConsumption } from './computation-consumption.js';
 
-type Failure = 'division' | 'range' | 'domain' | 'complexity' | 'expression' | 'units' | 'quantity' | 'date' | 'date_direction' | 'date_year' | 'timezone' | 'hijri';
+type Failure = 'division' | 'range' | 'domain' | 'complexity' | 'expression' | 'units' | 'quantity' | 'date' | 'date_direction' | 'date_year' | 'timezone';
 class CalculationError extends Error {
   constructor(readonly kind: Failure) { super(kind); }
 }
@@ -23,7 +24,6 @@ const MESSAGES: Record<Failure, { ar: string; en: string }> = {
   date_direction: { ar: 'اتجاه التاريخ يناقض الطلب: «منذ» تحتاج تاريخًا مضى و«حتى» تحتاج تاريخًا لم يمضِ. حدّد التاريخ أو الاتجاه المقصود.', en: 'The date contradicts the requested direction: since needs a past date and until needs a date that has not passed. Specify the intended date or direction.' },
   date_year: { ar: 'المدى المكتوب يعكس ترتيب الشهرين دون تحديد السنة. اذكر السنة لكل تاريخ لأحسب المدى المقصود.', en: 'The month/day order runs backwards without an explicit year. Specify the year for each date so I can calculate the intended interval.' },
   timezone: { ar: 'تعذر تحديد وقت واحد من المناطق والتاريخ المكتوبين. اذكر منطقة زمنية ووقتًا محددين.', en: 'I couldn’t resolve a single time from those zones and dates. Specify the time and time zone.' },
-  hijri: { ar: 'أستطيع إجراء الحساب بالتقويم الميلادي. حساب التقويم الهجري غير متاح حاليًا.', en: 'I can calculate Gregorian dates. Hijri calendar calculations are currently unavailable.' },
 };
 
 const NUMBER = String.raw`[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?`;
@@ -559,7 +559,6 @@ const DATE_ENVELOPES: readonly (readonly [ComputationKind, RegExp])[] = [
   ['date_range', ENVELOPE(String.raw`(?:(?:how many|number of) (?:days|weeks)(?: are there)? (?:between|from)|(?:calculate|compute) (?:the )?(?:days|weeks|difference) (?:between|from)|(?:كم|كام|قديش|اديش|شكد|اشكد) (?:يوما?|ايام|اسبوعا?|اسابيع) (?:بين|من)|(?:احسب )?(?:فرق الايام|فرق التاريخين|الفارق بين التاريخين)(?: بين| من)?)\s+${DATE_OPERAND}\s*(?:and|to|until|و|الي|الى|حتي|حتى)\s*${DATE_OPERAND}`)],
   ['date_shift', ENVELOPE(String.raw`(?:(?:add|subtract|اضف|اطرح|زود)\s+${SHIFT_COUNT}\s+(?:to|from|الي|الى|من|علي|على)\s+${DATE_OPERAND}|(?:what (?:date|day)(?: (?:is|will it be))?|(?:ما|اي)(?: (?:هو|هي))? (?:التاريخ|تاريخ|يوم)(?: (?:يكون|يصادف))?)\s+${SHIFT_COUNT}\s+(?:after|before|بعد|قبل)\s+${DATE_OPERAND}|(?:ما|اي)(?: (?:هو|هي))? (?:التاريخ|تاريخ|يوم)\s+(?:بعد|قبل)\s+${SHIFT_COUNT}\s+(?:من\s+)?${DATE_OPERAND}|${SHIFT_COUNT}\s+(?:after|before|بعد|قبل)\s+${DATE_OPERAND})`)],
   ['date_distance', ENVELOPE(String.raw`(?:(?:how many|number of) (?:days|weeks)(?: are (?:left|remaining))? (?:until|since)|(?:days|weeks) (?:until|since)|(?:كم|كام|قديش|اديش|شكد|اشكد) (?:يوما?|ايام|اسبوعا?|اسابيع) (?:حتي|حتى|منذ)|(?:(?:كم|كام|قديش|اديش|شكد|اشكد) )?(?:يوما?|ايام|اسبوعا?|اسابيع) (?:باقي[ةه]?|متبقي[ةه]?)(?: حتي| حتى)?)\s+${DATE_OPERAND}`)],
-  ['date_distance', ENVELOPE(String.raw`(?:calculate a date in the hijri calendar|احسب(?: التاريخ| تاريخا?)? الهجري)`) ],
 ];
 const CLOCK_ENVELOPES: readonly (readonly [ComputationKind, RegExp])[] = [
   ['clock_now', ENVELOPE(String.raw`(?:what time is it|what(?:'|’)s the (?:current |local )?time|what is the (?:current |local )?time|(?:كم|ما) (?:الساعة|الساعه|الوقت|التوقيت))(?: (?:now|الان))?\s+(?:in|at|في|ب)\s*${ZONE_OPERAND}(?: (?:now|الان))?`)],
@@ -568,6 +567,7 @@ const CLOCK_ENVELOPES: readonly (readonly [ComputationKind, RegExp])[] = [
 
 function inspectPreparedComputation(source: PreparedComputationSource): ComputationConsumption {
   if (!source.valid || source.literal) return finishComputationConsumption(source, 'unsupported');
+  const calendar = inspectHijri(source); if (calendar) return calendar;
   // NFKC intentionally folds unit m²/m³ aliases, but raised/lowered numeric
   // positions are not baseline digits. Never flatten them into another sum,
   // date, clock or quantity; subscripts do not denote square/cubic units.
@@ -628,6 +628,7 @@ export interface ComputedReply extends LocalReply { consumption: ComputationCons
 
 export function compute(frame: Frame, now: Date, options: { originalText?: string } = {}): ComputedReply | null {
   const source = prepareComputationSource(options.originalText ?? frame.text, SHORT_ANSWER_TAIL);
+  const calendar = computeHijri(source, frame.lang, now); if (calendar) return calendar;
   const consumption = inspectPreparedComputation(source);
   if (!consumption.complete || !Number.isFinite(now.getTime())) return null;
   const { input, valueOnly } = source;
@@ -636,7 +637,6 @@ export function compute(frame: Frame, now: Date, options: { originalText?: strin
   const conversionRequest = /\b(?:convert|conversion|exchange rate)\b|(?:حول|تحويل|يساوي كم|سعر الصرف)/iu.test(input);
   if (CURRENCIES.test(input) && (conversionRequest || /\b(?:to|into|in)\b|(?:الي|→|⇒|->)/iu.test(input))) return null;
   try {
-    if (/\b(?:hijri|islamic calendar)\b|(?:هجري|الهجري)/iu.test(input)) throw new CalculationError('hijri');
     const zoned = consumption.kind === 'clock_now' || consumption.kind === 'clock_conversion' ? zoneCalculation(display, input, now) : null;
     if (zoned) return covered(zoned);
     if (['date_range', 'date_shift', 'weekday', 'date_distance'].includes(consumption.kind)) {

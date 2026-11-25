@@ -10,20 +10,23 @@ import { verifyExecutableGates, type ExecutableGateEvidence, type ExecutableRead
 import { collectSandboxOutputs, safeSandboxPath as safePath, validateSandboxScript, type SandboxScriptInput, type SandboxScriptResult } from './script.ts';
 import { localSideChannelProbe } from './side-channel-probe.ts';
 import { QuotaSlots, quotaVolumeMaxBytes, SandboxQuotaUnavailableError, type QuotaLease } from './quota.ts';
+import { jsonCheck, lintOutputMaxBytes, prepareLintCommand, prepareTsxCheck, stageCodingTool, type SandboxLintInput, type SandboxTypecheck } from './coding-tools.ts';
 export { verifyExecutableGates } from './gates.ts';
 export { QuotaSlots, quotaVolumeMaxBytes, SandboxQuotaUnavailableError } from './quota.ts';
 export type { ExecutableReadiness, ExecutableGate, ExecutableGateId } from './gates.ts';
 export type { SandboxScriptInput, SandboxScriptResult, SandboxOutputFile } from './script.ts';
+export type { SandboxLintInput, SandboxTypecheck } from './coding-tools.ts';
 
 export interface SandboxFile { path: string; content: string }
-export interface SandboxRunInput { files: SandboxFile[]; testFiles: string[]; syntaxFiles?: string[]; signal?: AbortSignal; timeoutMs?: number }
+export interface SandboxRunInput { files: SandboxFile[]; testFiles: string[]; syntaxFiles?: string[]; jsonFiles?: string[]; typecheck?: SandboxTypecheck; signal?: AbortSignal; timeoutMs?: number }
 export interface SandboxTestResult {
   exitCode: number | null; stdout: string; stderr: string; timedOut: boolean; durationMs: number;
   provider: string; network: 'denied'; isolation: 'appcontainer'; isolationVerified: boolean; snapshotHash: string;
   nativeControls?: { uiRestrictionMask: 255; uiRestrictionsVerified: true; lowPrivilege?: boolean; memoryLimitBytes?: number; quotaVolumeBytes?: number };
 }
 export interface SandboxAvailability { available: boolean; provider: string; message: string }
-export interface SandboxRunner { available(): Promise<SandboxAvailability>; run(input: SandboxRunInput): Promise<SandboxTestResult>; executableReadiness?(): Promise<ExecutableReadiness>; runScript?(input: SandboxScriptInput): Promise<SandboxScriptResult> }
+export interface SandboxLintResult extends SandboxTestResult { fixes: SandboxFile[] }
+export interface SandboxRunner { available(): Promise<SandboxAvailability>; run(input: SandboxRunInput): Promise<SandboxTestResult>; lintFix?(input: SandboxLintInput): Promise<SandboxLintResult>; executableReadiness?(): Promise<ExecutableReadiness>; runScript?(input: SandboxScriptInput): Promise<SandboxScriptResult> }
 export class SandboxUnavailableError extends Error { readonly code = 'SANDBOX_UNAVAILABLE'; }
 const provider = 'windows-appcontainer';
 const nativeDirectory = fileURLToPath(new URL('../native/', import.meta.url));
@@ -35,11 +38,14 @@ const NativeResponse = z.object({ ok: z.literal(true), results: z.array(NativeRe
 export function snapshotHash(files: readonly SandboxFile[]): string {
   return createHash('sha256').update(JSON.stringify([...files].sort((a, b) => a.path.localeCompare(b.path, 'en')).map(({ path, content }) => ({ path, content })))).digest('hex');
 }
-function validate(input: SandboxRunInput) {
+function validate(input: SandboxRunInput, lint = false) {
   if (!Array.isArray(input.files) || !input.files.length || input.files.length > 100 || new Set(input.files.map((file) => file.path.toLowerCase())).size !== input.files.length) throw new SandboxUnavailableError('ملفات نسخة الاختبار غير صالحة.');
   if (input.files.some((file) => typeof file.content !== 'string' || !safePath(file.path)) || input.files.reduce((size, file) => size + Buffer.byteLength(file.content, 'utf8'), 0) > 512 * 1024) throw new SandboxUnavailableError('تجاوزت نسخة الاختبار حدود الملفات أو المسارات.');
   const known = new Set(input.files.map((file) => file.path));
-  if (!Array.isArray(input.testFiles) || !input.testFiles.length || input.testFiles.length > 30 || (input.syntaxFiles?.length ?? 0) > 100 || [...input.testFiles, ...(input.syntaxFiles ?? [])].some((path) => !known.has(path) || !safePath(path) || !/\.(?:mjs|cjs|js|ts)$/.test(path))) throw new SandboxUnavailableError('قائمة فحوص النسخة غير صالحة.');
+  if (!Array.isArray(input.testFiles) || (!lint && !input.testFiles.length) || input.testFiles.length > 30 || input.testFiles.some(path => !known.has(path) || !safePath(path) || !/\.(?:[mc]?js|ts)$/i.test(path)) || (input.syntaxFiles?.length ?? 0) > 100 || input.syntaxFiles?.some(path => !known.has(path) || !safePath(path) || !/\.(?:[mc]?js|tsx?)$/i.test(path))) throw new SandboxUnavailableError('قائمة فحوص النسخة غير صالحة.');
+  if ((input.jsonFiles?.length ?? 0) > 100 || input.jsonFiles?.some(path => !known.has(path) || !safePath(path) || !/\.json$/i.test(path))) throw new SandboxUnavailableError('قائمة ملفات JSON غير صالحة.');
+  const config = input.typecheck?.project;
+  if (config !== undefined && (!known.has(config) || !safePath(config) || !/\.json$/i.test(config))) throw new SandboxUnavailableError('مسار إعداد فحص TypeScript غير صالح.');
   if (input.timeoutMs !== undefined && (!Number.isFinite(input.timeoutMs) || input.timeoutMs <= 0)) throw new SandboxUnavailableError('مهلة الاختبار غير صالحة.');
 }
 async function removeOwnedTemp(directory: string, tempBase: string) {
@@ -96,6 +102,14 @@ export class WindowsAppContainerSandbox implements SandboxRunner {
     if (!(await this.available()).available) throw new SandboxUnavailableError('لا يوجد عزل نظام مثبت؛ لم يُشغّل أي كود مشروع.');
     return this.execute(input);
   }
+  async lintFix(input: SandboxLintInput): Promise<SandboxLintResult> {
+    const snapshot = { files: input.files, testFiles: [], signal: input.signal, timeoutMs: input.timeoutMs };
+    validate(snapshot, true);
+    const known = new Set(input.files.map(file => file.path));
+    if (typeof input.formatting !== 'boolean' || !Array.isArray(input.fixFiles) || !input.fixFiles.length || input.fixFiles.length > 5 || new Set(input.fixFiles).size !== input.fixFiles.length || input.fixFiles.some(path => !known.has(path) || !safePath(path) || !/\.[mc]?js$/i.test(path))) throw new SandboxUnavailableError('قائمة ملفات ESLint غير صالحة.');
+    if (!(await this.available()).available) throw new SandboxUnavailableError('لا يوجد عزل نظام مثبت؛ لم يُشغّل ESLint.');
+    return this.execute(snapshot, false, true, undefined, input) as Promise<SandboxLintResult>;
+  }
   async runScript(input: SandboxScriptInput): Promise<SandboxScriptResult> {
     const checked = validateSandboxScript(input);
     // No readiness override is accepted from a caller or a manifest. G2 has no
@@ -107,10 +121,10 @@ export class WindowsAppContainerSandbox implements SandboxRunner {
     const input = validateSandboxScript(raw), files = [...input.files, { path: '.mohassan-input.json', content: input.inputJson }];
     return this.execute({ files, testFiles: [input.entry], signal: input.signal, timeoutMs: input.timeoutMs }, false, true, { ...input, lowPrivilege, quota }) as Promise<SandboxScriptResult>;
   }
-  private async execute(input: SandboxRunInput, probe = false, enforceNodePermissions = true, script?: SandboxScriptInput & { lowPrivilege: boolean; publicResourceProbe?: boolean; quota?: boolean }): Promise<SandboxTestResult | SandboxScriptResult> {
+  private async execute(input: SandboxRunInput, probe = false, enforceNodePermissions = true, script?: SandboxScriptInput & { lowPrivilege: boolean; publicResourceProbe?: boolean; quota?: boolean }, lint?: SandboxLintInput): Promise<SandboxTestResult | SandboxScriptResult | SandboxLintResult> {
     this.lastNativeError = undefined;
     if (process.platform !== 'win32') throw new SandboxUnavailableError('موفر AppContainer يحتاج Windows.');
-    validate(input);
+    validate(input, Boolean(lint));
     if (input.signal?.aborted) throw new SandboxUnavailableError('أُلغي الاختبار قبل بدء أي عملية.');
     // Only the fixed boundary probe may outlast the run cap: it waits for the OS connect verdict.
     const timeoutMs = Math.max(100, Math.min(input.timeoutMs ?? 10_000, probe ? 45_000 : 20_000));
@@ -125,18 +139,35 @@ export class WindowsAppContainerSandbox implements SandboxRunner {
       }
       // Everything the isolated process may write lives on the quota volume when one is required.
       const writable = lease?.directory ?? root;
-      const work = join(root, 'work'), temp = join(writable, 'temp'), tools = join(root, 'tools'), output = script ? join(writable, 'outputs') : '';
+      const work = join(root, 'work'), temp = join(writable, 'temp'), tools = join(root, 'tools'), output = script || lint ? join(writable, 'outputs') : '';
       await Promise.all([mkdir(work), mkdir(temp), mkdir(tools)]);
-      if (script) await mkdir(output);
+      if (output) await mkdir(output);
       for (const file of input.files) { const target = join(work, ...file.path.split('/')); await mkdir(dirname(target), { recursive: true }); await writeFile(target, file.content, { flag: 'wx' }); }
       const node = join(tools, 'node.exe'); await copyFile(process.execPath, node);
       // The OS-boundary startup fixture deliberately omits these Node restrictions so
       // that ERR_ACCESS_DENIED cannot be mistaken for an AppContainer ACL proof.
-      const nodeRestrictions = enforceNodePermissions ? ['--permission', '--no-addons', `--allow-fs-read=${work}`, `--allow-fs-read=${tools}`, `--allow-fs-write=${temp}`, ...(script ? [`--allow-fs-read=${output}`, `--allow-fs-write=${output}`] : [])] : [];
-      const commands = script ? [{ arguments: [...nodeRestrictions, '--preserve-symlinks', '--preserve-symlinks-main', `./${script.entry}`] }] : [
-        ...(input.syntaxFiles ?? []).map((path) => ({ arguments: [...nodeRestrictions, '--preserve-symlinks', '--preserve-symlinks-main', '--check', `./${path}`] })),
-        { arguments: [...nodeRestrictions, '--preserve-symlinks', '--preserve-symlinks-main', '--test', '--test-isolation=none', ...input.testFiles.map((path) => `./${path}`)] },
-      ];
+      const nodeRestrictions = enforceNodePermissions ? ['--permission', '--no-addons', `--allow-fs-read=${work}`, `--allow-fs-read=${tools}`, `--allow-fs-write=${temp}`, ...(output ? [`--allow-fs-read=${output}`, `--allow-fs-write=${output}`] : [])] : [];
+      const nodeArguments = [...nodeRestrictions, '--preserve-symlinks', '--preserve-symlinks-main'];
+      const command = (...arguments_: string[]) => ({ arguments: [...nodeArguments, ...arguments_] });
+      let commands;
+      if (lint) {
+        commands = [command(...await prepareLintCommand(tools, work, lint))];
+      } else if (script) {
+        commands = [command(`./${script.entry}`)];
+      } else {
+        const syntaxFiles = input.syntaxFiles ?? [], tsx = /\.tsx$/i;
+        const tsxFiles = syntaxFiles.filter(path => tsx.test(path));
+        const typescript = input.typecheck || tsxFiles.length ? await stageCodingTool(tools, 'typescript') : null;
+        commands = syntaxFiles.filter(path => !tsx.test(path)).map(path => command('--check', `./${path}`));
+        if (typescript && tsxFiles.length) commands.push(command(...await prepareTsxCheck(tools, typescript, tsxFiles)));
+        if (input.jsonFiles?.length) commands.push(command('--input-type=commonjs', '--eval', jsonCheck, '--', ...input.jsonFiles.map(path => `./${path}`)));
+        if (typescript && input.typecheck) {
+          const tsc = join(typescript, 'bin', 'tsc');
+          commands.push(command(`--allow-fs-read=${temp}`, tsc, '--noEmit', '--incremental', 'true', '--tsBuildInfoFile', join(temp, 'typecheck.tsbuildinfo'), '--pretty', 'false', '--project', `./${input.typecheck.project ?? 'tsconfig.json'}`));
+        }
+        commands.push(command('--test', '--test-isolation=none', ...input.testFiles.map(path => `./${path}`)));
+      }
+      if (input.signal?.aborted) throw new SandboxUnavailableError('أُلغي الاختبار قبل بدء أي عملية.');
       const requestPath = join(root, 'request.json'), cancelPath = join(root, 'cancel');
       const memoryMb = script?.memoryMb ?? 512;
       await writeFile(requestPath, JSON.stringify({ node, work, temp, commands, timeoutMs, cancelPath, output, memoryMb, lowPrivilege: script?.lowPrivilege ?? false, publicResourceProbe: script?.publicResourceProbe ?? false, quotaBytes: lease ? quotaVolumeMaxBytes : 0 }), { flag: 'wx' });
@@ -168,13 +199,20 @@ export class WindowsAppContainerSandbox implements SandboxRunner {
         throw new SandboxUnavailableError('فشل إثبات عزل العملية؛ لم تُقبل نتيجة الاختبار.');
       }
       const results = parsed.results;
-      if (script && results.some(result => !result.outputComplete)) throw new SandboxUnavailableError('تجاوز stdout أو stderr الحد المسموح؛ رُفض نجاح مبتور.');
+      if ((script || lint) && results.some(result => !result.outputComplete)) throw new SandboxUnavailableError('تجاوز stdout أو stderr الحد المسموح؛ رُفض نجاح مبتور.');
       if (results.some(result => result.memoryLimitBytes !== memoryMb * 1024 * 1024 || result.lowPrivilegeRequested !== Boolean(script?.lowPrivilege) || result.tokenIsLessPrivilegedAppContainer !== Boolean(script?.lowPrivilege) || (script?.lowPrivilege ? result.capabilityCount !== 1 || result.capabilitySid !== lpacRegistryReadCapability : result.capabilityCount !== 0 || result.capabilitySid !== '') || (lease ? result.quotaVolumeBytes === 0 : result.quotaVolumeBytes !== 0))) throw new SandboxUnavailableError('لا تطابق حدود العملية الطلب الثابت.');
       const last = results[results.length - 1];
       const after = [];
       for (const file of input.files) after.push({ path: file.path, content: await readFile(join(work, ...file.path.split('/')), 'utf8') });
       if (snapshotHash(after) !== snapshotHash(input.files)) throw new SandboxUnavailableError('تغيرت نسخة الملفات أثناء الاختبار؛ رُفض الدليل.');
       const receipt: SandboxTestResult = { exitCode: last.exitCode, stdout: results.map((result) => result.stdout).join('\n').slice(0, 65536), stderr: results.map((result) => result.stderr).join('\n').slice(0, 65536), timedOut: results.some((result) => result.timedOut), durationMs: Date.now() - start, provider, network: 'denied', isolation: 'appcontainer', isolationVerified: true, snapshotHash: snapshotHash(input.files), nativeControls: { uiRestrictionMask: 255, uiRestrictionsVerified: true, lowPrivilege: last.tokenIsLessPrivilegedAppContainer, memoryLimitBytes: last.memoryLimitBytes, quotaVolumeBytes: last.quotaVolumeBytes } };
+      if (lint) {
+        if ((receipt.exitCode !== 0 && receipt.exitCode !== 1) || receipt.timedOut || input.signal?.aborted) return { ...receipt, fixes: [] };
+        const { outputs } = await collectSandboxOutputs(output, lintOutputMaxBytes);
+        if (outputs.length !== lint.fixFiles.length || outputs.some(file => !lint.fixFiles.includes(file.path))) throw new SandboxUnavailableError('تغيرت مجموعة ملفات إصلاح ESLint؛ رُفض الناتج.');
+        const fixes = outputs.filter(file => input.files.find(original => original.path === file.path)?.content !== file.content).map(({ path, content }) => ({ path, content }));
+        return { ...receipt, fixes };
+      }
       if (!script) return receipt;
       if (receipt.exitCode !== 0 || receipt.timedOut || input.signal?.aborted) return { ...receipt, ...(input.signal?.aborted ? { exitCode: 130 } : {}), outputs: [], outputManifestHash: snapshotHash([]) };
       return { ...receipt, ...await collectSandboxOutputs(output, script.outputMaxBytes) };

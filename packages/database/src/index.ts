@@ -6,6 +6,7 @@ import { mkdir, open, readFile, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
 import { ensureChatConversationsTable } from "./chat-schema.ts";
+import { migrateNotifications } from "./notifications-migration.ts";
 
 export interface DatabaseOptions {
   connectionString?: string;
@@ -378,6 +379,7 @@ export async function migrate(db: Kysely<any>): Promise<void> {
       await sql`ALTER TABLE chat_conversations ADD COLUMN IF NOT EXISTS review_summary jsonb`.execute(tx);
       await tx.insertInto('schema_migrations').values({ version: '035_chat_conversation_review' }).execute();
     }
+    await migrateNotifications(tx);
   });
 }
 

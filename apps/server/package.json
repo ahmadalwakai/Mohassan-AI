@@ -1,1 +1,1 @@
-{"name":"@mohassan/server","version":"0.1.0","private":true,"type":"module","exports":"./src/app.ts","dependencies":{"@mohassan/scratch-classifiers":"*"}}
+{"name":"@mohassan/server","version":"0.1.0","private":true,"type":"module","exports":"./src/app.ts","dependencies":{"@mohassan/scratch-classifiers":"*","web-push":"4.0.0"},"devDependencies":{"@types/web-push":"3.6.4"}}

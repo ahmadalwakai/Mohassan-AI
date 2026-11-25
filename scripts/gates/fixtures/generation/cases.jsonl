@@ -1,0 +1,2 @@
+{"id":"gen-ar","language":"ar","category":"instruction","criterion":"الإجابة هي الرقم ٣ فقط.","prompt":"ما ناتج ١ + ٢؟ اكتب الرقم فقط."}
+{"id":"gen-en","language":"en","category":"instruction","criterion":"Return the numeral 8 alone.","messages":[{"role":"system","content":"Fixture System Identity"},{"role":"user","content":"What is 3 + 5? Reply with the numeral alone."}],"prompt":"Fixture System Identity"}

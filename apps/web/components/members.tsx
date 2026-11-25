@@ -4,7 +4,9 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { Button, Spinner } from "@chakra-ui/react";
 import { ArrowRight, Check, Copy, LogOut, MessageCircle, UserPlus } from "lucide-react";
 import dynamic from "next/dynamic";
+import { OwnerMemberHistory } from "./member-audit";
 import styles from "./members.module.css";
+import { ConversationShareSettings } from "./conversation-share-settings";
 
 const GoogleAdsWorkspace = dynamic(() => import("./google-ads-workspace").then(module => module.GoogleAdsWorkspace));
 const SitesWorkspace = dynamic(() => import("./sites-workspace").then(module => module.SitesWorkspace));
@@ -161,6 +163,7 @@ export function MembersPanel({ offline }: { offline: boolean }) {
     try { await navigator.clipboard.writeText(link.url); setCopied(true); } catch { setCopied(false); }
   }
   return <div className={styles.stack}>
+    <ConversationShareSettings offline={offline} />
     <section className="panel"><div className="panel-heading"><div><h2>دعوة شخص جديد</h2><p>يحصل على المحادثة وبحثه وذاكرته وحساب Google Ads الخاص به فقط، ولا يصل إلى جهازك أو مشاريعك.</p></div></div>
       <form className={`stack-form ${styles.form}`} onSubmit={create}>
         <div className={styles.row}>
@@ -187,6 +190,7 @@ export function MembersPanel({ offline }: { offline: boolean }) {
         <Button className={styles.secondary} disabled={busy || offline} onClick={() => { void act(() => api(`/api/members/invites/${invite.id}/revoke`, {})); }}>إلغاء</Button>
       </li>)}</ul>
     </section> : null}
+    <OwnerMemberHistory members={data?.members} offline={offline} />
   </div>;
 }
 

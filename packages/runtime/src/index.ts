@@ -57,7 +57,7 @@ export const capabilities: readonly Capability[] = Object.freeze([
   },
   {
     id: "coding.change", name: "محرك البرمجة المعزول", version: "1.0.0", risk: "high", status: "needs_configuration",
-    description: "تعديل ملفات مصرح بها داخل Git Worktree، واختبارها في عزل نظامي، ثم إعداد التغييرات للمراجعة دون دمج.", requiredScopes: ["code:read", "code:write", "code:run", "model:generate"],
+    description: "تطبيق إصلاحات تثبتها أدوات البرمجة على ملفات مصرح بها داخل Git Worktree، واختبارها في عزل نظامي للمراجعة.", requiredScopes: ["code:read", "code:write", "code:run"],
   },
   {
     id:"studio.change",name:"تعديل الاستوديو بالذكاء",version:"1.0.0",risk:"high",status:"needs_configuration",description:"طلب تعديل نصي أو من صورة بعد موافقة محددة، مع فرع واختبار ومعاينة ومراجعة قبل تطبيق منفصل.",requiredScopes:["code:read","code:write","code:run","model:generate"],
@@ -407,7 +407,7 @@ export class Runtime {
       }
       await event(tx, id, "task_created", "حُفظت المهمة ومعايير تنفيذها.", { capabilityId: capability.id, autonomy: input.autonomy });
       if (approvalRequired) await event(tx, id, "approval_required", input.capabilityId==='skill.rollback'?`تحتاج استعادة الملف ${input.skillRollbackReview!.path} موافقة مستقلة. البصمة الحالية ${input.skillRollbackReview!.afterHash}؛ ${input.skillRollbackReview!.deletedOnRestore?'سيُحذف الملف الذي أنشأته المهارة':`سيعاد إلى البصمة ${input.skillRollbackReview!.beforeHash}`}. راجع المجلد والصورة السابقة قبل الموافقة.`:binding?this.skillApprovalMessage(binding,input.skillNodeInput??{}):input.capabilityId==='skill.run'?'تنتظر المهمة موافقتك على المخطط ومدخلاته المثبتة في تفاصيل المهمة. كل خطوة تنفيذ تحتاج موافقة مستقلة؛ لا تمنح هذه الموافقة صلاحيات أدوات.':input.capabilityId==='browser.open'?`تنتظر المهمة موافقتك على فتح ${input.browserInput!.url} للقراءة فقط وحفظ لقطة الصفحة دون إرسال نماذج.`:input.capabilityId==='studio.change'?'تنتظر المهمة موافقتك على إرسال السياق والصورة المحددة إن وجدت إلى النموذج، وتعديل نسخة Git واختبارها؛ تطبيق النتيجة إجراء مستقل بعد المراجعة.':input.capabilityId==='coding.change'
-        ? 'تنتظر المهمة موافقتك على قراءة الملفات المحددة وإرسال سياقها للنموذج وتعديل نسخة معزولة وتشغيل اختباراتها؛ لا دمج أو نشر.'
+        ? 'تنتظر المهمة موافقتك على قراءة الملفات المحددة وتطبيق إصلاح تثبته أدوات البرمجة في نسخة معزولة وتشغيل اختباراتها للمراجعة.'
         : input.capabilityId === "plan.draft"
         ? "تنتظر المهمة موافقتك على إرسال الهدف إلى النموذج وإنشاء خطة نصية بتكلفة توكنات محتملة."
         : "تنتظر المهمة موافقتك على فحص القراءة فقط.");
@@ -553,6 +553,7 @@ export class Runtime {
         const safe = (task.capability_id === "system.diagnostic" && task.capability_version === "1.0.0")
           || (['plan.draft','coding.change','studio.change','browser.open'].includes(task.capability_id) && task.autonomy === "shadow");
         const planning = ['plan.draft','coding.change','studio.change'].includes(task.capability_id) && task.autonomy !== "shadow";
+        const paidRequest = planning && (task.capability_id !== 'coding.change' || await this.hasCodingModelRun(tx,task));
         const browser = task.capability_id==='browser.open'&&task.autonomy!=='shadow';
         const status = task.cancellation_requested ? "cancelled"
           : task.attempt >= task.max_attempts ? "failed"
@@ -562,10 +563,12 @@ export class Runtime {
           ...(task.capability_id==='skill.run'?{workflow_token:null}:{}),
           approval_required: task.approval_required || planning || browser,
           error: status === "failed" ? "انتهت محاولات التعافي من توقف العامل."
-            : browser ? 'انقطعت جلسة المتصفح؛ راجع أثرها قبل الموافقة على محاولة جديدة.' : planning ? "انقطع طلب النموذج؛ قد تكون له تكلفة غير محسومة. يلزم تفويض جديد قبل أي طلب آخر." : null,
+            : browser ? 'انقطعت جلسة المتصفح؛ راجع أثرها قبل الموافقة على محاولة جديدة.'
+            : paidRequest ? "انقطع طلب النموذج؛ قد تكون له تكلفة غير محسومة. يلزم تفويض جديد قبل أي طلب آخر."
+            : planning ? 'انقطعت مهمة البرمجة؛ راجع أثر النسخة المعزولة قبل الموافقة على محاولة جديدة.' : null,
         }).where("id", "=", task.id).execute();
         if (planning && task.lease_token) {
-          await tx.updateTable("model_runs").set({ status: "unknown", error_code: "WORKER_LEASE_EXPIRED", finished_at: new Date() })
+          if(paidRequest)await tx.updateTable("model_runs").set({ status: "unknown", error_code: "WORKER_LEASE_EXPIRED", finished_at: new Date() })
             .where("task_id", "=", task.id).where("lease_token", "=", task.lease_token).where("status", "=", "started").execute();
           if(task.capability_id==='coding.change')await tx.updateTable('coding_runs').set({status:'unknown',error_code:'WORKER_LEASE_EXPIRED',finished_at:new Date()}).where('task_id','=',task.id).where('lease_token','=',task.lease_token).where('status','=','started').execute();
         }
@@ -777,6 +780,7 @@ export class Runtime {
       plan_verified: "اجتازت الخطة تحقق المحرك؛ يلزم تحقق مستقل قبل اعتمادها.",
       project_inspected:'فُحص المشروع ونطاق الملفات والمرجع المثبت.',worktree_created:'أُنشئت نسخة Git معزولة لهذه المهمة.',
       baseline_tested:'سُجلت نتيجة الاختبارات قبل التعديل داخل بيئة العزل.',edits_requested:'يجري طلب تعديل محدود من النموذج.',
+      repair_requested:'تبحث الأدوات المحلية عن إصلاح يمكن إثباته ضمن الملفات المصرح بها.',
       edits_validated:'اجتازت مسارات التعديل وبصماتها فحص النطاق.',edits_applied:'طُبقت التغييرات في نسخة المهمة فقط.',
       tests_started:'بدأت الاختبارات داخل بيئة العزل.',tests_finished:'حُفظت نتائج الاختبارات المعزولة.',
       review_finished:'اكتمل فحص التغييرات والنطاق ونتائج الاختبارات.',checkpoint_created:'حُفظت نقطة مراجعة في فرع المهمة دون دمج.',
@@ -803,6 +807,11 @@ export class Runtime {
       await event(tx, task.id, "model_run_started", "سُجلت محاولة طلب النموذج قبل الاتصال؛ لا إعادة تلقائية إذا تعذر حسم نتيجتها.", { attempt: task.attempt });
       return true;
     });
+  }
+
+  private async hasCodingModelRun(tx: Tx, task: TaskRow): Promise<boolean> {
+    if (!task.lease_token) return false;
+    return Boolean(await tx.selectFrom('model_runs').select('id').where('task_id','=',task.id).where('lease_token','=',task.lease_token).executeTakeFirst());
   }
 
   private async recordModelOutcome(task: TaskRow, raw: unknown, error = false): Promise<void> {
@@ -1120,9 +1129,12 @@ export class Runtime {
       if (current.cancellation_requested) { await this.cancelClaim(tx, current); return; }
       const coding=['coding.change','studio.change'].includes(current.capability_id);
       const failureCode=typeof(failure as any)?.code==='string'?(failure as any).code:'';
+      const refusal = current.capability_id==='coding.change' && failureCode==='NO_PROVEN_FIX'
+        ? 'لم تجد أدوات البرمجة إصلاحًا يمكن إثباته ضمن الملفات المصرح بها. لم تُطبّق أي تغييرات.' : null;
       const terminalCoding=coding&&['RUN_ALREADY_EXISTS','PROJECT_HEAD_CHANGED','UNSAFE_EDIT_SCOPE','PROJECT_FORBIDDEN','SENSITIVE_SOURCE_REJECTED','STUDIO_REVISION_CONFLICT','STUDIO_PROPOSAL_EXISTS'].includes(failureCode);
-      const retry = !terminalCoding&&current.attempt < current.max_attempts;
-      const paidPlanning = ['plan.draft','coding.change','studio.change'].includes(current.capability_id) && current.autonomy !== "shadow";
+      const retry = !refusal && !terminalCoding && current.attempt < current.max_attempts;
+      const paidPlanning = current.autonomy !== "shadow" && (['plan.draft','studio.change'].includes(current.capability_id)
+        || (current.capability_id==='coding.change' && !refusal && await this.hasCodingModelRun(tx,current)));
       const browser=current.capability_id==='browser.open'&&current.autonomy!=='shadow';
       const needsApproval = retry && (current.approval_required || paidPlanning || browser);
       await tx.updateTable("tasks").set({
@@ -1130,15 +1142,16 @@ export class Runtime {
         ...(current.capability_id==='skill.run'?{workflow_token:null}:{}),
         approval_required: current.approval_required || paidPlanning || browser,
         available_at: sql`CURRENT_TIMESTAMP + ${this.retryDelayMs * 2 ** (current.attempt - 1)} * interval '1 millisecond'`,
-        error: browser?'تعذر حسم فتح الصفحة؛ لن تعاد جلسة المتصفح تلقائيًا. راجع السجل قبل محاولة جديدة.':terminalCoding?'حُفظت بيئة هذه المهمة أو تغير نطاقها؛ راجع الأثر وأنشئ مهمة جديدة دون الكتابة فوق النسخة السابقة.':paidPlanning ? retry
+        error: refusal ?? (browser?'تعذر حسم فتح الصفحة؛ لن تعاد جلسة المتصفح تلقائيًا. راجع السجل قبل محاولة جديدة.':terminalCoding?'حُفظت بيئة هذه المهمة أو تغير نطاقها؛ راجع الأثر وأنشئ مهمة جديدة دون الكتابة فوق النسخة السابقة.':paidPlanning ? retry
           ? coding?'لم تُحسم مهمة البرمجة أو تكلفتها؛ لن تعاد دون موافقة جديدة.':"لم تُحسم نتيجة التخطيط أو تكلفته؛ لن يُعاد الطلب دون موافقة جديدة."
           : "توقف التخطيط بعد الحد الأقصى للمحاولات؛ راجع سجل استخدام النموذج."
-          : retry ? "تعذر الفحص؛ حُددت إعادة محاولة آمنة." : "تعذر الفحص بعد الحد الأقصى للمحاولات.", updated_at: new Date(),
+          : coding ? 'تعذر إكمال مهمة البرمجة داخل بيئة العزل؛ راجع نتيجة المحاولة.'
+          : retry ? "تعذر الفحص؛ حُددت إعادة محاولة آمنة." : "تعذر الفحص بعد الحد الأقصى للمحاولات."), updated_at: new Date(),
       }).where("id", "=", task.id).execute();
       await event(tx, task.id, retry ? browser ? 'browser_approval_required' : paidPlanning ? "planning_approval_required" : "retry_scheduled" : "task_failed",
-        browser?'لن يُكرر فتح المتصفح تلقائيًا؛ يلزم تفويض صريح لمحاولة جديدة.':retry ? paidPlanning ? "لن يُكرر طلب النموذج تلقائيًا؛ قد تكون له تكلفة. يلزم تفويض صريح لمحاولة جديدة."
+        refusal ?? (browser?'لن يُكرر فتح المتصفح تلقائيًا؛ يلزم تفويض صريح لمحاولة جديدة.':retry ? paidPlanning ? "لن يُكرر طلب النموذج تلقائيًا؛ قد تكون له تكلفة. يلزم تفويض صريح لمحاولة جديدة."
           : needsApproval ? "تحتاج إعادة المحاولة موافقة جديدة؛ استُهلكت الموافقة السابقة." : "حُددت إعادة محاولة للفحص الآمن ضمن الحد المسموح."
-          : "توقفت المهمة بعد استنفاد محاولات الفحص.", { attempt: current.attempt });
+          : "توقفت المهمة بعد استنفاد محاولات الفحص."), { attempt: current.attempt });
       if (!retry) await this.recordTerminalTask(tx, current, 'failed');
     });
   }

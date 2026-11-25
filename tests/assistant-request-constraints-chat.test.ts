@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { AgentBrowser, type AgentAction, type AgentPage, type SearchProvider } from '@mohassan/browser';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AgentBrowser, SafeNetwork, type AgentAction, type AgentPage, type SearchProvider } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import type { ModelRequest } from '@mohassan/providers';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
@@ -44,7 +44,16 @@ async function harness(model = false): Promise<Fixture> {
   });
   const fixture = { database, control, queries, actions, reads, writes, requests, script, hooks }; fixtures.push(fixture); return fixture;
 }
-afterEach(async () => { for (const fixture of fixtures.splice(0)) { await fixture.control.shutdown(); await fixture.database.close(); } });
+beforeEach(() => {
+  vi.spyOn(SafeNetwork.prototype, 'request').mockRejectedValue(new Error('The isolated fixture has no live data source.'));
+});
+afterEach(async () => {
+  try {
+    for (const fixture of fixtures.splice(0)) { await fixture.control.shutdown(); await fixture.database.close(); }
+  } finally {
+    vi.restoreAllMocks();
+  }
+});
 async function start(fixture: Fixture, goal: string) {
   const { id } = await fixture.control.create(OWNER, { goal }); await fixture.control.settled(id);
   return fixture.control.detail(OWNER, id);
@@ -100,6 +109,7 @@ describe('current-user constraints through the actual isolated chat controller',
     const fixture = await harness(true); fixture.script.push({ tool: 'search', text: query });
     const result = await start(fixture, goal);
     expect(result.error).toBeNull(); expect(fixture.requests.length).toBeGreaterThan(0);
+    expect(SafeNetwork.prototype.request).not.toHaveBeenCalled();
     expect(fixture.queries).toEqual([]); expect(fixture.actions).toEqual([]); expect(fixture.reads).toEqual([]); expect(fixture.writes).toEqual([]);
     expect(fixture.hooks.memoryContext).toBe(0); expect(fixture.hooks.learningContext).toBe(0);
     expect(fixture.requests.map(request => request.goal).join('\n')).not.toContain(PRIVATE_CONTEXT);

@@ -4,7 +4,7 @@ import type { ImageReading } from '@mohassan/vision';
 import { composeImageReply, readingForTrail } from './assistant/image-reading.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { FastifyInstance } from 'fastify';
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 import { z } from 'zod';
 import {
   ChatApproveSchema, ChatBrowserActivitySchema, ChatConversationSchema, ChatCreateSchema, ChatFeedbackSchema, ChatKeyboardSchema, ChatPointerSchema, ChatQuestionSchema, ChatRespondSchema,
@@ -14,6 +14,8 @@ import {
 import { AgentEffectHeld, AgentSessionCheckpointSchema, BrowserError, SearchEngine, SafeNetwork, type AgentPostcondition, type AgentAction, type AgentAuthority, type AgentActionResult, type AgentBrowser, type AgentCaptureResult, type AgentPage, type NetworkPolicy, type SearchProvider } from '@mohassan/browser';
 import { GroqProvider, ProviderError, redactSecrets, classifyProviderFallback, waitForRetryAfter, validatedRetryAfterMs, type InferenceRouter, type ModelProvider } from '@mohassan/providers';
 import { unfenceJson } from './inference.js';
+import { rememberRemovedConversationProfile } from './member-profile-storage.js';
+import { withMemberChatDeletionFence } from './member-chat-deletion-fence.js';
 import { redactCredentialText } from '@mohassan/cognitive';
 import { classifyExperience, escapedContextLength, recordExperience, type ExperienceInput } from '@mohassan/learning';
 import {
@@ -23,6 +25,7 @@ import {
 import { ADS_DRAFT_NOTE, ADS_SKILL_SLUG } from './assistant/ads-check.js';
 import { isLiveWebQuestion, PROVIDER_SPACING_MS, answerSubject, isBareAddress, isFollowUp, normalizeHandsPlan, notWebReason, parseHands, plainTitle, refersBack, runHands, siteQuestion, siteToOpen, tidy, topicWords, unnamedSite, webQuestion, type HandsIO, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
 import { liveLabel } from './assistant/activity.js';
+import { routeLiveDataChat } from './live-data/chat.js';
 import type { DesktopCommand, DesktopOutcome, ParsedDesktopCommand } from '@mohassan/desktop';
 import { searchRefusedReply, unsupportedReply, unsupportedRequest } from './assistant/unsupported-request.js';
 import { decideBrowserVisibility, deriveBrowserVisibility } from './assistant/browser-visibility.js';
@@ -53,6 +56,7 @@ import { evaluateLocalConversation } from './assistant/local-conversation.js';
 import { pauseEverydayClarification } from './assistant/everyday-clarification.js';
 import { admitManners } from './assistant/manners/chat.js';
 import { evaluateCapabilityReply } from './assistant/capability-reply.js';
+import { dispatchReminderTurn } from './reminders/chat-turn.js';
 import { answerRuntimeStatus } from './assistant/runtime-status.js';
 import { evaluateSelfQuestion, type SelfFacts } from './assistant/self-knowledge.js';
 import { evaluateLocalSequence } from './assistant/local-sequence.js';
@@ -62,6 +66,8 @@ import { rebindBrowserAction, reserveBrowserRecovery, transientBrowserFailure, t
 import { bootstrapRequestContext, parseRequestContextState, requestActionText, resolveRequestContext } from './assistant/request-context.js';
 import { createChatSupervisor, observeChatCapture, observeChatLocalAnswer, observeChatTool, resumeChatSupervisor, reviewChatAnswer } from './assistant/chat-supervision.js';
 import { createComputationMemoryReceipt, restoreComputationMemoryReceipt } from './assistant/computation-memory-receipt.js';
+import { migrateConversationShares } from './conversation-share-migration.js';
+import { noteConversationPromptPrivacy } from './conversation-share-privacy.js';
 import { runComputationMemoryFlow } from './assistant/computation-memory-flow.js';
 import { completeComputationMemory } from './assistant/computation-memory-completion.js';
 import { createClarifiedRequestSource, resolveEffectiveRequestSource } from './assistant/effective-request-source.js';
@@ -111,7 +117,9 @@ import { stopChromeJobsForRun, type ChromeExtensionControl } from './chrome-exte
 import { assessBrowserVerification } from './assistant/verification.js';
 import { newGoalState, observeFailure, observeOutcome, reviewOpen, reviewStop, stagnationWarning, type BrainVersion } from './assistant/goal-integrity.js';
 import { ChatWaitQuerySchema, abortWhenClosed, conversationVersion, waitForChange } from './chat-wait.js';
+import { finalizeChatFailure, recordChatNotification } from './chat-notification-lifecycle.js';
 import { noPreviousAnswer, shorterAnswer, shorterRequest } from './assistant/answer-reshape.js';
+import { initialProgressMarker } from './ops/metrics/chat-progress.js';
 import { fullerName, returnParts } from './assistant/return-to.js';
 import { RunLedgerError, addEvidence, appendStep, beginRepair, cancelLedger, classifySteering, collectStateEvidence, countModelCall, createRunLedger, criterionLabel, decideVerdict, planStep,
   projectRunView, restoreRunLedger, setStepAuthorization, settleOpenSteps, settleStep, startStep, tryEnterPhase, type RunLedger } from './assistant/agent-run.js';
@@ -374,7 +382,7 @@ const sleep = (milliseconds: number, signal: AbortSignal) => new Promise<void>((
 class RunEnded extends Error {}
 class AccountAccessEnded extends RunEnded {}
 
-export async function commandChatMigration(db: Kysely<any>) {
+export async function commandChatMigration(db: Kysely<any>, beforeShares?: (tx: Transaction<any>) => Promise<void>) {
   await db.transaction().execute(async (tx) => {
     await sql`LOCK TABLE schema_migrations IN EXCLUSIVE MODE`.execute(tx);
     if (!await tx.selectFrom('schema_migrations').select('version').where('version', '=', '013_command_chat').executeTakeFirst()) {
@@ -426,12 +434,15 @@ export async function commandChatMigration(db: Kysely<any>) {
       await tx.insertInto('schema_migrations').values({version:'033_chat_request_keys'}).execute();
     }
     await campaignEventsMigration(tx);
+    await beforeShares?.(tx);
+    await migrateConversationShares(tx);
   });
 }
 
 export async function createCommandChatControl(db: Kysely<any>, config: CommandChatConfig) {
   config = preferDocumentControl(config);
   await commandChatMigration(db);
+  config = await withMemberChatDeletionFence(db, config);
   const browser = config.browser;
   const providers = new Map<string, ModelProvider>();
   if (config.createProvider) {
@@ -634,6 +645,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   async function recordTerminalRun(tx: Kysely<any>, runId: string, status: ChatTerminalStatus, proof?: ChatExperienceProof) {
+    await recordChatNotification(tx, runId, status);
     if (config.recordExperiences === false) return;
     const run = await tx.selectFrom('chat_runs').select(['owner_id', 'goal', 'state', 'attempt', 'conversation_id'])
       .where('id', '=', runId).executeTakeFirstOrThrow();
@@ -785,7 +797,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   async function addMessage(connection: Kysely<any>, id: string, role: 'user' | 'assistant', text: string) {
-    await connection.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role, text: clean(text) }).execute();
+    await connection.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role, text: clean(text), run_id: role === 'assistant' ? execution.getStore()?.runId ?? null : null }).execute();
   }
 
   async function addStep(id: string, runId: string, text: string) {
@@ -1308,6 +1320,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       await tx.updateTable('chat_conversations').set({ status, progress: null, updated_at: new Date(), ...fields }).where('id', '=', id).execute();
       await tx.updateTable('chat_runs').set({ status, lease_expires_at:sql`CURRENT_TIMESTAMP + interval '10 minutes'`, updated_at: new Date() }).where('id', '=', runId).execute();
       if (say) await addMessage(tx, id, 'assistant', say);
+      await recordChatNotification(tx, runId, status);
     });
     if (say) judgeReply(id, runId, say, status);
   }
@@ -1997,6 +2010,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         return;
       }
       const request = effectiveSource.request;
+      if (await dispatchReminderTurn({
+        db, state, runId, ownerId, id, run, effectiveSource, runTransaction, pause, addMessage, recordTerminalRun, ledgerSafe,
+        recordSkillGap: config.recordSkillGap, scrub: value => vault.scrubValue(id, value, clean), releaseVault: () => forgetVault(id, execution.getStore()!.token),
+      })) return;
       const actionContract = compileActionCompletionContract({ runId, request });
       if (state.actionCompletion !== undefined) {
         const restored = restoreActionCompletionLedger(state.actionCompletion, { runId, request });
@@ -2383,6 +2400,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await finish(id,runId,state,`أعدت قراءة الصفحة المحفوظة. ${restored.sameContent?'لم يتغير محتواها المرصود.':'تغيرت الصفحة؛ سأعتمد قراءتها الحالية في الطلب التالي.'} لم تُستأنف الإجراءات السابقة.`,'partial');
         return;
       }
+      if (run.intent === 'task' && !state.steps && await routeLiveDataChat({ request: actionRequest, evaluatedAt: effectiveSource.evaluatedAt, signal, trail: state.trail,
+        allowSource: requestCapabilityAllowed(constraints, 'public_search'), reply: (text, status) => finish(id, runId, state, vault.scrub(id, text), status),
+        ask: question => pause(id, runId, state, 'waiting_user', { question: JSON.stringify(question) }, question.prompt),
+        notice: text => runTransaction(id, runId, tx => addMessage(tx, id, 'assistant', text)) })) return;
       if (requestCapabilityAllowed(constraints, 'browser_navigation') && requestCapabilityAllowed(constraints, 'browser_action')
         && reviewBrowserRequestScope(request, 'browser_action', state.requestResolution ?? undefined).allowed) {
         if (await browser.hasPage(ownerId, id)) {
@@ -3632,6 +3653,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         const skillsEnabled = Boolean(skillContext && config.loadSkill);
         await recordSkillContext(id, runId, state, skillContext, compiled);
+        noteConversationPromptPrivacy(state, { memory: promptInput.memory, browser: promptInput.page, learning: learningContext, skill: skillContext });
         const prompt = buildPrompt({ ...promptInput, skillContext });
         const tier = chooseTier(state, warning);
         // Only the Google Ads skill brings this tool, so every other prompt stays byte-identical.
@@ -3883,7 +3905,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         : error instanceof BrowserError ? error.message
           : error instanceof ProviderError ? chatModelFailure(error).message
             : 'حدث خطأ أثناء العمل. أرسل «تابع» وسأحاول مجددًا.';
-      await runTransaction(id,runId,async tx=>{
+      await finalizeChatFailure(execution, limit, runTransaction, id,runId,async tx=>{
         await tx.updateTable('chat_conversations').set({ status: 'failed', active_run_id: null, progress: null, error: message, updated_at: new Date() }).where('id', '=', id).execute();
         await tx.updateTable('chat_runs').set({ status: 'failed', updated_at: new Date() }).where('id', '=', runId).execute();
         await recordTerminalRun(tx, runId, 'failed');
@@ -4113,7 +4135,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       // The browser level the request asks for (plan §6.1), logged with its reason and time after the run row it refers to. detail() re-derives the current level from the rows.
       const visibility = decideBrowserVisibility({ request: clean(input.text), route: routing.route, role: fullForRouting ? 'owner' : 'member' });
       await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId, kind: 'visibility', message: visibility.reason,
-        data: JSON.stringify({ level: visibility.level, code: visibility.code, route: routing.route }) }).execute();
+        data: JSON.stringify({ level: visibility.level, code: visibility.code, route: routing.route, ...initialProgressMarker(db) }) }).execute();
     });
     // The corrected run is committed; the old worker stops at once (its lease token already changed, so it can no longer
     // write), and a prepared task nobody approved is withdrawn.
@@ -4385,6 +4407,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const row = await owned(ownerId, id);
     if (row.active_run_id) await cancel(ownerId, id);
     await workers.get(id)?.catch(() => {});
+    await rememberRemovedConversationProfile(browser, ownerId, row.browser_account ?? null);
     await db.transaction().execute(async (tx) => {
       const locked = await tx.selectFrom('chat_conversations').select('id').where('id', '=', id).where('owner_id', '=', ownerId).forUpdate().executeTakeFirst();
       if (!locked) throw notFound();
@@ -4478,7 +4501,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   return {
-    create, list, detail, approve, secureSubmit, cancel, remove, screen, browserActivity, shutdown,restoreBrowser,reviewBrowser, uploadImage, image: imageBytes, feedback, once,
+    create, list, detail, approve, secureSubmit, cancel, remove, screen, browserActivity, shutdown,restoreBrowser,reviewBrowser, uploadImage, image: imageBytes, feedback, once, recoverExpired,
     ...protectStructuredMemoryIngress({ create, send, once }),
     ...clarificationAnswers({ db, config, hasChatModel, resume, send, respond }),
     imagesAvailable: () => Boolean(config.imageReader?.available),

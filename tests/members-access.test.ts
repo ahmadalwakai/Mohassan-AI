@@ -85,6 +85,39 @@ describe('workspace members over disposable local state', () => {
     expect(forbidden.statusCode).toBe(403); expect(forbidden.json().error.code).toBe('MEMBER_FORBIDDEN');
   });
 
+  it('requires the owner on every owner-only route added by the platform wave', async () => {
+    // Owner route registrations from the merged pull requests (retrieved 2026-11-25).
+    // https://github.com/ahmadalwakai/Mohassan-AI/pull/64/files
+    // https://github.com/ahmadalwakai/Mohassan-AI/pull/67/files
+    // https://github.com/ahmadalwakai/Mohassan-AI/pull/17/files
+    // https://github.com/ahmadalwakai/Mohassan-AI/pull/66/files
+    // https://github.com/ahmadalwakai/Mohassan-AI/pull/69/files
+    const ownerRoutes = [
+      ['GET', '/api/ops/backup-status'],
+      ['GET', '/api/ops/metrics'],
+      ['GET', '/api/ops/metrics.csv'],
+      ['GET', '/api/training-monitor'],
+      ['GET', '/api/chat/conversation-share-settings'],
+      ['POST', '/api/chat/conversation-share-settings'],
+      ['GET', '/api/members/audit'],
+      ['DELETE', '/api/members/:userId/sessions'],
+      ['GET', '/api/members/deletions'],
+      ['DELETE', '/api/members/deletions/:userId'],
+    ] as const;
+    for (const [method, pattern] of ownerRoutes) {
+      const key = `${method} ${pattern}`;
+      expect(application!.routes.has(key), key).toBe(true);
+      expect(MEMBER_ROUTES.has(key), key).toBe(false);
+      const url = concrete(pattern);
+      const asMember = await app().inject({ method, url, headers: headers(memberCookie) });
+      expect(asMember.statusCode, key).toBe(403);
+      expect(asMember.json().error.code, key).toBe('MEMBER_FORBIDDEN');
+      const anonymous = await app().inject({ method, url, headers: headers('') });
+      expect(anonymous.statusCode, key).toBe(401);
+      expect(anonymous.json().error.code, key).toBe('UNAUTHORIZED');
+    }
+  });
+
   it('refuses a member on every route outside the member list, before any handler runs', async () => {
     const checked: string[] = [];
     for (const key of application!.routes) {
@@ -170,10 +203,10 @@ describe('workspace members over disposable local state', () => {
     expect(listed.members.map((entry: { email: string }) => entry.email)).toEqual([member.email]);
     expect((await app().inject({ method: 'POST', url: `/api/members/${memberId}/access`, headers: headers(), payload: { enabled: false } })).statusCode).toBe(200);
     expect((await app().inject({ url: '/api/access', headers: headers(memberCookie) })).statusCode).toBe(401);
-    // Signing in again still yields a session, but the gate refuses every route until access is restored.
+    // A suspended member can sign in to manage their own data. Product routes still refuse access.
     const again = await login(member); expect(again.status).toBe(200);
-    const refused = await app().inject({ url: '/api/access', headers: headers(again.cookie) });
-    expect(refused.statusCode).toBe(403); expect(refused.json().error.code).toBe('MEMBER_FORBIDDEN');
+    const restricted = await app().inject({ url: '/api/access', headers: headers(again.cookie) });
+    expect(restricted.statusCode).toBe(200); expect(restricted.json()).toMatchObject({ role: 'member', services: [], dataOnly: true });
     expect((await app().inject({ url: `/api/chat/conversations/${randomUUID()}/browser/activity`, headers: headers(again.cookie) })).statusCode).toBe(403);
     expect((await app().inject({ method: 'POST', url: '/api/chat/conversations', headers: headers(again.cookie), payload: {} })).statusCode).toBe(403);
     expect((await app().inject({ method: 'POST', url: `/api/members/${memberId}/access`, headers: headers(), payload: { enabled: true } })).statusCode).toBe(200);
