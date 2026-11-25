@@ -52,6 +52,7 @@ function report(withSamples: boolean): ProductionMetricsResponse {
   }
   return {
     enabled: true,
+    chatAvailable: true,
     snapshotAvailable: true,
     countingOnly: false,
     generatedAtMs: day.endMs,
@@ -129,6 +130,15 @@ describe("production metrics dashboard", () => {
     const markup = render({ kind: "ready", report: data });
     expect(markup).toContain("حتى الرد النهائي");
     expect(markup).not.toContain("لا توجد قياسات في الفترة المحددة");
+  });
+
+  it("identifies unavailable chat collection while preserving the latest known observations", () => {
+    const data = report(true);
+    const notice = "قراءة سجل المحادثات غير متاحة حاليًا";
+    expect(render({ kind: "ready", report: data })).not.toContain(notice);
+    const markup = render({ kind: "ready", report: { ...data, chatAvailable: false } });
+    expect(markup).toContain(`role="status">${notice}`);
+    expect(markup).toContain("حتى الرد النهائي");
   });
 
   it("maps failed or invalid responses to retry and leaves authentication errors distinct", async () => {

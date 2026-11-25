@@ -91,7 +91,7 @@ export function decodeSnapshot(line: string): Snapshot | undefined {
   }
 }
 
-export function decodeBucket(value: SerializedBucket): MetricBucket {
+export function decodeBucket(value: SerializedBucket, restoreChat: boolean): MetricBucket {
   const bucket = createBucket();
   for (const role of trafficRoles) {
     const data = value.roles[role];
@@ -100,6 +100,7 @@ export function decodeBucket(value: SerializedBucket): MetricBucket {
       request.statuses = statuses;
       if (histogram) request.histogram = decodeHistogram(histogram);
     }
+    if (!restoreChat) continue;
     const {chat} = bucket.roles[role];
     chat.runs = data.chat.runs;
     chat.paths = data.chat.paths;

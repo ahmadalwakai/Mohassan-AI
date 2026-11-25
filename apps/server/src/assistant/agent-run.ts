@@ -88,7 +88,7 @@ export const RUN_CAPABILITIES = {
 export type RunCapability = keyof typeof RUN_CAPABILITIES;
 export const isRunCapability = (value: string): value is RunCapability => Object.hasOwn(RUN_CAPABILITIES, value);
 
-export const MAX_HISTORY = 48;
+const MAX_HISTORY = 48;
 const MAX_EVIDENCE = 24;
 const MAX_PERMISSIONS = 12;
 const MAX_FAILURES = 16;

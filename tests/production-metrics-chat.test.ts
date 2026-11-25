@@ -1,21 +1,75 @@
-import type { AgentBrowser } from '@mohassan/browser';
-import { createDatabase, migrate } from '@mohassan/database';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MAX_HISTORY, appendStep, createRunLedger, decideVerdict, enterPhase, planStep, settleStep, startStep } from '../apps/server/src/assistant/agent-run.js';
+import { randomUUID } from 'node:crypto';
+import { createDatabase, migrate, type DatabaseHandle } from '@mohassan/database';
+import type { Kysely } from 'kysely';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  addEvidence, appendStep, cancelLedger, createRunLedger, decideVerdict, enterPhase, planStep, settleStep, startStep,
+} from '../apps/server/src/assistant/agent-run.js';
 import { newBrainState } from '../apps/server/src/assistant/brain.js';
-import { planWebSequence } from '../apps/server/src/assistant/web-sequence.js';
 import { migrateAuth } from '../apps/server/src/auth.js';
-import { createCommandChatControl } from '../apps/server/src/command-chat.js';
-import { chatPhaseDurations, recordChatAnswer, recordChatEnd, recordChatProgress, type ChatMetricsSink } from '../apps/server/src/ops/metrics/chat.js';
+import { commandChatMigration } from '../apps/server/src/command-chat.js';
+import { migrateMembers } from '../apps/server/src/members.js';
+import { chatPhaseDurations, readPersistedChatMetrics } from '../apps/server/src/ops/metrics/chat.js';
 
 const start = Date.UTC(2026, 10, 25);
-const run = () => createRunLedger({ runId: 'metrics-test-run', at: start });
+const dayMs = 24 * 60 * 60 * 1000;
+const privateMarker = 'fixture-only-email@example.test';
+const privateGoal = `A private chat goal for ${privateMarker}`;
+const privateUrl = `https://example.test/?privateQuery=${encodeURIComponent(privateMarker)}`;
+const ownerId = 'fixture-owner-record';
+const memberId = 'fixture-member-record';
+const unknownId = 'fixture-unknown-record';
 
-afterEach(() => { vi.restoreAllMocks(); });
+function run(at: number) {
+  return createRunLedger({ runId: randomUUID(), at });
+}
 
-describe('production chat metrics', () => {
-  it('sums repeated ledger phases and includes waits and simultaneous transitions', () => {
-    const ledger = run();
+async function addRun(db: Kysely<any>, fixture: {
+  ownerId: string;
+  createdAt: number;
+  updatedAt: number;
+  status: string;
+  state?: ReturnType<typeof newBrainState>;
+  events?: { kind: string; at: number; data?: Record<string, unknown> }[];
+}) {
+  const id = fixture.state?.agentRun?.runId ?? randomUUID();
+  const conversationId = randomUUID();
+  await db.insertInto('chat_conversations').values({ id: conversationId, owner_id: fixture.ownerId, title: privateMarker }).execute();
+  await db.insertInto('chat_runs').values({
+    id, conversation_id: conversationId, owner_id: fixture.ownerId, status: fixture.status, goal: privateGoal,
+    state: fixture.state ? JSON.stringify(fixture.state) : null,
+    created_at: new Date(fixture.createdAt), updated_at: new Date(fixture.updatedAt),
+    lease_token: randomUUID(), lease_expires_at: new Date(fixture.updatedAt),
+  }).execute();
+  if (fixture.events?.length) await db.insertInto('chat_events').values(fixture.events.map(event => ({
+    id: randomUUID(), conversation_id: conversationId, run_id: id, kind: event.kind, message: privateGoal,
+    created_at: new Date(event.at), data: JSON.stringify(event.data ?? {}),
+  }))).execute();
+  return { id, conversationId };
+}
+
+describe('persisted chat metrics', () => {
+  let database: DatabaseHandle;
+
+  beforeAll(async () => {
+    database = await createDatabase({});
+    await migrateAuth(database.db);
+    await migrateMembers(database.db);
+    await migrate(database.db);
+    await commandChatMigration(database.db);
+    await database.db.insertInto('user').values([
+      { id: ownerId, name: 'Fixture owner', email: 'fixture-owner@example.test' },
+      { id: memberId, name: 'Fixture member', email: 'fixture-member@example.test' },
+      { id: unknownId, name: 'Fixture without a role', email: 'fixture-unknown@example.test' },
+    ]).execute();
+    await database.db.insertInto('workspace_owner').values({ id: 1, owner_id: ownerId }).execute();
+    await database.db.insertInto('workspace_members').values({ user_id: memberId, role: 'member' }).execute();
+  });
+
+  afterAll(async () => { await database?.close(); });
+
+  it('sums visits to the real ledger phases and measures waits and simultaneous transitions', () => {
+    const ledger = run(start);
     enterPhase(ledger, 'understanding', start + 10);
     enterPhase(ledger, 'planning', start + 20);
     enterPhase(ledger, 'executing', start + 35);
@@ -30,167 +84,164 @@ describe('production chat metrics', () => {
     });
   });
 
-  it('omits incomplete intervals from ledger rollover, old runs and a reversed clock', () => {
-    const ledger = run();
+  it('omits intervals when the ledger is old, timestamps reverse, or the next entry was dropped', () => {
+    const ledger = run(start);
     enterPhase(ledger, 'understanding', start + 1);
     enterPhase(ledger, 'planning', start);
     enterPhase(ledger, 'executing', start + 2);
     expect(chatPhaseDurations(ledger.history, start - 1)).toEqual({ planning: 2 });
 
-    for (let i = 0; i < MAX_HISTORY; i++) {
-      enterPhase(ledger, 'awaiting_input', start + 3 * i + 3);
-      enterPhase(ledger, 'understanding', start + 3 * i + 4);
-      enterPhase(ledger, 'executing', start + 3 * i + 5);
+    // Rotate the real ledger enough to evict the immediate successor of the first entry.
+    for (let index = 0; index < 60; index++) {
+      enterPhase(ledger, 'awaiting_input', start + 3 * index + 3);
+      enterPhase(ledger, 'understanding', start + 3 * index + 4);
+      enterPhase(ledger, 'executing', start + 3 * index + 5);
     }
-    expect(ledger.history[0]?.phase).toBe('received');
-    expect(ledger.history).toHaveLength(MAX_HISTORY);
     const durations = chatPhaseDurations(ledger.history, start);
+    expect(ledger.history[0]?.phase).toBe('received');
     expect(durations.received).toBeUndefined();
     expect(Object.values(durations).reduce((sum, duration) => sum + duration, 0)).toBe(ledger.history.length - 2);
   });
 
-  it('projects only aggregate tags and timings from the host signals and deduplicates paths', () => {
-    vi.spyOn(Date, 'now').mockReturnValue(start + 42);
-    const sink = vi.fn<ChatMetricsSink>();
+  it('projects only aggregate measurements and observed path labels from persisted rows', async () => {
     const state = newBrainState();
-    const privateValue = 'private-email@example.test';
-    state.agentRun = run();
-    enterPhase(state.agentRun, 'understanding', start + 10);
-    state.trail = ['calculate', 'calculation_memory', 'skill_read', `search ${privateValue}`, `open https://example.test/?value=${privateValue}`]
-      .map((action, step) => ({ action, step, changed: true, result: action.startsWith('open ') ? `opened ${privateValue}` : privateValue }));
-    recordChatAnswer(sink, { full: false, metricsStartedAt: start }, state, false, {
-      localParts: [{ source: 'computation' }],
-      webParts: [{ source: 'computation', withheld: true }],
-      mindEvidence: [{ source: 'site' }, { source: 'computed' }, { source: 'memory' }],
-    });
-    expect(sink).toHaveBeenCalledWith('member', {
-      finalAnswerMs: 42, phases: { received: 10 },
-      paths: ['web', 'local_computation', 'memory', 'skill_reader', 'browser', 'refusal'],
-    });
-    expect(JSON.stringify(sink.mock.calls)).not.toContain(privateValue);
-  });
-
-  it('does not tag an unexecuted browser guess or a rejected search as tool evidence', () => {
-    vi.spyOn(Date, 'now').mockReturnValue(start + 42);
-    const sink = vi.fn<ChatMetricsSink>();
-    const state = newBrainState();
+    const ledger = state.agentRun = run(start);
+    enterPhase(ledger, 'understanding', start + 10);
+    enterPhase(ledger, 'executing', start + 12);
+    decideVerdict(ledger, { hostStatus: 'completed', at: start + 40 });
     state.trail = [
-      { action: 'open https://rejected.test', step: 0, changed: false, result: 'not opened: the address was a guess' },
-      { action: 'search private phrase', step: 1, changed: false, result: 'failed: source not allowed' },
-      { action: 'search unavailable phrase', step: 2, changed: false, result: 'no results; provider failures: unavailable' },
-      { action: 'read https://rejected.test', step: 3, changed: false, result: 'robots.txt disallows this page' },
-      { action: 'click rejected action', step: 4, changed: false, result: 'the user refused this action; do not try it again' },
-    ];
-    recordChatAnswer(sink, { full: true, metricsStartedAt: start }, state, true);
-    expect(sink).toHaveBeenCalledWith('owner', { finalAnswerMs: 42, phases: {}, paths: ['refusal'] });
+      { action: `search ${privateMarker}`, result: `results: ${privateUrl}`, changed: true },
+      { action: `read ${privateUrl}`, result: `HTTP 200 ${privateUrl}`, changed: true },
+      { action: 'calculate', result: privateGoal, changed: false },
+      { action: 'calculation_memory', result: privateGoal, changed: false },
+      { action: 'skill_read', result: privateGoal, changed: false },
+      { action: 'memory_search', result: privateGoal, changed: true },
+      { action: `open ${privateUrl}`, result: `opened ${privateUrl}`, changed: true },
+    ].map((entry, step) => ({ ...entry, step }));
+    const recorded = await addRun(database.db, {
+      ownerId, createdAt: start, updatedAt: start + 42, status: 'completed', state,
+      events: [{ kind: 'visibility', at: start - 20, data: { firstProgressAtMs: start + 3, request: privateGoal } },
+        { kind: 'step', at: start + 12 }],
+    });
+    await addRun(database.db, { ownerId: unknownId, createdAt: start, updatedAt: start + 45, status: 'completed' });
+
+    const { samples } = await readPersistedChatMetrics(database.db, { fromMs: start, toMs: start + 100 });
+    expect(samples).toHaveLength(2);
+    expect(samples[0]).toMatchObject({ role: 'owner', atMs: start, observation: { started: true, firstProgressMs: 3 } });
+    expect(samples[1]).toMatchObject({
+      role: 'owner', atMs: start + 42,
+      observation: {
+        finalAnswerMs: 42,
+        phases: { received: 10, understanding: 2, executing: 28, verifying: 0 },
+        paths: expect.arrayContaining(['web', 'local_computation', 'skill_reader', 'memory', 'browser']),
+      },
+    });
+    expect(samples[1]?.observation.paths).toHaveLength(5);
+    const output = JSON.stringify(samples);
+    for (const privateValue of [ownerId, unknownId, privateMarker, privateGoal, privateUrl, 'privateQuery', recorded.id, recorded.conversationId]) {
+      expect(output).not.toContain(privateValue);
+    }
   });
 
-  it('retains a mixed sequence calculation source only when collection is on', () => {
-    const deps = { now: new Date(start), self: { chatModel: false, web: true, browser: true, computation: true, memory: true, knowledge: true,
-      documents: true, sites: true, skills: true, ads: false, imageReading: false, pc: false, planner: true, letters: true } };
-    const request = 'كم حاصل 2 + 2؟ ثم ما عاصمة فرنسا؟';
-    expect(planWebSequence(request, deps)?.[0]?.local?.source).toBeUndefined();
-    expect(planWebSequence(request, deps, true)?.[0]?.local?.source).toBe('computation');
+  it('includes old starts that settle in the window and leaves out final latency for unpublished answers', async () => {
+    const at = start + dayMs;
+    const cancelled = newBrainState();
+    cancelled.agentRun = run(at - 20);
+    enterPhase(cancelled.agentRun, 'understanding', at - 10);
+    enterPhase(cancelled.agentRun, 'awaiting_input', at + 5);
+    cancelLedger(cancelled.agentRun, 'owner_cancelled', at + 30);
+    await addRun(database.db, { ownerId: memberId, createdAt: at - 20, updatedAt: at + 30, status: 'cancelled', state: cancelled });
+
+    const failed = newBrainState();
+    failed.agentRun = run(at + 1);
+    enterPhase(failed.agentRun, 'understanding', at + 3);
+    await addRun(database.db, { ownerId: memberId, createdAt: at + 1, updatedAt: at + 35, status: 'failed', state: failed });
+    await addRun(database.db, { ownerId, createdAt: at + 2, updatedAt: at + 14, status: 'waiting_user', events: [
+      { kind: 'visibility', at, data: { firstProgressAtMs: at + 1 } }, { kind: 'step', at: at + 5 },
+    ] });
+    await addRun(database.db, { ownerId, createdAt: at + 40, updatedAt: at + 45, status: 'completed' });
+
+    const { samples } = await readPersistedChatMetrics(database.db, { fromMs: at, toMs: at + 40 });
+    expect(samples).toHaveLength(4);
+    expect(samples).toContainEqual(expect.objectContaining({ role: 'member', atMs: at + 1, observation: { started: true } }));
+    expect(samples).toContainEqual(expect.objectContaining({ role: 'owner', atMs: at + 2, observation: { started: true } }));
+    expect(samples).toContainEqual(expect.objectContaining({ role: 'member', atMs: at + 30, observation: {
+      phases: { received: 10, understanding: 15, awaiting_input: 25 },
+    } }));
+    expect(samples).toContainEqual(expect.objectContaining({ role: 'member', atMs: at + 35, observation: {
+      phases: { received: 2, understanding: 32 },
+    } }));
   });
 
-  it('keeps a blocked required tool failure separate from a refusal', () => {
-    vi.spyOn(Date, 'now').mockReturnValue(start + 42);
-    const sink = vi.fn<ChatMetricsSink>();
+  it('counts a published refusal without tagging unsuccessful actions as evidence', async () => {
+    const at = start + 2 * dayMs;
     const state = newBrainState();
-    const ledger = state.agentRun = run();
-    enterPhase(ledger, 'understanding', start + 10);
-    enterPhase(ledger, 'executing', start + 11);
-    appendStep(ledger, planStep({ id: 'read', capability: 'web.read', outcome: 'Read source', input: null, acceptance: ['Source was read.'] }), start + 12);
-    startStep(ledger, 'read', start + 12);
-    settleStep(ledger, 'read', 'failed', start + 20);
-    expect(decideVerdict(ledger, { hostStatus: 'blocked', at: start + 22 }).verdict.reason).toBe('step_failed');
-    recordChatAnswer(sink, { full: true, metricsStartedAt: start }, state, true);
-    expect(sink.mock.calls[0]?.[1].paths).toEqual([]);
-    recordChatAnswer(sink, { full: true, metricsStartedAt: start }, state, true, undefined, true);
-    expect(sink.mock.calls[1]?.[1].paths).toEqual(['refusal']);
+    state.agentRun = run(at);
+    enterPhase(state.agentRun, 'understanding', at + 1);
+    decideVerdict(state.agentRun, { hostStatus: 'blocked', at: at + 5 });
+    state.trail = [
+      { action: `open ${privateUrl}`, result: 'not opened: the address was a guess' },
+      { action: `search ${privateMarker}`, result: 'no results; provider failures: unavailable' },
+      { action: `read ${privateUrl}`, result: 'robots.txt disallows this page' },
+      { action: `click ${privateMarker}`, result: 'the user refused this action; do not try it again' },
+      { action: 'permission gate', result: 'not run: owner_refused' },
+    ].map((entry, step) => ({ ...entry, step, changed: false }));
+    await addRun(database.db, { ownerId: memberId, createdAt: at, updatedAt: at + 6, status: 'blocked', state });
+
+    const { samples } = await readPersistedChatMetrics(database.db, { fromMs: at, toMs: at + 10 });
+    expect(samples[1]).toMatchObject({ role: 'member', atMs: at + 6, observation: { finalAnswerMs: 6, paths: ['refusal'] } });
   });
 
-  it('uses a recorded settlement to close a phase when a run publishes no answer', async () => {
-    const sink = vi.fn<ChatMetricsSink>();
-    const ledger = run();
-    enterPhase(ledger, 'understanding', start + 10);
-    await recordChatEnd(sink, async () => false, ledger.history, new Date(start + 42));
-    expect(sink).toHaveBeenCalledWith('member', { phases: { received: 10, understanding: 32 } });
-    await recordChatEnd(sink, async () => { throw new Error('role lookup failed'); }, ledger.history);
-    expect(sink).toHaveBeenCalledTimes(1);
-  });
-
-  it('swallows observer failures and handles disabled collection', () => {
-    const failing: ChatMetricsSink = () => { throw new Error('unwritable metrics store'); };
-    for (const sink of [undefined, failing]) {
-      expect(() => recordChatProgress(sink, true, new Date(start))).not.toThrow();
-      expect(() => recordChatAnswer(sink, { full: true, metricsStartedAt: start }, newBrainState(), false)).not.toThrow();
+  it('paginates equal timestamps without replaying or dropping observations', async () => {
+    const at = start + 3 * dayMs;
+    for (const role of [ownerId, memberId, ownerId]) {
+      await addRun(database.db, { ownerId: role, createdAt: at, updatedAt: at + 1, status: 'completed' });
     }
+    const range = { fromMs: at, toMs: at + 2 };
+    const full = await readPersistedChatMetrics(database.db, range);
+    expect(full.samples).toHaveLength(6);
+
+    type Batch = Awaited<ReturnType<typeof readPersistedChatMetrics>>;
+    const pageSamples: Batch['samples'] = [];
+    let cursor: Batch['nextCursor'];
+    for (let pageNo = 0; pageNo <= full.samples.length; pageNo++) {
+      const page = await readPersistedChatMetrics(database.db, { ...range, cursor, limit: 1 });
+      expect(page.samples.length).toBeLessThanOrEqual(1);
+      pageSamples.push(...page.samples);
+      cursor = page.nextCursor;
+      if (!cursor) break;
+    }
+    expect(cursor).toBeUndefined();
+    expect(pageSamples).toEqual(full.samples);
+    expect((await readPersistedChatMetrics(database.db, { fromMs: at + 2, toMs: at + 3 })).samples).toEqual([]);
   });
 
-  it('observes the initial visible progress and the final committed reply through the run controller', async () => {
-    const database = await createDatabase({});
-    let control: Awaited<ReturnType<typeof createCommandChatControl>> | undefined;
-    try {
-      await migrateAuth(database.db);
-      await migrate(database.db);
-      await database.db.insertInto('user').values([
-        { id: 'test-owner', name: 'Owner', email: 'metrics-owner@example.test' },
-        { id: 'test-member', name: 'Member', email: 'metrics-member@example.test' },
-      ]).execute();
-      const sink = vi.fn<ChatMetricsSink>();
-      let browserFailure = false;
-      const browser = {
-        setCheckpointStore() {},
-        async bindAccount() { if (browserFailure) throw new Error('isolated infrastructure failure'); },
-        async hasPage() { return false; }, async close() {},
-      } as unknown as AgentBrowser;
-      const search = vi.fn(async () => { throw new Error('The calculation should remain local.'); });
-      control = await createCommandChatControl(database.db, {
-        browser, fullAccess: async id => id === 'test-owner', models: { fast: [], deep: [], vision: '' },
-        recordExperiences: false, chatMetrics: sink, searchProvider: { name: 'no-network', search },
-      });
-      for (const [id, role] of [['test-owner', 'owner'], ['test-member', 'member']] as const) {
-        const created = await control.create(id, { goal: 'احسب 248 + 19' });
-        await control.settled(created.id);
-        const detail = await control.detail(id, created.id);
-        expect(detail.run?.phase).toBe('completed');
-        expect(detail.messages.some(message => message.role === 'assistant' && message.text.includes(String(248 + 19)))).toBe(true);
-        const calls = sink.mock.calls.filter(([seenRole]) => seenRole === role);
-        expect(calls).toHaveLength(2);
-        const progress = calls[0]![1];
-        const answer = calls[1]![1];
-        expect(progress).toEqual({ started: true, firstProgressMs: expect.any(Number) });
-        expect(progress.firstProgressMs).toBeGreaterThanOrEqual(0);
-        expect(answer.finalAnswerMs).toBeGreaterThanOrEqual(progress.firstProgressMs!);
-        expect(answer.phases?.understanding).toBeGreaterThanOrEqual(0);
-        expect(answer.paths).toEqual(['local_computation']);
-      }
-      const aggregate = JSON.stringify(sink.mock.calls);
-      expect(aggregate).not.toMatch(/test-owner|test-member|@example\.test/);
-      expect(aggregate).not.toContain('احسب 248 + 19');
+  it('uses verified ledger evidence and does not count a failed required tool as a refusal', async () => {
+    const at = start + 4 * dayMs;
+    const saved = newBrainState();
+    const ledger = saved.agentRun = run(at);
+    enterPhase(ledger, 'understanding', at + 1);
+    enterPhase(ledger, 'executing', at + 2);
+    appendStep(ledger, planStep({ id: 'news', capability: 'news.read', outcome: 'Read news', input: null, acceptance: ['The page was read.'] }), at + 3);
+    startStep(ledger, 'news', at + 3);
+    settleStep(ledger, 'news', 'verified', at + 4);
+    addEvidence(ledger, { kind: 'computation', label: privateGoal, reference: privateUrl, independent: true }, at + 4);
+    decideVerdict(ledger, { hostStatus: 'completed', at: at + 5 });
+    await addRun(database.db, { ownerId, createdAt: at, updatedAt: at + 6, status: 'completed', state: saved });
 
-      sink.mockClear();
-      const paused = await control.create('test-member', { goal: 'Add 12 to your previous result.' });
-      await control.settled(paused.id);
-      expect((await control.detail('test-member', paused.id)).status).toBe('waiting_user');
-      await control.cancel('test-member', paused.id);
-      expect(sink.mock.calls).toHaveLength(2);
-      expect(sink.mock.calls[1]).toEqual(['member', { phases: {
-        received: expect.any(Number), understanding: expect.any(Number), awaiting_input: expect.any(Number),
-      } }]);
+    const failure = newBrainState();
+    const failedLedger = failure.agentRun = run(at + 10);
+    enterPhase(failedLedger, 'understanding', at + 11);
+    enterPhase(failedLedger, 'executing', at + 12);
+    appendStep(failedLedger, planStep({ id: 'read', capability: 'web.read', outcome: 'Read source', input: null, acceptance: ['The source was read.'] }), at + 13);
+    startStep(failedLedger, 'read', at + 13);
+    settleStep(failedLedger, 'read', 'failed', at + 14);
+    expect(decideVerdict(failedLedger, { hostStatus: 'blocked', at: at + 15 }).verdict.reason).toBe('step_failed');
+    await addRun(database.db, { ownerId, createdAt: at + 10, updatedAt: at + 16, status: 'blocked', state: failure });
 
-      sink.mockClear();
-      browserFailure = true;
-      const failed = await control.create('test-owner', { goal: 'احسب 248 + 19' });
-      await control.settled(failed.id);
-      expect((await control.detail('test-owner', failed.id)).status).toBe('failed');
-      expect(sink.mock.calls).toHaveLength(2);
-      expect(sink.mock.calls[1]).toEqual(['owner', { phases: { received: expect.any(Number), understanding: expect.any(Number) } }]);
-      expect(search).not.toHaveBeenCalled();
-    } finally {
-      await control?.shutdown();
-      await database.close();
-    }
+    const { samples } = await readPersistedChatMetrics(database.db, { fromMs: at, toMs: at + 20 });
+    expect(samples[1]?.observation.paths).toEqual(['web', 'local_computation', 'browser']);
+    expect(samples[3]?.observation.paths).toEqual([]);
+    expect(JSON.stringify(samples)).not.toContain(privateMarker);
   });
 });

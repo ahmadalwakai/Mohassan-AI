@@ -332,6 +332,7 @@ export function ProductionMetrics({ initialState }: { initialState: MetricsState
             <>
               {report.countingOnly && <p className={styles.notice} role="status">يجمع الخادم العدّادات فقط الآن. قد تكون عينات الزمن والموارد ناقصة.</p>}
               {!report.snapshotAvailable && <p className={styles.notice} role="status">حفظ المقاييس على القرص غير متاح حاليًا.</p>}
+              {!report.chatAvailable && <p className={styles.notice} role="status">قراءة سجل المحادثات غير متاحة حاليًا. قد تكون قياسات المحادثات غير مكتملة.</p>}
               <div className={styles.filters}>
                 <label>الفترة
                   <select value={windowKey} onChange={event => setWindowKey(event.target.value as WindowKey)}>

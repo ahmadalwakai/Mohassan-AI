@@ -88,22 +88,12 @@ export class MetricsStore {
   }
 
   recordChat(role: TrafficRole, observation: ChatObservation): void {
-    const buckets = this.#buckets();
-    const chats = buckets.map(bucket => bucket.roles[role].chat);
-    if (observation.started) for (const chat of chats) chat.runs++;
-    if (observation.paths?.length) {
-      for (const path of new Set(observation.paths)) {
-        if (answerPathSet.has(path)) for (const chat of chats) chat.paths[path]++;
-      }
-    }
-    const timing = (name: ChatTiming, ms?: number) => {
-      if (ms !== undefined && Number.isFinite(ms) && ms >= 0 && !this.#capacityReached) {
-        this.#observe(chats.map(chat => timingData(chat.timings, name)), ms);
-      }
-    };
-    timing('firstProgress', observation.firstProgressMs);
-    timing('finalAnswer', observation.finalAnswerMs);
-    for (const phase of workingPhases) timing(phase, observation.phases?.[phase]);
+    this.#recordChat(this.#buckets(), role, observation);
+  }
+
+  recordPersistedChat(role: TrafficRole, observation: ChatObservation, atMs: number): void {
+    // The ledger and message receipts already persist this observation.
+    this.#recordChat(this.#historicalBuckets(atMs), role, observation);
   }
 
   recordResources(values: Partial<Record<ResourceMetric, number>>): void {
@@ -186,15 +176,43 @@ export class MetricsStore {
   }
 
   loadMinute(startMs: number, bucket: MetricBucket): void {
+    for (const target of this.#historicalBuckets(startMs)) {
+      mergeBucket(target, bucket, this.#allocateHistogram);
+    }
+  }
+
+  #historicalBuckets(atMs: number): MetricBucket[] {
     const now = this.nowMs();
     this.#advance(now);
+    if (!Number.isFinite(atMs) || atMs < 0 || atMs > now) return [];
+    const hour = bucketStart(atMs, hourMs);
     const currentHour = bucketStart(now, hourMs);
-    const hour = bucketStart(startMs, hourMs);
-    if (startMs > this.#currentMinute || hour < currentHour - (hourlySlots - 1) * hourMs) return;
-    mergeBucket(getBucket(this.#hours, hour), bucket, this.#allocateHistogram);
-    if (startMs >= this.#currentMinute - (minuteSlots - 1) * minuteMs) {
-      mergeBucket(getBucket(this.#minutes, startMs), bucket, this.#allocateHistogram);
+    if (hour < currentHour - (hourlySlots - 1) * hourMs) return [];
+    const targets = [getBucket(this.#hours, hour)];
+    const minute = bucketStart(atMs, minuteMs);
+    if (minute >= this.#currentMinute - (minuteSlots - 1) * minuteMs) {
+      targets.push(getBucket(this.#minutes, minute));
     }
+    return targets;
+  }
+
+  #recordChat(buckets: MetricBucket[], role: TrafficRole, observation: ChatObservation): void {
+    if (!buckets.length) return;
+    const chats = buckets.map(bucket => bucket.roles[role].chat);
+    if (observation.started) for (const chat of chats) chat.runs++;
+    if (observation.paths?.length) {
+      for (const path of new Set(observation.paths)) {
+        if (answerPathSet.has(path)) for (const chat of chats) chat.paths[path]++;
+      }
+    }
+    const timing = (name: ChatTiming, ms?: number) => {
+      if (ms !== undefined && Number.isFinite(ms) && ms >= 0 && !this.#capacityReached) {
+        this.#observe(chats.map(chat => timingData(chat.timings, name)), ms);
+      }
+    };
+    timing('firstProgress', observation.firstProgressMs);
+    timing('finalAnswer', observation.finalAnswerMs);
+    for (const phase of workingPhases) timing(phase, observation.phases?.[phase]);
   }
 
   #observe(targets: TimingData[], ms: number): void {

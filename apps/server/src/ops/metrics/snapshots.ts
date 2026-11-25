@@ -9,21 +9,23 @@ const managedName = /^metrics-(0|[1-9]\d*)(?:-([1-9]\d*))?\.jsonl$/;
 const filename = (startMs: number, sequence: number) => `metrics-${startMs}${sequence ? `-${sequence}` : ''}.jsonl`;
 
 type SnapshotFile = {path: string; hourStartMs: number; sequence: number; bytes: number};
-type SnapshotOptions = {maxBytes?: number};
+type SnapshotOptions = {maxBytes?: number; restoreChat?: boolean};
 
 export class MetricsSnapshots {
   readonly #store: MetricsStore;
   readonly #directory: string;
   readonly #maxBytes: number;
+  readonly #restoreChat: boolean;
   #queue = Promise.resolve();
   #lastMaintenance = -1;
   #loaded = false;
   #healthy = false;
 
-  constructor(store: MetricsStore, directory: string, {maxBytes = defaultSnapshotCapBytes}: SnapshotOptions = {}) {
+  constructor(store: MetricsStore, directory: string, {maxBytes = defaultSnapshotCapBytes, restoreChat = true}: SnapshotOptions = {}) {
     this.#store = store;
     this.#directory = directory;
     this.#maxBytes = maxBytes;
+    this.#restoreChat = restoreChat;
     store.enableSnapshots();
   }
 
@@ -49,7 +51,7 @@ export class MetricsSnapshots {
           if (!snapshot || snapshot.hourStartMs !== file.hourStartMs) continue;
           for (const [startMs, bucket] of snapshot.minutes) {
             if (startMs % minuteMs === 0 && bucketStart(startMs, hourMs) === file.hourStartMs) {
-              this.#store.loadMinute(startMs, decodeBucket(bucket));
+              this.#store.loadMinute(startMs, decodeBucket(bucket, this.#restoreChat));
             }
           }
         }

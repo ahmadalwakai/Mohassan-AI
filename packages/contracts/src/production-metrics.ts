@@ -49,4 +49,4 @@ export type MetricsView = {
   hourlyRoutes: {startMs: number; endMs: number; roles: Record<TrafficRole, RouteMetrics[]>}[];
 };
 
-export type ProductionMetricsResponse = MetricsView & {enabled: boolean; snapshotAvailable: boolean};
+export type ProductionMetricsResponse = MetricsView & {enabled: boolean; snapshotAvailable: boolean; chatAvailable: boolean};

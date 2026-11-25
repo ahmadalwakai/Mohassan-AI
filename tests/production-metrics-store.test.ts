@@ -75,6 +75,46 @@ describe('rolling metrics store', () => {
     expect(store.view().windows.week.roles.member.routes).toEqual([]);
   });
 
+  it('places persisted chat in the original rolling windows and ignores future and expired events', () => {
+    const minute = base + 15 * minuteMs;
+    const now = minute + 5;
+    const store = new MetricsStore({now: () => now});
+    store.recordPersistedChat('owner', {started: true, firstProgressMs: 10}, minute - 59 * minuteMs + 1);
+    store.recordPersistedChat('owner', {finalAnswerMs: 40, paths: ['web']}, minute + 2);
+    store.recordPersistedChat('owner', {started: true, firstProgressMs: 13, phases: {planning: 32}}, base - 23 * hourMs + 1);
+    store.recordPersistedChat('member', {started: true, firstProgressMs: 60, paths: ['local_computation']}, base - 167 * hourMs + 1);
+    for (const invalid of [base - 167 * hourMs - 1, now + 1, NaN, Infinity]) {
+      store.recordPersistedChat('member', {started: true, firstProgressMs: 70}, invalid);
+    }
+
+    const {windows} = store.view();
+    expect(windows.hour.roles.owner.chat).toMatchObject({
+      runs: 1, firstProgress: {samples: 1}, finalAnswer: {samples: 1}, phases: {}, paths: {web: 1},
+    });
+    expect(windows.day.roles.owner.chat).toMatchObject({
+      runs: 2, firstProgress: {samples: 2}, phases: {planning: {samples: 1}},
+    });
+    expect(windows.day.roles.member.chat.runs).toBe(0);
+    expect(windows.week.roles.member.chat).toMatchObject({
+      runs: 1, firstProgress: {samples: 1}, paths: {local_computation: 1},
+    });
+  });
+
+  it('shares the histogram budget between persisted chat and live requests', () => {
+    const store = new MetricsStore({now: () => base, memoryCapBytes: 3 * histogramBytes});
+    store.recordRequest('owner', route, 200, 11);
+    store.recordPersistedChat('owner', {started: true, firstProgressMs: 20}, base - hourMs);
+    store.recordPersistedChat('member', {started: true, firstProgressMs: 20, paths: ['memory']}, base);
+
+    const view = store.view();
+    expect(view.countingOnly).toBe(true);
+    expect(view.windows.hour.roles.owner.routes[0].latency.samples).toBe(1);
+    expect(view.windows.day.roles.owner.chat.firstProgress.samples).toBe(1);
+    expect(view.windows.hour.roles.member.chat).toMatchObject({
+      runs: 1, firstProgress: {samples: 0, p99: null}, paths: {memory: 1},
+    });
+  });
+
   it('reduces collection to counts when the histogram cap would be exceeded and recovers on rollover', () => {
     let now = base;
     const store = new MetricsStore({now: () => now, memoryCapBytes: 2 * histogramBytes});
@@ -150,6 +190,37 @@ describe('hourly metrics snapshots', () => {
       const segment = await readFile(join(directory, `metrics-${base + hourMs}${suffix}.jsonl`), 'utf8');
       expect(segment.trimEnd().split('\n').map(line => JSON.parse(line))).toHaveLength(1);
     }
+  });
+
+  it('can ignore prototype chat while restoring route and resource numbers, and never archives persisted chat', async () => {
+    const directory = await tempDirectory();
+    const now = base + 2 * minuteMs;
+    const prototype = new MetricsStore({now: () => now});
+    const legacySnapshots = new MetricsSnapshots(prototype, directory);
+    prototype.recordChat('owner', {started: true, firstProgressMs: 14, paths: ['web']});
+    prototype.recordRequest('member', route, 503, 18);
+    prototype.recordResources({rssBytes: 8210});
+    await legacySnapshots.flush({includeCurrentHour: true});
+
+    const store = new MetricsStore({now: () => now});
+    const snapshots = new MetricsSnapshots(store, directory, {restoreChat: false});
+    await snapshots.load();
+    const {hour} = store.view().windows;
+    expect(hour.roles.owner.chat).toMatchObject({runs: 0, firstProgress: {samples: 0}, paths: {web: 0}});
+    expect(hour.roles.member.routes[0]).toMatchObject({count: 1, statusClasses: {'5xx': 1}});
+    expect(hour.resources.rssBytes).toEqual({samples: 1, average: 8210, max: 8210});
+
+    store.recordPersistedChat('owner', {started: true, firstProgressMs: 60, paths: ['browser']}, now - minuteMs);
+    expect(store.view().windows.hour.roles.owner.chat).toMatchObject({runs: 1, paths: {web: 0, browser: 1}});
+    expect(store.pendingHours).toEqual([]);
+    store.recordRequest('owner', route, 200, 11);
+    await snapshots.flush({includeCurrentHour: true});
+
+    const restored = new MetricsStore({now: () => now});
+    await new MetricsSnapshots(restored, directory).load();
+    expect(restored.view().windows.hour.roles.owner.chat).toMatchObject({
+      runs: 1, firstProgress: {samples: 1}, paths: {web: 1, browser: 0},
+    });
   });
 
   it('ignores a torn line and resumes appending after it on restart', async () => {

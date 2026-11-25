@@ -1,5 +1,7 @@
 import { delimiter, resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
+import type { Kysely } from 'kysely';
+import { registerChatMetricsRefresh } from './chat-refresh.js';
 import { metricsCsv } from './csv.js';
 import { METRICS_CSV_PATH, METRICS_PATH, registerRequestMetrics } from './request.js';
 import { sampleProcessResources } from './resources.js';
@@ -17,10 +19,12 @@ export async function registerProductionMetrics(
   app: FastifyInstance,
   production: boolean,
   cachedRole: Parameters<typeof registerRequestMetrics>[1],
+  db: Kysely<any>,
 ) {
   const { enabled, directory } = productionMetricsSettings(production, process.env);
   const store = new MetricsStore();
-  const snapshots = enabled ? new MetricsSnapshots(store, directory) : undefined;
+  const snapshots = enabled ? new MetricsSnapshots(store, directory, { restoreChat: false }) : undefined;
+  const chatAvailable = enabled ? registerChatMetricsRefresh(app, db, store) : () => false;
   if (snapshots) {
     await snapshots.load();
     registerRequestMetrics(app, cachedRole, (role, route, status, durationMs) => store.recordRequest(role, route, status, durationMs));
@@ -46,7 +50,7 @@ export async function registerProductionMetrics(
   }
 
   function view() {
-    return { ...store.view(), enabled, snapshotAvailable: snapshots?.healthy ?? false };
+    return { ...store.view(), enabled, snapshotAvailable: snapshots?.healthy ?? false, chatAvailable: chatAvailable() };
   }
 
   return {
@@ -58,12 +62,5 @@ export async function registerProductionMetrics(
         .header('Content-Disposition', 'attachment; filename="production-metrics.csv"')
         .send(metricsCsv(view())));
     },
-    recordChat: enabled ? (...args: Parameters<MetricsStore['recordChat']>) => {
-      try {
-        store.recordChat(...args);
-      } catch {
-        // A metrics write must never affect chat publication.
-      }
-    } : undefined,
   };
 }

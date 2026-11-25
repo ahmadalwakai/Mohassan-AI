@@ -2,7 +2,7 @@ import type { Latency, ProductionMetricsResponse } from '@mohassan/contracts';
 
 const columns = [
   'window', 'start_utc', 'end_utc', 'role', 'section', 'name', 'count', 'samples', 'p50_ms', 'p90_ms', 'p99_ms',
-  '1xx', '2xx', '3xx', '4xx', '5xx', 'average', 'max', 'enabled', 'counting_only', 'snapshot_available',
+  '1xx', '2xx', '3xx', '4xx', '5xx', 'average', 'max', 'enabled', 'counting_only', 'snapshot_available', 'chat_available',
 ] as const;
 type Row = Partial<Record<typeof columns[number], string | number | boolean | null>>;
 
@@ -15,7 +15,7 @@ function field(value: Row[keyof Row]) {
 
 export function metricsCsv(view: ProductionMetricsResponse) {
   const output = [columns.join(',')];
-  const flags = { enabled: view.enabled, counting_only: view.countingOnly, snapshot_available: view.snapshotAvailable };
+  const flags = { enabled: view.enabled, counting_only: view.countingOnly, snapshot_available: view.snapshotAvailable, chat_available: view.chatAvailable };
   function write(row: Row) {
     const values = { ...flags, ...row };
     output.push(columns.map(column => field(values[column])).join(','));

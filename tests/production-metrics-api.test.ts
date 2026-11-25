@@ -44,7 +44,7 @@ async function fixture(enabled: boolean) {
     const setup = await app.inject({ method: 'POST', url: '/api/setup', headers: headers(), payload: { ...owner, setupToken } });
     expect(setup.statusCode).toBe(200);
     const ownerHeaders = await login(owner);
-    return { app, dispose, snapshots, headers, ownerHeaders, login };
+    return { app, db: application.database.db, dispose, snapshots, headers, ownerHeaders, login };
   } catch (error) {
     await dispose();
     throw error;
@@ -91,14 +91,20 @@ it('keeps JSON and CSV owner-only and records request and chat data without priv
     const submitted = await app.inject({ method: 'POST', url: `/api/chat/conversations/${conversationId}/messages?${query}=hidden`,
       remoteAddress: ip, headers: { ...ownerHeaders, 'x-metrics-private-fixture': email }, payload: { text: message } });
     expect(submitted.statusCode).toBe(200);
+    const visibility = await f.db.selectFrom('chat_events').select(['run_id', 'data']).where('conversation_id', '=', conversationId)
+      .where('kind', '=', 'visibility').executeTakeFirstOrThrow();
+    expect(visibility.data).toMatchObject({ firstProgressAtMs: expect.any(Number) });
 
     let measured = first;
-    for (let attempt = 0; attempt < 40; attempt++) {
+    for (let attempt = 0; attempt < 50; attempt++) {
       measured = await app.inject({ url: '/api/ops/metrics', headers: ownerHeaders });
-      if (measured.json<ProductionMetricsResponse>().windows.hour.roles.owner.chat.finalAnswer.samples > 0) break;
-      await delay(50);
+      const report = measured.json<ProductionMetricsResponse>();
+      if (report.chatAvailable && report.windows.hour.roles.owner.chat.finalAnswer.samples > 0) break;
+      await delay(500);
     }
-    const hour = measured.json<ProductionMetricsResponse>().windows.hour;
+    const report = measured.json<ProductionMetricsResponse>();
+    expect(report.chatAvailable).toBe(true);
+    const hour = report.windows.hour;
     expect(hour.roles.owner.chat).toMatchObject({ runs: 1, firstProgress: { samples: 1 }, finalAnswer: { samples: 1 },
       paths: { local_computation: 1 } });
     expect(Object.values(hour.roles.owner.chat.phases).some(phase => phase.samples > 0)).toBe(true);
@@ -124,14 +130,14 @@ it('keeps JSON and CSV owner-only and records request and chat data without priv
     const disk = (await Promise.all(files.map(file => readFile(join(f.snapshots, file), 'utf8')))).join('');
     expect(disk).toContain('/api/chat/conversations/:id/messages');
     for (const source of [measured.body, csv.body, disk]) {
-      for (const privateValue of [query, message, email, ip, uuid, conversationId, memberId, owner.email, member.email, token]) {
+      for (const privateValue of [query, message, email, ip, uuid, conversationId, String(visibility.run_id), memberId, owner.email, member.email, token]) {
         expect(source).not.toContain(privateValue);
       }
     }
   } finally {
     await f.dispose();
   }
-});
+}, 60_000);
 
 it('turns off collection and disk writes with the environment flag', async () => {
   expect(productionMetricsSettings(true, {}).enabled).toBe(true);
@@ -144,13 +150,19 @@ it('turns off collection and disk writes with the environment flag', async () =>
   const f = await fixture(false);
   try {
     expect((await f.app.inject({ url: '/api/access', headers: f.ownerHeaders })).statusCode).toBe(200);
+    const created = await f.app.inject({ method: 'POST', url: '/api/chat/conversations', headers: f.ownerHeaders,
+      payload: { goal: 'احسب 23 + 49' } });
+    expect(created.statusCode).toBe(200);
+    const visibility = await f.db.selectFrom('chat_events').select('data')
+      .where('conversation_id', '=', created.json<{ id: string }>().id).where('kind', '=', 'visibility').executeTakeFirstOrThrow();
+    expect(visibility.data).not.toHaveProperty('firstProgressAtMs');
     const result = await f.app.inject({ url: '/api/ops/metrics', headers: f.ownerHeaders });
     expect(result.statusCode).toBe(200);
-    expect(result.json<ProductionMetricsResponse>()).toMatchObject({ enabled: false, snapshotAvailable: false,
+    expect(result.json<ProductionMetricsResponse>()).toMatchObject({ enabled: false, snapshotAvailable: false, chatAvailable: false,
       windows: { hour: { roles: { owner: { routes: [], chat: { runs: 0 } }, member: { routes: [] } } } } });
     await f.app.close();
     await expect(readdir(f.snapshots)).rejects.toMatchObject({ code: 'ENOENT' });
   } finally {
     await f.dispose();
   }
-});
+}, 60_000);
