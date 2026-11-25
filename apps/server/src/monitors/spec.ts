@@ -62,7 +62,7 @@ function numericCondition(text: string): Condition | undefined {
   return { kind: CROSSING.test(text) ? 'crossing' : 'threshold', direction: below ? 'below' : 'above', value, hysteresis };
 }
 
-function pageWatch(need: MonitorNeed, body: string, url: string): Watch | null {
+function pageWatch(need: MonitorNeed, body: string, url: string, allowLabeledNumber: boolean): Watch | null {
   const language = need.language;
   const anchorMatch = ANCHOR.exec(need.text);
   const label = LABEL.exec(need.text)?.[1].trim();
@@ -77,7 +77,7 @@ function pageWatch(need: MonitorNeed, body: string, url: string): Watch | null {
   const numeric = numericCondition(body);
   const price = PRICE.test(body) || Boolean(need.sourceText && PRICE.test(monitorMatchText(need.sourceText)));
   const numberLabel = label ?? (price ? 'price' : undefined);
-  if (numeric || price && (CHANGE.test(body) || !PERFECT_STATUS.test(body))) {
+  if (numeric || (price || allowLabeledNumber && label) && (CHANGE.test(body) || !PERFECT_STATUS.test(body))) {
     const subject = label ?? (price ? say(language, 'السعر', 'Price') : say(language, 'القيمة', 'Value'));
     return watched({ kind: 'number', ...(numberLabel && { label: numberLabel }) }, numeric ?? { kind: 'change' }, subject);
   }
@@ -215,19 +215,25 @@ function deadline(text: string): string | undefined {
   return value.toISOString();
 }
 
-export function generateMonitorSpec(need: MonitorNeed, now = new Date()): MonitorSpec | null {
+export function generateMonitorSpec(need: MonitorNeed, now = new Date(), allowLabeledNumber = false): MonitorSpec | null {
   const body = monitorMatchText(need.text.replace(ADDRESS, ' '));
-  const watch = need.sourceUrl ? pageWatch(need, body, need.sourceUrl) : searchWatch(need) ?? (RUN.test(body) ? runWatch(need, body)
+  const watch = need.sourceUrl ? pageWatch(need, body, need.sourceUrl, allowLabeledNumber) : searchWatch(need) ?? (RUN.test(body) ? runWatch(need, body)
     : WEATHER_TOPIC.test(body) ? weatherWatch(need, body) : CURRENCY_TOPIC.test(body) || monitorCurrencyPair(body) ? currencyWatch(need, body) : null);
   if (!watch) return null;
-  const deadlineAt = deadline(body);
-  if (deadlineAt && Date.parse(deadlineAt) <= now.getTime()) return null;
-  const urgency = /\b(?:urgent(?:ly)?|as soon as|immediately)\b|(?<!\p{L})(?:عاجل|بسرعه|فورا|بمجرد)(?!\p{L})/u.test(body) ? 'urgent' : 'normal';
-  const timing = monitorTiming(watch.source.kind, urgency, { now, deadline: deadlineAt,
-    lifetimeMs: duration(LIFETIME.exec(body)), requestedIntervalMs: duration(INTERVAL.exec(body)) });
+  const timing = monitorTimingForNeed(watch.source.kind, need, now);
+  if (!timing) return null;
   const parsed = MonitorSpecSchema.safeParse({ ...watch, timing, language: need.language,
     message: say(need.language, `تحقّق شرط المراقبة لـ «${watch.title}».`, `The monitoring condition was met for ${watch.title}.`) });
   return parsed.success ? parsed.data : null;
+}
+
+export function monitorTimingForNeed(source: Source['kind'], need: Pick<MonitorNeed, 'text'>, now: Date) {
+  const body = monitorMatchText(need.text.replace(ADDRESS, ' '));
+  const deadlineAt = deadline(body);
+  if (deadlineAt && Date.parse(deadlineAt) <= now.getTime()) return null;
+  const urgency = /\b(?:urgent(?:ly)?|as soon as|immediately)\b|(?<!\p{L})(?:عاجل|بسرعه|فورا|بمجرد)(?!\p{L})/u.test(body) ? 'urgent' : 'normal';
+  return monitorTiming(source, urgency, { now, deadline: deadlineAt,
+    lifetimeMs: duration(LIFETIME.exec(body)), requestedIntervalMs: duration(INTERVAL.exec(body)) });
 }
 
 export function monitorNeedReply(need: MonitorNeed, spec?: MonitorSpec | null): string {

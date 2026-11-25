@@ -5,6 +5,7 @@ import type { MonitorMetricEvent } from '../ops/metrics/monitor-events.js';
 import { monitorHealth, monitorV2Trigger, publishMonitorNotice } from './delivery.js';
 import { evaluateMonitorV2, monitorV2DigestDueAt, monitorV2SourceSpec } from './evaluation-v2.js';
 import { MONITOR_LIMITS, monitorTiming } from './schedule.js';
+import { GITHUB_API_HOST } from './sources/github-network.js';
 import { learnMonitorSchedule, nextPredictiveMonitorCheck } from './schedule-v2.js';
 import type { MonitorRow } from './store.js';
 import type { MonitorReadOptions } from './sources.js';
@@ -17,12 +18,13 @@ export function monitorSourceSpec(spec: MonitorSpec, index: number): MonitorSpec
   return monitorV2SourceSpec(spec, monitorV2Targets(spec)[index]!);
 }
 
-/** A preview is one logical check, with one reservation per host even across related sources. */
+/** Ordinary previews share a host slot. GitHub budgets every adapter batch separately. */
 export async function prepareMonitorV2Preview(read: Read, spec: MonitorSpec,
   options: MonitorReadOptions): Promise<{ preview: MonitorV2Preview } | { result: Awaited<ReturnType<Read>> }> {
   const { reserveHost } = options;
   const reservations = new Map<string, Promise<number | null>>();
   const reserve: MonitorReadOptions['reserveHost'] = reserveHost && ((host, delay) => {
+    if (host === GITHUB_API_HOST && delay !== undefined) return reserveHost(host, delay);
     const existing = reservations.get(host);
     if (existing) return existing;
     const reservation = reserveHost(host, delay);
@@ -100,7 +102,7 @@ export async function finishV2Check(tx: Kysely<any>, row: MonitorRow, role: Work
   state.cursor = nextIndex;
   const lastReads = state.lastReads ??= targets.map(() => null);
   lastReads[index] = at.getTime();
-  const notice = pause ? monitorHealth(row, result.kind as 'clarify' | 'unsafe-target' | 'unreachable' | 'missing', at)
+  const notice = pause ? monitorHealth(row, unsafe ? result.reason ?? result.kind : result.kind as 'clarify' | 'unreachable' | 'missing', at)
     : evaluation.notice ? monitorV2Trigger(row, evaluation.notice, at) : undefined;
   const receipt = notice && canDeliver ? await publishMonitorNotice(tx, row, role, notice, at, observe) : undefined;
   if (pause) observe({ kind: 'pause', reason: result.kind === 'unreachable' ? 'unreachable' : 'missing' });

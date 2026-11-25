@@ -5,7 +5,9 @@ import { monitorOwnerIds, type EnabledMonitorRollout } from '../monitors-phase1/
 import { monitorHealth, monitorTrigger, monitorV2Trigger, publishMonitorNotice } from './delivery.js';
 import { evaluateMonitor } from './evaluation.js';
 import { evaluateMonitorV2, monitorV2DigestDueAt } from './evaluation-v2.js';
-import { smartMonitorsV2Enabled } from './flag.js';
+import { monitorSourceFlags, smartMonitorsV2Enabled } from './flag.js';
+import { GITHUB_API_HOST } from './sources/github-network.js';
+import { monitorDisabledSourcePredicates } from './sources/rollout.js';
 import { finishV2Check, monitorSourceSpec, v2ReadState } from './v2-runtime.js';
 import { MONITOR_LIMITS, nextMonitorBudgetDay, nextMonitorCheck } from './schedule.js';
 import { createMonitorStore, spendMonitorBudget, type MonitorRow, type MonitorStore } from './store.js';
@@ -40,6 +42,9 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
 } = {}) {
   const store = ports.store ?? createMonitorStore(db, { now, rollout: ports.rollout, v2 });
   const ownersOnly = ports.rollout === 'owner';
+  const sourceFlags = monitorSourceFlags();
+  const disabled = monitorDisabledSourcePredicates('spec', sourceFlags);
+  const disabledAliased = monitorDisabledSourcePredicates('m.spec', sourceFlags);
   let timer: NodeJS.Timeout | undefined;
   let running: Promise<void> | undefined;
   let controller = new AbortController();
@@ -52,6 +57,8 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
         .where('expires_at', '>', at).where('next_check_at', '<=', at)
         .where(eb => eb.or([eb('lease_until', 'is', null), eb('lease_until', '<=', at)]))
       if (!v2) due = due.where(sql<boolean>`spec->'v2' IS NULL`);
+      else for (const predicate of disabled) due = due.where(predicate);
+      if (v2 && !sourceFlags.visual) due = due.where(sql<boolean>`NOT coalesce(v2_state->'caches' @> '[{"anchor":{"origin":"visual"}}]'::jsonb, false)`);
       const row = await due.orderBy('next_check_at').orderBy('id').limit(1).forUpdate().skipLocked().executeTakeFirst() as MonitorRow | undefined;
       if (!row) return;
       const update = tx.updateTable('smart_monitors').where('id', '=', row.id);
@@ -153,6 +160,7 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
         .select(['m.id']).where('m.pending_notice', 'is not', null).where('m.notice_due_at', '<=', at)
         .$if(ownersOnly, query => query.where('m.user_id', 'in', monitorOwnerIds(tx)));
       if (!v2) due = due.where(sql<boolean>`m.spec->'v2' IS NULL`);
+      else for (const predicate of disabledAliased) due = due.where(predicate);
       const candidate = await due.orderBy('m.notice_due_at').orderBy('m.id').limit(1).forNoKeyUpdate('c').skipLocked().executeTakeFirst();
       if (!candidate) return false;
       const row = await tx.selectFrom('smart_monitors').selectAll().where('id', '=', candidate.id)
@@ -168,10 +176,11 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
 
   async function publishDueDigest(at: Date): Promise<boolean> {
     return monitorMetricTransaction(db, async (tx, observe) => {
-      const candidate = await tx.selectFrom('smart_monitors as m').innerJoin('chat_conversations as c', 'c.id', 'm.conversation_id')
+      let due = tx.selectFrom('smart_monitors as m').innerJoin('chat_conversations as c', 'c.id', 'm.conversation_id')
         .select(['m.id']).where('m.v2_digest_due_at', '<=', at)
-        .$if(ownersOnly, query => query.where('m.user_id', 'in', monitorOwnerIds(tx)))
-        .orderBy('m.v2_digest_due_at').orderBy('m.id')
+        .$if(ownersOnly, query => query.where('m.user_id', 'in', monitorOwnerIds(tx)));
+      for (const predicate of disabledAliased) due = due.where(predicate);
+      const candidate = await due.orderBy('m.v2_digest_due_at').orderBy('m.id')
         .limit(1).forNoKeyUpdate('c').skipLocked().executeTakeFirst();
       if (!candidate) return false;
       const row = await tx.selectFrom('smart_monitors').selectAll().where('id', '=', candidate.id)
@@ -208,7 +217,8 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
       .$if(ownersOnly, query => query.where('user_id', 'in', monitorOwnerIds(db)))
       .where('expires_at', '<=', at).orderBy('expires_at').limit(MONITOR_LIMITS.workPerPoll).forUpdate().skipLocked();
     await db.updateTable('smart_monitors').set(expire).where('id', 'in', pendingExpiry).execute();
-    const staleHosts = db.selectFrom('smart_monitor_hosts').select('host_key').where('eligible_at', '<=', at)
+    const hostCleanupAt = sourceFlags.github ? sql<Date>`least(${at}::timestamptz, CURRENT_TIMESTAMP)` : at;
+    const staleHosts = db.selectFrom('smart_monitor_hosts').select('host_key').where('eligible_at', '<=', hostCleanupAt)
       .orderBy('eligible_at').limit(MONITOR_LIMITS.workPerPoll).forUpdate().skipLocked();
     await db.deleteFrom('smart_monitor_hosts').where('host_key', 'in', staleHosts).execute();
   }
@@ -233,8 +243,8 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
         const signal = AbortSignal.any([shutdown, AbortSignal.timeout(MONITOR_LIMITS.readTimeoutMs)]);
         let result: ReadResult;
         let hostAdmitted = false;
-        const reserveHost = async (host: string) => {
-          const retryAt = await store.reserveHost(host);
+        const reserveHost = async (host: string, minimumMs?: number) => {
+          const retryAt = await store.reserveHost(host, sourceFlags.github && host === GITHUB_API_HOST ? minimumMs : undefined);
           hostAdmitted ||= retryAt === null;
           return retryAt;
         };

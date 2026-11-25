@@ -11,11 +11,12 @@ import { addMonitorCardAlerts, conversationMonitorAlerts } from '../monitors-pha
 import { detectMonitorNeed, monitorHistoryMayMatter, safeMonitorRequest, type MonitorNeed } from './detection.js';
 import { monitorAccountAllowed, type EnabledMonitorRollout } from '../monitors-phase1/rollout.js';
 import { monitorContainsCredentials } from './credential-privacy.js';
-import { monitorRollout, smartMonitorsV2Enabled } from './flag.js';
+import { monitorRollout, monitorSourceFlags, smartMonitorsV2Enabled } from './flag.js';
 import { migrateMonitors } from './migration.js';
 import { observePage } from './page.js';
 import { createMonitorRuntime } from './runtime.js';
 import { monitorTiming } from './schedule.js';
+import { detectGithubAnswerOffer, detectGithubMonitorNeed, githubIntentMayMatter } from './sources/github-intent.js';
 import { createMonitorReader, type MonitorReadResult } from './sources.js';
 import { generateMonitorSpec, monitorNeedReply } from './spec.js';
 import { createMonitorStore, MonitorError } from './store.js';
@@ -25,7 +26,7 @@ import type { MonitorV2Preview } from './v2-runtime-types.js';
 import { prepareMonitorV2Preview } from './v2-runtime.js';
 import { generateMonitorV2Spec } from './v2-spec.js';
 
-type Configuration = Pick<CommandChatConfig, 'networkPolicy' | 'searchProvider'>;
+type Configuration = Pick<CommandChatConfig, 'networkPolicy' | 'searchProvider' | 'imageReader'>;
 type SourceValue = Extract<MonitorReadResult, { kind: 'value' }>;
 export interface PreparedMonitorTurn {
   text: string;
@@ -66,7 +67,9 @@ function eligible(text: string) {
 
 function scopedSource(need: MonitorNeed, spec: Pick<MonitorSpec, 'source'>) {
   const scope = assessRequestScope(need.text);
-  if (spec.source.kind === 'page') return requestCapabilityAllowed(scope.constraints ?? null, 'browser_navigation');
+  if (spec.source.kind === 'page' || spec.source.kind === 'pdf' || spec.source.kind === 'visual' || spec.source.kind === 'github') {
+    return requestCapabilityAllowed(scope.constraints ?? null, 'browser_navigation');
+  }
   if (spec.source.kind === 'search') {
     return requestCapabilityAllowed(scope.constraints ?? null, 'public_search')
       && reviewPublicProjection(`Search for ${spec.source.query}`, spec.source.query).eligible;
@@ -78,7 +81,8 @@ export async function legacyMonitorHandledBySmartChat(db: Kysely<any>, ownerId: 
   const control = monitorChat(db);
   if (!control || !await control.availableTo(ownerId)) return false;
   return monitoringRequest(matchText(text)) || detectMonitorNeed({ text })?.kind === 'explicit'
-    || control.v2 && Boolean(parseMonitorManagement(text));
+    || control.v2 && Boolean(parseMonitorManagement(text))
+    || monitorSourceFlags().github && detectGithubMonitorNeed(text)?.kind === 'explicit';
 }
 
 function blockedSource(turn: BlockedTurn) {
@@ -101,7 +105,8 @@ function blockedSource(turn: BlockedTurn) {
 function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: EnabledMonitorRollout) {
   const network = new SafeNetwork({ resolver: config.networkPolicy?.resolver, userAgent: config.networkPolicy?.userAgent });
   const searchProvider = config.searchProvider instanceof SearchEngine ? undefined : config.searchProvider;
-  const reader = createMonitorReader({ db, network, searchProvider });
+  const flags = monitorSourceFlags();
+  const reader = createMonitorReader({ db, network, searchProvider, flags, visual: { imageReader: config.imageReader } });
   const store = createMonitorStore(db, { rollout });
   const runtime = createMonitorRuntime(db, { read: reader.read, store, rollout });
   const availableTo = (ownerId: string, tx = db) => monitorAccountAllowed(tx, ownerId, rollout);
@@ -121,12 +126,16 @@ function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: Enab
   };
 
   async function prepare(need: MonitorNeed, turn: Turn, blocked = false): Promise<PreparedMonitorTurn | null> {
-    const spec = v2 ? generateMonitorV2Spec(need) : generateMonitorSpec(need);
+    const spec = v2 ? generateMonitorV2Spec(need, new Date(), flags) : generateMonitorSpec(need);
     const sources = spec && (v2 ? monitorV2Targets(spec) : [spec]);
     if (!spec || !sources?.every(source => scopedSource(need, source))) {
+      if (!blocked && flags.github && githubIntentMayMatter(need.text)) {
+        return { text: localized(need.language, 'حدّد مستودع GitHub العام بصيغة owner/repo ورقم الطلب أو اسم الفرع عند الحاجة.',
+          'Specify the public GitHub repository as owner/repo and include the pull request number or branch if needed.') };
+      }
       return blocked ? null : { text: monitorNeedReply(need) };
     }
-    for (const { source } of sources) if (source.kind === 'page') {
+    for (const { source } of sources) if ('url' in source) {
       try { network.validate(source.url); }
       catch {
         return need.kind === 'explicit' ? { text: localized(need.language, 'أرسل رابط HTTPS عامًّا يمكن قراءته.', 'Send a readable public HTTPS address.') } : null;
@@ -158,7 +167,9 @@ function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: Enab
     if (preview.kind !== 'value') {
       return !blocked ? { text: preview.kind === 'deferred'
         ? localized(need.language, 'للمصدر فترة انتظار بين الفحوص. أعد طلب المراقبة بعد قليل لمراجعة القيمة الحالية.', 'This source has a minimum interval between reads. Ask again shortly so I can show you its current value.')
-        : localized(need.language, 'تعذّرت قراءة القيمة الحالية. تحقّق من الرابط العام أو حدّد الجزء المطلوب مراقبته.', 'I couldn’t read the current value. Check the public address or specify the part you want watched.') } : null;
+        : preview.kind === 'unsafe-target' && preview.reason === 'visual-unreadable'
+          ? localized(need.language, 'تعذّرت قراءة الصورة بثقة كافية. حدّد الجزء الذي يظهر فيه الرقم بوضوح.', 'I couldn’t read the image with enough confidence. Specify the region where the number is clearly visible.')
+          : localized(need.language, 'تعذّرت قراءة القيمة الحالية. تحقّق من الرابط العام أو حدّد الجزء المطلوب مراقبته.', 'I couldn’t read the current value. Check the public address or specify the part you want watched.') } : null;
     }
     if (blocked && (preview.observation.value === 'reachable' || preview.observation.value === 'published')) return null;
     const note = monitorNeedReply(need, spec);
@@ -186,13 +197,16 @@ function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: Enab
           return prepareMonitorManagement(store, turn.ownerId, turn.conversationId, management);
         }
       }
-      if (!monitorHistoryMayMatter(turn.text) || !eligible(turn.text)) return null;
+      const github = flags.github && githubIntentMayMatter(turn.text);
+      const githubReply = flags.github && /^(?:https:\/\/github\.com\/\S+|[a-z\d-]+\/[a-z\d_.-]+)$/iu.test(turn.text.trim());
+      if ((!github && !githubReply && !monitorHistoryMayMatter(turn.text)) || !eligible(turn.text)) return null;
       const messages = await db.selectFrom('chat_messages as m').innerJoin('chat_conversations as c', 'c.id', 'm.conversation_id')
         .select(['m.role', 'm.text']).where('c.id', '=', turn.conversationId).where('c.owner_id', '=', turn.ownerId)
         .orderBy('m.created_at', 'desc').orderBy('m.id', 'desc').limit(13).execute();
       const latest = messages.findIndex(message => message.role === 'user' && message.text === turn.text);
       if (latest >= 0) messages.splice(latest, 1);
-      const need = detectMonitorNeed({ text: turn.text, history: messages.reverse() });
+      const history = messages.reverse();
+      const need = ((github || githubReply) && detectGithubMonitorNeed(turn.text, history)) || detectMonitorNeed({ text: turn.text, history });
       return need && (!v2 || need.kind === 'explicit') ? prepare(need, turn) : null;
     },
     async forBlockedTurn(turn: BlockedTurn) {
@@ -204,15 +218,20 @@ function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: Enab
     },
     async publishAnswerOffer(tx: Kysely<any>, turn: AnswerTurn, answer: string) {
       if (!v2 || !ready || !await availableTo(turn.ownerId, tx)) return '';
-      const offer = detectMonitorAnswerOffer(turn.text, answer, turn.pages);
+      const offer = (flags.github && detectGithubAnswerOffer(turn.text, answer, turn.pages))
+        || detectMonitorAnswerOffer(turn.text, answer, turn.pages);
       if (!offer || monitorContainsCredentials(turn.text) || monitorContainsCredentials(offer.excerpt)) return '';
       const { ownerId, conversationId } = turn;
       const { language, url, title } = offer;
-      const note = localized(language, 'أتريد أن أراقب هذه الصفحة وأنبّهك عندما تتغيّر الحالة؟', 'Would you like me to watch this page and let you know when the status changes?');
+      const note = 'source' in offer
+        ? localized(language, 'أتريد أن أراقب هذا المصدر على GitHub وأنبّهك عند تغيّر الحالة؟', 'Would you like me to watch this GitHub source and let you know when the condition is met?')
+        : localized(language, 'أتريد أن أراقب هذه الصفحة وأنبّهك عندما تتغيّر الحالة؟', 'Would you like me to watch this page and let you know when the status changes?');
       const now = new Date();
-      const spec: MonitorSpec = { source: { kind: 'page', url }, read: { kind: 'status', label: offer.label },
-        condition: { kind: 'equals', value: offer.after }, language, title, message: note,
-        timing: monitorTiming('page', 'normal', { now }), v2: { freshnessMs: MONITOR_V2_DEFAULT_FRESHNESS_MS } };
+      const watch = 'source' in offer ? { source: offer.source, read: offer.read, condition: offer.condition }
+        : { source: { kind: 'page', url }, read: { kind: 'status', label: offer.label },
+          condition: { kind: 'equals', value: offer.after } } as const;
+      const spec: MonitorSpec = { ...watch, language, title, message: note,
+        timing: monitorTiming(watch.source.kind, 'normal', { now }), v2: { freshnessMs: MONITOR_V2_DEFAULT_FRESHNESS_MS } };
       const observation = { value: offer.before, excerpt: offer.excerpt, url, observedAt: offer.observedAt ?? now.toISOString() };
       const didOffer = await chatV2.offerOnce(tx, ownerId, conversationId, offer.topic, async () => {
         try {

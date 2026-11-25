@@ -1,4 +1,5 @@
 import { parentPort, workerData } from 'node:worker_threads';
+import { pdfMonitorLine } from './pdf-monitor-layout.mjs';
 
 // Data-only extraction. No viewer, annotation actions, XFA, JavaScript sandbox,
 // network fetch, external font fallback, rendering, or user-controlled asset URLs.
@@ -25,23 +26,37 @@ try {
   if (document.numPages > workerData.limits.pages) throw { code: 'KNOWLEDGE_PDF_PAGE_LIMIT' };
   const parts = [];
   let byteCount = 0;
-  const append = text => {
+  const charge = text => {
     byteCount += Buffer.byteLength(text, 'utf8');
     if (byteCount > workerData.limits.textBytes) throw { code: 'KNOWLEDGE_PDF_TEXT_LIMIT' };
+  };
+  const append = text => {
+    charge(text);
     parts.push(text);
   };
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber++) {
     const page = await document.getPage(pageNumber);
     const reader = page.streamTextContent({ includeMarkedContent: false }).getReader();
+    let line = [];
     try {
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
         for (const item of value.items) {
           if (typeof item.str !== 'string') continue;
-          append(item.str); append(item.hasEOL ? '\n' : ' ');
+          if (workerData.monitorLayout) {
+            charge(item.str); charge(' ');
+            if (item.str) line.push(item);
+            if (item.hasEOL) {
+              parts.push(pdfMonitorLine(line), '\n');
+              line = [];
+            }
+          } else {
+            append(item.str); append(item.hasEOL ? '\n' : ' ');
+          }
         }
       }
+      if (line.length) parts.push(pdfMonitorLine(line));
     } finally { await reader.cancel(new Error('PDF_TEXT_READING_FINISHED')).catch(() => {}); page.cleanup(); }
     append('\n\n');
   }

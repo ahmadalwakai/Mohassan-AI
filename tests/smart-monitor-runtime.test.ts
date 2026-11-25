@@ -458,6 +458,37 @@ describe('durable smart monitor runtime', () => {
     });
   });
 
+  it('pauses a visual monitor without a trigger when the OCR evidence is too weak', async () => {
+    vi.stubEnv('MOHASSAN_MONITORS_ENABLED', '1');
+    vi.stubEnv('MOHASSAN_MONITORS_V2', '1');
+    vi.stubEnv('MOHASSAN_MONITORS_VISUAL', '1');
+    try {
+      const spec = MonitorSpecSchema.parse({ ...pageSpec(now()), source: { ...source, kind: 'visual' }, v2: { freshnessMs: 6 * hour } });
+      const observation = observe(3.75);
+      const read = vi.fn(async (): Promise<MonitorReadResult> => ({
+        kind: 'unsafe-target', confidence: 0.82, reason: 'visual-unreadable', url: source.url,
+      }));
+      const { v2Store, worker, card } = runtimeV2(read);
+      const { id } = await v2Store.propose(member, { conversationId: memberConversation, spec, observation,
+        v2Preview: { samples: [{ index: 0, observation }], caches: [{ url: source.url, anchor: {
+          key: 'crop', origin: 'visual', label: 'Price', pattern: { kind: 'number' }, context: 'price',
+        } }] } });
+      goto((await v2Store.approve(member, id)).nextCheckAt);
+      await worker.runOnce();
+      await worker.runOnce();
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(await card(id)).toMatchObject({ status: 'paused', nextCheckAt: null,
+        note: expect.stringContaining('couldn’t read the watched image with enough confidence') });
+      expect(await events()).toEqual([expect.objectContaining({ monitor_id: id, background_outcome: 'approval' })]);
+      expect(metrics.view().windows.day.monitors).toMatchObject({
+        checks: { attempted: 1, succeeded: 0 }, pauses: { missing: 1 }, delivered: { conversation: 1 },
+      });
+      clock += 3_000;
+      const notices = (await syncNotifications(database.db, member, { tabId: randomUUID(), state: 'visible' }, now())).pending;
+      expect(notices).toEqual([expect.objectContaining({ monitorId: id, runKind: 'run-blocked' })]);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it('resolves ambiguous composite previews one source at a time', async () => {
     const first = pageSpec(now());
     const second = { ...source, url: 'https://second.example.org/shop' };

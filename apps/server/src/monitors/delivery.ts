@@ -30,9 +30,11 @@ export function monitorV2Trigger(row: MonitorRow, notice: MonitorV2Notice, at: D
     message: monitorV2EvidenceMessage(row.spec, notice, row.conversation_id), happenedAt: at.toISOString() };
 }
 
-export function monitorHealth(row: MonitorRow, failure: 'unreachable' | 'missing' | 'unsafe-target' | 'clarify', at: Date): MonitorNotice {
+export function monitorHealth(row: MonitorRow, failure: 'unreachable' | 'missing' | 'unsafe-target' | 'clarify' | 'visual-unreadable', at: Date): MonitorNotice {
   const detail = failure === 'missing'
     ? say(row, 'I lost track of the watched part. It disappeared from the source.', 'فقدتُ أثر الجزء المُراقَب. لم أعد أجده في المصدر.')
+    : failure === 'visual-unreadable'
+      ? say(row, 'I couldn’t read the watched image with enough confidence. Review the region before resuming.', 'تعذّرت قراءة الصورة المُراقَبة بثقة كافية. راجع الجزء المحدّد قبل الاستئناف.')
     : failure === 'unsafe-target'
       ? say(row, 'I couldn’t safely identify the value to watch after the page changed.', 'تعذّر تحديد القيمة التي أراقبها بثقة بعد تغيّر الصفحة.')
       : failure === 'clarify'

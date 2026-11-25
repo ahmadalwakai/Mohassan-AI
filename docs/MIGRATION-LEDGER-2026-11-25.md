@@ -17,7 +17,8 @@
 | 7 | `feat/smart-monitors` | `043_smart_monitors` | — |
 | 8 | #100 | `044_smart_monitors_v2` | — |
 | 9 | #100 | `045_smart_monitor_conversation_controls` | — |
-| 10 | #102 | `047_monitor_alert_feedback` | `044_monitor_alert_feedback` |
+| 10 | #104 | `046_smart_monitor_visual_budget` | — |
+| 11 | #102 | `047_monitor_alert_feedback` | `044_monitor_alert_feedback` |
 
 Startup recognizes each full legacy ID and changes the existing ledger row to its recorded ID inside the migration transaction, preserving the original application timestamp. The notifications upgrade also widens the existing notification kind constraint for reminder delivery. Fresh databases run each migration once. The platform branch starts at `c2a0ff7` and leaves the agent migrations to the agent wave.
 
@@ -30,6 +31,8 @@ Wave 5 runs `041_long_run_checkpoints` through the `042_background_results` star
 `044_smart_monitors_v2` follows `043_smart_monitors`. It adds nullable per-monitor state and a digest due time to `smart_monitors`.
 
 `045_smart_monitor_conversation_controls` follows `044_smart_monitors_v2` and creates `smart_monitor_v2_preferences`, `smart_monitor_v2_offers`, and `smart_monitor_v2_actions`.
+
+`046_smart_monitor_visual_budget` follows `045_smart_monitor_conversation_controls` and creates `smart_monitor_visual_budget` for daily render admission shared across accounts and workers.
 
 `047_monitor_alert_feedback` adds one optional feedback record per account and monitor alert. Startup applies it with monitors off, and deletion of the account or alert cascades to its feedback.
 

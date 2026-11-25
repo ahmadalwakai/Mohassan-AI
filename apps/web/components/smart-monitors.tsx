@@ -48,7 +48,8 @@ function intervalLabel(ms: number, language: Language): string {
 
 function sourceLabel(source: MonitorSpec["source"], language: Language): string {
   switch (source.kind) {
-    case "page": return source.anchor ? `${source.url} · ${source.anchor}` : source.url;
+    case "page": case "pdf": case "visual": return source.anchor ? `${source.url} · ${source.anchor}` : source.url;
+    case "github": return `${source.owner}/${source.repo}${"number" in source.watch ? ` #${source.watch.number}` : "branch" in source.watch ? ` · ${source.watch.branch}` : ""}`;
     case "currency": return `${source.base}/${source.quote}`;
     case "weather": return source.location;
     case "search": return source.query;

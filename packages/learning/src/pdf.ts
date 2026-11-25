@@ -6,7 +6,7 @@ export const PDF_LIMITS = Object.freeze({ bytes: 10_000_000, pages: 100, textByt
 let running = 0;
 
 /** Trusted configuration only. Callers can tighten, never enlarge, the extraction deadline. */
-export interface PdfExtractionOptions { signal?: AbortSignal; timeoutMs?: number; }
+export interface PdfExtractionOptions { signal?: AbortSignal; timeoutMs?: number; monitorLayout?: boolean; }
 
 export async function extractPdfText(bytes: Uint8Array, options: PdfExtractionOptions = {}): Promise<string> {
   if (bytes.byteLength > PDF_LIMITS.bytes) throw new LearningContentError('KNOWLEDGE_SIZE_LIMIT', 'حجم PDF يتجاوز 10 ميغابايت.');
@@ -21,7 +21,7 @@ export async function extractPdfText(bytes: Uint8Array, options: PdfExtractionOp
     // No path or owner credentials enter the worker. The fixed module never runs PDF scripts.
     const data = Uint8Array.from(bytes);
     worker = new Worker(new URL('./pdf-worker.mjs', import.meta.url), {
-      workerData: { bytes: data, limits: { pages: PDF_LIMITS.pages, textBytes: PDF_LIMITS.textBytes } },
+      workerData: { bytes: data, limits: { pages: PDF_LIMITS.pages, textBytes: PDF_LIMITS.textBytes }, monitorLayout: options.monitorLayout === true },
       transferList: [data.buffer], execArgv: [], env: {},
       resourceLimits: { maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: 16, stackSizeMb: 4 },
       stdout: true, stderr: true,

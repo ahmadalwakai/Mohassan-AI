@@ -52,7 +52,7 @@ const platformIds = [
   ['040_member_data_rights', '037_member_data_rights'],
 ] as const;
 const currentIds = [...platformIds.map(([current]) => current), '041_long_run_checkpoints', '042_background_results', '043_smart_monitors',
-  '044_smart_monitors_v2', '045_smart_monitor_conversation_controls', '047_monitor_alert_feedback'];
+  '044_smart_monitors_v2', '045_smart_monitor_conversation_controls', '046_smart_monitor_visual_budget', '047_monitor_alert_feedback'];
 const agentIds = ['035_chat_conversation_review', '036_structured_memory'];
 
 // Ledger registrations in the base startup migrators, retrieved 2026-11-25.

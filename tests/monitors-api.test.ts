@@ -192,6 +192,7 @@ describe('version 2 conversational management and offer settings', () => {
   beforeAll(async () => {
     vi.stubEnv('MOHASSAN_MONITORS_ENABLED', '1');
     vi.stubEnv('MOHASSAN_MONITORS_V2', '1');
+    vi.stubEnv('MOHASSAN_MONITORS_GITHUB', '1');
     application = await createApplication({ ...configuration, browser: { searchProvider: { name: 'monitor fixture', search } } });
     owner = await register(application, 'MonitorV2Owner', 'owner');
     member = await register(application, 'MonitorV2Member', 'member');
@@ -239,6 +240,26 @@ describe('version 2 conversational management and offer settings', () => {
     expect(pending.question).toContain('ملخصًا يوميًا');
     const saved = await send('POST', path, owner, { actionId: pending.id, approved: true });
     expect(saved.json()).toMatchObject({ monitor: { spec: { v2: { delivery: 'daily' } } } });
+  });
+
+  it('offers a GitHub watch only for the grounded topic and writes one proposal', async () => {
+    const db = application.database.db;
+    const controls = monitorChat(db)!;
+    const id = await draft();
+    const url = 'https://github.com/owner/repo/pull/42';
+    const offer = (answer: string, pages = [{ url, text: 'PR 42 is still open.', documentStatus: 200 }]) =>
+      db.transaction().execute(tx => controls.publishAnswerOffer(tx, {
+        ownerId, conversationId: id, runId: randomUUID(), text: 'Has PR 42 in owner/repo merged?', pages,
+      }, answer));
+    expect(await offer('I could not verify PR 42.', [])).toBe('');
+    expect(await offer('PR 43 is open.')).toBe('');
+    expect(await offer('PR 42 is still open.')).toContain('Would you like');
+    expect(await offer('PR 42 is still open.')).toBe('');
+    expect((await controls.view(ownerId, id)).monitorProposal).toMatchObject({
+      status: 'proposed', offer: 'agent-initiated',
+      spec: { source: { kind: 'github', owner: 'owner', repo: 'repo', watch: { kind: 'pull-request', number: 42 } },
+        condition: { kind: 'equals', value: 'merged' } },
+    });
   });
 
   it('publishes one offer per topic and obeys the account setting across conversations', async () => {
