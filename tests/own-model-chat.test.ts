@@ -54,13 +54,17 @@ it('observes both decisions in chat and sends the host quote when model phrasing
     expect(first.messages.at(-1)?.text).not.toContain('Penguins');
     expect(generate).toHaveBeenCalledTimes(1);
     expect(record).toHaveBeenCalledWith(expect.objectContaining({ capability: 'phrasing', outcome: 'rejected', judgeRejected: true }));
-    expect(record).toHaveBeenCalledWith(expect.objectContaining({ capability: 'route-choice', outcome: 'chosen', agreed: false }));
+    await vi.waitFor(() => {
+      expect(record).toHaveBeenCalledWith(expect.objectContaining({ capability: 'route-choice', outcome: 'chosen', agreed: false }));
+    });
 
     await control.send(owner, id, { text: 'And what is its population?' });
     await control.settled(id);
     expect(search).toHaveBeenCalledTimes(2);
     expect((await control.detail(owner, id)).error).toBeNull();
-    expect(record).toHaveBeenCalledWith(expect.objectContaining({ capability: 'follow-up-turn-type', outcome: 'chosen', agreed: true }));
+    await vi.waitFor(() => {
+      expect(record).toHaveBeenCalledWith(expect.objectContaining({ capability: 'follow-up-turn-type', outcome: 'chosen', agreed: true }));
+    });
   } finally {
     await control?.shutdown();
     await database.close();
