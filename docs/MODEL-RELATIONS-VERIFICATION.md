@@ -158,4 +158,71 @@ python3 -B "$bench/latency.py" shadow
 
 The baseline V1 and V2 runners and both receipt validators completed successfully. The baseline launcher exited 2 after writing both receipts because its cleanup script was edited while the launcher was still running. The independent receipt gate exited 0. The corrected launcher completed the later runs.
 
-The same-commit off comparison for end-to-end latency is pending.
+The paired end-to-end latency difference with shadow disabled remains unverified. The scheduling and background timings above come directly from the shadow observations.
+
+## Implementation checks
+
+Root and web typecheck passed with `nice -n 10 npm run typecheck`. The registry listed 47 model entries with `npm run -s models:list`. The inventory health run with `npm run -s models:health` returned six healthy CPU artifacts and 41 absent entries. The Linux runbook records the refusal and arithmetic CLI probes. The following commands exercised the recorded V1 shadow decisions, the isolated worker and the final shadow deadline fix.
+
+```sh
+npm run -s models:shadow-summary -- /workspace/work/model-relations-bench/receipts/shadow/v1-shadow.jsonl
+npm run test -- packages/model-relations/src/runtime.test.ts packages/model-relations/src/cli.test.ts
+npx vitest run packages/model-relations/src/registry.test.ts
+MODEL_WORKER_TEST_PYTHON=/workspace/work/model-relations-pr/python/bin/python npm run test -- packages/model-relations/src/runtime-worker.e2e.test.ts
+python3 -B -m unittest discover -s packages/model-relations/src -p test_encode_input.py
+npm test -- --maxWorkers=1 packages/model-relations/src/manager.test.ts tests/model-relations-shadow.test.ts
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 nice -n 15 /workspace/work/model-relations-pr/python/bin/python -B -m pytest -q -p no:cacheprovider packages/execution-integration/model_worker/tests
+```
+
+These commands exited 0. The summary read 279 V1 turns. The runtime and CLI passed 17 tests, the registry passed four, the CPU worker test and tokenizer test passed one each, and the manager and server observer passed nine. The worker Python suite passed 37 with one skip. The CPU worker test used a random-initialized fixture. Owner checkpoint inference, native GPU inference and Windows execution remain unverified.
+
+The broader Vitest run at lower priority while benchmarks were active passed 306 tests and skipped nine, with 10 failed tests and a worker setup failure. The following isolated rerun passed 41 tests and failed six. It rechecked the timing-sensitive package and provider suites after the benchmark lanes exited.
+
+```sh
+MODEL_WORKER_TEST_PYTHON=/workspace/work/model-relations-pr/python/bin/python \
+PLAYWRIGHT_BROWSERS_PATH=/workspace/work/model-relations-bench/chromium \
+nice -n 15 npm test -- --maxWorkers=1 --reporter=dot --disableConsoleIntercept \
+  packages/model-relations/src packages/execution-integration/src/permanent-worker.test.ts \
+  packages/execution-integration/src/permanent-worker.e2e.test.ts \
+  packages/scratch-classifiers/src packages/vision/src tests/model-relations-shadow.test.ts \
+  tests/model-worker-server.test.ts tests/own-model-*.test.ts tests/assistant-router.test.ts \
+  tests/assistant-arithmetic-search-candidates.test.ts tests/assistant-arithmetic-search-quantities.test.ts \
+  tests/assistant-refusal-arithmetic.test.ts tests/assistant-refusal-learned.test.ts \
+  tests/assistant-scratch-decisions.test.ts tests/assistant-word-problem*.test.ts \
+  tests/assistant-structured-memory-chat.test.ts tests/question-rewrite-chat.test.ts
+
+MODEL_WORKER_TEST_PYTHON=/workspace/work/model-relations-pr/python/bin/python \
+PLAYWRIGHT_BROWSERS_PATH=/workspace/work/model-relations-bench/chromium \
+npm test -- --maxWorkers=1 --hookTimeout=60000 --testTimeout=60000 --reporter=dot \
+  packages/model-relations/src/runtime.test.ts \
+  packages/execution-integration/src/permanent-worker.e2e.test.ts \
+  packages/scratch-classifiers/src/index.test.ts \
+  tests/own-model-provider.test.ts tests/own-model-chat.test.ts \
+  tests/own-model-phrasing.test.ts tests/own-model-reply.test.ts
+```
+
+The isolated failures were four permanent worker startup or readiness checks, one provider phrasing fixture startup, and the scratch classifier's long-input timing gate. Scratch p95 was 2.323 ms for the 2 ms gate.
+
+The same worker and scratch suites ran in a detached checkout of the retained #29 merge at `e268e2dca3eb85ca0833ade147c5748efd98c30d`, before the relations manager. They passed 18 tests and reproduced four of the later failures. The scratch timing gate passed on this control run.
+
+```sh
+cd /workspace/work/model-relations-pr/worker-control
+MODEL_WORKER_TEST_PYTHON=/workspace/work/model-relations-pr/python/bin/python \
+PLAYWRIGHT_BROWSERS_PATH=/workspace/work/model-relations-bench/chromium \
+npm test -- --maxWorkers=1 --hookTimeout=60000 --testTimeout=60000 --reporter=dot \
+  packages/execution-integration/src/permanent-worker.e2e.test.ts \
+  packages/scratch-classifiers/src/index.test.ts tests/own-model-phrasing.test.ts
+```
+
+A branch-only rerun with `npm test -- --maxWorkers=1 packages/scratch-classifiers/src/index.test.ts` passed six tests and failed the long-input timing check at 5.294 ms p95. The scratch classifier package is byte-identical to the Wave 4 base according to `git diff --name-only origin/integration/wave-4 HEAD -- packages/scratch-classifiers`.
+
+The final typecheck and the focused relation and arithmetic suites both exited 0. The Vitest run passed all 67 tests across nine files.
+
+```sh
+npm run typecheck
+MODEL_WORKER_TEST_PYTHON=/workspace/work/model-relations-pr/python/bin/python \
+npm test -- --maxWorkers=1 --hookTimeout=60000 --testTimeout=60000 \
+  packages/model-relations/src tests/model-relations-shadow.test.ts \
+  tests/assistant-word-problem-chat.test.ts tests/assistant-refusal-arithmetic.test.ts \
+  tests/assistant-scratch-decisions.test.ts
+```
