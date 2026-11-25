@@ -7,6 +7,7 @@ import {
   type RunPhase, type RunRisk, type RunVerdict, type TerminalRunPhase, type VerificationMethod, type VerificationResult,
 } from '@mohassan/contracts';
 import type { TaskCompletionReview, TaskSupervisorState } from './task-supervisor.js';
+import { projectRunDeliberation, thoughtLedgerFields } from './deliberation/run-ledger.js';
 
 /**
  * The run ledger: the runtime's own record of one chat run (docs/architecture/agent-execution.md). It holds the run's
@@ -128,6 +129,7 @@ export const RunLedgerSchema = z.object({
   modelCalls: z.number().int().min(0).max(10_000),
   sequence: z.number().int().min(0).max(1_000_000),
   updatedAt: isoSchema,
+  ...thoughtLedgerFields,
 }).strict();
 export type RunLedger = z.infer<typeof RunLedgerSchema>;
 
@@ -451,7 +453,7 @@ function phaseOfStatus(status: string): { phase: RunPhase; reason?: string } | n
  */
 export function projectRunView(input: { runId: string; status: string; ledger: unknown; createdAt: Date | string; updatedAt: Date | string;
   /** Model calls counted from the receipts table; used only for runs recorded before the ledger counted them. */
-  modelCalls?: number }): ChatRunView | null {
+  modelCalls?: number; includeDeliberation?: boolean }): ChatRunView | null {
   const ledger = restoreRunLedger(input.ledger, input.runId);
   const mapped = phaseOfStatus(input.status);
   const modelCalls = ledger ? ledger.modelCalls : input.modelCalls ?? 0;
@@ -468,6 +470,7 @@ export function projectRunView(input: { runId: string; status: string; ledger: u
     verification: ledger?.verification ?? null, verdict, repairs: ledger?.repairs ?? { used: 0, limit: 0 },
     steeredFrom: ledger?.steeredFrom && z.uuid().safeParse(ledger.steeredFrom).success ? ledger.steeredFrom : null,
     sequence: ledger?.sequence ?? 0, updatedAt: ledger && Date.parse(ledger.updatedAt) > Date.parse(updatedAt) ? ledger.updatedAt : updatedAt,
+    ...projectRunDeliberation(ledger, input.includeDeliberation === true),
   };
   const parsed = ChatRunViewSchema.safeParse(view);
   if (parsed.success) return parsed.data;

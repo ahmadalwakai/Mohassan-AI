@@ -145,16 +145,17 @@ function Steps({ conversation }: { conversation: Conversation }) {
   const [open, setOpen] = useState(false);
   const running = conversation.status === "running";
   const run = conversation.run ?? null;
-  if (!running && !conversation.steps.length && !unfinishedVerdict(conversation)) return null;
+  const showActivity = running || conversation.steps.length > 0 || unfinishedVerdict(conversation);
+  if (!showActivity && !run?.deliberation && !run?.earlierDeliberation?.length) return null;
   // The request's own time: its user message, so a reload keeps the count honest.
   const since = conversation.messages.filter((message) => message.role === "user").at(-1)?.createdAt ?? null;
   return <div className={styles.steps}>
-    <button type="button" className={styles.stepsToggle} aria-expanded={open} disabled={!conversation.steps.length} onClick={() => setOpen((value) => !value)}>
+    {showActivity ? <button type="button" className={styles.stepsToggle} aria-expanded={open} disabled={!conversation.steps.length} onClick={() => setOpen((value) => !value)}>
       {/* The finished run shows the server's verdict (2026-11-23); a check mark was drawn for blocked and partial runs too. */}
       {running ? <ActivityLine text={conversation.progress ?? "يعمل…"} since={since} />
         : <>{run?.verdict ? <RunVerdict run={run} /> : <Check size={14} />}{conversation.steps.length ? <span dir="auto">{stepCount(conversation.steps.length)}</span> : null}</>}
       {conversation.steps.length ? <ChevronDown size={14} className={open ? styles.flipped : ""} /> : null}
-    </button>
+    </button> : null}
     {open ? <ol className={styles.stepList}>
       {conversation.steps.map((step) => <li key={step.id} dir="auto">{step.text}</li>)}
       {running ? <li className={styles.activeStep} aria-current="step"><AgentActivity variant="spinner" /><span dir="auto">{conversation.progress ?? "يعمل…"}</span></li> : null}
@@ -731,7 +732,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
               {message.role === "assistant" && message.text.trim() ? <div className={styles.replyTools}><CopyButton text={message.text} /><FeedbackButtons key={message.id} conversationId={conversation!.id} messageId={message.id} /></div> : null}
               {index === conversation!.messages.length - 1 && message.role === "user" ? <Steps conversation={conversation!} /> : null}
             </article>)}
-            {conversation!.messages.at(-1)?.role === "assistant" && (running || conversation!.steps.length > 0 || unfinishedVerdict(conversation!)) && !answering && !blocked ? <Steps conversation={conversation!} /> : null}
+            {conversation!.messages.at(-1)?.role === "assistant" && (!answering && !blocked || conversation!.run?.deliberation || conversation!.run?.earlierDeliberation?.length) ? <Steps conversation={conversation!} /> : null}
             {conversation!.campaign?.events.length ? <CampaignCard stream={conversation!.campaign} running={running} /> : null}
             {conversation!.question?.fields?.length ? null
             : conversation!.question ? <div className={styles.choices}>{conversation!.question.options.map((option) => <button key={option.id} disabled={busy} onClick={() => conversation!.question!.action === "google_ads_connect" && option.id === "connect" ? void connectGoogleAds() : void act(() => post("respond", { questionId: conversation!.question!.id, optionId: option.id }))}>{option.label}</button>)}</div> : null}
