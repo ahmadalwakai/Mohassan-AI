@@ -1,5 +1,6 @@
 import { rewriteEnglishEllipsis } from './followup-english-ellipsis.js';
 import { buildEnglishReferentResolver } from './followup-english-referents.js';
+import { maskRequestLiteralData } from './request-constraints.js';
 
 export interface QuestionHistoryTurn {
   question: string;
@@ -110,9 +111,11 @@ function englishEntity(reference: string, context: EnglishContext, question: str
 
 function resolveEnglishReferences(question: string, context: EnglishContext, focus?: ReturnType<typeof buildEnglishReferentResolver>): string {
   const quotations = Array.from(question.matchAll(/["“][^"”]+["”]/gu));
+  const outer = focus ? maskRequestLiteralData(question) : question;
   const introduced = new Set<string>();
   return question.replace(ENGLISH_REFERENCE, (raw: string, position: number) => {
-    if (quotations.some(match => position > match.index && position < match.index + match[0].length)) return raw;
+    if (outer.slice(position, position + raw.length) !== raw
+      || quotations.some(match => position > match.index && position < match.index + match[0].length)) return raw;
     const reference = raw.toLowerCase();
     const before = question.slice(0, position);
     const after = question.slice(position + raw.length);

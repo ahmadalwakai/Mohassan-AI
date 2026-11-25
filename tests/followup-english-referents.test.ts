@@ -12,6 +12,19 @@ describe('English follow-ups with an ambiguous referent', () => {
     expect(rewriteFollowUpQuestion(question, history, false)).toBe('When did Nina Bell present the new edition?');
   });
 
+  it('uses explicit person-role evidence and preserves pronouns inside literals', () => {
+    const history = {
+      articleTitle: 'Sam Perry',
+      turns: [{ question: 'What happened at the workshop?', answer: 'Actress Nera Voss renovated the studio.' }],
+    };
+    expect(rewriteFollowUpQuestion('When did she renovate the studio?', history, true))
+      .toBe('When did Nera Voss renovate the studio?');
+    expect(rewriteFollowUpQuestion('When did he renovate the studio?', history, true))
+      .toBe('When did Sam Perry renovate the studio?');
+    expect(rewriteFollowUpQuestion('What does `he renovated the studio` mean here?', history, true))
+      .toBe('What does `he renovated the studio` mean here?');
+  });
+
   it('keeps the relation when the answer introduces a family member', () => {
     const history = {
       articleTitle: 'Lina Reed',
@@ -19,6 +32,15 @@ describe('English follow-ups with an ambiguous referent', () => {
     };
     expect(rewriteFollowUpQuestion('When did he instruct her?', history, true))
       .toBe("When did Lina Reed's brother instruct Lina Reed?");
+  });
+
+  it('requires a complete prior pronoun before assigning an unnamed relative to the article subject', () => {
+    const history = {
+      articleTitle: 'Lucas Green',
+      turns: [{ question: 'Was this the original plan?', answer: 'His brother moved the desk.' }],
+    };
+    expect(rewriteFollowUpQuestion('When did he move the desk?', history, true))
+      .toBe('When did Lucas Green move the desk?');
   });
 
   it('distinguishes the actor from a group that occurs under the same preposition', () => {

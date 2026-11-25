@@ -65,7 +65,7 @@ interface Actor {
 
 function actorInClause(clause: string, article: string, previous: string): Actor | undefined {
   const role = possessiveRole.exec(clause);
-  if (role && article && new RegExp(String.raw`\b${role[1].toLowerCase() === 'his' ? 'he|his' : 'she|her'}\b`, 'iu').test(previous)) {
+  if (role && article && (role[1].toLowerCase() === 'his' ? /\b(?:he|his)\b/iu : /\b(?:she|her)\b/iu).test(previous)) {
     const pronoun = /^(?:father|son|brother|husband)$/iu.test(role[2]) ? 'he'
       : /^(?:mother|daughter|sister|wife)$/iu.test(role[2]) ? 'she' : undefined;
     return { label: `${possessive(article)} ${role[2].toLowerCase()}`,
@@ -73,7 +73,8 @@ function actorInClause(clause: string, article: string, previous: string): Actor
   }
   const subject = namedSubject.exec(clause);
   if (subject && !nonSubject.test(subject[2]) && !isArticleAlias(subject[2], article)) {
-    return { label: subject[2], predicate: firstPredicate(clause.slice(subject[0].length)), typed: Boolean(subject[1]) };
+    const pronoun = /^actress$/iu.test(subject[1] ?? '') ? 'she' : undefined;
+    return { label: subject[2], predicate: firstPredicate(clause.slice(subject[0].length)), typed: Boolean(subject[1]), pronoun };
   }
   return undefined;
 }

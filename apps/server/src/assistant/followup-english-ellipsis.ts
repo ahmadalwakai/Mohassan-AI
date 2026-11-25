@@ -1,4 +1,5 @@
 import type { QuestionHistory } from './question-rewriter.js';
+import { maskRequestLiteralData } from './request-constraints.js';
 
 const QUESTION_LEAD = /^(?:who|whom|whose|what|which|when|where|why|how|is|are|was|were|do|does|did|can|could|has|have|had|will|would)\b/iu;
 const TYPE_GROUPS = [
@@ -21,6 +22,9 @@ const TIME_FRAME = /^((?:what(?: else)? happened|did anything(?: else)? happen))
 const YEAR_FOLLOWUP = /^(in|during) (\d{4})$/iu;
 const EVENT_FRAME = /^what (?:is|was) (?:a|an|one|the) (?:\p{L}+ )?(?:event|development) that (?:happened|occurred)\b[^?]{0,100}$/iu;
 const QUESTION_FRAME = /^(?:(when|where|how long)\s+)?((?:did|do|does|was|were|is|are|has|have|had|could|would|will)\s+[^?]+)$/iu;
+const FILLED_LOCATION = /\b(?:in|at|near|outside)\s+\p{Lu}[\p{L}\p{M}'’.-]*(?:\s+\p{Lu}[\p{L}\p{M}'’.-]*)*$/u;
+const LEADING_CONNECTIVE = /^(?:and|but)\s+/iu;
+const stripQuestionMark = (question: string) => question.trim().replace(/[?]+$/u, '').trimEnd();
 
 function textField(value: string | undefined, maxLength: number): string {
   const text = (value ?? '').trim();
@@ -74,14 +78,11 @@ function findNamedReferent(kind: string, article: string, section: string, turns
   return typed(section) ?? typed(article);
 }
 
-function insideQuotation(text: string, position: number): boolean {
-  return [...text.matchAll(/["“][^"”]+["”]/gu)]
-    .some(match => position > match.index && position < match.index + match[0].length);
-}
-
 function replaceNominal(question: string, article: string, section: string, turns: QuestionHistory['turns']): string {
+  const outer = maskRequestLiteralData(question);
   return question.replace(TYPE_REFERENCE, (phrase: string, _determiner: string, kind: string, position: number) => {
-    if (insideQuotation(question, position) || !AFTER_NOMINAL.test(question.slice(position + phrase.length))) return phrase;
+    const end = position + phrase.length;
+    if (outer.slice(position, end) !== phrase || !AFTER_NOMINAL.test(question.slice(end))) return phrase;
     const referent = findNamedReferent(kind.toLowerCase(), article, section, turns);
     if (!referent || mentions(question, referent.title)) return phrase;
     if (/^the /iu.test(referent.title)) return referent.title.replace(/^The\b/u, 'the');
@@ -92,7 +93,8 @@ function replaceNominal(question: string, article: string, section: string, turn
 function inheritQuestionFrame(question: string, previous: string): string | null {
   if (/^(?:when|where|how long)$/iu.test(question)) {
     const frame = QUESTION_FRAME.exec(previous);
-    if (frame && frame[1]?.toLowerCase() !== question.toLowerCase()) {
+    const slot = question.toLowerCase();
+    if (frame && frame[1]?.toLowerCase() !== slot && !(slot === 'where' && FILLED_LOCATION.test(frame[2]))) {
       return `${question.charAt(0).toUpperCase()}${question.slice(1)} ${frame[2].charAt(0).toLowerCase()}${frame[2].slice(1)}`;
     }
   }
@@ -109,14 +111,14 @@ function inheritQuestionFrame(question: string, previous: string): string | null
 }
 
 export function isEnglishYearFollowup(question: string): boolean {
-  return YEAR_FOLLOWUP.test(question.trim().replace(/[?]+$/u, ''));
+  return YEAR_FOLLOWUP.test(stripQuestionMark(question).replace(LEADING_CONNECTIVE, ''));
 }
 
 /** Restore noun phrases and question frames that have concrete evidence in the supplied context. */
 export function rewriteEnglishEllipsis(question: string, history: QuestionHistory): string | null {
-  const candidate = question.replace(/[?]+$/u, '').trim();
+  const candidate = stripQuestionMark(question);
   if (!candidate || candidate.length > 700 || /[?؟\r\n]|\p{Script=Arabic}/u.test(candidate)) return null;
-  const bare = candidate.replace(/^(?:and|but)\s+/iu, '');
+  const bare = candidate.replace(LEADING_CONNECTIVE, '');
   const previous = textField(history.turns.at(-1)?.question, 240).replace(/[?!.]+$/u, '');
   const inherited = inheritQuestionFrame(bare, previous);
   if (inherited) return `${inherited}?`;

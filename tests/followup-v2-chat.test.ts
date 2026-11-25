@@ -85,12 +85,13 @@ describe('English follow-up routing in live chat', () => {
     await database.db.insertInto('chat_messages').values({
       id: randomUUID(), conversation_id: dateConversation, role: 'user', text: prior, created_at: new Date(0),
     }).execute();
-    const pendingInput = input({ text: 'In 2014?', context: resolveRequestContext(prior).nextState });
+    const followUp = 'And in 2014?';
+    const dateInput = input({ text: followUp, context: resolveRequestContext(prior).nextState });
     const terms = mergePublicQueryTerms([], [prior]);
-    expect(await routeWithQuestionHistory(database.db, dateConversation, terms, true, pendingInput)).toMatchObject({
+    expect(await routeWithQuestionHistory(database.db, dateConversation, terms, true, dateInput)).toMatchObject({
       route: 'web_search', handler: 'search', reason: 'rewritten_question',
       publicQuery: 'What was the population of Spruce Bay in 2014?',
-      resolution: { kind: 'follow_up', original: 'In 2014?' },
+      resolution: { kind: 'follow_up', original: followUp },
     });
   });
 

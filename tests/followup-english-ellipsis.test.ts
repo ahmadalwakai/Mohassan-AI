@@ -44,6 +44,9 @@ describe('English follow-ups with an omitted or implicit topic', () => {
     expect(rewriteEnglishEllipsis('Where?', {
       turns: [{ question: 'When was the new observatory built?' }],
     })).toBe('Where was the new observatory built?');
+    expect(rewriteEnglishEllipsis('Where?', {
+      turns: [{ question: 'Did Tessa Green paint the mural in Spruce Bay?' }],
+    })).toBeNull();
     expect(rewriteEnglishEllipsis('How long?', {
       turns: [{ question: 'Did the ferry operate?' }],
     })).toBe('How long did the ferry operate?');
@@ -55,7 +58,10 @@ describe('English follow-ups with an omitted or implicit topic', () => {
       articleTitle: 'Sophie Lark', sectionTitle: 'Northbound Episode II: In the Fog (2017)',
       turns: [{ question: 'When did Neil Rowan apply?' }],
     };
-    expect(rewriteEnglishEllipsis('Who said “the film” aloud?', history)).toBeNull();
+    const namedFilm = { ...history, sectionTitle: 'The Lantern Film' };
+    expect(rewriteEnglishEllipsis('What does “the film was delayed” mean?', namedFilm)).toBeNull();
+    expect(rewriteEnglishEllipsis('What does ‘the film was delayed’ mean?', namedFilm)).toBeNull();
+    expect(rewriteEnglishEllipsis('What does `the film was delayed` mean?', namedFilm)).toBeNull();
     expect(rewriteEnglishEllipsis('Where was the film festival held?', history)).toBeNull();
     expect(rewriteEnglishEllipsis('What happened in 2018?', history)).toBeNull();
     expect(rewriteEnglishEllipsis('Did the movie win any awards?', history)).toBeNull();
