@@ -5,12 +5,15 @@ import { collectStateEvidence, criterionLabel, decideVerdict, settleOpenSteps, t
 import type { BrainState } from '../assistant/brain.js';
 import { reviewChatAnswer } from '../assistant/chat-supervision.js';
 import type { EffectiveRequestSource } from '../assistant/effective-request-source.js';
+import { monitorChat } from '../monitors/chat.js';
+import { registerReminderContext } from './chat-context.js';
 import { handleReminderChat, reminderRouting, type ChatReminderStore } from './chat.js';
 
 const stores = new WeakMap<Kysely<any>, ChatReminderStore>();
 
 export function registerReminderChat(db: Kysely<any>, store: ChatReminderStore) {
   stores.set(db, store);
+  registerReminderContext(db);
 }
 
 interface ReminderTurn {
@@ -33,6 +36,9 @@ interface ReminderTurn {
 
 export async function dispatchReminderTurn(turn: ReminderTurn): Promise<boolean> {
   const { db, state, runId, ownerId, id, run, effectiveSource, ledgerSafe, scrub } = turn;
+  const decision = await monitorChat(db)?.beforeReminder({
+    ownerId, conversationId: id, runId, text: effectiveSource.request, state,
+  });
   const store = stores.get(db);
   if (!store || run.intent !== 'task' || typeof run.attempt !== 'number') return false;
   const transact = <T>(work: (tx: Transaction<any>) => Promise<T>) => turn.runTransaction(id, runId, tx => {
@@ -40,7 +46,8 @@ export async function dispatchReminderTurn(turn: ReminderTurn): Promise<boolean>
     return work(tx as Transaction<any>);
   });
   const handled = await handleReminderChat({ store, db, state, userId: ownerId, conversationId: id, runId, attempt: run.attempt,
-    request: effectiveSource.request, routing: state.routing, now: new Date(effectiveSource.evaluatedAt), transact });
+    request: effectiveSource.request, routing: state.routing, now: new Date(effectiveSource.evaluatedAt), transact,
+    monitorDecision: decision });
   if (!handled) return false;
 
   state.routing = reminderRouting;

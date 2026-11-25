@@ -1,5 +1,10 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { ArbiterBrain, type ArbiterInput } from './arbiter.js';
+import {
+  isMonitorDecisionClaim, isRecord, makeMonitorArbiterInput, monitorDecisionModelId, MonitorDecisionPromotion,
+  monitorDecisionType, monitorHeadComponent, monitorHeadMayOverride, type MonitorDecisionClaim, type MonitorDecisionContext,
+  type MonitorDecisionHeadInput, type MonitorDecisionLabel,
+} from './monitor-decision.js';
 import type { ModelRunResult } from './runtime.js';
 
 const arbiterFlags = {
@@ -7,6 +12,7 @@ const arbiterFlags = {
   'question-rewrite': 'MOHASSAN_ARBITER_QUESTION_REWRITE',
   'local-computation': 'MOHASSAN_ARBITER_LOCAL_COMPUTATION',
   'compound-plan': 'MOHASSAN_ARBITER_COMPOUND_PLAN',
+  'monitor-context': 'MOHASSAN_ARBITER_MONITOR_CONTEXT',
 } as const;
 export type ArbiterDecisionType = keyof typeof arbiterFlags;
 
@@ -20,6 +26,7 @@ export interface ArbiterDecisionLog extends ArbiterInput {
   threshold: number | null;
   reason: string;
   elapsedMs: number;
+  modelOutcome?: Outcome;
   explanation?: ReturnType<ArbiterBrain['choose']>['reasons'];
 }
 
@@ -207,7 +214,8 @@ export class ModelRelationsManager {
   }
 
   /** Selects an already available claim without asking any model to run or loading an artifact. */
-  arbitrate(input: ArbiterInput, options: { forced?: string; protected?: boolean; shadowOnly?: boolean } = {}): ArbiterDecisionLog {
+  arbitrate(input: ArbiterInput, options: { forced?: string; protected?: boolean; shadowOnly?: boolean;
+    monitorPromotion?: MonitorDecisionPromotion } = {}): ArbiterDecisionLog {
     const started = performance.now();
     const { type, precedence, claimants } = input;
     const flag = Object.hasOwn(arbiterFlags, type) ? arbiterFlags[type as ArbiterDecisionType] : undefined;
@@ -217,17 +225,47 @@ export class ModelRelationsManager {
       ...(explanation?.length ? { explanation } : {}),
     });
     if (options.protected) return decision(precedence, precedence, 'protected');
-    if (!options.shadowOnly && options.forced && flag && claimants.some(claim => claim.component === options.forced)) {
+    const monitor = type === monitorDecisionType;
+    if (!monitor && !options.shadowOnly && options.forced && flag && claimants.some(claim => claim.component === options.forced)) {
       return decision(options.forced, options.forced, 'forced');
     }
     if (this.env.MOHASSAN_MODEL_RELATIONS === 'off') return decision(precedence, precedence, 'off');
     if (flag && this.env[`${flag}_KILL`] === '1') return decision(precedence, precedence, 'killed');
-    const pick = this.arbiter.choose(input);
+    const monitorPromotion = monitor && options.monitorPromotion instanceof MonitorDecisionPromotion ? options.monitorPromotion : undefined;
+    const pick = (monitorPromotion?.brain ?? this.arbiter).choose(input);
     const proposed = pick.proposedChoice ?? pick.choice;
     const reason = pick.choice === precedence ? pick.reason
-      : options.shadowOnly || !flag || !this.canApplyArbiter(type as ArbiterDecisionType) ? 'shadow' : pick.reason;
+      : options.shadowOnly || (monitor && !monitorPromotion) || !flag || !this.canApplyArbiter(type as ArbiterDecisionType) ? 'shadow' : pick.reason;
     const selected = reason === 'higher-pass-likelihood' ? pick.choice : precedence;
     return decision(selected, proposed, reason, pick.confidence, pick.threshold, pick.reasons);
+  }
+
+  async reviewMonitorDecision(context: MonitorDecisionContext, baseline: MonitorDecisionClaim, features: MonitorDecisionHeadInput,
+    options: { protected?: boolean } = {}): Promise<{ action: MonitorDecisionLabel; log: ArbiterDecisionLog }> {
+    const started = performance.now();
+    let learned: MonitorDecisionClaim | undefined;
+    let promotion: MonitorDecisionPromotion | undefined;
+    let modelOutcome: Outcome | undefined;
+    if (this.env.MOHASSAN_MODEL_RELATIONS !== 'off') {
+      try {
+        const result = await this.runtime.run(monitorDecisionModelId,
+          { frameFeatures: features.frameFeatures, textFeatureIds: features.textFeatureIds });
+        if (!result.ok) modelOutcome = result.reason;
+        else if (isMonitorDecisionClaim(result.output)) {
+          learned = { label: result.output.label, score: result.output.score };
+          const candidate = (result.output as MonitorDecisionClaim & { promotion?: unknown }).promotion;
+          if (candidate instanceof MonitorDecisionPromotion) promotion = candidate;
+          modelOutcome = 'ok';
+        } else modelOutcome = isRecord(result.output) && result.output.label === null ? 'abstained' : 'invalid-output';
+      } catch { modelOutcome = 'unhealthy'; }
+    }
+    const input = makeMonitorArbiterInput(context, baseline, learned);
+    const log = this.arbitrate(input, {
+      monitorPromotion: promotion,
+      shadowOnly: !learned || !monitorHeadMayOverride(baseline.label, learned.label, options.protected),
+    });
+    return { action: log.selected === monitorHeadComponent && learned ? learned.label : baseline.label,
+      log: { ...log, ...(modelOutcome ? { modelOutcome } : {}), elapsedMs: performance.now() - started } };
   }
 
   summary() {

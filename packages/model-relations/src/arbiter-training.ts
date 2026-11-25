@@ -113,7 +113,9 @@ export function splitArbiterFamilies(rows: readonly ArbiterReplay[]) {
   return { training, calibration, trainingFamilyCount: families.length - heldOut, calibrationFamilyCount: heldOut };
 }
 
-function fit(rows: readonly ArbiterReplay[]) {
+type Counterfactual = Pick<ArbiterReplay, 'input' | 'baselinePassed' | 'outcomes'>;
+
+function fit(rows: readonly Counterfactual[]) {
   const examples = rows.flatMap(row => row.input.claimants.map(claim => ({
     features: arbiterFeatures(row.input, claim), target: Number(row.outcomes[claim.component]),
     weight: 1 / row.input.claimants.length,
@@ -139,7 +141,7 @@ function fit(rows: readonly ArbiterReplay[]) {
 
 type DecisionModel = ArbiterArtifact['decisions'][string];
 
-function calibrate(type: string, model: DecisionModel, rows: readonly ArbiterReplay[]) {
+function calibrate(type: string, model: DecisionModel, rows: readonly Counterfactual[]) {
   const brain = new ArbiterBrain({ schemaVersion: 1, decisions: { [type]: model } });
   const predictions = rows.flatMap(row => {
     const decision = brain.choose(row.input);
@@ -152,6 +154,14 @@ function calibrate(type: string, model: DecisionModel, rows: readonly ArbiterRep
     if (accepted.some(prediction => prediction.delta > 0) && accepted.every(prediction => prediction.delta >= 0)) return threshold;
   }
   return null;
+}
+
+/** Fit with an independent calibration pool. Callers own provenance and split validation. */
+export function fitArbiterDecision(type: string, training: readonly Counterfactual[], calibration: readonly Counterfactual[]): DecisionModel | null {
+  if (!training.some(row => new Set(Object.values(row.outcomes)).size > 1)) return null;
+  const components = [...new Set(training.flatMap(row => row.input.claimants.map(claim => claim.component)))].sort();
+  const model = { components, coefficients: fit(training), threshold: null };
+  return { ...model, threshold: calibrate(type, model, calibration) };
 }
 
 function metrics(rows: readonly ArbiterReplay[], artifact: ArbiterArtifact) {
@@ -207,7 +217,7 @@ export interface DevelopmentResult {
   passed: boolean;
 }
 
-export function assessArbiterPromotion(before: readonly DevelopmentResult[], after: readonly DevelopmentResult[]) {
+export function assessArbiterPromotion(before: readonly DevelopmentResult[], after: readonly DevelopmentResult[], options: { intersections?: boolean } = {}) {
   const missing = { complete: false as const, holdsAllGroups: false as const, groups: [], changedCases: 0 };
   const results = (rows: readonly DevelopmentResult[]) => {
     const indexed = new Map<string, DevelopmentResult>();
@@ -232,7 +242,9 @@ export function assessArbiterPromotion(before: readonly DevelopmentResult[], aft
     const next = candidate.get(id);
     if (!next || row.area !== next.area || row.language !== next.language) return missing;
     changedCases += Number(row.passed !== next.passed);
-    for (const group of ['overall', `area:${row.area}`, `language:${row.language}`]) {
+    const dimensions = ['overall', `area:${row.area}`, `language:${row.language}`];
+    if (options.intersections) dimensions.push(`area:${row.area}/language:${row.language}`);
+    for (const group of dimensions) {
       const key = `${row.split}:${group}`;
       const counts = groups.get(key) ?? { split: row.split, group, total: 0, before: 0, after: 0 };
       counts.total++;
@@ -257,12 +269,8 @@ export function trainArbiter(receipt: ReplayReceipt) {
   const decisions: Record<string, DecisionModel> = {};
   for (const type of types) {
     const fitRows = training.filter(row => row.input.type === type);
-    const hasSignal = fitRows.some(row => new Set(Object.values(row.outcomes)).size > 1);
-    if (!hasSignal) continue;
-    const components = [...new Set(fitRows.flatMap(row => row.input.claimants.map(claim => claim.component)))].sort();
-    const model = { components, coefficients: fit(fitRows), threshold: null };
-    const threshold = calibrate(type, model, calibration.filter(row => row.input.type === type));
-    decisions[type] = { ...model, threshold };
+    const model = fitArbiterDecision(type, fitRows, calibration.filter(row => row.input.type === type));
+    if (model) decisions[type] = model;
   }
   const artifact: ArbiterArtifact = { schemaVersion: 1, decisions };
   return { artifact: Object.keys(decisions).length ? artifact : null,

@@ -31,6 +31,7 @@ const fold = (text: string) => text.normalize('NFKC').replace(/[\u0640\u064b-\u0
   .replace(/[أإآٱ]/gu, 'ا').replace(/ى/gu, 'ي').replace(/ة/gu, 'ه').toLowerCase().trim();
 const trim = (text: string) => text.replace(/^[\s,،:؛.?!؟]+|[\s,،:؛.?!؟]+$/gu, '');
 const createHead = /^(?:(?:please\s+)?(?:(?:can|could|would) you\s+)?(?:remind me|(?:set|create|schedule) (?:a |me a )?reminder(?: for me)?)\b|(?:من فضلك\s+)?(?:هل يمكنك\s+)?(?:ذك[\u064b-\u065f]*رني|نب[\u064b-\u065f]*هني|تذكيري|[أا]ضف تذكير[ًا]*|جدول تذكير[ًا]*)(?!\p{L}))/iu;
+const clockNotificationHead = /^(?:(?:please\s+)?(?:(?:can|could|would) you\s+)?(?:(?:notify|alert|ping|tell) me|let me know)\b|(?:من فضلك\s+|لو سمحت\s+)?(?:أخبرني|اخبرني|خبرني|أبلغني|ابلغني|بلغني|قل لي|أعلمني|اعلمني|أشعرني|اشعرني)(?!\p{L}))/iu;
 const editHead = /^(?:(?:please\s+)?(?:edit|move|reschedule|change)\s+(?:the\s+)?(?:reminder\s*|it\b\s*)|(?:عد[\u064b-\u065f]*ل|غي[\u064b-\u065f]*ر)\s+(?:موعد\s+)?(?:التذكير|تذكير)\s*|عد[\u064b-\u065f]*له\s*)/iu;
 const cancelHead = /^(?:(?:please\s+)?(?:cancel|delete|remove)\s+(?:the\s+|my\s+)?(?:reminder\b|it\b)|[أا]لغ[\u064b-\u065f]*(?:ي|اء)?\s*(?:التذكير|تذكير)|[أا]لغ[\u064b-\u065f]*(?:ه|يه)(?!\p{L}))/iu;
 const postponeHead = /^(?:(?:please\s+)?(?:postpone|delay|snooze)\s+(?:the\s+)?(?:reminder\b|it\b)|[أا]ج[\u064b-\u065f]*ل(?:ه|ها)(?!\p{L})|[أا]ج[\u064b-\u065f]*ل\s+(?:التذكير|تذكير))/iu;
@@ -76,6 +77,7 @@ function digits(text: string) {
 export async function handleReminderChat(input: {
   store: ChatReminderStore; db: Kysely<any>; state: BrainState; userId: string; conversationId: string; runId: string; attempt: number;
   request: string; routing?: CapabilityReplyRouting | null; now: Date; transact: <T>(work: (tx: Connection) => Promise<T>) => Promise<T>;
+  monitorDecision?: 'propose' | 'reminder';
 }): Promise<Handled | null> {
   const { store, db, userId, conversationId, runId, attempt, request, now } = input;
   const state = input.state as State;
@@ -183,8 +185,9 @@ export async function handleReminderChat(input: {
     return selection ? change(pending.change, selection) : askSelection(pending);
   }
 
+  if (input.monitorDecision === 'propose') return null;
   const text = trim(request);
-  const head = createHead.exec(text);
+  const head = createHead.exec(text) ?? (input.monitorDecision === 'reminder' ? clockNotificationHead.exec(text) : null);
   const cancellation = cancelHead.exec(text);
   const postponement = postponeHead.exec(text);
   const edit = editHead.exec(text);

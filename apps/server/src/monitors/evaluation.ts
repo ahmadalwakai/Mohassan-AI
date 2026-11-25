@@ -90,7 +90,7 @@ function textual(value: MonitorObservation['value']): string {
   return Array.isArray(value) ? value.join(' ') : String(value);
 }
 
-function compare(condition: MonitorSpec['condition'], value: MonitorObservation['value']): boolean {
+export function monitorTextConditionMatches(condition: MonitorSpec['condition'], value: MonitorObservation['value']): boolean {
   if (condition.kind !== 'equals' && condition.kind !== 'contains') return false;
   const left = matchMonitorText(textual(value)), right = matchMonitorText(condition.value);
   return condition.kind === 'equals' ? left === right : phraseIndex(left, right) >= 0;
@@ -140,7 +140,7 @@ export function evaluateMonitor(
       break;
     case 'equals':
     case 'contains':
-      triggered = compare(condition, value) && (previous.firstCheck || !compare(condition, previous.observation.value));
+      triggered = monitorTextConditionMatches(condition, value) && (previous.firstCheck || !monitorTextConditionMatches(condition, previous.observation.value));
       break;
     case 'appears':
       triggered = present(value) && !present(previous.observation.value);

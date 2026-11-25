@@ -8,7 +8,7 @@ const rootFiles = [
   'package.json', 'package-lock.json', 'tsconfig.json', 'vitest.config.ts',
   'playwright.config.ts', '.env.example',
 ];
-const sourceDirectories = ['apps', 'packages', 'scripts'];
+const sourceDirectories = ['apps', 'packages', 'scripts', 'tests/fixtures/agent-capability-bench/v2/exclusion'];
 const excludedNames = new Set([
   'node_modules', '.git', '.data', '.next', '.next-e2e', 'artifacts',
   'test-results', 'playwright-report', 'coverage', '.claude', '.vercel',
