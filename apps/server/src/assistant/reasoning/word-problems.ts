@@ -1,4 +1,5 @@
 import { evaluateArithmeticExpression } from '../calculator.js';
+import { resolveComputationUnit } from '../mind/compute.js';
 import type { Lang } from '../mind/contract.js';
 import { normalizeRequest, stripCourtesyTail } from '../mind/normalize.js';
 import { parseNumberWords } from './number-words.js';
@@ -59,6 +60,8 @@ const LABEL = {
   workerTime: ['الزمن = إجمالي العمل ÷ عدد العمال الجدد', 'Time = total work ÷ new worker count'],
   combinedRate: ['معدل الإنجاز المشترك = مجموع معدلَي الإنجاز', 'Combined work rate = sum of individual rates'],
   combinedTime: ['زمن إنجاز عمل واحد = 1 ÷ المعدل المشترك', 'Time for one job = 1 ÷ combined rate'],
+  lengthUnit: ['تحويل البعد إلى وحدة الطول المطلوبة', 'Convert the dimension to the target length unit'],
+  rectangleArea: ['مساحة المستطيل = الطول × العرض', 'Rectangle area = length × width'],
 } satisfies Record<string, Bilingual>;
 
 const formatNumber = new Intl.NumberFormat('en', { useGrouping: false, maximumSignificantDigits: 15 });
@@ -201,6 +204,31 @@ function together(lang: Lang, first: string, firstUnit: string, second: string, 
   ];
 }
 
+function rectangleArea(lang: Lang, first: string, firstUnit: string | undefined, second: string, secondUnit: string, squareUnit?: string): Problem {
+  const [length, width] = [quantity(first, lang), quantity(second, lang)];
+  const sourceLength = resolveComputationUnit(firstUnit ?? secondUnit);
+  const sourceWidth = resolveComputationUnit(secondUnit);
+  const target = squareUnit ? resolveComputationUnit(squareUnit
+    .replace(/^(?:square|sq\.?) /u, '').replace(/(?: *\^?2| squared| (?:ال)?مربع(?:ه|ات)?)$/u, '')) : sourceLength;
+  if (sourceLength?.dim !== 'length' || sourceWidth?.dim !== 'length' || target?.dim !== 'length') return null;
+  if (length === null || width === null || Number(length) <= 0 || Number(width) <= 0) return 'invalid';
+
+  const unitNames = target.names.split('|');
+  const symbol = [unitNames.find(name => /\p{Script=Arabic}/u.test(name)) ?? unitNames[0], unitNames[0]] as const;
+  const targetFactor = target.factor;
+  const steps: Equation[] = [];
+  function converted(value: string, factor: number): string {
+    if (factor === targetFactor) return value;
+    const metres = factor === 1 ? value : `${value} * ${factor}`;
+    const expression = targetFactor === 1 ? metres : `${metres} / ${targetFactor}`;
+    steps.push({ label: LABEL.lengthUnit, expression, unit: symbol });
+    return `(${expression})`;
+  }
+  const a = converted(length, sourceLength.factor);
+  const b = converted(width, sourceWidth.factor);
+  return [...steps, { label: LABEL.rectangleArea, expression: `${a} * ${b}`, unit: [`${symbol[0]}²`, `${symbol[1]}²`] }];
+}
+
 function grammar(pattern: string, equations: Grammar['equations']): Grammar {
   return { pattern: new RegExp(`^${pattern}$`, 'u'), equations };
 }
@@ -223,6 +251,37 @@ const STUDENT_GROUP_AR: Readonly<Record<string, string>> = {
 };
 const BUY_HEAD_AR = String.raw`(?:(?:اذا |لو )?(?:اشتريت|شريت|بشتري|هشتري|اشتري|اشتريتي))`;
 const TIME_QUESTION_AR = String.raw`(?:${HOW_MANY_AR} (?:يستغرق|تستغرق|الوقت|يحتاج|تحتاج|ياخذ|تاخذ)|في ${HOW_MANY_AR} (?:ساعه|وقت))`;
+
+const UNIT_WORDS = String.raw`\p{L}+(?: \p{L}+)??`;
+const LENGTH_UNIT = `(${UNIT_WORDS})`;
+const SQUARE_UNIT = String.raw`((?:square|sq\.?) ${UNIT_WORDS}|${UNIT_WORDS}(?: *\^?2| squared| (?:ال)?مربع(?:ه|ات)?))`;
+const EN_RECTANGLE = '(?:(?:a|the|this) )?rectangle';
+const EN_AREA_ASK = '(?:(?:what is|what\'s|calculate|compute|find|work out) (?:the |its )?)area';
+const EN_DIMENSION_LINK = '(?: (?:measuring|with(?: (?:dimensions|sides) of)?))?';
+const AR_RECTANGLE = '(?:(?:ال)?مستطيل|شكل مستطيل)';
+const AR_AREA_ASK = `(?:(?:احسب|اوجد|${HOW_MANY_AR}|شو|ايش|ما(?: هي)?) )?(?:ال)?مساح(?:ه|ته)`;
+const AR_DIMENSION_PAIR = `طول(?:ه)? ${QUANTITY} ?${LENGTH_UNIT} و ?عرض(?:ه)? ${QUANTITY} ?${LENGTH_UNIT}`;
+const EN_AREA_IN = `(?: in ${SQUARE_UNIT})?`;
+const AR_AREA_IN = `(?: (?:ب|في وحده )${SQUARE_UNIT})?`;
+
+const AREA_GRAMMARS = [
+  ...[
+    `${QUANTITY}(?: ?${LENGTH_UNIT}(?: long)?)?(?: by | *[×x] *)${QUANTITY} ?${LENGTH_UNIT}(?: wide)?`,
+    `${QUANTITY} ?${LENGTH_UNIT} long and ${QUANTITY} ?${LENGTH_UNIT} wide`,
+    `(?:a )?length(?: of)? ${QUANTITY} ?${LENGTH_UNIT} and (?:a )?width(?: of)? ${QUANTITY} ?${LENGTH_UNIT}`,
+  ].flatMap(dimensions => [
+    grammar(`${EN_AREA_ASK} in ${SQUARE_UNIT} of ${EN_RECTANGLE}${EN_DIMENSION_LINK} ${dimensions}`,
+      (requested, first, firstUnit, second, secondUnit) => rectangleArea('en', first, firstUnit, second, secondUnit, requested)),
+    grammar(`${EN_AREA_ASK} of ${EN_RECTANGLE}${EN_DIMENSION_LINK} ${dimensions}${EN_AREA_IN}`,
+      (first, firstUnit, second, secondUnit, requested) => rectangleArea('en', first, firstUnit, second, secondUnit, requested)),
+    grammar(`${EN_RECTANGLE} (?:has |measures |is )?${dimensions}${BREAK}${EN_AREA_ASK}${EN_AREA_IN}`,
+      (first, firstUnit, second, secondUnit, requested) => rectangleArea('en', first, firstUnit, second, secondUnit, requested)),
+  ]),
+  grammar(`${AR_AREA_ASK}${AR_AREA_IN} (?:ل ?)?${AR_RECTANGLE} ${AR_DIMENSION_PAIR}${AR_AREA_IN}`,
+    (before, first, firstUnit, second, secondUnit, after) => before && after ? null : rectangleArea('ar', first, firstUnit, second, secondUnit, before ?? after)),
+  grammar(`(?:(?:عندي|لدينا|عندنا) )?${AR_RECTANGLE} ${AR_DIMENSION_PAIR}${BREAK}${AR_AREA_ASK}${AR_AREA_IN}`,
+    (first, firstUnit, second, secondUnit, requested) => rectangleArea('ar', first, firstUnit, second, secondUnit, requested)),
+];
 
 const GRAMMARS_EN = [
   grammar(`${MOVE_HEAD_EN} at ${QUANTITY} ${DISTANCE_EN}${PER_HOUR_EN} for ${QUANTITY} ${TIME_EN}${BREAK}how far (?:does|will) it (?:travel|go|drive|move|run|ride)`,
@@ -284,7 +343,7 @@ const GRAMMARS_AR = [
   grammar(`${QUANTITY} (?:عمال|عامل(?:ا)?) (?:ينجزون|ينجزوا|يكملون|يكملوا|يخلصون|يخلصوا) (?:عملا|العمل|المهمه) (?:في|خلال) ${QUANTITY} ${TIME_AR}${BREAK}${HOW_MANY_AR} (?:يستغرق|يحتاج) ${QUANTITY} (?:عمال|عامل(?:ا)?) (?:بنفس|بالمعدل نفسه|بالمعدل ذات(?:ه)?)(?: المعدل)?`, (...parts) => workers('ar', parts[0], parts[1], parts[2], parts[3])),
 ];
 
-const GRAMMARS = [...GRAMMARS_EN, ...GRAMMARS_AR];
+const GRAMMARS = [...AREA_GRAMMARS, ...GRAMMARS_EN, ...GRAMMARS_AR];
 
 function normalizedProblem(text: string): string {
   return normalizeRequest(stripCourtesyTail(text)).match
@@ -316,7 +375,8 @@ function solve(equations: readonly Equation[], lang: Lang): { value: string; lin
 
 /** The full grammar assigns semantic roles before selecting the operations. */
 export function reasonWordProblem(text: string, lang: Lang): ReasoningResult | null {
-  if (text.length > 900) return null;
+  // Preserve a squared unit such as m², but never flatten raised or lowered digits in a quantity.
+  if (text.length > 900 || /[¹³\u2070-\u209f]|(?<!\p{L})²/u.test(text)) return null;
   const input = normalizedProblem(text);
   for (const { pattern, equations } of GRAMMARS) {
     const match = pattern.exec(input);
