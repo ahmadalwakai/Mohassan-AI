@@ -2735,6 +2735,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           return;
         }
         if (computation && !(computation.status === 'partial' && hasChatModel())) {
+          if (computation.abstained) {
+            await finish(id, runId, state, vault.scrub(id, computation.text), 'blocked');
+            return;
+          }
           await addStep(id, runId, computation.lang === 'ar' ? 'حساب محلي' : 'Local calculation');
           state.trail.push({ step: ++state.steps, action: 'calculate', result: clean(computation.evidence.map(item => item.quote).join('\n') || computation.text).slice(0, 1100), changed: false });
           observeChatLocalAnswer(state.supervision!, { source: 'computation', ...computation, startedAt: localStartedAt });
