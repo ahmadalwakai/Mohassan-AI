@@ -1,0 +1,20 @@
+{
+  "trunk": "v5-foundation",
+  "device": "cuda",
+  "jobs": [
+    {"name": "clinc-intent", "task": "intent", "sources": [{"dataset": "clinc150"}]},
+    {"name": "massive-intent", "task": "intent", "sources": [{"dataset": "massive"}]},
+    {"name": "clinc-domain", "task": "route", "sources": [{"dataset": "clinc150"}]},
+    {"name": "massive-scenario", "task": "route", "sources": [{"dataset": "massive"}]},
+    {"name": "out-of-scope", "task": "out_of_scope", "sources": [{"dataset": "clinc150"}]},
+    {"name": "follow-up", "task": "turn_type", "sources": [{"dataset": "quac"}]},
+    {"name": "rewrite", "task": "rewrite", "kind": "pairwise", "sources": [{"dataset": "canard"}]},
+    {
+      "name": "answer-sentence",
+      "task": "sentence_selection",
+      "sources": [{"dataset": "xquad"}, {"dataset": "mlqa"}, {"dataset": "tydiqa"}, {"dataset": "arcd"}]
+    },
+    {"name": "sufficiency", "task": "sufficiency", "sources": [{"dataset": "squad2"}]},
+    {"name": "speech-act", "task": "speech_act", "sources": [{"dataset": "ami"}]}
+  ]
+}

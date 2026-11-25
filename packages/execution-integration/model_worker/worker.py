@@ -5,6 +5,7 @@ import time
 
 _STARTED = time.monotonic()
 
+from hashlib import sha256
 import json
 import os
 import re
@@ -20,8 +21,11 @@ from model_worker.containment import contain
 from model_worker.runtime import MAX_FRAME_BYTES, WorkerLimits, WorkerRuntime, frame, parse_json, valid_id
 
 
-_MODEL_FIELDS = {"checkpoint", "heads", "device", "eosTokenId", "quantization"}
-_HEAD_KINDS = {("classify",): "classify", ("score", "select"): "pointer", ("generate",): "generate"}
+_MODEL_FIELDS = {"checkpoint", "heads", "device", "eosTokenId", "quantization", "tokenizer"}
+_HEAD_KINDS = {
+    ("classify",): "classify", ("score", "select"): "pointer", ("generate",): "generate",
+    ("score-options",): "score-options",
+}
 _STARTUP_CODES = {
     "invalid_config", "invalid_checkpoint", "checkpoint_pin_mismatch", "model_load_failure",
     "gpu_locked", "gpu_lock_unavailable", "gpu_unavailable", "containment_failure",
@@ -55,7 +59,7 @@ def _startup_ms() -> float:
     return round((time.monotonic() - _STARTED) * 1000, 3)
 
 
-def _read_config(path: Path) -> tuple[dict, dict, WorkerLimits]:
+def _read_config(path: Path) -> tuple[dict, dict, WorkerLimits, str]:
     if not path.is_absolute():
         raise ValueError("config must have an absolute path")
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
@@ -78,7 +82,7 @@ def _read_config(path: Path) -> tuple[dict, dict, WorkerLimits]:
     digest = checkpoint.get("sha256") if isinstance(checkpoint, dict) else None
     if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
         raise ValueError("missing checkpoint pin")
-    return identity, model, WorkerLimits.parse(raw.get("limits", {}))
+    return identity, model, WorkerLimits.parse(raw.get("limits", {})), sha256(data).hexdigest()
 
 
 def _read_commands(runtime: WorkerRuntime) -> None:
@@ -109,7 +113,7 @@ def main() -> int:
         parent_pid = int(pid_arg)
         if parent_pid <= 0 or parent_pid == os.getpid():
             raise ValueError("invalid parent")
-        identity, model, limits = _read_config(config_path)
+        identity, model, limits, config_digest = _read_config(config_path)
     except (ValueError, OSError, RecursionError):
         return _fail_startup("invalid_config")
 
@@ -136,10 +140,12 @@ def main() -> int:
 
         torch.set_num_threads(limits.cpu_threads)
         torch.set_num_interop_threads(1)
-        engine = load_engine(model, base_dir=config_path.parent, max_output_tokens=limits.max_output_tokens)
+        engine = load_engine(model, base_dir=config_path.parent, max_output_tokens=limits.max_output_tokens,
+                             tokenizer_id=identity["tokenizerId"])
         heads = {name: _HEAD_KINDS[head.operations] for name, head in engine.heads.items()}
         ready = frame("ready", identity=identity, heads=heads, limits=limits.advertised(), startupMs=_startup_ms(),
-                      device=engine.device.type, parity=engine.parity_report)
+                      device=engine.device.type, parity=engine.parity_report, configSha256=config_digest,
+                      **({"text": True} if engine.text is not None else {}))
         if len(ready) > MAX_FRAME_BYTES:
             raise ValueError("oversized readiness")
     except Exception as error:

@@ -7,13 +7,16 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from .text import TextStream
 
 
 PROTOCOL = "mohassan.execution.worker.v1"
 MAX_FRAME_BYTES = 16 * 1024 * 1024
 IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,255}")
-OPERATIONS = {"classify", "score", "select", "generate"}
+OPERATIONS = {"classify", "score", "select", "generate", "score-options"}
 REQUEST_CODES = {
     "invalid_request", "unsupported_capability", "invalid_model_output",
     "model_process_failure", "resource_exhaustion", "timeout", "cancelled",
@@ -112,6 +115,7 @@ class Request:
     batch_key: Any
     received: float
     deadline: float
+    text_stream: TextStream | None = None
     started: bool = False
     termination: str | None = None
     output_bytes: int = 0
@@ -175,6 +179,7 @@ class WorkerRuntime:
         try:
             value = self.engine.prepare(operation, head, payload)
             key = self.engine.batch_key(operation, head, value)
+            text_stream = self.engine.text.stream() if operation == "generate" and "text" in payload else None
         except Exception as error:
             self._error(request_id, error_code(error, "invalid_request"))
             return
@@ -182,7 +187,7 @@ class WorkerRuntime:
         if time.monotonic() >= deadline:
             self._error(request_id, "timeout")
             return
-        self._pending[request_id] = Request(request_id, operation, head, value, key, received, deadline)
+        self._pending[request_id] = Request(request_id, operation, head, value, key, received, deadline, text_stream)
         self._condition.notify_all()
 
     def _error(self, request_id: str, code: str) -> None:
@@ -327,11 +332,21 @@ class WorkerRuntime:
                     or (position + 1 >= self.limits.max_output_tokens and step.stop_reason is None)):
                     self._finish_error(request, "invalid_model_output")
                     continue
-                if not self._emit(request, "token", token=step.token_id, index=position):
+                text_fields: dict = {}
+                if request.text_stream is not None:
+                    try:
+                        text_fields["text"] = request.text_stream.push(step.token_id, step.stop_reason)
+                    except Exception as error:
+                        self._finish_error(request, error_code(error, "invalid_model_output"))
+                        continue
+                if not self._emit(request, "token", token=step.token_id, index=position, **text_fields):
                     continue
                 request.token_ids.append(step.token_id)
                 if step.stop_reason is not None:
-                    self._emit(request, "result", result={"tokenIds": request.token_ids, "stopReason": step.stop_reason})
+                    result = {"tokenIds": request.token_ids, "stopReason": step.stop_reason}
+                    if request.text_stream is not None:
+                        result.update(text=request.text_stream.text, inputTokens=len(request.value.input_ids))
+                    self._emit(request, "result", result=result)
             return any(self._pending.get(request.request_id) is request for request in batch)
 
     def run(self) -> int:

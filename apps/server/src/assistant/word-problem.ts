@@ -12,6 +12,7 @@ import { parseItemCosts } from './word-problem-costs.js';
 import { searchCandidates } from './arithmetic-search-candidates.js';
 import { extractSearchProblem } from './arithmetic-search-quantities.js';
 import { selectArithmeticCandidate } from './arithmetic-search-ranker.js';
+import { arithmeticSearchEnabled } from './arithmetic-search-settings.js';
 
 const englishQuestion = /\b(?:how (?:many|much|far|long|old)|what (?:is|was|will be) (?:the |her |his |their )?(?:total|difference|average|sum|cost|number|price|amount|percentage|fraction|age)|(?:calculate|find|determine) (?:the |her |his |their )?)\b/iu;
 const extraSearchQuestion = /\b(?:how (?:fast|heavy|tall|wide|deep)|(?:at )?what (?:percent(?:age)?|fraction|rate|speed)|what (?:is|was) the (?:ratio|rate|speed|remainder))\b/iu;
@@ -146,6 +147,7 @@ export function searchCandidatesForWordProblem(request: string) {
 }
 
 export function evaluateWordProblem(request: string): LocalComputation | null {
+  if (!arithmeticSearchEnabled()) return evaluateWordProblemGrammar(request);
   const problem = readProblem(request);
   const grammar = problem && evaluateGrammar(problem);
   if (problem && grammar?.result) return computedReply(problem.lang, grammar.result);

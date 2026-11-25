@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ScratchHead, ScratchPrediction } from '@mohassan/scratch-classifiers';
 import { evaluateLocalConversation } from '../apps/server/src/assistant/local-conversation.js';
 import { bootstrapRequestContext } from '../apps/server/src/assistant/request-context.js';
@@ -20,6 +20,8 @@ function policy(labels: Partial<Record<ScratchHead, string>>, enabled = true): S
 }
 
 describe('scratch classifier request decisions', () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
   it('observes all four predictions once in shadow and emits no request or history text', () => {
     const input: RequestRoutingInput = {
       text: 'What is happening around the world this morning?', capabilities, turnId: 'test-turn',
@@ -72,6 +74,7 @@ describe('scratch classifier request decisions', () => {
   });
 
   it.each(['refuse', 'out_of_scope'])('keeps an unresolved numeric question local despite a learned %s prediction', refusal => {
+    vi.stubEnv('MOHASSAN_ARITHMETIC_SEARCH', '1');
     const input = { text: 'Eighteen cubbies fit in each cabinet. The workshop has space for 7 cabinets. What is the total capacity?', capabilities };
     const fallback = decideRequestRoute({ text: 'A question with missing details.', capabilities }, null);
     expect(fallback).toMatchObject({ handler: 'clarify', publicQuery: null, sourceAssessment: { source: 'unresolved' } });

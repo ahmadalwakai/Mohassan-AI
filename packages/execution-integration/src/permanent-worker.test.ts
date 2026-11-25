@@ -18,7 +18,8 @@ const fixture = String.raw`
     send({
       kind: 'ready',
       identity: startup === 'wrong-id' ? { ...identity, checkpointId: 'incorrect' } : identity,
-      heads: { route: 'classify', text: 'generate' },
+      ...(startup === 'bad-config-digest' ? { configSha256: 'invalid' } : {}),
+      heads: { route: 'classify', text: 'generate', options: 'score-options' },
       limits: { maxBatchSize: 2, maxBatchWaitMs: 5, maxPending: 2, maxInputBytes: 2048,
         maxOutputBytes: 2048, maxOutputTokens: 8, maxTimeoutMs: 30000 },
       startupMs: 1,
@@ -78,6 +79,10 @@ const fixture = String.raw`
       send({ kind: 'token', requestId, token: 5, index: 0 });
       send({ kind: 'token', requestId, token: 2, index: 1 });
       send({ kind: 'result', requestId, result: { tokenIds: mode === 'bad-final' ? [4, 2] : [5, 2], stopReason: 'eos' } });
+      return;
+    }
+    if (request.operation === 'score-options') {
+      send({ kind: 'result', requestId, result: { scores: mode === 'short-scores' ? [-2] : [-2, 1] } });
       return;
     }
     send({ kind: 'result', requestId, result: { pid: process.pid, total } });
@@ -196,6 +201,7 @@ describe('permanent model worker supervision', () => {
   it.each([
     ['pin', 'checkpoint_pin_mismatch'],
     ['wrong-id', 'model_identity_mismatch'],
+    ['bad-config-digest', 'invalid_model_output'],
     ['silent', 'timeout'],
   ])('refuses startup %s', async (startup, code) => {
     const worker = newWorker({ startupTimeoutMs: 400, restartMinMs: 1_000, restartMaxMs: 1_000 }, startup);
@@ -225,6 +231,15 @@ describe('permanent model worker supervision', () => {
     await ready(worker);
     await expect(worker.request({
       operation: 'generate', head: 'text', input: { mode: 'bad-final', maxNewTokens: 2 },
+    })).rejects.toMatchObject({ code: 'invalid_model_output' });
+  });
+
+  it.each(['short-scores', 'positive-score'])('rejects an incompatible closed-list result (%s)', async mode => {
+    const worker = newWorker();
+    worker.start();
+    await ready(worker);
+    await expect(worker.request({
+      operation: 'score-options', head: 'options', input: { mode, inputIds: [1], options: [[2], [3]] },
     })).rejects.toMatchObject({ code: 'invalid_model_output' });
   });
 

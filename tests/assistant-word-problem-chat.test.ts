@@ -1,6 +1,6 @@
 import type { AgentBrowser } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { evaluateWordProblemGrammar } from '../apps/server/src/assistant/word-problem.js';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
 
@@ -27,6 +27,7 @@ describe('arithmetic word problems through the chat controller', () => {
 
   beforeEach(() => { search.mockClear(); act.mockClear(); fetch.mockClear(); });
 
+  afterEach(() => { vi.unstubAllEnvs(); });
   afterAll(async () => { await control?.shutdown(); await database?.close(); });
 
   async function ask(goal: string) {
@@ -60,7 +61,12 @@ describe('arithmetic word problems through the chat controller', () => {
 
   it('searches after the grammar abstains and verifies the selected steps', async () => {
     const story = 'A workshop has 8 rolls with 14 meters of ribbon per roll. The ribbon is divided equally into 4 display frames. How many meters of ribbon go on each frame?';
+    vi.stubEnv('MOHASSAN_ARITHMETIC_SEARCH', undefined);
     expect(evaluateWordProblemGrammar(story)).toMatchObject({ status: 'blocked', abstained: true });
+    const defaultReply = await ask(story);
+    expect(defaultReply.text).not.toContain('Final answer');
+    expect(defaultReply.run.status).toBe('blocked');
+    vi.stubEnv('MOHASSAN_ARITHMETIC_SEARCH', '1');
     const { text, run } = await ask(story);
     expect(text.split('\n')).toEqual(['8 × 14 = 112', '112 ÷ 4 = 28', 'Final answer = 28']);
     expect(run.status).toBe('completed');

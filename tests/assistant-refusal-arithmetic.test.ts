@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { hasQuantitativeQuestion } from '../apps/server/src/assistant/quantitative-question.js';
 import { classifyRefusal } from '../apps/server/src/assistant/refusal/classifier.js';
 import { classifyLearnedRefusal } from '../apps/server/src/assistant/refusal/learned-classifier.js';
@@ -10,6 +10,9 @@ vi.mock('../apps/server/src/assistant/refusal/learned-classifier.js', () => ({
 const context = { fullAccess: true };
 
 describe('arithmetic premises in refusal review', () => {
+  beforeEach(() => { vi.stubEnv('MOHASSAN_ARITHMETIC_SEARCH', '1'); });
+  afterEach(() => { vi.unstubAllEnvs(); });
+
   it.each([
     'A glass studio works with twenty-four sheets. Three break in storage. What percent of the sheets broke?',
     'The ferry travels 27 miles in 3 hours. At what rate does it travel?',

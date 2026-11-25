@@ -2,6 +2,7 @@ import { loadScratchClassifiers, type ScratchClassifiers, type ScratchHead, type
 import { webQuestion } from './hands.js';
 import { buildFrame } from './mind/frame.js';
 import { hasQuantitativeQuestion } from './quantitative-question.js';
+import { arithmeticSearchEnabled } from './arithmetic-search-settings.js';
 import { parseRequestContextState, requestActionText } from './request-context.js';
 import { maskRequestLiteralData, requestScopeActionText } from './request-scope.js';
 import type { RequestRoutingDecision, RequestRoutingInput, RoutedIntent } from './routing-decision.js';
@@ -84,7 +85,7 @@ function choose(input: RequestRoutingInput, rule: RequestRoutingDecision, predic
   const refusal = predictions.refusal.label;
   if (!ruleRefusal && resolution.kind === 'new' && (fallback || nominalFallback)
       && (refusal === 'refuse' || refusal === 'out_of_scope')) {
-    if (hasQuantitativeQuestion(maskRequestLiteralData(resolution.resolved))) return choices;
+    if (arithmeticSearchEnabled() && hasQuantitativeQuestion(maskRequestLiteralData(resolution.resolved))) return choices;
     return { refusal };
   }
 

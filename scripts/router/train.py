@@ -69,26 +69,41 @@ def stable(text: str) -> int:
 WRITTEN_REPEAT = 10
 
 
-def load() -> dict[str, list[tuple[str, int]]]:
-    splits: dict[str, list[tuple[str, int]]] = {"train": [], "dev": [], "massive_test": [], "sealed": []}
+def load_massive() -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+    train_rows, test_rows = [], []
     for locale in ("ar-SA", "en-US"):
         for line in (MASSIVE / f"{locale}.jsonl").read_text(encoding="utf-8").splitlines():
             row = json.loads(line)
             route = INTENT_TO_ROUTE[row["intent"]]
-            split = "massive_test" if row["partition"] == "test" else "train"
-            splits[split].append((row["utt"], ROUTE_ID[route]))
+            partition = test_rows if row["partition"] == "test" else train_rows
+            partition.append((row["utt"], ROUTE_ID[route]))
+    return train_rows, test_rows
+
+
+def load_written() -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+    train_rows, dev_rows = [], []
     for line in WRITTEN.read_text(encoding="utf-8").splitlines():
         row = json.loads(line)
         # A fixed fifth of the written sentences is held out for model selection.
-        # A fixed fifth of the written sentences is held out for model selection; the rest is repeated so the
-        # routes MASSIVE lacks are not drowned by its thousands of rows.
-        if stable(row["text"]) % 5 == 0:
-            splits["dev"].append((row["text"], ROUTE_ID[row["route"]]))
-        else:
-            splits["train"].extend([(row["text"], ROUTE_ID[row["route"]])] * WRITTEN_REPEAT)
-    for line in SEALED.read_text(encoding="utf-8").splitlines():
-        row = json.loads(line)
-        splits["sealed"].append((row["text"], ROUTE_ID[row["route"]]))
+        partition = dev_rows if stable(row["text"]) % 5 == 0 else train_rows
+        partition.append((row["text"], ROUTE_ID[row["route"]]))
+    return train_rows, dev_rows
+
+
+def load_public(*, use_massive: bool = True) -> dict[str, list[tuple[str, int]]]:
+    massive_train, massive_test = load_massive() if use_massive else ([], [])
+    written_train, dev = load_written()
+    repeated_written = [row for row in written_train for _ in range(WRITTEN_REPEAT)]
+    return {"train": massive_train + repeated_written, "dev": dev, "massive_test": massive_test}
+
+
+def load(*, use_sealed: bool = False) -> dict[str, list[tuple[str, int]]]:
+    splits = load_public()
+    splits["sealed"] = []
+    if use_sealed:
+        for line in SEALED.read_text(encoding="utf-8").splitlines():
+            row = json.loads(line)
+            splits["sealed"].append((row["text"], ROUTE_ID[row["route"]]))
     return splits
 
 
@@ -224,11 +239,12 @@ def main() -> None:
     parser.add_argument("--sealed", action="store_true", help="score the owner's real messages (once per final model)")
     args = parser.parse_args()
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    splits = load()
+    splits = load(use_sealed=args.sealed)
     print({k: len(v) for k, v in splits.items()}, "device", device)
     print("train routes:", {ROUTES[k]: n for k, n in sorted(Counter(y for _, y in splits["train"]).items())})
     OUT.mkdir(parents=True, exist_ok=True)
-    rules = json.loads((OUT / "rules-sealed.json").read_text(encoding="utf-8")) if (OUT / "rules-sealed.json").exists() else None
+    rules_file = OUT / "rules-sealed.json"
+    rules = json.loads(rules_file.read_text(encoding="utf-8")) if args.sealed and rules_file.exists() else None
     report: dict = {"date": time.strftime("%Y-%m-%d-%H%M%S"), "splits": {k: len(v) for k, v in splits.items()}, "models": {}}
     for kind in (["b0", "b1"] if args.model == "both" else [args.model]):
         started = time.time()
@@ -252,7 +268,7 @@ def main() -> None:
                     info["R2_vs_rules"] = {"rules_only_right": b, "model_only_right": c, "p_value": round(p, 4)}
         # Latency on this machine, CPU, one request at a time.
         cpu = model.to("cpu")
-        sample = [t for t, _ in splits["sealed"]][:40]
+        sample = [t for t, _ in (splits["sealed"] or splits["dev"])][:40]
         tick = time.perf_counter()
         for text in sample:
             predict(cpu, kind, [text], chars, "cpu")

@@ -1,5 +1,6 @@
 import { publicSearchScan, publicSearchText } from '@mohassan/browser';
 import { isCurrentComputerReadRequest } from '../computer-request-language.js';
+import { arithmeticSearchEnabled } from '../arithmetic-search-settings.js';
 import { documentTask } from '../documents.js';
 import { hasQuantitativeQuestion } from '../quantitative-question.js';
 import { maskRequestLiteralData } from '../request-constraints.js';
@@ -289,7 +290,7 @@ export function classifyRefusal(request: string, context: RefusalContext): Refus
   if (hasCredentialMaterial(request, scope)) return refusal('secrets', 'secure_entry');
   const action = scope.constraints?.safeActionText ?? requestScopeActionText(request);
   const masked = maskRequestLiteralData(action).replace(webAddress, url => ' '.repeat(url.length));
-  const arithmetic = hasQuantitativeQuestion(masked);
+  const arithmetic = arithmeticSearchEnabled() && hasQuantitativeQuestion(masked);
   const clauses = outerClauses(action, masked, arithmetic);
   const isDraft = clauses.some(clause => askForDraft.test(clause.text));
   let found: RefusalDecision | null = null;
