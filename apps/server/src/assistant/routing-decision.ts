@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { standaloneMannersRoute } from './manners/chat.js';
 import { directRoute } from './brain.js';
 import { isCampaignRequest } from './campaign-request.js';
 import { parseHands, type HandsStep } from './hands.js';
@@ -73,6 +74,8 @@ const frameIntent = (intent: ReturnType<typeof buildFrame>['intent']): RoutedInt
 
 /** No I/O, model calls, public search fallback for private requests or state mutation. */
 export function decideRequestRoute(input: RequestRoutingInput): RequestRoutingDecision {
+  const manners = standaloneMannersRoute(input);
+  if (manners) return manners;
   const pending = PendingQuestionSchema.safeParse(input.pendingQuestion);
   const options: RequestContextOptions = { turnId: input.turnId,
     ...(pending.success ? { pendingQuestion: { id: pending.data.id, fields: pending.data.fields } } : {}) };
