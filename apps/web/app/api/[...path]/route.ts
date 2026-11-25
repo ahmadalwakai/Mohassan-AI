@@ -19,7 +19,8 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
     const chatImage=path.length===2&&path[0]==='chat'&&path[1]==='images'&&request.method==='POST';
     const siteImage=path.length===3&&path[0]==='sites'&&path[2]==='images'&&request.method==='POST';
     const siteBrief=path.length===3&&path[0]==='sites'&&path[2]==='brief'&&request.method==='POST';
-    const limit=fileGrant?720000:chatImage?7500000:path.length===2&&path[0]==='studio'&&path[1]==='images'?1500000:siteImage?1500000:siteBrief?262144:desktopFiles?2300000:documentUpload?14000000:path.length===1&&path[0]==='documents'&&request.method==='POST'?400000:16384;
+    const activationRecord=path.length===2&&path[0]==='activation-console'&&path[1]==='state'&&request.method==='POST';
+    const limit=fileGrant?720000:chatImage?7500000:path.length===2&&path[0]==='studio'&&path[1]==='images'?1500000:siteImage?1500000:siteBrief?262144:desktopFiles?2300000:documentUpload?14000000:path.length===1&&path[0]==='documents'&&request.method==='POST'?400000:activationRecord?132*1024:16384;
     const tooLarge=()=>Response.json({error:{code:'PAYLOAD_TOO_LARGE',message:'حجم الطلب أكبر من المسموح.'}},{status:413});
     if (Number(request.headers.get('content-length') || '0') > limit) return tooLarge();
     let body:Uint8Array|undefined;

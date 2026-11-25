@@ -17,6 +17,7 @@ export * from './chrome-extension';
 export * from './campaign-progress';
 export * from './ai-providers';
 export * from './sites';
+export * from './activation-console';
 export { browserReadOrigins, detectBrowserOpenIntent, type BrowserOpenIntent } from './browser-intent';
 
 export const TaskStatusSchema = z.enum(['queued', 'running', 'waiting_approval', 'verifying', 'completed', 'failed', 'cancelled', 'paused']);
