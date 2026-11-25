@@ -14,17 +14,27 @@ const workerScript = readFileSync(new URL('../apps/web/public/notifications-sw.j
 
 afterEach(() => vi.unstubAllGlobals());
 
-function startWorker({ windows = [] as { url: string; focus?: () => Promise<unknown>; navigate?: (url: string) => Promise<unknown> }[], status = 204 } = {}) {
+function startWorker({
+  windows = [] as { url: string; focus?: () => Promise<unknown>; navigate?: (url: string) => Promise<unknown> }[],
+  status = 204,
+  receipts,
+}: { windows?: { url: string; focus?: () => Promise<unknown>; navigate?: (url: string) => Promise<unknown> }[]; status?: number; receipts?: Map<string, Response> } = {}) {
   const handlers = new Map<string, (value: unknown) => void>();
   const openWindow = vi.fn();
   const showNotification = vi.fn();
   const fetch = vi.fn(async () => ({ status }));
   runInNewContext(workerScript, {
-    URL, fetch,
+    URL, Response, fetch,
     self: {
       location: { origin },
       clients: { matchAll: async () => windows, openWindow },
       registration: { showNotification },
+      caches: receipts && { open: async () => ({
+        match: async (key: string) => receipts.get(key),
+        put: async (key: string, response: Response) => receipts.set(key, response),
+        keys: async () => [...receipts.keys()],
+        delete: async (key: string) => receipts.delete(key),
+      }) },
       addEventListener: (event: string, handler: (value: unknown) => void) => handlers.set(event, handler),
     },
   });
@@ -94,6 +104,29 @@ describe('web push worker', () => {
     const unauthorized = startWorker({ status: 404 });
     await unauthorized.dispatch('push', push);
     expect(unauthorized.showNotification).not.toHaveBeenCalled();
+  });
+
+  it('displays the background push body and only shows one notification across a worker restart', async () => {
+    const receipts = new Map<string, Response>();
+    const first = startWorker({ receipts });
+    const push = { data: { json: () => ({
+      ...task, runId: taskId, runKind: 'run-blocked', title: 'Sign in to continue',
+      body: 'One of the sources needs you to sign in.', language: 'en',
+      conversationTitle: 'Private conversation',
+    }) } };
+
+    await Promise.all([first.dispatch('push', push), first.dispatch('push', push)]);
+    expect(first.showNotification).toHaveBeenCalledExactlyOnceWith('Sign in to continue', {
+      body: 'One of the sources needs you to sign in.', data: { conversationId },
+      tag: `mohassan-task-${taskId}`, dir: 'ltr', lang: 'en', renotify: false,
+    });
+    expect(receipts.size).toBe(1);
+    expect(await [...receipts.values()][0]?.text()).toBe('');
+
+    const restarted = startWorker({ receipts });
+    await restarted.dispatch('push', push);
+    expect(restarted.fetch).toHaveBeenCalledOnce();
+    expect(restarted.showNotification).not.toHaveBeenCalled();
   });
 });
 
