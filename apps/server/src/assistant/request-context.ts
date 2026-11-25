@@ -2,7 +2,6 @@ import { z } from 'zod';
 import { returnedTo } from './return-to.js';
 import { explicitKnowledgeDocumentRequest } from './knowledge-document-request.js';
 import { assessRequestScope, parseRequestScopeAssessment, requestOperationText, RequestScopeAssessmentSchema, reviewPublicProjection, parseUserRequestConstraints, maskRequestLiteralData, isEntireLiteralRequest, type UserRequestConstraints, type RequestScopeAssessment } from './request-scope.js';
-import { questionCoreferenceText } from './public-question-syntax.js';
 
 /**
  * A small, deterministic context boundary, not a replacement language model.
@@ -132,7 +131,7 @@ const POINTER = /(?:^|\s)(?:سعر[هها]{1,2}|موعد[هها]{1,2}|اسم[ه�
 // «ما هو X» / «من هي X»: the pronoun is the question's copula when a subject follows it,
 // so it is not a pointer to an earlier topic. «من هو؟» and «ما هو سعره؟» keep their pointer test.
 const COPULA_QUESTION = /^(?:ما|من|ماذا|متي|متى|اين|وين|كيف|كم)\s+(?:هو|هي)\s+(?=[^\s?!؟.])/iu;
-const pointsBack = (text: string) => POINTER.test(questionCoreferenceText(text).replace(COPULA_QUESTION, ''));
+const pointsBack = (text: string) => POINTER.test(text.replace(COPULA_QUESTION, ''));
 const MODIFIER = /^(?:اجعلها|اجعله|خليها|خليه|خلها|خله|عدلها|عدله|بدلها|بدله|make it|change it|change that|set it|keep it)(?=\s|$)/iu;
 const QUESTION_ONLY = /^(?:و?هو|و?هي|عنه|عنها|it|that|them|what about it|how about it)[?!؟.]*$/iu;
 const PROPERTY = /^(?:(?:كم|ما|ماذا|متي|متى|هل|what(?:'s| is| are)?|how (?:much|many)|when(?:'s| is)?|is|are)\s+)*(سعر|اسعار|موعد|مبارا[ةه]|مباريات|نتيج[ةه]|نتائج|طقس|درج[ةه] الحرار[ةه]|مواصفات|تكلف[ةه]|طول|ارتفاع|عمر|price|prices|cost|weather|temperature|match|matches|score|scores|specifications?|height|age)(?=\s|$)/iu;
