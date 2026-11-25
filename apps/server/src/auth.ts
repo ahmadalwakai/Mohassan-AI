@@ -1,5 +1,6 @@
 import { betterAuth } from 'better-auth';
 import { sql, type Kysely } from 'kysely';
+import { discardUnusedSignupSession } from './member-sessions.js';
 
 export async function migrateAuth(database: Kysely<any>) {
   await database.transaction().execute(async (db) => {
@@ -50,7 +51,7 @@ export async function recoverLocalSetupClaim(db: Kysely<any>) {
   });
 }
 
-export function createAuth(db: Kysely<any>, options: {secret: string; webOrigin: string; production: boolean}) {
+export function createAuth(db: Kysely<any>, options: {secret: string; webOrigin: string; production: boolean; beforeSessionCreate?: (userId: string) => Promise<void>}) {
   const origin = new URL(options.webOrigin);
   const trustedOrigins = [origin.origin];
   if (!options.production && ['localhost', '127.0.0.1'].includes(origin.hostname)) {
@@ -65,6 +66,7 @@ export function createAuth(db: Kysely<any>, options: {secret: string; webOrigin:
     database: {db, type: 'postgres'},
     trustedOrigins,
     emailAndPassword: {enabled: true, minPasswordLength: 12, maxPasswordLength: 128},
+    databaseHooks: {session: {create: {before: async session => { await options.beforeSessionCreate?.(session.userId); }}}},
     session: {expiresIn: 60 * 60 * 24 * 7, updateAge: 60 * 60, cookieCache: {enabled: false}},
     rateLimit: {enabled: true, storage: 'database', window: 60, max: 30,customRules:{'/get-session':{window:60,max:120}}},
     advanced: {useSecureCookies: options.production},
@@ -80,7 +82,10 @@ export async function createOwner(db: Kysely<any>, auth: ReturnType<typeof creat
   try {
     // Public HTTP registration is never mounted. Only this one-time server operation can call it.
     const result = await auth.api.signUpEmail({body: input});
-    await db.updateTable('workspace_owner').set({owner_id: result.user.id}).where('id', '=', 1).execute();
+    await db.transaction().execute(async tx => {
+      await discardUnusedSignupSession(tx, result.user.id, result.token);
+      await tx.updateTable('workspace_owner').set({owner_id: result.user.id}).where('id', '=', 1).execute();
+    });
     return result.user;
   } catch (error) {
     await db.deleteFrom('workspace_owner').where('id', '=', 1).where('owner_id', 'is', null).execute();

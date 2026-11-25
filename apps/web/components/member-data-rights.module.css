@@ -1,0 +1,170 @@
+.details {
+  margin-block-end: 18px;
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  list-style: none;
+  padding: 16px 20px;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.summary::-webkit-details-marker {
+  display: none;
+}
+
+.summary:focus-visible {
+  outline: 2px solid #427c61;
+  outline-offset: -4px;
+}
+
+.summary h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.details[open] .summary > svg {
+  transform: rotate(180deg);
+}
+
+.contents,
+.body {
+  padding: 0 20px 20px;
+  color: #40594d;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.right {
+  display: grid;
+  justify-items: start;
+  gap: 9px;
+  padding-block: 16px;
+  border-block-start: 1px solid var(--line);
+}
+
+.right:last-child {
+  padding-block-end: 0;
+}
+
+.right h3 {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.actions,
+.metadata,
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 8px 14px;
+  flex-wrap: wrap;
+}
+
+.memberActions {
+  justify-items: end;
+}
+
+.list {
+  list-style: none;
+  width: 100%;
+  padding: 0;
+}
+
+.list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  border-block-end: 1px solid var(--line);
+  padding-block: 10px;
+}
+
+.record {
+  display: grid;
+  gap: 3px;
+  overflow-wrap: anywhere;
+}
+
+.current {
+  background: #edf5ed;
+  color: #346048;
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin-inline-start: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.metadata {
+  color: #52665b;
+  font-size: 12px;
+}
+
+.body > .actions {
+  margin-block-start: 10px;
+}
+
+.tableScroll {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: start;
+}
+
+.table th,
+.table td {
+  padding: 9px 8px;
+  text-align: start;
+  border-block-end: 1px solid var(--line);
+}
+
+.table th {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.identifier {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.pending {
+  display: grid;
+  justify-items: start;
+  gap: 14px;
+  max-width: 450px;
+  line-height: 1.7;
+}
+
+.pending h1,
+.dataOnly h1 {
+  color: var(--ink);
+  font-size: 26px;
+  font-weight: 650;
+}
+
+.dataOnly {
+  display: grid;
+  gap: 14px;
+  max-width: 720px;
+  margin-inline: auto;
+  padding: 24px 16px;
+}
+
+.dataOnly > button {
+  justify-self: start;
+}

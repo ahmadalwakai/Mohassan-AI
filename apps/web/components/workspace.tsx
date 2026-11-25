@@ -35,6 +35,7 @@ const ExecutorWorkspace = dynamic(() => import("./executor-workspace").then(modu
 const AssistantApp = dynamic(() => import("./assistant-app").then(module => module.AssistantApp));
 const MembersPanel = dynamic(() => import("./members").then(module => module.MembersPanel));
 const MemberTools = dynamic(() => import("./members").then(module => module.MemberTools));
+const MemberDataAccessGate = dynamic(() => import("./member-data-rights").then(module => module.MemberDataAccessGate));
 const InviteScreen = dynamic(() => import("./members").then(module => module.InviteScreen));
 
 type View = "chat" | "desktop" | "overview" | "tasks" | "browser" | "memory" | "skills" | "windows" | "ads" | "studio" | "sites" | "coding" | "executor" | "capabilities" | "integrations" | "members" | "roadmap";
@@ -320,6 +321,7 @@ export function Workspace() {
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
   const [access, setAccess] = useState<Access | null>(null);
+  const [scheduledDeletion, setScheduledDeletion] = useState<NonNullable<Access["deletion"]> | null>(null);
   const [inviteToken, setInviteToken] = useState<string | null>(null);
   useEffect(() => { const match = /^#invite=([A-Za-z0-9_-]{43})$/.exec(location.hash); if (match) setInviteToken(match[1]!); }, []);
   const closeInvite = useCallback(() => { setInviteToken(null); history.replaceState(null, "", location.pathname); }, []);
@@ -329,6 +331,7 @@ export function Workspace() {
     request<Access>("/api/access").then(value => { if (active) setAccess(value); }).catch((caught) => {
       if (!active) return;
       if (caught instanceof ApiError && [401, 403].includes(caught.status)) { setSession(null); setBoot("signin"); setError(caught.status === 403 ? caught.message : ""); }
+      else setError(errorMessage(caught));
     });
     return () => { active = false; };
   }, [boot, session]);
@@ -396,7 +399,8 @@ export function Workspace() {
   if (boot === "unconfigured") return <main className="boot-screen"><Brand compact /><span className="empty-icon"><ShieldCheck size={28} /></span><h1>يلزم إعداد حساب المالك</h1><p>إنشاء الحساب الأول متاح من بيئة الخادم فقط. بعد إتمامه، أعد المحاولة للدخول إلى مساحة العمل.</p><Button className="primary-button" onClick={() => { void retryBoot(); }}><RefreshCw size={16} />إعادة المحاولة</Button></main>;
   if (boot === "setup" || boot === "signin") return <AuthScreen needsSetup={boot === "setup"} onAuthenticated={(value) => { setSession(value); setBoot("ready"); }} onRetry={() => { void request<{ needsSetup: boolean; setupAvailable?: boolean }>("/api/setup").then((value) => { if (!value.needsSetup) setBoot("signin"); }).catch(() => {}); }} />;
 
-  if (access?.role === "member" && advanced) return <MemberTools access={access} onChat={() => setAdvanced(false)} onSignOut={() => { void signOut(); }} />;
+  if (!access || scheduledDeletion || access.deletion || access.dataOnly) return <MemberDataAccessGate deletion={scheduledDeletion ?? access?.deletion ?? null} signedIn={!scheduledDeletion} error={error} dataOnly={access?.dataOnly} onDeletionScheduled={setScheduledDeletion} onSignOut={() => { void signOut(); }} />;
+  if (access.role === "member" && advanced) return <MemberTools access={access} onChat={() => setAdvanced(false)} onSignOut={() => { void signOut(); }} onDeletionScheduled={setScheduledDeletion} />;
   if (!advanced || !owner) return <AssistantApp name={session?.user.name ?? "بك"} onAdvanced={() => setAdvanced(true)} onOpenTool={owner ? (target) => { setView(target); setAdvanced(true); } : undefined} onSignOut={() => { void signOut(); }} />;
 
   const tasks = snapshot?.tasks ?? [];

@@ -4330,6 +4330,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const row = await owned(ownerId, id);
     if (row.active_run_id) await cancel(ownerId, id);
     await workers.get(id)?.catch(() => {});
+    await browser.rememberAccountProfile?.(ownerId, row.browser_account ?? null);
     await db.transaction().execute(async (tx) => {
       const locked = await tx.selectFrom('chat_conversations').select('id').where('id', '=', id).where('owner_id', '=', ownerId).forUpdate().executeTakeFirst();
       if (!locked) throw notFound();

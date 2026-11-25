@@ -170,10 +170,10 @@ describe('workspace members over disposable local state', () => {
     expect(listed.members.map((entry: { email: string }) => entry.email)).toEqual([member.email]);
     expect((await app().inject({ method: 'POST', url: `/api/members/${memberId}/access`, headers: headers(), payload: { enabled: false } })).statusCode).toBe(200);
     expect((await app().inject({ url: '/api/access', headers: headers(memberCookie) })).statusCode).toBe(401);
-    // Signing in again still yields a session, but the gate refuses every route until access is restored.
+    // A suspended member can sign in to manage their own data. Product routes still refuse access.
     const again = await login(member); expect(again.status).toBe(200);
-    const refused = await app().inject({ url: '/api/access', headers: headers(again.cookie) });
-    expect(refused.statusCode).toBe(403); expect(refused.json().error.code).toBe('MEMBER_FORBIDDEN');
+    const restricted = await app().inject({ url: '/api/access', headers: headers(again.cookie) });
+    expect(restricted.statusCode).toBe(200); expect(restricted.json()).toMatchObject({ role: 'member', services: [], dataOnly: true });
     expect((await app().inject({ url: `/api/chat/conversations/${randomUUID()}/browser/activity`, headers: headers(again.cookie) })).statusCode).toBe(403);
     expect((await app().inject({ method: 'POST', url: '/api/chat/conversations', headers: headers(again.cookie), payload: {} })).statusCode).toBe(403);
     expect((await app().inject({ method: 'POST', url: `/api/members/${memberId}/access`, headers: headers(), payload: { enabled: true } })).statusCode).toBe(200);

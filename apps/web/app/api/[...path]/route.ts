@@ -4,6 +4,12 @@ export const dynamic = 'force-dynamic';
 async function forward(request: NextRequest, context: {params: Promise<{path:string[]}>}) {
   const {path} = await context.params;
   if (path.some(part=>!(/^[a-zA-Z0-9._~-]+$/).test(part) || part==='..')) return Response.json({error:{code:'INVALID_PATH',message:'مسار غير صالح.'}},{status:400});
+  const accountExport = path.length === 2 && path[0] === 'member-data' && path[1] === 'export';
+  // Fetch Metadata §2.3: https://www.w3.org/TR/fetch-metadata/#sec-fetch-site-header (retrieved 2026-11-25).
+  const fetchSite = request.headers.get('sec-fetch-site');
+  if (accountExport && fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') {
+    return Response.json({error:{code:'ORIGIN_DENIED',message:'مصدر الطلب غير مسموح به.'}},{status:403,headers:{'Cache-Control':'no-store'}});
+  }
   const secret = process.env.INTERNAL_API_SECRET;
   if (!secret) return Response.json({error:{code:'NOT_CONFIGURED',message:'ابدأ الخدمة من أمر تشغيل المشروع.'}},{status:503});
   const target = new URL(`/api/${path.map(encodeURIComponent).join('/')}`,process.env.MOHASSAN_SERVER_URL || 'http://127.0.0.1:4000');
@@ -11,6 +17,11 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
   const headers=new Headers({'x-mohassan-internal':secret});
   for(const key of ['cookie','origin','content-type','user-agent','idempotency-key']) {
     const value=request.headers.get(key); if(value)headers.set(key,value);
+  }
+  // Vercel supplies this IP header: https://vercel.com/docs/headers/request-headers#x-vercel-forwarded-for (retrieved 2026-11-25).
+  if (process.env.VERCEL === '1' && path[0] === 'auth') {
+    const clientIp = request.headers.get('x-vercel-forwarded-for');
+    if (clientIp) headers.set('x-mohassan-client-ip', clientIp);
   }
   try {
     const fileGrant=path.length===4&&path[0]==='browser'&&path[1]==='files'&&path[3]==='grants'&&request.method==='POST';
@@ -29,7 +40,7 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
       body=new Uint8Array(size);let offset=0;for(const part of parts){body.set(part,offset);offset+=part.byteLength;}
     }
     const learningImport=path.length===2&&path[0]==='learning'&&path[1]==='documents'&&request.method==='POST';
-    const response=await fetch(target,{method:request.method,headers,body:body as BodyInit|undefined,cache:'no-store',redirect:'manual',signal:AbortSignal.any([request.signal,AbortSignal.timeout(path[0]==='chat'&&request.method==='POST'&&(path.length===1||path[path.length-1]==='messages')?150000:path[0]==='sites'&&path[2]==='publish'&&request.method==='POST'?300000:path[0]==='studio'&&request.method==='POST'?360000:path[0]==='executor'&&request.method==='POST'?180000:path[0]==='desktop'?(request.method==='POST'?930000:60000):learningImport?30000:['research','browser','google-ads','search','documents'].includes(path[0]??'')?60000:15000)])});
+    const response=await fetch(target,{method:request.method,headers,body:body as BodyInit|undefined,cache:'no-store',redirect:'manual',signal:AbortSignal.any([request.signal,AbortSignal.timeout(path[0]==='chat'&&request.method==='POST'&&(path.length===1||path[path.length-1]==='messages')?150000:path[0]==='sites'&&path[2]==='publish'&&request.method==='POST'?300000:path[0]==='studio'&&request.method==='POST'?360000:path[0]==='executor'&&request.method==='POST'?180000:path[0]==='desktop'?(request.method==='POST'?930000:60000):learningImport?30000:accountExport||['research','browser','google-ads','search','documents'].includes(path[0]??'')?60000:15000)])});
     const output=new Headers({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
     const contentType=response.headers.get('content-type');if(contentType)output.set('content-type',contentType);
     // Downloads keep their file name and are sandboxed: browser file grants and PDF documents.
@@ -37,6 +48,10 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
       const disposition=response.headers.get('content-disposition');
       if(disposition&&/^attachment; filename="[a-zA-Z0-9][a-zA-Z0-9._ -]{0,99}"; filename\*=UTF-8''[a-zA-Z0-9._% -]{1,1200}$/.test(disposition))output.set('Content-Disposition',disposition);
       output.set('Content-Security-Policy',"default-src 'none'; sandbox");
+    }
+    if (accountExport && response.ok && contentType === 'application/zip') {
+      output.set('Content-Disposition', 'attachment; filename="mohassan-data.zip"');
+      output.set('Content-Security-Policy', "default-src 'none'; sandbox");
     }
     for(const key of ['retry-after','x-retry-after']){const value=response.headers.get(key);if(value&&/^\d{1,6}$/.test(value))output.set(key,value);}
     for(const cookie of response.headers.getSetCookie())output.append('set-cookie',cookie);

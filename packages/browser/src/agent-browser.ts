@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { chromium, type BrowserContext, type ElementHandle, type Frame, type JSHandle, type Page, type Route } from 'playwright';
 import { decideEffect, type EffectActor } from './effect-policy.js';
 import { BrowserError, SafeNetwork } from './network.js';
+import { openAgentBrowserProfile, purgeAgentBrowserProfiles, rememberExistingAgentBrowserProfile } from './member-profile-storage.js';
 import { AgentSessionCheckpointSchema, AgentPostconditionSchema, evidenceHash, safeResumeUrl, pagePostcondition, type AgentSessionCheckpoint, type AgentPostcondition, type AgentVerificationReport, type AgentVerificationCheck } from './session-state.js';
 
 export type AgentFieldKind = 'password' | 'otp' | 'card' | 'identifier' | 'text';
@@ -592,9 +592,7 @@ export class AgentBrowser {
   }
 
   private async launch(ownerKey: string): Promise<OwnerBrowser> {
-    const profileName = ownerKey.startsWith('default:') ? hashOf(ownerKey.slice('default:'.length)) : `account-${hashOf(ownerKey)}`;
-    const userDataDir = `${this.options.profileDir}/${profileName}`;
-    await mkdir(userDataDir, { recursive: true });
+    const userDataDir = await openAgentBrowserProfile(this.options.profileDir, ownerKey, hashOf);
     // Match BrowserEngine: Chromium cannot bypass the pinned host transport,
     // including on redirects, WebRTC, popups or requests missed by a route.
     const proxy = createServer((_request, response) => { response.writeHead(403); response.end(); });
@@ -1847,6 +1845,9 @@ export class AgentBrowser {
     const results = await Promise.allSettled([this.persist(entry), ...[...entry.pages].map(page => page.close())]);
     if (results[0].status === 'rejected') throw results[0].reason;
   }
+
+  rememberAccountProfile(ownerId: string, accountId: string | null) { return rememberExistingAgentBrowserProfile(this.options.profileDir, ownerId, accountId, hashOf); }
+  purgeAccount(ownerId: string, accounts: readonly string[]) { return purgeAgentBrowserProfiles(this.options.profileDir, ownerId, accounts, this.owners, this.accounts, this.recoveryBindings, hashOf); }
 
   async close(): Promise<void> {
     if (this.idleSweep) { clearInterval(this.idleSweep); this.idleSweep = undefined; }
