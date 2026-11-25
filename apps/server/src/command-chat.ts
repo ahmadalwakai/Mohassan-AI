@@ -61,6 +61,7 @@ import { assessUserFactMemoryRequest, createUserFactMemoryReceipt } from './assi
 import { restoreUserFactMemoryFlowState, runUserFactMemoryFlow } from './assistant/user-fact-memory-flow.js';
 import { completeUserFactMemory, createUserFactMemorySupervisor } from './assistant/user-fact-memory-completion.js';
 import { assessLegacyMemoryStatement } from './assistant/legacy-memory-statement.js';
+import { handleStructuredMemoryTurn, hasStructuredMemoryTransaction, joinStructuredMemoryTransaction, protectStructuredMemoryIngress, revalidateStructuredMemoryPublication } from './assistant/structured-memory-turn.js';
 import { reviewComputerRequestScope, type ComputerRequestAction } from './assistant/computer-request-scope.js';
 import { reviewBrowserRequestScope, type BrowserRequestCapability } from './assistant/browser-request-scope.js';
 import { reviewWorkRequestScope, type WorkRequestCapability } from './assistant/work-request-scope.js';
@@ -672,6 +673,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     return {conversation,run,current};
   }
   async function runTransaction<T>(id: string, runId: string, work: (tx: Kysely<any>) => Promise<T>): Promise<T> {
+    if (hasStructuredMemoryTransaction(db, id, runId)) return joinStructuredMemoryTransaction(work);
     return db.transaction().execute(async tx => { await lockedExecution(tx,id,runId); return work(tx); });
   }
   async function assertActive() { const current = execution.getStore(); if (!current) throw new RunEnded(); await runTransaction(current.id,current.runId,async()=>{}); }
@@ -1441,6 +1443,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',
         data: JSON.stringify({ contractHash: state.supervision?.contract.hash, review: state.completionReview }) }).execute();
+      if (hasStructuredMemoryTransaction(db, id, runId)) await revalidateStructuredMemoryPublication(tx);
       await tx.updateTable('chat_conversations').set({ status: 'idle', active_run_id: null, progress: null, error: null, updated_at: new Date() }).where('id', '=', id).execute();
       await tx.updateTable('chat_runs').set({ status: finalStatus, state: JSON.stringify(vault.scrubValue(id, state, clean)), updated_at: new Date() }).where('id', '=', runId).execute();
       await recordTerminalRun(tx, runId, finalStatus, proof);
@@ -2002,6 +2005,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const level = decideBrowserVisibility({ request, route: state.routing?.route ?? null, role: 'member' });
         if (level.level === 4) { await finish(id, runId, state, level.reason, 'blocked'); return; }
       }
+      if (await handleStructuredMemoryTurn({ db, ownerId, conversationId: id, runId, state, source: effectiveSource, constraints, task: run.intent === 'task', memoryAvailable: Boolean(tools?.memory), quota: MAX_MEMORY_SAVES, scrub: text => vault.scrub(id, clean(text)), lockedExecution, finish })) return;
       const actionRequest = requestActionText(requestScopeActionText(request));
       const computationMemoryBinding = { ownerId, conversationId: id, runId, evaluatedAt: effectiveSource.evaluatedAt };
       const computationMemoryReceipt = createComputationMemoryReceipt(request, computationMemoryBinding);
@@ -4424,6 +4428,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
 
   return {
     create, list, detail, send, respond, approve, secureSubmit, cancel, remove, screen, browserActivity, shutdown,restoreBrowser,reviewBrowser, uploadImage, image: imageBytes, feedback, once,
+    ...protectStructuredMemoryIngress({ create, send, once }),
     imagesAvailable: () => Boolean(config.imageReader?.available),
     pointer: (ownerId: string, id: string, raw: unknown) => { const input = ChatPointerSchema.parse(raw); return handsOn(ownerId, id, () => browser.pointer(ownerId, id, input.x, input.y)); },
     keyboard: (ownerId: string, id: string, raw: unknown) => { const input = ChatKeyboardSchema.parse(raw); return handsOn(ownerId, id, () => browser.keyboard(ownerId, id, input)); },
