@@ -32,8 +32,32 @@ enum PushNotificationChecks {
               let route = PushNotificationRoute.decode(payload) else {
             throw Failure(description: "FAILED: completed APNs fixture did not decode")
         }
-        try check(route == PushNotificationRoute(conversationID: "conversation-1", runID: "run-1", kind: .completed),
+        try check(route == PushNotificationRoute(conversationID: "conversation-1", runID: "run-1", kind: .completed, monitorID: nil),
                   "completed route uses top-level conversation and run IDs")
+        try check(route.monitorScrollTarget(assistantMessageIDs: ["run-1"], visibleMonitorIDs: []) == nil,
+                  "a regular run keeps the existing scroll behavior")
+
+        var monitor = payload
+        monitor["monitorId"] = "monitor-1"
+        monitor["kind"] = "run-blocked"
+        guard let monitorRoute = PushNotificationRoute.decode(monitor) else {
+            throw Failure(description: "FAILED: monitor APNs fixture did not decode")
+        }
+        try check(monitorRoute.monitorID == "monitor-1" && monitorRoute.kind == .blocked,
+                  "a monitor ID is optional top-level metadata for an existing kind")
+        try check(monitorRoute.monitorScrollTarget(assistantMessageIDs: ["run-1", "result-newer"], visibleMonitorIDs: ["monitor-1"]) == "run-1",
+                  "monitor alert targets the exact result when newer messages exist")
+        try check(monitorRoute.monitorScrollTarget(assistantMessageIDs: ["result-newer"], visibleMonitorIDs: ["other-monitor", "monitor-1"]) == "monitor-1",
+                  "the matching visible card is the fallback when the result is missing")
+        try check(monitorRoute.monitorScrollTarget(assistantMessageIDs: ["result-newer"], visibleMonitorIDs: ["other-monitor"]) == nil,
+                  "missing result and card leave the existing fallback in place")
+        var invalidMonitor = payload
+        invalidMonitor["monitorId"] = " \n"
+        try check(PushNotificationRoute.decode(invalidMonitor) == route, "blank monitor ID is ignored")
+        invalidMonitor["monitorId"] = 123
+        try check(PushNotificationRoute.decode(invalidMonitor) == route, "non-string monitor ID is ignored")
+        monitor.removeValue(forKey: "runId")
+        try check(PushNotificationRoute.decode(monitor) == nil, "monitor ID does not replace the required run ID")
 
         var blocked = payload
         blocked["kind"] = "run-blocked"

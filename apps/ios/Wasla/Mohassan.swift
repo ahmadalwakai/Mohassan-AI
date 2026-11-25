@@ -680,6 +680,17 @@ struct ChatView: View {
     }
 
     private func scrollTarget(for route: PushNotificationRoute, in conversation: ChatConversation) -> String? {
+        if route.monitorID != nil {
+            let assistantMessageIDs = conversation.messages.compactMap { $0.mine ? nil : $0.id }
+            var visibleMonitorIDs: [String] = []
+            if conversation.capabilities?.smartMonitors == true {
+                visibleMonitorIDs = conversation.monitors?.map(\.id) ?? []
+                if let proposal = conversation.monitorProposal { visibleMonitorIDs.append(proposal.id) }
+            }
+            if let target = route.monitorScrollTarget(assistantMessageIDs: assistantMessageIDs, visibleMonitorIDs: visibleMonitorIDs) {
+                return target
+            }
+        }
         if route.kind == .blocked {
             if conversation.status == ChatStatus.waitingApproval, let approval = conversation.approval { return approval.id }
             if conversation.status == ChatStatus.waitingInput, let secure = conversation.secure { return secure.id }
