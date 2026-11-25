@@ -8,8 +8,20 @@ const httpsUrl = z.string().max(2048).url().refine(value => {
   return url.protocol === 'https:' && !url.username && !url.password && !url.hash;
 }, 'Use a public HTTPS address without credentials or a fragment.');
 
+const githubWatch = z.discriminatedUnion('kind', [
+  z.object({ kind: z.enum(['releases', 'tags', 'latest-release', 'latest-tag']) }).strict(),
+  z.object({ kind: z.enum(['pull-request', 'pull-head', 'pull-ci']), number: z.int().positive() }).strict(),
+  z.object({ kind: z.enum(['branch-head', 'branch-ci']), branch: z.string().min(1).max(180)
+    .refine(value => !/[\s\x00-\x1f\x7f~^:?*\[\\]|\.\.|@\{/u.test(value)
+      && value !== '@' && !value.endsWith('.') && value.split('/').every(part => part && !part.startsWith('.') && !part.endsWith('.lock'))) }).strict(),
+]);
+
 export const MonitorSourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('page'), url: httpsUrl, anchor: label.optional() }).strict(),
+  z.object({ kind: z.literal('pdf'), url: httpsUrl, anchor: label.optional() }).strict(),
+  z.object({ kind: z.literal('visual'), url: httpsUrl, anchor: label.optional() }).strict(),
+  z.object({ kind: z.literal('github'), owner: z.string().regex(/^[a-z\d](?:[a-z\d-]{0,38})$/iu),
+    repo: z.string().regex(/^[a-z\d_.-]{1,100}$/iu).refine(value => value !== '.' && value !== '..'), watch: githubWatch }).strict(),
   z.object({ kind: z.literal('currency'), base: currency, quote: currency }).strict(),
   z.object({ kind: z.literal('weather'), location: label, latitude: z.number().min(-90).max(90).optional(),
     longitude: z.number().min(-180).max(180).optional(), metric: z.enum(['temperature', 'precipitation', 'wind']) }).strict(),
@@ -81,12 +93,20 @@ function monitorTargetIssues(
   if ((source.kind === 'currency' || source.kind === 'weather') && read.kind !== 'number') issues.push('A live-data series yields a number.');
   if (source.kind === 'search' && read.kind !== 'items') issues.push('Search yields a list of results.');
   if (source.kind === 'run' && read.kind !== 'status') issues.push('A background run yields its status.');
+  if (source.kind === 'pdf' && !['main', 'number', 'phrase', 'items'].includes(read.kind)) issues.push('This PDF reading is unavailable.');
+  if (source.kind === 'visual' && read.kind !== 'number') issues.push('A visual source yields a number.');
+  if (source.kind === 'github') {
+    const watch = source.watch.kind;
+    const required = watch === 'releases' || watch === 'tags' ? 'items'
+      : watch === 'pull-request' || watch === 'pull-ci' || watch === 'branch-ci' ? 'status' : 'main';
+    if (read.kind !== required) issues.push('The reading is incompatible with the GitHub watch.');
+  }
   if ((condition.kind === 'threshold' || condition.kind === 'crossing' || condition.kind === 'percent') && read.kind !== 'number') issues.push('This condition requires a number.');
   if ((condition.kind === 'equals' || condition.kind === 'contains') && !['main', 'status', 'date'].includes(read.kind)) issues.push('This condition requires text.');
   if ((condition.kind === 'appears' || condition.kind === 'disappears') && read.kind !== 'phrase') issues.push('This condition requires a phrase to watch.');
   if (condition.kind === 'new-item' && read.kind !== 'items') issues.push('This condition requires an item list.');
   if (options?.trend && (read.kind !== 'number' || condition.kind !== 'change')) issues.push('A trend requires a numeric change condition.');
-  if (options?.target && source.kind !== 'page') issues.push('A structured value target requires a public page.');
+  if (options?.target && source.kind !== 'page' && source.kind !== 'visual') issues.push('A structured value target requires a public page.');
   if (options?.target?.property) {
     const reads = { price: 'number', availability: 'status', startDate: 'date', eventStatus: 'status', productName: 'main' } as const;
     if (reads[options.target.property] !== read.kind) issues.push('The reading is incompatible with the structured property.');
@@ -101,7 +121,12 @@ export const MonitorSpecSchema = z.object({
   v2: MonitorV2Schema.optional(),
 }).strict().superRefine(({ source, read, condition, v2 }, ctx) => {
   for (const message of monitorTargetIssues(source, read, condition, v2)) ctx.addIssue({ code: 'custom', message });
-  if (!v2) return;
+  if (!v2) {
+    if (source.kind === 'pdf' || source.kind === 'visual' || source.kind === 'github') {
+      ctx.addIssue({ code: 'custom', message: 'This source requires smart monitors v2.', path: ['source'] });
+    }
+    return;
+  }
   function issue(message: string, path: (string | number)[] = []) {
     ctx.addIssue({ code: 'custom', message, path: ['v2', ...path] });
   }
@@ -137,6 +162,10 @@ export const MonitorListSchema = z.object({ monitors: z.array(MonitorCardSchema)
 export const MonitorApproveSchema = z.object({ proposalId: z.uuid() }).strict();
 
 export type MonitorSource = z.infer<typeof MonitorSourceSchema>;
+export type GithubMonitorSource = Extract<MonitorSource, { kind: 'github' }>;
+export const monitorGithubArabicStatus: Readonly<Record<string, string>> = Object.freeze({
+  open: 'مفتوح', merged: 'مدموج', closed: 'مغلق', pending: 'قيد الانتظار', success: 'ناجحة', failure: 'فاشلة',
+});
 export type MonitorRead = z.infer<typeof MonitorReadSchema>;
 export type MonitorCondition = z.infer<typeof MonitorConditionSchema>;
 export type MonitorValueTarget = z.infer<typeof MonitorValueTargetSchema>;
