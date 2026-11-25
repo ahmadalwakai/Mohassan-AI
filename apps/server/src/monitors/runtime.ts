@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
+import { monitorOwnerIds, type EnabledMonitorRollout } from '../monitors-phase1/rollout.js';
 import { monitorHealth, monitorTrigger, publishMonitorNotice } from './delivery.js';
 import { evaluateMonitor } from './evaluation.js';
 import { MONITOR_LIMITS, nextMonitorBudgetDay, nextMonitorCheck } from './schedule.js';
@@ -27,11 +28,13 @@ async function withinSignal<T>(signal: AbortSignal, invoke: () => Promise<T>): P
 export function createMonitorRuntime(db: Kysely<any>, ports: {
   read: ReadMonitor;
   store?: MonitorStore;
+  rollout?: EnabledMonitorRollout;
 }, { now = () => new Date(), onError = () => console.error('[monitors] Poll failed; retrying.') }: {
   now?: () => Date;
   onError?: () => void;
 } = {}) {
-  const store = ports.store ?? createMonitorStore(db, { now });
+  const store = ports.store ?? createMonitorStore(db, { now, rollout: ports.rollout });
+  const ownersOnly = ports.rollout === 'owner';
   let timer: NodeJS.Timeout | undefined;
   let running: Promise<void> | undefined;
   let controller = new AbortController();
@@ -40,6 +43,7 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
     return db.transaction().execute(async tx => {
       const at = now();
       const row = await tx.selectFrom('smart_monitors').selectAll().where('status', '=', 'active')
+        .$if(ownersOnly, query => query.where('user_id', 'in', monitorOwnerIds(tx)))
         .where('expires_at', '>', at).where('next_check_at', '<=', at)
         .where(eb => eb.or([eb('lease_until', 'is', null), eb('lease_until', '<=', at)]))
         .orderBy('next_check_at').orderBy('id').limit(1).forUpdate().skipLocked().executeTakeFirst() as MonitorRow | undefined;
@@ -135,6 +139,7 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
     return db.transaction().execute(async tx => {
       const candidate = await tx.selectFrom('smart_monitors as m').innerJoin('chat_conversations as c', 'c.id', 'm.conversation_id')
         .select(['m.id']).where('m.pending_notice', 'is not', null).where('m.notice_due_at', '<=', at)
+        .$if(ownersOnly, query => query.where('m.user_id', 'in', monitorOwnerIds(tx)))
         .orderBy('m.notice_due_at').orderBy('m.id').limit(1).forNoKeyUpdate('c').skipLocked().executeTakeFirst();
       if (!candidate) return false;
       const row = await tx.selectFrom('smart_monitors').selectAll().where('id', '=', candidate.id)
@@ -150,6 +155,7 @@ export function createMonitorRuntime(db: Kysely<any>, ports: {
 
   async function cleanExpired(at: Date) {
     const pendingExpiry = db.selectFrom('smart_monitors').select('id').where('status', 'in', ['proposed', 'active', 'paused'])
+      .$if(ownersOnly, query => query.where('user_id', 'in', monitorOwnerIds(db)))
       .where('expires_at', '<=', at).orderBy('expires_at').limit(MONITOR_LIMITS.workPerPoll).forUpdate().skipLocked();
     await db.updateTable('smart_monitors').set(expire).where('id', 'in', pendingExpiry).execute();
     const staleHosts = db.selectFrom('smart_monitor_hosts').select('host_key').where('eligible_at', '<=', at)

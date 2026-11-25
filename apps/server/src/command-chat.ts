@@ -1108,7 +1108,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       documents: Boolean(config.documents), sites: Boolean(config.sites), skills: Boolean(config.skillAnswer), planner: true, letters: true,
       imageReading: Boolean(config.imageReader?.available), ads: Boolean(config.adsModel) && full, pc: Boolean(tools?.computer) && full,
     };
-    return { chatModel: hasChatModel(), available: chatCapabilityIds.filter(capability => facts[capability]), ...(monitor ? { smartMonitors: true } : {}) };
+    return { chatModel: hasChatModel(), available: chatCapabilityIds.filter(capability => facts[capability]), ...(monitor && await monitor.availableTo(ownerId) ? { smartMonitors: true } : {}) };
   }
 
   async function list(ownerId: string) {

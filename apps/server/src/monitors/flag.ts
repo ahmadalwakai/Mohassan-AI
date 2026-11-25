@@ -1,1 +1,1 @@
-export const smartMonitorsEnabled = (env: NodeJS.ProcessEnv = process.env) => env.MOHASSAN_MONITORS_ENABLED === '1';
+export { monitorRollout, smartMonitorsEnabled } from '../monitors-phase1/rollout.js';
