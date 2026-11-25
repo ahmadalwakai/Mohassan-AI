@@ -85,7 +85,7 @@ export function routeWithModel(model: RouterModel, text: string): { route: strin
 }
 
 /** Loads router-b0.bin and checks it against the sha256 in its JSON header. */
-export async function loadRouterModel(dir: string): Promise<RouterModel> {
+export async function loadRouterModel(dir: string): Promise<RouterModel & { headerSha256: string }> {
   const metadata = await readRouterBytes(path.join(dir, 'router-b0.json'), 16 * 1024);
   let header: z.infer<typeof RouterHeader>;
   try { header = RouterHeader.parse(JSON.parse(metadata.toString('utf8'))); }
@@ -99,6 +99,7 @@ export async function loadRouterModel(dir: string): Promise<RouterModel> {
   const floats = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
   if (!floats.every(Number.isFinite)) throw new Error('ROUTER_MODEL_NONFINITE');
   return { buckets: header.buckets, dim: header.dim, routes: header.routes,
+    headerSha256: createHash('sha256').update(metadata).digest('hex'),
     embedding: floats.subarray(0, embedded), weight: floats.subarray(embedded, embedded + weights), bias: floats.subarray(embedded + weights) };
 }
 

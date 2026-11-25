@@ -49,8 +49,10 @@ interface PendingRequest {
   readonly reject: (error: ModelTransportError) => void;
   readonly clearDeadline: () => void;
   readonly tokens: number[];
+  readonly textChunks?: string[];
   readonly expiresAt: number;
   readonly maxOutputTokens: number;
+  readonly scoreOptionCount?: number;
   bytes: number;
   cancelDeadline?: ReturnType<typeof setTimeout>;
 }
@@ -161,7 +163,7 @@ export class PermanentModelWorker {
     const { operation, head, signal, onToken } = request;
     const timeoutMs = request.timeoutMs ?? Math.min(30_000, ready.limits.maxTimeoutMs);
     if (!id(head) || !integer(timeoutMs, 1, ready.limits.maxTimeoutMs)
-      || !['classify', 'score', 'select', 'generate'].includes(operation)
+      || !['classify', 'score', 'select', 'generate', 'score-options'].includes(operation)
       || (onToken !== undefined && (operation !== 'generate' || typeof onToken !== 'function'))) {
       throw new ModelTransportError('invalid_request');
     }
@@ -171,10 +173,21 @@ export class PermanentModelWorker {
 
     const input = copyJson(request.input, 'invalid_request');
     if (!record(input)) throw new ModelTransportError('invalid_request');
+    const textInput = (operation === 'generate' || operation === 'score-options') && input.text !== undefined;
+    if (textInput && (typeof input.text !== 'string' || input.inputIds !== undefined)) throw new ModelTransportError('invalid_request');
+    if (textInput && !ready.text) throw new ModelTransportError('unsupported_capability');
+    const textChunks = textInput && operation === 'generate' ? [] : undefined;
     let maxOutputTokens = 0;
     if (operation === 'generate') {
       if (!integer(input.maxNewTokens, 1, ready.limits.maxOutputTokens)) throw new ModelTransportError('invalid_request');
       maxOutputTokens = input.maxNewTokens;
+    }
+    let scoreOptionCount: number | undefined;
+    if (operation === 'score-options') {
+      if (!Array.isArray(input.options) || !integer(input.options.length, 2, 16)) {
+        throw new ModelTransportError('invalid_request');
+      }
+      scoreOptionCount = input.options.length;
     }
     const requestId = randomUUID();
     const frame = JSON.stringify({ protocol: MODEL_WORKER_PROTOCOL, kind: 'request', requestId, timeoutMs, operation, head, input }) + '\n';
@@ -193,7 +206,7 @@ export class PermanentModelWorker {
         signal?.removeEventListener('abort', onAbort);
       };
       worker.pending.set(requestId, {
-        operation, onToken, resolve, reject, clearDeadline, expiresAt, maxOutputTokens, tokens: [], bytes: 0,
+        operation, onToken, resolve, reject, clearDeadline, expiresAt, maxOutputTokens, scoreOptionCount, textChunks, tokens: [], bytes: 0,
       });
       signal?.addEventListener('abort', onAbort, { once: true });
       this.write(worker, frame);
@@ -315,24 +328,35 @@ export class PermanentModelWorker {
       if (pending.bytes > ready.limits.maxOutputBytes) throw new ModelTransportError('resource_exhaustion');
     }
     if (response.kind === 'token') {
-      if (pending.operation !== 'generate' || response.index !== pending.tokens.length
-        || pending.tokens.length >= pending.maxOutputTokens) {
+      const { token, index, text } = response;
+      if (pending.operation !== 'generate' || index !== pending.tokens.length
+        || pending.tokens.length >= pending.maxOutputTokens || Boolean(pending.textChunks) !== (text !== undefined)) {
         throw new ModelTransportError('invalid_model_output');
       }
-      pending.tokens.push(response.token);
+      pending.tokens.push(token);
+      if (text !== undefined) pending.textChunks?.push(text);
       if (performance.now() >= pending.expiresAt) this.cancel(worker, response.requestId, 'timeout');
       if (!pending.cancelDeadline) {
-        try { pending.onToken?.({ token: response.token, index: response.index }); }
+        try { pending.onToken?.({ token, index, ...(text === undefined ? {} : { text }) }); }
         catch { this.cancel(worker, response.requestId, 'cancelled'); }
       }
       return;
     }
     if (response.kind === 'result' && pending.operation === 'generate') {
-      keys(response.result, ['tokenIds', 'stopReason']);
-      const { tokenIds: tokens, stopReason } = response.result;
+      keys(response.result, pending.textChunks ? ['tokenIds', 'stopReason', 'text', 'inputTokens'] : ['tokenIds', 'stopReason']);
+      const { tokenIds: tokens, stopReason, text, inputTokens } = response.result;
       if (!Array.isArray(tokens) || tokens.length !== pending.tokens.length
         || (stopReason !== 'eos' && stopReason !== 'length')
-        || tokens.some((token, index) => token !== pending.tokens[index])) {
+        || tokens.some((token, index) => token !== pending.tokens[index])
+        || (pending.textChunks && (text !== pending.textChunks.join('') || !integer(inputTokens, 1, 8192)))) {
+        throw new ModelTransportError('invalid_model_output');
+      }
+    }
+    if (response.kind === 'result' && pending.operation === 'score-options') {
+      keys(response.result, ['scores']);
+      const { scores } = response.result;
+      if (!Array.isArray(scores) || scores.length !== pending.scoreOptionCount
+        || scores.some(score => typeof score !== 'number' || !Number.isFinite(score) || score > 0)) {
         throw new ModelTransportError('invalid_model_output');
       }
     }

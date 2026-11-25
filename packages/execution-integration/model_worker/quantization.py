@@ -203,7 +203,7 @@ def _evaluate(head: Any, probes: _Probes) -> dict[str, Any]:
                     with use_int8(True):
                         candidate = head.logits([value])[0]
                     metrics.record_logits(reference, candidate)
-                    if operation == "select" and head.prediction(value, reference) != head.prediction(value, candidate):
+                    if operation in ("select", "score-options") and head.prediction(value, reference) != head.prediction(value, candidate):
                         metrics.selection_unchanged = False
                 samples += 1
     except (RuntimeError, NumericalError):

@@ -8,10 +8,11 @@ import {
   type PermanentModelWorkerStatus,
 } from '../../../packages/execution-integration/src/experimental-worker-transport.js';
 import type { ModelIdentity } from '../../../packages/execution-integration/src/transport.js';
+import { loadOwnModelGates, readOwnModelGateConfig, type OwnModelGates } from './own-model-gates.js';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const maxConfigBytes = 16 * 1024 * 1024;
-type Service = { worker?: PermanentModelWorker; state: 'starting' | 'degraded' };
+type Service = { worker?: PermanentModelWorker; ownModelGates?: OwnModelGates; state: 'starting' | 'degraded' };
 const services = new WeakMap<FastifyInstance, Service>();
 
 async function readIdentity(path: string): Promise<ModelIdentity> {
@@ -55,6 +56,10 @@ export function getServerModelWorker(app: FastifyInstance): PermanentModelWorker
   return services.get(app)?.worker;
 }
 
+export function getServerOwnModelGates(app: FastifyInstance): OwnModelGates | undefined {
+  return services.get(app)?.ownModelGates;
+}
+
 export function serverModelWorkerHealth(app: FastifyInstance): {
   modelWorker?: { state: PermanentModelWorkerStatus['state']; startupMs?: number };
 } {
@@ -77,6 +82,8 @@ export async function startServerModelWorker(app: FastifyInstance, env: NodeJS.P
   try {
     const configPath = resolve(root, env.MOHASSAN_MODEL_WORKER_CONFIG?.trim() || '.data/model-worker.json');
     const identity = await readIdentity(configPath);
+    const gateConfig = await readOwnModelGateConfig(join(dirname(configPath), 'own-model-provider.json'));
+    if (Object.keys(gateConfig).length) service.ownModelGates = await loadOwnModelGates(gateConfig);
     if (closed) return;
     const python = env.EXECUTOR_PYTHON?.trim();
     const executable = python ? resolve(root, python) : process.platform === 'win32'
