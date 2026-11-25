@@ -65,7 +65,7 @@ export function publicConversationFollowup(input: PublicConversationFollowupInpu
   if (!turns.length || turns.some(text => typeof text !== 'string' || !text.trim() || text.length > MAX_CONTEXT_REQUEST)) return null;
   let state = emptyConversationState();
   for (const [index, text] of turns.entries()) state = understandTurn(state, text, `public-context-${index}`).next;
-  const understanding = understandTurn(state, request, 'public-followup');
+  const understanding = understandTurn(state, request, 'public-followup', resolution.understanding);
   const topic = understanding.next.topics.at(-1);
   if (!acceptedTypes.has(understanding.type) || !understanding.property || !understanding.entity
     || !understanding.query || understanding.query.length > MAX_QUERY_LENGTH
@@ -74,6 +74,6 @@ export function publicConversationFollowup(input: PublicConversationFollowupInpu
     || understanding.v1.kind !== 'follow_up' || understanding.v1.scope !== 'public'
     || !understanding.v1.query || understanding.v1.ambiguities.length) return null;
 
-  return reviewPublicProjection(request, understanding.query, { contextKind: resolution.kind, previous }).eligible
+  return reviewPublicProjection(request, understanding.query, { contextKind: resolution.kind, previous, understanding: resolution.understanding }).eligible
     ? understanding.query : null;
 }

@@ -3,6 +3,7 @@ import { parseUserRequestConstraints, isEntireLiteralRequest, maskRequestLiteral
 export { parseUserRequestConstraints, isEntireLiteralRequest, requestCapabilityAllowed, requestConstraintReply, maskRequestLiteralData, UserRequestConstraintsSchema, type UserRequestConstraints, type ForbiddenRequestCapability } from './request-constraints.js';
 import { publicSearchScan, publicSearchText } from '@mohassan/browser';
 import { isCurrentComputerReadRequest } from './computer-request-language.js';
+import { hasColloquialOwnedRecord, isSinglePublicClause, type RequestUnderstandingView } from './understanding/index.js';
 
 /** Source classification is independent of tool availability and model output. */
 export const requestSources = ['public_lookup', 'prior_conversation', 'local_state', 'supplied_content', 'unresolved'] as const;
@@ -32,6 +33,7 @@ export interface RequestScopeOptions {
   contextKind?: 'new' | 'follow_up' | 'answer' | 'ambiguous';
   /** Host-persisted source assessment; never page text or model self-certification. */
   previous?: unknown;
+  understanding?: RequestUnderstandingView;
 }
 
 const fold = (value: string) => value.normalize('NFKC').replace(/[\u0640\u064b-\u065f\u0670]/gu, '')
@@ -94,8 +96,8 @@ const NAVIGATE = /^(?:افتح|اذهب|ادخل|open|visit|navigate|go to)(?!\p
 const FIND_PUBLIC_FACT = /^find\s+(?:the\s+)?(?:(?:latest|current|official|public)\s+)?(?:opening hours|working hours|timetables?|prices?|fees?|dates?|address|location|news|headlines|documentation|website|reports?|articles?|papers?)\b/iu;
 
 /** Remove a greeting clause only when a complete task follows its delimiter. */
-export function requestScopeActionText(value: string): string {
-  value = parseUserRequestConstraints(value)?.safeActionText ?? value;
+export function requestScopeActionText(value: string, understanding?: RequestUnderstandingView): string {
+  value = parseUserRequestConstraints(value)?.safeActionText ?? understanding?.parserText ?? value;
   value = value.replace(/^(?:(?:طيب|طب|حسنا|حسنًا|تمام|okay|ok|well)[،,\s]+)+/iu, '');
   if (typeof value !== 'string' || value.length > 8000) return typeof value === 'string' ? value : '';
   let text = value.trim();
@@ -128,6 +130,14 @@ export function parseRequestScopeAssessment(value: unknown): RequestScopeAssessm
  * quoted public title does not become a private document merely because quoted.
  */
 export function assessRequestScope(value: string, options: RequestScopeOptions = {}): RequestScopeAssessment {
+  const candidate = assessScope(value, options);
+  if (!options.understanding || candidate.source !== 'public_lookup') return candidate;
+  const original = assessScope(value, { ...options, understanding: undefined });
+  return original.scope === 'private' || (original.source !== 'public_lookup' && !isSinglePublicClause(options.understanding.parserText))
+    ? original : candidate;
+}
+
+function assessScope(value: string, options: RequestScopeOptions): RequestScopeAssessment {
   const constraints: UserRequestConstraints | null = typeof value === 'string' ? parseUserRequestConstraints(value) : null;
   const make = (source: RequestSource, operation: RequestOperation, destination: RequestScopeDestination, reasons: RequestScopeAssessment['reasons']): RequestScopeAssessment => ({
     version: 1, source, operation, destination,
@@ -137,7 +147,7 @@ export function assessRequestScope(value: string, options: RequestScopeOptions =
   if (typeof value !== 'string' || !value.trim() || value.length > 8000) return make('unresolved', 'unknown', 'unknown', ['invalid_input']);
   if (isEntireLiteralRequest(value)) return make('supplied_content', 'unknown', 'unknown', ['missing_target']);
   if (constraints?.standalone || constraints?.ambiguous) return make('unresolved', constraints.standalone && !constraints.ambiguous ? 'converse' : 'unknown', 'unknown', ['explicit_prohibition']);
-  const original = value.trim(), actionText = requestScopeActionText(original), text = requestOperationText(actionText);
+  const original = value.trim(), actionText = requestScopeActionText(original, options.understanding), text = requestOperationText(actionText);
   if (SOCIAL_QUESTION.test(text)) return make('unresolved', 'converse', 'unknown', ['non_lookup_operation']);
   const credentialScan = publicSearchScan(original);
   if (publicSearchText(credentialScan) !== credentialScan) return make('supplied_content', 'unknown', 'unknown', ['credential_material']);
@@ -164,7 +174,8 @@ export function assessRequestScope(value: string, options: RequestScopeOptions =
     return make('supplied_content', 'transform', 'writing', ['supplied_transformation']);
   }
   if (isCurrentComputerReadRequest(actionText)) return make('local_state', 'lookup', 'pc', ['visible_local_surface']);
-  const memoryAction = MEMORY_ACTION.test(outer), owned = OWNED_RECORD.test(outer), prior = PRIOR_RELATION.test(outer);
+  const memoryAction = MEMORY_ACTION.test(outer), prior = PRIOR_RELATION.test(outer);
+  const owned = OWNED_RECORD.test(outer) || Boolean(options.understanding && (hasColloquialOwnedRecord(original) || hasColloquialOwnedRecord(outer)));
   const describeLocal = DESCRIBE_LOCAL.test(outer);
   const local = LOCAL_SURFACE.test(outer) && (LOCAL_ANCHOR.test(outer) || describeLocal
     || LOCAL_ACT.test(outer) && !explicitPublic && !PUBLIC_SOURCE.test(outer) && !hasPublicDocument);
@@ -187,7 +198,9 @@ export function assessRequestScope(value: string, options: RequestScopeOptions =
 
   const parsedPrevious = options.previous === undefined ? null : parseRequestScopeAssessment(options.previous);
   const reference = REFERENCE.test(outer) || FOLLOW.test(outer) || CLITIC_REFERENCE.test(outer);
-  const independentQuestion = (isQuestion(outer) || NEWS.test(outer)) && !reference && options.contextKind !== 'answer';
+  const question = isQuestion(outer) || Boolean(options.understanding?.question && !transformation
+    && !UNKNOWN_ACTION.test(outer) && !LOCAL_ACT.test(outer) && !CURRENT_CODE_ACTION.test(outer));
+  const independentQuestion = (question || NEWS.test(outer)) && !reference && options.contextKind !== 'answer';
   const selfContainedPublic = (explicitPublic || findPublicFact) && !reference || hasPublicDocument || independentQuestion;
   if (selfContainedPublic) return make('public_lookup', navigation ? 'act' : transformation ? 'transform' : 'lookup', navigation ? 'browser_command' : 'web_search', [hasPublicDocument ? 'public_document_reference' : explicitPublic ? 'explicit_public_lookup' : 'public_subject', 'explicit_new_task']);
   if (options.contextKind === 'follow_up' || options.contextKind === 'answer') {
@@ -203,7 +216,7 @@ export function assessRequestScope(value: string, options: RequestScopeOptions =
   }
   if (reference || transformation && !hasPublicDocument && !NEWS.test(outer)) return make('unresolved', transformation ? 'transform' : 'unknown', transformation ? 'writing' : 'unknown', [reference ? 'unresolved_reference' : 'missing_target']);
   if (options.contextKind === 'ambiguous') return make('unresolved', 'unknown', 'unknown', ['missing_target']);
-  if (NEWS.test(outer) || explicitPublic || isQuestion(outer)) return make('public_lookup', 'lookup', 'web_search', [explicitPublic ? 'explicit_public_lookup' : 'public_subject']);
+  if (NEWS.test(outer) || explicitPublic || question) return make('public_lookup', 'lookup', 'web_search', [explicitPublic ? 'explicit_public_lookup' : 'public_subject']);
   if (CONVERSE.test(outer)) return make('unresolved', 'converse', 'unknown', ['non_lookup_operation']);
   if (UNKNOWN_ACTION.test(outer) || CURRENT_CODE_ACTION.test(outer)) return make('unresolved', 'act', 'unknown', ['missing_target']);
   const words = outer.match(/[\p{L}][\p{L}\p{N}'’-]*/gu) ?? [];
@@ -235,6 +248,7 @@ export function reviewPublicProjection(request: string, query: string, options: 
   const tokens = (text: string) => fold(text).match(/[\p{L}\p{N}]+/gu) ?? [];
   const constraints = parseUserRequestConstraints(request);
   const currentTokens = new Set(tokens(constraints?.safeActionText ?? request));
+  if (!constraints && options.understanding) for (const token of tokens(options.understanding.parserText)) currentTokens.add(token);
   if (constraints?.safeActionText) {
     const deniedOnly = new Set(constraints.prohibitions.flatMap(item => tokens(request.slice(item.span.start, item.span.end))).filter(token => !currentTokens.has(token)));
     if (tokens(query).some(token => deniedOnly.has(token))) return { eligible: false, source, reason: 'prohibited_content_expansion' };
