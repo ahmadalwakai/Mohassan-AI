@@ -56,7 +56,7 @@ import { registerConversationShareRoutes } from './conversation-share.js';
 import { createImageReader } from './image-reader.js';
 import { createInferenceControl, registerInferenceRoutes, type InferenceConfig } from './inference.js';
 import { createExecutorControl, executorConfigFromEnv, registerExecutorRoutes, type ExecutorConfig } from './executor.js';
-import { serverModelWorkerHealth } from './model-worker.js';
+import { serverModelWorkerHealth, startServerModelWorker } from './model-worker.js';
 import { generateV5ChatReply, isV5ChatReady } from './v5-chat.js';
 import { createServerOwnModelReply } from './assistant/own-model-reply.js';
 import { createAdsLab, createAdsModelWorker, registerAdsLabRoutes, type AdsLabConfig } from './ads-lab.js';
@@ -103,6 +103,7 @@ export interface AppConfig {
   dataDir?: string; databaseUrl?: string; authSecret: string; internalSecret: string;
   backupStatusDirectory?: string;
   setupToken: string; webOrigin: string; production: boolean; runWorker: boolean;
+  modelWorkerEnabled?: boolean;
   v5Chat?: 'off' | 'owner';
   groqApiKey?:string;groqModel?:string;groqReasoningModel?:string;aiFetch?:typeof fetch;
   codingDataDir?:string;codingAllowedRoots?:string[];sandboxRunner?:SandboxRunner;
@@ -568,6 +569,8 @@ export async function createApplication(config: AppConfig) {
   app.post<{Params: {id: string}}>('/api/tasks/:id/approve', async (request) => runtime.approve((await owner(request)).id, request.params.id));
   app.addHook('onClose', async () => {clearInterval(benchmarkMaintenance);try{await skillRemoteScheduler?.stop();await skills.remote.shutdown();await benchmarkMaintenanceRun;await Promise.all([skillBenchmarks.shutdown(),skillForge.shutdown()]);}finally{try{await chat.shutdown();}finally{try{await runtime.stop();}finally{try{await browser.shutdown();}finally{try{await studioLive.close();}finally{await database.close();}}}}}});
   if (config.runWorker) runtime.start();
+  // The worker registers its close hook before Fastify completes startup.
+  if (config.modelWorkerEnabled) await startServerModelWorker(app);
   await app.ready();
   return {app, routes, runtime, database, auth,ai,coding,studio,studioAi,studioLive,browser,browserTask,memory,skills,chat,skillExecution,skillBenchmarks,skillForge,googleAds,inference,chromeExtension,trainingMonitor};
 }

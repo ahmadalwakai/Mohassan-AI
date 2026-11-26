@@ -16,6 +16,7 @@ export function getConfig(): AppConfig {
     authSecret: process.env.BETTER_AUTH_SECRET ?? '', internalSecret: process.env.INTERNAL_API_SECRET ?? '',
     setupToken: process.env.SETUP_TOKEN ?? '', webOrigin: process.env.WEB_ORIGIN ?? 'http://127.0.0.1:3000',
     production: process.env.NODE_ENV === 'production', runWorker: process.env.RUN_WORKER !== 'false',
+    modelWorkerEnabled: process.env.MOHASSAN_MODEL_WORKER === '1',
     v5Chat: process.env.MOHASSAN_V5_CHAT === 'owner' ? 'owner' : 'off',
     skillEngineEnabled: process.env.SKILL_ENGINE_ENABLED === 'true',
     mindEnabled: process.env.NODE_ENV !== 'production' && process.env.MOHASSAN_LOCAL_LAB === '1' && process.env.MOHASSAN_MIND === '1',

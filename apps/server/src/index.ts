@@ -1,9 +1,7 @@
 import { createApplication } from './app.js';
 import { getConfig } from './config.js';
-import { startServerModelWorker } from './model-worker.js';
 const config = getConfig();
 const {app} = await createApplication(config);
-await startServerModelWorker(app);
 try { await app.listen({port: Number(process.env.SERVER_PORT ?? 4000), host: process.env.SERVER_HOST ?? '127.0.0.1'}); }
 catch (error) { await app.close(); throw error; }
 console.log(`Mohassan API ready on port ${process.env.SERVER_PORT ?? 4000}`);
