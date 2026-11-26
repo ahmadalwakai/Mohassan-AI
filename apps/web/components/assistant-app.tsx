@@ -740,7 +740,11 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
             {conversation!.olderMessages ? <p className={styles.localMode} role="note">{`رسائل أقدم غير معروضة هنا (${conversation!.olderMessages})، والمعروض آخر ${conversation!.messages.length} رسالة.`}</p> : null}
             {conversation!.messages.map((message, index) => <article key={message.id} className={message.role === "user" ? styles.userTurn : styles.assistantTurn}>
               {message.role === "user" && message.images?.length ? <div className={styles.messageImages}>{message.images.map((image) => <a key={image.id} href={`/api/chat/images/${image.id}`} target="_blank" rel="noreferrer"><img src={`/api/chat/images/${image.id}`} alt="صورة مرفقة" width={image.width} height={image.height} /></a>)}</div> : null}
-              {message.role === "user" ? <p dir="auto">{message.text}</p> : <Markdown text={asking && index === conversation!.messages.length - 1 ? withoutQuestionList(message.text) : message.text} />}
+              {message.role === "user" ? <p dir="auto">{message.text}</p>
+                : message.experiment === "v5" ? <div className={styles.reply}>
+                  <span className={styles.experimentalBadge}>نموذج v5 تجريبي</span>
+                  <p dir="auto">{message.text}</p>
+                </div> : <Markdown text={asking && index === conversation!.messages.length - 1 ? withoutQuestionList(message.text) : message.text} />}
               {message.role === "assistant" && message.text.trim() ? <div className={styles.replyTools}><CopyButton text={message.text} /><ConversationMessageFeedback alerts={conversation!.monitorAlerts} messageId={message.id} fallback={<FeedbackButtons key={message.id} conversationId={conversation!.id} messageId={message.id} />} /></div> : null}
               {index === conversation!.messages.length - 1 && message.role === "user" ? <Steps conversation={conversation!} /> : null}
             </article>)}

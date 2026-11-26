@@ -1,0 +1,34 @@
+{
+  "identity": {
+    "modelId": "mohassan-chat-v5",
+    "tokenizerId": "sha256:297eaad3d1cd08b822fa1b7f215112633873d1603b83846dbf5bf7c48b49cbb7",
+    "checkpointId": "sha256:246983b5a42a9a14de7379c6da7f74a599c3131d58c848ed4b5ad0922aa14c39"
+  },
+  "model": {
+    "checkpoint": {
+      "path": "/opt/mohassan/models/v5/best.pt",
+      "sha256": "246983b5a42a9a14de7379c6da7f74a599c3131d58c848ed4b5ad0922aa14c39",
+      "format": "training"
+    },
+    "tokenizer": {
+      "path": "/opt/mohassan/models/v5/tokenizer.json",
+      "sha256": "297eaad3d1cd08b822fa1b7f215112633873d1603b83846dbf5bf7c48b49cbb7",
+      "pretokenizer": "words-v1"
+    },
+    "heads": {
+      "chat-v5": { "kind": "generate" }
+    },
+    "device": "cpu",
+    "eosTokenId": 258,
+    "quantization": null
+  },
+  "limits": {
+    "memoryBytes": 6442450944,
+    "cpuThreads": 2,
+    "maxBatchSize": 1,
+    "maxBatchWaitMs": 0,
+    "maxPending": 3,
+    "maxOutputTokens": 192,
+    "maxTimeoutMs": 60000
+  }
+}

@@ -3,15 +3,17 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getServerModelWorker, serverModelWorkerHealth, startServerModelWorker } from '../apps/server/src/model-worker.js';
+import { createServerOwnModelReply } from '../apps/server/src/assistant/own-model-reply.js';
+import { getServerModelWorker, getServerOwnModelGates, serverModelWorkerHealth, startServerModelWorker } from '../apps/server/src/model-worker.js';
 
-const controls = vi.hoisted(() => ({ construct: vi.fn(), start: vi.fn(), stop: vi.fn() }));
+const controls = vi.hoisted(() => ({ construct: vi.fn(), start: vi.fn(), stop: vi.fn(), request: vi.fn() }));
 vi.mock('../packages/execution-integration/src/experimental-worker-transport.js', () => ({
   PermanentModelWorker: class {
     status = { state: 'starting' };
     constructor(options: unknown) { controls.construct(options); }
     start = controls.start;
     stop = controls.stop;
+    request = controls.request;
   },
 }));
 
@@ -75,5 +77,31 @@ describe('server model worker lifecycle', () => {
     expect(log).toHaveBeenCalledWith(JSON.stringify({
       level: 'warn', event: 'model_worker_degraded', reason: 'invalid_configuration',
     }));
+  });
+
+  it('leaves all existing own-model capabilities inactive with only a ready v5 head and no gate file', async () => {
+    const app = application();
+    const directory = await mkdtemp(join(tmpdir(), 'model-worker-v5-'));
+    directories.push(directory);
+    const configPath = join(directory, 'model-worker.json');
+    const identity = { modelId: 'mohassan-chat-v5', tokenizerId: 'sha256:fixture', checkpointId: 'sha256:fixture' };
+    await writeFile(configPath, JSON.stringify({ identity, model: { heads: { 'chat-v5': { kind: 'generate' } } } }));
+    await startServerModelWorker(app, { MOHASSAN_MODEL_WORKER: '1', MOHASSAN_MODEL_WORKER_CONFIG: configPath,
+      EXECUTOR_PYTHON: '/opt/mohassan/venv-execution/bin/python' });
+    expect(controls.construct).toHaveBeenCalledWith(expect.objectContaining({
+      executable: expect.stringMatching(/[/\\]opt[/\\]mohassan[/\\]venv-execution[/\\]bin[/\\]python$/),
+    }));
+    Object.assign(getServerModelWorker(app)!, { status: { state: 'ready', ready: {
+      identity, text: true, configSha256: 'a'.repeat(64), heads: { 'chat-v5': 'generate' },
+    } } });
+    expect(getServerOwnModelGates(app)).toBeUndefined();
+
+    const existing = createServerOwnModelReply(app);
+    const signal = new AbortController().signal;
+    const reply = 'The original answer';
+    await existing.observe({ request: 'What about its population?', earlierUserTurns: ['Where is Japan?'], route: 'web_search', signal });
+    await expect(existing.phrase({ plan: { next: 0, steps: [] }, reply, status: 'completed', evidence: [],
+      question: 'What about its population?', signal })).resolves.toBe(reply);
+    expect(controls.request).not.toHaveBeenCalled();
   });
 });

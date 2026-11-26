@@ -179,6 +179,7 @@
 .assistantTurn { line-height: 1.9; animation: rise .3s var(--ease); }
 .reply { display: flex; flex-direction: column; gap: 10px; overflow-wrap: anywhere; }
 .reply p { white-space: pre-wrap; }
+.experimentalBadge { align-self: flex-start; padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--soft); font-size: .75rem; }
 .reply ul, .reply ol { margin: 0; padding-inline-start: 22px; display: flex; flex-direction: column; gap: 4px; }
 .reply ul { list-style: disc; }
 .reply ol { list-style: decimal; }

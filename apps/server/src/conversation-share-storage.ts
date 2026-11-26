@@ -130,13 +130,21 @@ function summary(row: ShareSummaryRow): ConversationShareSummary {
 }
 
 export function createConversationShareStorage(db: Kysely<any>, now: () => number = Date.now) {
-  async function ownedSnapshot(ownerId: string, conversationId: string) {
+  async function requireShareableConversation(tx: Kysely<any>, conversationId: string) {
+    const experimental = await tx.selectFrom('chat_messages as m').select('m.id')
+      .where('m.conversation_id', '=', conversationId)
+      .where(sql<boolean>`to_jsonb(m)->>'experiment' = 'v5'`).limit(1).executeTakeFirst();
+    if (experimental) throw failure(409, 'CONVERSATION_SHARE_EXPERIMENTAL', 'هذه المحادثة تتضمن ردًا تجريبيًا خاصًا بحساب المالك.');
+  }
+
+  async function ownedSnapshot(ownerId: string, conversationId: string, forSharing = false) {
     return db.transaction().execute(async tx => {
       // The embedded PGlite dialect ignores Kysely transaction settings.
       await sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`.execute(tx);
       const conversation = await tx.selectFrom('chat_conversations').select(['title', 'created_at'])
         .where('id', '=', conversationId).where('owner_id', '=', ownerId).executeTakeFirst();
       if (!conversation) return null;
+      if (forSharing) await requireShareableConversation(tx, conversationId);
       const messages: StoredMessage[] = await tx.selectFrom('chat_messages').select(['role', 'text', 'created_at', 'run_id'])
         .select(sql<boolean>`CASE WHEN jsonb_typeof(images) = 'array' THEN jsonb_array_length(images) > 0 ELSE false END`.as('has_images'))
         .where('conversation_id', '=', conversationId).orderBy('created_at').orderBy('id').execute();
@@ -166,6 +174,7 @@ export function createConversationShareStorage(db: Kysely<any>, now: () => numbe
       const conversation = await tx.selectFrom('chat_conversations').select('id')
         .where('id', '=', conversationId).where('owner_id', '=', ownerId).forShare().executeTakeFirst();
       if (!conversation) throw failure(404, 'CHAT_NOT_FOUND', 'لم يُعثر على المحادثة.');
+      await requireShareableConversation(tx, conversationId);
       if (role === 'member') {
         const settings = await tx.selectFrom('conversation_share_settings').select('member_sharing_enabled')
           .where('id', '=', SETTINGS_ID).forShare().executeTakeFirstOrThrow();

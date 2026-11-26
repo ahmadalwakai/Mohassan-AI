@@ -27,12 +27,24 @@ export type RouteMetrics = {
   latency: Latency;
 };
 
+export type V5ChatMetrics = {
+  generations: number;
+  latency: Latency;
+  eosStops: number;
+  lengthStops: number;
+  loopCuts: number;
+  timeouts: number;
+  fallbacks: number;
+};
+
 export type ChatMetrics = {
   runs: number;
   firstProgress: Latency;
   finalAnswer: Latency;
   phases: Partial<Record<WorkingRunPhase, Latency>>;
   paths: Record<AnswerPath, number>;
+  /** Present only in the owner's metrics when the v5 experiment has activity. */
+  v5?: V5ChatMetrics;
 };
 
 export const monitorDeliveryChannels = ['conversation', 'tab', 'webPush', 'apns'] as const;

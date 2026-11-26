@@ -35,14 +35,14 @@ export function registerConversationShareRoutes(app: FastifyInstance, options: C
   const renderer = createPdfRenderer({ fontsDir: options.fontsDir });
   app.addHook('preClose', () => renderer.close());
 
-  async function load(ownerId: string, id: string) {
-    const conversation = await store.ownedSnapshot(ownerId, id);
+  async function load(ownerId: string, id: string, forSharing = false) {
+    const conversation = await store.ownedSnapshot(ownerId, id, forSharing);
     if (!conversation) throw notFound();
     return conversation;
   }
 
   async function review(ownerId: string, id: string) {
-    const { snapshot, provenance, quotes } = await load(ownerId, id);
+    const { snapshot, provenance, quotes } = await load(ownerId, id, true);
     const checked = scanConversationPrivacy(snapshot, provenance, quotes);
     // RFC 2104 §2, retrieved 2026-11-25: https://www.rfc-editor.org/rfc/rfc2104#section-2
     // A stateless receipt binds the displayed findings to the account and the exact content reviewed.

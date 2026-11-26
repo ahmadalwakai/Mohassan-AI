@@ -56,7 +56,8 @@ import { registerConversationShareRoutes } from './conversation-share.js';
 import { createImageReader } from './image-reader.js';
 import { createInferenceControl, registerInferenceRoutes, type InferenceConfig } from './inference.js';
 import { createExecutorControl, executorConfigFromEnv, registerExecutorRoutes, type ExecutorConfig } from './executor.js';
-import { serverModelWorkerHealth } from './model-worker.js';
+import { serverModelWorkerHealth, startServerModelWorker } from './model-worker.js';
+import { generateV5ChatReply, isV5ChatReady } from './v5-chat.js';
 import { createServerOwnModelReply } from './assistant/own-model-reply.js';
 import { createAdsLab, createAdsModelWorker, registerAdsLabRoutes, type AdsLabConfig } from './ads-lab.js';
 import { createAdsModelChat } from './assistant/ads-model-chat.js';
@@ -102,6 +103,8 @@ export interface AppConfig {
   dataDir?: string; databaseUrl?: string; authSecret: string; internalSecret: string;
   backupStatusDirectory?: string;
   setupToken: string; webOrigin: string; production: boolean; runWorker: boolean;
+  modelWorkerEnabled?: boolean;
+  v5Chat?: 'off' | 'owner';
   groqApiKey?:string;groqModel?:string;groqReasoningModel?:string;aiFetch?:typeof fetch;
   codingDataDir?:string;codingAllowedRoots?:string[];sandboxRunner?:SandboxRunner;
   browser?:BrowserConfig;windowsEnabled?:boolean;browserProfileDir?:string;browserChannel?:'chrome'|null;
@@ -193,7 +196,7 @@ export async function createApplication(config: AppConfig) {
   type SessionUser = {id: string; name: string; email: string; sessionId: string};
   const sessions = new WeakMap<object, Promise<SessionUser | null>>();
   const roles = new WeakMap<object, Promise<WorkspaceRole | null>>();
-  const metrics = await registerProductionMetrics(app, config.production, request => roles.get(request), database.db);
+  const metrics = await registerProductionMetrics(app, config.production, request => roles.get(request), database.db, config.v5Chat === 'owner');
   const sessionUser = (request: {headers: Record<string, unknown>}) => {
     let found = sessions.get(request);
     if (!found) {
@@ -491,6 +494,10 @@ export async function createApplication(config: AppConfig) {
   const imageReader=await createImageReader({modelDir:process.env.MOHASSAN_OCR_MODEL_DIR??join(process.cwd(),'artifacts','vision','ocr-v1'),workers:Number(process.env.MOHASSAN_OCR_WORKERS??3)});
   const chat=await createCommandChatControl(database.db,{...(shadowRouter?{shadowRouter}:{}),...(conversationShadow?{conversationShadow}:{}),...(judgeShadow?{judgeShadow,judgeFixForOwner:judgeConfig.fixForOwner,judgeWithholdForOwner:judgeConfig.withholdForOwner,judgeLogText:judgeConfig.logText}:{}),...(imageReader.available?{imageReader}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),sites:{createFromBrief:(ownerId,brief,options)=>sites.create(ownerId,{brief,conversationId:options.conversationId,role:options.role,draftWriteFence:options.draftWriteFence}),command:(ownerId,siteId,input)=>sites.command(ownerId,siteId,input),detail:(ownerId,siteId)=>sites.detail(ownerId,siteId),roleOf:ownerId=>roleOf(database.db,ownerId),link:siteId=>`${new URL(config.webOrigin).origin}/#sites=${siteId}`},...(desktop?{desktop:{parse:(text:string)=>clarifyDesktopFile(text,value=>desktop.parse(value)),describe:(command,lang)=>desktop.describe(command,lang),execute:(command,options)=>desktop.execute(command,options)}}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,documents:{control:documents,link:documentLink},inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,readPage,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',accountFullAccess:(ownerId,tx)=>lockOwnerToolAccess(tx,ownerId),accountActive:async(ownerId,tx)=>{const role=await roleOf(tx,ownerId);if(role!=='member')return role!==null;return Boolean(await tx.selectFrom('workspace_members').select('user_id').where('user_id','=',ownerId).where('role','=','member').where('disabled_at','is',null).forShare().executeTakeFirst());},memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
     ownModel: createServerOwnModelReply(app),
+    ...(config.v5Chat === 'owner' ? { v5Chat: {
+      ready: () => isV5ChatReady(app),
+      generate: (messages, signal) => generateV5ChatReply(app, messages, signal),
+    } } : {}),
     reserveMemberRun: (tx, ownerId, runId) => reserveMemberRun(tx, ownerId, runId, memberDailyRuns),
     learningContext:learning.context,chromeExtension,
     knowledgeSearch:async(ownerId,query)=>(await learning.knowledge.retrieve(ownerId,query)).map(({title,text,source})=>({title,text,source})),
@@ -562,6 +569,8 @@ export async function createApplication(config: AppConfig) {
   app.post<{Params: {id: string}}>('/api/tasks/:id/approve', async (request) => runtime.approve((await owner(request)).id, request.params.id));
   app.addHook('onClose', async () => {clearInterval(benchmarkMaintenance);try{await skillRemoteScheduler?.stop();await skills.remote.shutdown();await benchmarkMaintenanceRun;await Promise.all([skillBenchmarks.shutdown(),skillForge.shutdown()]);}finally{try{await chat.shutdown();}finally{try{await runtime.stop();}finally{try{await browser.shutdown();}finally{try{await studioLive.close();}finally{await database.close();}}}}}});
   if (config.runWorker) runtime.start();
+  // The worker registers its close hook before Fastify completes startup.
+  if (config.modelWorkerEnabled) await startServerModelWorker(app);
   await app.ready();
   return {app, routes, runtime, database, auth,ai,coding,studio,studioAi,studioLive,browser,browserTask,memory,skills,chat,skillExecution,skillBenchmarks,skillForge,googleAds,inference,chromeExtension,trainingMonitor};
 }

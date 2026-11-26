@@ -9,7 +9,13 @@ import { readMonitorFeedbackMetrics } from './monitor-feedback.js';
 import { METRICS_CSV_PATH, METRICS_PATH, registerRequestMetrics } from './request.js';
 import { sampleProcessResources } from './resources.js';
 import { MetricsSnapshots } from './snapshots.js';
-import { hourMs, MetricsStore, minuteMs } from './store.js';
+import { hourMs, MetricsStore, minuteMs, type V5ChatObservation } from './store.js';
+
+const v5Metrics = new WeakMap<FastifyInstance, MetricsStore>();
+
+export function recordV5ChatMetrics(app: FastifyInstance, observation: V5ChatObservation): void {
+  v5Metrics.get(app)?.recordV5Chat(observation);
+}
 
 export function productionMetricsSettings(production: boolean, env: NodeJS.ProcessEnv) {
   return {
@@ -23,13 +29,15 @@ export async function registerProductionMetrics(
   production: boolean,
   cachedRole: Parameters<typeof registerRequestMetrics>[1],
   db: Kysely<any>,
+  v5ChatEnabled = false,
 ) {
   const { enabled, directory } = productionMetricsSettings(production, process.env);
   const store = new MetricsStore();
-  const snapshots = enabled ? new MetricsSnapshots(store, directory, { restoreChat: false }) : undefined;
+  const snapshots = enabled ? new MetricsSnapshots(store, directory, { restoreChat: false, restoreV5Chat: v5ChatEnabled }) : undefined;
   const chatAvailable = enabled ? registerChatMetricsRefresh(app, db, store) : () => false;
   if (snapshots) {
     await snapshots.load();
+    if (v5ChatEnabled) v5Metrics.set(app, store);
     registerRequestMetrics(app, cachedRole, (role, route, status, durationMs) => store.recordRequest(role, route, status, durationMs));
     const stopMonitorMetrics = registerMonitorMetrics(db, event => store.recordMonitor(event));
     const stopSampling = sampleProcessResources(sample => store.recordResources(sample));
@@ -47,6 +55,7 @@ export async function registerProductionMetrics(
     scheduleFlush();
     app.addHook('onClose', async () => {
       closed = true;
+      v5Metrics.delete(app);
       stopSampling();
       stopMonitorMetrics();
       clearTimeout(flushTimer);
