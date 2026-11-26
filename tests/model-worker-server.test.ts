@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServerOwnModelReply } from '../apps/server/src/assistant/own-model-reply.js';
-import { getServerModelWorker, getServerOwnModelGates, serverModelWorkerHealth, startServerModelWorker } from '../apps/server/src/model-worker.js';
+import { getServerModelWorker, getServerOwnModelGates, installServerModelWorkerShutdown, serverModelWorkerHealth, startServerModelWorker } from '../apps/server/src/model-worker.js';
 
 const controls = vi.hoisted(() => ({ construct: vi.fn(), start: vi.fn(), stop: vi.fn(), request: vi.fn() }));
 vi.mock('../packages/execution-integration/src/experimental-worker-transport.js', () => ({
@@ -59,6 +59,24 @@ describe('server model worker lifecycle', () => {
     }));
     expect(options.environment).toEqual(process.platform === 'win32' ? { PATH: dirname(options.executable) } : {});
     expect(getServerModelWorker(app)).toBeDefined();
+    expect((await app.inject('/health')).json()).toEqual({ status: 'ok', modelWorker: { state: 'starting' } });
+    await app.close();
+    expect(controls.stop).toHaveBeenCalledTimes(1);
+  });
+
+  // Production: createApplication() runs app.ready() and index.ts starts the worker afterwards.
+  // On 2026-11-26 that order crashed the API (FST_ERR_INSTANCE_ALREADY_LISTENING from addHook).
+  it('starts after app.ready() when the shutdown hook was installed before it', async () => {
+    const app = application();
+    installServerModelWorkerShutdown(app);
+    await app.ready();
+    const directory = await mkdtemp(join(tmpdir(), 'model-worker-server-'));
+    directories.push(directory);
+    const configPath = join(directory, 'model.json');
+    await writeFile(configPath, JSON.stringify({ identity: { modelId: 'fixture', tokenizerId: 'token-ids', checkpointId: 'a'.repeat(64) } }));
+    await expect(startServerModelWorker(app, { MOHASSAN_MODEL_WORKER: '1', MOHASSAN_MODEL_WORKER_CONFIG: configPath }))
+      .resolves.toBeUndefined();
+    expect(controls.start).toHaveBeenCalledTimes(1);
     expect((await app.inject('/health')).json()).toEqual({ status: 'ok', modelWorker: { state: 'starting' } });
     await app.close();
     expect(controls.stop).toHaveBeenCalledTimes(1);

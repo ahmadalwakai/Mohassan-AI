@@ -12,8 +12,24 @@ import { loadOwnModelGates, readOwnModelGateConfig, type OwnModelGates } from '.
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const maxConfigBytes = 16 * 1024 * 1024;
-type Service = { worker?: PermanentModelWorker; ownModelGates?: OwnModelGates; state: 'starting' | 'degraded' };
+type Service = { worker?: PermanentModelWorker; ownModelGates?: OwnModelGates; state: 'starting' | 'degraded'; closed?: boolean };
 const services = new WeakMap<FastifyInstance, Service>();
+const shutdownInstalled = new WeakSet<FastifyInstance>();
+
+/**
+ * Stops the worker when the app closes. Fastify refuses new hooks once the app is ready, so the
+ * server registers this before `app.ready()`; startServerModelWorker installs it only when it is missing.
+ */
+export function installServerModelWorkerShutdown(app: FastifyInstance): void {
+  if (shutdownInstalled.has(app)) return;
+  app.addHook('onClose', async () => {
+    const service = services.get(app);
+    if (!service) return;
+    service.closed = true;
+    await service.worker?.stop();
+  });
+  shutdownInstalled.add(app);
+}
 
 async function readIdentity(path: string): Promise<ModelIdentity> {
   const file = await open(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
@@ -72,19 +88,15 @@ export function serverModelWorkerHealth(app: FastifyInstance): {
 
 export async function startServerModelWorker(app: FastifyInstance, env: NodeJS.ProcessEnv = process.env): Promise<void> {
   if (env.MOHASSAN_MODEL_WORKER !== '1' || services.has(app)) return;
+  installServerModelWorkerShutdown(app);
   const service: Service = { state: 'starting' };
   services.set(app, service);
-  let closed = false;
-  app.addHook('onClose', async () => {
-    closed = true;
-    await service.worker?.stop();
-  });
   try {
     const configPath = resolve(root, env.MOHASSAN_MODEL_WORKER_CONFIG?.trim() || '.data/model-worker.json');
     const identity = await readIdentity(configPath);
     const gateConfig = await readOwnModelGateConfig(join(dirname(configPath), 'own-model-provider.json'));
     if (Object.keys(gateConfig).length) service.ownModelGates = await loadOwnModelGates(gateConfig);
-    if (closed) return;
+    if (service.closed) return;
     const python = env.EXECUTOR_PYTHON?.trim();
     const executable = python ? resolve(root, python) : process.platform === 'win32'
       ? join(root, '.venv-execution', 'Scripts', 'python.exe')

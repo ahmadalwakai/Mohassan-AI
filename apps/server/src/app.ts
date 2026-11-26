@@ -56,7 +56,7 @@ import { registerConversationShareRoutes } from './conversation-share.js';
 import { createImageReader } from './image-reader.js';
 import { createInferenceControl, registerInferenceRoutes, type InferenceConfig } from './inference.js';
 import { createExecutorControl, executorConfigFromEnv, registerExecutorRoutes, type ExecutorConfig } from './executor.js';
-import { serverModelWorkerHealth } from './model-worker.js';
+import { installServerModelWorkerShutdown, serverModelWorkerHealth } from './model-worker.js';
 import { generateV5ChatReply, isV5ChatReady } from './v5-chat.js';
 import { createServerOwnModelReply } from './assistant/own-model-reply.js';
 import { createAdsLab, createAdsModelWorker, registerAdsLabRoutes, type AdsLabConfig } from './ads-lab.js';
@@ -376,6 +376,8 @@ export async function createApplication(config: AppConfig) {
   const executor=createExecutorControl({config:config.executor??executorConfigFromEnv({},process.cwd(),true),sandbox:coding.sandbox});
   await registerExecutorRoutes(app,{control:executor,owner});
   app.addHook('onClose',async()=>{executor.shutdown();});
+  // index.ts starts the own-model worker after app.ready(), when Fastify no longer accepts hooks: register its stop now.
+  installServerModelWorkerShutdown(app);
   // Mohassan's own Ads model: local worker + checker gate, owner-only, on only with the executor experiment.
   const executorConfig=config.executor??executorConfigFromEnv({},process.cwd(),true);
   const adsLab=createAdsLab(config.adsLab??{enabled:false,python:executorConfig.python,packageDir:executorConfig.packageDir,device:'cpu',startupTimeoutMs:120_000,requestTimeoutMs:90_000});
