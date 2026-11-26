@@ -1,7 +1,7 @@
 import {
   answerPaths, resourceMetrics, statusClasses, trafficRoles,
   type AnswerPath, type ChatMetrics, type MetricWindow, type ResourceMetric,
-  type RouteMetrics, type TrafficRole, type WorkingRunPhase,
+  type RouteMetrics, type TrafficRole, type V5ChatMetrics, type WorkingRunPhase,
 } from '@mohassan/contracts';
 import {createHistogram, mergeHistograms, summarizeHistogram, type Histogram} from './histogram';
 import {createMonitorMetricBucket, mergeMonitorMetricBucket, summarizeMonitorMetrics, type MonitorMetricBucket} from './monitor-buckets.js';
@@ -9,6 +9,7 @@ import {createMonitorMetricBucket, mergeMonitorMetricBucket, summarizeMonitorMet
 export type ChatTiming = 'firstProgress' | 'finalAnswer' | WorkingRunPhase;
 export type TimingData = {histogram?: Histogram};
 export type RequestData = TimingData & {statuses: number[]};
+type V5ChatMetricBucket = Omit<V5ChatMetrics, 'latency'> & TimingData;
 type ResourceData = {samples: number; sum: number; max: number};
 type RoleData = {
   routes: Map<string, RequestData>;
@@ -19,7 +20,12 @@ export type MetricBucket = {
   roles: Record<TrafficRole, RoleData>;
   resources: Map<ResourceMetric, ResourceData>;
   monitors: MonitorMetricBucket;
+  v5Chat?: V5ChatMetricBucket;
 };
+
+export function v5ChatData(bucket: MetricBucket): V5ChatMetricBucket {
+  return bucket.v5Chat ??= {generations: 0, eosStops: 0, lengthStops: 0, loopCuts: 0, timeouts: 0, fallbacks: 0};
+}
 
 export function createBucket(): MetricBucket {
   const role = (): RoleData => ({
@@ -58,6 +64,7 @@ export function resourceData(resources: MetricBucket['resources'], metric: Resou
 
 export function forEachHistogram(bucket: MetricBucket, visit: (histogram: Histogram) => void): void {
   if (bucket.monitors.lateness) visit(bucket.monitors.lateness);
+  if (bucket.v5Chat?.histogram) visit(bucket.v5Chat.histogram);
   for (const role of trafficRoles) {
     for (const data of bucket.roles[role].routes.values()) if (data.histogram) visit(data.histogram);
     for (const data of bucket.roles[role].chat.timings.values()) if (data.histogram) visit(data.histogram);
@@ -84,6 +91,17 @@ export function mergeBucket(target: MetricBucket, source: MetricBucket, allocate
     for (const [name, timing] of incoming.timings) mergeTiming(timingData(chat.timings, name), timing.histogram);
   }
   mergeMonitorMetricBucket(target.monitors, source.monitors, allocate);
+  if (source.v5Chat) {
+    const incoming = source.v5Chat;
+    const v5 = v5ChatData(target);
+    v5.generations += incoming.generations;
+    v5.eosStops += incoming.eosStops;
+    v5.lengthStops += incoming.lengthStops;
+    v5.loopCuts += incoming.loopCuts;
+    v5.timeouts += incoming.timeouts;
+    v5.fallbacks += incoming.fallbacks;
+    mergeTiming(v5, incoming.histogram);
+  }
   for (const [metric, incoming] of source.resources) {
     const data = resourceData(target.resources, metric);
     data.samples += incoming.samples;
@@ -119,7 +137,12 @@ function summarizeChat(data: RoleData['chat']): ChatMetrics {
 
 export function summarizeWindow(bucket: MetricBucket, startMs: number, endMs: number): MetricWindow {
   function summarizeRole(role: TrafficRole): MetricWindow['roles'][TrafficRole] {
-    return {routes: summarizeRoutes(bucket, role), chat: summarizeChat(bucket.roles[role].chat)};
+    const chat = summarizeChat(bucket.roles[role].chat);
+    if (role === 'owner' && bucket.v5Chat) {
+      const {histogram, ...counts} = bucket.v5Chat;
+      chat.v5 = {...counts, latency: summarizeHistogram(histogram)};
+    }
+    return {routes: summarizeRoutes(bucket, role), chat};
   }
   const resources = Object.fromEntries(resourceMetrics.map(metric => {
     const data = bucket.resources.get(metric);

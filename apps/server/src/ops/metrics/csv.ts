@@ -56,6 +56,13 @@ export function metricsCsv(view: ProductionMetricsResponse) {
       }
       for (const [name, count] of Object.entries(chat.paths)) write({ ...base, section: 'answer_path', name, count });
     }
+    const v5 = data.roles.owner.chat.v5;
+    if (v5) {
+      const {latency: timing, ...counts} = v5;
+      const base = { ...bounds, role: 'owner', section: 'v5_chat' };
+      for (const [name, count] of Object.entries(counts)) write({ ...base, name, count });
+      write({ ...base, name: 'latency', ...latency(timing) });
+    }
     for (const [name, resource] of Object.entries(data.resources)) write({ ...bounds, section: 'resource', name, ...resource });
     monitor(bounds, data.monitors);
   }

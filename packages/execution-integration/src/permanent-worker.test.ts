@@ -19,12 +19,13 @@ const fixture = String.raw`
       kind: 'ready',
       identity: startup === 'wrong-id' ? { ...identity, checkpointId: 'incorrect' } : identity,
       ...(startup === 'bad-config-digest' ? { configSha256: 'invalid' } : {}),
-      heads: { route: 'classify', text: 'generate', options: 'score-options' },
+      ...(startup === 'chat' ? { text: true, heads: { 'chat-v5': 'generate' } }
+        : { heads: { route: 'classify', text: 'generate', options: 'score-options' } }),
       limits: { maxBatchSize: 2, maxBatchWaitMs: 5, maxPending: 2, maxInputBytes: 2048,
         maxOutputBytes: 2048, maxOutputTokens: 8, maxTimeoutMs: 30000 },
       startupMs: 1,
       device: 'cpu',
-      parity: {
+      parity: startup === 'chat' ? {} : {
         route: { top1Agreement: 1, maxAbsoluteLogitDifference: 0.001, greedyTokenAgreement: null,
           adopted: true, reason: 'passed', samples: 2 },
       },
@@ -76,6 +77,13 @@ const fixture = String.raw`
       return;
     }
     if (request.operation === 'generate') {
+      if (request.input.messages) {
+        if (mode === 'token-frame') { send({ kind: 'token', requestId, token: 5, index: 0 }); return; }
+        const result = mode === 'context-limit' ? { text: '', stopReason: 'context_limit', loopCut: false }
+          : { text: 'أهلاً', stopReason: 'length', loopCut: mode !== 'bad-chat-result' ? true : 'true' };
+        send({ kind: 'result', requestId, result });
+        return;
+      }
       send({ kind: 'token', requestId, token: 5, index: 0 });
       send({ kind: 'token', requestId, token: 2, index: 1 });
       send({ kind: 'result', requestId, result: { tokenIds: mode === 'bad-final' ? [4, 2] : [5, 2], stopReason: 'eos' } });
@@ -231,6 +239,28 @@ describe('permanent model worker supervision', () => {
     await ready(worker);
     await expect(worker.request({
       operation: 'generate', head: 'text', input: { mode: 'bad-final', maxNewTokens: 2 },
+    })).rejects.toMatchObject({ code: 'invalid_model_output' });
+  });
+
+  it('accepts compact chat results and context limits without streaming provisional tokens', async () => {
+    const worker = newWorker({}, 'chat');
+    worker.start();
+    await ready(worker);
+    const input = { messages: [{ role: 'user', content: 'مرحباً' }], maxNewTokens: 2 };
+    const request = { operation: 'generate', head: 'chat-v5', input } as const;
+    await expect(worker.request(request)).resolves.toEqual({ text: 'أهلاً', stopReason: 'length', loopCut: true });
+    await expect(worker.request({ ...request, input: { ...input, mode: 'context-limit' } }))
+      .resolves.toEqual({ text: '', stopReason: 'context_limit', loopCut: false });
+    await expect(worker.request({ ...request, input: { ...input, mode: 'bad-chat-result' } }))
+      .rejects.toMatchObject({ code: 'invalid_model_output' });
+  });
+
+  it('rejects a token frame for a nonstreaming chat generation', async () => {
+    const worker = newWorker({}, 'chat');
+    worker.start();
+    await ready(worker);
+    await expect(worker.request({ operation: 'generate', head: 'chat-v5',
+      input: { messages: [{ role: 'user', content: 'Hello' }], maxNewTokens: 2, mode: 'token-frame' },
     })).rejects.toMatchObject({ code: 'invalid_model_output' });
   });
 

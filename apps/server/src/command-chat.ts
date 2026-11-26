@@ -19,6 +19,7 @@ import { unfenceJson } from './inference.js';
 import { rememberRemovedConversationProfile } from './member-profile-storage.js';
 import { withMemberChatDeletionFence } from './member-chat-deletion-fence.js';
 import { redactSensitiveCredentialText as clean } from './sensitive-credential-text.js';
+import { V5_CHAT_LABEL } from './v5-chat.js';
 import { classifyExperience, escapedContextLength, recordExperience, type ExperienceInput } from '@mohassan/learning';
 import {
   boundedDecisionJsonSchema, decisionJsonSchema, decisionSchema, recoverDecision, ModelPool, buildPrompt, chooseTier, cookieRejectButton, directRoute, estimateTokens, newBrainState,
@@ -146,8 +147,12 @@ export interface CommandChatConfig {
   /** Current account access, checked using the same fenced transaction. Must not open a nested transaction. */
   accountActive?: (ownerId: string, connection: Kysely<any>) => Promise<boolean>;
   reserveMemberRun?: (tx: Kysely<any>, ownerId: string, runId: string) => Promise<void>;
-  /** Native input admission only: lock the granting owner row in this transaction. Never open a nested/outer transaction here. */
+  /** For owner-only admission and publication: lock the granting owner row in this transaction. */
   accountFullAccess?: (ownerId: string, connection: Kysely<any>) => Promise<boolean>;
+  v5Chat?: {
+    ready(): boolean;
+    generate(messages: readonly { role: 'user' | 'assistant'; content: string }[], signal: AbortSignal): Promise<string | undefined>;
+  };
   apiKey?: string;
   /**
    * Replaces the Groq boundary with an explicit provider per model (for example the
@@ -263,6 +268,7 @@ const MAX_AUTH_ATTEMPTS = 8;
 const RUN_LIMIT_MS = 15 * 60000;
 const MAX_OUTPUT_TOKENS = 1800;
 const HISTORY_MESSAGES = 6;
+const V5_CHAT_FOOTER = `\n\n${V5_CHAT_LABEL}`;
 /** The newest messages a conversation's detail carries; `olderMessages` counts the rest. */
 const MESSAGE_WINDOW = 300;
 const WAITING_STATUSES = ['waiting_user', 'waiting_input', 'waiting_approval'];
@@ -390,7 +396,7 @@ const sleep = (milliseconds: number, signal: AbortSignal) => new Promise<void>((
 class RunEnded extends Error {}
 class AccountAccessEnded extends RunEnded {}
 
-export async function commandChatMigration(db: Kysely<any>, beforeShares?: (tx: Transaction<any>) => Promise<void>) {
+export async function commandChatMigration(db: Kysely<any>, beforeShares?: (tx: Transaction<any>) => Promise<void>, v5ChatEnabled = false) {
   await db.transaction().execute(async (tx) => {
     await sql`LOCK TABLE schema_migrations IN EXCLUSIVE MODE`.execute(tx);
     if (!await tx.selectFrom('schema_migrations').select('version').where('version', '=', '013_command_chat').executeTakeFirst()) {
@@ -441,6 +447,10 @@ export async function commandChatMigration(db: Kysely<any>, beforeShares?: (tx: 
       await sql`CREATE INDEX chat_request_keys_created_idx ON chat_request_keys(created_at)`.execute(tx);
       await tx.insertInto('schema_migrations').values({version:'033_chat_request_keys'}).execute();
     }
+    if (v5ChatEnabled && !await tx.selectFrom('schema_migrations').select('version').where('version', '=', 'chat_message_experiment_v5').executeTakeFirst()) {
+      await sql`ALTER TABLE chat_messages ADD COLUMN experiment text CHECK (experiment IS NULL OR (role = 'assistant' AND experiment = 'v5'))`.execute(tx);
+      await tx.insertInto('schema_migrations').values({ version: 'chat_message_experiment_v5' }).execute();
+    }
     await campaignEventsMigration(tx);
     await beforeShares?.(tx);
     await migrateConversationShares(tx);
@@ -450,7 +460,7 @@ export async function commandChatMigration(db: Kysely<any>, beforeShares?: (tx: 
 export async function createCommandChatControl(db: Kysely<any>, config: CommandChatConfig) {
   await initializeTestDrivenCoding();
   config = preferDocumentControl(config);
-  await commandChatMigration(db);
+  await commandChatMigration(db, undefined, config.v5Chat !== undefined);
   config = await withMemberChatDeletionFence(db, config);
   const monitor = installMonitorChat(db, config);
   const browser = config.browser;
@@ -654,7 +664,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     if(taskId)await tools?.work?.cancel(ownerId,taskId).catch(()=>{});
   }
 
-  async function recordTerminalRun(tx: Kysely<any>, runId: string, status: ChatTerminalStatus, proof?: ChatExperienceProof) {
+  async function recordTerminalRun(tx: Kysely<any>, runId: string, status: ChatTerminalStatus, proof?: ChatExperienceProof, experiment?: 'v5') {
+    if (experiment) return;
     await recordChatNotification(tx, runId, status);
     if (config.recordExperiences === false) return;
     const run = await tx.selectFrom('chat_runs').select(['owner_id', 'goal', 'state', 'attempt', 'conversation_id'])
@@ -806,8 +817,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     });
   }
 
-  async function addMessage(connection: Kysely<any>, id: string, role: 'user' | 'assistant', text: string) {
-    await connection.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role, text: clean(text), run_id: role === 'assistant' ? execution.getStore()?.runId ?? null : null }).execute();
+  async function addMessage(connection: Kysely<any>, id: string, role: 'user' | 'assistant', text: string, experiment?: 'v5') {
+    await connection.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role, text: clean(text), run_id: role === 'assistant' ? execution.getStore()?.runId ?? null : null,
+      ...(experiment && { experiment }) }).execute();
   }
 
   async function addStep(id: string, runId: string, text: string) {
@@ -1071,16 +1083,18 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const saved=AgentSessionCheckpointSchema.safeParse(row.browser_checkpoint);
     const checkpoint=saved.success?saved.data:null;
     const page = (row.browser_state??(checkpoint?{url:checkpoint.resumeUrl??'about:blank',title:'جلسة محفوظة',observedAt:checkpoint.observedAt??checkpoint.savedAt,version:checkpoint.pageHash??'saved'}:null)) as { url: string; title: string; observedAt: string; version: string } | null;
+    const capabilities = await capabilitiesFor(ownerId);
     return ChatConversationSchema.parse({
       id, title: row.title, status: row.status, browserAccount: row.browser_account ?? null,
-      messages: messages.map((item) => ({ id: item.id, role: item.role, text: item.text, createdAt: iso(item.created_at), ...messageImages(item.images) })),
+      messages: messages.map((item) => ({ id: item.id, role: item.role, text: item.text, createdAt: iso(item.created_at), ...messageImages(item.images),
+        ...(item.experiment === 'v5' && { experiment: item.experiment }) })),
       question: row.question ?? null,
       approval: row.approval ?? null,
       secure: row.secure ?? null,
       browser: page ? { url: page.url, title: page.title, observedAt: page.observedAt, live: await browser.hasPage(ownerId, id), screenUrl: `/api/chat/conversations/${id}/screen?v=${page.version}`, recovery: row.browser_checkpoint ? row.browser_checkpoint.status === 'ready' && row.browser_checkpoint.resumeUrl ? 'available' : 'review_required' : 'unavailable',...(checkpoint?{recoveryToken:checkpointToken(checkpoint)}:{}) } : null,
       progress: row.progress, error: row.error, campaign: await readCampaignEvents(db, id),
       steps: steps.reverse().map((item) => ({ id: item.id, text: item.message, createdAt: iso(item.created_at) })),
-      updatedAt: iso(row.updated_at), configured: hasChatModel(), capabilities: await capabilitiesFor(ownerId),
+      updatedAt: iso(row.updated_at), configured: capabilities.chatModel, capabilities,
       // The browser level (plan §6.1) is read from the rows above, never stored apart from them: the UI opens the panel by itself only at 3.
       visibility: deriveBrowserVisibility({ request: messages.findLast(item => item.role === 'user')?.text ?? '', route: lastRun?.state?.routing?.route ?? null,
         role: (config.fullAccess ? await config.fullAccess(ownerId) : true) ? 'owner' : 'member', hasPage: Boolean(page), status: row.status,
@@ -1108,7 +1122,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       documents: Boolean(config.documents), sites: Boolean(config.sites), skills: Boolean(config.skillAnswer), planner: true, letters: true,
       imageReading: Boolean(config.imageReader?.available), ads: Boolean(config.adsModel) && full, pc: Boolean(tools?.computer) && full,
     };
-    return { chatModel: hasChatModel(), available: chatCapabilityIds.filter(capability => facts[capability]),
+    return { chatModel: hasChatModel() || (full && Boolean(config.fullAccess && config.v5Chat?.ready())), available: chatCapabilityIds.filter(capability => facts[capability]),
       ...(monitor && await monitor.availableTo(ownerId) ? { smartMonitors: true, ...(monitor.v2 ? { smartMonitorsV2: true as const } : {}) } : {}),
     };
   }
@@ -1117,7 +1131,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     await recoverExpired();
     const rows = await db.selectFrom('chat_conversations').select(['id', 'title', 'status', 'updated_at','browser_account']).where('owner_id', '=', ownerId).orderBy('updated_at', 'desc').limit(60).execute();
     // `requestKeys` tells a client that the changing routes honour an Idempotency-Key, so a resend after a lost reply runs once.
-    return { configured: hasChatModel(), capabilities: await capabilitiesFor(ownerId), requestKeys: true as const,
+    const capabilities = await capabilitiesFor(ownerId);
+    return { configured: capabilities.chatModel, capabilities, requestKeys: true as const,
       conversations: rows.map((row) => ({ id: row.id, title: row.title, status: row.status, browserAccount:row.browser_account??null, updatedAt: iso(row.updated_at) })) };
   }
 
@@ -1418,15 +1433,36 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     } catch { return null; }
   }
 
+  async function generateUnansweredV5(id: string, runId: string, current: Execution | undefined) {
+    const { v5Chat, accountFullAccess } = config;
+    if (!v5Chat || !current?.full || !accountFullAccess) return;
+    const recent = await runTransaction(id, runId, async tx => {
+      if (!await accountFullAccess(current.ownerId, tx)) return [];
+      return tx.selectFrom('chat_messages').select(['role', 'text', 'experiment']).where('conversation_id', '=', id)
+        .orderBy('created_at', 'desc').orderBy('id', 'desc').limit(16).execute();
+    });
+    if (recent[0]?.role !== 'user') return;
+    const turns = recent.reverse().map((message): { role: 'user' | 'assistant'; content: string } => {
+      const text = message.experiment === 'v5' && message.text.endsWith(V5_CHAT_FOOTER) ? message.text.slice(0, -V5_CHAT_FOOTER.length) : message.text;
+      return { role: message.role, content: vault.scrub(id, clean(text)) };
+    });
+    const reply = await v5Chat.generate(turns, current.controller.signal);
+    return reply && vault.scrub(id, clean(reply)).trim();
+  }
+
   /** `prejudged`: the text is a message of several answers, each already judged on its own question (web-sequence.ts). */
   async function finish(id: string, runId: string, state: BrainState, text: string, status: 'completed' | 'partial' | 'blocked',
-      proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall', prejudged = false, preparedMonitor?: PreparedMonitorTurn) {
+      proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall', prejudged = false, preparedMonitor?: PreparedMonitorTurn,
+      noModelFallback = false) {
     const source = execution.getStore();
     const blockedMonitor = monitor && !preparedMonitor && status !== 'completed' && source?.request && !memoryPublication ? await monitor.forBlockedTurn({ ownerId: source.ownerId, conversationId: id, runId, text: source.request, signal: source.controller.signal, trail: state.trail, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }) : null;
-    if (!prejudged && !proof && !memoryPublication && state.supervision?.contract.mode !== 'enforced') text = shapeCompletedChatReply(text, execution.getStore()?.request, status);
+    const v5Reply = noModelFallback && status === 'blocked' && !blockedMonitor && !state.steps
+      && !state.actionCompletion?.contract.requirements.length && !state.actionCompletion?.events.length && !state.actionCompletion?.fault
+      ? await generateUnansweredV5(id, runId, source) : undefined;
+    if (!v5Reply && !prejudged && !proof && !memoryPublication && state.supervision?.contract.mode !== 'enforced') text = shapeCompletedChatReply(text, execution.getStore()?.request, status);
     // The judge sees the reply first: logged in shadow for everyone; for the owner's account its fix, or its fixed withhold
     // sentence, is what goes on. Memory publications keep their own stricter checks and are never changed here.
-    const judged = prejudged || !config.judgeShadow ? { text, withheld: false } : await reviewJudgedReply(work => runTransaction(id, runId, work), { id, runId, clean, allowApply: !memoryPublication && state.supervision?.contract.mode !== 'enforced' }, () => judgeReply(id, runId, text, status, !memoryPublication));
+    const judged = v5Reply || prejudged || !config.judgeShadow ? { text, withheld: false } : await reviewJudgedReply(work => runTransaction(id, runId, work), { id, runId, clean, allowApply: !memoryPublication && state.supervision?.contract.mode !== 'enforced' }, () => judgeReply(id, runId, text, status, !memoryPublication));
     text = judged.text;
     // A withheld answer is not a completed task.
     if (judged.withheld && status === 'completed') status = 'partial';
@@ -1439,13 +1475,14 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const published = await runTransaction(id,runId,async (tx) => {
       const current = await tx.selectFrom('chat_conversations').select(['status', 'active_run_id']).where('id', '=', id).forUpdate().executeTakeFirstOrThrow();
       if (current.active_run_id !== runId || current.status !== 'running') throw new RunEnded();
+      const experiment = v5Reply && source && await config.accountFullAccess?.(source.ownerId, tx) ? 'v5' : undefined;
       if (campaignEnd && campaignTask) await appendCampaignEvent(tx, { conversationId: id, runId, taskId: campaignTask }, campaignEnd);
       // The earlier checkpoint may have waited for a database connection. Review
       // required evidence again at the fenced publication boundary, and persist
       // the matching state, review event and terminal status together.
       // Native memory handlers explicitly require their current review without
       // changing historical advisory contract hashes or generic chat policy.
-      let finalText = text, finalStatus = status;
+      let finalText = text, finalStatus = experiment ? 'completed' as const : status;
       const monitorOffer = preparedMonitor ?? blockedMonitor;
       const monitorError = monitor && source && monitorOffer ? await monitor.publish(tx, source.ownerId, id, monitorOffer) : null;
       if (preparedMonitor && monitorError) { finalText = monitorError; finalStatus = 'partial'; }
@@ -1487,21 +1524,21 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           criterionLabels: Object.fromEntries((state.supervision?.contract.criteria ?? []).map(item => [item.id, criterionLabel(ledger, item.id, item.description)])) }).status;
       });
       if (blockedMonitor && !monitorError) finalText += `\n\n${blockedMonitor.text}`;
-      if (monitor?.v2 && !preparedMonitor && finalStatus === 'completed' && !judged.withheld && !memoryPublication && !state.questionAnswer && source?.request) finalText += await monitor.publishAnswerOffer(tx, { ownerId: source.ownerId, conversationId: id, runId, text: source.request, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }, finalText);
-      await addMessage(tx, id, 'assistant', finalText);
+      if (!experiment && monitor?.v2 && !preparedMonitor && finalStatus === 'completed' && !judged.withheld && !memoryPublication && !state.questionAnswer && source?.request) finalText += await monitor.publishAnswerOffer(tx, { ownerId: source.ownerId, conversationId: id, runId, text: source.request, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }, finalText);
+      await addMessage(tx, id, 'assistant', experiment ? `${v5Reply}${V5_CHAT_FOOTER}` : finalText, experiment);
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',
         data: JSON.stringify({ contractHash: state.supervision?.contract.hash, review: state.completionReview }) }).execute();
       if (hasStructuredMemoryTransaction(db, id, runId)) await revalidateStructuredMemoryPublication(tx);
       await tx.updateTable('chat_conversations').set({ status: 'idle', active_run_id: null, progress: null, error: null, updated_at: new Date() }).where('id', '=', id).execute();
       await tx.updateTable('chat_runs').set({ status: finalStatus, state: JSON.stringify(vault.scrubValue(id, state, clean)), updated_at: new Date() }).where('id', '=', runId).execute();
-      await recordTerminalRun(tx, runId, finalStatus, proof);
+      await recordTerminalRun(tx, runId, finalStatus, proof, experiment);
       if (config.recordSkillGap && finalStatus !== 'completed') {
         await config.recordSkillGap(tx, { ownerId: execution.getStore()!.ownerId, chatRunId: runId, outcome: finalStatus, signal: state.gapSignal ?? null });
       }
-      return { text: finalText, status: finalStatus };
+      return { text: finalText, status: finalStatus, experiment };
     });
-    observeModelRelations(runId, state, execution.getStore(), published.text, published.status);
+    if (!published.experiment) observeModelRelations(runId, state, execution.getStore(), published.text, published.status);
     const current=execution.getStore();if(current)forgetVault(id,current.token);
   }
 
@@ -2708,7 +2745,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const shorter = shorterRequest(actionRequest);
         if (shorter) {
           const previousAnswer = history.findLast(entry => entry.role === 'assistant')?.text ?? null;
-          const shortened = previousAnswer ? shorterAnswer(previousAnswer, shorter) : null;
+          // This deterministic path stores the excerpt as a trail result and learning experience.
+          const experimental = previousAnswer?.endsWith(V5_CHAT_FOOTER) && await db.selectFrom('chat_messages as m').select('m.id')
+            .where('m.conversation_id', '=', id).where('m.role', '=', 'assistant').where('m.text', '=', previousAnswer)
+            .where(sql<boolean>`to_jsonb(m)->>'experiment' = 'v5'`).limit(1).executeTakeFirst();
+          const shortened = previousAnswer && !experimental ? shorterAnswer(previousAnswer, shorter) : null;
           // The page the answer was read from stays the conversation's page, so «اشرح أكثر» next reads more of it.
           const previousFound = shortened ? (await db.selectFrom('chat_runs').select('state').where('conversation_id', '=', id).where('owner_id', '=', ownerId)
             .where('id', '!=', runId).orderBy('created_at', 'desc').limit(1).executeTakeFirst())?.state?.handsFound : null;
@@ -3296,7 +3337,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         if (writing && 'unsupported' in writing) {
           // An article, a post or a CV needs a model to write in full; an active skill still gives its method and outline.
           if (await trySkill('writing')) return;
-          await finish(id, runId, state, unsupportedWriting(writing), 'blocked');
+          await finish(id, runId, state, unsupportedWriting(writing), 'blocked', undefined, undefined, false, undefined, true);
           return;
         }
         // A whole campaign request sent while a letter or week-plan card waits is a new request, not the card's answer: it once
@@ -3578,9 +3619,12 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           execution: !state.steps && !state.trail.length ? 'not_started' : 'unconfirmed',
           alternatives: ['letter_template', 'local_calculation'],
         });
+        const noModelFallback = !ownFact && !statedOperation && state.routing?.availability !== 'restricted' && (!state.routing
+          || ['chat', 'writing', 'unsupported', 'clarify'].includes(state.routing.route) || notWebReason(tidy(actionRequest)) === 'chat');
         await finish(id, runId, state, vault.scrub(id, unavailable?.text ??
           (/[؀-ۿ]/u.test(request) ? 'لم يكتمل هذا الطلب بالقدرات المتاحة في هذه المحادثة.' : 'This request was not completed by the capabilities available in this conversation.')),
-          unavailable?.status === 'completed' ? 'completed' : unavailable?.status === 'partial' ? 'partial' : 'blocked');
+          unavailable?.status === 'completed' ? 'completed' : unavailable?.status === 'partial' ? 'partial' : 'blocked',
+          undefined, undefined, false, undefined, noModelFallback);
         return;
       }
       const recallFormat = tools?.memory && requestCapabilityAllowed(constraints, 'memory_read')
@@ -4540,7 +4584,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     }
     try {
       const result = await withChatRequest(claim, run);
-      await cacheChatResponse(db, claim, result);
+      // Replays for this experiment refer to the conversation without copying its text to the request ledger.
+      const replayFromConversation = Boolean(config.v5Chat && await config.fullAccess?.(ownerId));
+      await cacheChatResponse(db, claim, result, replayFromConversation);
       return result;
     } catch (error) {
       await db.deleteFrom('chat_request_keys').where('owner_id', '=', ownerId).where('request_key', '=', key)

@@ -1,6 +1,6 @@
 import {answerPaths, monitorDeliveryChannels, monitorPauseReasons, resourceMetrics, trafficRoles, type TrafficRole} from '@mohassan/contracts';
 import {z} from 'zod';
-import {createBucket, resourceData, routeData, timingData, type MetricBucket} from './bucket';
+import {createBucket, resourceData, routeData, timingData, v5ChatData, type MetricBucket} from './bucket';
 import {createHistogram, histogramBucketCount, type Histogram} from './histogram';
 import {workingPhases, type MinuteBuckets} from './store';
 
@@ -29,10 +29,20 @@ const monitorSchema = z.object({
   pauses: z.record(z.enum(monitorPauseReasons), count),
   lateness: histogramSchema.optional(),
 }).strict();
+const v5ChatSchema = z.object({
+  generations: count,
+  eosStops: count,
+  lengthStops: count,
+  loopCuts: count,
+  timeouts: count,
+  fallbacks: count,
+  latency: histogramSchema.optional(),
+}).strict();
 const bucketSchema = z.object({
   roles: z.object({owner: roleSchema, member: roleSchema}).strict(),
   resources: z.array(z.tuple([z.enum(resourceMetrics), count.positive(), sample, sample])),
   monitors: monitorSchema.optional(),
+  v5Chat: v5ChatSchema.optional(),
 }).strict();
 const snapshotSchema = z.object({
   version: z.literal(1),
@@ -81,10 +91,16 @@ function encodeBucket(bucket: MetricBucket): SerializedBucket {
   const { checked, succeeded, delivered, pauses, lateness } = bucket.monitors;
   const monitors = checked || Object.values(delivered).some(Boolean) || Object.values(pauses).some(Boolean)
     ? { checked, succeeded, delivered, pauses, ...(lateness && {lateness: encodeHistogram(lateness)}) } : undefined;
+  let v5Chat: SerializedBucket['v5Chat'];
+  if (bucket.v5Chat) {
+    const {histogram, ...counts} = bucket.v5Chat;
+    v5Chat = {...counts, ...(histogram && {latency: encodeHistogram(histogram)})};
+  }
   return {
     monitors,
     roles: {owner: encodeRole('owner'), member: encodeRole('member')},
     resources: [...bucket.resources].map(([metric, data]) => [metric, data.samples, data.sum, data.max]),
+    v5Chat,
   };
 }
 
@@ -103,7 +119,7 @@ export function decodeSnapshot(line: string): Snapshot | undefined {
   }
 }
 
-export function decodeBucket(value: SerializedBucket, restoreChat: boolean): MetricBucket {
+export function decodeBucket(value: SerializedBucket, restoreChat: boolean, restoreV5Chat: boolean): MetricBucket {
   const bucket = createBucket();
   for (const role of trafficRoles) {
     const data = value.roles[role];
@@ -126,6 +142,10 @@ export function decodeBucket(value: SerializedBucket, restoreChat: boolean): Met
   if (value.monitors) {
     const { lateness, ...counts } = value.monitors;
     Object.assign(bucket.monitors, counts, lateness && {lateness: decodeHistogram(lateness)});
+  }
+  if (restoreV5Chat && value.v5Chat) {
+    const {latency, ...counts} = value.v5Chat;
+    Object.assign(v5ChatData(bucket), counts, latency && {histogram: decodeHistogram(latency)});
   }
   return bucket;
 }

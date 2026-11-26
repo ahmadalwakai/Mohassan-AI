@@ -3,7 +3,7 @@ import {
   type AnswerPath, type MetricsView, type ResourceMetric, type TrafficRole, type WorkingRunPhase,
 } from '@mohassan/contracts';
 import {
-  createBucket, forEachHistogram, mergeBucket, resourceData, routeData, summarizeRoutes, summarizeWindow, timingData,
+  createBucket, forEachHistogram, mergeBucket, resourceData, routeData, summarizeRoutes, summarizeWindow, timingData, v5ChatData,
   type ChatTiming, type MetricBucket, type TimingData,
 } from './bucket';
 import {addLatency, createHistogram, histogramBytes, latencyBucketIndex} from './histogram';
@@ -28,6 +28,15 @@ export type ChatObservation = {
   finalAnswerMs?: number;
   phases?: Partial<Record<WorkingRunPhase, number>>;
   paths?: readonly AnswerPath[];
+};
+
+export type V5ChatObservation = {
+  generation?: boolean;
+  latencyMs?: number;
+  stopReason?: 'eos' | 'length';
+  loopCut?: boolean;
+  timeout?: boolean;
+  fallback?: boolean;
 };
 
 type StoreOptions = {now?: () => number; memoryCapBytes?: number};
@@ -97,6 +106,19 @@ export class MetricsStore {
   recordPersistedChat(role: TrafficRole, observation: ChatObservation, atMs: number): void {
     // The ledger and message receipts already persist this observation.
     this.#recordChat(this.#historicalBuckets(atMs), role, observation);
+  }
+
+  recordV5Chat(observation: V5ChatObservation): void {
+    const targets = this.#buckets().map(v5ChatData);
+    for (const v5 of targets) {
+      v5.generations += Number(observation.generation === true);
+      v5.eosStops += Number(observation.stopReason === 'eos');
+      v5.lengthStops += Number(observation.stopReason === 'length');
+      v5.loopCuts += Number(observation.loopCut === true);
+      v5.timeouts += Number(observation.timeout === true);
+      v5.fallbacks += Number(observation.fallback === true);
+    }
+    if (observation.latencyMs !== undefined) this.#observe(targets, observation.latencyMs);
   }
 
   recordMonitor(event: MonitorMetricEvent): void {

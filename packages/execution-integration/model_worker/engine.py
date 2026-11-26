@@ -24,6 +24,10 @@ from .decoding import CACHE_AFTER_TOKENS, GenerateInput, GenerationBatch, TokenS
 from .quantization import apply_quantization, use_int8
 from .text import TextCodec, load_text_codec
 
+CHAT_HEAD = "chat-v5"
+CHAT_CONTEXT_TOKENS = 512
+CHAT_OUTPUT_TOKENS = 192
+
 
 @dataclass(frozen=True)
 class DenseInput:
@@ -246,15 +250,48 @@ class WorkerEngine:
             self.lease.close()
             self.lease = None
 
-    def prepare(self, operation: str, head: str, payload: Any) -> DenseInput | GenerateInput | OptionsInput | dict:
+    def prepare(self, operation: str, head: str, payload: Any) -> DenseInput | GenerateInput | OptionsInput | dict | None:
         if head not in self.heads or operation not in self.heads[head].operations:
             raise EngineError("unsupported_capability")
+        if operation == "generate" and type(payload) is dict and "messages" in payload:
+            if head != CHAT_HEAD or self.text is None or not self.text.conversation:
+                raise EngineError("unsupported_capability")
+            adapter = self.heads[head]
+            if not isinstance(adapter, DenseHead) or adapter.eos is None:
+                raise EngineError("unsupported_capability")
+            return self._prepare_chat(adapter, self.text, payload)
         if operation in ("generate", "score-options") and type(payload) is dict and "text" in payload:
             if self.text is None or "inputIds" in payload:
                 raise EngineError("invalid_request")
             payload = dict(payload)
             payload["inputIds"] = self.text.encode(payload.pop("text"))
         return self.heads[head].prepare(operation, payload, self.max_output_tokens)
+
+    def _prepare_chat(self, head: DenseHead, text: TextCodec, payload: dict) -> GenerateInput | None:
+        data = dict(fields(payload, {"messages", "maxNewTokens"}, {"temperature", "topK", "topP", "seed"},
+                           "invalid_request"))
+        messages = data.pop("messages")
+        if type(messages) is not list or not 1 <= len(messages) <= 16:
+            raise EngineError("invalid_request")
+        max_tokens = _integer(data["maxNewTokens"], 1, min(CHAT_OUTPUT_TOKENS, self.max_output_tokens))
+        context = min(CHAT_CONTEXT_TOKENS, head.trunk.config.max_context_length)
+        ids = text.encode_conversation(messages[-1:])
+        if len(ids) >= context:
+            return None
+        # Prefer retaining the full answer budget. Trim the budget only when
+        # the final user turn by itself requires it.
+        for start in range(len(messages) - 1):
+            try:
+                candidate = text.encode_conversation(messages[start:])
+            except (TypeError, ValueError):
+                continue  # E.g. the older turns exceed the framing character limit.
+            if len(candidate) + max_tokens <= context:
+                ids = candidate
+                break
+        data["maxNewTokens"] = min(max_tokens, context - len(ids))
+        return GenerateInput(tuple(ids), _generation_config(
+            data, context - len(ids), head.trunk.config.vocab_size, self.max_output_tokens,
+        ))
 
     def batch_key(self, operation: str, head: str, value: DenseInput | GenerateInput | OptionsInput | dict) -> tuple:
         cache = isinstance(value, GenerateInput) and value.config.max_new_tokens > CACHE_AFTER_TOKENS

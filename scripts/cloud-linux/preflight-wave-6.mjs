@@ -1,12 +1,14 @@
 import { spawnSync } from 'node:child_process';
-import { createECDH, createPrivateKey } from 'node:crypto';
-import { accessSync, constants, existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { createECDH, createHash, createPrivateKey } from 'node:crypto';
+import { accessSync, closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync,
+  realpathSync, statSync } from 'node:fs';
 import { userInfo } from 'node:os';
-import { dirname, isAbsolute } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseArgs, parseEnv } from 'node:util';
+import { isDeepStrictEqual, parseArgs, parseEnv } from 'node:util';
 
 const deploymentEnv = '/etc/mohassan/server.env';
+const appRoot = fileURLToPath(new URL('../../', import.meta.url));
 const offByCutover = [
   'MOHASSAN_SMALL_TALK_MANNERS', 'MOHASSAN_CONVERSATION_REVIEW_APPLY', 'MOHASSAN_CONVERSATION_SHADOW',
   'MOHASSAN_STRUCTURED_MEMORY', 'MOHASSAN_EXTRACTIVE_WRITING', 'MOHASSAN_REASONING',
@@ -61,9 +63,51 @@ function validVapid(subject, publicKey, privateKey) {
   return curve.getPublicKey().toString('base64url') === publicKey;
 }
 
+function pinnedModelFile({ path, sha256 }, expectedBytes) {
+  if (typeof path !== 'string' || !isAbsolute(path) || path.startsWith('//') || path.includes(':')
+    || path.split('/').includes('..')) return false;
+  const local = realpathSync(path);
+  if (local !== resolve(path) || !relative(appRoot, local).startsWith('../')) return false;
+  const fd = openSync(local, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const file = fstatSync(fd);
+    if (!file.isFile() || file.size !== expectedBytes) return false;
+    const digest = createHash('sha256');
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    let size = 0;
+    for (let length; (length = readSync(fd, buffer)) > 0;) {
+      size += length;
+      if (size > expectedBytes) return false;
+      digest.update(buffer.subarray(0, length));
+    }
+    return size === expectedBytes && digest.digest('hex') === sha256;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function checkOwnerV5Config(path) {
+  let model;
+  if (!check('v5 worker config exists with the expected identity and model settings', () => {
+    const file = lstatSync(path);
+    if (!file.isFile() || file.size > 16 * 1024 * 1024) return false;
+    const config = JSON.parse(readFileSync(path, 'utf8'));
+    const expected = JSON.parse(readFileSync(new URL('./model-worker.v5.example.json', import.meta.url), 'utf8'));
+    model = config.model;
+    // Permit other absolute external artifact locations with the same pins.
+    return isDeepStrictEqual(config.identity, expected.identity) && isDeepStrictEqual({
+      ...model,
+      checkpoint: { ...model.checkpoint, path: expected.model.checkpoint.path },
+      tokenizer: { ...model.tokenizer, path: expected.model.tokenizer.path },
+    }, expected.model);
+  })) return;
+  check('v5 checkpoint matches the pinned size and SHA-256', () => pinnedModelFile(model.checkpoint, 1_021_749_913));
+  check('v5 tokenizer matches the pinned size and SHA-256', () => pinnedModelFile(model.tokenizer, 284_174));
+}
+
 async function runtimeChecks() {
   if (!check('runtime uses an unprivileged service account', () => process.getuid() !== 0)) return;
-  const { python, apnsKeyPath, metricsDirectory } = JSON.parse(readFileSync(0, 'utf8'));
+  const { python, apnsKeyPath, metricsDirectory, v5ConfigPath } = JSON.parse(readFileSync(0, 'utf8'));
   check('trusted Python 3.11+ and libseccomp.so.2 under the service account', () => serviceCanUseInterpreter(python));
   const { chromium } = await import('playwright').catch(() => ({}));
   check('locked Playwright Chromium is installed and executable by the service account', () => {
@@ -82,6 +126,7 @@ async function runtimeChecks() {
     accessSync(directory, constants.W_OK | constants.X_OK);
     return statSync(directory).isDirectory();
   });
+  if (v5ConfigPath) checkOwnerV5Config(v5ConfigPath);
 }
 
 async function preflight() {
@@ -89,8 +134,11 @@ async function preflight() {
     'env-file': { type: 'string', default: deploymentEnv },
     'service-user': { type: 'string', default: 'mohassan' },
     'owner-trial': { type: 'boolean' },
+    'owner-v5': { type: 'boolean' },
   } });
   const envFile = values['env-file'];
+  const ownerV5 = values['owner-v5'];
+  const ownerTrial = values['owner-trial'] || ownerV5;
   if (!check('Linux with Node 24', () => process.platform === 'linux' && process.versions.node.split('.')[0] === '24')) return;
   let env;
   if (!check('environment file is private, regular and readable', () => {
@@ -114,13 +162,18 @@ async function preflight() {
   for (const name of ['BETTER_AUTH_SECRET', 'INTERNAL_API_SECRET']) {
     check(`${name} is present and at least 32 characters`, () => (env[name]?.trim().length ?? 0) >= 32);
   }
-  check('new runtime switches are off', () => [...offByCutover, ...arbiterKills].every(name => !env[name] || env[name] === '0')
+  const inactiveSwitches = [...offByCutover, ...arbiterKills].filter(name => !ownerV5 || name !== 'MOHASSAN_MODEL_WORKER');
+  check(ownerV5 ? 'other new runtime switches are off' : 'new runtime switches are off', () =>
+    inactiveSwitches.every(name => !env[name] || env[name] === '0')
+    && (ownerV5 || !env.MOHASSAN_V5_CHAT || env.MOHASSAN_V5_CHAT === 'off')
     && (!env.MOHASSAN_PLAN_COMPILER || env.MOHASSAN_PLAN_COMPILER === 'off')
     && env.MOHASSAN_MODEL_RELATIONS === 'off' && (!env.TEST_DRIVEN_CODING_ENABLED || env.TEST_DRIVEN_CODING_ENABLED === 'false')
     && !env.MOHASSAN_DESKTOP_SHELL && !env.MOHASSAN_ROUTER_SHADOW && !env.EXECUTOR_EXPERIMENT);
-  if (!values['owner-trial']) check('queue worker is off during cutover', () => env.RUN_WORKER === 'false');
-  check(values['owner-trial'] ? 'owner-only monitors and production metrics are enabled' : 'monitors and production metrics are off', () =>
-    values['owner-trial'] ? env.MOHASSAN_MONITORS_ENABLED === 'owner' && env.PRODUCTION_METRICS_ENABLED === 'true'
+  const v5Enabled = ownerV5 && check('worker and owner-only v5 chat are enabled', () =>
+    env.MOHASSAN_MODEL_WORKER === '1' && env.MOHASSAN_V5_CHAT === 'owner');
+  if (!ownerTrial) check('queue worker is off during cutover', () => env.RUN_WORKER === 'false');
+  check(ownerTrial ? 'owner-only monitors and production metrics are enabled' : 'monitors and production metrics are off', () =>
+    ownerTrial ? env.MOHASSAN_MONITORS_ENABLED === 'owner' && env.PRODUCTION_METRICS_ENABLED === 'true'
       : (!env.MOHASSAN_MONITORS_ENABLED || env.MOHASSAN_MONITORS_ENABLED === '0') && env.PRODUCTION_METRICS_ENABLED === 'false');
 
   const vapid = [env.WEB_PUSH_VAPID_SUBJECT, env.WEB_PUSH_VAPID_PUBLIC_KEY, env.WEB_PUSH_VAPID_PRIVATE_KEY];
@@ -135,12 +188,13 @@ async function preflight() {
   const user = values['service-user'];
   const runtime = user === userInfo().username ? args : ['/usr/sbin/runuser', '-u', user, '--', ...args];
   const child = spawnSync(runtime[0], runtime.slice(1), {
-    cwd: fileURLToPath(new URL('../../', import.meta.url)),
+    cwd: appRoot,
     env: { PATH: '/usr/local/bin:/usr/bin:/bin', PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || '/var/lib/mohassan/ms-playwright' },
     input: JSON.stringify({ python: env.TEST_DRIVEN_CODING_PYTHON || '/usr/bin/python3',
       apnsKeyPath: apns.every(Boolean) ? apns[2] : undefined,
-      metricsDirectory: values['owner-trial'] ? env.PRODUCTION_METRICS_DIR || '/var/lib/mohassan/production-metrics' : undefined }),
-    timeout: 10_000, encoding: 'utf8',
+      metricsDirectory: ownerTrial ? env.PRODUCTION_METRICS_DIR || '/var/lib/mohassan/production-metrics' : undefined,
+      v5ConfigPath: v5Enabled ? resolve(appRoot, env.MOHASSAN_MODEL_WORKER_CONFIG?.trim() || '.data/model-worker.json') : undefined }),
+    timeout: v5Enabled ? 120_000 : 10_000, encoding: 'utf8',
   });
   if (child.stdout) process.stdout.write(child.stdout);
   // Runtime diagnostics contain fixed check names. Other stderr may mention private paths.

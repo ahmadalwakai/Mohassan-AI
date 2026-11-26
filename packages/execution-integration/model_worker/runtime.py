@@ -116,6 +116,7 @@ class Request:
     received: float
     deadline: float
     text_stream: TextStream | None = None
+    conversation: bool = False
     started: bool = False
     termination: str | None = None
     output_bytes: int = 0
@@ -176,10 +177,13 @@ class WorkerRuntime:
         if len(self._pending) >= self.limits.max_pending:
             self._error(request_id, "resource_exhaustion")
             return
+        conversation = operation == "generate" and "messages" in payload
         try:
             value = self.engine.prepare(operation, head, payload)
-            key = self.engine.batch_key(operation, head, value)
-            text_stream = self.engine.text.stream() if operation == "generate" and "text" in payload else None
+            key = self.engine.batch_key(operation, head, value) if value is not None else None
+            if conversation:
+                key = (key, request_id)  # A chat request always runs by itself.
+            text_stream = self.engine.text.stream() if operation == "generate" and (conversation or "text" in payload) else None
         except Exception as error:
             self._error(request_id, error_code(error, "invalid_request"))
             return
@@ -187,7 +191,11 @@ class WorkerRuntime:
         if time.monotonic() >= deadline:
             self._error(request_id, "timeout")
             return
-        self._pending[request_id] = Request(request_id, operation, head, value, key, received, deadline, text_stream)
+        request = Request(request_id, operation, head, value, key, received, deadline, text_stream, conversation)
+        self._pending[request_id] = request
+        if conversation and value is None:
+            self._emit(request, "result", result={"text": "", "stopReason": "context_limit", "loopCut": False})
+            return
         self._condition.notify_all()
 
     def _error(self, request_id: str, code: str) -> None:
@@ -339,13 +347,17 @@ class WorkerRuntime:
                     except Exception as error:
                         self._finish_error(request, error_code(error, "invalid_model_output"))
                         continue
-                if not self._emit(request, "token", token=step.token_id, index=position, **text_fields):
+                if not request.conversation and not self._emit(request, "token", token=step.token_id, index=position, **text_fields):
                     continue
                 request.token_ids.append(step.token_id)
                 if step.stop_reason is not None:
-                    result = {"tokenIds": request.token_ids, "stopReason": step.stop_reason}
-                    if request.text_stream is not None:
-                        result.update(text=request.text_stream.text, inputTokens=len(request.value.input_ids))
+                    if request.conversation and request.text_stream is not None:
+                        text, cut = request.text_stream.without_repetition()
+                        result = {"text": text, "stopReason": step.stop_reason, "loopCut": cut}
+                    else:
+                        result = {"tokenIds": request.token_ids, "stopReason": step.stop_reason}
+                        if request.text_stream is not None:
+                            result.update(text=request.text_stream.text, inputTokens=len(request.value.input_ids))
                     self._emit(request, "result", result=result)
             return any(self._pending.get(request.request_id) is request for request in batch)
 

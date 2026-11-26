@@ -44,6 +44,7 @@ export interface PermanentModelWorkerRequest {
 
 interface PendingRequest {
   readonly operation: ModelWorkerOperation;
+  readonly chatGeneration: boolean;
   readonly onToken?: (token: ModelWorkerToken) => void;
   readonly resolve: (result: ModelWorkerResult) => void;
   readonly reject: (error: ModelTransportError) => void;
@@ -173,9 +174,12 @@ export class PermanentModelWorker {
 
     const input = copyJson(request.input, 'invalid_request');
     if (!record(input)) throw new ModelTransportError('invalid_request');
+    const chatGeneration = operation === 'generate' && input.messages !== undefined;
     const textInput = (operation === 'generate' || operation === 'score-options') && input.text !== undefined;
+    if (chatGeneration && (!Array.isArray(input.messages) || !input.messages.length || textInput
+      || input.inputIds !== undefined || onToken !== undefined)) throw new ModelTransportError('invalid_request');
     if (textInput && (typeof input.text !== 'string' || input.inputIds !== undefined)) throw new ModelTransportError('invalid_request');
-    if (textInput && !ready.text) throw new ModelTransportError('unsupported_capability');
+    if ((textInput || chatGeneration) && !ready.text) throw new ModelTransportError('unsupported_capability');
     const textChunks = textInput && operation === 'generate' ? [] : undefined;
     let maxOutputTokens = 0;
     if (operation === 'generate') {
@@ -206,7 +210,8 @@ export class PermanentModelWorker {
         signal?.removeEventListener('abort', onAbort);
       };
       worker.pending.set(requestId, {
-        operation, onToken, resolve, reject, clearDeadline, expiresAt, maxOutputTokens, scoreOptionCount, textChunks, tokens: [], bytes: 0,
+        operation, chatGeneration, onToken, resolve, reject, clearDeadline, expiresAt, maxOutputTokens,
+        scoreOptionCount, textChunks, tokens: [], bytes: 0,
       });
       signal?.addEventListener('abort', onAbort, { once: true });
       this.write(worker, frame);
@@ -329,7 +334,7 @@ export class PermanentModelWorker {
     }
     if (response.kind === 'token') {
       const { token, index, text } = response;
-      if (pending.operation !== 'generate' || index !== pending.tokens.length
+      if (pending.operation !== 'generate' || pending.chatGeneration || index !== pending.tokens.length
         || pending.tokens.length >= pending.maxOutputTokens || Boolean(pending.textChunks) !== (text !== undefined)) {
         throw new ModelTransportError('invalid_model_output');
       }
@@ -342,7 +347,15 @@ export class PermanentModelWorker {
       }
       return;
     }
-    if (response.kind === 'result' && pending.operation === 'generate') {
+    if (response.kind === 'result' && pending.chatGeneration) {
+      keys(response.result, ['text', 'stopReason', 'loopCut']);
+      const { text, stopReason, loopCut } = response.result;
+      if (typeof text !== 'string' || /\p{Surrogate}/u.test(text) || typeof loopCut !== 'boolean'
+        || (stopReason !== 'eos' && stopReason !== 'length'
+          && !(stopReason === 'context_limit' && text === '' && !loopCut))) {
+        throw new ModelTransportError('invalid_model_output');
+      }
+    } else if (response.kind === 'result' && pending.operation === 'generate') {
       keys(response.result, pending.textChunks ? ['tokenIds', 'stopReason', 'text', 'inputTokens'] : ['tokenIds', 'stopReason']);
       const { tokenIds: tokens, stopReason, text, inputTokens } = response.result;
       if (!Array.isArray(tokens) || tokens.length !== pending.tokens.length

@@ -97,6 +97,7 @@ export const ChatMessageSchema = z.object({
   text: z.string(),
   createdAt: z.string(),
   images: z.array(ChatImageSchema).max(MAX_CHAT_IMAGES).optional(),
+  experiment: z.literal('v5').optional(),
 }).strict();
 
 export const ChatBrowserSchema = z.object({
