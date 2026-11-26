@@ -35,11 +35,14 @@ import sys
 import tempfile
 from typing import Callable
 import uuid
+from xml.parsers.expat import ExpatError
 
 BUNDLE_ID = "com.ahmadalwakai.wasla"
 PROFILE_TYPE = "IOS_APP_STORE"
+ENTITLEMENTS_PATH = Path(__file__).resolve().parents[1] / "Wasla/Wasla.entitlements"
 CERTIFICATE_TYPES = {"DISTRIBUTION", "IOS_DISTRIBUTION"}
 RESOURCE_ID = re.compile(r"[A-Za-z0-9-]{1,128}\Z")
+CAPABILITY_RESOURCE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 MAX_OUTPUT = 16 * 1024 * 1024
 MAX_KEY_TEXT = 64 * 1024
 PRIVATE_KEY_ENV = "APP_STORE_CONNECT_PRIVATE_KEY"
@@ -179,6 +182,7 @@ def command_stage(arguments: list[str]) -> tuple[str, str]:
             ("certificates", "list"): "list-distribution-certificates",
             ("bundle-ids", "list"): "find-wasla-bundle",
             ("bundle-ids", "create"): "create-wasla-bundle",
+            ("bundle-ids", "capabilities"): "read-wasla-bundle-capabilities",
             ("bundle-ids", "profiles"): "find-wasla-profiles",
             ("profiles", "get"): "read-wasla-profile",
             ("profiles", "create"): "create-wasla-profile",
@@ -247,7 +251,8 @@ def run(arguments: list[str], *, input_data: bytes | None = None) -> bytes:
 
 def resource_id(resource: dict, kind: str) -> str:
     value = resource.get("id")
-    if resource.get("type") != kind or not isinstance(value, str) or not RESOURCE_ID.fullmatch(value):
+    pattern = CAPABILITY_RESOURCE_ID if kind == "bundleIdCapabilities" else RESOURCE_ID
+    if resource.get("type") != kind or not isinstance(value, str) or not pattern.fullmatch(value):
         raise SigningError("The signing API returned an invalid resource.")
     if not isinstance(resource.get("attributes"), dict):
         raise SigningError("The signing API omitted resource attributes.")
@@ -438,6 +443,29 @@ def ensure_bundle(api: AppleCLI) -> dict:
         raise SigningError(f"Wasla bundle creation was not confirmed. No creation retry was attempted. {failure}") from None
 
 
+def app_requires_push(path: Path) -> bool:
+    try:
+        with path.open("rb") as stream:
+            entitlements = plistlib.load(stream)
+    except (OSError, ValueError, plistlib.InvalidFileException, ExpatError):
+        raise SigningError("Could not read Wasla's entitlements as a property list.") from None
+    if not isinstance(entitlements, dict):
+        raise SigningError("Wasla's entitlements are not a dictionary.")
+    return "aps-environment" in entitlements
+
+
+def report_push_capability(api: AppleCLI, bundle: dict) -> None:
+    bundle_id = resource_id(bundle, "bundleIds")
+    try:
+        capabilities = api.call("bundleIdCapabilities", "bundle-ids", "capabilities", bundle_id)
+    except SigningError:
+        print("Wasla App ID PUSH_NOTIFICATIONS capability: lookup unavailable.", flush=True)
+        return
+    enabled = any(item["attributes"].get("capabilityType") == "PUSH_NOTIFICATIONS" for item in capabilities)
+    status = "enabled" if enabled else "not reported"
+    print(f"Wasla App ID PUSH_NOTIFICATIONS capability: {status}.", flush=True)
+
+
 def decode_profile(content: bytes, runner: Callable = run) -> dict:
     with tempfile.TemporaryDirectory(prefix="wasla-profile-") as directory:
         source = Path(directory) / "public.mobileprovision"
@@ -452,7 +480,13 @@ def decode_profile(content: bytes, runner: Callable = run) -> dict:
     return profile
 
 
-def matches_profile(profile: dict, resource: dict, der: bytes, team: str, now: datetime) -> bool:
+def has_production_push(profile: dict) -> bool:
+    entitlements = profile.get("Entitlements")
+    return isinstance(entitlements, dict) and entitlements.get("aps-environment") == "production"
+
+
+def matches_profile(profile: dict, resource: dict, der: bytes, team: str, now: datetime,
+                    *, requires_push: bool = False) -> bool:
     """Validate decoded content, not just an API profile name/relationship."""
     attrs = resource["attributes"]
     if attrs.get("profileState") != "ACTIVE" or attrs.get("profileType") != PROFILE_TYPE:
@@ -481,11 +515,14 @@ def matches_profile(profile: dict, resource: dict, der: bytes, team: str, now: d
     # App Store profiles must be bound to the one selected certificate.
     if not isinstance(certificates, list) or len(certificates) != 1 or not isinstance(certificates[0], bytes):
         return False
+    if requires_push and not has_production_push(profile):
+        return False
     return hashlib.sha256(certificates[0]).digest() == hashlib.sha256(der).digest() and certificates[0] == der
 
 
 def ensure_profile(api: AppleCLI, bundle: dict, certificate: dict, der: bytes,
-                   team: str, now: datetime, decoder: Callable = decode_profile) -> tuple[dict, bytes, bool]:
+                   team: str, now: datetime, decoder: Callable = decode_profile,
+                   *, requires_push: bool = False) -> tuple[dict, bytes, bool]:
     bundle_id = resource_id(bundle, "bundleIds")
     certificate_id = resource_id(certificate, "certificates")
 
@@ -505,7 +542,7 @@ def ensure_profile(api: AppleCLI, bundle: dict, certificate: dict, der: bytes,
                     raise SigningError("The profile lookup returned an unexpected result.")
                 resource = items[0]
             content = binary_content(resource["attributes"].get("profileContent"), "provisioning profile")
-            if matches_profile(decoder(content), resource, der, team, now):
+            if matches_profile(decoder(content), resource, der, team, now, requires_push=requires_push):
                 found.append((resource, content))
         # Deterministically reuse the longest-lived matching profile.
         found.sort(key=lambda item: (utc_date(item[0]["attributes"]["expirationDate"]), item[0]["id"]), reverse=True)
@@ -515,6 +552,9 @@ def ensure_profile(api: AppleCLI, bundle: dict, certificate: dict, der: bytes,
     if existing:
         return *existing, False
     profile_name = "Wasla App Store " + hashlib.sha256(der).hexdigest()[:16]
+    if requires_push:
+        # A legacy or previously created profile can still occupy its name.
+        profile_name += " Push " + uuid.uuid4().hex[:12]
     try:
         created = api.call("profiles", "profiles", "create", bundle_id, "--certificate-ids", certificate_id,
                            "--type", PROFILE_TYPE, "--name", profile_name)
@@ -522,14 +562,22 @@ def ensure_profile(api: AppleCLI, bundle: dict, certificate: dict, der: bytes,
             raise SigningError("The signing API did not return exactly one created profile.")
         resource = created[0]
         content = binary_content(resource["attributes"].get("profileContent"), "provisioning profile")
-        if not matches_profile(decoder(content), resource, der, team, now):
+        decoded = decoder(content)
+        if not matches_profile(decoded, resource, der, team, now):
             raise SigningError("The created profile did not match Wasla and its imported certificate.")
-        return resource, content, True
     except SigningError as failure:
         recovered = matching()
         if recovered:
             return *recovered, False
         raise SigningError(f"Wasla profile creation was not confirmed. No creation retry was attempted. {failure}") from None
+    if requires_push and not has_production_push(decoded):
+        raise SigningError(
+            "The created App Store profile lacks aps-environment=production. "
+            f"Push Notifications is not enabled for the App ID {BUNDLE_ID} in this profile. "
+            "In your Apple Developer account, open Certificates, Identifiers & Profiles > Identifiers, "
+            "select this App ID, enable Push Notifications, save, and rerun ios-release."
+        )
+    return resource, content, True
 
 
 def save_profile(resource: dict, content: bytes, directory: Path) -> Path:
@@ -573,6 +621,7 @@ def main() -> int:
     required = ("APP_STORE_CONNECT_ISSUER_ID", "APP_STORE_CONNECT_KEY_IDENTIFIER", "APP_STORE_CONNECT_PRIVATE_KEY")
     if not all(os.environ.get(name) for name in required):
         raise SigningError("The Vibeset Codemagic App Store Connect integration is missing.")
+    requires_push = app_requires_push(ENTITLEMENTS_PATH)
     now = datetime.now(timezone.utc)
     api = AppleCLI()
     report_cli_version()
@@ -582,7 +631,9 @@ def main() -> int:
                                                    "--profile-type", PROFILE_TYPE), installed, now)
     team = certificate_team(der)
     bundle = ensure_bundle(api)
-    profile, content, created = ensure_profile(api, bundle, certificate, der, team, now)
+    if requires_push:
+        report_push_capability(api, bundle)
+    profile, content, created = ensure_profile(api, bundle, certificate, der, team, now, requires_push=requires_push)
     save_profile(profile, content, Path.home() / "Library/MobileDevice/Provisioning Profiles")
     # Both copies come exclusively from ensure_profile's validated Wasla result.
     # This exact path lets use-profiles exclude the bootstrap profile entirely.
