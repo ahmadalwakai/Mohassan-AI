@@ -7,21 +7,33 @@ export interface MockGoogle {
   mutations: { operations: any[]; validateOnly: boolean }[];
   state: {
     refreshRevoked: boolean; accessRejected: boolean; rateLimitNext: number; dailyQuota: boolean; testLevelProject: boolean; permissionDenied: boolean; outage: boolean; keywordPlanDenied: boolean; mutateFailure: 'none' | 'rejected' | 'lost_applied' | 'lost_absent'; validateFailure: boolean;
-    conversionsRecorded: number; conversionActionEnabled: boolean; manager: boolean; emptyAccount: boolean; refreshIssued: boolean; campaigns: { name: string; status: string; resourceName: string; budget: string }[]; legacyLanguage: boolean; noLocations: boolean; arabicAds: boolean;
+    conversionsRecorded: number; conversionActionEnabled: boolean; manager: boolean; testAccount: boolean; emptyAccount: boolean; refreshIssued: boolean; campaigns: { name: string; status: string; resourceName: string; budget: string; operations?: any[] }[]; legacyLanguage: boolean; noLocations: boolean; arabicAds: boolean;
   };
 }
 
 const failure = (status: number, code: string, key: string, value: string) => Response.json({ error: { code: status, message: `raw google text with secret-looking detail ${value}`, status: code, details: [{ '@type': 'type.googleapis.com/google.ads.googleads.v26.errors.GoogleAdsFailure', errors: [{ errorCode: { [key]: value }, message: 'raw' }], requestId: 'req-failure' }] } }, { status, headers: { 'request-id': 'req-failure' } });
 
 export function createMockGoogle(): MockGoogle {
-  const state: MockGoogle['state'] = { refreshRevoked: false, accessRejected: false, rateLimitNext: 0, dailyQuota: false, testLevelProject: false, permissionDenied: false, outage: false, keywordPlanDenied: false, mutateFailure: 'none', validateFailure: false, conversionsRecorded: 7, conversionActionEnabled: true, manager: false, emptyAccount: false, refreshIssued: true, campaigns: [], legacyLanguage: false, noLocations: false, arabicAds: false };
+  const state: MockGoogle['state'] = { refreshRevoked: false, accessRejected: false, rateLimitNext: 0, dailyQuota: false, testLevelProject: false, permissionDenied: false, outage: false, keywordPlanDenied: false, mutateFailure: 'none', validateFailure: false, conversionsRecorded: 7, conversionActionEnabled: true, manager: false, testAccount: false, emptyAccount: false, refreshIssued: true, campaigns: [], legacyLanguage: false, noLocations: false, arabicAds: false };
   const calls: MockGoogle['calls'] = [], mutations: MockGoogle['mutations'] = [];
   let tokens = 0;
 
   function search(customerId: string, query: string): Record<string, unknown>[] {
     const from = /FROM\s+(\w+)/.exec(query)?.[1];
+    const target = /WHERE campaign\.resource_name = '(customers\/\d{10}\/campaigns\/\d+)'/.exec(query)?.[1];
+    if (target) {
+      const saved = state.campaigns.find(item => item.resourceName === target);
+      if (!saved?.operations) return [];
+      const created = (kind: string) => saved.operations!.filter(operation => operation[kind]?.create).map(operation => operation[kind].create);
+      const campaign = created('campaignOperation')[0], budget = created('campaignBudgetOperation')[0];
+      if (from === 'campaign') return [{ campaign: { ...campaign, status: saved.status, biddingStrategyType: campaign.manualCpc ? 'MANUAL_CPC' : campaign.targetSpend ? 'TARGET_SPEND' : 'MAXIMIZE_CONVERSIONS' }, campaignBudget: { ...budget, amountMicros: saved.budget } }];
+      if (from === 'ad_group') return created('adGroupOperation').map(adGroup => ({ adGroup }));
+      if (from === 'campaign_criterion') return created('campaignCriterionOperation').map(item => ({ campaignCriterion: { ...item, type: item.location ? 'LOCATION' : 'KEYWORD' } }));
+      if (from === 'ad_group_criterion') return created('adGroupCriterionOperation').map(adGroupCriterion => ({ adGroupCriterion }));
+      if (from === 'ad_group_ad') return created('adGroupAdOperation').map(adGroupAd => ({ adGroupAd }));
+    }
     if (from === 'customer_client') return customerId === MANAGER ? [{ customerClient: { id: CHILD, descriptiveName: 'Child Removals', currencyCode: 'GBP', timeZone: 'Europe/London', manager: false, testAccount: false, status: 'ENABLED' } }] : [];
-    if (from === 'customer' && query.includes('customer.id')) return [{ customer: { id: customerId, descriptiveName: customerId === MANAGER ? 'Manager' : 'MA Removals', currencyCode: 'GBP', timeZone: 'Europe/London', manager: customerId === MANAGER || state.manager, testAccount: false, status: 'ENABLED' } }];
+    if (from === 'customer' && query.includes('customer.id')) return [{ customer: { id: customerId, descriptiveName: customerId === MANAGER ? 'Manager' : 'MA Removals', currencyCode: 'GBP', timeZone: 'Europe/London', manager: customerId === MANAGER || state.manager, testAccount: state.testAccount, status: 'ENABLED' } }];
     if (from === 'customer') return state.conversionsRecorded ? [{ segments: { conversionAction: `customers/${customerId}/conversionActions/11` }, metrics: { allConversions: state.conversionsRecorded } }, { segments: { conversionAction: `customers/${customerId}/conversionActions/12` }, metrics: { allConversions: 2 } }] : [];
     if (from === 'conversion_action') return state.conversionActionEnabled ? [{ conversionAction: { resourceName: `customers/${customerId}/conversionActions/11`, name: 'Booking: House removals', status: 'ENABLED', category: 'BOOK_APPOINTMENT', primaryForGoal: true, includeInConversionsMetric: true } }, { conversionAction: { resourceName: `customers/${customerId}/conversionActions/12`, name: 'Booking: Man and van', status: 'ENABLED', category: 'BOOK_APPOINTMENT', primaryForGoal: true, includeInConversionsMetric: true } }] : [];
     if (from === 'campaign_criterion') return [...(state.noLocations ? [] : [{ campaign: { id: '100' }, campaignCriterion: { type: 'LOCATION', location: { geoTargetConstant: 'geoTargetConstants/2826' } } }]), ...(state.legacyLanguage ? [{ campaign: { id: '100' }, campaignCriterion: { type: 'LANGUAGE', language: { languageConstant: 'languageConstants/1019' } } }] : [])];
@@ -44,7 +56,10 @@ export function createMockGoogle(): MockGoogle {
       const update = operation.campaignOperation?.update;
       if (update) { const found = state.campaigns.find(item => item.resourceName === update.resourceName); if (found) found.status = update.status; continue; }
       const created = operation.campaignOperation?.create;
-      if (created) state.campaigns.push({ name: created.name, status: created.status, resourceName: `customers/${customerId}/campaigns/777`, budget: body.mutateOperations[0].campaignBudgetOperation.create.amountMicros });
+      if (created) {
+        const operations = JSON.parse(JSON.stringify(body.mutateOperations).replaceAll(`customers/${customerId}/campaigns/-2`, `customers/${customerId}/campaigns/777`).replaceAll(`customers/${customerId}/campaignBudgets/-1`, `customers/${customerId}/campaignBudgets/778`).replaceAll(`customers/${customerId}/adGroups/-3`, `customers/${customerId}/adGroups/779`));
+        state.campaigns.push({ name: created.name, status: created.status, resourceName: `customers/${customerId}/campaigns/777`, budget: body.mutateOperations[0].campaignBudgetOperation.create.amountMicros, operations });
+      }
     }
   }
 

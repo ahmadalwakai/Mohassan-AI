@@ -12,6 +12,7 @@ import { CreateTaskSchema, SetupSchema, WorkspaceSnapshotSchema, SkillBenchmarkS
 import { createAuth, createOwner, migrateAuth, recoverLocalSetupClaim } from './auth.js';
 import { MEMBER_QUOTA_ROUTES, MEMBER_ROUTES, PUBLIC_ROUTES, memberRunsToday, migrateMembers, registerMemberRoutes, roleOf, routeKey, type WorkspaceRole } from './members.js';
 import { lockOwnerToolAccess } from './owner-tool-authorization.js';
+import { WASLA_GATEWAY_ROUTES, registerWaslaRoutes, waslaMigration } from './wasla.js';
 import { createRequestRateLimitKey } from './request-rate-limit.js';
 import { createAIControl } from './ai.js';
 import { ProviderError, GroqProvider } from '@mohassan/providers';
@@ -85,6 +86,8 @@ export interface AppConfig {
   groqApiKey?:string;groqModel?:string;groqReasoningModel?:string;aiFetch?:typeof fetch;
   codingDataDir?:string;codingAllowedRoots?:string[];sandboxRunner?:SandboxRunner;
   browser?:BrowserConfig;windowsEnabled?:boolean;browserProfileDir?:string;browserChannel?:'chrome'|null;
+  /** The paired phone gateway is local-only and closed unless explicitly enabled. */
+  waslaBridgeEnabled?: boolean;
   studioAiDataDir?:string;groqVisionModel?:string;studioGatewayUrl?:string;studioGatewaySecret?:string;studioPreviewPort?:number;
   skillEngineEnabled?: boolean;
   /** The GitHub skills source from SKILL_REMOTE_*. Absent, or `config: null`: the library panel reports it as not configured. */
@@ -134,11 +137,13 @@ class RobotsSearchNetwork extends SafeNetwork {
 export async function createApplication(config: AppConfig) {
   if (config.authSecret.length < 32 || config.internalSecret.length < 32) throw new Error('يلزم سر جلسة وسر خدمة بطول 32 حرفًا على الأقل.');
   if (config.production && (!config.databaseUrl || !config.webOrigin.startsWith('https://'))) throw new Error('الإنتاج يحتاج PostgreSQL واتصال HTTPS.');
+  if (config.production && config.waslaBridgeEnabled) throw new Error('ربط وصلة يعمل على خادم موحسن المحلي فقط، وليس على خادم الإنتاج.');
   if(config.production&&config.browser?.testOrigins?.length)throw new Error('Test browser origins cannot be enabled in production.');
   if(config.testRequestLimit!==undefined&&(config.production||!Number.isInteger(config.testRequestLimit)||config.testRequestLimit<120||config.testRequestLimit>2000))throw new Error('Test request limits are restricted to bounded local fixtures.');
   const database = await createDatabase({connectionString: config.databaseUrl, dataDir: config.dataDir});
   await migrateAuth(database.db);
   await migrateMembers(database.db);
+  await waslaMigration(database.db);
   if (database.mode === 'embedded' && !config.production) await recoverLocalSetupClaim(database.db);
   await migrate(database.db);
   await windowsMigration(database.db);
@@ -203,6 +208,8 @@ export async function createApplication(config: AppConfig) {
     if (request.url === '/health') return;
     const companionPath=request.url.split('?')[0];
     if(request.method==='POST'&&['/api/windows/companion/pair','/api/windows/companion/poll'].includes(companionPath!))return;
+    // Only the closed gateway route set uses loopback + paired Bearer authentication in its own handlers.
+    if(WASLA_GATEWAY_ROUTES.has(routeKey(request.method,request.routeOptions.url)??''))return;
     const serviceSecret = request.headers['x-mohassan-internal'];
     if (typeof serviceSecret !== 'string' || !secretEqual(serviceSecret, config.internalSecret)) {
       return reply.code(401).send({error: {code: 'SERVICE_UNAUTHORIZED', message: 'الاتصال غير مصرح به.'}});
@@ -474,6 +481,7 @@ export async function createApplication(config: AppConfig) {
     }}:{}),
   });
   await registerCommandChatRoutes(app,{control:chat,owner:async request=>{const user=await owner(request);windows.noteSession(user.id,request);return user;}});
+  await registerWaslaRoutes(app,{db:database.db,enabled:config.waslaBridgeEnabled===true,owner,roleOf:(userId,connection)=>roleOf(connection??database.db,userId),chat:()=>chat});
   await registerBrowserFileRoutes(app,{db:database.db,browser:agentBrowser,owner});
   await registerDocumentRoutes(app,{control:documents,owner,link:documentLink});
   await registerStudioAiRoutes(app,{control:studioAi,owner});
@@ -489,7 +497,7 @@ export async function createApplication(config: AppConfig) {
     const integrations: Integration[] = [
       {id: 'database', name: database.mode === 'embedded' ? 'PostgreSQL محلي' : 'PostgreSQL / Neon', description: 'حفظ المهام والجلسات والأحداث', status: 'connected', detail: database.mode === 'embedded' ? 'مخزن تطوير دائم، تديره خدمة واحدة.' : 'تم التحقق من اتصال قاعدة البيانات.'},
       {id: 'groq', name: 'Groq', description: 'النماذج والتخطيط الذكي', status: aiStatus.status==='verified'?'connected':'needs_configuration', detail: aiStatus.message},
-      {id: 'freellmapi', name: 'FreeLLMAPI', description: 'نماذج مجانية عبر بوابة محلية مع تبديل تلقائي للمحادثة', status: inference.active()?'connected':'needs_configuration', detail: inference.active()?'مفعّل للمساعد. التخطيط والبرمجة والاستوديو تبقى على Groq.':inference.configured?'مهيأ على الخادم وغير مفعّل. فعّله من إعدادات المزودين.':'غير مهيأ. أضف FREELLMAPI_API_KEY إلى ملف .env على الخادم.'},
+      {id: 'freellmapi', name: 'FreeLLMAPI', description: 'نماذج مجانية عبر بوابة محلية مع تبديل تلقائي للمحادثة', status: inference.freeActive()?'connected':'needs_configuration', detail: inference.freeActive()?'مفعّل للمساعد. التخطيط والبرمجة والاستوديو تبقى على Groq.':inference.configured?'مهيأ على الخادم وغير مفعّل. فعّله من إعدادات المزودين.':'غير مهيأ. أضف FREELLMAPI_API_KEY إلى ملف .env على الخادم.'},
       {id: 'coding', name: 'Coding Engine', description: 'تعديل معزول واختبارات ومراجعة Git', status: coding.available?'connected':'needs_configuration', detail: codingWorkspace.sandbox.message},
       {id:'studio',name:'Visual Studio',description:'معاينة وتعديل المصدر ومراجعة الفروقات',status:'connected',detail:'اختيار عناصر وتعديلها، ومقترحات ذكية بموافقة وصور مقارنة قبل التطبيق؛ تشغيل Next الكامل يحتاج ربط مشغّل المعاينة.'},
       {id: 'browser', name: 'Browser & Research', description: 'بحث موثق وجلسات مستقلة', status: 'connected', detail: 'جلسات Chromium مستقلة، ومصادر محفوظة، وموافقة منفصلة لإرسال النماذج.'},

@@ -380,13 +380,13 @@ describe('publishing', () => {
     expect((await step(harness, unknown, 'reconcile')).state).toBe('published');
     expect(writes(harness.mock)).toHaveLength(1);
   });
-  it('returns to draft when the read shows nothing was created, and needs a new approval', async () => {
+  it('keeps a non-observed uncertain write blocked, because absence does not prove rejection', async () => {
     const { harness, draft } = await approved();
     harness.mock.state.mutateFailure = 'lost_absent';
     await harness.post(`/api/google-ads/drafts/${draft.id}/publish`, { expectedRevision: draft.revision });
     const unknown = (await harness.get(`/api/google-ads/drafts/${draft.id}`)).json();
     const settled = await step(harness, unknown, 'reconcile');
-    expect(settled).toMatchObject({ state: 'draft', verification: null });
+    expect(settled).toMatchObject({ state: 'outcome_unknown', readback: { passed: false } });
     expect((await harness.post(`/api/google-ads/drafts/${draft.id}/publish`, { expectedRevision: settled.revision })).statusCode).toBe(409);
     expect(writes(harness.mock)).toHaveLength(1);
   });

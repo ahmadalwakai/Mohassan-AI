@@ -60,6 +60,10 @@ describe('own Ads model: ask once, then create the campaign PAUSED', () => {
     const headers = { ...base, cookie: [login.headers['set-cookie']].flat().filter(Boolean).map(value => String(value).split(';')[0]).join('; ') };
     const post = (url: string, payload: object) => app.inject({ method: 'POST', url, headers, payload });
 
+    // A historical Chrome preference must never bypass task-scoped API
+    // authorization, sign-in or fresh remote readback.
+    expect((await post('/api/chrome-extension/preference', { transport: 'chrome' })).statusCode).toBe(200);
+
     const created = await post('/api/chat/conversations', { goal: MESSAGE });
     const id: string = created.json().id;
     await application.chat.settled(id);
@@ -74,7 +78,7 @@ describe('own Ads model: ask once, then create the campaign PAUSED', () => {
     expect(detail.question.prompt).toContain('الدولة: المملكة المتحدة');
     expect(google.mutations).toHaveLength(0);
 
-    // 2. One answer; the next stop is Google's own sign-in page, nothing in between.
+    // 2. One answer; even with Chrome selected the next stop is API sign-in.
     await post(`/api/chat/conversations/${id}/messages`, { text: '1. Mobile Tyre Fitting\n2. calls' });
     await application.chat.settled(id);
     detail = await read();

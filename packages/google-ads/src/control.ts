@@ -36,6 +36,7 @@ const toDraft = (row: any): GoogleAdsDraft => GoogleAdsDraftSchema.parse({
   id: row.id, customerId: row.customer_id, state: row.state, revision: row.revision, brief: parsed(row.brief), draftHash: row.draft_hash, bidding: row.bidding,
   summary: parsed(row.summary), strategy: parsed(row.strategy), validation: parsed(row.validation), verification: parsed(row.verification),
   campaignResourceName: row.campaign_resource_name, error: row.error, createdAt: iso(row.created_at), updatedAt: iso(row.updated_at),
+  ...(row.readback ? { readback: parsed(row.readback) } : {}),
 });
 
 export function createGoogleAdsControl(db: Db, config: GoogleAdsConfig) {
@@ -74,10 +75,13 @@ export function createGoogleAdsControl(db: Db, config: GoogleAdsConfig) {
     return GoogleAdsStatusSchema.parse({ ...base, state, message: messages[state], account, retryAfterSeconds: remaining > 0 ? remaining : null });
   }
 
-  async function report(ownerId: string, days: number): Promise<GoogleAdsReport> {
+  async function report(ownerId: string, days: number, expectedCustomerId?: string): Promise<GoogleAdsReport> {
     if (!REPORT_DAYS.has(days)) throw new GoogleAdsError('GOOGLE_ADS_RANGE', 'الفترة غير مدعومة.', 400);
     const { connection, client } = ready();
-    const result = await connection.runForAccount(ownerId, (context, row) => analyzeAccount(client, context, { currency: row.currency ?? '', timeZone: row.timeZone ?? '' }, row.bookingRules, days));
+    const result = await connection.runForAccount(ownerId, (context, row) => {
+      if (expectedCustomerId && context.customerId !== expectedCustomerId) throw new GoogleAdsError('GOOGLE_ADS_ACCOUNT_CHANGED', 'الحساب الحالي لا يطابق الحساب المطلوب؛ لم يُقرأ تقرير حساب آخر.', 409);
+      return analyzeAccount(client, context, { currency: row.currency ?? '', timeZone: row.timeZone ?? '' }, row.bookingRules, days);
+    });
     await recordOutcomes(ownerId, result);
     await audit(db, ownerId, null, 'report_read', { days, campaigns: result.campaigns.length });
     return GoogleAdsReportSchema.parse(result);
@@ -175,8 +179,9 @@ export function createGoogleAdsControl(db: Db, config: GoogleAdsConfig) {
     const { connection } = ready();
     const brief = GoogleAdsBriefSchema.parse(input);
     const { draft } = await load(ownerId, id, expectedRevision);
+    if (draft.campaignResourceName) throw stateConflict('هذه المسودة مرتبطة بحملة أُنشئت بالفعل؛ لا يمكن تعديلها لإعادة الإنشاء. راجع دليل الاختلاف في الحساب.');
     const prepared = await connection.runForAccount(ownerId, (context, row) => { assertAccount(draft, context.customerId); return prepare(ownerId, id, brief, context, row); });
-    const next = await move(ownerId, draft, ['preview', 'draft', 'rejected', 'validated', 'verified', 'approved', 'failed'], 'preview', { brief: json(brief), bidding: prepared.bidding, operations: json(prepared.operations), draft_hash: prepared.draftHash, geo_targets: json(prepared.geoTargets), summary: json(prepared.summary), strategy: json(prepared.strategy), validation: null, verification: null, error: null });
+    const next = await move(ownerId, draft, ['preview', 'draft', 'rejected', 'validated', 'verified', 'approved', 'failed'], 'preview', { brief: json(brief), bidding: prepared.bidding, operations: json(prepared.operations), draft_hash: prepared.draftHash, geo_targets: json(prepared.geoTargets), summary: json(prepared.summary), strategy: json(prepared.strategy), validation: null, verification: null, readback: null, error: null });
     await audit(db, ownerId, id, 'draft_revised', { draftHash: prepared.draftHash });
     return next;
   }
@@ -254,6 +259,7 @@ export function createGoogleAdsControl(db: Db, config: GoogleAdsConfig) {
   async function launch(ownerId: string, id: string, expectedRevision: number) {
     const { connection, publisher, client } = ready();
     const { draft } = await load(ownerId, id, expectedRevision);
+    if ((await connection.row(ownerId)).testAccount) throw new GoogleAdsError('GOOGLE_ADS_TEST_ACCOUNT_LAUNCH', 'الحساب التجريبي يسمح باختبار الإنشاء المتوقف فقط؛ لا يُفعّل العرض.', 409);
     const gates = await publishing(await connection.row(ownerId));
     await connection.runForAccount(ownerId, async context => {
       assertAccount(draft, context.customerId);
@@ -268,30 +274,38 @@ export function createGoogleAdsControl(db: Db, config: GoogleAdsConfig) {
   async function reconcile(ownerId: string, id: string, expectedRevision: number) {
     const { connection, publisher } = ready();
     const { draft } = await load(ownerId, id, expectedRevision);
-    if (!['outcome_unknown', 'publishing', 'launching'].includes(draft.state)) throw stateConflict('لا توجد نتيجة معلقة لهذه المسودة.');
+    if (!['outcome_unknown', 'publishing', 'launching', 'published', 'live'].includes(draft.state) && !(draft.state === 'failed' && draft.campaignResourceName)) throw stateConflict('لا توجد حملة منشورة أو نتيجة معلقة لهذه المسودة.');
     await connection.runForAccount(ownerId, context => { assertAccount(draft, context.customerId); return publisher.reconcile(ownerId, draft, context); });
     return (await load(ownerId, id)).draft;
   }
 
   async function discard(ownerId: string, id: string, expectedRevision: number) {
     const { draft } = await load(ownerId, id, expectedRevision);
+    if (draft.campaignResourceName) throw stateConflict('هذه المسودة مرتبطة بأثر في الحساب؛ اقرأ النتيجة وراجع اختلافاتها قبل أي إجراء جديد.');
     const next = await move(ownerId, draft, ['preview', 'draft', 'rejected', 'validated', 'verified', 'approved', 'failed'], 'discarded');
     await audit(db, ownerId, id, 'draft_discarded');
     return next;
   }
 
   /** A trusted, task-scoped adapter may create one new PAUSED campaign. This method can never launch. */
-  async function createPausedCampaign(ownerId: string, input: unknown, idempotencyKey: string, authority: { assertActive(): Promise<void> }, observer?: PausedCreationObserver): Promise<GoogleAdsDraft> {
+  async function createPausedCampaign(ownerId: string, input: unknown, idempotencyKey: string, authority: { assertActive(): Promise<void>; customerId?: string; currency?: string; timeZone?: string }, observer?: PausedCreationObserver): Promise<GoogleAdsDraft> {
     // Watching never changes the write path: only the record made just before the write may stop it.
     const notify = async (stage: PausedCreationStage, draft: GoogleAdsDraft | null) => { try { await observer?.stage(stage, draft); } catch { /* The next authority check decides whether the task still runs. */ } };
     if (!/^[a-zA-Z0-9:_-]{8,160}$/.test(idempotencyKey)) throw new GoogleAdsError('GOOGLE_ADS_IDEMPOTENCY', 'يلزم مفتاح ثابت صالح للمهمة.', 400);
     if (!authority || typeof authority.assertActive !== 'function') throw new GoogleAdsError('GOOGLE_ADS_AUTHORITY_REQUIRED', 'يلزم تفويض المهمة الجاري لإنشاء الحملة المتوقفة.', 403);
     await authority.assertActive();
     const { connection } = ready();
+    const assertBoundAccount = async () => {
+      const selected = await connection.row(ownerId);
+      if (authority.customerId !== undefined && selected.customerId !== authority.customerId || authority.currency !== undefined && selected.currency !== authority.currency || authority.timeZone !== undefined && selected.timeZone !== authority.timeZone) throw new GoogleAdsError('GOOGLE_ADS_ACCOUNT_CHANGED', 'الحساب أو عملته أو منطقته الزمنية تغيرت منذ إعداد المقترح؛ لم تُرسل كتابة جديدة.', 409);
+      return selected;
+    };
+    await assertBoundAccount();
     const gates = await publishing(await connection.row(ownerId));
     if (!gates.available) throw new GoogleAdsError('GOOGLE_ADS_PUBLISHING_CLOSED', `إنشاء الحملة مغلق: ${gates.gates.filter(gate => !gate.passed).map(gate => gate.detail).join('؛ ')}`, 403);
     await notify('gates_passed', null);
     let draft = await createDraft(ownerId, input, idempotencyKey);
+    if (authority.customerId !== undefined && draft.customerId !== authority.customerId) throw new GoogleAdsError('GOOGLE_ADS_ACCOUNT_CHANGED', 'المسودة تخص حسابًا خارج تفويض المهمة.', 409);
     const claimed = await db.insertInto('google_ads_automatic_requests').values({ owner_id: ownerId, idempotency_key: idempotencyKey, draft_id: draft.id, status: 'running' }).onConflict(conflict => conflict.columns(['owner_id', 'idempotency_key']).doNothing()).returning('draft_id').executeTakeFirst();
     // An interrupted/unknown request is never retried automatically. The existing draft is reviewable.
     if (!claimed) return (await load(ownerId, draft.id)).draft;
@@ -315,9 +329,9 @@ export function createGoogleAdsControl(db: Db, config: GoogleAdsConfig) {
       await authority.assertActive();
       const approved = draft;
       // If the intent to write cannot be recorded, the write is not sent: an unrecorded write could be repeated.
-      draft = await publish(ownerId, draft.id, draft.revision, async () => { await authority.assertActive(); await observer?.stage('mutation_started', approved); });
-      if (draft.state === 'published' && draft.campaignResourceName) await notify('readback_confirmed', draft);
-      if (draft.state !== 'published' || !draft.campaignResourceName) throw new GoogleAdsError('GOOGLE_ADS_PAUSED_UNCONFIRMED', 'لم تؤكد قراءة الحساب إنشاء الحملة متوقفة؛ راجع النتيجة قبل المتابعة.', 409);
+      draft = await publish(ownerId, draft.id, draft.revision, async () => { await authority.assertActive(); await assertBoundAccount(); await observer?.stage('mutation_started', approved); await authority.assertActive(); await assertBoundAccount(); });
+      if (draft.state === 'published' && draft.campaignResourceName && draft.readback?.passed) await notify('readback_confirmed', draft);
+      if (draft.state !== 'published' || !draft.campaignResourceName || !draft.readback?.passed) throw new GoogleAdsError('GOOGLE_ADS_PAUSED_UNCONFIRMED', 'لم تؤكد قراءة الحساب إنشاء الحملة متوقفة؛ راجع النتيجة قبل المتابعة.', 409);
       await db.updateTable('google_ads_automatic_requests').set({ status: 'completed', updated_at: new Date() }).where('owner_id', '=', ownerId).where('idempotency_key', '=', idempotencyKey).execute();
       return draft;
     } catch (error) {

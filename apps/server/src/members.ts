@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import type { createAuth } from './auth.js';
+import { WASLA_GATEWAY_ROUTES } from './wasla.js';
 
 /**
  * Members are people the owner invites. They use cloud services only (chat,
@@ -21,6 +22,7 @@ export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
   'GET /api/auth/*', 'POST /api/auth/*',
   'POST /api/windows/companion/pair', 'POST /api/windows/companion/poll',
   'POST /api/invites/inspect', 'POST /api/invites/accept',
+  ...WASLA_GATEWAY_ROUTES,
   // A generated site's preview files, by a per-revision token: the sandboxed iframe sends no cookie.
   'GET /api/sites/:id/p/:token/*',
 ]);
@@ -33,6 +35,7 @@ export const MEMBER_ROUTES: ReadonlySet<string> = new Set([
   // The chat, including its own cloud browser (a profile per account).
   `GET ${chat}`, `POST ${chat}`, `GET ${chat}/:id`, `DELETE ${chat}/:id`, `GET ${chat}/:id/screen`,
   `GET ${chat}/:id/browser/activity`,
+  `GET ${chat}/:id/campaign-events`, `POST ${chat}/:id/campaign/resume`,
   `POST ${chat}/:id/messages`, `POST ${chat}/:id/respond`, `POST ${chat}/:id/approve`, `POST ${chat}/:id/secure`, `POST ${chat}/:id/cancel`,
   `POST ${chat}/:id/browser/keyboard`, `POST ${chat}/:id/browser/pointer`, `POST ${chat}/:id/browser/restore`, `POST ${chat}/:id/browser/review`,
   `GET ${files}`, `GET ${files}/targets`, `POST ${files}/grants`, `DELETE ${files}/grants/:id`, `POST ${files}/grants/:id/execute`, `POST ${files}/grants/:id/release`, `GET ${files}/grants/:id/content`,
@@ -52,7 +55,7 @@ export const MEMBER_ROUTES: ReadonlySet<string> = new Set([
 ]);
 
 /** Requests that start chat work, counted against a member's daily allowance. */
-export const MEMBER_QUOTA_ROUTES: ReadonlySet<string> = new Set([`POST ${chat}`, `POST ${chat}/:id/messages`]);
+export const MEMBER_QUOTA_ROUTES: ReadonlySet<string> = new Set([`POST ${chat}`, `POST ${chat}/:id/messages`, `POST ${chat}/:id/campaign/resume`]);
 
 export function routeKey(method: string, url: string | undefined) {
   return url ? `${method === 'HEAD' ? 'GET' : method} ${url}` : null;

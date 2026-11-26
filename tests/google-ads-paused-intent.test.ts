@@ -3,6 +3,8 @@ import { requestsPausedCampaign } from '../apps/server/src/assistant/tools.js';
 it('requires explicit owner request to create a campaign in the account',()=>{
   expect(requestsPausedCampaign('أنشئ حملة بحث متوقفة في حساب Google Ads')).toBe(true);
   expect(requestsPausedCampaign('Create a paused campaign in my account')).toBe(true);
+  expect(requestsPausedCampaign("Create a paused campaign in my account; don't enable or launch it")).toBe(true);
+  expect(requestsPausedCampaign('أنشئ حملة متوقفة في حساب Google Ads ولا تنشرها')).toBe(true);
   expect(requestsPausedCampaign('اكتب معاينة فقط لحملة في حسابي')).toBe(false);
   expect(requestsPausedCampaign('لا تنشئ حملة في حسابي')).toBe(false);
   expect(requestsPausedCampaign('Do not create a campaign in my account')).toBe(false);

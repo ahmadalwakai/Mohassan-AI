@@ -12,6 +12,15 @@ export const AIProviderSettingsInputSchema = z.object({
 }).strict();
 export type AIProviderSettingsInput = z.infer<typeof AIProviderSettingsInputSchema>;
 
+export const AssistantProviderSettingsInputSchema = z.object({ enabled: z.boolean() }).strict();
+export const AssistantProviderStatusSchema = z.object({
+  configured: z.boolean(), enabled: z.boolean(), active: z.boolean(),
+  checkedAt: z.string().nullable(), message: z.string().max(400), code: z.string().max(60).nullable(),
+  automaticFallback: z.literal(false), allowPaidFallback: z.literal(false),
+  models: z.array(z.object({ id: InferenceModelIdSchema, available: z.boolean(), structured: z.boolean(), vision: z.boolean(), source: z.literal('groq_models_and_official_documentation') }).strict()).max(10),
+}).strict();
+export type AssistantProviderStatus = z.infer<typeof AssistantProviderStatusSchema>;
+
 const Iso = z.string().max(40);
 const Count = z.number().int().nonnegative();
 
@@ -39,6 +48,7 @@ export const ModelCountersSchema = z.object({
 });
 
 export const AIProvidersStatusSchema = z.object({
+  assistant: AssistantProviderStatusSchema.optional(),
   freellmapi: z.object({
     configured: z.boolean(),
     baseUrl: z.string().max(400).nullable(),

@@ -35,9 +35,21 @@ export type EffectDecision =
   /** Waits at the boundary for exact approval; nothing has been sent. */
   | { kind: 'hold'; reason: 'write' | 'cross_origin_navigation' }
   /** Dropped. Only an agent's own action reports it as that action's failure. */
-  | { kind: 'deny'; code: 'AGENT_EFFECT_DENIED' | 'AGENT_EFFECT_UNKNOWN'; failsAction: boolean };
+  | { kind: 'deny'; code: 'AGENT_EFFECT_DENIED' | 'AGENT_EFFECT_UNKNOWN' | 'GOOGLE_ADS_TYPED_API_REQUIRED'; failsAction: boolean };
 
 const READ_METHODS = new Set(['GET', 'HEAD']);
+
+export const GOOGLE_ADS_TYPED_API_REQUIRED_MESSAGE = 'تغييرات Google Ads تحتاج التكامل الرسمي المربوط بالحساب والموافقة والقراءة اللاحقة؛ استخدم مسار Google Ads لإعداد التغيير ومراجعته. لم يُرسل طلب المتصفح.';
+
+/** Generic browser approval has no Ads account/resource binding or read-back
+ * contract. Login on accounts.google.com and Ads observations remain available;
+ * writes must use the typed integration until an equivalent adapter exists. */
+export function requiresGoogleAdsTypedApi(url: string, method: string): boolean {
+  if (READ_METHODS.has(method.toUpperCase())) return false;
+  let host: string;
+  try { host = new URL(url).hostname.toLowerCase().replace(/\.$/, ''); } catch { return false; }
+  return ['ads.google.com', 'adwords.google.com', 'googleads.googleapis.com'].some(domain => host === domain || host.endsWith(`.${domain}`));
+}
 
 function samePermit(request: EffectRequest): boolean {
   const permit = request.permit;
@@ -46,6 +58,7 @@ function samePermit(request: EffectRequest): boolean {
 
 export function decideEffect(request: EffectRequest): EffectDecision {
   const failsAction = request.actor === 'agent';
+  if (requiresGoogleAdsTypedApi(request.url, request.method)) return { kind: 'deny', code: 'GOOGLE_ADS_TYPED_API_REQUIRED', failsAction };
   if (samePermit(request)) {
     if (request.permit!.used) return { kind: 'deny', code: 'AGENT_EFFECT_UNKNOWN', failsAction: true };
     if (request.permit!.expiresAt > request.now) return { kind: 'allow', credentials: 'keep', consumesPermit: true };
@@ -59,7 +72,9 @@ export function decideEffect(request: EffectRequest): EffectDecision {
   if (request.actor === 'owner') return { kind: 'allow', credentials: 'keep', consumesPermit: false };
 
   if (request.topLevelNavigation) {
-    if (request.actor === 'agent' && request.expectedNavigation === request.url) return { kind: 'allow', credentials: 'keep', consumesPermit: false };
+    // An observed link authorizes a read destination, never a script replacing
+    // that navigation with a form POST to the same URL.
+    if (request.actor === 'agent' && read && request.expectedNavigation === request.url) return { kind: 'allow', credentials: 'keep', consumesPermit: false };
     if (request.actor === 'agent' && read && sameOrigin) return { kind: 'allow', credentials: 'keep', consumesPermit: false };
     if (request.actor === 'agent') return { kind: 'hold', reason: read ? 'cross_origin_navigation' : 'write' };
     return { kind: 'deny', code: 'AGENT_EFFECT_DENIED', failsAction };

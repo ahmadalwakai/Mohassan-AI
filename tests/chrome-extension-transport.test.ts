@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import Fastify from 'fastify';
 import { chromium, type BrowserContext } from '@playwright/test';
@@ -20,7 +21,7 @@ describe('installed Chrome extension through the real queue and browser relay', 
   const cleanup: Array<() => Promise<unknown>> = [];
   afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 
-  it('pairs exact tabs, pauses on an unknown screen, then explicitly resumes through review without publishing', async () => {
+  it('pairs exact tabs for inspection and refuses new or cached campaign edits', async () => {
     const database = await createDatabase({});
     cleanup.push(() => database.close());
     await database.db.schema.createTable('user').addColumn('id', 'text', column => column.primaryKey()).execute();
@@ -87,67 +88,31 @@ describe('installed Chrome extension through the real queue and browser relay', 
     expect(await send({ kind: 'pair-ads', tabId: adsTab.id, customerId: '1234567890', currency: 'GBP' })).toMatchObject({ ok: true });
     expect(await control.status(ownerId)).toMatchObject({ connected: true, preferredTransport: 'chrome' });
 
-    // Google changes its wizard after pairing. No fixture-only selector is available to the adapter.
-    await adsPage.setContent('<!doctype html><html><body><header>123-456-7890 · GBP</header><main><h1>An unfamiliar campaign screen</h1><button onclick="document.body.dataset.published=\'yes\'">Publish campaign</button><input aria-label="Unrecognized setting" value="keep me"></main></body></html>');
-    const job = await control.queueCampaign(ownerId, lines, 'transport-fixture-campaign');
-    await expect.poll(async () => (await control.status(ownerId)).latestJob?.status, { timeout: 30000, interval: 500 }).toBe('needs_attention');
-    const finished = (await control.status(ownerId)).latestJob!;
-    expect(finished.id).toBe(job.id);
-    expect(finished.steps.length).toBeGreaterThan(0);
-    expect(await adsPage.locator('body').getAttribute('data-published')).toBeNull();
-    expect(await adsPage.getByLabel('Unrecognized setting').inputValue()).toBe('keep me');
-    expect((await control.queueCampaign(ownerId, lines, 'transport-fixture-campaign')).id).toBe(job.id);
-    expect(await control.claim(ownerId, { clientId: finished.clientId })).toEqual({ job: null });
-
-    // After inspecting the stopped page, the owner returns to the recognized wizard.
-    // Exercise all layers using the actual installed worker, not a mocked Chrome API.
-    await expect.poll(async () => (await send({ kind: 'popup-status' }))?.data?.checkpoint?.jobId, { timeout: 5000 }).toBe(job.id);
-    await adsPage.evaluate(campaign => {
-      const screens = [
-        '<h1>Choose your objective</h1><button role="radio" aria-checked="false">Leads</button>',
-        '<h1>Select a campaign type</h1><button role="radio" aria-checked="false">Search</button>',
-        '<h1>Campaign name</h1><label>Campaign name<input></label>',
-        '<h1>Locations</h1><div class="location-chip">Glasgow, United Kingdom</div>',
-        '<h1>Languages</h1><label>Languages<select><option value=""></option><option value="en">English</option></select></label>',
-        '<h1>Budget</h1><p>GBP</p><label>Average daily budget<input></label>',
-        '<h1>Keywords</h1><label>Enter keywords<textarea></textarea></label>',
-        '<h1>Ads</h1><label>Final URL<input></label>' + campaign.headlines.map((_, i) => `<label>Headline ${i + 1}<input></label>`).join('') + campaign.descriptions.map((_, i) => `<label>Description ${i + 1}<textarea></textarea></label>`).join(''),
-        '<h1>Review your campaign</h1><button id="publish">Publish campaign</button>',
-      ];
-      let index = 0;
-      (window as any).observedFields = {};
-      const render = () => {
-        document.body.innerHTML = '<header><span class="customer-id">123-456-7890</span></header><main>' + screens[index] + (index < screens.length - 1 ? '<button id="next">Next</button>' : '') + '</main>';
-        document.querySelector('[role="radio"]')?.addEventListener('click', event => (event.currentTarget as HTMLElement).setAttribute('aria-checked', 'true'));
-        document.getElementById('publish')?.addEventListener('click', () => { document.body.dataset.published = 'yes'; });
-        document.getElementById('next')?.addEventListener('click', () => {
-          for (const field of document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input,textarea,select')) {
-            const name = field.labels?.[0]?.textContent ?? '';
-            (window as any).observedFields[name.replace(/English$/, '').trim()] = field.value;
-          }
-          index += 1; render();
-        });
-      };
-      render();
-    }, job.campaign);
-    const resume = await appPage.evaluate(async ({ jobId, clientId }) => {
-      const response = await fetch(`/api/chrome-extension/jobs/${jobId}/resume`, { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clientId }) });
-      return response.status;
-    }, { jobId: job.id, clientId: finished.clientId });
-    expect(resume).toBe(200);
-    await expect.poll(async () => {
-      const status = (await control.status(ownerId)).latestJob?.status;
-      return status === 'queued' || status === 'running' ? 'active' : status;
-    }, { timeout: 45000, interval: 500 }).not.toBe('active');
-    const reviewed = (await control.status(ownerId)).latestJob!;
-    expect(reviewed.status, JSON.stringify({ message: reviewed.message, steps: reviewed.steps })).toBe('awaiting_review');
-    expect(reviewed.id).toBe(job.id);
-    expect(reviewed.leaseId).not.toBe(finished.leaseId);
-    expect(await adsPage.evaluate(() => (window as any).observedFields)).toMatchObject({
-      'Campaign name': job.campaign.campaignName, 'Average daily budget': '20',
-      'Enter keywords': job.campaign.keywords.join('\n'), 'Final URL': job.campaign.finalUrl,
-      'Headline 1': job.campaign.headlines[0], 'Description 2': job.campaign.descriptions[1],
-    });
+    // Even a recognized wizard with autosave-capable inputs is observation-only.
+    await adsPage.setContent('<!doctype html><html><body><header>123-456-7890 · GBP</header><main><h1>Budget</h1><label>Average daily budget<input value="7" oninput="document.body.dataset.mutated=\'yes\'"></label><button onclick="document.body.dataset.mutated=\'yes\'">Next</button><button onclick="document.body.dataset.published=\'yes\'">Publish campaign</button></main></body></html>');
+    await expect(control.queueCampaign(ownerId, lines, 'transport-fixture-campaign')).rejects.toMatchObject({ code: 'GOOGLE_ADS_TYPED_API_REQUIRED' });
+    expect((await control.status(ownerId)).latestJob).toBeNull();
+    const bound = (await control.status(ownerId)).binding!;
+    const campaign = { campaignName: 'Example Movers - House removals', goal: 'leads', type: 'search', customerId: bound.customerId, currency: bound.currency, dailyBudget: '20', locations: ['Glasgow'], countryCode: 'GB', adLanguage: 'en', keywords: ['"house removals glasgow"'], negativeKeywords: [], headlines: ['House Removals Glasgow', 'Local Moving Team', 'Plan Your House Move'], descriptions: ['Local house removals in Glasgow with a careful moving team.', 'Get in touch to discuss your house move and request a quote.'], finalUrl: 'https://example.com/removals', paths: [] };
+    const jobId = randomUUID(), leaseId = randomUUID(), at = new Date();
+    // Simulate a job and worker journal left behind by a pre-policy deployment.
+    await database.db.insertInto('chrome_extension_jobs').values({ id: jobId, owner_id: ownerId, idempotency_key: 'legacy-transport-fixture', source_run_id: null, client_id: bound.clientId, tab_id: bound.tabId, customer_id: bound.customerId, currency: bound.currency, status: 'running', lease_id: leaseId, lease_expires_at: new Date(Date.now() + 600000), campaign: JSON.stringify(campaign), message: 'Legacy fixture only', steps: '[]', created_at: at, updated_at: at }).execute();
+    await worker.evaluate(async ({ jobId, leaseId }) => {
+      const chrome = (globalThis as any).chrome;
+      const state = (await chrome.storage.local.get('mohassan-bridge-v1'))['mohassan-bridge-v1'];
+      await chrome.storage.local.set({ 'mohassan-bridge-v1': { ...state, journal: { job: { id: jobId, leaseId }, steps: [], progress: { done: [], snapshots: {} } }, checkpoint: { jobId, leaseId } } });
+    }, { jobId, leaseId });
+    // The installed relay ticks every five seconds. No adapter step is dispatched.
+    await expect.poll(async () => (await send({ kind: 'popup-status' }))?.data?.journal, { timeout: 15000, interval: 300 }).toBeNull();
+    const held = (await control.status(ownerId)).latestJob!;
+    expect(held).toMatchObject({ id: jobId, status: 'needs_attention', leaseId: null });
+    expect(held.message).toContain('قد تكون');
+    expect(await control.claim(ownerId, { clientId: bound.clientId })).toEqual({ job: null });
+    const resumed = await send({ kind: 'resume' });
+    expect(resumed.ok).toBe(false);
+    await expect(control.resume(ownerId, jobId, { clientId: bound.clientId })).rejects.toMatchObject({ code: 'GOOGLE_ADS_TYPED_API_REQUIRED' });
+    expect(await adsPage.getByLabel('Average daily budget').inputValue()).toBe('7');
+    expect(await adsPage.locator('body').getAttribute('data-mutated')).toBeNull();
     expect(await adsPage.locator('body').getAttribute('data-published')).toBeNull();
     expect(unexpectedTraffic).toEqual([]);
     await mkdir(resolve('artifacts/chrome-extension'), { recursive: true });
@@ -161,7 +126,7 @@ describe('installed Chrome extension through the real queue and browser relay', 
     expect(await worker.evaluate(() => (globalThis as any).chrome.alarms.get('mohassan-bridge'))).toBeUndefined();
     // The fixture deliberately lost the remote acknowledgement; local revocation is still durable.
     expect((await control.status(ownerId)).connected).toBe(true);
-    await control.disconnect(ownerId, { clientId: finished.clientId });
+    await control.disconnect(ownerId, { clientId: bound.clientId });
     expect((await control.status(ownerId)).connected).toBe(false);
   }, 90000);
 });

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import { BrowserError, SafeNetwork, type NetworkPolicy } from './network.js';
+import { requiresGoogleAdsTypedApi, GOOGLE_ADS_TYPED_API_REQUIRED_MESSAGE } from './effect-policy.js';
 
 export interface BrowserField {id:string;index:number;name:string;type:string;label:string;options:string[]}
 export interface BrowserForm {id:string;index:number;action:string;method:string;fingerprint:string;fields:BrowserField[];sensitive?:boolean}
@@ -60,6 +61,7 @@ export class BrowserEngine {
         if(live.abort.signal.aborted||Date.now()>=live.expiresAt)throw new BrowserError('BROWSER_SESSION_CLOSED','انتهى تفويض الجلسة.');
         if(++live.requests>200)throw new BrowserError('BROWSER_REQUEST_LIMIT','تجاوزت الصفحة عدد طلبات الجلسة المسموح.');
         const url=this.network.validate(request.url(),live.allowedOrigins).href,method=request.method(),body=request.postData()??'';
+        if(requiresGoogleAdsTypedApi(url,method))throw new BrowserError('GOOGLE_ADS_TYPED_API_REQUIRED',GOOGLE_ADS_TYPED_API_REQUIRED_MESSAGE,403);
         if(topDocument){
           const authorized=live.navigationUrl===url||live.permit&&!live.permit.used&&live.permit.url===url&&live.permit.method===method;
           if(!authorized)throw new BrowserError('BROWSER_SUBMIT_DENIED','تنقل الصفحة أو الإرسال التلقائي يحتاج فعلًا محددًا من جلسة المتصفح.');

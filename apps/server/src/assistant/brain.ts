@@ -357,11 +357,17 @@ export interface BrainState {
   adsAccounts?: (import('./tools.js').AdsAccountChoice & { option: string })[] | null;
   /** The own Ads model's facts while the brain waits for the owner's answers. Only code sets this. */
   adsBrief?: import('./ads-model-chat.js').AdsBrief | null;
+  /** Material values parsed from this run's actual owner answers, never from a generated proposal. */
+  adsAuthorizations?: { field: import('./ads-model-chat.js').AdsField; value: string }[];
+  adsRequestedAccountIds?: string[];
+  adsModelPath?: 'own';
   /** A complete checked campaign waiting for sign-in, then created PAUSED. Only code sets this. */
   /** shown: the draft is already in the chat, so later messages do not repeat it. */
   adsCampaign?: { lines: string; draft: string; shown?: boolean } | null;
   /** The campaign task's saved operation state: attempts, corrections and whether a write was sent. Only code sets this. */
   campaign?: import('./campaign-run.js').CampaignRunState;
+  /** Host-only readback recovery. It never replays a tool or authorizes a new write. */
+  campaignRecovery?: { sourceRunId: string };
   /** The model-free browser plan from the owner's words, kept across approvals and sign-in pauses. Only code sets this. */
   hands?: import('./hands.js').HandsPlan | null;
   /** Numbered search choices retained for the next browser command in this conversation. */

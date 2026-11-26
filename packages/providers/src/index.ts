@@ -101,7 +101,8 @@ function responseError(response:Response):ProviderError {
 /** Bounded text/image output boundary. It never sends tool definitions or executes actions. */
 export class GroqProvider implements ModelProvider {
   readonly id='groq';
-  readonly supportsImages=true;
+  /** Documented image support for the configured adapter, not inferred from having a model name. */
+  get supportsImages() { return this.options.model === 'qwen/qwen3.8-27b'; }
   constructor(private readonly options:{apiKey:string;model:string;timeoutMs?:number;fetch?:typeof fetch}) {
     if(!options.apiKey || !options.model)throw new ProviderError('NOT_CONFIGURED','مفتاح Groq واسم النموذج مطلوبان.');
   }
@@ -131,12 +132,14 @@ export class GroqProvider implements ModelProvider {
     if(request.structured){z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).parse(request.structured.name);if(JSON.stringify(request.structured.schema).length>48000)throw new ProviderError('SCHEMA_TOO_LARGE','مخطط النتيجة يتجاوز الحد المسموح.');}
     const image=request.image?z.object({mimeType:z.enum(['image/png','image/jpeg']),data:z.string().min(16).max(1400000).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/)}).strict().parse(request.image):undefined;
     if(image&&Buffer.byteLength(image.data,'base64')>1048576)throw new ProviderError('IMAGE_TOO_LARGE','حجم الصورة الأقصى 1MB.');
+    if(image&&!this.supportsImages)throw new ProviderError('CAPABILITY_UNAVAILABLE','لم يُتحقق من دعم الصور لهذا النموذج؛ لم تُرسل الصورة.');
     const signal=this.signal(request.signal);signal.throwIfAborted();let response:Response;
     try {
       response=await(this.options.fetch??fetch)('https://api.groq.com/openai/v1/chat/completions',{
         method:'POST',headers:{Authorization:`Bearer ${this.options.apiKey}`,'Content-Type':'application/json'},signal,
         body:JSON.stringify({model:this.options.model,max_completion_tokens:maxTokens,temperature:0.2,
-          ...(this.options.model.startsWith('openai/gpt-oss-')?{reasoning_effort:'low',reasoning_format:'hidden'}:{}),
+          // GPT-OSS uses include_reasoning; reasoning_format is unsupported (console.groq.com/docs/reasoning).
+          ...(['openai/gpt-oss-20b','openai/gpt-oss-120b'].includes(this.options.model)?{reasoning_effort:'low',include_reasoning:false}:{}),
           ...(request.structured?{response_format:{type:'json_schema',json_schema:{name:request.structured.name,strict:true,schema:request.structured.schema}}}:{}),
           messages:[{role:'system',content:system},{role:'user',content:image?[{type:'text',text:goal},{type:'image_url',image_url:{url:`data:${image.mimeType};base64,${image.data}`}}]:goal}],
         }),

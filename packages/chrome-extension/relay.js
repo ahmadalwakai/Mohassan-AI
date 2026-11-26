@@ -1,7 +1,7 @@
 (() => {
   if (globalThis.__mohassanRelay) return;
   globalThis.__mohassanRelay = true;
-  const paths = /^\/api\/chrome-extension\/(?:status|heartbeat|disconnect|jobs\/claim|jobs\/[a-f0-9-]{36}\/(?:result|resume))$/;
+  const paths = /^\/api\/chrome-extension\/(?:status|heartbeat|disconnect|jobs\/[a-f0-9-]{36}\/cancel)$/;
   chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (sender.id !== chrome.runtime.id || message?.kind !== 'relay-fetch') return;
     if (message.origin !== location.origin || !paths.test(message.path) || !['GET', 'POST'].includes(message.method)) {

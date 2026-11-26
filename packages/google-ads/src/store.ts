@@ -8,6 +8,7 @@ export async function googleAdsMigration(db: Db) {
   await sql`CREATE TABLE IF NOT EXISTS google_ads_oauth_states(state_hash text PRIMARY KEY,owner_id text NOT NULL,sealed_verifier text NOT NULL,expires_at timestamptz NOT NULL,consumed_at timestamptz,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`.execute(db);
   await sql`CREATE TABLE IF NOT EXISTS google_ads_drafts(id text PRIMARY KEY,owner_id text NOT NULL,customer_id text NOT NULL,idempotency_key text NOT NULL,state text NOT NULL,revision integer NOT NULL DEFAULT 1,brief jsonb NOT NULL,bidding text NOT NULL,operations jsonb NOT NULL,draft_hash text NOT NULL,geo_targets jsonb NOT NULL DEFAULT '[]'::jsonb,summary jsonb,strategy jsonb,validation jsonb,verification jsonb,campaign_resource_name text,error text,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(owner_id,idempotency_key))`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS google_ads_drafts_owner_idx ON google_ads_drafts(owner_id,updated_at DESC)`.execute(db);
+  await sql`ALTER TABLE google_ads_drafts ADD COLUMN IF NOT EXISTS readback jsonb`.execute(db);
   await sql`CREATE TABLE IF NOT EXISTS google_ads_automatic_requests(owner_id text NOT NULL,idempotency_key text NOT NULL,draft_id text NOT NULL REFERENCES google_ads_drafts(id),status text NOT NULL CHECK(status IN ('running','completed','blocked','unknown')),created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(owner_id,idempotency_key))`.execute(db);
   await sql`CREATE TABLE IF NOT EXISTS google_ads_approvals(id text PRIMARY KEY,owner_id text NOT NULL,draft_id text NOT NULL REFERENCES google_ads_drafts(id) ON DELETE CASCADE,action text NOT NULL CHECK(action IN ('publish','launch')),draft_hash text NOT NULL,customer_id text NOT NULL,expires_at timestamptz NOT NULL,consumed_at timestamptz,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS google_ads_approvals_draft_idx ON google_ads_approvals(draft_id,action,expires_at)`.execute(db);
@@ -16,6 +17,12 @@ export async function googleAdsMigration(db: Db) {
   await sql`CREATE TABLE IF NOT EXISTS google_ads_experiences(id text PRIMARY KEY,owner_id text NOT NULL,customer_id text NOT NULL,kind text NOT NULL,statement text NOT NULL,evidence jsonb NOT NULL,dedup_key text NOT NULL,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(owner_id,dedup_key))`.execute(db);
   // Counters over fixed vocabularies only: no ad text, no account data and no model prose can be stored here.
   await sql`CREATE TABLE IF NOT EXISTS google_ads_recovery_lessons(owner_id text NOT NULL,category text NOT NULL,code text NOT NULL,strategy text NOT NULL,verified_by text NOT NULL CHECK(verified_by IN ('local_validator','google_validate_only','google_readback')),successes integer NOT NULL DEFAULT 0,failures integer NOT NULL DEFAULT 0,updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(owner_id,category,code,strategy,verified_by))`.execute(db);
+  await sql`ALTER TABLE google_ads_recovery_lessons ADD COLUMN IF NOT EXISTS customer_id text`.execute(db);
+  await sql`ALTER TABLE google_ads_recovery_lessons ADD COLUMN IF NOT EXISTS scope_key text NOT NULL DEFAULT 'local'`.execute(db);
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS google_ads_recovery_lessons_scoped_idx ON google_ads_recovery_lessons(owner_id,scope_key,category,code,strategy,verified_by)`.execute(db);
+  // Preserve the rows and the scoped unique index before retiring the old key,
+  // which otherwise makes lessons from two accounts collide.
+  await sql`ALTER TABLE google_ads_recovery_lessons DROP CONSTRAINT IF EXISTS google_ads_recovery_lessons_pkey`.execute(db);
 }
 
 export const json = (value: unknown) => JSON.stringify(value);

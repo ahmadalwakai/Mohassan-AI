@@ -83,6 +83,8 @@ export const RUN_CAPABILITIES = {
   'computer.input': { risk: 'irreversible_write', verification: 'adapter_report' },
   'runtime.task': { risk: 'irreversible_write', verification: 'owner_review' },
   'ads.campaign': { risk: 'irreversible_write', verification: 'readback' },
+  'ads.check': { risk: 'none', verification: 'deterministic' },
+  'ads.read': { risk: 'read', verification: 'readback' },
   'model.decision': { risk: 'none', verification: 'none' },
 } as const satisfies Record<string, { risk: RunRisk; verification: VerificationMethod }>;
 export type RunCapability = keyof typeof RUN_CAPABILITIES;

@@ -53,6 +53,13 @@ export type CampaignChange = z.infer<typeof CampaignChangeSchema>;
 export const CampaignCheckSchema = z.object({ id: Code, passed: z.boolean(), detail: z.string().max(600) }).strict();
 export type CampaignCheck = z.infer<typeof CampaignCheckSchema>;
 
+export const CampaignAccountSchema = z.object({
+  customerId: z.string().regex(/^\d{10}$/), currency: z.string().regex(/^[A-Z]{3}$/), timeZone: z.string().min(1).max(100),
+  range: z.object({ start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).strict(),
+  checkedAt: z.iso.datetime(),
+}).strict();
+export type CampaignAccount = z.infer<typeof CampaignAccountSchema>;
+
 export const CampaignVerificationScopeSchema = z.enum(['local_text', 'landing_page', 'draft_integrity', 'account', 'conversion_tracking', 'google_validate_only', 'readback']);
 export type CampaignVerificationScope = z.infer<typeof CampaignVerificationScopeSchema>;
 
@@ -67,7 +74,8 @@ const base = {
 const event = <Type extends string, Data extends z.ZodType>(type: Type, data: Data) => z.object({ ...base, type: z.literal(type), data }).strict();
 
 export const CampaignEventSchema = z.discriminatedUnion('type', [
-  event('task_started', z.object({ kind: z.literal('google_ads_search_campaign'), createInAccount: z.boolean() }).strict()),
+  event('task_started', z.object({ kind: z.literal('google_ads_search_campaign'), createInAccount: z.boolean(), mode: z.literal('readback_only').optional() }).strict()),
+  event('account_observed', CampaignAccountSchema),
   event('step_started', z.object({ attempt: z.number().int().min(1).max(20).optional() }).strict()),
   event('draft_updated', z.object({ fields: z.array(CampaignFieldSchema).max(40), keywords: z.number().int().min(0), negativeKeywords: z.number().int().min(0), source: z.enum(['model_draft', 'corrected_draft', 'saved_draft']) }).strict()),
   event('validation_failed', z.object({ authority: CampaignAuthoritySchema, scope: CampaignVerificationScopeSchema, issues: z.array(CampaignIssueSchema).max(40), fingerprint: z.string().regex(/^[a-f0-9]{16,64}$/) }).strict()),
@@ -96,6 +104,7 @@ export interface CampaignProgress {
   lastSeq: number;
   status: CampaignTaskStatus;
   createInAccount: boolean;
+  account: CampaignAccount | null;
   steps: { id: CampaignStepId; status: CampaignStepStatus }[];
   fields: CampaignField[];
   keywords: number;
@@ -133,7 +142,7 @@ export function reduceCampaignEvents(input: readonly CampaignEvent[]): CampaignP
   if (!events.length) return null;
   const steps = new Map<CampaignStepId, CampaignStepStatus>();
   const progress: CampaignProgress = {
-    taskId: events[0]!.taskId, lastSeq: events.at(-1)!.seq, status: 'running', createInAccount: false, steps: [], fields: [], keywords: 0, negativeKeywords: 0,
+    taskId: events[0]!.taskId, lastSeq: events.at(-1)!.seq, status: 'running', createInAccount: false, account: null, steps: [], fields: [], keywords: 0, negativeKeywords: 0,
     issues: [], corrections: [], correctionFailure: null, verifications: [], approval: null, operations: [], outcome: null, error: null, cancelled: null, updatedAt: events.at(-1)!.at,
   };
   for (const item of events) {
@@ -142,6 +151,7 @@ export function reduceCampaignEvents(input: readonly CampaignEvent[]): CampaignP
     if (item.stepId) steps.set(item.stepId, item.status);
     switch (item.type) {
       case 'task_started': progress.createInAccount = item.data.createInAccount; break;
+      case 'account_observed': progress.account = item.data; break;
       case 'step_started': break;
       case 'draft_updated': progress.fields = item.data.fields; progress.keywords = item.data.keywords; progress.negativeKeywords = item.data.negativeKeywords; break;
       case 'validation_failed': progress.issues = item.data.issues.map(issue => ({ ...issue, authority: item.data.authority })); break;

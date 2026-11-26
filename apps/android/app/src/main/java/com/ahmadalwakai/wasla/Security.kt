@@ -194,11 +194,12 @@ class ApiClient(val identity: ServerIdentity, private val token: String? = null)
         }
     }
 
-    suspend fun data(path: String, method: String = "GET", body: ByteArray? = null, desktopSession: String? = null, timeoutSeconds: Int = 90): ByteArray = withContext(Dispatchers.IO) {
+    suspend fun data(path: String, method: String = "GET", body: ByteArray? = null, desktopSession: String? = null, timeoutSeconds: Int = 90, idempotencyKey: String? = null): ByteArray = withContext(Dispatchers.IO) {
         if (!path.startsWith("/v1/") || ".." in path || "//" in path || '%' in path || '?' in path || '#' in path || '\\' in path
             || path.any { it.isWhitespace() || it.code < 32 }) throw WaslaException.invalidAddress()
         if (desktopSession != null && (desktopSession.isEmpty() || desktopSession.toByteArray().size > 512
                 || desktopSession.any { it.isWhitespace() || it.code < 32 || it.code == 127 })) throw WaslaException.invalidResponse()
+        if (idempotencyKey != null && !Regex("^[a-zA-Z0-9_-]{8,128}$").matches(idempotencyKey)) throw WaslaException.invalidResponse()
         val url = URL(identity.baseUrl + path)
         if (url.protocol != "https" || !url.host.trim('[', ']').equals(identity.host, ignoreCase = true)) throw WaslaException.invalidAddress()
         val connection = url.openConnection() as? HttpsURLConnection ?: throw WaslaException.invalidAddress()
@@ -213,6 +214,7 @@ class ApiClient(val identity: ServerIdentity, private val token: String? = null)
             connection.setRequestProperty("Accept", "application/json")
             if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
             if (desktopSession != null) connection.setRequestProperty("X-Wasla-Session", desktopSession)
+            if (idempotencyKey != null) connection.setRequestProperty("Idempotency-Key", idempotencyKey)
             if (body != null) {
                 connection.doOutput = true
                 connection.setRequestProperty("Content-Type", "application/json")

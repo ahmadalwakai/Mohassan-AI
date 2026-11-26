@@ -2,9 +2,11 @@ package com.ahmadalwakai.wasla
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import java.net.URI
@@ -335,6 +337,35 @@ data class MohassanApproval(
 @Serializable data class MohassanSecure(val id: String, val kind: String = "", val site: String = "", val prompt: String = "")
 @Serializable data class MohassanMessage(val id: String, val role: String, val text: String)
 @Serializable data class MohassanStep(val id: String, val text: String)
+@Serializable data class MohassanCampaignRecovery(val runId: String, val mode: String) {
+    val supported: Boolean get() = mode == "readback_only" && isUuid(runId)
+    val requestKey: String? get() = if (supported) "campaign-readback-$runId" else null
+}
+@Serializable data class MohassanCampaignResume(val runId: String)
+@Serializable data class MohassanCampaignRange(val start: String, val end: String)
+@Serializable data class MohassanCampaignAccount(val customerId: String, val currency: String, val timeZone: String, val range: MohassanCampaignRange, val checkedAt: String)
+@Serializable data class MohassanCampaignCheck(val id: String, val passed: Boolean, val detail: String)
+@Serializable data class MohassanCampaignVerification(val authority: String, val scope: String, val passed: Boolean, val checks: List<MohassanCampaignCheck> = emptyList())
+@Serializable data class MohassanCampaignOperation(val operation: String, val outcome: String, val campaignResourceName: String? = null, val readAttempts: Int = 0)
+@Serializable data class MohassanCampaignCompletion(val outcome: String, val campaignResourceName: String? = null)
+@Serializable data class MohassanCampaignEvent(val taskId: String, val seq: Int, val type: String, val at: String = "", val data: JsonObject = JsonObject(emptyMap()))
+data class MohassanCampaignObservedCheck(val value: MohassanCampaignVerification, val at: String)
+@Serializable
+data class MohassanCampaignStream(val taskId: String, val lastSeq: Int = 0, val events: List<MohassanCampaignEvent> = emptyList()) {
+    // A replay or an unknown future event never changes a fact already recorded by the server.
+    private val ordered: List<MohassanCampaignEvent> get() = events.filter { it.taskId == taskId }.distinctBy { it.seq }.sortedBy { it.seq }.let { ordered ->
+        val terminal = ordered.indexOfFirst { it.type in setOf("task_completed", "task_failed", "task_cancelled") }
+        if (terminal >= 0) ordered.take(terminal + 1) else ordered
+    }
+    val account: MohassanCampaignAccount? get() = ordered.lastOrNull { it.type == "account_observed" }?.decodeData()
+    val verifications: List<MohassanCampaignObservedCheck> get() = ordered.filter { it.type == "verification_completed" }
+        .mapNotNull { event -> event.decodeData<MohassanCampaignVerification>()?.let { MohassanCampaignObservedCheck(it, event.at) } }
+        .groupBy { it.value.scope }.values.map { it.last() }
+    val operations: List<MohassanCampaignOperation> get() = ordered.filter { it.type == "external_operation_reconciled" }
+        .mapNotNull { it.decodeData<MohassanCampaignOperation>() }.groupBy { it.operation }.values.map { it.last() }
+    val completion: MohassanCampaignCompletion? get() = ordered.lastOrNull { it.type == "task_completed" }?.decodeData()
+}
+private inline fun <reified T> MohassanCampaignEvent.decodeData(): T? = runCatching { WaslaJson.decodeFromString<T>(data.toString()) }.getOrNull()
 @Serializable data class MohassanSummary(val id: String, val title: String = "", val status: String = "", val updatedAt: String = "")
 /** Mohassan wraps the list: `{"conversations": [...]}`. */
 @Serializable data class MohassanList(val conversations: List<MohassanSummary> = emptyList())
@@ -350,8 +381,11 @@ data class MohassanConversation(
     val progress: String? = null,
     val steps: List<MohassanStep> = emptyList(),
     val error: String? = null,
+    val campaign: MohassanCampaignStream? = null,
+    val campaignRecovery: MohassanCampaignRecovery? = null,
 ) {
     val working: Boolean get() = status == MohassanStatus.RUNNING
+    val canReviewSavedCampaign: Boolean get() = campaignRecovery?.supported == true && !working && status !in MohassanStatus.WAITING
 }
 @Serializable data class MohassanCreated(val id: String)
 @Serializable data class MohassanCreate(val goal: String)

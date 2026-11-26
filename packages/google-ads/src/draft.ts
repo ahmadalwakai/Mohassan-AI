@@ -17,7 +17,7 @@ export const budgetToMicros = (value: string): string => {
   return (BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, '0'))).toString();
 };
 
-/** The suffix is the idempotency marker: Google refuses a second campaign with the same name. */
+/** A reconciliation marker, not remote deduplication: receipts and claims prevent repeated writes. */
 export const campaignNameFor = (brief: GoogleAdsBrief, draftId: string) => `${brief.service} | ${brief.locations[0]} [m-${draftId.slice(0, 8)}]`;
 
 export interface GeoTarget { name: string; resourceName: string; countryCode: string }

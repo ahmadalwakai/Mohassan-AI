@@ -170,10 +170,20 @@ export const GoogleAdsStrategySchema = z.object({
 }).strict();
 export type GoogleAdsStrategy = z.infer<typeof GoogleAdsStrategySchema>;
 
+/** A fresh remote read, distinct from validate_only and from the mutation response. */
+export const GoogleAdsReadbackSchema = z.object({
+  checkedAt: z.iso.datetime(), customerId: GoogleAdsCustomerIdSchema, campaignResourceName: z.string().max(160).nullable(),
+  passed: z.boolean(),
+  fields: z.array(z.object({ field: z.string().min(1).max(200), expected: z.string().max(4000).nullable(), actual: z.string().max(4000).nullable(), passed: z.boolean() }).strict()).max(250),
+  resourceNames: z.array(z.string().max(200)).max(250), requestId: z.string().max(200).nullable(),
+}).strict();
+export type GoogleAdsReadback = z.infer<typeof GoogleAdsReadbackSchema>;
+
 export const GoogleAdsDraftSchema = z.object({
   id: z.uuid(), customerId: GoogleAdsCustomerIdSchema, state: GoogleAdsDraftStateSchema, revision: z.number().int(), brief: GoogleAdsBriefSchema,
   draftHash: z.string(), bidding: z.string(), summary: GoogleAdsChangeSummarySchema.nullable(), strategy: GoogleAdsStrategySchema.nullable(),
   validation: GoogleAdsValidationSchema.nullable(), verification: GoogleAdsVerificationSchema.nullable(), campaignResourceName: z.string().nullable(),
+  readback: GoogleAdsReadbackSchema.optional(),
   error: z.string().nullable(), createdAt: z.string(), updatedAt: z.string(),
 }).strict();
 export type GoogleAdsDraft = z.infer<typeof GoogleAdsDraftSchema>;

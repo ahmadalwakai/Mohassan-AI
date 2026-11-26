@@ -320,3 +320,140 @@ Not audited: the terms of the models that originally generated or translated the
   Rule for the next gates: pause training, run the probes alone, resume.
 - Next stop rule at 300M: core chat passes 3 or fewer of 18 in either language stop the run.
 - Report: `artifacts/chat-training/v5/probes/gate-b-report-20261123.md`.
+
+### 8.7 300M result (2026-11-24): the run stops
+
+- Stop rule: **stop**. Core chat passes by the blind independent reader: Arabic 0/18, English 0/18 (stop at 3 or fewer).
+  Prose 0/20 and 0/20; the four known-hard probes fail. Chat replies ending with EOS: 11/20 and 11/20 (10/20 and 10/20 at 100M).
+- Validation loss still falls (Arabic 2.885 → 2.700 → 2.612, English 3.162 → 2.973 → 2.879 at 100M, 200M and 300M), but the
+  outputs do not answer: 55 of 80 hit the length limit in loops, and the 25 that finish invent identities or drift off topic.
+- The run stays paused at 300,008,192 positions with its STOP file; all checkpoints are kept. V5-3 needs a checkpoint that
+  passed Gate 3, so it does not start. The next step is the owner's decision.
+- Incident: a Dell SupportAssist disk snapshot stalled the GPU memory guard at 285.07M (07:56 UTC); about 85M positions were
+  redone from 200M. The Dell service was paused at the owner's word and restored after the stop.
+- Report: `artifacts/chat-training/v5/probes/gate-300m-report-20261124.md`.
+- **Owner override (12:47 UTC):** «اكمل التدريب». The run resumed from 300M toward 1B with the same config and code
+  (`artifacts/chat-training/v5/probes/gate-300m-owner-override-20261124.json`). The final Gate 3 and the V5-3 condition are
+  unchanged.
+
+### 8.8 End of the run (owner decisions, 2026-11-25)
+
+The owner made these decisions on 2026-11-25 at about 15:30 UTC, in session 0ac0a23a. That session's shared note
+`v5-gate3-review-2026-11-25.md` holds the draft review for item 4. The scoring definitions and diagnostic settings below were
+registered at about 15:35 UTC, before any output existed from the 800M checkpoint or any later one.
+
+- **No test during the run.** A chat test needs the training paused. The 800M checkpoint is therefore tested after the run
+  ends, together with the selected checkpoint.
+- **When the run ends.** At 15:26 UTC the run had 834.9M positions at about 5,700 positions/s, so it should end at about
+  23:30 UTC. The best checkpoint so far is 800M (weighted validation loss 2.464). The run has ended when `status.json` reads
+  `completed` or `early_stopped`. The supervisor stops by itself in either state.
+
+Steps at the end, in order:
+
+1. **Restore and export.**
+   - **Owner change (2026-11-25, about 22:20 UTC):** «تأجيل خدمة dell و مهمة اللقطة في ويندوز الأولوية اجراء الفحوصات».
+     - The tests come first. The restore below waits until the tests of steps 3 to 5 are done, or until the owner
+       says so, so that no disk snapshot stalls them.
+     - The export and the 800M snapshot still run first.
+   - Restore the two snapshot sources that were paused for the run, from an elevated shell:
+     - `sc.exe config "Dell SupportAssist Remediation" start= delayed-auto`
+     - `Start-Service 'Dell SupportAssist Remediation'`
+     - `Enable-ScheduledTask -TaskPath '\Microsoft\Windows\Setup\' -TaskName PITRTask`
+   - Run `train_v5_foundation.py export --config-sha256 01cd6507…eb1b`. This publishes the best checkpoint as `selected` and
+     writes the assessment receipt (`gate3_passed: null`).
+   - If 800M is not the selected checkpoint, also take a `snapshot` at 800M.
+2. **Freeze the rule before any result (item 4).**
+   - Before any final probe output is opened, record the owner's choice among the review's options A, B and C, with its time
+     and SHA-256, in `artifacts/chat-training/v5/probes/gate3-condition-decision-20261125.json`.
+   - With no recorded choice, option A is the rule. Option A is this plan as written.
+   - A change made after the outputs are opened is recorded as a post-hoc owner override, as at 300M, and never as a Gate 3
+     pass.
+   - **Recorded: option B** (file written 2026-11-25 21:24:49 UTC, SHA-256 `01ab3856a1a41afc115bebcf86ec51a3045887f2be49f0f6ab85881d96431728`).
+     - The owner delegated the choice at about 21:15 UTC: «عند الانتهاء انت اختر المناسب بدون الرجوع لي».
+     - Session 0ac0a23a (local_b0c71abe) chose B at 21:21 UTC. No output from 900M or any later checkpoint existed then,
+       or when the choice was recorded.
+     - **V5-3 condition under B.** It uses the Gate 3 prose probes from the official greedy run on `selected`. An item
+       passes when the reader marks `content` pass and `loop` no. The condition needs at least 16 of 20 such items per
+       language.
+     - **Reported beside the condition:** EOS, length-limit stops and the objective loop measure. They are not part of the
+       condition, and Gate 5 enforces finishing.
+     - **The official original Gate 3 result** (option A: strict verdicts, 16 of 20) is still computed and reported beside it.
+   - **Addendum 1, after the owner's review** (`gate3-condition-decision-20261125-addendum-1.json`, written 21:40:42 UTC,
+     SHA-256 `6fb5c617dae6ba5829a7b8ba7a37cefeab7b598fad9bb344185a5aed525e9c73`). It changes neither B nor A.
+     - **Timing.** B was fixed after the 100M and 300M probe results were known, and before any probe output from a
+       later checkpoint.
+     - **Which checkpoint is `selected`.** It is the milestone checkpoint (100M, 200M, …, 1B) with the lowest
+       weighted validation loss, 0.5 × Arabic + 0.5 × English. A tie keeps the earlier milestone.
+       - The pinned trainer applies this rule during the run, before any probe.
+       - So `selected` is 1B if its loss is below 2.4355; otherwise it is 900M.
+       - Probe results never change the choice.
+     - **Wording when B passes and A fails:** «passed the modified transition criterion (B), failed the original
+       criterion (A)».
+     - **What a B pass means.** It is not a measure of factual correctness, language soundness or coherence. It is
+       never reported as a general quality percentage. The EOS and length-limit counts are always shown.
+     - **The sampling diagnostic.** The three seeds are samples of one question, not three questions. There is no
+       best-of-seeds count.
+     - **A hand count of B** keeps each item's verdicts and the reader's reason.
+     - **The framing check** compares the token ids stored in the pinned bins on disk with the ids the chat probes
+       feed.
+3. **Decode a sample of the training tokens (item 3).** This step does not depend on the model, so it runs before the
+   probes.
+   - Take 10 documents per language from the pinned `ar.train.bin` and `en.train.bin` of `corpus-20261123b`. Draw them with
+     seed 20261125, cut them at EOS boundaries (id 258), and decode them with the pinned tokenizer.
+   - For each document, record its kind (conversation or prose), its length in tokens, and whether it ends with 258.
+   - For each conversation document, record whether re-framing its messages with `execution_pipeline.chat.conversation_prompt`
+     reproduces its tokens exactly. The chat probes use this same framing.
+   - Report any mismatch to the owner before the probe results are read, because it changes what the probes measure.
+4. **Run the original tests, unchanged (item 1).**
+   - The tests are the frozen chat probes (20 per language, 18 core) and the Gate 3 prose probes (20 per language). Run them
+     with `chat_probes.py` and `gate3_probes.py` unchanged, on `selected` and, as a reported point, on 800M.
+   - Run settings: CPU, float32, greedy decoding, 192 new tokens, the reference decoder and the pinned code.
+   - Score three parts separately and report each per language:
+     - **EOS (objective):** `stop_reason` is `eos` and `terminal_token_id` is 258, within 192 tokens.
+     - **Loop (objective):** after NFKC normalization and lowercasing, some run of four whitespace-separated words occurs
+       three or more times, counted at every word position. Also report the outputs that hit the 192-token limit. The same
+       code recomputes the v4 baseline, 100M and 300M, so every point is measured the same way.
+     - **Content (blind reader):** the same packet builder, instructions and frozen criteria as at 300M, with no checkpoint
+       information. The reader first gives the strict verdict as before. Two fields are then asked after it:
+       - `content`: pass or fail on the criterion, setting the ending and the length aside;
+       - `loop`: yes or no, as the reader sees it.
+   - The official Gate 3 result is computed exactly as before: the strict verdicts on the prose probes, at least 16 of 20
+     per language. The separate parts are reported beside it and change no verdict.
+5. **Run a diagnostic with sampling (item 2).** It is reported in its own file and never counts toward Gate 3 or any stop
+   rule. No setting is tuned after its results.
+   - It uses the same 80 probes and framing, the CPU, float32 and 192 new tokens, on `selected` only.
+   - It samples with the pinned generator's own options: `do_sample=True`, `temperature=0.7`, `top_p=0.9`, `top_k=0`. Seeds
+     1, 2 and 3 run per probe, for 240 outputs.
+   - The cached decoder may be used, because this is not a gate evaluation and it chooses tokens with the same `_choose`.
+   - EOS and loops are counted on all 240 outputs. The blind reader judges content on seed 1 only, 80 items in their own
+     packet.
+6. **Review the Gate 3 → V5-3 condition (item 4).**
+   - The draft review becomes `artifacts/chat-training/v5/probes/gate3-condition-review-20261125.md`, with the results
+     attached. Its points are that Gate 3 is the prose-continuation probe, that its EOS part may belong in Gate 5, and the
+     options A, B and C.
+   - The original Gate 3 result is kept as measured, whatever is chosen.
+   - V5-3 starts only on the owner's decision, from the exact checkpoint named by the rule in force.
+7. **Report.** Write `gate-1b-report-<date>.md` in the 300M report's format, and send a short Arabic summary to the owner.
+
+**Still to build before the end.** The probe scripts hard-wire greedy decoding: `DECODING` in `chat_probes.py`, and
+`GenerationConfig(max_new_tokens=…)` in `gate3_probes.py`. The loop measure and the training-token decode have no script yet.
+Under the owner's rule that Claude plans and Codex implements, these go to one Codex task. Its new files sit outside the pinned
+packages and only import them. They must be reviewed before the run ends.
+- **Done:** PR #94 (`feat/v5-end-of-run-eval`). The follow-up commit `d6bda07` was reviewed, and its tests ran: 94 passed.
+
+### 8.9 1B result (2026-11-25): Gate 3 fails under A and B
+
+- **The run** completed at 22:59:46 UTC at 1,000,000,000 positions.
+- **`selected` = 1B** (weighted validation loss 2.420: Arabic 2.303, English 2.537), by the pre-registered rule.
+- **Format check:** the training-token check on the stored bins matches the probes exactly.
+- **Gate 3 prose (20 per language), on 1B:**
+  - A (strict): 0/20 and 0/20.
+  - B (content pass, no loop): 0/20 and 0/20.
+  - Content alone: 0/20 and 0/20.
+  - 800M, reported only: the same.
+- **V5-3 does not start.** The §7 branch applies.
+- **Chat core:** 1/18 and 3/18 (300M: 0/18 and 0/18).
+- **Sampling diagnostic:** fewer loops, but prose content is still 0/20.
+- **Independent recount:** session 0ac0a23a recounted every count, and they match.
+- **Report:** `artifacts/chat-training/v5/probes/gate-1b-report-20261125.md`. Review: `gate3-condition-review-20261125.md`. Machine-readable result: `gate3-1b-result-20261125.json`.
+- **Dell and PITRTask** were restored at 23:48:29 UTC, after the checks.

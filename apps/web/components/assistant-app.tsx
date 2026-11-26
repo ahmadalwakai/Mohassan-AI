@@ -21,11 +21,12 @@ import { BrowserFilesPanel } from './browser-files-panel';
 import { DocumentsPanel } from './documents-panel';
 import { BrowserViewport } from './browser-viewport';
 import { CampaignCard } from "./campaign-card";
+import { CampaignRecoveryCard } from "./campaign-recovery-card";
 
 const ADS_WORDS = /حمل[ةت]|حملات|إعلان|اعلان|google ads|campaign|\bads?\b|advertis|ppc/i;
 import { ActivityLine, AgentActivity } from "./agent-activity";
 import { RunDetails, RunVerdict } from "./run-status";
-import { isNewerSnapshot, steerable } from "./run-view";
+import { isNewerSnapshot, observedTime, progressRetryDelay, steerable } from "./run-view";
 import { QuestionPanel, withoutQuestionList } from "./question-card";
 import { ChromeExtensionPanel } from "./chrome-extension-panel";
 import { adsConnectProblems, pendingAdsConnect } from "./ads-connect";
@@ -159,7 +160,7 @@ function Steps({ conversation }: { conversation: Conversation }) {
       {conversation.steps.map((step) => <li key={step.id} dir="auto">{step.text}</li>)}
       {running ? <li className={styles.activeStep} aria-current="step"><AgentActivity variant="spinner" /><span dir="auto">{conversation.progress ?? "يعمل…"}</span></li> : null}
     </ol> : null}
-    {!running && run ? <RunDetails key={run.id} run={run} /> : null}
+    {run ? <RunDetails key={run.id} run={run} /> : null}
   </div>;
 }
 
@@ -245,6 +246,9 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
   const [browserAccount,setBrowserAccount]=useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [progressConnection, setProgressConnection] = useState<{ id: string; failures: number; confirmedAt: string } | null>(null);
+  const [conversationLoadError, setConversationLoadError] = useState<{ id: string; message: string } | null>(null);
+  const [conversationLoadAttempt, setConversationLoadAttempt] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   // The panel starts closed. A level-3 step opens it once (autoOpened remembers which), the owner can open it from the
@@ -306,9 +310,11 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
     saved.set(selectedId);
     if (conversation?.id === selectedId) return;
     let active = true;
-    void api<Conversation>(`/api/chat/conversations/${selectedId}`).then((result) => { if (active) setConversation(result); }).catch((caught) => { if (active) setError(messageOf(caught)); });
-    return () => { active = false; };
-  }, [selectedId, conversation?.id]);
+    const controller = new AbortController();
+    setConversationLoadError(null);
+    void api<Conversation>(`/api/chat/conversations/${selectedId}`, { signal: controller.signal }).then((result) => { if (active) setConversation(result); }).catch((caught) => { if (active) setConversationLoadError({ id: selectedId, message: messageOf(caught) }); });
+    return () => { active = false; controller.abort(); };
+  }, [selectedId, conversation?.id, conversationLoadAttempt]);
 
   const status = conversation?.status;
   const hasThread = Boolean(conversation?.messages.length);
@@ -323,6 +329,8 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
     // answer as soon as the mark changes (up to WAIT_MS), so a reply appears when it is written, not on the next poll.
     // A server without marks, or one that answers at once with the same mark, is polled every POLL_MS as before.
     let since = conversation.version;
+    let failures = 0;
+    let confirmedAt = conversation.updatedAt;
     // A hidden tab keeps following its task every 15 s instead of stopping, and catches up the moment it is shown again.
     const schedule = (delay: number) => { clearTimeout(timer); timer = setTimeout(poll, delay); };
     const poll = () => {
@@ -336,6 +344,9 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
         if (!active || selection.current !== id) return;
         // A slow answer never moves the view back past a newer one (run-view.ts isNewerSnapshot).
         setConversation((current) => isNewerSnapshot(current, result) ? result : current);
+        failures = 0;
+        confirmedAt = new Date().toISOString();
+        setProgressConnection({ id, failures, confirmedAt });
         setError("");
         if (result.status !== "running") void refreshHistory().catch(() => {});
         since = result.version;
@@ -344,12 +355,18 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
         // cleared, so no request starts only to be cancelled (browser check of 2026-11-23); and when the view kept a newer
         // snapshot over it (isNewerSnapshot, a task superseded while running), the following goes on.
         if (result.status === "running" && waiting && result.version && !(result.version === asked && Date.now() - sent < WAIT_MS / 2)) next = 0;
-      }).catch((caught) => { if (active) setError(messageOf(caught)); }).finally(() => { inFlight = false; if (active) schedule(document.hidden ? HIDDEN_POLL_MS : next); });
+      }).catch(() => {
+        if (!active || selection.current !== id) return;
+        failures += 1;
+        next = progressRetryDelay(failures, document.hidden);
+        setProgressConnection({ id, failures, confirmedAt });
+      }).finally(() => { inFlight = false; if (active) schedule(document.hidden ? HIDDEN_POLL_MS : next); });
     };
     const shown = () => { if (!document.hidden) schedule(0); };
     document.addEventListener("visibilitychange", shown);
+    window.addEventListener("online", shown);
     schedule(document.hidden ? HIDDEN_POLL_MS : since ? 0 : POLL_MS);
-    return () => { active = false; clearTimeout(timer); held.abort(); document.removeEventListener("visibilitychange", shown); };
+    return () => { active = false; clearTimeout(timer); held.abort(); document.removeEventListener("visibilitychange", shown); window.removeEventListener("online", shown); };
   }, [conversation?.id, status, refreshHistory]);
 
   useEffect(() => { setSetting(panelSetting.get()); }, []);
@@ -465,6 +482,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
   }, [conversation?.messages.length, conversation?.progress, conversation?.status]);
 
   const running = status === "running";
+  const loadingConversation = Boolean(selectedId && conversation?.id !== selectedId);
   const answering = status === "waiting_user";
   // The request's own time, for the counter on the chip's live line.
   const requestedAt = conversation?.messages.filter((message) => message.role === "user").at(-1)?.createdAt ?? null;
@@ -472,7 +490,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
   // While a task works or waits for approval or for the owner's hands, a typed message corrects it (the server ends the
   // old run, drops what it had queued and starts the corrected one); «توقف» alone stops it. Images do not steer.
   const steering = Boolean(selectedId) && steerable(status, conversation?.secure?.kind);
-  const canSend = !busy && uploading === 0 && (steering ? draft.trim().length > 0 && attachments.length === 0
+  const canSend = !loadingConversation && !busy && uploading === 0 && (steering ? draft.trim().length > 0 && attachments.length === 0
     : !running && !blocked && (draft.trim().length > 0 || attachments.length > 0));
   // The brain's questions take the input's place, one at a time, as in Claude.
   const asking = answering && !!conversation?.question?.fields?.length;
@@ -706,13 +724,20 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
             : <><Globe size={15} />المتصفح · عرض</>}</button> : null}
         {conversation ? <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="محادثة جديدة" onClick={startNew}><SquarePen size={18} /></button> : null}
       </header>
+      {running && progressConnection && progressConnection.id === conversation?.id && progressConnection.failures > 0 ? <div className={styles.noticeBar} role="status" aria-live="polite" data-testid="progress-reconnecting">
+        <AgentActivity variant="spinner" /><span>تعذر تحديث التقدم. نحاول إعادة الاتصال تلقائيًا؛ نتيجة المهمة لم تُحسم.</span>
+        <time dateTime={progressConnection.confirmedAt}>آخر اتصال: {observedTime(progressConnection.confirmedAt)}</time>
+      </div> : null}
       {noticeOffer ? <div className={styles.noticeBar} role="status" data-testid="notice-offer">
         <span>مهمة تعمل في الخلفية منذ أكثر من 20 ثانية. أعلمك عند انتهاء المهام حين يكون التبويب مخفيًا؟</span>
         <button type="button" className={styles.primary} onClick={() => void enableNotices()}>تفعيل الإشعارات</button>
         <button type="button" className={styles.secondary} onClick={() => { declineNoticeOffer(); setNoticeOffer(false); }}>ليس الآن</button>
       </div> : null}
       {onOpenTool ? <ChromeExtensionPanel relevant={adsConversation} /> : null}
-      {empty ? <div className={styles.welcome}>
+      {loadingConversation ? <div className={styles.welcome} aria-busy={conversationLoadError?.id !== selectedId}>
+        {conversationLoadError?.id === selectedId ? <><h1>تعذرت قراءة المحادثة</h1><p className={styles.problem} role="alert">{conversationLoadError.message}</p><button type="button" className={styles.secondary} onClick={() => setConversationLoadAttempt(value => value + 1)}>إعادة الاتصال وقراءة الحالة</button></>
+          : <><AgentActivity variant="spinner" /><p role="status">جارٍ قراءة المحادثة وحالة المهمة المحفوظة…</p></>}
+      </div> : empty ? <div className={styles.welcome}>
         <span className={styles.welcomeMark} aria-hidden="true">م</span>
         <h1>كيف أساعدك اليوم، {firstName}؟</h1>
         {form}
@@ -733,6 +758,10 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut }: { name
             </article>)}
             {conversation!.messages.at(-1)?.role === "assistant" && (running || conversation!.steps.length > 0 || unfinishedVerdict(conversation!)) && !answering && !blocked ? <Steps conversation={conversation!} /> : null}
             {conversation!.campaign?.events.length ? <CampaignCard stream={conversation!.campaign} running={running} /> : null}
+            {conversation!.campaignRecovery ? <CampaignRecoveryCard busy={busy || WORKING.has(conversation!.status)} onResume={() => {
+              const recovery = conversation!.campaignRecovery!;
+              void act(() => api<Conversation>(`/api/chat/conversations/${conversation!.id}/campaign/resume`, { method: "POST", headers: { "Idempotency-Key": `campaign-readback-${recovery.runId}` }, body: JSON.stringify({ runId: recovery.runId }) }));
+            }} /> : null}
             {conversation!.question?.fields?.length ? null
             : conversation!.question ? <div className={styles.choices}>{conversation!.question.options.map((option) => <button key={option.id} disabled={busy} onClick={() => conversation!.question!.action === "google_ads_connect" && option.id === "connect" ? void connectGoogleAds() : void act(() => post("respond", { questionId: conversation!.question!.id, optionId: option.id }))}>{option.label}</button>)}</div> : null}
             {conversation!.approval ? <div className={styles.card}>

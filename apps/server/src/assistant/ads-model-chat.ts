@@ -53,7 +53,7 @@ export interface AdsChatReply {
   /** With completed: the full campaign in the line format of the paused-creation tool. */
   campaign?: string;
 }
-export interface AdsChatIo { signal: AbortSignal; step(label: string): Promise<void> }
+export interface AdsChatIo { signal: AbortSignal; step(label: string): Promise<void>; modelCall?(): Promise<void> }
 export interface AdsModelChat { handle(request: string, io: AdsChatIo, saved?: { brief: AdsBrief; answer: string }): Promise<AdsChatReply | null> }
 
 /** Questions are asked at most this many times; past it the brain says what is still missing. */
@@ -760,7 +760,9 @@ export function createAdsModelChat(deps: { worker: Pick<AdsModelWorker, 'sample'
       brief = readAnswer(saved.answer, saved.brief);
     } else {
       await io.step('فهم طلب الحملة');
-      const readings = (await deps.worker.sample(pointer.renderGoalPointerPrompt(request), {}, CANDIDATES, { signal: io.signal })).candidates.filter(candidate => candidate.finished).map(candidate => {
+      const sampled = await deps.worker.sample(pointer.renderGoalPointerPrompt(request), {}, CANDIDATES, { signal: io.signal });
+      await io.modelCall?.();
+      const readings = sampled.candidates.filter(candidate => candidate.finished).map(candidate => {
         // The brain repairs what it can see in the sentence itself (the link, the number, the
         // edges of the service) before the checker judges the model's reading.
         const goal = pointer.pointerToGoal(request, pointer.repairGoalPointer(request, candidate.text));
@@ -860,7 +862,9 @@ export function createAdsModelChat(deps: { worker: Pick<AdsModelWorker, 'sample'
       if (!input.text) return { status: 'partial', text: 'لم أجد في صفحة الموقع نصاً كافياً لكتابة إعلانات منه.' };
       let texts: string[];
       try {
-        texts = (await deps.worker.sample(pointer.renderSitePointerPrompt(input, { usableOnly: true }), {}, CANDIDATES, { signal: io.signal })).candidates.filter(candidate => candidate.finished).map(candidate => candidate.text);
+        const sampled = await deps.worker.sample(pointer.renderSitePointerPrompt(input, { usableOnly: true }), {}, CANDIDATES, { signal: io.signal });
+        await io.modelCall?.();
+        texts = sampled.candidates.filter(candidate => candidate.finished).map(candidate => candidate.text);
       } catch (error) {
         if (error instanceof Error && /too long/i.test(error.message) && budget !== 1000) continue;
         throw error;

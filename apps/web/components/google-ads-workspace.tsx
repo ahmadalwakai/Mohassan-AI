@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, CircleSlash, Clock, KeyRound, Link2, Megaphone, RefreshCw, ShieldCheck, Unplug } from "lucide-react";
-import type { GoogleAdsAccountOption, GoogleAdsAuditEntry, GoogleAdsBasis, GoogleAdsBrief, GoogleAdsDraft, GoogleAdsDraftState, GoogleAdsMarket, GoogleAdsRecommendation, GoogleAdsReport, GoogleAdsStatus } from "@mohassan/contracts";
+import type { GoogleAdsAccountOption, GoogleAdsAuditEntry, GoogleAdsBasis, GoogleAdsBrief, GoogleAdsDraft, GoogleAdsDraftState, GoogleAdsMarket, GoogleAdsReadback, GoogleAdsRecommendation, GoogleAdsReport, GoogleAdsStatus } from "@mohassan/contracts";
+import { accountForDraft, moneyOf } from "./google-ads-view";
 import styles from "./google-ads-workspace.module.css";
 
 class AdsError extends Error {
@@ -23,7 +24,6 @@ async function api<T>(path: string, body?: unknown, headers: Record<string, stri
 }
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : "تعذر الاتصال بالخدمة.";
-const moneyOf = (micros: string, currency: string) => new Intl.NumberFormat("ar", { style: currency ? "currency" : "decimal", ...(currency ? { currency, currencyDisplay: "narrowSymbol" as const } : {}), maximumFractionDigits: 2 }).format(Number(micros) / 1_000_000);
 const count = (value: number) => value.toLocaleString("ar");
 const percent = (value: number | null) => value === null ? "غير متاح" : `${Math.round(value * 100).toLocaleString("ar")}٪`;
 const dateTime = (value: string) => new Date(value).toLocaleString("ar", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -78,15 +78,40 @@ function DraftForm({ initial, busy, onSubmit, onCancel }: { initial: FormFields;
   </form>;
 }
 
+/** A mutation receipt and validate_only are not read-back evidence. Render only the persisted remote observation. */
+export function GoogleAdsReadbackEvidence({ readback, customerId }: { readback: GoogleAdsReadback; customerId: string }) {
+  const accountMatches = readback.customerId === customerId;
+  const passed = accountMatches && readback.passed;
+  const matched = readback.fields.filter(field => field.passed).length;
+  return <section aria-label="قراءة الحساب بعد التنفيذ" className={styles.readback}>
+    <h4>{passed ? "تأكد التطابق من الحساب" : "لم يثبت تطابق النتيجة"}</h4>
+    <p className={styles.note}>مصدر الدليل: Google Ads · الحساب <bdi>{readback.customerId}</bdi> · <time dateTime={readback.checkedAt}>{dateTime(readback.checkedAt)}</time></p>
+    {!accountMatches ? <p className={styles.blocker} role="alert">هذا الدليل يخص حسابًا مختلفًا عن حساب المسودة.</p> : null}
+    {readback.campaignResourceName ? <p className={styles.note}><bdi dir="ltr">{readback.campaignResourceName}</bdi></p> : null}
+    <details open={!passed}>
+      <summary>مطابقة الحقول: {matched}/{readback.fields.length}</summary>
+      <ul className={styles.issues}>{readback.fields.map((field, index) => <li key={`${field.field}-${index}`} className={field.passed ? styles.readbackMatch : styles.error}>
+        <strong><bdi>{field.field}</bdi> · {field.passed ? "يطابق" : "لا يطابق"}</strong>
+        <dl><dt>المطلوب</dt><dd dir="auto">{field.expected ?? "غير متاح"}</dd><dt>المرصود</dt><dd dir="auto">{field.actual ?? "غير متاح"}</dd></dl>
+      </li>)}</ul>
+    </details>
+    {readback.requestId ? <p className={styles.note}>معرّف طلب القراءة: <bdi dir="ltr">{readback.requestId}</bdi></p> : null}
+    <p className={styles.note}>القراءة تثبت الإعدادات المرصودة في وقتها؛ أهلية الإعلان ونتائج الأداء تحتاجان أدلة منفصلة.</p>
+  </section>;
+}
+
 function DraftDetail({ draft, status, busy, onStep, onApprove, onEdit, launchHash }: { draft: GoogleAdsDraft; status: GoogleAdsStatus; busy: boolean; onStep: (name: string) => void; onApprove: (action: "publish" | "launch") => void; onEdit: () => void; launchHash: string | null }) {
   const [confirmed, setConfirmed] = useState(false);
   useEffect(() => setConfirmed(false), [draft.revision]);
-  const summary = draft.summary, currency = status.account?.currency ?? "";
-  const editable = ["preview", "draft", "rejected", "validated", "verified", "approved", "failed"].includes(draft.state);
-  const canPublish = status.publishing.available;
+  const account = accountForDraft(draft.customerId, status);
+  const summary = draft.summary, currency = account?.currency ?? "";
+  const editable = !draft.campaignResourceName && ["preview", "draft", "rejected", "validated", "verified", "approved", "failed"].includes(draft.state);
+  const canPublish = Boolean(account) && status.publishing.available;
   return <article className={styles.detail} aria-label="تفاصيل المسودة">
     <header><div><h3>{summary?.campaignName ?? draft.brief.service}</h3><small dir="ltr">{draft.customerId}</small></div><span className={styles.state}>{stateLabels[draft.state]}</span></header>
     {draft.error ? <p className="inline-error" role="alert">{draft.error}</p> : null}
+    {!account ? <p className={styles.blocker} role="alert">الحساب المحدد لا يطابق حساب هذه المسودة. اختر الحساب {draft.customerId} لتأكيد العملة والمنطقة الزمنية قبل الموافقة أو التنفيذ.</p> : <p className={styles.note}>عملة الحساب: <bdi>{account.currency}</bdi> · المنطقة الزمنية: <bdi>{account.timeZone}</bdi></p>}
+    {draft.readback ? <GoogleAdsReadbackEvidence readback={draft.readback} customerId={draft.customerId} /> : null}
     {draft.strategy ? <section><h4>الاستراتيجية</h4><ul className={styles.list}>{draft.strategy.recommendations.map(item => <li key={item.title}><Basis value={item.basis} /><div><strong>{item.title}</strong><p>{item.reason}</p><small>{item.source}</small></div></li>)}</ul>{draft.strategy.blockers.map(item => <p className={styles.blocker} key={item}><AlertTriangle size={15} />{item}</p>)}</section> : null}
     {draft.validation ? <section><h4>فحص الجودة: {draft.validation.passed ? "ناجح" : "مرفوض"}</h4>{draft.validation.issues.length ? <ul className={styles.issues}>{draft.validation.issues.map((issue, index) => <li key={index} className={issue.severity === "error" ? styles.error : styles.warning}><strong>{issue.field}</strong><span dir="auto">{issue.message}</span></li>)}</ul> : <p className={styles.note}>لا توجد ملاحظات.</p>}</section> : null}
     {draft.verification ? <section><h4>التحقق المستقل</h4><ul className={styles.checks}>{draft.verification.checks.map(check => <li key={check.id}>{check.passed ? <CheckCircle2 size={16} className={styles.pass} /> : <CircleSlash size={16} className={styles.fail} />}<div><strong>{checkLabels[check.id]}</strong><small dir="auto">{check.detail}</small></div></li>)}</ul></section> : null}
@@ -105,13 +130,13 @@ function DraftDetail({ draft, status, busy, onStep, onApprove, onEdit, launchHas
       {["validated", "verified"].includes(draft.state) ? <button className="secondary-button" disabled={busy} onClick={() => onStep("verify")}>{draft.state === "verified" ? "إعادة التحقق" : "تحقق مستقل"}</button> : null}
       {draft.state === "approved" ? <button className="primary-button" disabled={busy || !canPublish} onClick={() => onStep("publish")}>نشر متوقفة</button> : null}
       {draft.state === "launch_approved" ? <button className="primary-button" disabled={busy || !canPublish} onClick={() => onStep("launch")}>إطلاق الحملة</button> : null}
-      {["outcome_unknown", "publishing", "launching"].includes(draft.state) ? <button className="primary-button" disabled={busy} onClick={() => onStep("reconcile")}>قراءة الحالة من الحساب</button> : null}
+      {(["outcome_unknown", "publishing", "launching", "published", "live"].includes(draft.state) || draft.state === "failed" && draft.campaignResourceName) ? <button className="primary-button" disabled={busy} onClick={() => onStep("reconcile")}>قراءة الحالة من الحساب</button> : null}
       {editable ? <button className="secondary-button" disabled={busy} onClick={onEdit}>تعديل</button> : null}
       {editable ? <button className="text-button" disabled={busy} onClick={() => onStep("discard")}>حذف</button> : null}
     </div>
     {(draft.state === "verified" || (draft.state === "published" && launchHash)) ? <div className={styles.approval}>
       <label><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} /><span>{draft.state === "verified" ? `راجعت التغييرات أعلاه، وأوافق على إنشائها متوقفة في الحساب ${draft.customerId}.` : `أوافق على تفعيل هذه الحملة في الحساب ${draft.customerId}، وأعلم أن الإنفاق يبدأ بعدها.`}</span></label>
-      <button className="primary-button" disabled={busy || !confirmed} onClick={() => onApprove(draft.state === "verified" ? "publish" : "launch")}><ShieldCheck size={15} />{draft.state === "verified" ? "أوافق على النشر" : "أوافق على الإطلاق"}</button>
+      <button className="primary-button" disabled={busy || !confirmed || !account} onClick={() => onApprove(draft.state === "verified" ? "publish" : "launch")}><ShieldCheck size={15} />{draft.state === "verified" ? "أوافق على النشر" : "أوافق على الإطلاق"}</button>
       <small>الموافقة تخص هذه النسخة وحدها، تُستخدم مرة واحدة وتنتهي خلال 30 دقيقة.</small>
     </div> : null}
     {["approved", "launch_approved"].includes(draft.state) && !canPublish ? <p className={styles.blocker}><AlertTriangle size={15} />النشر مغلق حتى تكتمل البوابات أعلى الصفحة. موافقتك محفوظة ولم يُكتب شيء في الحساب.</p> : null}
@@ -140,6 +165,7 @@ function Performance({ offline, status, onChange }: { offline: boolean; status: 
   if (!report) return <Panel icon={<AlertTriangle size={30} />} title="تعذرت قراءة التقرير"><p role="alert">{error || "لا توجد بيانات بعد."}</p><button className="secondary-button" disabled={offline} onClick={() => void load()}>إعادة المحاولة</button></Panel>;
   return <div className={styles.stack}>
     <div className={styles.toolbar}><label>الفترة<select value={days} aria-label="فترة التقرير" onChange={event => setDays(Number(event.target.value))}>{[7, 14, 30, 90].map(value => <option key={value} value={value}>{count(value)} يومًا</option>)}</select></label><span>مرصود من Google من {report.range.start} إلى {report.range.end}</span><button className="secondary-button" disabled={offline || loading} onClick={() => void load()}><RefreshCw size={14} />تحديث</button></div>
+    <p className={styles.note}>الحساب: <bdi>{report.customerId}</bdi> · العملة: <bdi>{report.currency}</bdi> · المنطقة الزمنية: <bdi>{report.timeZone}</bdi> · قُرئ: <time dateTime={report.fetchedAt}>{dateTime(report.fetchedAt)}</time></p>
     {error ? <p className="inline-error" role="alert">{error}</p> : null}{saved ? <p className={styles.note} role="status">{saved}</p> : null}
     {report.empty ? <Panel icon={<Megaphone size={30} />} title="لا توجد بيانات حملات في هذه الفترة"><p>لم تُرجع Google أي حملة. لن نعرض أرقامًا غير موجودة.</p></Panel> : <>
       <section className={styles.stats} aria-label="إجماليات الفترة">{[["الظهور", count(report.totals.impressions)], ["النقرات", count(report.totals.clicks)], ["التكلفة", moneyOf(report.totals.costMicros, currency)], ["التحويلات", count(report.totals.conversions)]].map(([label, value]) => <article key={label}><span>{label}</span><strong>{value}</strong><Basis value="observed" /></article>)}</section>
@@ -254,7 +280,7 @@ export function GoogleAdsWorkspace({ offline }: { offline: boolean }) {
       : status.state === "needs_account" ? <Panel icon={<Megaphone size={30} />} title="اختر حساب الإعلانات"><p>{status.message}</p>{accounts ? accounts.length ? <div className={styles.accounts}>{accounts.map(account => <button key={account.customerId} disabled={busy || account.manager} onClick={() => void select(account)}><strong dir="auto">{account.name}</strong><small dir="ltr">{account.customerId} · {account.currency}</small><small>{account.manager ? "حساب مدير، لا يحمل حملات" : account.testAccount ? "حساب تجريبي" : "حساب حقيقي"}</small></button>)}</div> : <p>لا يصل حساب Google هذا إلى أي حساب إعلانات.</p> : <p>جارٍ قراءة الحسابات…</p>}<button className="text-button" disabled={busy} onClick={() => void disconnect()}>إلغاء الربط</button></Panel>
       : <>
         {status.state === "rate_limited" ? <p className={styles.blocker} role="status"><Clock size={15} />{status.message}{status.retryAfterSeconds ? ` أعد المحاولة بعد ${count(status.retryAfterSeconds)} ثانية.` : ""}</p> : null}
-        <div className={styles.account}><div><strong dir="auto">{status.account?.name}</strong><small dir="ltr">{status.account?.customerId} · {status.account?.currency}</small></div><button className="text-button" disabled={busy} onClick={() => void disconnect()}>إلغاء الربط</button></div>
+        <div className={styles.account}><div><strong dir="auto">{status.account?.name}</strong><small dir="ltr">{status.account?.customerId} · {status.account?.currency} · {status.account?.timeZone}</small></div><button className="text-button" disabled={busy} onClick={() => void disconnect()}>إلغاء الربط</button></div>
         <section className={styles.gates} aria-label="بوابات النشر"><h3>{status.publishing.available ? "النشر متاح بموافقتك" : "النشر مغلق"}</h3><ul>{status.publishing.gates.map(gate => <li key={gate.id}>{gate.passed ? <CheckCircle2 size={15} className={styles.pass} /> : <CircleSlash size={15} className={styles.fail} />}<div><strong>{gateLabels[gate.id] ?? gate.id}</strong><small>{gate.detail}</small></div></li>)}</ul></section>
         <div className={styles.tabs} role="tablist" aria-label="أقسام Google Ads">{tabs.map(([id, label]) => <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? styles.tabActive : styles.tab} onClick={() => setTab(id)}>{label}</button>)}</div>
         {tab === "performance" ? <Performance offline={offline} status={status} onChange={onChange} /> : null}

@@ -73,7 +73,8 @@ export function AiProviders({ offline }: { offline: boolean }) {
       if (!response.ok) throw new Error(errorMessage(result, kind === "save" ? "تعذر حفظ الإعدادات." : "تعذر فحص FreeLLMAPI."));
       if (kind === "save") dirty.current = false;
       apply(result);
-      setNotice(kind === "save" ? "حُفظت الإعدادات وتسري على الطلب التالي للمساعد." : "اكتمل الفحص. لم يُرسل أي طلب نموذج.");
+      const assistant = path.includes("/assistant/") ? AIProvidersStatusSchema.parse(result).assistant : null;
+      setNotice(assistant ? assistant.message : kind === "save" ? "حُفظت الإعدادات وتسري على الطلب التالي للمساعد." : "اكتمل الفحص. لم يُرسل أي طلب نموذج.");
     } catch (caught) {
       if (!controller.signal.aborted) setError(caught instanceof Error && !(caught instanceof TypeError) ? caught.message : "تعذر الاتصال بالخدمة.");
     } finally {
@@ -117,10 +118,29 @@ export function AiProviders({ offline }: { offline: boolean }) {
     <div className={styles.meta}>
       {free.baseUrl ? <span>العنوان <code dir="ltr">{free.baseUrl}</code></span> : null}
       {free.health.checkedAt ? <span>آخر فحص: <time dateTime={free.health.checkedAt}>{time(free.health.checkedAt)}</time></span> : null}
-      <span>Groq: {status.groq.configured ? "مهيأ" : "غير مهيأ"}</span>
+      <span>Groq: {status.assistant?.configured ? status.assistant.active ? "مفعّل للمحادثة" : "مهيأ؛ المحادثة تحتاج تفعيلًا وفحصًا" : status.groq.configured ? "مهيأ" : "غير مهيأ"}</span>
     </div>
 
+    {notice ? <p className={styles.notice} role="status">{notice}</p> : null}
+    {error ? <p className="inline-error" role="alert">{error}</p> : null}
+
     <div className={styles.grid}>
+      {status.assistant ? <div className={styles.card}>
+        <h3>مزود التخطيط والرؤية للمحادثة</h3>
+        <p className={styles.hint}>التفعيل يرسل طلبات المحادثة وسياق الأعمال والصفحات والصور اللازمة إلى Groq. قد تُحسب تكلفة على حسابك. يقتصر هذا الإذن على المحادثة ومهامها؛ لا يفعّل بقية ميزات الذكاء الخارجي.</p>
+        <p role="status" className={status.assistant.active ? styles.notice : styles.hint}>{status.assistant.message}</p>
+        <ul className={styles.quotas} aria-label="قدرات نماذج المحادثة">
+          {status.assistant.models.map(model => <li key={model.id}><code dir="ltr">{model.id}</code><span>{model.available ? "متاح في آخر فحص" : "غير متحقق من إتاحته"}</span><span>{model.structured ? "مخرجات منظمة موثقة" : "قدرة التخطيط غير موثقة"}</span>{model.vision ? <span>رؤية موثقة</span> : null}</li>)}
+        </ul>
+        {status.assistant.checkedAt ? <p className={styles.hint}>آخر تحقق من قائمة الحساب: <time dateTime={status.assistant.checkedAt}>{time(status.assistant.checkedAt)}</time>. يُعاد الفحص بعد 24 ساعة؛ لا يكفي اسم النموذج لإثبات إتاحته.</p> : null}
+        <div className={styles.actions}>
+          <Button className="primary-button" disabled={offline || busy !== "" || !status.assistant.configured || status.assistant.enabled} loading={busy === "save"} onClick={() => { void post("/api/ai/providers/assistant/settings", { enabled: true }, "save"); }}>تفعيل وفحص للمحادثة</Button>
+          <Button variant="outline" disabled={offline || busy !== "" || !status.assistant.enabled} onClick={() => { void post("/api/ai/providers/assistant/settings", { enabled: false }, "save"); }}>إيقاف مزود المحادثة</Button>
+          <Button variant="outline" disabled={offline || busy !== "" || !status.assistant.enabled} loading={busy === "check"} onClick={() => { void post("/api/ai/providers/assistant/check", {}, "check"); }}><RefreshCw size={15} />إعادة فحص النماذج</Button>
+        </div>
+        <p className={styles.hint}>التفعيل والفحص يقرآن قائمة النماذج فقط؛ أول طلب توليد يحدث عند استخدام المحادثة. لا تبديل تلقائي إلى نموذج مدفوع آخر. المفتاح يبقى على الخادم.</p>
+        <p className={styles.hint}><a href="https://console.groq.com/docs/structured-outputs" target="_blank" rel="noreferrer">توثيق المخرجات المنظمة</a> · <a href="https://console.groq.com/docs/vision" target="_blank" rel="noreferrer">توثيق الرؤية</a></p>
+      </div> : null}
       <div className={styles.card}>
         <h3>الإعدادات</h3>
         <Toggle label="تفعيل FreeLLMAPI للمساعد" hint={free.configured ? "يجرب المساعد النماذج المجانية أولًا. التخطيط والبرمجة والاستوديو تبقى على Groq." : free.health.code === "DISABLED_BY_OWNER" ? free.health.message : "أضف FREELLMAPI_API_KEY إلى ملف .env على الخادم أولًا."} checked={draft.enabled} disabled={!free.configured || offline} onChange={value => edit({ enabled: value })} />
@@ -154,8 +174,6 @@ export function AiProviders({ offline }: { offline: boolean }) {
           <Button variant="outline" disabled={offline || busy !== "" || !free.configured} loading={busy === "check"} onClick={() => { void post("/api/ai/providers/freellmapi/check", {}, "check"); }}><RefreshCw size={15} />فحص الاتصال والنماذج</Button>
         </div>
         <p className={styles.hint}><ShieldCheck size={14} />الفحص يقرأ قائمة النماذج وسجل الاستخدام فقط ولا يستهلك حصة. المفتاح يبقى على الخادم ولا يظهر هنا.</p>
-        {notice ? <p className={styles.notice} role="status">{notice}</p> : null}
-        {error ? <p className="inline-error" role="alert">{error}</p> : null}
       </div>
 
       <div className={styles.card}>
