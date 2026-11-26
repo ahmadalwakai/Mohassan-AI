@@ -70,6 +70,7 @@ const selectionOutput = '{ scores: number[]; selectedIndex: number | null; selec
 const classifyOutput = '{ logits: number[]; classIndex: number; label?: string; abstained: boolean; confidence: number }';
 const generateInput = '{ inputIds: number[]; maxNewTokens: number; temperature?: number; topK?: number; topP?: number; seed?: number }';
 const generateOutput = '{ tokenIds: number[]; stopReason: string; text?: string; inputTokens?: number }';
+const rawGenerateInput = `${generateInput}, or the same with text (one chat turn) or prompt (raw text continuation) instead of inputIds`;
 const headsTextInput = '{ text: string; history?: string[]; candidates?: string[] }';
 const workerConfig: ModelArtifact = { role: 'worker-config', path: '.data/model-worker.json', sha256: null, env: 'MOHASSAN_MODEL_WORKER_CONFIG', envFile: true };
 const assistantModule = 'apps/server/src/assistant/';
@@ -176,7 +177,7 @@ function ocr(id: string, version: string, dir: string, trainingRun: string, conf
 }
 
 function historical(entry: Pick<ModelEntry, 'id' | 'version' | 'task' | 'owner' | 'artifacts' | 'input' | 'output' | 'dataCard'>
-    & Partial<Pick<ModelEntry, 'dependencies' | 'runtime' | 'resources' | 'gates'>>): ModelEntry {
+    & Partial<Pick<ModelEntry, 'dependencies' | 'runtime' | 'resources' | 'gates' | 'workerHead'>>): ModelEntry {
   return { runtime: 'python-worker', resources: worker(2000), state: 'experimental', gates: [], dependencies: [], license: internal, ...entry };
 }
 
@@ -206,9 +207,10 @@ export const modelRegistry: readonly ModelEntry[] = [
   head('head-sufficiency', 'sufficiency', 'Evidence sufficiency classification', 'classify'),
   head('head-speech-act', 'speech-act', 'Speech-act classification', 'classify'),
   execution('execution', 'exec-c40m-2026-11-12', 'run-2026-11-12-c/inference-train-40m', true),
-  execution('execution-c9m', 'exec-c9m-2026-11-12', 'run-2026-11-12-c/inference'),
-  execution('execution-b', 'exec-b-2026-11-12', 'run-2026-11-12-b/inference'),
-  execution('execution-a', 'exec-a-2026-11-12', 'run-2026-11-12-a/inference'),
+  // Each run keeps its inference export in a folder named after the trained size (the owner's artifacts, 2026-11-26).
+  execution('execution-c9m', 'exec-c9m-2026-11-12', 'run-2026-11-12-c/inference-train-9m'),
+  execution('execution-b', 'exec-b-2026-11-12', 'run-2026-11-12-b/inference-train-6m'),
+  execution('execution-a', 'exec-a-2026-11-12', 'run-2026-11-12-a/inference-train-3m'),
   router('b0'),
   router('b2'),
   historical({ id: 'router-b1', version: 'b1', task: 'Historical character transformer router', owner: 'scripts/router/train.py',
@@ -293,13 +295,16 @@ export const modelRegistry: readonly ModelEntry[] = [
     gates: [gate('Independent TypeScript parity and bundle audits', 'scripts/router/SLOT-DATE-PLACE-TS-BRIDGE.md#parity-evidence-and-limits')],
     dataCard: 'scripts/router/SLOT-DATE-PLACE-EXPERIMENT.md', license: internal, dependencies: [],
   },
-  historical({ id: 'chat-v4', version: 'v4-stage-3-full', task: 'Historical 38M chat foundation',
-    owner: 'packages/execution-pipeline/scripts/train_full_foundation.py', input: generateInput, output: generateOutput,
+  historical({ id: 'chat-v4', version: 'v4-stage-3-full', task: 'Historical 38M chat foundation', workerHead: 'lm',
+    owner: 'packages/execution-pipeline/scripts/train_full_foundation.py', input: rawGenerateInput, output: generateOutput,
     artifacts: [artifact('checkpoint', `${v4Dir}/selected/best.pt`, '887bb54c58bf93cea2ad04e79b68379d66dd5e40556a0f6d980c4ad6f83ec9fd'),
       artifact('tokenizer', `${v4Dir}/tokenizer.json`), artifact('tokenizer-report', `${v4Dir}/tokenizer-report.json`)], dataCard: 'docs/CHAT-MODEL-TRAINING-PLAN.md' }),
-  ...['reading-v3-last', 'reading-v4-hn-last'].map(id => historical({ id, version: id,
+  // The reading fine-tunes continue a plain prompt: passage, «Question: …» and «Answer:» (scripts/context-use/run_context_test.py).
+  ...['reading-v3-last', 'reading-v4-hn-last'].map(id => historical({ id, version: id, workerHead: 'lm',
     task: 'Historical extractive reading model', owner: 'scripts/context-use/run_context_test.py',
-    artifacts: [artifact('checkpoint', `${v4Dir}/${id}/best.pt`)], input: '{ question: string; passage: string }', output: 'Generated answer or abstention text',
+    artifacts: [artifact('checkpoint', `${v4Dir}/${id}/best.pt`),
+      artifact('tokenizer', `${v4Dir}/tokenizer.json`), artifact('tokenizer-report', `${v4Dir}/tokenizer-report.json`)],
+    input: rawGenerateInput, output: 'Generated answer or abstention text',
     dataCard: responseReport, dependencies: [v4Dependency] })),
   historical({ id: 'reading-abstain-verifier', version: 'v1-20261120',
     task: 'Determine if an experimental reading model should abstain', owner: 'scripts/context-use/abstain_verifier.py',
@@ -310,7 +315,7 @@ export const modelRegistry: readonly ModelEntry[] = [
     input: '{ question: string; passages: string[] }', output: 'Ranked passage indices and similarity scores',
     runtime: 'gpu', resources: { ...worker(2000), gpu: true }, dataCard: developmentPlan, dependencies: [v4Dependency] }),
   ...['pretrain', 'bilingual-code-v1', 'bilingual-code-v2'].map(version => historical({
-    id: version === 'pretrain' ? 'ads-code-foundation' : `ads-${version}`, version,
+    id: version === 'pretrain' ? 'ads-code-foundation' : `ads-${version}`, version, workerHead: 'lm',
     task: version === 'pretrain' ? 'Historical local Ads and code foundation' : 'Historical bilingual Ads and code generation',
     owner: 'scripts/record-model-assessment.py', input: generateInput, output: generateOutput,
     artifacts: [artifact('checkpoint', `${adsDir}/${version}/best.pt`, version === 'bilingual-code-v2'
@@ -446,4 +451,27 @@ export async function resolveModel(entry: ModelEntry, root: string, env: NodeJS.
   const configuredState = entry.activationFlag && env[entry.activationFlag] === '1' ? 'active' : entry.state;
   const state = artifacts.some(item => item.required && !item.present) ? 'absent' : configuredState;
   return { entry, state, artifacts };
+}
+
+/**
+ * Resolves against several roots in order and keeps the first where every required artifact is present, e.g. a server's
+ * model store before its code checkout, which carries only the small checked-in models. All absent: the first root's result.
+ */
+export async function resolveModelInRoots(entry: ModelEntry, roots: readonly string[], env: NodeJS.ProcessEnv = process.env,
+    verify = true): Promise<ResolvedModel> {
+  if (!roots.length) throw new RangeError('At least one model root is required');
+  let first: ResolvedModel | undefined;
+  for (const root of roots) {
+    // A presence probe first, so only the chosen root's bytes are hashed.
+    const probe = await resolveModel(entry, root, env, false);
+    if (probe.state !== 'absent') return verify ? resolveModel(entry, root, env, true) : probe;
+    first ??= probe;
+  }
+  return first!;
+}
+
+/** The roots a process resolves models against: MOHASSAN_MODELS_ROOT (the server's model store) first, then the checkout. */
+export function modelRoots(checkout: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  const store = env.MOHASSAN_MODELS_ROOT?.trim();
+  return store && resolve(store) !== resolve(checkout) ? [resolve(store), resolve(checkout)] : [resolve(checkout)];
 }

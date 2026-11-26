@@ -32,11 +32,13 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
     const chatImage=path.length===2&&path[0]==='chat'&&path[1]==='images'&&request.method==='POST';
     const siteImage=path.length===3&&path[0]==='sites'&&path[2]==='images'&&request.method==='POST';
     const siteBrief=path.length===3&&path[0]==='sites'&&path[2]==='brief'&&request.method==='POST';
-    const limit=fileGrant?720000:chatImage?7500000:path.length===2&&path[0]==='studio'&&path[1]==='images'?1500000:siteImage?1500000:siteBrief?262144:desktopFiles?2300000:documentUpload?14000000:path.length===1&&path[0]==='documents'&&request.method==='POST'?400000:16384;
+    // The owner's models page runs one model on a text or an image (apps/server/src/models-routes.ts).
+    const modelRun=path.length===3&&path[0]==='models'&&path[2]==='run'&&request.method==='POST';
+    const limit=fileGrant?720000:chatImage?7500000:modelRun?7600000:path.length===2&&path[0]==='studio'&&path[1]==='images'?1500000:siteImage?1500000:siteBrief?262144:desktopFiles?2300000:documentUpload?14000000:path.length===1&&path[0]==='documents'&&request.method==='POST'?400000:16384;
     if (Number(request.headers.get('content-length') || '0') > limit) return tooLarge();
     const learningImport=path.length===2&&path[0]==='learning'&&path[1]==='documents'&&request.method==='POST';
     const conversationExport=path.length===4&&path[0]==='chat'&&path[1]==='conversations'&&path[3]==='export'&&request.method==='GET';
-    const signal=AbortSignal.any([request.signal,AbortSignal.timeout(conversationExport||accountExport?60000:path[0]==='chat'&&request.method==='POST'&&(path.length===1||path[path.length-1]==='messages')?150000:path[0]==='sites'&&path[2]==='publish'&&request.method==='POST'?300000:path[0]==='studio'&&request.method==='POST'?360000:path[0]==='executor'&&request.method==='POST'?180000:path[0]==='desktop'?(request.method==='POST'?930000:60000):learningImport?30000:['research','browser','google-ads','search','documents'].includes(path[0]??'')?60000:15000)]);
+    const signal=AbortSignal.any([request.signal,AbortSignal.timeout(conversationExport||accountExport?60000:path[0]==='chat'&&request.method==='POST'&&(path.length===1||path[path.length-1]==='messages')?150000:path[0]==='sites'&&path[2]==='publish'&&request.method==='POST'?300000:path[0]==='studio'&&request.method==='POST'?360000:path[0]==='executor'&&request.method==='POST'?180000:modelRun?180000:path[0]==='desktop'?(request.method==='POST'?930000:60000):learningImport?30000:['research','browser','google-ads','search','documents'].includes(path[0]??'')?60000:15000)]);
     relay = boundedRelayBody(request.body, limit, signal);
     const response=await fetch(target,{method:request.method,headers,...relay.request,cache:'no-store',redirect:'manual',signal});
     const output=new Headers({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});

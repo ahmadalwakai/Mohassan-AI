@@ -33,6 +33,24 @@ def test_pinned_tokenizer_matches_training_pretokenizer(tmp_path):
         load_text_codec(tmp_path, spec, identity, tokenizer.vocab_size)
 
 
+def test_raw_prompt_uses_the_training_pretokenizer_without_framing(tmp_path):
+    tokenizer = ByteBPETokenizer([(ord("a"), ord(" ")), (263, ord("b"))])
+    tokenizer_path = tmp_path / "tokenizer.json"
+    tokenizer.save(tokenizer_path)
+    tokenizer_digest = sha256(tokenizer_path.read_bytes()).hexdigest()
+    report_path = tmp_path / "tokenizer-report.json"
+    report_path.write_text(json.dumps({"pretokenizer": "words-v1", "identity": tokenizer.identity,
+                                       "sha256": tokenizer_digest}), encoding="utf-8")
+    spec = {"path": tokenizer_path.name, "sha256": tokenizer_digest, "reportPath": report_path.name,
+            "reportSha256": sha256(report_path.read_bytes()).hexdigest()}
+    codec = load_text_codec(tmp_path, spec, "sha256:" + tokenizer.identity, tokenizer.vocab_size)
+    # A reading model's prompt: passage, question and answer cue, continued as written (no chat framing).
+    prompt = "a b a b\n\nسؤال: أين المكتبة؟\nالجواب:"
+    assert codec.encode_raw(prompt) == TextEncoder(tmp_path).encode(prompt)
+    assert codec.encode("a b") == codec.encode_raw(conversation_prompt([{"role": "user", "content": "a b"}]))
+    assert codec.encode_raw(prompt) != codec.encode(prompt)
+
+
 def test_text_stream_reassembles_arabic_bytes_and_omits_eos():
     tokenizer = ByteBPETokenizer()
     stream = TextStream(tokenizer)

@@ -183,7 +183,8 @@ class WorkerRuntime:
             key = self.engine.batch_key(operation, head, value) if value is not None else None
             if conversation:
                 key = (key, request_id)  # A chat request always runs by itself.
-            text_stream = self.engine.text.stream() if operation == "generate" and (conversation or "text" in payload) else None
+            text_stream = self.engine.text.stream() if operation == "generate" and (
+                conversation or "text" in payload or "prompt" in payload) else None
         except Exception as error:
             self._error(request_id, error_code(error, "invalid_request"))
             return

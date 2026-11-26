@@ -3,7 +3,7 @@ import { open } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import { createInterface } from 'node:readline';
 import type { TurnDecisionLog } from './manager.js';
-import { getModelEntry, modelRegistry, resolveModel } from './registry.js';
+import { getModelEntry, modelRegistry, modelRoots, resolveModelInRoots } from './registry.js';
 import { createModelRuntime } from './runtime.js';
 
 const maxInputBytes = 1024 * 1024;
@@ -122,7 +122,7 @@ async function main([command, modelId, inputPath, iterationsArg, ...extra]: read
   if (command === 'list' && modelId === undefined) {
     const inventory = [];
     for (const entry of modelRegistry) {
-      const { state, artifacts } = await resolveModel(entry, process.cwd());
+      const { state, artifacts } = await resolveModelInRoots(entry, modelRoots(process.cwd()));
       inventory.push({ ...entry, state, artifacts });
     }
     print(inventory);
@@ -144,7 +144,7 @@ async function main([command, modelId, inputPath, iterationsArg, ...extra]: read
     throw new Error('Iterations must be an integer from 1 to 1000.');
   }
 
-  const runtime = createModelRuntime({ root: process.cwd() });
+  const runtime = createModelRuntime({ root: process.cwd(), artifactRoots: modelRoots(process.cwd()) });
   try {
     if (command === 'health') {
       const ids = modelId ? [modelId] : modelRegistry.map(entry => entry.id);

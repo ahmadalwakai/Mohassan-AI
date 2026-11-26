@@ -51,7 +51,10 @@ class TextCodec:
         return self.encode_conversation([{"role": "user", "content": text}])
 
     def encode_conversation(self, messages: Any) -> list[int]:
-        prompt = conversation_prompt(messages)
+        return self.encode_raw(conversation_prompt(messages))
+
+    def encode_raw(self, prompt: str) -> list[int]:
+        """Tokenizes text as the model was trained on it, with no conversation framing."""
         if self.words:
             return [token for piece in pretokenize(prompt) for token in self.tokenizer.encode(piece)]
         return self.tokenizer.encode(prompt)

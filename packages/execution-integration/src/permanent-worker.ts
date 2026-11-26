@@ -179,8 +179,13 @@ export class PermanentModelWorker {
     if (chatGeneration && (!Array.isArray(input.messages) || !input.messages.length || textInput
       || input.inputIds !== undefined || onToken !== undefined)) throw new ModelTransportError('invalid_request');
     if (textInput && (typeof input.text !== 'string' || input.inputIds !== undefined)) throw new ModelTransportError('invalid_request');
-    if ((textInput || chatGeneration) && !ready.text) throw new ModelTransportError('unsupported_capability');
-    const textChunks = textInput && operation === 'generate' ? [] : undefined;
+    // A raw prompt continues plain text without chat framing (model_worker/engine.py); it streams text like a text turn.
+    const promptInput = operation === 'generate' && input.prompt !== undefined;
+    if (promptInput && (typeof input.prompt !== 'string' || textInput || chatGeneration || input.inputIds !== undefined)) {
+      throw new ModelTransportError('invalid_request');
+    }
+    if ((textInput || chatGeneration || promptInput) && !ready.text) throw new ModelTransportError('unsupported_capability');
+    const textChunks = (textInput || promptInput) && operation === 'generate' ? [] : undefined;
     let maxOutputTokens = 0;
     if (operation === 'generate') {
       if (!integer(input.maxNewTokens, 1, ready.limits.maxOutputTokens)) throw new ModelTransportError('invalid_request');

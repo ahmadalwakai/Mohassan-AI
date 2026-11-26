@@ -91,6 +91,44 @@ export const ChatImageUploadSchema = z.object({
 }).strict();
 export const MAX_CHAT_IMAGES = 4;
 
+/**
+ * One model's part in the owner's model council (apps/server/src/assistant/model-council.ts): how it read the request
+ * (understanding round) or what it answered (answer round), with the council's checks of that answer.
+ */
+export const ModelCouncilMemberSchema = z.object({
+  model: z.string().min(1).max(64),
+  label: z.string().min(1).max(80),
+  /** `search`: the council's own web search, made only when the pipeline read no page and found no answer. */
+  round: z.enum(['understanding', 'search', 'answer']),
+  outcome: z.enum(['ok', 'abstained', 'failed', 'timeout']),
+  /** A label (understanding) or the answer text, shortened. */
+  output: z.string().max(600).optional(),
+  /** Understanding round: whether the model agreed with the existing rules. */
+  agreesWithRules: z.boolean().optional(),
+  /** Answer round: whether the answer was found in the pages read for this turn; absent when nothing was read. */
+  inEvidence: z.boolean().optional(),
+  /** Answer round: how many other answering members said the same thing. */
+  agreements: z.number().int().min(0).max(16).optional(),
+  /** Answer round: the judge's decision on this answer. */
+  judge: z.enum(['send', 'fix', 'withhold']).optional(),
+  chosen: z.boolean().optional(),
+  elapsedMs: z.number().int().min(0).max(600_000),
+  note: z.string().max(240).optional(),
+}).strict();
+export type ModelCouncilMember = z.infer<typeof ModelCouncilMemberSchema>;
+
+export const ModelCouncilSchema = z.object({
+  version: z.literal(1),
+  /** The member whose answer was sent: `pipeline` (the rules and evidence) or a registry model ID. */
+  chosen: z.string().min(1).max(64),
+  /** Whether the sent text differs from what the pipeline alone would have sent. */
+  changed: z.boolean(),
+  reason: z.string().min(1).max(400),
+  elapsedMs: z.number().int().min(0).max(600_000),
+  members: z.array(ModelCouncilMemberSchema).max(48),
+}).strict();
+export type ModelCouncil = z.infer<typeof ModelCouncilSchema>;
+
 export const ChatMessageSchema = z.object({
   id: z.uuid(),
   role: z.enum(['user', 'assistant']),
@@ -98,6 +136,8 @@ export const ChatMessageSchema = z.object({
   createdAt: z.string(),
   images: z.array(ChatImageSchema).max(MAX_CHAT_IMAGES).optional(),
   experiment: z.literal('v5').optional(),
+  /** The owner's model council for this reply (owner accounts only). */
+  council: ModelCouncilSchema.optional(),
 }).strict();
 
 export const ChatBrowserSchema = z.object({

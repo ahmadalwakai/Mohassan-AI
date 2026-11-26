@@ -34,7 +34,10 @@ export interface ModelAdapterContext {
 }
 
 export interface ModelRuntimeOptions {
+  /** The checkout: worker scripts, the local Python and the GPU lock live here. */
   root?: string;
+  /** Where artifacts are looked up, in order; the first root holding every required file wins. Default: `[root]`. */
+  artifactRoots?: readonly string[];
   env?: NodeJS.ProcessEnv;
   memoryBudgetMiB?: number;
   cpuConcurrency?: number;
@@ -71,6 +74,7 @@ function positiveInteger(value: number, name: string): number {
 export class ModelRuntime {
   private readonly entries: ReadonlyMap<string, ModelEntry>;
   private readonly root: string;
+  private readonly artifactRoots: readonly string[];
   private readonly env: NodeJS.ProcessEnv;
   private readonly memoryBudgetMiB: number;
   private readonly cpuConcurrency: number;
@@ -89,6 +93,7 @@ export class ModelRuntime {
   constructor(options: ModelRuntimeOptions = {}) {
     this.entries = new Map((options.registry ?? modelRegistry).map(entry => [entry.id, entry]));
     this.root = resolve(options.root ?? repositoryRoot);
+    this.artifactRoots = options.artifactRoots?.length ? options.artifactRoots.map(root => resolve(root)) : [this.root];
     this.env = options.env ?? process.env;
     this.memoryBudgetMiB = positiveInteger(options.memoryBudgetMiB ?? 4_608, 'memoryBudgetMiB');
     this.cpuConcurrency = positiveInteger(options.cpuConcurrency ?? 2, 'cpuConcurrency');
@@ -215,7 +220,7 @@ export class ModelRuntime {
     const slot = this.slots.get(entry.id)!;
     const startupMs = startupBudget(entry);
     const signal = AbortSignal.any([this.lifecycle.signal, AbortSignal.timeout(startupMs)]);
-    const model = await this.resolveEntry(entry, this.root, this.env, false);
+    const model = await this.resolveIn(entry, false);
     if (model.state === 'absent') throw new ModelRuntimeError('absent');
     const dependencies: ResolvedModel[] = [];
     for (const dependency of entry.dependencies) {
@@ -223,7 +228,7 @@ export class ModelRuntime {
       if (!candidate || candidate.version !== dependency.version) {
         throw new ModelRuntimeError('incompatible', `${entry.id} requires ${dependency.id}@${dependency.version}; found ${candidate?.version ?? 'no registered version'}`);
       }
-      const resolved = await this.resolveEntry(candidate, this.root, this.env, false);
+      const resolved = await this.resolveIn(candidate, false);
       if (resolved.state === 'absent') throw new ModelRuntimeError('absent', `Dependency ${dependency.id}@${dependency.version} is absent`);
       dependencies.push(resolved);
     }
@@ -238,7 +243,7 @@ export class ModelRuntime {
     };
     if (entry.runtime === 'gpu') await assertGpuFree();
     signal.throwIfAborted();
-    const verified = await this.resolveEntry(entry, this.root, this.env, true);
+    const verified = await this.resolveIn(entry, true);
     if (verified.state === 'absent') throw new ModelRuntimeError('absent');
     const badPin = verified.artifacts.find(artifact => artifact.matchesPin === false || (artifact.present &&
       entry.artifacts.some(pin => pin.role === artifact.role && pin.sha256 && artifact.sha256 !== pin.sha256)));
@@ -255,6 +260,17 @@ export class ModelRuntime {
       if (signal.aborted) throw new ModelRuntimeError('timeout');
       throw error;
     }
+  }
+
+  /** The first artifact root where the model is present; with none, the first root's absent result. */
+  private async resolveIn(entry: ModelEntry, verify: boolean): Promise<ResolvedModel> {
+    let first: ResolvedModel | undefined;
+    for (const root of this.artifactRoots) {
+      const probe = await this.resolveEntry(entry, root, this.env, false);
+      if (probe.state !== 'absent') return verify ? this.resolveEntry(entry, root, this.env, true) : probe;
+      first ??= probe;
+    }
+    return first!;
   }
 
   private async reserve(slot: Slot): Promise<void> {

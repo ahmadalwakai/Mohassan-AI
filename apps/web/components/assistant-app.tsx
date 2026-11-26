@@ -27,6 +27,7 @@ import { ConversationActions } from "./conversation-actions";
 const ADS_WORDS = /حمل[ةت]|حملات|إعلان|اعلان|google ads|campaign|\bads?\b|advertis|ppc/i;
 import { ActivityLine, AgentActivity } from "./agent-activity";
 import { RunDetails, RunVerdict } from "./run-status";
+import { ModelCouncilDetails } from "./model-council";
 import { isNewerSnapshot, steerable } from "./run-view";
 import { QuestionPanel, withoutQuestionList } from "./question-card";
 import { ChromeExtensionPanel } from "./chrome-extension-panel";
@@ -746,6 +747,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
                   <p dir="auto">{message.text}</p>
                 </div> : <Markdown text={asking && index === conversation!.messages.length - 1 ? withoutQuestionList(message.text) : message.text} />}
               {message.role === "assistant" && message.text.trim() ? <div className={styles.replyTools}><CopyButton text={message.text} /><ConversationMessageFeedback alerts={conversation!.monitorAlerts} messageId={message.id} fallback={<FeedbackButtons key={message.id} conversationId={conversation!.id} messageId={message.id} />} /></div> : null}
+              {message.role === "assistant" && message.council ? <ModelCouncilDetails council={message.council} /> : null}
               {index === conversation!.messages.length - 1 && message.role === "user" ? <Steps conversation={conversation!} /> : null}
             </article>)}
             {conversation!.messages.at(-1)?.role === "assistant" && (running || conversation!.steps.length > 0 || unfinishedVerdict(conversation!)) && !answering && !blocked ? <Steps conversation={conversation!} /> : null}

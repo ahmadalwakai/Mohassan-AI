@@ -18,6 +18,22 @@ function pageEvidence(pages: readonly Page[]): JudgeEvidence[] {
     .map(({ text, url, title }) => ({ kind: 'page', text: text.slice(0, 24_000), url, title }));
 }
 
+/** How the rules read a request, as the organizer compares models with them (also the model council's understanding round). */
+export function ruleBaseline(state: BrainState | undefined, text: string, imageReadMs?: number): TurnObservation['baseline'] {
+  const routing = state?.routing;
+  const resolution = state?.requestResolution;
+  return {
+    route: imageReadMs === undefined ? routing?.route ?? 'unsupported' : 'image',
+    refusal: routing?.reason === 'scratch_out_of_scope' ? 'out_of_scope'
+      : routing?.reason === 'request_refused' || routing?.reason === 'scratch_refuse' ? 'refuse' : 'allow',
+    speechAct: routing?.handler === 'local_conversation'
+      && (routing.reason === 'scratch_speech_act' || detectManners(text)?.request === null) ? 'smalltalk' : 'request',
+    turnType: resolution?.kind ?? 'new',
+    question: resolution?.resolved ?? text,
+    arithmeticValue: state?.computed?.value,
+  };
+}
+
 export function createModelRelationsObserver(options: {
   env?: NodeJS.ProcessEnv;
   logFile?: string;
@@ -35,28 +51,19 @@ export function createModelRelationsObserver(options: {
     const id = execution.token ? `${runId}:${execution.token}` : runId;
     const text = execution.request;
     const previousText = execution.previousRequest;
-    const routing = state?.routing;
-    const resolution = state?.requestResolution;
-    const arithmeticValue = state?.computed?.value;
+    const rules = ruleBaseline(state, text, imageReadMs);
     const pages = [...(execution.readPages ?? []), ...(execution.page ? [execution.page] : [])];
     const arbiter = captureArbiterObservation(runId);
     let schedulingMs = 0;
     const schedule = () => setImmediate(() => {
       const work = async () => {
         const evidence = pageEvidence(pages);
-        const question = resolution?.resolved ?? text;
         const observation: TurnObservation = {
           id, text, previousText, arbiter: await arbiter?.(),
           baseline: {
-            route: imageReadMs === undefined ? routing?.route ?? 'unsupported' : 'image',
-            refusal: routing?.reason === 'scratch_out_of_scope' ? 'out_of_scope'
-              : routing?.reason === 'request_refused' || routing?.reason === 'scratch_refuse' ? 'refuse' : 'allow',
-            speechAct: routing?.handler === 'local_conversation'
-              && (routing.reason === 'scratch_speech_act' || detectManners(text)?.request === null) ? 'smalltalk' : 'request',
-            turnType: resolution?.kind ?? 'new',
-            question,
+            ...rules,
             ...(evidence.length ? { evidence } : {}),
-            answer, status, arithmeticValue, imageReadMs,
+            answer, status, imageReadMs,
           },
         };
         const worker = await (inspector ??= getInspector().catch(error => { inspector = undefined; throw error; }));

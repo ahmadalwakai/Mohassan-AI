@@ -133,7 +133,8 @@ export function createConversationShareStorage(db: Kysely<any>, now: () => numbe
   async function requireShareableConversation(tx: Kysely<any>, conversationId: string) {
     const experimental = await tx.selectFrom('chat_messages as m').select('m.id')
       .where('m.conversation_id', '=', conversationId)
-      .where(sql<boolean>`to_jsonb(m)->>'experiment' = 'v5'`).limit(1).executeTakeFirst();
+      // A reply the owner's model council took from an experimental model is the same kind of owner-only reply as v5's.
+      .where(sql<boolean>`(to_jsonb(m)->>'experiment' = 'v5' OR to_jsonb(m)->'council'->>'changed' = 'true')`).limit(1).executeTakeFirst();
     if (experimental) throw failure(409, 'CONVERSATION_SHARE_EXPERIMENTAL', 'هذه المحادثة تتضمن ردًا تجريبيًا خاصًا بحساب المالك.');
   }
 

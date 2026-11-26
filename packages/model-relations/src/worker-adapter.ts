@@ -38,7 +38,11 @@ const tokenIds = z.array(z.number().int().nonnegative()).min(1).max(8_192);
 const candidateIds = z.array(z.number().int().nonnegative()).min(1).max(256);
 const genText = z.string().min(1).max(32_000);
 const genSettings = z.object({ maxNewTokens: z.number().int().min(1).max(8_192), temperature: z.number().optional(), topK: z.number().int().optional(), topP: z.number().optional(), seed: z.number().int().optional() });
-const generateInput = z.union([genSettings.extend({ text: genText }).strict(), genSettings.extend({ inputIds: tokenIds }).strict()]);
+const generateInput = z.union([genSettings.extend({ text: genText }).strict(), genSettings.extend({ inputIds: tokenIds }).strict(),
+  // Raw continuation without chat framing, for the reading fine-tunes (packages/execution-integration/model_worker/engine.py).
+  genSettings.extend({ prompt: genText }).strict()]);
+/** The Ads and code foundation family shares the pointer run's tokenizer, which the worker cannot frame: encode-input.py does. */
+const adsFamily = new Set(['google-ads-pointer-lm', 'ads-code-foundation', 'ads-bilingual-code-v1', 'ads-bilingual-code-v2']);
 const selectInput = z.object({ inputIds: tokenIds, candidatePositions: candidateIds }).strict();
 const classifyInput = z.object({ inputIds: tokenIds }).strict();
 const denseInput = z.object({ text: z.string().min(1).max(8_000), history: z.array(z.string().max(8_000)).max(16).optional(), candidates: z.array(z.string().min(1).max(8_000)).max(32).optional() }).strict();
@@ -254,7 +258,7 @@ export async function loadWorkerAdapter(model: ResolvedModel, context: ModelAdap
   };
   const hasHead = model.entry.dependencies.some(dependency => dependency.id === 'chat-v5');
   const dense = hasHead ? await checkDenseHead(model, context, config) : undefined;
-  const isAds = model.entry.id === 'google-ads-pointer-lm';
+  const isAds = adsFamily.has(model.entry.id);
   const goalTagger = record.parse(config.model.checkpoint).format === 'goal-tagger';
   const head = dense?.training.inference.head ?? (goalTagger ? 'goal-tagger' : 'lm');
   const operation: ModelWorkerOperation = dense?.training.inference.operation ?? (goalTagger ? 'select' : 'generate');

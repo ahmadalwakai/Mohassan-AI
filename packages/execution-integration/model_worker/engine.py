@@ -27,6 +27,7 @@ from .text import TextCodec, load_text_codec
 CHAT_HEAD = "chat-v5"
 CHAT_CONTEXT_TOKENS = 512
 CHAT_OUTPUT_TOKENS = 192
+RAW_PROMPT_CHARS = 32_000
 
 
 @dataclass(frozen=True)
@@ -260,12 +261,36 @@ class WorkerEngine:
             if not isinstance(adapter, DenseHead) or adapter.eos is None:
                 raise EngineError("unsupported_capability")
             return self._prepare_chat(adapter, self.text, payload)
+        if operation == "generate" and type(payload) is dict and "prompt" in payload:
+            return self._prepare_prompt(head, payload)
         if operation in ("generate", "score-options") and type(payload) is dict and "text" in payload:
             if self.text is None or "inputIds" in payload:
                 raise EngineError("invalid_request")
             payload = dict(payload)
             payload["inputIds"] = self.text.encode(payload.pop("text"))
         return self.heads[head].prepare(operation, payload, self.max_output_tokens)
+
+    def _prepare_prompt(self, head: str, payload: dict) -> GenerateInput:
+        """Raw text continuation without chat framing, for models fine-tuned on a plain prompt (e.g. passage, question, answer).
+
+        A prompt longer than the context keeps its end, where the question and the answer cue are.
+        """
+        adapter = self.heads[head]
+        if self.text is None or not isinstance(adapter, DenseHead) or {"inputIds", "text", "messages"} & payload.keys():
+            raise EngineError("invalid_request")
+        prompt = payload["prompt"]
+        if type(prompt) is not str or not 1 <= len(prompt) <= RAW_PROMPT_CHARS:
+            raise EngineError("invalid_request")
+        max_tokens = _integer(payload.get("maxNewTokens"), 1, self.max_output_tokens)
+        room = adapter.trunk.config.max_context_length - max_tokens
+        if room < 1:
+            raise EngineError("invalid_request")
+        ids = self.text.encode_raw(prompt)
+        if not ids:
+            raise EngineError("invalid_request")
+        rest = {key: value for key, value in payload.items() if key != "prompt"}
+        rest["inputIds"] = ids[-room:]
+        return adapter.prepare("generate", rest, self.max_output_tokens)
 
     def _prepare_chat(self, head: DenseHead, text: TextCodec, payload: dict) -> GenerateInput | None:
         data = dict(fields(payload, {"messages", "maxNewTokens"}, {"temperature", "topK", "topP", "seed"},
