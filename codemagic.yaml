@@ -161,3 +161,60 @@ workflows:
         script: |
           set -euo pipefail
           python3 "$CM_BUILD_DIR/apps/ios/Tools/enable_internal_testflight.py"
+
+  # With no triggering events, these workflows must be started explicitly.
+  ios-rename-app:
+    name: Mohassan AI - rename the App Store Connect app
+    instance_type: mac_mini_m2
+    max_build_duration: 10
+    integrations:
+      app_store_connect: Vibeset Codemagic
+    environment:
+      xcode: "26.6"
+    scripts:
+      - name: Rename and verify the App Store Connect app localizations
+        script: |
+          set -euo pipefail
+          if [[ "${CM_TRIGGER_SOURCE:-}" != api ]]; then
+            echo "Start ios-rename-app manually in Codemagic." >&2
+            exit 1
+          fi
+          python3 "$CM_BUILD_DIR/apps/ios/Tools/rename_app_store_name.py"
+
+  ios-push-check:
+    name: Mohassan AI - check the App ID Push Notifications capability
+    instance_type: mac_mini_m2
+    max_build_duration: 10
+    integrations:
+      app_store_connect: Vibeset Codemagic
+    environment:
+      xcode: "26.6"
+      ios_signing:
+        certificates:
+          - vibeset_distribution
+        # Use the same stored profile that Codemagic pairs with this certificate in ios-release.
+        provisioning_profiles:
+          - vibeset_app_store
+    scripts:
+      - name: Report the imported certificate team and App ID capabilities
+        script: |
+          set -euo pipefail
+          python3 "$CM_BUILD_DIR/apps/ios/Tools/push_capability.py" check
+
+  ios-push-enable:
+    name: Mohassan AI - enable Push Notifications on the App ID
+    instance_type: mac_mini_m2
+    max_build_duration: 10
+    integrations:
+      app_store_connect: Vibeset Codemagic
+    environment:
+      xcode: "26.6"
+    scripts:
+      - name: Enable and verify Push Notifications on the App ID
+        script: |
+          set -euo pipefail
+          if [[ "${CM_TRIGGER_SOURCE:-}" != api ]]; then
+            echo "Start ios-push-enable manually in Codemagic." >&2
+            exit 1
+          fi
+          python3 "$CM_BUILD_DIR/apps/ios/Tools/push_capability.py" enable
