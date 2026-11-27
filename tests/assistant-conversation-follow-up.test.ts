@@ -62,19 +62,19 @@ describe('«اشرح أكثر» and «اختصر جوابك»', () => {
   });
 
   it('recognises a request to shorten the previous answer, and only that', () => {
-    expect(shorterRequest('اختصر جوابك السابق في جملة واحدة')).toEqual({ sentences: 1, lang: 'ar' });
-    expect(shorterRequest('لخّصه في جملتين')).toEqual({ sentences: 2, lang: 'ar' });
+    expect(shorterRequest('اختصر جوابك السابق في جملة واحدة')).toEqual({ sentences: 1, lang: 'ar', asSentences: true });
+    expect(shorterRequest('لخّصه في جملتين')).toEqual({ sentences: 2, lang: 'ar', asSentences: true });
     expect(shorterRequest('باختصار')).toEqual({ sentences: 1, lang: 'ar' });
     expect(shorterRequest('make it shorter')).toEqual({ sentences: 1, lang: 'en' });
-    expect(shorterRequest('summarize that in two sentences')).toEqual({ sentences: 2, lang: 'en' });
+    expect(shorterRequest('summarize that in two sentences')).toEqual({ sentences: 2, lang: 'en', asSentences: true });
     for (const text of ['لخص لي أهم أخبار اليوم', 'لخص الخبر الثالث', 'اختصر المسافة إلى العمل', 'summarize this article about solar power']) expect(shorterRequest(text), text).toBeNull();
   });
 
   it('quotes the previous answer’s opening sentence with its source', () => {
     const previous = 'الذكاء الاصطناعي هو فرع من علم الحاسوب. يدرس الآلات التي تحاكي التفكير.\n\n**تفاصيل أخرى من نفس المصدر:**\n- جملة أخرى طويلة بما يكفي لتكون تفصيلًا.\n\n'
       + '**المصدر:** [ويكيبيديا — ذكاء اصطناعي](https://ar.wikipedia.org/wiki/x) · قُرئت 2026-11-23 01:15 UTC';
-    expect(shorterAnswer(previous, { sentences: 1, lang: 'ar' })).toBe('الذكاء الاصطناعي هو فرع من علم الحاسوب.\n\n**المصدر:** [ويكيبيديا — ذكاء اصطناعي](https://ar.wikipedia.org/wiki/x) · قُرئت 2026-11-23 01:15 UTC');
-    expect(shorterAnswer('37 * 24 = 888', { sentences: 1, lang: 'ar' })).toBe('37 * 24 = 888');
+    expect(shorterAnswer(previous, { sentences: 1, lang: 'ar', asSentences: true })).toBe('الذكاء الاصطناعي هو فرع من علم الحاسوب.\n\n**المصدر:** [ويكيبيديا — ذكاء اصطناعي](https://ar.wikipedia.org/wiki/x) · قُرئت 2026-11-23 01:15 UTC');
+    expect(shorterAnswer('37 * 24 = 888', { sentences: 1, lang: 'ar' })).toBeNull();
   });
 });
 
@@ -162,11 +162,26 @@ describe('a conversation that goes on, through the real chat controller', () => 
     expect(back.reply).not.toContain('لم أبحث في الويب');
   });
 
-  it('«اختصر جوابك السابق في جملة واحدة» quotes the first sentence of the last answer', async () => {
+  it.each([
+    { request: 'اختصر الجواب السابق', alreadyShort: 'مختصر', missing: 'لا يوجد في هذه المحادثة جواب سابق' },
+    { request: 'make it shorter', alreadyShort: 'already short', missing: 'no earlier answer in this conversation' },
+  ])('distinguishes an already-short answer from missing history for $request', async ({ request, alreadyShort, missing }) => {
     const first = await turn('احسب 37 * 24');
-    const next = await turn('اختصر جوابك السابق في جملة واحدة', first.id);
-    expect(next.reply).toBe(first.reply);
-    const empty = await turn('اختصر جوابك السابق');
-    expect(empty.reply).toContain('لا يوجد في هذه المحادثة جواب سابق');
+    const next = await turn(request, first.id);
+    expect(next.reply).toContain(alreadyShort);
+    expect(next.reply).not.toContain(missing);
+    expect((await turn(request)).reply).toContain(missing);
+  });
+
+  it('shortens a stored list into two sentences and carries its source into the reply', async () => {
+    const first = await turn('احسب 2 + 2');
+    const facts = ['الحالة الأولى جاهزة.', 'الحالة الثانية قيد المراجعة.', 'الحالة الثالثة مؤجلة.'];
+    const source = '**المصدر:** [سجل الاختبار](https://example.test/log)';
+    await database.db.updateTable('chat_messages')
+      .set({ text: [...facts.map(fact => `- ${fact}`), '', source].join('\n') })
+      .where('conversation_id', '=', first.id).where('role', '=', 'assistant').execute();
+
+    const next = await turn('في جملتين', first.id);
+    expect(next.reply).toBe(`${facts.slice(0, 2).join(' ')}\n\n${source}`);
   });
 });

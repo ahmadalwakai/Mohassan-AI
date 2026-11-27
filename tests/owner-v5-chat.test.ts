@@ -112,7 +112,7 @@ describe('owner-only v5 chat over signed-in sessions', () => {
       headers: headers(ownerCookie), payload: { text: 'Make it shorter.' } });
     expect(shorten.statusCode).toBe(200);
     const shortened = await detail(conversation.id, ownerCookie);
-    expect(shortened.messages.at(-1)?.text).toContain('no earlier answer');
+    expect(shortened.messages.at(-1)?.text).toBe('I can’t shorten the previous answer in this experimental mode.');
     expect(mockGenerate).toHaveBeenCalledTimes(2);
   });
 
