@@ -20,6 +20,7 @@
 | 10 | #104 | `046_smart_monitor_visual_budget` | — |
 | 11 | #102 | `047_monitor_alert_feedback` | `044_monitor_alert_feedback` |
 | 12 | #105 | `048_smart_monitor_decisions` | `046_smart_monitor_decisions` |
+| 13 | `fix/chat-data-hygiene` | `058_chat_run_indexes` | — |
 
 Startup recognizes each full legacy ID and changes the existing ledger row to its recorded ID inside the migration transaction, preserving the original application timestamp. The notifications upgrade also widens the existing notification kind constraint for reminder delivery. Fresh databases run each migration once. The platform branch starts at `c2a0ff7` and leaves the agent migrations to the agent wave.
 
@@ -40,6 +41,8 @@ Wave 5 runs `041_long_run_checkpoints` through the `042_background_results` star
 `047_monitor_alert_feedback` adds one optional feedback record per account and monitor alert. Startup applies it with monitors off, and deletion of the account or alert cascades to its feedback.
 
 `048_smart_monitor_decisions` adds the recording preference and proposal outcomes. The training export joins those outcomes with `047` alert feedback. The startup transaction applies `044` through `048` in order under the monitor schema lock.
+
+`058_chat_run_indexes` indexes the five chat foreign keys that reference `chat_runs`, the conversation references in `chat_images` and `chat_observations`, and non-null image expiry times. The chat control startup pass applies it after `042_background_results` has added the `chat_notifications.run_id` foreign key. The ID may need renumbering at merge.
 
 ## Collisions
 
