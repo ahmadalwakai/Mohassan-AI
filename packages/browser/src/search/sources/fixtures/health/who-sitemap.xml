@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Recorded 2026-11-27 from https://www.who.int/sitemap/sitemap.gz; selected URL and alternate links -->
+<urlset xmlns:xhtml="http://www.w3.org/1999/xhtml" xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<url>
+    <loc>https://www.who.int/ar/news-room/fact-sheets/detail/asthma</loc>
+    <priority>1</priority>
+    <xhtml:link rel="alternate" hreflang="ar" href="https://www.who.int/ar/news-room/fact-sheets/detail/asthma" />
+    <xhtml:link rel="alternate" hreflang="zh" href="https://www.who.int/zh/news-room/fact-sheets/detail/asthma" />
+    <xhtml:link rel="alternate" hreflang="en" href="https://www.who.int/news-room/fact-sheets/detail/asthma" />
+    <xhtml:link rel="alternate" hreflang="fr" href="https://www.who.int/fr/news-room/fact-sheets/detail/asthma" />
+    <xhtml:link rel="alternate" hreflang="ru" href="https://www.who.int/ru/news-room/fact-sheets/detail/asthma" />
+    <xhtml:link rel="alternate" hreflang="es" href="https://www.who.int/es/news-room/fact-sheets/detail/asthma" />
+  </url>
+<url>
+    <loc>https://www.who.int/ar/news-room/fact-sheets</loc>
+    <priority>1</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://www.who.int/news-room/fact-sheets" />
+    <xhtml:link rel="alternate" hreflang="es" href="https://www.who.int/es/news-room/fact-sheets" />
+    <xhtml:link rel="alternate" hreflang="zh" href="https://www.who.int/zh/news-room/fact-sheets" />
+    <xhtml:link rel="alternate" hreflang="fr" href="https://www.who.int/fr/news-room/fact-sheets" />
+    <xhtml:link rel="alternate" hreflang="ru" href="https://www.who.int/ru/news-room/fact-sheets" />
+    <xhtml:link rel="alternate" hreflang="ar" href="https://www.who.int/ar/news-room/fact-sheets" />
+  </url>
+</urlset>
