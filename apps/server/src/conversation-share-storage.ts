@@ -6,6 +6,7 @@ import {
 } from '@mohassan/contracts';
 import type { WorkspaceRole } from './members.js';
 import type { BrainState } from './assistant/brain.js';
+import { emptyConversationShareSnapshot } from './conversation-share-lifecycle.js';
 import {
   conversationPublicToolQuotes, conversationRunPrivacy, hasConversationPromptPrivacy, visibleConversationText, type ConversationPrivateOrigin,
 } from './conversation-share-privacy.js';
@@ -203,12 +204,13 @@ export function createConversationShareStorage(db: Kysely<any>, now: () => numbe
       .select(['id', 'conversation_id', 'shared_at', 'expires_at']).select(sql<string>`snapshot ->> 'title'`.as('title'))
       .where('sharer_id', '=', ownerId).where('revoked_at', 'is', null)
       .where(eb => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date(now()))]))
+      .where('snapshot', '!=', emptyConversationShareSnapshot)
       .orderBy('shared_at', 'desc').orderBy('id', 'desc').execute();
     return rows.map(summary);
   }
 
   async function revokeShare(ownerId: string, id: string) {
-    const row = await db.updateTable('conversation_shares').set({ revoked_at: new Date(now()) })
+    const row = await db.updateTable('conversation_shares').set({ revoked_at: new Date(now()), snapshot: emptyConversationShareSnapshot })
       .where('sharer_id', '=', ownerId).where('id', '=', id).where('revoked_at', 'is', null)
       .returning('id').executeTakeFirst();
     return Boolean(row);
@@ -218,7 +220,8 @@ export function createConversationShareStorage(db: Kysely<any>, now: () => numbe
     if (!ConversationShareTokenSchema.safeParse(token).success || Buffer.from(token, 'base64url').toString('base64url') !== token) return null;
     const row = await db.selectFrom('conversation_shares').select(['snapshot', 'shared_at'])
       .where('token_hash', '=', hashToken(token)).where('revoked_at', 'is', null)
-      .where(eb => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date(now()))])).executeTakeFirst();
+      .where(eb => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date(now()))]))
+      .where('snapshot', '!=', emptyConversationShareSnapshot).executeTakeFirst();
     return row ? { snapshot: ConversationSnapshotSchema.parse(row.snapshot), sharedAt: iso(row.shared_at) } : null;
   }
 

@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AccountSessionsSchema, MemberAuditPageSchema, PendingMemberDeletionsSchema } from '@mohassan/contracts';
 import { createApplication } from '../apps/server/src/app.js';
 import { MEMBER_DATA_ROUTES } from '../apps/server/src/member-data-routes.js';
+import { addOversizedMemberDocument } from './fixtures/oversized-member-export.ts';
 
 const origin = 'http://127.0.0.1:3000';
 const internalSecret = 'member-rights-test-internal-secret-001';
@@ -230,16 +231,28 @@ describe('member data rights over the authenticated application', () => {
     expect((await suspend(true)).statusCode).toBe(200);
   });
 
-  it('audits completed exports and rate-limits the requester independently', async () => {
-    expect((await app().inject({ url: `/api/member-data/export?userId=${bobId}`, headers: headers(alice) })).statusCode).toBe(400);
-    const download = await app().inject({ url: '/api/member-data/export', headers: headers(alice) });
+  it('strictly validates the query, refunds oversized exports, and audits only completed downloads', async () => {
+    const exportUrl = '/api/member-data/export';
+    const exportAsAlice = (query = '') => app().inject({ url: `${exportUrl}${query}`, headers: headers(alice) });
+    for (const query of [`?userId=${bobId}`, `?files=omit&userId=${bobId}`, '?files=', '?files=include', '?files=OMIT', '?files=omit&files=omit']) {
+      expect((await exportAsAlice(query)).statusCode, query).toBe(400);
+    }
+    await addOversizedMemberDocument(application!.database.db, join(directory!, 'documents'), aliceId);
+    const rejected = await exportAsAlice();
+    expect(rejected.statusCode).toBe(413);
+    expect(rejected.json().error.code).toBe('MEMBER_EXPORT_TOO_LARGE');
+    expect((await readAudit()).filter(entry => entry.action === 'export_downloaded')).toEqual([]);
+
+    const download = await exportAsAlice('?files=omit');
     expect(download.statusCode).toBe(200);
     expect(download.headers['content-type']).toContain('application/zip');
     expect(download.rawPayload.length).toBeGreaterThan(0);
-    const repeated = await app().inject({ url: '/api/member-data/export', headers: headers(alice) });
-    expect(repeated.statusCode).toBe(429);
-    expect(Number(repeated.headers['retry-after'])).toBeGreaterThan(0);
-    expect((await app().inject({ url: '/api/member-data/export', headers: headers(bob) })).statusCode).toBe(200);
+    for (const query of ['', '?files=omit']) {
+      const repeated = await exportAsAlice(query);
+      expect(repeated.statusCode).toBe(429);
+      expect(Number(repeated.headers['retry-after'])).toBeGreaterThan(0);
+    }
+    expect((await app().inject({ url: exportUrl, headers: headers(bob) })).statusCode).toBe(200);
     await vi.waitFor(async () => {
       const downloaded = (await readAudit()).filter(entry => entry.action === 'export_downloaded');
       expect(downloaded).toHaveLength(2);

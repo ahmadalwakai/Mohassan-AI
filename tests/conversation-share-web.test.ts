@@ -74,17 +74,26 @@ describe("public conversation route", () => {
     );
   });
 
-  it("applies public security headers when links are unavailable or the service is down", async () => {
+  it.each(["revoked", "expired"])("returns a private 404 page for a %s link", async state => {
     vi.stubEnv("INTERNAL_API_SECRET", secret);
-    const fetcher = vi.fn().mockResolvedValueOnce(new Response(null, { status: 404 })).mockRejectedValueOnce(new Error());
+    const transcript = `fixture transcript for ${state} link`;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ transcript }, { status: 404 })));
+    const unavailable = await getPublicShare(request(), params(token));
+    expect(unavailable.status).toBe(404);
+    expectPrivateResponse(unavailable);
+    const html = await unavailable.text();
+    expect(html).toContain("رابط المشاركة غير متاح");
+    expect(html).not.toContain(transcript);
+  });
+
+  it("applies public security headers when the token is invalid or the service is down", async () => {
+    vi.stubEnv("INTERNAL_API_SECRET", secret);
+    const fetcher = vi.fn().mockRejectedValueOnce(new Error());
     vi.stubGlobal("fetch", fetcher);
     const invalid = await getPublicShare(request(), params("bad-format"));
     expect(invalid.status).toBe(404);
     expectPrivateResponse(invalid);
     expect(fetcher).not.toHaveBeenCalled();
-    const unavailable = await getPublicShare(request(), params(token));
-    expect(unavailable.status).toBe(404);
-    expectPrivateResponse(unavailable);
     const serviceFailure = await getPublicShare(request(), params(token));
     expect(serviceFailure.status).toBe(503);
     expectPrivateResponse(serviceFailure);

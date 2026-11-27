@@ -12,6 +12,8 @@ import { buildOperations, operationsHash, summarizeOperations } from '@mohassan/
 import { listZip } from '@mohassan/sites';
 import { createApplication } from '../apps/server/src/app.ts';
 import { createMemberDataExport } from '../apps/server/src/member-data-export.ts';
+import { memberDataRegistry } from '../apps/server/src/member-data-registry.ts';
+import { addOversizedMemberDocument } from './fixtures/oversized-member-export.ts';
 import { addPlatformMemberData } from './fixtures/platform-member-data.ts';
 
 const exportUrl = '/api/member-data/export';
@@ -109,9 +111,13 @@ describe('signed-in account exports', () => {
     const siteId = randomUUID();
     const siteImageId = randomUUID();
     const message = `Message belonging to ${account.name}`;
-    const image = new PNG({ width: 16, height: 16 });
+    const image = new PNG({ width: 32, height: 32 });
     image.data.fill(pixel);
     const png = PNG.sync.write(image);
+    const smallImage = new PNG({ width: image.width / 2, height: image.height / 2 });
+    smallImage.data.fill(pixel);
+    const smallPng = PNG.sync.write(smallImage);
+    const studioImageId = randomUUID();
     await db().insertInto('chat_conversations').values({ id: conversationId, owner_id: account.id, title: account.name }).execute();
     const platform = await addPlatformMemberData(db(), account.id, conversationId);
     await db().insertInto('chat_messages').values({ id: randomUUID(), conversation_id: conversationId, text: message, role: 'user' }).execute();
@@ -125,7 +131,13 @@ describe('signed-in account exports', () => {
     }).execute();
     await db().insertInto('site_images').values({
       id: siteImageId, site_id: siteId, owner_id: account.id, mime_type: 'image/png', width: image.width, height: image.height,
-      data_base64: png.toString('base64'), small_base64: png.toString('base64'), alt: account.name, role: 'gallery',
+      data_base64: png.toString('base64'), small_base64: smallPng.toString('base64'), alt: account.name, role: 'gallery',
+    }).execute();
+    // Fixture follows the studio upload schema (retrieved 2026-11-27).
+    // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/studio-ai.ts#L23
+    await db().insertInto('studio_images').values({
+      id: studioImageId, owner_id: account.id, mime_type: 'image/png', width: image.width, height: image.height,
+      data_base64: png.toString('base64'), content_hash: hash(png), expires_at: sql<Date>`now() + interval '1 hour'`,
     }).execute();
 
     const pdf = await PDFDocument.create();
@@ -195,7 +207,7 @@ describe('signed-in account exports', () => {
         field: 'Safe fixture value', text: `Connected as ${adsSecrets.login_customer_id}` } }),
     }).execute();
 
-    return { message, png, imageId, siteImageId, document, documentId, documentName, files, adsName, campaign: summary!.campaignName, platform,
+    return { message, png, smallPng, imageId, siteImageId, studioImageId, document, documentId, documentName, files, adsName, campaign: summary!.campaignName, platform,
       secrets: [...Object.values(oauthSecrets), ...Object.values(adsSecrets), ...platform.secrets, apiKey, privateConfig, copiedCookie, credential.password as string],
     };
   }
@@ -258,7 +270,8 @@ describe('signed-in account exports', () => {
     }
     expect(archive.get(`files/chat-images/${ownData.imageId}.png`)?.equals(ownData.png)).toBe(true);
     expect(archive.get(`files/site-images/${ownData.siteImageId}.png`)?.equals(ownData.png)).toBe(true);
-    expect(archive.get(`files/site-images/${ownData.siteImageId}-small.png`)?.equals(ownData.png)).toBe(true);
+    expect(archive.get(`files/site-images/${ownData.siteImageId}-small.png`)?.equals(ownData.smallPng)).toBe(true);
+    expect(archive.get(`files/studio-images/${ownData.studioImageId}.png`)?.equals(ownData.png)).toBe(true);
     expect(archive.get(`files/documents/${ownData.documentId}/${ownData.documentName}`)?.equals(ownData.document)).toBe(true);
     for (const file of ownData.files) {
       if (file.status === 'quarantined') {
@@ -268,7 +281,8 @@ describe('signed-in account exports', () => {
       }
     }
     for (const foreign of [ownerData, otherData]) {
-      for (const value of [foreign.message, foreign.adsName, foreign.imageId, foreign.siteImageId, foreign.documentId, foreign.document, foreign.png]) {
+      for (const value of [foreign.message, foreign.adsName, foreign.imageId, foreign.siteImageId, foreign.studioImageId, foreign.documentId,
+        foreign.document, foreign.png, foreign.smallPng]) {
         expect(contains(archive, value)).toBe(false);
       }
       for (const file of foreign.files) expect(contains(archive, file.bytes)).toBe(false);
@@ -287,7 +301,7 @@ describe('signed-in account exports', () => {
     expect((await app().inject({ method: 'HEAD', url: exportUrl, headers: headers(member.cookie) })).statusCode).toBe(404);
     const [first, second] = await Promise.all([
       app().inject({ url: exportUrl, headers: headers(member.cookie) }),
-      app().inject({ url: exportUrl, headers: headers(secondSession) }),
+      app().inject({ url: `${exportUrl}?files=omit`, headers: headers(secondSession) }),
     ]);
     expect([first.statusCode, second.statusCode].sort()).toEqual([200, 429]);
     const limited = [first, second].find(response => response.statusCode === 429)!;
@@ -324,5 +338,72 @@ describe('signed-in account exports', () => {
     await db().deleteFrom('member_data_exports').where('user_id', '=', member.id).execute();
     const exporter = createMemberDataExport(db(), { documentsDir, maxBytes: fullExport.rawPayload.byteLength - 1 });
     await expect(exporter.prepare(member.id)).rejects.toMatchObject({ statusCode: 413, code: 'MEMBER_EXPORT_TOO_LARGE' });
+  });
+
+  it('lets an over-limit account download all its data with a redacted inventory of omitted files', async () => {
+    const large = await addOversizedMemberDocument(db(), documentsDir, member.id);
+    const download = ownData.files.find(file => file.status === 'released')!;
+    const nameSecret = randomUUID();
+    await db().updateTable('browser_file_grants').set({ filename: `Authorization: Bearer ${nameSecret}` })
+      .where('id', '=', download.id).execute();
+    const closedShares = await db().insertInto('conversation_shares').values(['revoked', 'expired'].map(state => {
+      const id = randomUUID();
+      return {
+        id, sharer_id: member.id, conversation_id: randomUUID(), token_hash: hash(Buffer.from(id)),
+        snapshot: JSON.stringify({ title: `Closed share ${id}`, messages: [{ text: `Transcript ${id}` }] }),
+        shared_at: sql<Date>`now() - interval '1 day'`,
+        revoked_at: state === 'revoked' ? sql<Date>`now()` : null,
+        expires_at: state === 'expired' ? sql<Date>`now() - interval '1 hour'` : null,
+      };
+    })).returning('id').execute();
+
+    const full = await app().inject({ url: exportUrl, headers: headers(member.cookie) });
+    expect(full.statusCode).toBe(413);
+    expect(full.json().error.code).toBe('MEMBER_EXPORT_TOO_LARGE');
+    const response = await app().inject({ url: `${exportUrl}?files=omit`, headers: headers(member.cookie) });
+    expect(response.statusCode).toBe(200);
+    const archive = readArchive(response.rawPayload);
+    expect([...archive.keys()].sort()).toEqual(['README.txt', ...memberDataRegistry.flatMap(entry =>
+      entry.export ? [`data/${entry.table}.json`] : [])].sort());
+    expect(readTable(archive, 'user')).toMatchObject([{ id: member.id, email: member.email }]);
+    expect(readTable(archive, 'chat_messages')).toMatchObject([{ text: ownData.message }]);
+    const shares = readTable(archive, 'conversation_shares');
+    const activeShare = ownData.platform.exportedRows.conversation_shares;
+    expect(shares.find(share => share.id === activeShare.id)).toMatchObject(activeShare);
+    for (const closed of closedShares) expect(shares.find(share => share.id === closed.id)?.snapshot).toEqual({});
+
+    const list = archive.get('README.txt')!.toString('utf8').split('\n').filter(line => line.startsWith('"'));
+    const inventory = list.map(line => {
+      const [id, name, byteCount, hash] = line.split('\t');
+      return { id: JSON.parse(id), name: JSON.parse(name), byteCount: Number(byteCount), hash };
+    });
+    const file = (id: string, name: string, bytes: Buffer) => ({ id, name, byteCount: bytes.length, hash: hash(bytes) });
+    const expected = [
+      large,
+      file(ownData.documentId, ownData.documentName, ownData.document),
+      file(ownData.imageId, `${ownData.imageId}.png`, ownData.png),
+      file(ownData.siteImageId, `${ownData.siteImageId}.png`, ownData.png),
+      file(ownData.siteImageId, `${ownData.siteImageId}-small.png`, ownData.smallPng),
+      file(ownData.studioImageId, `${ownData.studioImageId}.png`, ownData.png),
+      ...ownData.files.filter(item => item.status !== 'quarantined').map(item =>
+        file(item.id, item.id === download.id ? '[REDACTED]' : item.filename, item.bytes)),
+    ];
+    expect(inventory).toHaveLength(expected.length);
+    expect(inventory).toEqual(expect.arrayContaining(expected));
+
+    const credentials = await db().selectFrom('session').select('token').execute();
+    const invites = await db().selectFrom('workspace_invites').select('token_hash').execute();
+    const secrets = [nameSecret, member.password, owner.password, other.password, ...ownData.secrets, ...ownerData.secrets,
+      ...otherData.secrets, ...credentials.map(row => row.token as string), ...invites.map(row => row.token_hash as string)];
+    for (const value of [...secrets, owner.email, other.email, ownData.document, ownData.png, ownData.smallPng, ...ownData.files.map(item => item.bytes),
+      ...closedShares.flatMap(share => [`Closed share ${share.id}`, `Transcript ${share.id}`])]) {
+      expect(contains(archive, value)).toBe(false);
+    }
+    for (const foreign of [ownerData, otherData]) {
+      for (const value of [foreign.message, foreign.adsName, foreign.imageId, foreign.siteImageId, foreign.studioImageId, foreign.documentId,
+        ...foreign.files.map(item => item.id)]) {
+        expect(contains(archive, value)).toBe(false);
+      }
+    }
   });
 });

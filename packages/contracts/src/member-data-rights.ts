@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const MemberAccountIdSchema = z.string().min(1).max(64);
+export const MemberDataExportQuerySchema = z.object({ files: z.literal('omit').optional() }).strict();
 export const RequestMemberDeletionSchema = z.object({ password: z.string().min(1).max(128) }).strict();
 export const MemberDeletionSchema = z.object({
   requestedAt: z.iso.datetime(),
@@ -40,6 +41,7 @@ export const MemberAuditEntrySchema = z.object({
 }).strict();
 export const MemberAuditPageSchema = z.object({ entries: z.array(MemberAuditEntrySchema), nextBeforeId: MemberAuditIdSchema.nullable() }).strict();
 
+export type MemberDataExportQuery = z.infer<typeof MemberDataExportQuerySchema>;
 export type MemberDeletion = z.infer<typeof MemberDeletionSchema>;
 export type MemberDeletionStatus = z.infer<typeof MemberDeletionStatusSchema>;
 export type CancelMemberDeletionResult = z.infer<typeof CancelMemberDeletionResultSchema>;

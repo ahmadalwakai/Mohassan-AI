@@ -1,3 +1,6 @@
+import { sql } from 'kysely';
+import { emptyConversationShareSnapshot } from './conversation-share-lifecycle.js';
+
 export type AccountDataDeletion =
   | { action: 'delete'; final?: true }
   | { action: 'anonymize'; set: string }
@@ -10,6 +13,15 @@ export interface AccountDataTable {
   /** Explicit column allowlist. Binary attachments have separate archive entries. */
   export: readonly string[] | false;
   deletion: AccountDataDeletion;
+}
+
+export function memberDataExportColumn(entry: AccountDataTable, column: string) {
+  if (entry.table === 'conversation_shares' && column === 'snapshot') {
+    return sql`CASE WHEN data.revoked_at IS NULL
+      AND (data.expires_at IS NULL OR data.expires_at > statement_timestamp())
+      THEN data.snapshot ELSE ${emptyConversationShareSnapshot} END AS snapshot`;
+  }
+  return sql.ref(`data.${column}`);
 }
 
 function accountData(

@@ -5,6 +5,7 @@ import { CompiledQuery, sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import { MemberAccountIdSchema, RequestMemberDeletionSchema, type MemberDeletion } from '@mohassan/contracts';
 import type { createAuth } from './auth.js';
+import { clearEndedConversationShareSnapshots, revokeMemberConversationShares } from './conversation-share-lifecycle.js';
 import { recordMemberAudit } from './member-audit.js';
 import { memberDocumentDirectory } from './member-data-document-path.js';
 import { memberDataRegistry } from './member-data-registry.js';
@@ -107,8 +108,7 @@ async function requestMemberDeletion(db: Kysely<any>, userId: string, sessionId:
       ON CONFLICT (user_id) DO NOTHING
       RETURNING requested_at, purge_after`.execute(tx);
     if (!row.rows[0]) throw failure(409, 'DELETION_ALREADY_REQUESTED', 'حذف الحساب مطلوب بالفعل.');
-    await tx.updateTable('conversation_shares').set({ revoked_at: row.rows[0].requested_at })
-      .where('sharer_id', '=', userId).where('revoked_at', 'is', null).execute();
+    await revokeMemberConversationShares(tx, userId, row.rows[0].requested_at);
     await tx.deleteFrom('push_subscriptions').where('user_id', '=', userId).execute();
     await tx.updateTable('chat_notifications').set({ delivery: 'suppressed' }).where('user_id', '=', userId)
       .where('conversation_id', 'is not', null).where('delivery', 'in', ['pending', 'push'])
@@ -279,6 +279,9 @@ export function startMemberDeletionPurge(app: FastifyInstance, db: Kysely<any>, 
   const reportError = () => console.error(JSON.stringify({ level: 'error', event: 'member_deletion_purge_failed' }));
   const tick = () => {
     running ??= (async () => {
+      await clearEndedConversationShareSnapshots(db).catch(() => {
+        console.error(JSON.stringify({ level: 'error', event: 'conversation_share_sweep_failed' }));
+      });
       const due = await memberDeletionQuery(db).select('d.user_id')
         .where('d.purge_after', '<=', sql<Date>`clock_timestamp()`).orderBy('d.purge_after').limit(20).execute();
       for (const { user_id } of due) {

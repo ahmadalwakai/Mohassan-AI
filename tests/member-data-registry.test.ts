@@ -1,8 +1,9 @@
+import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CompiledQuery, sql } from 'kysely';
 import { describe, expect, it } from 'vitest';
-import { memberDataRegistry } from '../apps/server/src/member-data-registry.ts';
+import { memberDataExportColumn, memberDataRegistry } from '../apps/server/src/member-data-registry.ts';
 
 // Better Auth 1.7.17 keys database rate-limit rows by IP and path in createRateLimitKey.
 // https://registry.npmjs.org/@better-auth/core/-/core-1.7.17.tgz (retrieved 2026-11-25).
@@ -92,16 +93,42 @@ describe('member data schema registry', () => {
       }
 
       for (const entry of memberDataRegistry) {
-        const projection = entry.export ? entry.export.map(column => `data.${identifier(column)}`).join(', ') : '1';
+        const projection = entry.export ? sql.join(entry.export.map(column => memberDataExportColumn(entry, column))) : sql.lit(1);
         const from = `${identifier(entry.table)} AS data`;
         const predicate = entry.accountPredicate;
         const parameter = ['member-registry-fixture-account'];
-        await db.executeQuery(CompiledQuery.raw(`EXPLAIN SELECT ${projection} FROM ${from} WHERE ${predicate}`, parameter));
+        const scoped = sql.join(predicate.split('$1').map(part => sql.raw(part)), sql`${parameter[0]}`);
+        await sql`EXPLAIN SELECT ${projection} FROM ${sql.raw(from)} WHERE ${scoped}`.execute(db);
         if (entry.deletion.action === 'anonymize') {
           await db.executeQuery(CompiledQuery.raw(`EXPLAIN UPDATE ${from} SET ${entry.deletion.set} WHERE ${predicate}`, parameter));
         }
         if (entry.deletion.action === 'keep') expect(entry.deletion.reason.trim()).not.toBe('');
       }
+
+      const accountId = 'member-registry-fixture-account';
+      const share = registryByTable.get('conversation_shares')!;
+      const snapshot = { title: 'Snapshot fixture', messages: [] };
+      for (const id of ['active', 'expired', 'revoked', 'other']) {
+        await db.insertInto('conversation_shares').values({
+          id, sharer_id: id === 'other' ? 'another-account' : accountId, conversation_id: id,
+          token_hash: createHash('sha256').update(id).digest('hex'), snapshot: JSON.stringify(snapshot),
+          shared_at: sql`statement_timestamp() - interval '1 hour'`,
+          expires_at: id === 'expired' ? sql`statement_timestamp() - interval '1 second'` : null,
+          revoked_at: id === 'revoked' ? sql`statement_timestamp()` : null,
+        }).execute();
+      }
+      const rawSnapshots = await db.selectFrom('conversation_shares').select('snapshot').execute();
+      expect(rawSnapshots).toEqual(Array.from({ length: 4 }, () => ({ snapshot })));
+      const projection = sql.join((share.export || []).map(column => memberDataExportColumn(share, column)));
+      const predicate = sql.join(share.accountPredicate.split('$1').map(part => sql.raw(part)), sql`${accountId}`);
+      const exported = await sql<{ snapshot: unknown }>`SELECT ${projection} FROM conversation_shares AS data
+        WHERE ${predicate} ORDER BY data.id`.execute(db);
+      expect(exported.rows).toMatchObject([
+        { id: 'active' },
+        { id: 'expired', expires_at: expect.any(Date), revoked_at: null },
+        { id: 'revoked', expires_at: null, revoked_at: expect.any(Date) },
+      ]);
+      expect(exported.rows.map(row => row.snapshot)).toEqual([snapshot, {}, {}]);
     } finally {
       await application.app.close();
     }

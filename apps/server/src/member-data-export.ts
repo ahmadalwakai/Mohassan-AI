@@ -4,24 +4,32 @@ import { mkdtemp, open, realpath, rm, type FileHandle } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
-import { GoogleAdsCustomerIdSchema } from '@mohassan/contracts';
+import { GoogleAdsCustomerIdSchema, type MemberDataExportQuery } from '@mohassan/contracts';
 import { sql, type Kysely, type RawBuilder } from 'kysely';
 import { memberDocumentLocation } from './member-data-document-path.js';
-import { memberDataRegistry } from './member-data-registry.js';
-import { createMemberDataZip } from './member-data-zip.js';
+import { memberDataExportColumn, memberDataRegistry } from './member-data-registry.js';
+import { createMemberDataZip, MemberExportTooLarge } from './member-data-zip.js';
 import { redactSensitiveCredentialText } from './sensitive-credential-text.js';
 
 export const MEMBER_EXPORT_MAX_BYTES = 64 * 1024 * 1024;
 
-const readme = `بيانات حسابك في محسن AI
+const readmeIntro = `بيانات حسابك في محسن AI
 
 يحتوي المجلد data على ملف JSON لكل جدول متاح للتصدير، وتُعرض سجلات حسابك وحده فيه.
+`;
+const readmePrivacy = `قد تظهر معلومات ملف في JSON بعد انتهاء صلاحية نسخته أو زوالها من التخزين.
+تُحجب بيانات الاعتماد ورموز الجلسات، ويظهر حساب Google Ads المرتبط بالاسم فقط.
+`;
+const fullReadme = `${readmeIntro}
 تجد مرفقات المحادثة في files/chat-images وملفات PDF في files/documents.
 يحتوي files/transfers على الملفات المرفوعة التي لا تزال محفوظة والتنزيلات التي تم تحريرها.
 توجد الصور المحفوظة من المواقع والاستوديو في files/site-images وfiles/studio-images وfiles/studio-review-images.
 يمكنك ربط الملفات بسجلاتها عبر معرّف الملف في اسمه أو في المجلد الذي يحتويه.
-قد تظهر معلومات ملف في JSON بعد انتهاء صلاحية نسخته أو زوالها من التخزين.
-تُحجب بيانات الاعتماد ورموز الجلسات، ويظهر حساب Google Ads المرتبط بالاسم فقط.
+${readmePrivacy}`;
+const omittedReadme = `${readmeIntro}
+استُبعد محتوى الملفات من هذا التنزيل. تسرد القائمة التالية الملفات المتاحة التي استُبعد محتواها.
+${readmePrivacy}
+المعرّف\tاسم الملف\tالحجم بالبايت\tبصمة SHA-256
 `;
 
 class MemberExportError extends Error {
@@ -135,47 +143,85 @@ async function openDocument(dir: string, accountId: string, row: { id: string; p
   }
 }
 
-type Zip = ReturnType<typeof createMemberDataZip>;
+type InlineMetadata = { byte_count: number; content_hash: string };
+type InlineContents = { bytes_base64: string; content_hash: string | null };
+type InlinePayload = InlineMetadata | InlineContents;
+type ArchiveFile = { id: string; name: string } & (
+  | { path: string; contents: AsyncIterable<Buffer> | Iterable<Buffer> }
+  | InlineMetadata
+);
 
-async function exportFiles(tx: Kysely<any>, zip: Zip, accountId: string, documentsDir: string, signal?: AbortSignal) {
-  const documents = sql<{ id: string; path: string; name: string; content_hash: string }>`
-    SELECT id, path, name, content_hash FROM pdf_documents WHERE owner_id = ${accountId}`;
+function inlineColumns(omit: boolean, encoded: RawBuilder<unknown>, hash = sql`NULL`, size = sql`NULL`) {
+  if (!omit) return sql`${encoded} AS bytes_base64, ${hash} AS content_hash`;
+  // Compute missing metadata in PostgreSQL so the contents never leave the database in omit mode.
+  // https://www.postgresql.org/docs/current/functions-binarystring.html (retrieved 2026-11-27).
+  const bytes = sql`decode(${encoded}, 'base64')`;
+  return sql`COALESCE(${size}, octet_length(${bytes})) AS byte_count,
+    COALESCE(${hash}, encode(sha256(${bytes}), 'hex')) AS content_hash`;
+}
+
+function inlineArchiveFile(row: { id: string } & InlinePayload, name: string, path: string): ArchiveFile {
+  if ('bytes_base64' in row) return { id: row.id, name, path, contents: [checkedBytes(row.bytes_base64, row.content_hash)] };
+  return { id: row.id, name, byte_count: row.byte_count, content_hash: row.content_hash };
+}
+
+async function* archiveFiles(tx: Kysely<any>, accountId: string, documentsDir: string, omit: boolean, signal?: AbortSignal): AsyncGenerator<ArchiveFile> {
+  const documents = sql<{ id: string; path: string; name: string } & InlineMetadata>`
+    SELECT id, path, name, content_hash, byte_count FROM pdf_documents WHERE owner_id = ${accountId}`;
   for await (const row of exportRows(tx, documents, signal)) {
     const file = await openDocument(documentsDir, accountId, row);
     if (!file) continue;
     try {
-      await zip.entry(`files/documents/${row.id}/${fileSegment(row.name, 'document.pdf')}`, documentBytes(file, row.content_hash));
+      if (omit) yield { id: row.id, name: row.name, byte_count: row.byte_count, content_hash: row.content_hash };
+      else yield { id: row.id, name: row.name, path: `files/documents/${row.id}/${fileSegment(row.name, 'document.pdf')}`,
+        contents: documentBytes(file, row.content_hash) };
     } finally {
       await file.close();
     }
   }
 
   // Keep the browser file release boundary intact for downloads, including while a sweep is pending.
-  const transfers = sql<{ id: string; filename: string; bytes_base64: string; content_hash: string }>`
-    SELECT grant_row.id, grant_row.filename, grant_row.bytes_base64, grant_row.content_hash
+  const transfers = sql<{ id: string; filename: string | null } & InlinePayload>`
+    SELECT grant_row.id, grant_row.filename,
+      ${inlineColumns(omit, sql`grant_row.bytes_base64`, sql`grant_row.content_hash`, sql`grant_row.byte_count`)}
     FROM browser_file_grants AS grant_row JOIN chat_conversations AS chat ON chat.id = grant_row.conversation_id
     WHERE grant_row.owner_id = ${accountId} AND chat.owner_id = ${accountId}
       AND grant_row.bytes_base64 IS NOT NULL AND grant_row.expires_at > CURRENT_TIMESTAMP
       AND (grant_row.direction = 'upload' OR (grant_row.direction = 'download' AND grant_row.status = 'released'))`;
   for await (const row of exportRows(tx, transfers, signal)) {
-    const name = fileSegment(row.filename, 'file');
-    await zip.entry(`files/transfers/${fileSegment(row.id, 'transfer')}/${name}`, [checkedBytes(row.bytes_base64, row.content_hash)]);
+    const name = row.filename ?? 'file';
+    yield inlineArchiveFile(row, name, `files/transfers/${fileSegment(row.id, 'transfer')}/${fileSegment(name, 'file')}`);
   }
 
-  type Image = { id: string; mime_type: string; data_base64: string; content_hash: string | null; small_base64: string | null };
+  type Image = { id: string; mime_type: string } & InlinePayload;
+  const siteImages = sql`FROM site_images AS data JOIN sites AS site ON site.id = data.site_id
+    WHERE data.owner_id = ${accountId} AND site.owner_id = ${accountId}`;
   const images = [
-    ['chat-images', sql<Image>`SELECT id, mime_type, data_base64, content_hash, NULL AS small_base64 FROM chat_images WHERE owner_id = ${accountId}`],
-    ['site-images', sql<Image>`SELECT data.id, data.mime_type, data.data_base64, NULL AS content_hash, data.small_base64
-      FROM site_images AS data JOIN sites AS site ON site.id = data.site_id WHERE data.owner_id = ${accountId} AND site.owner_id = ${accountId}`],
-    ['studio-images', sql<Image>`SELECT id, mime_type, data_base64, content_hash, NULL AS small_base64 FROM studio_images WHERE owner_id = ${accountId}`],
-    ['studio-review-images', sql<Image>`SELECT id, 'image/png' AS mime_type, data_base64, content_hash, NULL AS small_base64 FROM studio_review_images WHERE owner_id = ${accountId}`],
+    ['chat-images', '', sql<Image>`SELECT id, mime_type, ${inlineColumns(omit, sql`data_base64`, sql`content_hash`, sql`bytes`)}
+      FROM chat_images WHERE owner_id = ${accountId}`],
+    ['site-images', '', sql<Image>`SELECT data.id, data.mime_type, ${inlineColumns(omit, sql`data.data_base64`)} ${siteImages}`],
+    ['site-images', '-small', sql<Image>`SELECT data.id, data.mime_type, ${inlineColumns(omit, sql`data.small_base64`)}
+      ${siteImages} AND data.small_base64 <> ''`],
+    ['studio-images', '', sql<Image>`SELECT id, mime_type, ${inlineColumns(omit, sql`data_base64`, sql`content_hash`)}
+      FROM studio_images WHERE owner_id = ${accountId}`],
+    ['studio-review-images', '', sql<Image>`SELECT id, 'image/png' AS mime_type, ${inlineColumns(omit, sql`data_base64`, sql`content_hash`)}
+      FROM studio_review_images WHERE owner_id = ${accountId}`],
   ] as const;
-  for (const [folder, query] of images) {
+  for (const [folder, suffix, query] of images) {
     for await (const row of exportRows(tx, query, signal, 1)) {
       const extension = row.mime_type === 'image/jpeg' ? 'jpg' : 'png';
-      const path = `files/${folder}/${fileSegment(row.id, 'image')}`;
-      await zip.entry(`${path}.${extension}`, [checkedBytes(row.data_base64, row.content_hash)]);
-      if (row.small_base64) await zip.entry(`${path}-small.${extension}`, [checkedBytes(row.small_base64)]);
+      const name = `${fileSegment(row.id, 'image')}${suffix}.${extension}`;
+      yield inlineArchiveFile(row, name, `files/${folder}/${name}`);
+    }
+  }
+}
+
+async function* readmeWithOmitted(files: AsyncIterable<ArchiveFile>, replace: ReturnType<typeof exportReplacer>): AsyncGenerator<Buffer> {
+  yield Buffer.from(omittedReadme);
+  for await (const file of files) {
+    if ('byte_count' in file) {
+      const fields = [JSON.stringify(file.id), JSON.stringify(replace('name', file.name)), file.byte_count, file.content_hash];
+      yield Buffer.from(`${fields.join('\t')}\n`);
     }
   }
 }
@@ -184,14 +230,14 @@ export function createMemberDataExport(db: Kysely<any>, options: { documentsDir?
   const documentsDir = options.documentsDir ?? resolve('.data/documents');
   const maxBytes = Math.min(MEMBER_EXPORT_MAX_BYTES, options.maxBytes ?? MEMBER_EXPORT_MAX_BYTES);
 
-  async function prepare(accountId: string, signal?: AbortSignal): Promise<{ stream: Readable; bytes: number }> {
+  async function prepare(accountId: string, signal?: AbortSignal, query: MemberDataExportQuery = {}): Promise<{ stream: Readable; bytes: number }> {
     signal?.throwIfAborted();
-    const claim = await sql<{ user_id: string }>`
+    const { rows: [claim] } = await sql<{ requested_at: string }>`
       INSERT INTO member_data_exports (user_id, requested_at) VALUES (${accountId}, CURRENT_TIMESTAMP)
       ON CONFLICT (user_id) DO UPDATE SET requested_at = EXCLUDED.requested_at
       WHERE member_data_exports.requested_at <= EXCLUDED.requested_at - INTERVAL '1 hour'
-      RETURNING user_id`.execute(db);
-    if (!claim.rows.length) {
+      RETURNING requested_at::text AS requested_at`.execute(db);
+    if (!claim) {
       const { rows } = await sql<{ seconds: number }>`
         SELECT GREATEST(1, CEIL(EXTRACT(EPOCH FROM requested_at + INTERVAL '1 hour' - CURRENT_TIMESTAMP)))::integer AS seconds
         FROM member_data_exports WHERE user_id = ${accountId}`.execute(db);
@@ -206,28 +252,40 @@ export function createMemberDataExport(db: Kysely<any>, options: { documentsDir?
       // POSIX keeps the descriptor usable after unlink and releases the bytes even on a process crash.
       if (process.platform !== 'win32') await removeStage();
       const zip = createMemberDataZip(file, maxBytes, signal);
-      await zip.entry('README.txt', [Buffer.from(readme)]);
+      const omit = query.files === 'omit';
       await db.transaction().execute(async tx => {
         await sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`.execute(tx);
         const { rows: [ads] } = await sql<{ customer_id: string | null; login_customer_id: string | null }>`
           SELECT customer_id, login_customer_id FROM google_ads_connections WHERE owner_id = ${accountId}`.execute(tx);
         const replace = exportReplacer(ads ? [ads.customer_id, ads.login_customer_id] : []);
+        const files = archiveFiles(tx, accountId, documentsDir, omit, signal);
+        await zip.entry('README.txt', omit ? readmeWithOmitted(files, replace) : [Buffer.from(fullReadme)]);
         for (const entry of memberDataRegistry) {
           if (!entry.export) continue;
-          const columns = sql.join(entry.export.map(column => sql.ref(`data.${column}`)));
+          const columns = sql.join(entry.export.map(column => memberDataExportColumn(entry, column)));
           // Predicates come from the registry. Account IDs always go through bound parameters.
           const predicate = sql.join(entry.accountPredicate.split('$1').map(part => sql.raw(part)), sql`${accountId}`);
           const query = sql`SELECT ${columns} FROM ${sql.table(entry.table)} AS data WHERE (${predicate})`;
           await zip.entry(`data/${entry.table}.json`, jsonRows(exportRows(tx, query, signal), replace));
         }
-        await exportFiles(tx, zip, accountId, documentsDir, signal);
+        if (!omit) {
+          for await (const memberFile of files) {
+            if ('contents' in memberFile) await zip.entry(memberFile.path, memberFile.contents);
+          }
+        }
       });
       const bytes = await zip.finish();
       const stream = file.createReadStream({ start: 0, signal });
       stream.once('close', () => { void removeStage().catch(() => {}); });
       return { stream, bytes };
     } catch (error) {
-      try { await file?.close(); } finally { await removeStage(); }
+      try {
+        // Match this reservation exactly, including timestamp precision, so a newer claim cannot be removed.
+        if (error instanceof MemberExportTooLarge) await sql`DELETE FROM member_data_exports
+          WHERE user_id = ${accountId} AND requested_at = ${claim.requested_at}::timestamptz`.execute(db);
+      } finally {
+        try { await file?.close(); } finally { await removeStage(); }
+      }
       throw error;
     }
   }
