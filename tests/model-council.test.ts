@@ -4,6 +4,7 @@ import {
   createModelCouncil, decide, rankHits, readerPrompt, selectPassage, states, wantsWeb,
   type Candidate, type CouncilRunner, type CouncilTurn,
 } from '../apps/server/src/assistant/model-council.js';
+import * as councilJudge from '../apps/server/src/assistant/judge.js';
 import type { ModelRunResult } from '../packages/model-relations/src/runtime.js';
 
 const page = (text: string, title = 'Paris - Encyclopedia', url = 'https://example.org/paris') => ({ kind: 'page' as const, text, title, url });
@@ -134,6 +135,26 @@ describe('deliberation', () => {
     expect(models.calls).not.toContain('chat-v4');
   });
 
+  it('does not count a withheld council answer as corroboration', async () => {
+    const withheld = 'Paris and an additional detail.';
+    const judge = councilJudge.judge;
+    const verdict = vi.spyOn(councilJudge, 'judge').mockImplementation(input => ({
+      ...judge(input), decision: input.reply === withheld ? 'withhold' : 'send',
+    }));
+    try {
+      const models = runner({ 'reading-v3-last': { ok: true, output: { text: 'Paris' }, elapsedMs: 1 } });
+      const council = createModelCouncil({ runner: models, v5: async () => withheld });
+      const outcome = await council.deliberate(turn({
+        pipeline: { text: 'No answer available.', status: 'blocked' }, evidence: [page(PARIS)],
+      }));
+      expect(outcome.council.members.find(member => member.model === 'chat-v5')).toMatchObject({ judge: 'withhold' });
+      expect(outcome.council.members.find(member => member.model === 'reading-v3-last')).toMatchObject({ inEvidence: true, agreements: 0 });
+      expect(outcome).toMatchObject({ changed: false, chosen: 'pipeline' });
+    } finally {
+      verdict.mockRestore();
+    }
+  });
+
   it('does not search a request that is not a web question', async () => {
     const search = vi.fn();
     const council = createModelCouncil({ runner: runner({}) });
@@ -150,6 +171,44 @@ describe('deliberation', () => {
     expect(performance.now() - started).toBeLessThan(2_000);
     expect(outcome.council.members.find(member => member.model === 'reading-v3-last')).toMatchObject({ outcome: 'timeout' });
     expect(outcome.chosen).toBe('pipeline');
+  });
+
+  it.each(['search', 'v5', 'reader', 'understanding'] as const)('cancels %s when that round reaches its deadline', async stage => {
+    let received: AbortSignal | undefined;
+    const failure: ModelRunResult = { ok: false, reason: 'absent', elapsedMs: 1 };
+    function untilAborted<T>(signal: AbortSignal | undefined, result: T): Promise<T> {
+      received = signal;
+      return new Promise(resolve => signal?.addEventListener('abort', () => resolve(result), { once: true }));
+    }
+    const models = {
+      async run(model: string, _input: unknown, signal?: AbortSignal) {
+        if ((stage === 'reader' && model === 'reading-v3-last') || (stage === 'understanding' && model === 'refusal')) {
+          return untilAborted(signal, failure);
+        }
+        return failure;
+      },
+    };
+    const council = createModelCouncil({ runner: models, budgetMs: 2_000, memberMs: { [stage]: 35 },
+      ...(stage === 'v5' && { v5: (_history, signal) => untilAborted(signal, undefined) }),
+    });
+    const outcome = await council.deliberate(stage === 'search'
+      ? turn({ pipeline: { text: 'No answer available.', status: 'blocked' }, search: (_question, signal) => untilAborted(signal, { pages: [] }) })
+      : turn({ evidence: [page(PARIS)] }));
+    expect(received?.aborted).toBe(true);
+    const model = { search: 'web-search', v5: 'chat-v5', reader: 'reading-v3-last', understanding: 'refusal' }[stage];
+    expect(outcome.council.members.find(member => member.model === model)).toMatchObject({ outcome: 'timeout' });
+  });
+
+  it('scrubs raw titles and replies before extracting council excerpts', async () => {
+    const privateValue = 'private-value-fixture';
+    const title = `Page title ${privateValue}`;
+    const council = createModelCouncil({ runner: runner({}), v5: async () => `${'b'.repeat(590)}${privateValue}` });
+    const outcome = await council.deliberate(turn({ evidence: [page(PARIS, title)],
+      scrub: (text: string) => text.replaceAll(privateValue, '[REDACTED]'),
+    }));
+    const members = outcome.council.members;
+    expect(members.find(member => member.model === 'reading-v3-last')?.note).not.toContain('private');
+    expect(members.find(member => member.model === 'chat-v5')?.output).not.toContain('private');
   });
 
   it('marks a reading abstention and asks v4 only when nothing was read', async () => {

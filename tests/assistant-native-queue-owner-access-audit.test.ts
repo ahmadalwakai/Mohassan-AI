@@ -74,6 +74,7 @@ async function run(downgradeAtQueueEntry: boolean, grantPath: 'policy' | 'primar
   } });
   const app = Fastify({ logger: false });
   const native = await registerWindowsRoutes(app, { db: windowsDb, owner: async () => ({ id: OWNER, sessionId: SESSION_ID }),
+    lockOwnerAccess: lockOwnerToolAccess,
     config: { webOrigin: 'http://127.0.0.1:3000', production: false, windowsEnabled: true } });
   await app.ready();
   const forbidden = async (): Promise<never> => { forbiddenCalls++; throw new Error('No unrelated external or native input process belongs to this audit.'); };

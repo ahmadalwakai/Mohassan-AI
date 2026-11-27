@@ -103,8 +103,8 @@ export class ModelRuntime {
     this.heavyAvailable = options.heavyAvailable ?? (() => true);
   }
 
-  async run(modelId: string, input: unknown): Promise<ModelRunResult> {
-    return this.execute(modelId, async (adapter, signal, timeout) => ({ output: await adapter.run(input, signal, timeout) }), false);
+  async run(modelId: string, input: unknown, signal?: AbortSignal): Promise<ModelRunResult> {
+    return this.execute(modelId, async (adapter, active, timeout) => ({ output: await adapter.run(input, active, timeout) }), false, signal);
   }
 
   async health(modelId: string): Promise<ModelHealthResult> {
@@ -122,12 +122,14 @@ export class ModelRuntime {
     return this.closing;
   }
 
-  private async execute<T extends object>(modelId: string, operation: (adapter: ModelAdapter, signal: AbortSignal, timeout: number) => Promise<T>, check: boolean): Promise<({ ok: true; elapsedMs: number } & T) | ModelFailure> {
+  private async execute<T extends object>(modelId: string, operation: (adapter: ModelAdapter, signal: AbortSignal, timeout: number) => Promise<T>, check: boolean,
+    signal?: AbortSignal): Promise<({ ok: true; elapsedMs: number } & T) | ModelFailure> {
     const begin = performance.now();
     const failure = (reason: ModelFailureReason, detail?: string): ModelFailure => ({ ok: false, reason, elapsedMs: performance.now() - begin, ...(detail ? { detail } : {}) });
     const entry = this.entries.get(modelId);
     if (!entry) return failure('unknown-model');
     if (this.closed) return failure('unhealthy', 'Runtime is closed');
+    if (signal?.aborted) return failure('timeout');
     if (this.cpuUsed + entry.resources.cpu > this.cpuConcurrency || (heavy(entry) && (this.heavyBusy || !this.heavyAvailable()))) return failure('busy');
     this.cpuUsed += entry.resources.cpu;
     if (heavy(entry)) this.heavyBusy = true;
@@ -139,12 +141,14 @@ export class ModelRuntime {
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let expired!: (failure: ModelFailure) => void;
     const limit = new Promise<ModelFailure>(done => { expired = done; });
+    const expire = () => {
+      controller.abort();
+      expired(failure('timeout'));
+    };
+    signal?.addEventListener('abort', expire, { once: true });
     const startDeadline = () => {
       clearTimeout(deadline);
-      deadline = setTimeout(() => {
-        controller.abort();
-        expired(failure('timeout'));
-      }, phaseBudget);
+      deadline = setTimeout(expire, phaseBudget);
     };
     startDeadline();
     const task = this.use(entry, controller.signal, async adapter => {
@@ -175,6 +179,7 @@ export class ModelRuntime {
       return failure('unhealthy');
     } finally {
       clearTimeout(deadline);
+      signal?.removeEventListener('abort', expire);
     }
   }
 

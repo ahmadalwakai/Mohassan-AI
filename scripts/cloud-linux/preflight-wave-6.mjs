@@ -28,7 +28,7 @@ function check(label, predicate) {
   return ok;
 }
 
-function serviceCanUseInterpreter(configured) {
+function trustedInterpreter(configured) {
   if (!isAbsolute(configured)) return false;
   const python = realpathSync(configured);
   const file = statSync(python);
@@ -43,11 +43,25 @@ function serviceCanUseInterpreter(configured) {
     if (statSync(dir).uid === process.getuid() || !readOnly(dir)) return false;
     if (dir === dirname(dir)) break;
   }
-  return spawnSync(python, ['-I', '-B', '-S', '-c', [
+  return python;
+}
+
+function serviceCanUseInterpreter(configured) {
+  const python = trustedInterpreter(configured);
+  return python && spawnSync(python, ['-I', '-B', '-S', '-c', [
     'import ctypes, sys',
     'assert sys.version_info >= (3, 11)',
     'ctypes.CDLL("libseccomp.so.2")',
   ].join('\n')], { env: {}, timeout: 2500, stdio: 'ignore' }).status === 0;
+}
+
+function serviceCanUseV5Interpreter(configured) {
+  // Check the interpreter selected by the worker configuration.
+  // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/scripts/cloud-linux/setup-model-worker.sh#L9-L10 (retrieved 2026-11-27)
+  const python = trustedInterpreter(configured);
+  return python && spawnSync(python, ['-I', '-B', '-S', '-c',
+    'import sys; assert sys.version_info[:2] == (3, 12)',
+  ], { env: {}, timeout: 2500, stdio: 'ignore' }).status === 0;
 }
 
 function validVapid(subject, publicKey, privateKey) {
@@ -88,18 +102,21 @@ function pinnedModelFile({ path, sha256 }, expectedBytes) {
 
 function checkOwnerV5Config(path) {
   let model;
-  if (!check('v5 worker config exists with the expected identity and model settings', () => {
+  if (!check('v5 worker config exists with the expected identity, model settings and resource limits', () => {
     const file = lstatSync(path);
     if (!file.isFile() || file.size > 16 * 1024 * 1024) return false;
     const config = JSON.parse(readFileSync(path, 'utf8'));
     const expected = JSON.parse(readFileSync(new URL('./model-worker.v5.example.json', import.meta.url), 'utf8'));
     model = config.model;
     // Permit other absolute external artifact locations with the same pins.
-    return isDeepStrictEqual(config.identity, expected.identity) && isDeepStrictEqual({
-      ...model,
-      checkpoint: { ...model.checkpoint, path: expected.model.checkpoint.path },
-      tokenizer: { ...model.tokenizer, path: expected.model.tokenizer.path },
-    }, expected.model);
+    return isDeepStrictEqual({
+      ...config,
+      model: {
+        ...model,
+        checkpoint: { ...model.checkpoint, path: expected.model.checkpoint.path },
+        tokenizer: { ...model.tokenizer, path: expected.model.tokenizer.path },
+      },
+    }, expected);
   })) return;
   check('v5 checkpoint matches the pinned size and SHA-256', () => pinnedModelFile(model.checkpoint, 1_021_749_913));
   check('v5 tokenizer matches the pinned size and SHA-256', () => pinnedModelFile(model.tokenizer, 284_174));
@@ -107,7 +124,7 @@ function checkOwnerV5Config(path) {
 
 async function runtimeChecks() {
   if (!check('runtime uses an unprivileged service account', () => process.getuid() !== 0)) return;
-  const { python, apnsKeyPath, metricsDirectory, v5ConfigPath } = JSON.parse(readFileSync(0, 'utf8'));
+  const { python, apnsKeyPath, metricsDirectory, v5ConfigPath, v5Python } = JSON.parse(readFileSync(0, 'utf8'));
   check('trusted Python 3.11+ and libseccomp.so.2 under the service account', () => serviceCanUseInterpreter(python));
   const { chromium } = await import('playwright').catch(() => ({}));
   check('locked Playwright Chromium is installed and executable by the service account', () => {
@@ -126,7 +143,10 @@ async function runtimeChecks() {
     accessSync(directory, constants.W_OK | constants.X_OK);
     return statSync(directory).isDirectory();
   });
-  if (v5ConfigPath) checkOwnerV5Config(v5ConfigPath);
+  if (v5ConfigPath) {
+    check('trusted Python 3.12 for the v5 model worker', () => serviceCanUseV5Interpreter(v5Python));
+    checkOwnerV5Config(v5ConfigPath);
+  }
 }
 
 async function preflight() {
@@ -193,7 +213,8 @@ async function preflight() {
     input: JSON.stringify({ python: env.TEST_DRIVEN_CODING_PYTHON || '/usr/bin/python3',
       apnsKeyPath: apns.every(Boolean) ? apns[2] : undefined,
       metricsDirectory: ownerTrial ? env.PRODUCTION_METRICS_DIR || '/var/lib/mohassan/production-metrics' : undefined,
-      v5ConfigPath: v5Enabled ? resolve(appRoot, env.MOHASSAN_MODEL_WORKER_CONFIG?.trim() || '.data/model-worker.json') : undefined }),
+      v5ConfigPath: v5Enabled ? resolve(appRoot, env.MOHASSAN_MODEL_WORKER_CONFIG?.trim() || '.data/model-worker.json') : undefined,
+      v5Python: v5Enabled ? resolve(appRoot, env.EXECUTOR_PYTHON?.trim() || '.venv-execution/bin/python') : undefined }),
     timeout: v5Enabled ? 120_000 : 10_000, encoding: 'utf8',
   });
   if (child.stdout) process.stdout.write(child.stdout);

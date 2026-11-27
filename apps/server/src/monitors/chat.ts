@@ -201,14 +201,17 @@ function createMonitorChat(db: Kysely<any>, config: Configuration, rollout: Enab
   return {
     initialize, runtime, store, availableTo, v2,
     v2State: chatV2.state, confirmAction: chatV2.confirm, setProactiveOffers: chatV2.setProactiveOffers,
-    async view(ownerId: string, conversationId: string) {
+    async view(ownerId: string, conversationId: string, messageIds: readonly string[] = []) {
       if (!ready || !await availableTo(ownerId)) return {};
-      const [listed, alerts] = await Promise.all([store.list(ownerId, conversationId), conversationMonitorAlerts(db, ownerId, conversationId)]);
+      const listed = await store.list(ownerId, conversationId);
+      const alerts = await conversationMonitorAlerts(db, ownerId, { conversationId, messageIds, monitorIds: listed.map(card => card.id) });
       const cards = addMonitorCardAlerts(listed, alerts);
       const monitorProposal = cards.find(card => card.status === 'proposed');
       const monitors = cards.filter(card => card.status !== 'proposed');
+      const visibleIds = new Set(messageIds);
+      const monitorAlerts = alerts.flatMap(({ alert }) => visibleIds.has(alert.id) ? [alert] : []);
       return { ...(monitorProposal ? { monitorProposal } : {}), ...(monitors.length ? { monitors } : {}),
-        ...(alerts.length ? { monitorAlerts: alerts.map(({ alert }) => alert) } : {}) };
+        ...(monitorAlerts.length ? { monitorAlerts } : {}) };
     },
     async beforeReminder(turn: Turn) {
       if (!context.observing || !await availableTo(turn.ownerId)) return undefined;

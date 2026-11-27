@@ -137,4 +137,27 @@ describe('authenticated monitor alert feedback', () => {
     expect(await db.selectFrom('monitor_alert_feedback').select(['user_id', 'alert_id', 'rating', 'reason']).where('alert_id', '=', alertId).execute())
       .toEqual([{ user_id: owner.id, alert_id: alertId, rating: 'not_helpful', reason: 'wrong_value' }]);
   });
+
+  it('returns message feedback for the visible conversation window and retains the card history', async () => {
+    const { alertId, conversationId, monitorId, at } = await deliverMonitorAlert(owner);
+    const db = application.database.db;
+    const later = new Date(at.getTime() + 60_000);
+    const recentAlert = randomUUID();
+    // Fill the configured 300-message chat window (retrieved 2026-11-27).
+    // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/command-chat.ts#L281
+    await db.insertInto('chat_messages').values(Array.from({ length: 300 }, () => ({
+      id: randomUUID(), conversation_id: conversationId, role: 'user', text: 'Fixture message', created_at: later,
+    }))).execute();
+    await db.insertInto('chat_messages').values({ id: recentAlert, conversation_id: conversationId, role: 'assistant',
+      text: 'Fixture monitor update', created_at: new Date(later.getTime() + 1) }).execute();
+    await recordBackgroundRunOutcome(db, { runId: recentAlert, userId: owner.id, monitorId, conversationId, startedAt: at,
+      outcome: 'completed', language: 'en' }, later);
+
+    const detail = ChatConversationSchema.parse((await request('GET', `${conversations}/${conversationId}`, owner)).json());
+    expect(detail.messages.some(message => message.id === alertId)).toBe(false);
+    expect(detail.messages.some(message => message.id === recentAlert)).toBe(true);
+    expect(detail.monitorAlerts?.map(alert => alert.id === recentAlert)).toEqual([true]);
+    const card = detail.monitors?.find(monitor => monitor.id === monitorId);
+    expect(card?.alerts?.map(alert => alert.id)).toEqual([alertId, recentAlert]);
+  });
 });

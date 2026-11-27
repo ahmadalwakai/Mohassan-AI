@@ -51,7 +51,7 @@ async function fixture(pauseNextTransaction = false) {
     reply.code(failure.statusCode ?? 500).send({ error: { code: failure.code ?? 'ERROR', message: failure.message } }); });
   const native = await registerWindowsRoutes(app, { db: controlledDb, owner: async request => {
     if (request.headers['x-synthetic-owner'] !== owner) throw Object.assign(new Error('Synthetic unauthorized owner'), { statusCode: 401 }); return { id: owner, sessionId };
-  }, config: { webOrigin: 'http://127.0.0.1:3000', production: false, windowsEnabled: true } });
+  }, lockOwnerAccess: async (_tx, id) => id === owner, config: { webOrigin: 'http://127.0.0.1:3000', production: false, windowsEnabled: true } });
   const control = { ...native,
     view: (...args: Parameters<typeof native.view>) => native.runInSession(owner, sessionId, () => native.view(...args)),
     act: (...args: Parameters<typeof native.act>) => native.runInSession(owner, sessionId, () => native.act(...args)),

@@ -295,10 +295,11 @@ export class PermanentModelWorker {
           const newline = chunk.indexOf(10, offset);
           const part = chunk.subarray(offset, newline === -1 ? chunk.length : newline);
           const size = pending + part.length;
-          if (size + 1 > MAX_WORKER_FRAME_BYTES) throw new ModelTransportError('resource_exhaustion');
+          const frameLimit = Math.min(MAX_WORKER_FRAME_BYTES, worker.ready?.limits.maxOutputBytes ?? MAX_WORKER_FRAME_BYTES);
+          if (size + 1 > frameLimit) throw new ModelTransportError('resource_exhaustion');
           if (pending || newline === -1) {
             if (size > buffer.length) {
-              const grown = Buffer.allocUnsafe(Math.min(MAX_WORKER_FRAME_BYTES, Math.max(4096, buffer.length * 2, size)));
+              const grown = Buffer.allocUnsafe(Math.min(frameLimit, Math.max(4096, buffer.length * 2, size)));
               buffer.copy(grown, 0, 0, pending);
               buffer = grown;
             }

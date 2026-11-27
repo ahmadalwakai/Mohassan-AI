@@ -6,6 +6,7 @@ import { normalizeCurrency, normalizeUnit, pageNumbers } from '../page-values-v2
 import type { MonitorPageAnchor, MonitorPageCandidate } from '../page-v2.js';
 import { display, matchMonitorText } from '../page.js';
 import type { MonitorReadOptions, MonitorReadResult } from '../sources.js';
+import { MONITOR_LIMITS } from '../schedule.js';
 import { renderMonitorRegions, type VisualRenderRequest, type VisualRenderResult, type VisualRegion } from './visual-browser.js';
 
 export type { VisualRenderRequest, VisualRenderResult, VisualRegion } from './visual-browser.js';
@@ -58,32 +59,41 @@ export function createVisualMonitorReader({ network, imageReader, reserveDaily, 
   clock?: () => number;
   render?: (request: VisualRenderRequest) => Promise<VisualRenderResult>;
 }) {
+  let activeReads = 0;
   return async (spec: MonitorSpec, url: string, options: MonitorReadOptions): Promise<MonitorReadResult> => {
     options.signal?.throwIfAborted();
     if (spec.read.kind !== 'number' || !imageReader?.available) return unreadable(url);
     const now = clock();
-    const deferred = await reserveDaily(now);
-    if (deferred !== null) return { kind: 'deferred', at: deferred };
-    const deadline = AbortSignal.timeout(VISUAL_READ_TIMEOUT_MS);
-    const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
-    const request = { network, spec, url, at: new Date(now).toISOString(), signal, previous: options.cache?.anchor };
+    // A burst of previews and scheduled reads shares the same process capacity.
+    if (activeReads >= MONITOR_LIMITS.concurrentReads) return { kind: 'deferred', at: now + MONITOR_LIMITS.pollMs };
+    activeReads++;
     try {
-      const result = await render(request);
-      signal.throwIfAborted();
-      if (result.kind === 'page') return result.result;
-      if (result.kind === 'missing') return unreadable(url);
-      const reads = [];
-      // Sequential work also bounds the own OCR pool queue per monitor check.
-      for (const region of result.regions.slice(0, 4)) reads.push(await readRegion(imageReader, region, request));
-      const reliable = reads.flatMap(({ candidate }) => candidate ? [candidate] : []);
-      const confidence = Math.max(0, ...reads.map(read => read.confidence));
-      if (reliable.length >= 2) return { kind: 'clarify', url, candidates: reliable, confidence, cache: { url } };
-      if (reliable.length !== 1 || result.regions.length !== 1 || result.ambiguous) return unreadable(url, confidence);
-      const [{ observation, anchor }] = reliable;
-      return { kind: 'value', observation, cache: { url, anchor } };
-    } catch {
+      const deferred = await reserveDaily(now);
+      if (deferred !== null) return { kind: 'deferred', at: deferred };
       options.signal?.throwIfAborted();
-      return unreadable(url);
+      const deadline = AbortSignal.timeout(VISUAL_READ_TIMEOUT_MS);
+      const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
+      const request = { network, spec, url, at: new Date(now).toISOString(), signal, previous: options.cache?.anchor };
+      try {
+        const result = await render(request);
+        signal.throwIfAborted();
+        if (result.kind === 'page') return result.result;
+        if (result.kind === 'missing') return unreadable(url);
+        const reads = [];
+        // Sequential work also bounds the own OCR pool queue per monitor check.
+        for (const region of result.regions.slice(0, 4)) reads.push(await readRegion(imageReader, region, request));
+        const reliable = reads.flatMap(({ candidate }) => candidate ? [candidate] : []);
+        const confidence = Math.max(0, ...reads.map(read => read.confidence));
+        if (reliable.length >= 2) return { kind: 'clarify', url, candidates: reliable, confidence, cache: { url } };
+        if (reliable.length !== 1 || result.regions.length !== 1 || result.ambiguous) return unreadable(url, confidence);
+        const [{ observation, anchor }] = reliable;
+        return { kind: 'value', observation, cache: { url, anchor } };
+      } catch {
+        options.signal?.throwIfAborted();
+        return unreadable(url);
+      }
+    } finally {
+      activeReads--;
     }
   };
 }

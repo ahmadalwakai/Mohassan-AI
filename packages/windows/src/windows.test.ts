@@ -13,6 +13,7 @@ import { z } from 'zod';
 
 describe('Windows device permissions with synthetic transport fixtures',()=>{
   let database:Awaited<ReturnType<typeof createDatabase>>,app:ReturnType<typeof Fastify>,deviceId='',deviceKey='',grant:any;
+  let hasOwnerAccess = true;
   const owner='windows-fixture-owner',other='windows-fixture-other',cookie='owner-session-a',key='a'.repeat(64);
   const ownerSession=randomUUID(),secondSession=randomUUID(),otherSession=randomUUID();let epoch=randomUUID();
   const headers=(ownerId=owner,session=cookie)=>({'x-fixture-owner':ownerId,cookie:session});
@@ -28,7 +29,7 @@ describe('Windows device permissions with synthetic transport fixtures',()=>{
       await database.db.insertInto('session').values({id,userId,token:randomUUID(),expiresAt:new Date(Date.now()+60000)}).execute();
     }
     app=Fastify({logger:false});app.setErrorHandler((error:any,_request:any,reply:any)=>{reply.code(error instanceof z.ZodError?400:error.statusCode??500).send({error:{code:error.code??'ERROR',message:error.message}});});
-    await registerWindowsRoutes(app,{db:database.db,owner:async request=>{const id=request.headers['x-fixture-owner'];if(id!==owner&&id!==other)throw Object.assign(new Error('unauthorized'),{statusCode:401});return {id,sessionId:id===other?otherSession:request.headers.cookie===cookie?ownerSession:secondSession};},config:{webOrigin:'http://127.0.0.1:3000',production:false}});await app.ready();
+    await registerWindowsRoutes(app,{db:database.db,owner:async request=>{const id=request.headers['x-fixture-owner'];if(id!==owner&&id!==other)throw Object.assign(new Error('unauthorized'),{statusCode:401});return {id,sessionId:id===other?otherSession:request.headers.cookie===cookie?ownerSession:secondSession};},lockOwnerAccess:async (_tx, id) => id === owner && hasOwnerAccess,config:{webOrigin:'http://127.0.0.1:3000',production:false}});await app.ready();
   });
   afterAll(async()=>{await app?.close();await database?.close();});
 
@@ -46,6 +47,30 @@ describe('Windows device permissions with synthetic transport fixtures',()=>{
     const noConsent=await app.inject({method:'POST',url:`/api/windows/devices/${deviceId}/grants`,headers:headers(),payload:{scope:'control',durationSeconds:30,targetKey:key,approvalNonce:epoch}});expect(noConsent.statusCode).toBe(409);
     expect((await poll({sentAt:new Date(Date.now()-10000).toISOString()})).statusCode).toBe(409);
     const nonce=randomUUID();expect((await poll({nonce})).statusCode).toBe(200);expect((await poll({nonce})).statusCode).toBe(409);
+  });
+  it('requires current owner access for companion consent alongside a live session', async () => {
+    const initialPairing = await app.inject({ method: 'POST', url: '/api/windows/pairing', headers: headers(), payload: {} });
+    expect(initialPairing.statusCode).toBe(200);
+    const issued = await app.inject({ method: 'POST', url: '/api/windows/companion/pair', payload: { code: initialPairing.json().code, name: 'Owner role fixture' } });
+    expect(issued.statusCode).toBe(200);
+    const { deviceId: fixtureDevice, deviceKey: fixtureKey } = issued.json();
+    const pollFixture = () => app.inject({ method: 'POST', url: '/api/windows/companion/poll', headers: { authorization: `Bearer ${fixtureDevice}.${fixtureKey}` },
+      payload: { nonce: randomUUID(), sentAt: new Date().toISOString(), state: state(), frame: null, ack: null } });
+    expect((await pollFixture()).statusCode).toBe(200);
+    const consent = await app.inject({ method: 'POST', url: `/api/windows/devices/${fixtureDevice}/grants`, headers: headers(),
+      payload: { scope: 'view', durationSeconds: 30, targetKey: key, approvalNonce: epoch } });
+    expect(consent.statusCode).toBe(200);
+    const pairing = await app.inject({ method: 'POST', url: '/api/windows/pairing', headers: headers(), payload: {} });
+    expect(pairing.statusCode).toBe(200);
+    hasOwnerAccess = false;
+    try {
+      const response = await pollFixture();
+      const replacement = await app.inject({ method: 'POST', url: '/api/windows/companion/pair', payload: { code: pairing.json().code, name: 'Fixture' } });
+      expect.soft(response.json()).toMatchObject({ grant: null, command: null });
+      expect(replacement.statusCode).toBe(401);
+    } finally {
+      hasOwnerAccess = true;
+    }
   });
   it('separates view/control and binds grants to the authenticated browser session',async()=>{
     await allow('view');const image=frame();await poll({frame:image});
