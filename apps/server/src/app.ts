@@ -497,6 +497,7 @@ export async function createApplication(config: AppConfig) {
   const documentLink=(id:string)=>`${config.webOrigin}/api/documents/${id}/content`;
   // The own image reader (packages/vision): exported weights in artifacts/vision/ocr-v1 unless MOHASSAN_OCR_MODEL_DIR points elsewhere.
   const imageReader=await createImageReader({modelDir:process.env.MOHASSAN_OCR_MODEL_DIR??join(process.cwd(),'artifacts','vision','ocr-v1'),workers:Number(process.env.MOHASSAN_OCR_WORKERS??3)});
+  app.addHook('onClose', () => imageReader.close());
   // The owner's model council and models page (assistant/model-council.ts, models-routes.ts) share one model runtime. It
   // reads the server's model store (MOHASSAN_MODELS_ROOT) before the checkout, and starts a model's worker on first use.
   const modelStoreRoots = modelRoots(process.cwd());

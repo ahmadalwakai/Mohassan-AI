@@ -1,6 +1,30 @@
-import { describe, expect, it } from 'vitest';
+import { EventEmitter } from 'node:events';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
+import type { WorkerOptions } from 'node:worker_threads';
+import sharp from 'sharp';
+import { describe, expect, it, vi } from 'vitest';
 import type { ImageReading } from '@mohassan/vision';
 import { composeImageReply, contentWords, imageIntent, readingForTrail } from '../apps/server/src/assistant/image-reading.js';
+import { createImageReader, ImageReaderUnavailable } from '../apps/server/src/image-reader.js';
+import { createTinyOcrModel } from '../packages/vision/src/ocr-test-model.js';
+
+let failStartup: EventEmitter | undefined;
+
+vi.mock('node:worker_threads', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:worker_threads')>();
+  return {
+    ...actual,
+    Worker: function (source: string, options: WorkerOptions) {
+      if (!failStartup) return new actual.Worker(source, options);
+      const worker = failStartup;
+      failStartup = undefined;
+      return Object.assign(worker, { unref() {}, async terminate() { return 0; } });
+    },
+  };
+});
 
 function reading(lines: string[], overrides: Partial<ImageReading> = {}): ImageReading {
   const rtl = lines.some(line => /[؀-ۿ]/u.test(line));
@@ -73,5 +97,38 @@ describe('image replies', () => {
   it('gives the brain a short trail note', () => {
     expect(readingForTrail(reading(['Sign in', 'Password']))).toBe('2 text lines read (own OCR): Sign in Password');
     expect(readingForTrail(reading([], { kind: 'photo' }))).toContain('no readable text');
+  });
+});
+
+describe('server image reader', () => {
+  it('refuses reads while OCR is unavailable without delaying the event loop, then reads from the recovered pool', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mohassan-image-reader-'));
+    const { modelId, manifestBytes, weightsBytes } = createTinyOcrModel();
+    try {
+      await Promise.all([writeFile(join(dir, 'manifest.json'), manifestBytes), writeFile(join(dir, 'weights.bin'), weightsBytes)]);
+      const width = 80, height = 40;
+      const bytes = await sharp({ create: { width, height, channels: 3, background: '#fff' } }).png().toBuffer();
+      const firstWorker = failStartup = new EventEmitter();
+      const reader = await createImageReader({ modelDir: dir, workers: 1 });
+      const histogram = monitorEventLoopDelay({ resolution: 5 });
+      const failure = setTimeout(() => firstWorker.emit('message', { v: 1, type: 'failed', error: 'fixture startup failure' }), 40);
+      try {
+        histogram.enable();
+        await expect(reader.read(bytes)).rejects.toBeInstanceOf(ImageReaderUnavailable);
+        histogram.disable();
+        expect(histogram.count).toBeGreaterThan(0);
+        expect(histogram.max / 1_000_000).toBeLessThan(250);
+        await vi.waitFor(async () => {
+          expect(await reader.read(bytes)).toMatchObject({ modelId, facts: { width, height, format: 'png' } });
+        }, { timeout: 20_000 });
+      } finally {
+        clearTimeout(failure);
+        histogram.disable();
+        await reader.close();
+      }
+    } finally {
+      failStartup = undefined;
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
