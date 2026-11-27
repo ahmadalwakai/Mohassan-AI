@@ -1,8 +1,14 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentPage } from '@mohassan/browser';
+import type { AgentBrowser, AgentPage, SearchProvider } from '@mohassan/browser';
+import { createDatabase, migrate } from '@mohassan/database';
 import { searchComparison } from '../apps/server/src/assistant/comparison-web.js';
 import { parseComparisonQuestion } from '../apps/server/src/assistant/comparison-question.js';
-import { PROVIDER_SPACING_MS, runHands, webQuestion, type HandsIO } from '../apps/server/src/assistant/hands.js';
+import { PROVIDER_SPACING_MS, runHands, webQuestion, type HandsIO, type HandsRead } from '../apps/server/src/assistant/hands.js';
+import { createJudgeShadow, type JudgeShadowLine } from '../apps/server/src/assistant/judge-shadow.js';
+import { createCommandChatControl } from '../apps/server/src/command-chat.js';
 
 const python = 'Python';
 const java = 'Java';
@@ -24,7 +30,7 @@ const pair = {
 function page(slug: string, title: string, text: string): AgentPage {
   const url = `https://comparison.example/${slug}`;
   return {
-    id: url, url, title, text, elements: [], hash: url,
+    id: url, url, title, text, elements: [], hash: url, observedAt: new Date(0).toISOString(),
     signals: { captcha: false, password: false, otp: false, card: false },
     scroll: { top: 0, height: 0, viewport: 0 },
   };
@@ -34,7 +40,7 @@ function harness(find: (query: string) => AgentPage[], sources: AgentPage[]): Ha
   return {
     page: async () => null,
     search: vi.fn(async query => find(query).map(({ title, url, text }) => ({ title, url, snippet: text }))),
-    read: vi.fn(async url => {
+    read: vi.fn(async (url: string): Promise<HandsRead> => {
       const found = sources.find(source => source.url === url);
       return found ? { kind: 'page', page: found } : { kind: 'unreadable' };
     }),
@@ -99,6 +105,16 @@ describe('comparison completeness on the public web path', () => {
     expect(io.search).toHaveBeenCalledTimes(1);
   });
 
+  it('looks for the missing side even if the first page gives no measurement', async () => {
+    const first = page(python, python, `${python} is an input to the fixture.`);
+    const io = harness(() => [first], [first]);
+
+    await expect(runHands({ steps: webQuestion(questions.en)!, next: 0, lang: 'en' }, io))
+      .resolves.toMatchObject({ status: 'partial', text: expect.stringContaining(partial.en) });
+    expect(io.search).toHaveBeenCalledTimes(2);
+    expect(io.search).toHaveBeenNthCalledWith(2, expect.stringMatching(/^Java\s/u), 6);
+  });
+
   it('keeps a search domain constraint when looking for the missing side', async () => {
     const first = page(python, python, measurement.en(python));
     const io = harness(() => [first], [first]);
@@ -157,4 +173,46 @@ describe('comparison completeness on the public web path', () => {
       .resolves.toMatchObject({ status: 'completed', text: expect.stringContaining(ordinary.text) });
     expect(io.search).toHaveBeenCalledExactlyOnceWith(question.slice(0, -1), 6);
   });
+
+  it('publishes a native partial reply for both the owner and a member with normal judge settings', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'comparison-publication-'));
+    const database = await createDatabase();
+    const shadow = createJudgeShadow({ logFile: join(directory, 'shadow.jsonl') });
+    const first = page(python, python, measurement.en(python));
+    const search: SearchProvider['search'] = vi.fn(async () => [{ title: first.title, url: first.url, snippet: first.text }]);
+    const browser = {
+      setCheckpointStore() {}, async bindAccount() {}, async hasPage() { return false; },
+      async act() { throw new Error('Public comparison uses HTTP.'); }, async close() {},
+    } as unknown as AgentBrowser;
+    const owner = 'comparison-publication-owner';
+    const member = 'comparison-publication-member';
+    let control: Awaited<ReturnType<typeof createCommandChatControl>> | undefined;
+    try {
+      await migrate(database.db);
+      control = await createCommandChatControl(database.db, {
+        browser, models: { fast: [], deep: [], vision: '' }, searchProvider: { name: 'comparison-publication', search },
+        readPage: async () => ({ url: first.url, status: 200, text: first.text, title: first.title }),
+        fullAccess: async account => account === owner,
+        judgeShadow: shadow, judgeFixForOwner: true, judgeWithholdForOwner: true, judgeLogText: 'owner',
+      });
+      for (const [account, lang] of [[owner, 'en'], [member, 'ar']] as const) {
+        vi.mocked(search).mockClear();
+        const { id } = await control.create(account, { goal: questions[lang] });
+        await control.settled(id);
+        const detail = await control.detail(account, id);
+        const run = await database.db.selectFrom('chat_runs').select('status').where('conversation_id', '=', id).executeTakeFirstOrThrow();
+        expect(detail.error).toBeNull();
+        expect(detail.messages.at(-1)?.text.startsWith(partial[lang])).toBe(true);
+        expect(run.status).toBe('partial');
+        expect(search).toHaveBeenCalledTimes(2);
+        await shadow.flush();
+        const lines = (await readFile(shadow.logFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as JudgeShadowLine);
+        expect(lines.find(line => line.conversationId === id)).toMatchObject({ applied: false, status: 'partial', textKept: account === owner });
+      }
+    } finally {
+      await control?.shutdown();
+      await database.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

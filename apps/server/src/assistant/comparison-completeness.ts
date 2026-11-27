@@ -2,7 +2,8 @@ import { publicSearchText } from '@mohassan/browser';
 import { isMetaLine } from './answer-check.js';
 import { explicitFactualEvidence } from './factual-evidence.js';
 import {
-  comparisonAttributesIn, isConditionalComparisonAttribute, mentionsComparisonSubject, normalizeComparisonText, type ParsedComparisonQuestion,
+  comparisonAttributesIn, isConditionalComparisonAttribute, matchesChoiceTransliteration, mentionedComparisonSubjects, mentionsComparisonSubject,
+  normalizeComparisonText, type ParsedComparisonQuestion,
 } from './comparison-question.js';
 import { isPageInstruction } from './mind/extract.js';
 
@@ -24,14 +25,15 @@ const conditionEdge = /[,،;؛!?؟]|(?<!\p{L})(?:while|whereas|but|بينما|ل
 const conditionGrammar = /^(?:the|a|an|and|or|it|is|are|be|its|of|to|by|more|less|than|there|الذي|التي|هو|هي|ذلك|هذه|هذا|ال|ان|او|و|من|في|علي)$/u;
 const noConcreteContext = /^(?:both|them|all|each|comparison|general|average|المتوسط|المقارنه|العموم|الجميع)$/u;
 const conditionContinuation = /^(?:(?:the )?(?:results?|prices?|costs?|performance|speed|comparison|findings?|measurements?|these (?:results?|measurements?))\s+(?:(?:can|may|will)\s+)?(?:var(?:y|ies)|depends?|change[sd]?|appl(?:y|ies)|(?:we(?:re)? )?measured|(?:was|were) measured)|(?:و?تختلف|و?يتغير|و?تتغير|و?يعتمد|و?تعتمد)\s+(?:ال)?(?:النتائج|الاسعار|التكلفه|الاداء|السرعه)|(?:و?تختلف|و?يتغير|و?تتغير|و?يعتمد|و?تعتمد)\s+(?:حسب|باختلاف|على)|(?:النتائج|الاسعار|الاداء|السرعه)\s+(?:تختلف|يتغير|تتغير|يعتمد|تعتمد))/u;
-const markdownLink = /\[([^\]\n]*)\]\((https?:\/\/[^)\s]+)\)/gu;
+const markdownLink = /\[([^\]\n]*)\]\((https?:\/\/(?:[^()\s]|\([^()\s]*\))+)\)/gu;
 const sourceLine = /^\s*(?:\*\*)?(?:Sources?|المصادر?|Source link|رابط المصدر)\s*:/iu;
 const layoutLine = /^\s*(?:\*\*)?(?:See also|للمزيد|Page title|عنوان الصفحة)\s*:/iu;
 const partialLead = /^(?:\*\*)?(?:Partial answer|إجابة جزئية)\s*:/iu;
-const questionEcho = /^(?:Q(?:uestion)?|You asked(?: me)?|(?:ال)?سؤال|سألت(?:ني)?)\s*[:：]/iu;
+const questionEcho = /^(?:Q(?:uestion)?|You asked(?: me)?|(?:ال)?س[ؤو]ال|س|سألت(?:ني)?)\s*[:：]/iu;
 const questionLabel = /(?<!\p{L})(?:question|q|(?:ال)?س[ؤو]ال|س)\s*[:：]/iu;
 const answerLabel = /(?<!\p{L})(?:answer|a|(?:ال)?[إأا]جاب[ةه]|(?:ال)?جواب|ج)\s*[:：]/giu;
 const disputedChoice = /(?<!\p{L})(?:not|never|perhaps|possibly|probably|maybe|rather|ليس|ليست|ربما|المحتمل)(?!\p{L})/u;
+const noObservation = /(?<!\p{L})(?:(?:did not|didn't|does not|doesn't|never) (?:compare|measure|benchmark|test|assess|evaluate)|(?:no|without) (?:comparable )?(?:evidence|measurements?|benchmarks?|data) (?:for|of|on|about|from|comparing)|(?:لم|لا) (?:ي|ت)(?:قارن|قس|قيس|ختبر|ختبِر|قيم)|لا توجد (?:بيانات|قياسات|ادله))(?!\p{L})/u;
 
 const contextTerms = (text: string) => (normalizeComparisonText(text).match(/[\p{L}\p{N}]+/gu) ?? [])
   .filter(word => !conditionGrammar.test(word));
@@ -65,7 +67,8 @@ function pieces(text: string): string[] {
 }
 
 function isObservation(text: string): boolean {
-  return !/[?؟]$/u.test(text) && !questionEcho.test(text) && !isMetaLine(text) && !isPageInstruction(text);
+  return !/[?؟]$/u.test(text) && !questionEcho.test(text) && !/^\|/u.test(text) && !isMetaLine(text) && !isPageInstruction(text)
+    && !noObservation.test(normalizeComparisonText(text));
 }
 
 /** A single choice in an exact, labeled Q&A can state an ordering for a stable attribute. */
@@ -77,8 +80,10 @@ function choiceRecord<T extends ComparisonEvidence>(comparison: ParsedComparison
   const label = labels.at(-1);
   if (!label) return;
   const value = normalizeComparisonText(record.quote.slice(label.index + label[0].length)).replace(/[.!]+$/u, '');
-  if (!/^[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N}.'() -]*$/u.test(value) || disputedChoice.test(value)
-    || comparison.subjects.filter(subject => mentionsComparisonSubject(value, subject)).length !== 1) return;
+  if (!/^[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N}.'()+# -]*$/u.test(value) || disputedChoice.test(value)) return;
+  const named = mentionedComparisonSubjects(value, comparison.subjects);
+  const selected = named.length ? named : comparison.subjects.filter(subject => matchesChoiceTransliteration(value, subject));
+  if (selected.length !== 1) return;
   return { evidence, text: record.quote, subjects: [...comparison.subjects], attributes: [comparison.attribute.key], conditions: [] };
 }
 
@@ -94,9 +99,9 @@ function evidencePassages<T extends ComparisonEvidence>(comparison: ParsedCompar
       previous = undefined;
       continue;
     }
-    const subjects = comparison.subjects.filter(subject => mentionsComparisonSubject(piece, subject));
+    const subjects = mentionedComparisonSubjects(piece, comparison.subjects);
     const attributes = comparisonAttributesIn(comparison, piece);
-    const conditions = comparison.attribute.conditionSensitive || comparison.attribute.key === 'general' ? conditionsIn(piece, comparison) : [];
+    const conditions = conditionsIn(piece, comparison);
     if (subjects.length && attributes.length) {
       previous = { evidence, text: piece, subjects, attributes, conditions };
       passages.push(previous);
@@ -134,6 +139,15 @@ function sharedAttributes(subjects: readonly string[], parts: readonly { subject
     .filter(attribute => first.has(attribute));
 }
 
+function hasComparableConditions(subjects: readonly string[], passages: readonly ComparisonPassage<ComparisonEvidence>[]): boolean {
+  if (passages.some(passage => passage.subjects.length === 2 && passage.conditions.length)) return true;
+  const [left, right] = subjects.map(subject => passages.filter(passage => passage.subjects.includes(subject))
+    .flatMap(passage => passage.conditions));
+  // Separate observations need one common testing or pricing context before they can answer a relative question.
+  return left!.some(first => right!.some(second => first.relation === second.relation && first.terms.length === second.terms.length
+    && first.terms.every(term => second.terms.includes(term))));
+}
+
 export interface ComparisonCompleteness {
   complete: boolean;
   missingEvidenceSubjects: string[];
@@ -150,7 +164,7 @@ export function checkComparisonCompleteness(
     .map(line => line.replace(markdownLink, '$1').replace(/https?:\/\/\S+/gu, '').replace(/^\s*(?:>|[-*•])\s*/u, '')).join('\n');
   const replyParts = pieces(replyText).filter(isObservation);
   const replyObservations = replyParts.map(text => ({
-    subjects: comparison.subjects.filter(subject => mentionsComparisonSubject(text, subject)),
+    subjects: mentionedComparisonSubjects(text, comparison.subjects),
     attributes: comparisonAttributesIn(comparison, text),
   }));
   const presentedEvidence = checkedEvidence(reply, evidence);
@@ -161,14 +175,18 @@ export function checkComparisonCompleteness(
   }
   const replyAttributes = sharedAttributes(comparison.subjects, replyObservations);
   const comparableAttributes = sharedAttributes(comparison.subjects, passages).filter(attribute => replyAttributes.includes(attribute));
-  const missingEvidenceSubjects = comparison.subjects.filter(subject => !passages.some(passage => passage.subjects.includes(subject)));
+  // If none of the evidence gives the attribute yet, a page naming only one alternative still identifies which side to seek.
+  const namedEvidence = passages.length ? passages.flatMap(passage => passage.subjects) : presentedEvidence.flatMap(item =>
+    pieces(item.text.slice(0, 200_000)).filter(isObservation).flatMap(line => mentionedComparisonSubjects(line, comparison.subjects)));
+  const missingEvidenceSubjects = comparison.subjects.filter(subject => !namedEvidence.includes(subject));
   const missingReplySubjects = comparison.subjects.filter(subject => !replyObservations.some(part => part.subjects.includes(subject)));
   const missingAttribute = comparableAttributes.length === 0;
   const replyConditions = replyParts.flatMap(line => conditionsIn(line, comparison)).map(condition => ({ ...condition, terms: new Set(condition.terms) }));
   const missingConditions = comparableAttributes.some(attribute => {
-    if (!comparison.attribute.conditionSensitive && !isConditionalComparisonAttribute(attribute)) return false;
-    const conditions = passages.filter(passage => passage.attributes.includes(attribute)).flatMap(passage => passage.conditions);
-    return !conditions.length || conditions.some(condition => !replyConditions.some(stated => stated.relation === condition.relation
+    const needsConditions = comparison.attribute.conditionSensitive || isConditionalComparisonAttribute(attribute);
+    const relevant = passages.filter(passage => passage.attributes.includes(attribute));
+    return needsConditions && !hasComparableConditions(comparison.subjects, relevant)
+      || relevant.flatMap(passage => passage.conditions).some(condition => !replyConditions.some(stated => stated.relation === condition.relation
       && condition.terms.every(term => stated.terms.has(term))));
   });
   return {

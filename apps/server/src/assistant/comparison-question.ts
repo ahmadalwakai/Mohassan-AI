@@ -17,7 +17,8 @@ type ComparisonParts = Omit<ParsedComparisonQuestion, 'question'>;
 
 const word = '[\\p{L}\\p{N}+#]';
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-export const normalizeComparisonText = (text: string) => matchText(text).replace(/[‘’]/gu, "'").replace(/\s+/gu, ' ').trim();
+export const normalizeComparisonText = (text: string) => matchText(text).normalize('NFD').replace(/(\p{Script=Latin})\p{M}+/gu, '$1').normalize('NFC')
+  .replace(/[‘’]/gu, "'").replace(/\s+/gu, ' ').trim();
 
 const subjectKey = (text: string) => normalizeComparisonText(text).replace(/^(?:the |an? |ال(?=\p{L}{3}))/u, '');
 
@@ -31,6 +32,38 @@ function term(text: string): RegExp {
 
 export function mentionsComparisonSubject(text: string, subject: string): boolean {
   return term(subject).test(normalizeComparisonText(text));
+}
+
+/** A longer name cannot stand in for a separately named shorter alternative. */
+export function mentionedComparisonSubjects(text: string, subjects: readonly string[]): string[] {
+  const normalized = normalizeComparisonText(text);
+  const matches = subjects.flatMap(subject => [...normalized.matchAll(new RegExp(term(subject).source, 'gu'))]
+    .map(match => ({ subject, start: match.index, end: match.index + match[0].length })))
+    .sort((first, second) => (second.end - second.start) - (first.end - first.start) || first.start - second.start);
+  const selected: typeof matches = [];
+  for (const match of matches) {
+    if (!selected.some(other => match.start < other.end && other.start < match.end)) selected.push(match);
+  }
+  return subjects.filter(subject => selected.some(match => match.subject === subject));
+}
+
+// Base letters from the Unicode CLDR Arabic–Latin transform (retrieved 2026-11-27).
+// https://github.com/unicode-org/cldr/blob/release-48/common/transforms/Arabic-Latin.xml
+const arabicRoman: Record<string, string> = {
+  ا: 'a', ب: 'b', ت: 't', ث: 'th', ج: 'j', ح: 'h', خ: 'kh', د: 'd', ذ: 'dh', ر: 'r', ز: 'z',
+  س: 's', ش: 'sh', ص: 's', ض: 'd', ط: 't', ظ: 'z', غ: 'gh', ف: 'f', ق: 'q', ك: 'k', ل: 'l',
+  م: 'm', ن: 'n', ه: 'h', و: 'w', ي: 'y', پ: 'p', چ: 'ch', ڤ: 'v', گ: 'g',
+};
+
+/** Resolve a single transliterated name only within an explicit two-choice source record. */
+export function matchesChoiceTransliteration(value: string, subject: string): boolean {
+  const sides = [normalizeComparisonText(value), normalizeComparisonText(subject)];
+  const arabic = sides.find(item => /^\p{Script=Arabic}+$/u.test(item));
+  const latin = sides.find(item => /^[a-z]+$/u.test(item));
+  if (!arabic || !latin || [...arabic].some(letter => !arabicRoman[letter])) return false;
+  const consonants = (name: string) => name.replace(/[aeiouy]/gu, '').replace(/(.)\1+/gu, '$1');
+  const romanized = consonants([...arabic].map(letter => arabicRoman[letter]).join(''));
+  return romanized.length >= 3 && romanized === consonants(latin);
 }
 
 function dimension(key: string, en: string, ar: string, english: string, arabic: string, conditionSensitive = false): ComparisonAttribute {

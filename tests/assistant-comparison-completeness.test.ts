@@ -54,6 +54,22 @@ describe('comparison completeness', () => {
     expect(check(en, `${left}\n${right}`, [left, right]).complete).toBe(true);
   });
 
+  it('requires comparable contexts for separately sourced measurements', () => {
+    const left = `${pair[0]} ran in ${pair[0].length} ms on the small input.`;
+    const right = `${pair[1]} ran in ${pair[1].length} ms on the large input.`;
+    expect(check(en, `${left}\n${right}`, [left, right])).toMatchObject({ complete: false, missingConditions: true });
+  });
+
+  it('does not count a disclaimer as an observation or one variant as two distinct sides', () => {
+    const disclaimer = `On these workloads, this report did not compare the speed of ${pair[0]} or ${pair[1]}.`;
+    expect(check(en, disclaimer, [disclaimer]).complete).toBe(false);
+    const question = 'Is Sample faster than Sample Pro?';
+    const lone = 'On shared hardware, Sample Pro ran faster.';
+    expect(check(question, lone, [lone])).toMatchObject({ complete: false, missingEvidenceSubjects: ['Sample'] });
+    const both = 'On shared hardware, Sample Pro ran faster than Sample.';
+    expect(check(question, both, [both]).complete).toBe(true);
+  });
+
   it('carries a separate evidence sentence that explains when the finding applies', () => {
     const comparison = 'Python was faster than Java.';
     const condition = 'Results vary by input size and runtime.';
@@ -68,6 +84,14 @@ describe('comparison completeness', () => {
     const later = 'After the trial month, Plan B costs less than Plan A.';
     expect(check(question, `${earlier}\n${later}`, [earlier, later]).complete).toBe(true);
     expect(check(question, earlier, [earlier, later])).toMatchObject({ complete: false, missingConditions: true });
+  });
+
+  it('preserves evidence conditions for other attributes when they affect the comparison', () => {
+    const question = 'Is Option A safer than Option B?';
+    const younger = 'For younger participants, Option A was safer than Option B.';
+    const older = 'For older participants, Option B was safer than Option A.';
+    expect(check(question, `${younger}\n${older}`, [younger, older]).complete).toBe(true);
+    expect(check(question, 'Option A was safer than Option B.', [younger, older])).toMatchObject({ complete: false, missingConditions: true });
   });
 
   it('requires conditions for an inferred performance criterion and a shared criterion for an open comparison', () => {
@@ -95,6 +119,15 @@ describe('comparison completeness', () => {
     expect(check(question, record, [record]).complete).toBe(true);
     expect(check(question, left, [record]).complete).toBe(false);
     expect(check(question.replace('larger', 'smaller'), record, [record]).complete).toBe(false);
+  });
+
+  // The pinned human development records use an unaccented choice and a transliterated choice (retrieved 2026-11-27).
+  // https://github.com/ahmadalwakai/Mohassan-AI/blob/12cedfe592aab40cdd47ee00d05ea86a6d2bae89/tests/fixtures/agent-capability-bench/v2/dev/payload.json
+  it.each([
+    ['Who won more Grammys, Britney Spears or Beyoncé?', 'Question: Who won more Grammys, Britney Spears or Beyoncé | Answer: Beyonce'],
+    ['أيهما أكبر سنًا، The Weeknd أم Drake؟', 'السؤال: أيهما أكبر سنًا، The Weeknd أم Drake | الإجابة: دريك'],
+  ])('can resolve alternate spellings in a sourced choice for %s', (question, record) => {
+    expect(check(question, record, [record]).complete).toBe(true);
   });
 
   it('recognises the host’s partial reply without a second judge replacement', () => {
