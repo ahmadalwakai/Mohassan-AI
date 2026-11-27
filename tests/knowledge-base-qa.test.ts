@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createKnowledgeQa, createKnowledgeQaShadow, openKnowledgeBase } from '../packages/knowledge-base/src/index.ts';
+import { answerOfflineQuestion, createKnowledgeQa, createKnowledgeQaShadow, openKnowledgeBase } from '../packages/knowledge-base/src/index.ts';
 import type { KnowledgeQaShadowReport, StoredClaim, StoredEntity, WikidataSnak } from '../packages/knowledge-base/src/index.ts';
 import { openBuild } from '../packages/knowledge-base/src/store.ts';
 
@@ -125,6 +125,53 @@ describe('offline factual answers', () => {
     expect(qa.answer('What was the capital of the United States in 1799?')).toMatchObject({
       status: 'answered', values: [{ id: 'Q1345' }],
     });
+  });
+
+  it('uses dated office observations while declining an ended or conflicting current claim', () => {
+    // These deliberately fictional people and states exercise term qualification.
+    const database = join(directory, 'office-scenarios.sqlite');
+    const person = (id: string, en: string): StoredEntity => ({
+      id, revision: null, labels: { en }, categories: ['people'], aliases: {}, descriptions: {}, claims: [],
+    });
+    const state = (id: string, en: string, claims: StoredClaim[]): StoredEntity => ({
+      id, revision: null, labels: { en }, categories: ['countries'], aliases: {}, descriptions: {}, claims,
+    });
+    const first = person('Q900000001', 'First Fixture Holder');
+    const second = person('Q900000002', 'Second Fixture Holder');
+    const past = time('P585', '2020-01-01', 11);
+    const recent = time('P585', '2025-01-01', 11);
+    const started = time('P580', '2024-01-01', 11);
+    const ended = time('P582', '2021-01-01', 11);
+    const future = time('P580', '2027-01-01', 11);
+    const records = [first, second,
+      state('Q900000010', 'First Fixture State', [
+        item('P35', first.id, { qualifiers: { P585: [past], P582: [ended] } }),
+      ]),
+      state('Q900000011', 'Second Fixture State', [
+        item('P35', first.id, { rank: 'preferred', qualifiers: { P585: [past] } }),
+        item('P35', second.id, { qualifiers: { P585: [recent] } }),
+        item('P35', first.id, { qualifiers: { P580: [future] } }),
+      ]),
+      state('Q900000012', 'Third Fixture State', [
+        item('P6', first.id, { qualifiers: { P585: [recent] } }),
+        item('P6', second.id, { rank: 'preferred', qualifiers: { P580: [started] } }),
+      ]),
+    ];
+    const build = openBuild(database, { source: 'fixture:office-scenarios', dumpDate, fingerprint: 'sha256:fixture',
+      categories: ['countries', 'people'] });
+    try {
+      build.commit({ phase: 'entities', offset: 0 }, () => {});
+      build.writeEntities(records, { phase: 'entities', offset: records.length });
+      build.finish();
+    } finally {
+      build.close();
+    }
+    expect(answerOfflineQuestion(database, 'Who is the head of state of First Fixture State?')).toBeUndefined();
+    expect(answerOfflineQuestion(database, 'Who was the head of state of First Fixture State in 2020?'))
+      .toContain('First Fixture Holder (as of 2020-01-01)');
+    expect(answerOfflineQuestion(database, 'Who is the head of state of Second Fixture State?'))
+      .toContain('Second Fixture Holder (as of 2025-01-01)');
+    expect(answerOfflineQuestion(database, 'Who is the head of government of Third Fixture State?')).toBeUndefined();
   });
 
   it('compares comparable values and marks the index scope of a category superlative', () => {

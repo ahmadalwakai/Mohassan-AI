@@ -69,7 +69,7 @@ export function calendarDateBounds(date: NonNullable<ReturnType<typeof readWikid
   return { earliest: exactDay, latest: exactDay };
 }
 
-function uniqueDateBounds(snaks: WikidataSnak[]): DateBounds | undefined {
+export function uniqueDateBounds(snaks: WikidataSnak[]): DateBounds | undefined {
   const first = snaks[0] && dateBounds(snaks[0]);
   if (!first) return;
   if (snaks.every(snak => {

@@ -1,24 +1,32 @@
 import { analyzeKnowledgeQuestion } from './question-analysis.ts';
 import { KNOWLEDGE_PROPERTIES } from './qa-properties.ts';
 import { knowledgeValueKey, readKnowledgeValue, renderKnowledgeValue } from './qa-values.ts';
-import { readWikidataDate } from './query-values.ts';
-import { openKnowledgeBase } from './query.ts';
+import { orderedStatementDate, readWikidataDate, uniqueDateBounds } from './query-values.ts';
+import { openKnowledgeBase, type Fact } from './query.ts';
 
 const PROPERTIES = KNOWLEDGE_PROPERTIES;
-const DATED_OBSERVATIONS = new Set<string>([
-  PROPERTIES.population.property.id, PROPERTIES.headOfState.property.id, PROPERTIES.headOfGovernment.property.id,
-]);
+const OFFICE_PROPERTIES = new Set<string>([PROPERTIES.headOfState.property.id, PROPERTIES.headOfGovernment.property.id]);
 const STABLE_PROPERTIES = new Set<string>([
   PROPERTIES.capital.property.id, PROPERTIES.birthDate.property.id, PROPERTIES.deathDate.property.id,
   PROPERTIES.inception.property.id, PROPERTIES.publication.property.id,
 ]);
+
+function officeTerm(fact: Fact) {
+  const { P580: starts, P582: ends } = fact.statement.qualifiers;
+  return {
+    start: starts ? uniqueDateBounds(starts) : { earliest: -Infinity, latest: -Infinity },
+    end: ends ? uniqueDateBounds(ends) : { earliest: Infinity, latest: Infinity },
+  };
+}
 
 /** Returns a cited direct answer, or leaves the entire question for the caller. */
 export function answerOfflineQuestion(databasePath: string, text: string): string | undefined {
   const question = analyzeKnowledgeQuestion(text);
   if (!question || question.kind !== 'lookup' || question.multiple) return;
   const { property, language, entity, time } = question;
-  const dated = DATED_OBSERVATIONS.has(property.id);
+  const office = OFFICE_PROPERTIES.has(property.id);
+  const dated = office || property.id === PROPERTIES.population.property.id;
+  const currentOffice = office && time?.year === undefined && time?.order !== 'earliest';
   if (!dated && !STABLE_PROPERTIES.has(property.id)) return;
   // A year-qualified request for a stable fact requires context beyond its bare value.
   if (!dated && time?.year !== undefined) return;
@@ -38,6 +46,12 @@ export function answerOfflineQuestion(databasePath: string, text: string): strin
       ? { ...time, order: time?.order ?? 'latest', pointInTimeOnly: true, allRanks: true }
       : time);
     if (!facts.length) return;
+
+    const snapshotDay = Number(facts[0].source.dumpDate.replaceAll('-', ''));
+    if (currentOffice && facts.some(fact => {
+      const { start, end } = officeTerm(fact);
+      return (start?.latest ?? Infinity) > snapshotDay || (end?.earliest ?? -Infinity) <= snapshotDay;
+    })) return;
 
     const label = (id: string) => {
       const [item] = store.lookupEntity(id);
@@ -66,6 +80,15 @@ export function answerOfflineQuestion(databasePath: string, text: string): strin
       }
     }
     if (values.size !== 1 || dated && observations.size !== 1) return;
+
+    if (currentOffice && store.lookupFacts(entityId, property.id, { allRanks: true }).some(fact => {
+      // Dated observations already participated in chronological selection.
+      if (orderedStatementDate(fact.statement, true)) return false;
+      const { start, end } = officeTerm(fact);
+      if ((start?.earliest ?? -Infinity) > snapshotDay || (end?.latest ?? Infinity) < snapshotDay) return false;
+      const value = readKnowledgeValue(fact, property.answerType, label);
+      return !value || !values.has(knowledgeValueKey(value));
+    })) return;
 
     const ar = language === 'ar';
     const [value] = values.values();
