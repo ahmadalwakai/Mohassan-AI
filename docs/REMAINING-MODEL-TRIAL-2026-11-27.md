@@ -6,23 +6,25 @@ Assessment of production commit `29448aea3fa10d226ef82ec5bf0a65e723d6ec39`. **Se
 
 The pilot host was an Intel Xeon Platinum 8573C with five visible logical CPUs, a four-vCPU quota, 16 GiB memory limit and no NVIDIA device. The v5 kit supports CPU fitting and is configured for the PC's CUDA path in the example schedule. Even CPU scheduling requires v5 readiness. No schedule or checkpoint override was used to get around the failed gate. [Head-training kit](../packages/head-training/README.md) · [Exact ten-job schedule](../packages/head-training/pc-schedule.example.json)
 
-| Model | Required data, trunk and hardware | Cloud eligibility | Data preparation | CPU training | Development evaluation | Owner PC training from receipts |
+| Model | Required data, trunk and hardware | Cloud eligibility | Data preparation | CPU training | Development evaluation | Owner PC fitting estimate |
 | --- | --- | --- | ---: | ---: | ---: | --- |
-| `head-clinc-intent` | CLINC150 intents · pinned v5 trunk/tokenizer · CPU or CUDA | Blocked by Gate 3 and missing trunk | 0.4 s encoding | 5 h 41 m | 36 m | No comparable measurement |
-| `head-massive-intent` | MASSIVE ar-SA/en-US intents · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | 0.6 s encoding | 8 h 44 m | 49 m | No comparable measurement |
-| `head-clinc-domain` | CLINC150 domains · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | 0.4 s encoding | 5 h 41 m | 36 m | No comparable measurement |
-| `head-massive-scenario` | MASSIVE ar-SA/en-US scenarios · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | 0.6 s encoding | 8 h 44 m | 49 m | No comparable measurement |
-| `head-out-of-scope` | CLINC150 in-scope and OOS examples · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | 0.4 s encoding | 5 h 44 m | 37 m | No comparable measurement |
-| `head-follow-up` | QuAC dialogues and human follow-up annotations · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | 16.5 s encoding | 103 h | 9 h 51 m | No comparable measurement |
-| `question-edit` | CANARD human rewrites · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | 4.3 s encoding | 97 h | 2 h 52 m | No comparable measurement |
-| `head-answer-sentence` | XQuAD, MLQA, TyDiQA-GoldP and ARCD · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | 20.5 s encoding | 249 h | 11 h 18 m | No comparable measurement |
-| `head-sufficiency` | SQuAD 2.0 · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | 26–49 s encoding using initial proxies | 161–601 h | 16–22 h | No comparable measurement |
-| `head-speech-act` | Manual AMI annotations · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | About 16 s download, parsing and encoding before exclusions | 34 h | 4 h 28 m | No comparable measurement |
-| `monitor-context-head` | Private human outcomes and guarded CLINC150 and MASSIVE 1.0 fitting proxies · CPU | Blocked by absence of private outcomes | About 9–12 s for public source and feature work, plus unknown export time | 0.09–0.25 s fitted solver | 0.007–0.029 s sample calculation | CPU job. No comparable owner CPU fitting measurement |
+| `head-clinc-intent` | CLINC150 intents · pinned v5 trunk/tokenizer · CPU or CUDA | Blocked by Gate 3 and missing trunk | 0.4 s encoding | 5 h 41 m | 36 m | 18 m at batch 16 · 9 h 20 m at batch 2 |
+| `head-massive-intent` | MASSIVE ar-SA/en-US intents · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | 0.6 s encoding | 8 h 44 m | 49 m | 28 m at batch 16 · 14 h 19 m at batch 2 |
+| `head-clinc-domain` | CLINC150 domains · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | 0.4 s encoding | 5 h 41 m | 36 m | 18 m at batch 16 · 9 h 20 m at batch 2 |
+| `head-massive-scenario` | MASSIVE ar-SA/en-US scenarios · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | 0.6 s encoding | 8 h 44 m | 49 m | 28 m at batch 16 · 14 h 19 m at batch 2 |
+| `head-out-of-scope` | CLINC150 in-scope and OOS examples · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | 0.4 s encoding | 5 h 44 m | 37 m | 18 m at batch 16 · 9 h 24 m at batch 2 |
+| `head-follow-up` | QuAC dialogues and human follow-up annotations · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | 16.5 s encoding | 103 h | 9 h 51 m | 208 h at batch 2, conditional token budget |
+| `question-edit` | CANARD human rewrites · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | 4.3 s encoding | 97 h | 2 h 52 m | 78 h 26 m at batch 2, conditional token budget |
+| `head-answer-sentence` | XQuAD, MLQA, TyDiQA-GoldP and ARCD · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | 20.5 s encoding | 249 h | 11 h 18 m | 537 h at batch 2, conditional token budget |
+| `head-sufficiency` | SQuAD 2.0 · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | 26–49 s encoding using initial proxies | 161–601 h | 16–22 h | 1,297 h at batch 2, conditional token budget |
+| `head-speech-act` | Manual AMI annotations · pinned v5 trunk/tokenizer · CPU or CUDA | Same v5 block | About 16 s download, parsing and encoding before exclusions | 34 h | 4 h 28 m | 55 h 7 m at batch 2, conditional token budget |
+| `monitor-context-head` | Private human outcomes and guarded CLINC150 and MASSIVE 1.0 fitting proxies · CPU | Blocked by absence of private outcomes | About 9–12 s for public source and feature work, plus unknown export time | 0.09–0.25 s fitted solver | 0.007–0.029 s sample calculation | CPU only. Owner fit time depends on human rows and remains unmeasured. |
 
 All times are illustrative compute estimates. Most preparation entries cover token encoding only. Checkpoint I/O, publisher downloads and parsing, collection, data review, grouping and V2 filtering may add time or reduce the number of rows. The higher estimate is relevant only where the examples fill the assumed token width. CPU timing varied with the workload. The completed 512-token SQuAD classification probe refines the initial `head-sufficiency` estimates to about **60 s encoding, 372 h fitting and 19 h 55 m evaluation** in the same max-epoch scenario. [Head-training implementation](../packages/head-training/head_training/training.py) · [Partition rules](../packages/head-training/head_training/splits.py)
 
-The RTX 3050 Ti Laptop has 4 GB. The repository records **5,833 positions/s** for full 85M next-token training on it. The historical sidecar report explicitly leaves sidecar throughput on that GPU unverified. The monitor job uses the PC's CPU. The repository's monitor latency measurements cover warm inference using pipeline-check weights. Neither measurement gives the requested owner-PC training throughput. [Foundation throughput](CHAT-MODEL-TRAINING-PLAN.md#83-model-and-tooling) · [Head-training PR #44](https://github.com/ahmadalwakai/Mohassan-AI/pull/44) · [Monitor inference measurement](MONITOR-CONTEXT-DEV-BENCH.md#cpu-head-latency)
+The owner reported an RTX 3050 Ti Laptop 4 GB measurement on 2026-11-27. A linear intent head on the frozen 85M v5 trunk fitted **22,425 rows for 20 epochs in 27 min 4 s** at batch 16, with about **2,000–2,800 tokens/s**. At the kit default batch 2, the owner measured **285.8 tokens/s**. The batch-16 table estimates scale the reported elapsed time by fitting rows for comparable short classification heads, assuming a similar encoded-length distribution. [Training defaults and token counting](../packages/head-training/head_training/training.py)
+
+The batch-2 entries estimate fitting compute as `20 × fit rows × assumed tokens per row ÷ 285.8`. They use the cloud probe's widths of 32 for short classification, 128 for follow-up and rewrite, and 512 for answer selection and sufficiency. They exclude preparation and development. For contextual, ranking and evidence heads, the result is a conditional token budget. Actual sequence lengths, throughput and fit in 4 GB remain unverified. The CPU monitor trial has its own timing receipt below. The estimates confer no eligibility to start gated v5 work.
 
 ### Sources, licences and reference sizes
 
@@ -55,7 +57,7 @@ The H4 scenario uses TyDi's published all-language counts (49,881 fitting and 5,
 | 512 tokens, selection, 12 candidates | 0.34215 | 13.28959 | 9.86821 | 0.01443 |
 | 512 tokens, classification with evidence | 0.42187 | 8.21987 | 8.77978 | 0.01427 |
 
-Preparation scales encoding by total rows. Training scales median update time by `20 × fit_rows / 16` for the kit's configured maximum, with earlier stopping possible. Evaluation scales the median scoring pass by `(21 × development_rows + calibration_rows) / 16` and adds a calibrated score calculation. The contextual classification probe uses the double-pass evidence encoding cost as an approximation for QuAC. No full run took place, so total preparation, training and evaluation wall times and any real-data gain against the no-model baseline remain unverified.
+Preparation scales encoding by total rows. Training scales median update time by `20 × fit_rows / 16` for the kit's configured maximum, with earlier stopping possible. Evaluation scales the median scoring pass by `(21 × development_rows + calibration_rows) / 16` and adds a calibrated score calculation. The contextual classification probe uses the double-pass evidence encoding cost as an approximation for QuAC. This PR has no real monitor run. Actual preparation, training, evaluation and any gain against the no-model baseline remain unverified.
 
 ## Owner PC run
 
@@ -63,17 +65,38 @@ The monitor head is the candidate because it can train from zero on CPU without 
 
 ### Prepare eligible data
 
-Use a **PC-local PGlite snapshot** from before the reserved evaluation interval. Copy it while the local server is stopped. Keep the snapshot, exports, cache and outputs local. Use only human monitor approvals, declines, early stops and alert feedback from authorized recordings. The exporter preserves the owner, member-consent and deletion filters. It bounds both proposal and feedback timestamps in SQL. It exports numeric and hashed features and hashed conversation and monitor identifiers. Local outcome data is private and authorized only for the owner-local trial. [Recording exporter](../scripts/monitor-decision/export-development.ts) · [Feature schema](../apps/server/src/monitors/decision/features.ts)
+The production server records monitor proposals and feedback in the VM's PostgreSQL. On 2026-11-27 the owner reported **0 monitors and 0 human decisions** in a read-only check. When eligible records exist, run the exporter from the owner PC using `--database-url` with the approved VM connection. The VM database listens on loopback. If the PC needs a tunnel, use its existing SSH access with `ssh -N -L 127.0.0.1:LOCAL_PORT:127.0.0.1:5432 VM_SSH_TARGET`, substituting the owner's free local port and authorized SSH target. Enter the PostgreSQL URI for the forwarded port at the masked prompt. Use an authorized read-only login if available and keep its URI out of transcripts. The exporter takes the URI from the flag and runs the reads in a PostgreSQL read-only transaction. [Production database setup](DEPLOY-WAVE-6-2026-11-25.md) · [Bounded exporter](../scripts/monitor-decision/export-development.ts)
 
-Before export, record four increasing UTC timestamps that define three consecutive half-open windows for fitting, calibration and development. Their last boundary must be at or before the start of anything reserved. Supply the actual dates from the owner's collection plan. Records qualify only if the proposal and feedback both fall in the same window. Use distinct conversations across windows. The latest in-window feedback per monitor supplies its label. Fitting must include positive and negative feedback. The development gate also needs eligible positive and negative offers in both Arabic and English. An empty window or crossing group stops the trial. No collection or feedback wait is included in the compute estimates.
+For local recordings use `--database-dir` with a PC-local PGlite snapshot from before the reserved interval, copied while its server was stopped. Choose exactly one source. Both paths keep the owner, member-consent and deletion filters and bound proposal and feedback timestamps in SQL. They export numeric and hashed features and hashed conversation and monitor identifiers. Keep the exports, cache and outputs in the ignored local trial directory. [Feature schema](../apps/server/src/monitors/decision/features.ts)
+
+Before export, record four increasing UTC timestamps that define three consecutive half-open windows for fitting, calibration and development. Their last boundary must be at or before the start of anything reserved. Supply the actual dates from the owner's collection plan. Records qualify only if the proposal and feedback both fall in the same window. Use distinct conversations across windows. The latest in-window feedback per monitor supplies its label. Fitting must include positive and negative feedback. The development gate also needs eligible positive and negative offers in both Arabic and English. A crossing group stops the trial. No collection or feedback wait is included in the compute estimates.
+
+A window with no eligible decisions produces a zero-byte JSONL file and a checksum manifest with `rows: 0`. If any of the three exports is empty, the trainer exits with code 1 before fitting, prints one line, and creates no candidate directory.
+
+```text
+Decision export is empty or its row count does not match the manifest
+```
 
 The existing source cache helper downloads only the two requested archives and verifies both SHA-256 pins. CLINC150 is CC BY 3.0. MASSIVE **1.0** is CC BY 4.0. The trainer reads the official training partitions, selects guarded weak supervision for `none` and `reminder`, and caps public fitting rows by language using the real fitting support. The public rows never supply calibration or development outcomes. Record the actual retrieval date of the fresh cache. Source pins and license information were retrieved on 2026-11-27. [CLINC publisher license](https://github.com/clinc/oos-eval/blob/828f8093932c8fe6ca7936c3d2e52903b1c523de/LICENSE) · [MASSIVE publisher notice](https://github.com/alexa/massive/blob/main/NOTICE.md) · [Pinned archive URLs and hashes](../packages/scratch-classifiers/data/sources.json)
 
 ### Run from the branch checkout in PowerShell 7.2 or later
 
-Use Node 24 and Python 3.12. Start in the existing repository. The commands create a separate sparse worktree to leave local edits in place and keep benchmark case payloads out of the checkout. The one exception is the published exclusion fingerprint file required by the guard. The four UTC timestamps and the owner's local snapshot path are the run-specific inputs. Keep scripts, cutoffs and receipts fixed for this candidate before examining results.
+Use Node 24 and Python 3.11 or newer. The commands prefer `py -3.11` and accept `py -3` after checking its version. If neither works, install Python 3.11 with the Windows launcher and check `py -0p` before rerunning. The pinned NumPy 2.3.5 and SciPy 1.17.0 publishers list Windows CPython 3.11 wheels, checked 2026-11-27. [Python for Windows](https://www.python.org/downloads/windows/) · [NumPy release metadata](https://pypi.org/pypi/numpy/2.3.5/json) · [SciPy release metadata](https://pypi.org/pypi/scipy/1.17.0/json)
+
+Start in the existing repository. The commands create a separate sparse worktree to preserve local edits and exclude benchmark case payloads while retaining the published exclusion fingerprints. Keep the source, four UTC cutoffs and receipts fixed for this trial before examining results.
 
 ```powershell
+if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
+    throw 'Install Python 3.11 with the Windows launcher and check py -0p.'
+}
+$pythonSelector = '-3.11'
+py -3.11 -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>$null
+if ($LASTEXITCODE -ne 0) {
+    $pythonSelector = '-3'
+    py -3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>$null
+    if ($LASTEXITCODE -ne 0) { throw 'Install Python 3.11 with the Windows launcher and check py -0p.' }
+}
+
 git fetch origin refs/heads/model/remaining-model-trial:refs/remotes/origin/model/remaining-model-trial
 if ($LASTEXITCODE -ne 0) { throw 'Trial branch fetch failed.' }
 $trialCheckout = Join-Path (Split-Path -Parent (Get-Location).Path) 'Mohassan-AI-remaining-model-trial'
@@ -88,13 +111,22 @@ if ($LASTEXITCODE -ne 0) { throw 'Trial revision checkout failed.' }
 Set-Location $trialCheckout
 npm.cmd ci
 if ($LASTEXITCODE -ne 0) { throw 'Dependency install failed.' }
-py -3.12 -m venv .data/monitor-trial-venv
+py $pythonSelector -m venv .data/monitor-trial-venv
 if ($LASTEXITCODE -ne 0) { throw 'Python environment setup failed.' }
 $python = (Resolve-Path '.data/monitor-trial-venv/Scripts/python.exe').Path
 & $python -m pip install -r packages/scratch-classifiers/requirements.txt
 if ($LASTEXITCODE -ne 0) { throw 'Python dependency install failed.' }
 
-$databaseDir = (Resolve-Path (Read-Host 'Local PGlite snapshot directory')).Path
+$source = Read-Host 'Decision source (postgres or pglite)'
+switch ($source) {
+    'postgres' {
+        $databaseArgs = @('--database-url', (Read-Host 'PostgreSQL URI' -MaskInput))
+    }
+    'pglite' {
+        $databaseArgs = @('--database-dir', (Resolve-Path (Read-Host 'Local PGlite snapshot directory') -ErrorAction Stop).Path)
+    }
+    default { throw 'Choose postgres or pglite.' }
+}
 $ownerId = Read-Host 'Primary owner user ID' -MaskInput
 $trainStart = Read-Host 'Fit start UTC (YYYY-MM-DDTHH:mm:ss.sssZ)'
 $calibrationStart = Read-Host 'Calibration start UTC (YYYY-MM-DDTHH:mm:ss.sssZ)'
@@ -128,14 +160,17 @@ $windows = @(
     @{ Name = 'calibration'; From = $calibrationStart; Until = $developmentStart }
     @{ Name = 'development'; From = $developmentStart; Until = $developmentEnd }
 )
-foreach ($window in $windows) {
-    $exportPath = Join-Path $run ($window.Name + '.jsonl')
-    node --import tsx scripts/monitor-decision/export-development.ts --database-dir $databaseDir `
-        --owner-id $ownerId --from $window.From --until $window.Until --out $exportPath
-    if ($LASTEXITCODE -ne 0) { throw 'Bounded local export failed.' }
+try {
+    foreach ($window in $windows) {
+        $exportPath = Join-Path $run ($window.Name + '.jsonl')
+        node --import tsx scripts/monitor-decision/export-development.ts @databaseArgs `
+            --owner-id $ownerId --from $window.From --until $window.Until --out $exportPath
+        if ($LASTEXITCODE -ne 0) { throw 'Bounded decision export failed.' }
+    }
+} finally {
+    Remove-Variable databaseArgs, ownerId
 }
 $preparation.Stop()
-Remove-Variable ownerId
 @{ sourceCacheAndExportSeconds = $preparation.Elapsed.TotalSeconds; publicSourcesRetrievedOn = $retrievedOn } |
     ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $run 'preparation-timing.json')
 
@@ -151,10 +186,9 @@ $exitCode = $LASTEXITCODE
 $trial.Stop()
 @{ wallSeconds = $trial.Elapsed.TotalSeconds; exitCode = $exitCode } |
     ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $run 'trial-timing.json')
-if ($exitCode -ne 0) { throw 'Trial stopped. Check the local development report or trainer error.' }
 ```
 
-The four cutoffs must describe eligible material on that snapshot. Keep the cutoff and hash receipts with the candidate.
+Use cutoffs for eligible material on the selected source. Keep the cutoff and hash receipts with the candidate. Read `exitCode` in `trial-timing.json` to distinguish a successful screen from a failed screen or an early stop.
 
 ### Judge the result
 

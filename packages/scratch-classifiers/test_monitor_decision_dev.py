@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import sys
 from datetime import date, timedelta
 
 import pytest
@@ -14,11 +17,64 @@ def decision(index, proposed, *, group=None, monitor=None, language="en", expect
                         Features([0], {"waiting": 1}))
 
 
-def write_manifest(path, start, end, source="human", *, bounded=True):
-    manifest = {"source": source}
+def write_manifest(path, start, end, source="human", *, bounded=True, **metadata):
+    manifest = {"source": source, **metadata}
     if bounded:
         manifest["trialWindow"] = {"start": utc_stamp(start), "end": utc_stamp(end)}
     path.with_name(f"{path.name}.manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def cli_arguments(paths, day, output):
+    return [
+        trial.__file__,
+        "--train-decisions", str(paths[0]),
+        "--calibration-decisions", str(paths[1]),
+        "--development-decisions", str(paths[2]),
+        "--development-end", utc_stamp(day + timedelta(days=3)),
+        "--cache", str(output.parent / "unused-cache"),
+        "--sources-retrieved-on", day.date().isoformat(),
+        "--output", str(output),
+    ]
+
+
+@pytest.mark.parametrize("empty_index", [0, 1, 2], ids=["fit", "calibration", "development"])
+def test_cli_stops_before_training_on_valid_empty_export(tmp_path, empty_index):
+    day = stamp("2026-01-01T00:00:00Z")
+    paths = [tmp_path / f"{i}.jsonl" for i in range(3)]
+    for i, path in enumerate(paths):
+        metadata = {}
+        if i == empty_index:
+            path.write_bytes(b"")
+            metadata = {"rows": 0, "version": trial.monitor.SCHEMA_VERSION,
+                        "sha256": digest(b""), "v2ExclusionSha256": trial.monitor.REGISTRY_SHA256}
+        write_manifest(path, day + timedelta(days=i), day + timedelta(days=i + 1), **metadata)
+    output = tmp_path / "candidate"
+
+    result = subprocess.run([sys.executable, *cli_arguments(paths, day, output)], capture_output=True, text=True,
+                            env=os.environ | {"PATH": str(tmp_path)})
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == "Decision export is empty or its row count does not match the manifest\n"
+    assert not output.exists()
+
+
+def test_cli_does_not_report_nonempty_payload_as_empty(tmp_path, monkeypatch):
+    day = stamp("2026-01-01T00:00:00Z")
+    paths = [tmp_path / f"{i}.jsonl" for i in range(3)]
+    for i, path in enumerate(paths):
+        write_manifest(path, day + timedelta(days=i), day + timedelta(days=i + 1), rows=0,
+                       version=trial.monitor.SCHEMA_VERSION, sha256=digest(b""),
+                       v2ExclusionSha256=trial.monitor.REGISTRY_SHA256)
+        path.write_bytes(b"{}\n")
+    output = tmp_path / "candidate"
+    monkeypatch.setattr(sys, "argv", cli_arguments(paths, day, output))
+    monkeypatch.setattr(trial.monitor, "bridge", lambda _: '{"frameFeatureKeys":["waiting"],"textFeatureDimensions":1}')
+
+    with pytest.raises(ValueError, match="Expected a checksum-matched owner export"):
+        trial.main()
+
+    assert not output.exists()
 
 
 @pytest.mark.parametrize("source,bounded", [("human", False), ("pipeline-check", True)])

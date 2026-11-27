@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+from stat import S_ISREG
 from tempfile import TemporaryDirectory
 from time import perf_counter
 
@@ -43,6 +44,10 @@ CODE_PATHS = (
 )
 
 
+class EmptyDecisionExport(ValueError):
+    """A bounded export completed successfully and found no eligible rows."""
+
+
 @dataclass(frozen=True)
 class Window:
     name: str
@@ -61,6 +66,14 @@ def read_window(name: str, path: Path) -> Window:
     start, end = monitor.stamp(bounds["start"]), monitor.stamp(bounds["end"])
     if start >= end:
         raise ValueError(f"{name} trial bounds must be increasing.")
+    if (type(manifest.get("rows")) is int and manifest["rows"] == 0
+            and manifest.get("version") == monitor.SCHEMA_VERSION
+            and manifest.get("sha256") == monitor.digest(b"")
+            and manifest.get("v2ExclusionSha256") == monitor.REGISTRY_SHA256):
+        # Inspect metadata only so development payloads remain unread until weights are frozen.
+        info = path.stat()
+        if S_ISREG(info.st_mode) and info.st_size == 0:
+            raise EmptyDecisionExport("Decision export is empty or its row count does not match the manifest")
     return Window(name, path, start, end)
 
 
@@ -267,8 +280,11 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     options = parser.parse_args()
     started = perf_counter()
-    result = run_trial(options.train_decisions, options.calibration_decisions, options.development_decisions,
-                       options.development_end, options.cache, options.sources_retrieved_on, options.output)
+    try:
+        result = run_trial(options.train_decisions, options.calibration_decisions, options.development_decisions,
+                           options.development_end, options.cache, options.sources_retrieved_on, options.output)
+    except EmptyDecisionExport as error:
+        raise SystemExit(str(error)) from None
     result["timingSeconds"]["totalIncludingArtifactWrites"] = perf_counter() - started
     print(monitor.json_bytes(result).decode(), end="")
     if not result["comparison"]["developmentPassed"]:
