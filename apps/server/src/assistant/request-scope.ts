@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isBareAcknowledgement, stripAcknowledgementLead } from './acknowledgements.js';
 import { parseUserRequestConstraints, isEntireLiteralRequest, maskRequestLiteralData, UserRequestConstraintsSchema, type UserRequestConstraints } from './request-constraints.js';
 export { parseUserRequestConstraints, isEntireLiteralRequest, requestCapabilityAllowed, requestConstraintReply, maskRequestLiteralData, UserRequestConstraintsSchema, type UserRequestConstraints, type ForbiddenRequestCapability } from './request-constraints.js';
 import { publicSearchScan, publicSearchText } from '@mohassan/browser';
@@ -95,7 +96,7 @@ const FIND_PUBLIC_FACT = /^find\s+(?:the\s+)?(?:(?:latest|current|official|publi
 
 /** Remove a greeting clause only when a complete task follows its delimiter. */
 export function requestScopeActionText(value: string): string {
-  value = parseUserRequestConstraints(value)?.safeActionText ?? value;
+  value = stripAcknowledgementLead(parseUserRequestConstraints(value)?.safeActionText ?? value);
   value = value.replace(/^(?:(?:طيب|طب|حسنا|حسنًا|تمام|okay|ok|well)[،,\s]+)+/iu, '');
   if (typeof value !== 'string' || value.length > 8000) return typeof value === 'string' ? value : '';
   let text = value.trim();
@@ -139,6 +140,7 @@ export function assessRequestScope(value: string, options: RequestScopeOptions =
     publicQueryEligible: source === 'public_lookup' && ['lookup', 'transform'].includes(operation) && !constraints?.forbiddenCapabilities.includes('public_search'), reasons, ...(constraints ? { constraints } : {}),
   });
   if (typeof value !== 'string' || !value.trim() || value.length > 8000) return make('unresolved', 'unknown', 'unknown', ['invalid_input']);
+  if (options.contextKind !== 'answer' && isBareAcknowledgement(value)) return make('unresolved', 'converse', 'unknown', ['non_lookup_operation']);
   if (isEntireLiteralRequest(value)) return make('supplied_content', 'unknown', 'unknown', ['missing_target']);
   if (constraints?.standalone || constraints?.ambiguous) return make('unresolved', constraints.standalone && !constraints.ambiguous ? 'converse' : 'unknown', 'unknown', ['explicit_prohibition']);
   const original = value.trim(), actionText = requestScopeActionText(original), text = requestOperationText(actionText);

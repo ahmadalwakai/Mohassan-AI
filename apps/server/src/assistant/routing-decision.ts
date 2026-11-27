@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { standaloneMannersRoute } from './manners/chat.js';
+import { standaloneAcknowledgementRoute, standaloneMannersRoute } from './manners/chat.js';
 import { directRoute } from './brain.js';
 import { isCampaignRequest } from './campaign-request.js';
 import { recognizeEverydayClarification } from './everyday-clarification.js';
@@ -140,8 +140,11 @@ export function rankClarificationRoutes(text: string, decision?: RouteDecisionSu
 }
 
 /** No I/O, model calls, public search fallback for private requests or state mutation. */
-export function decideRequestRoute(input: RequestRoutingInput, policy: ScratchDecisionPolicy | null = runtimeScratchPolicy()): RequestRoutingDecision {
+export function decideRequestRoute(input: RequestRoutingInput, policy?: ScratchDecisionPolicy | null): RequestRoutingDecision {
+  const acknowledgement = standaloneAcknowledgementRoute(input);
+  if (acknowledgement) return acknowledgement;
   const rule = decideRuleRequestRoute(input);
+  if (policy === undefined) policy = runtimeScratchPolicy();
   return policy ? applyScratchRouting(input, rule, policy, choices => decideRuleRequestRoute(input, choices)) : rule;
 }
 
@@ -163,6 +166,8 @@ function offer(component: RoutingComponent, result: RequestRoutingDecision): Rou
 /** Compare explicit routing claims at admission. The existing refusal and scope checks still run. */
 export function decideHostRequestRoute(input: RequestRoutingInput): RequestRoutingDecision {
   if (!arbiterEnabled() || !input.turnId || input.pendingQuestion) return decideRequestRoute(input);
+  const acknowledgement = standaloneAcknowledgementRoute(input);
+  if (acknowledgement) return acknowledgement;
   const rules = routingClaims(input);
   const first = rules.next();
   const rule = first.done ? first.value : first.value.result;

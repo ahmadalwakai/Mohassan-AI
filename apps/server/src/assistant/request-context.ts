@@ -1,10 +1,13 @@
 import { z } from 'zod';
+import { isBareAcknowledgement, isContextConfirmation, stripAcknowledgementLead } from './acknowledgements.js';
+import { topicPropertyPhrase } from './conversation-properties.js';
 import { returnedTo } from './return-to.js';
 import { explicitKnowledgeDocumentRequest } from './knowledge-document-request.js';
 import { parseQuestionRewriteRequest } from './question-rewrite-request.js';
 import { assessRequestScope, parseRequestScopeAssessment, requestOperationText, RequestScopeAssessmentSchema, reviewPublicProjection, parseUserRequestConstraints, maskRequestLiteralData, isEntireLiteralRequest, type UserRequestConstraints, type RequestScopeAssessment } from './request-scope.js';
 import { factualNumberText, questionCoreferenceText, startsFactualQuestion } from './public-question-syntax.js';
 import { noHistory } from './response-policy-signals.js';
+import { stripArabicEntityConjunction } from './public-question-syntax.js';
 
 /**
  * A small, deterministic context boundary, not a replacement language model.
@@ -125,9 +128,8 @@ const COMPUTE = /[\d٠-٩]\s*(?:[+*/×÷^]|-(?=\s*[\d٠-٩])|ضرب|زائد|ن�
 const BROWSER = /^(?:افتح|ادخل|اضغط|انقر|اختر|اقرا|ارجع|مرر)(?=\s|$)|^(?:open|visit|navigate|click|tap|scroll|go back|read (?:the|this) page)\b/iu;
 const NEWS = /(?:^|\s)(?:اخبار|عناوين الاخبار)(?=\s|$)|\b(?:news|headlines)\b/iu;
 const UNSUPPORTED = /^(?:ارسم|ولد صوره|انشئ صوره|generate an? image|draw|make a video|generate a video)(?=\s|$)/iu;
-const SMALLTALK = /^(?:مرحبا|اهلا|هلا|شكرا|شكرا لك|السلام عليكم|كيف حالك|كيفك|من انت|ما اسمك|hi|hello|hey|thanks|thank you|who are you|what is your name)[.!?؟]*$/iu;
+const SMALLTALK = /^(?:مرحبا|اهلا|هلا|السلام عليكم|كيف حالك|كيفك|من انت|ما اسمك|hi|hello|hey|who are you|what is your name)[.!?؟]*$/iu;
 const CANCEL = /^(?:توقف|قف|لا تكمل|الغ(?:ها|اء)|stop|cancel|never mind|nevermind)[.!?؟]*$/iu;
-const ACK = /^(?:نعم|لا|اي|ايوه|تمام|طيب|حسنا|موافق|yes|no|ok(?:ay)?|sure|fine|agreed)[.!?؟]*$/iu;
 const CONTROL_TEXT = /\b(?:ignore|override|disregard) (?:all |the |any )?(?:previous |prior |system |developer )?(?:instructions?|rules?|prompts?)\b|(?:تجاهل|تخطي|تجاوز)\s+(?:كل\s+)?(?:التعليمات|القواعد|الاوامر)|\b(?:system|developer|assistant)\s*:/iu;
 const FOLLOW_LEAD = /^(?:(?:طيب|طب|تمام|حسنا|اوكي|okay|ok|well)[،,\s]+)*(?:(?:و?ماذا|وش|شو|ايش)\s+عن\s+|(?:what|how) about\s+|and\s+|و(?=كم|متي|متى|ما\s|هل|في\s|بكر|غد|اليوم|الان|سعر|ايش|شو|اين|كيف|ليش|لماذا|من\s|عن\s|ال|مبارا[ةه]|طقس|نتيج|اسعار|هو|هي)|(?:طيب|طب|حسنا)[،,\s]+)/iu;
 const CORRECTION = /^(?:(?:لا|no)[،,\s]+)?(?:[اأإآ]قصد|قصدي|[اأإآ]عني|بل|i mean|i meant|rather|instead)(?::|،|,|\s)+/iu;
@@ -141,7 +143,6 @@ const QUESTION_ONLY = /^(?:و?هو|و?هي|عنه|عنها|it|that|them|what abo
 const PROPERTY = /^(?:(?:كم|ما|ماذا|متي|متى|هل|what(?:'s| is| are)?|how (?:much|many)|when(?:'s| is)?|is|are)\s+)*(سعر|اسعار|موعد|مبارا[ةه]|مباريات|نتيج[ةه]|نتائج|طقس|درج[ةه] الحرار[ةه]|مواصفات|تكلف[ةه]|طول|ارتفاع|عمر|price|prices|cost|weather|temperature|match|matches|score|scores|specifications?|height|age)(?=\s|$)/iu;
 const ASK_PREFIX = /^(?:(?:كم|ما|ماذا|متي|متى|اين|وين|هل|كيف|وش|شو|ايش|هو|هي|عن|ابحث عن|دور لي عن|ما هي|ما هو|what(?:'s| is| are)?|how (?:much|many)|when(?:'s| is)?|where(?:'s| is)?|is|are|search for|look up|tell me about|the)\s+)+/iu;
 const NEW_ACTION = /^(?:انشئ|اصنع|جهز|احفظ|تذكر|ذكرني|افتح|ادخل|ابحث|اضغط|انقر|اكتب|ترجم|خطط|نظم|ارسم)(?=\s|$)|^(?:create|make|prepare|save|remember|remind|open|visit|search|click|write|translate|plan|draw)\b/iu;
-const THANKS = /^(?:شكرا|شكرا لك|thanks|thank you)[.!?؟]*$/iu;
 const CONTEXT_FIELD = /(?<![\p{L}\p{N}])(?:name|city|address|colou?r|price|cost|height|age|specifications?|اسم|مدين[ةه]|عنوان|لون|سعر|تكلف[ةه]|طول|ارتفاع|عمر|مواصفات)(?![\p{L}\p{N}])/giu;
 
 /**
@@ -149,7 +150,7 @@ const CONTEXT_FIELD = /(?<![\p{L}\p{N}])(?:name|city|address|colou?r|price|cost|
  * («ارجع إلى أينشتاين: أين ولد؟») is classified as the question it asks («أين ولد أينشتاين»), the query the hands search.
  */
 export function requestActionText(text: string): string {
-  let result = clean(text).replace(/^(?:(?:طيب|طب|حسنا|حسنًا|تمام|okay|ok|well)[،,\s]+)+/iu, '');
+  let result = stripAcknowledgementLead(clean(text)).replace(/^(?:(?:طيب|طب|حسنا|حسنًا|تمام|okay|ok|well)[،,\s]+)+/iu, '');
   result = returnedTo(result) ?? result;
   if (/^and\s+/iu.test(result) && startsNewAction(result.replace(/^and\s+/iu, ''))) result = result.replace(/^and\s+/iu, '');
   if (/^و/u.test(result) && startsNewAction(result.slice(1))) result = result.slice(1);
@@ -197,7 +198,7 @@ function classify(text: string): RequestContextIntent {
   if (BROWSER.test(normalized)) return 'browser_command';
   if (WRITING.test(normalized)) return 'writing';
   if (UNSUPPORTED.test(normalized)) return 'unsupported';
-  if (SMALLTALK.test(normalized) || ACK.test(normalized) || CANCEL.test(normalized)) return 'chat';
+  if (SMALLTALK.test(normalized) || isBareAcknowledgement(text) || CANCEL.test(normalized)) return 'chat';
   if (NEWS.test(normalized)) return 'news';
   if (CONTROL_TEXT.test(normalized)) return 'unknown';
   return 'web_search';
@@ -351,16 +352,19 @@ function publicQuery(topic: string | null, slots: readonly RequestContextSlot[],
   return [...new Set(parts)].join(' ').trim();
 }
 
-function replaceTopic(fragment: string, previous: string): string | null {
+function replaceTopic(fragment: string, previous: string, acknowledgementLead: boolean): string | null {
   const own = trimPunctuation(fragment.replace(CORRECTION, '').replace(/\s+instead$/iu, ''));
-  if (!own || POINTER.test(fold(own))) return null;
+  const normalized = fold(own);
+  if (!own || POINTER.test(normalized)) return null;
+  const entitySubstitution = acknowledgementLead && !startsFactualQuestion(normalized)
+    && /^[\p{L}\p{M}]+(?:[ '’-]+[\p{L}\p{M}]+){0,3}$/u.test(own);
   // An explicit category is already a full new topic: الهلال must not survive النصر.
-  if (PROPERTY.test(fold(own))) return own;
-  const category = PROPERTY.exec(previous)?.[1];
+  if (PROPERTY.test(normalized) || entitySubstitution && topicPropertyPhrase(normalized)) return own;
+  const category = (entitySubstitution ? topicPropertyPhrase(fold(previous)) : undefined) ?? PROPERTY.exec(previous)?.[1];
   return category ? `${category} ${own}` : own;
 }
 
-function resolveRequestContextBase(request: string, previousValue?: unknown, options: RequestContextOptions = {}): RequestResolution {
+function resolveRequestContextBase(request: string, previousValue: unknown, options: RequestContextOptions, acknowledgementLead: boolean): RequestResolution {
   const input = typeof request === 'string' ? request : '';
   const tooLong = input.length > MAX_CONTEXT_REQUEST;
   const original = clean(input.slice(0, MAX_CONTEXT_REQUEST + 1));
@@ -387,7 +391,8 @@ function resolveRequestContextBase(request: string, previousValue?: unknown, opt
     return result;
   }
   if (CANCEL.test(fold(original))) return result;
-  if (previous && (ACK.test(fold(original)) || THANKS.test(fold(original))) && !options.pendingQuestion) {
+  const acknowledgement = isBareAcknowledgement(original);
+  if (previous && acknowledgement && !options.pendingQuestion) {
     result.nextState = { ...structuredClone(previous), revision };
     result.topic = previous.topic;
     result.slots = structuredClone(previous.slots);
@@ -407,7 +412,7 @@ function resolveRequestContextBase(request: string, previousValue?: unknown, opt
   const bareAnswer = intent !== 'compute' && !startsNewAction(requestActionText(original)) && !BROWSER.test(fold(original)) && !WRITING.test(fold(original)) && !REMINDER.test(fold(original))
     && !MEMORY.test(fold(original)) && !CODING.test(fold(original)) && !/^(?:ابحث|search|look up|ما |ماذا |كم |كيف |هل |what |when |where |how )/iu.test(fold(original));
   const pendingId = TurnId.safeParse(options.pendingQuestion?.id);
-  if (pendingId.success && bareAnswer && (ACK.test(fold(original)) || found.length > 0 || original.split(' ').length <= 8)) {
+  if (pendingId.success && bareAnswer && (acknowledgement || found.length > 0 || original.split(' ').length <= 8)) {
     result.kind = 'answer'; result.pendingQuestionId = pendingId.data;
     result.intent = previous?.intent ?? 'unknown'; result.scope = previous?.scope ?? 'unknown';
     result.topic = previous?.topic ?? null;
@@ -415,7 +420,7 @@ function resolveRequestContextBase(request: string, previousValue?: unknown, opt
     const answers = allowed ? found.filter(slot => allowed.includes(slot.kind)) : [...found];
     // A single host-owned question provides the field name; its answer supplies
     // only the literal value. No currency, date, country or unit is filled in.
-    if (allowed?.length === 1 && !answers.length && !ACK.test(fold(original)) && original.length <= MAX_VALUE) {
+    if (allowed?.length === 1 && !answers.length && !isContextConfirmation(original) && original.length <= MAX_VALUE) {
       const kind = allowed[0];
       if (requestSlotKinds.includes(kind) && (kind !== 'url' || /^https?:\/\/\S+$/iu.test(original))) {
         answers.push({ kind, value: trimPunctuation(original), span: original });
@@ -468,7 +473,7 @@ function resolveRequestContextBase(request: string, previousValue?: unknown, opt
         && !found.some(slot => slot.kind === 'place') && !CORRECTION.test(fold(fragment)) && substantive.split(' ').length <= 4) {
         contextualFound = [...found, { kind: 'place', value: substantive, span: substantive }];
       } else {
-        result.topic = replaceTopic(remainder, previous.topic);
+        result.topic = replaceTopic(remainder, previous.topic, acknowledgementLead);
         if (!result.topic) ambiguities.push('unclear_replacement');
       }
     } else if (hasPointer) {
@@ -559,17 +564,25 @@ export function resolveRequestContext(request: string, previousValue?: unknown, 
       pendingQuestionId: null, sourceAssessment };
   }
   const constraints = parseUserRequestConstraints(request);
-  const result = resolveRequestContextBase(constraints?.safeActionText ?? request, previousValue, options);
+  const action = constraints?.safeActionText ?? request;
+  const content = !options.pendingQuestion && typeof action === 'string' && action.length <= MAX_CONTEXT_REQUEST
+    ? stripAcknowledgementLead(action) : action;
+  const acknowledgementLead = content !== action;
+  const entity = acknowledgementLead && !FOLLOW_LEAD.test(content) && /^و\s*[\p{L}\p{M}]+(?:\s+[\p{L}\p{M}]+){0,2}[؟?]\s*$/u.test(content)
+    ? stripArabicEntityConjunction(content, key(content).split(' ')[0] ?? '') : content;
+  const result = resolveRequestContextBase(entity !== content ? `ماذا عن ${entity}` : content, previousValue, options, acknowledgementLead);
   const previous = parseRequestContextState(previousValue);
   if (isEntireLiteralRequest(request) && result.kind !== 'answer') {
     result.kind = 'ambiguous'; result.intent = 'unknown'; result.scope = 'private'; result.query = null;
     result.topic = null; result.slots = []; result.nextState = null; result.provenance = [];
     result.ambiguities.push('missing_question');
   }
-  if (constraints) {
-    result.constraints = constraints;
+  if (constraints || acknowledgementLead) {
     result.original = clean(request).slice(0, MAX_CONTEXT_REQUEST);
     if (result.resolved !== null) result.resolved = clean(request);
+  }
+  if (constraints) {
+    result.constraints = constraints;
     if (constraints.standalone || constraints.ambiguous) {
       result.kind = constraints.ambiguous ? 'ambiguous' : 'new'; result.intent = constraints.ambiguous ? 'unknown' : 'chat';
       result.scope = 'unknown'; result.query = null; result.topic = null; result.slots = []; result.provenance = [];

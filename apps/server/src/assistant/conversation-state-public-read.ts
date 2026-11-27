@@ -1,4 +1,5 @@
 import { safeResumeUrl } from '@mohassan/browser';
+import { stripAcknowledgementLead } from './acknowledgements.js';
 import type { BrainState } from './brain.js';
 import type { ConversationPageSelection } from './conversation-state-page.js';
 import type { TopicFrame, TurnUnderstanding } from './conversation-state.js';
@@ -31,6 +32,9 @@ export function planPublicConversationRead(input: {
     || !contains(words(previous), title) || !request || isLiveWebQuestion(text)
     || !QUESTION_END.test(text) && !decision.questionType
     || decision.references.some(reference => !reference.publicLookup)) return null;
+  // The previous entity can supply the property of a follow-up without being its subject.
+  if (understanding.type === 'follow_up_entity' && understanding.entity
+    && words(understanding.entity) !== words(topic?.entity ?? pageTitle) && stripAcknowledgementLead(text) !== text) return null;
 
   const ar = /\p{Script=Arabic}/u.test(text);
   const attribute = property === 'currency' ? 'currency' : property === 'language' || LANGUAGE.test(request) ? 'language' : null;

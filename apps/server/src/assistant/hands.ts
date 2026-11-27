@@ -1,4 +1,5 @@
 import { AgentEffectHeld, BrowserError, compileQuery, publicSearchScan, publicSearchText, safeResumeUrl, webFreshnessText, type AgentAction, type AgentElement, type AgentPage, type AgentRequestPermit, type SearchHit } from '@mohassan/browser';
+import { isBareAcknowledgement, stripAcknowledgementLead } from './acknowledgements.js';
 import { directRoute, namedSite, sensitiveAction } from './brain.js';
 import { hostOf, readingLabel, siteName } from './activity.js';
 import { checkAnswerLine, figureKind, hasAnswerNumber, isDisambiguationPage, isDisambiguationTitle, isMetaLine, isReasonQuestion, questionLanguage } from './answer-check.js';
@@ -358,8 +359,8 @@ const NOT_WEB = /(?:^|\s)(?:[تي]?تذكر|تذكّر|احفظ|اسمي|شرك�
 const REMIND = /(?:^|\s)(?:ذكرني|ذكّرني|نبهني|نبّهني|فكرني|ذكرنى|منبه|تذكير)|\bremind me\b|\bset (?:an? )?(?:alarm|reminder|timer)\b/iu;
 const ARITHMETIC = /[\d٠-٩]\s*(?:[+\-*/×÷^]|ضرب|زائد|ناقص|قسم[ةه]?\s+على|تقسيم|plus|minus|times|divided by)\s*[\d٠-٩]/iu;
 const WRITER = /^(?:ترجم|اكتب|أكتب|إكتب|صغ|صيغ|اعد صياغ|أعد صياغ|صحح|حسن|translate|write|draft|rewrite|compose|correct)(?=\s|$)/iu;
-/** Small talk, acknowledgements and questions about the assistant itself. */
-const CHAT = /^(?:هلا|مرحبا|السلام|اهلا|أهلا|صباح|مساء|كيف حالك|كيفك|شلونك|شكرا|hi|hello|hey|how are you|thanks|thank you)(?=\s|$|[؟?!.,،])|^(?:تمام|اوك[يه]?|ok(?:ay)?|نعم|لا|ايوه|إيوه|اي|طيب|حسنا|حسنًا|ممتاز|رائع|جميل|good|great|nice|yes|no|cool)$|(?:^|\s)(?:انت|أنت|اسمك|تستطيع|تقدر)(?=\s|$|[؟?])|\b(?:you|your)\b/iu;
+/** Greetings, extended gratitude and questions about the assistant itself. */
+const CHAT = /^(?:هلا|مرحبا|السلام|اهلا|أهلا|صباح|مساء|كيف حالك|كيفك|شلونك|hi|hello|hey|how are you)(?=\s|$|[؟?!.,،])|^(?:شكرا|thanks|thank you)(?=[\s؟?!.,،])|(?:^|\s)(?:انت|أنت|اسمك|تستطيع|تقدر)(?=\s|$|[؟?])|\b(?:you|your)\b/iu;
 
 /** Why a request is not a web search, or null when it is one. */
 /** Planning a week or a day: the owner's own tasks, laid out by planner.ts, never a web search. */
@@ -389,7 +390,7 @@ export function notWebReason(text: string): 'memory_ads_pc' | 'reminder' | 'arit
   if (ARITHMETIC.test(text)) return 'arithmetic';
   if (WRITER.test(text)) return 'writing';
   if (URL_LIKE.test(text) || directRoute(text)) return 'address';
-  if (CHAT.test(text) && !isLiveWebQuestion(text)) return 'chat';
+  if (isBareAcknowledgement(text) || CHAT.test(text) && !isLiveWebQuestion(text)) return 'chat';
   return null;
 }
 
@@ -399,7 +400,7 @@ export function notWebReason(text: string): 'memory_ads_pc' | 'reminder' | 'arit
  * `earlier` holds the owner's previous messages in this conversation, oldest first, for follow-ups.
  */
 export function webQuestion(request: string, earlier: readonly string[] = []): HandsStep[] | null {
-  const raw = request.normalize('NFC').replace(/^(?:من فضلك|لو سمحت|please)[،,\s]+/iu, '').trim();
+  const raw = stripAcknowledgementLead(request.normalize('NFC').replace(/^(?:من فضلك|لو سمحت|please)[،,\s]+/iu, '').trim());
   const text = tidy(raw);
   if (notWebReason(text)) return null;
   // «Explain why rain falls in two short Arabic sentences.» asks «why rain falls»: «explain» only asks for the answer, and
@@ -494,7 +495,7 @@ export function withTopic(text: string, earlier: readonly string[]): string {
   if (!isFollowUp(text)) return text;
   let own = text;
   for (let round = 0; round < 3 && FOLLOW_START.test(own); round++) own = own.replace(FOLLOW_START, '').trim();
-  const previousIndex = earlier.length - 1;
+  const previousIndex = earlier.findLastIndex(turn => !isBareAcknowledgement(turn));
   if (previousIndex < 0) return own || text;
   const previous = tidy(earlier[previousIndex].normalize('NFC'));
   if (parseHands(previous) || notWebReason(previous)) return own || text;
