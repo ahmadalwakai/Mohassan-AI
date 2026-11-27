@@ -104,6 +104,7 @@ import { completeQuestionRewrite, questionRewriteHandsPlan, routeWithQuestionHis
 import { observePlanMessage, runCompiledChatPlan } from './assistant/plan/chat.js';
 import { clarificationAnswers, clarifyCommand } from './assistant/clarify/host.js';
 import { reviewWorkRefusal } from './assistant/refusal/turn.js';
+import { evaluateCodeKnowledgeTurn } from './assistant/code-knowledge-turn.js';
 import { answerTestDrivenCoding, bindTestDrivenCodingHash, initializeTestDrivenCoding, publishTestDrivenCoding } from './assistant/test-driven-coding/reply.js';
 import { describeSearchDestination, extractPublicSearchQueries, isSearchEntryElement, mergePublicQueryTerms, reviewGeneratedPublicQuery } from './assistant/public-query-provenance.js';
 import { reviewExplicitPublicBrowserQuery } from './assistant/browser-public-query.js';
@@ -2245,8 +2246,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await finish(id, runId, state, reviewed.replacement?.text ?? 'لم أتحقق من سجل إجراءات صالح لهذا الطلب.', 'blocked');
         return;
       }
+      const codeKnowledge = run.intent === 'task' ? await evaluateCodeKnowledgeTurn({ request, actionRequest, state, constraints, signal, scrub: text => vault.scrub(id, clean(text)) }) : null;
+      if (codeKnowledge?.kind === 'explanation') return finish(id, runId, state, codeKnowledge.text, 'completed', undefined, undefined, true);
       const codingReply = run.intent === 'task' && !state.steps && !state.trail.length && state.routing?.handler === 'local_coding'
-        ? await answerTestDrivenCoding(request, { accountId: ownerId, authorized: fullReach() && state.routing.availability !== 'restricted', signal, originalHash: state.requestOriginalHash, scrub: text => vault.scrub(id, clean(text)) }) : null;
+        ? await answerTestDrivenCoding(request, { accountId: ownerId, authorized: fullReach() && state.routing.availability !== 'restricted', signal, originalHash: state.requestOriginalHash, scrub: text => vault.scrub(id, clean(text)) }, codeKnowledge?.kind === 'runnable' ? codeKnowledge.evidence : undefined) : null;
       if (codingReply) return publishTestDrivenCoding(state, codingReply,
         (text, status) => finish(id, runId, state, text, status, undefined, undefined, true));
       if (noteVerificationIntent) {

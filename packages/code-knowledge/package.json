@@ -1,0 +1,11 @@
+{
+  "name": "@mohassan/code-knowledge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@mohassan/skills": "*",
+    "zod": "4.6.7"
+  }
+}
