@@ -4,10 +4,12 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { connect, createServer, type IncomingHttpHeaders } from 'node:http2';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IosPushPayload, IosPushRegistration } from '@mohassan/contracts';
 import { createApplication } from '../apps/server/src/app.ts';
-import { apnsConfigFromEnv, createApnsSender, listApnsDevices, sendToApnsDevice } from '../apps/server/src/apns.ts';
+import { apnsConfigFromEnv, createApnsSender, listApnsDevices, sendToApnsDevice, type ApnsSender } from '../apps/server/src/apns.ts';
+import { dispatchBackgroundApns } from '../apps/server/src/background-apns-delivery.ts';
+import { recordBackgroundRunOutcome } from '../apps/server/src/notifications-store.ts';
 
 const origin = 'http://127.0.0.1:3000';
 const secret = 'ios-push-fixture-internal-2026-11-25';
@@ -33,6 +35,8 @@ describe('iOS push devices and APNs transport', () => {
   let ownerCookie = '', memberCookie = '', ownerId = '', memberId = '';
   const db = () => application.database.db;
   async function login(credentials: typeof owner) {
+    // Fastify injections share an IP, so reset the Better Auth rate limit between fixture sign-ins.
+    await db().deleteFrom('rateLimit').execute();
     const result = await application.app.inject({ method: 'POST', url: '/api/auth/sign-in/email', headers: headers(), payload: credentials });
     expect(result.statusCode, result.body).toBe(200);
     return cookieOf(result.headers['set-cookie']);
@@ -42,6 +46,33 @@ describe('iOS push devices and APNs transport', () => {
   }
   function remove(cookie: string, token: string) {
     return application.app.inject({ method: 'DELETE', url: `${devices}/${token}`, headers: headers(cookie) });
+  }
+  function removeRegistration(cookie: string, id: string) {
+    return application.app.inject({ method: 'DELETE', url: `${devices}/registrations/${id}`, headers: headers(cookie) });
+  }
+  function signOut(cookie: string) {
+    return application.app.inject({ method: 'POST', url: '/api/auth/sign-out', headers: headers(cookie), payload: {} });
+  }
+  async function addDevice(cookie: string, input: IosPushRegistration) {
+    const result = await register(cookie, input);
+    expect(result.statusCode, result.body).toBe(204);
+    return db().selectFrom('ios_push_devices').selectAll().where('token', '=', input.token)
+      .where('environment', '=', input.environment).executeTakeFirstOrThrow();
+  }
+  async function queueOutcome(userId: string) {
+    const id = randomUUID(), conversationId = randomUUID(), now = new Date();
+    await db().insertInto('chat_conversations').values({ id: conversationId, owner_id: userId, title: 'APNs session fixture' }).execute();
+    await db().insertInto('chat_runs').values({ id, owner_id: userId, conversation_id: conversationId, status: 'completed',
+      goal: 'APNs session fixture', lease_token: randomUUID(), lease_expires_at: now }).execute();
+    await recordBackgroundRunOutcome(db(), { runId: id, userId, conversationId, startedAt: now,
+      outcome: 'completed', language: 'en', preview: 'Private result' }, now);
+    const { available_at } = await db().selectFrom('chat_notifications').select('available_at').where('task_id', '=', id).executeTakeFirstOrThrow();
+    return { id, ready: new Date(available_at) };
+  }
+  async function queuedRegistrations(eventId: string) {
+    const rows = await db().selectFrom('background_apns_deliveries').select('registration_id')
+      .where('event_id', '=', eventId).orderBy('registration_id').execute();
+    return rows.map(row => row.registration_id);
   }
 
   beforeAll(async () => {
@@ -64,6 +95,7 @@ describe('iOS push devices and APNs transport', () => {
   }, 45_000);
 
   afterAll(async () => { await application?.app.close(); });
+  beforeEach(async () => { await db().deleteFrom('ios_push_devices').execute(); });
 
   it('allows authenticated owners and members to register and remove only their own devices', async () => {
     const own = registration('ab', 'production');
@@ -205,5 +237,147 @@ describe('iOS push devices and APNs transport', () => {
     }, initial!, pushFixture(), randomUUID());
     expect(await listApnsDevices(db(), ownerId)).toEqual([expect.objectContaining({ app_version: '2.0.0' })]);
     expect((await remove(ownerCookie, input.token)).statusCode).toBe(204);
+  });
+
+  it('removes the devices and queues of other sessions while keeping the current session’s device', async () => {
+    const otherCookie = await login(owner);
+    const current = await addDevice(ownerCookie, registration('b1', 'sandbox'));
+    const other = await addDevice(otherCookie, registration('b2', 'sandbox'));
+    const refresh = registration('ba', 'sandbox');
+    const beforeRefresh = await addDevice(otherCookie, refresh);
+    const refreshed = await addDevice(ownerCookie, refresh);
+    const sessions = await application.app.inject({ url: '/api/member-data/sessions', headers: headers(ownerCookie) });
+    const currentSession = sessions.json().sessions.find((session: { current: boolean }) => session.current);
+    expect(current.session_id).toBe(currentSession.id);
+    expect(other.session_id).not.toBe(currentSession.id);
+    expect(beforeRefresh.session_id).toBe(other.session_id);
+    expect(refreshed).toMatchObject({ registration_id: beforeRefresh.registration_id, session_id: currentSession.id });
+    const kept = [current.registration_id, refreshed.registration_id].sort();
+    const event = await queueOutcome(ownerId);
+    expect(await queuedRegistrations(event.id)).toEqual([...kept, other.registration_id].sort());
+
+    const ended = await application.app.inject({ method: 'DELETE', url: '/api/member-data/sessions', headers: headers(ownerCookie) });
+    expect(ended.statusCode, ended.body).toBe(200);
+    expect((await listApnsDevices(db(), ownerId)).map(device => device.registration_id).sort()).toEqual(kept);
+    expect(await queuedRegistrations(event.id)).toEqual(kept);
+  });
+
+  it('removes a signed-out phone and its queue and lets another account register its token', async () => {
+    const phone = await login(owner);
+    const input = registration('b3', 'production');
+    const device = await addDevice(phone, input);
+    const event = await queueOutcome(ownerId);
+    expect(await queuedRegistrations(event.id)).toEqual([device.registration_id]);
+
+    const signedOut = await signOut(phone);
+    expect(signedOut.statusCode, signedOut.body).toBe(200);
+    expect(await listApnsDevices(db(), ownerId)).toEqual([]);
+    expect(await queuedRegistrations(event.id)).toEqual([]);
+    expect((await addDevice(memberCookie, input)).user_id).toBe(memberId);
+  });
+
+  it('skips an expired session for new and queued alerts and allows its token to change accounts', async () => {
+    const phone = await login(owner);
+    const input = registration('b4', 'production');
+    const device = await addDevice(phone, input);
+    const conflict = await register(memberCookie, input);
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json().error.code).toBe('PUSH_DEVICE_IN_USE');
+    const queued = await queueOutcome(ownerId);
+    expect(await queuedRegistrations(queued.id)).toEqual([device.registration_id]);
+    await db().updateTable('session').set({ expiresAt: new Date(Date.now() - 1) }).where('id', '=', device.session_id).execute();
+    expect(await queuedRegistrations(queued.id)).toEqual([device.registration_id]);
+    const afterExpiry = await queueOutcome(ownerId);
+    expect(await queuedRegistrations(afterExpiry.id)).toEqual([]);
+    const transport = vi.fn<ApnsSender>(async () => 'delivered');
+    await dispatchBackgroundApns(db(), transport, async () => true, afterExpiry.ready);
+    expect(transport).not.toHaveBeenCalled();
+
+    const claimed = await addDevice(memberCookie, input);
+    expect(claimed.user_id).toBe(memberId);
+    expect(claimed.session_id).not.toBe(device.session_id);
+    expect(await listApnsDevices(db(), ownerId)).toEqual([]);
+    expect(await queuedRegistrations(queued.id)).toEqual([]);
+    const next = await queueOutcome(memberId);
+    await dispatchBackgroundApns(db(), transport, async () => true, next.ready);
+    expect(transport).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ user_id: memberId }), expect.anything(), next.id);
+  });
+
+  it('keeps a legacy registration eligible for delivery until its account registers it with a session', async () => {
+    const input = registration('b5', 'production');
+    const id = randomUUID();
+    await db().insertInto('ios_push_devices').values({ registration_id: id, registration_generation: randomUUID(), user_id: ownerId,
+      token: input.token, environment: input.environment, app_version: input.appVersion }).execute();
+    expect((await register(memberCookie, input)).statusCode).toBe(409);
+    const event = await queueOutcome(ownerId);
+    expect(await queuedRegistrations(event.id)).toEqual([id]);
+    const transport = vi.fn<ApnsSender>(async () => 'delivered');
+    await dispatchBackgroundApns(db(), transport, async () => true, event.ready);
+    expect(transport).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ registration_id: id, session_id: null }), expect.anything(), event.id);
+
+    const phone = await login(owner);
+    const rebound = await addDevice(phone, input);
+    expect(rebound.registration_id).toBe(id);
+    expect(rebound.session_id).toEqual(expect.any(String));
+    const signedOut = await signOut(phone);
+    expect(signedOut.statusCode, signedOut.body).toBe(200);
+    expect(await listApnsDevices(db(), ownerId)).toEqual([]);
+    expect(await queuedRegistrations(event.id)).toEqual([]);
+  });
+
+  it('lists each account’s iPhones without tokens and removes only its own registration by ID', async () => {
+    const ownerPhone = await addDevice(ownerCookie, registration('b6', 'production'));
+    const memberPhone = await addDevice(memberCookie, registration('b7', 'sandbox'));
+    const settings = (cookie: string) => application.app.inject({ url: '/api/notifications/settings', headers: headers(cookie) });
+    const before = await settings(ownerCookie);
+    expect(before.statusCode, before.body).toBe(200);
+    expect(before.json().iosDevices).toEqual([{ id: ownerPhone.registration_id, label: expect.stringContaining('iPhone'),
+      registeredAt: new Date(ownerPhone.registered_at).toISOString(), lastDeliveryAt: null }]);
+    expect(before.body).not.toContain(ownerPhone.token);
+    expect((await settings(memberCookie)).json().iosDevices).toEqual([{ id: memberPhone.registration_id, label: expect.stringContaining('iPhone'),
+      registeredAt: new Date(memberPhone.registered_at).toISOString(), lastDeliveryAt: null }]);
+
+    const event = await queueOutcome(memberId);
+    await dispatchBackgroundApns(db(), async () => 'delivered', async () => true, event.ready);
+    expect((await settings(memberCookie)).json().iosDevices[0].lastDeliveryAt).toBe(event.ready.toISOString());
+    expect((await removeRegistration('', memberPhone.registration_id)).statusCode).toBe(401);
+    expect((await removeRegistration(memberCookie, 'not-a-uuid')).statusCode).toBe(400);
+    expect((await removeRegistration(ownerCookie, memberPhone.registration_id)).json()).toEqual({ removed: false });
+    expect((await removeRegistration(memberCookie, ownerPhone.registration_id)).json()).toEqual({ removed: false });
+    expect((await removeRegistration(memberCookie, memberPhone.registration_id)).json()).toEqual({ removed: true });
+    expect((await removeRegistration(memberCookie, memberPhone.registration_id)).json()).toEqual({ removed: false });
+    expect((await settings(memberCookie)).json().iosDevices).toEqual([]);
+    expect((await settings(ownerCookie)).json().iosDevices).toEqual(before.json().iosDevices);
+    expect(await queuedRegistrations(event.id)).toEqual([]);
+  });
+
+  it('removes a member’s device and queued deliveries when the owner ends their sessions', async () => {
+    const device = await addDevice(memberCookie, registration('b8', 'sandbox'));
+    const event = await queueOutcome(memberId);
+    expect(await queuedRegistrations(event.id)).toEqual([device.registration_id]);
+
+    const ended = await application.app.inject({ method: 'DELETE', url: `/api/members/${memberId}/sessions`, headers: headers(ownerCookie) });
+    expect(ended.statusCode, ended.body).toBe(200);
+    expect(await listApnsDevices(db(), memberId)).toEqual([]);
+    expect(await queuedRegistrations(event.id)).toEqual([]);
+    memberCookie = await login(member);
+  });
+
+  it('removes a suspended member’s device and queued deliveries', async () => {
+    const device = await addDevice(memberCookie, registration('b9', 'sandbox'));
+    const event = await queueOutcome(memberId);
+    expect(await queuedRegistrations(event.id)).toEqual([device.registration_id]);
+    const access = (enabled: boolean) => application.app.inject({ method: 'POST', url: `/api/members/${memberId}/access`,
+      headers: headers(ownerCookie), payload: { enabled } });
+
+    const suspended = await access(false);
+    expect(suspended.statusCode, suspended.body).toBe(200);
+    try {
+      expect(await listApnsDevices(db(), memberId)).toEqual([]);
+      expect(await queuedRegistrations(event.id)).toEqual([]);
+    } finally {
+      expect((await access(true)).statusCode).toBe(200);
+      memberCookie = await login(member);
+    }
   });
 });

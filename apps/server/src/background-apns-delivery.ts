@@ -2,13 +2,15 @@ import { sql, type Kysely } from 'kysely';
 import type { IosPushPayload } from '@mohassan/contracts';
 import { sendToApnsDevice, type ApnsSender, type IosPushDevice } from './apns.js';
 import { backgroundPayload, type BackgroundNotificationEvent } from './background-notification-payload.js';
+import { liveApnsRegistration } from './ios-push-devices.js';
 import { backgroundAccountCanReceive, backgroundRetryAt, isQuietHours, notificationPreferences } from './notifications-store.js';
 import { monitorMetricTransaction } from './ops/metrics/monitor-events.js';
 
 function dueApnsDeliveries(db: Kysely<any>, now: Date) {
   return db.selectFrom('background_apns_deliveries as d').innerJoin('chat_notifications as n', 'n.task_id', 'd.event_id')
     .innerJoin('chat_conversations as c', join => join.onRef('c.id', '=', 'n.conversation_id').onRef('c.owner_id', '=', 'n.user_id'))
-    .where('n.delivery', '!=', 'suppressed').where('d.delivered_at', 'is', null).where('d.next_at', '<=', now);
+    .innerJoin('ios_push_devices as device', join => join.onRef('device.registration_id', '=', 'd.registration_id').onRef('device.user_id', '=', 'n.user_id'))
+    .where(liveApnsRegistration).where('n.delivery', '!=', 'suppressed').where('d.delivered_at', 'is', null).where('d.next_at', '<=', now);
 }
 
 export async function dispatchBackgroundApns(db: Kysely<any>, send: ApnsSender, isActive: (id: string) => Promise<boolean>, now: Date) {

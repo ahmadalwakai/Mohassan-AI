@@ -8,6 +8,7 @@ import {
   type NotificationQuietHours,
   type NotificationSettingsResponse,
   type PushTestResponse,
+  type PushUnsubscribeResponse,
 } from '@mohassan/contracts';
 import {
   browserPushSupported, currentPushDevice, notificationPost, notificationRequest,
@@ -100,6 +101,16 @@ export function NotificationSettings({ viewerId }: { viewerId: string }) {
     });
   }
 
+  function removeIosDevice(id: string) {
+    void run(async () => {
+      const result = await notificationRequest<PushUnsubscribeResponse>(
+        `/api/push/devices/registrations/${encodeURIComponent(id)}`, { method: 'DELETE' },
+      );
+      await reload();
+      setStatus(result.removed ? 'أُزيل جهاز الآيفون.' : 'لم يعد جهاز الآيفون مسجّلًا.');
+    });
+  }
+
   function sendTest() {
     void run(async () => {
       const result = await notificationPost<PushTestResponse>('/api/notifications/test', {});
@@ -109,6 +120,7 @@ export function NotificationSettings({ viewerId }: { viewerId: string }) {
   }
 
   const hours = preferences.quietHours;
+  const iosDevices = settings?.iosDevices ?? [];
   const thisDeviceEnabled = !!currentDevice && settings?.devices.some(device => device.id === currentDevice);
   const canEnableDevice = permission === 'granted' && !!settings?.publicKey && browserPushSupported() && !thisDeviceEnabled;
 
@@ -143,7 +155,7 @@ export function NotificationSettings({ viewerId }: { viewerId: string }) {
           <button type="submit" className={styles.action} disabled={busy}>حفظ الإعدادات</button>
         </form>
         <section className={styles.section} aria-labelledby="notification-devices-title">
-          <h3 id="notification-devices-title">الأجهزة</h3>
+          <h3 id="notification-devices-title">المتصفحات</h3>
           {settings.devices.length ? <ul className={styles.devices}>
             {settings.devices.map(device => <li key={device.id}>
               <div>
@@ -154,12 +166,27 @@ export function NotificationSettings({ viewerId }: { viewerId: string }) {
               </div>
               <button type="button" className={styles.action} disabled={busy} aria-label={`إزالة جهاز ${device.label}`} onClick={() => removeDevice(device.id)}>إزالة</button>
             </li>)}
-          </ul> : <p className={styles.hint}>لا توجد أجهزة مسجّلة.</p>}
-          {!settings.publicKey ? <p className={styles.hint}>إشعارات الأجهزة بعد الإغلاق غير مهيّأة على الخادم.</p> : null}
+          </ul> : <p className={styles.hint}>لا توجد متصفّحات مسجّلة.</p>}
+          {!settings.publicKey ? <p className={styles.hint}>إشعارات المتصفّحات بعد الإغلاق غير مهيّأة على الخادم.</p> : null}
           <div className={styles.actions}>
             {canEnableDevice ? <button type="button" className={styles.action} disabled={busy} onClick={enableDevice}>تفعيل هذا الجهاز</button> : null}
             <button type="button" className={styles.action} disabled={busy || !settings.publicKey || !settings.devices.length} onClick={sendTest}>إرسال إشعار اختبار</button>
           </div>
+        </section>
+        <section className={styles.section} aria-labelledby="notification-ios-devices-title">
+          <h3 id="notification-ios-devices-title">أجهزة آيفون</h3>
+          {iosDevices.length ? <ul className={styles.devices} role="list">
+            {iosDevices.map(device => <li key={device.id}>
+              <div>
+                <strong><bdi>{device.label}</bdi></strong>
+                <small>سُجّل في <time dateTime={device.registeredAt}>{dateLabel(device.registeredAt)}</time></small>
+                {device.lastDeliveryAt
+                  ? <small>آخر إرسال ناجح في <time dateTime={device.lastDeliveryAt}>{dateLabel(device.lastDeliveryAt)}</time></small>
+                  : <small>لم يُسجّل أي إرسال ناجح بعد.</small>}
+              </div>
+              <button type="button" className={styles.action} disabled={busy} aria-label={`إزالة جهاز ${device.label}`} onClick={() => removeIosDevice(device.id)}>إزالة</button>
+            </li>)}
+          </ul> : <p className={styles.hint}>لا توجد أجهزة آيفون مسجّلة.</p>}
         </section>
       </> : null}
     </dialog>

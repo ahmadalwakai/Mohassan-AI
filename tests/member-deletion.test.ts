@@ -97,6 +97,16 @@ describe('member deletion', () => {
     ]).execute();
     const memberData = await addPlatformMemberData(db(), memberId, conversationId);
     const ownerData = await addPlatformMemberData(db(), ownerId, ownerConversationId);
+    const memberPhone = randomUUID(), ownerPhone = randomUUID();
+    const legacyPhones = [{ id: memberPhone, userId: memberId }, { id: ownerPhone, userId: ownerId }];
+    await db().insertInto('ios_push_devices').values(legacyPhones.map(({ id, userId }) => ({
+      registration_id: id, registration_generation: randomUUID(), user_id: userId, token: id.replaceAll('-', '').repeat(2),
+      environment: 'sandbox', app_version: '1.0',
+    }))).execute();
+    await db().insertInto('background_apns_deliveries').values([
+      { event_id: memberData.taskId, registration_id: memberPhone, next_at: memberData.dueAt },
+      { event_id: ownerData.taskId, registration_id: ownerPhone, next_at: ownerData.dueAt },
+    ]).execute();
     const queuedId = memberData.exportedRows.reminder_deliveries.delivery_key;
     const queuedAt = new Date();
     await db().insertInto('chat_notifications').values({
@@ -116,6 +126,8 @@ describe('member deletion', () => {
     expect((await get(publicPath(memberData.token))).statusCode).toBe(404);
     expect((await get(publicPath(ownerData.token))).statusCode).toBe(200);
     expect(await db().selectFrom('push_subscriptions').select('id').execute()).toEqual([{ id: ownerData.pushId }]);
+    expect(await db().selectFrom('ios_push_devices').select('registration_id').execute()).toEqual([{ registration_id: ownerPhone }]);
+    expect(await db().selectFrom('background_apns_deliveries').select('registration_id').execute()).toEqual([{ registration_id: ownerPhone }]);
     expect(await db().selectFrom('chat_notifications').select('delivery').where('task_id', '=', memberData.taskId).executeTakeFirst())
       .toEqual({ delivery: 'suppressed' });
     const now = () => new Date(Math.max(memberData.dueAt.getTime(), ownerData.dueAt.getTime()));

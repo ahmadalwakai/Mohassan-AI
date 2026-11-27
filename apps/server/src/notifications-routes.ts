@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely';
 import { z } from 'zod';
 import { checkPushRegistration } from './notification-security.js';
 import { IOS_PUSH_MEMBER_ROUTES, registerIosPushRoutes } from './ios-push-routes.js';
+import { listIosNotificationDevices } from './ios-push-devices.js';
 import { apnsConfigFromEnv, createApnsSender } from './apns.js';
 import { dispatchBackgroundApns } from './background-apns-delivery.js';
 import {
@@ -40,7 +41,7 @@ export async function dispatchPushNotifications(db: Kysely<any>, send: PushSende
 
 export function registerNotificationRoutes(app: FastifyInstance, options: {
   db: Kysely<any>;
-  owner: (request: FastifyRequest) => Promise<{ id: string }>;
+  owner: (request: FastifyRequest) => Promise<{ id: string; sessionId: string }>;
   isActive: (userId: string) => Promise<boolean>;
   recoverChatRuns: () => Promise<void>;
 }) {
@@ -51,8 +52,10 @@ export function registerNotificationRoutes(app: FastifyInstance, options: {
   const apns = apnsConfigFromEnv(process.env);
   const sendIos = apns && createApnsSender(apns);
   async function getSettings(userId: string): Promise<NotificationSettingsResponse> {
-    const [preferences, devices] = await Promise.all([notificationPreferences(db, userId), listPushDevices(db, userId)]);
-    return { preferences, devices, publicKey: config?.publicKey ?? null };
+    const [preferences, devices, iosDevices] = await Promise.all([
+      notificationPreferences(db, userId), listPushDevices(db, userId), listIosNotificationDevices(db, userId),
+    ]);
+    return { preferences, devices, iosDevices, publicKey: config?.publicKey ?? null };
   }
   app.get(settings, async request => getSettings((await owner(request)).id));
   app.post(settings, async request => {

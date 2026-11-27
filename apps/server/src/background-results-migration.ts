@@ -2,12 +2,16 @@ import { sql, type Kysely } from 'kysely';
 import { migrateLongRuns } from './assistant/long-run/migration.js';
 
 export const BACKGROUND_RESULTS_MIGRATION = '042_background_results';
+export const IOS_PUSH_SESSIONS_MIGRATION = '056_ios_push_sessions';
 
 export async function migrateBackgroundResults(db: Kysely<any>) {
   await migrateLongRuns(db);
   await db.transaction().execute(async tx => {
     await sql`LOCK TABLE schema_migrations IN EXCLUSIVE MODE`.execute(tx);
-    if (await tx.selectFrom('schema_migrations').select('version').where('version', '=', BACKGROUND_RESULTS_MIGRATION).executeTakeFirst()) return;
+    if (await tx.selectFrom('schema_migrations').select('version').where('version', '=', BACKGROUND_RESULTS_MIGRATION).executeTakeFirst()) {
+      await migrateIosPushSessions(tx);
+      return;
+    }
     await sql`CREATE TABLE ios_push_devices (
       registration_id uuid PRIMARY KEY,
       user_id text NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
@@ -44,5 +48,13 @@ export async function migrateBackgroundResults(db: Kysely<any>) {
       WHERE delivered_at IS NULL`.execute(tx);
     await sql`CREATE INDEX background_apns_deliveries_device_idx ON background_apns_deliveries(registration_id)`.execute(tx);
     await tx.insertInto('schema_migrations').values({ version: BACKGROUND_RESULTS_MIGRATION }).execute();
+    await migrateIosPushSessions(tx);
   });
+}
+
+async function migrateIosPushSessions(tx: Kysely<any>) {
+  if (await tx.selectFrom('schema_migrations').select('version').where('version', '=', IOS_PUSH_SESSIONS_MIGRATION).executeTakeFirst()) return;
+  await sql`ALTER TABLE ios_push_devices ADD COLUMN session_id text REFERENCES session(id) ON DELETE CASCADE`.execute(tx);
+  await sql`CREATE INDEX ios_push_devices_session_idx ON ios_push_devices(session_id) WHERE session_id IS NOT NULL`.execute(tx);
+  await tx.insertInto('schema_migrations').values({ version: IOS_PUSH_SESSIONS_MIGRATION }).execute();
 }
