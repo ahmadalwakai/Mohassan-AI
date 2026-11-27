@@ -38,7 +38,10 @@ export class ProviderError extends Error {
 const UsageSchema=z.object({prompt_tokens:z.number().int().nonnegative(),completion_tokens:z.number().int().nonnegative()});
 const ResponseSchema=z.object({model:z.string().min(1).max(100),choices:z.array(z.object({message:z.object({content:z.string().max(131072).nullable()}),finish_reason:z.string().nullable().optional()})).min(1),usage:UsageSchema});
 export function redactSecrets(text:string):string {
-  return text.replace(/\b((?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|https?):\/\/)[^\s\/@:]+:[^\s\/@]+@/gi,'$1[اعتماد محجوب]@')
+  const braveKey=process.env.BRAVE_SEARCH_API_KEY?.trim();
+  const safeText=braveKey ? text.replaceAll(braveKey,'[مفتاح محجوب]') : text;
+  return safeText.replace(/(\b(?:BRAVE_SEARCH_API_KEY|x-subscription-token)["'`]?\s*[:=]\s*["'`]?)(?!\[)[^\s,"'`;}&]+/gi,'$1[مفتاح محجوب]')
+    .replace(/\b((?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|https?):\/\/)[^\s\/@:]+:[^\s\/@]+@/gi,'$1[اعتماد محجوب]@')
     .replace(/\bgsk_[A-Za-z0-9_-]{12,}\b/g,'[مفتاح محجوب]')
     .replace(/\bnpg_[A-Za-z0-9_-]{12,}\b/g,'[اعتماد محجوب]')
     .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/g,'[مفتاح محجوب]')

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { BrowserError, SafeNetwork } from '../network.js';
 import type { SearchHit, SearchProvider } from '../research.js';
 import { compileQuery, rankResults, type RankedHit } from './ranking.js';
-import { documentedProviders, SearchProviderFailure, type DocumentedProvider } from './providers.js';
+import { documentedProviders, SearchProviderFailure, type DocumentedProvider, type SearchProviderContext } from './providers.js';
 import { PROVIDER_INTERVALS, SEARCH_POLICY_VERSION, searchHash, type SearchCacheStore, type SearchProviderAdmission } from './store.js';
 import { publicSearchScan, publicSearchText, type LocalIndexHit, type SearchLocalIndex } from './local-index.js';
 import { safeResumeUrl } from '../session-state.js';
@@ -31,7 +31,7 @@ export class SearchEngine implements SearchProvider {
    * 2026-11-22: bing.com/robots.txt forbids /search, and html.duckduckgo.com answers every request with a
    * human check (artifacts/perf/2026-11-22/search-providers). The documented APIs remain.
    */
-  constructor(private network: SafeNetwork, private options: { providers?: DocumentedProvider[]; publicWeb?: boolean; now?: () => number; store?:SearchCacheStore; localIndex?:SearchLocalIndex; admission?:SearchProviderAdmission } = {}) {
+  constructor(private network: SafeNetwork, private options: { providers?: DocumentedProvider[]; publicWeb?: boolean; now?: () => number; store?:SearchCacheStore; localIndex?:SearchLocalIndex; admission?:SearchProviderAdmission; resolveAccountRole?: (ownerId: string) => Promise<SearchProviderContext['role'] | null> } = {}) {
     this.now = options.now ?? Date.now;
     const web = options.publicWeb === false ? [] : publicWebProviders(network);
     this.providers = (options.providers ?? [...web, ...documentedProviders(network, this.now)]).filter(provider=>provider.name!=='arXiv'||options.admission);
@@ -45,13 +45,20 @@ export class SearchEngine implements SearchProvider {
     let query:ReturnType<typeof compileQuery>;
     try { query = compileQuery(question); } catch { throw new BrowserError('RESEARCH_QUERY_INVALID','اكتب موضوعًا محددًا للبحث، واستخدم site: مع اسم نطاق صالح فقط.',400); }
     const count = Math.max(1, Math.min(20, Number.isFinite(limit) ? Math.floor(limit) : 5));
-    const key = context?.ownerId ? createHash('sha256').update(JSON.stringify([SEARCH_POLICY_VERSION,context.ownerId,query,count,this.providers.map(p=>p.name)])).digest('hex') : null;
-    const revision=context?.ownerId&&this.options.store?await this.options.store.revision(context.ownerId):0;
+    const role = context?.ownerId && this.providers.some(provider => provider.allowsAccount)
+      ? await this.options.resolveAccountRole?.(context.ownerId).catch(() => null) : null;
+    signal?.throwIfAborted();
+    const providerContext = role ? { role } : undefined;
+    const available = this.providers.filter(provider => provider.allowsAccount?.(providerContext) !== false);
+    const eligible = available.filter(provider => provider.supports(query, providerContext));
+    const cacheable = eligible.every(provider => provider.cacheResults !== false);
+    const key = context?.ownerId && cacheable ? createHash('sha256').update(JSON.stringify([SEARCH_POLICY_VERSION,context.ownerId,query,count,available.map(p=>p.name)])).digest('hex') : null;
+    const revision=key&&this.options.store?await this.options.store.revision(context!.ownerId):0;
     if(key&&this.options.store){const stored=await this.options.store.get(context!.ownerId,key,revision);signal?.throwIfAborted();if(stored)return stored;}
     const cached = key&&!this.options.store&&!this.options.localIndex ? this.cache.get(key) : undefined;
     if (cached && cached.until > this.now()) return { ...structuredClone(cached.result), freshness:'cached' };
     const failures: SearchOutcome['failures'] = [];
-    const rows = await Promise.all(this.providers.filter(provider => provider.supports(query)).map(async provider => {
+    const rows = await Promise.all(eligible.map(async provider => {
       const health = this.health.get(provider.name) ?? { failures:0,next:0 };
       if (health.next > this.now() || this.active.has(provider.name)) { failures.push({provider:provider.name,kind:'rate_limited'}); return {provider:provider.name,hits:[]}; }
       let admissionToken:string|undefined;
@@ -69,7 +76,7 @@ export class SearchEngine implements SearchProvider {
       const abort = new Promise<never>((_, reject) => {onAbort=()=>reject(combined.reason);if(combined.aborted)onAbort();else combined.addEventListener('abort',onAbort,{once:true});});
       this.active.add(provider.name);
       this.health.set(provider.name,{...health,next:this.now()+1000});
-      const providerRequest=Promise.resolve().then(()=>{combined.throwIfAborted();return provider.search(query,Math.min(count*3,20),combined);});
+      const providerRequest=Promise.resolve().then(()=>{combined.throwIfAborted();return provider.search(query,Math.min(count*3,20),combined,providerContext);});
       // A caller timeout is not proof that a non-cooperative transport has stopped.
       // Keep this provider busy until its original promise settles, including late rejection.
       const completed=async(error?:unknown)=>{

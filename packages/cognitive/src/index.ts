@@ -47,6 +47,7 @@ export function redactCredentialText(value: string): string {
     .replace(/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
     .replace(/\bBearer\s+[A-Za-z0-9._~+/-]{12,}=*/gi, 'Bearer [REDACTED]')
     .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi, '$1[REDACTED]@')
+    .replace(/(\b(?:BRAVE_SEARCH_API_KEY|x-subscription-token)["'`]?\s*[:=]\s*["'`]?)[^\s,"'`;}&]+/gi, '$1[REDACTED]')
     .replace(/((?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|password|secret)\s*[:=]\s*)["']?[^\s,"';]{8,}["']?/gi, '$1[REDACTED]');
 }
 

@@ -81,4 +81,22 @@ describe('shared documented-provider admission',()=>{
     expect(await restarted.acquireProvider('Stack Exchange',searchHash('react hooks'))).toHaveProperty('token');
     await expect(restarted.acquireProvider('__proto__')).rejects.toThrow('SEARCH_ADMISSION_PROVIDER_INVALID');
   });
+  it('shares Brave monthly backoff across processes without saving the query hash', async () => {
+    await reset();
+    await database.db.deleteFrom('search_provider_queries').execute();
+    const store = new SqlSearchStore(database.db);
+    const claimed = await store.acquireProvider('Brave Search', searchHash('test query'));
+    if (!('token' in claimed)) throw new Error('fixture claim failed');
+    // Published reset-header example, checked 2026-11-27.
+    // https://api-dashboard.search.brave.com/documentation/guides/rate-limiting#understanding-the-headers
+    const monthlyResetMs = 1_419_704 * 1000;
+    await store.releaseProvider('Brave Search', claimed.token, monthlyResetMs);
+    const denied = await new SqlSearchStore(database.db).acquireProvider('Brave Search');
+    expect(denied).toHaveProperty('retryAfterMs');
+    if ('retryAfterMs' in denied) {
+      expect(denied.retryAfterMs).toBeGreaterThan(monthlyResetMs - 10_000);
+      expect(denied.retryAfterMs).toBeLessThanOrEqual(monthlyResetMs);
+    }
+    expect(await database.db.selectFrom('search_provider_queries').select('provider').executeTakeFirst()).toBeUndefined();
+  });
 });

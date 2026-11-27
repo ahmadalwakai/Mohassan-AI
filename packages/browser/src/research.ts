@@ -3,7 +3,7 @@ import { parse,parseFragment } from 'parse5';
 import { BrowserError, SafeNetwork } from './network.js';
 import { RobotsPolicy } from './search/robots.js';
 
-export interface SearchHit {title:string;url:string;snippet:string}
+export interface SearchHit {title:string;url:string;snippet:string;pageAge?:string}
 export interface SearchProvider {name:string;limitations?:readonly string[];search(question:string,limit:number,signal?:AbortSignal,context?:{ownerId:string}):Promise<SearchHit[]>}
 export interface ResearchSource {id:string;title:string;url:string;accessedAt:string;contentHash:string;quote:string;text:string}
 export interface ResearchReport {id:string;question:string;provider:string;createdAt:string;plan:string[];sources:ResearchSource[];claims:{text:string;sourceIds:string[]}[];conflicts:{sourceIds:string[];description:string;status:'needs_review'}[];coverage:{requested:number;read:number;failed:{url:string;reason:string}[];limitations:string[]}}

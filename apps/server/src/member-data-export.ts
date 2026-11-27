@@ -35,6 +35,7 @@ const fileChanged = () => new MemberExportError(409, 'MEMBER_EXPORT_FILE_CHANGED
 // The registry allow-lists top-level columns. These checks also cover credentials in JSON objects and text.
 const secretFields = new Set([
   'token', 'tokenhash', 'authorization', 'proxyauthorization', 'cookie', 'cookies', 'setcookie',
+  'xsubscriptiontoken',
   'credential', 'credentials', 'privatekey', 'codeverifier', 'pkceverifier', 'csrf', 'csrftoken',
   'apnskeypath', 'apnsprivatekey', 'vapidprivatekey', 'vapidpublickey', 'webpushvapidprivatekey', 'webpushvapidpublickey',
 ]);

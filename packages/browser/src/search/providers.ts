@@ -6,19 +6,24 @@ import { excludesWikipedia, requestsWikipedia, type compileQuery } from './ranki
 import { extraDocumentedProviders } from './extra-providers.js';
 
 export type SearchQuery = ReturnType<typeof compileQuery>;
+export interface SearchProviderContext { role: 'owner' | 'member' }
 export interface DocumentedProvider {
   name: string;
   coverage: 'encyclopedia' | 'programming' | 'scholarly' | 'web';
   accessBasis: 'documented_api' | 'public_search';
-  supports(query: SearchQuery): boolean;
-  search(query: SearchQuery, limit: number, signal: AbortSignal): Promise<SearchHit[]>;
+  supports(query: SearchQuery, context?: SearchProviderContext): boolean;
+  search(query: SearchQuery, limit: number, signal: AbortSignal, context?: SearchProviderContext): Promise<SearchHit[]>;
+  /** Authorization for source selection, independent of query intent. */
+  allowsAccount?(context?: SearchProviderContext): boolean;
+  /** Skip result caching when this provider can be called for the query. */
+  cacheResults?: false;
   /** Carries successful-response backoff/quota instructions to the shared gate. */
   cooldownMs?(): number;
 }
 export class SearchProviderFailure extends Error {
   constructor(readonly kind: 'rate_limited' | 'unavailable' | 'invalid_response', readonly retryAfterMs = 0) { super(kind); }
 }
-function plain(input: unknown, max = 700): string {
+export function plain(input: unknown, max = 700): string {
   if (typeof input !== 'string') return '';
   function text(node: any): string { return node.nodeName === '#text' ? node.value : ['script','style'].includes(node.tagName) ? '' : (node.childNodes ?? []).map(text).join(' '); }
   return text(parseFragment(input)).replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);

@@ -6,6 +6,7 @@ import { createSkillControl, skillsMigration } from '@mohassan/skills';
 import { createAIControl } from '../../server/src/ai.js';
 import { createCodingControl } from '../../server/src/coding.js';
 import { getConfig } from '../../server/src/config.js';
+import { roleOf } from '../../server/src/members.js';
 import { createStudioControl } from '../../server/src/studio.js';
 import { createStudioAiControl } from '../../server/src/studio-ai.js';
 import { createStudioLiveControl } from '../../server/src/studio-live.js';
@@ -31,7 +32,7 @@ const studioAi = await createStudioAiControl(database.db, {dataDir:config.studio
 await migrateSearch(database.db);
 const searchNetwork=new SafeNetwork(config.browser);
 const searchStore=new SqlSearchStore(database.db);
-const searchProvider=config.browser?.searchProvider??new SearchEngine(searchNetwork,{store:searchStore,localIndex:new LocalPublicIndex(database.db,searchNetwork),admission:searchStore});
+const searchProvider=config.browser?.searchProvider??new SearchEngine(searchNetwork,{store:searchStore,localIndex:new LocalPublicIndex(database.db,searchNetwork),admission:searchStore,resolveAccountRole:id=>roleOf(database.db,id)});
 const browser=createBrowserResearchControl(database.db,{...config.browser,searchProvider});
 const browserTask=await createBrowserTaskControl(database.db,{browser,networkPolicy:config.browser});
 const moduleAvailability={studioVisual:true,memory:true,browser:true};
