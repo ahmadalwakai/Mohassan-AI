@@ -99,6 +99,8 @@ import { registerBackupStatusRoute } from './backup-status.js';
 import { registerProductionMetrics } from './ops/metrics/index.js';
 import { registerNotificationRoutes } from './notifications-routes.js';
 import { migrateBackgroundResults } from './background-results-migration.js';
+import { migrateActivationConsole } from './activation-migration.js';
+import { registerActivationConsole } from './activation-console/routes.js';
 
 /** Fallback window for the reader when no catalogue index is given (tests). The chat passes the catalogue index, which has no window. */
 const SKILL_READER_DISCOVERY = MAX_GITHUB_SKILLS + MAX_IMPORTED_VERSIONS_PER_OWNER + 50;
@@ -372,6 +374,7 @@ export async function createApplication(config: AppConfig) {
   const agentBrowser = await registerMemberDataRights(app, { db: database.db, auth, owner, role, config, adsAvailable: () => googleAds.configured, registerMemberRoutes, AgentBrowser, browserProfileDir: config.browserProfileDir ?? join(tmpdir(), `mohassan-browser-${randomUUID()}`) });
   await migrateBackgroundResults(database.db);
   await migrateMonitors(database.db);
+  await migrateActivationConsole(database.db);
   const assistantTools=createAssistantTools({memory,coding,studio,studioChange:studioAi.available,runtime,windows,googleAds});
   const inference=await createInferenceControl(database.db,{...config.inference,groq:{apiKey:config.groqApiKey,fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b']},fetch:config.aiFetch});
   await registerInferenceRoutes(app,{control:inference,owner});
@@ -526,6 +529,8 @@ export async function createApplication(config: AppConfig) {
     imageReaderLive: imageReader.available, v5Live: config.v5Chat === 'owner', councilLive: Boolean(modelCouncil) });
   await registerReminderRuntime(app, { db: database.db, owner });
   await registerMonitorRuntime(app, database.db, owner, (tx, userId, id) => reserveMemberRun(tx, userId, id, memberDailyRuns));
+  registerActivationConsole(app, { db: database.db, owner, role, config, judgeLogFile: judgeConfig.logFile,
+    live: { modelCouncil: Boolean(modelCouncil), routerShadow: Boolean(shadowRouter), conversationShadow: Boolean(conversationShadow), ocrAvailable: imageReader.available } });
   await registerWindowsScopedChatRoutes(app, { control: chat, owner }, windows, sessionUser);
   registerNotificationRoutes(app, { db: database.db, owner, isActive: async id => Boolean(await roleOf(database.db, id)), recoverChatRuns: chat.recoverExpired });
   registerConversationShareRoutes(app,{db:database.db,owner,role,webOrigin:config.webOrigin,internalSecret:config.internalSecret,fontsDir:config.documentsFontsDir});
