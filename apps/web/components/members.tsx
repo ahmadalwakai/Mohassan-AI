@@ -11,7 +11,7 @@ import { ConversationShareSettings } from "./conversation-share-settings";
 const GoogleAdsWorkspace = dynamic(() => import("./google-ads-workspace").then(module => module.GoogleAdsWorkspace));
 const SitesWorkspace = dynamic(() => import("./sites-workspace").then(module => module.SitesWorkspace));
 
-export type Access = { user: { id: string; name: string; email: string }; role: "owner" | "member"; services: string[]; quota?: { dailyRuns: number; used: number } };
+export type Access = { user: { id: string; name: string; email: string }; role: "owner" | "member"; services: string[]; quota?: { dailyRuns: number; used: number }; feedbackReviewEnabled?: boolean };
 type Session = { user: { id: string; name: string; email: string } };
 type Member = { id: string; name: string; email: string; joinedAt: string; disabled: boolean; runsToday: number };
 type Invite = { id: string; name: string; email: string; createdAt: string; expiresAt: string };

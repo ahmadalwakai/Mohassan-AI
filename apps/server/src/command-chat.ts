@@ -1,6 +1,7 @@
 import { cacheChatResponse, commitChatRequest, replayChatResponse, scrubChatRequestResponses, withChatRequest } from './chat-request-ledger.js';
 import { cleanRejectedChatCreate } from './rejected-chat-create.js';
 import { createHash, randomUUID } from 'node:crypto';
+import * as feedbackLoop from './feedback-runtime.js';
 import sharp from 'sharp';
 import type { ImageReading } from '@mohassan/vision';
 import { composeImageReply, readingForTrail } from './assistant/image-reading.js';
@@ -468,6 +469,7 @@ export async function commandChatMigration(db: Kysely<any>, beforeShares?: (tx: 
     await campaignEventsMigration(tx);
     await beforeShares?.(tx);
     await migrateConversationShares(tx);
+    await feedbackLoop.migrateFeedbackInTransaction(tx);
   });
 }
 
@@ -831,8 +833,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     });
   }
 
-  async function addMessage(connection: Kysely<any>, id: string, role: 'user' | 'assistant', text: string, experiment?: 'v5', council?: ModelCouncil) {
-    await connection.insertInto('chat_messages').values({ id: randomUUID(), conversation_id: id, role, text: clean(text), run_id: role === 'assistant' ? execution.getStore()?.runId ?? null : null,
+  async function addMessage(connection: Kysely<any>, id: string, role: 'user' | 'assistant', text: string, experiment?: 'v5', council?: ModelCouncil, messageId = randomUUID()) {
+    await connection.insertInto('chat_messages').values({ id: messageId, conversation_id: id, role, text: clean(text), run_id: role === 'assistant' ? execution.getStore()?.runId ?? null : null,
       ...(experiment && { experiment }),
       // The council's members quote model outputs and page titles: the same scrub as the reply text.
       ...(council && role === 'assistant' && { council: JSON.stringify(vault.scrubValue(id, council, clean)) }) }).execute();
@@ -1413,7 +1415,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   /** What this run read: pages fetched over HTTP, and the browser page it ended on. Texts stay in memory; the log keeps only their count. */
   function judgeEvidence(current: Execution) {
     const seen = new Set<string>();
-    return [...(current.readPages ?? []), ...(current.page ? [current.page] : [])]
+    return feedbackLoop.orderCurrentEvidence([...(current.readPages ?? []), ...(current.page ? [current.page] : [])])
       .filter(page => page.text?.trim() && !seen.has(page.url) && seen.add(page.url))
       .map(page => ({ kind: 'page' as const, url: page.url, title: page.title, text: page.text.slice(0, 200_000) }));
   }
@@ -1486,7 +1488,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const hits = typeof engine.execute === 'function'
       ? (await engine.execute.call(search, question, 8, signal, { ownerId })).hits
       : await search.search(question, 8, signal, { ownerId });
-    const ranked = rankHits(question, hits).slice(0, 3);
+    const ranked = feedbackLoop.orderCurrentEvidence(rankHits(question, hits)).slice(0, 3);
     if (!ranked.length) return { pages: [], note: hits.length ? 'لم تكن أي نتيجة بحث قريبة من السؤال.' : 'لم يُرجع البحث نتائج.' };
     const live = isLiveWebQuestion(question);
     const read = await Promise.all(ranked.map(async hit => {
@@ -1494,7 +1496,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (page && page !== 'disallowed' && page.text.trim()) return { kind: 'page' as const, url: page.url, title: page.title || hit.title, text: page.text.slice(0, 200_000) };
       return hit.snippet?.trim() ? { kind: 'page' as const, url: hit.url, title: hit.title, text: hit.snippet } : null;
     }));
-    const pages = read.filter((page): page is NonNullable<typeof page> => page !== null);
+    const pages = feedbackLoop.orderCurrentEvidence(read.filter((page): page is NonNullable<typeof page> => page !== null));
     return pages.length ? { pages } : { pages: [], note: 'لم تُقرأ أي صفحة من نتائج البحث.' };
   }
 
@@ -1518,6 +1520,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     let council: CouncilOutcome | undefined;
     if (councilTurn && source?.request && config.modelCouncil) {
       const request = source.request;
+      const feedback = feedbackLoop.feedbackSelectionScope.getStore();
+      if (feedback) await feedback.load();
       const baseline = ruleBaseline(state, request);
       try {
         council = await config.modelCouncil.deliberate({
@@ -1606,7 +1610,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       });
       if (blockedMonitor && !monitorError) finalText += `\n\n${blockedMonitor.text}`;
       if (!experiment && !council?.changed && monitor?.v2 && !preparedMonitor && finalStatus === 'completed' && !judged.withheld && !memoryPublication && !state.questionAnswer && source?.request) finalText += await monitor.publishAnswerOffer(tx, { ownerId: source.ownerId, conversationId: id, runId, text: source.request, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }, finalText);
-      await addMessage(tx, id, 'assistant', experiment ? `${modelReply}${V5_CHAT_FOOTER}` : finalText, experiment, councilRecord);
+      const reply = experiment ? `${modelReply}${V5_CHAT_FOOTER}` : finalText;
+      const messageId = randomUUID();
+      await addMessage(tx, id, 'assistant', reply, experiment, councilRecord, messageId);
+      await feedbackLoop.snapshotFeedbackAnswer(tx, source, messageId, clean(reply), text => vault.scrub(id, text), config.accountFullAccess);
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',
         data: JSON.stringify({ contractHash: state.supervision?.contract.hash, review: state.completionReview }) }).execute();
@@ -4100,7 +4107,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     controllers.set(id, {runId,token,controller});
     if(!preserveVault){const prior=vaultOwners.get(id);if(prior)forgetVault(id,prior);}
     vaultOwners.set(id,token);
-    const worker = execution.run({ownerId,id,runId,token,controller,full},()=>withArbiterExecution(runId, () => work(ownerId, id, runId, controller))).catch(() => {});
+    const worker = execution.run({ownerId,id,runId,token,controller,full},()=>feedbackLoop.withFeedbackRun(db, execution.getStore()!, text => vault.scrub(id, text), config.fullAccess, () => withArbiterExecution(runId, () => work(ownerId, id, runId, controller)))).catch(() => {});
     workers.set(id, worker);
     void worker.finally(() => { if (workers.get(id) === worker) workers.delete(id); });
   }
@@ -4460,12 +4467,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   async function feedback(ownerId: string, id: string, raw: unknown) {
     const input = ChatFeedbackSchema.parse(raw);
     await owned(ownerId, id);
-    const message = await db.selectFrom('chat_messages').select(['id', 'role']).where('id', '=', input.messageId).where('conversation_id', '=', id).executeTakeFirst();
-    if (!message || message.role !== 'assistant') throw new BrowserError('CHAT_FEEDBACK_TARGET', 'هذا الرد غير موجود في المحادثة.', 404);
     await db.transaction().execute(async tx => {
+      if (!await tx.selectFrom('chat_conversations').select('id').where('id', '=', id).where('owner_id', '=', ownerId).forKeyShare().executeTakeFirst()) throw notFound();
+      const message = await tx.selectFrom('chat_messages').select(['id', 'role']).where('id', '=', input.messageId).where('conversation_id', '=', id).forNoKeyUpdate().executeTakeFirst();
+      if (!message || message.role !== 'assistant') throw new BrowserError('CHAT_FEEDBACK_TARGET', 'هذا الرد غير موجود في المحادثة.', 404);
       await tx.deleteFrom('chat_events').where('conversation_id', '=', id).where('kind', '=', 'feedback').where(sql`data->>'messageId'`, '=', input.messageId).execute();
       await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: null, kind: 'feedback', message: input.verdict,
-        data: JSON.stringify({ messageId: input.messageId, verdict: input.verdict, note: input.note ? clean(input.note) : null }) }).execute();
+        data: JSON.stringify({ messageId: input.messageId, verdict: input.verdict, note: feedbackLoop.safeFeedbackNote(input.note && vault.scrub(id, input.note)) }) }).execute();
     });
     return detail(ownerId, id);
   }

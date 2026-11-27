@@ -241,7 +241,7 @@ function DeleteDialog({ target, busy, error, onCancel, onConfirm }: { target: Su
 /** Owner-only views a failed turn can point to. The executor is a separate local experiment, never a stand-in for the chat model. */
 export type AssistantToolView = "integrations" | "executor" | "desktop";
 
-export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifications }: { name: string; onAdvanced: () => void; onOpenTool?: (view: AssistantToolView) => void; onSignOut: () => void; notifications: NotificationControls }) {
+export function AssistantApp({ name, owner, feedbackReviewEnabled, onAdvanced, onOpenTool, onSignOut, notifications }: { name: string; owner: boolean; feedbackReviewEnabled: boolean; onAdvanced: () => void; onOpenTool?: (view: AssistantToolView) => void; onSignOut: () => void; notifications: NotificationControls }) {
   const [history, setHistory] = useState<Summary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -699,6 +699,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
           </label>
           {onOpenTool ? <button onClick={() => { setMenuOpen(false); onOpenTool("desktop"); }}><Laptop size={15} />سطح المكتب</button> : null}
           {onOpenTool ? <TrainingMonitorMenuItem /> : null}
+          {feedbackReviewEnabled ? <button type="button" onClick={() => window.location.assign("/feedback")}><MessageSquare size={15} aria-hidden="true" />ملاحظات الإجابات</button> : null}
           {chatCapabilities?.smartMonitors || conversation?.capabilities?.smartMonitors ? <MonitorSettings v2={conversation?.capabilities?.smartMonitorsV2 ?? chatCapabilities?.smartMonitorsV2} onOpenConversation={(id) => { setMenuOpen(false); open(id); }} /> : null}
           <button onClick={() => { setMenuOpen(false); onAdvanced(); }}><Settings2 size={15} />الأدوات المتقدمة</button>
           <button onClick={onSignOut}><LogOut size={15} />تسجيل الخروج</button>
@@ -746,7 +747,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
                   <span className={styles.experimentalBadge}>نموذج v5 تجريبي</span>
                   <p dir="auto">{message.text}</p>
                 </div> : <Markdown text={asking && index === conversation!.messages.length - 1 ? withoutQuestionList(message.text) : message.text} />}
-              {message.role === "assistant" && message.text.trim() ? <div className={styles.replyTools}><CopyButton text={message.text} /><ConversationMessageFeedback alerts={conversation!.monitorAlerts} messageId={message.id} fallback={<FeedbackButtons key={message.id} conversationId={conversation!.id} messageId={message.id} />} /></div> : null}
+              {message.role === "assistant" && message.text.trim() ? <div className={styles.replyTools}><CopyButton text={message.text} /><ConversationMessageFeedback alerts={conversation!.monitorAlerts} messageId={message.id} fallback={owner ? <FeedbackButtons key={message.id} conversationId={conversation!.id} messageId={message.id} /> : null} /></div> : null}
               {message.role === "assistant" && message.council ? <ModelCouncilDetails council={message.council} /> : null}
               {index === conversation!.messages.length - 1 && message.role === "user" ? <Steps conversation={conversation!} /> : null}
             </article>)}

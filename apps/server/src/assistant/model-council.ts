@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks';
+import { feedbackSelectionScope } from '../feedback-selection.js';
 import type { ModelCouncil, ModelCouncilMember } from '@mohassan/contracts';
 import { ModelRelationsManager, type TurnDecisionLog, type TurnObservation } from '../../../../packages/model-relations/src/manager.js';
 import type { ModelRunResult } from '../../../../packages/model-relations/src/runtime.js';
@@ -409,6 +410,7 @@ export function createModelCouncil(options: ModelCouncilOptions) {
     const winner = candidates.find(candidate => candidate.model === decision.chosen);
     const changed = decision.changed && Boolean(winner?.reply.trim());
     const chosen = changed ? decision.chosen : PIPELINE;
+    if (chosen === READER && passage?.url) feedbackSelectionScope.getStore()?.observe([passage.url]);
     for (const candidate of candidates) {
       members.push({
         model: candidate.model, label: label(candidate.model), round: 'answer', outcome: candidate.outcome,

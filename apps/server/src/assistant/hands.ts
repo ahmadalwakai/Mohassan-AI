@@ -1,4 +1,5 @@
 import { AgentEffectHeld, BrowserError, compileQuery, publicSearchScan, publicSearchText, safeResumeUrl, webFreshnessText, type AgentAction, type AgentElement, type AgentPage, type AgentRequestPermit, type SearchHit } from '@mohassan/browser';
+import { allowsFeedbackEvidence, excludeReviewedHandsEvidence, feedbackExcludedPageReply, feedbackHandsReader, feedbackSelectionScope, observeHandsEvidence, selectFeedbackEvidence } from '../feedback-selection.js';
 import { directRoute, namedSite, sensitiveAction } from './brain.js';
 import { hostOf, readingLabel, siteName } from './activity.js';
 import { checkAnswerLine, figureKind, hasAnswerNumber, isDisambiguationPage, isDisambiguationTitle, isMetaLine, isReasonQuestion, questionLanguage } from './answer-check.js';
@@ -1404,6 +1405,10 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     text: refusalReply(decision, plan.lang === 'en' ? '' : 'العربية').text });
   const planRefusal = enforceRefusal && reviewHandsRefusal(plan.steps);
   if (planRefusal) return refused(planRefusal);
+  const feedback = feedbackSelectionScope.getStore();
+  const policy = feedback ? await feedback.load() : undefined;
+  const allowed = (url: string) => allowsFeedbackEvidence(policy, url);
+  const readEvidence = feedbackHandsReader(io.read, policy);
   const first = plan.steps[0];
   const publicPageRead = plan.steps.length === 1 && first?.kind === 'ask_page' && first.conversationPage?.readPublic;
   let page = publicPageRead ? null : await io.page();
@@ -1493,8 +1498,8 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     // Wikipedia opens a subject's article by its name and follows its redirects («المياه البيضاء» → «الساد», «الشاي الأخضر»
     // → «شاي أخضر», measured 2026-11-22), so the article is read while the search runs, not searched for after it: the search
     // lookup cost 1.1 to 1.9 s a question (the engine's one-second spacing, then the search). The page reader caches it.
-    const direct = subject.length && !live && surface.trim() && io.read
-      ? io.read(articleUrl(surface, questionLanguage(query))).catch((): HandsRead => ({ kind: 'unreadable' })) : null;
+    const direct = subject.length && !live && surface.trim() && readEvidence
+      ? readEvidence(articleUrl(surface, questionLanguage(query))).catch((): HandsRead => ({ kind: 'unreadable' })) : null;
     let results = await lookup(query);
     const openedByName = direct ? await direct : null;
     const named = openedByName?.kind === 'page' && readableOverHttp(openedByName.page.text) && !isDisambiguationPage(openedByName.page) ? openedByName.page : null;
@@ -1567,10 +1572,10 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         // «What is the latest version of Node.js?» is read from the product's own release page first (releases.ts): the
         // search only finds old forum threads for it. When that page cannot be read or no longer states a version, the
         // general search runs as before.
-        const release = !template && !box && step.ask && io.read ? releaseQuestion(step.query) : null;
+        const release = !template && !box && step.ask && readEvidence ? releaseQuestion(step.query) : null;
         if (release) {
           await io.step(readingLabel([release.page]));
-          const read = await io.read!(release.page).catch((): HandsRead => ({ kind: 'unreadable' }));
+          const read = await readEvidence!(release.page).catch((): HandsRead => ({ kind: 'unreadable' }));
           const official = read.kind === 'page' ? read.page : null;
           const fact = official ? release.parse(official.text) : null;
           if (official && fact) {
@@ -1606,7 +1611,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             page = await io.act({ kind: 'wait', text: '2000' });
           }
         }
-        if (searched) plan.results = searched;
+        if (searched) plan.results = searched.filter(item => allowed(item.url));
         const tried = new Set<string>();
         const extracted = new Map<string, NonNullable<HandsPlan['found']>>();
         const readResults = async (results: SearchResult[], candidates = results) => {
@@ -1614,9 +1619,9 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           // A page the judge already refused for this question is neither read again nor offered again (plan.rejected, set by the
           // chat's correction step).
           const refused = new Set((plan.rejected ?? []).map(withoutHash));
-          const eligible = results.filter(item => !refused.has(withoutHash(item.url)));
+          const eligible = results.filter(item => !refused.has(withoutHash(item.url)) && allowed(item.url));
           plan.results = eligible;
-          const unread = candidates.filter(item => !refused.has(withoutHash(item.url)) && !tried.has(withoutHash(item.url)));
+          const unread = candidates.filter(item => !refused.has(withoutHash(item.url)) && !tried.has(withoutHash(item.url)) && allowed(item.url));
           // Open only the results whose titles name the question's topic best: «إمداد المياه» is not «المياه البيضاء».
           const topic = topicWords(step.query);
           const ranked = unread.map((item, at) => ({ item, at, score: topic.length ? titleScore(item.title, topic) : 1 }));
@@ -1637,11 +1642,12 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           // A disambiguation page lists subjects and answers none.
           // The article opened by the subject's own name (engine) is read first, whatever its title («الساد» for «المياه البيضاء»).
           const byName = unread.filter(item => ownUrls.has(withoutHash(item.url)));
-          const fitting = [...new Set(searched ? [...byName, ...subject, ...unread] : [...subject, ...best])].filter(item => !isDisambiguationTitle(item.title)).slice(0, 3);
+          const candidatesForAnswer = [...new Set(searched ? [...byName, ...subject, ...unread] : [...subject, ...best])].filter(item => !isDisambiguationTitle(item.title));
+          const fitting = selectFeedbackEvidence(policy, candidatesForAnswer).slice(0, 3);
           // Engine results are read over HTTP, all together, so no browser opens for a question. A page that
           // gives no readable text (built by JavaScript, not HTML, timed out) is opened in the hidden browser instead.
-          const reads: (HandsRead | null)[] = searched && io.read && fitting.length
-            ? (await io.step(readingLabel(fitting.map(item => item.url))), await Promise.all(fitting.map(item => io.read!(item.url).catch((): HandsRead => ({ kind: 'unreadable' })))))
+          const reads: (HandsRead | null)[] = searched && readEvidence && fitting.length
+            ? (await io.step(readingLabel(fitting.map(item => item.url))), await Promise.all(fitting.map(item => readEvidence(item.url).catch((): HandsRead => ({ kind: 'unreadable' })))))
             : fitting.map(() => null);
           for (const [index, item] of fitting.entries()) {
             tried.add(withoutHash(item.url));
@@ -1667,7 +1673,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
               page = shown;
               opened = shown;
             }
-            if (isDisambiguationPage(opened)) continue;
+            if (!allowed(opened.url) || isDisambiguationPage(opened)) continue;
             const passage = read?.kind === 'page' && read.page === opened ? readPassage
               : !isLiveWebQuestion(step.query) ? readFactualPassage(opened, step.query) : undefined;
             const extract = passage ? formatFactualPassage(passage) : undefined;
@@ -1813,11 +1819,13 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         if (!page) {
           // The last answer was read over HTTP, so «اقرأ المزيد» opens that page in the browser first.
           if (!plan.found?.url) return { kind: 'done', status: 'blocked', text: NO_PAGE };
+          if (!allowed(plan.found.url)) return feedbackExcludedPageReply(plan.lang);
           await io.step(`فتح ${hostOf(plan.found.url)}`);
           const opened = await go({ kind: 'open', text: plan.found.url }, `فتح ${hostOf(plan.found.url)}`);
           if (!opened) return { kind: 'paused' };
           page = opened;
         }
+        if (!allowed(page.url)) return feedbackExcludedPageReply(plan.lang);
         await io.step('قراءة الصفحة');
         plan.next = index + 1;
         const offset = step.more && plan.read?.url === page.url ? plan.read.offset : 0;
@@ -1842,8 +1850,8 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
       }
       case 'ask_page': {
         const context = step.conversationPage;
-        if (publicPageRead && context?.expectedUrl && safeResumeUrl(context.expectedUrl) === context.expectedUrl && io.read) {
-          const result = await io.read(context.expectedUrl);
+        if (publicPageRead && context?.expectedUrl && safeResumeUrl(context.expectedUrl) === context.expectedUrl && readEvidence) {
+          const result = await readEvidence(context.expectedUrl);
           page = result.kind === 'page' ? result.page : null;
         }
         if (context && page && !matchesConversationPage(page, context)) page = null;
@@ -1851,6 +1859,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           ? 'I could not verify the page this question refers to. Send its link to continue.'
           : 'لم أتحقق من الصفحة التي يشير إليها السؤال. أرسل رابطها للمتابعة.' };
         if (!page) return { kind: 'done', status: 'blocked', text: NO_PAGE };
+        if (!allowed(page.url)) return feedbackExcludedPageReply(plan.lang);
         await io.step(plan.lang === 'en' ? 'Reading the answer on the page' : 'قراءة الجواب من الصفحة');
         if (context) {
           delete plan.found;
@@ -1873,7 +1882,12 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
       await io.complete(index, missing || ranked?.status === 'blocked' ? 'partial' : 'completed');
     }
   }
-  return { kind: 'done', ...describe(plan, page) };
+  excludeReviewedHandsEvidence(plan, policy);
+  const last = plan.steps.at(-1);
+  if (page && last?.kind === 'news' && !allowed(page.url)) return feedbackExcludedPageReply(plan.lang);
+  const described = describe(plan, page, !page || allowed(page.url));
+  observeHandsEvidence(plan, page, described.text);
+  return { kind: 'done', ...described };
 }
 
 /** What a question about an opened page asks for, beside ordinary sentences: its main heading, its links' text, a version. */
@@ -1986,7 +2000,7 @@ export function isWholeDetail(line: string): boolean {
 }
 
 /** The reply is built only from what the pages show: titles, links and quoted sentences. A question answered over HTTP needs no open page. */
-export function describe(plan: HandsPlan, page: AgentPage | null): { text: string; status: 'completed' | 'partial' | 'blocked' } {
+export function describe(plan: HandsPlan, page: AgentPage | null, includeExcerpt = true): { text: string; status: 'completed' | 'partial' | 'blocked' } {
   const last = plan.steps[plan.steps.length - 1];
   if (last.kind === 'search' && last.ask && plan.results) {
     const list = (items: { title: string; url: string }[]) => items.map((item, index) => `${index + 1}. [${shownTitle(item.title)}](${item.url}) — ${siteName(item.url)}`).join('\n');
@@ -2108,7 +2122,7 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
   else if (en) lead = `I reached ${where}:`;
   const from = isRead && plan.read?.url === page.url ? plan.read.start : 0;
   const part = excerpt(page, from, isRead ? READ_WINDOW : 500);
-  const quote = part.lines.length ? `\n\n${part.lines.map(line => `> ${line}`).join('\n>\n')}` : en ? '\n\nI found no readable text in the visible part of the page.' : '\n\nلم أجد نصًا مقروءًا في الجزء الظاهر من الصفحة.';
+  const quote = !includeExcerpt ? '' : part.lines.length ? `\n\n${part.lines.map(line => `> ${line}`).join('\n>\n')}` : en ? '\n\nI found no readable text in the visible part of the page.' : '\n\nلم أجد نصًا مقروءًا في الجزء الظاهر من الصفحة.';
   const tail = isRead ? (part.more ? en ? '\n\nSay “read more” and I will go on.' : '\n\nقل «اقرأ المزيد» لأكمل.' : '')
     : en ? '\n\nSay “read the page” to read more, or “click …”.' : '\n\nقل «اقرأ الصفحة» لأقرأ أكثر، أو «اضغط على …».';
   return { status: 'completed', text: `${lead}${quote}${tail}` };
