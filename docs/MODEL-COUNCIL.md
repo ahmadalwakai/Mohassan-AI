@@ -67,6 +67,18 @@ Registry changes:
 - Three execution exports are now found under their real folders (`inference-train-3m/6m/9m`).
 - `chat-v4`, both reading models and the Ads and code foundations now carry `workerHead: 'lm'`, so the runtime can run them.
 
+### Production setup and preflight
+
+1. Provision a model store such as `/opt/mohassan/models` separately from the source snapshot. `scripts/package-cloud.mjs` excludes `artifacts/`. Copy the approved exports into their registry-relative paths and include their manifests and sidecar files. Give `mohassan` read access to the files and traversal access to the directories. Protect the store and its parent directories from writes by the service account. [Model registry](../packages/model-relations/src/registry.ts)
+2. In the private `/etc/mohassan/server.env`, set `MOHASSAN_MODELS_ROOT=/opt/mohassan/models` and `MOHASSAN_MODEL_COUNCIL=owner`. To enable OCR, stage its approved `manifest.json` and `weights.bin` in the same read-only store and set `MOHASSAN_OCR_MODEL_DIR=/opt/mohassan/models/artifacts/vision/ocr-v1`. On a packaged release, omitting that setting leaves OCR unavailable.
+3. Before restarting the service, run the preflight against the installed release and review the model report. Stage any missing models the council is expected to use and resolve any integrity failures. The report includes historical registry entries, which can be absent. Add `--owner-trial` when the monitor trial is configured or `--owner-v5` when both the monitor trial and resident v5 are configured. [Wave 6 rollout procedure](DEPLOY-WAVE-6-2026-11-25.md#turn-on-owner-monitors)
+
+   ```bash
+   sudo /usr/local/bin/node /opt/mohassan/app/scripts/cloud-linux/preflight-wave-6.mjs --owner-council
+   ```
+
+   Preflight reads `/etc/mohassan/server.env`, checks the store as the service account, and reports `present`, `absent`, or `hash mismatch` for each registry entry. It also checks the OCR store when configured. The council's resident v5 member requires its own worker configuration and the `--owner-v5` checks. [v5 rollout procedure](MODELS-RUNBOOK.md)
+
 ## Measurement
 
 `scripts/quality/council-questions.ts` asks the 12 frozen date and population questions of `date-questions.ts` through an isolated server, with the council on and the owner's models. The expected answers were written into the script before its first run.
@@ -92,6 +104,7 @@ The production server is an ARM CPU, so its times will differ. They are not meas
 | Setting | Value | Effect |
 | --- | --- | --- |
 | `MOHASSAN_MODEL_COUNCIL` | `owner` | The council runs on the owner's turns. Any other value: off, and replies are published as before. |
-| `MOHASSAN_MODELS_ROOT` | `/var/lib/mohassan/models` | The server's model store for the council and the page. |
+| `MOHASSAN_MODELS_ROOT` | `/opt/mohassan/models` | The server's model store for the council and the page. |
+| `MOHASSAN_OCR_MODEL_DIR` | `/opt/mohassan/models/artifacts/vision/ocr-v1` | Optional OCR export directory on a packaged release. |
 
 Turning the council off restores the previous behaviour exactly, including v5's own last resort. The `council` column stays; earlier releases ignore it.

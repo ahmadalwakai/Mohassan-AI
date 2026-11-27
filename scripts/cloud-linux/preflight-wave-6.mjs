@@ -3,22 +3,16 @@ import { createECDH, createHash, createPrivateKey } from 'node:crypto';
 import { accessSync, closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync,
   realpathSync, statSync } from 'node:fs';
 import { userInfo } from 'node:os';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual, parseArgs, parseEnv } from 'node:util';
+import { runtimeSwitches } from './runtime-switches.mjs';
 
 const deploymentEnv = '/etc/mohassan/server.env';
 const appRoot = fileURLToPath(new URL('../../', import.meta.url));
-const offByCutover = [
-  'MOHASSAN_SMALL_TALK_MANNERS', 'MOHASSAN_CONVERSATION_REVIEW_APPLY', 'MOHASSAN_CONVERSATION_SHADOW',
-  'MOHASSAN_STRUCTURED_MEMORY', 'MOHASSAN_EXTRACTIVE_WRITING', 'MOHASSAN_REASONING',
-  'MOHASSAN_CLARIFY_CHOICES', 'MOHASSAN_SCRATCH_CLASSIFIERS', 'MOHASSAN_REFUSAL_POLICY',
-  'MOHASSAN_QUESTION_REWRITER', 'MOHASSAN_ARITHMETIC_SEARCH', 'MOHASSAN_MODEL_WORKER',
-  'MOHASSAN_REPLY_POLICY_ENABLED', 'MOHASSAN_CONTEXT_POLICY_ENABLED', 'MOHASSAN_LONG_RUN_ENABLED',
-  'MOHASSAN_BACKGROUND_RESULTS_ENABLED', 'MOHASSAN_ARBITER_ROUTING', 'MOHASSAN_ARBITER_QUESTION_REWRITE',
-  'MOHASSAN_ARBITER_LOCAL_COMPUTATION', 'MOHASSAN_ARBITER_COMPOUND_PLAN',
-];
-const arbiterKills = offByCutover.filter(name => name.startsWith('MOHASSAN_ARBITER_')).map(name => `${name}_KILL`);
+const switchNames = new Set(runtimeSwitches.map(({ name }) => name));
+const inactiveValues = new Set(runtimeSwitches.filter(item => item.kind === 'switch' && item.off).map(item => item.off));
+const defaultOcrDirectory = runtimeSwitches.find(({ name }) => name === 'MOHASSAN_OCR_MODEL_DIR').default;
 
 function check(label, predicate) {
   let ok = false;
@@ -107,7 +101,7 @@ function checkOwnerV5Config(path) {
 
 async function runtimeChecks() {
   if (!check('runtime uses an unprivileged service account', () => process.getuid() !== 0)) return;
-  const { python, apnsKeyPath, metricsDirectory, v5ConfigPath } = JSON.parse(readFileSync(0, 'utf8'));
+  const { python, apnsKeyPath, metricsDirectory, v5ConfigPath, ownerCouncil, modelEnv } = JSON.parse(readFileSync(0, 'utf8'));
   check('trusted Python 3.11+ and libseccomp.so.2 under the service account', () => serviceCanUseInterpreter(python));
   const { chromium } = await import('playwright').catch(() => ({}));
   check('locked Playwright Chromium is installed and executable by the service account', () => {
@@ -127,6 +121,39 @@ async function runtimeChecks() {
     return statSync(directory).isDirectory();
   });
   if (v5ConfigPath) checkOwnerV5Config(v5ConfigPath);
+  const ocrDirectory = modelEnv.MOHASSAN_OCR_MODEL_DIR ?? join(appRoot, defaultOcrDirectory);
+  const ocrEnabled = Boolean(modelEnv.MOHASSAN_OCR_MODEL_DIR) ||
+    (existsSync(join(ocrDirectory, 'manifest.json')) && existsSync(join(ocrDirectory, 'weights.bin')));
+  if (ownerCouncil || ocrEnabled) {
+    const { tsImport } = await import('tsx/esm/api');
+    const { checkModelStores } = await tsImport('./preflight-model-stores.ts', import.meta.url);
+    await checkModelStores(appRoot, modelEnv, ownerCouncil, ocrEnabled ? ocrDirectory : undefined, check);
+  }
+}
+
+function checkSwitchProfiles(env, { ownerTrial, ownerV5, ownerCouncil }) {
+  const unexpected = [];
+  const trial = [];
+  const v5 = [];
+  const council = [];
+  for (const item of runtimeSwitches.filter(({ kind }) => kind === 'switch')) {
+    const actual = env[item.name] || undefined;
+    if (ownerV5 && item.ownerV5 !== undefined) v5.push(actual === item.ownerV5);
+    else if (ownerCouncil && item.ownerCouncil !== undefined) council.push(actual === item.ownerCouncil);
+    else if (ownerTrial && item.ownerTrial === null) continue;
+    else if (ownerTrial && item.ownerTrial !== item.production) trial.push(actual === item.ownerTrial);
+    else if (actual !== item.production && !item.allowed?.includes(actual) && (item.required || actual !== undefined)) {
+      unexpected.push(item.name);
+    }
+  }
+  const unlisted = Object.entries(env).some(([name, value]) =>
+    name.startsWith('MOHASSAN_') && !switchNames.has(name) && value && !inactiveValues.has(value));
+  const valid = check('new runtime switches are off', () => unexpected.length === 0 && !unlisted);
+  if (!valid && unexpected.length) console.log(`Unexpected switches: ${unexpected.join(', ')}`);
+  if (unlisted) console.log('An unlisted MOHASSAN_* variable is enabled');
+  if (ownerTrial) check('owner-only monitors and production metrics are enabled', () => trial.every(Boolean));
+  if (ownerCouncil) check('owner-only model council is enabled', () => council.every(Boolean));
+  return ownerV5 && check('worker and owner-only v5 chat are enabled', () => v5.every(Boolean));
 }
 
 async function preflight() {
@@ -135,10 +162,12 @@ async function preflight() {
     'service-user': { type: 'string', default: 'mohassan' },
     'owner-trial': { type: 'boolean' },
     'owner-v5': { type: 'boolean' },
+    'owner-council': { type: 'boolean' },
   } });
   const envFile = values['env-file'];
   const ownerV5 = values['owner-v5'];
   const ownerTrial = values['owner-trial'] || ownerV5;
+  const ownerCouncil = values['owner-council'];
   if (!check('Linux with Node 24', () => process.platform === 'linux' && process.versions.node.split('.')[0] === '24')) return;
   let env;
   if (!check('environment file is private, regular and readable', () => {
@@ -162,19 +191,7 @@ async function preflight() {
   for (const name of ['BETTER_AUTH_SECRET', 'INTERNAL_API_SECRET']) {
     check(`${name} is present and at least 32 characters`, () => (env[name]?.trim().length ?? 0) >= 32);
   }
-  const inactiveSwitches = [...offByCutover, ...arbiterKills].filter(name => !ownerV5 || name !== 'MOHASSAN_MODEL_WORKER');
-  check(ownerV5 ? 'other new runtime switches are off' : 'new runtime switches are off', () =>
-    inactiveSwitches.every(name => !env[name] || env[name] === '0')
-    && (ownerV5 || !env.MOHASSAN_V5_CHAT || env.MOHASSAN_V5_CHAT === 'off')
-    && (!env.MOHASSAN_PLAN_COMPILER || env.MOHASSAN_PLAN_COMPILER === 'off')
-    && env.MOHASSAN_MODEL_RELATIONS === 'off' && (!env.TEST_DRIVEN_CODING_ENABLED || env.TEST_DRIVEN_CODING_ENABLED === 'false')
-    && !env.MOHASSAN_DESKTOP_SHELL && !env.MOHASSAN_ROUTER_SHADOW && !env.EXECUTOR_EXPERIMENT);
-  const v5Enabled = ownerV5 && check('worker and owner-only v5 chat are enabled', () =>
-    env.MOHASSAN_MODEL_WORKER === '1' && env.MOHASSAN_V5_CHAT === 'owner');
-  if (!ownerTrial) check('queue worker is off during cutover', () => env.RUN_WORKER === 'false');
-  check(ownerTrial ? 'owner-only monitors and production metrics are enabled' : 'monitors and production metrics are off', () =>
-    ownerTrial ? env.MOHASSAN_MONITORS_ENABLED === 'owner' && env.PRODUCTION_METRICS_ENABLED === 'true'
-      : (!env.MOHASSAN_MONITORS_ENABLED || env.MOHASSAN_MONITORS_ENABLED === '0') && env.PRODUCTION_METRICS_ENABLED === 'false');
+  const v5Enabled = checkSwitchProfiles(env, { ownerTrial, ownerV5, ownerCouncil });
 
   const vapid = [env.WEB_PUSH_VAPID_SUBJECT, env.WEB_PUSH_VAPID_PUBLIC_KEY, env.WEB_PUSH_VAPID_PRIVATE_KEY];
   if (vapid.some(Boolean)) check('optional VAPID contact and matching signing keys', () => validVapid(...vapid));
@@ -189,12 +206,19 @@ async function preflight() {
   const runtime = user === userInfo().username ? args : ['/usr/sbin/runuser', '-u', user, '--', ...args];
   const child = spawnSync(runtime[0], runtime.slice(1), {
     cwd: appRoot,
-    env: { PATH: '/usr/local/bin:/usr/bin:/bin', PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || '/var/lib/mohassan/ms-playwright' },
+    env: { PATH: '/usr/local/bin:/usr/bin:/bin', TSX_DISABLE_CACHE: '1',
+      PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH || '/var/lib/mohassan/ms-playwright' },
     input: JSON.stringify({ python: env.TEST_DRIVEN_CODING_PYTHON || '/usr/bin/python3',
       apnsKeyPath: apns.every(Boolean) ? apns[2] : undefined,
       metricsDirectory: ownerTrial ? env.PRODUCTION_METRICS_DIR || '/var/lib/mohassan/production-metrics' : undefined,
-      v5ConfigPath: v5Enabled ? resolve(appRoot, env.MOHASSAN_MODEL_WORKER_CONFIG?.trim() || '.data/model-worker.json') : undefined }),
-    timeout: v5Enabled ? 120_000 : 10_000, encoding: 'utf8',
+      v5ConfigPath: v5Enabled ? resolve(appRoot, env.MOHASSAN_MODEL_WORKER_CONFIG?.trim() || '.data/model-worker.json') : undefined,
+      ownerCouncil: Boolean(ownerCouncil),
+      // Registry path overrides only. Authentication and database settings remain in the caller.
+      // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/packages/model-relations/src/registry.ts (retrieved 2026-11-27).
+      modelEnv: { MOHASSAN_MODELS_ROOT: env.MOHASSAN_MODELS_ROOT, MOHASSAN_OCR_MODEL_DIR: env.MOHASSAN_OCR_MODEL_DIR,
+        MOHASSAN_MODEL_WORKER_CONFIG: env.MOHASSAN_MODEL_WORKER_CONFIG, EXECUTOR_CHECKPOINT: env.EXECUTOR_CHECKPOINT,
+        ADS_MODEL_RUN: env.ADS_MODEL_RUN, ADS_CHAT_FINETUNE: env.ADS_CHAT_FINETUNE } }),
+    timeout: ownerCouncil || v5Enabled ? 120_000 : 10_000, encoding: 'utf8',
   });
   if (child.stdout) process.stdout.write(child.stdout);
   // Runtime diagnostics contain fixed check names. Other stderr may mention private paths.
