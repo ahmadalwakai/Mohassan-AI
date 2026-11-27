@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { createOcrPool, loadOcrModelFromBytes, readImage, readOcrModelFiles, type ImageReading, type OcrModel, type OcrPool } from '@mohassan/vision';
+import { createOcrPool, OcrPoolUnavailable, readOcrModelFiles, type ImageReading } from '@mohassan/vision';
 
 /**
  * The server's handle on the own image reader. The exported model lives in
@@ -14,8 +14,15 @@ export interface ImageReader {
   close(): Promise<void>;
 }
 
+const unavailableArabic = 'تعذّرت قراءة الصورة الآن؛ أعد المحاولة بعد قليل';
+const unavailableEnglish = 'The image could not be read right now. Please try again shortly.';
+
+export function imageReaderUnavailableMessage(request: string): string {
+  return !request.trim() || /[؀-ۿ]/u.test(request) ? unavailableArabic : unavailableEnglish;
+}
+
 export class ImageReaderUnavailable extends Error {
-  constructor() { super('IMAGE_READER_UNAVAILABLE'); }
+  constructor(options?: ErrorOptions) { super(`${unavailableArabic}\n${unavailableEnglish}`, options); }
 }
 
 export async function createImageReader(options: { modelDir: string; workers?: number }): Promise<ImageReader> {
@@ -24,22 +31,18 @@ export async function createImageReader(options: { modelDir: string; workers?: n
     return { available: false, modelId: null, async read() { throw new ImageReaderUnavailable(); }, async close() {} };
   }
   const files = await readOcrModelFiles(dir);
-  const model: OcrModel = loadOcrModelFromBytes(files.manifestBytes, files.weightsBytes);
-  let pool: OcrPool | null = null, poolReady: Promise<boolean> | null = null;
-  const ensurePool = async (): Promise<OcrPool | null> => {
-    if (!pool) {
-      try { pool = createOcrPool({ manifestBytes: files.manifestBytes, weightsBytes: files.weightsBytes, size: options.workers ?? 3 }); poolReady = pool.ready(); } catch { pool = null; poolReady = Promise.resolve(false); }
-    }
-    return (await poolReady) ? pool : null;
-  };
+  const pool = createOcrPool({ ...files, size: options.workers });
   return {
     available: true,
-    modelId: model.modelId,
+    modelId: pool.modelId,
     async read(bytes, signal) {
-      const workers = await ensurePool();
-      // Without live workers the main thread reads the image itself; slower, never silent.
-      return readImage(bytes, { model, signal, ...(workers ? { recognize: crops => workers.recognize(crops, signal) } : {}) });
+      try {
+        return await pool.readImage(bytes, signal);
+      } catch (error) {
+        if (error instanceof OcrPoolUnavailable) throw new ImageReaderUnavailable({ cause: error });
+        throw error;
+      }
     },
-    async close() { await pool?.close(); },
+    close: () => pool.close(),
   };
 }

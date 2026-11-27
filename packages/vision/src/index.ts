@@ -5,4 +5,4 @@ export { conv3x3Relu, greedyCtc, gruDirection, linear, maxPool, type Tensor } fr
 export { loadOcrModel, loadOcrModelFromBytes, readOcrModelFiles, OcrManifestSchema, OcrModelError, OCR_FORMAT, MAX_OCR_WEIGHT_BYTES, TENSOR_NAMES, type OcrManifest, type OcrModel, type TensorName } from './ocr-model.js';
 export { forward, prepareInput, recognizeLine, type LineCrop, type LineRecognition } from './recognize.js';
 export { joinPieces, keepLegible, readImage, type ImageReading, type ReadImageOptions, type ReadLine, type Recognizer } from './read-image.js';
-export { createOcrPool, type OcrPool, type OcrPoolOptions } from './ocr-pool.js';
+export { createOcrPool, OcrPoolUnavailable, type OcrPool, type OcrPoolOptions } from './ocr-pool.js';

@@ -3,6 +3,7 @@ import { cleanRejectedChatCreate } from './rejected-chat-create.js';
 import { createHash, randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import type { ImageReading } from '@mohassan/vision';
+import { ImageReaderUnavailable, imageReaderUnavailableMessage } from './image-reader.js';
 import { composeImageReply, readingForTrail } from './assistant/image-reading.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { FastifyInstance } from 'fastify';
@@ -4377,7 +4378,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
    */
   async function sendWithImages(ownerId: string, id: string, row: { status: string; title: string }, text: string, imageIds: string[]) {
     if (row.status === 'running' || WAITING_STATUSES.includes(row.status)) throw new BrowserError('CHAT_BUSY', 'توجد مهمة جارية في هذه المحادثة. أكملها أو أوقفها قبل إرسال صورة.', 409);
-    if (!config.imageReader?.available) throw new BrowserError('CHAT_IMAGES_UNAVAILABLE', 'قراءة الصور غير مهيأة على هذا الخادم بعد.', 409);
+    if (!config.imageReader?.available) throw new BrowserError('CHAT_IMAGES_UNAVAILABLE', imageReaderUnavailableMessage(text), 409);
     const unique = [...new Set(imageIds)];
     const rows = await db.selectFrom('chat_images').select(['id', 'width', 'height', 'data_base64', 'content_hash']).where('owner_id', '=', ownerId).where('id', 'in', unique).execute();
     if (rows.length !== unique.length) throw new BrowserError('CHAT_IMAGE_MISSING', 'إحدى الصور لم تعد موجودة؛ أعد إرفاقها.', 409);
@@ -4394,6 +4395,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
     } catch (error) {
       if (error instanceof BrowserError) throw error;
+      if (error instanceof ImageReaderUnavailable) throw new BrowserError('CHAT_IMAGES_UNAVAILABLE', imageReaderUnavailableMessage(text), 503);
       throw new BrowserError('CHAT_IMAGE_READ_FAILED', controller.signal.aborted ? 'استغرقت قراءة الصورة وقتًا طويلًا. جرّب صورة أصغر.' : 'تعذرت قراءة الصورة. تأكد من أنها PNG أو JPEG سليمة.', 422);
     } finally { clearTimeout(deadline); }
     const imageReadMs = performance.now() - readingStarted;

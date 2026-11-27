@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { AgentBrowser } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { memoryMigration } from '@mohassan/memory';
 import type { ImageReading } from '@mohassan/vision';
 import { migrateAuth } from '../apps/server/src/auth.js';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
+import { ImageReaderUnavailable } from '../apps/server/src/image-reader.js';
 
 /** A message with images is read by the own reader and answered at once; the bytes never leave the database. */
 const OWNER = 'image-messages-owner';
@@ -26,13 +27,17 @@ describe('chat messages with images', () => {
   let control: Awaited<ReturnType<typeof createCommandChatControl>>;
   let withoutReader: Awaited<ReturnType<typeof createCommandChatControl>>;
   const reads: number[] = [];
+  const read = vi.fn(async (bytes: Uint8Array) => {
+    reads.push(bytes.byteLength);
+    return reading(['السعر 150 ريال', 'التسليم خلال 3 أيام']);
+  });
   const refuse = async () => { throw new Error('The browser must not run for an image message.'); };
   const browser = { setCheckpointStore() {}, async bindAccount() {}, async hasPage() { return false; }, async close() {}, act: refuse, observe: refuse, screen: refuse, prepareAction: refuse } as unknown as AgentBrowser;
 
   beforeAll(async () => {
     database = await createDatabase({});
     await migrateAuth(database.db); await migrate(database.db); await memoryMigration(database.db);
-    const imageReader = { available: true, modelId: 'f'.repeat(64), async read(bytes: Uint8Array) { reads.push(bytes.byteLength); return reading(['السعر 150 ريال', 'التسليم خلال 3 أيام']); } };
+    const imageReader = { available: true, modelId: 'f'.repeat(64), read };
     control = await createCommandChatControl(database.db, { browser, recordExperiences: false, models: { fast: [], deep: [], vision: '' }, imageReader });
     withoutReader = await createCommandChatControl(database.db, { browser, recordExperiences: false, models: { fast: [], deep: [], vision: '' } });
   });
@@ -92,5 +97,16 @@ describe('chat messages with images', () => {
     await expect(control.create(OWNER, { images: [randomUUID()] })).rejects.toMatchObject({ code: 'CHAT_IMAGE_MISSING' });
     await expect(control.create(OTHER, { images: [upload.id] })).rejects.toMatchObject({ code: 'CHAT_IMAGE_MISSING' });
     await expect(withoutReader.create(OWNER, { images: [upload.id] })).rejects.toMatchObject({ code: 'CHAT_IMAGES_UNAVAILABLE' });
+  });
+
+  it.each([
+    ['اقرأ الصورة', 'تعذّرت قراءة الصورة الآن؛ أعد المحاولة بعد قليل'],
+    ['Read the image', 'The image could not be read right now. Please try again shortly.'],
+  ])('refuses an image with a retry message while configured OCR is unavailable (%s)', async (goal, message) => {
+    const upload = await control.uploadImage(OWNER, { mimeType: 'image/png', data: await png() });
+    read.mockRejectedValueOnce(new ImageReaderUnavailable());
+    await expect(control.create(OWNER, { goal, images: [upload.id] })).rejects.toMatchObject({
+      code: 'CHAT_IMAGES_UNAVAILABLE', statusCode: 503, message,
+    });
   });
 });
