@@ -16,7 +16,7 @@ export interface DocumentedProvider {
   cooldownMs?(): number;
 }
 export class SearchProviderFailure extends Error {
-  constructor(readonly kind: 'rate_limited' | 'unavailable' | 'invalid_response', readonly retryAfterMs = 0) { super(kind); }
+  constructor(readonly kind: 'rate_limited' | 'unavailable' | 'invalid_response' | 'forbidden_by_robots' | 'no_search_method' | 'needs_account', readonly retryAfterMs = 0) { super(kind); }
 }
 function plain(input: unknown, max = 700): string {
   if (typeof input !== 'string') return '';

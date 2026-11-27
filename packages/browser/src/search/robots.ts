@@ -1,4 +1,4 @@
-import { BrowserError, SafeNetwork } from '../network.js';
+import { BrowserError, SafeNetwork, type SafeResponse } from '../network.js';
 
 type Rule = { allow:boolean; path:string };
 /** A bounded glob matcher avoids executing a server-controlled regular expression. */
@@ -55,6 +55,11 @@ export class RobotsPolicy {
   private cache=new Map<string,{until:number;text:string}>();
   constructor(private network:SafeNetwork,private now=Date.now){}
   async assertAllowed(input:string,signal?:AbortSignal,agent?:string):Promise<void>{
+    const text=await this.rulesFor(input,signal);
+    if(!robotsAllows(text,input,agent))throw new BrowserError('RESEARCH_ROBOTS_DENIED','سياسة الموقع لا تسمح بجلب هذا المصدر آليًا.',403);
+  }
+  /** A caller with its own request budget can count robots requests and read Sitemap directives. */
+  async rulesFor(input:string,signal?:AbortSignal,request?:(url:string,maxBytes:number)=>Promise<SafeResponse>):Promise<string>{
     signal?.throwIfAborted();
     const url=this.network.validate(input),cached=this.cache.get(url.origin);
     let text=cached&&cached.until>this.now()?cached.text:undefined;
@@ -62,17 +67,17 @@ export class RobotsPolicy {
       let target=new URL('/robots.txt',url).href;
       try{
         for(let redirect=0;redirect<=5;redirect++){
-          const response=await this.network.request(target,{signal,maxBytes:512000});
+          const response=request?await request(target,512000):await this.network.request(target,{signal,maxBytes:512000});
           if([301,302,303,307,308].includes(response.status)&&response.headers.location){target=this.network.validate(new URL(response.headers.location,target).href).href;continue;}
           if(response.status>=400&&response.status<500&&response.status!==429){text='';break;}
           if(response.status!==200)throw new Error('robots unavailable');
           text=new TextDecoder('utf-8',{fatal:true}).decode(response.body);break;
         }
-      }catch{signal?.throwIfAborted();throw new BrowserError('RESEARCH_ROBOTS_UNAVAILABLE','تعذر التحقق من سياسة قراءة المصدر.',502);}
+      }catch(error){signal?.throwIfAborted();if(request&&error instanceof Error)throw error;throw new BrowserError('RESEARCH_ROBOTS_UNAVAILABLE','تعذر التحقق من سياسة قراءة المصدر.',502);}
       if(text===undefined)throw new BrowserError('RESEARCH_ROBOTS_UNAVAILABLE','تعذر التحقق من سياسة قراءة المصدر.',502);
       if(this.cache.size>=200)this.cache.delete(this.cache.keys().next().value!);
       this.cache.set(url.origin,{until:this.now()+3600000,text});
     }
-    if(!robotsAllows(text,url.href,agent))throw new BrowserError('RESEARCH_ROBOTS_DENIED','سياسة الموقع لا تسمح بجلب هذا المصدر آليًا.',403);
+    return text;
   }
 }

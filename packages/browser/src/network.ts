@@ -10,7 +10,7 @@ export class BrowserError extends Error {
 }
 export interface NetworkAddress {address:string;family:4|6}
 export interface NetworkPolicy {testOrigins?:string[];resolver?:(hostname:string)=>Promise<NetworkAddress[]>;userAgent?:string}
-export interface SafeResponse {status:number;headers:Record<string,string>;body:Buffer;url:string}
+export interface SafeResponse {status:number;headers:Record<string,string>;body:Buffer;url:string;wireBytes?:number}
 
 export function isPublicAddress(address:string):boolean {
   if(isIP(address)===4){
@@ -88,7 +88,7 @@ export class SafeNetwork {
         let total=0;const chunks:Buffer[]=[];
         response.on('data',(chunk:Buffer)=>{total+=chunk.length;if(total>maximum){response.destroy();reject(new BrowserError('BROWSER_RESPONSE_TOO_LARGE','تجاوزت الصفحة حد حجم القراءة.'));}else chunks.push(chunk);});
         response.on('end',()=>{
-          try{resolve({status:response.statusCode??502,headers:resultHeaders,body:decoded(Buffer.concat(chunks),encoding,maximum),url:url.href});}
+          try{resolve({status:response.statusCode??502,headers:resultHeaders,body:decoded(Buffer.concat(chunks),encoding,maximum),url:url.href,wireBytes:total});}
           catch{reject(new BrowserError('BROWSER_FETCH_FAILED','تعذر فك ترميز الرد ضمن حدود الحجم.',502));}
         });
         response.on('error',()=>reject(new BrowserError('BROWSER_FETCH_FAILED','انقطع نقل الصفحة؛ لم تُفترض نتيجة ناجحة.',502)));

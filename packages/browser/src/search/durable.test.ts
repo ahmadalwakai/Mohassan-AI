@@ -3,6 +3,7 @@ import { createDatabase, migrate } from '@mohassan/database';
 import { SafeNetwork, type SafeResponse } from '../network.js';
 import { SearchEngine, type SearchOutcome } from './engine.js';
 import { LocalPublicIndex } from './local-index.js';
+import { SearchProviderFailure } from './providers.js';
 import { migrateSearch, searchHash, SqlSearchStore } from './store.js';
 
 let database:Awaited<ReturnType<typeof createDatabase>>;
@@ -18,6 +19,19 @@ const fixture=(page='Node API supports verified requests.')=>{
 const result=(at:number):SearchOutcome=>({hits:[{title:'Node API',url:'https://example.com/node',snippet:'Node API documentation',providers:['fixture'],score:1,relevance:'lexical'}],fetchedAt:new Date(at).toISOString(),freshness:'fresh',coverage:'specialized_sources',failures:[],limitations:[]});
 
 describe('durable owner search cache',()=>{
+  it('preserves actionable provider failures across engine and SQL cache reads', async () => {
+    const network = new SafeNetwork();
+    const kinds = ['forbidden_by_robots', 'needs_account', 'no_search_method'] as const;
+    const providers = kinds.map(kind => ({
+      name: kind, coverage: 'web' as const, accessBasis: 'public_search' as const,
+      supports: () => true, search: async () => { throw new SearchProviderFailure(kind); },
+    }));
+    const make = () => new SearchEngine(network, { providers, store: new SqlSearchStore(database.db, () => initial), now: () => initial });
+    const context = { ownerId: 'site-failure-cache' };
+    const expected = kinds.map(kind => ({ provider: kind, kind }));
+    expect(await make().execute('history site:example.com', 5, undefined, context)).toMatchObject({ freshness: 'fresh', failures: expected });
+    expect(await make().execute('history site:example.com', 5, undefined, context)).toMatchObject({ freshness: 'cached', failures: expected });
+  });
   it('preserves public web coverage and provider provenance across store instances',async()=>{
     const store=new SqlSearchStore(database.db,()=>initial),key=searchHash('public-web-coverage');
     const outcome={...result(initial),coverage:'web_sources' as const,hits:result(initial).hits.map(hit=>({...hit,providers:['Bing RSS','DuckDuckGo HTML']}))};
