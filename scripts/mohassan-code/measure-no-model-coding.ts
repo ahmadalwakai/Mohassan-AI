@@ -1,17 +1,19 @@
 /**
  * Measures the chat's coding route with no chat model (docs/MOHASSAN-CODE-2026-11-27.md).
  *
- * Two fixed sets, each written before either of its arms ran:
+ * Fixed sets, each written before either of its arms ran:
  * - `slice1` (2026-11-27): 9 coding requests and one control. With the stub sandbox, the tests fail while src/sum.ts
  *   still has its misspelling.
  * - `slice2` (2026-11-27 10:27 UTC): run the checks and explain the failure, search the project, import relations,
  *   «صحح الأخطاء», and three controls. A target is met only when its final reply contains every expected string.
+ * - `show-change` (2026-11-27): show a previously approved and verified repair in Arabic and English, report no
+ *   task for a second registered project, and compare two control replies verbatim across checkouts.
  *
  * Each request runs in a fresh conversation; an approval card is approved once. The demo project is registered, no chat
  * model is configured, and the database is embedded and in memory. Records the first and final replies, the run status
  * and the time per request.
  *
- * Usage: npx tsx scripts/mohassan-code/measure-no-model-coding.ts [checkout] [out.json] [--set=slice1|slice2] [--real-sandbox]
+ * Usage: npx tsx scripts/mohassan-code/measure-no-model-coding.ts [checkout] [out.json] [--set=slice1|slice2|show-change] [--real-sandbox]
  * `checkout` (default: the current directory) is the repository to measure, so one copy of this file measures a base
  * checkout too. That checkout needs its own installed node_modules. `--real-sandbox` uses the Windows AppContainer
  * sandbox instead of the stub (Windows only; its first isolation probe takes about half a minute).
@@ -20,9 +22,11 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { REPAIR_DEMO_FAILURE_OUTPUT, REPAIR_DEMO_SUCCESS_OUTPUT } from '../../tests/fixtures/coding-repair-demo-output.js';
 
 interface Case { id: string; goal: string; expect?: string[]; approval?: boolean; control?: boolean }
-const SETS: Record<'slice1' | 'slice2', Case[]> = {
+const REPAIR_DIFF = ['mohassan/', 'src/sum.ts', '-  return leftHandValue + rightHandVaule;', '+  return leftHandValue + rightHandValue;', 'git merge'];
+const SETS: Record<'slice1' | 'slice2' | 'show-change', Case[]> = {
   slice1: [
     'أصلح الكود في مشروع تجربة الجمع',
     'أصلح مشروع تجربة الجمع',
@@ -50,27 +54,38 @@ const SETS: Record<'slice1' | 'slice2', Case[]> = {
     { id: 'K2', goal: 'ما عاصمة فرنسا؟', control: true },
     { id: 'K3', goal: 'صحح هذا النص: انا ذهبت الي المدرسه', control: true },
   ],
+  'show-change': [
+    { id: 'V1', goal: 'اعرض التعديل الأخير في مشروع تجربة الجمع', expect: ['فرع المراجعة', ...REPAIR_DIFF] },
+    { id: 'V2', goal: 'show the last change in مشروع تجربة الجمع', expect: ['Review branch', ...REPAIR_DIFF] },
+    { id: 'V3', goal: 'اعرض التعديل الأخير في مشروع بلا تعديلات', expect: ['لا توجد مهمة تعديل', 'مشروع بلا تعديلات'] },
+    { id: 'K1', goal: 'ابحث عن ملف اسمه README', control: true },
+    { id: 'K2', goal: 'صحح هذا النص: انا ذهبت الي المدرسه', control: true },
+  ],
 };
 
 const flags = process.argv.slice(2).filter(value => value.startsWith('--'));
 const [checkoutArgument, out] = process.argv.slice(2).filter(value => !value.startsWith('--'));
 const set = flags.find(value => value.startsWith('--set='))?.slice('--set='.length) ?? 'slice1';
-if (set !== 'slice1' && set !== 'slice2') throw new Error(`unknown set ${set}`);
+if (set !== 'slice1' && set !== 'slice2' && set !== 'show-change') throw new Error(`unknown set ${set}`);
 const realSandbox = flags.includes('--real-sandbox');
 const checkout = resolve(checkoutArgument ?? process.cwd());
 const { createApplication } = await import(pathToFileURL(join(checkout, 'apps/server/src/app.ts')).href);
-const { snapshotHash } = await import(pathToFileURL(join(checkout, 'packages/coding/src/index.ts')).href);
+const { createRepairDemoProject, snapshotHash } = await import(pathToFileURL(join(checkout, 'packages/coding/src/index.ts')).href);
 
 const directory = await mkdtemp(join(tmpdir(), 'mohassan-measure-coding-'));
 const secret = 'measure-coding-fixture-internal-secret-01', origin = 'http://127.0.0.1:3000';
 const headers = { 'x-mohassan-internal': secret, origin };
 const stub = {
   available: async () => ({ available: true, provider: 'unit-fixture', message: 'measurement stub' }),
-  run: async (request: { files: { path: string; content: string }[] }) => ({
-    exitCode: request.files.some(file => file.path === 'src/sum.ts' && file.content.includes('rightHandVaule')) ? 1 : 0,
-    stdout: 'measurement stub', stderr: '', timedOut: false, durationMs: 1, provider: 'unit-fixture',
-    network: 'denied', isolation: 'appcontainer', isolationVerified: true, snapshotHash: snapshotHash(request.files),
-  }),
+  run: async (request: { files: { path: string; content: string }[] }) => {
+    const failed = request.files.some(file => file.path === 'src/sum.ts' && file.content.includes('rightHandVaule'));
+    return {
+      exitCode: failed ? 1 : 0,
+      stdout: set === 'show-change' ? (failed ? REPAIR_DEMO_FAILURE_OUTPUT : REPAIR_DEMO_SUCCESS_OUTPUT) : 'measurement stub',
+      stderr: '', timedOut: false, durationMs: 1, provider: 'unit-fixture',
+      network: 'denied', isolation: 'appcontainer', isolationVerified: true, snapshotHash: snapshotHash(request.files),
+    };
+  },
 };
 const startedApp = Date.now();
 const application = await createApplication({
@@ -92,24 +107,48 @@ async function settled(id: string) {
   }
   return { status: 'timeout', messages: [] };
 }
+
+async function seedVerifiedChange(ownerId: string, projectId: string) {
+  const task = await application.runtime.createTask(ownerId, {
+    title: 'Repair the sum demo', goal: 'Fix the code in the registered sum demo', capabilityId: 'coding.change',
+    autonomy: 'assisted', projectId,
+  }, 'measure-show-change-setup');
+  await application.runtime.approve(ownerId, task.id);
+  for (let attempt = 0; attempt < 600; attempt++) {
+    const { task: current } = await application.runtime.detail(ownerId, task.id);
+    if (current.status === 'completed' && current.result?.outcome === 'ready_for_review') return;
+    if (current.status === 'failed' || current.status === 'cancelled') break;
+    await delay(150);
+  }
+  throw new Error('The measurement fixture did not reach a verified review branch.');
+}
+
 try {
   await application.app.inject({ method: 'POST', url: '/api/setup', headers, payload: { name: 'مالك القياس', email: 'measure@example.test', password: 'Measure-Coding-Password-42', setupToken: 'measure-coding-fixture-setup-token-001' } });
   const login = await application.app.inject({ method: 'POST', url: '/api/auth/sign-in/email', headers, payload: { email: 'measure@example.test', password: 'Measure-Coding-Password-42' } });
   cookie = (Array.isArray(login.headers['set-cookie']) ? login.headers['set-cookie'] : [login.headers['set-cookie']]).filter(Boolean).map((value: unknown) => String(value).split(';')[0]).join('; ');
   const ownerId = (await application.database.db.selectFrom('user').select('id').executeTakeFirstOrThrow()).id as string;
-  await api('POST', '/api/coding/projects/demo', {});
+  const demo = await api('POST', '/api/coding/projects/demo', {});
+  if (set === 'show-change') {
+    if (demo.statusCode !== 200) throw new Error('Could not register the measurement repair demo.');
+    const { id } = demo.json();
+    await seedVerifiedChange(ownerId, id);
+    const untouched = await createRepairDemoProject(join(directory, 'untouched'));
+    await application.coding.register(ownerId, { name: 'مشروع بلا تعديلات', path: untouched.path, allowedPaths: untouched.allowedPaths });
+  }
+  const replyLimit = set === 'show-change' ? undefined : 1200;
   const rows: Record<string, unknown>[] = [];
   for (const item of SETS[set]) {
     const started = Date.now();
     const first = await settled((await application.chat.create(ownerId, { goal: item.goal })).id);
-    const row: Record<string, unknown> = { id: item.id, goal: item.goal, first: first.status, firstRun: first.run?.status ?? null, firstText: first.messages?.at(-1)?.text?.slice(0, 1200) ?? null };
+    const row: Record<string, unknown> = { id: item.id, goal: item.goal, first: first.status, firstRun: first.run?.status ?? null, firstText: first.messages?.at(-1)?.text?.slice(0, replyLimit) ?? null };
     let finalText = row.firstText as string | null;
     if (first.status === 'waiting_approval' && first.approval) {
       await api('POST', `/api/chat/conversations/${first.id}/approve`, { approvalId: first.approval.id, approved: true });
       const done = await settled(first.id);
       row.final = done.status;
       row.finalRun = done.run?.status ?? null;
-      finalText = done.messages?.at(-1)?.text?.slice(0, 1200) ?? null;
+      finalText = done.messages?.at(-1)?.text?.slice(0, replyLimit) ?? null;
       row.finalText = finalText;
     }
     row.ms = Date.now() - started;

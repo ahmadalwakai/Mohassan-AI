@@ -7,6 +7,7 @@ import type { MemoryExactWriteInput, MemoryExactWriteOptions, MemoryExactWriteRe
 import type { CodingCheckResult, ImportsLookup, ProjectSearchResult } from '@mohassan/coding';
 import { z } from 'zod';
 import type { CampaignPorts } from './campaign-run.js';
+import { readCodeChangeView } from './code-change-view.js';
 
 /**
  * What the assistant may reach outside the browser. Each adapter calls the
@@ -54,6 +55,7 @@ export interface AssistantTools {
     codeSearch?(ownerId: string, projectId: string, query: string): Promise<ProjectSearchResult>;
     codeImports?(ownerId: string, projectId: string, reference: string): Promise<ImportsLookup>;
     codeCheck?(ownerId: string, projectId: string, signal: AbortSignal): Promise<CodingCheckResult>;
+    codeChangeView?: ReturnType<typeof readCodeChangeView>;
     studio?(ownerId: string, input: { id: string; goal: string }, idempotencyKey: string, runId?: string): Promise<PendingWorkTask>;
     approve(ownerId: string, taskId: string): Promise<void>;
     cancel(ownerId: string, taskId: string): Promise<void>;
@@ -169,6 +171,7 @@ interface ToolModules {
     reconcileExact?(ownerId: string, input: MemoryExactReconcileInput, options?: Pick<MemoryExactWriteOptions, 'signal'>): Promise<MemoryExactReconciliation>;
   };
   coding: { available: boolean; workspace(ownerId: string): Promise<{ projects: { id: string; name: string; path: string }[] }>;
+    verify?: Parameters<typeof readCodeChangeView>[1]['verify'];
     search?(ownerId: string, projectId: string, query: string): Promise<ProjectSearchResult>;
     imports?(ownerId: string, projectId: string, reference: string): Promise<ImportsLookup>;
     check?(ownerId: string, projectId: string, signal: AbortSignal): Promise<CodingCheckResult> };
@@ -178,6 +181,7 @@ interface ToolModules {
   };
   studioChange: boolean;
   runtime: {
+    latestCodingChange?: Parameters<typeof readCodeChangeView>[0]['latestCodingChange'];
     createTask(ownerId: string, input: CreateTaskInput, key: string, runId?: string): Promise<Task>;
     approve(ownerId: string, id: string): Promise<unknown>;
     cancel(ownerId: string, id: string): Promise<unknown>;
@@ -227,6 +231,7 @@ export function createAssistantTools({ memory, coding, studio, studioChange, run
       }),
     },
     work: {
+      codeChangeView: readCodeChangeView(runtime, coding),
       inventory: ownerId => guarded(async () => {
         const { projects } = await coding.workspace(ownerId);
         return projects.map(({ id, name }) => ({ id, name }));
