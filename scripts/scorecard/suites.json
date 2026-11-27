@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "default_suites": ["dev-bench-v1", "dev-bench-v2"],
+  "suites": {
+    "dev-bench-v1": {
+      "runner": "scripts/dev-bench/run.py",
+      "split": "development",
+      "version": "v1",
+      "area_field": "area",
+      "source": "scripts/dev-bench/README.md"
+    },
+    "dev-bench-v2": {
+      "runner": "scripts/dev-bench/run.py",
+      "split": "development",
+      "version": "v2",
+      "area_field": "area",
+      "source": "scripts/dev-bench/README.md"
+    },
+    "council": {
+      "runner": "scripts/quality/council-questions.ts",
+      "scope": "development",
+      "area": "factual",
+      "source": "docs/MODEL-COUNCIL.md"
+    },
+    "private-local": {
+      "scope": "owner-local",
+      "source": "outside-git",
+      "reporting": "aggregates-only"
+    }
+  }
+}
