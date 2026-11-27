@@ -111,7 +111,6 @@ import { ADS_REWRITE_JSON_SCHEMA, ADS_REWRITE_SCHEMA_NAME, ADS_REWRITE_SYSTEM, b
 import { appendCampaignEvent, campaignEventsMigration, closeOpenCampaignTasks, readCampaignEvents } from './assistant/campaign-events.js';
 import { TEXT_ONLY_PORTS, campaignCancelEvent, campaignEndEvent, campaignFailureEvent, campaignTaskId, checkCampaignDraft, createPausedCampaign, newCampaignRunState, type CampaignContext } from './assistant/campaign-run.js';
 import { EFFECT_KEYS, guarded, requestsPausedCampaign, type AssistantTools, type ComputerStep, type MemoryLookupResult } from './assistant/tools.js';
-import { deniesCampaignCreation } from './assistant/consent-wording.js';
 import { projectInventoryFormat, renderProjectInventory } from './assistant/inventory.js';
 import { decodeStructuredMemoryDecision, memoryRecallFormat, structuredMemoryDecisionSchema } from './assistant/memory-recall.js';
 import { reviewMemoryRecallEvidence } from './assistant/memory-recall-evidence.js';
@@ -3553,7 +3552,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         const step = async (label: string) => { await active(); await addStep(id, runId, label); await setProgress(id, `${liveLabel(label)}…`); };
         // The brain asks everything it is missing in one message, then continues alone after the
         // owner's answer: the run resumes here with the saved facts and the answer text.
-        const answer = state.adsBrief || state.adsCampaign ? [...state.trail].reverse().find(entry => entry.action === 'asked the user')?.result.replace(/^user answered: /, '') : undefined;
+        const answer = state.adsBrief ? [...state.trail].reverse().find(entry => entry.action === 'asked the user')?.result.replace(/^user answered: /, '') : undefined;
         const reply = state.adsCampaign ? null : await config.adsModel.handle(request, { signal, step }, state.adsBrief && answer ? { brief: state.adsBrief, answer } : undefined);
         if (reply) {
           await active();
@@ -3567,8 +3566,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             await pause(id, runId, state, 'waiting_user', { question: JSON.stringify({ id: randomUUID(), prompt: prompt.slice(0, 1000), options: [{ id: 'stop', label: 'توقف هنا' }], ...(fields ? { fields } : {}) } satisfies ChatQuestion) }, prompt);
             return;
           }
-          if (reply.status !== 'completed' || !reply.campaign || deniesCampaignCreation(request)
-            || (answer && deniesCampaignCreation(answer))) { await finish(id, runId, state, vault.scrub(id, reply.text), reply.status); return; }
+          if (reply.status !== 'completed' || !reply.campaign) { await finish(id, runId, state, vault.scrub(id, reply.text), reply.status); return; }
           state.adsCampaign = { lines: reply.campaign, draft: reply.text };
           await saveState(runId, state);
           if (!config.chromeExtension && !tools?.ads?.createPaused) {
@@ -3576,10 +3574,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             return;
           }
         }
-        if (state.adsCampaign && (deniesCampaignCreation(request) || (answer && deniesCampaignCreation(answer)))) {
-          const { draft } = state.adsCampaign; state.adsCampaign = null;
-          await finish(id, runId, state, vault.scrub(id, draft), 'completed');
-          return;
+        if (state.adsCampaign && (await import('./assistant/consent-wording.js')).deniesCampaignHandoff(request, state.trail)) {
+          const draft = state.adsCampaign.draft;
+          state.adsCampaign = null;
+          return await finish(id, runId, state, vault.scrub(id, draft), 'completed');
         }
         if (state.adsCampaign && config.chromeExtension) {
           const connection = await config.chromeExtension.status(ownerId);

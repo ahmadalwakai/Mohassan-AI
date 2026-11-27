@@ -1,10 +1,14 @@
-/** Matching only. Keep the original user wording for payloads and source spans. */
-export function foldConsentWording(text: string): string {
+function normalizeConsentWording(text: string): string {
   // Existing verification folding, retrieved 2026-11-27.
   // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/assistant/memory-verification.ts#L71-L72
   return text.normalize('NFKC').replace(/[\u0640\u064b-\u065f\u0670]/gu, '')
     .replace(/[أإآٱ]/gu, 'ا').replace(/ى/gu, 'ي').replace(/ة/gu, 'ه')
-    .replace(/’/gu, "'").toLowerCase().replace(/\s+/gu, ' ').trim();
+    .replace(/’/gu, "'").toLowerCase().trim();
+}
+
+/** Matching only. Keep the original user wording for payloads and source spans. */
+export function foldConsentWording(text: string): string {
+  return normalizeConsentWording(text).replace(/\s+/gu, ' ');
 }
 
 // Leading memory directives from the existing brain and structured memory parser, retrieved 2026-11-27.
@@ -19,31 +23,36 @@ const REMEMBER_EN = /^(?:please[,\s]+)?(?:remember|don'?t forget|save (?:this|th
 // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/assistant/brain.ts#L54
 // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/assistant/request-constraints.ts#L105-L122 (including ما ... ش)
 // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/assistant/request-context.ts#L307-L318
-const NEGATION_EN = String.raw`(?:do not|don'?t|never)`;
+const NEGATION_EN = String.raw`(?:do\s+not|don'?t|never)`;
 const MEMORY_NEGATION_EN = `(?:${NEGATION_EN}|avoid)`;
-const NEGATION_AR = String.raw`(?:(?:لا|ما)\s*|(?:مش|مو|ممنوع|بلاش) )`;
+const NEGATION_AR = String.raw`(?:(?:لا|ما)\s*|(?:مش|مو|ممنوع|بلاش)\s+)`;
 const WORD_START = String.raw`(?<![\p{L}\p{N}])`;
 const WORD_END = String.raw`(?![\p{L}\p{N}])`;
 const NEGATIVE_PHRASE_AR = String.raw`${WORD_START}(?:و\s*)?${NEGATION_AR}`;
 const MEMORY_VERBS_EN = 'save|store|record|remember';
 const MEMORY_VERBS_AR = 'تحفظ|تخزن|تسجل|تتذكر';
 const ARABIC_OBJECT_SUFFIX = '(?:ها|ه)?';
-const NO_MEMORY_WRITE_EN = new RegExp(String.raw`\b(?:${MEMORY_NEGATION_EN}|not) (?:${MEMORY_VERBS_EN}|write|change|update)\b|\b(?:no|without) (?:saving|storing)\b`, 'u');
-const NO_MEMORY_WRITE_AR = new RegExp(`${NEGATIVE_PHRASE_AR}(?:${MEMORY_VERBS_AR}|تكتب|تضف|تعدل|تغير|تحدث)${ARABIC_OBJECT_SUFFIX}ش?${WORD_END}`, 'u');
+// Clause boundaries from the baseline check above and the owner's PR #171 review, retrieved 2026-11-27.
+// https://github.com/ahmadalwakai/Mohassan-AI/pull/171
+const MEMORY_CLAUSE_START = String.raw`(?:^|[.!?؟،,;\r\n]\s*|${WORD_START}(?:(?:و\s*)?(?:بس|لكن|but|and)\s+|و\s*))`;
+const NO_MEMORY_WRITE_EN = new RegExp(String.raw`${MEMORY_CLAUSE_START}(?:please\s+)?(?:(?:${MEMORY_NEGATION_EN}|not)\s+(?:${MEMORY_VERBS_EN}|write|change|update)|(?:no|without)\s+(?:saving|storing))\b`, 'u');
+const NO_MEMORY_WRITE_AR = new RegExp(`${MEMORY_CLAUSE_START}${NEGATION_AR}(?:${MEMORY_VERBS_AR}|تكتب|تضف|تعدل|تغير|تحدث)${ARABIC_OBJECT_SUFFIX}ش?${WORD_END}`, 'u');
 
 function deniesMemoryWriteIn(text: string): boolean {
-  // Require a matching operation after the negator. Arabic ما can introduce a relative clause.
+  // Inside a fact, a negated verb can describe its subject and ما can introduce a relative clause.
   return NO_MEMORY_WRITE_AR.test(text) || NO_MEMORY_WRITE_EN.test(text);
 }
 
 export function deniesMemoryWrite(request: string): boolean {
-  return deniesMemoryWriteIn(foldConsentWording(request));
+  return deniesMemoryWriteIn(normalizeConsentWording(request));
 }
 
 /** A leading directive gives permission only if the full request permits the write. */
 export function asksToRemember(request: string): boolean {
-  const text = foldConsentWording(request);
-  return !/[?؟]$/u.test(text) && !deniesMemoryWriteIn(text) && (REMEMBER_AR.test(text) || REMEMBER_EN.test(text));
+  const text = normalizeConsentWording(request);
+  if (/[?؟]$/u.test(text) || deniesMemoryWriteIn(text)) return false;
+  const folded = text.replace(/\s+/gu, ' ');
+  return REMEMBER_AR.test(folded) || REMEMBER_EN.test(folded);
 }
 
 // The verification questions accept a closed write-only clause with the same verb lists.
@@ -68,29 +77,26 @@ export function isMemoryWriteOnlyProhibition(request: string, subject: 'result' 
 // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/assistant/tools.ts#L87-L93
 // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/monitors/decision/signals.ts#L51
 // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/assistant/conversation-state.ts#L259
-// https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/assistant/brain.ts#L43-L44
+// https://github.com/ahmadalwakai/Mohassan-AI/blob/2a4498e1de09edf9c4a7b2847754d197e5146b85/apps/server/src/assistant/tools.ts#L90
 // https://github.com/ahmadalwakai/Mohassan-AI/blob/a258b3d47e39b5a2c03c71d4a9eb01107ae3d97f/tests/fixtures/agent-capability-bench/development.json (dev-google-ads-163 to 176)
 const DRAFT_ONLY_EN = /\b(?:(?:draft|preview)[ -]+only|(?:only|as) (?:a )?(?:draft|preview)|campaign draft|draft campaign|(?:create|build|save|prepare) (?:a |the )?(?:draft|preview)|(?:keep|leave) (?:it|the campaign) (?:a )?draft)\b/u;
 const DRAFT_ONLY_AR = new RegExp(`${WORD_START}(?:(?:مسوده|معاينه) (?:فقط|بس)|(?:فقط|بس) (?:مسوده|معاينه)|(?:خليها|(?:ال)?حمله) مسوده|مسوده (?:ال)?حمله)${WORD_END}`, 'u');
-const NO_CAMPAIGN_WRITE_EN = new RegExp(String.raw`\b(?:${NEGATION_EN}|unpublished|not (?:yet )?published|not (?:create|save|publish|launch)|(?:no|without) (?:publishing|publication))\b`, 'u');
-const NO_CAMPAIGN_WRITE_AR = new RegExp(String.raw`${NEGATIVE_PHRASE_AR}(?:تنش|تعمل|تحفظ|تبن|تطلق|تفعل)\p{L}*|${WORD_START}(?:غير منشور(?:ه)?|لم تنشر|(?:من غير|بدون|دون) نشر)${WORD_END}`, 'u');
+const CAMPAIGN_WRITE_EN = 'create|build|save|make|set up|publish';
+const NO_CAMPAIGN_WRITE_EN = new RegExp(String.raw`\b(?:(?:${NEGATION_EN}|not) (?:${CAMPAIGN_WRITE_EN})|unpublished|not (?:yet )?published|(?:no|without) (?:publishing|publication))\b`, 'u');
+const NO_CAMPAIGN_WRITE_AR = new RegExp(String.raw`${NEGATIVE_PHRASE_AR}(?:تنش|تعمل|تحفظ|تبن)\p{L}*|${WORD_START}(?:غير منشور(?:ه)?|لم تنشر|(?:من غير|بدون|دون) نشر)${WORD_END}`, 'u');
 
-function deniesCampaignCreationIn(text: string): boolean {
+/** Check wording already normalized by foldConsentWording. */
+export function deniesFoldedCampaignCreation(text: string): boolean {
   return DRAFT_ONLY_EN.test(text) || DRAFT_ONLY_AR.test(text)
     || NO_CAMPAIGN_WRITE_EN.test(text) || NO_CAMPAIGN_WRITE_AR.test(text);
 }
 
-export function deniesCampaignCreation(request: string): boolean {
-  return deniesCampaignCreationIn(foldConsentWording(request));
-}
-
-// Affirmative account-creation wording preserved from the original gate, retrieved 2026-11-27.
-// https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/assistant/tools.ts#L88-L93
-const CREATE_CAMPAIGN_EN = /^(?:(?:please|can you|could you|i want you to) ){0,2}(?:create|build|save)\b/u;
-const CREATE_CAMPAIGN_AR = /^(?:(?:من فضلك|لو سمحت) )?(?:(?:اريد|احتاج)(?: منك)? (?:ان )?(?:تنشئ|انشاء|تبني|بناء|تحفظ|حفظ)|انشئ|انشاء|ابن|ابني|احفظ)(?: |$)/u;
-
-export function requestsPausedCampaign(request: string): boolean {
-  const text = foldConsentWording(request);
-  return !deniesCampaignCreationIn(text) && (CREATE_CAMPAIGN_EN.test(text) || CREATE_CAMPAIGN_AR.test(text))
-    && /حمله|\bcampaign\b/u.test(text) && /حساب|google ads|جوجل ادز|غوغل ادز|\baccount\b/u.test(text);
+/** Recheck the owner's request and recorded answers before handing off an Ads draft. */
+export function deniesCampaignHandoff(request: string, trail: readonly { action: string; result: string }[]): boolean {
+  // The host records clarification answers in the run trail, retrieved 2026-11-27.
+  // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/command-chat.ts#L4197-L4199
+  const answerPrefix = 'user answered: ';
+  return deniesFoldedCampaignCreation(foldConsentWording(request)) || trail.some(({ action, result }) =>
+    action === 'asked the user' && result.startsWith(answerPrefix)
+    && deniesFoldedCampaignCreation(foldConsentWording(result.slice(answerPrefix.length))));
 }

@@ -6,7 +6,7 @@ import type { GoogleAdsControl } from '@mohassan/google-ads';
 import type { MemoryExactWriteInput, MemoryExactWriteOptions, MemoryExactWriteResult, MemoryExactReconcileInput, MemoryExactReconciliation } from '@mohassan/memory';
 import { z } from 'zod';
 import type { CampaignPorts } from './campaign-run.js';
-import { deniesCampaignCreation, requestsPausedCampaign } from './consent-wording.js';
+import { deniesFoldedCampaignCreation, foldConsentWording } from './consent-wording.js';
 
 /**
  * What the assistant may reach outside the browser. Each adapter calls the
@@ -86,7 +86,12 @@ const ACTIONABLE = /Button|Edit|MenuItem|ListItem|TabItem|CheckBox|ComboBox|Hype
 /** A key that can activate whatever has focus has a sending effect we cannot see. */
 export const EFFECT_KEYS = new Set(['Enter', 'Space', 'Delete']);
 /** Only the current owner's request authorizes account creation, never retrieved content. */
-export { requestsPausedCampaign };
+export function requestsPausedCampaign(request:string):boolean {
+  const text=foldConsentWording(request);
+  if(deniesFoldedCampaignCreation(text))return false;
+  const direct=/^(?:(?:please|can you|could you|i want you to)\s+){0,2}(?:create|build|save)\b/i.test(text.trim())||/^(?:(?:من فضلك|لو سمحت)\s+)?(?:(?:اريد|احتاج)(?:\s+منك)?\s+(?:ان\s+)?(?:تنشئ|انشاء|تبني|بناء|تحفظ|حفظ)|انشئ|انشاء|ابنِ?|ابني|احفظ)(?:\s|$)/u.test(text.trim());
+  return direct&&/حمل[ةه]|\bcampaign\b/i.test(text)&&/حساب|google ads|جوجل ادز|غوغل ادز|\baccount\b/i.test(text);
+}
 
 const money = (micros: string, currency: string) => `${(Number(micros) / 1_000_000).toFixed(2)} ${currency}`;
 
@@ -282,7 +287,7 @@ export function createAssistantTools({ memory, coding, studio, studioChange, run
         lessons: { list: ownerId => googleAds.lessons.list(ownerId), record: (ownerId, entry) => googleAds.lessons.record(ownerId, entry) },
       },
       createPaused:(ownerId,text,request,key,assertActive,ownCommand)=>guarded(async()=>{
-        if(ownCommand?deniesCampaignCreation(request):!requestsPausedCampaign(request))throw new BrowserError('ADS_CREATION_NOT_REQUESTED','يلزم طلبك الصريح لإنشاء حملة في الحساب؛ المعاينة وحدها لا تجيز ذلك.',403);
+        if(!ownCommand&&!requestsPausedCampaign(request))throw new BrowserError('ADS_CREATION_NOT_REQUESTED','يلزم طلبك الصريح لإنشاء حملة في الحساب؛ المعاينة وحدها لا تجيز ذلك.',403);
         const draft=await googleAds.createPausedCampaign(ownerId,parseAdsDraft(text,request),key,{assertActive});
         return `Google Ads readback confirmed new campaign ${draft.campaignResourceName} in PAUSED state. Draft ${draft.id}. It is not running. Only the owner can approve launch separately. ${draft.verification?.checks.find(check=>check.id==='conversion_tracking')?.passed?'Conversion tracking verified.':'Conversion tracking must be verified before launch.'}`;
       }),

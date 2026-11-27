@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { AgentElement, AgentPage } from '@mohassan/browser';
+import { asksToRemember as recognizesRememberConsent, deniesMemoryWrite as recognizesMemoryWriteRefusal } from './consent-wording.js';
 import { parseRequestContextState, type RequestContextState, type RequestResolution } from './request-context.js';
 import { appendResponsePolicyPrompt, responsePolicyPromptInput } from './response-policy-runtime.js';
 
@@ -49,7 +50,15 @@ const SENSITIVE_ACTIONS: [RegExp, string][] = [
   [/\b(?:enable campaign|launch campaign|publish campaign|activate campaign|increase budget|set budget|apply budget)\b|تفعيل الحملة|إطلاق الحملة|تعديل الميزانية|زيادة الميزانية/i, 'تغيير إنفاق الإعلانات'],
 ];
 
-export { asksToRemember, deniesMemoryWrite } from './consent-wording.js';
+/** Shared denial precedence; a later parser must not bypass a current-user refusal. */
+export function deniesMemoryWrite(request: string): boolean {
+  return recognizesMemoryWriteRefusal(request);
+}
+
+/** Saving requires an affirmative directive at the start of the owner's request. */
+export function asksToRemember(request: string): boolean {
+  return recognizesRememberConsent(request);
+}
 
 export function sensitiveAction(label: string): string | null {
   for (const [pattern, reason] of SENSITIVE_ACTIONS) if (pattern.test(label)) return reason;

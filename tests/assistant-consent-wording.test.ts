@@ -35,6 +35,23 @@ describe('memory consent wording', () => {
     expect(asksToRemember(request)).toBe(true);
   });
 
+  // Owner's regression examples from the PR #171 review, retrieved 2026-11-27.
+  // https://github.com/ahmadalwakai/Mohassan-AI/pull/171
+  it.each([
+    'تذكر أن زوجتي لا تتذكر المواعيد',
+    'تذكر أن ابنتي ما تحفظ جدول الضرب',
+    'احفظ أن مديرتي لا تغير المواعيد أبدا',
+    'تذكر أن الشركة لا تسجل المكالمات',
+    'احفظ ما تكتبه لي في هذه المحادثة',
+    'Remember that our backend does not store sessions',
+    'Remember that I never remember names',
+    'Remember that my wife does not remember birthdays',
+    'Remember that the API must never store raw tokens',
+  ])('allows a save when the negated wording is part of the fact in %s', request => {
+    expect(deniesMemoryWrite(request)).toBe(false);
+    expect(asksToRemember(request)).toBe(true);
+  });
+
   it.each(['هل تتذكر رمز الخزانة؟', 'تذكر رمز الخزانة؟', '«احفظ هذا» عبارة في النص المعروض'])(
     'requires an affirmative directive in %s', request => {
       expect(asksToRemember(request)).toBe(false);
@@ -50,10 +67,12 @@ describe('memory consent wording', () => {
 
   it.each([
     `${rememberCar} ولا تحفظه`,
-    `${rememberCar} ما تحفظه ثم احفظه`,
+    `${rememberCar}، ما تحفظه ثم احفظه`,
+    `${rememberCar}\nما تحفظه`,
     `${rememberCar} بس ماتحفظهاش`,
     'Remember this but do not save it.',
     'Remember it for now but not save it.',
+    'Remember this\nPlease do not\nsave it.',
     'Remember this and don’t save it.',
     "Remember this and don't save it.",
     'Keep in mind that my preferred language is English. Never store it.',
@@ -75,7 +94,12 @@ it.each(['بلاش تحفظ أي شيء', 'ممنوع تحفظ أي شيء', 'م
 );
 
 describe('paused Ads campaign consent wording', () => {
-  it.each([englishCampaign, arabicCampaign])('allows an explicit paused creation request in %s', request => {
+  it.each([
+    englishCampaign,
+    arabicCampaign,
+    'أنشئ حملة متوقفة في حساب Google Ads لمخبزي ولا تفعلها',
+    'أنشئ حملة متوقفة في حساب Google Ads لمخبزي ولا تطلقها قبل موافقتي',
+  ])('allows an explicit paused creation request in %s', request => {
     expect(requestsPausedCampaign(request)).toBe(true);
   });
 
@@ -101,7 +125,7 @@ describe('paused Ads campaign consent wording', () => {
     expect(requestsPausedCampaign(request)).toBe(false);
   });
 
-  it.each([false, true])('keeps the campaign write behind the veto when ownCommand is %s', async ownCommand => {
+  it('keeps the campaign write behind the explicit request gate', async () => {
     const draft = [
       `BUSINESS: ${brief.businessName}`, `SERVICE: ${brief.service}`, `GOAL: ${brief.goal}`,
       `URL: ${brief.landingPageUrl}`, `COUNTRY: ${brief.countryCode}`, `LANGUAGE: ${brief.adLanguage}`,
@@ -120,7 +144,7 @@ describe('paused Ads campaign consent wording', () => {
       googleAds: googleAds as unknown as GoogleAdsControl,
     });
 
-    await expect(tools.ads!.createPaused!('owner', draft, `${englishCampaign}. Keep it unpublished.`, 'campaign', async () => {}, ownCommand))
+    await expect(tools.ads!.createPaused!('owner', draft, `${englishCampaign}. Keep it unpublished.`, 'campaign', async () => {}))
       .rejects.toMatchObject({ code: 'ADS_CREATION_NOT_REQUESTED' });
     expect(createPausedCampaign).not.toHaveBeenCalled();
   });
