@@ -5,6 +5,7 @@ import copy
 import importlib.util
 import itertools
 import json
+import math
 import struct
 import tempfile
 import unittest
@@ -17,7 +18,29 @@ e = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(e)
 
 
-class FiveTagExportTests(unittest.TestCase):
+def structural_fixture():
+    # Mirror the TypeScript fixture's zero tensors and date biases (retrieved 2026-11-27).
+    # https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/tests/assistant-slot-date-place-tagger.test.ts
+    config = {"buckets": 128, "dim": 4, "hidden": 4}
+    biases = {"B-date": 2.0, "I-date": 1.8}
+    layout, weights = [], bytearray()
+    for name, shape in e.expected_shapes(**config).items():
+        payload = bytes(math.prod(shape) * 4)
+        if name == "classifier.bias":
+            payload = struct.pack(f"<{len(e.TAGS)}f", *(biases.get(tag, 0) for tag in e.TAGS))
+        layout.append({"name": name, "shape": shape, "offsetBytes": len(weights), "lengthBytes": len(payload)})
+        weights.extend(payload)
+    header = {
+        "format": "mohassan-slot-date-place-gru-v2", "tags": list(e.TAGS), "active": False,
+        "dtype": "float32-little-endian", "targetLabels": ["place", "date"], "assignmentHash": e.ASSIGNMENT,
+        "sha256": e.sha(weights), "config": config, "layout": layout,
+    }
+    calibration = {"temperature": 1.0, "thresholds": {"date": 0.1, "place": 0.9}}
+    return header, bytes(weights), calibration
+
+
+@unittest.skipUnless(e.SOURCE.is_dir(), "requires the untracked frozen five-tag target48-cap3 source and cached development parity")
+class FrozenFiveTagExportTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.header, cls.weights, cls.calibration, cls.cached = e.verified_source()
@@ -34,12 +57,33 @@ class FiveTagExportTests(unittest.TestCase):
         self.assertEqual(self.manifest["calibration"]["thresholds"], {"date": 0.8228255028191475, "place": 0.9688093835656453})
         self.assertFalse(self.manifest["active"])
         self.assertEqual(self.manifest["calibration"]["abstainedLabels"], [])
+        self.assertEqual(e.sha((e.SOURCE / "selection.json").read_bytes()), e.PINS["selection.json"])
 
     def test_content_address_includes_separate_five_tag_contract(self):
         body = {key: value for key, value in self.manifest.items() if key != "modelId"}
         self.assertEqual(e.sha(e.shared().typed_canonical(body)), "4443f07d0322db1326de784b5aae4b04023cd4b3125877a8de854bf7d96e9314")
         changed = copy.deepcopy(body); changed["calibration"]["thresholds"]["date"] += 0.001
         self.assertNotEqual(e.sha(e.shared().typed_canonical(changed)), self.manifest["modelId"])
+
+    def test_cached_public_dev_reference_is_actual_pytorch_and_has_no_parameter_mutation(self):
+        for entry in self.cached:
+            actual, error = e.prediction(self.model, self.manifest, self.weights, entry["text"])
+            self.assertLess(error, 1e-5)
+            np.testing.assert_allclose(actual["logits"], entry["logits"], rtol=1e-5, atol=1e-5)
+            self.assertTrue(all(len(row) == 5 for row in actual["logits"]))
+        restored = b"".join(self.model.state_dict()[item["name"]].cpu().numpy().astype("<f4", copy=False).tobytes() for item in self.header["layout"])
+        self.assertEqual(e.sha(restored), e.sha(self.weights))
+
+
+class FiveTagExportContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import torch
+
+        cls.addClassCleanup(torch.set_num_threads, torch.get_num_threads())
+        cls.header, cls.weights, calibration = structural_fixture()
+        cls.manifest = e.bundle_manifest(cls.header, cls.weights, calibration)
+        cls.model = e.torch_model(cls.header, cls.weights)
 
     def test_rejects_thirteen_tag_geometry_wrong_layout_and_truncated_or_extra_weights(self):
         for mutation in ("tags", "classifier", "order", "offset", "dimensions"):
@@ -61,19 +105,12 @@ class FiveTagExportTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, "float_bounds"):
                 e.validate_layout(header, bytes(payload))
 
-    def test_cached_public_dev_reference_is_actual_pytorch_and_has_no_parameter_mutation(self):
-        for entry in self.cached:
-            actual, error = e.prediction(self.model, self.manifest, self.weights, entry["text"])
-            self.assertLess(error, 1e-5)
-            np.testing.assert_allclose(actual["logits"], entry["logits"], rtol=1e-5, atol=1e-5)
-            self.assertTrue(all(len(row) == 5 for row in actual["logits"]))
-        restored = b"".join(self.model.state_dict()[item["name"]].cpu().numpy().astype("<f4", copy=False).tobytes() for item in self.header["layout"])
-        self.assertEqual(e.sha(restored), e.sha(self.weights))
-
     def test_unicode_boundary_cases_keep_literal_half_open_offsets_and_only_date_place_hypotheses(self):
         for text in e.shared().PARITY_TEXTS:
             actual, error = e.prediction(self.model, self.manifest, self.weights, text)
             self.assertLess(error, 1e-5)
+            self.assertTrue(actual["raw"])
+            self.assertTrue(actual["hypotheses"])
             for item in actual["raw"]:
                 self.assertEqual(text[item["startCodepoint"]:item["endCodepoint"]], item["text"])
                 self.assertEqual(text.encode("utf-16-le")[2 * item["startUtf16"]:2 * item["endUtf16"]].decode("utf-16-le"), item["text"])
@@ -100,8 +137,10 @@ class FiveTagExportTests(unittest.TestCase):
             # The first trusted pin rejects the modified clone before any weight read.
             (target / "selection.json").write_text(json.dumps({"candidateId": "target48-cap3"}), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "selected_source_changed"): e.verified_source(target)
-        self.assertEqual(e.sha((e.SOURCE / "selection.json").read_bytes()), e.PINS["selection.json"])
 
+
+class FrozenFiveTagBundleTests(unittest.TestCase):
+    @unittest.skipUnless((e.OUTPUT / "typescript-export-v1-20261121-a").is_dir(), "requires the untracked frozen five-tag typescript-export-v1-20261121-a bundle")
     def test_predeclared_bundle_is_inactive_and_all_exported_bytes_are_content_addressed(self):
         target = e.OUTPUT / "typescript-export-v1-20261121-a"
         checksums = e.read_json(target / "checksums.json")

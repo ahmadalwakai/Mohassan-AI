@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { withoutExternalAI, inferenceConfigFromEnv, EXTERNAL_AI_DISABLED_MESSAGE } from '../apps/server/src/inference.js';
 
 // Owner decision 2026-11-12: Mohassan uses only its own model. Keys in the environment must not
@@ -11,9 +14,24 @@ const env = {
 
 describe('external AI platforms are cut off', () => {
   let getConfig: typeof import('../apps/server/src/config.js').getConfig;
+  let authSecretDuringImport: string | undefined;
   beforeAll(async () => {
-    process.env.MOHASSAN_ISOLATED_TEST = 'true';
-    ({ getConfig } = await import('../apps/server/src/config.js'));
+    const directory = await mkdtemp(join(tmpdir(), 'mohassan-config-isolation-'));
+    try {
+      const dotenvFile = join(directory, '.env');
+      await writeFile(dotenvFile, 'BETTER_AUTH_SECRET=fixture-dotenv-only\n');
+      vi.stubEnv('BETTER_AUTH_SECRET', undefined);
+      vi.stubEnv('DOTENV_CONFIG_PATH', dotenvFile);
+      ({ getConfig } = await import('../apps/server/src/config.js'));
+      authSecretDuringImport = process.env.BETTER_AUTH_SECRET;
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('imports the server configuration without loading dotenv in the Vitest environment', () => {
+    expect(authSecretDuringImport).toBeUndefined();
   });
 
   it('drops every external credential and fallback from the inference settings', () => {

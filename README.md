@@ -85,6 +85,23 @@ npm run dev
 
 ## الفحص
 
+قبل رفع تغيير على خط الإنتاج، نفّذ `npm ci` وثبّت Chromium للاختبارات بواسطة `npx playwright install chromium`. فعّل بيئة Python 3.11 محلية وثبّت تبعيات الاختبار مرة واحدة فيها. تتوافق جداول Unicode في Python 3.11 مع عقد التصدير، ويستخدم الفحص إصدار PyTorch للمعالج المحدد في [خطة الموجّه](docs/ROUTER-MODEL-PLAN-2026-11-20.md#reproduce).
+
+```text
+python -m pip install -r scripts/refusal-classifier/requirements.txt pytest==7.4.3
+python -m pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu
+```
+
+شغّل بوابة الفحص المحلية من جذر المشروع مع إبقاء بيئة Python مفعّلة.
+
+```text
+npm run test:gate
+```
+
+تفحص البوابة الأنواع وتشغّل مجموعة Vitest الكاملة واختبارات pytest تحت `scripts/`. تعرض نتائج الاختبارات وحالة كل فحص ومدته، وتعيد رمز خروج غير صفري عند فشل أي فحص.
+
+يمكن أيضًا تشغيل الفحوص المنفصلة والبناء واختبارات المتصفح.
+
 ```powershell
 npm run typecheck
 npm test

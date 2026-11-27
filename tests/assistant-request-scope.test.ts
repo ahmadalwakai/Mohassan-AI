@@ -4,6 +4,7 @@ import { assessRequestScope, parseRequestScopeAssessment, requestScopeActionText
 describe('request source and operation provenance', () => {
   it.each([
     'Which delivery reference did I give you last Tuesday?',
+    'Do not save anything. What is my booking reference from memory?',
     'ما اسم المورد الذي ذكرتُه لك في حديثنا؟',
     'راجع ملاحظاتي المحفوظة عن مواعيد التسليم',
     'لا تسجّل أي شيء؛ أريد معرفة تفضيلاتي فقط',
@@ -13,6 +14,7 @@ describe('request source and operation provenance', () => {
 
   it.each([
     'Read the total displayed in the shared spreadsheet window.',
+    'What is my computer loading from memory?',
     'ما عنوان التقرير الظاهر في نافذة البرنامج؟',
     'شو لون الزر اللي قدامك في الشاشة؟',
     'Identify the application visible on my desktop taskbar.',
@@ -22,6 +24,7 @@ describe('request source and operation provenance', () => {
 
   it.each([
     'What is a desktop taskbar?',
+    'What does a processor load from memory?',
     'ابحث في الموقع الرسمي عن دليل استخدام نوافذ الجداول',
     'Search the official documentation for application window management.',
   ])('distinguishes general public documentation from a local observation: %s', text => {

@@ -1,8 +1,9 @@
+import { execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DesktopAudit } from './audit.ts';
 import { parseDesktopCommand, describeDesktopCommand, folderReference } from './commands.ts';
 import { DesktopEngine, typingTargetRisk } from './engine.ts';
@@ -218,12 +219,12 @@ describe('PathPolicy and files', () => {
 
 describe('DesktopProjects', () => {
   let root: string, projects: DesktopProjects;
-  beforeAll(async () => {
+  beforeEach(async () => {
     root = await tempRoot('mohassan-projects-');
     const policy = new PathPolicy({ roots: [root] });
     projects = new DesktopProjects(policy, new DesktopAudit(join(root, '.audit', 'audit.jsonl')), { registryFile: join(root, '.registry', 'projects.json'), projectsRoot: join(root, 'Projects'), now: () => new Date('2026-11-22T10:00:00Z') });
   });
-  afterAll(async () => { await rm(root, { recursive: true, force: true }); });
+  afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
   it('maps template words and names', () => {
     expect(findTemplate('ويب')?.id).toBe('web');
@@ -236,12 +237,11 @@ describe('DesktopProjects', () => {
     expect(slugFor('متجري')).toMatch(/^mohassan-project-/u);
   });
 
-  it('scaffolds a node project with git and registers it', async () => {
-    const created = await projects.create({ name: 'متجري', template: 'node' });
+  it('scaffolds a node project and registers it', async () => {
+    const created = await projects.create({ name: 'متجري', template: 'node', git: false });
     expect(created.path).toBe(join(root, 'Projects', 'متجري'));
     expect(created.files).toEqual(['.gitignore', '.mohassan/project.json', 'README.md', 'package.json', 'src/greet.js', 'src/index.js', 'test/greet.test.js']);
     expect(JSON.parse(await readFile(join(created.path, 'package.json'), 'utf8')).scripts.test).toBe('node --test');
-    expect(created.git).toBe(true);
     const listed = await projects.list();
     expect(listed.map(project => project.name)).toEqual(['متجري']);
     expect((await projects.find('متجري'))?.path).toBe(created.path);
@@ -252,6 +252,20 @@ describe('DesktopProjects', () => {
     expect((await readFile(join(web.path, 'index.html'), 'utf8'))).toContain('<title>Landing</title>');
     expect(await projects.forget(web.id)).toBe(true);
     expect((await projects.list()).length).toBe(1);
+  }, 60_000);
+
+  it.skipIf(!WINDOWS)('initializes the project Git repository through cmd.exe (Windows required)', async () => {
+    const gitConfig = join(root, 'gitconfig');
+    await writeFile(gitConfig, '');
+    vi.stubEnv('GIT_CONFIG_GLOBAL', gitConfig);
+    vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1');
+    try {
+      const created = await projects.create({ name: 'متجري', template: 'node' });
+      expect(created.git).toBe(true);
+      expect(execFileSync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: created.path, encoding: 'utf8' }).trim()).not.toBe('');
+    } finally {
+      vi.unstubAllEnvs();
+    }
   }, 60_000);
 });
 

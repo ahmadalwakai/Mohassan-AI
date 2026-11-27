@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import './fixtures/ads-goal-grammar.js';
 import { loadCorpusServices } from '../scripts/ads-training/goal-grammar-corpus.js';
 import { makeGrammarGoals } from '../scripts/ads-training/goal-grammar.js';
 import { pointerToGoal } from '../scripts/ads-training/pointer.js';

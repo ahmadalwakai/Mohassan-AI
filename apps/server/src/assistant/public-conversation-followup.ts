@@ -21,11 +21,14 @@ export interface PublicConversationFollowupInput {
 const MAX_REPLAY_TURNS = 8;
 const MAX_QUERY_LENGTH = 500;
 const acceptedTypes = new Set(['follow_up_property', 'follow_up_entity', 'correction']);
+// Length and height terms from the reply judge's SUPERLATIVE pattern (retrieved 2026-11-27).
+// https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/apps/server/src/assistant/judge.ts#L150
+const RANKED_SUBJECT = /^(?:اطول|اعلي|longest|highest|tallest)\s/iu;
 // This narrow lookup helper must leave outer actions with their existing handlers.
 // A public v1 source may be inherited before generic action classification runs;
 // matching outside literal ranges also catches polite/modal heads and action tails.
 const OUTER_ACTION = /(?:^|[^\p{L}\p{N}])(?:send|email|mail|deliver|publish|post|save|store|record|remember|delete|remove|erase|open|visit|navigate|run|execute|launch|schedule|remind|book|reserve|buy|purchase|pay|transfer|write|draft|compose|create|generate|update|edit|change|replace|download|upload|copy|move|click|press|type|tell)(?!\p{L})|(?:^|[^\p{L}\p{N}])(?:و|ف)?(?:ارسل|ابعث|ابعت|ترسل|تبعث|تبعت|انشر|تنشر|احفظ|خزن|سجل|تذكر|احذف|ازل|امسح|تحذف|افتح|ادخل|اذهب|تفتح|شغل|نفذ|تشغل|تنفذ|ذكرني|نبهني|جدول|احجز|اشتر|اشتري|ادفع|حول|اكتب|صغ|انشئ|اصنع|ولد|غير|عدل|حدث|بدل|ارفع|انسخ|انقل|اضغط|انقر)(?:ها|ه|هم)?(?!\p{L})/iu;
-const actionMatchingText = (text: string) => text.normalize('NFKC')
+const foldRequestText = (text: string) => text.normalize('NFKC')
   .replace(/[\u0640\u064b-\u065f\u0670]|\p{Cf}/gu, '').replace(/[أإآٱ]/gu, 'ا').replace(/ى/gu, 'ي').replace(/ة/gu, 'ه');
 const clean = (text: string) => text.normalize('NFC')
   .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, '').replace(/\s+/gu, ' ').trim();
@@ -53,7 +56,7 @@ export function publicConversationFollowup(input: PublicConversationFollowupInpu
   // v2 scans request words; literal operands must not select a conversational property.
   // Quoted public names also retain the existing handler in this restricted tranche.
   if (compound.kind !== 'single' || compound.literalRanges.length > 0
-    || OUTER_ACTION.test(actionMatchingText(compound.outerText))) return null;
+    || OUTER_ACTION.test(foldRequestText(compound.outerText))) return null;
 
   const previous = parseRequestScopeAssessment(input.previousSource);
   const current = parseRequestScopeAssessment(resolution.sourceAssessment);
@@ -66,6 +69,10 @@ export function publicConversationFollowup(input: PublicConversationFollowupInpu
   let state = emptyConversationState();
   for (const [index, text] of turns.entries()) state = understandTurn(state, text, `public-context-${index}`).next;
   const understanding = understandTurn(state, request, 'public-followup');
+  const previousTopic = state.topics.at(-1);
+  // A ranked subject such as "tallest mountain" leaves the named entity to the previous answer.
+  if (understanding.type === 'follow_up_property' && !previousTopic?.property
+    && RANKED_SUBJECT.test(foldRequestText(previousTopic?.entity ?? ''))) return null;
   const topic = understanding.next.topics.at(-1);
   if (!acceptedTypes.has(understanding.type) || !understanding.property || !understanding.entity
     || !understanding.query || understanding.query.length > MAX_QUERY_LENGTH

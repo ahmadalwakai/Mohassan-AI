@@ -137,8 +137,8 @@ describe('a conversation that goes on, through the real chat controller', () => 
     expect(next.reply).toContain('1955');
   });
 
-  it('looks up the named river for «وكم طوله؟» rather than reading the generic list again', async () => {
-    vi.stubEnv('MOHASSAN_CONVERSATION_SHADOW', 'decide');
+  it.each(['shadow', 'decide'])('looks up the named river for «وكم طوله؟» in %s mode', async mode => {
+    vi.stubEnv('MOHASSAN_CONVERSATION_SHADOW', mode);
     const first = await turn('ما هو أطول نهر في العالم؟');
     expect(first.reply).toContain('نهر النيل');
     queries.length = 0;

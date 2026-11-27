@@ -97,7 +97,7 @@ async function runWorker(directory: string, nonce: string, phase: 'start' | 'res
   signal.throwIfAborted();
   const worker = fileURLToPath(new URL('./skill-benchmark-worker.ts', import.meta.url));
   const child = spawn(process.execPath, ['--import', 'tsx', worker, directory, phase], { cwd: dirname(fileURLToPath(new URL('../../../package.json', import.meta.url))), windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, TEMP: process.env.TEMP, TMP: process.env.TMP, NODE_ENV: 'test' } });
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, TEMP: process.env.TEMP, TMP: process.env.TMP, TMPDIR: process.env.TMPDIR, NODE_ENV: 'test' } });
   const closed = once(child, 'close'); let captured = 0, fatal: Error | undefined;
   const kill = () => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); };
   const abort = () => { fatal = new Error('BENCHMARK_CANCELLED'); kill(); }; signal.addEventListener('abort', abort, { once: true });

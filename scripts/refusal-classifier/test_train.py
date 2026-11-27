@@ -1,5 +1,7 @@
+import importlib.util
 import io
 import json
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -7,7 +9,11 @@ from collections import Counter
 from pathlib import Path
 from unittest.mock import Mock, call, patch
 
-import train
+# Keep this trainer separate from scripts/router/train.py during pytest collection.
+spec = importlib.util.spec_from_file_location("refusal_classifier_train", Path(__file__).with_name("train.py"))
+train = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = train
+spec.loader.exec_module(train)
 
 
 class PublicIngestionTests(unittest.TestCase):

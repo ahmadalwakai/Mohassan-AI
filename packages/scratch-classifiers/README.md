@@ -25,6 +25,12 @@ python3 -m unittest discover -s packages/scratch-classifiers -p test_prepare_dat
 npm test -- packages/scratch-classifiers/src tests/assistant-scratch-decisions.test.ts
 ```
 
+Run the wall-clock benchmark separately, with other CPU-heavy jobs stopped. The regular test run skips the timing check because shared host scheduling affects p95.
+
+```sh
+npm test -- packages/scratch-classifiers/src/index.test.ts --mode scratch-benchmark
+```
+
 ## Server operation
 
 `MOHASSAN_SCRATCH_CLASSIFIERS=1` enables decisions from the heads. With the flag unset or `0`, the server uses the existing rule decisions and still emits one `scratch_classifiers` JSON record per scored routing decision outside Vitest. The record contains rule labels, model top-k scores, abstentions and selected labels. It contains no current or previous message text. Missing or invalid artifacts make the server fall back to rules.
