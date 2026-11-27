@@ -112,22 +112,73 @@ describe('OCR worker pool', () => {
     expect(spawned[1].terminate).toHaveBeenCalledTimes(1);
   });
 
-  it('delays startup failures exponentially and caps replacements in the rolling window', async () => {
-    const { simulatedPool, spawned } = simulateWorkers();
-    const cap = 5, initialDelay = 100, restartWindow = 30_000;
-    let elapsed = 0;
-    for (let attempt = 0; attempt < cap; attempt++) {
-      spawned[attempt].failStartup();
+  it('stops after five failed startups and shares the next startup attempt between concurrent requests', async () => {
+    const size = 2, startupLimit = 5, initialDelay = 100;
+    const { simulatedPool, spawned } = simulateWorkers({ size });
+    for (let attempt = 0; attempt < startupLimit - 1; attempt++) {
+      for (const worker of spawned.slice(attempt * size)) worker.failStartup();
       const delay = initialDelay * 2 ** attempt;
       await vi.advanceTimersByTimeAsync(delay - 1);
-      expect(spawned).toHaveLength(attempt + 1);
+      expect(spawned).toHaveLength((attempt + 1) * size);
       await vi.advanceTimersByTimeAsync(1);
-      expect(spawned).toHaveLength(attempt + 2);
-      elapsed += delay;
+      expect(spawned).toHaveLength((attempt + 2) * size);
     }
 
-    spawned[cap].failStartup();
-    await vi.advanceTimersByTimeAsync(restartWindow + initialDelay - elapsed - 1);
+    for (const worker of spawned.slice((startupLimit - 1) * size)) worker.failStartup();
+    const initialAttempts = startupLimit * size;
+    await vi.advanceTimersByTimeAsync(0);
+    const cooldownRefusal = expect(simulatedPool.readImage(new Uint8Array())).rejects.toThrow(OcrPoolUnavailable);
+    expect(spawned).toHaveLength(initialAttempts);
+    await cooldownRefusal;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(spawned).toHaveLength(initialAttempts);
+    expect(simulatedPool.stats()).toMatchObject({ restarts: initialAttempts - size, exhaustedSlots: size });
+    expect(vi.getTimerCount()).toBe(0);
+    expect(await simulatedPool.ready()).toBe(false);
+    expect(spawned).toHaveLength(initialAttempts);
+
+    const imageRefusal = expect(simulatedPool.readImage(new Uint8Array())).rejects.toThrow(OcrPoolUnavailable);
+    const cropRefusal = expect(simulatedPool.recognize([crop])).rejects.toThrow(OcrPoolUnavailable);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(spawned).toHaveLength(initialAttempts + 1);
+    spawned[initialAttempts].failStartup();
+    await Promise.all([imageRefusal, cropRefusal]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(spawned).toHaveLength(initialAttempts + 1);
+    expect(simulatedPool.stats().exhaustedSlots).toBe(size);
+    expect(vi.getTimerCount()).toBe(0);
+
+    const recognition = simulatedPool.recognize([crop]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(spawned).toHaveLength(initialAttempts + 2);
+    const recovered = spawned[initialAttempts + 1];
+    recovered.reportReady();
+    expect(await recognition).toEqual([recognizeLine(model, crop)]);
+    expect(simulatedPool.stats().exhaustedSlots).toBe(size - 1);
+
+    recovered.emit('exit', 1);
+    await vi.advanceTimersToNextTimerAsync();
+    expect(spawned).toHaveLength(initialAttempts + 3);
+    await simulatedPool.close();
+    await expect(simulatedPool.readImage(new Uint8Array())).rejects.toThrow(OcrPoolUnavailable);
+    expect(spawned).toHaveLength(initialAttempts + 3);
+  });
+
+  it('caps replacements in the rolling window when workers keep crashing after starting', async () => {
+    const { simulatedPool, spawned } = simulateWorkers();
+    const cap = 5, restartWindow = 30_000;
+    const restartTimes: number[] = [];
+    for (let attempt = 0; attempt < cap; attempt++) {
+      spawned[attempt].reportReady();
+      spawned[attempt].emit('exit', 1);
+      await vi.advanceTimersToNextTimerAsync();
+      expect(spawned).toHaveLength(attempt + 2);
+      restartTimes.push(performance.now());
+    }
+
+    spawned[cap].reportReady();
+    spawned[cap].emit('exit', 1);
+    await vi.advanceTimersByTimeAsync(restartTimes[0] + restartWindow - performance.now() - 1);
     expect(spawned).toHaveLength(cap + 1);
     expect(simulatedPool.stats().restarts).toBe(cap);
     await vi.advanceTimersByTimeAsync(1);

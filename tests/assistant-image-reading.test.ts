@@ -2,11 +2,12 @@ import { EventEmitter } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { monitorEventLoopDelay } from 'node:perf_hooks';
+import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { WorkerOptions } from 'node:worker_threads';
 import sharp from 'sharp';
-import { describe, expect, it, vi } from 'vitest';
-import type { ImageReading } from '@mohassan/vision';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadOcrModelFromBytes, readImage, type ImageReading } from '@mohassan/vision';
 import { composeImageReply, contentWords, imageIntent, readingForTrail } from '../apps/server/src/assistant/image-reading.js';
 import { createImageReader, ImageReaderUnavailable } from '../apps/server/src/image-reader.js';
 import { createTinyOcrModel } from '../packages/vision/src/ocr-test-model.js';
@@ -101,34 +102,81 @@ describe('image replies', () => {
 });
 
 describe('server image reader', () => {
-  it('refuses reads while OCR is unavailable without delaying the event loop, then reads from the recovered pool', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'mohassan-image-reader-'));
-    const { modelId, manifestBytes, weightsBytes } = createTinyOcrModel();
+  const { modelId, manifestBytes, weightsBytes } = createTinyOcrModel();
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'mohassan-image-reader-'));
+    await Promise.all([writeFile(join(dir, 'manifest.json'), manifestBytes), writeFile(join(dir, 'weights.bin'), weightsBytes)]);
+  });
+  afterEach(async () => {
+    failStartup = undefined;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('refuses reads during a worker startup failure, then reads from the recovered pool', async () => {
+    const width = 80, height = 40;
+    const bytes = await sharp({ create: { width, height, channels: 3, background: '#fff' } }).png().toBuffer();
+    const firstWorker = failStartup = new EventEmitter();
+    const reader = await createImageReader({ modelDir: dir, workers: 1 });
     try {
-      await Promise.all([writeFile(join(dir, 'manifest.json'), manifestBytes), writeFile(join(dir, 'weights.bin'), weightsBytes)]);
-      const width = 80, height = 40;
-      const bytes = await sharp({ create: { width, height, channels: 3, background: '#fff' } }).png().toBuffer();
-      const firstWorker = failStartup = new EventEmitter();
-      const reader = await createImageReader({ modelDir: dir, workers: 1 });
-      const histogram = monitorEventLoopDelay({ resolution: 5 });
-      const failure = setTimeout(() => firstWorker.emit('message', { v: 1, type: 'failed', error: 'fixture startup failure' }), 40);
-      try {
-        histogram.enable();
-        await expect(reader.read(bytes)).rejects.toBeInstanceOf(ImageReaderUnavailable);
-        histogram.disable();
-        expect(histogram.count).toBeGreaterThan(0);
-        expect(histogram.max / 1_000_000).toBeLessThan(250);
-        await vi.waitFor(async () => {
-          expect(await reader.read(bytes)).toMatchObject({ modelId, facts: { width, height, format: 'png' } });
-        }, { timeout: 20_000 });
-      } finally {
-        clearTimeout(failure);
-        histogram.disable();
-        await reader.close();
-      }
+      const reading = reader.read(bytes);
+      firstWorker.emit('message', { v: 1, type: 'failed', error: 'fixture startup failure' });
+      await expect(reading).rejects.toBeInstanceOf(ImageReaderUnavailable);
+      await vi.waitFor(async () => {
+        expect(await reader.read(bytes)).toMatchObject({ modelId, facts: { width, height, format: 'png' } });
+      }, { timeout: 20_000 });
     } finally {
-      failStartup = undefined;
-      await rm(dir, { recursive: true, force: true });
+      await reader.close();
+    }
+  });
+
+  it('keeps the event loop responsive while reading a full page through a ready pool', async () => {
+    const lineCount = 120, glyphHeight = 14, rowHeight = 20, margin = 10;
+    const width = 1280, height = lineCount * rowHeight + 2 * margin;
+    const pixels = new Uint8Array(width * height).fill(255);
+    for (let line = 0; line < lineCount; line++) {
+      const top = margin + line * rowHeight;
+      for (let x = margin; x < 240; x += 12) {
+        for (let y = top; y < top + glyphHeight; y++) pixels.fill(0, y * width + x, y * width + x + 8);
+      }
+    }
+    const bytes = await sharp(pixels, { raw: { width, height, channels: 1 } }).png().toBuffer();
+    const model = loadOcrModelFromBytes(manifestBytes, weightsBytes);
+    const reader = await createImageReader({ modelDir: dir, workers: 1 });
+    try {
+      await reader.read(bytes);
+      await readImage(bytes, { model });
+      const baseline = await measureImageRead(() => readImage(bytes, { model }));
+      const worker = await measureImageRead(() => reader.read(bytes));
+      expect(baseline.reading.candidates).toBe(lineCount);
+      // Zero weights decode to blanks. Dropped lines confirm the page reached recognition.
+      expect(baseline.reading.dropped).toBe(lineCount);
+      expect(worker.reading).toEqual({ ...baseline.reading, durationMs: expect.any(Number) });
+      const delayLimitMs = baseline.elapsedMs / 2;
+      expect(baseline.maxDelayMs).toBeGreaterThan(delayLimitMs);
+      expect(worker.maxDelayMs).toBeLessThan(delayLimitMs);
+    } finally {
+      await reader.close();
     }
   });
 });
+
+async function measureImageRead(read: () => Promise<ImageReading>) {
+  const resolution = 5;
+  const histogram = monitorEventLoopDelay({ resolution });
+  histogram.enable();
+  try {
+    // Prime the timer and give the sample that overlaps the last synchronous work time to report.
+    await delay(2 * resolution);
+    histogram.reset();
+    const started = performance.now();
+    const reading = await read();
+    const elapsedMs = performance.now() - started;
+    await delay(2 * resolution);
+    expect(histogram.count).toBeGreaterThan(0);
+    return { reading, elapsedMs, maxDelayMs: histogram.max / 1_000_000 };
+  } finally {
+    histogram.disable();
+  }
+}

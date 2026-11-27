@@ -18,7 +18,15 @@ export interface OcrPool {
   ready(): Promise<boolean>;
   recognize(crops: readonly LineCrop[], signal?: AbortSignal): Promise<LineRecognition[]>;
   readImage(bytes: Uint8Array, signal?: AbortSignal): Promise<ImageReading>;
-  stats(): { readonly requests: number; readonly crops: number; readonly failures: number; readonly restarts: number; readonly busyMs: number; readonly lastError: string };
+  stats(): {
+    readonly requests: number;
+    readonly crops: number;
+    readonly failures: number;
+    readonly restarts: number;
+    readonly exhaustedSlots: number;
+    readonly busyMs: number;
+    readonly lastError: string;
+  };
   close(): Promise<void>;
 }
 
@@ -26,8 +34,8 @@ export class OcrPoolUnavailable extends Error {
   constructor(message = 'OCR_POOL_UNAVAILABLE') { super(message); }
 }
 
-// Each slot can restart five times in a rolling 30-second window. Its backoff
-// resets after a worker has stayed ready for a full window.
+// Limit restart frequency even for workers that report ready before crashing.
+// Five consecutive startup failures also stop automatic restarts for the slot.
 const RESTART_WINDOW_MS = 30_000;
 const MAX_RESTARTS = 5;
 const INITIAL_BACKOFF_MS = 100;
@@ -68,6 +76,8 @@ interface Slot {
   stopping?: Promise<void>;
   restartTimer?: ReturnType<typeof setTimeout>;
   restartTimes: number[];
+  startupFailures: number;
+  retryAfter: number;
   backoffMs: number;
 }
 
@@ -88,11 +98,19 @@ export function createOcrPool(options: OcrPoolOptions): OcrPool {
   const counters = { requests: 0, crops: 0, failures: 0, restarts: 0, busyMs: 0, lastError: '' };
   let closed = false;
   let nextId = 1;
-  const slots: Slot[] = Array.from({ length: size }, () => ({ restartTimes: [], backoffMs: INITIAL_BACKOFF_MS }));
+  const slots: Slot[] = Array.from({ length: size }, () => ({
+    restartTimes: [], startupFailures: 0, retryAfter: 0, backoffMs: INITIAL_BACKOFF_MS,
+  }));
 
   function recordFailure(error: unknown): void {
     counters.failures++;
     counters.lastError = (error instanceof Error ? error.message : String(error)).slice(0, 300);
+  }
+
+  function restart(slot: Slot): void {
+    slot.restartTimes.push(performance.now());
+    counters.restarts++;
+    spawn(slot);
   }
 
   function scheduleRestart(slot: Slot): void {
@@ -102,14 +120,25 @@ export function createOcrPool(options: OcrPoolOptions): OcrPool {
     const capDelay = slot.restartTimes.length >= MAX_RESTARTS ? slot.restartTimes[0] + RESTART_WINDOW_MS - now : 0;
     const delay = Math.max(slot.backoffMs, Math.ceil(capDelay));
     slot.backoffMs = Math.min(MAX_BACKOFF_MS, slot.backoffMs * 2);
+    if (slot.startupFailures >= MAX_RESTARTS) {
+      // Keep the cooldown for demand retries without arming a timer.
+      slot.retryAfter = now + delay;
+      return;
+    }
     slot.restartTimer = setTimeout(() => {
       slot.restartTimer = undefined;
-      if (closed) return;
-      slot.restartTimes.push(performance.now());
-      counters.restarts++;
-      spawn(slot);
+      if (!closed) restart(slot);
     }, delay);
     slot.restartTimer.unref();
+  }
+
+  function retryExhaustedSlot(): void {
+    // An active worker may already be starting. Let concurrent requests wait
+    // for that attempt before considering another exhausted slot.
+    if (closed || slots.some(slot => slot.active || slot.stopping)) return;
+    const now = performance.now();
+    const slot = slots.find(slot => slot.startupFailures >= MAX_RESTARTS && now >= slot.retryAfter);
+    if (slot) restart(slot);
   }
 
   function retire(slot: Slot, active: ActiveWorker, reason: string, jobError = 'OCR_WORKER_EXITED'): void {
@@ -120,7 +149,10 @@ export function createOcrPool(options: OcrPoolOptions): OcrPool {
       slot.backoffMs = INITIAL_BACKOFF_MS;
     }
     active.settleStartup();
-    if (!closed) recordFailure(reason);
+    if (!closed) {
+      if (active.readyAt === null) slot.startupFailures++;
+      recordFailure(reason);
+    }
     const error = new OcrPoolUnavailable(closed ? 'OCR_POOL_CLOSED' : jobError);
     for (const pending of active.pending.values()) pending.reject(error);
     slot.stopping = active.worker.terminate().then(() => {
@@ -138,6 +170,7 @@ export function createOcrPool(options: OcrPoolOptions): OcrPool {
         workerData: { loaderUrl, tsxUrl, manifest, weights },
       });
     } catch (error) {
+      slot.startupFailures++;
       recordFailure(error);
       scheduleRestart(slot);
       return;
@@ -157,6 +190,7 @@ export function createOcrPool(options: OcrPoolOptions): OcrPool {
       if (slot.active !== active || packet?.v !== 1) return;
       if (packet.type === 'ready') {
         active.readyAt ??= performance.now();
+        slot.startupFailures = 0;
         active.settleStartup();
         return;
       }
@@ -267,6 +301,7 @@ export function createOcrPool(options: OcrPoolOptions): OcrPool {
     counters.requests++;
     counters.crops += crops.length;
     if (!crops.length) return [];
+    retryExhaustedSlot();
     await waitForReady(signal);
     signal?.throwIfAborted();
     if (closed) throw new OcrPoolUnavailable('OCR_POOL_CLOSED');
@@ -310,6 +345,7 @@ export function createOcrPool(options: OcrPoolOptions): OcrPool {
     recognize,
     async readImage(bytes, signal) {
       signal?.throwIfAborted();
+      retryExhaustedSlot();
       await waitForReady(signal);
       signal?.throwIfAborted();
       if (closed) throw new OcrPoolUnavailable('OCR_POOL_CLOSED');
@@ -326,7 +362,9 @@ export function createOcrPool(options: OcrPoolOptions): OcrPool {
         controller.abort();
       }
     },
-    stats() { return { ...counters }; },
+    stats() {
+      return { ...counters, exhaustedSlots: slots.filter(slot => slot.startupFailures >= MAX_RESTARTS).length };
+    },
     async close() {
       closed = true;
       for (const slot of slots) {
