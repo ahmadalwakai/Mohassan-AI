@@ -131,7 +131,7 @@ export function observeChatCapture(state: TaskSupervisorState, input: {
 export function observeChatLocalAnswer(state: TaskSupervisorState, input: {
   source: 'memory-read' | 'computation' | 'knowledge-verifier'; text: string; claims: readonly Claim[]; evidence: readonly Evidence[];
   status: 'completed' | 'partial' | 'blocked' | 'waiting_user'; startedAt: number; now?: number; contextTopic?: string;
-}): void {
+}, verifiedComputationPresentation?: string): void {
   const criterion = state.contract.criteria.find(item => item.kind === 'answer_evidence');
   if (!criterion) return;
   const now = input.now ?? Date.now();
@@ -159,13 +159,15 @@ export function observeChatLocalAnswer(state: TaskSupervisorState, input: {
     && input.claims.length > 0 && input.claims.every(claim =>
       (claim.status === 'confirmed' || claim.status === 'single_source')
       && claim.support.length > 0 && claim.support.every(id => input.evidence.some(item => item.id === id)));
+  // The computation adapter may bind a presentation of the verified claims without replacing the original evidence.
+  const answerText = supported && input.source === 'computation' ? verifiedComputationPresentation ?? input.text : input.text;
   observeTaskStep(state, {
     stepId: `${state.contract.id}:${state.lastSequence + 1}`, sequence: state.lastSequence + 1,
     tool: input.source === 'computation' ? 'calculate' : input.source === 'memory-read' ? 'memory_search' : 'knowledge_search',
     startedAt: Math.max(state.startedAt, input.startedAt), finishedAt: now, result: supported ? 'succeeded' : 'unknown',
     resultHash: taskEvidenceHash(JSON.stringify(input.evidence)), observations: [{
       criterionId: criterion.id, kind: 'answer_evidence', source: input.source, target: criterion.target,
-      reference: `${state.contract.id}:local-answer`, observedAt: now, answerHash: taskEvidenceHash(input.text),
+      reference: `${state.contract.id}:local-answer`, observedAt: now, answerHash: taskEvidenceHash(answerText),
       independentlyVerified: supported, outcome: supported ? 'confirmed' : 'unknown',
     }],
   });
