@@ -2,6 +2,7 @@ import { Button, Spinner } from "@chakra-ui/react";
 import type { AccountSessions, CancelMemberDeletionResult, EndAccountSessionsResult, MemberDeletion, MemberDeletionStatus } from "@mohassan/contracts";
 import { ChevronDown, Download, ShieldCheck } from "lucide-react";
 import { useEffect, useId, useMemo, useReducer, useRef, useState, type ComponentType, type FormEvent } from "react";
+import { AccountPasswordForm, accountFailure } from "./account-password-form";
 import type { Access } from "./members";
 import styles from "./member-data-rights.module.css";
 
@@ -25,10 +26,6 @@ export async function accountRequest<T>(path: string, options?: RequestInit): Pr
   return (await accountResponse(path, options)).json();
 }
 
-function failure(error: unknown) {
-  return error instanceof Error && error.name !== "TypeError" ? error.message : genericError;
-}
-
 export function useAccountResource<T>(path: string, refresh?: unknown) {
   const [revision, reload] = useReducer((value: number) => value + 1, 0);
   const request = useMemo(() => ({ path }), [path, revision, refresh]);
@@ -37,7 +34,7 @@ export function useAccountResource<T>(path: string, refresh?: unknown) {
     const controller = new AbortController();
     accountRequest<T>(request.path, { signal: controller.signal }).then(
       value => { if (!controller.signal.aborted) setOutcome({ request, value }); },
-      error => { if (!controller.signal.aborted) setOutcome({ request, error: failure(error) }); },
+      error => { if (!controller.signal.aborted) setOutcome({ request, error: accountFailure(error) }); },
     );
     return () => controller.abort();
   }, [request]);
@@ -82,7 +79,7 @@ export function ConfirmAccountAction({ title, instruction, label, needsPassword,
       await run(password);
       dialog.current?.close();
     } catch (caught) {
-      setError(failure(caught));
+      setError(accountFailure(caught));
     } finally {
       setBusy(false);
     }
@@ -133,7 +130,7 @@ function ExportSection({ offline, onExported }: { offline: boolean; onExported?:
       setDownloaded(true);
       onExported?.();
     } catch (caught) {
-      if (!controller.signal.aborted) setError(failure(caught));
+      if (!controller.signal.aborted) setError(accountFailure(caught));
     } finally {
       activeExport.current = null;
       if (!controller.signal.aborted) setBusy(false);
@@ -149,8 +146,22 @@ function ExportSection({ offline, onExported }: { offline: boolean; onExported?:
   </section>;
 }
 
-function SessionsSection({ offline }: { offline: boolean }) {
-  const { value, error, reload } = useAccountResource<AccountSessions>(sessionsPath);
+function PasswordChangeSection({ offline, onChanged }: { offline?: boolean; onChanged?: () => void }) {
+  return <section className={styles.right}>
+    <h3>تغيير كلمة المرور</h3>
+    <p>عند تغيير كلمة المرور، ينتهي تسجيل الدخول على الأجهزة الأخرى.</p>
+    <AccountPasswordForm requireCurrent disabled={offline} submitLabel="حفظ كلمة المرور"
+      successMessage="تغيّرت كلمة المرور وأُنهيت الجلسات الأخرى." onSave={async passwords => {
+        await accountRequest("/api/member-data/password", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(passwords),
+        });
+        onChanged?.();
+      }} />
+  </section>;
+}
+
+function SessionsSection({ offline, passwordRevision }: { offline: boolean; passwordRevision: number }) {
+  const { value, error, reload } = useAccountResource<AccountSessions>(sessionsPath, passwordRevision);
   const [confirm, setConfirm] = useState(false);
   const [ended, setEnded] = useState(false);
   const hasOthers = value?.sessions.some(session => !session.current);
@@ -197,14 +208,16 @@ function RequestDeletion({ offline, onScheduled }: { offline: boolean; onSchedul
   </section>;
 }
 
-export function MemberAccountData({ offline = false, initiallyOpen = false, onDeletionScheduled, onExported }: {
+export function MemberAccountData({ offline = false, initiallyOpen = false, onDeletionScheduled, onExported, onPasswordChanged }: {
   offline?: boolean;
   initiallyOpen?: boolean;
   onDeletionScheduled?: DeletionAction;
   onExported?: () => void;
+  onPasswordChanged?: () => void;
 }) {
   const [open, setOpen] = useState(initiallyOpen);
   const [opened, setOpened] = useState(initiallyOpen);
+  const [passwordRevision, refreshSessions] = useReducer((value: number) => value + 1, 0);
   return <details open={open} className={`panel ${styles.details}`} onToggle={event => {
     setOpen(event.currentTarget.open);
     if (event.currentTarget.open) setOpened(true);
@@ -212,7 +225,8 @@ export function MemberAccountData({ offline = false, initiallyOpen = false, onDe
     <summary className={styles.summary}><h2><ShieldCheck size={19} aria-hidden="true" />بياناتي</h2><ChevronDown size={18} aria-hidden="true" /></summary>
     {opened ? <div className={styles.contents}>
       <ExportSection offline={offline} onExported={onExported} />
-      <SessionsSection offline={offline} />
+      <SessionsSection offline={offline} passwordRevision={passwordRevision} />
+      <PasswordChangeSection offline={offline} onChanged={() => { refreshSessions(); onPasswordChanged?.(); }} />
       {onDeletionScheduled ? <RequestDeletion offline={offline} onScheduled={onDeletionScheduled} /> : null}
     </div> : null}
   </details>;
@@ -250,7 +264,7 @@ function PendingMemberDeletion({ deletion, signedIn }: { deletion: MemberDeletio
       });
       returnToApp();
     } catch (caught) {
-      setError(failure(caught));
+      setError(accountFailure(caught));
       setSigningOut(false);
     }
   }
@@ -267,6 +281,7 @@ function PendingMemberDeletion({ deletion, signedIn }: { deletion: MemberDeletio
         : <Button className="primary-button" onClick={returnToApp}>تسجيل الدخول</Button>}
     </div>
     {error ? <p className="inline-error" role="alert">{error}</p> : null}
+    {signedIn && remaining ? <PasswordChangeSection /> : null}
     {confirm ? <ConfirmAccountAction title="إلغاء طلب حذف الحساب" instruction="سيبقى حسابك وبياناتك متاحين عند إلغاء الطلب."
       label="تأكيد الإلغاء" close={() => setConfirm(false)} run={async () => {
         await accountRequest<CancelMemberDeletionResult>(deletionPath, { method: "DELETE" });

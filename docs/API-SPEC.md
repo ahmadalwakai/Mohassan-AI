@@ -19,6 +19,10 @@
 | GET `/api/auth/get-session` | cookie اختيارية | 200 `{session,user}` أو `null` | معلومات الجلسة دون رمز الاعتماد، ويعاد عنوان IP كبادئة شبكة |
 | POST `/api/auth/sign-out` | cookie وOrigin وجسم `{}` | 200 `{success:true}`، وإبطال الجلسة وإزالة cookie | إعادة استعمال cookie القديمة لا تعيد جلسة |
 | `/api/auth/*` الأخرى | تشمل sign-up وreset/update غير المسموح بها | لا نجاح متاح | 403 `AUTH_ACTION_DISABLED` |
+| POST `/api/member-data/password` | جلسة وOrigin؛ `{currentPassword,newPassword}`؛ 3 محاولات كل 10 ثوان | 200 `{ok:true}`، تدوير cookie الحالية وإنهاء الجلسات الأخرى | 400 مدخلات غير صالحة، 401 جلسة، 403 `PASSWORD_CONFIRMATION_FAILED`، 429 حد المعدل |
+| POST `/api/members/:id/password-reset` | جلسة مالك وOrigin؛ `{}`؛ 10/دقيقة | 200 `{resetLink,expiresAt}`؛ مسار نسبي يتضمن `#reset=`، صالح لمدة ساعة ويستبدل الرابط السابق | 404 عضو غير موجود أو حساب مالك، 409 `MEMBER_DELETION_PENDING` |
+| POST `/api/members/password-reset/inspect` | Origin و`{token}`؛ 10/دقيقة | 200 `{ok:true}` لرابط صالح | 404 `PASSWORD_RESET_INVALID` لرابط مستعمل أو منتهي أو غير صالح |
+| POST `/api/members/password-reset/accept` | Origin و`{token,newPassword}`؛ 5/دقيقة | 200 `{ok:true}`، استخدام الرابط مرة واحدة وإنهاء جميع جلسات الحساب | 400 مدخلات غير صالحة، 404 `PASSWORD_RESET_INVALID` |
 | GET `/api/workspace` | جلسة مالك | 200 `WorkspaceSnapshot` أدناه | 401 `UNAUTHORIZED`؛ خطأ SQL لا يكشف تفاصيله |
 | GET `/api/coding/projects` | جلسة مالك | 200 `{projects:Project[],sandbox:SandboxStatus}` | 401 جلسة؛ لا تعرض مشروعات مالك آخر |
 | POST `/api/coding/projects` | جلسة وOrigin؛ `{name,path,allowedPaths}` | 200 `Project`؛ يتكرر التسجيل نفسه دون إنشاء نطاق جديد | 400 schema/جذر/ملفات/نطاق غير مسموح؛ 409 تعارض؛ خطأ إعداد الخدمة منقح |
@@ -40,6 +44,8 @@
 `Setup`: name مقصوص 2–80، email صحيح، password بطول 12–128، setupToken بطول 32–256؛ الحقول الإضافية مرفوضة. الرمز مولد محليًا وموجود في ملف إعداد محلي مستبعد من Git، ولا يرجعه HTTP. إنشاء المالك محمي بقيد singleton؛ بداية خدمة التخزين المحلي الحصرية تستعيد حجزًا يتيمًا عند عدم وجود مستخدم. لا يسمح ذلك بتسجيل عام.
 
 الجلسة cookie تديرها Better Auth: HttpOnly، وتكون Secure في الإنتاج، وcookieCache معطل، والعمر 7 أيام مع تحديث دوري. اسم cookie وتفاصيل session يتبعان إصدار المكتبة المثبت. تعتمد الواجهة على cookie، وتبقى بيانات اعتماد الجلسة في ترويسات المصادقة.
+
+طول كلمة المرور الجديدة 12–128 حرفًا. يعرض التطبيق رابط إعادة التعيين للمالك عند إصداره لتسليمه إلى العضو. يُحفظ تجزئة رمز الرابط فقط. بعد استخدامه يسجّل العضو الدخول بكلمة المرور الجديدة. يُسجّل تدقيق الأعضاء تغييرات كلمات المرور وإصدار روابط إعادة التعيين واستخدامها وإنهاء المالك لجلسات عضو، مع معرّفات الحسابات ونوع الإجراء وتوقيته. تفشل عملية قبول الدعوة كوحدة واحدة إذا تعذّر إنشاء الحساب أو العضوية، ويمكن للعضو إعادة المحاولة ما دامت الدعوة صالحة.
 
 `CreateTask = {title:string[3..120],goal:string[5..4000],capabilityId:'system.diagnostic'|'plan.draft'|'coding.change',autonomy?:'assisted'|'scoped'|'shadow',projectId?:UUID}`. projectId إلزامي للبرمجة ومرفوض لبقية القدرات؛ الملكية تفحص قبل الحفظ، والمشروع غير المملوك يعيد 404. title/goal يقصان، default autonomy هو assisted، والحقول الإضافية مرفوضة. مفتاح idempotency بطول 8–128 ومحارف `[a-zA-Z0-9_-]`؛ التفرد ضمن المالك، والمقارنة على المدخلات المطَبّعة بما فيها projectId. إعادة المفتاح والمدخلات نفسها تعيد المهمة نفسها بحالتها الحالية؛ اختلافها 409 دون إعادة جدولة.
 

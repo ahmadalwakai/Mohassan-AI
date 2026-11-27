@@ -12,6 +12,7 @@ import { roleOf, type WorkspaceRole } from './members.js';
 
 const PENDING_ROUTES = new Set([
   'GET /api/access', 'GET /api/member-data/deletion', 'DELETE /api/member-data/deletion',
+  'POST /api/member-data/password',
 ]);
 const PURGE_BATCH_SIZE = 250;
 const PURGE_INTERVAL_MS = 60_000;
@@ -81,7 +82,7 @@ export async function assertDeletionCanSignIn(db: Kysely<any>, userId: string) {
 }
 
 /** Use the identity row to serialize requests, cancellation, and each purge transaction. */
-async function lockMember(db: Kysely<any>, userId: string) {
+export async function lockMember(db: Kysely<any>, userId: string) {
   const user = await db.selectFrom('user').select('id').where('id', '=', userId).forUpdate().executeTakeFirst();
   if (!user) return null;
   const owner = await db.selectFrom('workspace_owner').select('id').where('owner_id', '=', userId).executeTakeFirst();

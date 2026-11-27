@@ -1,6 +1,11 @@
 import { z } from 'zod';
+import { NewMemberPasswordSchema } from './member-account-recovery';
 
 export const MemberAccountIdSchema = z.string().min(1).max(64);
+export const ChangeMemberPasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(128),
+  newPassword: NewMemberPasswordSchema,
+}).strict();
 export const RequestMemberDeletionSchema = z.object({ password: z.string().min(1).max(128) }).strict();
 export const MemberDeletionSchema = z.object({
   requestedAt: z.iso.datetime(),
@@ -25,6 +30,7 @@ export const EndAccountSessionsResultSchema = z.object({ ended: z.number().int()
 export const MemberAuditActionSchema = z.enum([
   'invite_created', 'invite_used', 'invite_revoked', 'member_suspended', 'member_unsuspended',
   'deletion_requested', 'deletion_cancelled', 'deletion_purged', 'export_downloaded',
+  'password_changed', 'password_reset_issued', 'password_reset_used', 'member_sessions_ended',
 ]);
 // Cursor IDs are PostgreSQL bigint values. https://www.postgresql.org/docs/current/datatype-numeric.html (retrieved 2026-11-25).
 const MemberAuditIdSchema = z.string().regex(/^[1-9]\d{0,18}$/).refine(value => {

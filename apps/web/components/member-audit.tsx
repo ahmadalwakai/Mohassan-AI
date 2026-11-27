@@ -17,9 +17,13 @@ const actionNames: Record<AuditEntry["action"], string> = {
   deletion_cancelled: "إلغاء طلب حذف",
   deletion_purged: "حذف حساب نهائيًا",
   export_downloaded: "تنزيل نسخة البيانات",
+  password_changed: "تغيير كلمة المرور",
+  password_reset_issued: "إصدار رابط إعادة تعيين كلمة المرور",
+  password_reset_used: "استخدام رابط إعادة تعيين كلمة المرور",
+  member_sessions_ended: "إنهاء جلسات عضو",
 };
 
-function MemberSessionActions({ member, offline }: { member: MemberReference; offline: boolean }) {
+function MemberSessionActions({ member, offline, onEnded }: { member: MemberReference; offline: boolean; onEnded: () => void }) {
   const [confirm, setConfirm] = useState(false);
   const [notice, setNotice] = useState("");
   return <div className={styles.memberActions}>
@@ -30,11 +34,12 @@ function MemberSessionActions({ member, offline }: { member: MemberReference; of
         const path = `/api/members/${encodeURIComponent(member.id)}/sessions`;
         const result = await accountRequest<EndAccountSessionsResult>(path, { method: "DELETE" });
         setNotice(result.ended ? "أُنهيت جلسات العضو." : "لا توجد جلسات نشطة لهذا العضو.");
+        onEnded();
       }} /> : null}
   </div>;
 }
 
-function MemberSessionsPanel({ members, offline }: { members: readonly MemberReference[]; offline: boolean }) {
+function MemberSessionsPanel({ members, offline, onEnded }: { members: readonly MemberReference[]; offline: boolean; onEnded: () => void }) {
   const [open, setOpen] = useState(false);
   return <details className={`panel ${styles.details}`} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary className={styles.summary}><h2>جلسات الأعضاء</h2><ChevronDown size={18} aria-hidden="true" /></summary>
@@ -42,7 +47,7 @@ function MemberSessionsPanel({ members, offline }: { members: readonly MemberRef
       {members.length ? <ul className={styles.list}>
         {members.map(member => <li key={member.id}>
           <div className={styles.record}><strong>{member.name}</strong><bdi dir="ltr">{member.email}</bdi></div>
-          <MemberSessionActions member={member} offline={offline} />
+          <MemberSessionActions member={member} offline={offline} onEnded={onEnded} />
         </li>)}
       </ul> : <p>لا يوجد أعضاء لإدارة جلساتهم.</p>}
     </div> : null}
@@ -128,9 +133,9 @@ export function OwnerMemberHistory({ members, offline }: { members?: readonly Me
   const [revision, setRevision] = useState(0);
   const refreshAudit = () => setRevision(current => current + 1);
   return <>
-    <MemberAccountData offline={offline} onExported={refreshAudit} />
+    <MemberAccountData offline={offline} onExported={refreshAudit} onPasswordChanged={refreshAudit} />
     {members ? <>
-      <MemberSessionsPanel members={members} offline={offline} />
+      <MemberSessionsPanel members={members} offline={offline} onEnded={refreshAudit} />
       <PendingRequests offline={offline} onCancel={refreshAudit} />
       <AuditLog members={members} revision={revision} offline={offline} />
     </> : null}

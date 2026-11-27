@@ -188,6 +188,7 @@ export const memberDataRegistry: readonly AccountDataTable[] = [
   accountData('verification', `data.value = $1 OR lower(data.identifier) = ${ownEmail}`, false),
   accountData('account', 'data."userId" = $1', 'id providerId userId createdAt updatedAt'),
   accountData('session', 'data."userId" = $1', 'id userId userAgent createdAt updatedAt expiresAt'),
+  accountData('workspace_member_password_resets', 'data.user_id = $1', false),
   accountData('workspace_invites', `data.created_by = $1 OR data.consumed_by = $1 OR lower(data.email) = ${ownEmail}`,
     'id created_at expires_at claimed_at revoked_at'),
   accountData('ai_provider_settings', 'data.updated_by = $1', 'id enabled models automatic_fallback free_only updated_at',

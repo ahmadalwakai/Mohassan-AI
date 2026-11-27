@@ -13,6 +13,7 @@ export * from './monitors';
 export * from './monitor-feedback';
 export * from './monitor-management';
 export * from './member-data-rights';
+export * from './member-account-recovery';
 import { SkillRunInputSchema, SkillNodeBindingSchema, isBoundedSkillJson } from './skills';
 export * from './command-chat';
 export * from './models';

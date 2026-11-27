@@ -159,6 +159,9 @@ describe('member data rights over the authenticated application', () => {
     expect((await app().inject({ url: '/api/access', headers: headers(bob) })).statusCode).toBe(401);
     expect((await app().inject({ method: 'DELETE', url: `/api/members/${ownerId}/sessions`, headers: headers(owner) })).statusCode).toBe(404);
     expect(await readAccountId(owner)).toBe(ownerId);
+    expect((await readAudit()).filter(entry => entry.action === 'member_sessions_ended')).toEqual([
+      expect.objectContaining({ actorId: ownerId, targetId: bobId }),
+    ]);
     bob = (await logIn('bob')).cookie;
   });
 

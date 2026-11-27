@@ -1,8 +1,13 @@
 import { sql, type Kysely } from 'kysely';
-import { MemberAuditActionSchema } from '@mohassan/contracts';
 import { installMemberAdministrationAudit } from './member-audit.js';
 
 const version = '040_member_data_rights';
+// Preserve the original CHECK for databases migrating through 040.
+// https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/packages/contracts/src/member-data-rights.ts (retrieved 2026-11-27).
+const originalAuditActions = [
+  'invite_created', 'invite_used', 'invite_revoked', 'member_suspended', 'member_unsuspended',
+  'deletion_requested', 'deletion_cancelled', 'deletion_purged', 'export_downloaded',
+];
 
 /** Server migration: auth and workspace membership must already be installed. */
 export async function migrateMemberDataRights(db: Kysely<any>) {
@@ -28,7 +33,7 @@ export async function migrateMemberDataRights(db: Kysely<any>) {
       id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
       actor_id text,
       target_id text NOT NULL,
-      action text NOT NULL CHECK (action IN (${sql.join(MemberAuditActionSchema.options.map(action => sql.lit(action)))})),
+      action text NOT NULL CHECK (action IN (${sql.join(originalAuditActions.map(action => sql.lit(action)))})),
       occurred_at timestamptz NOT NULL DEFAULT now()
     )`.execute(tx);
     await sql`CREATE FUNCTION reject_workspace_member_audit_mutation() RETURNS trigger

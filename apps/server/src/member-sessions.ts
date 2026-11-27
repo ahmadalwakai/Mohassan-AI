@@ -2,6 +2,7 @@ import { isIP } from 'node:net';
 import type { FastifyRequest } from 'fastify';
 import { sql, type Kysely } from 'kysely';
 import type { AccountSession } from '@mohassan/contracts';
+import { recordMemberAudit } from './member-audit.js';
 import { verifiedProxyClientIp } from './proxy-client-ip.js';
 
 // Device and product tokens follow the vendor UA examples (retrieved 2026-11-25).
@@ -97,7 +98,7 @@ export async function endOtherAccountSessions(db: Kysely<any>, userId: string, c
   });
 }
 
-export async function endMemberSessions(db: Kysely<any>, userId: string): Promise<{ ended: number }> {
+export async function endMemberSessions(db: Kysely<any>, actorId: string, userId: string): Promise<{ ended: number }> {
   return db.transaction().execute(async tx => {
     await tx.selectFrom('user').select('id').where('id', '=', userId).forUpdate().executeTakeFirst();
     const member = await tx.selectFrom('workspace_members').select('user_id')
@@ -107,6 +108,7 @@ export async function endMemberSessions(db: Kysely<any>, userId: string): Promis
     if (!member) throw Object.assign(new Error('العضو غير موجود.'), { statusCode: 404, code: 'MEMBER_NOT_FOUND' });
     const result = await tx.deleteFrom('session').where('userId', '=', userId)
       .where('expiresAt', '>', sql`clock_timestamp()`).executeTakeFirstOrThrow();
+    await recordMemberAudit(tx, { actorId, targetId: userId, action: 'member_sessions_ended' });
     return { ended: Number(result.numDeletedRows) };
   });
 }
