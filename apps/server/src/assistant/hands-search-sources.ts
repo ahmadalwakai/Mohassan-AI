@@ -57,5 +57,5 @@ export async function searchCouncilSources(search: SearchProvider, question: str
   const engine = search as Partial<Pick<SearchEngine, 'execute'>>;
   const outcome = await engine.execute?.call(search, question, 8, signal, { ownerId, plan });
   const hits = outcome?.hits ?? await search.search(question, 8, signal, { ownerId, plan });
-  return { hits: hits.filter(hit => allows(hit.url)), allows, note: outcome?.selection && unavailableSearchSources(plan, outcome.selection) };
+  return { hits: hits.filter(hit => allows(hit.url)), allows, plan, note: outcome?.selection && unavailableSearchSources(plan, outcome.selection) };
 }

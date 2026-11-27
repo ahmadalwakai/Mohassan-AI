@@ -11,6 +11,8 @@ import shutil
 import subprocess
 from tempfile import TemporaryDirectory
 
+from answer_mode_bench import instrument_observer as instrument_resources_observer
+from answer_mode_bench import instrument_scoring as instrument_resources_scoring
 from council_bench import instrument_observer as instrument_council_observer, instrument_scoring as instrument_council_scoring
 from monitor_audit import SOURCE_FLAGS, instrument_observer, instrument_product, instrument_scoring
 
@@ -52,6 +54,7 @@ OVERRIDES = {
     "TEST_DRIVEN_CODING_ENABLED": {"true", "false"},
     "MOHASSAN_MODEL_RELATIONS": {"off", "shadow"},
     "MOHASSAN_MODEL_COUNCIL": {"off", "owner"},
+    "MOHASSAN_ANSWER_MODE": {"off", "council-web"},
     "MOHASSAN_MONITORS_ENABLED": {"0", "owner", "1"},
     **{name: {"0", "1"} for name in (
         *(BASE_FLAGS.keys() - {"MOHASSAN_PLAN_COMPILER", "MOHASSAN_CONVERSATION_SHADOW",
@@ -319,6 +322,9 @@ def run_arm(
                     for file in instrument_product(checkout):
                         inputs[f"{version}/effective/{file.relative_to(checkout)}"] = digest(file)
                     inputs[f"{version}/effective/monitor-audit.mjs"] = digest(mounted[-1])
+                if "MOHASSAN_ANSWER_MODE" in settings:
+                    instrument_resources_observer(observe, apply_once)
+                    instrument_resources_scoring(runner, apply_once)
                 inputs[f"{version}/effective/observe.ts"] = digest(observe)
                 inputs[f"{version}/effective/run.ts"] = digest(runner)
                 if any((checkout / path).exists() for path in HOLDOUTS):

@@ -33,6 +33,8 @@ export interface CouncilTurn {
   advisory?: boolean;
   /** This turn's public web search (the chat's engine, page reader and public-query guard); overrides `options.search`. */
   search?: (question: string, signal: AbortSignal) => Promise<CouncilSearchResult>;
+  /** Council-web has already read the planned sources and shares its remaining monotonic deadline. */
+  webDeliberation?: { deadline: number; pipelineCitation?: { url: string; quote: string } };
   signal: AbortSignal;
 }
 
@@ -42,6 +44,7 @@ export interface CouncilOutcome {
   chosen: string;
   changed: boolean;
   council: ModelCouncil;
+  timeLimited?: true;
 }
 
 export interface CouncilSearchResult {

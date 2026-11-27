@@ -42,6 +42,7 @@ import { judge as judgeAnswer } from './assistant/judge.js';
 import { observeImageRelations, observeModelRelations, ruleBaseline } from './assistant/model-relations-shadow.js';
 import { rankHits, type CouncilOutcome, type CouncilSearchResult, type ModelCouncilService } from './assistant/model-council.js';
 import { deliberateAdvisory, fenceAdvisoryRecord } from './assistant/council-advisory.js';
+import { answerCouncilWebChat, councilWebAccessEnded, councilWebEnabled, type CouncilWebChatAnswer } from './assistant/council-web-chat.js';
 import { withArbiterExecution } from './assistant/model-relations-arbiter.js';
 import { ensureChatConversationsTable, reviewJudgedReply } from './assistant/review/publication.js';
 import { backgroundRunView } from './assistant/long-run/view.js';
@@ -493,6 +494,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     || config.inference?.active() === true;
   const vault = new CredentialVault();
   const search = config.searchProvider ?? new SearchEngine(new SafeNetwork(config.networkPolicy));
+  const councilWeb = councilWebEnabled() ? config.modelCouncil : undefined;
   const controllers = new Map<string, {runId:string;token:string;controller:AbortController}>();
   const workers = new Map<string, Promise<void>>();
   const vaultOwners = new Map<string,string>();
@@ -1504,9 +1506,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   /** `prejudged`: the text is a message of several answers, each already judged on its own question (web-sequence.ts). */
   async function finish(id: string, runId: string, state: BrainState, text: string, status: 'completed' | 'partial' | 'blocked',
       proof?: ChatExperienceProof, memoryPublication?: 'saved_note' | 'saved_result' | 'memory_recall', prejudged = false, preparedMonitor?: PreparedMonitorTurn,
-      noModelFallback = false) {
+      noModelFallback = false, councilWebAnswer?: CouncilWebChatAnswer) {
     const source = execution.getStore();
-    const blockedMonitor = monitor && !preparedMonitor && status !== 'completed' && source?.request && !memoryPublication ? await monitor.forBlockedTurn({ ownerId: source.ownerId, conversationId: id, runId, text: source.request, signal: source.controller.signal, trail: state.trail, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }) : null;
+    const blockedMonitor = !councilWebAnswer && monitor && !preparedMonitor && status !== 'completed' && source?.request && !memoryPublication ? await monitor.forBlockedTurn({ ownerId: source.ownerId, conversationId: id, runId, text: source.request, signal: source.controller.signal, trail: state.trail, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }) : null;
     const noAction = !state.actionCompletion?.contract.requirements.length && !state.actionCompletion?.events.length && !state.actionCompletion?.fault;
     const v5MayAnswer = noModelFallback && status === 'blocked' && !blockedMonitor && !state.steps && noAction;
     // The owner's model council answers the owner's answer turns: no step but reading ones (a search, page reads, a memory or
@@ -1514,7 +1516,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     // It replaces the separate v5 last resort below.
     const answerTurn = noAction && state.trail.every(entry => COUNCIL_ANSWER_STEP.test(entry.action));
     const councilAdvisory = state.trail.some(entry => entry.action === 'ads_model') || state.codingVerification?.reason === 'passed';
-    const councilTurn = Boolean(config.modelCouncil && source?.full && source.request && (councilAdvisory || (answerTurn && !prejudged)) && !proof && !memoryPublication
+    const councilTurn = Boolean(config.modelCouncil && source?.full && source.request && (councilAdvisory || (!councilWeb && answerTurn && !prejudged)) && !proof && !memoryPublication
       && !preparedMonitor && !blockedMonitor && !state.campaign && state.supervision?.contract.mode !== 'enforced');
     const v5Reply = !councilTurn && v5MayAnswer ? await generateUnansweredV5(id, runId, source) : undefined;
     if (!v5Reply && !prejudged && !proof && !memoryPublication && state.supervision?.contract.mode !== 'enforced') text = shapeCompletedChatReply(text, execution.getStore()?.request, status);
@@ -1560,9 +1562,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const current = await tx.selectFrom('chat_conversations').select(['status', 'active_run_id']).where('id', '=', id).forUpdate().executeTakeFirstOrThrow();
       if (current.active_run_id !== runId || current.status !== 'running') throw new RunEnded();
       // Owner-only at the fenced publication boundary: v5's text and the council's record are kept for an owner account only.
-      const owner = Boolean((modelReply || council) && source && await config.accountFullAccess?.(source.ownerId, tx));
+      const owner = Boolean((modelReply || council || councilWebAnswer) && source && await config.accountFullAccess?.(source.ownerId, tx));
       const experiment = modelReply && owner ? 'v5' as const : undefined;
-      const councilRecord = council && owner ? council.council : undefined;
+      const councilRecord = owner ? councilWebAnswer?.council ?? council?.council : undefined;
       if (campaignEnd && campaignTask) await appendCampaignEvent(tx, { conversationId: id, runId, taskId: campaignTask }, campaignEnd);
       // The earlier checkpoint may have waited for a database connection. Review
       // required evidence again at the fenced publication boundary, and persist
@@ -1572,6 +1574,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const discardCouncil = council?.changed && !owner;
       let finalText = discardCouncil ? pipelineBeforeCouncil.text : text,
         finalStatus = experiment ? 'completed' as const : discardCouncil ? pipelineBeforeCouncil.status : status;
+      if (councilWebAnswer && !owner) { finalText = councilWebAccessEnded(source?.request ?? ''); finalStatus = 'blocked'; }
       const monitorOffer = preparedMonitor ?? blockedMonitor;
       const monitorError = monitor && source && monitorOffer ? await monitor.publish(tx, source.ownerId, id, monitorOffer) : null;
       if (preparedMonitor && monitorError) { finalText = monitorError; finalStatus = 'partial'; }
@@ -1613,7 +1616,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           criterionLabels: Object.fromEntries((state.supervision?.contract.criteria ?? []).map(item => [item.id, criterionLabel(ledger, item.id, item.description)])) }).status;
       });
       if (blockedMonitor && !monitorError) finalText += `\n\n${blockedMonitor.text}`;
-      if (!experiment && !council?.changed && monitor?.v2 && !preparedMonitor && finalStatus === 'completed' && !judged.withheld && !memoryPublication && !state.questionAnswer && source?.request) finalText += await monitor.publishAnswerOffer(tx, { ownerId: source.ownerId, conversationId: id, runId, text: source.request, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }, finalText);
+      if (!councilWebAnswer && !experiment && !council?.changed && monitor?.v2 && !preparedMonitor && finalStatus === 'completed' && !judged.withheld && !memoryPublication && !state.questionAnswer && source?.request) finalText += await monitor.publishAnswerOffer(tx, { ownerId: source.ownerId, conversationId: id, runId, text: source.request, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }, finalText);
       await addMessage(tx, id, 'assistant', experiment ? `${modelReply}${V5_CHAT_FOOTER}` : finalText, experiment, councilRecord);
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',
@@ -2140,6 +2143,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
 
   async function work(ownerId: string, id: string, runId: string, controller: AbortController) {
     const { signal } = controller;
+    const answerModeStartedAt = councilWeb ? performance.now() : 0;
     const deadlineAt = Date.now() + RUN_LIMIT_MS;
     const deadline = setTimeout(() => controller.abort(new Error('RUN_TIME_LIMIT')), RUN_LIMIT_MS);
     deadline.unref();
@@ -2246,6 +2250,11 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await pause(id, runId, state, 'waiting_user', { question: JSON.stringify({ id: randomUUID(), prompt, options: [] } satisfies ChatQuestion) }, prompt);
         return;
       }
+      const councilAnswer = councilWeb && currentExecution.full && run.intent === 'task' && !state.steps && !state.dropHeld && !state.trail.some(step => step.action !== 'asked the user')
+        ? await answerCouncilWebChat({ request, state, ownerId, signal, db, conversationId: id, recentLimit: HISTORY_MESSAGES + 1, scrub: text => vault.scrub(id, clean(text)),
+          workerStartedAt: answerModeStartedAt, firstAttempt: run.attempt === 1, evaluatedAt: effectiveSource.evaluatedAt, council: councilWeb, search, readPage: config.readPage,
+          authorizeSearch: query => assertPublicSearch(request, query, state), progress: label => setProgress(id, label), history: async () => config.v5Chat ? await v5Turns(id, runId, currentExecution) ?? [] : [] }) : undefined;
+      if (councilAnswer) return finish(id, runId, state, councilAnswer.text, councilAnswer.status, undefined, undefined, true, undefined, false, councilAnswer);
       if (run.intent === 'task' && run.attempt === 1 && !verificationIntent && !noteVerificationIntent && await runCompiledChatPlan({ request, config, search, state, ownerId, conversationId: id, runId, fullAccess: currentExecution.full, now: new Date(effectiveSource.evaluatedAt), signal, memoryLimit: MAX_MEMORY_SAVES, active, navigate: async url => (await actBrowser(ownerId, id, { kind: 'open', text: url }, authority())).page, keepPage: page => keepPage(id, page), scrub: text => vault.scrub(id, clean(text)), ledger: () => ledgerOf(state, runId), checkpoint: () => saveState(runId, state), fenceMemory: async tx => { await lockedExecution(tx, id, runId); }, validActionLedger: () => Boolean(restoreActionCompletionLedger(state.actionCompletion, { runId, request })), isInterruption: error => error instanceof RunEnded, publish: (text, status) => finish(id, runId, state, text, status, undefined, undefined, true) })) return;
       if (!restoreActionCompletionLedger(state.actionCompletion, { runId, request })) {
         const reviewed = reviewActionCompletion(state.actionCompletion, { runId, request, outcome: 'blocked' });

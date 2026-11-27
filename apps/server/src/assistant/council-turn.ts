@@ -4,7 +4,7 @@ import { modelRoots, resolveModelInRoots, type ModelEntry } from '../../../../pa
 import type { ModelRunResult } from '../../../../packages/model-relations/src/runtime.js';
 import {
   councilModelReply, decideCouncilDiscussion, proposeCouncilAnswers, uncertainCouncilReply,
-  type CouncilCheck, type CouncilProposal,
+  type CouncilAnswer, type CouncilCheck, type CouncilProposal,
 } from './council-deliberation.js';
 import { readerPrompt, selectPassage } from './council-passage.js';
 import { councilWeight, type CouncilDomain, type CouncilLanguage } from './council-receipts.js';
@@ -31,7 +31,6 @@ type SignalOutput = {
   hypotheses?: readonly { label: string; text: string }[];
   ranking?: readonly { index: number; score: number }[];
 };
-type Answer = { member: string; answer: string };
 type CheckResult = { checks: CouncilCheck[]; failure?: Extract<ModelRunResult, { ok: false }> };
 type Passage = NonNullable<CouncilRunContext['passage']>;
 const roundMs = (elapsed: number) => Math.min(600_000, Math.max(0, Math.round(elapsed)));
@@ -123,7 +122,7 @@ function taggerCheck(run: SignalOutput, proposal: CouncilProposal, domain: Counc
 
 export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: CouncilTurn): Promise<CouncilOutcome> {
   const started = performance.now();
-  const deadline = started + (options.budgetMs ?? 45_000);
+  const deadline = Math.min(started + (options.budgetMs ?? 45_000), turn.webDeliberation?.deadline ?? Infinity);
   const language = questionLanguage(turn.question);
   const letterOutsideSupportedScripts = /(?=\p{L})(?!\p{Script=Latin}|\p{Script=Arabic})/u.test(turn.question);
   const receiptLanguage: CouncilLanguage = letterOutsideSupportedScripts ? 'other' : language;
@@ -138,7 +137,8 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
     question: turn.question, previous: turn.previous, reply: pipelineText,
     status: turn.pipeline.status, ...(evidence.length && { evidence }),
   });
-  const pipelineStands = Boolean(pipelineText && turn.pipeline.status === 'completed' && pipelineJudge.decision !== 'withhold');
+  const pipelineStands = Boolean(pipelineText && turn.pipeline.status === 'completed' && pipelineJudge.decision !== 'withhold'
+    && (!turn.webDeliberation || mayPropose));
   const resolve = options.resolve ?? (entry => resolveModelInRoots(entry, modelRoots(process.cwd()), process.env, false));
   const schedule = createCouncilSchedule({
     registry: options.registry, signal: turn.signal, deadline,
@@ -154,7 +154,8 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
     runCouncilMember(options.runner, entry, role, context, signal);
 
   const understood = await schedule.run(['understanding'], entry =>
-    entry.id === 'monitor-context-head' ? 'No monitor decision context on this turn' : true,
+    turn.webDeliberation && !evidence.length ? false
+      : entry.id === 'monitor-context-head' ? 'No monitor decision context on this turn' : true,
     run, started + (options.memberMs?.understanding ?? 4_000));
   for (const result of understood) {
     const value = result.status === 'ok' ? output(result.value) : {};
@@ -167,7 +168,7 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
   }
 
   const search = turn.search ?? options.search;
-  if (search && !turn.advisory && mayPropose && !evidence.length && !pipelineStands && WEB_ROUTES.has(turn.baseline.route)) {
+  if (search && !turn.webDeliberation && !turn.advisory && mayPropose && !evidence.length && !pipelineStands && WEB_ROUTES.has(turn.baseline.route)) {
     const searched = await searchTurn(turn, search, Math.min(deadline - performance.now(), options.memberMs?.search ?? 15_000));
     evidence = searched.pages;
     domain = domainFor(turn, evidence);
@@ -178,6 +179,7 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
   context.passages = pages.map(page => selectPassage(turn.question, [page]) ?? {
     text: short(page.text, 1_200), url: page.url, title: page.title,
   });
+  if (turn.webDeliberation && !context.passage) context.passage = context.passages[0];
   if (mayPropose && context.passages.length && !turn.advisory) {
     const retrieved = await schedule.run(['reader'], entry => entry.id === 'reading-dense-retriever', run);
     for (const result of retrieved) {
@@ -188,7 +190,7 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
     }
   }
 
-  const answers: Answer[] = [{ member: PIPELINE, answer: pipelineText }];
+  const answers: CouncilAnswer[] = [{ member: PIPELINE, answer: pipelineText, evidence: turn.webDeliberation?.pipelineCitation }];
   members.push({
     model: PIPELINE, label: 'المحرك (القواعد والصفحات)', round: 'answer', elapsedMs: 0,
     outcome: pipelineText ? 'ok' : 'abstained', ...(pipelineText && { output: short(pipelineText, 600) }),
@@ -196,6 +198,7 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
   });
   const answering = await schedule.run(['reader', 'generator', 'calculator', 'image-reader', 'ads-tagger', 'code'], (entry, role) => {
     if (!mayPropose) return false;
+    if (turn.webDeliberation && (!context.passage || (role !== 'reader' && role !== 'generator'))) return false;
     if (role === 'reader') return !turn.advisory && entry.id !== 'reading-dense-retriever' && pages.length > 0
       && (Boolean(context.passage) || 'No relevant passage');
     if (role === 'generator') return !turn.advisory && (entry.id !== V5
@@ -229,6 +232,7 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
 
   const proposals = proposeCouncilAnswers(answers, pages);
   const checkable = proposals.filter(proposal => proposal.answer && proposal.evidenceQuote);
+  const completedWebChecks: CouncilCheck[] = [];
   const verify = await schedule.run(['verifier', 'extractor'], (entry, role) => {
     if (!mayPropose || turn.advisory || !pages.length) return false;
     if (role === 'extractor' && domain !== 'date' && domain !== 'place') return false;
@@ -248,18 +252,21 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
         ...context, checkAnswer: proposal.answer, passage: role === 'extractor' ? passage : context.passage,
         requestedField: domain,
       }, signal);
+      if (turn.webDeliberation && signal.aborted) break;
       const model = output(result);
       const verdict = role === 'extractor' ? taggerCheck(model, proposal, domain) : model.verdict ?? 'unsure';
       if (!result.ok) failure ??= result;
-      checks.push({ checker: entry.id, member: proposal.member, verdict, ...(!result.ok && { note: result.reason }) });
+      const check = { checker: entry.id, member: proposal.member, verdict, ...(!result.ok && { note: result.reason }) };
+      checks.push(check);
+      if (turn.webDeliberation) completedWebChecks.push(check);
     }
     return { checks, failure };
   });
-  const checks: CouncilCheck[] = [];
+  const checks = turn.webDeliberation ? completedWebChecks : [];
   for (const result of verify) {
     const member = record(result, 'answer');
     if (result.status === 'ok') {
-      checks.push(...result.value.checks);
+      if (!turn.webDeliberation) checks.push(...result.value.checks);
       const failure = result.value.failure;
       if (failure) {
         member.outcome = failure.reason === 'timeout' ? 'timeout' : 'failed';
@@ -275,13 +282,15 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
     || (turn.pipeline.status !== 'completed' && (turn.pipeline.status === 'partial' || !pages.length))));
   const discussion = decideCouncilDiscussion({
     question: turn.question, previous: turn.previous, evidence: pages, proposals, checks, pipelineStands, keepPipeline,
+    requireVerifiedPipeline: Boolean(turn.webDeliberation),
     allowReplacement: !turn.advisory && mayPropose,
     vote: member => receipt(member, member === PIPELINE ? 'pipeline' : roles.get(member)!, receiptLanguage, domain),
   });
   const chosen = discussion.decision.chosen;
   const winner = proposals.find(proposal => proposal.member === chosen);
-  const text = chosen === PIPELINE ? turn.pipeline.text : winner
-    ? councilModelReply(winner, language) : uncertainCouncilReply(language, pages);
+  const winnerTitle = turn.webDeliberation && pages.find(page => page.url === winner?.evidenceUrl)?.title;
+  const text = chosen === PIPELINE && !turn.webDeliberation ? turn.pipeline.text : winner
+    ? councilModelReply(winner, language, winnerTitle || undefined) : uncertainCouncilReply(language, pages);
   for (const member of members) {
     if (member.round !== 'answer') continue;
     if (member.model === chosen) member.chosen = true;
@@ -294,6 +303,7 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
   return {
     text, chosen, changed: text !== turn.pipeline.text,
     status: chosen === PIPELINE ? turn.pipeline.status : winner ? 'completed' : 'partial',
+    ...(turn.webDeliberation && performance.now() >= deadline - 1 && { timeLimited: true as const }),
     council: {
       version: 1, chosen, changed: text !== turn.pipeline.text, reason: discussion.decision.reasonAr,
       elapsedMs: roundMs(performance.now() - started), members: members.slice(0, 48), discussion,

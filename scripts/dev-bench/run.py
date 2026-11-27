@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import subprocess
 
+from answer_mode_bench import summarize_turn_resources
 from council_bench import summarize_council
 from runner import run_arm
 
@@ -215,6 +216,10 @@ def main():
             require(all(group['turnsByAreaAndLanguage'] for group in council.values()),
                     f'{name}: expected an owner council record on each development split')
             run_summary['arms'][name]['council'] = council
+        if 'MOHASSAN_ANSWER_MODE' in settings:
+            run_summary['arms'][name]['turnResources'] = {
+                version: summarize_turn_resources(result['scores']) for version, result in versions.items()
+            }
         for version, result in versions.items():
             overall = result['summary']['overall']
             print(f'{name} {version}: {overall["passed"]}/{overall["total"]}', flush=True)

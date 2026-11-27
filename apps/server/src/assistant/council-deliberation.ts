@@ -53,6 +53,10 @@ function sourceUrl(url: string | undefined): url is string {
   }
 }
 
+export function usableCouncilPage(page: JudgeEvidence): page is JudgeEvidence & { url: string } {
+  return page.kind === 'page' && sourceUrl(page.url) && Boolean(page.text.trim());
+}
+
 function canQuote(quote: string): boolean {
   return Boolean(quote && quote.length <= MAX_QUOTE && !isPageInstruction(quote)
     && !/[?؟]$/u.test(quote) && !UNCERTAIN_CLAIM.test(quote));
@@ -120,18 +124,18 @@ function sourceLine(title: string | undefined, url: string, language: 'en' | 'ar
   return `**${language === 'ar' ? 'المصدر' : 'Source'}:** [${label}](${target})`;
 }
 
-export function councilModelReply(proposal: CouncilProposal, language: 'en' | 'ar'): string {
+export function councilModelReply(proposal: CouncilProposal, language: 'en' | 'ar', title?: string): string {
   return sourceUrl(proposal.evidenceUrl)
-    ? `${proposal.answer}\n\n${sourceLine(undefined, proposal.evidenceUrl, language)}`
+    ? `${proposal.answer}\n\n${sourceLine(title, proposal.evidenceUrl, language)}`
     : '';
 }
 
-export function uncertainCouncilReply(language: 'en' | 'ar', evidence: readonly JudgeEvidence[]): string {
+export function uncertainCouncilReply(language: 'en' | 'ar', evidence: readonly JudgeEvidence[], message?: string): string {
   const sources = new Map<string, string>();
   for (const page of evidence) {
     if (page.kind === 'page' && sourceUrl(page.url)) sources.set(page.url, sourceLine(page.title, page.url, language));
   }
-  const reply = language === 'ar' ? 'لم أتمكن من التحقق من جواب مؤكد.' : 'I could not verify an answer.';
+  const reply = message ?? (language === 'ar' ? 'لم أتمكن من التحقق من جواب مؤكد.' : 'I could not verify an answer.');
   return [reply, ...Array.from(sources.values()).slice(0, 3)].join('\n\n');
 }
 
@@ -143,6 +147,7 @@ interface DiscussionInput {
   checks: readonly CouncilCheck[];
   pipelineStands: boolean;
   keepPipeline: boolean;
+  requireVerifiedPipeline?: boolean;
   allowReplacement?: boolean;
   vote: (member: string) => CouncilVote;
 }
@@ -242,11 +247,19 @@ export function decideCouncilDiscussion(input: DiscussionInput): Discussion {
 
   const weight = (member: string) => ballots.get(member)?.weight ?? 0;
   const pipeline = proposals.find(proposal => proposal.member === PIPELINE);
-  let pipelineSupport = input.pipelineStands ? weight(PIPELINE) : 0;
+  // In council-web the pipeline participates as one member. Its answer needs a verified
+  // citation plus independent support from an answering member or model verifier.
+  const agreesWithPipeline = (proposal: CouncilProposal) => pipeline && (input.requireVerifiedPipeline
+    ? answerKey(pipeline.answer) === answerKey(proposal.answer) : containsAnswer(pipeline.answer, proposal.answer));
+  const pipelineConfirmed = !input.requireVerifiedPipeline || (verified.has(PIPELINE)
+    && (proposals.some(proposal => proposal.member !== PIPELINE && verified.has(proposal.member) && agreesWithPipeline(proposal))
+      || learned.some(check => check.member === PIPELINE && check.checker !== PIPELINE && check.verdict === 'supports')));
+  const pipelineStands = input.pipelineStands && pipelineConfirmed;
+  let pipelineSupport = pipelineStands ? weight(PIPELINE) : 0;
   const groups = new Map<string, CouncilProposal[]>();
   for (const proposal of proposals) {
     if (proposal.member === PIPELINE || !verified.has(proposal.member)) continue;
-    if (input.pipelineStands && pipeline && containsAnswer(pipeline.answer, proposal.answer)) {
+    if (pipelineStands && agreesWithPipeline(proposal)) {
       pipelineSupport += weight(proposal.member);
       continue;
     }
@@ -258,7 +271,7 @@ export function decideCouncilDiscussion(input: DiscussionInput): Discussion {
 
   const ranked = Array.from(groups.values())
     .filter(group => group.length > 1
-      && (!input.pipelineStands || ballots.get(PIPELINE)?.measured && group.some(proposal => ballots.get(proposal.member)?.measured)))
+      && (!pipelineStands || ballots.get(PIPELINE)?.measured && group.some(proposal => ballots.get(proposal.member)?.measured)))
     .map(group => ({
       winner: [...group].sort((a, b) => weight(b.member) - weight(a.member))[0]!,
       support: group.reduce((total, proposal) => total + weight(proposal.member), 0),
@@ -272,11 +285,11 @@ export function decideCouncilDiscussion(input: DiscussionInput): Discussion {
     } };
   }
 
-  return { proposals, checks, votes, decision: input.allowReplacement === false ? {
+  return { proposals, checks, votes, decision: input.allowReplacement === false && !input.requireVerifiedPipeline ? {
     chosen: PIPELINE,
     reasonAr: 'سُجّلت آراء النماذج للاستشارة، وبقي رد المحرك لهذه المهمة.',
     reasonEn: 'The models provided advice, and the pipeline response stands for this task.',
-  } : input.pipelineStands || input.keepPipeline ? {
+  } : pipelineStands || (!input.requireVerifiedPipeline && input.keepPipeline) ? {
     chosen: PIPELINE,
     reasonAr: 'بقي رد المحرك لعدم وجود جواب بديل مؤيَّد بالأدلة وبوزن كافٍ لتجاوزه.',
     reasonEn: 'The pipeline response stands. No verified alternative had enough weighted support to replace it.',
