@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   answerPaths, resourceMetrics, trafficRoles,
   type AnswerPath, type Latency, type MetricWindow, type ProductionMetricsResponse, type ResourceMetric,
@@ -260,7 +260,7 @@ function ProcessMetrics({ window }: { window: MetricWindow }) {
   );
 }
 
-export function ProductionMetrics({ initialState }: { initialState: MetricsState }) {
+export function ProductionMetrics({ initialState, backupStatus }: { initialState: MetricsState; backupStatus?: ReactNode }) {
   const [state, setState] = useState(initialState);
   const [windowKey, setWindowKey] = useState<WindowKey>("day");
   const [role, setRole] = useState<TrafficRole>("owner");
@@ -306,6 +306,7 @@ export function ProductionMetrics({ initialState }: { initialState: MetricsState
 
   return (
     <MetricsFrame>
+      {backupStatus}
       {state.kind === "loading" && <p role="status">جارٍ تحميل مقاييس الإنتاج…</p>}
       {state.kind === "signin" && <p role="alert">سجّل الدخول بحساب المالك لعرض مقاييس الإنتاج.</p>}
       {state.kind === "forbidden" && <p role="alert">مقاييس الإنتاج متاحة لحساب المالك فقط.</p>}

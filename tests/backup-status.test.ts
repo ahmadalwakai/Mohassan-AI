@@ -73,18 +73,19 @@ describe('owner backup status', () => {
     expect(anonymousResponse.json().error.code).toBe('UNAUTHORIZED');
   });
 
-  it('returns timestamps, ages and the newest drill verdict to the owner', async () => {
+  it('returns timestamps, dump size, ages and the newest drill verdict to the owner', async () => {
     const now = Date.now();
     const hour = 3_600_000;
     const snapshotAt = new Date(now - 27 * hour).toISOString();
     const finishedAt = new Date(now - 25 * hour).toISOString();
     const drillAt = new Date(now - 2 * hour).toISOString();
     const downloadedAt = new Date(now - 1 * hour).toISOString();
+    const sizeBytes = Buffer.byteLength('fixture archive');
     function drillName(at: string) {
       return `restore-drill-${at.replaceAll(':', '')}.json`;
     }
     await mkdir(statusDirectory);
-    await statusFile('backup.json', { snapshotAt, finishedAt, sha256: 'fixture-metadata' });
+    await statusFile('backup.json', { snapshotAt, finishedAt, sizeBytes, sha256: 'fixture-metadata' });
     await statusFile(drillName(drillAt), { finishedAt: drillAt, verdict: 'failed', counts: { fixture: 1 } });
     const olderDrillAt = new Date(now - 24 * hour).toISOString();
     await statusFile(drillName(olderDrillAt), { finishedAt: olderDrillAt, verdict: 'passed' });
@@ -95,13 +96,27 @@ describe('owner backup status', () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers['cache-control']).toBe('no-store');
     expect(response.json()).toEqual({
-      newestDump: { snapshotAt, finishedAt, ageHours: expect.any(Number) },
+      newestDump: { snapshotAt, finishedAt, sizeBytes, ageHours: expect.any(Number) },
       lastDrill: { finishedAt: drillAt, verdict: 'failed', ageHours: expect.any(Number) },
       offServerCopy: { downloadedAt },
     });
     expect(response.json().newestDump.ageHours).toBeCloseTo(27, 1);
     expect(response.json().lastDrill.ageHours).toBeCloseTo(2, 1);
   });
+
+  it.each([undefined, null, '14', 0, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    'preserves the dump timestamps when size is missing or invalid (%j)',
+    async sizeBytes => {
+      const snapshotAt = new Date().toISOString();
+      const finishedAt = snapshotAt;
+      await mkdir(statusDirectory);
+      await statusFile('backup.json', { snapshotAt, finishedAt, sizeBytes });
+
+      const response = await app().inject({ url, headers: headers(ownerCookie) });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().newestDump).toEqual({ snapshotAt, finishedAt, ageHours: expect.any(Number) });
+    },
+  );
 
   it('reports missing or invalid records as unknown', async () => {
     expect((await app().inject({ url, headers: headers(ownerCookie) })).json()).toEqual({

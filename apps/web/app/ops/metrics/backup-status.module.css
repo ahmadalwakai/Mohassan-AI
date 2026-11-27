@@ -1,0 +1,81 @@
+.panel {
+  margin-block-end: 1.25rem;
+  padding: clamp(0.75rem, 3vw, 1.35rem);
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: var(--surface);
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+  margin-block-end: 0.35rem;
+}
+
+.header h2 {
+  font-size: 1.17rem;
+}
+
+.header a {
+  color: var(--green);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 0.75rem;
+  margin-block-start: 0.75rem;
+}
+
+.card {
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  background: var(--background);
+}
+
+.card h3 {
+  margin-block-end: 0.25rem;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.card dl {
+  display: grid;
+  gap: 0.35rem;
+  margin-block-start: 0.4rem;
+}
+
+.card dt, .note {
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.card dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.note {
+  margin-block-start: 0.45rem;
+}
+
+.healthy, .warning {
+  font-weight: 700;
+}
+
+.healthy {
+  color: var(--green);
+}
+
+.warning {
+  color: var(--ink);
+  border-inline-start: 0.2rem solid currentColor;
+  padding-inline-start: 0.4rem;
+}

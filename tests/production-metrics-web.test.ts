@@ -177,9 +177,12 @@ describe("production metrics dashboard", () => {
     vi.stubEnv("MOHASSAN_SERVER_URL", "http://localhost:4000");
     vi.stubEnv("INTERNAL_API_SECRET", "metrics-test-only");
     incoming.set("cookie", "test-session=owner");
-    const fetchMock = vi.fn()
+    const metricsResponses = vi.fn()
       .mockResolvedValueOnce(Response.json(report(true)))
       .mockResolvedValueOnce(new Response(null, { status: 403 }));
+    const fetchMock = vi.fn((url: URL) => url.pathname === "/api/ops/metrics"
+      ? metricsResponses()
+      : new Response(null, { status: 503 }));
     vi.stubGlobal("fetch", fetchMock);
     const owner = renderToStaticMarkup(await ProductionMetricsPage());
     expect(owner).toContain("مراحل الجولة");
