@@ -27,6 +27,7 @@ import {
 } from './assistant/brain.js';
 import { ADS_DRAFT_NOTE, ADS_SKILL_SLUG } from './assistant/ads-check.js';
 import { isLiveWebQuestion, PROVIDER_SPACING_MS, answerSubject, isBareAddress, isFollowUp, normalizeHandsPlan, notWebReason, parseHands, plainTitle, refersBack, runHands, siteQuestion, siteToOpen, tidy, topicWords, unnamedSite, webQuestion, type HandsIO, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
+import { searchCouncilSources } from './assistant/hands-search-sources.js';
 import { liveLabel } from './assistant/activity.js';
 import { routeLiveDataChat } from './live-data/chat.js';
 import type { DesktopCommand, DesktopOutcome, ParsedDesktopCommand } from '@mohassan/desktop';
@@ -1482,16 +1483,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   async function councilSearch(ownerId: string, request: string, state: BrainState, question: string, signal: AbortSignal): Promise<CouncilSearchResult> {
     try { assertPublicSearch(request, question, state); }
     catch { return { pages: [], note: 'لا يُحوَّل هذا الطلب إلى بحث عام (معلومات خاصة أو مرجع غير واضح).' }; }
-    const engine = search as Partial<Pick<SearchEngine, 'execute'>>;
-    const hits = typeof engine.execute === 'function'
-      ? (await engine.execute.call(search, question, 8, signal, { ownerId })).hits
-      : await search.search(question, 8, signal, { ownerId });
+    const { hits, allows, note } = await searchCouncilSources(search, question, request, ownerId, signal, execution.getStore()?.previousRequest);
     const ranked = rankHits(question, hits).slice(0, 3);
-    if (!ranked.length) return { pages: [], note: hits.length ? 'لم تكن أي نتيجة بحث قريبة من السؤال.' : 'لم يُرجع البحث نتائج.' };
+    if (!ranked.length) return { pages: [], note: note ?? (hits.length ? 'لم تكن أي نتيجة بحث قريبة من السؤال.' : 'لم يُرجع البحث نتائج.') };
     const live = isLiveWebQuestion(question);
     const read = await Promise.all(ranked.map(async hit => {
       const page = config.readPage ? await config.readPage(hit.url, signal, { live }).catch(() => null) : null;
-      if (page && page !== 'disallowed' && page.text.trim()) return { kind: 'page' as const, url: page.url, title: page.title || hit.title, text: page.text.slice(0, 200_000) };
+      if (page && page !== 'disallowed' && allows(page.url) && page.text.trim()) return { kind: 'page' as const, url: page.url, title: page.title || hit.title, text: page.text.slice(0, 200_000) };
       return hit.snippet?.trim() ? { kind: 'page' as const, url: hit.url, title: hit.title, text: hit.snippet } : null;
     }));
     const pages = read.filter((page): page is NonNullable<typeof page> => page !== null);
@@ -3134,7 +3132,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           ? 'تعذر قبول خطة التنفيذ كاملة أو التحقق من نتيجة خطوة سابقة. لم أنفّذ خطوات إضافية؛ راجع النتائج المسجلة أو قسّم الطلب إلى مهمة أصغر.'
           : 'I could not admit the complete execution plan or verify an earlier step. No additional steps were dispatched; review the recorded results or split the request into a smaller task.';
         try {
-          normalizeHandsPlan(plan);
+          normalizeHandsPlan(plan, plan.next === 0 && search instanceof SearchEngine ? request : undefined);
           handsPrefix = recordHandsPlan(ledgerOf(state, runId), plan, Date.now());
           await saveState(runId, state);
         } catch (error) {
@@ -3172,7 +3170,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             await keepPage(id, settled);
             return settled;
           },
-          search: async (query, limit) => {
+          sourceRequest: request, recentTurns: history.filter(entry => entry.role === 'user').map(entry => entry.text).slice(-4),
+          search: async (query, limit, sourcePlan, report) => {
             await active();
             assertPublicSearch(request, query, state, Boolean(returnName && query.includes(returnName)));
             // The shared engine reports each provider's failure: a search whose providers did not answer is a failed request
@@ -3180,7 +3179,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
             const engine = search as Partial<Pick<SearchEngine, 'execute'>>;
             let hits: Awaited<ReturnType<SearchProvider['search']>>;
             if (typeof engine.execute === 'function') {
-              const outcome = await engine.execute.call(search, query, limit, signal, { ownerId });
+              const outcome = await engine.execute.call(search, query, limit, signal, { ownerId, plan: sourcePlan });
+              if (outcome.selection) report(outcome.selection);
               if (!outcome.hits.length) {
                 state.trail.push({ step: ++state.steps, action: `search ${query}`.slice(0, 300), changed: false,
                   result: `no results; provider failures: ${outcome.failures.map(item => `${item.provider} ${item.kind}`).join(', ') || 'none'}`.slice(0, 1100) });
@@ -3188,7 +3188,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
                 throw new BrowserError('RESEARCH_SEARCH_UNAVAILABLE', 'لم يُرجع البحث مصادر مرتبطة بالسؤال قابلة للقراءة.', 502);
               }
               hits = outcome.hits.map(hit => hit.coverage === 'local_only' ? { ...hit, snippet: `نسخة مفهرسة بتاريخ ${hit.fetchedAt}. ${hit.snippet}` } : hit);
-            } else hits = await search.search(query, limit, signal, { ownerId });
+            } else hits = await search.search(query, limit, signal, { ownerId, plan: sourcePlan });
             state.publicQueryTerms = mergePublicQueryTerms(state.publicQueryTerms, hits.flatMap(hit => [hit.title, hit.snippet]));
             await active();
             state.trail.push({ step: ++state.steps, action: `search ${query}`.slice(0, 300), result: `results: ${hits.map(hit => `${hit.title} | ${hit.url}`).join('\n')}`.slice(0, 1100), changed: hits.length > 0 });

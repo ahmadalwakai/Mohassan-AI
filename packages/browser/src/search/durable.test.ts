@@ -18,6 +18,14 @@ const fixture=(page='Node API supports verified requests.')=>{
 const result=(at:number):SearchOutcome=>({hits:[{title:'Node API',url:'https://example.com/node',snippet:'Node API documentation',providers:['fixture'],score:1,relevance:'lexical'}],fetchedAt:new Date(at).toISOString(),freshness:'fresh',coverage:'specialized_sources',failures:[],limitations:[]});
 
 describe('durable owner search cache',()=>{
+  it('preserves planned search availability across SQL store instances', async () => {
+    const store = new SqlSearchStore(database.db, () => initial), key = searchHash('selection');
+    const outcome: SearchOutcome = { ...result(initial), selection: { searchedProviders: ['fixture'], unavailableSites: ['example.net'], unavailableDomains: ['news'] } };
+    await store.put('selection-owner', key, 0, outcome, 60000);
+    expect(await new SqlSearchStore(database.db, () => initial + 1000).get('selection-owner', key, 0)).toMatchObject({
+      freshness: 'cached', selection: outcome.selection,
+    });
+  });
   it('preserves public web coverage and provider provenance across store instances',async()=>{
     const store=new SqlSearchStore(database.db,()=>initial),key=searchHash('public-web-coverage');
     const outcome={...result(initial),coverage:'web_sources' as const,hits:result(initial).hits.map(hit=>({...hit,providers:['Bing RSS','DuckDuckGo HTML']}))};

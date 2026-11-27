@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { AgentBrowser, type AgentAction, type AgentPage, type SearchProvider } from '@mohassan/browser';
+import { AgentBrowser, SafeNetwork, SearchEngine, type AgentAction, type AgentPage, type SearchProvider } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { createCommandChatControl } from '../apps/server/src/command-chat.js';
 
@@ -24,7 +24,7 @@ const texts: Record<string, { title: string; text: string }> = {
   [tokyo]: { title: 'طوكيو - ويكيبيديا', text: 'طوكيو عاصمة اليابان وأكبر مدنها، وتقع على الساحل الشرقي لجزيرة هونشو في منطقة كانتو الواسعة.\n' },
 };
 
-async function harness() {
+async function harness(plannedSearch?: SearchEngine) {
   database = await createDatabase();
   await migrate(database.db);
   const queries: string[] = [];
@@ -49,11 +49,27 @@ async function harness() {
     async close() {},
   } as unknown as AgentBrowser;
   control = await createCommandChatControl(database.db, {
-    models: { fast: [], deep: [], vision: '' }, browser, searchProvider,
+    models: { fast: [], deep: [], vision: '' }, browser, searchProvider: plannedSearch ?? searchProvider,
     readPage: async url => { reads.push(url); const found = texts[url]; return found ? { url, title: found.title, text: found.text, status: 200 } : null; },
   });
   return { control, queries, actions, reads };
 }
+
+it('reports an unsupported requested site and a missing source family without opening Wikipedia or a search form', async () => {
+  const { control, actions, reads } = await harness(new SearchEngine(new SafeNetwork(), { providers: [] }));
+  for (const [goal, expected] of [
+    ['ابحث في يوتيوب عن وصفة كبسة', 'تعذّر البحث تلقائيًا في youtube.com'],
+    ['What are the symptoms of cataracts? Not from Wikipedia.', 'Automatic search sources for health are currently unavailable.'],
+  ]) {
+    const { id } = await control.create(owner, { goal });
+    await control.settled(id);
+    const result = await control.detail(owner, id);
+    expect(result.error, goal).toBeNull();
+    expect(result.messages.at(-1)?.text, goal).toContain(expected);
+  }
+  expect(actions).toEqual([]);
+  expect(reads).toEqual([]);
+});
 
 it('answers a question by reading its sources over HTTP, with no browser action', async () => {
   const { control, queries, actions, reads } = await harness();
