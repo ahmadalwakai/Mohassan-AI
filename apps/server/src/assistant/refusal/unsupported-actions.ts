@@ -1,37 +1,46 @@
-import { draftReference, head, outreach, sendAction, words } from './patterns.js';
+import { draftReference, head, outreach, physicalAction, sendAction, words } from './patterns.js';
+import {
+  arabicMediaAdditions, arabicPlay, arabicPlayHead, arabicSwitchOff, arabicSwitchOn, colloquialMediaLead,
+  dialectLightNoun, englishSacredMedia, hasQuotedPlaybackTitle, impliedPlaybackHead,
+  isAdditionalNamedPlayback, isProcessPlaybackOperand, nonMediaArabicTarget, nonMediaWorkOperand, optionalColloquialMediaLead,
+} from './playback-language.js';
 import type { RefusalDecision } from './types.js';
 
 const recipient = '(?:me |us )?';
 const article = '(?:(?:a|an|the|my|our|this|that|some|another) )?';
 
-const deviceNouns = 'lights?|lighting|lamps?|bulbs?|dimmer|(?:robot )?vacuum(?: cleaner)?|roomba|(?:smart |wi fi )(?:plug|socket|outlet|switch|speaker|thermostat)|(?:wemo|tapo|kasa)(?: (?:plug|socket|outlet|switch))?|coffee (?:maker|machine)|(?:air )?conditioner|thermostat|heater|fan|television|tv|(?:ال)?(?:نور|انوار|ضوء|اضواء|اضاءه|لمبه|لمبات|مصباح|مصابيح|مكنسه|مقبس|قابس|فيش|افياش|مكيف|تكييف|مروحه|دفايه|تلفزيون|تلفاز)|(?:اله|ماكينه|جهاز) (?:صنع )?القهوه';
+const deviceNouns = `lights?|lighting|lamps?|bulbs?|dimmer|(?:robot )?vacuum(?: cleaner)?|roomba|(?:smart |wi fi )(?:plug|socket|outlet|switch|speaker|thermostat)|(?:wemo|tapo|kasa)(?: (?:plug|socket|outlet|switch))?|coffee (?:maker|machine)|(?:air )?conditioner|thermostat|heater|fan|television|tv|(?:(?:زر|مفتاح) )?(?:ال)?(?:نور|انوار|${dialectLightNoun}|ضوء|اضواء|اضاءه|لمبه|لمبات|مصباح|مصابيح|مكنسه|مقبس|قابس|فيش|افياش|مكيف|تكييف|مروحه|دفايه|تلفزيون|تلفاز)|(?:اله|ماكينه|جهاز) (?:صنع )?القهوه`;
 const deviceNoun = words(deviceNouns);
 const deviceOperand = head(
   `(?:(?:all|both|كل) )?${article}(?:(?:main|new|smart|robotic|ceiling|overhead|hallway|kitchen|bedroom|bathroom|living room|dining room|office|porch|outdoor|nursery|garage|patio|garden|desk) )*(?:${deviceNouns})`,
 );
 const devicePower = head(
-  '(?:turn|switch|power|shut) (?:on|off|down|up)|(?:start|stop|run|activate|deactivate|enable|disable|unplug|plug in)|(?:قم |قومي )?ب(?:تشغيل|ايقاف|اطفاء)|(?:شغل|اشغل|طف|طفي|اطفي|اطفئ|اغلق|اقفل|افتح|مكن|عطل|افصل|وصل|ابدا|اوقف)(?:ي|لي)?(?: لي)?',
+  `(?:turn|switch|power|shut) (?:on|off|down|up)|(?:start|stop|run|activate|deactivate|enable|disable|unplug|plug in)|(?:قم |قومي )?ب(?:تشغيل|ايقاف|اطفاء)|${arabicPlay}|${arabicSwitchOn}|${arabicSwitchOff}|(?:اغلق|اقفل|افتح|مكن|عطل|افصل|وصل|ابدا|اوقف)(?:ي|لي)?(?: لي)?`,
 );
-const deviceAdjust = head('dim|brighten|raise|lower|increase|reduce|set|adjust|change|(?:وطي|خفف|اعلي|علي|اخفت|ارفع|اخفض|خفض|اضبط|غير|بدل)(?:ي|لي)?');
+const deviceAdjust = head('dim|brighten(?: of)?|raise|lower|increase|reduce|set|adjust|change|(?:وطي|خفف|اعلي|علي|اخفت|ارفع|اخفض|خفض|اضبط|غير|بدل)(?:ي|لي)?');
 const splitDevicePower = head('turn|switch|power|shut');
 const deviceParticle = words('on|off|up|down');
 const deviceSetting = head('(?:the )?(?:brightness|temperature|intensity|color|colour|level|settings?) (?:of|on|in|for)|(?:ال)?(?:سطوع|حراره|شده|لون|قوه|اعدادات)');
 const deviceSetValue = head('turn');
 const deviceValue = head('to (?:\\d+(?:[.,]\\d+)?|[\\p{L}-]+(?=\\s+(?:color|colour|brightness|percent))|red|orange|yellow|green|blue|violet|purple|white|pink|warm|cool)');
-const descriptiveDevice = words('icons?|diagrams?|photos?|illustrations?|simulat(?:ion|or)|effects?|in (?:the|this) (?:app|editor|image|game|drawing|simulation)|رمز|رسمه|صوره|محاكاه|تاثير');
+const descriptiveDevice = words('icons?|diagrams?|photos?|illustrations?|simulat(?:ion|or)|effects?|in (?:the|this) (?:app|editor|image|game|drawing|simulation)|(?:ال)?(?:رمز|رسمه|صوره|محاكاه|تاثير)');
 
-const mediaNoun = words(
-  'music|songs?|tracks?|playlists?|podcasts?|radio|stations?|audio(?: ?books?)?|recordings?|albums?|videos?|films?|movies?|episodes?|channels?|recitations?|tunes|greatest hits|(?:ال)?(?:موسيقي|موسيقا|اغنيه|اغاني|البوم|فيديو|مقطع|بودكاست|مدونه صوتيه|اذاعه|راديو|محطه|تسجيل|تلاوه|قران|سوره|نشيد|اناشيد|فيلم|مسلسل|حلقه|قناه|كتاب (?:ال)?(?:صوتي|مسموع))',
-);
-const directPlayback = head('play|stream|start playing|listen to|tune(?: in)?(?: to)?|shuffle|(?:شغل|اشغل|تشغيل|سمعني|اسمعني|اسمع|ولف|استمع (?:الي|ل))(?:ي|لي)?');
-const playbackControl = head('put on|turn on|start|stop|pause|resume|restart|continue|(?:read|say) aloud|read out|(?:ابدا|كمل|واصل|است[ائ]نف|تابع|وقف|اوقف|اقرا لي)(?:ي|لي)?');
+const mediaNouns = `music|songs?|tracks?|playlists?|podcasts?|radio|stations?|audio(?: ?books?)?|recordings?|albums?|videos?|films?|movies?|episodes?|channels?|recitations?|tunes|greatest hits|${englishSacredMedia}|${arabicMediaAdditions}|(?:ال|لل)?(?:موسيقي|موسيقا|اغنيه|اغاني|البوم|فيديو|مقطع|بودكاست|مدونه صوتيه|اذاعه|راديو|محطه|تسجيل|تلاوه|قران|سوره|نشيد|اناشيد|فيلم|مسلسل|حلقه|قناه|كتاب (?:ال)?(?:صوتي|مسموع))`;
+const mediaNoun = words(mediaNouns);
+const directPlayback = head(`${optionalColloquialMediaLead}play|listen to|stream|start playing|tune(?: in)?(?: to)?|shuffle|${arabicPlay}|${arabicSwitchOn}|(?:تشغيل|سمعني|اسمعني|اسمع|ولف|استمع(?: الي| ل)?)(?:ي|لي)?`);
+const mediaPerception = head(`${optionalColloquialMediaLead}(?:hear|watch)|${colloquialMediaLead}listen to`);
+const perceivedMedia = head(`${article}(?:(?:new|latest|live|short|favorite|favourite) )?(?:${mediaNouns})`);
+const monitorPurpose = words('for (?:any |new )?(?:updates?|changes?|comments?|replies?|activity)');
+const playbackControl = head(`put on|turn on|stop|pause|restart|continue|(?:read|say) aloud|read out|${arabicSwitchOff}|(?:ابدا|كمل|واصل|است[ائ]نف|تابع|وقف|اوقف|اقرا لي)(?:ي|لي)?`);
 const ordinaryPlay = head(
-  '(?:play|stream|start playing) (?:the role|a role|a part|the part|devil\'s advocate|along|with|against|framework|it safe|a trick|a prank|chess|checkers|tic tac toe|(?:a |the )?word game|(?:a |the )?game|data|logs|events|records|bytes|responses)|(?:شغل|اشغل|تشغيل) (?:ال)?(?:تطبيق|برنامج|محاكي|موقع|كود|سكريبت|نص برمجي|ملف تنفيذي|لعبه|مؤقت)',
+  `${optionalColloquialMediaLead}(?:play|stream|start playing) (?:the role|a role|a part|the part|devil's advocate|along|with|against|framework|it safe|a trick|a prank|chess|checkers|tic tac toe|(?:a |the )?word game|(?:a |the )?game|data|logs|events|records|bytes|responses)|(?:${arabicPlay}|تشغيل) (?:ال)?(?:تطبيق|برنامج|محاكي|موقع|كود|سكريبت|نص برمجي|ملف تنفيذي|لعبه|مؤقت)`,
 );
 const mediaContext = words('spotify|youtube|soundcloud|apple music|في منصه الموسيقي|سبوتيفاي|يوتيوب|ساوند كلاود');
 const namedPlayback = head('play (?!(?:it|this|that|them|anything|something|more|next|previous)(?:$|[ .!?]))\\p{L}[\\p{L}\\p{N}\'’ .,:-]{1,100}$');
 const attributedMedia = /(?:\b(?:by|performed by|covered by)|(?<!\p{L})(?:حق|بصوت|غناء|للفنان|للفنانه))\s+\p{L}/u;
+const proceduralBy = words('by (?:[a-z]+ing(?= )|default|design|hand|noon|midnight|lunchtime|dinnertime|today|tomorrow|then|monday|tuesday|wednesday|thursday|friday|saturday|sunday)');
 const chosenMedia = head('(?:my|our) (?:favorites|favourites|mix)|(?:this|the) (?:radio|television|tv) program(?:me)?');
+const playProgram = head(`${optionalColloquialMediaLead}(?:play|watch) (?:this|the) program(?:me)?`);
 const playbackOutput = words('(?:through|out of|on) (?:the|my|our) (?:speakers?|headphones?|earbuds?)');
 
 const booking = head(
@@ -73,7 +82,7 @@ const publication = words('post|status|announcement|press release|public stateme
 const explicitPublishing = head('publish|انشر(?:ي|ه|ها)?|نشر');
 
 export const unsupportedActionHeads = [
-  devicePower, deviceAdjust, splitDevicePower, directPlayback, playbackControl, booking, ordering, orderSubmission, callCommand, directMessaging, messagingVerb, replyExternally, publishVerb,
+  devicePower, deviceAdjust, splitDevicePower, directPlayback, playbackControl, impliedPlaybackHead, booking, ordering, orderSubmission, callCommand, directMessaging, messagingVerb, replyExternally, publishVerb,
 ];
 
 export function isChatDelivery(text: string): boolean {
@@ -104,7 +113,6 @@ function operand(action: RegExp, text: string): string {
 }
 
 function changesDevice(text: string): boolean {
-  if (descriptiveDevice.test(text)) return false;
   const switched = operand(devicePower, text);
   const split = operand(splitDevicePower, text);
   const adjusted = operand(deviceAdjust, text);
@@ -115,15 +123,41 @@ function changesDevice(text: string): boolean {
     || deviceSetting.test(adjusted) && deviceNoun.test(adjusted);
 }
 
-/** Matches the requested effect at the head, using the rest of the clause only as its operand. */
-export function classifyUnsupportedAction(text: string, mediaAvailable: boolean, hasDraft: boolean): RefusalDecision | null {
-  if (changesDevice(text)) return { code: 'no_capability', alternative: 'device_control' };
-  const playback = operand(directPlayback, text) || operand(playbackControl, text);
-  if (!mediaAvailable && !ordinaryPlay.test(text) && (
-    playback && (mediaNoun.test(playback) || mediaContext.test(playback) || chosenMedia.test(playback) || playbackOutput.test(playback)
-      || directPlayback.test(text) && attributedMedia.test(playback))
+export function isDescriptiveDeviceRequest(text: string): boolean {
+  return descriptiveDevice.test(text) && changesDevice(text);
+}
+
+function requestsPlayback(text: string, unmaskedText: string): boolean {
+  const direct = operand(directPlayback, text);
+  if (!direct && impliedPlaybackHead.test(text)) {
+    const playback = operand(impliedPlaybackHead, text);
+    const original = operand(impliedPlaybackHead, unmaskedText);
+    const attribution = attributedMedia.exec(playback);
+    return !isProcessPlaybackOperand(original) && !nonMediaWorkOperand.test(playback) && (
+      mediaNoun.test(playback) || mediaContext.test(playback)
+      || Boolean(attribution && attribution.index > 0 && !proceduralBy.test(playback))
+      || hasQuotedPlaybackTitle(original)
+    );
+  }
+  if (arabicPlayHead.test(text)) {
+    const original = operand(arabicPlayHead, unmaskedText);
+    if (physicalAction.test(text) || nonMediaArabicTarget.test(original) || isProcessPlaybackOperand(original)) return false;
+  }
+  const playback = direct || operand(playbackControl, text);
+  return Boolean(playback && (mediaNoun.test(playback) || mediaContext.test(playback) || chosenMedia.test(playback)
+    || playbackOutput.test(playback) || direct && attributedMedia.test(playback)))
     || namedPlayback.test(text)
-  )) return { code: 'no_capability', alternative: 'find_media' };
+    || playProgram.test(text)
+    || perceivedMedia.test(operand(mediaPerception, text)) && !monitorPurpose.test(text)
+    || !descriptiveDevice.test(text) && isAdditionalNamedPlayback(text);
+}
+
+/** Matches the action in the masked clause. The original operand can supply a title or show command syntax. */
+export function classifyUnsupportedAction(text: string, unmaskedText: string, mediaAvailable: boolean, hasDraft: boolean): RefusalDecision | null {
+  if (!descriptiveDevice.test(text) && changesDevice(text)) return { code: 'no_capability', alternative: 'device_control' };
+  if (!mediaAvailable && !ordinaryPlay.test(text) && requestsPlayback(text, unmaskedText)) {
+    return { code: 'no_capability', alternative: 'find_media' };
+  }
   if (booking.test(text) && !bookingLookup.test(text)) return { code: 'human_step', alternative: 'make_booking' };
   if ((operand(callCommand, text) || indirectCall.test(text)) && !nonTelephone.test(text)) {
     return { code: 'human_step', alternative: 'place_call' };
