@@ -23,10 +23,14 @@ describe('judge shadow through the real chat controller', () => {
   // judge is for. The live film page of 2026-11-22 06:13 no longer reaches the judge, since hands.ts refuses a page whose title
   // names nothing of the question (tests/assistant-hands-page-choice.test.ts).
   const MUSEUM_TEXT = 'The best time to visit the museum is early on a weekday morning, when the halls are quiet. Guided tours start at ten.';
+  const WALL_URL = 'https://en.wikipedia.org/wiki/Berlin_Wall';
+  // The exact e1 lead sent on 2026-11-26. In this fixture it is the only sentence on the page.
+  const WALL_TEXT = 'The fall of the Berlin Wall paved the way for German reunification, which formally took place on 3 October 1990.';
   const FIXTURES: Record<string, { title: string; text: string }> = {
     'https://judge-fixtures.test/capital-of-japan': { title: 'Capital of Japan', text: PAGE_TEXT },
     'https://judge-fixtures.test/morocco-population': { title: 'سكان المغرب', text: MOROCCO_TEXT },
     'https://judge-fixtures.test/museum-visits': { title: 'Best time to visit museums', text: MUSEUM_TEXT },
+    [WALL_URL]: { title: 'Berlin Wall', text: WALL_TEXT },
   };
   const member = 'isolated-judge-shadow-member';
 
@@ -56,7 +60,7 @@ describe('judge shadow through the real chat controller', () => {
     const searchProvider: SearchProvider = {
       name: 'isolated-judge-shadow-search',
       async search(query) {
-        const url = /المغرب/u.test(query) ? 'https://judge-fixtures.test/morocco-population' : /visit/iu.test(query) ? 'https://judge-fixtures.test/museum-visits' : 'https://judge-fixtures.test/capital-of-japan';
+        const url = /Berlin Wall/iu.test(query) ? WALL_URL : /المغرب/u.test(query) ? 'https://judge-fixtures.test/morocco-population' : /visit/iu.test(query) ? 'https://judge-fixtures.test/museum-visits' : 'https://judge-fixtures.test/capital-of-japan';
         return [{ title: `${FIXTURES[url]!.title} — ${query}`, url, snippet: FIXTURES[url]!.text }];
       },
     };
@@ -154,6 +158,18 @@ describe('judge shadow through the real chat controller', () => {
     expect(line).toMatchObject({ decision: 'withhold', applied: false });
     expect(stored).toBe(line.reply);
     expect(stored).toMatch(/^The best time to visit the museum/u);
+  });
+
+  it.each([{ account: owner, applied: true }, { account: member, applied: false }])('records the wrong event date for $account', async ({ account, applied }) => {
+    const { id } = await control.create(account, { goal: 'When did the Berlin Wall fall?' });
+    await control.settled(id);
+    const detail = await control.detail(account, id);
+    const stored = detail.messages.filter(message => message.role === 'assistant').at(-1)!.text;
+    const line = (await lines()).find(item => item.conversationId === id)!;
+    expect(line).toMatchObject({ kind: 'abstain', status: 'partial', decision: 'withhold', applied, evidence: 1 });
+    expect(line.findings).toContainEqual(expect.objectContaining({ code: 'event_date_mismatch', excerpt: WALL_TEXT }));
+    expect(stored).toBe(applied ? line.withholdText : line.reply);
+    expect(stored).not.toContain('1990');
   });
 
   it('logs a question card to the owner as a question, not a defect', async () => {

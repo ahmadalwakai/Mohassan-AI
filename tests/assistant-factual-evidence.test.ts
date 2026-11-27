@@ -40,6 +40,17 @@ describe('explicit factual evidence', () => {
     expect(explicitFactualEvidence(page(`${line} 17`, 404), question)).toBeUndefined();
   });
 
+  it('anchors a standalone date through the question label and declines a dated consequence', () => {
+    // Synthetic passages and dates for a fictional subject.
+    const question = 'When did the Grayhaven Wall fall?';
+    const date = 'on 9 October 1918';
+    expect(explicitFactualEvidence(page(`Q: ${question}\nA: ${date}`), question)).toEqual({
+      kind: 'answer', quote: `Q: ${question} A: ${date}`,
+    });
+    const wrong = 'The fall of the Grayhaven Wall led to the reopening of the city archive, which took place in 1920.';
+    expect(explicitFactualEvidence(page(`Q: ${question}\nA: ${wrong}`), question)).toEqual({ kind: 'unanswered' });
+  });
+
   it('answers from a short HTTP record without opening a browser and passes the evidence judge', async () => {
     const question = 'Who chairs Luma?';
     const source = page(`Q: ${question} A: K. Li`);
@@ -96,7 +107,7 @@ describe('factual passages', () => {
 
   it('binds event dates to the requested predicate and retains context for a following sentence', () => {
     const source = { ...page('Larkspur Observatory is a research institute. The institution was established in the nineteenth century.'), title: 'Larkspur Observatory' };
-    expect(readFactualPassage(source, 'When was Larkspur Observatory founded?')).toEqual({
+    expect(readFactualPassage(source, 'When was Larkspur Observatory founded?')).toMatchObject({
       value: 'nineteenth century', quote: source.text,
     });
     const fort = page('Crestwood Fort was built in 72CE.');
@@ -104,6 +115,99 @@ describe('factual passages', () => {
     const dateFirst = page('On 12 June 1912, Larkspur Observatory opened.');
     expect(readFactualPassage(dateFirst, 'When did Larkspur Observatory open?')?.value).toBe('12 June 1912');
     expect(readFactualPassage(page('Larkspur Observatory was opened for an exhibition that started in 2014.'), 'When did Larkspur Observatory open?')).toBeUndefined();
+  });
+
+  it('anchors a reduced relative to the named subject and its own date', () => {
+    // Synthetic passages for a fictional institution.
+    const question = 'When was Larkspur Observatory founded?';
+    const datedFounding = page('Larkspur Observatory, officially founded in 1912, opened in 1921.');
+    expect(readFactualPassage(datedFounding, question)?.value).toBe('1912');
+    const undatedFounding = page('Larkspur Observatory, founded to observe a comet, opened in 1921.');
+    expect(readFactualPassage(undatedFounding, question)).toBeUndefined();
+  });
+
+  // Synthetic passages for fictional subjects.
+  it.each([
+    ['When was Larkspur Observatory founded?', 'Larkspur Observatory was founded by Edward Larkspur in 1921.'],
+    ['When was Crestwood Fort built?', 'Crestwood Fort was built of sandstone in 1921.'],
+    ['When was Ada Rowan born?', 'Ada Rowan was born in Fairhollow in 1921.'],
+    ['When was Garden Passage released?', 'Garden Passage was released to theatres in 1921.'],
+    ['When was Larkspur Observatory opened?', 'Larkspur Observatory was opened to the public in 1921.'],
+  ])('binds a date after a simple complement for %s', (question, sentence) => {
+    expect(readFactualPassage(page(sentence), question)?.value).toBe('1921');
+  });
+
+  it('rejects the date of an event embedded in a complement', () => {
+    // Synthetic passage for a fictional fort.
+    const source = page('Crestwood Fort was built of sandstone quarried in 1921.');
+    expect(readFactualPassage(source, 'When was Crestwood Fort built?')).toBeUndefined();
+  });
+
+  // Synthetic evidence for fictional subjects.
+  it.each([
+    ['When was the Willow Relief Corps started?', 'March 1932', 'The Willow Relief Corps (WRC) was a regional volunteer organization in Elmford, established by the Northern Relief Council in March 1932.'],
+    ['متى اندلعت حملة المنارة؟', '8 مايو 1935', 'حملة المنارة (وتعرف باسم حملة الساحل)، هي حملة مدنية اندلعت أحداثها في 8 مايو 1935.'],
+    ['متى اكتشف حجر الندى؟', '1934 م', 'أما اكتشاف حجر الندى، فقد تم عام 1934 م، وقد شهدت القرية تغييرات في 1938 م.'],
+    ['متى تأسست مكتبة الصفاء؟', '1936', 'كما مكتبة الصفاء التي تأسست دون إعلان رسمي عام 1936 كانت أكبر مكتبات القرية.'],
+    ['متى بدأ حصار الميناء؟', '17 سبتمبر 1942', 'حصار الميناء هو عملية بحرية بدأت دون إعلان رسمي في 17 سبتمبر 1942.'],
+    ['متى حدثت معركة الأرز؟', '1943', 'وقعت معركة الأرز Cedar في عام 1943.'],
+  ])('carries an explicitly named subject in the source for %s', (question, value, sentence) => {
+    expect(readFactualPassage(page(sentence), question)?.value).toBe(value);
+  });
+
+  // Synthetic passages and dates for fictional subjects.
+  it.each([
+    ['When did the Grayhaven Wall fall?', '9 October 1918', 'The fall of the Grayhaven Wall occurred on DATE.'],
+    ['When did the Prism Campaign end?', '1916', 'The Prism Campaign ended in DATE.'],
+    ['When did the Amber Coast gain independence?', '1922', 'The Amber Coast gained independence in DATE.'],
+    ['متى سقط جدار السرو؟', '١٩٢٤', 'سقط جدار السرو عام DATE.'],
+    ['متى انتهت حملة المنارة؟', '١٩٣٢', 'انتهت حملة المنارة سنة DATE.'],
+    ['متى استقلت جزيرة المرجان؟', '١٩٦٧', 'أُعلن استقلال جزيرة المرجان عام DATE.'],
+  ])('extracts the event date for %s', (question, value, statement) => {
+    const quote = statement.replace('DATE', value);
+    expect(readFactualPassage(page(quote), question)).toMatchObject({ value, quote });
+  });
+
+  it('skips a dated Arabic question when finding a factual passage', () => {
+    // Synthetic question and date for a fictional subject.
+    const source = page('كيف سقط جدار السرو عام ١٩٢٤؟');
+    expect(readFactualPassage(source, 'متى سقط جدار السرو؟')).toBeUndefined();
+  });
+
+  it('reads explicitly dated origins while preferring a direct opening date', () => {
+    // Synthetic passages and dates for fictional subjects.
+    const question = 'متى افتتحت جامعة السرو الجديدة؟';
+    const origin = '١٨٧٣';
+    const opening = '١٨٩٣';
+    const historical = `إن البداية التي انطلقت منها الجامعة تعود إلى عام ${origin}`;
+    const quote = `${historical}، حين افتتحت مدرسة الحي في عام ١٨٧٧.`;
+    const grounded = { ...page(quote), title: 'ويكيبيديا — جامعة السرو الجديدة' };
+    expect(readFactualPassage(page(quote), question)).toBeUndefined();
+    expect(readFactualPassage(grounded, question)).toMatchObject({ value: origin, quote: historical });
+    expect(readFactualPassage(grounded, 'متى استقلت جامعة السرو الجديدة؟')).toBeUndefined();
+    expect(readFactualPassage({ ...grounded, text: `${quote} افتتحت جامعة السرو الجديدة عام ${opening}.` }, question)?.value).toBe(opening);
+
+    const named = page(`The origins of the Alder Guild date back to ${origin}.`);
+    expect(readFactualPassage(named, 'When was the Alder Guild founded?')?.value).toBe(origin);
+    const arabic = page(`عادةً ما يعود تاريخ مسرح الظل الاحترافي إلى سنة ${origin}.`);
+    expect(readFactualPassage(arabic, 'متى تأسس مسرح الظل؟')?.value).toBe(origin);
+  });
+
+  it('skips a consequence and highlights the bound occurrence of a repeated date', () => {
+    // Synthetic passages and dates for fictional subjects.
+    const question = 'When did the Grayhaven Wall fall?';
+    const wrong = 'The fall of the Grayhaven Wall paved the way for the reopening of the city archive, which took place in 1920.';
+    const date = '9 October 1918';
+    const before = 'The Grayhaven Wall fell on ';
+    const after = `, while the city archive moved on ${date}.`;
+    const quote = `${before}${date}${after}`;
+    expect(readFactualPassage(page(wrong), question)).toBeUndefined();
+    const passage = readFactualPassage(page(`${wrong} ${quote}`), question);
+    expect(passage).toMatchObject({ value: date, quote });
+    if (passage) expect(formatFactualPassage(passage)).toBe(`${before}**${date}**${after}`);
+
+    const earlier = readFactualPassage(page(`The city archive opened in 1890, while the Grayhaven Wall fell on ${date}.`), question);
+    expect(earlier).toMatchObject({ value: date, quote: `the Grayhaven Wall fell on ${date}` });
   });
 
   it('extracts names, locations, aliases, lists and materials with their original wording', () => {

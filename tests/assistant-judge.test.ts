@@ -378,6 +378,52 @@ describe('population questions (regression: live 2026-11-22 14:02, a right answe
   });
 });
 
+describe('event dates', () => {
+  // Exact leads sent to the owner in the frozen 2026-11-26 council run (d5 and e1).
+  const wrongAlgeria = 'وقد تمتعت موريطانيا القيصرية بالاستقلال والرخاء والنهضة في ظل ملكها يوبا الثاني الجزائري أبن عنابة 25 ق.م إلى 40 ميلادية.';
+  const wrongWall = 'The fall of the Berlin Wall paved the way for German reunification, which formally took place on 3 October 1990.';
+  const wallQuestion = 'When did the Berlin Wall fall?';
+  const wallSource = '**Source:** [Wikipedia — Berlin Wall](https://en.wikipedia.org/wiki/Berlin_Wall)';
+
+  it.each([
+    ['متى استقلت الجزائر؟', wrongAlgeria, SOURCE('الجزائر', 'https://ar.wikipedia.org/wiki/الجزائر')],
+    [wallQuestion, wrongWall, wallSource],
+  ])('withholds a supported sentence when the date answers a different event for %s', (question, line, source) => {
+    const verdict = judge({ question, reply: `${line}\n\n${source}`, evidence: [{ kind: 'page', text: line }] });
+    expect(verdict.decision).toBe('withhold');
+    expect(verdict.findings).toContainEqual(expect.objectContaining({ code: 'event_date_mismatch', severity: 'block', line: 1, excerpt: line }));
+    expect(verdict.support).toEqual({ sentences: 1, supported: 1 });
+  });
+
+  it('reports a wrong-event date when Hands abstains after reading the Algeria fixture', () => {
+    const verdict = judge({ question: 'متى استقلت الجزائر؟', reply: 'لم أجد صفحة تجيب عن «متى استقلت الجزائر؟».', status: 'partial',
+      evidence: [{ kind: 'page', title: 'الجزائر', text: wrongAlgeria }] });
+    expect(verdict.decision).toBe('withhold');
+    expect(verdict.findings).toContainEqual(expect.objectContaining({ code: 'event_date_mismatch', severity: 'block', line: 0, excerpt: wrongAlgeria }));
+  });
+
+  it.each([
+    'The Berlin Wall fell in 1989, paving the way for German reunification in 1990.',
+    'German reunification took place in 1990, after the Berlin Wall fell in 1989.',
+  ])('keeps a lead whose date is bound even with another event nearby', (line) => {
+    // Synthetic sentences. The requested year comes from the e1 oracle in scripts/quality/council-questions.ts.
+    const verdict = judge({ question: wallQuestion, reply: `${line}\n\n**More from the same source:**\n- ${wrongWall}\n\n${wallSource}` });
+    expect(verdict.decision).toBe('send');
+    expect(verdict.lead?.text).toBe(line);
+    expect(verdict.codes).not.toContain('event_date_mismatch');
+  });
+
+  it('accepts a bare date in an exact Q&A but withholds a mislabeled sentence', () => {
+    // Synthetic Q&A. The requested year comes from the frozen e1 council oracle.
+    const check = (answer: string) => {
+      const line = `Question: ${wallQuestion} Answer: ${answer}`;
+      return judge({ question: wallQuestion, reply: `${line}\n\n${wallSource}`, evidence: [{ kind: 'page', text: line }] });
+    };
+    expect(check('1989').codes).not.toContain('event_date_mismatch');
+    expect(check(wrongWall).codes).toContain('event_date_mismatch');
+  });
+});
+
 describe('only page text is changed (regression: live 2026-11-22 06:39–07:16, three desktop replies lost «كتبت»)', () => {
   it('leaves a desktop action report exactly as it is', () => {
     for (const reply of ['كتبت 14 حرفًا في نافذة المفكرة.', 'كتبت 14 حرفًا في «Untitled - Notepad».', 'كتبت 14 حرفًا في «ملاحظات.txt - Notepad» وتحققت أنها ظهرت كما هي.']) {
