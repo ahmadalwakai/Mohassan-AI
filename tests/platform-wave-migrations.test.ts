@@ -57,7 +57,7 @@ const currentIds = [
   '037_notifications', '038_reminders', '039_conversation_shares', '040_member_data_rights',
   '041_long_run_checkpoints', '042_background_results', '043_smart_monitors',
   '044_smart_monitors_v2', '045_smart_monitor_conversation_controls', '046_smart_monitor_visual_budget',
-  '047_monitor_alert_feedback', '048_smart_monitor_decisions',
+  '047_monitor_alert_feedback', '048_smart_monitor_decisions', '050_activation_console',
 ];
 const agentIds = ['035_chat_conversation_review', '036_structured_memory'];
 
@@ -123,7 +123,16 @@ it('records platform migrations in startup order, restarts unchanged, and adopts
       databaseUrl = target.href;
     }
 
-    const first = await boot();
+    const first = await boot(async db => {
+      // Schema ported from PR #43, retrieved 2026-11-27.
+      // https://github.com/ahmadalwakai/Mohassan-AI/blob/470d5593e4c8d41bb7b41f1980cd87ab61d9546c/apps/server/src/activation-migration.ts
+      const { rows } = await sql<{ table_name: string }>`
+        SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'
+        AND table_name LIKE 'activation_%' ORDER BY table_name
+      `.execute(db);
+      expect(rows.map(row => row.table_name)).toEqual(['activation_changes', 'activation_observations', 'activation_reviews']);
+      await expect(sql`TRUNCATE activation_changes`.execute(db)).rejects.toThrow('Activation history is append-only');
+    });
     expect(first.platformInserts).toEqual(currentIds);
     expect(first.appLedger.map(row => row.version)).toEqual([...baseIds, ...agentIds, ...currentIds].sort());
     expect(first.authLedger.map(row => row.version)).toEqual(['001_auth', '002_members', '003_member_run_quota']);

@@ -8,7 +8,7 @@ const config: NextConfig = {
   distDir,
   transpilePackages: ["@mohassan/contracts"],
   logging: { incomingRequests: { ignore: [/^\/(?:share\/|api\/chat\/conversation-shares\/public\/)/] } },
-  experimental: { optimizePackageImports: ["@chakra-ui/react", "lucide-react"] },
+  experimental: { authInterrupts: true, optimizePackageImports: ["@chakra-ui/react", "lucide-react"] },
 };
 
 export default config;
