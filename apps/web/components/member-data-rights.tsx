@@ -14,11 +14,17 @@ export function AccountTime({ value }: { value: string }) {
   return <time dateTime={value}>{dateFormat.format(new Date(value))}</time>;
 }
 
+class AccountResponseError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 async function accountResponse(path: string, options: RequestInit = {}) {
   const response = await fetch(path, { cache: "no-store", credentials: "same-origin", mode: "same-origin", ...options });
   if (response.ok) return response;
   const result = await response.json().catch(() => null);
-  throw new Error(result?.error?.message ?? genericError);
+  throw new AccountResponseError(result?.error?.message ?? genericError, response.status);
 }
 
 export async function accountRequest<T>(path: string, options?: RequestInit): Promise<T> {
@@ -102,22 +108,26 @@ export function ConfirmAccountAction({ title, instruction, label, needsPassword,
   </dialog>;
 }
 
+type ExportMode = "full" | "omit";
+
 function ExportSection({ offline, onExported }: { offline: boolean; onExported?: () => void }) {
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<ExportMode | null>(null);
   const [error, setError] = useState("");
+  const [offerDataOnly, setOfferDataOnly] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
   const activeExport = useRef<AbortController | null>(null);
   useEffect(() => () => activeExport.current?.abort(), []);
 
-  async function download() {
+  async function download(mode: ExportMode) {
     if (activeExport.current) return;
     const controller = new AbortController();
     activeExport.current = controller;
-    setBusy(true);
+    setBusy(mode);
     setError("");
     setDownloaded(false);
     try {
-      const response = await accountResponse("/api/member-data/export", { signal: controller.signal });
+      const path = mode === "omit" ? "/api/member-data/export?files=omit" : "/api/member-data/export";
+      const response = await accountResponse(path, { signal: controller.signal });
       if (response.headers.get("Content-Type") !== "application/zip") throw new Error("تعذر تنزيل ملف البيانات.");
       const archive = await response.blob();
       if (controller.signal.aborted) return;
@@ -130,21 +140,28 @@ function ExportSection({ offline, onExported }: { offline: boolean; onExported?:
       link.remove();
       // Wait until the browser has processed the download before releasing the object URL.
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+      if (mode === "full") setOfferDataOnly(false);
       setDownloaded(true);
       onExported?.();
     } catch (caught) {
-      if (!controller.signal.aborted) setError(failure(caught));
+      if (!controller.signal.aborted) {
+        setError(failure(caught));
+        if (mode === "full" && caught instanceof AccountResponseError && caught.status === 413) setOfferDataOnly(true);
+      }
     } finally {
       activeExport.current = null;
-      if (!controller.signal.aborted) setBusy(false);
+      if (!controller.signal.aborted) setBusy(null);
     }
   }
 
   return <section className={styles.right}>
     <h3>تنزيل بياناتي</h3>
     <p>ملف ZIP يضم بيانات حسابك وملفاته. يمكنك تنزيل نسخة واحدة كل ساعة.</p>
-    <Button size="sm" variant="outline" loading={busy} disabled={busy || offline} onClick={() => { void download(); }}><Download size={16} />تنزيل نسخة ZIP</Button>
+    <Button size="sm" variant="outline" loading={busy === "full"} disabled={busy !== null || offline} onClick={() => { void download("full"); }}><Download size={16} />تنزيل نسخة ZIP</Button>
     {error ? <p className="inline-error" role="alert">{error}</p> : null}
+    {offerDataOnly ? <Button size="sm" variant="outline" loading={busy === "omit"} disabled={busy !== null || offline} onClick={() => { void download("omit"); }}>
+      <Download size={16} />تنزيل البيانات بدون محتوى الملفات
+    </Button> : null}
     {downloaded ? <p role="status">بدأ تنزيل ملف بياناتك.</p> : null}
   </section>;
 }

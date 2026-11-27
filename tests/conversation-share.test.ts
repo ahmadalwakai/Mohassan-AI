@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApplication } from '../apps/server/src/app.ts';
+import { clearEndedConversationShareSnapshots } from '../apps/server/src/conversation-share-lifecycle.js';
 
 const origin = 'http://127.0.0.1:3000';
 const secret = 'conversation-share-fixture-internal-secret';
@@ -115,7 +116,38 @@ describe('conversation exports and shares through the application', () => {
     const revoked = await get(lookup);
     expect(revoked.statusCode).toBe(404);
     expect(revoked.headers['x-robots-tag']).toContain('noindex');
+    const revokedRow = await db().selectFrom('conversation_shares').selectAll().where('id', '=', share.id).executeTakeFirstOrThrow();
+    expect(revokedRow).toEqual({ ...row, revoked_at: expect.any(Date), snapshot: {} });
     expect((await get(shares, memberCookie)).json()).toEqual({ shares: [] });
+  });
+
+  it('serves only the active link while the sweep clears an expired snapshot', async () => {
+    const text = 'نص اللقطة قبل انتهاء الصلاحية';
+    const id = await makeConversation(memberCookie, text);
+    const reviewed = await preview(id, memberCookie);
+    const expires = await publish(id, memberCookie, reviewed.review);
+    const remains = await publish(id, memberCookie, reviewed.review, 'never');
+    expect(expires.statusCode).toBe(201);
+    expect(remains.statusCode).toBe(201);
+    const { share: expiredShare, url: expiredUrl } = expires.json();
+    const { share: activeShare, url: activeUrl } = remains.json();
+    const activeLookup = `${shares}/public/${tokenFrom(activeUrl)}`;
+    const expiredLookup = `${shares}/public/${tokenFrom(expiredUrl)}`;
+    const active = await get(activeLookup);
+    expect(active.statusCode).toBe(200);
+    expect(active.json().snapshot.messages[0].text).toBe(text);
+    expect((await get(expiredLookup)).statusCode).toBe(200);
+
+    const expiresAt = new Date();
+    await db().updateTable('conversation_shares').set({ expires_at: expiresAt }).where('id', '=', expiredShare.id).execute();
+    expect((await get(expiredLookup)).statusCode).toBe(404);
+    const row = db().selectFrom('conversation_shares').selectAll().where('id', '=', expiredShare.id);
+    const before = await row.executeTakeFirstOrThrow();
+    await clearEndedConversationShareSnapshots(db());
+    expect(await row.executeTakeFirstOrThrow()).toEqual({ ...before, snapshot: {} });
+    expect((await get(expiredLookup)).statusCode).toBe(404);
+    expect((await get(activeLookup)).json()).toEqual(active.json());
+    expect((await get(shares, memberCookie)).json()).toEqual({ shares: [activeShare] });
   });
 
   it('limits export and sharing to the acting account and keeps export available when sharing is off', async () => {

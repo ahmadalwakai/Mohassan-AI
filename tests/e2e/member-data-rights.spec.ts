@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { MemberExportTooLarge } from '../../apps/server/src/member-data-zip';
 import { signInAsFixtureOwner, submitFixtureSignIn } from './helpers';
 
 const email = 'rights-e2e@example.test';
@@ -69,9 +70,22 @@ test('handles exports, sessions and the deletion grace period in the Arabic acco
 
     const crossSite = await memberContext.request.get('/api/member-data/export', { headers: { 'sec-fetch-site': 'cross-site' } });
     expect(crossSite.status()).toBe(403);
-    const downloaded = member.waitForEvent('download');
     const downloadButton = member.getByRole('button', { name: 'تنزيل نسخة ZIP' });
+    const dataOnlyButton = member.getByRole('button', { name: 'تنزيل البيانات بدون محتوى الملفات' });
+    await expect(dataOnlyButton).toHaveCount(0);
+    const tooLarge = new MemberExportTooLarge();
+    await member.route(url => url.pathname === '/api/member-data/export' && !url.search, route => route.fulfill({
+      status: tooLarge.statusCode, json: { error: { code: tooLarge.code, message: tooLarge.message } },
+    }), { times: 1 });
     await downloadButton.click();
+    await expect(member.getByRole('alert').filter({ hasText: tooLarge.message })).toBeVisible();
+    await expect(dataOnlyButton).toBeEnabled();
+    const downloaded = member.waitForEvent('download');
+    const exported = member.waitForResponse(response => new URL(response.url()).pathname === '/api/member-data/export');
+    await dataOnlyButton.click();
+    const result = await exported;
+    expect(new URL(result.url()).search).toBe('?files=omit');
+    expect(result.status()).toBe(200);
     const archive = await downloaded;
     expect(archive.suggestedFilename()).toBe('mohassan-data.zip');
     expect(await archive.failure()).toBeNull();

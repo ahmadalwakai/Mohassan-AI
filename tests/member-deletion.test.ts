@@ -97,6 +97,14 @@ describe('member deletion', () => {
     ]).execute();
     const memberData = await addPlatformMemberData(db(), memberId, conversationId);
     const ownerData = await addPlatformMemberData(db(), ownerId, ownerConversationId);
+    const activeShare = await db().selectFrom('conversation_shares').selectAll()
+      .where('id', '=', memberData.shareId).executeTakeFirstOrThrow();
+    const legacyShare = {
+      id: randomUUID(), sharer_id: memberId, conversation_id: conversationId,
+      token_hash: createHash('sha256').update(randomUUID()).digest('hex'), snapshot: JSON.stringify(activeShare.snapshot),
+      shared_at: activeShare.shared_at, revoked_at: activeShare.shared_at,
+    };
+    await db().insertInto('conversation_shares').values(legacyShare).execute();
     const queuedId = memberData.exportedRows.reminder_deliveries.delivery_key;
     const queuedAt = new Date();
     await db().insertInto('chat_notifications').values({
@@ -115,6 +123,14 @@ describe('member deletion', () => {
     expect(await db().selectFrom('session').select('id').where('userId', '=', memberId).execute()).toHaveLength(0);
     expect((await get(publicPath(memberData.token))).statusCode).toBe(404);
     expect((await get(publicPath(ownerData.token))).statusCode).toBe(200);
+    const memberShare = (id: string) => db().selectFrom('conversation_shares')
+      .select(['id', 'snapshot', 'shared_at', 'revoked_at']).where('id', '=', id).executeTakeFirstOrThrow();
+    expect(await memberShare(memberData.shareId)).toEqual({
+      id: memberData.shareId, snapshot: {}, shared_at: activeShare.shared_at, revoked_at: new Date(deletion.requestedAt),
+    });
+    expect(await memberShare(legacyShare.id)).toEqual({
+      id: legacyShare.id, snapshot: {}, shared_at: legacyShare.shared_at, revoked_at: legacyShare.revoked_at,
+    });
     expect(await db().selectFrom('push_subscriptions').select('id').execute()).toEqual([{ id: ownerData.pushId }]);
     expect(await db().selectFrom('chat_notifications').select('delivery').where('task_id', '=', memberData.taskId).executeTakeFirst())
       .toEqual({ delivery: 'suppressed' });
@@ -143,6 +159,7 @@ describe('member deletion', () => {
     expect(await deliveries()).toHaveLength(2);
     expect(await queuedMessage()).toEqual({ id: queuedId });
     expect((await get(publicPath(memberData.token))).statusCode).toBe(404);
+    expect((await memberShare(memberData.shareId)).snapshot).toEqual({});
     expect(await db().selectFrom('push_subscriptions').select('id').where('user_id', '=', memberId).execute()).toEqual([]);
     expect((await get(self, recovery.cookie)).json()).toEqual({ deletion: null });
     expect((await get('/api/chat/conversations', recovery.cookie)).statusCode).toBe(200);
@@ -151,6 +168,28 @@ describe('member deletion', () => {
       { actor_id: memberId, action: 'deletion_requested' }, { actor_id: memberId, action: 'deletion_cancelled' },
     ]);
   }, 30_000);
+
+  it('clears expired and previously revoked snapshots on the maintenance startup tick', async () => {
+    const snapshot = { title: 'Startup sweep fixture', messages: [] };
+    const conversationId = randomUUID();
+    const id = { active: randomUUID(), expired: randomUUID(), revoked: randomUUID() };
+    await db().insertInto('conversation_shares').values(Object.entries(id).map(([state, key]) => ({
+      id: key, sharer_id: ownerId, conversation_id: conversationId,
+      token_hash: createHash('sha256').update(key).digest('hex'), snapshot: JSON.stringify(snapshot),
+      shared_at: sql`statement_timestamp() - interval '1 hour'`,
+      expires_at: state === 'expired' ? sql`statement_timestamp() - interval '1 second'` : null,
+      revoked_at: state === 'revoked' ? sql`statement_timestamp()` : null,
+    }))).execute();
+    const read = () => db().selectFrom('conversation_shares')
+      .select(['id', 'snapshot', 'shared_at', 'expires_at', 'revoked_at'])
+      .where('id', 'in', Object.values(id)).orderBy('id').execute();
+    const before = await read();
+    const maintenance = Fastify();
+    startMemberDeletionPurge(maintenance, db(), { documentsDir, purgeBrowserProfiles: async () => {} });
+    await maintenance.ready();
+    await maintenance.close();
+    expect(await read()).toEqual(before.map(row => ({ ...row, snapshot: row.id === id.active ? snapshot : {} })));
+  });
 
   it('lets the owner cancel a member request and protects the owner even if a request row exists', async () => {
     const signedIn = await login(first);

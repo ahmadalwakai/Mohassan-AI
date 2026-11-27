@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Kysely } from 'kysely';
 import { z } from 'zod';
-import { MemberAccountIdSchema, MemberAuditQuerySchema } from '@mohassan/contracts';
+import { MemberAccountIdSchema, MemberAuditQuerySchema, MemberDataExportQuerySchema } from '@mohassan/contracts';
 import { createMemberDataExport } from './member-data-export.js';
 import { listMemberAudit, recordMemberAudit } from './member-audit.js';
 import { endMemberSessions, endOtherAccountSessions, listAccountSessions } from './member-sessions.js';
@@ -29,13 +29,13 @@ export async function registerMemberDataRoutes(app: FastifyInstance, options: {
   };
 
   app.get(`${data}/export`, { exposeHeadRoute: false }, async (request, reply) => {
-    empty.parse(request.query);
+    const query = MemberDataExportQuerySchema.parse(request.query);
     const { id } = await owner(request);
     const abort = new AbortController();
     reply.raw.once('close', () => abort.abort());
     let archive: Awaited<ReturnType<typeof exports.prepare>>;
     try {
-      archive = await exports.prepare(id, abort.signal);
+      archive = await exports.prepare(id, abort.signal, query);
     } catch (error) {
       const seconds = (error as { retryAfterSeconds?: number }).retryAfterSeconds;
       if (typeof seconds === 'number') reply.header('Retry-After', String(seconds));

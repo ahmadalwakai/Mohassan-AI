@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AgentBrowser } from '@mohassan/browser';
 import { createDatabase, migrate } from '@mohassan/database';
 import { commandChatMigration, createCommandChatControl } from '../apps/server/src/command-chat.js';
+import { clearEndedConversationShareSnapshots } from '../apps/server/src/conversation-share-lifecycle.js';
 import { scanConversationPrivacy } from '../apps/server/src/conversation-share-privacy.js';
 import { createConversationShareStorage } from '../apps/server/src/conversation-share-storage.js';
 
@@ -149,7 +150,8 @@ describe('conversation share storage', () => {
 
   it('stores only the 128-bit credential hash and keeps the public snapshot independent of chat edits and deletion', async () => {
     const id = await conversation('قبل التعديل');
-    const store = createConversationShareStorage(database.db, () => Date.parse(createdAt));
+    let clock = Date.parse(createdAt);
+    const store = createConversationShareStorage(database.db, () => clock);
     const { snapshot } = (await store.ownedSnapshot(owner, id))!;
     const { share, token } = await store.createShare(owner, id, snapshot, 'never', 'owner');
     expect(Buffer.from(token, 'base64url')).toHaveLength(16);
@@ -161,25 +163,57 @@ describe('conversation share storage', () => {
     expect(await store.lookupShare(token)).toEqual({ snapshot, sharedAt: createdAt });
     expect(await store.lookupShare(share.id)).toBeNull();
     expect(await store.revokeShare('another-account', share.id)).toBe(false);
+    expect(await store.lookupShare(token)).toEqual({ snapshot, sharedAt: createdAt });
+    clock += 1;
     expect(await store.revokeShare(owner, share.id)).toBe(true);
     expect(await store.lookupShare(token)).toBeNull();
+    expect(await store.revokeShare(owner, share.id)).toBe(false);
+    expect(await database.db.selectFrom('conversation_shares').selectAll().where('id', '=', share.id).executeTakeFirstOrThrow())
+      .toEqual({ ...row, revoked_at: new Date(clock), snapshot: {} });
+  });
+
+  it('clears snapshots from links revoked before snapshot cleanup was introduced', async () => {
+    const id = await conversation('أُلغي الرابط سابقًا');
+    const store = createConversationShareStorage(database.db, () => Date.parse(createdAt));
+    const { snapshot } = (await store.ownedSnapshot(owner, id))!;
+    const { share, token } = await store.createShare(owner, id, snapshot, 'never', 'owner');
+    await database.db.updateTable('conversation_shares').set({ revoked_at: new Date(createdAt) }).where('id', '=', share.id).execute();
+    const row = database.db.selectFrom('conversation_shares').selectAll().where('id', '=', share.id);
+    const before = await row.executeTakeFirstOrThrow();
+    expect(before.snapshot).toEqual(snapshot);
+
+    await clearEndedConversationShareSnapshots(database.db, new Date(createdAt));
+    expect(await row.executeTakeFirstOrThrow()).toEqual({ ...before, snapshot: {} });
+    expect(await store.lookupShare(token)).toBeNull();
+    expect((await store.listShares(owner)).some(item => item.id === share.id)).toBe(false);
   });
 
   it.each([
     ['1d', '2026-11-26T12:00:00.000Z'],
     ['7d', '2026-12-02T12:00:00.000Z'],
     ['30d', '2026-12-25T12:00:00.000Z'],
-  ] as const)('expires %s at its exact cutoff in the list and on lookup', async (expiry, expiresAt) => {
+  ] as const)('expires %s at its cutoff in the list and on lookup and clears the snapshot', async (expiry, expiresAt) => {
     let clock = Date.parse(createdAt);
     const store = createConversationShareStorage(database.db, () => clock);
     const id = await conversation('المدة');
     const { snapshot } = (await store.ownedSnapshot(owner, id))!;
     const { share, token } = await store.createShare(owner, id, snapshot, expiry, 'owner');
+    const row = database.db.selectFrom('conversation_shares').selectAll().where('id', '=', share.id);
+    const before = await row.executeTakeFirstOrThrow();
     expect(share.expiresAt).toBe(expiresAt);
     clock = Date.parse(expiresAt) - 1;
+    await clearEndedConversationShareSnapshots(database.db, new Date(clock));
+    expect(await row.executeTakeFirstOrThrow()).toEqual(before);
     expect(await store.lookupShare(token)).toEqual({ snapshot, sharedAt: createdAt });
     expect((await store.listShares(owner)).some(item => item.id === share.id)).toBe(true);
     clock += 1;
+    expect(await store.lookupShare(token)).toBeNull();
+    expect((await store.listShares(owner)).some(item => item.id === share.id)).toBe(false);
+    await clearEndedConversationShareSnapshots(database.db, new Date(clock));
+    expect(await row.executeTakeFirstOrThrow()).toEqual({ ...before, snapshot: {} });
+    expect(await store.lookupShare(token)).toBeNull();
+    expect((await store.listShares(owner)).some(item => item.id === share.id)).toBe(false);
+    clock -= 1;
     expect(await store.lookupShare(token)).toBeNull();
     expect((await store.listShares(owner)).some(item => item.id === share.id)).toBe(false);
   });
