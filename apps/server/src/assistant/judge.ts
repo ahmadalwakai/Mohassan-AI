@@ -15,6 +15,8 @@
  */
 import { performance } from 'node:perf_hooks';
 import { checkAnswerLine, figureKind, hasFigureOf, isMetaLine } from './answer-check.js';
+import { checkComparisonCompleteness, comparisonPartialReply, isComparisonPartialReply } from './comparison-completeness.js';
+import { parseComparisonQuestion } from './comparison-question.js';
 import { factualPassage, formatFactualPassage } from './factual-evidence.js';
 import { entityWords, fold, isFollowUp, refersBack, topicWords } from './hands.js';
 import { buildFrame } from './mind/frame.js';
@@ -24,7 +26,7 @@ export type ReplyKind = 'answer' | 'quote' | 'list' | 'computed' | 'memory' | 'q
 export type JudgeCode = ReplyFindingCode
   | 'lead_meta' | 'lead_ui' | 'lead_off_topic' | 'lead_needs_number' | 'lead_needs_name' | 'fragment_lead' | 'lead_not_best'
   | 'definition_form_missing' | 'duration_unit_missing' | 'self_question_from_web' | 'local_intent_abstained' | 'page_subject_mismatch' | 'subject_missing'
-  | 'unsupported_sentence' | 'evidence_unavailable';
+  | 'comparison_incomplete' | 'unsupported_sentence' | 'evidence_unavailable';
 /** block: the reply must not go out as it is. fix: a mechanical repair exists. review: counted for the owner. info: a note. */
 export type JudgeSeverity = 'block' | 'fix' | 'review' | 'info';
 export type JudgeDecision = 'send' | 'fix' | 'withhold';
@@ -67,7 +69,7 @@ export const SEVERITY: Record<JudgeCode, JudgeSeverity> = {
   language_mismatch: 'review', foreign_heading: 'fix', byline_lead: 'fix', site_chrome: 'fix', duplicate_line: 'fix', lead_without_answer: 'review',
   lead_meta: 'block', lead_ui: 'review', lead_off_topic: 'block', lead_needs_number: 'block', lead_needs_name: 'review', fragment_lead: 'review', lead_not_best: 'fix',
   definition_form_missing: 'review', duration_unit_missing: 'block', self_question_from_web: 'block', local_intent_abstained: 'review', page_subject_mismatch: 'review',
-  subject_missing: 'block', unsupported_sentence: 'block', evidence_unavailable: 'info',
+  subject_missing: 'block', comparison_incomplete: 'block', unsupported_sentence: 'block', evidence_unavailable: 'info',
 };
 const ORDER: JudgeSeverity[] = ['block', 'fix', 'review', 'info'];
 
@@ -286,7 +288,7 @@ export function replyKind(input: JudgeInput, intent: string, sourced: boolean): 
   const lead = reply.split('\n').find(line => line.trim())?.trim() ?? '';
   const lines = reply.split('\n');
   if (input.status?.startsWith('waiting_') || QUESTION_TO_USER.test(lead) && !ABSTAIN_LEAD.test(lead)) return 'question';
-  if (ABSTAIN_LEAD.test(lead) || NEEDS_MODEL.test(lead)) return 'abstain';
+  if (ABSTAIN_LEAD.test(lead) || NEEDS_MODEL.test(lead) || isComparisonPartialReply(lead)) return 'abstain';
   if (COMPUTED.test(reply)) return 'computed';
   if (MEMORY_LEAD.test(lead) || intent === 'memory_recall' && words(reply).length <= 6) return 'memory';
   if (lines.filter(line => LIST_ITEM.test(line.trim())).length >= 2) return 'list';
@@ -325,8 +327,8 @@ export interface QuestionSubject {
   from: 'name' | 'word';
 }
 export function questionSubject(question: string, topic: readonly string[], lang: 'ar' | 'en'): QuestionSubject | null {
-  // Proper names written in Latin capitals, in either language («Japan», «Python» in «ابحث عن Python pathlib»): any one of them will do,
-  // so a comparison («Is Python faster than Java?») passes when the page names either.
+  // Proper names written in Latin capitals, in either language («Japan», «Python» in «ابحث عن Python pathlib»).
+  // Two-sided comparisons are checked separately against the reply and evidence.
   const latin = words(question.replace(/[؟?!.,;:«»"“”()]/gu, ' '));
   const names = latin.slice(/^[A-Z]/u.test(latin[0] ?? '') ? 1 : 0)
     .map(word => /^[A-Z][a-z]+/u.exec(word)?.[0]).filter((name): name is string => Boolean(name) && !QUESTION_NAMES.has(name!));
@@ -447,6 +449,10 @@ export function judge(input: JudgeInput): JudgeVerdict {
   const pageText = sourced || kind === 'quote';
   const findings: JudgeFinding[] = [];
   const add = (code: JudgeCode, line: number, excerpt: string, detail: string, severity = SEVERITY[code]) => findings.push({ code, severity, line, excerpt: excerptOf(excerpt), detail });
+  const pages = input.evidence?.filter(item => item.kind === 'page') ?? [];
+  const comparison = (pageText || pages.length) && (kind === 'answer' || kind === 'quote' || kind === 'list') ? parseComparisonQuestion(asked) : null;
+  const incomplete = comparison && !checkComparisonCompleteness(comparison, reply, pages).complete;
+  if (incomplete) add('comparison_incomplete', 1, reply.split('\n')[0] ?? '', comparisonPartialReply(comparison, lang));
 
   // Form: the pre-send checks of reply-check.ts. Bylines, site chrome and repeated lines are judged on page text only; the
   // host's own fixed Arabic headings («**الموضوع:**») are translated for an English question on any reply (owner-approved,
@@ -492,7 +498,7 @@ export function judge(input: JudgeInput): JudgeVerdict {
     }
     if (!extracted && topic.length && first.relevance.topicHits === 0) {
       add('lead_off_topic', first.line, first.text, lang === 'ar' ? `لا يذكر السطر الأول أي كلمة من الموضوع (${topic.join('، ')})` : `The first line names none of the subject words (${topic.join(', ')})`);
-    } else if (!extracted) {
+    } else if (!extracted && !comparison) {
       const subject = questionSubject(asked, ownTopic, lang);
       const named = (word: string) => mentions(fold(first.text), word)
         || titleWords.some(title => mentions(title, word) || title.length >= 4 && mentions(word, title));
@@ -591,6 +597,7 @@ export function judge(input: JudgeInput): JudgeVerdict {
   }
   return {
     decision, kind, lang, frame: { intent: frame.intent, answerType: frame.answerType, topic }, sourced, codes, findings, lead, best,
-    fixedReply, withholdText: decision === 'withhold' ? withholdReply(lang, codes, reply) : null, support, ms: Number((performance.now() - started).toFixed(3)),
+    fixedReply, withholdText: decision === 'withhold' ? incomplete ? comparisonPartialReply(comparison, lang) : withholdReply(lang, codes, reply) : null,
+    support, ms: Number((performance.now() - started).toFixed(3)),
   };
 }

@@ -16,6 +16,7 @@ import { refusalReply } from './refusal/replies.js';
 import { refusalPolicyEnabled } from './refusal/settings.js';
 import type { RefusalDecision } from './refusal/types.js';
 import { explicitFactualEvidence, formatFactualPassage, readFactualPassage } from './factual-evidence.js';
+import { comparisonSearchQuestion, searchComparison } from './comparison-web.js';
 
 export { returnedTo };
 export { siteName };
@@ -1316,9 +1317,10 @@ export interface HandsIO {
   /** The conversation's live page, or null when no page is open. */
   page(): Promise<AgentPage | null>;
   /** The same public web search used by the model, with topic relevance and source ranking. */
-  search?(query: string, limit: number): Promise<SearchHit[]>;
+  search?(query: string, limit: number, signal?: AbortSignal): Promise<SearchHit[]>;
   /** Reads a search result over HTTP, so a question is answered without opening the browser. */
-  read?(url: string): Promise<HandsRead>;
+  read?(url: string, signal?: AbortSignal): Promise<HandsRead>;
+  turn?: { deadlineAt: number; signal: AbortSignal };
   act(action: AgentAction): Promise<AgentPage>;
   prepare(action: AgentAction): Promise<AgentRequestPermit | null>;
   /** Cookie banners, sign-in and human checks; null when the run paused or ended there. */
@@ -1337,7 +1339,7 @@ export interface HandsIO {
   hold(held: AgentEffectHeld['held'], label: string): Promise<void>;
 }
 
-export type HandsOutcome = { kind: 'paused' } | { kind: 'done'; text: string; status: 'completed' | 'partial' | 'blocked' };
+export type HandsOutcome = { kind: 'paused' } | { kind: 'done'; text: string; status: 'completed' | 'partial' | 'blocked'; comparison?: true };
 
 /** The shared search engine's spacing between two calls to one provider (1000 ms), with a margin. */
 export const PROVIDER_SPACING_MS = 1100;
@@ -1441,7 +1443,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
   const ownPage = (page: { url: string; title: string }, entity: readonly string[]) => ownUrls.has(withoutHash(page.url)) || isOwnArticle(page.title, entity);
   type SearchResult = { title: string; url: string };
   type SearchBatch = { results: SearchResult[]; retrySubject?: () => Promise<SearchResult[]> };
-  const engine = async (query: string, ask = false): Promise<SearchBatch | { failed: string } | 'unavailable'> => {
+  const engine = async (query: string, ask = false, exactOnly = false, signal?: AbortSignal): Promise<SearchBatch | { failed: string } | 'unavailable'> => {
     const publicQuery = query.normalize('NFKC').replace(/\p{Cf}/gu, '');
     const decoded = publicSearchScan(publicQuery);
     if (publicSearchText(publicQuery) !== publicQuery || publicSearchText(decoded) !== decoded || (decoded.match(/https?:\/\/\S+/gi) ?? []).some(url => safeResumeUrl(url) === null)) {
@@ -1456,7 +1458,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     let providerFailure: string | null = null;
     const lookup = async (words: string) => {
       let hits: SearchHit[] = [];
-      try { hits = await io.search!(words, 6); }
+      try { hits = signal ? await io.search!(words, 6, signal) : await io.search!(words, 6); }
       catch (error) {
         if (error instanceof BrowserError && error.code === 'RESEARCH_PROVIDERS_FAILED') providerFailure = error.message;
         // Cancellation, rejected query policy and lost execution authority must stop the run.
@@ -1474,6 +1476,10 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         .sort((a, b) => Number(a.wiki) - Number(b.wiki) || a.at - b.at)
         .map(({ title, url }) => ({ title, url }));
     };
+    if (exactOnly) {
+      const results = await lookup(query);
+      return results.length ? { results } : providerFailure ? { failed: providerFailure } : 'unavailable';
+    }
     // A question about a subject's attribute («كم عدد سكان مصر») is answered from the subject's own article first. The shared
     // ranking keeps only pages whose title and snippet repeat every question word, which dropped «مصر» for «القصير (مصر)» and
     // «عرب» (artifacts/plan-2026-11-22/two-sources-2026-11-22T06-00-31.json).
@@ -1562,6 +1568,15 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         const scoped = step.here || index > 0 && plan.steps[index - 1].kind === 'open';
         const box = !template && page && scoped ? findSearchBox(page) : undefined;
         if (!template && !box && step.here) return { kind: 'done', status: 'partial', text: page ? `لم أجد خانة بحث في ${hostOf(page.url)}. الصفحة ظاهرة في لوحة المتصفح؛ قل «ابحث عن ${step.query} في الإنترنت» لأبحث خارجها.` : NO_PAGE };
+        const comparison = step.ask && !scoped && !step.site && io.search && index === plan.steps.length - 1 && comparisonSearchQuestion(step.query);
+        if (comparison) {
+          const compared = await searchComparison(step.query, comparison, plan.lang ?? questionLanguage(step.query), step.reply, io,
+            (query, signal) => engine(query, true, true, signal), PROVIDER_SPACING_MS, relevantLines);
+          plan.results = compared.results;
+          plan.found = compared.found;
+          await io.complete?.(index, compared.result.status);
+          return compared.result;
+        }
         let searched: SearchResult[] | undefined;
         let retrySubject: SearchBatch['retrySubject'];
         // «What is the latest version of Node.js?» is read from the product's own release page first (releases.ts): the
