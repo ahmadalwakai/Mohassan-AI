@@ -28,7 +28,7 @@ It is skipped for:
    - the rules or a routing model send the request to `web_search` or `news`;
    - the public-query guard (`assertPublicSearch`) admits the question.
 
-   It uses the chat's own search engine and page reader. It ranks hits by question words in their title and snippet, takes one per site whatever the site is, reads three pages over HTTP, and uses a hit's snippet when its page cannot be read.
+   It uses the chat's own search engine and page reader. It ranks hits by question words in their title and snippet, takes one per site whatever the site is, and attempts up to three page reads over HTTP. Evidence for a reading answer comes from a successful page read.
 3. **Answers and decision.** The members are:
    - the pipeline;
    - v5, through the resident worker;
@@ -36,14 +36,15 @@ It is skipped for:
    - `chat-v4` when nothing was read;
    - the arithmetic ranker for an English word problem.
 
-   The judge (`judge.ts`) checks every answer, the council checks each answer against the pages, and the answers are compared with each other. The pipeline's answer stays whenever it completed and the judge would not withhold it, because it is the only member with a passed product evaluation.
+   The deterministic judge (`judge.ts`) screens reply form and certain source-specific properties. A `send` decision means the rules produced neither a block nor a mechanical repair. It can occur with unmeasured source support and for mutually contradictory answers. The council records technical execution, screening, textual evidence matching, and eligibility under its publication rules for that turn. The pipeline has priority when it completes and the judge returns `send` or `fix`.
 
-Otherwise a model answer is sent only when it is found in a page read for this turn and another member says the same thing. It goes out with its page and a label stating the model's measured result. A lone guess stays in the record and is not sent. After that, v5 answers where it already did as the owner's labelled last resort. Failing all of these, the pipeline's reply stays.
+The reading model can supply an alternative when its output passes screening, occurs in its cited passage, and matches the full normalized text of another candidate's screened answer. The reply includes the source and the model's measured result. Text matching supplies corroboration for this rule and leaves factual correctness unmeasured. A repair recommendation or failed screening prevents an experimental candidate from advancing. A definition request also requires a direct definition of the subject in the question's language from the cited page. The owner-only v5 fallback stays available for other requests where configured and after successful screening, with its experimental label. Otherwise the pipeline's reply and status stay in place.
 
 The record is stored in `chat_messages.council` (jsonb, migration `chat_message_council_v1`). It reaches the owner as `council` on the message (`ModelCouncilSchema` in `packages/contracts`), and the web chat shows it under the reply as «نقاش النماذج».
 
 - A conversation with a reply the council took from a model cannot be shared, like v5's.
 - iPhone and Android ignore the field; they show the sent text, which carries its model label.
+- Older records retain their original results and selection explanations. The screen labels their source and answer comparisons as approximate historical results. Publication eligibility is recorded on new records.
 
 ## Models page
 
@@ -51,6 +52,8 @@ The owner's workspace has an «النماذج» view (`apps/web/components/model
 
 - `GET /api/models` lists every registered model, whether its files are on this server, and where it is used (chat replies, council, page).
 - `POST /api/models/:id/run` runs one model on the owner's text, question and passage, or image.
+
+A completed trial run reports technical execution. The model cards list registered checks and any recorded measurements separately.
 
 v5 runs on the resident worker, never in a second process. Models without a runner, such as the executor's task format, parameter deltas, the retriever, or the routers without a runtime export, say why.
 

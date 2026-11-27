@@ -44,8 +44,8 @@ export function ModelCard({ model, selected, onSelect }: { model: ModelInfo; sel
     <dl>
       <dt>الإصدار</dt><dd><bdi dir="ltr">{model.version}</bdi></dd>
       <dt>التشغيل</dt><dd>{RUNTIME_LABELS[model.runtime]}</dd>
-      {model.measured ? <><dt>المقاس</dt><dd>{model.measured}</dd></> : null}
-      {model.gates.length ? <><dt>الاختبارات</dt><dd dir="auto">{model.gates.join("؛ ")}</dd></> : null}
+      {model.measured ? <><dt>قياسات سابقة</dt><dd>{model.measured}</dd></> : null}
+      {model.gates.length ? <><dt>اختبارات مسجّلة</dt><dd dir="auto">{model.gates.join("؛ ")}</dd></> : null}
     </dl>
     {model.unavailable ? <p className={styles.warning}><ShieldAlert size={13} aria-hidden="true" />{model.unavailable}</p> : null}
     {runnable && onSelect ? <button type="button" className="secondary-button" onClick={() => onSelect(model.id)} aria-pressed={selected}>
@@ -147,7 +147,7 @@ export function ModelsWorkspace({ offline }: { offline: boolean }) {
         </div>
         {runError ? <p className="inline-error" role="alert">{runError}</p> : null}
         {result ? <div className={styles.result} role="status">
-          <p className={result.ok ? styles.badgeOk : styles.badgeBad}>{result.ok ? `أجاب في ${(result.elapsedMs / 1000).toFixed(1)} ث` : REASONS[result.reason ?? ""] ?? "تعذّر تشغيله."}</p>
+          <p className={result.ok ? styles.badgeOk : styles.badgeBad}>{result.ok ? `اكتمل التشغيل في ${(result.elapsedMs / 1000).toFixed(1)} ث` : REASONS[result.reason ?? ""] ?? "تعذّر تشغيله."}</p>
           {result.detail ? <p className={styles.task} dir="auto">{result.detail}</p> : null}
           {result.text ? <p className={styles.answer} dir="auto">{result.text}</p> : null}
           {result.output ? <details><summary>المخرج كما هو</summary><pre dir="ltr" className={styles.output}>{result.output}</pre></details> : null}

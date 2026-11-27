@@ -31,7 +31,7 @@ test('Google sign-in from the chat returns to the same conversation and continue
   await page.route('**/api/google-ads/connect', route => route.fulfill({ json: { authorizationUrl: new URL('/?googleAds=connected#tools', route.request().url()).href } }));
 
   await signInAsFixtureOwner(page, 'assistant');
-  await page.getByRole('navigation', { name: 'المحادثات' }).getByRole('button', { name: 'حملة نقل', exact: true }).click();
+  await page.getByRole('navigation', { name: 'المحادثات' }).getByRole('button', { name: 'حملة نقل تحتاجك', exact: true }).click();
   await expect(page.getByRole('button', { name: 'تم تسجيل الدخول، أكمل' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('sign-in-question.png'), fullPage: true });
   await page.getByRole('button', { name: 'تسجيل الدخول إلى Google' }).click();

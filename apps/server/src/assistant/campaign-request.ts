@@ -1,4 +1,26 @@
-import { matchText } from './mind/normalize.js';
+import { matchText, normalizeRequest } from './mind/normalize.js';
+
+const CAMPAIGN_PLAN_AR = new RegExp(
+  String.raw`^(?:(?:ممكن|هل يمكنك|هل تستطيع|ساعدني (?:في|على))\s+)?` +
+  String.raw`(?:خطط(?:\s+(?:لي|لنا))?\s+ل?|(?:(?:ضع|اكتب|[اأ]عد|جهز)\s+(?:لي\s+)?)?خط[ةه]\s+ل?)` +
+  String.raw`(?:ال)?حمل(?:[ةه]|تي|تنا)\s+(?:ال)?(?:[اأإ]علاني[ةه]|تسويقي[ةه]|(?:[اأإ]علانات|جوجل)(?:\s+(?:جوجل|الإعلانية))?)(?=\s|[\p{P}]|$)`, 'iu',
+);
+const CAMPAIGN_EN = '(?:(?:an?|the|my|our) )?(?:ad(?:vertising)?|marketing|google ads) campaign';
+const CAMPAIGN_PLAN_EN = new RegExp(
+  String.raw`^(?:(?:can you|could you|would you|help me)\s+)?` +
+  String.raw`(?:(?:plan(?: out)?|(?:draft|write|prepare|make|create) (?:me )?(?:a )?plan for) ${CAMPAIGN_EN}|` +
+  String.raw`(?:(?:draft|write|prepare|make|create) (?:me )?)?${CAMPAIGN_EN} plan)(?=\s|[\p{P}]|$)`, 'iu',
+);
+
+/** An explicit request for a campaign plan can be fulfilled without creating a campaign. */
+export function parseCampaignPlanRequest(request: string): { lang: 'ar' | 'en'; brief: string } | null {
+  if (!request.trim() || request.length > 8000) return null;
+  const { text } = normalizeRequest(request);
+  const arabic = CAMPAIGN_PLAN_AR.exec(text)?.[0];
+  if (arabic) return { lang: 'ar', brief: text.slice(arabic.length) };
+  const english = CAMPAIGN_PLAN_EN.exec(text)?.[0];
+  return english ? { lang: 'en', brief: text.slice(english.length) } : null;
+}
 
 /**
  * Whether a message asks for an advertising campaign (the task cycle's step 2, «فهم الطلب»), for the routes that must not take
@@ -51,6 +73,7 @@ const PERIOD = /\b(?:a|per|each|every|\/)\s?(?:day|week|month)\b|\b(?:daily|week
 
 export function isCampaignRequest(request: string): boolean {
   if (typeof request !== 'string' || !request.trim() || request.length > 2000) return false;
+  if (parseCampaignPlanRequest(request)) return true;
   const text = matchText(request.normalize('NFKC')).replace(/[«»"“”'’‘`]/gu, '').replace(/[!?؟]+/gu, ' ').replace(/\s+/gu, ' ').trim();
   const asking = LEARNING.test(text) || QUESTION_START.test(text) && !/^(?:can|could|would|will) you\b|^هل (?:يمكنك|تستطيع|ممكن)(?= |$)/u.test(text);
   if (!asking && EXPLICIT.some(pattern => pattern.test(text))) return true;

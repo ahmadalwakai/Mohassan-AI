@@ -4,6 +4,7 @@ import {
   createModelCouncil, decide, rankHits, readerPrompt, selectPassage, states, wantsWeb,
   type Candidate, type CouncilRunner, type CouncilTurn,
 } from '../apps/server/src/assistant/model-council.js';
+import * as replyJudge from '../apps/server/src/assistant/judge.js';
 import type { ModelRunResult } from '../packages/model-relations/src/runtime.js';
 
 const page = (text: string, title = 'Paris - Encyclopedia', url = 'https://example.org/paris') => ({ kind: 'page' as const, text, title, url });
@@ -48,6 +49,8 @@ describe('model council building blocks', () => {
     expect(states(PARIS, 'Paris')).toBe(true);
     expect(states('Completed in 1889 for the fair.', '1889')).toBe(true);
     expect(states('Completed in 1887 for the fair.', '1889')).toBe(false);
+    expect(states('A population of 18890 people.', '1889')).toBe(false);
+    expect(states('A reading of −12.5 degrees.', '12.5')).toBe(false);
     expect(states('باريس هي عاصمة فرنسا', 'باريس')).toBe(true);
   });
 
@@ -74,17 +77,17 @@ describe('the referee', () => {
   const candidate = (model: string, text: string, extra: Partial<Candidate> = {}): Candidate =>
     ({ model, text, reply: text, outcome: 'ok', ms: 5, agreements: 0, judge: 'send', ...extra });
 
-  it('keeps a standing pipeline answer and names who agreed and who differed', () => {
-    const decision = decide({ v5MayAnswer: false }, true, [candidate('pipeline', 'The capital is Paris.'),
+  it('keeps a standing pipeline answer and reports which answers match its text', () => {
+    const decision = decide({ v5MayAnswer: false }, true, [candidate('pipeline', 'Paris.'),
       candidate('reading-v3-last', 'Paris', { inEvidence: true }), candidate('chat-v5', 'Lyon')]);
     expect(decision).toMatchObject({ chosen: 'pipeline', changed: false });
-    expect(decision.reason).toContain('وافقه: نموذج القراءة v3');
-    expect(decision.reason).toContain('خالفه: نموذج المحادثة v5');
+    expect(decision.reason).toContain('ظهرت مطابقة نصية مع: نموذج القراءة v3');
+    expect(decision.reason).toContain('لم تظهر مطابقة نصية مع: نموذج المحادثة v5');
   });
 
   it('sends a model answer found in the pages and backed by another member when the pipeline has none', () => {
     const decision = decide({ v5MayAnswer: true }, false, [candidate('pipeline', 'I could not find it.'),
-      candidate('chat-v5', 'It is Paris.', { agreements: 1 }), candidate('reading-v3-last', 'Paris', { inEvidence: true, agreements: 1 })]);
+      candidate('chat-v5', 'Paris.', { agreements: 1 }), candidate('reading-v3-last', 'Paris', { inEvidence: true, agreements: 1 })]);
     expect(decision).toMatchObject({ chosen: 'reading-v3-last', changed: true });
   });
 
@@ -92,7 +95,7 @@ describe('the referee', () => {
     const decision = decide({ v5MayAnswer: false }, false, [candidate('pipeline', 'I could not find it.'),
       candidate('reading-v3-last', '2022', { inEvidence: true })]);
     expect(decision).toMatchObject({ chosen: 'pipeline', changed: false });
-    expect(decision.reason).toContain('لم يُرسل تخمين منفرد');
+    expect(decision.reason).toContain('غابت المطابقة مع أي عضو مؤهل آخر');
   });
 
   it('never sends a model answer the pages do not contain, except v5 as the existing last resort', () => {
@@ -100,6 +103,12 @@ describe('the referee', () => {
     expect(decide({ v5MayAnswer: true }, false, cases)).toMatchObject({ chosen: 'chat-v5', changed: true });
     expect(decide({ v5MayAnswer: false }, false, cases)).toMatchObject({ chosen: 'pipeline', changed: false });
     expect(decide({ v5MayAnswer: true }, false, [candidate('chat-v5', 'Lyon', { judge: 'withhold' })])).toMatchObject({ chosen: 'pipeline' });
+  });
+
+  it.each(['withhold', 'fix', 'failed', undefined] as const)('does not publish a model candidate with screening result %s', judge => {
+    const reader = candidate('reading-v3-last', 'Paris', { inEvidence: true, agreements: 1, judge });
+    const v5 = candidate('chat-v5', 'Paris', { judge });
+    expect(decide({ v5MayAnswer: true }, false, [reader, v5])).toMatchObject({ chosen: 'pipeline', changed: false });
   });
 });
 
@@ -113,16 +122,100 @@ describe('deliberation', () => {
     expect(search).not.toHaveBeenCalled();
     const answers = outcome.council.members.filter(member => member.round === 'answer');
     expect(answers.map(member => member.model)).toEqual(['pipeline', 'chat-v5', 'reading-v3-last']);
-    expect(answers.find(member => member.model === 'reading-v3-last')).toMatchObject({ output: 'Paris', inEvidence: true, agreements: 1 });
+    expect(answers.find(member => member.model === 'reading-v3-last')).toMatchObject({ output: 'Paris', inEvidence: true, agreements: 0 });
     expect(answers.find(member => member.model === 'pipeline')).toMatchObject({ chosen: true });
     expect(ModelCouncilSchema.parse(outcome.council)).toEqual(outcome.council);
+  });
+
+  it('records successful screening of contradictory candidates without crediting them as corroboration or matching evidence', async () => {
+    const supported = 'The official administrative capital of the country of France is Paris.';
+    const contradictory = 'The official administrative capital of the country of France is Lyon.';
+    const models = runner({ 'reading-v3-last': { ok: true, output: { text: supported }, elapsedMs: 12 } });
+    const council = createModelCouncil({ runner: models, v5: async () => contradictory });
+    const outcome = await council.deliberate(turn({ evidence: [page(supported)], pipeline: { text: supported, status: 'completed' } }));
+    const answers = outcome.council.members.filter(member => member.round === 'answer');
+    expect(answers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ model: 'pipeline', outcome: 'ok', judge: 'send', publication: 'pipeline' }),
+      expect.objectContaining({ model: 'chat-v5', outcome: 'ok', judge: 'send', inEvidence: false, agreements: 0, publication: 'ineligible' }),
+      expect.objectContaining({ model: 'reading-v3-last', outcome: 'ok', judge: 'send', inEvidence: true, agreements: 1, publication: 'corroborated' }),
+    ]));
+    expect(outcome.chosen).toBe('pipeline');
+  });
+
+  it.each(['The capital of France is not Paris.', 'The capital of France is Lyon, formerly Paris.', 'Paris or Lyon', 'Paris, Texas'])(
+    'does not use an answer that only contains the reader’s text as corroboration: %s', async alternate => {
+      const models = runner({ 'reading-v3-last': { ok: true, output: { text: 'Paris' }, elapsedMs: 12 } });
+      const council = createModelCouncil({ runner: models, v5: async () => alternate });
+      const outcome = await council.deliberate(turn({ evidence: [page(PARIS)], pipeline: { text: 'I could not find it.', status: 'blocked' } }));
+      expect(outcome.council.members.find(member => member.model === 'reading-v3-last')).toMatchObject({ inEvidence: true, agreements: 0, publication: 'ineligible' });
+      expect(outcome).toMatchObject({ chosen: 'pipeline', changed: false, status: 'blocked' });
+    },
+  );
+
+  it('requires the reader answer to match the passage the model read and would cite', async () => {
+    const models = runner({ 'reading-v3-last': { ok: true, output: { text: 'Lyon' }, elapsedMs: 12 } });
+    const council = createModelCouncil({ runner: models, v5: async () => 'Lyon' });
+    const outcome = await council.deliberate(turn({
+      evidence: [page(PARIS), page('Lyon is a large city located on the Rhône and Saône rivers.', 'Lyon', 'https://example.org/lyon')],
+      pipeline: { text: 'I could not find it.', status: 'blocked' },
+    }));
+    expect(outcome.council.members.find(member => member.model === 'reading-v3-last')).toMatchObject({ inEvidence: false, agreements: 1, publication: 'ineligible' });
+    expect(outcome).toMatchObject({ chosen: 'pipeline', changed: false });
+  });
+
+  it.each([
+    ['خبر ChatGPT هو عنوان مقال يناقش ارتفاع تقييم الشركة.', false],
+    ['ChatGPT هو مساعد محادثة بالذكاء الاصطناعي.', true],
+  ] as const)('checks whether the corroborated reader result defines the named subject: %s', async (answer, defines) => {
+    const question = 'ما هو ChatGPT';
+    const pipeline = { text: 'لم أجد تعريفًا مباشرًا بالعربية.', status: 'partial' as const };
+    const models = runner({ 'reading-v3-last': { ok: true, output: { text: answer }, elapsedMs: 12 } });
+    const council = createModelCouncil({ runner: models, v5: async () => answer });
+    const outcome = await council.deliberate(turn({ question, pipeline, history: [{ role: 'user', content: question }],
+      evidence: [page(`${answer} تحتوي الصفحة أيضًا على معلومات إضافية.`, 'ChatGPT', 'https://example.org/chatgpt')] }));
+
+    expect(outcome.council.members.find(member => member.model === 'reading-v3-last')).toMatchObject({
+      outcome: 'ok', inEvidence: true, agreements: 1, publication: defines ? 'corroborated' : 'ineligible',
+    });
+    expect(outcome).toMatchObject(defines ? { chosen: 'reading-v3-last', changed: true, status: 'completed' }
+      : { chosen: 'pipeline', changed: false, ...pipeline });
+  });
+
+  it('keeps the pipeline when a definition has no evidence even if the owner v5 fallback is available', async () => {
+    const question = 'ما هو ChatGPT';
+    const pipeline = { text: 'لم أجد تعريفًا مباشرًا بالعربية.', status: 'blocked' as const };
+    const council = createModelCouncil({ runner: runner({}), v5: async () => 'ChatGPT هو مساعد محادثة بالذكاء الاصطناعي.' });
+    const outcome = await council.deliberate(turn({ question, pipeline, history: [{ role: 'user', content: question }], v5MayAnswer: true }));
+
+    expect(outcome.council.members.find(member => member.model === 'chat-v5')).toMatchObject({ outcome: 'ok', publication: 'ineligible' });
+    expect(outcome).toMatchObject({ chosen: 'pipeline', changed: false, ...pipeline });
+  });
+
+  it('records screening errors separately from execution success and excludes those candidates from corroboration', async () => {
+    const originalJudge = replyJudge.judge;
+    const screening = vi.spyOn(replyJudge, 'judge').mockImplementation(input => {
+      if (input.reply === 'The capital is Paris.') throw new Error('Fixture screening error');
+      return originalJudge(input);
+    });
+    try {
+      const models = runner({ 'reading-v3-last': { ok: true, output: { text: 'Paris' }, elapsedMs: 12 } });
+      const council = createModelCouncil({ runner: models, v5: async () => 'The capital is Paris.' });
+      const outcome = await council.deliberate(turn({ evidence: [page(PARIS)], v5MayAnswer: true,
+        pipeline: { text: 'I could not find it.', status: 'blocked' } }));
+      expect(ModelCouncilSchema.parse(outcome.council)).toEqual(outcome.council);
+      expect(outcome.council.members.find(member => member.model === 'chat-v5')).toMatchObject({ outcome: 'ok', judge: 'failed', publication: 'ineligible' });
+      expect(outcome.council.members.find(member => member.model === 'reading-v3-last')).toMatchObject({ inEvidence: true, agreements: 0, publication: 'ineligible' });
+      expect(outcome).toMatchObject({ chosen: 'pipeline', changed: false, status: 'blocked' });
+    } finally {
+      screening.mockRestore();
+    }
   });
 
   it('searches the web on the backend when the pipeline read nothing and found nothing, then sends the grounded answer', async () => {
     const search = vi.fn(async () => ({ pages: [page(PARIS, 'Capital of France guide', 'https://travel.example/france-capital')] }));
     const models = runner({ 'reading-v3-last': { ok: true, output: { text: ' Paris\nQuestion:', stopReason: 'length' }, elapsedMs: 40 } });
     // v5 says the same thing, so the reading model's answer is grounded and backed by a second member.
-    const council = createModelCouncil({ runner: models, v5: async () => 'The capital of France is Paris.' });
+    const council = createModelCouncil({ runner: models, v5: async () => 'Paris.' });
     const outcome = await council.deliberate(turn({ pipeline: { text: 'لم أجد جواباً.', status: 'blocked' }, search }));
     expect(search).toHaveBeenCalledWith('What is the capital of France?', expect.any(AbortSignal));
     expect(outcome).toMatchObject({ changed: true, chosen: 'reading-v3-last', status: 'completed' });
@@ -150,6 +243,14 @@ describe('deliberation', () => {
     expect(performance.now() - started).toBeLessThan(2_000);
     expect(outcome.council.members.find(member => member.model === 'reading-v3-last')).toMatchObject({ outcome: 'timeout' });
     expect(outcome.chosen).toBe('pipeline');
+  });
+
+  it('records reader output without answer text as an execution failure', async () => {
+    const models = runner({ 'reading-v3-last': { ok: true, output: { label: 'Paris' }, elapsedMs: 12 } });
+    const outcome = await createModelCouncil({ runner: models }).deliberate(turn({ evidence: [page(PARIS)] }));
+    const reader = outcome.council.members.find(member => member.model === 'reading-v3-last');
+    expect(reader).toMatchObject({ outcome: 'failed', publication: 'ineligible' });
+    expect(reader).not.toHaveProperty('judge');
   });
 
   it('marks a reading abstention and asks v4 only when nothing was read', async () => {

@@ -2,10 +2,12 @@ import { z } from 'zod';
 import { parseUserRequestConstraints, isEntireLiteralRequest, maskRequestLiteralData, UserRequestConstraintsSchema, type UserRequestConstraints } from './request-constraints.js';
 export { parseUserRequestConstraints, isEntireLiteralRequest, requestCapabilityAllowed, requestConstraintReply, maskRequestLiteralData, UserRequestConstraintsSchema, type UserRequestConstraints, type ForbiddenRequestCapability } from './request-constraints.js';
 import { publicSearchScan, publicSearchText } from '@mohassan/browser';
+import { parseCampaignPlanRequest } from './campaign-request.js';
 import { isCurrentComputerReadRequest } from './computer-request-language.js';
 import { explicitKnowledgeDocumentRequest, requestsKnowledgeSummary } from './knowledge-document-request.js';
 import { parseQuestionRewriteRequest } from './question-rewrite-request.js';
 import { factualNumberText, questionCoreferenceText, startsFactualQuestion } from './public-question-syntax.js';
+import { answerProvenanceRequest } from './answer-provenance.js';
 
 /** Source classification is independent of tool availability and model output. */
 export const requestSources = ['public_lookup', 'prior_conversation', 'local_state', 'supplied_content', 'unresolved'] as const;
@@ -145,6 +147,8 @@ export function assessRequestScope(value: string, options: RequestScopeOptions =
   if (SOCIAL_QUESTION.test(text)) return make('unresolved', 'converse', 'unknown', ['non_lookup_operation']);
   const credentialScan = publicSearchScan(original);
   if (publicSearchText(credentialScan) !== credentialScan) return make('supplied_content', 'unknown', 'unknown', ['credential_material']);
+  if (answerProvenanceRequest(actionText)) return make('prior_conversation', 'lookup', 'unknown', ['prior_conversation_reference']);
+  if (parseCampaignPlanRequest(actionText)) return make('supplied_content', 'transform', 'unknown', ['new_content_request']);
   const descriptiveContent = DESCRIBE_CONTENT.test(text);
   const transformation = TRANSFORM.test(text) || descriptiveContent;
   const explicitPublic = PUBLIC_ACTION.test(text), findPublicFact = FIND_PUBLIC_FACT.test(text);

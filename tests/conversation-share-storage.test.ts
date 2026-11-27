@@ -147,6 +147,36 @@ describe('conversation share storage', () => {
     }
   });
 
+  it('carries private source provenance into an explanation of the previous reply', async () => {
+    const id = await conversation('نتيجة قراءة خاصة');
+    const priorRun = randomUUID();
+    const url = 'https://workspace.example.test/internal-report';
+    const answeredAt = '2026-11-25T12:01:00.000Z';
+    await database.db.insertInto('chat_runs').values({
+      id: priorRun, owner_id: owner, conversation_id: id, status: 'completed', goal: 'Read my report', lease_token: randomUUID(),
+      created_at: createdAt, updated_at: answeredAt, lease_expires_at: createdAt,
+      state: JSON.stringify({ handsFound: { url }, trail: [{ action: 'browser_observe' }] }),
+    }).execute();
+    await database.db.insertInto('chat_messages').values({
+      id: randomUUID(), conversation_id: id, role: 'assistant', run_id: priorRun, created_at: answeredAt,
+      text: `قرأت التقرير.\n\n**المصدر:** [التقرير](${url})`,
+    }).execute();
+    const browser = { setCheckpointStore() {}, async close() {} } as unknown as AgentBrowser;
+    const control = await createCommandChatControl(database.db, { browser, models: { fast: [], deep: [], vision: '' }, recordExperiences: false });
+    try {
+      await control.send(owner, id, { text: 'كيف حصلت على الإجابة السابقة؟' });
+      await control.settled(id);
+      expect((await control.detail(owner, id)).messages.at(-1)?.text).toContain(url);
+      const { snapshot, provenance, quotes } = (await createConversationShareStorage(database.db).ownedSnapshot(owner, id))!;
+      expect(snapshot.messages.at(-1)?.sources.map(source => source.url)).toContain(url);
+      const checked = scanConversationPrivacy(snapshot, provenance, quotes);
+      expect(checked.findings).toContainEqual(expect.objectContaining({ messageIndex: snapshot.messages.length - 1, kind: 'tool-output' }));
+      expect(JSON.stringify(checked.snapshot)).not.toContain(url);
+    } finally {
+      await control.shutdown();
+    }
+  });
+
   it('stores only the 128-bit credential hash and keeps the public snapshot independent of chat edits and deletion', async () => {
     const id = await conversation('قبل التعديل');
     const store = createConversationShareStorage(database.db, () => Date.parse(createdAt));

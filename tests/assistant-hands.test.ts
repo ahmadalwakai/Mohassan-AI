@@ -503,6 +503,14 @@ describe('question answers from the web', () => {
   });
 
   it.each([
+    ['What is the Internet of Things?', 'The Internet of Things is a network of physical objects connected to the internet.'],
+    ['What is an AI chatbot?', 'An AI chatbot is a program that uses artificial intelligence to converse with users.'],
+  ])('retains the whole subject phrase for definitions: %s', (question, definition) => {
+    const page = pageOf('https://example.com/guide', [], definition);
+    expect(relevantLines(page, question, 1, true, { requireDefinition: true })).toEqual([definition]);
+  });
+
+  it.each([
     'ما معنى الذكاء الاصطناعي؟',
     'ما المقصود بالذكاء الاصطناعي؟',
     'ما المقصود ب الذكاء الاصطناعي؟',

@@ -370,6 +370,8 @@ export interface BrainState {
   handsResults?: import('./hands.js').HandsPlan['results'];
   /** The page whose own sentences answered the last question, read over HTTP; «اقرأ المزيد» opens it in the browser. */
   handsFound?: import('./hands.js').HandsPlan['found'];
+  /** Source citations bound to the text published at the end of this run. */
+  answerProvenance?: import('./answer-provenance.js').AnswerProvenance;
   /** A web lookup held while the mind answers first; the browser runs it only when the mind has no proven answer. */
   webFallback?: import('./hands.js').HandsStep[] | null;
   /** A follow-up question with the previous question's topic added; the mind answers this instead of the bare words. */
@@ -378,6 +380,8 @@ export interface BrainState {
   writer?: import('./writer.js').WritingTask | null;
   writingReadUrls?: string[];
   planner?: import('./planner.js').PlanningTask | null;
+  /** The supplied campaign brief while its local planning questions are open. */
+  campaignPlan?: import('./campaign-planner.js').CampaignPlanningTask;
   /** A website being collected or edited in this conversation (packages/sites, no model). Only code sets this. */
   site?: import('./site-builder.js').SiteChatState | null;
   siteId?: string | null;

@@ -105,12 +105,14 @@ export const ModelCouncilMemberSchema = z.object({
   output: z.string().max(600).optional(),
   /** Understanding round: whether the model agreed with the existing rules. */
   agreesWithRules: z.boolean().optional(),
-  /** Answer round: whether the answer was found in the pages read for this turn; absent when nothing was read. */
+  /** Answer round: text matched the available evidence. Absent when no source match was measured. */
   inEvidence: z.boolean().optional(),
-  /** Answer round: how many other answering members said the same thing. */
+  /** Answer round: how many other answer texts matched. */
   agreements: z.number().int().min(0).max(16).optional(),
-  /** Answer round: the judge's decision on this answer. */
-  judge: z.enum(['send', 'fix', 'withhold']).optional(),
+  /** Answer round: the rule-based judge's screening result, independent of factual correctness. */
+  judge: z.enum(['send', 'fix', 'withhold', 'failed']).optional(),
+  /** Answer round: eligibility under the council's publication rules for this turn. */
+  publication: z.enum(['pipeline', 'corroborated', 'owner-fallback', 'ineligible']).optional(),
   chosen: z.boolean().optional(),
   elapsedMs: z.number().int().min(0).max(600_000),
   note: z.string().max(240).optional(),

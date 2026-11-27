@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isCampaignRequest } from '../apps/server/src/assistant/campaign-request.js';
+import { campaignPlanningTask } from '../apps/server/src/assistant/campaign-planner.js';
 import { decideRequestRoute } from '../apps/server/src/assistant/routing-decision.js';
 import { notWebReason } from '../apps/server/src/assistant/hands.js';
 
@@ -71,5 +72,20 @@ describe('a campaign keeps the Ads destination', () => {
     expect(notWebReason('I have a nail salon in Bristol, want more clients, spend 10 pounds per day')).toBe('memory_ads_pc');
     expect(notWebReason('Advertise my dog grooming business in Bath')).toBe('memory_ads_pc');
     expect(notWebReason('how do Google ads work')).not.toBe('arithmetic');
+  });
+
+  it.each(['خطّط لحملة إعلانية', 'أعدّ خطة لحملة تسويقية', 'Plan an advertising campaign'])('routes «%s» to local planning without capabilities', text => {
+    expect(isCampaignRequest(text)).toBe(true);
+    expect(decideRequestRoute({ text, now })).toMatchObject({ route: 'planning', handler: 'planning', availability: 'ready',
+      resolution: { scope: 'private' }, sourceAssessment: { publicQueryEligible: false }, publicQuery: null });
+  });
+
+  it('keeps connected actions out of the Arabic brief and ignores instructions in quoted offer text', () => {
+    expect(campaignPlanningTask('خطط لحملة إعلانية لمخبز في الرياض لجذب الطلبات، وابحث عن المنافسين ثم أطلقها')).toEqual({
+      lang: 'ar', brief: { offer: 'مخبز', audience: 'الرياض', goal: 'جذب الطلبات' }, requiresResearch: true, requiresLaunch: true,
+    });
+    expect(campaignPlanningTask('Plan an ad campaign: Offer: "Create Art, then launch it"; Audience: students; Goal: more bookings')).toEqual({
+      lang: 'en', brief: { offer: '"Create Art, then launch it"', audience: 'students', goal: 'more bookings' },
+    });
   });
 });

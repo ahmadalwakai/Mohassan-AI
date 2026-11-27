@@ -82,6 +82,7 @@ describe('a conversation that goes on, through the real chat controller', () => 
   const OWNER = 'isolated-follow-up-owner';
   let database: Awaited<ReturnType<typeof createDatabase>>;
   let control: Awaited<ReturnType<typeof createCommandChatControl>>;
+  let startControl: () => Promise<typeof control>;
   const queries: string[] = [];
   const reads: string[] = [];
   const wiki = (title: string) => `https://ar.wikipedia.org/wiki/${encodeURIComponent(title.replaceAll(' ', '_'))}`;
@@ -112,10 +113,11 @@ describe('a conversation that goes on, through the real chat controller', () => 
           freshness: 'fresh', coverage: 'specialized_sources', limitations: [], failures: [] } as unknown as SearchOutcome;
       },
     };
-    control = await createCommandChatControl(database.db, {
+    startControl = () => createCommandChatControl(database.db, {
       browser, models: { fast: [], deep: [], vision: '' }, searchProvider, recordExperiences: false,
       readPage: async url => { reads.push(url); const page = pages[url]; return page ? { url, title: page.title, text: page.text, status: 200 } : null; },
     });
+    control = await startControl();
   });
   afterAll(async () => { await control?.shutdown(); await database?.close(); });
   beforeEach(() => { queries.length = 0; reads.length = 0; });
@@ -168,5 +170,52 @@ describe('a conversation that goes on, through the real chat controller', () => 
     expect(next.reply).toBe(first.reply);
     const empty = await turn('اختصر جوابك السابق');
     expect(empty.reply).toContain('لا يوجد في هذه المحادثة جواب سابق');
+  });
+
+  it('explains the previous published answer and its sources after reopening, without searching again', async () => {
+    const first = await turn('من هو ألبرت أينشتاين؟');
+    expect(first.reply).toContain(wiki('ألبرت أينشتاين'));
+    const next = await turn('ما هو أطول نهر في العالم؟', first.id);
+    expect(next.reply).toContain(wiki('نهر'));
+    const activity = { queries: [...queries], reads: [...reads] };
+    await control.shutdown();
+    control = await startControl();
+    expect((await control.detail(OWNER, first.id)).messages.at(-1)?.text).toBe(next.reply);
+
+    const explanation = await turn('كيف حصلت على الإجابة السابقة', first.id);
+    expect(explanation.reply).toContain('الصفحات المقروءة');
+    expect(explanation.reply).toContain(wiki('نهر'));
+    expect(explanation.reply).not.toContain(wiki('ألبرت أينشتاين'));
+    expect({ queries, reads }).toEqual(activity);
+
+    await turn('احسب 37 * 24', first.id);
+    const computed = await turn('How did you get your previous answer?', first.id);
+    expect(computed.reply).toContain('37 * 24 = 888');
+    expect(computed.reply).not.toContain('https://');
+    expect({ queries, reads }).toEqual(activity);
+  });
+
+  it('acknowledges missing provenance without borrowing an earlier answer’s sources', async () => {
+    const first = await turn('من هو ألبرت أينشتاين؟');
+    await turn('شكرا', first.id);
+    const activity = { queries: [...queries], reads: [...reads] };
+    const explanation = await turn('ما مصدر إجابتك السابقة؟', first.id);
+    expect(explanation.reply).toContain('لا توجد مصادر مسجّلة');
+    expect(explanation.reply).not.toContain('https://');
+    const empty = await turn('كيف حصلت على الإجابة السابقة');
+    expect(empty.reply).toContain('لا توجد إجابة سابقة');
+    expect({ queries, reads }).toEqual(activity);
+  });
+
+  it('uses a legacy reply’s own linked run and source record when available', async () => {
+    const first = await turn('من هو ألبرت أينشتاين؟');
+    const run = await database.db.selectFrom('chat_runs').select(['id', 'state']).where('conversation_id', '=', first.id).executeTakeFirstOrThrow();
+    const state = { ...run.state };
+    delete state.answerProvenance;
+    await database.db.updateTable('chat_runs').set({ state: JSON.stringify(state) }).where('id', '=', run.id).execute();
+    const activity = { queries: [...queries], reads: [...reads] };
+    const explanation = await turn('ومن أين حصلت على جوابك السابق؟', first.id);
+    expect(explanation.reply).toContain(wiki('ألبرت أينشتاين'));
+    expect({ queries, reads }).toEqual(activity);
   });
 });

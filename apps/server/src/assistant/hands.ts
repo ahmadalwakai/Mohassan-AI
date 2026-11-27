@@ -821,6 +821,17 @@ const OVERVIEW_QUESTION = /\b(?:documentation|docs|overview|introduction)\b|(?:^
 /** Questions asking what or who something is: their answer is a definition sentence. */
 const DEFINE_QUESTION = /^(?:ما هو|ما هي|من هو|من هي|ما معنى|ما المقصود ب|ماذا يعني|what is|what are|what was|who is|who was|who were)\s/iu;
 const ARABIC_DEFINITION_LEAD = /^(?:(?:ما معنى|ماذا يعني)\s+|ما المقصود\s+ب\s*)/iu;
+const CONCEPT_QUESTION = /^(?:ما هو|ما هي|what is|what['’]s)\s+/iu;
+const FACT_LOOKUP = /(?:^|\s)(?:افضل|اطول|اكبر|اصغر|اعلي|اقدم|اول|اخر|احدث|اسرع|best|first|last|latest|newest|largest|longest|fastest|most)(?=\s|$)|\b(?:rating|speed|date|difference|version|number|cost)\s+(?:of|for)\b|\b(?:made of|used for|known for)\b/iu;
+const REFERENCE_SECTION = /(?:^|\n|(?<=[.!?؟]))\s*(?:المراجع|المصادر والمراجع|references|bibliography|works cited)\s*(?=[:：.\n]|[↑^]|\[\s*\p{Nd}|\p{Nd}+[.)]|$)/iu;
+const DEFINITION_PREDICATE = '(?:هو|هي|يعد|تعد|يعرف|تعرف|عباره عن|(?:is|are|was|were)\\s+(?:a|an|the|one of|defined as|known as|called)|refers to|means)';
+
+export function needsDefinition(question: string): boolean {
+  if (ARABIC_DEFINITION_LEAD.test(question.trim())) return true;
+  return CONCEPT_QUESTION.test(question.trim()) && !isLiveWebQuestion(question) && figureKind(question) === 'any'
+    && !isReasonQuestion(question) && !aspectSubject(question).length && !entityWords(question).length && !FACT_LOOKUP.test(fold(question));
+}
+
 const ERROR_QUESTION =/\b(?:traceback|stack\s*trace|exception|debug|error)\b|خطأ|اخطاء|أخطاء|تتبع/iu;
 const TRACEBACK_FRAGMENT = /\bTraceback\s*\(|\bFile\s+["'][^"']+["'],?\s+line\s+\d+\b/iu;
 const WIKI_INFOBOX = /معلومات عامة|تعديل مصدري|Edit this at Wikidata|edit on Wikidata/u;
@@ -852,7 +863,7 @@ export function readableText(text: string): string {
 }
 
 /** The page's own sentences that share the question's words, best first by page order; quoted, never rewritten. */
-export function relevantLines(page: AgentPage, question: string, limit = 3, bestFirst = false): string[] {
+export function relevantLines(page: Pick<AgentPage, 'text' | 'title' | 'elements'>, question: string, limit = 3, bestFirst = false, { requireDefinition = false } = {}): string[] {
   const overview = OVERVIEW_QUESTION.test(question) && !ERROR_QUESTION.test(question);
   let matchingQuestion = question;
   try {
@@ -863,26 +874,42 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
   matchingQuestion = matchingQuestion.trim().replace(ARABIC_DEFINITION_LEAD, '');
   // «ما هي عملية الليزك»: «عملية» names the kind of thing, not the thing, and the article's own definition («تعنى كلمة الليزك…»)
   // never says it. Required as a match word, it kept that definition out (measured on «ليزك», 2026-11-22).
-  const definitionAsk = DEFINE_QUESTION.test(question.trim()) || ARABIC_DEFINITION_LEAD.test(question.trim());
+  const definitionAsk = requireDefinition || DEFINE_QUESTION.test(question.trim()) || ARABIC_DEFINITION_LEAD.test(question.trim());
   const asked = fold(matchingQuestion).replace(/[؟?]/gu, ' ').split(/\s+/).filter(word => word && !ASK_WORDS.has(word));
   const kindless = asked.filter(word => !KIND_WORDS.has(word));
+  const ignoresKind = definitionAsk && kindless.length > 0 && kindless.length < asked.length;
   // The question's own words in a row («عدد سكان المغرب»): a sentence that holds the phrase is about the question itself.
-  const phraseWords = definitionAsk && kindless.length && kindless.length < asked.length ? kindless : asked;
+  const phraseWords = ignoresKind ? kindless : asked;
   const words = queryWords(phraseWords.join(' '));
   if (!words.length) return [];
   const need = Math.min(2, words.length);
   const phrase = phraseWords.length >= 2 ? phraseWords.join(' ') : '';
   // «ما هو الذكاء الاصطناعي»: the sentence «الذكاء الاصطناعي (AI) هو …» is the definition itself.
-  const subject = phraseWords.join(' ').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const subject = escape(phraseWords.join(' '));
   const definition = definitionAsk && subject
-    ? new RegExp(`^(?:\\S+\\s){0,2}?(?:ال)?${subject}(?:\\s*\\([^)]*\\))?\\s+(?:هو|هي|يعد|تعد|يعرف|تعرف|عباره عن|(?:is|are|was|were)\\s+(?:a|an|the|one of|defined as|known as|called)|refers to|means)(?=\\s)`, 'u')
+    ? new RegExp(`^(?:\\S+\\s){0,2}?(?:ال)?${subject}(?:\\s*\\([^)]*\\))?\\s+${DEFINITION_PREDICATE}(?=\\s)`, 'u')
     : null;
+  // Keep the surface name's joining words, as in “Internet of Things”. They are omitted from topic scoring.
+  const definitionWords = requireDefinition
+    ? fold(matchingQuestion.replace(CONCEPT_QUESTION, '')).replace(/^(?:an?|the)\s+/u, '').split(/\s+/u).filter(word => word && !(ignoresKind && KIND_WORDS.has(word)))
+    : [];
+  const directSubject = definitionWords.map(word => /^\p{Script=Arabic}{3,}$/u.test(word)
+    ? `(?:ال)?${escape(word.replace(/^ال(?=\p{L}{3})/u, ''))}` : escape(word)).join('\\s+');
+  // A definition states what the named subject is. A mention in a headline, or a related subject with the name in its title, does not.
+  // A localised lead can also introduce the queried name in parentheses after its Arabic name.
+  const directDefinition = directSubject ? new RegExp(
+    `^(?:(?:(?:an?|the)\\s+)?${directSubject}(?:\\s*\\([^)]*\\))*|[\\p{Script=Arabic} ]{1,60}\\((?:بال\\p{Script=Arabic}+\\s*:\\s*)?${directSubject}\\))\\s*[,،]?\\s+${DEFINITION_PREDICATE}(?=\\s)`, 'u',
+  ) : null;
   // «تعنى كلمة الليزك …»: Arabic articles also define a term by its meaning, verb first.
-  const wordMeans = definition ? new RegExp(`^(?:تعني|يعني)\\s+(?:كلمه|مصطلح|لفظ|لفظه|عباره)\\s+(?:ال)?${subject}(?=[\\s(،,:]|$)`, 'u') : null;
+  const wordMeans = definition ? new RegExp(`^(?:تعني|يعني)\\s+(?:كلمه|مصطلح|لفظ|لفظه|عباره)\\s+(?:ال)?${directSubject || subject}(?=[\\s(،,:]|$)`, 'u') : null;
+  const definesSubject = (folded: string) => directDefinition?.test(folded) || wordMeans?.test(folded);
+  const heading = requireDefinition ? plainTitle(page.title) : '';
+  const headingPrefix = heading ? new RegExp(`^${escape(heading)}\\s+`, 'iu') : null;
   // Without a definition, a sentence that opens with the subject is about it, not a passing mention.
   const aboutSubject = definition ? new RegExp(`^(?:ال)?${subject}(?=[\\s(،,:]|$)`, 'u') : null;
   // Some sources explain a process first, then name it in the next sentence.
-  const namesSubject = definition ? new RegExp(`^this (?:process|reaction|method|technique|phenomenon) (?:(?:is )?called|is known as) ${subject}$`, 'u') : null;
+  const namesSubject = definition ? new RegExp(`^this (?:process|reaction|method|technique|phenomenon) (?:(?:is )?called|is known as) ${directSubject || subject}$`, 'u') : null;
   // A price, a time or a score is a number: for such questions a sentence without one does not answer.
   const wantsNumber = isLiveWebQuestion(question);
   const numberAnswer = wantsNumber || WANTS_NUMBER.test(question);
@@ -944,10 +971,15 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     .replace(/\s+([.،,؛;:!?؟)\]»])/gu, '$1')
     .replace(/([(\[«])\s+/gu, '$1'), labels);
   // Keep decimal points, name initials and common title and calendar abbreviations inside their sentence.
-  const text = readableText(page.text);
+  const body = readableText(page.text);
+  const referencesAt = requireDefinition ? body.search(REFERENCE_SECTION) : -1;
+  const text = referencesAt < 0 ? body : body.slice(0, referencesAt);
   const sentences = [...text.matchAll(/(?:[^.!?؟\n]|(?<=\p{Nd})\.(?=\p{Nd})|(?<=(?<!\p{L})(?:\p{Lu}|Dr|Prof|Mr|Mrs|Ms|St|Maj|Gen|Lt|Col))\.(?=[ \t]+\p{Lu})|(?<=(?<!\p{L})ق)\.(?=[ \t]*(?:هـ|م)(?!\p{L})))+(?:[.!?؟]+|\n|$)/gu)];
   for (const [index, match] of sentences.entries()) {
     let line = cleanSentence(match[0]);
+    // The HTTP reader may join the page heading to its first paragraph. The remaining sentence must stand on its own.
+    const prefix = index === 0 ? headingPrefix?.exec(line)?.[0] : undefined;
+    if (prefix && definesSubject(fold(line.slice(prefix.length)))) line = line.slice(prefix.length);
     const opening = subjectStart ? [...line.matchAll(subjectStart)].at(-1) : undefined;
     if (opening?.index) line = line.slice(opening.index).trim();
     let pairedDefinition = false, at = match.index ?? 0;
@@ -979,7 +1011,7 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
       const head = `${parts.slice(0, 40).join(' ')} …`.slice(0, 400);
       const matched = (text: string) => words.filter(word => has(fold(text), word)).length;
       // A definition's head is the answer even when its tail repeats the subject: «تعنى كلمة الليزك …» runs 74 words on «ليزك».
-      const definesAtHead = Boolean(definition?.test(fold(head)) || wordMeans?.test(fold(head)));
+      const definesAtHead = Boolean(definition?.test(fold(head)) || definesSubject(fold(head)));
       lead = definesAtHead || matched(tail) < need && matched(head) >= need;
       // The lead is shown whole when it fits (leadSentence), not cut at 40 words in mid-clause as it was until 2026-11-23.
       line = lead ? leadSentence(parts) : tail;
@@ -990,10 +1022,12 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     const count = glued ? 40 : line.split(' ').length;
     const hasNumber = hasAnswerNumber(line);
     const folded = fold(line);
+    const defines = pairedDefinition || definesSubject(folded);
+    if (requireDefinition && (!defines || !checkAnswerLine(question, line).ok)) continue;
     // A short, complete sentence can state a fact when it names both the page's subject and the requested property.
     const shortStatement = count >= 3 && count < 5 && /[.!]$/u.test(line) && titled.length > 0
       && titled.length < words.length && words.every(word => has(folded, word));
-    if (count < (hasNumber || shortStatement ? 3 : 5) || line.length > (lead ? LEAD_MAX_CHARS : 400) || seen.has(line) || (wantsNumber && !hasNumber)) continue;
+    if (count < (hasNumber || shortStatement || requireDefinition ? 3 : 5) || line.length > (lead ? LEAD_MAX_CHARS : 400) || seen.has(line) || (wantsNumber && !hasNumber)) continue;
     // A sentence that asks («ما تاريخ الذكاء الاصطناعي؟») is a heading or a contents entry, never an answer.
     if (/[؟?]\s*$/u.test(line)) continue;
     // Lines about the page, not the subject: hatnotes, bylines, headers (plan §7.4; 0-baseline §8.3 sent these as answers).
@@ -1022,7 +1056,7 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     // («عاصمتها كانبرا»: its capital is Canberra), stronger than a name that repeats the phrase.
     const answerForm = titled.length > 0 && own > 0 && words.some(word => !titled.includes(word)
       && new RegExp(`(?:^|\\s)[وف]?(?:ال)?${word}(?:\\p{L}{0,2}(?:ها|هم)|\\p{L}{1,2}ه)(?=[\\s،,:]|$)`, 'u').test(folded));
-    scored.push({ line, score: hits + (numberAnswer && /\d/u.test(line) ? 1 : 0) - (glued ? 1 : 0) + (phrase && folded.includes(phrase) ? 2 : 0) + (answerForm ? 3 : 0) + (pairedDefinition || definition?.test(folded) || wordMeans?.test(folded) ? 3 : 0) + (aboutSubject?.test(folded) ? 1 : 0)
+    scored.push({ line, score: hits + (numberAnswer && /\d/u.test(line) ? 1 : 0) - (glued ? 1 : 0) + (phrase && folded.includes(phrase) ? 2 : 0) + (answerForm ? 3 : 0) + (defines || definition?.test(folded) ? 3 : 0) + (aboutSubject?.test(folded) ? 1 : 0)
       + (peopleAsk && POPULATION_NOUN.test(folded) ? 2 : 0) + (opensWithSubject?.test(folded) ? 2 : 0) + (makerAsk && MAKER_STATEMENT.test(folded) ? 2 : 0) + (reasonAsk && reasonAnswers(question, line) ? 3 : 0), at, year, glued, lead });
   }
   // «كم تستغرق …» is answered by a number: sentences without one only look related.
@@ -1344,9 +1378,9 @@ export const PROVIDER_SPACING_MS = 1100;
 
 /** A page fetched over HTTP whose body is only a JavaScript notice (or nothing) is read in the browser instead. */
 const JS_ONLY = /enable javascript|javascript is (?:required|disabled|turned off|not enabled)|please enable js|يجب تفعيل (?:جافا|javascript)|فعّل جافا/iu;
-export function readableOverHttp(text: string): boolean {
+export function readableOverHttp(text: string, minimumLength = 40): boolean {
   const body = text.trim();
-  return body.length >= 40 && !JS_ONLY.test(body.slice(0, 600));
+  return body.length >= minimumLength && !JS_ONLY.test(body.slice(0, 600));
 }
 
 /** No source answered a changing fact; do not substitute an encyclopedia's old figure. */
@@ -1554,6 +1588,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
       }
       case 'search': {
         const template = step.site ? templateFor(step.site.url, step.query) : null;
+        const requireDefinition = Boolean(step.ask && needsDefinition(step.query));
         await io.step(`البحث عن «${step.query.slice(0, 60)}»`);
         plan.next = index + 1;
         delete plan.results;
@@ -1647,7 +1682,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             tried.add(withoutHash(item.url));
             const read = reads[index];
             if (read?.kind === 'disallowed') continue;
-            const explicit = read?.kind === 'page' && !isLiveWebQuestion(step.query) && !isDisambiguationPage(read.page)
+            const explicit = read?.kind === 'page' && !requireDefinition && !isLiveWebQuestion(step.query) && !isDisambiguationPage(read.page)
               ? explicitFactualEvidence(read.page, step.query) : undefined;
             if (explicit?.kind === 'unanswered') continue;
             if (explicit?.kind === 'answer' && read?.kind === 'page') {
@@ -1658,7 +1693,8 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             let opened: AgentPage;
             const readPassage = read?.kind === 'page' && !isLiveWebQuestion(step.query)
               ? readFactualPassage(read.page, step.query) : undefined;
-            if (read?.kind === 'page' && (readPassage || readableOverHttp(read.page.text))) opened = read.page;
+            // Even a short, readable page can contain a complete definition.
+            if (read?.kind === 'page' && (readPassage || readableOverHttp(read.page.text, requireDefinition ? 1 : undefined))) opened = read.page;
             else {
               await io.step(read ? `فتح ${hostOf(item.url)} في المتصفح` : `قراءة ${hostOf(item.url)}`);
               const current = page;
@@ -1668,6 +1704,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
               opened = shown;
             }
             if (isDisambiguationPage(opened)) continue;
+            if (requireDefinition && (opened.documentStatus ?? 200) >= 400) continue;
             const passage = read?.kind === 'page' && read.page === opened ? readPassage
               : !isLiveWebQuestion(step.query) ? readFactualPassage(opened, step.query) : undefined;
             const extract = passage ? formatFactualPassage(passage) : undefined;
@@ -1696,14 +1733,15 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             // 2026-11-22 08:15, artifacts/plan-2026-11-22/wrong-answers-fix/). Every other question reads its top three lines as before.
             const people = figureKind(step.query) === 'people';
             // A reason sits further down its page too: the sentence that states the cause is rarely among the first three that share the question's words.
-            const ranked = relevantLines(opened, step.query, people || reasonWords.length ? 6 : 3, true);
+            const ranked = relevantLines(opened, step.query, people || reasonWords.length ? 6 : 3, true, { requireDefinition });
             // A reason is quoted only from a sentence that states the cause of what was asked (reasonAnswers), not from any sentence with a causal word in it.
             const reasoned = isReasonQuestion(step.query);
             const passing = ranked.flatMap((line, at) => checkAnswerLine(step.query, line).ok && namesEntity(line, entity, ownPage(opened, entity)) && (!reasoned || reasonAnswers(step.query, line)) ? [at] : []);
             // A population is today's count or nothing. When the page states only a forecast («ستكون … 42 مليون نسمة في 2050»,
             // the answer to «كم عدد سكان أستراليا؟» in the 13:50 audit of 2026-11-22) or an old census, the next page is tried.
             const answerAt = people ? passing.find(at => !pastFigure(ranked[at]!) && !projectedFigure(ranked[at]!)) ?? -1 : passing[0] ?? -1;
-            const lines = answerAt < 0 ? [] : [ranked[answerAt]!, ...ranked.filter((_, at) => at !== answerAt)].slice(0, 3);
+            const lines = answerAt < 0 ? [] : requireDefinition ? [ranked[answerAt]!]
+              : [ranked[answerAt]!, ...ranked.filter((_, at) => at !== answerAt)].slice(0, 3);
             // A page whose title names none of the question's words answers only with a sentence that carries nearly all of them:
             // «The trio visit Misumi again, this time…» from the film «The Third Murder» shares only «visit» and «time» with «What is
             // the best time to visit Japan?» (live 2026-11-22 06:13 and 07:44). Measured on the 208 sourced answers of the eight full
@@ -1993,6 +2031,7 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
     // The frame around the quotes follows the owner's language (plan §7.3); the quotes themselves stay as the page wrote them.
     // A reply asked in another language («in two short Arabic sentences») is said not to be met below, in this same language.
     const reply = last.reply;
+    const definition = needsDefinition(last.query);
     const en = (plan.lang ?? (/[؀-ۿ]/u.test(last.query) ? 'ar' : 'en')) === 'en';
     const note = isMedical(last.query) ? `\n\n${plan.found ? en ? MEDICAL_NOTE_EN : MEDICAL_NOTE : en ? 'For diagnosis and treatment, see a doctor.' : 'للتشخيص والعلاج راجع طبيبًا مختصًا.'}` : '';
     if (plan.found) {
@@ -2001,7 +2040,7 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
       // the engine ranks lexically, and the 107 real requests of 2026-11-23 listed «فيصل محمد الطبيقي» under LASIK and «عرب»
       // under the population of Egypt. One word is enough for a short topic, since a plural title («أسعار») does not hold «سعر».
       const topic = topicWords(last.query);
-      const others = plan.results.filter(item => withoutHash(item.url) !== withoutHash(plan.found!.url)
+      const others = definition ? [] : plan.results.filter(item => withoutHash(item.url) !== withoutHash(plan.found!.url)
         && topic.length > 0 && titleScore(plainTitle(item.title), topic) >= (topic.length >= 3 ? 2 : 1)).slice(0, 3);
       // «in two sentences»: no more of the page's sentences than were asked for.
       const shownLines = reply?.sentences ? plan.found.lines.slice(0, Math.max(1, reply.sentences)) : plan.found.lines;
@@ -2043,6 +2082,9 @@ export function describe(plan: HandsPlan, page: AgentPage | null): { text: strin
       const quoted = plan.found.quote ? `\n\n> ${plan.found.quote}` : '';
       return { status: otherLanguage || notOfficial ? 'partial' : 'completed', text: `${named}${first}${quoted}${more}\n\n${source}${second}${also}${note}${languageNote}${officialNote}` };
     }
+    if (definition) return { status: 'partial', text: en
+      ? `I did not find a direct definition in English in the pages I read for “${last.query}”. Send a source you would like me to read.${note}`
+      : `لم أجد في الصفحات التي قرأتها تعريفًا مباشرًا بالعربية يجيب عن «${last.query}». أرسل رابطًا لمصدر تريدني أن أقرأه.${note}` };
     if (plan.results.length) return { status: 'partial', text: en
       ? `I found no page that answers “${last.query}” directly, and I will not pass you an answer from a page that is not about your question. These pages came up in the search:\n\n${list(plan.results)}\n\nSay “open result 2”, for example, and I will read it for you.${note}`
       : `لم أجد صفحة تجيب مباشرة عن «${last.query}»، ولن أنقل لك جوابًا من صفحة لا تخص سؤالك. هذه الصفحات التي ظهرت في البحث:\n\n${list(plan.results)}\n\nاكتب «افتح النتيجة 2» مثلًا وأقرأها لك.${note}` };
