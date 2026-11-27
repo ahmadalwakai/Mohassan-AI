@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { monitorDecisionModelId } from './monitor-decision.js';
 
 export type ModelState = 'absent' | 'experimental' | 'shadow' | 'active';
@@ -73,6 +74,8 @@ const generateOutput = '{ tokenIds: number[]; stopReason: string; text?: string;
 const rawGenerateInput = `${generateInput}, or the same with text (one chat turn) or prompt (raw text continuation) instead of inputIds`;
 const headsTextInput = '{ text: string; history?: string[]; candidates?: string[] }';
 const workerConfig: ModelArtifact = { role: 'worker-config', path: '.data/model-worker.json', sha256: null, env: 'MOHASSAN_MODEL_WORKER_CONFIG', envFile: true };
+const goalTaggerConfig: ModelArtifact = { ...workerConfig, path: '.data/goal-tagger-worker.json', env: 'MOHASSAN_GOAL_TAGGER_CONFIG' };
+const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const assistantModule = 'apps/server/src/assistant/';
 const v5Dir = 'artifacts/execution-model-runs/text-b5-2026-11-23';
 const v5Config = 'artifacts/chat-training/v5/foundation-20261123/config.json';
@@ -255,9 +258,9 @@ export const modelRegistry: readonly ModelEntry[] = [
   {
     id: 'google-ads-pointer', version: 'goal-tagger-v1', workerHead: 'goal-tagger',
     task: 'Extract structured Google Ads GoalTagger fields', owner: 'packages/execution-pipeline/execution_pipeline/goal_tagger.py',
-    artifacts: [workerConfig,
-      { ...artifact('checkpoint', '.data/model-worker.json#model.checkpoint.path'), workerConfigField: 'checkpoint' },
-      { ...artifact('tokenizer', '.data/model-worker.json#model.tokenizer.path'), workerConfigField: 'tokenizer', optional: true }],
+    artifacts: [goalTaggerConfig,
+      { ...artifact('checkpoint', `${goalTaggerConfig.path}#model.checkpoint.path`), workerConfigField: 'checkpoint' },
+      { ...artifact('tokenizer', `${goalTaggerConfig.path}#model.tokenizer.path`), workerConfigField: 'tokenizer', optional: true }],
     runtime: 'python-worker', input: text, output: 'GoalTagger span scores and decoded structured fields',
     resources: worker(15_000), state: 'experimental', gates: [],
     dataCard: 'docs/ADS-GOAL-LABELING-GUIDE.md', license: internal, dependencies: [],
@@ -470,8 +473,8 @@ export async function resolveModelInRoots(entry: ModelEntry, roots: readonly str
   return first!;
 }
 
-/** The roots a process resolves models against: MOHASSAN_MODELS_ROOT (the server's model store) first, then the checkout. */
-export function modelRoots(checkout: string, env: NodeJS.ProcessEnv = process.env): string[] {
+/** Search the configured store, the caller's working directory, and the checkout containing this module. */
+export function modelRoots(workingDirectory: string, env: NodeJS.ProcessEnv = process.env): string[] {
   const store = env.MOHASSAN_MODELS_ROOT?.trim();
-  return store && resolve(store) !== resolve(checkout) ? [resolve(store), resolve(checkout)] : [resolve(checkout)];
+  return [...new Set([...(store ? [resolve(store)] : []), resolve(workingDirectory), resolve(repositoryRoot)])];
 }

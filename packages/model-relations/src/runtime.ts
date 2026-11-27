@@ -6,12 +6,12 @@ import { modelRegistry, resolveModel, type ModelEntry, type ResolvedModel } from
 
 export type ModelFailureReason = 'unknown-model' | 'absent' | 'incompatible' | 'gpu-locked' | 'busy'
   | 'memory-budget' | 'timeout' | 'unhealthy' | 'unsupported' | 'invalid-input';
-export type ModelFailure = { ok: false; reason: ModelFailureReason; elapsedMs: number; detail?: string };
+export type ModelFailure = { ok: false; reason: ModelFailureReason; elapsedMs: number; detail?: string; code?: 'pin-mismatch' };
 export type ModelHealthResult = { ok: true; elapsedMs: number } | ModelFailure;
 export type ModelRunResult = { ok: true; output: unknown; elapsedMs: number } | ModelFailure;
 
 export class ModelRuntimeError extends Error {
-  constructor(readonly reason: ModelFailureReason, readonly detail?: string) {
+  constructor(readonly reason: ModelFailureReason, readonly detail?: string, readonly code?: ModelFailure['code']) {
     super(detail ?? reason);
   }
 }
@@ -124,7 +124,9 @@ export class ModelRuntime {
 
   private async execute<T extends object>(modelId: string, operation: (adapter: ModelAdapter, signal: AbortSignal, timeout: number) => Promise<T>, check: boolean): Promise<({ ok: true; elapsedMs: number } & T) | ModelFailure> {
     const begin = performance.now();
-    const failure = (reason: ModelFailureReason, detail?: string): ModelFailure => ({ ok: false, reason, elapsedMs: performance.now() - begin, ...(detail ? { detail } : {}) });
+    const failure = (reason: ModelFailureReason, detail?: string, code?: ModelFailure['code']): ModelFailure => ({
+      ok: false, reason, elapsedMs: performance.now() - begin, ...(detail ? { detail } : {}), ...(code ? { code } : {}),
+    });
     const entry = this.entries.get(modelId);
     if (!entry) return failure('unknown-model');
     if (this.closed) return failure('unhealthy', 'Runtime is closed');
@@ -169,7 +171,7 @@ export class ModelRuntime {
       return result;
     } catch (error) {
       if (controller.signal.aborted) return failure(this.closed ? 'unhealthy' : 'timeout');
-      if (error instanceof ModelRuntimeError) return failure(error.reason, error.detail);
+      if (error instanceof ModelRuntimeError) return failure(error.reason, error.detail, error.code);
       const code = (error as NodeJS.ErrnoException | undefined)?.code;
       if (code === 'ENOENT' || code === 'ENOTDIR') return failure('absent');
       return failure('unhealthy');
@@ -247,7 +249,7 @@ export class ModelRuntime {
     if (verified.state === 'absent') throw new ModelRuntimeError('absent');
     const badPin = verified.artifacts.find(artifact => artifact.matchesPin === false || (artifact.present &&
       entry.artifacts.some(pin => pin.role === artifact.role && pin.sha256 && artifact.sha256 !== pin.sha256)));
-    if (badPin) throw new ModelRuntimeError('unhealthy', `Could not verify ${badPin.role} SHA-256`);
+    if (badPin) throw new ModelRuntimeError('unhealthy', `Could not verify ${badPin.role} SHA-256`, 'pin-mismatch');
     try {
       signal.throwIfAborted();
       if (heavy(entry) && !this.heavyAvailable()) throw new ModelRuntimeError('busy');

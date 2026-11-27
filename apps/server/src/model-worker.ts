@@ -63,7 +63,7 @@ function logState(status: PermanentModelWorkerStatus): void {
     }));
   } else if (status.state === 'degraded') {
     console.log(JSON.stringify({
-      level: 'warn', event: 'model_worker_degraded', reason: status.code, restartInMs: status.restartInMs,
+      level: 'warn', event: 'model_worker_degraded', reason: status.code, restartInMs: status.restartInMs, terminal: status.terminal,
     }));
   }
 }
@@ -77,12 +77,18 @@ export function getServerOwnModelGates(app: FastifyInstance): OwnModelGates | un
 }
 
 export function serverModelWorkerHealth(app: FastifyInstance): {
-  modelWorker?: { state: PermanentModelWorkerStatus['state']; startupMs?: number };
+  modelWorker?: { state: PermanentModelWorkerStatus['state']; startupMs?: number; reason?: string; terminal?: true };
 } {
   const service = services.get(app);
   if (!service) return {};
   const status = service.worker?.status;
   if (status?.state === 'ready') return { modelWorker: { state: status.state, startupMs: status.startupMs } };
+  if (status?.state === 'degraded' && status.terminal) {
+    return { modelWorker: { state: status.state, reason: status.code, terminal: true } };
+  }
+  if (service.state === 'degraded') {
+    return { modelWorker: { state: 'degraded', reason: 'invalid_configuration', terminal: true } };
+  }
   return { modelWorker: { state: status?.state ?? service.state } };
 }
 
@@ -121,6 +127,6 @@ export async function startServerModelWorker(app: FastifyInstance, env: NodeJS.P
     const worker = service.worker;
     service.worker = undefined;
     await worker?.stop();
-    console.log(JSON.stringify({ level: 'warn', event: 'model_worker_degraded', reason: 'invalid_configuration' }));
+    console.log(JSON.stringify({ level: 'warn', event: 'model_worker_degraded', reason: 'invalid_configuration', terminal: true }));
   }
 }

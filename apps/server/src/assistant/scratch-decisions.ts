@@ -1,4 +1,4 @@
-import { loadScratchClassifiers, type ScratchClassifiers, type ScratchHead, type ScratchPrediction } from '@mohassan/scratch-classifiers';
+import { loadScratchClassifiers, ScratchClassifierPinMismatch, type ScratchClassifiers, type ScratchHead, type ScratchPrediction } from '@mohassan/scratch-classifiers';
 import { getModelEntry } from '../../../../packages/model-relations/src/registry.js';
 import { webQuestion } from './hands.js';
 import { buildFrame } from './mind/frame.js';
@@ -33,8 +33,9 @@ export interface ScratchDecisionPolicy {
 
 function readRuntimeModels(): ScratchClassifiers | null {
   try { return loadScratchClassifiers(); }
-  catch {
-    console.warn(JSON.stringify({ event: 'scratch_classifiers_unavailable' }));
+  catch (error) {
+    const reason = error instanceof ScratchClassifierPinMismatch ? 'pin-mismatch' : 'unhealthy';
+    console.warn(JSON.stringify({ event: 'scratch_classifiers_unavailable', reason }));
     return null;
   }
 }

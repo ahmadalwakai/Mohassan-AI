@@ -1,0 +1,13 @@
+# Preserve the exact bytes used by model and evaluation SHA-256 pins.
+/packages/scratch-classifiers/models/*.json -text
+/apps/server/src/assistant/refusal/learned-model.json -text
+/apps/server/src/assistant/arithmetic-search-model.json -text
+/scripts/gates/registrations/** -text
+/scripts/gates/monitor_trial.py -text
+/scripts/response-policy/decision-cases.jsonl -text
+/skills-pilot/tests/cases.json -text
+/skills-pilot/tests/heldout*.json -text
+/tests/fixtures/manners-development.ts -text
+/tests/fixtures/slot-tagger-v1/** -text
+/tests/fixtures/agent-capability-bench/v2/exclusion/*.json -text
+/tests/fixtures/agent-capability-bench/v2/exclusion/*.jsonl -text

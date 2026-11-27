@@ -108,7 +108,7 @@ async function workerConfiguration(model: ResolvedModel, context: ModelAdapterCo
     const config = existingConfig(workerConfig.parse(await readJson(configured.path)), dirname(configured.path));
     if (model.entry.id !== 'chat-v5') return config;
     const checkpoint = record.parse(config.model.checkpoint);
-    // The same server setting can name a GoalTagger config. The v5 trunk still has its native files.
+    // Older checkouts could point the v5 setting at a GoalTagger config. Fall back to v5's native files for those setups.
     if (checkpoint.format !== 'goal-tagger') {
       const registered = requiredArtifact(model, 'checkpoint');
       if (checkpoint.sha256 !== registered.sha256 || (checkpoint.format && checkpoint.format !== 'training')) {
@@ -172,9 +172,11 @@ async function checkDenseHead(model: ResolvedModel, context: ModelAdapterContext
   const worker = requiredArtifact(model, 'worker-config');
   const source = sidecar.source_trunk_sha256 ?? sidecar.trunk_sha256;
   if (checkpoint.sha256 !== sidecar.trunk_sha256 || trained.trunk.checkpoint.sha256 !== source
-    || worker.sha256 !== trained.worker.sha256 || (registryTrunk.expectedSha256 && source !== registryTrunk.expectedSha256)
-    || source !== await fileHash(registryTrunk.path)) {
+    || (registryTrunk.expectedSha256 && source !== registryTrunk.expectedSha256)) {
     throw new ModelRuntimeError('incompatible', 'The head is bound to a different v5 trunk checkpoint or worker configuration');
+  }
+  if (worker.sha256 !== trained.worker.sha256 || source !== await fileHash(registryTrunk.path)) {
+    throw new ModelRuntimeError('incompatible', 'The head worker configuration or v5 trunk bytes differ from the training pin', 'pin-mismatch');
   }
   if (model.entry.workerHead && trained.inference.head !== model.entry.workerHead) {
     throw new ModelRuntimeError('incompatible', 'The head manifest does not identify the registered head');
@@ -182,14 +184,16 @@ async function checkDenseHead(model: ResolvedModel, context: ModelAdapterContext
   const heads = record.parse(config.model.heads);
   const head = z.object({ kind: z.enum(['classify', 'pointer']), sidecar: pin.extend({ manifestSha256: sha }) }).parse(heads[trained.inference.head]);
   if (head.kind !== sidecar.kind || head.kind !== (trained.inference.operation === 'classify' ? 'classify' : 'pointer')
-    || head.sidecar.sha256 !== sidecar.weights_sha256 || head.sidecar.sha256 !== requiredArtifact(model, 'weights').sha256
-    || head.sidecar.manifestSha256 !== sidecarFile.sha256) {
+    || head.sidecar.sha256 !== sidecar.weights_sha256) {
     throw new ModelRuntimeError('incompatible', 'The head metadata and sidecar do not match');
+  }
+  if (head.sidecar.sha256 !== requiredArtifact(model, 'weights').sha256 || head.sidecar.manifestSha256 !== sidecarFile.sha256) {
+    throw new ModelRuntimeError('incompatible', 'The head weights or sidecar manifest bytes differ from the sidecar pin', 'pin-mismatch');
   }
   const adaptedPath = join(dirname(sidecarFile.path), 'adapted-trunk.pt');
   const checkpointPath = sidecar.source_trunk_sha256 ? adaptedPath : registryTrunk.path;
   if (checkpointPath === adaptedPath && await fileHash(adaptedPath) !== checkpoint.sha256) {
-    throw new ModelRuntimeError('incompatible', 'The adapted trunk bytes differ from the head pin');
+    throw new ModelRuntimeError('incompatible', 'The adapted trunk bytes differ from the head pin', 'pin-mismatch');
   }
   // Preserve the original manifest and worker digest. The temporary worker file refers to
   // the verified local copy of each artifact, including exports transferred from Windows.
@@ -200,7 +204,7 @@ async function checkDenseHead(model: ResolvedModel, context: ModelAdapterContext
   if (!tokenizer || (trained.trunk.tokenizer_report && !report)) throw new ModelRuntimeError('absent', 'The trained head tokenizer is absent');
   if (await fileHash(tokenizer.path) !== trained.trunk.tokenizer.sha256
     || (report && trained.trunk.tokenizer_report && await fileHash(report.path) !== trained.trunk.tokenizer_report.sha256)) {
-    throw new ModelRuntimeError('incompatible', 'The tokenizer differs from the head training pin');
+    throw new ModelRuntimeError('incompatible', 'The tokenizer differs from the head training pin', 'pin-mismatch');
   }
   return { training: trained, tokenizer: { path: tokenizer.path, sha256: trained.trunk.tokenizer.sha256 },
     ...(trained.trunk.tokenizer_report && report ? { report: { path: report.path, sha256: trained.trunk.tokenizer_report.sha256 } } : {}) };
@@ -306,10 +310,11 @@ export async function loadWorkerAdapter(model: ResolvedModel, context: ModelAdap
             else reject(new ModelRuntimeError('incompatible', 'Worker readiness does not match this model configuration'));
           } else if (status.state === 'degraded') {
             clear();
+            const pinMismatch = status.code === 'checkpoint_pin_mismatch';
             const reason = status.code === 'gpu_locked' ? 'gpu-locked'
-              : status.code === 'checkpoint_pin_mismatch' ? 'incompatible'
+              : pinMismatch ? 'incompatible'
                 : status.code === 'timeout' ? 'timeout' : 'unhealthy';
-            reject(new ModelRuntimeError(reason, status.code));
+            reject(new ModelRuntimeError(reason, status.code, pinMismatch ? 'pin-mismatch' : undefined));
           }
         };
         worker.start();

@@ -104,6 +104,26 @@ describe('the referee', () => {
 });
 
 describe('deliberation', () => {
+  it('records the runtime reason for failures without including raw error details', async () => {
+    const models = runner({
+      refusal: { ok: false, reason: 'unhealthy', code: 'pin-mismatch', detail: 'private path', elapsedMs: 1 },
+      'scratch-refusal': { ok: false, reason: 'unhealthy', elapsedMs: 1 },
+      'scratch-route': { ok: false, reason: 'timeout', elapsedMs: 1 },
+    });
+    const result = await createModelCouncil({ runner: models }).deliberate(turn());
+    const members = result.council.members;
+    for (const [id, reason, outcome] of [
+      ['refusal', 'pin-mismatch', 'failed'],
+      ['scratch-refusal', 'unhealthy', 'failed'],
+      ['scratch-speech-act', 'absent', 'failed'],
+      ['scratch-route', 'timeout', 'timeout'],
+      ['chat-v4', 'absent', 'failed'],
+    ]) {
+      expect(members.find(member => member.model === id)).toMatchObject({ outcome, note: expect.stringContaining(reason) });
+    }
+    expect(JSON.stringify(result.council)).not.toContain('private path');
+  });
+
   it('keeps a completed pipeline answer, shows the members, and searches nothing', async () => {
     const search = vi.fn();
     const models = runner({ 'reading-v3-last': { ok: true, output: { text: ' Paris', stopReason: 'eos' }, elapsedMs: 40 } });
@@ -148,7 +168,9 @@ describe('deliberation', () => {
     const started = performance.now();
     const outcome = await council.deliberate(turn({ evidence: [page(PARIS)] }));
     expect(performance.now() - started).toBeLessThan(2_000);
-    expect(outcome.council.members.find(member => member.model === 'reading-v3-last')).toMatchObject({ outcome: 'timeout' });
+    expect(outcome.council.members.find(member => member.model === 'reading-v3-last')).toMatchObject({
+      outcome: 'timeout', note: expect.stringContaining('timeout'),
+    });
     expect(outcome.chosen).toBe('pipeline');
   });
 

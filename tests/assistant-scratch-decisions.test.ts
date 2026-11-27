@@ -22,6 +22,28 @@ function policy(labels: Partial<Record<ScratchHead, string>>, enabled = true): S
 describe('scratch classifier request decisions', () => {
   afterEach(() => { vi.unstubAllEnvs(); });
 
+  it('logs a pin mismatch when the runtime falls back to rules', async () => {
+    vi.stubEnv('MOHASSAN_SCRATCH_CLASSIFIERS', '1');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.resetModules();
+    vi.doMock('@mohassan/scratch-classifiers', async importOriginal => {
+      const actual = await importOriginal<typeof import('@mohassan/scratch-classifiers')>();
+      return {
+        ...actual,
+        loadScratchClassifiers: () => { throw new actual.ScratchClassifierPinMismatch('private path'); },
+      };
+    });
+    try {
+      const { runtimeScratchPolicy } = await import('../apps/server/src/assistant/scratch-decisions.js');
+      expect(runtimeScratchPolicy()).toBeNull();
+      expect(warn).toHaveBeenCalledWith(JSON.stringify({ event: 'scratch_classifiers_unavailable', reason: 'pin-mismatch' }));
+    } finally {
+      vi.doUnmock('@mohassan/scratch-classifiers');
+      vi.resetModules();
+      warn.mockRestore();
+    }
+  });
+
   it('observes all four predictions once in shadow and emits no request or history text', () => {
     const input: RequestRoutingInput = {
       text: 'What is happening around the world this morning?', capabilities, turnId: 'test-turn',

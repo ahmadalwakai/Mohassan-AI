@@ -226,6 +226,15 @@ async function capped<T>(work: () => Promise<T>, ms: number, signal: AbortSignal
   }
 }
 
+function withFailureNote(note: string, reason?: string): string {
+  return (reason ? `${reason}؛ ${note}` : note).slice(0, 240);
+}
+
+function runFailureReason(result: Settled<ModelRunResult>): string | undefined {
+  if (result.status !== 'ok') return result.status === 'timeout' ? 'timeout' : 'unhealthy';
+  return result.value.ok ? undefined : result.value.code ?? result.value.reason;
+}
+
 /** The understanding round as members: one per model the organizer asked, with its label and the rules' label. */
 export function understandingMembers(log: TurnDecisionLog): ModelCouncilMember[] {
   const members: ModelCouncilMember[] = [];
@@ -240,7 +249,8 @@ export function understandingMembers(log: TurnDecisionLog): ModelCouncilMember[]
         ...(model.returned?.label ? { output: model.returned.label } : {}),
         ...(typeof model.disagreed === 'boolean' ? { agreesWithRules: !model.disagreed } : {}),
         elapsedMs: Math.min(600_000, Math.max(0, Math.round(model.elapsedMs))),
-        note: `${STAGES[stage.stage] ?? stage.stage}${rule ? `؛ القواعد: ${rule}` : ''}`.slice(0, 240),
+        note: withFailureNote(`${STAGES[stage.stage] ?? stage.stage}${rule ? `؛ القواعد: ${rule}` : ''}`,
+          outcome === 'failed' || outcome === 'timeout' ? model.outcome : undefined),
       });
     }
   }
@@ -358,7 +368,8 @@ export function createModelCouncil(options: ModelCouncilOptions) {
     if (options.v5 && turn.history.at(-1)?.role === 'user') {
       const spoken = await capped(() => options.v5!(turn.history, turn.signal), left(caps.v5), turn.signal);
       const text = spoken.status === 'ok' ? spoken.value?.trim() : undefined;
-      candidates.push({ model: V5, text: text ?? '', reply: text ?? '', ms: spoken.ms, agreements: 0, note: MEASURED[V5],
+      const reason = spoken.status === 'timeout' ? 'timeout' : spoken.status === 'failed' ? 'unhealthy' : text ? undefined : 'unavailable';
+      candidates.push({ model: V5, text: text ?? '', reply: text ?? '', ms: spoken.ms, agreements: 0, note: withFailureNote(MEASURED[V5]!, reason),
         outcome: spoken.status === 'timeout' ? 'timeout' : text ? 'ok' : 'failed' });
     }
     const passage = evidence.length ? selectPassage(turn.question, evidence) : null;
@@ -371,13 +382,14 @@ export function createModelCouncil(options: ModelCouncilOptions) {
       const source = passage.title || passage.url ? `\n\n${ar ? 'المصدر' : 'Source'}: ${[passage.title, passage.url].filter(Boolean).join(' — ')}` : '';
       const footer = ar ? `\n\n— جواب «${label(READER)}» (${MEASURED[READER]})` : '\n\n— Answer from the reading model v3 (experimental; F1 18% Arabic, 26% English on XQuAD)';
       candidates.push({ model: READER, text: abstained ? '' : answer, reply: `${answer}${source}${footer}`, ms: read.ms, agreements: 0,
-        note: `${MEASURED[READER]}؛ قرأ فقرة من: ${passage.title || passage.url || 'صفحة'}`.slice(0, 240),
+        note: withFailureNote(`${MEASURED[READER]}؛ قرأ فقرة من: ${passage.title || passage.url || 'صفحة'}`, runFailureReason(read)),
         outcome: read.status === 'timeout' ? 'timeout' : read.status === 'ok' && read.value.ok ? abstained ? 'abstained' : 'ok' : 'failed' });
     } else if (!evidence.length) {
       const spoken = await capped(() => options.runner.run(V4, { text: turn.question, maxNewTokens: 48 }), left(caps.v4), turn.signal);
       const raw = spoken.status === 'ok' && spoken.value.ok ? outputText(spoken.value.output) : undefined;
       const text = raw?.split(/\n\s*\n/u)[0]?.trim() ?? '';
-      candidates.push({ model: V4, text, reply: text, ms: spoken.ms, agreements: 0, note: MEASURED[V4],
+      candidates.push({ model: V4, text, reply: text, ms: spoken.ms, agreements: 0,
+        note: withFailureNote(MEASURED[V4]!, runFailureReason(spoken) ?? (text ? undefined : 'empty-output')),
         outcome: spoken.status === 'timeout' ? 'timeout' : text ? 'ok' : 'failed' });
     }
     if (!ar && /\d/u.test(turn.question) && turn.baseline.refusal === 'allow') {
@@ -386,7 +398,8 @@ export function createModelCouncil(options: ModelCouncilOptions) {
       const value = typeof output?.value === 'string' ? output.value : undefined;
       const expression = typeof output?.expression === 'string' ? output.expression : undefined;
       if (solved.status !== 'ok' || !solved.value.ok || value) {
-        candidates.push({ model: ARITHMETIC, text: value ?? '', ms: solved.ms, agreements: 0, note: MEASURED[ARITHMETIC],
+        candidates.push({ model: ARITHMETIC, text: value ?? '', ms: solved.ms, agreements: 0,
+          note: withFailureNote(MEASURED[ARITHMETIC]!, runFailureReason(solved)),
           reply: value ? `${value}${expression ? `\n\n${expression} = ${value}` : ''}\n\n— Answer from the arithmetic model (experimental)` : '',
           outcome: solved.status === 'timeout' ? 'timeout' : value ? 'ok' : 'failed' });
       }

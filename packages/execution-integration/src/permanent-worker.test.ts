@@ -1,8 +1,18 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   PermanentModelWorker, type PermanentModelWorkerOptions, type PermanentModelWorkerStatus,
 } from './experimental-worker-transport.js';
 import { MODEL_WORKER_PROTOCOL } from './permanent-worker-protocol.js';
+
+vi.mock('node:child_process', async importOriginal => {
+  const original = await importOriginal<typeof import('node:child_process')>();
+  return { ...original, spawn: vi.fn(original.spawn) };
+});
 
 const identity = { modelId: 'tiny-random', tokenizerId: 'local-tokens', checkpointId: 'pinned-tiny' };
 const fixture = String.raw`
@@ -12,8 +22,11 @@ const fixture = String.raw`
   let total = 0;
   const hanging = new Map();
   const input = readline.createInterface({ input: process.stdin });
-  if (startup === 'pin') {
-    send({ kind: 'startup_error', code: 'checkpoint_pin_mismatch' }, () => process.exit(1));
+  const startupError = {
+    pin: 'checkpoint_pin_mismatch', config: 'invalid_config', checkpoint: 'invalid_checkpoint', gpu: 'gpu_locked',
+  }[startup];
+  if (startupError) {
+    send({ kind: 'startup_error', code: startupError }, () => process.exit(1));
   } else if (startup !== 'silent') {
     send({
       kind: 'ready',
@@ -129,6 +142,7 @@ function classify(worker: PermanentModelWorker, mode = '', timeoutMs?: number, s
 
 afterEach(async () => {
   await Promise.all(workers.splice(0).map(worker => worker.stop()));
+  vi.mocked(spawn).mockClear();
 });
 
 describe('permanent model worker supervision', () => {
@@ -209,15 +223,49 @@ describe('permanent model worker supervision', () => {
   it.each([
     ['pin', 'checkpoint_pin_mismatch'],
     ['wrong-id', 'model_identity_mismatch'],
+    ['config', 'invalid_config'],
+    ['checkpoint', 'invalid_checkpoint'],
     ['bad-config-digest', 'invalid_model_output'],
-    ['silent', 'timeout'],
-  ])('refuses startup %s', async (startup, code) => {
-    const worker = newWorker({ startupTimeoutMs: 400, restartMinMs: 1_000, restartMaxMs: 1_000 }, startup);
+  ])('stays degraded without respawning after startup refusal %s', async (startup, code) => {
+    const restartDelay = 50;
+    const worker = newWorker({ restartMinMs: restartDelay, restartMaxMs: restartDelay }, startup);
     worker.start();
-    await expect.poll(() => worker.status).toMatchObject({ state: 'degraded', code });
+    const terminal = { state: 'degraded', code, terminal: true };
+    await expect.poll(() => worker.status).toEqual(terminal);
+    await delay(restartDelay * 4);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(worker.status).toEqual(terminal);
     await expect(classify(worker)).rejects.toMatchObject({ code: 'model_process_failure' });
     await worker.stop();
     expect(worker.status).toEqual({ state: 'stopped' });
+  });
+
+  it('retries a GPU lock refusal with exponential backoff', async () => {
+    const changes: PermanentModelWorkerStatus[] = [];
+    const worker = newWorker({ onState: change => changes.push(change) }, 'gpu');
+    worker.start();
+    await expect.poll(() => changes).toContainEqual({ state: 'degraded', code: 'gpu_locked', restartInMs: 80 });
+    await expect.poll(() => changes).toContainEqual({ state: 'degraded', code: 'gpu_locked', restartInMs: 160 });
+    expect(vi.mocked(spawn).mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it.each([
+    ['missing executable', { executable: join(tmpdir(), `missing-model-worker-${randomUUID()}`) }],
+    ['working directory that is a file', { cwd: process.execPath }],
+  ] as const)('does not retry a worker configured with a %s', async (_description, overrides) => {
+    const restartDelay = 50;
+    const worker = newWorker({ ...overrides, restartMinMs: restartDelay });
+    worker.start();
+    await expect.poll(() => worker.status).toEqual({ state: 'degraded', code: 'invalid_configuration', terminal: true });
+    await delay(restartDelay * 4);
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a startup timeout when the worker stays silent', async () => {
+    const worker = newWorker({ startupTimeoutMs: 400, restartMinMs: 1_000, restartMaxMs: 1_000 }, 'silent');
+    worker.start();
+    await expect.poll(() => worker.status).toEqual({ state: 'degraded', code: 'timeout', restartInMs: 1_000 });
+    await expect(classify(worker)).rejects.toMatchObject({ code: 'model_process_failure' });
   });
 
   it.each([
