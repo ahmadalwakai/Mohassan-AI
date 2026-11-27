@@ -1,11 +1,12 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { link, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import type { CodingEdits, Project, SandboxTestResult } from "@mohassan/contracts";
-import { CodingEngine, createDemoProject, inspectProject, snapshotHash, type CodingContext, type SandboxRunner } from "./index.ts";
+import { CodingEngine, createDemoProject, generateDeterministicEdits, inspectProject, snapshotHash, type CodingContext, type SandboxRunner } from "./index.ts";
 import { git } from "./git.ts";
+import { PROJECT_INSTRUCTIONS_PATH } from "./instructions.ts";
 
 // These test adapters never execute a project file. Actual OS-isolation proof
 // belongs to the sandbox package and the separate AppContainer integration run.
@@ -165,6 +166,32 @@ describe("trusted Git worktrees and bounded edit security", () => {
     const engine = new CodingEngine({ dataDir: directory, sandbox: fakeSandbox(), generateEdits: async (context) => { calls += 1; return fixedEdits(context); } });
     await expect(engine.execute({ taskId: randomUUID(), ownerId: "owner", project: { ...project, allowedPaths: ["test/sum.test.mjs"] }, goal: "صحح الجمع.", signal: new AbortController().signal })).rejects.toMatchObject({ code: "UNSAFE_EDIT_SCOPE" });
     expect(calls).toBe(0);
+  });
+
+  it("rejects an older registration's allowed path when saved instructions protect it", async () => {
+    const { directory, project } = await fixture();
+    const target = join(project.path, PROJECT_INSTRUCTIONS_PATH);
+    const content = "## Do not edit\n- src/*.mjs\n";
+    await mkdir(dirname(target));
+    await writeFile(target, content);
+    const oid = (await git(project.path, ["hash-object", "-w", "--no-filters", "--stdin"], { input: content })).stdout.trim();
+    await git(project.path, ["update-index", "--add", "--cacheinfo", "100644", oid, PROJECT_INSTRUCTIONS_PATH]);
+    const tree = (await git(project.path, ["write-tree"])).stdout.trim();
+    const baseCommit = (await git(project.path, ["commit-tree", tree, "-p", project.baseCommit, "-m", "Project instructions fixture"])).stdout.trim();
+    await git(project.path, ["update-ref", "refs/heads/main", baseCommit, project.baseCommit]);
+
+    const run = vi.fn(async () => { throw new Error("A protected edit scope must fail before checks run."); });
+    const sandbox: SandboxRunner = {
+      available: async () => ({ available: true, provider: "test-boundary-adapter", message: "Unit-test availability only." }),
+      run,
+    };
+    const engine = new CodingEngine({ dataDir: directory, generateEdits: generateDeterministicEdits, sandbox });
+    const taskId = randomUUID();
+    // A registration saved before instruction handling would allow src/sum.mjs at this same HEAD.
+    await expect(engine.execute({ taskId, ownerId: "owner", project: { ...project, baseCommit }, goal: "نسّق الكود.", signal: new AbortController().signal }))
+      .rejects.toMatchObject({ code: "UNSAFE_EDIT_SCOPE" });
+    expect(run).not.toHaveBeenCalled();
+    await expect(lstat(join(directory, "coding-worktrees", taskId))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects out-of-scope or stale model edits while preserving actual usage metadata", async () => {

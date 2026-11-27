@@ -55,12 +55,18 @@ export async function createCodingControl(db:Kysely<any>,config:CodingConfig){
     return await verifyRecoveryAuthority(db,context)?result:null;
   }
   // Read-only views for the chat without a model: the committed files of a registered project, and its own checks run once in the sandbox.
-  async function committedFiles(ownerId:string,projectId:string){return (await inspectProject((await project(ownerId,projectId)).path,roots)).files;}
+  async function inspectRegistered(ownerId:string,projectId:string){return inspectProject((await project(ownerId,projectId)).path,roots);}
+  async function committedFiles(ownerId:string,projectId:string){return (await inspectRegistered(ownerId,projectId)).files;}
+  async function instructions(ownerId:string,projectId:string,baseCommit?:string){
+    const inspected=await inspectRegistered(ownerId,projectId);
+    if(baseCommit&&inspected.baseCommit!==baseCommit)throw fault('PROJECT_HEAD_CHANGED','تغير HEAD منذ الفحص.');
+    return inspected.instructions;
+  }
   async function search(ownerId:string,projectId:string,query:string){return searchProjectFiles(await committedFiles(ownerId,projectId),query);}
   async function imports(ownerId:string,projectId:string,reference:string){return lookupImports(await committedFiles(ownerId,projectId),reference);}
   async function check(ownerId:string,projectId:string,signal:AbortSignal){
     if(!engine)throw fault('SANDBOX_UNAVAILABLE','لم يثبت توفر بيئة عزل؛ لم يُشغّل كود.',503);
     return engine.check({ownerId,project:await project(ownerId,projectId),signal});
   }
-  return {available:Boolean(engine),workspace,register,demo,execute,verify,sandbox,search,imports,check};
+  return {available:Boolean(engine),workspace,register,demo,execute,verify,sandbox,search,imports,check,instructions};
 }

@@ -2,6 +2,7 @@ import { lstat, mkdir, writeFile } from "node:fs/promises";
 import { join, posix, resolve } from "node:path";
 import ts from "typescript";
 import { git, inspectGitMetadata } from "./git.ts";
+import { PROJECT_INSTRUCTIONS_PATH, matchesProjectInstructions, parseProjectInstructions, type ProjectInstructions } from "./instructions.ts";
 import { CodingError, assertNoLinks, boundedText, canonicalDirectory, editablePath, limits, safeRelative, sha256, snapshotHash, sourcePaths } from "./security.ts";
 
 export interface ProjectFile { path: string; content: string; hash: string; mode: string }
@@ -12,6 +13,8 @@ export interface ProjectInspection {
   files: ProjectFile[];
   testFiles: string[];
   candidateEditablePaths: string[];
+  protectedPaths: string[];
+  instructions?: ProjectInstructions;
   snapshotHash: string;
   testProfile: "node-test";
   typecheck?: ProjectTypecheck;
@@ -149,9 +152,17 @@ export async function inspectProject(repoPath: string, allowedRoots: readonly st
   }
   const { testFiles, typecheck, eslintConfig } = detectProjectTools(files, paths);
   if (!testFiles.length) throw new CodingError("TESTS_REQUIRED", "يلزم اختبار Node مدمج محفوظ ضمن المشروع.");
-  const protectedPaths = new Set([...testFiles, ...typeConfigPaths(files, typecheck?.project), eslintConfig]);
+  const instructionsFile = files.find((file) => file.path === PROJECT_INSTRUCTIONS_PATH);
+  const instructions = instructionsFile && parseProjectInstructions(instructionsFile.content);
+  const protectedPaths = new Set([...testFiles, ...typeConfigPaths(files, typecheck?.project)]);
+  if (eslintConfig) protectedPaths.add(eslintConfig);
+  if (instructions) {
+    protectedPaths.add(PROJECT_INSTRUCTIONS_PATH);
+    for (const file of paths) if (matchesProjectInstructions(file, instructions)) protectedPaths.add(file);
+  }
   const candidateEditablePaths = paths.filter((file) => editablePath(file) && !protectedPaths.has(file));
-  return { path, baseCommit, files, testFiles, candidateEditablePaths, snapshotHash: snapshotHash(files), testProfile: "node-test", typecheck, eslintConfig };
+  return { path, baseCommit, files, testFiles, candidateEditablePaths, protectedPaths: [...protectedPaths].sort(), instructions,
+    snapshotHash: snapshotHash(files), testProfile: "node-test", typecheck, eslintConfig };
 }
 
 const demoFiles: Record<string, string> = {
