@@ -12,6 +12,7 @@ export * from './agent-browser.js';
 export * from './session-state.js';
 export * from './files.js';
 export * from './search/engine.js';
+export * from './search/source-plan.js';
 export * from './search/ranking.js';
 export * from './search/providers.js';
 export * from './search/store.js';

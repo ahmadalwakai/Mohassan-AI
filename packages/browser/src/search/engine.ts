@@ -7,6 +7,11 @@ import { PROVIDER_INTERVALS, SEARCH_POLICY_VERSION, searchHash, type SearchCache
 import { publicSearchScan, publicSearchText, type LocalIndexHit, type SearchLocalIndex } from './local-index.js';
 import { safeResumeUrl } from '../session-state.js';
 import { publicWebProviders } from './web-providers.js';
+import { sourceSearchText, type SourcePlan } from './source-plan.js';
+import { selectSources, type SearchSelection } from './selection.js';
+import { plannedProviderFactories } from './sources/registry.js';
+
+export type { SearchSelection } from './selection.js';
 
 export interface SearchOutcome {
   hits: (RankedHit & Partial<Pick<LocalIndexHit,'coverage'|'freshness'|'fetchedAt'|'expiresAt'|'contentHash'|'sourceHash'|'trust'>>)[];
@@ -15,8 +20,9 @@ export interface SearchOutcome {
   coverage: 'web_sources' | 'specialized_sources' | 'local_only' | 'mixed';
   failures: { provider: string; kind: 'rate_limited' | 'unavailable' | 'invalid_response' }[];
   limitations: string[];
+  selection?: SearchSelection;
 }
-export interface SearchContext { ownerId: string }
+export interface SearchContext { ownerId: string; plan?: SourcePlan }
 /** Owner-partitioned bounded cache, circuit breaker and deterministic concurrent retrieval. */
 export class SearchEngine implements SearchProvider {
   readonly name:string;
@@ -34,7 +40,8 @@ export class SearchEngine implements SearchProvider {
   constructor(private network: SafeNetwork, private options: { providers?: DocumentedProvider[]; publicWeb?: boolean; now?: () => number; store?:SearchCacheStore; localIndex?:SearchLocalIndex; admission?:SearchProviderAdmission } = {}) {
     this.now = options.now ?? Date.now;
     const web = options.publicWeb === false ? [] : publicWebProviders(network);
-    this.providers = (options.providers ?? [...web, ...documentedProviders(network, this.now)]).filter(provider=>provider.name!=='arXiv'||options.admission);
+    this.providers = (options.providers ?? [...web, ...documentedProviders(network, this.now),
+      ...plannedProviderFactories.flatMap(factory => factory(network, this.now))]).filter(provider=>provider.name!=='arXiv'||options.admission);
     this.name=[...this.providers.map(provider=>provider.name),...(options.localIndex?[options.localIndex.name]:[])].join(' / ');
   }
   async execute(question: string, limit: number, signal?: AbortSignal, context?: SearchContext): Promise<SearchOutcome> {
@@ -42,16 +49,27 @@ export class SearchEngine implements SearchProvider {
     const publicQuery=question.normalize('NFKC').replace(/\p{Cf}/gu,'');
     const decodedQuery=publicSearchScan(publicQuery);
     if(publicSearchText(publicQuery)!==publicQuery||publicSearchText(decodedQuery)!==decodedQuery||(decodedQuery.match(/https?:\/\/\S+/gi)??[]).some(url=>safeResumeUrl(url)===null))throw new BrowserError('RESEARCH_QUERY_SECRET','أزل بيانات الاعتماد من الاستعلام قبل البحث العام.',400);
+    const plan = context?.plan;
     let query:ReturnType<typeof compileQuery>;
-    try { query = compileQuery(question); } catch { throw new BrowserError('RESEARCH_QUERY_INVALID','اكتب موضوعًا محددًا للبحث، واستخدم site: مع اسم نطاق صالح فقط.',400); }
+    try {
+      query = compileQuery(question);
+      if (plan) {
+        const topic = compileQuery(sourceSearchText(question));
+        query = { ...topic, sites: query.sites, language: plan.language, timeSensitive: topic.timeSensitive || plan.fresh };
+      }
+    } catch { throw new BrowserError('RESEARCH_QUERY_INVALID','اكتب موضوعًا محددًا للبحث، واستخدم site: مع اسم نطاق صالح فقط.',400); }
     const count = Math.max(1, Math.min(20, Number.isFinite(limit) ? Math.floor(limit) : 5));
-    const key = context?.ownerId ? createHash('sha256').update(JSON.stringify([SEARCH_POLICY_VERSION,context.ownerId,query,count,this.providers.map(p=>p.name)])).digest('hex') : null;
+    const planned = plan ? selectSources(this.providers, query, plan) : undefined;
+    const planKey = plan ? [plan.explicitSites, plan.excludedSites, plan.domains, plan.language, plan.fresh] : [];
+    const key = context?.ownerId ? createHash('sha256').update(JSON.stringify([SEARCH_POLICY_VERSION,context.ownerId,query,count,this.providers.map(p=>p.name),...planKey])).digest('hex') : null;
     const revision=context?.ownerId&&this.options.store?await this.options.store.revision(context.ownerId):0;
     if(key&&this.options.store){const stored=await this.options.store.get(context!.ownerId,key,revision);signal?.throwIfAborted();if(stored)return stored;}
     const cached = key&&!this.options.store&&!this.options.localIndex ? this.cache.get(key) : undefined;
     if (cached && cached.until > this.now()) return { ...structuredClone(cached.result), freshness:'cached' };
     const failures: SearchOutcome['failures'] = [];
-    const rows = await Promise.all(this.providers.filter(provider => provider.supports(query)).map(async provider => {
+    const searched = new Set<string>();
+    const eligible = planned?.eligible ?? this.providers.filter(provider => provider.supports(query)).map(provider => ({ provider, query }));
+    const rows = await Promise.all(eligible.map(async ({ provider, query }) => {
       const health = this.health.get(provider.name) ?? { failures:0,next:0 };
       if (health.next > this.now() || this.active.has(provider.name)) { failures.push({provider:provider.name,kind:'rate_limited'}); return {provider:provider.name,hits:[]}; }
       let admissionToken:string|undefined;
@@ -69,7 +87,7 @@ export class SearchEngine implements SearchProvider {
       const abort = new Promise<never>((_, reject) => {onAbort=()=>reject(combined.reason);if(combined.aborted)onAbort();else combined.addEventListener('abort',onAbort,{once:true});});
       this.active.add(provider.name);
       this.health.set(provider.name,{...health,next:this.now()+1000});
-      const providerRequest=Promise.resolve().then(()=>{combined.throwIfAborted();return provider.search(query,Math.min(count*3,20),combined);});
+      const providerRequest=Promise.resolve().then(()=>{combined.throwIfAborted();searched.add(provider.name);return provider.search(query,Math.min(count*3,20),combined);});
       // A caller timeout is not proof that a non-cooperative transport has stopped.
       // Keep this provider busy until its original promise settles, including late rejection.
       const completed=async(error?:unknown)=>{
@@ -81,7 +99,7 @@ export class SearchEngine implements SearchProvider {
       try {
         const hits = await Promise.race([releasedRequest,abort]);
         this.health.set(provider.name,{failures:0,next:this.now()+1000});
-        return {provider:provider.name,hits:hits.filter(hit => { try { this.network.validate(hit.url); return Boolean(safeResumeUrl(hit.url)); } catch { return false; } }).map(hit=>({...hit,title:publicSearchText(hit.title).slice(0,240),snippet:publicSearchText(hit.snippet).slice(0,2000)}))};
+        return {provider:provider.name,hits:hits.filter(hit => { try { this.network.validate(hit.url); return Boolean(safeResumeUrl(hit.url)) && (!planned || planned.allowsHit(hit.url, query.sites)); } catch { return false; } }).map(hit=>({...hit,title:publicSearchText(hit.title).slice(0,240),snippet:publicSearchText(hit.snippet).slice(0,2000)}))};
       } catch (error) {
         signal?.throwIfAborted();
         const kind = error instanceof SearchProviderFailure ? error.kind : 'unavailable';
@@ -90,18 +108,27 @@ export class SearchEngine implements SearchProvider {
         failures.push({provider:provider.name,kind}); return {provider:provider.name,hits:[]};
       } finally { clearTimeout(timer); combined.removeEventListener('abort',onAbort!); }
     }));
-    const local=await this.options.localIndex?.search(question,Math.min(count*3,20),signal,context)??[];
+    const localQuestion = planned ? [query.question, ...planned.sites.map(site => `site:${site}`)].join(' ') : question;
+    const local = planned?.searchLocal === false ? []
+      : (await this.options.localIndex?.search(localQuestion,Math.min(count*3,20),signal,context) ?? [])
+        .filter(hit => !planned || planned.allowsLocalHit(hit.url));
     if(local.length)rows.push({provider:this.options.localIndex!.name,hits:local});
     signal?.throwIfAborted();
-    const hits=rankResults(query,rows,count);
+    const hits=rankResults(planned ? { ...query, sites: planned.sites } : query, rows, count, planned?.preferred);
     // Preserve index provenance even when a live provider has the richer description of the same URL.
     const indexed=new Map(local.map(hit=>[hit.url,hit]));
     const annotated:SearchOutcome['hits']=hits.map(hit=>{const item=indexed.get(hit.url);return item?{...hit,...item}:hit;});
     const hasLocal=annotated.some(hit=>hit.coverage==='local_only'),hasRemote=annotated.some(hit=>hit.providers.some(name=>name!==this.options.localIndex?.name));
     const webNames=new Set(this.providers.filter(provider=>provider.coverage==='web').map(provider=>provider.name));
     const hasWeb=annotated.some(hit=>hit.providers.some(name=>webNames.has(name)));
+    const failedProviders = new Set(failures.map(failure => failure.provider));
     const result: SearchOutcome = { hits:annotated,fetchedAt:new Date(this.now()).toISOString(),freshness:hasLocal&&!hasRemote?'indexed_snapshot':'fresh',coverage:hasLocal?(hasRemote?'mixed':'local_only'):hasWeb?'web_sources':'specialized_sources',failures:failures.sort((a,b)=>a.provider.localeCompare(b.provider)),
-      limitations:[hasWeb?'نتائج من الويب العام مع مصادر متخصصة عند ملاءمتها للسؤال؛ التغطية ليست شاملة.':'لم تتوفر نتائج من الويب العام؛ النتائج المتاحة مصادر متخصصة أو محلية محدودة التغطية.','الترتيب مبني على تطابق النص؛ يلزم فتح المصدر للتحقق من الادعاءات.',...(hasLocal?['المصادر المحلية نسخ أضافها المالك صراحة؛ fetchedAt وقت جلب النسخة وليس تاريخ تحديث الموقع.']:[]),...(query.timeSensitive?['الأسعار والطقس والمواعيد تتغير؛ تحقّق من الموقع المعني وتاريخ تحديثه.']:[])] };
+      limitations:[hasWeb?'نتائج من الويب العام مع مصادر متخصصة عند ملاءمتها للسؤال؛ التغطية ليست شاملة.':'لم تتوفر نتائج من الويب العام؛ النتائج المتاحة مصادر متخصصة أو محلية محدودة التغطية.','الترتيب مبني على تطابق النص؛ يلزم فتح المصدر للتحقق من الادعاءات.',...(hasLocal?['المصادر المحلية نسخ أضافها المالك صراحة؛ fetchedAt وقت جلب النسخة وليس تاريخ تحديث الموقع.']:[]),...(query.timeSensitive?['الأسعار والطقس والمواعيد تتغير؛ تحقّق من الموقع المعني وتاريخ تحديثه.']:[])],
+      ...(planned ? { selection: {
+        ...planned.selection,
+        searchedProviders: [...eligible.map(entry => entry.provider.name).filter(name => searched.has(name)), ...(hasLocal ? [this.options.localIndex!.name] : [])],
+        unavailableSites: planned.sites.filter(site => !eligible.some(entry => entry.query.sites.includes(site) && !failedProviders.has(entry.provider.name))),
+      } } : {}) };
     const ttl=result.hits.length?(query.timeSensitive?15_000:query.intent==='general'?60_000:120_000):10_000;
     if(key&&this.options.store){signal?.throwIfAborted();await this.options.store.put(context!.ownerId,key,revision,result,ttl);signal?.throwIfAborted();}
     else if (key&&!this.options.localIndex) {

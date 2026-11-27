@@ -332,6 +332,21 @@ describe('question answers from the web', () => {
     expect(outcome.kind === 'done' && outcome.text).toContain('لم أتمكن من الوصول إلى مصدر حديث');
   });
 
+  it('honors a Wikipedia exclusion before reading a subject and identifies the provider searched', async () => {
+    const { io, log } = fakeIO({}, null, {}, {});
+    const progress: string[] = [];
+    io.progress = async label => { progress.push(label); };
+    io.search = async (_query, _limit, plan, report) => {
+      expect(plan.excludedSites).toContain('wikipedia.org');
+      report({ searchedProviders: ['Fixture'], unavailableSites: [], unavailableDomains: [] });
+      return [hit('France capital', 'https://en.wikipedia.org/wiki/France')];
+    };
+    const outcome = await runHands({ steps: webQuestion('What is the capital of France, not from Wikipedia?')!, next: 0 }, io);
+    expect(outcome).toMatchObject({ kind: 'done', status: 'blocked' });
+    expect(log.some(line => /^(read|open):.*wikipedia\.org/u.test(line))).toBe(false);
+    expect(progress[0]).toContain('I searched Fixture because you excluded wikipedia.org');
+  });
+
   it('keeps an explicit Wikipedia request on Wikipedia', async () => {
     const wiki = WIKI_SEARCH('اليابان');
     const { io, log } = fakeIO({ [wiki]: pageOf(wiki, [el('japan', 'link', 'اليابان', { href: 'https://ar.wikipedia.org/wiki/اليابان' })]) }, null);
