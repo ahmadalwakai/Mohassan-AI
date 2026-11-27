@@ -46,6 +46,7 @@ import { backgroundRunView } from './assistant/long-run/view.js';
 import { continueWebSequence, joinSequence, planWebSequence, startWebSequence } from './assistant/web-sequence.js';
 import { composeLetter, unsupportedWriting, writingQuestion, writingTask } from './assistant/writer.js';
 import { runExtractiveWriting, type WritingPageReader } from './assistant/writing/host.js';
+import { isRateLimitedPageRead } from './assistant/http-page-reader.js';
 import { composePlan, planningQuestion, planningTask } from './assistant/planner.js';
 import type { SkillReader, SkillReadMode } from './assistant/skill-reader.js';
 import { buildSiteReply, siteAnswers, siteCard, siteCommandTurn, siteTask, type SitesChatPort } from './assistant/site-builder.js';
@@ -1491,7 +1492,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const live = isLiveWebQuestion(question);
     const read = await Promise.all(ranked.map(async hit => {
       const page = config.readPage ? await config.readPage(hit.url, signal, { live }).catch(() => null) : null;
-      if (page && page !== 'disallowed' && page.text.trim()) return { kind: 'page' as const, url: page.url, title: page.title || hit.title, text: page.text.slice(0, 200_000) };
+      if (page && page !== 'disallowed' && !isRateLimitedPageRead(page) && page.text.trim()) return { kind: 'page' as const, url: page.url, title: page.title || hit.title, text: page.text.slice(0, 200_000) };
       return hit.snippet?.trim() ? { kind: 'page' as const, url: hit.url, title: hit.title, text: hit.snippet } : null;
     }));
     const pages = read.filter((page): page is NonNullable<typeof page> => page !== null);
@@ -3152,6 +3153,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           await active();
           const action = `read ${url}`.slice(0, 300);
           if (result === 'disallowed') { state.trail.push({ step: ++state.steps, action, result: 'robots.txt disallows this page', changed: false }); return { kind: 'disallowed' }; }
+          if (isRateLimitedPageRead(result)) { state.trail.push({ step: ++state.steps, action, result: `HTTP 429 · retry after ${result.retryAfterMs} ms`, changed: false }); return result; }
           if (!result || !result.text.trim()) { state.trail.push({ step: ++state.steps, action, result: 'no readable text over HTTP', changed: false }); return { kind: 'unreadable' }; }
           state.trail.push({ step: ++state.steps, action, result: `HTTP ${result.status} ${result.url} · ${result.text.length} chars`.slice(0, 1100), changed: true });
           const readPageObject: AgentPage = { id: result.url, url: result.url, title: result.title, text: result.text, elements: [],
@@ -3275,6 +3277,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         // Every pause path saves the run state, plan included, before it stops.
         if (outcome.kind === 'paused') return;
+        if (outcome.rateLimited) state.trail.push({ step: ++state.steps, action: 'sources busy', result: 'all candidate sources rate-limited', changed: false });
         if (config.ownModel && outcome.status === 'completed') outcome.text = await config.ownModel.phrase({
           plan, reply: vault.scrub(id, outcome.text), status: outcome.status, evidence: judgeEvidence(currentExecution),
           question: judgedAs?.question ?? request, previous: judgedAs ? judgedAs.previous : currentExecution.previousRequest, signal,

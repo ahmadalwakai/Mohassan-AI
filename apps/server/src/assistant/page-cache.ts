@@ -23,7 +23,7 @@ export const PAGE_TTL_MS: Record<PageClass, number> = {
   other: 15 * 60_000,
 };
 const MAX_ENTRIES = 300;
-const MAX_TEXT_CHARS = 200_000;
+export const PAGE_CACHE_MAX_TEXT_CHARS = 200_000;
 
 const ENCYCLOPEDIA = /(?:^|\.)(?:wikipedia|wiktionary|wikidata|britannica|marefa)\.(?:org|com)$|(?:^|\.)wikipedia\.org$/i;
 const DOCUMENTATION = /^docs?\.|^developer\.|^learn\.|(?:^|\.)readthedocs\.io$|^nodejs\.org$|^developer\.mozilla\.org$|^python\.org$|(?:^|\.)github\.(?:com|io)$|^stackoverflow\.com$|(?:^|\.)stackexchange\.com$/i;
@@ -61,7 +61,7 @@ export function createPageCache(options: { now?: () => number; maxEntries?: numb
       const { links, ...content } = page;
       const disambiguationLinks = links && isDisambiguationPage(page) ? links.slice(0, 100).filter(link => link.length <= 1024) : undefined;
       const stored: CachedPage = { ...content, ...(disambiguationLinks?.length ? { links: disambiguationLinks } : {}),
-        text: page.text.slice(0, MAX_TEXT_CHARS), fetchedAt: page.fetchedAt ?? new Date(now()).toISOString() };
+        text: page.text.slice(0, PAGE_CACHE_MAX_TEXT_CHARS), fetchedAt: page.fetchedAt ?? new Date(now()).toISOString() };
       const key = pageCacheKey(page.url);
       if (options.live || !key || !stored.text.trim() || page.status !== 200 || !mayShareCachedPage(options.responseHeaders)) return stored;
       if (entries.size >= limit) entries.delete(entries.keys().next().value!);

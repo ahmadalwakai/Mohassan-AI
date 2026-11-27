@@ -1,5 +1,5 @@
 /**
- * HTML cleanup before a page read over HTTP becomes text for the hands (app.ts readPage).
+ * HTML cleanup before the HTTP page reader extracts text for the hands.
  *
  * The shared extractor (readableSource in packages/browser) joins every node with a space, so an image or video caption
  * runs into the next sentence of the article. Measured on 2026-11-22 (artifacts/plan-2026-11-22/3-answers-and-questions.md

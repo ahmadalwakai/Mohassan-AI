@@ -16,7 +16,7 @@ export * from './search/ranking.js';
 export * from './search/providers.js';
 export * from './search/store.js';
 export * from './search/local-index.js';
-export { RobotsPolicy } from './search/robots.js';
+export { RobotsPolicy, RobotsRateLimitError } from './search/robots.js';
 
 export interface BrowserConfig extends NetworkPolicy {searchProvider?:SearchProvider}
 export const browserMigration=`

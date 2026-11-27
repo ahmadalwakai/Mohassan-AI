@@ -13,6 +13,7 @@ import {
 } from '../hands.js';
 import { extractPublicSearchQueries, mergePublicQueryTerms, reviewGeneratedPublicQuery } from '../public-query-provenance.js';
 import { parseUserRequestConstraints, requestCapabilityAllowed, requestScopeActionText, reviewPublicProjection } from '../request-scope.js';
+import { isRateLimitedPageRead, type HttpPageEvidence } from '../http-page-reader.js';
 import type { PlanAttempt, PlanToolResult } from './executor.js';
 import type { PlanStep, PlanValue, ResolvedStepInputs } from './types.js';
 import { webFigure, webMeasureKind } from './web-figures.js';
@@ -95,7 +96,7 @@ function citation(title: string, url: string): string {
   return `[${label}](${url})`;
 }
 
-function observedPage(source: Exclude<Awaited<ReturnType<NonNullable<PlanWebToolContext['readPage']>>>, 'disallowed' | null>): AgentPage {
+function observedPage(source: HttpPageEvidence): AgentPage {
   return {
     id: source.url, url: source.url, title: source.title, text: source.text, elements: [],
     signals: { captcha: false, password: false, otp: false, card: false }, scroll: { top: 0, height: 0, viewport: 0 },
@@ -142,7 +143,7 @@ export function createPlanWebTools(context: PlanWebToolContext) {
     } catch { return null; }
   };
 
-  async function readPage(url: string, signal: AbortSignal, live = false): Promise<AgentPage | null | 'disallowed'> {
+  async function readPage(url: string, signal: AbortSignal, live = false): Promise<AgentPage | null | 'disallowed' | 'rate-limited'> {
     await context.active();
     signal.throwIfAborted();
     if (!context.readPage) return null;
@@ -152,6 +153,7 @@ export function createPlanWebTools(context: PlanWebToolContext) {
       await context.active();
       signal.throwIfAborted();
       if (page === 'disallowed') return 'disallowed';
+      if (isRateLimitedPageRead(page)) return 'rate-limited';
       if (!page || safeUrl(page.url) !== url || page.status < 200 || page.status >= 300 || page.status === 202
         || !readableOverHttp(page.text)) return null;
       outcome = 'completed';
@@ -342,7 +344,7 @@ export function createPlanWebTools(context: PlanWebToolContext) {
     if (!hit) return { ok: false, reason: 'no_result' };
     state.used.add(hit.url);
     const page = await readPage(hit.url, signal, live);
-    if (!page || page === 'disallowed') return { ok: false, reason: 'no_result' };
+    if (!page || page === 'disallowed' || page === 'rate-limited') return { ok: false, reason: 'no_result' };
     return resultFromPage(step, page, qualifier.question);
   }
 
@@ -369,6 +371,7 @@ export function createPlanWebTools(context: PlanWebToolContext) {
     const signal = signalOf(attempt);
     const page = await readPage(url, signal, LIVE_EXPLICIT.test(webFreshnessText(step.text)));
     if (page === 'disallowed') return { ok: false, reason: literal ? 'restricted' : 'no_result' };
+    if (page === 'rate-limited') return { ok: false, reason: 'no_result' };
     // Use the unauthenticated reader for the value and the browser observation
     // for the explicit navigation. A signed-in page is not a public operand.
     if (navigate && !await openPage(url, signal)) return { ok: false, reason: 'no_result' };
