@@ -59,7 +59,7 @@ def _startup_ms() -> float:
     return round((time.monotonic() - _STARTED) * 1000, 3)
 
 
-def _read_config(path: Path) -> tuple[dict, dict, WorkerLimits, str]:
+def _read_config(path: Path, extra_model_fields: frozenset[str] = frozenset()) -> tuple[dict, dict, WorkerLimits, str]:
     if not path.is_absolute():
         raise ValueError("config must have an absolute path")
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
@@ -76,7 +76,7 @@ def _read_config(path: Path) -> tuple[dict, dict, WorkerLimits, str]:
     identity, model = raw["identity"], raw["model"]
     if (not isinstance(identity, dict) or identity.keys() != {"modelId", "tokenizerId", "checkpointId"}
             or not all(valid_id(item) for item in identity.values())
-            or not isinstance(model, dict) or model.keys() - _MODEL_FIELDS):
+            or not isinstance(model, dict) or model.keys() - (_MODEL_FIELDS | extra_model_fields)):
         raise ValueError("invalid model configuration")
     checkpoint = model.get("checkpoint")
     digest = checkpoint.get("sha256") if isinstance(checkpoint, dict) else None
@@ -106,14 +106,14 @@ def _read_commands(runtime: WorkerRuntime) -> None:
         runtime.stop(failed=True)
 
 
-def main() -> int:
+def main(*, engine_loader=None, extra_model_fields: frozenset[str] = frozenset()) -> int:
     try:
         config_arg, pid_arg = sys.argv[1:]
         config_path = Path(config_arg)
         parent_pid = int(pid_arg)
         if parent_pid <= 0 or parent_pid == os.getpid():
             raise ValueError("invalid parent")
-        identity, model, limits, config_digest = _read_config(config_path)
+        identity, model, limits, config_digest = _read_config(config_path, extra_model_fields)
     except (ValueError, OSError, RecursionError):
         return _fail_startup("invalid_config")
 
@@ -140,8 +140,9 @@ def main() -> int:
 
         torch.set_num_threads(limits.cpu_threads)
         torch.set_num_interop_threads(1)
-        engine = load_engine(model, base_dir=config_path.parent, max_output_tokens=limits.max_output_tokens,
-                             tokenizer_id=identity["tokenizerId"])
+        engine = (engine_loader or load_engine)(model, base_dir=config_path.parent,
+                                                max_output_tokens=limits.max_output_tokens,
+                                                tokenizer_id=identity["tokenizerId"])
         heads = {name: _HEAD_KINDS[head.operations] for name, head in engine.heads.items()}
         ready = frame("ready", identity=identity, heads=heads, limits=limits.advertised(), startupMs=_startup_ms(),
                       device=engine.device.type, parity=engine.parity_report, configSha256=config_digest,

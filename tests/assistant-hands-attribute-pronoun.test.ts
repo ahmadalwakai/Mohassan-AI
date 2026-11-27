@@ -21,11 +21,15 @@ const japanUrl = articleUrl('اليابان', 'ar');
 const japan = pageOf(japanUrl, 'اليابان - ويكيبيديا', 'اليابان دولة جزرية في شرق آسيا تقع في المحيط الهادئ. تحتل المناطق الجبلية ما يزيد عن 70% من أرض اليابان، أما المدن التي يزيد عدد سكانها على مليون نسمة فهي سابورو وسنداي. يبلغ عدد سكان اليابان 123 مليون نسمة اعتباراً من 2024، وعاصمتها طوكيو.');
 
 type Hit = { title: string; url: string; snippet: string };
-function fakeIO(reads: Record<string, AgentPage>, hits: Hit[]) {
+function fakeIO(reads: Record<string, AgentPage>, hits: Hit[], wikipediaFallback = false) {
   const log: string[] = [];
   const io: HandsIO = {
     read: async (url: string) => { log.push(`read:${url}`); const found = reads[url]; return found ? { kind: 'page' as const, page: found } : { kind: 'unreadable' as const }; },
-    search: async query => { log.push(`search:${query}`); return hits; },
+    search: async (query, _limit, _plan, report) => {
+      log.push(`search:${query}`);
+      if (wikipediaFallback) report({ searchedProviders: ['Wikipedia'], unavailableSites: [], unavailableDomains: ['official_statistics'], wikipediaFallback: true });
+      return hits;
+    },
     page: async () => null,
     act: async (action: AgentAction) => { log.push(`${action.kind}:${action.text ?? action.ref}`); return pageOf(action.text ?? '', '', ''); },
     prepare: async () => null,
@@ -70,7 +74,7 @@ describe('«وكم عدد سكانها؟» after an answer read from the Japan a
   const steps = () => webQuestion('وكم عدد سكانها؟', ['اليابان'])!;
 
   it("answers with Japan's population from its article, not the town the search returned nor the share of mountains", async () => {
-    const { io, log } = fakeIO({ [japanUrl]: japan, [townUrl]: town }, [townHit]);
+    const { io, log } = fakeIO({ [japanUrl]: japan, [townUrl]: town }, [townHit], true);
     const outcome = await runHands({ steps: steps(), next: 0 }, io);
     expect(log).toContain(`read:${japanUrl}`);
     expect(outcome).toMatchObject({ kind: 'done', status: 'completed' });
@@ -80,7 +84,7 @@ describe('«وكم عدد سكانها؟» after an answer read from the Japan a
   });
 
   it('shows no figure when only the town page can be read', async () => {
-    const { io } = fakeIO({ [townUrl]: town }, [townHit]);
+    const { io } = fakeIO({ [townUrl]: town }, [townHit], true);
     const outcome = await runHands({ steps: steps(), next: 0 }, io);
     expect(outcome.kind).toBe('done');
     expect(outcome.kind === 'done' && outcome.text).not.toContain('10,577');

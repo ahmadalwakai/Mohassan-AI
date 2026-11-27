@@ -11,6 +11,9 @@ import shutil
 import subprocess
 from tempfile import TemporaryDirectory
 
+from answer_mode_bench import instrument_observer as instrument_resources_observer
+from answer_mode_bench import instrument_scoring as instrument_resources_scoring
+from council_bench import instrument_observer as instrument_council_observer, instrument_scoring as instrument_council_scoring
 from monitor_audit import SOURCE_FLAGS, instrument_observer, instrument_product, instrument_scoring
 
 V1_BUNDLE = "a258b3d47e39b5a2c03c71d4a9eb01107ae3d97f"
@@ -50,6 +53,8 @@ OVERRIDES = {
     "MOHASSAN_CONVERSATION_SHADOW": {"decide", "0"},
     "TEST_DRIVEN_CODING_ENABLED": {"true", "false"},
     "MOHASSAN_MODEL_RELATIONS": {"off", "shadow"},
+    "MOHASSAN_MODEL_COUNCIL": {"off", "owner"},
+    "MOHASSAN_ANSWER_MODE": {"off", "council-web"},
     "MOHASSAN_MONITORS_ENABLED": {"0", "owner", "1"},
     **{name: {"0", "1"} for name in (
         *(BASE_FLAGS.keys() - {"MOHASSAN_PLAN_COMPILER", "MOHASSAN_CONVERSATION_SHADOW",
@@ -174,6 +179,8 @@ def run_logged(args: list[str], cwd: Path, environment: dict[str, str], log: Pat
 def collect_environment(overrides: dict[str, str], temporary: Path) -> tuple[dict[str, str], dict[str, str]]:
     for name, value in overrides.items():
         if name == "TEST_DRIVEN_CODING_PYTHON" and Path(value).is_absolute():
+            continue
+        if name == "MOHASSAN_MODELS_ROOT" and Path(value).is_absolute() and Path(value).is_dir():
             continue
         if name not in OVERRIDES or value not in OVERRIDES[name]:
             raise ValueError(f"Unsupported development benchmark setting {name}")
@@ -308,12 +315,22 @@ def run_arm(
                                 str(checkout / adapter_path), str(observe), version],
                                cwd=checkout, env=environment, check=True)
                 instrument_runner(runner, version)
+                if "MOHASSAN_MODEL_COUNCIL" in settings:
+                    council_enabled = settings["MOHASSAN_MODEL_COUNCIL"] == "owner"
+                    use_adapter = council_enabled and (checkout / "apps/server/src/assistant/council-runners.ts").is_file()
+                    instrument_council_observer(observe, apply_once, enabled=council_enabled, use_adapter=use_adapter)
+                    instrument_council_scoring(runner, apply_once)
                 if monitor_audit:
                     mounted.append(instrument_observer(observe))
                     instrument_scoring(runner)
                     for file in instrument_product(checkout):
                         inputs[f"{version}/effective/{file.relative_to(checkout)}"] = digest(file)
                     inputs[f"{version}/effective/monitor-audit.mjs"] = digest(mounted[-1])
+                if "MOHASSAN_ANSWER_MODE" in settings:
+                    instrument_resources_observer(observe, apply_once)
+                    instrument_resources_scoring(runner, apply_once, capture_pipeline=(
+                        settings["MOHASSAN_ANSWER_MODE"] == "council-web" and settings.get("MOHASSAN_MODEL_COUNCIL") == "owner"
+                    ))
                 inputs[f"{version}/effective/observe.ts"] = digest(observe)
                 inputs[f"{version}/effective/run.ts"] = digest(runner)
                 if any((checkout / path).exists() for path in HOLDOUTS):

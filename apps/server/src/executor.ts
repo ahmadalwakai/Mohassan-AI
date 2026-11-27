@@ -18,10 +18,13 @@ import { createReadStream } from 'node:fs';
 import { access, readFile, stat } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
+import type { ModelCouncil } from '@mohassan/contracts';
 import { z } from 'zod';
 import { ollamaInventory, ProviderError, type ModelRequest, type ModelResult, type OllamaInventory } from '@mohassan/providers';
 import { ExperimentalUncontainedWorkerTransport } from '../../../packages/execution-integration/src/experimental-worker-transport.js';
 import { ModelTransportError, type LocalModelProcessConfig, type ModelTransport } from '../../../packages/execution-integration/src/transport.js';
+import { withAdvisoryBudget } from './assistant/council-advisory.js';
+import type { ModelCouncilService } from './assistant/model-council.js';
 
 export const EXECUTOR_EXPERIMENT_MODE = 'uncontained-local';
 const WORKER_MAX_OUTPUT_TOKENS = 96;
@@ -124,6 +127,7 @@ export interface ExecutorSandbox {
 
 export interface ExecutorDependencies {
   config: ExecutorConfig;
+  council?: () => ModelCouncilService | undefined;
   sandbox?: ExecutorSandbox;
   reasoning?: ExecutorReasoning;
   /** Tests inject a fake; the default launches the real worker without containment. */
@@ -156,6 +160,7 @@ export interface ExecutorRun {
   candidate: { text: string; outputTokens: number; generationMs: number; stopReason: string } | null;
   missingContextKeys?: string[];
   verification: Verification | null;
+  council?: ModelCouncil;
   timing: { totalMs: number; executorMs: number | null };
   startedAt: string;
 }
@@ -426,6 +431,17 @@ export function createExecutorControl(dependencies: ExecutorDependencies) {
       result.candidate = { text: proposal.text, outputTokens: response.outputTokens, generationMs: Number(proposal.generationMs ?? 0), stopReason: String(proposal.stopReason ?? 'unknown') };
       if (task.output === 'json') result.verification = verifyJsonCandidate(input.capability, submitted, proposal.text);
       else result.verification = await verifyTypescript(submitted as { function_name: string; increment: number }, proposal.text, signal);
+      const council = input.mode === 'direct' && !signal.aborted ? dependencies.council?.() : undefined;
+      if (council) {
+        const pipeline = { text: proposal.text, status: result.verification.status === 'passed' ? 'completed' : 'blocked' } as const;
+        const record = await withAdvisoryBudget(signal, advisorySignal => council.deliberate({
+          question: input.capability, previous: null, history: [], evidence: [], signal: advisorySignal, advisory: true,
+          baseline: { route: 'coding', refusal: 'allow', speechAct: 'request', turnType: 'new' },
+          pipeline,
+          codeTask: { capability: input.capability, fields: submitted },
+        }));
+        if (record) result.council = record.council;
+      }
       if (signal.aborted) return finish('cancelled', 'أُلغيت التجربة بعد التوليد.');
       return finish('candidate', result.verification.status === 'passed' ? 'اجتاز المرشح الفحص المستقل.' : result.verification.status === 'rejected' ? 'رفض الفحص المستقل المرشح.' : 'المرشح غير مُتحقق منه.');
     } finally {

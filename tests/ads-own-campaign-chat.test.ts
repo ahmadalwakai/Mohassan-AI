@@ -6,9 +6,13 @@
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AgentBrowser } from '@mohassan/browser';
+import { createDatabase, migrate } from '@mohassan/database';
 import { sourceFingerprint } from '@mohassan/google-ads';
 import { createApplication } from '../apps/server/src/app.js';
+import { createCommandChatControl, type CommandChatConfig } from '../apps/server/src/command-chat.js';
+import type { CouncilOutcome, CouncilTurn } from '../apps/server/src/assistant/model-council.js';
 import { MAX_ASK_ROUNDS, pageLines } from '../apps/server/src/assistant/ads-model-chat.js';
 import { goalToPointer, siteToPointer, GOAL_POINTER_CAPABILITY } from '../scripts/ads-training/pointer.js';
 import { siteAds, siteDigest } from '../scripts/ads-training/site.js';
@@ -23,9 +27,10 @@ const MESSAGE = 'make ads for kerbsidetyres.co.uk in Wigan, £20 a day';
 
 describe('own Ads model: ask once, then create the campaign PAUSED', () => {
   const open: Awaited<ReturnType<typeof createApplication>>[] = [];
-  afterEach(async () => { await Promise.all(open.splice(0).map(item => item.app.close())); });
+  afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(open.splice(0).map(item => item.app.close())); });
 
   it('asks every missing fact in one message, then signs in and creates the campaign without another stop', async () => {
+    vi.stubEnv('MOHASSAN_MODEL_COUNCIL', 'owner');
     const directory = await mkdtemp(join(tmpdir(), 'mohassan-ads-own-'));
     const sourceDir = join(directory, 'src');
     await mkdir(sourceDir, { recursive: true });
@@ -72,6 +77,9 @@ describe('own Ads model: ask once, then create the campaign PAUSED', () => {
     expect(detail.question.prompt).toMatch(/1\. ما الخدمة[\s\S]*2\. ماذا تريد من الإعلان/);
     expect(detail.question.prompt).not.toContain('في أي دولة');
     expect(detail.question.prompt).toContain('الدولة: المملكة المتحدة');
+    expect(detail.messages.at(-1).council).toMatchObject({ chosen: 'pipeline', changed: false, members: expect.arrayContaining([
+      expect.objectContaining({ model: 'google-ads-pointer' }),
+    ]) });
     expect(google.mutations).toHaveLength(0);
 
     // 2. One answer; the next stop is Google's own sign-in page, nothing in between.
@@ -186,4 +194,59 @@ describe('own Ads model: ask once, then create the campaign PAUSED', () => {
     expect(prompts).toHaveLength(1);
     expect(prompts[0]).toContain(`Ads task: ${GOAL_POINTER_CAPABILITY}`);
   }, 90000);
+
+  it('publishes the Ads clarification card when advisory deliberation stalls', async () => {
+    const database = await createDatabase();
+    let chat: Awaited<ReturnType<typeof createCommandChatControl>> | undefined;
+    try {
+      await migrate(database.db);
+      const owner = 'ads-advisory-owner';
+      const prompt = 'Which service do you want to advertise?';
+      let advisoryWaitMs = 0;
+      const deliberate = vi.fn((turn: CouncilTurn) => {
+        const started = performance.now();
+        turn.signal.addEventListener('abort', () => { advisoryWaitMs = performance.now() - started; }, { once: true });
+        return new Promise<CouncilOutcome>(() => {});
+      });
+      const browser = {
+        setCheckpointStore() {}, async bindAccount() {}, async hasPage() { return false; }, async close() {},
+        async act() { throw new Error('The Ads clarification must not start the browser.'); },
+      } as unknown as AgentBrowser;
+      const config: CommandChatConfig = {
+        browser, modelCouncil: { deliberate }, recordExperiences: false, models: { fast: [], deep: [], vision: '' },
+        fullAccess: async id => id === owner, accountFullAccess: async id => id === owner,
+        searchProvider: { name: 'ads-clarification-fixture', async search() { return []; } },
+        adsModel: { async handle() {
+          return { status: 'waiting_user', text: prompt, brief: {
+            url: SITE, service: null, serviceChoices: [], locations: [], country: null, budget: null, goal: null, asked: ['service'], rounds: 1,
+          } };
+        } },
+      };
+      const control = await createCommandChatControl(database.db, config);
+      chat = control;
+      async function publish() {
+        const started = performance.now();
+        const { id } = await control.create(owner, { goal: MESSAGE });
+        await control.settled(id);
+        const detail = await control.detail(owner, id);
+        return { detail, ms: performance.now() - started };
+      }
+
+      config.modelCouncil = undefined;
+      await publish();
+      const baseline = await publish();
+      config.modelCouncil = { deliberate };
+      const stalled = await publish();
+      expect(baseline.detail).toMatchObject({ status: 'waiting_user', question: { prompt } });
+      expect(stalled.detail).toMatchObject({ status: 'waiting_user', question: { prompt } });
+      expect(stalled.detail.messages.at(-1)).toMatchObject({ text: prompt });
+      expect(stalled.detail.messages.at(-1)).not.toHaveProperty('council');
+      expect(deliberate).toHaveBeenCalledOnce();
+      expect(deliberate.mock.calls[0]?.[0].signal.aborted).toBe(true);
+      console.info(`Ads card publication fixture: baseline ${baseline.ms.toFixed(1)} ms, stalled advice ${stalled.ms.toFixed(1)} ms, added ${(stalled.ms - baseline.ms).toFixed(1)} ms, model wait ${advisoryWaitMs.toFixed(1)} ms`);
+    } finally {
+      await chat?.shutdown();
+      await database.close();
+    }
+  });
 });

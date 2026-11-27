@@ -8,7 +8,29 @@ On a choice between a models page and automatic use, the owner chose both and ad
 - «البحث يجب ان يتم في الباكاند و يناقش الجواب قبل ان يصدر ل المستخدم من قبل النماذج»: the search runs in the backend, and the models discuss the answer before it is issued.
 - «يقرأ الصفحات المتعلقة و ليس ب الضرورة ويكبيديا»: it reads the relevant pages, not necessarily Wikipedia.
 
-## What runs
+## Council v2
+
+`MOHASSAN_MODEL_COUNCIL=owner` enables the server-side council. The registry determines which local models fit the turn.
+The scheduler probes for artifacts, orders available members by applicable accuracy receipts within each round, and runs them
+within the turn deadline. The shared runtime has one Python slot beside the resident v5 worker. The independently enabled
+local Ads and executor labs have their own process lifecycles.
+
+The understanding models return informational labels. Public research uses the pipeline's existing routing decision, search
+engine and public-query guard. The propose round records an exact quote and URL from a page read on the current turn, or an
+abstention. The check round uses the evidence check, the judge and applicable local verifiers. Votes use task-, domain- and
+language-matched measured accuracy. An unavailable receipt carries zero weight and an explanation.
+
+A replacement requires at least two verified answers that agree and have strictly greater measured support than the pipeline
+or any competing answer. A standing pipeline answer needs a comparable receipt before it can be replaced. On an eligible
+owner turn where the pipeline was blocked and no page was read, the existing labelled v5 fallback can still reply.
+A blocked reply with pages, a completed reply withheld by the judge, or an empty reply can be replaced by an uncertainty
+message with the URLs that were read. Image reading, Ads drafting and typed executor tasks receive time-bounded advisory
+records while the pipeline retains publication authority.
+
+The existing version 1 council record carries optional `discussion` with proposals, checks, votes and bilingual decision
+reasons. Member rows retain failed, missing, untrained, timed-out and abstaining outcomes. Existing stored records remain valid.
+
+## What ran at 29448ae
 
 `MOHASSAN_MODEL_COUNCIL=owner` turns the council on. It runs only on the owner's plain answer turns, inside `finish()` in `apps/server/src/command-chat.ts`, before the judge and before the reply is stored. Members never meet it.
 

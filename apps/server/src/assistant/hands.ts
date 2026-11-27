@@ -1,4 +1,4 @@
-import { AgentEffectHeld, BrowserError, compileQuery, publicSearchScan, publicSearchText, safeResumeUrl, webFreshnessText, type AgentAction, type AgentElement, type AgentPage, type AgentRequestPermit, type SearchHit } from '@mohassan/browser';
+import { AgentEffectHeld, BrowserError, compileQuery, planSources, publicSearchScan, publicSearchText, safeResumeUrl, sourceSearchText, webFreshnessText, type AgentAction, type AgentElement, type AgentPage, type AgentRequestPermit, type SearchHit, type SearchSelection, type SourcePlan } from '@mohassan/browser';
 import { directRoute, namedSite, sensitiveAction } from './brain.js';
 import { hostOf, readingLabel, siteName } from './activity.js';
 import { checkAnswerLine, figureKind, hasAnswerNumber, isDisambiguationPage, isDisambiguationTitle, isMetaLine, isReasonQuestion, questionLanguage } from './answer-check.js';
@@ -16,6 +16,7 @@ import { refusalReply } from './refusal/replies.js';
 import { refusalPolicyEnabled } from './refusal/settings.js';
 import type { RefusalDecision } from './refusal/types.js';
 import { explicitFactualEvidence, formatFactualPassage, readFactualPassage } from './factual-evidence.js';
+import { allowsSearchSource, plannedSearchProgress, publicSourceTurns, unavailableSearchSources } from './hands-search-sources.js';
 
 export { returnedTo };
 export { siteName };
@@ -35,7 +36,7 @@ export interface HandsReply { lang?: 'ar' | 'en'; sentences?: number; fields?: R
 export type HandsStep =
   | { kind: 'open'; url: string; name: string }
   /** `ask`: the owner asked a question, so the run opens the top results and quotes the sentences that answer it. */
-  | { kind: 'search'; query: string; site: { url: string; name: string } | null; here?: boolean; ask?: boolean; reply?: HandsReply }
+  | { kind: 'search'; query: string; site: { url: string; name: string } | null; sourceSite?: string; here?: boolean; ask?: boolean; reply?: HandsReply }
   | { kind: 'click'; target: string; ordinal: number | null }
   | { kind: 'type'; text: string; field: string }
   | { kind: 'read'; more: boolean }
@@ -197,6 +198,7 @@ function parseSegment(raw: string): HandsStep | HandsStep[] | null {
   let match = /^(?:ابحث|أبحث|إبحث|دور|فتش)(?:\s+لي)?(?:\s+(?:في|على|داخل)\s+(.+?))?\s+عن\s+(.+)$/u.exec(text);
   if (match) {
     const named = match[1] ? namedSite(match[1]) : null;
+    if (match[1] && !named && planSources(`ابحث في ${match[1]}`).explicitSites.length) return { kind: 'search', query: strip(text), site: null };
     if (match[1] && !named && !/^(?:ال)?(?:انترنت|إنترنت|نت|ويب|جوجل)$/u.test(match[1])) return null;
     const peeled = named ? { query: match[2], site: named } : peelSite(match[2], /^(?:في|على|ب)$/u);
     return peeled.query ? { kind: 'search', query: strip(peeled.query), site: peeled.site } : null;
@@ -401,13 +403,17 @@ export function notWebReason(text: string): 'memory_ads_pc' | 'reminder' | 'arit
 export function webQuestion(request: string, earlier: readonly string[] = []): HandsStep[] | null {
   const raw = request.normalize('NFC').replace(/^(?:من فضلك|لو سمحت|please)[،,\s]+/iu, '').trim();
   const text = tidy(raw);
-  if (notWebReason(text)) return null;
+  const rejectsQuestion = (value: string) => {
+    const reason = notWebReason(value);
+    return reason === 'address' ? Boolean(directRoute(value) || notWebReason(sourceSearchText(value))) : Boolean(reason);
+  };
+  if (rejectsQuestion(text)) return null;
   // «Explain why rain falls in two short Arabic sentences.» asks «why rain falls»: «explain» only asks for the answer, and
   // the closing instruction shapes the reply (reply-directive.ts). In the live test of 2026-11-23 the whole sentence was the
   // query, and the search guard refused it as private before any search.
   const framing = splitReplyDirective(raw);
   const asked = tidy(explainedQuestion(framing.directive ? framing.body : raw));
-  if (!asked || notWebReason(asked)) return null;
+  if (!asked || rejectsQuestion(asked)) return null;
   const lookup = LOOKUP.exec(asked);
   const own = lookup ? strip(lookup[1]) : returnedTo(asked) ?? workQuestion(asked) ?? asked;
   const query = withTopic(own, earlier);
@@ -852,7 +858,7 @@ export function readableText(text: string): string {
 }
 
 /** The page's own sentences that share the question's words, best first by page order; quoted, never rewritten. */
-export function relevantLines(page: AgentPage, question: string, limit = 3, bestFirst = false): string[] {
+export function relevantLines(page: Pick<AgentPage, 'title' | 'text' | 'elements'>, question: string, limit = 3, bestFirst = false): string[] {
   const overview = OVERVIEW_QUESTION.test(question) && !ERROR_QUESTION.test(question);
   let matchingQuestion = question;
   try {
@@ -1291,7 +1297,7 @@ function templateFor(siteUrl: string, query: string): string | null {
 }
 
 /** Expand deterministic site navigation before the host admits and persists the whole plan. */
-export function normalizeHandsPlan(plan: HandsPlan): HandsPlan {
+export function normalizeHandsPlan(plan: HandsPlan, sourceRequest?: string): HandsPlan {
   if (!Array.isArray(plan.steps) || !plan.steps.length || !Number.isSafeInteger(plan.next) || plan.next < 0 || plan.next > plan.steps.length) {
     throw new BrowserError('ASSISTANT_HANDS_PLAN_INVALID', 'تعذر التحقق من خطة المتصفح المحفوظة؛ اطلب المهمة من جديد.', 409);
   }
@@ -1299,6 +1305,20 @@ export function normalizeHandsPlan(plan: HandsPlan): HandsPlan {
   let next = 0;
   for (const [index, step] of plan.steps.entries()) {
     if (index === plan.next) next = expanded.length;
+    if (sourceRequest && step.kind === 'news' && plan.steps.length === 1) {
+      const sources = planSources(sourceRequest);
+      // Headline roundups can still read a front page. A topic or a different requested site needs source selection.
+      if (!allowsSearchSource(step.source.url, sources) || step.topic && !sources.explicitSites.length) {
+        expanded.push({ kind: 'search', query: sourceRequest, site: null });
+        continue;
+      }
+    }
+    const scopedHost = sourceRequest && step.kind === 'search' && step.site && !step.here && plan.steps[index - 1]?.kind !== 'open'
+      ? URL.parse(/^https?:\/\//i.test(step.site.url) ? step.site.url : `https://${step.site.url}`)?.hostname : null;
+    if (scopedHost && step.kind === 'search') {
+      expanded.push({ ...step, site: null, sourceSite: scopedHost.replace(/^www\./u, '') });
+      continue;
+    }
     if (step.kind === 'search' && step.site && !templateFor(step.site.url, step.query)) {
       expanded.push({ kind: 'open', url: step.site.url, name: step.site.name }, { ...step, site: null, here: true });
     } else expanded.push(step);
@@ -1316,7 +1336,9 @@ export interface HandsIO {
   /** The conversation's live page, or null when no page is open. */
   page(): Promise<AgentPage | null>;
   /** The same public web search used by the model, with topic relevance and source ranking. */
-  search?(query: string, limit: number): Promise<SearchHit[]>;
+  search?(query: string, limit: number, plan: SourcePlan, report: (selection: SearchSelection) => void): Promise<SearchHit[]>;
+  recentTurns?: readonly string[];
+  sourceRequest?: string;
   /** Reads a search result over HTTP, so a question is answered without opening the browser. */
   read?(url: string): Promise<HandsRead>;
   act(action: AgentAction): Promise<AgentPage>;
@@ -1363,8 +1385,8 @@ export const searchFailed = (query: string, detail: string, lang: 'ar' | 'en' = 
   : `The search for “${query}” failed: the search sources did not answer just now (${detail}). This is a failed request, not a search without results. Please try again shortly.`;
 
 const noSearchSource = (query: string, lang: 'ar' | 'en' = /[؀-ۿ]/u.test(query) ? 'ar' : 'en') => isLiveWebQuestion(query) ? noLiveSource(query, lang) : lang === 'ar'
-  ? `لم أجد في المصادر المتاحة لي (ويكيبيديا والواجهات الموثقة) نتائج مرتبطة بسؤالك «${query}». أرسل رابط موقع مناسب أو حدد اسم الجهة التي تريد البحث لديها.`
-  : `I found no results relevant to “${query}” in the sources available to me (Wikipedia and documented APIs). Send a suitable website link or name the organization to search.`;
+  ? `لم أجد في المصادر المتاحة لي نتائج مرتبطة بسؤالك «${query}». أرسل رابط موقع مناسب أو حدد اسم الجهة التي تريد البحث لديها.`
+  : `I found no results relevant to “${query}” in the sources available to me. Send a suitable website link or name the organization to search.`;
 
 
 /** A page title without the site's own suffix («… - ويكيبيديا») and without link brackets. */
@@ -1439,9 +1461,11 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
   /** Articles opened by the subject's own name (Wikipedia resolves its redirects): the subject's article whatever its title. */
   const ownUrls = new Set<string>();
   const ownPage = (page: { url: string; title: string }, entity: readonly string[]) => ownUrls.has(withoutHash(page.url)) || isOwnArticle(page.title, entity);
+  const sourceNotes = new Set<string>();
+  const withSourceNotes = (text: string) => [text, ...sourceNotes].join('\n\n');
   type SearchResult = { title: string; url: string };
   type SearchBatch = { results: SearchResult[]; retrySubject?: () => Promise<SearchResult[]> };
-  const engine = async (query: string, ask = false): Promise<SearchBatch | { failed: string } | 'unavailable'> => {
+  const engine = async (query: string, sources: SourcePlan, ask = false): Promise<SearchBatch | { failed: string } | 'unavailable'> => {
     const publicQuery = query.normalize('NFKC').replace(/\p{Cf}/gu, '');
     const decoded = publicSearchScan(publicQuery);
     if (publicSearchText(publicQuery) !== publicQuery || publicSearchText(decoded) !== decoded || (decoded.match(/https?:\/\/\S+/gi) ?? []).some(url => safeResumeUrl(url) === null)) {
@@ -1450,22 +1474,34 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     try { compileQuery(query); } catch { throw new BrowserError('RESEARCH_QUERY_INVALID', 'اكتب موضوعًا محددًا للبحث، واستخدم site: مع اسم نطاق صالح فقط.', 400); }
     if (!io.search) return 'unavailable';
     const live = isLiveWebQuestion(query);
-    const topic = topicWords(query);
+    const subjectQuery = sourceSearchText(query);
+    const topic = topicWords(subjectQuery);
     // The search providers did not answer (unavailable, rate limited, invalid answer): a failed request, told apart from a
     // search that answered with nothing about the question.
     let providerFailure: string | null = null;
+    let unavailableOnly = false;
+    let wikipediaFallback = false;
     const lookup = async (words: string) => {
       let hits: SearchHit[] = [];
-      try { hits = await io.search!(words, 6); }
+      let selection: SearchSelection | undefined;
+      try { hits = await io.search!(words, 6, sources, report => { selection = report; }); }
       catch (error) {
         if (error instanceof BrowserError && error.code === 'RESEARCH_PROVIDERS_FAILED') providerFailure = error.message;
         // Cancellation, rejected query policy and lost execution authority must stop the run.
         else if (!(error instanceof BrowserError) || error.code !== 'RESEARCH_SEARCH_UNAVAILABLE') throw error;
       }
+      if (selection) {
+        wikipediaFallback = selection.wikipediaFallback === true;
+        const detail = unavailableSearchSources(sources, selection);
+        if (detail) sourceNotes.add(detail);
+        unavailableOnly = Boolean(detail && !selection.searchedProviders.length && !providerFailure);
+        const progress = plannedSearchProgress(sources, selection);
+        if (progress) await (io.progress ?? io.step)(progress);
+      }
       const seen = new Set<string>();
       const ranked = hits.flatMap((hit, at) => {
         const url = URL.parse(hit.url);
-        if (!url || !/^https?:$/.test(url.protocol) || seen.has(withoutHash(url.href))) return [];
+        if (!url || !allowsSearchSource(url.href, sources) || seen.has(withoutHash(url.href))) return [];
         seen.add(withoutHash(url.href));
         return [{ title: tidy(hit.title), url: url.href, at, score: titleScore(`${hit.title} ${hit.snippet}`, topic), wiki: /(?:^|\.)wikipedia\.org$/.test(url.hostname) }];
       });
@@ -1484,20 +1520,21 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     // §7.2). In the full runs since 04:48 the search returned only his sons' pages for «من هو ألبرت أينشتاين», so the reply
     // quoted Eduard Einstein's article (rq025, rq079; the 02:17 baseline had quoted Albert's).
     // A reason is asked about one thing («السماء» in «لماذا السماء زرقاء؟»): that thing's article is the source, whatever else the question says.
-    const reason = reasonSubject(query);
-    const entity = reason ? [] : entityWords(query);
-    const searchable = reason ? topicWords(reason) : entity.length ? entity : DEFINE_QUESTION.test(query.trim()) ? topicWords(query) : aspectSubject(query);
+    const reason = reasonSubject(subjectQuery);
+    const entity = reason ? [] : entityWords(subjectQuery);
+    const searchable = reason ? topicWords(reason) : entity.length ? entity : DEFINE_QUESTION.test(subjectQuery) ? topicWords(subjectQuery) : aspectSubject(subjectQuery);
     // A figure with no attribute word («كم تستغرق عملية المياه البيضاء») has its subject opened by name too, never searched for.
-    const subject = searchable.length ? searchable : WANTS_NUMBER.test(query) ? topicWords(wikiTerms(query)) : [];
-    const surface = !subject.length ? '' : reason ? reason : entity.length ? entitySurface(query, entity) : wikiTerms(query);
-    // Wikipedia opens a subject's article by its name and follows its redirects («المياه البيضاء» → «الساد», «الشاي الأخضر»
-    // → «شاي أخضر», measured 2026-11-22), so the article is read while the search runs, not searched for after it: the search
-    // lookup cost 1.1 to 1.9 s a question (the engine's one-second spacing, then the search). The page reader caches it.
-    const direct = subject.length && !live && surface.trim() && io.read
-      ? io.read(articleUrl(surface, questionLanguage(query))).catch((): HandsRead => ({ kind: 'unreadable' })) : null;
+    const subject = searchable.length ? searchable : WANTS_NUMBER.test(subjectQuery) ? topicWords(wikiTerms(subjectQuery)) : [];
+    const surface = !subject.length ? '' : reason ? reason : entity.length ? entitySurface(subjectQuery, entity) : wikiTerms(subjectQuery);
+    // Wikipedia resolves the subject's name to its article. Read it in parallel for encyclopedic questions, or after
+    // selection confirms the fallback for other questions.
+    const article = surface.trim() ? articleUrl(surface, sources.language) : null;
+    const readArticle = article && !live && !sources.fresh && allowsSearchSource(article, sources) && io.read
+      ? () => io.read!(article).catch((): HandsRead => ({ kind: 'unreadable' })) : null;
+    const direct = sources.domains.includes('encyclopedia') ? readArticle?.() : null;
     let results = await lookup(query);
-    const openedByName = direct ? await direct : null;
-    const named = openedByName?.kind === 'page' && readableOverHttp(openedByName.page.text) && !isDisambiguationPage(openedByName.page) ? openedByName.page : null;
+    const openedByName = await (direct ?? (wikipediaFallback ? readArticle?.() : null));
+    const named = openedByName?.kind === 'page' && allowsSearchSource(openedByName.page.url, sources) && readableOverHttp(openedByName.page.text) && !isDisambiguationPage(openedByName.page) ? openedByName.page : null;
     if (named) {
       const title = tidy(named.title) || hostOf(named.url);
       ownUrls.add(withoutHash(named.url));
@@ -1513,8 +1550,8 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     const pause = io.pause ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
     // Words already searched in this round are not searched again: the same words return the same results.
     const looked = new Set([fold(query)]);
-    const narrower = wikiTerms(query);
-    if (!results.length && !live && fold(narrower) !== fold(query) && topicWords(narrower).length) {
+    const narrower = wikiTerms(subjectQuery);
+    if (!results.length && !unavailableOnly && !live && fold(narrower) !== fold(subjectQuery) && topicWords(narrower).length) {
       await io.step(`لم يُجب البحث الأول؛ البحث عن «${narrower.slice(0, 60)}»`);
       await pause(PROVIDER_SPACING_MS);
       results = await lookup(narrower);
@@ -1522,7 +1559,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     }
     // A subject-name retry can recover its article when the first hits don't answer. Read the
     // existing hits first for questions, so a relevant source can save another provider round trip.
-    if (!named && searchable.length && !live && surface && !looked.has(fold(surface))
+    if (!named && !unavailableOnly && searchable.length && !live && surface && !looked.has(fold(surface))
       && !results.some(hit => isOwnArticle(hit.title, searchable))) {
       const retrySubject = async () => {
         await io.step(`البحث عن مقالة «${surface.slice(0, 60)}»`);
@@ -1553,6 +1590,10 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         break;
       }
       case 'search': {
+        const sourceQuestion = plan.steps.length === 1 && !plan.sequel ? io.sourceRequest ?? step.query : step.query;
+        const priorTurns = publicSourceTurns(plan.sequel?.previous ? [plan.sequel.previous] : io.recentTurns);
+        const sources = planSources(step.sourceSite ? `${sourceQuestion} site:${step.sourceSite}` : sourceQuestion, priorTurns);
+        sources.language = plan.lang ?? sources.language;
         const template = step.site ? templateFor(step.site.url, step.query) : null;
         await io.step(`البحث عن «${step.query.slice(0, 60)}»`);
         plan.next = index + 1;
@@ -1567,11 +1608,11 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         // «What is the latest version of Node.js?» is read from the product's own release page first (releases.ts): the
         // search only finds old forum threads for it. When that page cannot be read or no longer states a version, the
         // general search runs as before.
-        const release = !template && !box && step.ask && io.read ? releaseQuestion(step.query) : null;
-        if (release) {
+        const release = !template && !box && step.ask && io.read ? releaseQuestion(sourceSearchText(step.query)) : null;
+        if (release && allowsSearchSource(release.page, sources)) {
           await io.step(readingLabel([release.page]));
           const read = await io.read!(release.page).catch((): HandsRead => ({ kind: 'unreadable' }));
-          const official = read.kind === 'page' ? read.page : null;
+          const official = read.kind === 'page' && allowsSearchSource(read.page.url, sources) ? read.page : null;
           const fact = official ? release.parse(official.text) : null;
           if (official && fact) {
             const lang = plan.lang ?? (/[؀-ۿ]/u.test(step.query) ? 'ar' : 'en');
@@ -1582,9 +1623,9 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         }
         if (!template && !box) {
           // The shared engine over HTTP: a results list and no browser page.
-          const found = await engine(step.query, step.ask);
-          if (found === 'unavailable') return { kind: 'done', status: 'blocked', text: noSearchSource(step.query, plan.lang) };
-          if ('failed' in found) return { kind: 'done', status: 'blocked', text: searchFailed(step.query, found.failed, plan.lang) };
+          const found = await engine(step.query, sources, step.ask);
+          if (found === 'unavailable') return { kind: 'done', status: 'blocked', text: withSourceNotes(noSearchSource(step.query, plan.lang)) };
+          if ('failed' in found) return { kind: 'done', status: 'blocked', text: withSourceNotes(searchFailed(step.query, found.failed, plan.lang)) };
           searched = found.results;
           retrySubject = found.retrySubject;
         } else {
@@ -1646,7 +1687,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
           for (const [index, item] of fitting.entries()) {
             tried.add(withoutHash(item.url));
             const read = reads[index];
-            if (read?.kind === 'disallowed') continue;
+            if (read?.kind === 'disallowed' || searched && read?.kind === 'page' && !allowsSearchSource(read.page.url, sources)) continue;
             const explicit = read?.kind === 'page' && !isLiveWebQuestion(step.query) && !isDisambiguationPage(read.page)
               ? explicitFactualEvidence(read.page, step.query) : undefined;
             if (explicit?.kind === 'unanswered') continue;
@@ -1667,6 +1708,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
               page = shown;
               opened = shown;
             }
+            if (searched && !allowsSearchSource(opened.url, sources)) continue;
             if (isDisambiguationPage(opened)) continue;
             const passage = read?.kind === 'page' && read.page === opened ? readPassage
               : !isLiveWebQuestion(step.query) ? readFactualPassage(opened, step.query) : undefined;
@@ -1720,7 +1762,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
               // The other page must be about the same subject: its title holds every topic word, or is the subject itself.
               if (WANTS_NUMBER.test(step.query) || isLiveWebQuestion(step.query)) {
                 for (const [other, otherRead] of reads.entries()) {
-                  if (other === index || otherRead?.kind !== 'page' || !readableOverHttp(otherRead.page.text) || isDisambiguationPage(otherRead.page)) continue;
+                  if (other === index || otherRead?.kind !== 'page' || searched && !allowsSearchSource(otherRead.page.url, sources) || !readableOverHttp(otherRead.page.text) || isDisambiguationPage(otherRead.page)) continue;
                   const ownArticle = ownPage(otherRead.page, entity);
                   if (!ownArticle && topic.length && titleScore(otherRead.page.title, topic) < topic.length) continue;
                   const [line] = relevantLines(otherRead.page, step.query, 1, true)
@@ -1873,7 +1915,8 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
       await io.complete(index, missing || ranked?.status === 'blocked' ? 'partial' : 'completed');
     }
   }
-  return { kind: 'done', ...describe(plan, page) };
+  const description = describe(plan, page);
+  return { kind: 'done', ...description, text: withSourceNotes(description.text) };
 }
 
 /** What a question about an opened page asks for, beside ordinary sentences: its main heading, its links' text, a version. */

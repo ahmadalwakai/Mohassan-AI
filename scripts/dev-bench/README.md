@@ -36,6 +36,10 @@ The wave 4 target is `176/240` on V1 and `1586/2400` on V2. Run without competin
 
 `summary.json` records the measured commits, input and tool SHA-256 digests, effective settings, toolchain, receipt hashes and recomputed summaries. Each arm directory has the V1 and eight V2 lane receipts plus the validated `receipt.json` with cases in release order. If the product writes a model-relations shadow journal, it is copied into the output for latency measurement. Keep this directory local. The receipts contain development reply text, and the coordinator prints counts and commit IDs.
 
+For an answer mode comparison, pass `--set NAME:MOHASSAN_ANSWER_MODE=off` and `--set NAME:MOHASSAN_ANSWER_MODE=council-web` on two arms at the same commit, with `--set NAME:MOHASSAN_MODEL_COUNCIL=owner` on both. Include a production revision as another `off` arm with the same settings for baseline parity. If an existing model store is available, pass `--set NAME:MOHASSAN_MODELS_ROOT=/absolute/path/to/store` on every arm. The benchmark uses recorded search and pages. The recorded search looks up the query without applying the source plan. Novel queries may miss a recording. Live web and missing model artifacts require separate verification.
+
+`summary.json` adds separate V1 and V2 `turnResources` rows. They report nearest-rank p50 and p95 from dispatch through the first read of a settled turn with a new assistant reply, and mean Node process user-plus-system CPU milliseconds per attempted turn, excluding fixture setup and including failed dispatches. CPU for separate Python and browser processes is outside this counter. The council-web summary also counts stored pipeline proposals and matches against the same development turn in the off arm with the same commit and settings. A match means the full normalized proposal appears in the reply body after removing links and source lines. It is a text overlap measure. The summary includes both all recorded council-web turns and turns in the benchmark's factual task family.
+
 Run the parity and subgroup checks against the coordinated receipts:
 
 ```bash
