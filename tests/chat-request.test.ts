@@ -1,8 +1,16 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { ChatHttpError, chatErrorMessage, OFFLINE_REQUEST_MESSAGE } from "../apps/web/components/chat-connection";
-import { onSessionExpired, renewChatSession, requestChatJson, sessionFetch } from "../apps/web/components/chat-request";
+import {
+  onSessionExpired, renewChatSession, requestChatConversation, requestChatHistory, requestChatJson, sessionFetch,
+} from "../apps/web/components/chat-request";
 
 afterEach(() => vi.unstubAllGlobals());
+
+function mockChatReply(body: unknown) {
+  const response = new Response();
+  vi.spyOn(response, "json").mockResolvedValue(body);
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+}
 
 it("keeps a failed request's HTTP status and announces expiry once for concurrent 401s", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: { message: "Unauthorized" } }), { status: 401 })));
@@ -51,4 +59,38 @@ it("localizes browser transport errors and propagates intentional aborts", async
   expect(fetch).toHaveBeenCalledOnce();
   vi.stubGlobal("navigator", { onLine: true });
   await expect(sessionFetch("/api/access")).rejects.toBe(abort);
+});
+
+it("loads a conversation with additive fields and new enum values", async () => {
+  const body = {
+    id: "conversation",
+    status: "future-status",
+    messages: [{ id: "message", role: "future-role", text: "رسالة" }],
+    capabilities: { available: ["future-capability"] },
+    serverRevision: "future-revision",
+  };
+  mockChatReply(body);
+
+  await expect(requestChatConversation("/api/chat/conversations/conversation")).resolves.toBe(body);
+});
+
+it("uses the Arabic conversation error when messages is null", async () => {
+  mockChatReply({ id: "conversation", status: "idle", messages: null });
+
+  await expect(requestChatConversation("/api/chat/conversations/conversation"))
+    .rejects.toThrow("تعذّر قراءة بيانات المحادثة. أعد المحاولة.");
+});
+
+it("preserves pagination and idempotency fields in the full history reply", async () => {
+  // Wire fields from the existing list route and pagination PR (retrieved 2026-11-27).
+  // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/apps/server/src/command-chat.ts#L1146-L1152
+  // https://github.com/ahmadalwakai/Mohassan-AI/pull/136/files
+  const body = {
+    conversations: [{ id: "conversation", status: "future-status", serverRevision: "future-revision" }],
+    requestKeys: true,
+    nextCursor: "cursor-from-server",
+  };
+  mockChatReply(body);
+
+  await expect(requestChatHistory()).resolves.toBe(body);
 });
