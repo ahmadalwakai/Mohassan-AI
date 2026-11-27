@@ -9,7 +9,11 @@
 const ARABIC_MARK = /(?=\p{Script_Extensions=Arabic})\p{Mark}/gu;
 const FINAL_ARABIC_VARIANT = /[ةى](?![\p{Letter}\p{Mark}\p{Number}\p{Join_Control}])/gu;
 
-/** Returns a comparison key. Case, whitespace and numeral scripts are left to the caller. */
+/**
+ * Returns a comparison key. Case, whitespace and numeral scripts are left to the caller.
+ * Word-final ى folds to ي, so على (the preposition) and علي (the name) compare equal.
+ * For name and search matching, remove stop words before folding so names remain searchable.
+ */
 export function foldArabicForMatch(text: string): string {
   return text.normalize('NFC')
     .replace(ARABIC_MARK, '')

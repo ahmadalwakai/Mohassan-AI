@@ -95,14 +95,20 @@ export function legacyClarificationNeeded(resolution: RequestResolution | null |
     reason === 'missing_reference' || reason === 'missing_question' || reason === 'unclear_replacement');
 }
 
+// Write Arabic literals in the folded forms used to match requests.
+export const clarificationSlotPatterns = {
+  reminderTime: /\b(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|noon|midnight|morning|evening|later)\b|(?:السبت|الاحد|الاثنين|الثلاثاء|الاربعاء|الخميس|الجمعه|صباح|مساء|بعد قليل|بعد غد|امس)|\p{Nd}{1,4}[-/:٫]\p{Nd}{1,2}|\b(?:on|at)\s+\p{Nd}|(?:\b(?:in|after)|(?:^|\s)بعد)\s+\p{Nd}+\s*(?:minutes?|hours?|days?|weeks?|دقايق|ساعات|ايام|اسابيع)/iu,
+  arabicAccount: /^(?:اعرض|تحقق|اقرا|ابحث|ارني)\s+[^\n.!?؟]{0,180}(?:في|من|علي)\s+(?:حسابي|الحساب)\s*[.!?؟]?$/u,
+  arabicFile: /^(?:افتح|اقرا|اعرض|لخص|ابحث عن)\s+(?:الملف|المستند|ملفي|مستندي)(?:\s+علي\s+جهازي)?\s*[.!?؟]?$/u,
+} as const;
+
 export function missingClarificationSlot(text: string, resolution?: RequestResolution | null): 'date' | 'file' | 'account' | null {
   const folded = foldArabicForMatch(text.normalize('NFKC'));
-  // Arabic slot words below are written in their folded forms.
   if (resolution?.intent === 'reminder' && !resolution.slots.some(slot => slot.kind === 'time')
-    && !/\b(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|noon|midnight|morning|evening|later)\b|(?:السبت|الاحد|الاثنين|الثلاثاء|الاربعاء|الخميس|الجمعه|صباح|مساء|بعد قليل|بعد غد|امس)|\p{Nd}{1,4}[-/:٫]\p{Nd}{1,2}|\b(?:on|at)\s+\p{Nd}|(?:\b(?:in|after)|(?:^|\s)بعد)\s+\p{Nd}+\s*(?:minutes?|hours?|days?|weeks?|دقائق|ساعات|ايام|اسابيع)/iu.test(folded)) return 'date';
+    && !clarificationSlotPatterns.reminderTime.test(folded)) return 'date';
   if (/^(?:please\s+)?(?:show|check|look up|find|read|view)\b[^\n.!?؟]{0,180}\b(?:in|for|from|on) (?:my|the) account\s*[.!?؟]?$/iu.test(folded)
-    || /^(?:اعرض|تحقق|اقرا|ابحث|ارني)\s+[^\n.!?؟]{0,180}(?:في|من|علي)\s+(?:حسابي|الحساب)\s*[.!?؟]?$/u.test(folded)) return 'account';
+    || clarificationSlotPatterns.arabicAccount.test(folded)) return 'account';
   if (/^(?:please\s+)?(?:open|read|show|summari[sz]e|inspect|find)\s+(?:(?:the|my|this|that)\s+)?(?:file|document|pdf)(?: on my (?:computer|pc))?\s*[.!?؟]?$/iu.test(folded)
-    || /^(?:افتح|اقرا|اعرض|لخص|ابحث عن)\s+(?:الملف|المستند|ملفي|مستندي)(?:\s+علي\s+جهازي)?\s*[.!?؟]?$/u.test(folded)) return 'file';
+    || clarificationSlotPatterns.arabicFile.test(folded)) return 'file';
   return null;
 }
