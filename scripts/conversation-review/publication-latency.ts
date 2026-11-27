@@ -11,7 +11,7 @@ import { AliasNode, SelectQueryNode, TableNode, sql, type Kysely } from 'kysely'
 import { judge } from '../../apps/server/src/assistant/judge.js';
 import { createJudgeShadow, type JudgeShadow, type JudgeShadowLine } from '../../apps/server/src/assistant/judge-shadow.js';
 import type { ReviewMessage } from '../../apps/server/src/assistant/review/ledger.js';
-import { reviewJudgedReply } from '../../apps/server/src/assistant/review/publication.js';
+import * as publication from '../../apps/server/src/assistant/review/publication.js';
 import { commandChatMigration } from '../../apps/server/src/command-chat.js';
 
 const owner = 'offline-publication-benchmark';
@@ -19,6 +19,8 @@ const worker = 'offline-publication-worker';
 const warmupPairs = 10;
 const measuredPairs = 80;
 const clean = (text: string) => redactCredentialText(redactSecrets(text));
+const { reviewJudgedReply } = publication;
+const incremental = 'REVIEW_MESSAGE_WINDOW' in publication;
 
 const examples = [
   {
@@ -109,8 +111,11 @@ async function seed(db: Kysely<any>, messages: number, keepSummary: boolean, exa
 
 function fencedTransaction<T>(db: Kysely<any>, { id, runId }: Seed, work: (tx: Kysely<any>) => Promise<T>) {
   return db.transaction().execute(async tx => {
-    const conversation = await tx.selectFrom('chat_conversations').selectAll().where('id', '=', id)
-      .where('owner_id', '=', owner).forUpdate().executeTakeFirstOrThrow();
+    const row = tx.selectFrom('chat_conversations').where('id', '=', id).where('owner_id', '=', owner).forUpdate();
+    // Mirror the conversation lock projection of the implementation under test.
+    const conversation = incremental
+      ? await row.select(['status', 'active_run_id']).executeTakeFirstOrThrow()
+      : await row.selectAll().executeTakeFirstOrThrow();
     const run = await tx.selectFrom('chat_runs').selectAll().where('id', '=', runId).where('owner_id', '=', owner)
       .where('conversation_id', '=', id).where('lease_token', '=', runId).where('worker_id', '=', worker)
       .where('lease_expires_at', '>', sql<Date>`clock_timestamp()`).forUpdate().executeTakeFirstOrThrow();
@@ -250,7 +255,7 @@ try {
     machine: { cpu: cpus()[0]?.model, availableParallelism: availableParallelism() },
     provenance: 'Offline deterministic development inputs. Never used for training.',
     timingScope: 'Elapsed time through assistant-message commit with embedded PGlite. Both modes run the real judge and take the conversation and run locks for assistant publication. Shadow also times the pre-send review. Prior checkpoint setup and file-log flush are outside timing.',
-    rowScope: 'Added result rows returned by chat_messages queries per publication with pre-send review enabled, including aggregate results.',
+    rowScope: 'Added chat_messages SELECT result rows per publication, including checkpoint anchors.',
     pairing: `Each sample uses identical transcript text in two separate conversations. Order alternates, with equal measured pairs in Arabic and English. All transcript sizes are seeded before timing and interleaved in rotating order on the same database. ${warmupPairs} warmup pairs per scenario are excluded. Added timings are paired shadow minus baseline. Percentiles use nearest rank.`,
     runs,
   }, null, 2));

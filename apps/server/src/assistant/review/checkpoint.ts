@@ -66,12 +66,11 @@ async function validCheckpoint(db: Kysely<any>, id: string, summary: StoredSumma
     || !Number.isSafeInteger(checkpoint.messageCount) || checkpoint.messageCount < SUMMARY_MIN_MESSAGES
     || checkpoint.messageCount > summary.messageCount || summary.messageCount - checkpoint.messageCount >= REVIEW_MESSAGE_WINDOW) return;
 
-  // Messages are immutable in command chat, but a writer can supply a timestamp
-  // earlier than the cursor. Check its rank without transferring that prefix.
-  const { count, anchor } = await messageQuery(db, id)
-    .select([sql<string>`count(*)`.as('count'), sql<boolean>`bool_or((created_at, id) = ${cursorTuple(cursor)})`.as('anchor')])
-    .where(sql<boolean>`(created_at, id) <= ${cursorTuple(cursor)}`).executeTakeFirstOrThrow();
-  if (anchor && Number(count) === checkpoint.messageCount) return checkpoint;
+  // An out-of-order insert changes the cursor's rank. Look up that position
+  // with the transcript index and transfer only the anchor, without its text.
+  const anchor = await messageQuery(db, id).select(['id', sql<string>`created_at::text`.as('createdAt')])
+    .orderBy('created_at', 'asc').orderBy('id', 'asc').offset(checkpoint.messageCount - 1).limit(1).executeTakeFirst();
+  if (anchor?.id === cursor.id && anchor.createdAt === cursor.createdAt) return checkpoint;
 }
 
 async function readPage(db: Kysely<any>, id: string, cursor?: Cursor) {

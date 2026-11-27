@@ -722,7 +722,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const current = execution.getStore();
     if (!current || current.id !== id || current.runId !== runId) throw new RunEnded();
     current.controller.signal.throwIfAborted();
-    const conversation = await tx.selectFrom('chat_conversations').selectAll().where('id','=',id).where('owner_id','=',current.ownerId).forUpdate().executeTakeFirst();
+    const conversation = await tx.selectFrom('chat_conversations').select(['status', 'active_run_id']).where('id','=',id).where('owner_id','=',current.ownerId).forUpdate().executeTakeFirst();
     // A fence can run twice inside one transaction. CURRENT_TIMESTAMP is fixed
     // at transaction start; use the DB wall clock so the precommit check cannot
     // accept a lease that expired while the transaction held its locks.
