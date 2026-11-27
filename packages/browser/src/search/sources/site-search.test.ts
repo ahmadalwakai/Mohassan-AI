@@ -67,7 +67,9 @@ describe('named-host search', () => {
     });
     expect(provider.supports(compileQuery('New York history'))).toBe(false);
     expect(provider.supports(compileQuery('New York history site:example.com'))).toBe(true);
-    expect(provider.planned.hosts).toEqual([]);
+    expect(provider.planned).toMatchObject({ domains: [], hosts: [], access: 'opensearch' });
+    await expect(search('New York history')).resolves.toEqual([]);
+    expect(network.urls()).toEqual([]);
     await expect(search('New York history site:example.com')).resolves.toEqual([{
       title: 'New York History',
       url: exampleHost + '/new-york-history',

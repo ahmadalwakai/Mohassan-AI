@@ -312,7 +312,7 @@ export function siteSearchProviders(network: SafeNetwork, now: () => number): Pl
   return [{
     name: 'Named site search', coverage: 'web', accessBasis: 'public_search',
     planned: {
-      domains: ['general_web'], languages: ['ar', 'en'], access: 'opensearch', hosts: [],
+      domains: [], languages: ['ar', 'en'], access: 'opensearch', hosts: [],
       contract: {
         url: 'https://github.com/dewitt/opensearch/blob/master/opensearch-1-1-draft-6.md',
         // Sitemaps fallback contract: https://www.sitemaps.org/protocol.html (also checked 2026-11-27).
