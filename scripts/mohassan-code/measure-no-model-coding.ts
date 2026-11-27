@@ -1,17 +1,18 @@
 /**
  * Measures the chat's coding route with no chat model (docs/MOHASSAN-CODE-2026-11-27.md).
  *
- * Two fixed sets, each written before either of its arms ran:
+ * Fixed sets, each written before either of its arms ran:
  * - `slice1` (2026-11-27): 9 coding requests and one control. With the stub sandbox, the tests fail while src/sum.ts
  *   still has its misspelling.
  * - `slice2` (2026-11-27 10:27 UTC): run the checks and explain the failure, search the project, import relations,
  *   «صحح الأخطاء», and three controls. A target is met only when its final reply contains every expected string.
+ * - `logic` (2026-11-27): six logic changes that must be blocked without approval, and two project read controls.
  *
  * Each request runs in a fresh conversation; an approval card is approved once. The demo project is registered, no chat
  * model is configured, and the database is embedded and in memory. Records the first and final replies, the run status
  * and the time per request.
  *
- * Usage: npx tsx scripts/mohassan-code/measure-no-model-coding.ts [checkout] [out.json] [--set=slice1|slice2] [--real-sandbox]
+ * Usage: npx tsx scripts/mohassan-code/measure-no-model-coding.ts [checkout] [out.json] [--set=slice1|slice2|logic] [--real-sandbox]
  * `checkout` (default: the current directory) is the repository to measure, so one copy of this file measures a base
  * checkout too. That checkout needs its own installed node_modules. `--real-sandbox` uses the Windows AppContainer
  * sandbox instead of the stub (Windows only; its first isolation probe takes about half a minute).
@@ -21,8 +22,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-interface Case { id: string; goal: string; expect?: string[]; approval?: boolean; control?: boolean }
-const SETS: Record<'slice1' | 'slice2', Case[]> = {
+interface Case { id: string; goal: string; expect?: string[]; approval?: boolean; control?: boolean; blocked?: boolean }
+const LOGIC_AR = ['مشروع تجربة الجمع', 'تغيير المنطق يحتاج إلى نموذج لا يعمل الآن', 'تشغيل الفحوص وشرح نتائجها', 'البحث', 'الاستيراد', 'الإصلاحات المثبتة', 'بعد موافقتك'];
+const LOGIC_EN = ['مشروع تجربة الجمع', 'A logic change needs a model, which is not running now', 'run the checks and explain the results', 'search', 'imports', 'proven fixes', 'with your approval'];
+const SETS: Record<'slice1' | 'slice2' | 'logic', Case[]> = {
   slice1: [
     'أصلح الكود في مشروع تجربة الجمع',
     'أصلح مشروع تجربة الجمع',
@@ -50,12 +53,22 @@ const SETS: Record<'slice1' | 'slice2', Case[]> = {
     { id: 'K2', goal: 'ما عاصمة فرنسا؟', control: true },
     { id: 'K3', goal: 'صحح هذا النص: انا ذهبت الي المدرسه', control: true },
   ],
+  logic: [
+    { id: 'G1', goal: 'اجعل دالة الجمع في مشروع تجربة الجمع تضرب بدل أن تجمع', blocked: true, approval: false, expect: [...LOGIC_AR, 'تضرب بدل أن تجمع'] },
+    { id: 'G2', goal: 'غيّر سلوك دالة الجمع في مشروع تجربة الجمع لتعيد صفرًا عند غياب المدخلات', blocked: true, approval: false, expect: [...LOGIC_AR, 'لتعيد صفرًا عند غياب المدخلات'] },
+    { id: 'G3', goal: 'أضف دالة لحساب المتوسط في مشروع تجربة الجمع', blocked: true, approval: false, expect: [...LOGIC_AR, 'أضف دالة لحساب المتوسط'] },
+    { id: 'G4', goal: 'احذف ميزة جمع الأعداد السالبة من مشروع تجربة الجمع', blocked: true, approval: false, expect: [...LOGIC_AR, 'احذف ميزة جمع الأعداد السالبة'] },
+    { id: 'G5', goal: 'Make the sum function in مشروع تجربة الجمع multiply instead of adding', blocked: true, approval: false, expect: [...LOGIC_EN, 'multiply instead of adding'] },
+    { id: 'G6', goal: 'Add a function to calculate the average in مشروع تجربة الجمع', blocked: true, approval: false, expect: [...LOGIC_EN, 'Add a function to calculate the average'] },
+    { id: 'GK1', goal: 'ابحث في مشروع تجربة الجمع عن rightHandVaule', control: true, approval: false, expect: ['وجدت «rightHandVaule»', 'src/sum.ts:2'] },
+    { id: 'GK2', goal: 'ماذا يستورد ملف test/sum.test.mjs في مشروع تجربة الجمع؟', control: true, approval: false, expect: ['node:test', 'node:assert/strict', 'src/sum.ts'] },
+  ],
 };
 
 const flags = process.argv.slice(2).filter(value => value.startsWith('--'));
 const [checkoutArgument, out] = process.argv.slice(2).filter(value => !value.startsWith('--'));
 const set = flags.find(value => value.startsWith('--set='))?.slice('--set='.length) ?? 'slice1';
-if (set !== 'slice1' && set !== 'slice2') throw new Error(`unknown set ${set}`);
+if (set !== 'slice1' && set !== 'slice2' && set !== 'logic') throw new Error(`unknown set ${set}`);
 const realSandbox = flags.includes('--real-sandbox');
 const checkout = resolve(checkoutArgument ?? process.cwd());
 const { createApplication } = await import(pathToFileURL(join(checkout, 'apps/server/src/app.ts')).href);
@@ -102,18 +115,20 @@ try {
   for (const item of SETS[set]) {
     const started = Date.now();
     const first = await settled((await application.chat.create(ownerId, { goal: item.goal })).id);
-    const row: Record<string, unknown> = { id: item.id, goal: item.goal, first: first.status, firstRun: first.run?.status ?? null, firstText: first.messages?.at(-1)?.text?.slice(0, 1200) ?? null };
+    const row: Record<string, unknown> = { id: item.id, goal: item.goal, first: first.status, firstRun: first.run?.verdict?.status ?? first.run?.phase ?? null, firstText: first.messages?.at(-1)?.text?.slice(0, 1200) ?? null };
     let finalText = row.firstText as string | null;
     if (first.status === 'waiting_approval' && first.approval) {
       await api('POST', `/api/chat/conversations/${first.id}/approve`, { approvalId: first.approval.id, approved: true });
       const done = await settled(first.id);
       row.final = done.status;
-      row.finalRun = done.run?.status ?? null;
+      row.finalRun = done.run?.verdict?.status ?? done.run?.phase ?? null;
       finalText = done.messages?.at(-1)?.text?.slice(0, 1200) ?? null;
       row.finalText = finalText;
     }
     row.ms = Date.now() - started;
-    if (item.expect) row.met = (!item.approval || first.status === 'waiting_approval') && item.expect.every(text => (finalText ?? '').includes(text));
+    if (item.expect) row.met = (item.approval === undefined || (item.approval
+      ? first.status === 'waiting_approval' : first.status !== 'waiting_approval' && !first.approval))
+      && (!item.blocked || first.run?.verdict?.status === 'blocked') && item.expect.every(text => (finalText ?? '').includes(text));
     if (item.control) row.control = true;
     rows.push(row);
   }

@@ -177,9 +177,10 @@ describe('the engine\'s read-only check', () => {
   });
 });
 
-describe('a read of a named project in the chat when no model exists', () => {
+describe('owner chat for a registered coding project when no model exists', () => {
   let application: Awaited<ReturnType<typeof createApplication>>;
   let directory = '', cookie = '', ownerId = '';
+  let sandboxRuns = 0, webSearches = 0;
   const secret = 'no-model-code-read-fixture-internal-secret', origin = 'http://127.0.0.1:3000';
   const headers = { 'x-mohassan-internal': secret, origin };
   const api = (method: 'GET' | 'POST', url: string, payload?: unknown) => application.app.inject({ method, url, headers: { ...headers, cookie }, ...(payload === undefined ? {} : { payload: payload as object }) });
@@ -199,11 +200,15 @@ describe('a read of a named project in the chat when no model exists', () => {
     application = await createApplication({
       authSecret: 'no-model-code-read-fixture-auth-secret-01', internalSecret: secret, setupToken: 'no-model-code-read-fixture-setup-token', webOrigin: origin,
       production: false, runWorker: true, testRequestLimit: 2000, codingDataDir: directory, codingAllowedRoots: [directory], browserChannel: null,
+      browser: { searchProvider: { name: 'offline-code-request-fixture', async search() { webSearches++; return []; } } },
       sandboxRunner: {
         available: async () => ({ available: true, provider: 'unit-fixture', message: 'injected unit test only' }),
         // The real sandbox's output for the misspelled demo; no project code is executed here.
-        run: async request => ({ exitCode: 1, stdout: REAL_OUTPUT, stderr: '', timedOut: false, durationMs: 1, provider: 'unit-fixture',
-          network: 'denied', isolation: 'appcontainer', isolationVerified: true, snapshotHash: snapshotHash(request.files) }),
+        run: async request => {
+          sandboxRuns++;
+          return { exitCode: 1, stdout: REAL_OUTPUT, stderr: '', timedOut: false, durationMs: 1, provider: 'unit-fixture',
+            network: 'denied', isolation: 'appcontainer', isolationVerified: true, snapshotHash: snapshotHash(request.files) };
+        },
       },
     });
     await application.app.inject({ method: 'POST', url: '/api/setup', headers, payload: { name: 'مالك اختبار القراءة', email: 'code-read@example.test', password: 'No-Model-Code-Read-Password-42', setupToken: 'no-model-code-read-fixture-setup-token' } });
@@ -223,33 +228,81 @@ describe('a read of a named project in the chat when no model exists', () => {
   it('runs the checks without approval, explains them, records the step and its receipt, and changes nothing', async () => {
     const project = (await application.coding.workspace(ownerId)).projects[0]!;
     const before = await readFile(join(project.path, 'src', 'sum.ts'), 'utf8');
+    const runsBefore = sandboxRuns;
     const done = await ask('شغّل اختبارات مشروع تجربة الجمع');
-    expect(done.status).toBe('idle');
+    expect(done).toMatchObject({ status: 'idle', approval: null, run: { verdict: { status: 'completed' } } });
     const reply = done.messages.at(-1).text as string;
     expect(reply).toContain('«adds positive values» في `test/sum.test.mjs:5`');
     expect(reply).toContain('مصدره: `src/sum.ts:2`');
     expect(reply).toContain("Did you mean 'rightHandValue'? (TS2552)");
     expect(done.run.plan.steps).toEqual([expect.objectContaining({ id: 'code-check', capability: 'code.check', state: 'verified', risk: 'read', authorization: 'not_needed' })]);
     expect(done.run.evidence).toEqual([expect.objectContaining({ stepId: 'code-check', kind: 'adapter_report', label: expect.stringContaining('unit-fixture: exit 1; tests 0/2 passed') })]);
+    expect(sandboxRuns).toBe(runsBefore + 1);
     expect((await application.runtime.snapshot(ownerId)).tasks).toEqual([]);
     expect(await readFile(join(project.path, 'src', 'sum.ts'), 'utf8')).toBe(before);
   });
 
   it('searches the committed files and reads imports in the chat', async () => {
     const found = await ask('ابحث في مشروع تجربة الجمع عن rightHandVaule');
+    expect(found).toMatchObject({ approval: null, run: { verdict: { status: 'completed' } } });
     expect(found.messages.at(-1).text).toContain('- `src/sum.ts:2` — `return leftHandValue + rightHandVaule;`');
     expect(found.run.plan.steps).toEqual([expect.objectContaining({ id: 'code-read', capability: 'code.read', state: 'verified' })]);
     const imports = await ask('ماذا يستورد ملف test/sum.test.mjs في مشروع تجربة الجمع؟');
+    expect(imports).toMatchObject({ approval: null, run: { verdict: { status: 'completed' } } });
     const text = imports.messages.at(-1).text as string;
     expect(text).toContain('- `node:test` — وحدة مدمجة أو حزمة خارج المشروع');
     expect(text).toContain('- `../src/sum.ts` ← `src/sum.ts`');
+    expect(imports.run.plan.steps).toEqual([expect.objectContaining({ id: 'code-read', capability: 'code.read', state: 'verified' })]);
   });
 
-  it('sends «صحح الأخطاء» in a named project to the approved change path', async () => {
-    const waiting = await ask('صحح الأخطاء في مشروع تجربة الجمع');
+  it.each([
+    'أصلح الكود في مشروع تجربة الجمع',
+    'نسّق الكود في مشروع تجربة الجمع',
+    'Lint the code in مشروع تجربة الجمع',
+    'صحح الأخطاء في مشروع تجربة الجمع',
+  ])('sends %s to the approved change path', async goal => {
+    const runsBefore = sandboxRuns;
+    const waiting = await ask(goal);
     expect(waiting.status).toBe('waiting_approval');
+    expect(waiting.approval.prompt).toContain(NAME);
     expect(waiting.approval.detail).toContain('لا يُنفَّذ أي تغيير في المنطق');
+    expect(sandboxRuns).toBe(runsBefore);
     expect((await api('POST', `/api/chat/conversations/${waiting.id}/approve`, { approvalId: waiting.approval.id, approved: false })).statusCode).toBe(200);
     await settled(waiting.id);
+  });
+
+  it.each([
+    { lang: 'ar', goal: 'اجعل دالة الجمع في مشروع تجربة الجمع تضرب بدل أن تجمع', change: 'تضرب بدل أن تجمع' },
+    { lang: 'ar', goal: 'غيّر سلوك دالة الجمع في مشروع تجربة الجمع لتعيد صفرًا عند غياب المدخلات', change: 'لتعيد صفرًا عند غياب المدخلات' },
+    { lang: 'ar', goal: 'أضف دالة لحساب المتوسط في مشروع تجربة الجمع', change: 'أضف دالة لحساب المتوسط' },
+    { lang: 'ar', goal: 'احذف ميزة جمع الأعداد السالبة من مشروع تجربة الجمع', change: 'احذف ميزة جمع الأعداد السالبة' },
+    { lang: 'en', goal: 'Make the sum function in مشروع تجربة الجمع multiply instead of adding', change: 'multiply instead of adding' },
+    { lang: 'en', goal: 'Add a function to calculate the average in مشروع تجربة الجمع', change: 'Add a function to calculate the average' },
+    { lang: 'en', goal: 'Change the behaviour of sum in مشروع تجربة الجمع to return zero for missing input', change: 'return zero for missing input' },
+  ])('blocks $goal without executing any tools', async ({ lang, goal, change }) => {
+    const [runsBefore, searchesBefore] = [sandboxRuns, webSearches];
+    const tasksBefore = (await application.runtime.snapshot(ownerId)).tasks;
+    const done = await ask(goal);
+    const reply = done.messages.at(-1).text as string;
+    const capabilities = lang === 'ar'
+      ? ['تغيير المنطق يحتاج إلى نموذج لا يعمل الآن', 'تشغيل الفحوص وشرح نتائجها', 'البحث', 'الاستيراد', 'الإصلاحات المثبتة', 'بعد موافقتك']
+      : ['A logic change needs a model, which is not running now', 'run the checks and explain the results', 'search', 'imports', 'proven fixes', 'with your approval'];
+    for (const expected of [NAME, change, ...capabilities]) expect(reply).toContain(expected);
+    expect(done).toMatchObject({ status: 'idle', configured: false, approval: null, browser: null,
+      run: { path: 'direct', engine: { modelCalls: 0 }, verdict: { status: 'blocked' } } });
+    expect(done.steps).toEqual([]);
+    expect(sandboxRuns).toBe(runsBefore);
+    expect(webSearches).toBe(searchesBefore);
+    expect((await application.runtime.snapshot(ownerId)).tasks).toEqual(tasksBefore);
+  });
+
+  it('leaves a logic request without a named registered project on its previous path', async () => {
+    const runsBefore = sandboxRuns;
+    const tasksBefore = (await application.runtime.snapshot(ownerId)).tasks;
+    const done = await ask('اجعل دالة الجمع في مشروع تجربة الضرب تضرب بدل أن تجمع');
+    expect(done.approval).toBeNull();
+    expect(done.messages.at(-1).text).toContain('لم يتحقق مسار البحث');
+    expect(sandboxRuns).toBe(runsBefore);
+    expect((await application.runtime.snapshot(ownerId)).tasks).toEqual(tasksBefore);
   });
 });

@@ -3,6 +3,7 @@ import { BrowserError } from '@mohassan/browser';
 import type { CheckFailure, CodingCheckResult, ImportsLookup, ProjectSearchResult } from '@mohassan/coding';
 import { addEvidence, appendStep, planStep, settleStep, startStep, tryEnterPhase, type RunLedger } from './agent-run.js';
 import type { BrainState } from './brain.js';
+import { codeLogicReply, recognizeCodeLogicRequest } from './code-logic-request.js';
 import type { RequestRoutingDecision } from './routing-decision.js';
 import type { AssistantTools } from './tools.js';
 import { reviewWorkRequestScope } from './work-request-scope.js';
@@ -20,7 +21,7 @@ export type CodingTarget =
   | { kind: 'ambiguous'; projects: CodingProjectRef[] }
   | { kind: 'none' };
 export type NoModelCodingStart =
-  | { kind: 'reply'; text: string; status: 'blocked' }
+  | { kind: 'reply'; text: string; status: 'blocked'; direct?: true }
   | { kind: 'approval'; task: NonNullable<BrainState['pendingTask']>; prompt: string; detail: string };
 export interface CodingReply { text: string; status: 'completed' | 'partial' | 'blocked' }
 type Lang = 'ar' | 'en';
@@ -72,6 +73,11 @@ export function codingTargetReply(target: Exclude<CodingTarget, { kind: 'project
 export async function prepareNoModelCoding(request: string, routing: Pick<RequestRoutingDecision, 'handler' | 'availability'> | null | undefined,
     understanding: Parameters<typeof reviewWorkRequestScope>[2], work: AssistantTools['work'], ownerId: string,
     runId: string): Promise<NoModelCodingStart | null> {
+  const logic = !EDIT_VERB.test(foldProjectText(request)) && recognizeCodeLogicRequest(request);
+  if (logic && work?.inventory) {
+    const target = chooseCodingProject(request, await work.inventory(ownerId));
+    if (target.kind === 'project' && target.named) return codeLogicReply(request, target.project.name, logic, Boolean(work.codeCheck && work.code));
+  }
   const routed = routing?.handler === 'coding';
   if (routed ? routing.availability !== 'ready' : !EDIT_VERB.test(foldProjectText(request))) return null;
   if (!work?.code || !work.inventory || !reviewWorkRequestScope(request, 'code_prepare', understanding).allowed) return null;

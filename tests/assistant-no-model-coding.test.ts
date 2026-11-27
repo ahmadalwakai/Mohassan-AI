@@ -68,6 +68,23 @@ describe('preparing the coding task without a model', () => {
     expect((await prepareNoModelCoding('أصلح مشروع تجربة الجمع', chat, undefined, work, 'owner', 'run-2'))?.kind).toBe('approval');
     expect(created).toEqual([{ id: demo.id, goal: 'أصلح مشروع تجربة الجمع' }]);
   });
+  it('explains which options need the sandbox when only the project inventory is available', async () => {
+    const goal = 'Could you make sum multiply in Shop API?';
+    const start = await prepareNoModelCoding(goal, { ...routed, availability: 'missing_capability' }, undefined,
+      { ...work, code: undefined }, 'owner', 'logic-no-sandbox');
+    expect(start).toMatchObject({ kind: 'reply', status: 'blocked', direct: true });
+    const text = start?.kind === 'reply' ? start.text : '';
+    expect(text).toContain(goal);
+    expect(text).toContain('When the sandbox is available, I can run the checks');
+  });
+  it.each([
+    '«اجعل دالة الجمع في مشروع تجربة الجمع تضرب بدل أن تجمع»',
+    'اجعل النص يعرض مشروع تجربة الجمع',
+    'Make the text show Shop API in bold',
+    'Summarize this request: Add a function in Shop API',
+  ])('leaves supplied text and quoted requests alone (%s)', async goal => {
+    expect(await prepareNoModelCoding(goal, chat, undefined, work, 'owner', 'logic-supplied')).toBeNull();
+  });
   it('leaves every other request to the existing paths', async () => {
     created.length = 0;
     expect(await prepareNoModelCoding('ما عاصمة فرنسا؟', chat, undefined, work, 'owner', 'run-3')).toBeNull();

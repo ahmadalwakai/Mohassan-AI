@@ -2256,7 +2256,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await finish(id, runId, state, vault.scrub(id, codeRead.text), codeRead.status); return; }
       const noModelCode = run.intent === 'task' && !state.steps && !state.trail.length && !state.pendingTask && !hasChatModel() && fullReach()
         ? await prepareNoModelCoding(request, state.routing, state.requestResolution ?? undefined, tools?.work, ownerId, runId) : null;
-      if (noModelCode?.kind === 'reply') { await finish(id, runId, state, vault.scrub(id, noModelCode.text), noModelCode.status); return; }
+      if (noModelCode?.kind === 'reply') {
+        if (noModelCode.direct) ledgerSafe(state, runId, ledger => { ledger.path = 'direct'; });
+        await finish(id, runId, state, vault.scrub(id, noModelCode.text), noModelCode.status, undefined, undefined, noModelCode.direct); return;
+      }
       if (noModelCode?.kind === 'approval') { state.pendingTask = noModelCode.task; await pause(id, runId, state, 'waiting_approval', { approval: JSON.stringify({ id: randomUUID(), prompt: clean(noModelCode.prompt).slice(0, 1000), detail: noModelCode.detail }) }, noModelCode.prompt); return; }
       if (noteVerificationIntent) {
         const unavailable = () => /\p{Script=Arabic}/u.test(request)
