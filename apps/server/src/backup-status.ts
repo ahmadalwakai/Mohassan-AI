@@ -1,12 +1,17 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { BackupStatusResponse } from '@mohassan/contracts';
 import { z } from 'zod';
 
 const statusDirectory = '/var/lib/mohassan-backup-status';
 const drillReportName = /^restore-drill-\d{4}-\d{2}-\d{2}T\d{6}\.\d{3}Z\.json$/;
 const timestamp = z.iso.datetime({ offset: true });
-const backupStatus = z.object({ snapshotAt: timestamp, finishedAt: timestamp });
+const backupStatus = z.object({
+  snapshotAt: timestamp,
+  finishedAt: timestamp,
+  sizeBytes: z.int().positive().optional().catch(undefined),
+});
 const drillStatus = z.object({ finishedAt: timestamp, verdict: z.enum(['passed', 'failed']) });
 const copyStatus = z.object({ downloadedAt: timestamp });
 
@@ -38,7 +43,7 @@ export function registerBackupStatusRoute(
   owner: (request: FastifyRequest) => Promise<unknown>,
   directory = statusDirectory,
 ) {
-  app.get('/api/ops/backup-status', async request => {
+  app.get('/api/ops/backup-status', async (request): Promise<BackupStatusResponse> => {
     await owner(request);
     const [backupData, drillData, copyData] = await Promise.all([
       readStatus(join(directory, 'backup.json')),

@@ -319,7 +319,7 @@ async function backup() {
     }
   }
   const { snapshotAt, finishedAt, sizeBytes } = manifest;
-  await publishStatus('backup.json', { snapshotAt, finishedAt }, group);
+  await publishStatus('backup.json', { snapshotAt, finishedAt, sizeBytes }, group);
 
   // Only exact daily archive names and their corresponding manifests are retained.
   const names = await retainedNames(daily, dailyPattern);
