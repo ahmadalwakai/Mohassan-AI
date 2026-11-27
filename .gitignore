@@ -1,6 +1,16 @@
 node_modules/
 .next/
 .data/
+
+# Generated offline knowledge snapshots and receipts
+*.sqlite
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite.data-card.json
+*.sqlite.manifest.json
+.offline-wikipedia-*/
+
 .env
 .env.*
 !.env.example

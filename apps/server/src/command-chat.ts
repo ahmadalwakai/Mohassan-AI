@@ -35,6 +35,7 @@ import { decideBrowserVisibility, deriveBrowserVisibility } from './assistant/br
 import type { ShadowRouter } from './assistant/router.js';
 import type { ConversationShadow } from './assistant/conversation-state-shadow.js';
 import { enterConversationTurn, useLegacyConversationLookup } from './assistant/conversation-state-chat.js';
+import { tryOfflineKnowledge } from './assistant/offline-knowledge.js';
 import { publicConversationFollowup } from './assistant/public-conversation-followup.js';
 import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { judge as judgeAnswer } from './assistant/judge.js';
@@ -3021,6 +3022,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         }
         if (!documentFirst && await tryKnowledge()) return;
       }
+      if (run.intent === 'task' && intrinsicAllowed && !documentWork && !ownFact && state.requestResolution?.scope !== 'private'
+        && await tryOfflineKnowledge(request, actionRequest, constraints, text => finish(id, runId, state, vault.scrub(id, text), 'completed', undefined, undefined, true))) return;
       // A message of several questions waiting behind the Ads model or the mind: its first search sits in state.webFallback.
       let pendingSequence: HandsPlan | null = null;
       if (useLegacyConversationLookup(conversationTurn, { state, actionRequest, handsPlan, freshRequest, chatModel: hasChatModel(), documentWork, ownFact, mindReady,
