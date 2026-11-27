@@ -104,6 +104,8 @@ sudo du --apparent-size --summarize --block-size=1 -- /var/lib/mohassan/models /
 
 Record the previous-store paths printed when the installer replaces an existing store. Run these commands using the exact path printed for each root you want to restore. If the main store includes OCR, the first rollback restores both.
 
+Interrupted installs can leave `.staging-*` directories. If an exchange completed before the interruption, that directory can hold the displaced store. If the installer cannot rename the displaced store, it prints the `.staging-*` location and exits with an error while the verified replacement remains live. Rollback accepts only `.previous-*` directories. The installer leaves staging leftovers for the owner to inspect or remove manually.
+
 ```bash
 read -r -p 'Previous models path printed by installer: ' previous_models
 sudo bash /opt/mohassan/app/scripts/cloud-linux/install-model-store.sh rollback "$previous_models" --store /var/lib/mohassan/models

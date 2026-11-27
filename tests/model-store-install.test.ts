@@ -99,6 +99,7 @@ describeLinux('model store installer', () => {
       const backup = previous(live);
       expect(result.stdout).toContain(backup);
       expect(statSync(backup).ino).toBe(oldStore.ino);
+      expect(readdirSync(root).filter(name => name.includes('.staging-'))).toEqual([]);
       expect(statSync(live).ino).not.toBe(oldStore.ino);
       expect(readFileSync(openReader, 'utf8')).toBe('original');
       expect(readFileSync(join(live, weights), 'utf8')).toBe('original');
@@ -137,6 +138,25 @@ describeLinux('model store installer', () => {
     const refused = shell('rollback', bundle, '--store', live);
     expect(refused.status).toBe(1);
     expect(readFileSync(join(live, weights), 'utf8')).toBe('third');
+  });
+
+  it('refuses rollback to an interrupted staging directory and preserves it on later installs', () => {
+    const leftover = `${live}.staging-${digest('interrupted upload').slice(0, 32)}`;
+    write(join(live, weights), 'live data');
+    write(join(leftover, otherWeights), 'partial upload');
+    const liveInode = statSync(live).ino;
+    const leftoverInode = statSync(leftover).ino;
+
+    const refused = shell('rollback', leftover, '--store', live);
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toContain('Choose a previous generation');
+    expect(statSync(live).ino).toBe(liveInode);
+    expect(readFileSync(join(live, weights), 'utf8')).toBe('live data');
+
+    const installed = install(upload({ area: 'models', path: otherWeights, contents: 'verified data' }));
+    expect(installed.status, installed.stderr).toBe(0);
+    expect(statSync(leftover).ino).toBe(leftoverInode);
+    expect(readFileSync(join(leftover, otherWeights), 'utf8')).toBe('partial upload');
   });
 
   it('checks both roots before exchanging either and retains both previous stores', () => {

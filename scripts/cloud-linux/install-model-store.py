@@ -180,6 +180,7 @@ def ensure_name(parent_fd, name, fd):
 
 def remove_stage(parent_fd, name, stage_fd):
     # Clean only the directory opened at stage creation, even if its parent is service-owned.
+    ensure_name(parent_fd, name, stage_fd)
     for child in os.listdir(stage_fd):
         if stat.S_ISDIR(os.stat(child, dir_fd=stage_fd, follow_symlinks=False).st_mode):
             shutil.rmtree(child, dir_fd=stage_fd)
@@ -193,7 +194,9 @@ class Stage:
     def __init__(self, stack, live, parent, incoming):
         self.live = live
         self.parent = parent
-        self.backup = f"{live.name}.previous-{uuid.uuid4().hex}"
+        generation = uuid.uuid4().hex
+        self.staging = f"{live.name}.staging-{generation}"
+        self.previous = f"{live.name}.previous-{generation}"
         self.incoming = incoming
         try:
             self.old = stack.enter_context(directory(Path(live.name), parent))
@@ -206,8 +209,8 @@ class Stage:
         self.published = False
 
     def stage(self, stack, payload, group):
-        os.mkdir(self.backup, mode=0o700, dir_fd=self.parent)
-        self.fd = stack.enter_context(directory(Path(self.backup), self.parent))
+        os.mkdir(self.staging, mode=0o700, dir_fd=self.parent)
+        self.fd = stack.enter_context(directory(Path(self.staging), self.parent))
         if os.fstat(self.fd).st_uid != os.geteuid() or stat.S_IMODE(os.fstat(self.fd).st_mode) != 0o700:
             raise ValueError("Staging directory is not private to the installer.")
         stack.callback(self.cleanup)
@@ -226,21 +229,32 @@ class Stage:
 
     def activate(self):
         ensure_name(self.parent, self.live.name, self.old)
-        ensure_name(self.parent, self.backup, self.fd)
-        rename_directory(self.parent, self.backup, self.live.name, exchange=self.old is not None)
+        ensure_name(self.parent, self.staging, self.fd)
+        rename_directory(self.parent, self.staging, self.live.name, exchange=self.old is not None)
         self.published = True
         ensure_name(self.parent, self.live.name, self.fd)
-        ensure_name(self.parent, self.backup, self.old)
+        ensure_name(self.parent, self.staging, self.old)
 
     def undo(self):
         ensure_name(self.parent, self.live.name, self.fd)
-        ensure_name(self.parent, self.backup, self.old)
-        rename_directory(self.parent, self.live.name, self.backup, exchange=self.old is not None)
+        ensure_name(self.parent, self.staging, self.old)
+        rename_directory(self.parent, self.live.name, self.staging, exchange=self.old is not None)
         self.published = False
+
+    def retain_previous(self):
+        ensure_name(self.parent, self.staging, self.old)
+        try:
+            rename_directory(self.parent, self.staging, self.previous, exchange=False)
+        except OSError as error:
+            path = self.live.with_name(self.staging)
+            raise ValueError(f"Could not name the rollback generation for {self.live}. "
+                             f"The previous store remains at {path}: {error}") from error
+        ensure_name(self.parent, self.previous, self.old)
+        return self.live.with_name(self.previous)
 
     def cleanup(self):
         if not self.published:
-            remove_stage(self.parent, self.backup, self.fd)
+            remove_stage(self.parent, self.staging, self.fd)
 
 
 def lock_directories(stack, paths):
@@ -334,13 +348,24 @@ def install(args, live, group):
                         stage.undo()
                         os.fsync(stage.parent)
                     except (OSError, ValueError) as error:
-                        print(f"Restore {stage.live} from {stage.live.with_name(stage.backup)}: {error}", file=sys.stderr)
+                        path = stage.live.with_name(stage.staging)
+                        print(f"Could not restore {stage.live}. Inspect {path}: {error}", file=sys.stderr)
             raise
 
+        # All swaps succeeded. Only displaced live generations can receive rollback names.
         print(f"Installed {len(entries)} files from the verified manifest.")
+        retention_failed = False
         for stage in stages:
             if stage.old is not None:
-                print(f"Previous {stage.live}: {stage.live.with_name(stage.backup)}")
+                try:
+                    print(f"Previous {stage.live}: {stage.retain_previous()}")
+                except (OSError, ValueError) as error:
+                    print(error, file=sys.stderr)
+                    retention_failed = True
+        for parent in parents.values():
+            os.fsync(parent)
+        if retention_failed:
+            raise ValueError("The verified replacement is live. Review the previous-store paths above.")
 
 
 def rollback(live, backup):
