@@ -8,7 +8,7 @@ import { assessRequestScope, requestScopeActionText, type RequestScopeAssessment
 import { classifyLearnedRefusal } from './learned-classifier.js';
 import * as pattern from './patterns.js';
 import { reviewRefusalControl, reviewRefusalDestination } from './permissions.js';
-import { classifyUnsupportedAction, isChatDelivery, isShoppingOrder, unsupportedActionHeads } from './unsupported-actions.js';
+import { classifyUnsupportedAction, isChatDelivery, isDescriptiveDeviceRequest, isShoppingOrder, unsupportedActionHeads } from './unsupported-actions.js';
 import type { RefusalAlternative, RefusalCode, RefusalDecision } from './types.js';
 
 export interface RefusalContext {
@@ -261,7 +261,7 @@ function classifyClause(clause: OuterClause, context: RefusalContext, scope: Req
   if (unsupported) return unsupported;
   if (imageRequest.test(text) && capability?.imageModel !== true) return refusal('no_capability', 'describe_image');
   if (mediaRequest.test(text) && capability?.mediaModel !== true) return refusal('no_capability', 'find_media');
-  if (physicalAction.test(text)) return refusal('no_capability', 'public_info');
+  if (physicalAction.test(text) && !isDescriptiveDeviceRequest(text)) return refusal('no_capability', 'public_info');
   return null;
 }
 
