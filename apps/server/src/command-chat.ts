@@ -105,6 +105,7 @@ import { observePlanMessage, runCompiledChatPlan } from './assistant/plan/chat.j
 import { clarificationAnswers, clarifyCommand } from './assistant/clarify/host.js';
 import { reviewWorkRefusal } from './assistant/refusal/turn.js';
 import { answerTestDrivenCoding, bindTestDrivenCodingHash, initializeTestDrivenCoding, publishTestDrivenCoding } from './assistant/test-driven-coding/reply.js';
+import { codingOutcomeReply, prepareNoModelCoding } from './assistant/no-model-coding.js';
 import { describeSearchDestination, extractPublicSearchQueries, isSearchEntryElement, mergePublicQueryTerms, reviewGeneratedPublicQuery } from './assistant/public-query-provenance.js';
 import { reviewExplicitPublicBrowserQuery } from './assistant/browser-public-query.js';
 import { ADS_REWRITE_JSON_SCHEMA, ADS_REWRITE_SCHEMA_NAME, ADS_REWRITE_SYSTEM, buildRewritePrompt, type RewriteRequest } from '@mohassan/google-ads';
@@ -2249,6 +2250,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         ? await answerTestDrivenCoding(request, { accountId: ownerId, authorized: fullReach() && state.routing.availability !== 'restricted', signal, originalHash: state.requestOriginalHash, scrub: text => vault.scrub(id, clean(text)) }) : null;
       if (codingReply) return publishTestDrivenCoding(state, codingReply,
         (text, status) => finish(id, runId, state, text, status, undefined, undefined, true));
+      const noModelCode = run.intent === 'task' && !state.steps && !state.trail.length && !state.pendingTask && !hasChatModel() && fullReach()
+        ? await prepareNoModelCoding(request, state.routing, state.requestResolution ?? undefined, tools?.work, ownerId, runId) : null;
+      if (noModelCode?.kind === 'reply') { await finish(id, runId, state, vault.scrub(id, noModelCode.text), noModelCode.status); return; }
+      if (noModelCode?.kind === 'approval') { state.pendingTask = noModelCode.task; await pause(id, runId, state, 'waiting_approval', { approval: JSON.stringify({ id: randomUUID(), prompt: clean(noModelCode.prompt).slice(0, 1000), detail: noModelCode.detail }) }, noModelCode.prompt); return; }
       if (noteVerificationIntent) {
         const unavailable = () => /\p{Script=Arabic}/u.test(request)
           ? 'لم أتمكن من التحقق من حالة محاولة حفظ هذه الملاحظة الآن.'
@@ -2615,6 +2620,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           if (!(error instanceof BrowserError)) throw error;
           state.trail.push({ step: state.steps, action: `${pending.tool} ${pending.label}`, result: `failed: ${clean(error.message)}`, changed: false });
         }
+        if (!hasChatModel() && pending.tool === 'code_change') { const reply = codingOutcomeReply(state.trail.at(-1)?.result ?? '', pending.label, request); await finish(id, runId, state, vault.scrub(id, reply.text), reply.status); return; }
       }
       if (state.pendingComputer) {
         const pending = state.pendingComputer;

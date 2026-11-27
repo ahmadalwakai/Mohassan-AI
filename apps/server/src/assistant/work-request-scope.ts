@@ -33,6 +33,8 @@ const STUDIO = new RegExp(`^(?:prepare|draft|propose|create)\\s+(?:(?:a|the)\\s+
 const SKILL = new RegExp(`^(?:(?:prepare|create)\\s+(?:(?:a|the)\\s+)?skill\\s+(?:run|task|workflow)\\s+(?:for\\s+)?${UUID}|(?:run|execute|launch)\\s+(?:skill|workflow)\\s+${UUID}|(?:جهز|حضر|اعد)\\s+(?:مهمه|تشغيل)\\s+(?:للمهاره|المهاره)\\s+${UUID}|(?:شغل|نفذ)\\s+(?:المهاره|مهاره)\\s+${UUID})[.!?؟]*$`, 'u');
 const PRIVATE_PRIMARY = /^(?:(?:read|recall|retrieve|search|look up|rewrite|summari[sz]e|translate|paraphrase|proofread|shorten|edit)\s+(?:my|our|the)\s+(?:(?:saved|stored|private|personal|recorded|previous)\s+)?(?:[\p{L}\p{N}_-]+\s+){0,4}(?:notes?|records?|memory|memories|preferences?|reference|message|text|document)(?:\s+(?:concisely|briefly))?|(?:اقرا|استرجع|لخص|ترجم|اختصر|صحح|اعد صياغه)\s+(?:ملاحظاتي|ملاحظاتنا|سجلاتي|ذاكرتي|رسائلي|النص المحفوظ)(?:\s+(?:المحفوظه|المخزنه|الخاصه|القديمه))?(?:\s+(?:باختصار|بوضوح))?)[.!?؟,،]*$/u;
 const SUPPLIED_PRIMARY = /^(?:rewrite|translate|summari[sz]e|paraphrase|proofread|shorten|reword|edit|polish|describe|اعد صياغه|ترجم|لخص|اختصر|صحح|صف)(?:\s+(?:(?:this|the|provided|supplied|following)\s+)?(?:text|note|sentence|paragraph|message|النص|الجمله|الملاحظه))?(?:\s+(?:(?:into|to|in)\s+[\p{L} -]{1,40}|concisely|briefly|politely|باختصار|بوضوح|بادب))?[.!?؟,،]*$/u;
+// One direct coding imperative from the owner: its object is a project, not text supplied in the message.
+const CODING_IMPERATIVE = /^(?:fix|repair|format|lint|refactor|debug|اصلح|صلح|عدل|نسق|حسن|رتب)(?!\p{L})[^;.!?؟\n]{3,300}[.!?؟]*$/iu;
 const BOUNDARY = /\b(?:and\s+then|then|afterwards|also|and)\b[\s,:،]*|(?<!\p{L})(?:ثم|وبعدها|وبعدين|بعدها|كذلك)(?!\p{L})[\s,:،]*|و(?=(?:جهز|حضر|اعد|شغل|نفذ|اعرض|استعرض|اسرد)(?!\p{L}))|[.!?؟;؛]\s+(?=\p{L})/gu;
 
 const head = (text: string) => requestOperationText(text).replace(COURTESY, '').trim();
@@ -112,6 +114,12 @@ export function reviewWorkRequestScope(request: unknown, capability: WorkRequest
       scope ??= privateScope(parseRequestScopeAssessment(understanding.sourceAssessment));
       if (!scope && understanding.intent === 'memory' && understanding.scope === 'private'
         && (source.operation === 'lookup' || source.operation === 'unknown')) scope = 'private_memory_lookup';
+      // «اصلح الكود في مشروع …»: the context step lifts the project name into a slot and reads the bare «اصلح الكود» as
+      // supplied text. A single direct coding imperative, with no quoted data, reported speech, narrative or second
+      // clause, and no scoped source in its own text, is the owner's current work goal, as «اصلح مشروعي» already is.
+      if (scope === 'supplied_content' && capability === 'code_prepare' && understanding.intent === 'coding' && !privateScope(source)
+        && masked === actionText && CODING_IMPERATIVE.test(outer) && !REPORTED.test(outer) && !NARRATIVE.test(outer)
+        && ![...outer.matchAll(BOUNDARY)].length) scope = null;
     }
     if (!scope) return result(true, 'unscoped', 'outside_scoped_sources');
     const localOperation = scope === 'local_content_lookup' ? 'lookup' : scope === 'local_content_transform' ? 'transform' : undefined;

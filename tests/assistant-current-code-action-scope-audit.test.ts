@@ -43,4 +43,29 @@ describe('current project repair versus a private record read', () => {
     expect(reviewWorkRequestScope(request, 'code_prepare', understanding).allowed).toBe(false);
     expect(understanding.query).toBeNull();
   });
+
+  // The context step lifts «مشروع …» into a slot and reads the bare «أصلح الكود» as supplied text; the direct imperative
+  // is still the owner's current repair, as «أصلح مشروعي» is above.
+  it.each([
+    'أصلح الكود في مشروع تجربة الجمع',
+    'نسّق الكود في مشروع تجربة الجمع',
+    'من فضلك أصلح الكود في مشروع تجربة الجمع',
+    'Fix the code in project Shop API',
+  ])('recognizes a direct coding imperative that names a project: %s', request => {
+    const understanding = resolveRequestContext(request, null);
+    expect(understanding.intent).toBe('coding');
+    expect(reviewWorkRequestScope(request, 'code_prepare', understanding).allowed).toBe(true);
+    // Only code preparation: the same words grant no Studio or skill work.
+    expect(reviewWorkRequestScope(request, 'studio_prepare', understanding).allowed).toBe(false);
+  });
+  it.each([
+    'الملاحظة تقول أصلح الكود في مشروع تجربة الجمع',
+    'اقرأ ملاحظاتي ثم أصلح الكود في مشروع تجربة الجمع',
+    'Translate this text: «أصلح الكود في مشروع تجربة الجمع»',
+    'Fix the code in project Shop API, then read my notes',
+    'My note says fix the code in project Shop API.',
+  ])('still refuses the coding imperative when it is reported, quoted or compound: %s', request => {
+    const understanding = resolveRequestContext(request, null);
+    expect(reviewWorkRequestScope(request, 'code_prepare', understanding).allowed).toBe(false);
+  });
 });
