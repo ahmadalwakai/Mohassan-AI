@@ -1,0 +1,183 @@
+{
+  "turLatest": {
+    "url": "https://www.imf.org/external/datamapper/api/v2/PCPIPCH/TUR?periods=2026,2025,2024,2023,2022",
+    "body": {
+      "indicators": {
+        "PCPIPCH": {
+          "label": "Inflation rate, average consumer prices",
+          "description": "The average consumer price index (CPI) is a measure of a country's average level of prices based on the cost of a typical basket of consumer goods and services in a given period. The rate of inflation is the percent change in the average CPI.\n \n",
+          "source": "World Economic Outlook (October 2026)",
+          "unit": "Annual percent change",
+          "dataset": "WEO",
+          "projection-year": 2026,
+          "last-modified": "2026-10-08 14:43:36"
+        }
+      },
+      "values": {
+        "PCPIPCH": {
+          "TUR": {
+            "2026": 31.2,
+            "2025": 34.9,
+            "2024": 58.5,
+            "2023": 53.9,
+            "2022": 72.3
+          }
+        }
+      },
+      "api": {
+        "version": "2",
+        "output-method": "json"
+      }
+    }
+  },
+  "tur2025": {
+    "url": "https://www.imf.org/external/datamapper/api/v2/PCPIPCH/TUR?periods=2025",
+    "body": {
+      "indicators": {
+        "PCPIPCH": {
+          "label": "Inflation rate, average consumer prices",
+          "description": "The average consumer price index (CPI) is a measure of a country's average level of prices based on the cost of a typical basket of consumer goods and services in a given period. The rate of inflation is the percent change in the average CPI.\n \n",
+          "source": "World Economic Outlook (October 2026)",
+          "unit": "Annual percent change",
+          "dataset": "WEO",
+          "projection-year": 2026,
+          "last-modified": "2026-10-08 14:43:36"
+        }
+      },
+      "values": {
+        "PCPIPCH": {
+          "TUR": {
+            "2025": 34.9
+          }
+        }
+      },
+      "api": {
+        "version": "2",
+        "output-method": "json"
+      }
+    }
+  },
+  "turProjection": {
+    "url": "https://www.imf.org/external/datamapper/api/v2/PCPIPCH/TUR?periods=2027,2028,2029,2030,2031",
+    "body": {
+      "indicators": {
+        "PCPIPCH": {
+          "label": "Inflation rate, average consumer prices",
+          "description": "The average consumer price index (CPI) is a measure of a country's average level of prices based on the cost of a typical basket of consumer goods and services in a given period. The rate of inflation is the percent change in the average CPI.\n \n",
+          "source": "World Economic Outlook (October 2026)",
+          "unit": "Annual percent change",
+          "dataset": "WEO",
+          "projection-year": 2026,
+          "last-modified": "2026-10-08 14:43:36"
+        }
+      },
+      "values": {
+        "PCPIPCH": {
+          "TUR": {
+            "2027": 26.5,
+            "2028": 20.6,
+            "2029": 17.1,
+            "2030": 15,
+            "2031": 13.2
+          }
+        }
+      },
+      "api": {
+        "version": "2",
+        "output-method": "json"
+      }
+    }
+  },
+  "egyLatest": {
+    "url": "https://www.imf.org/external/datamapper/api/v2/NGDPD/EGY?periods=2026,2025,2024,2023,2022",
+    "body": {
+      "indicators": {
+        "NGDPD": {
+          "label": "GDP, current prices",
+          "description": "Gross domestic product is the most commonly used single measure of a country's overall economic activity. It represents the total value at current prices of final goods and services produced within a country during a specified time period, such as one year.",
+          "source": "World Economic Outlook (October 2026)",
+          "unit": "Billions of U.S. dollars",
+          "dataset": "WEO",
+          "projection-year": 2026,
+          "last-modified": "2026-10-08 14:43:33"
+        }
+      },
+      "values": {
+        "NGDPD": {
+          "EGY": {
+            "2026": 442.886,
+            "2025": 364.638,
+            "2024": 383.105,
+            "2023": 393.828,
+            "2022": 475.231
+          }
+        }
+      },
+      "api": {
+        "version": "2",
+        "output-method": "json"
+      }
+    }
+  },
+  "sauLatest": {
+    "url": "https://www.imf.org/external/datamapper/api/v2/LUR/SAU?periods=2026,2025,2024,2023,2022",
+    "body": {
+      "indicators": {
+        "LUR": {
+          "label": "Unemployment rate",
+          "description": "The number of unemployed persons as a percentage of the total labor force.",
+          "source": "World Economic Outlook (October 2026)",
+          "unit": "Percent",
+          "dataset": "WEO",
+          "projection-year": 2026,
+          "last-modified": "2026-10-08 14:43:39"
+        }
+      },
+      "values": {
+        "LUR": {
+          "SAU": {
+            "2025": 3.2,
+            "2024": 3.5,
+            "2023": 4,
+            "2022": 4.9
+          }
+        }
+      },
+      "api": {
+        "version": "2",
+        "output-method": "json"
+      }
+    }
+  },
+  "ausLatest": {
+    "url": "https://www.imf.org/external/datamapper/api/v2/LP/AUS?periods=2026,2025,2024,2023,2022",
+    "body": {
+      "indicators": {
+        "LP": {
+          "label": "Population",
+          "description": "Total population of a country, region, or group of countries.",
+          "source": "World Economic Outlook (October 2026)",
+          "unit": "Millions of people",
+          "dataset": "WEO",
+          "projection-year": 2026,
+          "last-modified": "2026-10-08 14:43:39"
+        }
+      },
+      "values": {
+        "LP": {
+          "AUS": {
+            "2026": 28.078,
+            "2025": 27.731,
+            "2024": 27.389,
+            "2023": 26.957,
+            "2022": 26.32
+          }
+        }
+      },
+      "api": {
+        "version": "2",
+        "output-method": "json"
+      }
+    }
+  }
+}
