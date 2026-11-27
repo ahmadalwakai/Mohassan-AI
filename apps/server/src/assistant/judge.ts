@@ -15,7 +15,9 @@
  */
 import { performance } from 'node:perf_hooks';
 import { checkAnswerLine, figureKind, hasFigureOf, isMetaLine } from './answer-check.js';
-import { factualPassage, formatFactualPassage } from './factual-evidence.js';
+import { inspectEventDateLine, parseEventDateQuestion } from './event-date.js';
+import { wrongEventDateEvidence } from './event-date-judge.js';
+import { explicitFactualText, factualPassage, formatFactualPassage } from './factual-evidence.js';
 import { entityWords, fold, isFollowUp, refersBack, topicWords } from './hands.js';
 import { buildFrame } from './mind/frame.js';
 import { applyReplyFixes, checkReply, questionLanguage, type ReplyFindingCode } from './reply-check.js';
@@ -24,7 +26,7 @@ export type ReplyKind = 'answer' | 'quote' | 'list' | 'computed' | 'memory' | 'q
 export type JudgeCode = ReplyFindingCode
   | 'lead_meta' | 'lead_ui' | 'lead_off_topic' | 'lead_needs_number' | 'lead_needs_name' | 'fragment_lead' | 'lead_not_best'
   | 'definition_form_missing' | 'duration_unit_missing' | 'self_question_from_web' | 'local_intent_abstained' | 'page_subject_mismatch' | 'subject_missing'
-  | 'unsupported_sentence' | 'evidence_unavailable';
+  | 'event_date_mismatch' | 'unsupported_sentence' | 'evidence_unavailable';
 /** block: the reply must not go out as it is. fix: a mechanical repair exists. review: counted for the owner. info: a note. */
 export type JudgeSeverity = 'block' | 'fix' | 'review' | 'info';
 export type JudgeDecision = 'send' | 'fix' | 'withhold';
@@ -67,7 +69,7 @@ export const SEVERITY: Record<JudgeCode, JudgeSeverity> = {
   language_mismatch: 'review', foreign_heading: 'fix', byline_lead: 'fix', site_chrome: 'fix', duplicate_line: 'fix', lead_without_answer: 'review',
   lead_meta: 'block', lead_ui: 'review', lead_off_topic: 'block', lead_needs_number: 'block', lead_needs_name: 'review', fragment_lead: 'review', lead_not_best: 'fix',
   definition_form_missing: 'review', duration_unit_missing: 'block', self_question_from_web: 'block', local_intent_abstained: 'review', page_subject_mismatch: 'review',
-  subject_missing: 'block', unsupported_sentence: 'block', evidence_unavailable: 'info',
+  subject_missing: 'block', event_date_mismatch: 'block', unsupported_sentence: 'block', evidence_unavailable: 'info',
 };
 const ORDER: JudgeSeverity[] = ['block', 'fix', 'review', 'info'];
 
@@ -101,6 +103,7 @@ export const WITHHOLD_COPY = {
     number: 'لم أجد في الصفحة التي قرأتها الرقم الذي يسأل عنه سؤالك، فلم أنقل لك جوابًا غير مؤكد.',
     unsupported: 'في الجواب جملة لم أجدها في الصفحات التي قرأتها، فلم أرسله.',
     subject: 'الصفحة التي وجدتها لا تتحدث عن موضوع سؤالك، فلم أنقل منها جوابًا.',
+    eventDate: 'التاريخ الذي وجدته يخص حدثًا آخر، فلم أنقله جوابًا عن سؤالك.',
     generic: 'لم أجد في الصفحات التي قرأتها جملة تجيب عن سؤالك مباشرة، فلم أنقل لك جوابًا غير مؤكد.',
     page: 'الصفحة التي قرأتها:',
     next: 'أرسل رابط صفحة مناسبة أو أعد صياغة السؤال.',
@@ -110,6 +113,7 @@ export const WITHHOLD_COPY = {
     number: 'The page I read does not give the figure your question asks for, so I did not pass on an unconfirmed answer.',
     unsupported: 'The answer had a sentence I did not find in the pages I read, so I did not send it.',
     subject: 'The page I found is not about the subject of your question, so I did not take an answer from it.',
+    eventDate: 'The date I found belongs to a different event, so I did not pass it on as the answer.',
     generic: 'The pages I read had no sentence that answers your question directly, so I did not pass on an unconfirmed answer.',
     page: 'The page I read:',
     next: 'Send a suitable page link or rephrase the question.',
@@ -261,6 +265,7 @@ export function withholdReply(lang: 'ar' | 'en', codes: readonly JudgeCode[], re
   const copy = WITHHOLD_COPY[lang];
   if (codes.includes('self_question_from_web')) return copy.self;
   const reason = codes.includes('unsupported_sentence') ? copy.unsupported
+    : codes.includes('event_date_mismatch') ? copy.eventDate
     : codes.includes('duration_unit_missing') || codes.includes('lead_needs_number') ? copy.number
     : codes.includes('subject_missing') || codes.includes('lead_off_topic') || codes.includes('lead_meta') ? copy.subject
     : copy.generic;
@@ -462,6 +467,10 @@ export function judge(input: JudgeInput): JudgeVerdict {
   const own = ownLines(reply);
   const cues = cueWords(asked, topic);
   const titleWords = sourceTitleWords(reply);
+  const citedTitle = SOURCE_TITLE.exec(reply)?.[1];
+  const dateAbstention = kind === 'abstain' && input.status === 'partial' && /^(?:I found no page that answers|لم أجد صفحة تجيب)/u.test(reply.trimStart());
+  const dateQuestion = (kind === 'answer' && sourced) || dateAbstention ? parseEventDateQuestion(asked) : undefined;
+  const eventDateDetail = lang === 'ar' ? 'التاريخ يخص حدثًا غير الذي يسأل عنه السؤال' : 'The date belongs to a different event than the one asked about';
   let lead: ScoredLine | null = null, best: ScoredLine | null = null, dropOldLead = false;
 
   if (kind === 'answer' && sourced && own.length) {
@@ -474,6 +483,10 @@ export function judge(input: JudgeInput): JudgeVerdict {
       const answer = factualPassage({ text: item.text, title: item.title }, asked);
       return answer && formatFactualPassage(answer) === first.raw;
     });
+    const record = dateQuestion ? explicitFactualText(first.raw, asked) : undefined;
+    const firstDate = dateQuestion && inspectEventDateLine(dateQuestion, first.text, citedTitle);
+    const boundDate = Boolean(firstDate?.date) || (record?.kind === 'answer' && record.quote === first.raw);
+    if (firstDate?.hasDate && !boundDate && !extracted && !first.relevance.meta) add('event_date_mismatch', first.line, first.text, eventDateDetail);
     lead = { line: first.line, text: first.text, score: first.relevance.score };
     const top = [...scored].sort((a, b) => b.relevance.score - a.relevance.score || a.line - b.line)[0]!;
     best = { line: top.line, text: top.text, score: top.relevance.score };
@@ -518,8 +531,8 @@ export function judge(input: JudgeInput): JudgeVerdict {
     // artifacts/agent-gaps-2026-11-22/audit-head-3959084/wiring-probe-after-1.json).
     const countedLead = figureKind(asked) === 'people' && first.relevance.topicHits > 0 && hasFigureOf('people', first.text);
     const defectiveLead = first.relevance.fragment || first.relevance.meta || first.relevance.topicHits === 0 || !first.relevance.phrase && !first.relevance.answerForm && !countedLead;
-    if (!extracted && defectiveLead && top.line !== first.line && top.relevance.score - first.relevance.score >= JUDGE_THRESHOLDS.leadNotBestMargin
-      && checkAnswerLine(asked, top.text).ok) {
+    if (!extracted && !boundDate && defectiveLead && top.line !== first.line && top.relevance.score - first.relevance.score >= JUDGE_THRESHOLDS.leadNotBestMargin
+      && checkAnswerLine(asked, top.text).ok && (!dateQuestion || inspectEventDateLine(dateQuestion, top.text, citedTitle).date)) {
       dropOldLead = first.relevance.meta;
       add('lead_not_best', first.line, first.text, lang === 'ar'
         ? `السطر ${top.line} يجيب أفضل (${top.relevance.score} مقابل ${first.relevance.score}): «${excerptOf(top.text)}»`
@@ -533,6 +546,10 @@ export function judge(input: JudgeInput): JudgeVerdict {
   }
   if (kind === 'abstain' && (SELF_QUESTION.test(question) || ['identity', 'smalltalk', 'compute', 'memory_recall'].includes(frame.intent))) {
     add('local_intent_abstained', 1, reply.split('\n')[0] ?? '', lang === 'ar' ? `طلب محلي (${frame.intent}) قوبل بقالب امتناع` : `A local request (${frame.intent}) met an abstention template`);
+  }
+  if (dateQuestion && dateAbstention) {
+    const wrong = wrongEventDateEvidence(dateQuestion, input.evidence);
+    if (wrong) add('event_date_mismatch', 0, wrong, eventDateDetail);
   }
 
   // Support: only when the host hands over what the reply was built from, and only when the page the reply names as its

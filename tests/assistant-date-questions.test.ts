@@ -68,6 +68,66 @@ describe('the subject of a date question', () => {
 });
 
 describe('the answer line of a date question', () => {
+  it.each([
+    {
+      // d5 in scripts/quality/council-questions.ts. The first line is from the owner's 2026-11-26 run.
+      question: 'متى استقلت الجزائر؟',
+      title: 'الجزائر',
+      lang: 'ar',
+      wrong: 'وقد تمتعت موريطانيا القيصرية بالاستقلال والرخاء والنهضة في ظل ملكها يوبا الثاني الجزائري أبن عنابة 25 ق.م إلى 40 ميلادية.',
+      // https://ar.wikipedia.org/wiki/الجزائر (retrieved 2026-11-27).
+      correct: 'وتم الإعلان عن استقلال الجزائر يوم 3 جويلية 1962 واختير يوم 5 جويلية عيداً للاستقلال ليكون يوم دخول فرنسا للجزائر هو نفسه يوم خروجها منها.',
+      expected: /1962|١٩٦٢/u,
+    },
+    {
+      // e1 in scripts/quality/council-questions.ts. The first line is from the owner's 2026-11-26 run.
+      question: 'When did the Berlin Wall fall?',
+      title: 'Berlin Wall',
+      lang: 'en',
+      wrong: 'The fall of the Berlin Wall paved the way for German reunification, which formally took place on 3 October 1990.',
+      // https://webarchiv.bundestag.de/archive/2007/0206/interakt/infomat/fremdsprachiges_material/downloads/faktenEn_download.pdf (retrieved 2026-11-27).
+      correct: 'The Berlin Wall fell on 9 November 1989.',
+      expected: /1989/u,
+    },
+  ] as const)('answers $question from the clause about that event', async ({ question, title, lang, wrong, correct, expected }) => {
+    const url = articleUrl(title, lang);
+    const page = pageOf(url, title, `${wrong} ${correct}`);
+    const hits = [{ title, url, snippet: wrong }];
+    const { outcome, first } = await answerOf(question, { [url]: page }, hits);
+    expect(outcome).toMatchObject({ kind: 'done', status: 'completed' });
+    expect(first).toMatch(expected);
+    expect(first).not.toBe(wrong);
+    expect(relevantLines(pageOf(url, title, wrong), question, 3, true)).toEqual([]);
+  });
+
+  it('quotes the event clause when another date comes first in the sentence', () => {
+    // Synthetic sentence and dates for a fictional subject.
+    const url = articleUrl('Grayhaven Wall', 'en');
+    const page = pageOf(url, 'Grayhaven Wall', 'An archive opened in 1900, and the Grayhaven Wall fell in 1918.');
+    const [lead] = relevantLines(page, 'On what date did the Grayhaven Wall fall?', 3, true);
+    expect(lead).toContain('Grayhaven Wall fell in 1918');
+    expect(lead).not.toContain('1900');
+  });
+
+  it('recovers the Berlin Wall introduction from navigation glued to the sentence', () => {
+    // The navigation prefix is synthetic. The introduction is from https://en.wikipedia.org/wiki/Berlin_Wall
+    // (retrieved 2026-11-27, with the pronunciation aside shortened).
+    const lead = 'The Berlin Wall (German: Berliner Mauer) was a guarded concrete barrier that encircled West Berlin from 1961 to 1989, separating it from East Berlin and the German Democratic Republic (GDR; East Germany).';
+    const page = pageOf(articleUrl('Berlin Wall', 'en'), 'Berlin Wall - Wikipedia', `${'History of Europe · '.repeat(60)}${lead}`);
+    expect(relevantLines(page, 'When did the Berlin Wall fall?', 3, true)[0]).toBe(lead);
+  });
+
+  // Synthetic biographies and dates for fictional people.
+  it.each([
+    ['متى توفي عارف السهيل؟', 'عارف السهيل', 'عارف السهيل (ولد:1805 في الوادي - الوفاة:1872 في الساحل)، مؤرخ.', '1872'],
+    ['متى عاش عارف السهيل؟', 'عارف السهيل النجدي', 'عارف السهيل النجدي (97 هـ-161 هـ) مؤرخ من الوادي.', '97 هـ-161 هـ'],
+    ['متى ولدت مريم السهيل؟', 'مريم السهيل', 'مريم سلمى السهيل (ولدت في 2 ديسمبر 1895)، هي مؤرخة.', '2 ديسمبر 1895'],
+    ['When did Sam Arbour live?', 'Sam Arbour', 'Robert Samuel Arbour (born Robert Samuel Arbour June 19, 1803–June 2, 1841) was a historian.', 'June 19, 1803–June 2, 1841'],
+  ])('keeps the named biography and its date for %s', (question, title, line, date) => {
+    const page = pageOf(articleUrl(title, 'en'), title, line);
+    expect(relevantLines(page, question, 3, true)[0]).toContain(date);
+  });
+
   it('is the article’s opening with its dates, not a later sentence with the question’s verb', () => {
     const url = articleUrl('الحرب العالمية الأولى', 'ar');
     const page = pageOf(url, 'الحرب العالمية الأولى - ويكيبيديا', [

@@ -1,5 +1,6 @@
 import { publicSearchScan, publicSearchText, type AgentPage } from '@mohassan/browser';
 import { isDisambiguationPage, isMetaLine, normalizeAnswerDigits } from './answer-check.js';
+import { inspectEventDateLine, isStandaloneEventDate, parseEventDateQuestion, type EventDateQuestion } from './event-date.js';
 import { extractEnglishQuantity } from './factual-quantity.js';
 import { isPageInstruction } from './mind/extract.js';
 
@@ -33,50 +34,63 @@ function availablePage(page: EvidencePage): boolean {
     && !page.signals.captcha && !page.signals.password && !page.signals.otp && !page.signals.card;
 }
 
-export type ExplicitFactualEvidence = { kind: 'answer'; quote: string } | { kind: 'unanswered' };
+type UnansweredRecord = { kind: 'unanswered' };
+export type ExplicitFactualEvidence = { kind: 'answer'; quote: string } | UnansweredRecord;
+
+export function explicitFactualEvidence(page: EvidencePage, question: string): ExplicitFactualEvidence | undefined {
+  const record = availablePage(page) ? explicitFactualText(page.text, question) : undefined;
+  return record?.kind === 'answer' ? { kind: 'answer', quote: record.quote } : record;
+}
 
 /** Read a labeled Q&A record (for example a public FAQ). Match the entire question and preserve the answer's surface form. */
-export function explicitFactualEvidence(page: EvidencePage, question: string): ExplicitFactualEvidence | undefined {
-  if (!availablePage(page)) return;
+export function explicitFactualText(text: string, question: string): { kind: 'answer'; quote: string; value: string } | UnansweredRecord | undefined {
   const wanted = questionKey(question);
   if (!wanted || wanted.length > maxRecordLength) return;
+  const event = parseEventDateQuestion(question);
 
-  const labels = [...page.text.matchAll(recordLabel)];
-  const records = new Map<string, string>();
+  const labels = [...text.matchAll(recordLabel)];
+  const records = new Map<string, { quote: string; value: string }>();
   let matched = false;
   for (const [index, label] of labels.entries()) {
     const answerLabel = labels[index + 1];
     if (!label[1] || !answerLabel || answerLabel[1]) continue;
-    const ask = page.text.slice(label.index + label[0].length, answerLabel.index).trim().replace(/[\s|]+$/u, '');
+    const ask = text.slice(label.index + label[0].length, answerLabel.index).trim().replace(/[\s|]+$/u, '');
     if (questionKey(ask) !== wanted) continue;
     matched = true;
 
     const answerStart = answerLabel.index + answerLabel[0].length;
-    const rest = page.text.slice(answerStart, labels[index + 2]?.index).trimStart();
+    const rest = text.slice(answerStart, labels[index + 2]?.index).trimStart();
     const value = rest.split(/\r?\n/u, 1)[0].trim().replace(/[\s|]+$/u, '');
-    const quote = `${page.text.slice(label.index, answerStart).trimEnd()} ${value}`.replace(/\s+/gu, ' ');
+    const quote = `${text.slice(label.index, answerStart).trimEnd()} ${value}`.replace(/\s+/gu, ' ');
     if (quote.length > maxRecordLength || !safeAnswer(value)) return { kind: 'unanswered' };
     if (numericQuestion.test(question) && !/\p{Nd}/u.test(value) && !yearQuestion.test(question)) return { kind: 'unanswered' };
-    records.set(matchText(value), quote);
+    if (event) {
+      const { date, hasDate } = inspectEventDateLine(event, value);
+      if (hasDate && !date && !isStandaloneEventDate(value)) return { kind: 'unanswered' };
+    }
+    records.set(matchText(value), { quote, value });
   }
   if (!matched) return;
-  const [quote] = records.values();
-  if (records.size !== 1 || !quote) return { kind: 'unanswered' };
-  return { kind: 'answer', quote };
+  const [record] = records.values();
+  if (records.size !== 1 || !record) return { kind: 'unanswered' };
+  return { kind: 'answer', ...record };
 }
 
-export interface FactualPassage { value: string; quote: string }
+export interface FactualPassage { value: string; quote: string; valueAt?: number; historicalOrigin?: boolean }
 
 const sentenceSegmenter = new Intl.Segmenter('en', { granularity: 'sentence' });
 const incompleteSentence = /(?:^|\s)(?:[A-Z]|Dr|Prof|Mr|Mrs|Ms|St|Maj|Gen|Lt|Col|Inc|Ltd|Corp|c|ca)\.$/u;
+const arabicEraPeriod = /(?<=(?<!\p{L})ق)\.(?=[ \t]*(?:هـ|م)(?!\p{L}))/gu;
 const leadingReference = /^(?:\s*\[\s*(?:\d+|note \d+)\s*\])+\s*/iu;
 const uncertainClaim = /\b(?:might|could|would|not|never|hypothetical|disputed)\b/iu;
 const articleType = /^(?:it|the (?:company|firm|business|organization|organisation|institution|club|team|town|city|village|settlement|university|school|museum|building|bridge|railway|ship|station|fort|castle))\b/iu;
 
-function passageSentences(text: string): string[] {
+export function passageSentences(text: string): string[] {
   const sentences: string[] = [];
-  for (const { segment } of sentenceSegmenter.segment(text.slice(0, 50_000))) {
-    const line = segment.trim().replace(leadingReference, '').replace(/\s+/gu, ' ');
+  const excerpt = text.slice(0, 50_000);
+  // Hide the era abbreviation's period from the segmenter and read the original text at the same offsets.
+  for (const { segment, index } of sentenceSegmenter.segment(excerpt.replace(arabicEraPeriod, '·'))) {
+    const line = excerpt.slice(index, index + segment.length).trim().replace(leadingReference, '').replace(/\s+/gu, ' ');
     if (!line) continue;
     const previous = sentences.at(-1);
     if (previous && incompleteSentence.test(previous)) sentences[sentences.length - 1] = `${previous} ${line}`;
@@ -114,7 +128,9 @@ const dateEvents = [
   { ask: /\s+(?:be\s+)?(?:release|released|publish|published|premiere|premiered)$/iu, claim: /\b(?:released|published|premiered)\b/iu },
 ] as const;
 
-function dateRelations(question: string): ((line: string, previous: string, title: string) => FactualPassage | undefined) | undefined {
+type PassageRelation = (line: string, previous: string, title: string) => FactualPassage | undefined;
+
+function englishDateRelations(question: string, boundRequest: EventDateQuestion | undefined): PassageRelation | undefined {
   const request = /^(?:when|(?:on |in )?what (?:date|day|year))\s+(?:did|does|was|were|is|are)\s+(.+)$/iu.exec(question)?.[1];
   if (!request) return;
   const event = dateEvents.find(({ ask }) => ask.test(request));
@@ -143,6 +159,16 @@ function dateRelations(question: string): ((line: string, previous: string, titl
     const anaphor = articleType.exec(before);
     const adjacent = titleNamesSubject && previousName && contextualIntro.test(previous.slice(previousName[0].length))
       && (anaphor ? predicatePreamble.test(before.slice(anaphor[0].length)) : !before.trim());
+    if (boundRequest) {
+      if (!adjacent) return;
+      // The matching title and adjacent introduction identify the subject of this clause.
+      const tail = line.slice(anaphor?.[0].length ?? 0).trimStart();
+      const { date, dateAt } = inspectEventDateLine(boundRequest, `${subject} ${tail}`);
+      if (!date) return;
+      const quote = `${previous} ${line}`;
+      const valueAt = dateAt === undefined ? undefined : quote.length - tail.length + dateAt - subject.length - 1;
+      return { value: date, quote, valueAt };
+    }
     const inFront = dateBeforeClause.exec(before);
     const frontSubject = inFront && begins.exec(before.slice(inFront[0].length));
     const dateBeforeSubject = frontSubject && predicatePreamble.test(before.slice(inFront![0].length + frontSubject[0].length));
@@ -154,6 +180,19 @@ function dateRelations(question: string): ((line: string, previous: string, titl
     const value = dateBeforeSubject ? inFront?.groups?.date : suppliedDate.exec(dateClause)?.groups?.date;
     if (!value) return;
     return { value, quote: adjacent ? `${previous} ${line}` : line };
+  };
+}
+
+function dateRelations(question: string): PassageRelation | undefined {
+  const request = parseEventDateQuestion(question);
+  const english = englishDateRelations(question, request);
+  if (!request) return english;
+  return (line, previous, title) => {
+    const { date, dateAt, clause, hasEarlierDate, historicalOrigin } = inspectEventDateLine(request, line, title);
+    if (!date) return english?.(line, previous, title);
+    const quote = (hasEarlierDate || historicalOrigin) && clause ? clause : line;
+    const valueAt = dateAt === undefined ? undefined : dateAt - line.indexOf(quote);
+    return { value: date, quote, valueAt, historicalOrigin };
   };
 }
 
@@ -202,17 +241,19 @@ function namedRelation(question: string): ((line: string) => FactualPassage | un
 
 /** Extract a source span only when the passage directly states the requested relation. */
 export function factualPassage(page: Pick<AgentPage, 'title' | 'text'>, question: string): FactualPassage | undefined {
-  if (/\p{Script=Arabic}/u.test(question) || isDisambiguationPage(page)) return;
-  const asked = question.trim().replace(/[.!?]+$/u, '');
-  const relation = dateRelations(asked) ?? namedRelation(asked);
-  const quantity = /^how (?:many|long|tall|wide|deep|far|heavy|old)\b/iu.test(asked);
+  if (isDisambiguationPage(page)) return;
+  const asked = question.trim().replace(/[.!?؟]+$/u, '');
+  const arabic = /\p{Script=Arabic}/u.test(asked);
+  const relation = dateRelations(asked) ?? (arabic ? undefined : namedRelation(asked));
+  const quantity = !arabic && /^how (?:many|long|tall|wide|deep|far|heavy|old)\b/iu.test(asked);
   if (!relation && !quantity) return;
   const candidates = new Map<string, FactualPassage>();
+  const origins = new Map<string, FactualPassage>();
   const sentences = passageSentences(page.text);
   const subject = plainArticleTitle(page.title);
   const titled = subject ? leadSubject(subject) : null;
   for (const [index, sentence] of sentences.entries()) {
-    if (sentence.length > 650 || isMetaLine(sentence) || /[?？]$/u.test(sentence)) continue;
+    if (sentence.length > 650 || isMetaLine(sentence) || /[?؟？]$/u.test(sentence)) continue;
     const previous = sentences[index - 1] ?? '';
     const titleInPrevious = titled?.exec(previous);
     const anchored = Boolean(titleInPrevious && contextualIntro.test(previous.slice(titleInPrevious[0].length)));
@@ -223,14 +264,15 @@ export function factualPassage(page: Pick<AgentPage, 'title' | 'text'>, question
       : contextualValue ? { value: contextualValue, quote: `${previous} ${sentence}` } : undefined);
     if (!answer || answer.quote.length > 850 || !safeAnswer(answer.quote) || !safeAnswer(answer.value)) continue;
     const key = matchText(answer.value);
-    if (!candidates.has(key)) candidates.set(key, answer);
+    const matches = answer.historicalOrigin ? origins : candidates;
+    if (!matches.has(key)) matches.set(key, answer);
     if (candidates.size > 1) return;
   }
-  return candidates.values().next().value;
+  return candidates.values().next().value ?? (origins.size === 1 ? origins.values().next().value : undefined);
 }
 
-export function formatFactualPassage({ value, quote }: FactualPassage): string {
-  const start = quote.lastIndexOf(value);
+export function formatFactualPassage({ value, quote, valueAt }: FactualPassage): string {
+  const start = valueAt ?? quote.lastIndexOf(value);
   return start < 0 ? quote : `${quote.slice(0, start)}**${value}**${quote.slice(start + value.length)}`;
 }
 

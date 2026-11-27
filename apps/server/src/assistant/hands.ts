@@ -16,6 +16,7 @@ import { refusalReply } from './refusal/replies.js';
 import { refusalPolicyEnabled } from './refusal/settings.js';
 import type { RefusalDecision } from './refusal/types.js';
 import { explicitFactualEvidence, formatFactualPassage, readFactualPassage } from './factual-evidence.js';
+import { inspectEventDateLine, parseEventDateQuestion } from './event-date.js';
 
 export { returnedTo };
 export { siteName };
@@ -885,8 +886,9 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
   const namesSubject = definition ? new RegExp(`^this (?:process|reaction|method|technique|phenomenon) (?:(?:is )?called|is known as) ${subject}$`, 'u') : null;
   // A price, a time or a score is a number: for such questions a sentence without one does not answer.
   const wantsNumber = isLiveWebQuestion(question);
-  const numberAnswer = wantsNumber || WANTS_NUMBER.test(question);
-  const kind = figureKind(question);
+  const dateQuestion = parseEventDateQuestion(question);
+  const kind = dateQuestion ? 'date' : figureKind(question);
+  const numberAnswer = wantsNumber || Boolean(dateQuestion) || WANTS_NUMBER.test(question);
   // "How many people live in Japan?": the article says «population» or «inhabitants» ("With a population of almost 123 million
   // as of 2026, it is the world's 11th most populous country"), so those words match «people», and a sentence that names a
   // population outranks one that only counts people. Live on 2026-11-22 the answers were «…Greater Tokyo Area… with 37.4
@@ -917,7 +919,9 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
   // English author Jane Austen». Infobox cells glue onto it («… Author Jane Austen Working title … at Wikisource Pride and
   // Prejudice is a novel by …», measured on the article 2026-11-22), so for these questions the sentence starts at the subject.
   const whoMade = makerAsk;
-  const rawSubject = whoMade ? plainTitle(page.title ?? '').replace(/\s+[-–—|:]\s+[^-–—|:]{1,40}$/u, '').trim() : '';
+  // An HTTP read can attach an infobox and navigation to the date-bearing opening sentence too.
+  const ownDateArticle = dateQuestion && isOwnArticle(page.title, topicWords(dateQuestion.subject));
+  const rawSubject = whoMade || ownDateArticle ? plainTitle(page.title ?? '').replace(/\s+[-–—|:]\s+[^-–—|:]{1,40}$/u, '').trim() : '';
   const subjectStart = rawSubject.length >= 3
     ? new RegExp(`(?<=\\s)(?:The\\s+)?${rawSubject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s*\\([^)]*\\))?\\s+(?:is|was|are|were|هو|هي|كان|كانت)\\s`, 'giu') : null;
   const pageSubject = kind === 'date' || whoMade ? fold(plainTitle(page.title ?? '')) : '';
@@ -928,7 +932,7 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
   const labelSet = new Set(labels.map(fold));
   const pageTitle = fold(page.title ?? '');
   const titled = words.filter(word => has(pageTitle, word));
-  const scored:{ line: string; score: number; at: number; year: number; glued: boolean; lead: boolean }[] = [];
+  const scored:{ line: string; score: number; at: number; year: number; glued: boolean; lead: boolean; inferredRange: boolean }[] = [];
   const seen = new Set<string>();
   // Citation marks may carry spaces inside the brackets («[ 5 ] [ 28 ] ويبلغ عدد سكانها…», measured 2026-11-22 on «المغرب»).
   // A page read over HTTP is one line of words joined by spaces, so the full run of 07:06 sent first lines that began with a
@@ -948,7 +952,8 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
   const sentences = [...text.matchAll(/(?:[^.!?؟\n]|(?<=\p{Nd})\.(?=\p{Nd})|(?<=(?<!\p{L})(?:\p{Lu}|Dr|Prof|Mr|Mrs|Ms|St|Maj|Gen|Lt|Col))\.(?=[ \t]+\p{Lu})|(?<=(?<!\p{L})ق)\.(?=[ \t]*(?:هـ|م)(?!\p{L})))+(?:[.!?؟]+|\n|$)/gu)];
   for (const [index, match] of sentences.entries()) {
     let line = cleanSentence(match[0]);
-    const opening = subjectStart ? [...line.matchAll(subjectStart)].at(-1) : undefined;
+    const opening = subjectStart && (whoMade || line.length > 400 || line.split(' ').length > 40)
+      ? [...line.matchAll(subjectStart)].at(-1) : undefined;
     if (opening?.index) line = line.slice(opening.index).trim();
     let pairedDefinition = false, at = match.index ?? 0;
     if (/[.!]$/u.test(line) && namesSubject?.test(fold(line)) && index > 0) {
@@ -993,7 +998,7 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     // A short, complete sentence can state a fact when it names both the page's subject and the requested property.
     const shortStatement = count >= 3 && count < 5 && /[.!]$/u.test(line) && titled.length > 0
       && titled.length < words.length && words.every(word => has(folded, word));
-    if (count < (hasNumber || shortStatement ? 3 : 5) || line.length > (lead ? LEAD_MAX_CHARS : 400) || seen.has(line) || (wantsNumber && !hasNumber)) continue;
+    if (count < (hasNumber || shortStatement ? 3 : 5) || line.length > (lead ? LEAD_MAX_CHARS : 400) || (wantsNumber && !hasNumber)) continue;
     // A sentence that asks («ما تاريخ الذكاء الاصطناعي؟») is a heading or a contents entry, never an answer.
     if (/[؟?]\s*$/u.test(line)) continue;
     // Lines about the page, not the subject: hatnotes, bylines, headers (plan §7.4; 0-baseline §8.3 sent these as answers).
@@ -1004,13 +1009,17 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     // A run of the page's own menu labels is navigation, not an answer.
     const menuWords = labels.length ? folded.split(' ').filter(word => labelSet.has(word)).length : 0;
     if (menuWords / count > 0.3) continue;
+    const eventDate = dateQuestion ? inspectEventDateLine(dateQuestion, line, page.title) : undefined;
+    if (eventDate && !eventDate.date) continue;
+    if (eventDate?.clause && (eventDate.hasEarlierDate || !lead && line.length > 300)) line = eventDate.clause;
+    if (seen.has(line)) continue;
     // The page's own subject («أستراليا» on its article) is implied in its sentences («عاصمتها كانبرا»),
     // but only once the sentence holds another question word: the title alone answers nothing.
     const own = words.filter(word => !titled.includes(word) && has(folded, word)).length;
     // A date sentence names its subject: on «الجزائر», «بنى عاصمته القلعة عام 1007 م … واستقل بالحكم» is about a dynasty.
     const implied = kind !== 'date' || titled.some(word => has(folded, word));
     const hits = own && implied ? own + titled.length : words.filter(word => has(folded, word)).length;
-    if (hits < need) continue;
+    if (hits < need && !eventDate?.date) continue;
     seen.add(line);
     // A number in the sentence is often the answer itself: a price, a time, a score. A run past 40 words
     // is usually table cells glued to a sentence (an infobox), so it ranks below a plain sentence.
@@ -1023,12 +1032,13 @@ export function relevantLines(page: AgentPage, question: string, limit = 3, best
     const answerForm = titled.length > 0 && own > 0 && words.some(word => !titled.includes(word)
       && new RegExp(`(?:^|\\s)[وف]?(?:ال)?${word}(?:\\p{L}{0,2}(?:ها|هم)|\\p{L}{1,2}ه)(?=[\\s،,:]|$)`, 'u').test(folded));
     scored.push({ line, score: hits + (numberAnswer && /\d/u.test(line) ? 1 : 0) - (glued ? 1 : 0) + (phrase && folded.includes(phrase) ? 2 : 0) + (answerForm ? 3 : 0) + (pairedDefinition || definition?.test(folded) || wordMeans?.test(folded) ? 3 : 0) + (aboutSubject?.test(folded) ? 1 : 0)
-      + (peopleAsk && POPULATION_NOUN.test(folded) ? 2 : 0) + (opensWithSubject?.test(folded) ? 2 : 0) + (makerAsk && MAKER_STATEMENT.test(folded) ? 2 : 0) + (reasonAsk && reasonAnswers(question, line) ? 3 : 0), at, year, glued, lead });
+      + (peopleAsk && POPULATION_NOUN.test(folded) ? 2 : 0) + (opensWithSubject?.test(folded) ? 2 : 0) + (makerAsk && MAKER_STATEMENT.test(folded) ? 2 : 0) + (reasonAsk && reasonAnswers(question, line) ? 3 : 0), at, year, glued, lead, inferredRange: Boolean(eventDate?.inferredRange || eventDate?.historicalOrigin) });
   }
   // «كم تستغرق …» is answered by a number: sentences without one only look related.
   if (numberAnswer && !scored.some(item => hasAnswerNumber(item.line))) return [];
+  // A direct event statement comes before an inferred endpoint of the subject's date range.
   // Among equals the newest year wins («إحصاء 2024» over «إحصاء 2014»), except for a date: there it is the page order.
-  const best = scored.sort((a, b) => b.score - a.score || (numberAnswer && kind !== 'date' ? b.year - a.year : 0) || a.at - b.at).slice(0, limit);
+  const best = scored.sort((a, b) => Number(a.inferredRange) - Number(b.inferredRange) || b.score - a.score || (numberAnswer && kind !== 'date' ? b.year - a.year : 0) || a.at - b.at).slice(0, limit);
   return (bestFirst ? best : best.sort((a, b) => a.at - b.at)).map(item => item.lead ? item.line : wholeWords(item.line, 300));
 }
 
@@ -1609,6 +1619,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         if (searched) plan.results = searched;
         const tried = new Set<string>();
         const extracted = new Map<string, NonNullable<HandsPlan['found']>>();
+        const dateQuestion = parseEventDateQuestion(step.query);
         const readResults = async (results: SearchResult[], candidates = results) => {
           // A question wants its answer, not a list: read the top results until one page answers in its own words.
           // A page the judge already refused for this question is neither read again nor offered again (plan.rejected, set by the
@@ -1683,7 +1694,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             const reasonWords = topicWords(reasonSubject(step.query));
             const entity = reasonWords.length ? [] : entityWords(step.query);
             const byOwnName = ownUrls.has(withoutHash(opened.url));
-            if (WANTS_NUMBER.test(step.query) && !isLiveWebQuestion(step.query) && !byOwnName && !aboutSubject(opened.title, topic, entity)) continue;
+            if (!dateQuestion && WANTS_NUMBER.test(step.query) && !isLiveWebQuestion(step.query) && !byOwnName && !aboutSubject(opened.title, topic, entity)) continue;
             // An aspect («فوائد الشاي الأخضر») is read only from a page about its subject, not from one that mentions it.
             // A reason («لماذا السماء زرقاء؟») is read the same way, from a page about the thing asked about.
             const aspect = reasonWords.length ? reasonWords : entity.length ? [] : aspectSubject(step.query);
@@ -1699,7 +1710,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             const ranked = relevantLines(opened, step.query, people || reasonWords.length ? 6 : 3, true);
             // A reason is quoted only from a sentence that states the cause of what was asked (reasonAnswers), not from any sentence with a causal word in it.
             const reasoned = isReasonQuestion(step.query);
-            const passing = ranked.flatMap((line, at) => checkAnswerLine(step.query, line).ok && namesEntity(line, entity, ownPage(opened, entity)) && (!reasoned || reasonAnswers(step.query, line)) ? [at] : []);
+            const passing = ranked.flatMap((line, at) => checkAnswerLine(step.query, line).ok && (dateQuestion || namesEntity(line, entity, ownPage(opened, entity))) && (!reasoned || reasonAnswers(step.query, line)) ? [at] : []);
             // A population is today's count or nothing. When the page states only a forecast («ستكون … 42 مليون نسمة في 2050»,
             // the answer to «كم عدد سكان أستراليا؟» in the 13:50 audit of 2026-11-22) or an old census, the next page is tried.
             const answerAt = people ? passing.find(at => !pastFigure(ranked[at]!) && !projectedFigure(ranked[at]!)) ?? -1 : passing[0] ?? -1;
@@ -1710,10 +1721,10 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
             // runs of 2026-11-22 and the live judge log: it rejects 4, all wrong pages (that film three times, «CrossCountry» for a
             // train ticket), and none of the right ones («طوكيو» for «ما عاصمة اليابان» carries both of its words). The title is
             // the page's own or the search's for it: some sites give every page a generic title.
-            if (lines.length && topic.length >= 2 && titleScore(opened.title, topic) === 0 && titleScore(item.title, topic) === 0
+            if (!dateQuestion && lines.length && topic.length >= 2 && titleScore(opened.title, topic) === 0 && titleScore(item.title, topic) === 0
               && topicCoverage(lines[0]!, topic) < Math.max(2, topic.length - 1)) continue;
             if (lines.length) {
-              if (extract && passage && lines[0] !== passage.quote) lines.unshift(extract);
+              if (!dateQuestion && extract && passage && lines[0] !== passage.quote) lines.unshift(extract);
               plan.found = { url: opened.url, title: tidy(opened.title) || hostOf(opened.url), lines, readAt: opened.observedAt };
               // A figure is shown with a second page's figure when another fitting page was already read (plan §7.4): the
               // reply says whether the two agree, and shows both when they differ. No extra fetch: the pages came together.
