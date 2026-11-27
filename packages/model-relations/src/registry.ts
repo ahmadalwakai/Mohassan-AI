@@ -20,6 +20,34 @@ export interface ModelArtifact {
   readonly pin?: { readonly reference: string; readonly keys: readonly string[] };
 }
 
+type MeasurementLanguage = 'ar' | 'en';
+type MeasurementText = Readonly<Record<MeasurementLanguage, string>>;
+
+interface MeasurementCount {
+  readonly language: MeasurementLanguage;
+  readonly numerator: number;
+  readonly denominator: number;
+}
+
+interface ReportedF1Score {
+  readonly language: MeasurementLanguage;
+  readonly score: number;
+}
+
+type ModelMeasurement = {
+  readonly metric: MeasurementText;
+  readonly split: MeasurementText;
+  readonly source: { readonly path: string; readonly section: string };
+} & ({
+  readonly kind: 'counts';
+  readonly results: readonly [MeasurementCount, ...MeasurementCount[]];
+  /** A separate quality gate documented by the same source as these counts. */
+  readonly gateFailure?: MeasurementText;
+} | {
+  readonly kind: 'reported-f1';
+  readonly results: readonly [ReportedF1Score, ...ReportedF1Score[]];
+});
+
 export interface ModelEntry {
   readonly id: string;
   readonly version: string;
@@ -33,6 +61,8 @@ export interface ModelEntry {
   /** Upstream application state when artifact files are present. The manager still applies its own mode. */
   readonly state: Exclude<ModelState, 'absent'>;
   readonly gates: readonly { readonly name: string; readonly receipt: string }[];
+  /** A measurement with committed per-language evidence, if available. */
+  readonly measurement: ModelMeasurement | 'not measured';
   readonly dataCard: string;
   readonly license: string;
   readonly dependencies: readonly { readonly id: string; readonly version: string }[];
@@ -88,9 +118,12 @@ const executionReport = 'docs/EXECUTION-MODEL-REPORT-2026-11-12.md';
 const imageReport = 'docs/IMAGE-READING-2026-11-22.md';
 const responseReport = 'docs/RESPONSE-QUALITY-RESULTS-2026-11-22.md';
 const developmentPlan = 'docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md';
+const v5OwnerReport = 'docs/V5-OWNER-CHAT-2026-11-26.md';
+const v5GateFailure: MeasurementText = { ar: 'لم يجتز Gate 3 (القاعدتان A وB)', en: 'Failed Gate 3 (rules A and B)' };
 const contextExperiment = 'scripts/router/CONTEXT-EXPERIMENT.md';
 const slotDir = 'artifacts/brain-slot-development-v1/typescript-export-v1-20261121-b';
 const datePlaceDir = 'artifacts/brain-slot-date-place-typescript-v1/typescript-export-v1-20261121-a';
+const notMeasured = 'not measured';
 
 function scratch(id: string, file: string, task: string, sha256: string, gates: ModelEntry['gates'] = []): ModelEntry {
   return {
@@ -98,7 +131,7 @@ function scratch(id: string, file: string, task: string, sha256: string, gates: 
     artifacts: [scratchManifest, artifact('weights', `${scratchDir}/${file}.json`, sha256)],
     runtime: 'node-cpu', input: '{ text: string; previousText?: string; topK?: number }',
     output: '{ label?: string; abstained: boolean; topK: { label: string; score: number }[] }',
-    resources: cpu(8, 20), state: 'shadow', activationFlag: 'MOHASSAN_SCRATCH_CLASSIFIERS', gates,
+    resources: cpu(8, 20), state: 'shadow', activationFlag: 'MOHASSAN_SCRATCH_CLASSIFIERS', gates, measurement: notMeasured,
     dataCard: scratchCard, license: internal, dependencies: [],
   };
 }
@@ -113,7 +146,7 @@ function head(id: string, workerHead: string, task: string, operation: 'classify
       { ...artifact('adapted-checkpoint', `${dir}/sidecar/adapted-trunk.pt`), optional: true }],
     runtime: 'python-worker', input: `${operation === 'select' ? selectionInput : tokenIds} or ${headsTextInput}`,
     output: operation === 'select' ? selectionOutput : classifyOutput,
-    resources: worker(2000), state: 'experimental', gates: [],
+    resources: worker(2000), state: 'experimental', gates: [], measurement: notMeasured,
     dataCard: 'packages/head-training/DATASETS.md', license: internal, dependencies: [v5Dependency],
   };
 }
@@ -125,7 +158,7 @@ function execution(id: string, version: string, directory: string, configured = 
     artifacts: [['manifest', 'manifest.json'], ['config', 'config.json'], ['tokenizer', 'tokenizer.json'], ['weights', 'weights.pt']]
       .map(([role, name]) => ({ ...artifact(role, `${dir}/${name}`), ...(configured ? { env: 'EXECUTOR_CHECKPOINT' } : {}) })),
     runtime: 'python-worker', input: generateInput, output: generateOutput,
-    resources: worker(60_000), state: 'experimental', gates: [],
+    resources: worker(60_000), state: 'experimental', gates: [], measurement: notMeasured,
     dataCard: executionReport, license: internal, dependencies: [],
   };
 }
@@ -142,6 +175,7 @@ function router(version: 'b0' | 'b2'): ModelEntry {
     runtime: 'node-cpu', input: text, output: '{ route: string; confidence: number }',
     resources: cpu(160, 40), state: b0 ? 'shadow' : 'experimental',
     gates: b0 ? [gate('Historical R2 and R3; sealed repeat caveat in receipt', `${routerPlan}#8-first-measured-results-2026-11-20`)] : [],
+    measurement: notMeasured,
     dataCard: routerPlan, license: internal, dependencies: [],
   };
 }
@@ -156,6 +190,7 @@ function contextRouter(name: 'text_only' | 'context'): ModelEntry {
     runtime: 'python-worker', input: name === 'context' ? '{ text: string; history: string[]; pendingReply: boolean }' : text,
     output: '{ route: string; confidence: number; abstained: boolean }', resources: cpu(256, 100),
     state: 'experimental', gates: [gate('Python to NumPy export parity', `${contextExperiment}#artifacts-and-independent-checks`)],
+    measurement: notMeasured,
     dataCard: contextExperiment, license: internal, dependencies: [],
   };
 }
@@ -172,13 +207,15 @@ function ocr(id: string, version: string, dir: string, trainingRun: string, conf
     runtime: 'node-cpu', input: '{ path: string } for a local PNG, JPEG or WebP file', output: 'ImageReading from packages/vision/src/index.ts',
     resources: cpu(256, 15_000), state: configured ? 'active' : 'experimental',
     gates: configured ? [gate('Image reader export parity and measured page checks', imageReport)] : [],
+    measurement: notMeasured,
     dataCard: 'scripts/vision/README.md', license: internal, dependencies: [],
   };
 }
 
 function historical(entry: Pick<ModelEntry, 'id' | 'version' | 'task' | 'owner' | 'artifacts' | 'input' | 'output' | 'dataCard'>
-    & Partial<Pick<ModelEntry, 'dependencies' | 'runtime' | 'resources' | 'gates' | 'workerHead'>>): ModelEntry {
-  return { runtime: 'python-worker', resources: worker(2000), state: 'experimental', gates: [], dependencies: [], license: internal, ...entry };
+    & Partial<Pick<ModelEntry, 'dependencies' | 'runtime' | 'resources' | 'gates' | 'workerHead' | 'measurement'>>): ModelEntry {
+  return { runtime: 'python-worker', resources: worker(2000), state: 'experimental', gates: [], measurement: notMeasured,
+    dependencies: [], license: internal, ...entry };
 }
 
 export const modelRegistry: readonly ModelEntry[] = [
@@ -193,7 +230,20 @@ export const modelRegistry: readonly ModelEntry[] = [
     ],
     runtime: 'python-worker', input: `${generateInput} or the equivalent with text instead of inputIds`,
     output: generateOutput,
-    resources: worker(30_000), state: 'experimental', gates: [],
+    resources: worker(30_000), state: 'experimental',
+    gates: [gate(v5GateFailure.ar, `${v5OwnerReport}#v5-owner-chat-experiment`)],
+    // Retrieved 2026-11-27 from https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/docs/V5-OWNER-CHAT-2026-11-26.md#v5-owner-chat-experiment
+    measurement: {
+      kind: 'counts',
+      gateFailure: v5GateFailure,
+      metric: { ar: 'توقف عند EOS', en: 'Stopped at EOS' },
+      split: { ar: 'اختبارات v5 التجريبية الثابتة', en: 'Frozen experimental v5 probes' },
+      results: [
+        { language: 'ar', numerator: 49, denominator: 60 },
+        { language: 'en', numerator: 47, denominator: 60 },
+      ],
+      source: { path: v5OwnerReport, section: 'v5 owner chat experiment' },
+    },
     dataCard: 'docs/CHAT-MODEL-TRAINING-PLAN.md', license: internal, dependencies: [],
   },
   head('head-clinc-intent', 'clinc-intent', 'CLINC150 intent classification', 'classify'),
@@ -231,7 +281,7 @@ export const modelRegistry: readonly ModelEntry[] = [
       { ...artifact('promotion', '.data/monitor-decision/promotion.json'), optional: true }],
     runtime: 'node-cpu', input: '{ frameFeatures: Record<string, number>; textFeatureIds: number[] }',
     output: '{ label: string | null; score: number }', resources: cpu(8, 20), state: 'shadow',
-    gates: [], dataCard: 'docs/MONITOR-CONTEXT-DECISION-MODEL.md', license: internal, dependencies: [],
+    gates: [], measurement: notMeasured, dataCard: 'docs/MONITOR-CONTEXT-DECISION-MODEL.md', license: internal, dependencies: [],
   },
   {
     id: 'refusal', version: 'v1-exclusion-20261125', task: 'Flag unsafe and out-of-scope text', owner: `${assistantModule}refusal/learned-classifier.ts`,
@@ -239,6 +289,7 @@ export const modelRegistry: readonly ModelEntry[] = [
     runtime: 'node-cpu', input: text, output: '{ label: "allow" | "out_of_scope" | "unsafe"; confidence: number; abstained: boolean }',
     resources: cpu(8, 120), state: 'experimental', activationFlag: 'MOHASSAN_REFUSAL_POLICY',
     gates: [gate('Accepted calibrated precision thresholds', 'scripts/refusal-classifier/README.md')],
+    measurement: notMeasured,
     dataCard: 'scripts/refusal-classifier/README.md', license: internal, dependencies: [],
   },
   {
@@ -247,7 +298,7 @@ export const modelRegistry: readonly ModelEntry[] = [
     artifacts: [artifact('weights', `${assistantModule}arithmetic-search-model.json`, 'fef323bb9e24b1aa4fa96c51ac585721c836ea4afe4b882c7ad322f3eccd0ebf')],
     runtime: 'node-cpu', input: text, output: 'Accepted expression and exact value, or null when the ranker abstains',
     resources: cpu(256, 1500), state: 'experimental', activationFlag: 'MOHASSAN_ARITHMETIC_SEARCH',
-    gates: [], dataCard: 'docs/WORD-PROBLEM-SOLVER-DATA.md', license: internal, dependencies: [],
+    gates: [], measurement: notMeasured, dataCard: 'docs/WORD-PROBLEM-SOLVER-DATA.md', license: internal, dependencies: [],
   },
   ocr('ocr', 'ocr-v1-real2', 'artifacts/vision/ocr-v1', 'artifacts/vision-real-v1/run-2', true),
   ocr('ocr-base', 'ocr-v1', 'artifacts/vision/ocr-v1-base', 'artifacts/vision-ocr-v1/run-1'),
@@ -259,7 +310,7 @@ export const modelRegistry: readonly ModelEntry[] = [
       { ...artifact('checkpoint', '.data/model-worker.json#model.checkpoint.path'), workerConfigField: 'checkpoint' },
       { ...artifact('tokenizer', '.data/model-worker.json#model.tokenizer.path'), workerConfigField: 'tokenizer', optional: true }],
     runtime: 'python-worker', input: text, output: 'GoalTagger span scores and decoded structured fields',
-    resources: worker(15_000), state: 'experimental', gates: [],
+    resources: worker(15_000), state: 'experimental', gates: [], measurement: notMeasured,
     dataCard: 'docs/ADS-GOAL-LABELING-GUIDE.md', license: internal, dependencies: [],
   },
   {
@@ -272,7 +323,7 @@ export const modelRegistry: readonly ModelEntry[] = [
       { ...artifact('tokenizer-report', `${adsDir}/tokenizer-report.json`), env: 'ADS_MODEL_RUN', optional: true },
     ],
     runtime: 'python-worker', input: `${generateInput} or the equivalent with text instead of inputIds`, output: generateOutput,
-    resources: worker(90_000), state: 'experimental', gates: [],
+    resources: worker(90_000), state: 'experimental', gates: [], measurement: notMeasured,
     dataCard: 'docs/ADS-GOAL-LABELING-GUIDE.md', license: internal, dependencies: [],
   },
   {
@@ -283,6 +334,7 @@ export const modelRegistry: readonly ModelEntry[] = [
     runtime: 'node-cpu', input: text, output: 'SlotTaggerResult with literal source spans and confidences',
     resources: cpu(16, 100), state: 'experimental',
     gates: [gate('NumPy and TypeScript export parity', 'scripts/router/SLOT-TYPESCRIPT-BRIDGE.md')],
+    measurement: notMeasured,
     dataCard: 'scripts/router/SLOT-EXPERIMENT.md', license: internal, dependencies: [],
   },
   {
@@ -293,10 +345,22 @@ export const modelRegistry: readonly ModelEntry[] = [
     runtime: 'node-cpu', input: text, output: 'DatePlaceSlotResult with literal source spans and confidences',
     resources: cpu(16, 100), state: 'experimental',
     gates: [gate('Independent TypeScript parity and bundle audits', 'scripts/router/SLOT-DATE-PLACE-TS-BRIDGE.md#parity-evidence-and-limits')],
+    measurement: notMeasured,
     dataCard: 'scripts/router/SLOT-DATE-PLACE-EXPERIMENT.md', license: internal, dependencies: [],
   },
   historical({ id: 'chat-v4', version: 'v4-stage-3-full', task: 'Historical 38M chat foundation', workerHead: 'lm',
     owner: 'packages/execution-pipeline/scripts/train_full_foundation.py', input: rawGenerateInput, output: generateOutput,
+    // Retrieved 2026-11-27 from https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md#12-النماذج-الخاصة
+    measurement: {
+      kind: 'counts',
+      metric: { ar: 'اجتياز الاستمرار الدلالي', en: 'Semantic continuation passes' },
+      split: { ar: 'اختبار Gate 3', en: 'Gate 3 evaluation' },
+      results: [
+        { language: 'ar', numerator: 0, denominator: 20 },
+        { language: 'en', numerator: 0, denominator: 20 },
+      ],
+      source: { path: developmentPlan, section: '1.2 النماذج الخاصة' },
+    },
     artifacts: [artifact('checkpoint', `${v4Dir}/selected/best.pt`, '887bb54c58bf93cea2ad04e79b68379d66dd5e40556a0f6d980c4ad6f83ec9fd'),
       artifact('tokenizer', `${v4Dir}/tokenizer.json`), artifact('tokenizer-report', `${v4Dir}/tokenizer-report.json`)], dataCard: 'docs/CHAT-MODEL-TRAINING-PLAN.md' }),
   // The reading fine-tunes continue a plain prompt: passage, «Question: …» and «Answer:» (scripts/context-use/run_context_test.py).
@@ -305,6 +369,15 @@ export const modelRegistry: readonly ModelEntry[] = [
     artifacts: [artifact('checkpoint', `${v4Dir}/${id}/best.pt`),
       artifact('tokenizer', `${v4Dir}/tokenizer.json`), artifact('tokenizer-report', `${v4Dir}/tokenizer-report.json`)],
     input: rawGenerateInput, output: 'Generated answer or abstention text',
+    // The section records F1 scores without sample counts. Retrieved 2026-11-27.
+    // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md#L55
+    measurement: id === 'reading-v3-last' ? {
+      kind: 'reported-f1',
+      metric: { ar: 'F1', en: 'F1' },
+      split: { ar: 'مجموعة XQuAD الجديدة', en: 'Fresh XQuAD split' },
+      results: [{ language: 'ar', score: 18.0 }, { language: 'en', score: 26.4 }],
+      source: { path: developmentPlan, section: '1.2 النماذج الخاصة' },
+    } : notMeasured,
     dataCard: responseReport, dependencies: [v4Dependency] })),
   historical({ id: 'reading-abstain-verifier', version: 'v1-20261120',
     task: 'Determine if an experimental reading model should abstain', owner: 'scripts/context-use/abstain_verifier.py',
@@ -339,6 +412,27 @@ export const modelRegistry: readonly ModelEntry[] = [
 
 export function getModelEntry(id: string): ModelEntry | undefined {
   return modelRegistry.find(entry => entry.id === id);
+}
+
+const measurementLanguages: Record<MeasurementLanguage, MeasurementText> = {
+  ar: { ar: 'العربية', en: 'Arabic' },
+  en: { ar: 'الإنجليزية', en: 'English' },
+};
+
+export function modelMeasurementLabel(id: string, locale: MeasurementLanguage = 'ar'): string {
+  const measurement = getModelEntry(id)?.measurement ?? notMeasured;
+  if (measurement === notMeasured) {
+    return locale === 'ar' ? 'لا قياس موثّق ببسط ومقام لكل لغة' : 'No measurement with documented per-language counts';
+  }
+  const scores = measurement.kind === 'counts'
+    ? measurement.results.map(({ language, numerator, denominator }) => `${measurementLanguages[language][locale]} ${numerator}/${denominator}`)
+    : measurement.results.map(({ language, score }) => `${measurementLanguages[language][locale]} ${score.toFixed(1)}`);
+  const result = [measurement.metric[locale], measurement.split[locale], ...scores].join(' · ');
+  const source = `${measurement.source.path} § ${measurement.source.section}`;
+  if (measurement.kind === 'counts' && measurement.gateFailure) {
+    return `${measurement.gateFailure[locale]} · ${source} · ${result}`;
+  }
+  return `${result} · ${source}`;
 }
 
 function relativeArtifactPath(root: string, item: ModelArtifact, env: NodeJS.ProcessEnv): string {

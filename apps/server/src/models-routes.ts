@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ModelListSchema, ModelRunRequestSchema, ModelRunResponseSchema, type ModelInfo, type ModelInputKind, type ModelRunResponse, type ModelUse } from '@mohassan/contracts';
-import { modelRegistry, resolveModelInRoots, type ModelEntry } from '../../../packages/model-relations/src/registry.js';
+import { modelMeasurementLabel, modelRegistry, resolveModelInRoots, type ModelEntry } from '../../../packages/model-relations/src/registry.js';
 import type { ModelRunResult } from '../../../packages/model-relations/src/runtime.js';
 import { readerPrompt } from './assistant/model-council.js';
 
@@ -19,13 +19,6 @@ const READING = new Set(['reading-v3-last', 'reading-v4-hn-last']);
 /** Asked by the council: the organizer's stage models (understanding) and the council's answering models. */
 const COUNCIL = new Set(['chat-v5', 'chat-v4', 'reading-v3-last', 'arithmetic', 'refusal', 'scratch-refusal', 'scratch-speech-act',
   'scratch-route', 'scratch-follow-up', 'router-b0', 'router-b2', 'question-edit', 'head-sufficiency', 'head-answer-sentence']);
-const MEASURED: Record<string, string> = {
-  'chat-v5': 'لم يجتز Gate 3 (0 من 20 بكل لغة)',
-  'chat-v4': 'لم يجتز اختبار الاستمرار الدلالي',
-  'reading-v3-last': 'F1 ‏18٪ بالعربية و26٪ بالإنجليزية على XQuAD',
-  ocr: 'صفحات مواقع لم يرها: 0.940 و0.802',
-  'router-b0': '72.1٪ مقابل 45.9٪ للقواعد على المجموعة المختومة',
-};
 const MAX_OUTPUT = 20_000;
 
 export interface ModelsRoutesOptions {
@@ -83,7 +76,7 @@ export async function listModels(options: Pick<ModelsRoutesOptions, 'roots' | 'i
       id: entry.id, version: entry.version, task: entry.task.slice(0, 240), runtime: entry.runtime, present, input,
       ...(unavailable ? { unavailable } : !present ? { unavailable: 'ملفاته غير موجودة على هذا الخادم (لم يُدرَّب أو لم يُرفع).' } : {}),
       gates: entry.gates.map(gate => gate.name.slice(0, 240)).slice(0, 8),
-      ...(MEASURED[entry.id] ? { measured: MEASURED[entry.id] } : {}),
+      measured: modelMeasurementLabel(entry.id),
       uses,
     } satisfies ModelInfo;
   }));

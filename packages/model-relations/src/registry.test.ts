@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { getModelEntry, modelRegistry, resolveModel } from './registry.js';
+import { getModelEntry, modelMeasurementLabel, modelRegistry, resolveModel } from './registry.js';
 
 const checkout = fileURLToPath(new URL('../../../', import.meta.url));
 const sha = (bytes: string) => createHash('sha256').update(bytes).digest('hex');
@@ -35,6 +35,44 @@ describe('model registry', () => {
       const model = await resolveModel(entry, checkout, {});
       expect(model.state).toBe(entry.state);
       expect(model.artifacts.every(item => item.present && item.matchesPin && item.sha256 === item.expectedSha256)).toBe(true);
+    }
+  });
+
+  it('records per-language counts, reported F1, or explicit unmeasured status', async () => {
+    for (const entry of modelRegistry) {
+      const { measurement } = entry;
+      const englishLabel = modelMeasurementLabel(entry.id, 'en');
+      if (measurement === 'not measured') {
+        expect(englishLabel).toBe('No measurement with documented per-language counts');
+        continue;
+      }
+
+      const { results, source, metric, split } = measurement;
+      expect(results.length).toBeGreaterThan(0);
+      expect(new Set(results.map(result => result.language)).size).toBe(results.length);
+      expect(englishLabel).toContain(metric.en);
+      expect(englishLabel).toContain(split.en);
+      const contents = await readFile(join(checkout, source.path), 'utf8');
+      const headings = Array.from(contents.matchAll(/^#{1,6} (.+)$/gmu), match => match[1].trim());
+      expect(headings).toContain(source.section);
+      expect(englishLabel).toContain(source.path);
+      expect(englishLabel).toContain(source.section);
+
+      for (const result of results) {
+        expect(['ar', 'en']).toContain(result.language);
+        if ('score' in result) {
+          expect(metric.en).toBe('F1');
+          expect(Number.isFinite(result.score)).toBe(true);
+          expect(englishLabel).toContain(result.score.toFixed(1));
+          continue;
+        }
+        expect(Number.isSafeInteger(result.denominator)).toBe(true);
+        expect(result.denominator).toBeGreaterThan(0);
+        expect(Number.isFinite(result.numerator)).toBe(true);
+        expect(result.numerator).toBeGreaterThanOrEqual(0);
+        expect(result.numerator).toBeLessThanOrEqual(result.denominator);
+        expect(englishLabel).toContain(`${result.numerator}/${result.denominator}`);
+      }
     }
   });
 
