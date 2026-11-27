@@ -53,7 +53,7 @@ export function planReferences(text: string, tool: PlanTool, previous: PlanStep[
   }
   // Preserve the calculator's existing Arabic clitic and preposition handling.
   const masked = clauseMatchingText(text);
-  const existing = tool === 'compute' ? computationReference(masked) : null;
+  const existing = tool === 'compute' ? computationReference(masked, latest.tool === 'compute') : null;
   const view = matchingView(masked);
   const references: PlanReference[] = [];
   for (const found of view.text.matchAll(REFERENCE)) {
@@ -113,7 +113,7 @@ export function resolveStepInputs(step: PlanStep, values: ReadonlyMap<string, Pl
     const { start, end } = reference;
     if (start === undefined || end === undefined) continue;
     if (step.tool === 'compute' && value.type === 'number') {
-      const original = computationReference(clauseMatchingText(step.inputs.text));
+      const original = computationReference(clauseMatchingText(step.inputs.text), start === end);
       const operand = String(value.value);
       const prefix = ARABIC_CLITIC_VERB.exec(matchText(step.inputs.text.slice(start, end)))?.[1];
       const replacement = original && original.start === start && original.end === end

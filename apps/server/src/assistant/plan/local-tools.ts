@@ -58,7 +58,7 @@ function runSourceComputation(operation: SourceComputation, source: Extract<Plan
     if (!shown || !Number.isFinite(Number(shown))) return { ok: false, reason: 'invalid_result' };
     return { ok: true, value: { type: 'number', value: Number(shown), unit: operation.unit }, text: conversion.text, evidence };
   }
-  const value = Number(computed);
+  const value = calculation.arithmeticValue ?? Number(computed);
   if (!Number.isFinite(value)) return { ok: false, reason: 'invalid_result' };
   return { ok: true, value: { type: 'number', value, ...(source.unit ? { unit: source.unit } : {}) },
     text: [calculation.text, source.unit].filter(Boolean).join(' '), evidence };
@@ -81,7 +81,7 @@ export function runPlanComputation(step: PlanStep, inputs: ResolvedStepInputs, n
   const shown = calculation.evidence.find(item => item.id === 'calculation')?.value;
   if (step.output === 'text') return { ok: true, value: { type: 'text', value: calculation.text }, evidence: { kind: 'computation', label: 'Local calculation' } };
   const number = shown && NUMBER.exec(shown);
-  const value = number ? Number(number[1]) : NaN;
+  const value = calculation.arithmeticValue ?? (number ? Number(number[1]) : NaN);
   if (!number || !Number.isFinite(value)) return { ok: false, reason: 'invalid_result' };
   const unit = budget?.unit ?? number[2]?.trim();
   const result: PlanValue = { type: 'number', value, ...(unit ? { unit } : {}) };

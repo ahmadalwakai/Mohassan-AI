@@ -119,7 +119,7 @@ function bodyForRoute(text: string, tool: PlanTool, references: PlanReference[],
     if (start === undefined || end === undefined) continue;
     const source = steps.find(step => step.id === reference.stepId);
     const placeholder = reference.kind === 'number' || source?.output === 'number' ? '37' : 'London';
-    candidate = candidate.slice(0, start) + placeholder + candidate.slice(end);
+    candidate = candidate.slice(0, start) + (start === end ? `${placeholder} ` : placeholder) + candidate.slice(end);
   }
   return candidate;
 }

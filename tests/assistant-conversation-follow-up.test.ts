@@ -85,14 +85,27 @@ describe('a conversation that goes on, through the real chat controller', () => 
   const queries: string[] = [];
   const reads: string[] = [];
   const wiki = (title: string) => `https://ar.wikipedia.org/wiki/${encodeURIComponent(title.replaceAll(' ', '_'))}`;
+  // Mock pages from PR #13, retrieved 2026-11-27.
+  // https://github.com/ahmadalwakai/Mohassan-AI/pull/13/files
+  const founderClaim = 'تجدر الإشارة أن بيل غيتس وبول ألين هما المؤسسان والملاك لهذه الشركة قبل أن تصبح من الشركات العامة.';
+  const foundingClaim = 'تأسست شركة مايكروسوفت العملاقة من قبل بيل غيتس وبول ألين في 4 أبريل 1975 لتطوير برمجيات الحاسوب.';
+  const birthClaim = 'وُلد بيل غيتس في 28 أكتوبر 1955 في سياتل بولاية واشنطن.';
   const pages: Record<string, { title: string; text: string }> = {
     [wiki('ألبرت أينشتاين')]: { title: 'ألبرت أينشتاين - ويكيبيديا', text: 'ألبرت أينشتاين (14 مارس 1879 – 18 أبريل 1955) عالم فيزياء نظرية ألماني المولد اشتهر بنظرية النسبية.\nولد ألبرت أينشتاين في مدينة أولم الألمانية لعائلة يهودية.\nتوفي ألبرت أينشتاين في برينستون في 18 أبريل 1955.\n' },
     // His father's page names him too: searched as «أينشتاين» alone, the live search put it first (long-final turn 11).
     [wiki('هرمان أينشتاين')]: { title: 'هرمان أينشتاين - ويكيبيديا', text: 'هرمان أينشتاين (1847 – 1902) رائد أعمال ألماني ولد في باد بوخاو، وهو والد ألبرت أينشتاين.\n' },
     [wiki('نهر')]: { title: 'نهر - ويكيبيديا', text: 'النهر مجرى مائي عذب يجري على سطح الأرض.\nنهر النيل: أطول أنهار العالم.\nنهر الدانوب: أطول نهر في أوروبا طوله 2860 كم.\n' },
     [wiki('نهر النيل')]: { title: 'نهر النيل - ويكيبيديا', text: 'نهر النيل أطول أنهار العالم ويجري في شمال شرق أفريقيا.\nيبلغ طول نهر النيل نحو 6650 كم من منابعه إلى مصبه في البحر المتوسط.\n' },
+    [wiki('مايكروسوفت')]: { title: 'مايكروسوفت - ويكيبيديا', text: `${founderClaim}
+${foundingClaim}
+` },
+    [wiki('بيل غيتس')]: { title: 'بيل غيتس - ويكيبيديا', text: `${birthClaim}
+` },
   };
-  const hitsFor = (query: string): SearchHit[] => /البرت|ألبرت/u.test(query)
+  const hitsFor = (query: string): SearchHit[] => /بيل غيتس/u.test(query)
+    ? [{ title: 'بيل غيتس', url: wiki('بيل غيتس'), snippet: birthClaim }]
+    : /مايكروسوفت/u.test(query) ? [{ title: 'مايكروسوفت', url: wiki('مايكروسوفت'), snippet: founderClaim }]
+    : /البرت|ألبرت/u.test(query)
     ? [{ title: 'ألبرت أينشتاين', url: wiki('ألبرت أينشتاين'), snippet: 'عالم فيزياء' }]
     : /اينشتاين|أينشتاين/u.test(query)
     ? [{ title: 'هرمان أينشتاين', url: wiki('هرمان أينشتاين'), snippet: 'رائد أعمال' }, { title: 'ألبرت أينشتاين', url: wiki('ألبرت أينشتاين'), snippet: 'عالم فيزياء' }]
@@ -137,8 +150,35 @@ describe('a conversation that goes on, through the real chat controller', () => 
     expect(next.reply).toContain('1955');
   });
 
-  it('looks up the named river for «وكم طوله؟» rather than reading the generic list again', async () => {
-    vi.stubEnv('MOHASSAN_CONVERSATION_SHADOW', 'decide');
+  it('uses the first founder named in the previous answer for a biographical follow-up', async () => {
+    const first = await turn('من هو مؤسس شركة مايكروسوفت؟');
+    expect(first.reply).toContain('بيل غيتس');
+    expect(first.reply).toContain('بول ألين');
+    queries.length = 0;
+    const next = await turn('متى ولد؟', first.id);
+    expect(queries).toContain('متى ولد بيل غيتس');
+    expect(next.reply).toContain(birthClaim);
+  });
+
+  it.each(['كم عمره؟', 'كم عمرها؟'])('looks up the founder by name for %s', async (request) => {
+    const first = await turn('من هو مؤسس شركة مايكروسوفت؟');
+    expect(first.reply).toContain('بيل غيتس');
+    queries.length = 0;
+    await turn(request, first.id);
+    expect(queries).toContain('كم عمر بيل غيتس');
+  });
+
+  it('keeps the company as the subject of a founding-date follow-up', async () => {
+    const first = await turn('من هو مؤسس شركة مايكروسوفت؟');
+    expect(first.reply).toContain('بيل غيتس');
+    queries.length = 0;
+    const next = await turn('متى تأسست؟', first.id);
+    expect(queries).toContain('متى تأسست مايكروسوفت');
+    expect(next.reply).toContain(foundingClaim);
+  });
+
+  it.each(['off', 'decide'])('looks up the named river for «وكم طوله؟» with conversation shadow %s', async shadow => {
+    vi.stubEnv('MOHASSAN_CONVERSATION_SHADOW', shadow);
     const first = await turn('ما هو أطول نهر في العالم؟');
     expect(first.reply).toContain('نهر النيل');
     queries.length = 0;

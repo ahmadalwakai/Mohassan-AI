@@ -5,6 +5,7 @@ import { evaluateArithmeticExpression, type ArithmeticStep } from '../calculator
 import { parseNumberWords } from '../reasoning/number-words.js';
 import { arithmeticExpression } from './arithmetic-language.js';
 import { finishComputationConsumption, prepareComputationSource, type ComputationConsumption, type ComputationKind, type PreparedComputationSource } from './computation-consumption.js';
+import { WATER_TEMPERATURE_CUE, waterTemperatureQuestion } from './water-temperature.js';
 export type { ComputationConsumption } from './computation-consumption.js';
 
 type Failure = 'division' | 'range' | 'domain' | 'complexity' | 'expression' | 'units' | 'quantity' | 'date' | 'date_direction' | 'date_year' | 'timezone';
@@ -74,6 +75,7 @@ function arithmeticWork(reply: LocalReply, steps: readonly ArithmeticStep[], val
 }
 
 type Unit = { dim: string; factor: number; offset?: number; names: string; pluralNames?: string; abbreviations?: string };
+const CELSIUS = { dim: 'temperature', factor: 1, offset: 273.15, names: 'c|°c|celsius|centigrade|مئوي|مئوية|مئويه|سيليسيوس|سيلسيوس|سلسيوس' };
 // SI, IEC, common imperial units, and affine temperature scales.
 const UNITS: readonly Unit[] = [
   { dim: 'length', factor: 1, names: 'm|meter|metre|م|متر|امتار', pluralNames: 'امتار' },
@@ -90,7 +92,7 @@ const UNITS: readonly Unit[] = [
   { dim: 'mass', factor: 1e3, names: 't|tonne|metric ton|طن|اطنان', pluralNames: 'اطنان' },
   { dim: 'mass', factor: 0.45359237, names: 'lb|pound|رطل|ارطال', pluralNames: 'ارطال' },
   { dim: 'mass', factor: 0.45359237 / 16, names: 'oz|ounce|اونصة|اونصه' },
-  { dim: 'temperature', factor: 1, offset: 273.15, names: 'c|°c|celsius|centigrade|مئوي|مئوية|مئويه|سيليسيوس|سيلسيوس|سلسيوس' },
+  CELSIUS,
   { dim: 'temperature', factor: 5 / 9, offset: 273.15 - 32 * 5 / 9, names: 'f|°f|fahrenheit|فهرنهايت' },
   { dim: 'temperature', factor: 1, names: 'k|kelvin|كلفن|كيلفن' },
   { dim: 'area', factor: 1, names: 'm2|m^2|square metre|square meter|sq m|متر مربع|م2' },
@@ -129,7 +131,7 @@ const UNITS: readonly Unit[] = [
 function unit(raw: string) {
   const label = raw.trim().replace(/^(?:degrees?\s+|درج(?:ة|ه|ات)\s+)/iu, '');
   if (!label) return undefined;
-  const words = label.toLowerCase().replace(/\s+/gu, ' ');
+  const words = label.toLowerCase().replace(/\s+/gu, ' ').replace(/^°\s+/u, '°');
   const singular = words.replace(/\b([a-z]{2,})s\b/gu, '$1');
   const arabicUninflected = words.replace(/^ال(?=\p{Script=Arabic})/u, '').replace(/(?<=\p{Script=Arabic})ا(?=\s|$)/gu, '');
   return UNITS.find(item => {
@@ -213,6 +215,7 @@ const CONVERSION_QUESTIONS = [
   String.raw`how many (?<target>.+?) (?:(?:are there |are )?in|per|are|is) (?<origin>.+)`,
   String.raw`(?:what is|what['’]s|how much is) (?<origin>.+?) (?:in|as|expressed in) (?<target>.+)`,
   String.raw`${HOW_MANY_UNITS} (?<target>.+?) (?:في|داخل|بداخل|ب *)\s*(?<origin>.+)`,
+  String.raw`${HOW_MANY_UNITS} (?:يساوي|تساوي|يعادل|تعادل) (?<origin>${NUMBER}\s*.+?)\s+ب\s*(?<target>.+)`,
   String.raw`(?:(?:اذا|لو) +)?(?:(?:عند(?:ي|نا|ك|كم)|عد(?:نا|كم)|لدينا|مع(?:ي|نا|ايا)) +)?(?<origin>.+?)[,،. ]+(?:(?:هذا|هذه|هذي|هاي|دي|ده|هي|هو) +)?${HOW_MANY_UNITS}(?: +(?:يساوي|تساوي|يعادل|تعادل|يطلع|بتطلع|بيطلع))? +(?:ب *|في +)(?<target>.+)`,
   String.raw`(?:convert|conversion|حول|تحويل)[\s:،]+(?<origin>.+?)(?:\s+(?:to|into|in|الي)\s+|\s+ل\s*|\s*(?:→|⇒|->)\s*)(?<target>.+)`,
 ].map(pattern => new RegExp(`^${pattern}$`, 'diu'));
@@ -303,11 +306,19 @@ function conversionWithCoverage(source: PreparedComputationSource) {
   return raisedQuantity ? null : question;
 }
 
+function readWaterTemperature(source: PreparedComputationSource) {
+  const question = waterTemperatureQuestion(source.input);
+  if (!question) return null;
+  const target = unit(question.label);
+  return target?.dim === 'temperature' ? { ...question, target } : null;
+}
+
 /** Frame classification uses the same whole-request grammar as evaluation. */
 export function isUnitConversionQuestion(request: string): boolean {
-  if (!CONVERSION_QUESTION_CUE.test(request.replace(/[أإآٱ]/gu, 'ا'))) return false;
+  if (!CONVERSION_QUESTION_CUE.test(request.replace(/[أإآٱ]/gu, 'ا')) && !WATER_TEMPERATURE_CUE.test(request)) return false;
   const source = prepareComputationSource(request, SHORT_ANSWER_TAIL);
-  return source.valid && !source.literal && !/[\u2080-\u209f]/u.test(source.original) && Boolean(conversionWithCoverage(source));
+  return source.valid && !source.literal && !/[\u2080-\u209f]/u.test(source.original)
+    && Boolean(conversionWithCoverage(source) ?? readWaterTemperature(source));
 }
 
 function conversionAmount(source: PreparedComputationSource, term: UnitTerm): Quantity | null {
@@ -578,7 +589,9 @@ function inspectPreparedComputation(source: PreparedComputationSource): Computat
     if (match) return raised ? finishComputationConsumption(source, 'unsupported') : finishComputationConsumption(source, kind, { start: 0, end: match[0].length });
   }
   if (arithmeticExpression(source.input) !== null) return raised ? finishComputationConsumption(source, 'unsupported') : finishComputationConsumption(source, 'arithmetic', { start: 0, end: source.input.length });
-  if (conversionWithCoverage(source)) return finishComputationConsumption(source, 'conversion', { start: 0, end: source.input.length });
+  if (conversionWithCoverage(source) || readWaterTemperature(source)) {
+    return finishComputationConsumption(source, 'conversion', { start: 0, end: source.input.length });
+  }
   const intro = CONVERSION_INTRO.exec(source.input);
   const offset = intro?.[0].length ?? 0;
   const phrase = CONVERSION.exec(source.input.slice(offset));
@@ -624,7 +637,11 @@ export function isCalendarCalculationRequest(original: string): boolean {
     && DATE_ENVELOPES.some(([, pattern]) => pattern.exec(source.input)?.[0] === source.input);
 }
 
-export interface ComputedReply extends LocalReply { consumption: ComputationConsumption }
+export interface ComputedReply extends LocalReply {
+  consumption: ComputationConsumption;
+  /** Dependent arithmetic uses the value before display rounding. */
+  arithmeticValue?: number;
+}
 
 export function compute(frame: Frame, now: Date, options: { originalText?: string } = {}): ComputedReply | null {
   const source = prepareComputationSource(options.originalText ?? frame.text, SHORT_ANSWER_TAIL);
@@ -648,7 +665,16 @@ export function compute(frame: Frame, now: Date, options: { originalText?: strin
     if (operation) {
       const value = formatNumber(operation.value);
       const reply = calculated(display, value, `${operation.expression} = ${value}`);
-      return covered(steps ? arithmeticWork(reply, steps, operation.value) : reply);
+      return { ...covered(steps ? arithmeticWork(reply, steps, operation.value) : reply), arithmeticValue: operation.value };
+    }
+    const water = consumption.kind === 'conversion' ? readWaterTemperature(source) : null;
+    if (water) {
+      const absolute = water.celsius * CELSIUS.factor + CELSIUS.offset;
+      const value = formatNumber(safeNumber((absolute - (water.target.offset ?? 0)) / water.target.factor));
+      const condition = frame.lang === 'ar'
+        ? `درجة ${water.boiling ? 'غليان' : 'تجمد'} الماء عند ضغط جوي واحد`
+        : `water’s ${water.boiling ? 'boiling' : 'freezing'} point at 1 atm`;
+      return covered(calculated(display, value, `${water.celsius} °C = ${value} ${water.label} (${condition})`));
     }
     const question = consumption.kind === 'conversion' ? conversionWithCoverage(source) : null;
     const originalConversion = consumption.kind === 'conversion' && !question?.terms[1]

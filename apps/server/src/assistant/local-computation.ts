@@ -1,6 +1,7 @@
 import { buildFrame } from './mind/frame.js';
 import { compute, type ComputationConsumption } from './mind/compute.js';
 import { calculationBodyBeforeWork } from './mind/computation-consumption.js';
+import { completeCalculationSequence } from './computation-sequence.js';
 import type { Claim, Evidence } from './mind/contract.js';
 import { evaluateLocalReasoning, type ReasoningContext } from './reasoning/index.js';
 import { analyzeCompoundRequest, type CompoundRequestAnalysis, type PendingActionKind } from './compound-request.js';
@@ -17,6 +18,8 @@ export interface LocalComputation {
   evidence: Evidence[];
   /** Coverage refers to this calculation's original primary argument. */
   consumption?: ComputationConsumption;
+  /** Arithmetic result before display rounding, for a dependent calculation. */
+  arithmeticValue?: number;
   /** Step-only evidence: no pending action has been dispatched or verified. */
   compound?: CompoundRequestAnalysis;
   /** Host may use the verified step separately while continuing the full request. */
@@ -75,7 +78,8 @@ export function evaluateLocalComputation(request: string, now = new Date(), reas
 /** «37 * 24 = 888» as the reply the owner asked for: one sentence in the requested language. Code writes it, not a model. */
 function shapedReply(result: LocalComputation, directive: ReplyDirective): LocalComputation {
   const lang: ReplyLanguage = directive.lang ?? result.lang;
-  if (result.status !== 'completed' || result.compound?.pendingActions.length || (lang === result.lang && !directive.sentences)) return result;
+  if (result.status !== 'completed' || (!result.consumption && result.evidence.length > 1)
+    || result.compound?.pendingActions.length || (lang === result.lang && !directive.sentences)) return result;
   const evidence = result.evidence.find(item => item.id === 'calculation' && item.value !== undefined);
   if (!evidence?.value) return result;
   const equation = /^(.+?)\s=\s(.+)$/u.exec(evidence.quote);
@@ -99,6 +103,8 @@ function evaluateComputationText(request: string, now: Date, body = request): Lo
   if (!result || (result.status !== 'completed' && result.status !== 'blocked')) return null;
   if (compound.kind !== 'compound') return { ...result, status: result.status, lang: frame.lang };
   if (!compound.pendingActions.length) return { ...result, status: result.status, lang: frame.lang, compound };
+  const sequence = completeCalculationSequence(result, compound, now, frame.lang, frame.valueOnly);
+  if (sequence) return sequence;
   const labels: Record<PendingActionKind, readonly [string, string]> = {
     compute: ['الحساب التالي', 'the next calculation'], save: ['الحفظ', 'saving'], send: ['الإرسال', 'sending'],
     publish: ['النشر', 'publishing'], schedule: ['التذكير أو الجدولة', 'the reminder or schedule'],

@@ -1,5 +1,7 @@
 import { emptyConversationState, understandTurn } from './conversation-state.js';
 import { analyzeCompoundRequest } from './compound-request.js';
+import { fold } from './hands.js';
+import { isSuperlativeQuestion } from './superlative-question.js';
 import { MAX_CONTEXT_REQUEST, type RequestResolution } from './request-context.js';
 import { splitReplyDirective } from './reply-directive.js';
 import {
@@ -66,6 +68,8 @@ export function publicConversationFollowup(input: PublicConversationFollowupInpu
   let state = emptyConversationState();
   for (const [index, text] of turns.entries()) state = understandTurn(state, text, `public-context-${index}`).next;
   const understanding = understandTurn(state, request, 'public-followup');
+  // The previous answer can name an entity that the superlative question only describes.
+  if (understanding.type === 'follow_up_property' && isSuperlativeQuestion(fold(turns[turns.length - 1]!))) return null;
   const topic = understanding.next.topics.at(-1);
   if (!acceptedTypes.has(understanding.type) || !understanding.property || !understanding.entity
     || !understanding.query || understanding.query.length > MAX_QUERY_LENGTH

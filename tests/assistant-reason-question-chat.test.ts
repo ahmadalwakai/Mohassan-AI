@@ -11,9 +11,16 @@ import { createCommandChatControl } from '../apps/server/src/command-chat.js';
 const owner = 'isolated-reason-question-owner';
 const wiki = (title: string) => `https://ar.wikipedia.org/wiki/${encodeURIComponent(title)}`;
 const sky = wiki('السماء'), film = wiki('السماء الزرقاء (فيلم)'), sea = wiki('البحر');
+// Mock page and question from PR #13, retrieved 2026-11-27.
+// https://github.com/ahmadalwakai/Mohassan-AI/pull/13/files
+const scattering = wiki('تشتت_الضوء');
+const cloudExplanation = 'تبعثر قطرات الماء ألوان الضوء المرئي بالتساوي، ولذلك تظهر الغيوم بيضاء.';
 const pages: Record<string, { title: string; text: string }> = {
   [sky]: { title: 'سماء - ويكيبيديا', text: 'السماء هي ما يُرى فوق سطح الأرض من غلاف جوي وفضاء خارجي.\nتبدو السماء زرقاء بسبب تبعثر ضوء الشمس في جزيئات الغلاف الجوي.\nتظهر في السماء ليلًا النجوم والكواكب والقمر عند صفاء الجو.\n' },
   [film]: { title: 'السماء الزرقاء (فيلم) - ويكيبيديا', text: 'السماء الزرقاء (الإنجليزية: Blue Sky) هو فيلم دراما تم إنتاجه في الولايات المتحدة وصدر في سنة 1994.\n' },
+  [scattering]: { title: 'تشتت الضوء - ويكيبيديا', text: `تنتشر موجات الضوء في اتجاهات مختلفة عندما تمر بالجسيمات.
+${cloudExplanation}
+` },
   // A page about the subject that never says why: nothing in it may be quoted as the reason.
   [sea]: { title: 'بحر - ويكيبيديا', text: 'البحر مسطح مائي مالح متصل بالمحيط أو بحيرة مالحة كبيرة ليس لها منفذ.\nتغطي البحار والمحيطات معظم سطح الأرض وتؤثر في مناخها.\nيعيش في البحر عدد كبير من الكائنات الحية المالحة.\n' },
 };
@@ -36,6 +43,7 @@ describe('a why-question through the real chat controller', () => {
       name: 'isolated-reason-question-search',
       async search(query) {
         queries.push(query);
+        if (/الغيوم بيضاء/u.test(query)) return [{ title: 'تشتت الضوء', url: scattering, snippet: cloudExplanation }];
         if (/البحر/u.test(query)) return [{ title: 'بحر', url: sea, snippet: 'البحر مسطح مائي مالح' }];
         // The film comes first, as the live search listed it on 2026-11-23.
         return [{ title: 'السماء الزرقاء (فيلم)', url: film, snippet: 'السماء الزرقاء فيلم دراما' }, { title: 'سماء', url: sky, snippet: 'السماء هي ما يرى فوق سطح الأرض' }];
@@ -77,6 +85,15 @@ describe('a why-question through the real chat controller', () => {
     expect(reply).not.toContain('مسطح مائي');
     expect(reply).not.toContain('لم أبحث في الويب');
     expect(status).toBe('partial');
+  });
+
+  it('quotes the cause before the effect from a page about the cause', async () => {
+    const { detail, reply, status } = await ask('لماذا تظهر الغيوم بيضاء؟');
+    expect(detail.error).toBeNull();
+    expect(reads).toContain(scattering);
+    expect(reply.startsWith(cloudExplanation)).toBe(true);
+    expect(reply).toContain(scattering);
+    expect(status).toBe('completed');
   });
 
   it('still asks what a pointing why refers to, and searches nothing for it', async () => {

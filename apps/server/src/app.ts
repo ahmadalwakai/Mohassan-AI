@@ -411,7 +411,6 @@ export async function createApplication(config: AppConfig) {
   // every other account the verdict alone, logged without a word of the conversation (judgeSettings in judge-shadow.ts).
   const judgeConfig = judgeSettings(config.production, process.env, process.cwd());
   const judgeShadow = judgeConfig.enabled ? createJudgeShadow({ logFile: judgeConfig.logFile }) : undefined;
-  if (judgeShadow) app.addHook('onClose', async () => { await judgeShadow.flush(); });
   if (judgeShadow && config.production) console.log(JSON.stringify({ level: 'info', event: 'judge_enabled', fixForOwner: judgeConfig.fixForOwner, withholdForOwner: judgeConfig.withholdForOwner, logText: judgeConfig.logText, logFile: judgeConfig.logFile }));
   const mind = config.mindEnabled === true && !config.production ? config.mind ?? createMind() : undefined;
   const mindRobots = new RobotsPolicy(searchNetwork);

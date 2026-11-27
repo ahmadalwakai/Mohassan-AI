@@ -1,3 +1,5 @@
+import { reasonEffectLink } from './reason-evidence.js';
+import { isPopulationEstimateRow } from './population-estimate.js';
 /**
  * Checks before an answer line is sent (docs/MOHASSAN-DEVELOPMENT-PLAN-2026-11-22.md §7.4). Pure functions on text.
  *
@@ -144,6 +146,7 @@ export function hasFigureOf(kind: FigureKind, line: string): boolean {
   // Wikipedia leads carry vowel marks: «قُدِّر عدد سكانها بأكثرَ من 120 مليون نسَمة». Marks and tatweel only: the range
   // U+064B–U+0670 written as one span would also take the digits ٠–٩ and the percent sign ٪.
   const text = line.replace(/[ً-ٰٟـ]/gu, '');
+  if (isPopulationEstimateRow(text)) return true;
   // «123 مليون نسمة» with its unit is a population only in a line that speaks of one, and never as a density.
   const withUnit = POPULATION_STATEMENT.test(text) && [...text.matchAll(new RegExp(FIGURE_UNITS.people.source, 'giu'))]
     .some(found => !PER_AREA.test(text.slice(found.index! + found[0].length)) && !otherPeople(text, found.index!));
@@ -181,7 +184,7 @@ const REASON_LINE = /(?:^|[\s،(])(?:و|ف)?ل[أإا]ن(?:ه|ها|هم|هما|�
 const ASPECT_LINE: Record<AspectKind, RegExp> = {
   benefits: /فوائد|فائد|مفيد|يفيد|تفيد|منافع|benefit|beneficial/iu,
   symptoms: /أعراض|اعراض|عوارض|علامات|يعاني|يشعر|تشوش|ضبابي|symptom|signs?\b/iu,
-  causes: new RegExp(`أسباب|اسباب|سبب|يسبب|تسبب|ينتج عن|ناتج عن|يحدث نتيجة|cause|due to|results? from|${REASON_LINE.source}`, 'iu'),
+  causes: new RegExp(`أسباب|اسباب|سبب|يسبب|تسبب|ينتج عن|ناتج عن|يحدث نتيجة|cause|due to|results? from|${REASON_LINE.source}|${reasonEffectLink.source}`, 'iu'),
   treatment: /علاج|يعالج|تعالج|معالجة|دواء|أدوية|ادوية|جراح|treat|therap|medication|surgery/iu,
   risks: /أضرار|اضرار|ضرر|مخاطر|خطر|أخطار|آثار جانبية|الآثار الجانبية|مضاعفات|risk|harm|side effect|danger/iu,
   types: /أنواع|انواع|نوع|أصناف|اصناف|ينقسم|تنقسم|types?\b|kinds?\b/iu,
