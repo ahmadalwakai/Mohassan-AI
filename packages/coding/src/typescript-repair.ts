@@ -163,6 +163,21 @@ export function inspectTypeScript(files: readonly SnapshotFile[], signal?: Abort
   } finally { snapshot.service.dispose(); }
 }
 
+export interface TypeScriptDiagnostic { path: string; line: number; column: number; code: string; message: string }
+
+/** The compiler's own diagnostics for the tracked files, computed in memory: nothing runs and nothing is written. */
+export function typeScriptDiagnostics(files: readonly SnapshotFile[], signal?: AbortSignal, project?: string): TypeScriptDiagnostic[] {
+  signal?.throwIfAborted();
+  const snapshot = createSnapshot(files, false, signal, project);
+  try {
+    return snapshot.diagnostics().map((diagnostic) => {
+      const { line, character } = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start ?? 0);
+      return { path: snapshot.paths.get(absolutePath(diagnostic.file.fileName))!, line: line + 1, column: character + 1,
+        code: `TS${diagnostic.code}`, message: ts.flattenDiagnosticMessageText(diagnostic.messageText, " ").slice(0, 300) };
+    });
+  } finally { snapshot.service.dispose(); }
+}
+
 function applyTextChanges(content: string, changes: readonly ts.TextChange[]): string | undefined {
   let end = content.length;
   let result = content;

@@ -1,5 +1,10 @@
 export { CodingEngine } from "./engine.ts";
-export type { CodingEngineOptions, CodingRequest, SandboxRunner } from "./engine.ts";
+export type { CodingCheckResult, CodingEngineOptions, CodingRequest, SandboxRunner } from "./engine.ts";
+export { explainCheckRun, projectPathOf, relativeOutput } from "./test-report.ts";
+export type { CheckCounts, CheckFailure, CheckReport, SourceLocation, SyntaxFailure, TypecheckError } from "./test-report.ts";
+export { fileImports, importRelations, lookupImports, resolveProjectReference, searchProjectFiles } from "./project-read.ts";
+export type { ImportEdge, ImportRelations, ImportsLookup, ProjectReference, ProjectSearchResult, SearchMatch } from "./project-read.ts";
+export type { TypeScriptDiagnostic } from "./typescript-repair.ts";
 export type { CodingContext, CodingContextFile, CodingModelReceipt, EditGenerator, EditRefusal } from "./edit-generator.ts";
 export { deterministicCodingMessage, generateDeterministicEdits } from "./deterministic.ts";
 export { createDemoProject, createRepairDemoProject, inspectProject } from "./project.ts";

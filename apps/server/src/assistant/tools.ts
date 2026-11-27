@@ -4,6 +4,7 @@ import { WindowsOriginSchema, type WindowsControl, type WindowsInputOptions, typ
 import { GoogleAdsBriefSchema } from '@mohassan/contracts';
 import type { GoogleAdsControl } from '@mohassan/google-ads';
 import type { MemoryExactWriteInput, MemoryExactWriteOptions, MemoryExactWriteResult, MemoryExactReconcileInput, MemoryExactReconciliation } from '@mohassan/memory';
+import type { CodingCheckResult, ImportsLookup, ProjectSearchResult } from '@mohassan/coding';
 import { z } from 'zod';
 import type { CampaignPorts } from './campaign-run.js';
 
@@ -49,6 +50,10 @@ export interface AssistantTools {
     list(ownerId: string): Promise<string>;
     inventory?(ownerId: string): Promise<{ id: string; name: string }[]>;
     code?(ownerId: string, input: { id: string; goal: string }, idempotencyKey: string, runId?: string): Promise<PendingWorkTask>;
+    /** Read-only, no model: a registered project's committed files searched, its imports read, or its own checks run once in the sandbox. */
+    codeSearch?(ownerId: string, projectId: string, query: string): Promise<ProjectSearchResult>;
+    codeImports?(ownerId: string, projectId: string, reference: string): Promise<ImportsLookup>;
+    codeCheck?(ownerId: string, projectId: string, signal: AbortSignal): Promise<CodingCheckResult>;
     studio?(ownerId: string, input: { id: string; goal: string }, idempotencyKey: string, runId?: string): Promise<PendingWorkTask>;
     approve(ownerId: string, taskId: string): Promise<void>;
     cancel(ownerId: string, taskId: string): Promise<void>;
@@ -163,7 +168,10 @@ interface ToolModules {
     writeExact?(ownerId: string, input: MemoryExactWriteInput, options?: MemoryExactWriteOptions): Promise<MemoryExactWriteResult>;
     reconcileExact?(ownerId: string, input: MemoryExactReconcileInput, options?: Pick<MemoryExactWriteOptions, 'signal'>): Promise<MemoryExactReconciliation>;
   };
-  coding: { available: boolean; workspace(ownerId: string): Promise<{ projects: { id: string; name: string; path: string }[] }> };
+  coding: { available: boolean; workspace(ownerId: string): Promise<{ projects: { id: string; name: string; path: string }[] }>;
+    search?(ownerId: string, projectId: string, query: string): Promise<ProjectSearchResult>;
+    imports?(ownerId: string, projectId: string, reference: string): Promise<ImportsLookup>;
+    check?(ownerId: string, projectId: string, signal: AbortSignal): Promise<CodingCheckResult> };
   studio: {
     workspace(ownerId: string): Promise<{ sessions: { id: string; name: string; framework: string }[] }>;
     detail(ownerId: string, id: string): Promise<{ name: string; revision: string }>;
@@ -237,6 +245,9 @@ export function createAssistantTools({ memory, coding, studio, studioChange, run
         const task = await runtime.createTask(ownerId, { title: `تعديل ${project.name}`.slice(0, 120), goal: input.goal, capabilityId: 'coding.change', autonomy: 'assisted', projectId: project.id }, key, runId);
         return pendingTask(task, `تعديل مشروع ${project.name}`.slice(0, 80), `أريد تعديل مشروع «${project.name.slice(0, 80)}»: ${input.goal.slice(0, 500)}`, 'يعمل التعديل على نسخة معزولة ويُختبر هناك. يبقى مشروعك الأصلي كما هو حتى تراجع الفرع بنفسك.');
       }) } satisfies Pick<NonNullable<AssistantTools['work']>, 'code'> : {}),
+      ...(coding.search && coding.imports ? { codeSearch: (ownerId, projectId, query) => guarded(() => coding.search!(ownerId, projectId, query)),
+        codeImports: (ownerId, projectId, reference) => guarded(() => coding.imports!(ownerId, projectId, reference)) } satisfies Pick<NonNullable<AssistantTools['work']>, 'codeSearch' | 'codeImports'> : {}),
+      ...(coding.available && coding.check ? { codeCheck: (ownerId, projectId, signal) => guarded(() => coding.check!(ownerId, projectId, signal)) } satisfies Pick<NonNullable<AssistantTools['work']>, 'codeCheck'> : {}),
       ...(studioChange ? { studio: (ownerId, raw, key, runId) => guarded(async () => {
         const input = StudioInput.parse({ sessionId: raw.id, goal: raw.goal });
         const session = await studio.detail(ownerId, input.sessionId);

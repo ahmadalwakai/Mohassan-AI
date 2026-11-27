@@ -83,6 +83,10 @@ export const RUN_CAPABILITIES = {
   'computer.view': { risk: 'read', verification: 'observation' },
   'computer.input': { risk: 'irreversible_write', verification: 'adapter_report' },
   'runtime.task': { risk: 'irreversible_write', verification: 'owner_review' },
+  // A registered coding project, read-only: its committed files searched or its imports read; or its own checks run once in
+  // the AppContainer sandbox (no network, a copy of the files, nothing kept), checked by the sandbox's own receipt.
+  'code.read': { risk: 'read', verification: 'readback' },
+  'code.check': { risk: 'read', verification: 'adapter_report' },
   'ads.campaign': { risk: 'irreversible_write', verification: 'readback' },
   'model.decision': { risk: 'none', verification: 'none' },
 } as const satisfies Record<string, { risk: RunRisk; verification: VerificationMethod }>;

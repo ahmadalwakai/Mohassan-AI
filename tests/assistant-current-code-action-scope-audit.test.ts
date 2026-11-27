@@ -50,6 +50,7 @@ describe('current project repair versus a private record read', () => {
     'أصلح الكود في مشروع تجربة الجمع',
     'نسّق الكود في مشروع تجربة الجمع',
     'من فضلك أصلح الكود في مشروع تجربة الجمع',
+    'صحح الكود في مشروع تجربة الجمع',
     'Fix the code in project Shop API',
   ])('recognizes a direct coding imperative that names a project: %s', request => {
     const understanding = resolveRequestContext(request, null);
@@ -64,8 +65,17 @@ describe('current project repair versus a private record read', () => {
     'Translate this text: «أصلح الكود في مشروع تجربة الجمع»',
     'Fix the code in project Shop API, then read my notes',
     'My note says fix the code in project Shop API.',
+    // «صحح» also corrects text: a correction of supplied text is never a code change.
+    'صحح هذا النص: انا ذهبت الي المدرسه',
   ])('still refuses the coding imperative when it is reported, quoted or compound: %s', request => {
     const understanding = resolveRequestContext(request, null);
     expect(reviewWorkRequestScope(request, 'code_prepare', understanding).allowed).toBe(false);
+  });
+  it('lets «صحح الأخطاء» in a named project prepare code, though the context step reads it as writing', () => {
+    // The chat path still requires a registered project named as a whole phrase (assistant/no-model-coding.ts).
+    const request = 'صحح الأخطاء في مشروع تجربة الجمع';
+    const understanding = resolveRequestContext(request, null);
+    expect(understanding.intent).toBe('writing');
+    expect(reviewWorkRequestScope(request, 'code_prepare', understanding).allowed).toBe(true);
   });
 });

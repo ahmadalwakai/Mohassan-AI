@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -47,7 +47,9 @@ afterEach(async () => {
 });
 
 async function fixture(target: string, before: string, files: Record<string, string> = {}) {
-  const directory = await mkdtemp(join(tmpdir(), "mohassan-deterministic-"));
+  // The canonical path, as project registration stores it: Windows may report TEMP in its 8.3 short form
+  // (C:\Users\ADMINI~1), and verify() compares the project's path with the canonical one the run recorded.
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "mohassan-deterministic-")));
   roots.push(directory);
   const path = join(directory, "project");
   await mkdir(path);

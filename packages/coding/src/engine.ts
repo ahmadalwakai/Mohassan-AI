@@ -8,7 +8,8 @@ import { git } from "./git.ts";
 import { inspectProject, type ProjectFile, type ProjectInspection } from "./project.ts";
 import type { CodingContext, CodingModelReceipt, EditGenerator } from "./edit-generator.ts";
 import { sandboxDiagnosticPaths, selectContextFiles } from "./selection.ts";
-import { inspectTypeScript, repairTypeScript } from "./typescript-repair.ts";
+import { explainCheckRun, type CheckReport } from "./test-report.ts";
+import { inspectTypeScript, repairTypeScript, typeScriptDiagnostics, type TypeScriptDiagnostic } from "./typescript-repair.ts";
 import { CodingError, assertNoLinks, boundedText, containsPath, credentialLike, limits, safeRelative, sha256, snapshotHash, sourcePaths, type SnapshotFile } from "./security.ts";
 
 export interface SandboxRunner {
@@ -48,6 +49,20 @@ export interface CodingRequest {
   onProgress?: (stage: string, message: string) => Promise<void>;
   onModelReceipt?: (receipt: CodingModelReceipt) => Promise<void>;
 }
+
+/** One read-only run of a project's own checks: what the sandbox reported, explained, with its isolation receipt. */
+export interface CodingCheckResult {
+  projectId: string;
+  baseCommit: string;
+  testFiles: string[];
+  report: CheckReport;
+  /** In-memory TypeScript diagnostics in the files the failures point at; empty when the checks passed. */
+  diagnostics: TypeScriptDiagnostic[];
+  receipt: Pick<SandboxTestResult, "provider" | "isolationVerified" | "network" | "snapshotHash" | "exitCode" | "timedOut" | "durationMs">;
+}
+
+// The in-memory analysis has no Node type declarations, so these say nothing about the project itself.
+const environmentDiagnostic = /\bnode:[\w/]+|@types\/node|type definitions for node/i;
 
 interface RunManifest {
   version: 1;
@@ -326,6 +341,32 @@ export class CodingEngine {
       if (error instanceof CodingError) throw retainUsage(error, proposal ?? error);
       throw retainUsage(new CodingError(signal.aborted ? "ABORTED" : "CODING_FAILED", signal.aborted ? "أُلغيت مهمة البرمجة؛ لم يُدمج أي تعديل." : "تعذر إكمال مهمة البرمجة ضمن حدود الأمان؛ احتُفظ ببيئة المراجعة إن أُنشئت."), proposal ?? error);
     } finally { await release(); }
+  }
+
+  /**
+   * Runs the project's own checks once in the sandbox, exactly as a change task's baseline does (syntax, typecheck when
+   * the project defines it, node --test), on the clean registered HEAD. Read-only: no worktree, no branch, no edit and no
+   * project lock. The receipt must prove isolation for the very files sent, and the explanation comes from its output.
+   */
+  async check(request: { ownerId: string; project: Project; signal: AbortSignal }): Promise<CodingCheckResult> {
+    const { signal, project } = request;
+    signal.throwIfAborted();
+    if (project.ownerId !== request.ownerId || project.testProfile !== "node-test") throw new CodingError("PROJECT_FORBIDDEN", "المشروع أو ملف الاختبار خارج النطاق المصرح.");
+    const sandbox = await this.options.sandbox.available();
+    if (!sandbox.available) throw new CodingError("SANDBOX_UNAVAILABLE", "بيئة تنفيذ معزولة مثبتة غير متاحة؛ لم يُشغل كود المشروع على المضيف.");
+    const initial = await inspectProject(project.path, this.options.allowedRoots ?? [join(this.dataDir, "demo-project")]);
+    if (initial.baseCommit !== project.baseCommit) throw new CodingError("PROJECT_HEAD_CHANGED", "تغير HEAD منذ تسجيل المشروع؛ يلزم تحديث التسجيل قبل العمل.");
+    const allowed = new Set(project.allowedPaths.map(safeRelative));
+    const receipt = validReceipt(await abortable(() => this.options.sandbox.run(testRequest(initial.files, initial, allowed, signal)), signal), initial.files, sandbox.provider);
+    const report = explainCheckRun(receipt, initial.files.map((file) => file.path));
+    const pointed = new Set([...report.failures.flatMap((failure) => failure.origin ? [failure.origin.path] : []),
+      ...report.typecheck.map((error) => error.path), ...report.syntax.flatMap((failure) => failure.location ? [failure.location.path] : [])]);
+    const diagnostics = report.status === "passed" ? [] : typeScriptDiagnostics(initial.files, signal, initial.typecheck?.project)
+      .filter((diagnostic) => !environmentDiagnostic.test(diagnostic.message) && (pointed.size ? pointed.has(diagnostic.path) : allowed.has(diagnostic.path)))
+      .slice(0, 5);
+    return { projectId: project.id, baseCommit: initial.baseCommit, testFiles: initial.testFiles, report, diagnostics,
+      receipt: { provider: receipt.provider, isolationVerified: receipt.isolationVerified, network: receipt.network, snapshotHash: receipt.snapshotHash,
+        exitCode: receipt.exitCode, timedOut: receipt.timedOut, durationMs: receipt.durationMs } };
   }
 
   /** Re-reads disk and trusted sandbox receipts; model review flags cannot authorize success. */

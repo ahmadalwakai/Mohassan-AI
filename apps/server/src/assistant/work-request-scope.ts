@@ -34,7 +34,7 @@ const SKILL = new RegExp(`^(?:(?:prepare|create)\\s+(?:(?:a|the)\\s+)?skill\\s+(
 const PRIVATE_PRIMARY = /^(?:(?:read|recall|retrieve|search|look up|rewrite|summari[sz]e|translate|paraphrase|proofread|shorten|edit)\s+(?:my|our|the)\s+(?:(?:saved|stored|private|personal|recorded|previous)\s+)?(?:[\p{L}\p{N}_-]+\s+){0,4}(?:notes?|records?|memory|memories|preferences?|reference|message|text|document)(?:\s+(?:concisely|briefly))?|(?:اقرا|استرجع|لخص|ترجم|اختصر|صحح|اعد صياغه)\s+(?:ملاحظاتي|ملاحظاتنا|سجلاتي|ذاكرتي|رسائلي|النص المحفوظ)(?:\s+(?:المحفوظه|المخزنه|الخاصه|القديمه))?(?:\s+(?:باختصار|بوضوح))?)[.!?؟,،]*$/u;
 const SUPPLIED_PRIMARY = /^(?:rewrite|translate|summari[sz]e|paraphrase|proofread|shorten|reword|edit|polish|describe|اعد صياغه|ترجم|لخص|اختصر|صحح|صف)(?:\s+(?:(?:this|the|provided|supplied|following)\s+)?(?:text|note|sentence|paragraph|message|النص|الجمله|الملاحظه))?(?:\s+(?:(?:into|to|in)\s+[\p{L} -]{1,40}|concisely|briefly|politely|باختصار|بوضوح|بادب))?[.!?؟,،]*$/u;
 // One direct coding imperative from the owner: its object is a project, not text supplied in the message.
-const CODING_IMPERATIVE = /^(?:fix|repair|format|lint|refactor|debug|اصلح|صلح|عدل|نسق|حسن|رتب)(?!\p{L})[^;.!?؟\n]{3,300}[.!?؟]*$/iu;
+const CODING_IMPERATIVE = /^(?:fix|repair|format|lint|refactor|debug|اصلح|صلح|صحح|عدل|نسق|حسن|رتب)(?!\p{L})[^;.!?؟\n]{3,300}[.!?؟]*$/iu;
 const BOUNDARY = /\b(?:and\s+then|then|afterwards|also|and)\b[\s,:،]*|(?<!\p{L})(?:ثم|وبعدها|وبعدين|بعدها|كذلك)(?!\p{L})[\s,:،]*|و(?=(?:جهز|حضر|اعد|شغل|نفذ|اعرض|استعرض|اسرد)(?!\p{L}))|[.!?؟;؛]\s+(?=\p{L})/gu;
 
 const head = (text: string) => requestOperationText(text).replace(COURTESY, '').trim();

@@ -105,7 +105,7 @@ import { observePlanMessage, runCompiledChatPlan } from './assistant/plan/chat.j
 import { clarificationAnswers, clarifyCommand } from './assistant/clarify/host.js';
 import { reviewWorkRefusal } from './assistant/refusal/turn.js';
 import { answerTestDrivenCoding, bindTestDrivenCodingHash, initializeTestDrivenCoding, publishTestDrivenCoding } from './assistant/test-driven-coding/reply.js';
-import { codingOutcomeReply, prepareNoModelCoding } from './assistant/no-model-coding.js';
+import { answerNoModelCodeRead, codingOutcomeReply, prepareNoModelCoding, recordCodeRead } from './assistant/no-model-coding.js';
 import { describeSearchDestination, extractPublicSearchQueries, isSearchEntryElement, mergePublicQueryTerms, reviewGeneratedPublicQuery } from './assistant/public-query-provenance.js';
 import { reviewExplicitPublicBrowserQuery } from './assistant/browser-public-query.js';
 import { ADS_REWRITE_JSON_SCHEMA, ADS_REWRITE_SCHEMA_NAME, ADS_REWRITE_SYSTEM, buildRewritePrompt, type RewriteRequest } from '@mohassan/google-ads';
@@ -2250,6 +2250,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         ? await answerTestDrivenCoding(request, { accountId: ownerId, authorized: fullReach() && state.routing.availability !== 'restricted', signal, originalHash: state.requestOriginalHash, scrub: text => vault.scrub(id, clean(text)) }) : null;
       if (codingReply) return publishTestDrivenCoding(state, codingReply,
         (text, status) => finish(id, runId, state, text, status, undefined, undefined, true));
+      const codeRead = run.intent === 'task' && !state.steps && !state.trail.length && !state.pendingTask && !hasChatModel() && fullReach()
+        ? await answerNoModelCodeRead(request, tools?.work, ownerId, signal, async label => { await addStep(id, runId, label); await setProgress(id, `${label}…`); }) : null;
+      if (codeRead) { ledgerSafe(state, runId, ledger => recordCodeRead(ledger, codeRead, Date.now())); state.trail.push({ step: ++state.steps, ...codeRead.trail, changed: false });
+        await finish(id, runId, state, vault.scrub(id, codeRead.text), codeRead.status); return; }
       const noModelCode = run.intent === 'task' && !state.steps && !state.trail.length && !state.pendingTask && !hasChatModel() && fullReach()
         ? await prepareNoModelCoding(request, state.routing, state.requestResolution ?? undefined, tools?.work, ownerId, runId) : null;
       if (noModelCode?.kind === 'reply') { await finish(id, runId, state, vault.scrub(id, noModelCode.text), noModelCode.status); return; }
