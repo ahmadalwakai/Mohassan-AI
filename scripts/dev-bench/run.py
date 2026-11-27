@@ -10,8 +10,10 @@ import os
 from pathlib import Path
 import re
 import subprocess
+from tempfile import TemporaryDirectory
 
-from runner import run_arm
+from ablation import build_report
+from runner import BASE_FLAGS, ENABLE_SWITCH, effective_settings, run_arm
 
 
 STAGES = ('understanding', 'routing', 'planning', 'tool', 'answer', 'verification')
@@ -156,17 +158,66 @@ def tool_hashes():
     return {'sha256': digest(listing), 'files': files}
 
 
+def unique_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        require(key not in result, f'duplicate JSON key {key!r}')
+        result[key] = value
+    return result
+
+
+def read_profile(path):
+    data = path.read_bytes()
+    profile = json.loads(data, object_pairs_hook=unique_keys)
+    require(isinstance(profile, dict) and isinstance(profile.get('flags'), dict),
+            'profile must contain a flags object')
+    settings = profile['flags']
+    missing = sorted(BASE_FLAGS.keys() - settings.keys())
+    require(not missing, f'profile must explicitly set legacy defaults: {", ".join(missing)}')
+    require(settings.keys() <= ENABLE_SWITCH.keys(), 'profile contains an unsupported switch')
+    effective_settings(settings)
+    deployment_only = profile.get('deployment_only', {})
+    require(isinstance(deployment_only, dict) and not settings.keys() & deployment_only.keys(),
+            'profile deployment_only must be an object of settings outside flags')
+    return settings, {'path': str(path), 'sha256': digest(data), 'deploymentOnly': sorted(deployment_only)}
+
+
+def profile_arms(arms, path, requested):
+    require(len(arms) == 1 and 'profile' in arms, '--profile requires exactly one --arm profile=COMMIT')
+    commit, overrides = arms['profile']
+    require(overrides.keys() <= {'TEST_DRIVEN_CODING_PYTHON'},
+            'edit the profile to change switches; --set only sets the coding Python in profile mode')
+    settings, provenance = read_profile(path)
+    baseline = effective_settings(settings | overrides)
+    arms['profile'] = (commit, baseline)
+    off = {name: ENABLE_SWITCH[name][1] for name, value in settings.items() if value == ENABLE_SWITCH[name][0]}
+    switches = list(off) if requested == 'all' else requested.split(',') if requested is not None else []
+    require(requested is None or switches, 'no disabled benchmark switches in the profile')
+    require(len(switches) == len(set(switches)), 'duplicate switch in --ablate')
+    for name in switches:
+        require(name in off, f'{name!r} is not a disabled benchmark switch in the profile')
+        arms[name] = (commit, baseline | {name: off[name]})
+    return provenance
+
+
 def arguments():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output', type=Path, required=True, help='new directory outside the product checkout')
+    parser.add_argument('--output', type=Path, help='new directory outside the product checkout')
     parser.add_argument('--arm', action='append', required=True, metavar='NAME=COMMIT', help='full pinned SHA, repeat in run order')
     parser.add_argument('--set', action='append', default=[], metavar='NAME:KEY=VALUE', help='override one allowed flag in an arm')
+    parser.add_argument('--profile', type=Path, metavar='FILE', help='JSON settings for the profile arm')
+    parser.add_argument('--ablate', metavar='A,B,...', help='enable one listed switch per arm, or use all disabled profile switches')
+    parser.add_argument('--dry-run', action='store_true', help='print the arm plan without touching the product or output')
     parser.add_argument('--workers', type=int, choices=range(1, LANES + 1), default=LANES,
                         help='concurrent V2 workers; all eight lanes always run')
     parser.add_argument('--offline', action='store_true', help='install from the local npm cache without network access')
     parser.add_argument('--audit-monitors', action='store_true',
                         help='control fixture IDs and citation time, and record monitor checks against recorded pages only')
     args = parser.parse_args()
+    if not args.dry_run and args.output is None:
+        parser.error('--output is required unless using --dry-run')
+    if args.ablate is not None and args.profile is None:
+        parser.error('--ablate requires --profile')
     arms = {}
     for spec in args.arm:
         name, _, commit = spec.partition('=')
@@ -179,25 +230,64 @@ def arguments():
         if arm not in arms or not equal or not key or key in arms[arm][1]:
             parser.error(f'invalid or duplicate override for {arm!r}: {key!r}')
         arms[arm][1][key] = value
-    return args, arms
+    profile = None
+    try:
+        if args.profile is not None:
+            profile = profile_arms(arms, args.profile, args.ablate)
+            args.audit_monitors |= any(
+                settings.get('MOHASSAN_MONITORS_ENABLED', '0') != '0' for _, settings in arms.values()
+            )
+        else:
+            arms = {name: (commit, effective_settings(settings)) for name, (commit, settings) in arms.items()}
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+    return args, arms, profile
 
 
 def main():
-    args, arms = arguments()
+    args, arms, profile = arguments()
+    plan = {
+        'split': 'development',
+        'profile': profile,
+        'workers': args.workers,
+        'offline': args.offline,
+        'auditMonitors': args.audit_monitors,
+        'installCommits': list(dict.fromkeys(commit for commit, _ in arms.values())),
+        'arms': {name: {'commit': commit, 'settings': settings} for name, (commit, settings) in arms.items()},
+    }
+    if args.dry_run:
+        print(json.dumps(plan, indent=2))
+        return
     output = args.output.resolve()
     repo = Path(__file__).resolve().parents[2]
     require(not output.is_relative_to(repo), 'write receipts outside the product checkout')
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     tool = tool_hashes()
-    run_summary = {'schemaVersion': 1, 'tool': tool, 'arms': {}}
+    run_summary = {'schemaVersion': 1, 'tool': tool, 'plan': plan, 'arms': {}}
+    commit_counts = Counter(commit for commit, _ in arms.values())
+    with TemporaryDirectory(prefix='.installs-', dir=output) as installs:
+        measure_arms(args, arms, output, repo, tool, run_summary, Path(installs), commit_counts)
+    write_json(output / 'summary.json', run_summary)
+    if args.ablate is not None:
+        report = build_report(output / 'profile' / 'receipt.json', {
+            name: output / name / 'receipt.json' for name in arms if name != 'profile'
+        })
+        report['profileFile'] = profile
+        write_json(output / 'ablation.json', report)
+        print(f"Ablation report written to {output / 'ablation.json'}")
+
+
+def measure_arms(args, arms, output, repo, tool, run_summary, installs, commit_counts):
     for name, (commit, settings) in arms.items():
         arm_output = output / name
         arm_output.mkdir(mode=0o700)
         print(f'{name}: measuring {commit}', flush=True)
         source = run_arm(repo, arm_output, commit, settings, workers=args.workers, offline=args.offline,
-                         monitor_audit=args.audit_monitors)
+                         monitor_audit=args.audit_monitors,
+                         snapshot=installs / commit if commit_counts[commit] > 1 else None)
         require(source['commit'] == commit, f'{name}: launcher measured a different commit')
         versions = combine(arm_output, source)
+        source['split'] = 'development'
         receipt = {'schemaVersion': 1, 'name': name, 'commit': commit, 'tool': tool, 'source': source, 'versions': versions}
         receipt_path = arm_output / 'receipt.json'
         write_json(receipt_path, receipt)
@@ -210,7 +300,6 @@ def main():
         for version, result in versions.items():
             overall = result['summary']['overall']
             print(f'{name} {version}: {overall["passed"]}/{overall["total"]}', flush=True)
-    write_json(output / 'summary.json', run_summary)
 
 
 if __name__ == '__main__':

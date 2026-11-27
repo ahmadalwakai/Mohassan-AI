@@ -1,0 +1,188 @@
+{
+  "retrieved": "2026-11-27",
+  "flags": {
+    "MOHASSAN_MONITORS_ENABLED": "owner",
+    "MOHASSAN_REPLY_POLICY_ENABLED": "0",
+    "MOHASSAN_CONTEXT_POLICY_ENABLED": "0",
+    "MOHASSAN_LONG_RUN_ENABLED": "0",
+    "MOHASSAN_BACKGROUND_RESULTS_ENABLED": "0",
+    "MOHASSAN_ARBITER_ROUTING": "0",
+    "MOHASSAN_ARBITER_ROUTING_KILL": "0",
+    "MOHASSAN_ARBITER_QUESTION_REWRITE": "0",
+    "MOHASSAN_ARBITER_QUESTION_REWRITE_KILL": "0",
+    "MOHASSAN_ARBITER_LOCAL_COMPUTATION": "0",
+    "MOHASSAN_ARBITER_LOCAL_COMPUTATION_KILL": "0",
+    "MOHASSAN_ARBITER_COMPOUND_PLAN": "0",
+    "MOHASSAN_ARBITER_COMPOUND_PLAN_KILL": "0",
+    "MOHASSAN_SMALL_TALK_MANNERS": "0",
+    "MOHASSAN_CONVERSATION_REVIEW_APPLY": "0",
+    "MOHASSAN_CONVERSATION_SHADOW": "0",
+    "MOHASSAN_STRUCTURED_MEMORY": "0",
+    "MOHASSAN_EXTRACTIVE_WRITING": "0",
+    "MOHASSAN_REASONING": "0",
+    "MOHASSAN_CLARIFY_CHOICES": "0",
+    "MOHASSAN_SCRATCH_CLASSIFIERS": "0",
+    "MOHASSAN_REFUSAL_POLICY": "0",
+    "MOHASSAN_QUESTION_REWRITER": "0",
+    "MOHASSAN_ARITHMETIC_SEARCH": "0",
+    "MOHASSAN_PLAN_COMPILER": "off",
+    "MOHASSAN_MODEL_RELATIONS": "off",
+    "TEST_DRIVEN_CODING_ENABLED": "false",
+    "MOHASSAN_MONITORS_V2": "0",
+    "MOHASSAN_MONITORS_GITHUB": "0",
+    "MOHASSAN_MONITORS_PDF": "0",
+    "MOHASSAN_MONITORS_VISUAL": "0",
+    "MOHASSAN_MONITOR_CONTEXT": "0",
+    "MOHASSAN_MONITOR_CONTEXT_SHADOW": "0",
+    "MOHASSAN_ARBITER_MONITOR_CONTEXT": "0",
+    "MOHASSAN_ARBITER_MONITOR_CONTEXT_KILL": "0"
+  },
+  "deployment_only": {
+    "MOHASSAN_V5_CHAT": "owner",
+    "MOHASSAN_MODEL_WORKER": "1",
+    "MOHASSAN_MODEL_COUNCIL": "owner",
+    "PRODUCTION_METRICS_ENABLED": "true",
+    "MOHASSAN_DESKTOP_SHELL": null,
+    "MOHASSAN_ROUTER_SHADOW": null,
+    "EXECUTOR_EXPERIMENT": null,
+    "RUN_WORKER": {
+      "cutover": "false",
+      "after_cutover": "restore the existing setting"
+    }
+  },
+  "sources": {
+    "MOHASSAN_MONITORS_ENABLED": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/V5-OWNER-CHAT-2026-11-26.md#L52",
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L72"
+    ],
+    "MOHASSAN_REPLY_POLICY_ENABLED": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L29"
+    ],
+    "MOHASSAN_CONTEXT_POLICY_ENABLED": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L29"
+    ],
+    "MOHASSAN_LONG_RUN_ENABLED": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L29"
+    ],
+    "MOHASSAN_BACKGROUND_RESULTS_ENABLED": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L29"
+    ],
+    "MOHASSAN_ARBITER_ROUTING": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L30"
+    ],
+    "MOHASSAN_ARBITER_ROUTING_KILL": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L30"
+    ],
+    "MOHASSAN_ARBITER_QUESTION_REWRITE": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L30"
+    ],
+    "MOHASSAN_ARBITER_QUESTION_REWRITE_KILL": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L30"
+    ],
+    "MOHASSAN_ARBITER_LOCAL_COMPUTATION": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L30"
+    ],
+    "MOHASSAN_ARBITER_LOCAL_COMPUTATION_KILL": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L30"
+    ],
+    "MOHASSAN_ARBITER_COMPOUND_PLAN": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L30"
+    ],
+    "MOHASSAN_ARBITER_COMPOUND_PLAN_KILL": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L30"
+    ],
+    "MOHASSAN_SMALL_TALK_MANNERS": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L31"
+    ],
+    "MOHASSAN_CONVERSATION_REVIEW_APPLY": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L31"
+    ],
+    "MOHASSAN_CONVERSATION_SHADOW": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L31"
+    ],
+    "MOHASSAN_STRUCTURED_MEMORY": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L31"
+    ],
+    "MOHASSAN_EXTRACTIVE_WRITING": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L31"
+    ],
+    "MOHASSAN_REASONING": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L31"
+    ],
+    "MOHASSAN_CLARIFY_CHOICES": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L31"
+    ],
+    "MOHASSAN_SCRATCH_CLASSIFIERS": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L31"
+    ],
+    "MOHASSAN_REFUSAL_POLICY": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L31"
+    ],
+    "MOHASSAN_QUESTION_REWRITER": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L31"
+    ],
+    "MOHASSAN_ARITHMETIC_SEARCH": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L31"
+    ],
+    "MOHASSAN_PLAN_COMPILER": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L32"
+    ],
+    "MOHASSAN_MODEL_RELATIONS": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L32"
+    ],
+    "TEST_DRIVEN_CODING_ENABLED": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L33"
+    ],
+    "MOHASSAN_MONITORS_V2": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/MONITORS.md#L368"
+    ],
+    "MOHASSAN_MONITORS_GITHUB": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/MONITORS.md#L369"
+    ],
+    "MOHASSAN_MONITORS_PDF": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/MONITORS.md#L370"
+    ],
+    "MOHASSAN_MONITORS_VISUAL": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/MONITORS.md#L371"
+    ],
+    "MOHASSAN_MONITOR_CONTEXT": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/MONITORS.md#L372"
+    ],
+    "MOHASSAN_MONITOR_CONTEXT_SHADOW": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/MONITORS.md#L373"
+    ],
+    "MOHASSAN_ARBITER_MONITOR_CONTEXT": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/MONITORS.md#L374"
+    ],
+    "MOHASSAN_ARBITER_MONITOR_CONTEXT_KILL": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/MONITORS.md#L375"
+    ],
+    "MOHASSAN_V5_CHAT": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/V5-OWNER-CHAT-2026-11-26.md#L48"
+    ],
+    "MOHASSAN_MODEL_WORKER": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/V5-OWNER-CHAT-2026-11-26.md#L49"
+    ],
+    "MOHASSAN_MODEL_COUNCIL": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/MODEL-COUNCIL.md#L13",
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/MODEL-COUNCIL.md#L94"
+    ],
+    "PRODUCTION_METRICS_ENABLED": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/V5-OWNER-CHAT-2026-11-26.md#L53",
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L72"
+    ],
+    "MOHASSAN_DESKTOP_SHELL": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L34"
+    ],
+    "MOHASSAN_ROUTER_SHADOW": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L34"
+    ],
+    "EXECUTOR_EXPERIMENT": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L34"
+    ],
+    "RUN_WORKER": [
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L33",
+      "https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/docs/DEPLOY-WAVE-6-2026-11-25.md#L68"
+    ]
+  }
+}

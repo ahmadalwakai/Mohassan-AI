@@ -23,7 +23,7 @@ V2_DEV = f"{FIXTURES}/v2/dev"
 LANES = 8
 COMMON = ("run.ts", "corpus.ts", "observe.ts", "score.ts")
 V2_HARNESS = (*COMMON, "v2/dev.ts", "v2/sealed.ts", "v2/mapping.ts")
-HOLDOUTS = (f"{FIXTURES}/holdout", f"{FIXTURES}/v2/sealed")
+HOLDOUTS = (f"{FIXTURES}/holdout", f"{FIXTURES}/v2/sealed", f"{FIXTURES}/v2/exclusion")
 NODE_OPTIONS = ("--no-wasm-tier-up", "--no-wasm-dynamic-tiering", "--import", "tsx")
 BASE_FLAGS = {
     "MOHASSAN_SMALL_TALK_MANNERS": "1",
@@ -44,6 +44,7 @@ ARBITER_FLAGS = (
     "MOHASSAN_ARBITER_QUESTION_REWRITE",
     "MOHASSAN_ARBITER_LOCAL_COMPUTATION",
     "MOHASSAN_ARBITER_COMPOUND_PLAN",
+    "MOHASSAN_ARBITER_MONITOR_CONTEXT",
 )
 OVERRIDES = {
     "MOHASSAN_PLAN_COMPILER": {"on", "off"},
@@ -66,6 +67,15 @@ OVERRIDES = {
         *ARBITER_FLAGS,
         *(f"{flag}_KILL" for flag in ARBITER_FLAGS),
     )},
+}
+
+ENABLE_SWITCH = {
+    **{name: ("0", "1") for name, values in OVERRIDES.items() if values == {"0", "1"}},
+    "MOHASSAN_PLAN_COMPILER": ("off", "on"),
+    "MOHASSAN_CONVERSATION_SHADOW": ("0", "decide"),
+    "TEST_DRIVEN_CODING_ENABLED": ("false", "true"),
+    "MOHASSAN_MODEL_RELATIONS": ("off", "shadow"),
+    "MOHASSAN_MONITORS_ENABLED": ("0", "owner"),
 }
 
 APPLY_ADAPTERS = """
@@ -116,7 +126,8 @@ def install_inputs(
     inputs: dict[str, str], label: str,
 ) -> list[Path]:
     files = git(repo, "ls-tree", "-rz", "--name-only", revision, "--", *paths).decode().split("\0")[:-1]
-    if not files or any(path.startswith(tuple(f"{directory}/" for directory in HOLDOUTS)) for path in files):
+    if not files or any(path == directory or path.startswith(directory + "/")
+                        for path in files for directory in HOLDOUTS):
         raise ValueError("Expected pinned development inputs only")
     installed = []
     for path in files:
@@ -140,6 +151,9 @@ def apply_once(source: str, before: str, after: str) -> str:
 def instrument_runner(path: Path, version: str) -> None:
     source = path.read_text()
     if version == "v1":
+        source = apply_once(source, "    const corpus = await loadCapabilityCorpus(paths);",
+                            """    if (paths.sealed) throw new CapabilityCorpusError('Expected the development split.');
+    const corpus = await loadCapabilityCorpus(paths);""")
         source = apply_once(source, "for (const item of cases) scores.push(scoreCapabilityCase(item, await observe(item)));",
                             f"for (const item of cases) {SCORE_WITH_REPLIES}")
         source = apply_once(source, "summary, splits: results,",
@@ -171,17 +185,22 @@ def run_logged(args: list[str], cwd: Path, environment: dict[str, str], log: Pat
         raise RuntimeError(f"{Path(args[0]).name} exited {completed.returncode}. See {log}")
 
 
-def collect_environment(overrides: dict[str, str], temporary: Path) -> tuple[dict[str, str], dict[str, str]]:
+def effective_settings(overrides: dict[str, str]) -> dict[str, str]:
     for name, value in overrides.items():
+        if not isinstance(value, str):
+            raise ValueError(f"Expected a string for development benchmark setting {name}")
         if name == "TEST_DRIVEN_CODING_PYTHON" and Path(value).is_absolute():
             continue
         if name not in OVERRIDES or value not in OVERRIDES[name]:
             raise ValueError(f"Unsupported development benchmark setting {name}")
+    return BASE_FLAGS | overrides
 
+
+def collect_environment(overrides: dict[str, str], temporary: Path) -> tuple[dict[str, str], dict[str, str]]:
+    settings = effective_settings(overrides)
     real_home = pwd.getpwuid(os.getuid()).pw_dir
     if real_home == "/" or not Path(real_home).is_dir():
         raise ValueError("Use a service account with a normal home directory for desktop fixtures")
-    settings = BASE_FLAGS | overrides
     runtime = {
         "PATH": os.environ["PATH"],
         "HOME": real_home,
@@ -244,9 +263,42 @@ for (const browser of ['chromium', 'chromium-headless-shell']) {
     return versions
 
 
+def dependency_directories(checkout: Path):
+    for directory, children, _ in os.walk(checkout):
+        if "node_modules" in children:
+            children.remove("node_modules")
+            yield (Path(directory) / "node_modules").relative_to(checkout)
+
+
+def copy_dependencies(source: Path, destination: Path, environment: dict[str, str]) -> None:
+    for relative in dependency_directories(source):
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["cp", "-a", "--reflink=auto", str(source / relative), str(target)],
+                       env=environment, check=True)
+
+
+def install_for_arm(checkout, output, temporary, environment, install, snapshot, offline):
+    log = output / "npm-ci.log"
+    if snapshot is not None and snapshot.is_dir():
+        copy_dependencies(snapshot, checkout, environment)
+        shutil.copyfile(snapshot / log.name, log)
+        return
+    install_environment = environment | {
+        "npm_config_cache": os.environ.get("npm_config_cache", str(temporary / "npm-cache")),
+        **({"ELECTRON_SKIP_BINARY_DOWNLOAD": "1"} if offline else {}),
+    }
+    run_logged(install, checkout, install_environment, log)
+    if snapshot is not None:
+        snapshot.mkdir(mode=0o700)
+        copy_dependencies(checkout, snapshot, environment)
+        shutil.copyfile(log, snapshot / log.name)
+
+
 def run_arm(
     repo: Path, output: Path, commit: str, overrides: dict[str, str], *,
     workers: int = LANES, offline: bool = False, monitor_audit: bool = False,
+    snapshot: Path | None = None,
 ) -> dict[str, object]:
     """Write native split receipts under an existing empty, private output directory."""
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
@@ -274,12 +326,8 @@ def run_arm(
             git(checkout, "checkout", "--detach")
             lock = checkout / "package-lock.json"
             inputs["product/package-lock.json"] = digest(lock)
-            install_environment = environment | {
-                "npm_config_cache": os.environ.get("npm_config_cache", str(temporary / "npm-cache")),
-                **({"ELECTRON_SKIP_BINARY_DOWNLOAD": "1"} if offline else {}),
-            }
             install = ["npm", "ci", "--no-audit", "--no-fund", *(["--offline"] if offline else [])]
-            run_logged(install, checkout, install_environment, output / "npm-ci.log")
+            install_for_arm(checkout, output, temporary, environment, install, snapshot, offline)
             versions = toolchain(checkout, environment, inputs)
             versions["v2ConcurrentWorkers"] = workers
             versions["npmInstall"] = install
@@ -288,16 +336,6 @@ def run_arm(
                 ("v1", V1_BUNDLE, COMMON, (f"{FIXTURES}/manifest.json", f"{FIXTURES}/development.json")),
                 ("v2", AUDIT, V2_HARNESS, (V2_DEV,)),
             ):
-                if version == "v2":
-                    # The audit merge sets MERGE_HEAD but leaves the source revision at the measured commit.
-                    git(checkout, "-c", "user.name=Development benchmark", "-c", "user.email=dev-bench@example.invalid",
-                        "merge", "--no-ff", "--no-commit", AUDIT)
-                    git(checkout, "restore", "--source=HEAD", "--staged", "--worktree", "--", ".")
-                    # Remove index-only holdout paths without checking out their contents.
-                    git(checkout, "restore", "--ignore-skip-worktree-bits", "--source=HEAD", "--staged", "--", ".")
-                    if git(checkout, "status", "--porcelain", "--untracked-files=no"):
-                        raise ValueError("Audit merge changed the measured product")
-
                 mounted = install_inputs(repo, checkout, revision, tuple(f"{BENCH}/{file}" for file in harness), inputs, version)
                 mounted += install_inputs(repo, checkout, revision, payload, inputs, version)
                 adapter_path = f"{BENCH}/by-branch.mjs"
