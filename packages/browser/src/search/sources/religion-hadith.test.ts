@@ -11,7 +11,8 @@ function fakeNetwork() {
   const reply = (url: string, status: number, body: string, headers = {}) => responses.set(url, { status, body, headers });
   reply(fixture.robots.url, 200, fixture.robots.body);
   for (const recorded of [fixture.search, fixture.englishSearch, fixture.detail, fixture.empty,
-    ...fixture.ruling.flatMap(item => [item.search, item.detail])]) {
+    ...fixture.ruling.flatMap(item => [item.search, item.detail]),
+    ...Object.values(fixture.snippetBudget).flatMap(item => [item.search, item.detail])]) {
     reply(recorded.url, 200, JSON.stringify(recorded.body));
   }
   const request = vi.spyOn(network, 'request').mockImplementation(async url => {
@@ -62,6 +63,34 @@ describe('HadeethEnc religion provider', () => {
     });
     expect(hit.snippet.startsWith(detail.hadeeth)).toBe(true);
     expect(request.mock.calls.map(([url]) => url)).toEqual([fixture.robots.url, fixture.englishSearch.url, fixture.detail.url]);
+  });
+
+  it('shortens a long bibliography while preserving the exact hadith and grade', async () => {
+    const { provider } = fakeNetwork();
+    const { search, detail } = fixture.snippetBudget.longBibliography;
+    const [recorded] = detail.body;
+    const phrase = new URL(search.url).searchParams.get('phrase');
+    const [hit] = await provider.search(compileQuery(`ما نص حديث ${phrase}؟`), 1, signal());
+    expect(recorded.hadeeth.length + recorded.reference.length).toBeGreaterThan(2_000);
+    expect(hit.snippet.length).toBeLessThanOrEqual(2_000);
+    expect(Buffer.from(hit.snippet.slice(0, recorded.hadeeth.length))).toEqual(Buffer.from(recorded.hadeeth));
+    expect(hit.snippet).toContain(`\n\nدرجة الحديث: ${recorded.grade}`);
+    expect(hit.snippet).toContain(`\n\nالمراجع: ${recorded.reference.split('\n', 1)[0]}`);
+    expect(hit.snippet).not.toContain(recorded.reference);
+    expect(hit.url).toBe(`https://hadeethenc.com/ar/browse/hadith/${recorded.id}`);
+  });
+
+  it('returns the reference and link when the original hadith is too long to quote whole', async () => {
+    const { provider } = fakeNetwork();
+    const { search, detail } = fixture.snippetBudget.oversizedQuotation;
+    const [recorded] = detail.body;
+    const phrase = new URL(search.url).searchParams.get('phrase');
+    const [hit] = await provider.search(compileQuery(`ما نص حديث ${phrase}؟`), 1, signal());
+    expect(recorded.hadeeth.length).toBeGreaterThan(2_000);
+    expect(hit.snippet).toBe(`المراجع: ${recorded.reference}`);
+    expect(hit.snippet.length).toBeLessThanOrEqual(2_000);
+    expect(hit.title).toBe(`حديث (${recorded.id}) — HadeethEnc.com`);
+    expect(hit.url).toBe(`https://hadeethenc.com/ar/browse/hadith/${recorded.id}`);
   });
 
   it('treats search suggestions as an empty result without looking up details', async () => {

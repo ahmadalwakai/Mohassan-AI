@@ -8,10 +8,13 @@ const origin = 'https://api.alquran.cloud';
 const versePath = '/v1/ayah/2:255/quran-uthmani';
 const editionsPath = '/v1/ayah/2:255/editions/quran-uthmani,en.sahih';
 const tafsirPath = '/v1/ayah/2:255/editions/quran-uthmani,ar.muyassar';
+const longEditionsPath = '/v1/ayah/2:282/editions/quran-uthmani,en.sahih';
+const longTafsirPath = '/v1/ayah/2:282/editions/quran-uthmani,ar.muyassar';
 const chapterPath = '/v1/surah/1/editions/quran-uthmani,en.sahih?offset=0&limit=7';
 const englishSearchPath = '/v1/search/the%20Ever-Living/all/en.sahih?limit=3';
 const emptyPath = '/v1/search/qftqftzx/all/en.sahih?limit=3';
 const corpusPath = '/v1/quran/quran-simple';
+const tanzilAttribution = 'Tanzil Project (https://tanzil.net)';
 
 const read = (file: string) => readFileSync(new URL(`./fixtures/quran-${file}.json`, import.meta.url));
 const expected = <T>(file: string): T => JSON.parse(read(file).toString('utf8')).data;
@@ -23,6 +26,8 @@ const recordings = new Map([
   [versePath, 'verse-uthmani'],
   [editionsPath, 'verse-editions'],
   [tafsirPath, 'tafsir-editions'],
+  [longEditionsPath, '2-282-verse-editions'],
+  [longTafsirPath, '2-282-tafsir-editions'],
   [chapterPath, 'chapter-editions'],
   [englishSearchPath, 'english-search'],
   [emptyPath, 'empty-search'],
@@ -78,6 +83,7 @@ describe('AlQuran Cloud provider', () => {
     const [hit] = await search('what does verse 2:255 say');
     expect(hit.url).toBe(origin + editionsPath);
     expect(hit.title).toContain('Al-Baqara (2:255) · English translation · Saheeh International');
+    expect(hit.title).toContain(tanzilAttribution);
     expect(hit.snippet).toBe(`Qur’an text\n${arabic.text}\n\nEnglish translation · Saheeh International\n${english.text}`);
     expect(requestedPaths()).toEqual(['/robots.txt', editionsPath]);
   });
@@ -87,6 +93,7 @@ describe('AlQuran Cloud provider', () => {
     const [hit] = await search('ما نص الآية ٢:٢٥٥؟');
     const quote = expected<Quote>('verse-uthmani').text;
     expect(hit.url).toBe(origin + versePath);
+    expect(hit.title).toContain(tanzilAttribution);
     expect(Buffer.from(hit.snippet, 'utf8')).toEqual(Buffer.from(quote, 'utf8'));
   });
 
@@ -107,6 +114,7 @@ describe('AlQuran Cloud provider', () => {
     expect(rows).toHaveLength(7);
     expect(rows[0].title).toContain('Al-Faatiha (1:1)');
     expect(rows[6].title).toContain('Al-Faatiha (1:7)');
+    expect(rows.every(row => row.title.includes(tanzilAttribution))).toBe(true);
     const [arabic] = expected<{ ayahs: Quote[] }[]>('chapter-editions');
     expect(rows[0].snippet).toContain(arabic.ayahs[0].text);
     expect(requestedPaths()).toEqual(['/robots.txt', '/v1/surah', chapterPath]);
@@ -124,6 +132,7 @@ describe('AlQuran Cloud provider', () => {
     const { search, requestedPaths } = setup();
     const [hit] = await search('في أي سورة لَا تَاخُذُهُ سِنَهٌ وَلَا نَوْمٌ؟');
     expect(hit.url).toBe(origin + '/v1/ayah/2:255/quran-simple');
+    expect(hit.title).toContain(tanzilAttribution);
     const { surahs } = expected<{ surahs: { number: number; ayahs: (Quote & { numberInSurah: number })[] }[] }>('simple-excerpt');
     expect(hit.snippet).toBe(surahs.find(surah => surah.number === 2)?.ayahs.find(ayah => ayah.numberInSurah === 255)?.text);
     const alternate = await search('في أي سورة لا تَأْخُذُهُ سِنَةٌ ولا نوم؟');
@@ -153,7 +162,28 @@ describe('AlQuran Cloud provider', () => {
     const [hit] = await search('ما تفسير آية الكرسي؟');
     expect(hit.url).toBe(origin + tafsirPath);
     expect(hit.title).toContain(`(2:255) · التفسير · ${tafsir.edition.name}`);
+    expect(hit.title).toContain(tanzilAttribution);
     expect(hit.snippet).toBe(`نص القرآن\n${arabic.text}\n\nالتفسير · ${tafsir.edition.name}\n${tafsir.text}`);
+  });
+
+  it.each([
+    ['what does verse 2:282 say', '2-282-verse-editions', longEditionsPath, 'en.sahih'],
+    ['ما تفسير الآية ٢:٢٨٢؟', '2-282-tafsir-editions', longTafsirPath, 'ar.muyassar'],
+  ])('returns separate intact editions when %s exceeds the combined snippet budget', async (question, recording, path, edition) => {
+    const { search, requestedPaths } = setup();
+    const [original, requested] = expected<Quote[]>(recording);
+    const hits = await search(question);
+    expect(original.text.length + requested.text.length).toBeGreaterThan(2000);
+    expect(hits.map(hit => hit.url)).toEqual([
+      origin + `/v1/ayah/2:282/${edition}`, origin + '/v1/ayah/2:282/quran-uthmani',
+    ]);
+    for (const [index, quote] of [requested, original].entries()) {
+      expect(hits[index].title).toContain('(2:282)');
+      expect(hits[index].snippet.length).toBeLessThanOrEqual(2000);
+      expect(Buffer.from(hits[index].snippet, 'utf8')).toEqual(Buffer.from(quote.text, 'utf8'));
+    }
+    expect(hits[1].title).toContain(tanzilAttribution);
+    expect(requestedPaths()).toEqual(['/robots.txt', path]);
   });
 
   it('searches the named English translation and handles a recorded no-match response', async () => {

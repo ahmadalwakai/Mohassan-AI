@@ -4,6 +4,7 @@ import { SearchProviderFailure, searchRetryAfter } from '../providers.js';
 import { RobotsPolicy } from '../robots.js';
 import type { PlannedProvider } from '../source-plan.js';
 import { matchesSurahName, normalizeQuranText, parseQuranQuery } from './religion-quran-query.js';
+import { religionSnippetLimit, wholeReligionQuote } from './religion-snippet.js';
 
 // API paths and editions checked 2026-11-27: https://alquran.cloud/api
 // https://api.alquran.cloud/v1/documentation/openapi/yaml
@@ -13,6 +14,8 @@ const uthmani = 'quran-uthmani';
 const simple = 'quran-simple';
 const translation = 'en.sahih';
 const commentary = 'ar.muyassar';
+// Attribution required by https://tanzil.net/docs/Text_License (checked 2026-11-27).
+const tanzilCredit = 'Tanzil Project (https://tanzil.net)';
 
 const cacheMs = 24 * 60 * 60 * 1000;
 const maxResponseBytes = 4_000_000;
@@ -55,27 +58,32 @@ function preferredEditions(language: Language, tafsir: boolean): string[] {
   if (tafsir) return [commentary, uthmani];
   return language === 'en' ? [translation, uthmani] : [uthmani];
 }
-function verseHit(versions: Verse[], language: Language, label?: string): SearchHit {
+function verseHits(versions: Verse[], language: Language, label?: string): SearchHit[] {
   const [main, original] = versions;
   const reference = `${main.surah.number}:${main.ayah}`;
   const surahTitle = language === 'ar' ? main.surah.name : main.surah.englishName;
-  const editionTitle = (edition: Edition) => language === 'ar' ? edition.name : edition.englishName;
-  const edition = editionTitle(main.edition);
-  const kind = main.edition.identifier === commentary
-    ? (language === 'ar' ? 'التفسير' : 'Tafsir')
-    : main.edition.identifier === translation
-      ? (language === 'ar' ? 'ترجمة إنجليزية' : 'English translation')
-      : undefined;
-  const snippet = original && kind
-    ? `${language === 'ar' ? 'نص القرآن' : 'Qur’an text'}\n${original.text}\n\n${kind} · ${edition}\n${main.text}`
-    : main.text;
-  return {
-    title: `${label ? `${label} · ` : ''}${surahTitle} (${reference}) · ${kind ? `${kind} · ` : ''}${edition} · AlQuran Cloud`,
-    url: `${origin}/v1/ayah/${reference}/${original
-      ? `editions/${original.edition.identifier},${main.edition.identifier}`
-      : main.edition.identifier}`,
-    snippet,
+  const title = `${label ? `${label} · ` : ''}${surahTitle} (${reference})`;
+  const editionTitle = (edition: Edition) => {
+    const name = language === 'ar' ? edition.name : edition.englishName;
+    if (edition.identifier === commentary) return `${language === 'ar' ? 'التفسير' : 'Tafsir'} · ${name}`;
+    if (edition.identifier === translation) return `${language === 'ar' ? 'ترجمة إنجليزية' : 'English translation'} · ${name}`;
+    return name;
   };
+  const hit = (verse: Verse, snippet: string, sourceEdition?: Edition): SearchHit => {
+    const { identifier } = verse.edition;
+    const path = sourceEdition ? `editions/${sourceEdition.identifier},${identifier}` : identifier;
+    const credit = snippet && [identifier, sourceEdition?.identifier].some(id => id === uthmani || id === simple)
+      ? ` · ${tanzilCredit}` : '';
+    return {
+      title: `${title} · ${editionTitle(verse.edition)}${credit} · AlQuran Cloud`,
+      url: `${origin}/v1/ayah/${reference}/${path}`,
+      snippet,
+    };
+  };
+  if (!original) return [hit(main, wholeReligionQuote(main.text))];
+  const combined = `${language === 'ar' ? 'نص القرآن' : 'Qur’an text'}\n${original.text}\n\n${editionTitle(main.edition)}\n${main.text}`;
+  if (combined.length <= religionSnippetLimit) return [hit(main, combined, original.edition)];
+  return [hit(main, wholeReligionQuote(main.text)), hit(original, wholeReligionQuote(original.text))];
 }
 
 export function quranProvider(network: SafeNetwork, now: () => number): PlannedProvider {
@@ -144,7 +152,7 @@ export function quranProvider(network: SafeNetwork, now: () => number): PlannedP
     const versions = (editions.length === 1 ? [result] : array(result)).map(value => readVerse(value, editions));
     if (versions.some(one => one.surah.number !== surah || one.ayah !== ayah)) return invalid();
     const ordered = orderEditions(versions, editions);
-    return [verseHit(ordered, language, label)];
+    return verseHits(ordered, language, label);
   }
 
   async function chapter(surah: number, editions: string[], language: Language, limit: number, signal: AbortSignal) {
@@ -159,9 +167,9 @@ export function quranProvider(network: SafeNetwork, now: () => number): PlannedP
     });
     const [main, original] = orderEditions(chapters, editions);
     if (original && original.verses.length !== main.verses.length) return invalid();
-    return main.verses.slice(0, limit).map((one, index) => {
+    return main.verses.slice(0, limit).flatMap((one, index) => {
       if (one.ayah !== index + 1 || original && original.verses[index].ayah !== one.ayah) return invalid();
-      return verseHit(original ? [one, original.verses[index]] : [one], language);
+      return verseHits(original ? [one, original.verses[index]] : [one], language);
     });
   }
 
@@ -248,7 +256,7 @@ export function quranProvider(network: SafeNetwork, now: () => number): PlannedP
       const matches = /\p{Script=Arabic}/u.test(target.words)
         ? await arabicMatches(target.words, matchLimit, signal)
         : await englishMatches(target.words, matchLimit, signal);
-      if (!tafsir) return matches.map(match => verseHit([match], language));
+      if (!tafsir) return matches.flatMap(match => verseHits([match], language));
       const hits: SearchHit[] = [];
       for (const match of matches) hits.push(...await verse(match.surah.number, match.ayah, editions, language, signal));
       return hits;

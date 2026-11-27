@@ -3,6 +3,7 @@ import { SearchProviderFailure, searchRetryAfter, type SearchQuery } from '../pr
 import { RobotsPolicy } from '../robots.js';
 import type { PlannedProvider } from '../source-plan.js';
 import { parseQuranQuery } from './religion-quran-query.js';
+import { religionSnippetLimit, wholeReligionQuote } from './religion-snippet.js';
 
 const ORIGIN = 'https://hadeethenc.com';
 // Official developer docs and usage terms, checked 2026-11-27.
@@ -41,6 +42,35 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 function present(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function shortenMetadata(line: string, limit: number): string {
+  if (line.length <= limit) return line;
+  if (limit <= 1) return '';
+  const lastLineEnd = line.lastIndexOf('\n', limit);
+  if (lastLineEnd > 0) {
+    const completeLines = line.slice(0, lastLineEnd).trimEnd();
+    return completeLines.length < limit ? `${completeLines}…` : completeLines;
+  }
+  const prefix = line.slice(0, limit - 1);
+  const wordEnd = prefix.search(/\s+\S*$/u);
+  return wordEnd > 0 ? `${prefix.slice(0, wordEnd)}…` : '';
+}
+
+function formatSnippet(quote: string, narrator: string, grade: string, reference: string) {
+  const fullSnippet = [quote, narrator, grade, reference].filter(Boolean).join('\n\n');
+  if (fullSnippet.length <= religionSnippetLimit) return { snippet: fullSnippet, referenceInTitle: '' };
+
+  const firstReference = reference.split('\n', 1)[0];
+  const metadataBudget = religionSnippetLimit - quote.length - 2;
+  const fitGrade = metadataBudget >= grade.length &&
+    (firstReference.length > metadataBudget || firstReference.length + grade.length + 2 <= metadataBudget);
+  const referenceBudget = metadataBudget - (fitGrade ? grade.length + 2 : 0);
+  const shortReference = referenceBudget >= firstReference.length ? shortenMetadata(reference, referenceBudget) : '';
+  const narratorBudget = referenceBudget - (shortReference ? shortReference.length + 2 : 0);
+  const shortNarrator = shortenMetadata(narrator, narratorBudget);
+  const snippet = [quote, shortNarrator, fitGrade ? grade : '', shortReference].filter(Boolean).join('\n\n');
+  return { snippet, referenceInTitle: shortReference ? '' : shortenMetadata(firstReference, 120) };
 }
 
 export function hadithProvider(network: SafeNetwork, now: () => number): PlannedProvider {
@@ -110,11 +140,22 @@ export function hadithProvider(network: SafeNetwork, now: () => number): Planned
     return [...titles].flatMap(([id, title]) => {
       const item = byId.get(id);
       if (!item || !present(item.hadeeth) || !present(item.grade) || !present(item.reference)) return [];
-      const narrator = present(item.hadeeth_intro) ? [`${labels.narrator}: ${item.hadeeth_intro}`] : [];
+      const url = `${ORIGIN}/ar/browse/hadith/${id}`;
+      const quote = wholeReligionQuote(item.hadeeth);
+      const reference = `${labels.reference}: ${item.reference}`;
+      if (!quote) {
+        return [{
+          title: `${query.language === 'ar' ? 'حديث' : 'Hadith'} (${id}) — HadeethEnc.com`,
+          url,
+          snippet: shortenMetadata(reference, religionSnippetLimit),
+        }];
+      }
+      const narrator = present(item.hadeeth_intro) ? `${labels.narrator}: ${item.hadeeth_intro}` : '';
+      const { snippet, referenceInTitle } = formatSnippet(quote, narrator, `${labels.grade}: ${item.grade}`, reference);
       return [{
-        title: `${title} — HadeethEnc.com`,
-        url: `${ORIGIN}/ar/browse/hadith/${id}`,
-        snippet: [item.hadeeth, ...narrator, `${labels.grade}: ${item.grade}`, `${labels.reference}: ${item.reference}`].join('\n\n'),
+        title: [referenceInTitle, `${title} — HadeethEnc.com`].filter(Boolean).join(' · '),
+        url,
+        snippet,
       }];
     });
   }
