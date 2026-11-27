@@ -156,6 +156,24 @@ for coverage, then use `disagreements` over `compared` for disagreement.
 Read both counts for each language and use the outcome numerators over
 `considered` to diagnose gaps. [Model runbook](MODELS-RUNBOOK.md#measure-budgets-on-the-production-vm)
 
+#### Local Linux x64 measurement
+
+The clean checkout at `ec4c6337c4ac76a6b9117df85878f08fa92ebfb0` measured 6 CPU models on Linux x64 with Node `v24.22.3` and 4 available CPUs. 42 registry entries were absent. Each model used 20 samples per language. Latencies are displayed as p50 / p95.
+
+| Model | Arabic cold ms | English cold ms | Arabic warm ms | English warm ms | Peak RSS MiB (ar / en) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `arithmetic` | 441.766 / 535.865 | 444.877 / 500.885 | 0.363 / 5.831 | 11.415 / 15.473 | 115.5 / 116.0 |
+| `refusal` | 9.793 / 13.014 | 9.586 / 13.530 | 0.329 / 0.467 | 0.444 / 0.574 | 61.5 / 61.1 |
+| `scratch-follow-up` | 19.298 / 23.450 | 18.982 / 22.663 | 0.217 / 0.327 | 0.236 / 0.298 | 66.6 / 66.9 |
+| `scratch-refusal` | 22.055 / 24.653 | 21.537 / 23.967 | 0.241 / 0.334 | 0.233 / 0.312 | 66.4 / 66.0 |
+| `scratch-route` | 22.760 / 27.574 | 22.208 / 27.733 | 0.233 / 0.315 | 0.243 / 0.314 | 66.5 / 66.4 |
+| `scratch-speech-act` | 18.490 / 21.847 | 20.148 / 34.089 | 0.265 / 0.417 | 0.234 / 0.347 | 66.8 / 66.4 |
+
+The receipt was created at `2026-11-27T00:56:16.779Z` and has SHA-256
+`8b71c78595a890b3b18783cd8292664206acbdbfa9e538063565e77cb5727f26`. It contains the raw timing
+samples, input and artifact fingerprints, machine details and the derived
+budgets. [Linux x64 JSON receipt](receipts/model-runtime-budgets-linux-x64-2026-11-27.json)
+
 ## Development commands
 
 Run the commands from the repository root.

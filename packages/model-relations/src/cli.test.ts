@@ -132,6 +132,38 @@ describe('model commands', () => {
     });
   });
 
+  it('reports each shadow failure over the considered calls in its language', async () => {
+    const log = join(scratch, 'shadow.jsonl');
+    const observations = [
+      { language: 'ar', outcome: 'ok', disagreed: true },
+      { language: 'ar', outcome: 'busy' },
+      { language: 'en', outcome: 'ok', disagreed: false },
+      { language: 'en', outcome: 'timeout', attempted: false },
+      { language: 'mixed', outcome: 'absent' },
+      { language: 'mixed', outcome: 'unhealthy' },
+    ];
+    const rows = observations.map(({ language, outcome, attempted = true, disagreed }) => JSON.stringify({
+      event: 'model_relations_turn', mode: 'shadow', language,
+      stages: [{ models: [{ model: 'refusal', outcome, attempted, disagreed,
+        ...(outcome === 'ok' ? {} : { fallback: 'existing-rules' }) }] }],
+    }));
+    await writeFile(log, rows.join('\n') + '\n');
+
+    const result = run('shadow-summary', log);
+    expect(result.status, result.stderr).toBe(0);
+    const share = (numerator: number, denominator: number) => ({ numerator, denominator });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      turnsByLanguage: { ar: 2, en: 2, mixed: 2, unknown: 0 },
+      models: [{ model: 'refusal', considered: 6, attempted: 5, compared: 2, disagreements: 1, fallbacks: 4,
+        outcomes: { ok: share(2, 6), busy: share(1, 6), timeout: share(1, 6), absent: share(1, 6), unhealthy: share(1, 6) },
+        byLanguage: {
+          ar: { compared: 1, disagreements: 1, outcomes: { ok: share(1, 2), busy: share(1, 2) } },
+          en: { compared: 1, disagreements: 0, outcomes: { ok: share(1, 2), timeout: share(1, 2) } },
+          mixed: { compared: 0, disagreements: 0, outcomes: { absent: share(1, 2), unhealthy: share(1, 2) } },
+        } }],
+    });
+  });
+
   it('reports arbiter disagreements separately from actual changes', async () => {
     const log = join(scratch, 'shadow.jsonl');
     const rows = [

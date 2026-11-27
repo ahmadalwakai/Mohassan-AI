@@ -89,6 +89,9 @@ The deployment and worker configuration still set upper limits. The
 margins allow for some variation between the isolated probes and service
 traffic. [Worker limits](../packages/execution-integration/model_worker/runtime.py) · [Linux enforcement](../packages/execution-integration/model_worker/containment.py)
 
+The RSS and virtual-memory fields follow the Node and Linux documentation,
+retrieved on 2026-11-27. [Node `resourceUsage`](https://nodejs.org/docs/latest-v24.x/api/process.html#processresourceusage) · [Linux `/proc` fields](https://docs.kernel.org/filesystems/proc.html)
+
 To apply a reviewed receipt, install it as `.data/model-runtime-budgets.json`
 from the deployed checkout root. Start the service with that receipt in
 place and check the provenance field in `npm run -s models:list`. Entries
