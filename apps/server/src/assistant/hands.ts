@@ -1313,6 +1313,7 @@ export function normalizeHandsPlan(plan: HandsPlan): HandsPlan {
 export type HandsRead = { kind: 'page'; page: AgentPage } | { kind: 'unreadable' } | { kind: 'disallowed' };
 
 export interface HandsIO {
+  liveHandover?: boolean;
   /** The conversation's live page, or null when no page is open. */
   page(): Promise<AgentPage | null>;
   /** The same public web search used by the model, with topic relevance and source ranking. */
@@ -1406,7 +1407,8 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
   if (planRefusal) return refused(planRefusal);
   const first = plan.steps[0];
   const publicPageRead = plan.steps.length === 1 && first?.kind === 'ask_page' && first.conversationPage?.readPublic;
-  let page = publicPageRead ? null : await io.page();
+  const opensNewPage = io.liveHandover && plan.next === 0 && (first?.kind === 'open' || first?.kind === 'news');
+  let page = publicPageRead || opensNewPage ? null : await io.page();
   const go = async (action: AgentAction, label: string): Promise<AgentPage | null> => {
     let next: AgentPage;
     try { next = await io.act(action); }
@@ -1422,7 +1424,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
     if (!permit) return 'none';
     const effectRefusal = enforceRefusal && reviewRefusalDestination(permit.url, permit.method);
     if (effectRefusal) return effectRefusal;
-    if (permit.method === 'GET') return go({ kind: 'open', text: permit.url }, label);
+    if (permit.method === 'GET') return go({ kind: 'open', text: permit.url, ...(io.liveHandover && action.ref ? { ref: action.ref } : {}) }, label);
     await io.approve(action, permit, label);
     return null;
   };
@@ -1780,7 +1782,7 @@ export async function runHands(plan: HandsPlan, io: HandsIO): Promise<HandsOutco
         plan.next = index + 1;
         let reached: AgentPage | null | 'none' | RefusalDecision;
         if (element.role === 'link' && element.href && !/^https?:/i.test(element.href)) return { kind: 'done', status: 'partial', text: `«${label}» ليس رابط صفحة ويب (${element.href.split(':')[0]})، فلم أفتحه.` };
-        if (element.role === 'link' && element.href) reached = await go({ kind: 'open', text: realUrl(element.href) }, label);
+        if (element.role === 'link' && element.href) reached = await go({ kind: 'open', text: realUrl(element.href), ...(io.liveHandover ? { ref: element.ref } : {}) }, label);
         else {
           reached = await submit({ kind: 'click', ref: element.ref }, label);
           if (reached === 'none') reached = await go({ kind: 'click', ref: element.ref }, label);

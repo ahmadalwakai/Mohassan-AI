@@ -1,0 +1,63 @@
+.panel {
+  position: fixed;
+  inset-inline-end: max(1rem, env(safe-area-inset-left));
+  inset-block-end: max(1rem, env(safe-area-inset-bottom));
+  z-index: 25;
+  max-inline-size: calc(100vw - 2rem);
+  max-block-size: calc(100dvh - 2rem);
+  overflow: auto;
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  box-shadow: var(--shadow-lg);
+}
+
+.panel[data-open="true"] { inline-size: min(36rem, calc(100vw - 2rem)); }
+.panel[data-open="true"][data-manual="true"] { inline-size: min(52rem, calc(100vw - 2rem)); }
+.panel[data-open="false"] { border-radius: 2rem; }
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  inline-size: 100%;
+  min-block-size: 2.75rem;
+  padding: .5rem .8rem;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  font-weight: 600;
+  text-align: start;
+}
+
+.toggle:hover { background: var(--hover); }
+.toggle svg:first-child { color: var(--accent); }
+.toggle svg:last-child { margin-inline-start: auto; }
+.panel[data-open="false"] .toggle svg:last-child { transform: rotate(180deg); }
+
+.preview {
+  display: grid;
+  place-items: center;
+  min-block-size: 5.5rem;
+  color: var(--soft);
+  background: var(--panel);
+}
+
+.preview img { display: block; inline-size: 100%; block-size: auto; }
+.preview img[data-interactive="true"] { cursor: pointer; }
+.preview p { padding: .75rem; }
+
+.takeover { display: grid; gap: .65rem; padding: .65rem; }
+.takeover .preview { overflow: hidden; border: 1px solid var(--line); border-radius: .6rem; }
+.prompt { padding: .65rem; border-radius: .6rem; background: var(--accent-soft); line-height: 1.6; }
+.text { display: flex; flex-wrap: wrap; gap: .5rem; }
+.text input { flex: 1 1 8rem; min-inline-size: 0; color: var(--ink); background: var(--page); }
+.text input, .takeover button { min-block-size: 2.25rem; padding: .35rem .6rem; border: 1px solid var(--line); border-radius: .5rem; }
+.takeover button { color: var(--ink); background: var(--raised); }
+.takeover button:hover:enabled { background: var(--hover); }
+.keys { display: flex; flex-wrap: wrap; gap: .35rem; }
+.keys button { font-size: .75rem; }
+.takeover .continue { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.takeover .continue:hover:enabled { background: var(--accent-hover); }
+.error { padding: .6rem; border-radius: .5rem; color: var(--alert); background: var(--alert-soft); }

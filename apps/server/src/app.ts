@@ -27,6 +27,7 @@ import { registerBrowserRoutes } from './browser.js';
 import { AgentBrowser, BrowserError, SafeNetwork, SearchEngine, SqlSearchStore, LocalPublicIndex, RobotsPolicy, migrateSearch, readableSource, type BrowserConfig } from '@mohassan/browser';
 import { registerSearchRoutes } from './search.js';
 import { registerBrowserFileRoutes } from './browser-files.js';
+import { registerBrowserLiveRoutes } from './assistant/browser-live-routes.js';
 import { createDocumentControl, migrateDocuments, registerDocumentRoutes } from './documents.js';
 import { PdfError } from '@mohassan/pdf';
 import { isWritingPdf, readWritingPdf } from './assistant/writing/pdf-source.js';
@@ -107,6 +108,7 @@ export interface AppConfig {
   dataDir?: string; databaseUrl?: string; authSecret: string; internalSecret: string;
   backupStatusDirectory?: string;
   setupToken: string; webOrigin: string; production: boolean; runWorker: boolean;
+  browserHands?: 'on';
   v5Chat?: 'off' | 'owner';
   groqApiKey?:string;groqModel?:string;groqReasoningModel?:string;aiFetch?:typeof fetch;
   codingDataDir?:string;codingAllowedRoots?:string[];sandboxRunner?:SandboxRunner;
@@ -506,6 +508,7 @@ export async function createApplication(config: AppConfig) {
     ...(config.v5Chat === 'owner' ? { v5: (history: readonly { role: 'user' | 'assistant'; content: string }[], signal: AbortSignal) => generateV5ChatReply(app, history, signal) } : {}) }) : undefined;
   const chat=await createCommandChatControl(database.db,{...(modelCouncil?{modelCouncil}:{}),...(shadowRouter?{shadowRouter}:{}),...(conversationShadow?{conversationShadow}:{}),...(judgeShadow?{judgeShadow,judgeFixForOwner:judgeConfig.fixForOwner,judgeWithholdForOwner:judgeConfig.withholdForOwner,judgeLogText:judgeConfig.logText}:{}),...(imageReader.available?{imageReader}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),sites:{createFromBrief:(ownerId,brief,options)=>sites.create(ownerId,{brief,conversationId:options.conversationId,role:options.role,draftWriteFence:options.draftWriteFence}),command:(ownerId,siteId,input)=>sites.command(ownerId,siteId,input),detail:(ownerId,siteId)=>sites.detail(ownerId,siteId),roleOf:ownerId=>roleOf(database.db,ownerId),link:siteId=>`${new URL(config.webOrigin).origin}/#sites=${siteId}`},...(desktop?{desktop:{parse:(text:string)=>clarifyDesktopFile(text,value=>desktop.parse(value)),describe:(command,lang)=>desktop.describe(command,lang),execute:(command,options)=>desktop.execute(command,options)}}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,documents:{control:documents,link:documentLink},inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,readPage,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',accountFullAccess:(ownerId,tx)=>lockOwnerToolAccess(tx,ownerId),accountActive:async(ownerId,tx)=>{const role=await roleOf(tx,ownerId);if(role!=='member')return role!==null;return Boolean(await tx.selectFrom('workspace_members').select('user_id').where('user_id','=',ownerId).where('role','=','member').where('disabled_at','is',null).forShare().executeTakeFirst());},memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
     ownModel: createServerOwnModelReply(app),
+    browserHands: config.browserHands,
     ...(config.v5Chat === 'owner' ? { v5Chat: {
       ready: () => isV5ChatReady(app),
       generate: (messages, signal) => generateV5ChatReply(app, messages, signal),
@@ -527,6 +530,7 @@ export async function createApplication(config: AppConfig) {
   await registerReminderRuntime(app, { db: database.db, owner });
   await registerMonitorRuntime(app, database.db, owner, (tx, userId, id) => reserveMemberRun(tx, userId, id, memberDailyRuns));
   await registerWindowsScopedChatRoutes(app, { control: chat, owner }, windows, sessionUser);
+  registerBrowserLiveRoutes(app, { db: database.db, owner, isOwner: async id => await roleOf(database.db, id) === 'owner', enabled: config.browserHands === 'on', live: chat.browserLive });
   registerNotificationRoutes(app, { db: database.db, owner, isActive: async id => Boolean(await roleOf(database.db, id)), recoverChatRuns: chat.recoverExpired });
   registerConversationShareRoutes(app,{db:database.db,owner,role,webOrigin:config.webOrigin,internalSecret:config.internalSecret,fontsDir:config.documentsFontsDir});
   await registerBrowserFileRoutes(app,{db:database.db,browser:agentBrowser,owner});

@@ -18,7 +18,8 @@ const [{createApplication},{getConfig},{createMockGroq}]=await Promise.all([
 ]);
 const mock=createMockGroq();
 const localBrain=process.env.MOHASSAN_E2E_LOCAL_BRAIN==='1';
-const {app}=await createApplication({...getConfig(),testRequestLimit:1000,browser:{testOrigins:['http://127.0.0.1:4201']},groqApiKey:localBrain?undefined:'isolated-browser-fixture-not-a-real-key',groqModel:'openai/gpt-oss-20b',groqReasoningModel:'openai/gpt-oss-120b',aiFetch:mock.fetch});
+const browserHands = process.argv.includes('--browser-hands') ? 'on' : undefined;
+const {app}=await createApplication({...getConfig(),browserHands,testRequestLimit:1000,browser:{testOrigins:['http://127.0.0.1:4201']},groqApiKey:localBrain?undefined:'isolated-browser-fixture-not-a-real-key',groqModel:'openai/gpt-oss-20b',groqReasoningModel:'openai/gpt-oss-120b',aiFetch:mock.fetch});
 await app.listen({port:Number(process.env.SERVER_PORT??4100),host:'127.0.0.1'});
 process.send?.({type:'e2e.ready',root:fixtureRoot});
 let stopping=false;

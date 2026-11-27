@@ -3,7 +3,7 @@ import { defineConfig, devices } from '@playwright/test';
 const webPort = process.env.MOHASSAN_E2E_WEB_PORT || '3100';
 export default defineConfig({
   testDir:'./tests/e2e',fullyParallel:false,workers:1,timeout:45000,
-  testIgnore:'**/smart-monitors-github.spec.ts',
+  testIgnore:['**/smart-monitors-github.spec.ts', '**/browser-live-view.spec.ts'],
   expect:{timeout:15000},
   use:{baseURL:`http://127.0.0.1:${webPort}`,trace:'retain-on-failure',screenshot:'only-on-failure'},
   projects:[{name:'chromium',use:{...devices['Desktop Chrome']}}],

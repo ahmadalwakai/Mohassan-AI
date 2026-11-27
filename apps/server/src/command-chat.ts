@@ -116,6 +116,9 @@ import { decodeStructuredMemoryDecision, memoryRecallFormat, structuredMemoryDec
 import { reviewMemoryRecallEvidence } from './assistant/memory-recall-evidence.js';
 import { projectPreferredLanguageMemoryQuery, recognizePreferredLanguageRequest } from './assistant/preferred-language-fact.js';
 import { CredentialVault } from './assistant/vault.js';
+import type { BrowserHumanStep } from '@mohassan/browser';
+import { isBrowserLiveHandover } from '@mohassan/contracts';
+import { createBrowserLiveControl, pauseBrowserLivePage, watchBrowserLiveAction, type BrowserHandsFlag, type LiveHandsProgress } from './assistant/browser-live-handover.js';
 import { trustedSkillGapSignal } from './assistant/skill-gaps.js';
 import { chatModelFailure } from './assistant/model-failure.js';
 import { reviewModelRetry } from './assistant/model-retry.js';
@@ -143,6 +146,7 @@ export interface DesktopChatPort {
 }
 
 export interface CommandChatConfig {
+  browserHands?: BrowserHandsFlag;
   /** False for a member: no projects, studio, computer or skill runs. Absent means full access. */
   fullAccess?: (ownerId: string) => Promise<boolean>;
   /** Current account access, checked using the same fenced transaction. Must not open a nested transaction. */
@@ -505,6 +509,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     ...(tools?.computer ? ['computer_view', 'computer_click', 'computer_type', 'computer_key'] as const : []),
   ];
   type Execution = { ownerId: string; id: string; runId: string; token: string; controller: AbortController; full: boolean;
+    liveHands?: LiveHandsProgress;
     request?: string; previousRequest?: string | null; constraints?: UserRequestConstraints | null; state?: BrainState; page?: AgentPage;
     /** Pages this run read over HTTP (the last five, in memory only): the judge in shadow compares the reply's sentences with them. */
     readPages?: AgentPage[] };
@@ -551,7 +556,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     let before = current?.page;
     let action = args[2];
     for (;;) {
-      try { return await browser.act(args[0], args[1], action, args[3], args[4], args[5]); }
+      const run = () => browser.act(args[0], args[1], action, args[3], args[4], args[5]);
+      try { return args[3].liveRunId ? await watchBrowserLiveAction(run, action, current?.liveHands, url => browser.normalizeUrl(url), pauseLivePage, () => new RunEnded()) : await run(); }
       catch (error) {
         const reason = transientBrowserFailure(error, action, Boolean(args[4]));
         if (!current?.state || !reason) throw error;
@@ -669,6 +675,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   function prepareBrowserAction(...args: Parameters<AgentBrowser['prepareAction']>): ReturnType<AgentBrowser['prepareAction']> {
     assertBrowserActionScope(args[2]);
     return browser.prepareAction(...args);
+  }
+  async function pauseLivePage(page: AgentPage, reason?: BrowserHumanStep['reason']): Promise<boolean> {
+    return pauseBrowserLivePage({ enabled: config.browserHands === 'on', current: execution.getStore(), browser,
+      requireOwner: requireCurrentOwnerAccess, keepPage, pause: pauseSecure }, page, reason);
   }
   let closing = false;
   function forgetVault(id:string,token:string){if(vaultOwners.get(id)===token){vault.forget(id);vaultOwners.delete(id);}}
@@ -797,6 +807,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   function authority(): AgentAuthority {
     const current = execution.getStore(); if (!current) throw new RunEnded();
     return { signal: current.controller.signal, assertActive:()=>execution.run(current,assertActive),
+      ...(config.browserHands === 'on' && current.full ? { liveRunId: current.runId } : {}),
       saveCheckpoint: checkpoint=>execution.run(current,()=>runTransaction(current.id,current.runId,async tx=>{
         if(checkpoint.ownerId!==current.ownerId||checkpoint.conversationId!==current.id)throw new RunEnded();
         const row=await tx.selectFrom('chat_conversations').select('browser_account').where('id','=',current.id).executeTakeFirstOrThrow();
@@ -1381,6 +1392,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
 
   async function pauseSecure(id: string, runId: string, state: BrainState, secure: Omit<ChatSecureRequest, 'id'>) {
     const current=execution.getStore();
+    if (current?.page && (secure.kind === 'login' || secure.kind === 'code') && await pauseLivePage(current.page, secure.kind)) return;
     if(secure.kind!=='hands_on'&&current&&await browser.hasPage(current.ownerId,id))state.securePageHash=(await browser.observe(current.ownerId,id)).page.hash;
     else state.securePageHash=null;
     await pause(id, runId, state, 'waiting_input', { secure: JSON.stringify({ id: randomUUID(), ...secure }) }, secure.prompt);
@@ -1631,6 +1643,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     let page = start;
     for (let round = 0; round < 6; round++) {
       signal.throwIfAborted();
+      if (await pauseLivePage(page)) return null;
       const kind = situation(page);
       const site = siteOf(page.url);
       const authKind = ['password', 'identifier', 'otp'].includes(kind);
@@ -2238,7 +2251,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         await pause(id, runId, state, 'waiting_user', { question: JSON.stringify({ id: randomUUID(), prompt, options: [] } satisfies ChatQuestion) }, prompt);
         return;
       }
-      if (run.intent === 'task' && run.attempt === 1 && !verificationIntent && !noteVerificationIntent && await runCompiledChatPlan({ request, config, search, state, ownerId, conversationId: id, runId, fullAccess: currentExecution.full, now: new Date(effectiveSource.evaluatedAt), signal, memoryLimit: MAX_MEMORY_SAVES, active, navigate: async url => (await actBrowser(ownerId, id, { kind: 'open', text: url }, authority())).page, keepPage: page => keepPage(id, page), scrub: text => vault.scrub(id, clean(text)), ledger: () => ledgerOf(state, runId), checkpoint: () => saveState(runId, state), fenceMemory: async tx => { await lockedExecution(tx, id, runId); }, validActionLedger: () => Boolean(restoreActionCompletionLedger(state.actionCompletion, { runId, request })), isInterruption: error => error instanceof RunEnded, publish: (text, status) => finish(id, runId, state, text, status, undefined, undefined, true) })) return;
+      if (run.intent === 'task' && run.attempt === 1 && !verificationIntent && !noteVerificationIntent && await runCompiledChatPlan({ request, config, search, state, ownerId, conversationId: id, runId, fullAccess: currentExecution.full, now: new Date(effectiveSource.evaluatedAt), signal, memoryLimit: MAX_MEMORY_SAVES, active, navigate: async url => (await actBrowser(ownerId, id, { kind: 'open', text: url }, authority())).page, keepPage: async page => { if (await pauseLivePage(page)) throw new RunEnded(); await keepPage(id, page); }, scrub: text => vault.scrub(id, clean(text)), ledger: () => ledgerOf(state, runId), checkpoint: () => saveState(runId, state), fenceMemory: async tx => { await lockedExecution(tx, id, runId); }, validActionLedger: () => Boolean(restoreActionCompletionLedger(state.actionCompletion, { runId, request })), isInterruption: error => error instanceof RunEnded, publish: (text, status) => finish(id, runId, state, text, status, undefined, undefined, true) })) return;
       if (!restoreActionCompletionLedger(state.actionCompletion, { runId, request })) {
         const reviewed = reviewActionCompletion(state.actionCompletion, { runId, request, outcome: 'blocked' });
         state.actionCompletionReview = reviewed;
@@ -2604,6 +2617,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
         if (state.hands && admittedBrowserStep) completeApprovedHandsStep(ledgerOf(state, runId), state.hands, admittedBrowserStep, Date.now());
         await saveState(runId, state);
       }
+      if (admittedBrowserStep && page && await pauseLivePage(page)) return;
       if (state.pendingTask) {
         const pending = state.pendingTask;
         state.pendingTask = null;
@@ -3161,6 +3175,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           return { kind: 'page', page: readPageObject };
         } : undefined;
         const io: HandsIO = {
+          liveHandover: config.browserHands === 'on' && currentExecution.full,
           ...(read ? { read } : {}),
           page: async () => {
             assertBrowserRequestScope(request, 'browser_action', state);
@@ -3197,8 +3212,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           act: async action => { await active(); const result = await actBrowser(ownerId, id, action, authority()); page = result.page; await keepPage(id, page); state.trail.push({ step: ++state.steps, action: `${action.kind} ${action.text ?? action.ref ?? ''}`.trim().slice(0, 300), result: `now at ${page.url}`, changed: result.changed }); return page; },
           prepare: action => prepareBrowserAction(ownerId, id, action),
           settle: async next => { const settled = await instincts(ownerId, id, runId, state, next, signal, personalSignIn); if (settled) { page = settled; await keepPage(id, settled); } return settled; },
-          begin: async index => { await active(); beginHandsStep(ledgerOf(state, runId), plan, handsPrefix, index, Date.now()); await saveState(runId, state); },
-          complete: async (index, status) => { await active(); completeHandsStep(ledgerOf(state, runId), plan, handsPrefix, index, status, Date.now()); await saveState(runId, state); },
+          begin: async index => { await active(); beginHandsStep(ledgerOf(state, runId), plan, handsPrefix, index, Date.now()); await saveState(runId, state); if (config.browserHands === 'on' && currentExecution.full) currentExecution.liveHands = { prefix: handsPrefix, index, actions: 0 }; },
+          complete: async (index, status) => { await active(); completeHandsStep(ledgerOf(state, runId), plan, handsPrefix, index, status, Date.now()); await saveState(runId, state); currentExecution.liveHands = undefined; if (page && await pauseLivePage(page)) throw new RunEnded(); },
           step: async label => { await active(); await addStep(id, runId, label); await setProgress(id, `${liveLabel(label)}…`); },
           progress: async label => { await active(); await setProgress(id, `${label}…`); },
           approve: async (action, permit, label) => { await pauseBrowserAction(id, runId, state, { action, permit, label }); },
@@ -4533,6 +4548,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const row = await owned(ownerId, id);
     const secure = row.secure as ChatSecureRequest | null;
     if (row.status !== 'waiting_input' || secure?.id !== input.requestId || !row.active_run_id) throw new BrowserError('CHAT_SECURE_CHANGED', 'هذا الطلب لم يعد معلقًا.', 409);
+    if (isBrowserLiveHandover(secure)) throw new BrowserError('CHAT_BROWSER_HANDOVER_LIVE', 'أكمل الخطوة واضغط «متابعة» في نافذة المتصفح.', 409);
     if (input.action === 'submit') {
       if (secure.site === GOOGLE_SIGN_IN_ORIGIN) throw new BrowserError('CHAT_GOOGLE_SIGN_IN_UNSUPPORTED', GOOGLE_SIGN_IN_STOP, 409);
       if (!input.values || !Object.values(input.values).some(Boolean)) throw new BrowserError('CHAT_SECURE_EMPTY', 'أدخل البيانات المطلوبة.');
@@ -4623,6 +4639,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   async function handsOn(ownerId: string, id: string, act: () => Promise<void>) {
     if(closing)throw new BrowserError('CHAT_SHUTTING_DOWN','الخدمة تتوقف الآن. حاول بعد قليل.',503);
     const row = await owned(ownerId, id);
+    if (isBrowserLiveHandover(row.secure)) throw new BrowserError('CHAT_BROWSER_HANDOVER_LIVE', 'أكمل الخطوة في نافذة المتصفح.', 409);
     if (row.status === 'running') throw new BrowserError('CHAT_BUSY', 'انتظر حتى ينتهي العمل الجاري أو أوقفه.', 409);
     await act();
     return { ok: true };
@@ -4686,6 +4703,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   }
 
   return {
+    browserLive: createBrowserLiveControl({ db, browser, enabled: config.browserHands === 'on', closing: () => closing,
+      ownerAllowed: (ownerId, tx) => config.accountFullAccess?.(ownerId, tx) ?? config.fullAccess?.(ownerId) ?? Promise.resolve(false),
+      effectClear: async (ownerId, id, tx) => await browserEffectStatus(ownerId, id, tx) === 'clear',
+      resume: (ownerId, id, runId, handoverId, change) => resume(ownerId, id, runId, (state, tx) => change(state, tx), 'أكملت الخطوة في المتصفح', { status: 'waiting_input', field: 'secure', requestId: handoverId }) }),
     create, list, detail, approve, secureSubmit, cancel, remove, screen, browserActivity, shutdown,restoreBrowser,reviewBrowser, uploadImage, image: imageBytes, feedback, once, recoverExpired,
     ...protectStructuredMemoryIngress({ create, send, once }),
     ...clarificationAnswers({ db, config, hasChatModel, resume, send, respond }),

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { chromium, type BrowserContext, type ElementHandle, type Frame, type JSHandle, type Page, type Route } from 'playwright';
+import { bindBrowserLivePage, browserHasLiveBinding, browserLiveMasks, createBrowserLiveView, guardBrowserLiveAction, trackBrowserLiveNavigation } from './browser-live-page.js';
 import { decideEffect, type EffectActor } from './effect-policy.js';
 import { BrowserError, SafeNetwork } from './network.js';
 import { crossOriginReadHeaders } from './redirect-headers.js';
@@ -119,6 +120,7 @@ export interface AgentAction {
   submit?: boolean;
 }
 export interface AgentAuthority {
+  liveRunId?: string;
   signal: AbortSignal;
   assertActive(): Promise<void>;
   dispatched(permit: AgentRequestPermit): Promise<string>;
@@ -446,6 +448,11 @@ export class AgentBrowser {
   private idleSweep?: ReturnType<typeof setInterval>;
   private sweeping: Promise<number> | null = null;
 
+  readonly liveView = createBrowserLiveView<ConversationPage>({
+    find: async ({ ownerId, conversationId }) => (await this.owners.get(this.profileKey(ownerId, conversationId))?.catch(() => null))?.conversations.get(conversationId),
+    read: entry => this.read(entry, false), secrets: entry => this.redactions(entry), beginInput: entry => { this.clearActivity(entry); this.ownerInput(entry); },
+    save: (entry, store) => store ? store(this.checkpoint(entry)) : this.persist(entry),
+  });
   constructor(private readonly options: AgentBrowserOptions) {
     this.network = new SafeNetwork({ testOrigins: options.testOrigins });
     this.checkpointStore = options.onCheckpoint;
@@ -868,6 +875,7 @@ export class AgentBrowser {
     if (!entry.operation && (entry.ownerInputUntil ?? 0) <= Date.now()) { void popup.close().catch(() => {}); return; }
     this.clearActivity(entry);
     entry.page = popup;
+    trackBrowserLiveNavigation(entry, popup.mainFrame());
     this.watch(entry, popup);
     popup.once('close', () => {
       if (entry.page === popup && !previous.isClosed()) { this.clearActivity(entry); entry.page = previous; }
@@ -886,6 +894,7 @@ export class AgentBrowser {
     page.on('framenavigated', captureChange);
     page.on('close', captureChange);
     page.on('framenavigated',frame=>{
+      trackBrowserLiveNavigation(entry, frame);
       if (entry.page === page) this.clearActivity(entry);
       if(frame!==entry.page.mainFrame()||!/^https?:/.test(frame.url()))return;
       const url=frame.url();
@@ -1122,7 +1131,7 @@ export class AgentBrowser {
 
   private async capture(entry: ConversationPage): Promise<void> {
     const secrets=this.redactions(entry);
-    const mask=entry.page.frames().filter(frame=>!frame.isDetached()).flatMap(frame=>[frame.locator('input[type="password"],input[autocomplete="one-time-code"],input[autocomplete^="cc-"]'),...secrets.map(secret=>frame.getByText(secret,{exact:false}))]);
+    const mask = browserLiveMasks(entry.page, secrets, browserHasLiveBinding(entry));
     // Never reuse an old, possibly sensitive capture when masking fails.
     entry.shot = await entry.page.screenshot({ type: 'jpeg', quality: 62, timeout: 5000, mask }).catch(() => null);
   }
@@ -1311,9 +1320,10 @@ export class AgentBrowser {
     } finally { operation.pending.abort(); if (entry.operation === operation) entry.operation = undefined; }
   }
 
-  async observe(ownerId: string, conversationId: string): Promise<AgentActionResult> {
+  async observe(ownerId: string, conversationId: string, liveRunId?: string): Promise<AgentActionResult> {
     const entry = await this.conversation(ownerId, conversationId), result = await this.result(entry);
     if (!entry.operation) await this.persist(entry);
+    bindBrowserLivePage(entry, liveRunId);
     return result;
   }
 
@@ -1365,6 +1375,7 @@ export class AgentBrowser {
     this.discard(entry);
     try {
       authority.signal.throwIfAborted(); await authority.assertActive();
+      await guardBrowserLiveAction(entry, authority.liveRunId, action, () => this.read(entry, false));
       if (entry.recovery.reviewRequired && !['open', 'back', 'scroll', 'wait'].includes(action.kind)) throw new BrowserError('AGENT_RECOVERY_REVIEW_REQUIRED', 'يوجد أثر غير محسوم؛ اقرأ نتيجته وراجعها قبل أي فعل جديد.', 409);
       if (approved) {
         const current = await this.prepareAction(ownerId, conversationId, action);
@@ -1389,6 +1400,7 @@ export class AgentBrowser {
         default: throw new BrowserError('AGENT_ACTION_INVALID','هذا الإجراء غير معروف.',400);
       } };
       let result = await perform();
+      bindBrowserLivePage(entry, authority.liveRunId);
       if (entry.closed) throw new BrowserError('AGENT_PAGE_CLOSED', 'أُغلقت صفحة المحادثة.', 409);
       if (conditions) result = await this.verifyPostconditions(ownerId, conversationId, conditions, authority);
       if (operation.used && !operation.responded) entry.recovery.reviewRequired = true;
@@ -1480,6 +1492,8 @@ export class AgentBrowser {
 
   /** Scroll/hover may rebuild a control after resolution but before native input. */
   private async assertTargetCurrent(entry: ConversationPage, ref: string, target: ElementHandle<Element>, observed: ObservedTarget): Promise<void> {
+    const operation = entry.operation;
+    if (operation?.authority.liveRunId) await guardBrowserLiveAction(entry, operation.authority.liveRunId, { kind: operation.kind, ref }, () => this.read(entry, false));
     const current = observed.frame.page() === entry.page && await observed.model.evaluate((model, input) =>
       input.target.isConnected && model.resolve(input.ref) === input.target, { ref, target }).catch(() => false);
     if (!current || observed.frame.page() !== entry.page)
@@ -1538,7 +1552,7 @@ export class AgentBrowser {
       const value = await target.evaluate(node => 'value' in node ? String((node as HTMLInputElement).value) : node.textContent ?? '');
       if (value !== text) throw new BrowserError('AGENT_FIELD_UNVERIFIED', 'لم يثبت أن الحقل احتفظ بالقيمة المطلوبة؛ راجع الصفحة قبل المتابعة.', 409);
       await observed.model.evaluate((model, ref) => model.recordWrite(ref), ref);
-      if (submit) await target.press('Enter');
+      if (submit) { await guardBrowserLiveAction(entry, entry.operation?.authority.liveRunId, { kind: 'type', ref }, () => this.read(entry, false), false); await target.press('Enter'); }
       });
     });
     return this.result(entry);
@@ -1575,9 +1589,10 @@ export class AgentBrowser {
   async press(ownerId: string, conversationId: string, key: string): Promise<AgentActionResult> {
     const entry = await this.conversation(ownerId, conversationId);
     return this.withMutation(entry, async () => {
-    await this.duringActivity(entry, await this.startKeyboardActivity(entry), () => entry.page.keyboard.press(key).catch(() => {
+    await this.duringActivity(entry, await this.startKeyboardActivity(entry), () =>
+      guardBrowserLiveAction(entry, entry.operation?.authority.liveRunId, { kind: 'press' }, () => this.read(entry, false)).then(() => entry.page.keyboard.press(key).catch(() => {
       throw new BrowserError('AGENT_KEY_INVALID', 'هذا المفتاح غير معروف.');
-    }));
+    })));
     return this.result(entry);
     });
   }

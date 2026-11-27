@@ -20,6 +20,7 @@ import { takeoverInput } from "./takeover-input";
 import { BrowserFilesPanel } from './browser-files-panel';
 import { DocumentsPanel } from './documents-panel';
 import { BrowserViewport } from './browser-viewport';
+import { useBrowserLive } from './browser-live-panel';
 import { CampaignCard } from "./campaign-card";
 import { TrainingMonitorMenuItem } from "./training-monitor-menu-item";
 import { ConversationActions } from "./conversation-actions";
@@ -641,7 +642,8 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
   // The Chrome bar belongs to Google Ads work: campaign events, or a campaign asked for in this conversation.
   const adsConversation = Boolean(conversation?.campaign?.events.length
     || conversation?.messages.some(message => message.role === "user" && ADS_WORDS.test(message.text)));
-  const showBrowser = Boolean(conversation?.browser && browserOpen);
+  const browserLive = useBrowserLive(selectedId === conversation?.id ? conversation : null, setConversation, Boolean(visibility && panelOpens(visibility, setting) && !narrowViewport()));
+  const showBrowser = Boolean(conversation?.browser && browserOpen && !browserLive.active);
   const firstName = name.trim().split(/\s+/)[0];
   const form = <form className={styles.composer} onSubmit={send} onPaste={onPaste} onDrop={onDrop} onDragOver={(event) => event.preventDefault()}>
     {!selectedId?<details className={styles.browserAccount}><summary>حساب المتصفح: {browserAccount||'الافتراضي'}</summary><label htmlFor="browser-account">اسم جلسة الحساب</label><input id="browser-account" dir="ltr" value={browserAccount} maxLength={128} pattern="[a-zA-Z0-9_-]{1,128}" placeholder="work-account" disabled={busy} onChange={event=>setBrowserAccount(event.target.value)}/><small>اتركه فارغًا للحساب الافتراضي، أو استخدم اسمًا بحروف إنجليزية وأرقام لفصل حسابات المواقع.</small></details>:null}
@@ -713,7 +715,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
         <button className={`${styles.iconButton} ${styles.mobileOnly}`} aria-label="فتح القائمة" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
         <span dir="auto">{conversation?.title !== "محادثة جديدة" ? conversation?.title : ""}</span>
         <ConversationActions conversationId={conversation?.id} />
-        {conversation?.browser && !browserOpen && visibility?.canView !== false ? <button className={`${styles.showBrowser} ${running ? styles.background : ""}`} onClick={showPanel} aria-label="عرض المتصفح" data-testid="browser-chip">
+        {conversation?.browser && !browserOpen && !browserLive.active && visibility?.canView !== false ? <button className={`${styles.showBrowser} ${running ? styles.background : ""}`} onClick={showPanel} aria-label="عرض المتصفح" data-testid="browser-chip">
           {running
             ? <><span className={styles.chipName}>المتصفح ·</span><ActivityLine text={conversation.progress ?? "يعمل في الخلفية"} since={requestedAt} compact /><span className={styles.chipAction}>· عرض</span></>
             : <><Globe size={15} />المتصفح · عرض</>}</button> : null}
@@ -770,7 +772,8 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
                 <button className={styles.secondary} disabled={busy} onClick={() => void act(() => post("approve", { approvalId: conversation!.approval!.id, approved: false }))}>لا تفعل</button>
               </div>
             </div> : null}
-            {conversation!.secure ? <SecureCard request={conversation!.secure} busy={busy} onSubmit={(action, values) => void act(() => post("secure", { requestId: conversation!.secure!.id, action, ...(values ? { values } : {}) }))} /> : null}
+            {browserLive.handoverWithoutPage ? <p className={styles.card} role="status">{browserLive.handoverWithoutPage.prompt} في انتظار الصفحة الحية.</p>
+              : conversation!.secure && !browserLive.manualHandover ? <SecureCard request={conversation!.secure} busy={busy} onSubmit={(action, values) => void act(() => post("secure", { requestId: conversation!.secure!.id, action, ...(values ? { values } : {}) }))} /> : null}
             {conversation!.error || error ? <p className={styles.problem} role="alert">{conversation!.error || error}</p> : null}
             {conversation!.status === "failed" && conversation!.error && onOpenTool ? <div className={styles.problemActions}>
               <button type="button" className={styles.secondary} onClick={() => onOpenTool("integrations")}><Settings2 size={15} />حالة مزودي النماذج</button>
@@ -788,6 +791,7 @@ export function AssistantApp({ name, onAdvanced, onOpenTool, onSignOut, notifica
       </>}
     </main>
     {showBrowser ? <BrowserPanel conversation={conversation!} reason={visibility?.level === 3 ? visibility.reason : null} onClose={hidePanel} onError={setError} busy={busy} onRestore={()=>void act(()=>post("browser/restore",{}))} onReview={()=>void act(()=>post("browser/review",{reviewed:true,checkpointToken:conversation?.browser?.recoveryToken}))} /> : null}
+    {browserLive.panel}
     <DeleteDialog target={deleting} busy={deleteBusy} error={deleteError} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} />
     {notice ? <div className={styles.toast} role="status"><Check size={15} />{notice}</div> : null}
   </div>;
