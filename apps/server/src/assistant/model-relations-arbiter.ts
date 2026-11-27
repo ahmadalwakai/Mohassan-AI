@@ -5,11 +5,11 @@ import type { ModelRuntime } from '../../../../packages/model-relations/src/runt
 
 let runtime: Promise<ModelRuntime> | undefined;
 export const modelRelationsManager = new ModelRelationsManager({
-  async run(id, input) {
+  async run(id, input, signal) {
     runtime ??= import('../../../../packages/model-relations/src/runtime.js').then(({ createModelRuntime }) => createModelRuntime({
       heavyAvailable: () => process.env.MOHASSAN_MODEL_WORKER !== '1' && process.env.EXECUTOR_EXPERIMENT !== 'uncontained-local',
     })).catch(error => { runtime = undefined; throw error; });
-    return (await runtime).run(id, input);
+    return (await runtime).run(id, input, signal);
   },
 });
 

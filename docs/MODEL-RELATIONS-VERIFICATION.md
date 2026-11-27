@@ -134,6 +134,28 @@ that workload.
 | `scratch-route` | 2,679 | 297 | 186 | 62.6% | 2,382 |
 | `scratch-speech-act` | 2,679 | 542 | 3 | 0.6% | 2,137 |
 
+### Runtime budgets and new shadow receipts
+
+At `29448ae` the refusal row used 489 comparable calls out of 2,679
+considered calls. It recorded 2,130 immediate `busy` outcomes across the two
+splits. The historical file did not record turn language.
+
+For a new deployment measurement, run the following from the production VM
+checkout with the service's local model artifacts and interpreter.
+
+```sh
+npm run -s models:budgets -- .data/model-runtime-budget-receipt.json
+npm run -s models:shadow-summary -- .data/model-relations-shadow.jsonl
+```
+
+Retain the ARM receipt privately. The runbook describes the measurement
+method, receipt application and shadow denominators. A new shadow run can
+show how many comparisons completed after waiting for a CPU slot and how
+many waited until their deadline. Compare `compared` against `considered`
+for coverage, then use `disagreements` over `compared` for disagreement.
+Read both counts for each language and use the outcome numerators over
+`considered` to diagnose gaps. [Model runbook](MODELS-RUNBOOK.md#measure-budgets-on-the-production-vm)
+
 ## Development commands
 
 Run the commands from the repository root.

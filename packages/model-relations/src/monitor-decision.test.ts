@@ -50,6 +50,11 @@ describe('monitor context decision head', () => {
       modelOutcome: 'ok', reason: 'shadow', claimants: [{ label: 'offer' }, { label: 'none' }] });
     expect(runtime.run).toHaveBeenCalledExactlyOnceWith(monitorDecisionModelId, features);
     expect(JSON.stringify(result.log)).not.toMatch(/historyTurns|textFeatureIds|frameFeatures/u);
+    await manager.inspect({ id: 'monitor-turn', text: 'A \u0633', arbiter: [result.log],
+      baseline: { route: 'image', refusal: 'allow', speechAct: 'request', turnType: 'new', imageReadMs: 0 } });
+    expect(manager.summary().models.find(model => model.model === monitorDecisionModelId)).toMatchObject({
+      compared: 1, disagreements: 1, byLanguage: { mixed: { considered: 1, outcomes: { ok: { numerator: 1, denominator: 1 } } } },
+    });
   });
 
   it('cannot force a monitor decision or apply it with the flag and a designation alone', async () => {
@@ -59,7 +64,13 @@ describe('monitor context decision head', () => {
     });
     const input = makeMonitorArbiterInput(context, baseline, { label: 'none', score: 0.99 });
     expect(manager.arbitrate(input, { forced: monitorHeadComponent })).toMatchObject({ selected: monitorReasonerComponent, reason: 'shadow' });
-    expect((await manager.reviewMonitorDecision(context, baseline, features)).log.modelOutcome).toBe('absent');
+    const { log } = await manager.reviewMonitorDecision(context, baseline, features);
+    expect(log.modelOutcome).toBe('absent');
+    await manager.inspect({ id: 'monitor-turn', text: '\u0633', arbiter: [log],
+      baseline: { route: 'image', refusal: 'allow', speechAct: 'request', turnType: 'new', imageReadMs: 0 } });
+    expect(manager.summary().models.find(model => model.model === monitorDecisionModelId)).toMatchObject({
+      compared: 0, fallbacks: 1, byLanguage: { ar: { considered: 1, outcomes: { absent: { numerator: 1, denominator: 1 } } } },
+    });
     expect(MonitorDecisionPromotion.fromArtifact({ schemaVersion: 1, trainingSource: 'pipeline-check', arbiter: hypotheticalArbiter },
       'a'.repeat(64))).toBeUndefined();
   });

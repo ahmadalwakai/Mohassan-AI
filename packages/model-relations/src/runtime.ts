@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadModelAdapter } from './adapters.js';
 import { modelRegistry, resolveModel, type ModelEntry, type ResolvedModel } from './registry.js';
+import { ModelCallSlots } from './runtime-slots.js';
 
 export type ModelFailureReason = 'unknown-model' | 'absent' | 'incompatible' | 'gpu-locked' | 'busy'
   | 'memory-budget' | 'timeout' | 'unhealthy' | 'unsupported' | 'invalid-input';
@@ -63,7 +64,7 @@ interface Slot {
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const heavy = (entry: ModelEntry) => entry.runtime !== 'node-cpu';
-const startupBudget = (entry: ModelEntry) => Math.max(entry.resources.latencyMs, heavy(entry) ? 90_000 : 10_000);
+const startupBudget = (entry: ModelEntry) => entry.resources.startupMs ?? Math.max(entry.resources.latencyMs, heavy(entry) ? 90_000 : 10_000);
 
 function positiveInteger(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} must be a positive integer`);
@@ -83,9 +84,8 @@ export class ModelRuntime {
   private readonly loadAdapter: NonNullable<ModelRuntimeOptions['loadAdapter']>;
   private readonly heavyAvailable: () => boolean;
   private readonly slots = new Map<string, Slot>();
+  private readonly callSlots: ModelCallSlots;
   private readonly pending = new Map<Promise<unknown>, AbortController>();
-  private cpuUsed = 0;
-  private heavyBusy = false;
   private readonly lifecycle = new AbortController();
   private closed = false;
   private closing?: Promise<void>;
@@ -97,14 +97,15 @@ export class ModelRuntime {
     this.env = options.env ?? process.env;
     this.memoryBudgetMiB = positiveInteger(options.memoryBudgetMiB ?? 4_608, 'memoryBudgetMiB');
     this.cpuConcurrency = positiveInteger(options.cpuConcurrency ?? 2, 'cpuConcurrency');
+    this.callSlots = new ModelCallSlots(this.cpuConcurrency);
     this.idleMs = positiveInteger(options.idleMs ?? 60_000, 'idleMs');
     this.resolveEntry = options.resolve ?? resolveModel;
     this.loadAdapter = options.loadAdapter ?? loadModelAdapter;
     this.heavyAvailable = options.heavyAvailable ?? (() => true);
   }
 
-  async run(modelId: string, input: unknown): Promise<ModelRunResult> {
-    return this.execute(modelId, async (adapter, signal, timeout) => ({ output: await adapter.run(input, signal, timeout) }), false);
+  async run(modelId: string, input: unknown, signal?: AbortSignal): Promise<ModelRunResult> {
+    return this.execute(modelId, async (adapter, signal, timeout) => ({ output: await adapter.run(input, signal, timeout) }), false, signal);
   }
 
   async health(modelId: string): Promise<ModelHealthResult> {
@@ -122,59 +123,79 @@ export class ModelRuntime {
     return this.closing;
   }
 
-  private async execute<T extends object>(modelId: string, operation: (adapter: ModelAdapter, signal: AbortSignal, timeout: number) => Promise<T>, check: boolean): Promise<({ ok: true; elapsedMs: number } & T) | ModelFailure> {
+  private async execute<T extends object>(modelId: string, operation: (adapter: ModelAdapter, signal: AbortSignal, timeout: number) => Promise<T>, check: boolean, callerSignal?: AbortSignal): Promise<({ ok: true; elapsedMs: number } & T) | ModelFailure> {
     const begin = performance.now();
     const failure = (reason: ModelFailureReason, detail?: string): ModelFailure => ({ ok: false, reason, elapsedMs: performance.now() - begin, ...(detail ? { detail } : {}) });
     const entry = this.entries.get(modelId);
     if (!entry) return failure('unknown-model');
     if (this.closed) return failure('unhealthy', 'Runtime is closed');
-    if (this.cpuUsed + entry.resources.cpu > this.cpuConcurrency || (heavy(entry) && (this.heavyBusy || !this.heavyAvailable()))) return failure('busy');
-    this.cpuUsed += entry.resources.cpu;
-    if (heavy(entry)) this.heavyBusy = true;
+    if (callerSignal?.aborted) return failure('timeout');
+    const exclusive = heavy(entry);
+    if (entry.resources.cpu > this.cpuConcurrency || (exclusive && !this.heavyAvailable())) return failure('busy');
 
-    const cold = !this.slots.get(entry.id)?.loaded;
-    let phaseStart = begin;
-    let phaseBudget = check || cold ? startupBudget(entry) : entry.resources.latencyMs;
     const controller = new AbortController();
-    let deadline: ReturnType<typeof setTimeout> | undefined;
-    let expired!: (failure: ModelFailure) => void;
-    const limit = new Promise<ModelFailure>(done => { expired = done; });
+    const signal = callerSignal ? AbortSignal.any([controller.signal, callerSignal]) : controller.signal;
+    const aborted = () => failure(this.closed ? 'unhealthy' : 'timeout');
+    let finishAbort!: (result: ModelFailure) => void;
+    const limit = new Promise<ModelFailure>(done => { finishAbort = done; });
+    const expire = () => { finishAbort(aborted()); };
+    signal.addEventListener('abort', expire, { once: true });
+    let deadlineAt = begin + (check ? startupBudget(entry) : entry.resources.latencyMs);
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const startDeadline = () => {
-      clearTimeout(deadline);
-      deadline = setTimeout(() => {
+      clearTimeout(timer);
+      timer = setTimeout(() => controller.abort(), Math.ceil(deadlineAt - performance.now()));
+    };
+    const remaining = () => {
+      signal.throwIfAborted();
+      const ms = deadlineAt - performance.now();
+      if (ms <= 0) {
         controller.abort();
-        expired(failure('timeout'));
-      }, phaseBudget);
+        throw new ModelRuntimeError('timeout');
+      }
+      return ms;
     };
     startDeadline();
-    const task = this.use(entry, controller.signal, async adapter => {
-      if (performance.now() - phaseStart > phaseBudget) throw new ModelRuntimeError('timeout');
-      if (!check && cold) {
-        phaseStart = performance.now();
-        phaseBudget = entry.resources.latencyMs;
-        startDeadline();
+    const task = (async () => {
+      const release = await this.callSlots.acquire(entry.resources.cpu, exclusive, entry.serialCalls ? entry.id : undefined, signal);
+      try {
+        const callMs = remaining();
+        if (exclusive && !this.heavyAvailable()) throw new ModelRuntimeError('busy');
+        const cold = !check && !this.slots.get(entry.id)?.loaded;
+        if (cold) {
+          // Cold loading has its own deadline. Slot wait already used part of the call budget.
+          deadlineAt = performance.now() + startupBudget(entry);
+          startDeadline();
+        }
+        return await this.use(entry, signal, async adapter => {
+          remaining();
+          if (cold) {
+            deadlineAt = performance.now() + callMs;
+            startDeadline();
+          }
+          return operation(adapter, signal, Math.ceil(remaining()));
+        });
+      } finally {
+        release();
       }
-      return operation(adapter, controller.signal, Math.max(1, Math.ceil(phaseBudget - (performance.now() - phaseStart))));
-    }).finally(() => {
-      this.cpuUsed -= entry.resources.cpu;
-      if (heavy(entry)) this.heavyBusy = false;
-    });
+    })();
     this.pending.set(task, controller);
     void task.then(() => this.pending.delete(task), () => this.pending.delete(task));
     try {
       const result = await Promise.race([
-        task.then(value => performance.now() - phaseStart > phaseBudget ? failure('timeout') : { ok: true as const, elapsedMs: performance.now() - begin, ...value }),
+        task.then(value => performance.now() >= deadlineAt ? failure('timeout') : { ok: true as const, elapsedMs: performance.now() - begin, ...value }),
         limit,
       ]);
       return result;
     } catch (error) {
-      if (controller.signal.aborted) return failure(this.closed ? 'unhealthy' : 'timeout');
+      if (signal.aborted) return aborted();
       if (error instanceof ModelRuntimeError) return failure(error.reason, error.detail);
       const code = (error as NodeJS.ErrnoException | undefined)?.code;
       if (code === 'ENOENT' || code === 'ENOTDIR') return failure('absent');
       return failure('unhealthy');
     } finally {
-      clearTimeout(deadline);
+      clearTimeout(timer);
+      signal.removeEventListener('abort', expire);
     }
   }
 

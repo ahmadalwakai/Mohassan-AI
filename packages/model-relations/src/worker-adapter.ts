@@ -9,8 +9,9 @@ import { PermanentModelWorker, type PermanentModelWorkerStatus } from '../../exe
 import type { ModelWorkerOperation, ModelWorkerResult } from '../../execution-integration/src/permanent-worker-protocol.js';
 import { ModelTransportError, type TransportJson } from '../../execution-integration/src/transport.js';
 import { inputAs, modelArtifact, requiredArtifact } from './adapters.js';
+import { readWorkerMemoryPeaks, type MeasurableModelAdapter } from './budget-worker-memory.js';
 import type { ResolvedModel } from './registry.js';
-import { ModelRuntimeError, type ModelAdapter, type ModelAdapterContext } from './runtime.js';
+import { ModelRuntimeError, type ModelAdapterContext } from './runtime.js';
 
 const record = z.record(z.string(), z.unknown());
 const sha = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -245,12 +246,13 @@ function transportFailure(error: unknown): never {
   throw error;
 }
 
-export async function loadWorkerAdapter(model: ResolvedModel, context: ModelAdapterContext): Promise<ModelAdapter> {
+export async function loadWorkerAdapter(model: ResolvedModel, context: ModelAdapterContext): Promise<MeasurableModelAdapter> {
   const config = await workerConfiguration(model, context);
   const checkpoint = pin.parse(config.model.checkpoint);
   const wantsCuda = config.model.device === 'cuda';
   if (wantsCuda) await context.assertGpuFree();
-  const heavyMemoryBytes = Math.min(4_096, model.entry.resources.memoryMb, context.memoryBudgetMiB) * 1024 * 1024;
+  const workerMemoryMiB = model.entry.resources.workerMemoryMb ?? Math.min(4_096, model.entry.resources.memoryMb);
+  const heavyMemoryBytes = Math.min(workerMemoryMiB, context.memoryBudgetMiB) * 1024 * 1024;
   const configuredMemoryBytes = config.limits?.memoryBytes;
   config.limits = { ...config.limits,
     memoryBytes: typeof configuredMemoryBytes === 'number' ? Math.min(configuredMemoryBytes, heavyMemoryBytes) : heavyMemoryBytes,
@@ -319,6 +321,11 @@ export async function loadWorkerAdapter(model: ResolvedModel, context: ModelAdap
       await request(operation, head, input, signal, context.startupMs);
     },
     health: ready,
+    workerMemoryPeaks: async () => {
+      const status = worker.status;
+      if (status.state !== 'ready' || !ready()) throw new ModelRuntimeError('unhealthy');
+      return readWorkerMemoryPeaks(status.pid);
+    },
     run: async (input, signal, timeoutMs) => {
       if (dense) {
         const fromText = denseInput.safeParse(input);

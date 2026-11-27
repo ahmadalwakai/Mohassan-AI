@@ -1,10 +1,9 @@
-import { constants, createReadStream } from 'node:fs';
+import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
-import { createInterface } from 'node:readline';
-import type { TurnDecisionLog } from './manager.js';
 import { getModelEntry, modelRegistry, modelRoots, resolveModelInRoots } from './registry.js';
 import { createModelRuntime } from './runtime.js';
+import { summarizeShadow } from './shadow-summary.js';
 
 const maxInputBytes = 1024 * 1024;
 const defaultIterations = 20;
@@ -14,6 +13,7 @@ const usage = [
   'npm run models:health -- [model-id]',
   'npm run models:run -- <model-id> <input.json>',
   'npm run models:latency -- <model-id> <input.json> [iterations]',
+  'npm run models:budgets -- [output.json] [samples-per-language]',
   'npm run models:shadow-summary -- [log.jsonl]',
 ].join('\n');
 
@@ -51,69 +51,6 @@ function percentile(sorted: readonly number[], ratio: number): number {
   return sorted[Math.ceil(sorted.length * ratio) - 1];
 }
 
-async function summarizeShadow(path: string): Promise<void> {
-  const input = createReadStream(path);
-  const lines = createInterface({ input, crlfDelay: Infinity });
-  const counts = new Map<string, { considered: number; attempted: number; compared: number; disagreements: number; fallbacks: number }>();
-  const decisions = new Map<string, { contested: number; disagreements: number; changed: number;
-    reasons: Map<string, number>; alternatives: Map<string, number>; times: number[] }>();
-  let turns = 0;
-  try {
-    for await (const line of lines) {
-      if (!line.trim()) continue;
-      const row: TurnDecisionLog = JSON.parse(line);
-      if (row.event !== 'model_relations_turn' || row.mode !== 'shadow' || !Array.isArray(row.stages)) {
-        throw new Error('Invalid shadow record.');
-      }
-      for (const stage of row.stages) {
-        for (const call of stage.models) {
-          if (!getModelEntry(call.model)) throw new Error('Invalid shadow model ID.');
-          const count = counts.get(call.model) ?? { considered: 0, attempted: 0, compared: 0, disagreements: 0, fallbacks: 0 };
-          count.considered++;
-          if (call.attempted === true) count.attempted++;
-          if (typeof call.disagreed === 'boolean') count.compared++;
-          if (call.disagreed === true) count.disagreements++;
-          if (call.fallback === 'existing-rules') count.fallbacks++;
-          counts.set(call.model, count);
-        }
-      }
-      for (const decision of row.arbiter ?? []) {
-        const { type, precedence, proposed, selected, reason, elapsedMs } = decision;
-        const count = decisions.get(type) ?? { contested: 0, disagreements: 0, changed: 0,
-          reasons: new Map<string, number>(), alternatives: new Map<string, number>(), times: [] };
-        count.contested++;
-        count.reasons.set(reason, (count.reasons.get(reason) ?? 0) + 1);
-        if (proposed !== precedence) {
-          count.disagreements++;
-          const path = `${precedence} → ${proposed}`;
-          count.alternatives.set(path, (count.alternatives.get(path) ?? 0) + 1);
-        }
-        if (selected !== precedence) count.changed++;
-        if (Number.isFinite(elapsedMs) && elapsedMs >= 0) count.times.push(elapsedMs);
-        decisions.set(type, count);
-      }
-      turns++;
-    }
-  } catch {
-    throw new Error('Cannot summarize the shadow log. Check the path and use a complete JSONL snapshot.');
-  } finally {
-    lines.close();
-    input.destroy();
-  }
-  print({
-    turns,
-    models: [...counts].sort(([first], [second]) => first.localeCompare(second, 'en')).map(([model, count]) => ({
-      model, ...count, disagreementRate: count.compared ? count.disagreements / count.compared : null,
-    })),
-    ...(decisions.size ? { arbiter: [...decisions].sort(([first], [second]) => first.localeCompare(second, 'en'))
-      .map(([type, { times, reasons, alternatives, ...count }]) => ({
-        type, ...count, disagreementRate: count.disagreements / count.contested,
-        reasons: Object.fromEntries(reasons), disagreementsByChoice: Object.fromEntries(alternatives),
-        p95Ms: times.length ? percentile(times.sort((a, b) => a - b), 0.95) : null,
-      })) } : {}),
-  });
-}
-
 async function main([command, modelId, inputPath, iterationsArg, ...extra]: readonly string[]): Promise<number> {
   if (command === '--help' || modelId === '--help') {
     process.stdout.write(usage + '\n');
@@ -129,8 +66,15 @@ async function main([command, modelId, inputPath, iterationsArg, ...extra]: read
     return 0;
   }
   if (command === 'shadow-summary' && inputPath === undefined) {
-    await summarizeShadow(modelId ?? '.data/model-relations-shadow.jsonl');
+    print(await summarizeShadow(modelId ?? '.data/model-relations-shadow.jsonl'));
     return 0;
+  }
+  if (command === 'budgets' && iterationsArg === undefined) {
+    const { measureModelBudgets, defaultBudgetReceiptPath } = await import('./budget-measurement.js');
+    const receipt = await measureModelBudgets({ root: process.cwd(), outputPath: modelId ?? defaultBudgetReceiptPath,
+      samples: inputPath === undefined ? undefined : Number(inputPath) });
+    print(receipt);
+    return receipt.models.some(model => model.status === 'failed') ? 1 : 0;
   }
   if (extra.length || (command === 'health' && inputPath !== undefined) ||
     ((command === 'run' || command === 'latency') && (!modelId || !inputPath)) ||

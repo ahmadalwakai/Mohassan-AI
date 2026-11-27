@@ -49,6 +49,61 @@ The runtime defaults to a 4,608 MiB model reservation budget, two CPU
 inference slots, one concurrent heavy inference, and unload after 60 seconds
 idle. Each registered model has its own request budget.
 
+### Measure budgets on the production VM
+
+Run the measurement on Linux for the RSS and worker address-space readings.
+Use the deployed revision and Node version from the checkout root. Run as
+the service user with the same local artifacts, Python interpreter and
+worker configuration as the service. Use the service's CPU affinity and
+resource controls where configured. Choose a maintenance window because the
+measurement loads each installed model repeatedly. Keep the resulting ARM
+receipt on the VM or in the owner's private records.
+
+```sh
+umask 077
+npm run -s models:budgets -- .data/model-runtime-budget-receipt.json
+```
+
+The optional second argument sets the sample count per language. Use the
+default 20 for a receipt you intend to apply. The command uses fixed Arabic
+and English inputs selected from committed fixtures. It records the Git
+revision, machine and runtime details, input hashes, artifact digests and
+per-model outcomes. Each cold sample uses a fresh process and times the
+runtime health path through model load and warm-up. The first fixture call
+primes the model and the next call measures warm inference. The receipt
+contains the median (p50), nearest-rank p95 in milliseconds and the observed
+peak resident memory.
+Measurement uses a 120-second watchdog per phase. Missing models appear
+as `absent`. Review any failure or unsupported entry before using the
+receipt.
+
+The proposed cold and warm deadlines each use twice the higher p95 of the
+two languages plus 20 ms for scheduling, rounded up. The memory reservation
+uses 125% of the highest sum of the Node and permanent Python worker RSS
+peaks in a sample, rounded up to MiB. The per-process peaks may occur at
+different times. The Node peak includes its worker threads. Short-lived
+encoder processes contribute to elapsed time and are outside these RSS
+readings. On Linux the Python worker enforces an address-space limit, so
+its cap uses 125% of peak virtual memory with the worker's 128 MiB minimum.
+The deployment and worker configuration still set upper limits. The
+margins allow for some variation between the isolated probes and service
+traffic. [Worker limits](../packages/execution-integration/model_worker/runtime.py) · [Linux enforcement](../packages/execution-integration/model_worker/containment.py)
+
+To apply a reviewed receipt, install it as `.data/model-runtime-budgets.json`
+from the deployed checkout root. Start the service with that receipt in
+place and check the provenance field in `npm run -s models:list`. Entries
+without an applicable measurement report `unmeasured` and use the existing
+fallback limits. Use a clean checkout with at least 20 samples per language
+and check that the receipt's commit and artifact digests match what the
+service will run. Regenerate it when the deployed code, artifacts or machine
+change.
+
+```sh
+install -m 600 .data/model-runtime-budget-receipt.json .data/model-runtime-budgets.json.new
+mv .data/model-runtime-budgets.json.new .data/model-runtime-budgets.json
+npm run -s models:list
+```
+
 Run the standalone refusal classifier with an example input. In PowerShell,
 use the owner's normal project checkout.
 
@@ -105,7 +160,7 @@ evidence, then the rule reply judge. Missing, incompatible, unavailable or
 timed-out models leave the existing rule values in place.
 
 Each turn appends one row to `.data/model-relations-shadow.jsonl`. It records
-the selected rule result, model outcomes, fixed categorical labels, keyed
+the selected rule result, model outcomes, a coarse turn language, keyed
 hashes, and elapsed times. The per-process hash key limits cross-process
 correlation. `schedulingMs` measures synchronous scheduling work at the
 publication hook. `elapsedMs` measures asynchronous manager work. To count
@@ -118,16 +173,23 @@ npm run models:shadow-summary -- <copied-log.jsonl>
 
 The disagreement rate divides disagreements by calls that returned a
 value comparable to the rule output. A model with zero comparable calls
-has a null rate. Considered calls include stages that reached their time
-budget before dispatch. Fallback counts include abstentions and runtime
-errors.
+has a null rate. The summary gives these counts for each model overall and
+by turn language. `ar` means Arabic letters are present, `mixed` means Arabic
+and Latin letters are both present, and `en` is the default for the other
+turns. This uses only the current request and ignores digits. Missing language
+or outcome fields in historical rows count as `unknown`. Each outcome gives
+its count over the number of considered calls in that group. This includes
+`busy`, `timeout`, `absent` and `unhealthy` when recorded. Considered calls
+include stages that reached their time budget before dispatch. Fallback
+counts include abstentions and runtime errors.
 
 The server observer keeps heavy shadow inference idle while the existing
 resident worker or local executor experiment is enabled. It records these
-attempts as busy. The explicit CLI uses its own runtime. Each heavy model
-warms on demand, and switching between heads may cause a cold load. With
-a tight turn budget, the later shadow stages can fall back while a new
-worker starts.
+attempts as `busy`. Other calls can wait for a CPU slot within their request
+budget. A wait that consumes the budget records `timeout`. The explicit CLI
+uses its own runtime. Each heavy model warms on demand, and switching
+between heads may cause a cold load. With a tight turn budget, the later
+shadow stages can fall back while a new worker starts.
 
 ## Models
 

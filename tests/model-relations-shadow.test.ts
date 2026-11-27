@@ -26,7 +26,7 @@ describe('published chat model relations', () => {
       expect(raw).not.toContain('private');
       const decision = JSON.parse(raw);
       expect(decision).toMatchObject({
-        event: 'model_relations_turn', mode: 'shadow',
+        event: 'model_relations_turn', mode: 'shadow', language: 'en',
         arbitration: { winner: 'existing-rules', reason: 'host-refusal' },
         stages: expect.arrayContaining([expect.objectContaining({
           stage: 'refusal', models: expect.arrayContaining([expect.objectContaining({ outcome: 'absent' })]),

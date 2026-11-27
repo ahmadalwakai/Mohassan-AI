@@ -6,6 +6,7 @@ import {
   type MonitorDecisionHeadInput, type MonitorDecisionLabel,
 } from './monitor-decision.js';
 import type { ModelRunResult } from './runtime.js';
+import { ShadowModelCounts, type ShadowLanguage } from './shadow-model-counts.js';
 
 const arbiterFlags = {
   routing: 'MOHASSAN_ARBITER_ROUTING',
@@ -120,6 +121,7 @@ export interface StageObservation {
 export interface TurnDecisionLog {
   event: 'model_relations_turn';
   mode: 'shadow';
+  language: ShadowLanguage;
   turnHash: string;
   requestHash: string;
   replyHash?: string;
@@ -133,16 +135,8 @@ export interface TurnDecisionLog {
   stages: StageObservation[];
 }
 
-interface SummaryCounts {
-  considered: number;
-  attempted: number;
-  compared: number;
-  disagreements: number;
-  fallbacks: number;
-}
-
 interface ModelRunner {
-  run(modelId: string, input: unknown): Promise<ModelRunResult>;
+  run(modelId: string, input: unknown, signal?: AbortSignal): Promise<ModelRunResult>;
 }
 
 type Decode = (output: unknown) => string | null | undefined;
@@ -188,15 +182,19 @@ function sentences(evidence: readonly TurnEvidence[]): string[] {
     .filter(text => text.length <= 600).slice(0, 24);
 }
 
+function shadowLanguage(text: string): ShadowLanguage {
+  if (!/(?=\p{L})\p{Script=Arabic}/u.test(text)) return 'en';
+  return /(?=\p{L})\p{Script=Latin}/u.test(text) ? 'mixed' : 'ar';
+}
+
 /** Evaluates only already available turn data. Its output is an observation without dispatch authority. */
 export class ModelRelationsManager {
   private readonly hashKey: string | Buffer;
   private readonly maxTurnMs: number;
-  private readonly counts = new Map<string, SummaryCounts>();
+  private readonly counts = new ShadowModelCounts();
   private readonly arbiter: ArbiterBrain;
   private readonly promoted: ReadonlySet<ArbiterDecisionType>;
   private readonly env: NodeJS.ProcessEnv;
-  private turns = 0;
 
   constructor(private readonly runtime: ModelRunner, private readonly options: ManagerOptions = {}) {
     this.hashKey = options.hashKey ?? randomBytes(32);
@@ -269,8 +267,7 @@ export class ModelRelationsManager {
   }
 
   summary() {
-    return { turns: this.turns, models: [...this.counts].sort(([a], [b]) => a.localeCompare(b, 'en')).map(([model, counts]) => ({ model, ...counts,
-      disagreementRate: counts.compared ? counts.disagreements / counts.compared : null })) };
+    return this.counts.summary();
   }
 
   async inspect(turn: TurnObservation, review = this.options.judge): Promise<TurnDecisionLog> {
@@ -297,8 +294,9 @@ export class ModelRelationsManager {
     const ask = (decision: StageObservation, id: string, input: unknown, decode: Decode, allowed?: readonly string[]) =>
       this.ask(decision, id, input, decode, text => value(decision.stage, text, allowed), deadline);
     const complete = (arbitration: TurnDecisionLog['arbitration']): TurnDecisionLog => {
-      this.turns++;
-      return { event: 'model_relations_turn', mode: 'shadow', turnHash: this.hash('turn', turn.id),
+      const language = shadowLanguage(turn.text);
+      this.counts.recordTurn(language, stages.flatMap(stage => stage.models), turn.arbiter);
+      return { event: 'model_relations_turn', mode: 'shadow', language, turnHash: this.hash('turn', turn.id),
         requestHash: this.hash('request', turn.text),
         ...(turn.arbiter?.length ? { arbiter: turn.arbiter } : {}),
         ...(baseline.answer !== undefined ? { replyHash: this.hash('reply', baseline.answer) } : {}),
@@ -397,13 +395,15 @@ export class ModelRelationsManager {
     try {
       if (!attempted) outcome = 'timeout';
       else {
+        const controller = new AbortController();
         const timeout = new Promise<ModelRunResult>(resolve => {
           timer = setTimeout(() => {
             deadline.expired = true;
             resolve({ ok: false, reason: 'timeout', elapsedMs: performance.now() - started });
+            controller.abort();
           }, Math.ceil(deadline.at - started));
         });
-        const run = await Promise.race([this.runtime.run(id, input), timeout]);
+        const run = await Promise.race([this.runtime.run(id, input, controller.signal), timeout]);
         if (deadline.expired || performance.now() >= deadline.at) outcome = 'timeout';
         else if (!run.ok) outcome = run.reason;
         else {
@@ -423,12 +423,5 @@ export class ModelRelationsManager {
       : returned.hash !== decision.rule.hash;
     decision.models.push({ model: id, outcome, attempted, elapsedMs, ...(returned ? { returned } : { fallback: 'existing-rules' }),
       ...(disagreed !== undefined ? { disagreed } : {}) });
-    const counts = this.counts.get(id) ?? { considered: 0, attempted: 0, compared: 0, disagreements: 0, fallbacks: 0 };
-    counts.considered++;
-    if (attempted) counts.attempted++;
-    if (disagreed !== undefined) counts.compared++;
-    if (disagreed) counts.disagreements++;
-    if (!returned) counts.fallbacks++;
-    this.counts.set(id, counts);
   }
 }

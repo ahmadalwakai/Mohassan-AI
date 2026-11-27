@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { applyBudgetReceipt, installedBudgetReceiptPath, type BudgetProvenance } from './budget-receipt.js';
 import { monitorDecisionModelId } from './monitor-decision.js';
 
 export type ModelState = 'absent' | 'experimental' | 'shadow' | 'active';
@@ -29,7 +31,16 @@ export interface ModelEntry {
   readonly runtime: ModelRuntimeKind;
   readonly input: string;
   readonly output: string;
-  readonly resources: { readonly memoryMb: number; readonly cpu: number; readonly gpu: boolean; readonly latencyMs: number };
+  readonly resources: {
+    readonly memoryMb: number;
+    readonly cpu: number;
+    readonly gpu: boolean;
+    readonly latencyMs: number;
+    readonly startupMs?: number;
+    /** Virtual address-space cap for Linux Python workers, measured separately from resident memory. */
+    readonly workerMemoryMb?: number;
+    readonly provenance?: BudgetProvenance;
+  };
   /** Upstream application state when artifact files are present. The manager still applies its own mode. */
   readonly state: Exclude<ModelState, 'absent'>;
   readonly gates: readonly { readonly name: string; readonly receipt: string }[];
@@ -39,6 +50,8 @@ export interface ModelEntry {
   readonly workerHead?: string;
   readonly modelIdentity?: string;
   readonly activationFlag?: string;
+  /** The adapter handles one inference at a time. */
+  readonly serialCalls?: boolean;
 }
 
 export interface ResolvedArtifact {
@@ -59,7 +72,7 @@ export interface ResolvedModel {
 }
 
 const internal = 'No model redistribution license declared. See data card for source terms.';
-const cpu = (memoryMb: number, latencyMs: number) => ({ memoryMb, cpu: 1, gpu: false, latencyMs });
+const cpu = (memoryMb: number, latencyMs: number) => ({ memoryMb, cpu: 1, gpu: false, latencyMs, provenance: 'unmeasured' as const });
 const worker = (latencyMs: number) => cpu(4096, latencyMs);
 const artifact = (role: string, path: string, sha256: string | null = null): ModelArtifact => ({ role, path, sha256 });
 const gate = (name: string, receipt: string) => ({ name, receipt });
@@ -181,7 +194,7 @@ function historical(entry: Pick<ModelEntry, 'id' | 'version' | 'task' | 'owner' 
   return { runtime: 'python-worker', resources: worker(2000), state: 'experimental', gates: [], dependencies: [], license: internal, ...entry };
 }
 
-export const modelRegistry: readonly ModelEntry[] = [
+export const unmeasuredModelRegistry: readonly ModelEntry[] = [
   {
     id: 'chat-v5', version: 'v5-foundation', workerHead: 'lm', task: 'Shared v5 trunk and causal token generation',
     owner: 'packages/execution-pipeline/scripts/train_v5_foundation.py',
@@ -246,6 +259,7 @@ export const modelRegistry: readonly ModelEntry[] = [
     owner: `${assistantModule}arithmetic-search-ranker.ts`,
     artifacts: [artifact('weights', `${assistantModule}arithmetic-search-model.json`, 'fef323bb9e24b1aa4fa96c51ac585721c836ea4afe4b882c7ad322f3eccd0ebf')],
     runtime: 'node-cpu', input: text, output: 'Accepted expression and exact value, or null when the ranker abstains',
+    serialCalls: true,
     resources: cpu(256, 1500), state: 'experimental', activationFlag: 'MOHASSAN_ARITHMETIC_SEARCH',
     gates: [], dataCard: 'docs/WORD-PROBLEM-SOLVER-DATA.md', license: internal, dependencies: [],
   },
@@ -336,6 +350,9 @@ export const modelRegistry: readonly ModelEntry[] = [
     artifacts: [artifact('weights', `artifacts/${dir}/${filename}`)], dataCard: responseReport, dependencies: [v4Dependency],
   })),
 ];
+
+export const modelRegistry = applyBudgetReceipt(unmeasuredModelRegistry,
+  fileURLToPath(new URL(`../../../${installedBudgetReceiptPath}`, import.meta.url)));
 
 export function getModelEntry(id: string): ModelEntry | undefined {
   return modelRegistry.find(entry => entry.id === id);

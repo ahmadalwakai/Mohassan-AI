@@ -4,6 +4,7 @@ import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import type { ResolvedModel } from './registry.js';
+import type { MeasurableModelAdapter } from './budget-worker-memory.js';
 import { ModelRuntimeError, type ModelAdapter, type ModelAdapterContext } from './runtime.js';
 import {
   isRecord, loadMonitorDecisionHead, monitorArtifactSha256, monitorDecisionModelId, MonitorDecisionPromotion, readMonitorArtifact,
@@ -148,7 +149,7 @@ async function loadSlot(model: ResolvedModel, datePlace: boolean): Promise<Model
   return withText(text => tagger.infer(text), probe);
 }
 
-export async function loadModelAdapter(model: ResolvedModel, context: ModelAdapterContext): Promise<ModelAdapter> {
+export async function loadModelAdapter(model: ResolvedModel, context: ModelAdapterContext): Promise<MeasurableModelAdapter> {
   const { id } = model.entry;
   if (Object.hasOwn(scratchHeads, id)) return loadScratch(model, scratchHeads[id as keyof typeof scratchHeads]);
   switch (id) {
