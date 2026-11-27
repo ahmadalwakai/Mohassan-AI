@@ -1,8 +1,10 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createJudgeShadow, type JudgeShadowLine } from '../apps/server/src/assistant/judge-shadow.js';
+import { buildConversationLedger } from '../apps/server/src/assistant/review/ledger.js';
+import { reviewJudgedReply } from '../apps/server/src/assistant/review/publication.js';
 
 describe('judge shadow', () => {
   let directory: string;
@@ -43,6 +45,29 @@ describe('judge shadow', () => {
     const shadow = createJudgeShadow({ logFile: join(directory, 'broken.jsonl') });
     expect(shadow.observe({ conversationId: 'c2', runId: 'r1', question: undefined as unknown as string, reply: undefined as unknown as string })).not.toBeUndefined();
     await shadow.flush();
+  });
+
+  it('keeps private conversation review active without logging a per-turn observation', async () => {
+    const shadow = createJudgeShadow({ logFile: join(directory, 'private-conversation.jsonl') });
+    // Existing preference-correction case at 29448ae (retrieved 2026-11-27).
+    // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/tests/conversation-review-publication.test.ts
+    const ledger = buildConversationLedger([{ id: 'fixture-preference', role: 'user', content: 'My name is Siobhán, not Shivawn.' }]);
+    const conversationId = 'private-conversation', runId = 'private-turn';
+    const reply = 'Hello, Shivawn! The catalogue is ready.';
+    vi.stubEnv('MOHASSAN_CONVERSATION_REVIEW_APPLY', '1');
+    try {
+      const reviewed = await reviewJudgedReply(async () => ledger,
+        { id: conversationId, runId, allowApply: true, clean: text => text }, () => {
+          const verdict = shadow.observe({ conversationId, runId, question: 'ما النوافذ المفتوحة؟', reply, keepObservation: false });
+          expect(verdict).not.toBeNull();
+          return { text: reply, withheld: false };
+        });
+      expect(reviewed.text).toBe(reply.replace('Shivawn', 'Siobhán'));
+      await shadow.flush();
+      await expect(readFile(shadow.logFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it.each([

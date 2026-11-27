@@ -9,6 +9,8 @@ export interface AccountDataTable {
   accountPredicate: string;
   /** Explicit column allowlist. Binary attachments have separate archive entries. */
   export: readonly string[] | false;
+  /** Optional migration columns for member archives only. */
+  memberExport?: readonly string[];
   deletion: AccountDataDeletion;
 }
 
@@ -129,7 +131,12 @@ export const memberDataRegistry: readonly AccountDataTable[] = [
   accountData('chat_model_receipts', through('run_id', 'chat_runs'), 'id run_id step model status input_tokens output_tokens usage_known action_valid output_hash error_code started_at finished_at purpose http_status retry_after_ms retry_reason'),
   accountData('chat_events', through('conversation_id', 'chat_conversations'), 'id conversation_id run_id kind message data created_at'),
   accountData('chat_observations', through('conversation_id', 'chat_conversations'), 'id conversation_id session_id content_hash screenshot_hash created_at'),
-  accountData('chat_messages', through('conversation_id', 'chat_conversations'), 'id conversation_id role text created_at images run_id'),
+  // Council records are part of the existing message deletion policy. The column is optional on older databases.
+  // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/command-chat.ts#L463-L466 (retrieved 2026-11-27).
+  {
+    ...accountData('chat_messages', through('conversation_id', 'chat_conversations'), 'id conversation_id role text created_at images run_id'),
+    memberExport: ['council'],
+  },
   owned('chat_request_keys', false),
   owned('chat_runs', 'id conversation_id owner_id status goal steps created_at updated_at attempt intent'),
   owned('chat_conversations', 'id owner_id title status active_run_id session_id question progress error created_at updated_at'),

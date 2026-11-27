@@ -39,7 +39,8 @@ import { publicConversationFollowup } from './assistant/public-conversation-foll
 import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { judge as judgeAnswer } from './assistant/judge.js';
 import { observeImageRelations, observeModelRelations, ruleBaseline } from './assistant/model-relations-shadow.js';
-import { rankHits, type CouncilOutcome, type CouncilSearchResult, type ModelCouncilService } from './assistant/model-council.js';
+import { rankHits, type CouncilOutcome, type CouncilSearchResult } from './assistant/model-council.js';
+import { councilRunsForMembers, deliberateChatCouncil, type ChatModelCouncil } from './assistant/chat-model-council.js';
 import { withArbiterExecution } from './assistant/model-relations-arbiter.js';
 import { ensureChatConversationsTable, reviewJudgedReply } from './assistant/review/publication.js';
 import { backgroundRunView } from './assistant/long-run/view.js';
@@ -155,10 +156,10 @@ export interface CommandChatConfig {
     generate(messages: readonly { role: 'user' | 'assistant'; content: string }[], signal: AbortSignal): Promise<string | undefined>;
   };
   /**
-   * The owner's model council (assistant/model-council.ts): on the owner's plain answer turns, the trained models answer
+   * The model council (assistant/model-council.ts): on eligible plain answer turns, the trained models answer
    * too, the council searches the web when needed, and its referee picks the reply before it is published. Absent: off.
    */
-  modelCouncil?: ModelCouncilService;
+  modelCouncil?: ChatModelCouncil;
   apiKey?: string;
   /**
    * Replaces the Groq boundary with an explicit provider per model (for example the
@@ -504,7 +505,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     ...(tools?.work?.studio ? ['studio_change'] as const : []),
     ...(tools?.computer ? ['computer_view', 'computer_click', 'computer_type', 'computer_key'] as const : []),
   ];
-  type Execution = { ownerId: string; id: string; runId: string; token: string; controller: AbortController; full: boolean;
+  type Execution = { ownerId: string; id: string; runId: string; token: string; controller: AbortController; full: boolean; deadlineAt?: number; privateDiagnostics?: boolean;
     request?: string; previousRequest?: string | null; constraints?: UserRequestConstraints | null; state?: BrainState; page?: AgentPage;
     /** Pages this run read over HTTP (the last five, in memory only): the judge in shadow compares the reply's sentences with them. */
     readPages?: AgentPage[] };
@@ -1428,7 +1429,8 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       const applyFix = Boolean(allowChange && config.judgeFixForOwner && current.full);
       const applyWithhold = Boolean(allowChange && config.judgeWithholdForOwner && current.full);
       const verdict = config.judgeShadow.observe({ conversationId: id, runId, question: asked?.question ?? current.request, previous: asked ? asked.previous : current.previousRequest ?? null, reply, status,
-        applyFix, applyWithhold, keepText: config.judgeLogText !== 'owner' || Boolean(current.full), ...(evidence.length ? { evidence } : {}) });
+        applyFix, applyWithhold, ...(current.privateDiagnostics && { keepObservation: false }),
+        keepText: config.judgeLogText !== 'owner' || Boolean(current.full), ...(evidence.length ? { evidence } : {}) });
       if (applyWithhold && verdict?.decision === 'withhold' && verdict.withholdText?.trim()) return { text: verdict.withholdText, withheld: true };
       if (applyFix && verdict?.decision === 'fix' && verdict.fixedReply?.trim()) return { text: verdict.fixedReply, withheld: false };
     } catch { /* The judge never stops a run. */ }
@@ -1506,27 +1508,27 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const blockedMonitor = monitor && !preparedMonitor && status !== 'completed' && source?.request && !memoryPublication ? await monitor.forBlockedTurn({ ownerId: source.ownerId, conversationId: id, runId, text: source.request, signal: source.controller.signal, trail: state.trail, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }) : null;
     const noAction = !state.actionCompletion?.contract.requirements.length && !state.actionCompletion?.events.length && !state.actionCompletion?.fault;
     const v5MayAnswer = noModelFallback && status === 'blocked' && !blockedMonitor && !state.steps && noAction;
-    // The owner's model council answers the owner's answer turns: no step but reading ones (a search, page reads, a memory or
+    // The model council joins answer turns: no step but reading ones (a search, page reads, a memory or
     // knowledge lookup, a calculation), so a turn that acted (browser, desktop, documents, Ads) is published as before.
     // It replaces the separate v5 last resort below.
     const answerTurn = noAction && state.trail.every(entry => COUNCIL_ANSWER_STEP.test(entry.action));
-    const councilTurn = Boolean(config.modelCouncil && source?.full && source.request && answerTurn && !prejudged && !proof && !memoryPublication
+    const councilTurn = Boolean(config.modelCouncil && source?.request && (source.full || councilRunsForMembers(config.modelCouncil)) && answerTurn && !prejudged && !proof && !memoryPublication
       && !preparedMonitor && !blockedMonitor && !state.campaign && state.supervision?.contract.mode !== 'enforced');
     const v5Reply = !councilTurn && v5MayAnswer ? await generateUnansweredV5(id, runId, source) : undefined;
     if (!v5Reply && !prejudged && !proof && !memoryPublication && state.supervision?.contract.mode !== 'enforced') text = shapeCompletedChatReply(text, execution.getStore()?.request, status);
     // The council speaks before the judge and before publication; the reply it picks is the one stored and sent.
-    let council: CouncilOutcome | undefined;
+    let council: CouncilOutcome | undefined, councilNote: string | undefined;
     if (councilTurn && source?.request && config.modelCouncil) {
       const request = source.request;
       const baseline = ruleBaseline(state, request);
       try {
-        council = await config.modelCouncil.deliberate({
+        ({ outcome: council, note: councilNote } = await deliberateChatCouncil(config.modelCouncil, source, async signal => ({
           question: baseline.question?.trim() || request, previous: source.previousRequest ?? null,
           pipeline: { text, status }, evidence: judgeEvidence(source), baseline, v5MayAnswer,
           history: config.v5Chat ? await v5Turns(id, runId, source) ?? [] : [],
           search: (question, signal) => councilSearch(source.ownerId, request, state, question, signal),
-          signal: source.controller.signal,
-        });
+          signal,
+        }), assertActive));
       } catch {
         // A council failure never costs the owner the pipeline's reply.
         council = undefined;
@@ -1553,10 +1555,10 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     const published = await runTransaction(id,runId,async (tx) => {
       const current = await tx.selectFrom('chat_conversations').select(['status', 'active_run_id']).where('id', '=', id).forUpdate().executeTakeFirstOrThrow();
       if (current.active_run_id !== runId || current.status !== 'running') throw new RunEnded();
-      // Owner-only at the fenced publication boundary: v5's text and the council's record are kept for an owner account only.
-      const owner = Boolean((modelReply || council) && source && await config.accountFullAccess?.(source.ownerId, tx));
+      // The owner grant fences v5; the run transaction already fences the active member and their conversation.
+      const owner = Boolean(source && (modelReply || (council && source.full)) && await config.accountFullAccess?.(source.ownerId, tx));
       const experiment = modelReply && owner ? 'v5' as const : undefined;
-      const councilRecord = council && owner ? council.council : undefined;
+      const councilRecord = council && (owner || source?.full === false) ? council.council : undefined;
       if (campaignEnd && campaignTask) await appendCampaignEvent(tx, { conversationId: id, runId, taskId: campaignTask }, campaignEnd);
       // The earlier checkpoint may have waited for a database connection. Review
       // required evidence again at the fenced publication boundary, and persist
@@ -1606,6 +1608,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       });
       if (blockedMonitor && !monitorError) finalText += `\n\n${blockedMonitor.text}`;
       if (!experiment && !council?.changed && monitor?.v2 && !preparedMonitor && finalStatus === 'completed' && !judged.withheld && !memoryPublication && !state.questionAnswer && source?.request) finalText += await monitor.publishAnswerOffer(tx, { ownerId: source.ownerId, conversationId: id, runId, text: source.request, pages: [...(source.readPages ?? []), ...(source.page ? [source.page] : [])] }, finalText);
+      if (councilNote) finalText += `\n\n${councilNote}`;
       await addMessage(tx, id, 'assistant', experiment ? `${modelReply}${V5_CHAT_FOOTER}` : finalText, experiment, councilRecord);
       if (state.completionReview) await tx.insertInto('chat_events').values({ id: randomUUID(), conversation_id: id, run_id: runId,
         kind: 'task_review', message: 'مراجعة شروط المهمة المعلنة؛ لا تعني تصديق كل عبارة في الجواب.',
@@ -2133,6 +2136,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
   async function work(ownerId: string, id: string, runId: string, controller: AbortController) {
     const { signal } = controller;
     const deadlineAt = Date.now() + RUN_LIMIT_MS;
+    execution.getStore()!.deadlineAt = deadlineAt;
     const deadline = setTimeout(() => controller.abort(new Error('RUN_TIME_LIMIT')), RUN_LIMIT_MS);
     deadline.unref();
     const active = assertActive;
@@ -2170,6 +2174,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       } else if (actionContract) state.actionCompletion = createActionCompletionLedger(actionContract);
       const constraints = parseUserRequestConstraints(request);
       const currentExecution = execution.getStore()!;
+      currentExecution.privateDiagnostics = !currentExecution.full && councilRunsForMembers(config.modelCouncil);
       currentExecution.request = request; currentExecution.constraints = constraints; currentExecution.state = state;
       // The run ledger: the worker starts (or resumes, after a card or an approval) by understanding the request.
       ledgerSafe(state, runId, ledger => tryEnterPhase(ledger, 'understanding', Date.now()));
@@ -2187,7 +2192,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       }
       if (await handleStructuredMemoryTurn({ db, ownerId, conversationId: id, runId, state, source: effectiveSource, constraints, task: run.intent === 'task', memoryAvailable: Boolean(tools?.memory), quota: MAX_MEMORY_SAVES, scrub: text => vault.scrub(id, clean(text)), lockedExecution, finish })) return;
       const actionRequest = requestActionText(requestScopeActionText(request));
-      const conversationTurn = await enterConversationTurn({ db, ownerId, conversationId: id, turnId: runId, text: request, intent: run.intent, state, active, shadow: config.conversationShadow, chatModel: hasChatModel(), canReadPublicPage: Boolean(config.readPage) });
+      const conversationTurn = await enterConversationTurn({ db, ownerId, conversationId: id, turnId: runId, text: request, intent: run.intent, state, active, shadow: currentExecution.privateDiagnostics ? undefined : config.conversationShadow, chatModel: hasChatModel(), canReadPublicPage: Boolean(config.readPage) });
       const computationMemoryBinding = { ownerId, conversationId: id, runId, evaluatedAt: effectiveSource.evaluatedAt };
       const computationMemoryReceipt = createComputationMemoryReceipt(request, computationMemoryBinding);
       const userFactAssessment = assessUserFactMemoryRequest(request);
@@ -2698,13 +2703,13 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       };
       // Only where no chat model exists: a model, once there, reads the page itself.
       // Shadow router: one log line per new request; never awaited, never changes the route.
-      if (config.shadowRouter && freshRequest) {
+      if (config.shadowRouter && freshRequest && !currentExecution.privateDiagnostics) {
         const previousAsk = history.filter(entry => entry.role === 'user').at(-1)?.text ?? null;
         config.shadowRouter.observe({ conversationId: id, text: request, previous: previousAsk, pendingQuestion: Boolean(conversation.question) });
       }
       // Conversation state v2 in shadow: one understanding per new request, read by no reply path. observeLater runs it after this
       // request has gone on (the live log measured 36 ms median per turn under load), in order, from a copy of these values.
-      if (config.conversationShadow && freshRequest) {
+      if (config.conversationShadow && freshRequest && !currentExecution.privateDiagnostics) {
         try {
           config.conversationShadow.observeLater({ conversationId: id, turnId: runId, text: request,
             pending: conversation.question ? { kind: 'question_card', id: conversation.question.id } : null });

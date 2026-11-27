@@ -7,6 +7,7 @@ import { ModelListSchema, ModelRunRequestSchema, ModelRunResponseSchema, type Mo
 import { modelRegistry, resolveModelInRoots, type ModelEntry } from '../../../packages/model-relations/src/registry.js';
 import type { ModelRunResult } from '../../../packages/model-relations/src/runtime.js';
 import { readerPrompt } from './assistant/model-council.js';
+import { readMemberCouncilMetrics } from './assistant/member-council-metrics.js';
 
 /**
  * The owner's models page: lists every registered model with where it is used, and runs one on the owner's input.
@@ -98,7 +99,8 @@ export async function registerModelsRoutes(app: FastifyInstance, options: Models
 
   app.get('/api/models', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async request => {
     await ownerOnly(request);
-    return ModelListSchema.parse({ models: await listModels(options), council: options.councilLive });
+    const memberCouncil = readMemberCouncilMetrics(app);
+    return ModelListSchema.parse({ models: await listModels(options), council: options.councilLive, ...(memberCouncil && { memberCouncil }) });
   });
 
   app.post<{ Params: { id: string } }>('/api/models/:id/run', {

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
 import { describe, expect, it, vi } from 'vitest';
 import { type BrainState } from '../apps/server/src/assistant/brain.js';
+import { captureArbiterObservation, deferArbiterReview } from '../apps/server/src/assistant/model-relations-arbiter.js';
 import { createModelRelationsObserver } from '../apps/server/src/assistant/model-relations-shadow.js';
 import { ModelRelationsManager } from '../packages/model-relations/src/manager.js';
 import type { ModelRunResult } from '../packages/model-relations/src/runtime.js';
@@ -44,5 +45,27 @@ describe('published chat model relations', () => {
     observe('id', {} as BrainState, { request: 'test' }, 'reply', 'completed');
     await setImmediate();
     expect(inspector).not.toHaveBeenCalled();
+  });
+
+  it('drops pending shadow work for private member turns without writing a receipt', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'mohassan-private-relations-shadow-'));
+    const logFile = join(directory, 'shadow.jsonl');
+    const runId = 'private-member-turn';
+    const inspector = vi.fn(async () => { throw new Error('unexpected initialization'); });
+    const review = vi.fn(async () => { throw new Error('unexpected review'); });
+    vi.stubEnv('MOHASSAN_MODEL_RELATIONS', undefined);
+    try {
+      const observe = createModelRelationsObserver({ env: {}, logFile, inspector });
+      deferArbiterReview(runId, review);
+      observe(runId, undefined, { request: 'private request fixture', privateDiagnostics: true }, 'private reply fixture', 'completed');
+      await setImmediate();
+      expect(inspector).not.toHaveBeenCalled();
+      expect(review).not.toHaveBeenCalled();
+      expect(captureArbiterObservation(runId)).toBeUndefined();
+      await expect(readFile(logFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

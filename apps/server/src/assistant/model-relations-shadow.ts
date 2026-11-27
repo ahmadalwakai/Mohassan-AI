@@ -9,7 +9,7 @@ import { captureArbiterObservation, modelRelationsManager } from './model-relati
 import { afterStructuredMemoryPublication } from './structured-memory-turn.js';
 
 type Page = { text: string; url: string; title: string };
-type Execution = { token?: string; request?: string; previousRequest?: string | null; page?: Page; readPages?: Page[] };
+type Execution = { token?: string; request?: string; previousRequest?: string | null; page?: Page; readPages?: Page[]; privateDiagnostics?: boolean };
 type Inspector = Pick<ModelRelationsManager, 'inspect'>;
 
 function pageEvidence(pages: readonly Page[]): JudgeEvidence[] {
@@ -46,6 +46,10 @@ export function createModelRelationsObserver(options: {
 
   return function observe(runId: string, state: BrainState | undefined, execution: Execution | undefined,
       answer: string | undefined, status: string, imageReadMs?: number): void {
+    if (execution?.privateDiagnostics) {
+      captureArbiterObservation(runId);
+      return;
+    }
     const started = performance.now();
     if (env.MOHASSAN_MODEL_RELATIONS === 'off' || !execution?.request) return;
     const id = execution.token ? `${runId}:${execution.token}` : runId;

@@ -7,10 +7,12 @@ import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MemberAgentBrowser, purgeAgentBrowserProfiles } from '../apps/server/src/member-profile-storage.ts';
 import { createApplication } from '../apps/server/src/app.ts';
+import { commandChatMigration } from '../apps/server/src/command-chat.ts';
 import { memberDocumentDirectory } from '../apps/server/src/member-data-document-path.ts';
 import { purgeMemberAccount, startMemberDeletionPurge } from '../apps/server/src/member-deletion.ts';
 import { conversationSharePaths } from '../apps/server/src/conversation-share-paths.ts';
 import { createReminderScheduler } from '../apps/server/src/reminders/scheduler.ts';
+import { memberCouncilFixture } from './fixtures/member-council.ts';
 import { addPlatformMemberData } from './fixtures/platform-member-data.ts';
 
 describe('member deletion', () => {
@@ -213,7 +215,12 @@ describe('member deletion', () => {
     ]).execute();
     await db().insertInto('chat_messages').values(Array.from({ length: 251 }, () =>
       ({ id: randomUUID(), conversation_id: conversationId, role: 'user', text: 'fixture message' }))).execute();
-    await db().insertInto('chat_messages').values({ id: randomUUID(), conversation_id: otherConversation, role: 'user', text: 'other fixture message' }).execute();
+    await commandChatMigration(db(), undefined, false, true);
+    const retainedCouncil = memberCouncilFixture('A different member’s retained council');
+    await db().insertInto('chat_messages').values([
+      { id: randomUUID(), conversation_id: conversationId, role: 'assistant', text: 'Fixture reply', council: JSON.stringify(memberCouncilFixture('Council for the purged member')) },
+      { id: randomUUID(), conversation_id: otherConversation, role: 'assistant', text: 'Other fixture reply', council: JSON.stringify(retainedCouncil) },
+    ]).execute();
     const platform = await addPlatformMemberData(db(), purgedId, conversationId);
     const deletedDocs = memberDocumentDirectory(documentsDir, purgedId);
     const retainedDocs = memberDocumentDirectory(documentsDir, memberId);
@@ -244,7 +251,7 @@ describe('member deletion', () => {
     try {
       await expect(purge()).rejects.toThrow('simulated interruption');
       expect(await db().selectFrom('chat_messages').select('id').where('conversation_id', '=', conversationId).execute()).toHaveLength(0);
-      expect(await db().selectFrom('chat_messages').select('id').where('conversation_id', '=', otherConversation).execute()).toHaveLength(1);
+      expect(await db().selectFrom('chat_messages').select('council').where('conversation_id', '=', otherConversation).execute()).toEqual([{ council: retainedCouncil }]);
       for (const [table, row] of Object.entries(platform.exportedRows)) {
         const accountColumn = 'owner_id' in row ? 'owner_id' : 'sharer_id' in row ? 'sharer_id' : 'user_id';
         expect(await db().selectFrom(table).select(accountColumn).where(accountColumn, '=', purgedId).execute(), table).toEqual([]);

@@ -103,8 +103,8 @@ export class ModelRuntime {
     this.heavyAvailable = options.heavyAvailable ?? (() => true);
   }
 
-  async run(modelId: string, input: unknown): Promise<ModelRunResult> {
-    return this.execute(modelId, async (adapter, signal, timeout) => ({ output: await adapter.run(input, signal, timeout) }), false);
+  async run(modelId: string, input: unknown, signal?: AbortSignal): Promise<ModelRunResult> {
+    return this.execute(modelId, async (adapter, signal, timeout) => ({ output: await adapter.run(input, signal, timeout) }), false, signal);
   }
 
   async health(modelId: string): Promise<ModelHealthResult> {
@@ -122,12 +122,13 @@ export class ModelRuntime {
     return this.closing;
   }
 
-  private async execute<T extends object>(modelId: string, operation: (adapter: ModelAdapter, signal: AbortSignal, timeout: number) => Promise<T>, check: boolean): Promise<({ ok: true; elapsedMs: number } & T) | ModelFailure> {
+  private async execute<T extends object>(modelId: string, operation: (adapter: ModelAdapter, signal: AbortSignal, timeout: number) => Promise<T>, check: boolean, callerSignal?: AbortSignal): Promise<({ ok: true; elapsedMs: number } & T) | ModelFailure> {
     const begin = performance.now();
     const failure = (reason: ModelFailureReason, detail?: string): ModelFailure => ({ ok: false, reason, elapsedMs: performance.now() - begin, ...(detail ? { detail } : {}) });
     const entry = this.entries.get(modelId);
     if (!entry) return failure('unknown-model');
     if (this.closed) return failure('unhealthy', 'Runtime is closed');
+    if (callerSignal?.aborted) return failure('timeout');
     if (this.cpuUsed + entry.resources.cpu > this.cpuConcurrency || (heavy(entry) && (this.heavyBusy || !this.heavyAvailable()))) return failure('busy');
     this.cpuUsed += entry.resources.cpu;
     if (heavy(entry)) this.heavyBusy = true;
@@ -136,6 +137,7 @@ export class ModelRuntime {
     let phaseStart = begin;
     let phaseBudget = check || cold ? startupBudget(entry) : entry.resources.latencyMs;
     const controller = new AbortController();
+    const signal = callerSignal ? AbortSignal.any([callerSignal, controller.signal]) : controller.signal;
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let expired!: (failure: ModelFailure) => void;
     const limit = new Promise<ModelFailure>(done => { expired = done; });
@@ -147,14 +149,14 @@ export class ModelRuntime {
       }, phaseBudget);
     };
     startDeadline();
-    const task = this.use(entry, controller.signal, async adapter => {
+    const task = this.use(entry, signal, async adapter => {
       if (performance.now() - phaseStart > phaseBudget) throw new ModelRuntimeError('timeout');
       if (!check && cold) {
         phaseStart = performance.now();
         phaseBudget = entry.resources.latencyMs;
         startDeadline();
       }
-      return operation(adapter, controller.signal, Math.max(1, Math.ceil(phaseBudget - (performance.now() - phaseStart))));
+      return operation(adapter, signal, Math.max(1, Math.ceil(phaseBudget - (performance.now() - phaseStart))));
     }).finally(() => {
       this.cpuUsed -= entry.resources.cpu;
       if (heavy(entry)) this.heavyBusy = false;
@@ -163,12 +165,12 @@ export class ModelRuntime {
     void task.then(() => this.pending.delete(task), () => this.pending.delete(task));
     try {
       const result = await Promise.race([
-        task.then(value => performance.now() - phaseStart > phaseBudget ? failure('timeout') : { ok: true as const, elapsedMs: performance.now() - begin, ...value }),
+        task.then(value => signal.aborted || performance.now() - phaseStart > phaseBudget ? failure('timeout') : { ok: true as const, elapsedMs: performance.now() - begin, ...value }),
         limit,
       ]);
       return result;
     } catch (error) {
-      if (controller.signal.aborted) return failure(this.closed ? 'unhealthy' : 'timeout');
+      if (signal.aborted) return failure(this.closed ? 'unhealthy' : 'timeout');
       if (error instanceof ModelRuntimeError) return failure(error.reason, error.detail);
       const code = (error as NodeJS.ErrnoException | undefined)?.code;
       if (code === 'ENOENT' || code === 'ENOTDIR') return failure('absent');

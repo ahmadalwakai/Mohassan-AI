@@ -58,7 +58,7 @@ import { createInferenceControl, registerInferenceRoutes, type InferenceConfig }
 import { createExecutorControl, executorConfigFromEnv, registerExecutorRoutes, type ExecutorConfig } from './executor.js';
 import { installServerModelWorkerShutdown, serverModelWorkerHealth } from './model-worker.js';
 import { generateV5ChatReply, isV5ChatReady } from './v5-chat.js';
-import { createModelCouncil } from './assistant/model-council.js';
+import { createChatModelCouncil } from './assistant/chat-model-council.js';
 import { registerModelsRoutes } from './models-routes.js';
 import { createModelRuntime } from '../../../packages/model-relations/src/runtime.js';
 import { modelRoots } from '../../../packages/model-relations/src/registry.js';
@@ -502,8 +502,8 @@ export async function createApplication(config: AppConfig) {
   const modelStoreRoots = modelRoots(process.cwd());
   const modelRuntime = createModelRuntime({ artifactRoots: modelStoreRoots, idleMs: 15 * 60_000 });
   app.addHook('onClose', async () => { await modelRuntime.close(); });
-  const modelCouncil = process.env.MOHASSAN_MODEL_COUNCIL === 'owner' ? createModelCouncil({ runner: modelRuntime,
-    ...(config.v5Chat === 'owner' ? { v5: (history: readonly { role: 'user' | 'assistant'; content: string }[], signal: AbortSignal) => generateV5ChatReply(app, history, signal) } : {}) }) : undefined;
+  const modelCouncil = createChatModelCouncil(app, process.env.MOHASSAN_MODEL_COUNCIL, { runner: modelRuntime,
+    ...(config.v5Chat === 'owner' ? { v5: (history, signal) => generateV5ChatReply(app, history, signal) } : {}) });
   const chat=await createCommandChatControl(database.db,{...(modelCouncil?{modelCouncil}:{}),...(shadowRouter?{shadowRouter}:{}),...(conversationShadow?{conversationShadow}:{}),...(judgeShadow?{judgeShadow,judgeFixForOwner:judgeConfig.fixForOwner,judgeWithholdForOwner:judgeConfig.withholdForOwner,judgeLogText:judgeConfig.logText}:{}),...(imageReader.available?{imageReader}:{}),...(mind?{mind,mindDeps}:{}),...(adsModel?{adsModel}:{}),sites:{createFromBrief:(ownerId,brief,options)=>sites.create(ownerId,{brief,conversationId:options.conversationId,role:options.role,draftWriteFence:options.draftWriteFence}),command:(ownerId,siteId,input)=>sites.command(ownerId,siteId,input),detail:(ownerId,siteId)=>sites.detail(ownerId,siteId),roleOf:ownerId=>roleOf(database.db,ownerId),link:siteId=>`${new URL(config.webOrigin).origin}/#sites=${siteId}`},...(desktop?{desktop:{parse:(text:string)=>clarifyDesktopFile(text,value=>desktop.parse(value)),describe:(command,lang)=>desktop.describe(command,lang),execute:(command,options)=>desktop.execute(command,options)}}:{}),...(adsSleep?{campaignSleep:(milliseconds:number)=>adsSleep(milliseconds)}:{}),apiKey:config.groqApiKey,tools:assistantTools,documents:{control:documents,link:documentLink},inference,models:{fast:[config.groqModel??'openai/gpt-oss-20b'],deep:[config.groqReasoningModel??'openai/gpt-oss-120b'],vision:config.groqVisionModel??'qwen/qwen3.8-27b'},fetch:config.aiFetch,browser:agentBrowser,networkPolicy:config.browser,searchProvider,readPage,fullAccess:async ownerId=>await roleOf(database.db,ownerId)==='owner',accountFullAccess:(ownerId,tx)=>lockOwnerToolAccess(tx,ownerId),accountActive:async(ownerId,tx)=>{const role=await roleOf(tx,ownerId);if(role!=='member')return role!==null;return Boolean(await tx.selectFrom('workspace_members').select('user_id').where('user_id','=',ownerId).where('role','=','member').where('disabled_at','is',null).forShare().executeTakeFirst());},memoryContext:(ownerId,goal)=>memory.context(ownerId,goal,undefined,{readOnly:true}),
     ownModel: createServerOwnModelReply(app),
     ...(config.v5Chat === 'owner' ? { v5Chat: {

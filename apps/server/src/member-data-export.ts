@@ -6,6 +6,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 import { GoogleAdsCustomerIdSchema } from '@mohassan/contracts';
 import { sql, type Kysely, type RawBuilder } from 'kysely';
+import { isInvitedMemberAccount } from './assistant/member-council-privacy.js';
 import { memberDocumentLocation } from './member-data-document-path.js';
 import { memberDataRegistry } from './member-data-registry.js';
 import { createMemberDataZip } from './member-data-zip.js';
@@ -86,10 +87,15 @@ async function* exportRows<Row>(tx: Kysely<any>, query: RawBuilder<Row>, signal?
   }
 }
 
-async function* jsonRows(rows: AsyncIterable<unknown>, replace: ReturnType<typeof exportReplacer>): AsyncGenerator<Buffer> {
+async function* jsonRows(
+  rows: AsyncIterable<Record<string, unknown>>,
+  replace: ReturnType<typeof exportReplacer>,
+  memberColumns: readonly string[],
+): AsyncGenerator<Buffer> {
   yield Buffer.from('[');
   let delimiter = '\n';
   for await (const row of rows) {
+    for (const column of memberColumns) if (row[column] == null) delete row[column];
     yield Buffer.from(delimiter + JSON.stringify(row, replace));
     delimiter = ',\n';
   }
@@ -214,11 +220,15 @@ export function createMemberDataExport(db: Kysely<any>, options: { documentsDir?
         const replace = exportReplacer(ads ? [ads.customer_id, ads.login_customer_id] : []);
         for (const entry of memberDataRegistry) {
           if (!entry.export) continue;
-          const columns = sql.join(entry.export.map(column => sql.ref(`data.${column}`)));
+          const memberColumns = entry.memberExport && await isInvitedMemberAccount(tx, accountId) ? entry.memberExport : [];
+          const columns = sql.join([
+            ...entry.export.map(column => sql.ref(`data.${column}`)),
+            ...memberColumns.map(column => sql`to_jsonb(data) -> ${column}::text`.as(column)),
+          ]);
           // Predicates come from the registry. Account IDs always go through bound parameters.
           const predicate = sql.join(entry.accountPredicate.split('$1').map(part => sql.raw(part)), sql`${accountId}`);
-          const query = sql`SELECT ${columns} FROM ${sql.table(entry.table)} AS data WHERE (${predicate})`;
-          await zip.entry(`data/${entry.table}.json`, jsonRows(exportRows(tx, query, signal), replace));
+          const query = sql<Record<string, unknown>>`SELECT ${columns} FROM ${sql.table(entry.table)} AS data WHERE (${predicate})`;
+          await zip.entry(`data/${entry.table}.json`, jsonRows(exportRows(tx, query, signal), replace, memberColumns));
         }
         await exportFiles(tx, zip, accountId, documentsDir, signal);
       });

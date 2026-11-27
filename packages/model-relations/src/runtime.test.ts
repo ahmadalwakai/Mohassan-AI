@@ -103,6 +103,45 @@ describe('model runtime', () => {
     await vi.waitFor(async () => expect(await instance.health('other')).toMatchObject({ ok: true }));
   });
 
+  it('skips inference when the caller cancels during cold startup', async () => {
+    const loading = pending<void>();
+    const warmup = pending<void>();
+    const run = vi.fn();
+    const instance = runtime({ registry: [entry('small')], resolve: present, loadAdapter: async () => {
+      loading.resolve();
+      await warmup.promise;
+      return adapter(run);
+    } });
+    const turn = new AbortController();
+    const active = instance.run('small', {}, turn.signal);
+    await loading.promise;
+    turn.abort();
+    warmup.resolve();
+
+    expect(await active).toMatchObject({ ok: false, reason: 'timeout' });
+    expect(run).not.toHaveBeenCalled();
+    expect(await instance.run('small', {}, turn.signal)).toMatchObject({ ok: false, reason: 'timeout' });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('forwards the caller signal to running inference and discards a late result', async () => {
+    const started = pending<AbortSignal>();
+    const worker = pending<string>();
+    const instance = runtime({ registry: [entry('small'), entry('other')], cpuConcurrency: 1, resolve: present,
+      loadAdapter: () => adapter((_input, signal) => { started.resolve(signal); return worker.promise; }) });
+    const turn = new AbortController();
+    const active = instance.run('small', {}, turn.signal);
+    const signal = await started.promise;
+    try {
+      turn.abort();
+      expect(signal.aborted).toBe(true);
+      expect(await instance.run('other', {})).toMatchObject({ ok: false, reason: 'busy' });
+    } finally {
+      worker.resolve('late result');
+    }
+    expect(await active).toMatchObject({ ok: false, reason: 'timeout' });
+  });
+
   it('unloads idle adapters and evicts the least recently used adapter under memory pressure', async () => {
     const disposed = vi.fn();
     const instance = runtime({ registry: [entry('first'), entry('second'), entry('too-large', { resources: { memoryMb: 9, cpu: 1, gpu: false, latencyMs: 500 } })],
