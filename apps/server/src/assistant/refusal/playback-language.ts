@@ -1,4 +1,4 @@
-import { parseDesktopCommand } from '@mohassan/desktop';
+import { looksLikePath, parseDesktopCommand } from '@mohassan/desktop';
 import { assessRequestScope } from '../request-scope.js';
 import { head, words } from './patterns.js';
 
@@ -31,25 +31,42 @@ export const englishSacredMedia = "qur'?an|surahs?|suras?";
 export const colloquialMediaLead = "(?:(?:i )?wanna|(?:(?:i'm|i am) )?gonna) ";
 export const optionalColloquialMediaLead = `(?:${colloquialMediaLead})?`;
 
-const arabicNamedHead = head(`${arabicPlay}(?= )`);
+export const arabicPlayHead = head(arabicPlay);
+export const impliedPlaybackHead = head('start|resume');
 const englishNamedHead = head(`${colloquialMediaLead}play|start playing`);
-const impliedPlaybackHead = head('resume(?= \\p{L}+ \\p{L})|start(?= the \\p{L}+ \\p{L})');
 const nameOperand = head(String.raw`\p{L}[\p{L}\p{N}'’ .,:-]{1,100}$`);
 const vagueOperand = head('it|this|that|them|anything|something|more|next|previous|the (?:next|previous|last|first)|(?:هذا|هذه|هذي|لي|اي شيء|اي شي|شيء|شي|حاجه)(?=[ .!?]*$)');
 // Preserve the software, document, conversation and workspace actions handled by the existing routes.
-const workOperand = words('apps?|applications?|software|programs?|programming|code|scripts?|commands?|tests?|projects?|builds?|workflows?|jobs?|tasks?|sessions?|conversations?|chats?|drafts?|reports?|documents?|files?|meetings?|timers?|games?|analysis|discussion|lessons?|tutorials?|exercises?|routines?|introductions?|paragraphs?|sections?|reviews?|(?:ال)?(?:تطبيق|برنامج|امر|اوامر|سكريبت|سكربت|اختبار(?:ات)?|فحص|تحقق|بناء|مشروع|مهمه|مهاره|حمله|محاكي|موقع|كود|شفره|ملف|مجلد|لعبه|مؤقت|منصب|وظيفه|دور)');
-const continuationOperand = head('as|with|where|from|what|my|our|(?:the )?work|كيف|وين|من|مخك|عقلك');
-const activityOperand = head('[a-z]+ing(?= [a-z])');
+export const nonMediaWorkOperand = words('apps?|applications?|software|programs?|programming|code|scripts?|commands?|tests?|projects?|builds?|workflows?|tasks?|sessions?|conversations?|chats?|drafts?|reports?|documents?|files?|meetings?|timers?|games?|analysis|discussion|lessons?|tutorials?|exercises?|routines?|introductions?|paragraphs?|sections?|reviews?|presentations?|(?:ال)?(?:تطبيق|برنامج|امر|اوامر|سكريبت|سكربت|اختبار(?:ات)?|فحص|تحقق|بناء|مشروع|مهمه|مهاره|حمله|محاكي|موقع|كود|شفره|ملف|مجلد|لعبه|مؤقت|منصب|وظيفه|دور)');
+const continuationOperand = head('as|with|where|from|what|my|our|(?:the )?work|كيف|وين|من|مخك|عقلك|فكر(?:ك|كم)');
+
+// Owner review and existing desktop shell terminology, retrieved 2026-11-27.
+// https://github.com/ahmadalwakai/Mohassan-AI/pull/179
+// https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/packages/desktop/src/shell.ts
+const processOperand = words('servers?|services?|stacks?|containers?|docker|compose|runs?|jobs?|training|pipelines?|deployments?|npm|yarn|pnpm|node|npx|git|python(?:3)?|pip|bash|powershell|pwsh|cmd|dotnet|echo');
+// Appliance terminology retrieved 2026-11-27 from the Egyptian glossary above and https://www.samsung.com/sa/home-appliances/.
+const otherAppliance = 'فرن|افران|موقد|بوتاجاز|سخان|(?:ث|ت)لاج(?:ه|ات)|غسال(?:ه|ات)|مجفف(?:ات)?|ميكروويف';
+export const nonMediaArabicTarget = head(`(?:ال)?(?:سيرفر|سرفر|خادم|دوكر|حاوي(?:ه|ات)|خدم(?:ه|ات)|واي فاي|وايفاي|بلوتوث|انترنت|نت|شبك(?:ه|ات)|سيار(?:ه|ات)|محرك(?:ات)?|وورد|اكسل|بوربوينت|باوربوينت|${otherAppliance})`);
+const commandSyntax = /`|&&|\|\||(?:^|[\s"'«“])(?:--?[a-z0-9]|[a-z_][a-z0-9_]*=\S|[a-z0-9_.-]+\.(?:exe|bat|cmd|ps1|sh|py|[cm]?[jt]s)(?![\p{L}\p{N}_]))/u;
+const quotedTitle = /^(?:(?:the|a|an) )?(?:"([^"]+)"|'([^']+)'|“([^”]+)”|«([^»]+)»)(?=$|[\s.!?؟،])/u;
+
+export function isProcessPlaybackOperand(operand: string): boolean {
+  return processOperand.test(operand) || looksLikePath(operand) || commandSyntax.test(operand);
+}
+
+export function hasQuotedPlaybackTitle(operand: string): boolean {
+  const title = quotedTitle.exec(operand);
+  return title?.slice(1).some(value => value && /\p{L}/u.test(value)) ?? false;
+}
 
 /** A name may also refer to a local app or an ordinary task. Preserve those command paths. */
 export function isAdditionalNamedPlayback(text: string): boolean {
-  const arabic = arabicNamedHead.exec(text);
-  const implied = impliedPlaybackHead.exec(text);
-  const action = arabic ?? englishNamedHead.exec(text) ?? implied;
+  const arabic = arabicPlayHead.exec(text);
+  const action = arabic ?? englishNamedHead.exec(text);
   if (!action) return false;
   const name = text.slice(action[0].length).trim();
-  if (!nameOperand.test(name) || vagueOperand.test(name) || workOperand.test(name) || continuationOperand.test(name)
-    || implied && activityOperand.test(name)) return false;
+  if (!nameOperand.test(name) || vagueOperand.test(name) || nonMediaWorkOperand.test(name) || continuationOperand.test(name)
+    || isProcessPlaybackOperand(name)) return false;
   // The desktop parser recognizes the base imperative, including known app aliases.
   const command = arabic ? `شغل ${name}` : text;
   return parseDesktopCommand(command) === null && assessRequestScope(command).destination !== 'pc';

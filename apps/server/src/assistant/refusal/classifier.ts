@@ -108,6 +108,7 @@ function requestText(value: string): string {
 
 interface OuterClause {
   text: string;
+  unmaskedText: string;
   controlRefusal: RefusalDecision | null;
   describedAction: boolean;
 }
@@ -133,9 +134,14 @@ function outerClauses(value: string, maskedInput: string, arithmetic: boolean): 
   let describedAction = false;
   let modalPremise = false;
   const collect = (end: number) => {
-    const text = requestText(masked.slice(start, end));
+    const maskedClause = masked.slice(start, end);
+    const text = requestText(maskedClause);
+    const rawClause = value.slice(start, end);
     if (text && !negativeLead.test(text)) result.push({
-      text, describedAction: describedAction || modalPremise, controlRefusal: explicitControlRefusal(value.slice(start, end), text),
+      text,
+      unmaskedText: maskedClause === rawClause ? text : requestText(rawClause),
+      describedAction: describedAction || modalPremise,
+      controlRefusal: explicitControlRefusal(rawClause, text),
     });
   };
   for (const boundary of masked.matchAll(connectors)) {
@@ -257,7 +263,7 @@ function classifyClause(clause: OuterClause, context: RefusalContext, scope: Req
     return refusal('future', 'plan');
   }
   if (describedAction) return null;
-  const unsupported = classifyUnsupportedAction(text, capability?.mediaModel === true, isDraft);
+  const unsupported = classifyUnsupportedAction(text, clause.unmaskedText, capability?.mediaModel === true, isDraft);
   if (unsupported) return unsupported;
   if (imageRequest.test(text) && capability?.imageModel !== true) return refusal('no_capability', 'describe_image');
   if (mediaRequest.test(text) && capability?.mediaModel !== true) return refusal('no_capability', 'find_media');

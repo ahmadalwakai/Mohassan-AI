@@ -1,7 +1,8 @@
-import { draftReference, head, outreach, sendAction, words } from './patterns.js';
+import { draftReference, head, outreach, physicalAction, sendAction, words } from './patterns.js';
 import {
-  arabicMediaAdditions, arabicPlay, arabicSwitchOff, arabicSwitchOn, colloquialMediaLead,
-  dialectLightNoun, englishSacredMedia, isAdditionalNamedPlayback, optionalColloquialMediaLead,
+  arabicMediaAdditions, arabicPlay, arabicPlayHead, arabicSwitchOff, arabicSwitchOn, colloquialMediaLead,
+  dialectLightNoun, englishSacredMedia, hasQuotedPlaybackTitle, impliedPlaybackHead,
+  isAdditionalNamedPlayback, isProcessPlaybackOperand, nonMediaArabicTarget, nonMediaWorkOperand, optionalColloquialMediaLead,
 } from './playback-language.js';
 import type { RefusalDecision } from './types.js';
 
@@ -30,13 +31,14 @@ const directPlayback = head(`${optionalColloquialMediaLead}play|listen to|stream
 const mediaPerception = head(`${optionalColloquialMediaLead}(?:hear|watch)|${colloquialMediaLead}listen to`);
 const perceivedMedia = head(`${article}(?:(?:new|latest|live|short|favorite|favourite) )?(?:${mediaNouns})`);
 const monitorPurpose = words('for (?:any |new )?(?:updates?|changes?|comments?|replies?|activity)');
-const playbackControl = head(`put on|turn on|start|stop|pause|resume|restart|continue|(?:read|say) aloud|read out|${arabicSwitchOff}|(?:ابدا|كمل|واصل|است[ائ]نف|تابع|وقف|اوقف|اقرا لي)(?:ي|لي)?`);
+const playbackControl = head(`put on|turn on|stop|pause|restart|continue|(?:read|say) aloud|read out|${arabicSwitchOff}|(?:ابدا|كمل|واصل|است[ائ]نف|تابع|وقف|اوقف|اقرا لي)(?:ي|لي)?`);
 const ordinaryPlay = head(
   `${optionalColloquialMediaLead}(?:play|stream|start playing) (?:the role|a role|a part|the part|devil's advocate|along|with|against|framework|it safe|a trick|a prank|chess|checkers|tic tac toe|(?:a |the )?word game|(?:a |the )?game|data|logs|events|records|bytes|responses)|(?:${arabicPlay}|تشغيل) (?:ال)?(?:تطبيق|برنامج|محاكي|موقع|كود|سكريبت|نص برمجي|ملف تنفيذي|لعبه|مؤقت)`,
 );
 const mediaContext = words('spotify|youtube|soundcloud|apple music|في منصه الموسيقي|سبوتيفاي|يوتيوب|ساوند كلاود');
 const namedPlayback = head('play (?!(?:it|this|that|them|anything|something|more|next|previous)(?:$|[ .!?]))\\p{L}[\\p{L}\\p{N}\'’ .,:-]{1,100}$');
 const attributedMedia = /(?:\b(?:by|performed by|covered by)|(?<!\p{L})(?:حق|بصوت|غناء|للفنان|للفنانه))\s+\p{L}/u;
+const proceduralBy = words('by (?:[a-z]+ing(?= )|default|design|hand|noon|midnight|lunchtime|dinnertime|today|tomorrow|then|monday|tuesday|wednesday|thursday|friday|saturday|sunday)');
 const chosenMedia = head('(?:my|our) (?:favorites|favourites|mix)|(?:this|the) (?:radio|television|tv) program(?:me)?');
 const playProgram = head(`${optionalColloquialMediaLead}(?:play|watch) (?:this|the) program(?:me)?`);
 const playbackOutput = words('(?:through|out of|on) (?:the|my|our) (?:speakers?|headphones?|earbuds?)');
@@ -80,7 +82,7 @@ const publication = words('post|status|announcement|press release|public stateme
 const explicitPublishing = head('publish|انشر(?:ي|ه|ها)?|نشر');
 
 export const unsupportedActionHeads = [
-  devicePower, deviceAdjust, splitDevicePower, directPlayback, playbackControl, booking, ordering, orderSubmission, callCommand, directMessaging, messagingVerb, replyExternally, publishVerb,
+  devicePower, deviceAdjust, splitDevicePower, directPlayback, playbackControl, impliedPlaybackHead, booking, ordering, orderSubmission, callCommand, directMessaging, messagingVerb, replyExternally, publishVerb,
 ];
 
 export function isChatDelivery(text: string): boolean {
@@ -125,18 +127,37 @@ export function isDescriptiveDeviceRequest(text: string): boolean {
   return descriptiveDevice.test(text) && changesDevice(text);
 }
 
-/** Matches the requested effect at the head, using the rest of the clause only as its operand. */
-export function classifyUnsupportedAction(text: string, mediaAvailable: boolean, hasDraft: boolean): RefusalDecision | null {
-  if (!descriptiveDevice.test(text) && changesDevice(text)) return { code: 'no_capability', alternative: 'device_control' };
-  const playback = operand(directPlayback, text) || operand(playbackControl, text);
-  if (!mediaAvailable && !ordinaryPlay.test(text) && (
-    playback && (mediaNoun.test(playback) || mediaContext.test(playback) || chosenMedia.test(playback) || playbackOutput.test(playback)
-      || directPlayback.test(text) && attributedMedia.test(playback))
+function requestsPlayback(text: string, unmaskedText: string): boolean {
+  const direct = operand(directPlayback, text);
+  if (!direct && impliedPlaybackHead.test(text)) {
+    const playback = operand(impliedPlaybackHead, text);
+    const original = operand(impliedPlaybackHead, unmaskedText);
+    const attribution = attributedMedia.exec(playback);
+    return !isProcessPlaybackOperand(original) && !nonMediaWorkOperand.test(playback) && (
+      mediaNoun.test(playback) || mediaContext.test(playback)
+      || Boolean(attribution && attribution.index > 0 && !proceduralBy.test(playback))
+      || hasQuotedPlaybackTitle(original)
+    );
+  }
+  if (arabicPlayHead.test(text)) {
+    const original = operand(arabicPlayHead, unmaskedText);
+    if (physicalAction.test(text) || nonMediaArabicTarget.test(original) || isProcessPlaybackOperand(original)) return false;
+  }
+  const playback = direct || operand(playbackControl, text);
+  return Boolean(playback && (mediaNoun.test(playback) || mediaContext.test(playback) || chosenMedia.test(playback)
+    || playbackOutput.test(playback) || direct && attributedMedia.test(playback)))
     || namedPlayback.test(text)
     || playProgram.test(text)
     || perceivedMedia.test(operand(mediaPerception, text)) && !monitorPurpose.test(text)
-    || !descriptiveDevice.test(text) && isAdditionalNamedPlayback(text)
-  )) return { code: 'no_capability', alternative: 'find_media' };
+    || !descriptiveDevice.test(text) && isAdditionalNamedPlayback(text);
+}
+
+/** Matches the action in the masked clause. The original operand can supply a title or show command syntax. */
+export function classifyUnsupportedAction(text: string, unmaskedText: string, mediaAvailable: boolean, hasDraft: boolean): RefusalDecision | null {
+  if (!descriptiveDevice.test(text) && changesDevice(text)) return { code: 'no_capability', alternative: 'device_control' };
+  if (!mediaAvailable && !ordinaryPlay.test(text) && requestsPlayback(text, unmaskedText)) {
+    return { code: 'no_capability', alternative: 'find_media' };
+  }
   if (booking.test(text) && !bookingLookup.test(text)) return { code: 'human_step', alternative: 'make_booking' };
   if ((operand(callCommand, text) || indirectCall.test(text)) && !nonTelephone.test(text)) {
     return { code: 'human_step', alternative: 'place_call' };
