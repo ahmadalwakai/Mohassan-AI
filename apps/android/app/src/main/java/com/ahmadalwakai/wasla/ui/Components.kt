@@ -146,15 +146,6 @@ fun fieldColors(): TextFieldColors {
     )
 }
 
-@Composable
-fun FieldBlock(title: String, content: @Composable () -> Unit) {
-    val forest = Forest
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(title, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold), color = forest.ink)
-        content()
-    }
-}
-
 /** Wraps chips onto new lines, centred, like the web's suggestions row. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -171,8 +162,7 @@ fun ChipFlow(items: List<String>, onPick: (String) -> Unit) {
 }
 
 /**
- * A thread that scrolls under a composer pinned above the keyboard, shared by Mohassan's
- * chat and the local fallback chat. Sending clears focus, so the keyboard closes.
+ * The thread scrolls beneath a composer pinned above the keyboard.
  */
 @Composable
 fun ChatScaffold(
@@ -186,6 +176,9 @@ fun ChatScaffold(
     showComposer: Boolean = true,
     onSend: () -> Boolean,
     onStop: (() -> Unit)? = null,
+    tools: (@Composable () -> Unit)? = null,
+    tray: (@Composable () -> Unit)? = null,
+    notice: String? = null,
     thread: LazyListScope.() -> Unit,
 ) {
     val forest = Forest
@@ -214,6 +207,8 @@ fun ChatScaffold(
                 Modifier.fillMaxWidth().background(forest.background).padding(horizontal = 12.dp, vertical = 8.dp).widthIn(max = 740.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                tray?.invoke()
+                if (notice != null) Footnote(notice)
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -223,6 +218,7 @@ fun ChatScaffold(
                         .padding(start = 6.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.Bottom,
                 ) {
+                    tools?.invoke()
                     TextField(
                         value = draft,
                         onValueChange = onDraftChange,
@@ -240,7 +236,8 @@ fun ChatScaffold(
                         IconButton(onClick = onStop, modifier = Modifier.padding(bottom = 6.dp).size(36.dp).background(forest.soft, RoundedCornerShape(12.dp))) {
                             Icon(Icons.Filled.Stop, contentDescription = "إيقاف", tint = forest.ink, modifier = Modifier.size(18.dp))
                         }
-                    } else {
+                    }
+                    if (!working || draft.isNotBlank() || canSend) {
                         IconButton(
                             onClick = { if (onSend()) { focus.clearFocus(); keyboard?.hide() } },
                             enabled = canSend,

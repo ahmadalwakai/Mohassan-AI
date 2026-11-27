@@ -1,248 +1,483 @@
 package com.ahmadalwakai.wasla
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.net.Uri
+import android.os.Build
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.serialization.encodeToString
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 
-// Mohassan's chat on the phone. The computer service forwards these calls to the
-// Mohassan server on the same computer; Mohassan runs the work with its own brain,
-// questions and approvals, exactly as in the web workspace.
-//
-// Two shapes of question exist. Older servers send `clarification` and accept a typed
-// answer through `respond`; newer servers send `fields` and read a typed answer as the
-// next message. The phone speaks both: an option always goes through `respond`, a typed
-// answer goes through `respond` only when the question says it allows one, and field
-// answers travel as one numbered message, as the web composes them.
+// MAX_CHAT_IMAGES in https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/packages/contracts/src/command-chat.ts (retrieved 2026-11-27).
+internal const val MAX_CHAT_PHOTOS = 4
+private const val MAX_PHOTO_SIDE = 2048
 
-val WaslaStore.mohassanLinked: Boolean get() = mohassanLink?.linked == true
-val WaslaStore.mohassanBusy: Boolean get() = mohassanSending || mohassanConversation?.working == true
-/** While the assistant waits for an answer, an approval or a step, the card answers it, not the composer. */
-val WaslaStore.mohassanWaiting: Boolean get() = mohassanConversation?.status?.let { it in MohassanStatus.WAITING } == true
-
-internal suspend fun WaslaStore.refreshMohassanLink() {
-    val client = client ?: run { mohassanLink = null; return }
-    val epoch = sessionEpoch
+internal suspend fun WaslaStore.refreshList(force: Boolean = false) {
+    if (!canChat || loadingConversations && !force) return
+    val session = sessionEpoch
+    val request = ++listRequestEpoch
+    loadingConversations = true
     try {
-        val link: MohassanLink = client.get("/v1/mohassan/status", timeoutSeconds = 30)
-        if (epoch == sessionEpoch) mohassanLink = link
+        val reply = cloud.chatList()
+        if (session != sessionEpoch || request != listRequestEpoch || !cloud.signedIn.value) return
+        chatList = reply.conversations
+        reply.capabilities?.let { capabilities = it }
+        requestKeys = reply.requestKeys == true
+        conversationsLoaded = true
     } catch (error: Exception) {
         if (error is CancellationException) throw error
-        if (epoch != sessionEpoch) return
-        // An older computer service has no Mohassan routes: keep the local chat.
-        // Other failures keep the last known state instead of switching screens.
-        if (error is WaslaException && error.isServer404) mohassanLink = null
+        if (session == sessionEpoch && request == listRequestEpoch) show(error)
+    } finally {
+        if (session == sessionEpoch && request == listRequestEpoch) loadingConversations = false
     }
 }
 
-fun WaslaStore.loadMohassanList() {
-    val client = client ?: return
-    val epoch = sessionEpoch
-    viewModelScope.launch {
-        try {
-            val list: MohassanList = client.get("/v1/mohassan/conversations", timeoutSeconds = 30)
-            if (epoch != sessionEpoch) return@launch
-            mohassanList.clear()
-            mohassanList.addAll(list.conversations)
-        } catch (error: Exception) {
-            if (error is CancellationException) throw error
-            if (epoch == sessionEpoch) show(error)
-        }
-    }
-}
-
-fun WaslaStore.newMohassanChat() {
-    mohassanEpoch += 1
-    stopMohassanPolling()
-    mohassanConversation = null
-    mohassanSending = false
-    mohassanPendingText = null
-    mohassanDraft = ""
-}
-
-fun WaslaStore.openMohassan(id: String) {
-    if (!isUuid(id)) return
-    newMohassanChat()
-    viewModelScope.launch { refreshMohassan(id) }
-}
-
-internal suspend fun WaslaStore.refreshMohassan(id: String) {
-    val client = client ?: return
-    if (!isUuid(id)) return
-    val epoch = sessionEpoch
-    val conversationEpoch = mohassanEpoch
+internal suspend fun WaslaStore.refreshImageAvailability() {
+    if (!isOwner || !canChat) return
+    val session = sessionEpoch
     try {
-        val detail: MohassanConversation = client.get("/v1/mohassan/conversations/$id", timeoutSeconds = 30)
-        if (epoch != sessionEpoch || conversationEpoch != mohassanEpoch) return
-        mohassanConversation = detail
-        if (detail.working) pollMohassan() else stopMohassanPolling()
+        val available = cloud.imagesAvailable()
+        if (session == sessionEpoch) imagesAvailable = available
     } catch (error: Exception) {
         if (error is CancellationException) throw error
-        if (epoch == sessionEpoch && conversationEpoch == mohassanEpoch) show(error)
     }
 }
 
-fun WaslaStore.sendMohassan(text: String): Boolean {
-    val client = client ?: run { show(WaslaException.notPaired()); return false }
-    val clean = text.trim()
-    if (clean.isEmpty() || mohassanBusy || mohassanWaiting) return false
-    if (!mohassanTextFits(clean)) { errorMessage = "الرسالة تتجاوز ٤٬٠٠٠ حرف. اختصرها قبل الإرسال."; return false }
-    val existing = mohassanConversation?.id
-    val epoch = sessionEpoch
-    val conversationEpoch = mohassanEpoch
-    mohassanSending = true
-    mohassanPendingText = clean
+internal fun WaslaStore.loadConversations() {
+    if (loadingConversations) return
+    clearError()
+    viewModelScope.launch { refreshList() }
+}
+
+internal fun WaslaStore.newConversation() {
+    if (sending || uploading || secureBusy) return
+    clearError()
+    clearConversation()
+}
+
+private fun WaslaStore.clearConversation() {
+    chatEpoch++
+    watchJob?.cancel()
+    watchJob = null
+    conversation = null
+    draft = ""
+    attachments.clear()
+    opening = false
+    secureBusy = false
+}
+
+internal fun WaslaStore.openConversation(id: String) {
+    if (!canChat || !isUuid(id) || sending || uploading || secureBusy) return
+    clearError()
+    clearConversation()
+    opening = true
+    val screen = chatEpoch
     viewModelScope.launch {
         try {
-            val id = if (existing != null && isUuid(existing)) {
-                client.send("/v1/mohassan/conversations/$existing/messages", MohassanSend(clean), timeoutSeconds = 45)
-                existing
-            } else {
-                val created: MohassanCreated = client.post("/v1/mohassan/conversations", MohassanCreate(clean), timeoutSeconds = 45)
-                if (!isUuid(created.id)) throw WaslaException.invalidResponse()
-                created.id
-            }
-            if (epoch != sessionEpoch || conversationEpoch != mohassanEpoch) return@launch
-            refreshMohassan(id)
-        } catch (error: Exception) {
-            if (error is CancellationException) throw error
-            // A lost response is not proof that nothing started; nothing is sent again automatically.
-            if (epoch == sessionEpoch && conversationEpoch == mohassanEpoch) show(error)
+            refreshConversation(id)
         } finally {
-            if (epoch == sessionEpoch && conversationEpoch == mohassanEpoch) { mohassanSending = false; mohassanPendingText = null }
-        }
-    }
-    return true
-}
-
-/** An option, or a typed answer, to the pending question. */
-fun WaslaStore.answerMohassan(option: MohassanOption?, text: String?) {
-    val conversation = mohassanConversation ?: return
-    val question = conversation.question ?: return
-    if (conversation.status != MohassanStatus.WAITING_USER) return
-    val typed = text?.trim().orEmpty()
-    when {
-        option != null -> actOnMohassan(conversation.id, "respond", MohassanRespond(question.id, optionId = option.id))
-        typed.isEmpty() -> return
-        question.clarification != null -> actOnMohassan(conversation.id, "respond", MohassanRespond(question.id, text = typed))
-        else -> actOnMohassan(conversation.id, "messages", MohassanSend(typed))
-    }
-}
-
-/** The answers to a several-questions card, already composed as one numbered reply. */
-fun WaslaStore.answerMohassanFields(reply: String) {
-    val conversation = mohassanConversation ?: return
-    if (conversation.status != MohassanStatus.WAITING_USER || conversation.question?.hasFields != true) return
-    val clean = reply.trim()
-    if (clean.isEmpty() || !mohassanTextFits(clean)) return
-    actOnMohassan(conversation.id, "messages", MohassanSend(clean))
-}
-
-fun WaslaStore.approveMohassan(approved: Boolean) {
-    val conversation = mohassanConversation ?: return
-    val approval = conversation.approval ?: return
-    if (conversation.status != MohassanStatus.WAITING_APPROVAL) return
-    actOnMohassan(conversation.id, "approve", MohassanApprove(approval.id, approved))
-}
-
-/** Stopping is always allowed, even while another call is in flight. */
-fun WaslaStore.cancelMohassan() {
-    val conversation = mohassanConversation ?: return
-    actOnMohassan(conversation.id, "cancel", EmptyBody(), allowWhileSending = true)
-}
-
-fun WaslaStore.deleteMohassan(id: String) {
-    val client = client ?: return
-    if (!isUuid(id)) return
-    val epoch = sessionEpoch
-    viewModelScope.launch {
-        try {
-            client.delete("/v1/mohassan/conversations/$id")
-            if (epoch != sessionEpoch) return@launch
-            mohassanList.removeAll { it.id == id }
-            if (mohassanConversation?.id == id) newMohassanChat()
-        } catch (error: Exception) {
-            if (error is CancellationException) throw error
-            if (epoch == sessionEpoch) show(error)
+            if (screen == chatEpoch) opening = false
         }
     }
 }
 
-private inline fun <reified Body> WaslaStore.actOnMohassan(id: String, action: String, body: Body, allowWhileSending: Boolean = false) {
-    val client = client ?: return
-    if (!isUuid(id) || (!allowWhileSending && mohassanSending)) return
-    val epoch = sessionEpoch
-    val conversationEpoch = mohassanEpoch
-    val encoded = WaslaJson.encodeToString(body).toByteArray(Charsets.UTF_8)
-    mohassanSending = true
-    viewModelScope.launch {
-        try {
-            client.data("/v1/mohassan/conversations/$id/$action", "POST", encoded, timeoutSeconds = 45)
-            if (epoch != sessionEpoch || conversationEpoch != mohassanEpoch) return@launch
-            refreshMohassan(id)
-        } catch (error: Exception) {
-            if (error is CancellationException) throw error
-            if (epoch == sessionEpoch && conversationEpoch == mohassanEpoch) show(error)
-        } finally {
-            if (epoch == sessionEpoch && conversationEpoch == mohassanEpoch) mohassanSending = false
-        }
+internal suspend fun WaslaStore.refreshConversation(id: String) {
+    if (!canChat) return
+    val session = sessionEpoch
+    val screen = chatEpoch
+    try {
+        val detail = cloud.conversation(id)
+        if (session == sessionEpoch && screen == chatEpoch && detail.id == id) present(detail)
+    } catch (error: Exception) {
+        if (session == sessionEpoch && screen == chatEpoch) show(error)
     }
 }
 
-/** Reads the conversation every two seconds while Mohassan works, in the foreground only. */
-internal fun WaslaStore.pollMohassan() {
-    val client = client ?: return
-    val id = mohassanConversation?.id ?: return
-    if (mohassanPollJob != null || !foreground || !isUuid(id)) return
-    mohassanPollId += 1
-    val pollId = mohassanPollId
-    val epoch = sessionEpoch
-    val conversationEpoch = mohassanEpoch
-    mohassanPollJob = viewModelScope.launch {
+private fun WaslaStore.present(detail: ChatConversation) {
+    watchJob?.cancel()
+    conversation = detail
+    detail.capabilities?.let { capabilities = it }
+    if (!foreground) {
+        watchJob = null
+        return
+    }
+    val session = sessionEpoch
+    val screen = chatEpoch
+    watchJob = viewModelScope.launch {
         var failures = 0
+        while (isActive && foreground && session == sessionEpoch && screen == chatEpoch) {
+            val current = conversation?.takeIf { it.id == detail.id } ?: break
+            val since = current.version
+            if (since == null && !current.working) break
+            try {
+                if (since == null) delay(2_000)
+                val updated = cloud.conversation(current.id, since)
+                if (!isActive || session != sessionEpoch || screen != chatEpoch || updated.id != current.id) break
+                conversation = updated
+                updated.capabilities?.let { capabilities = it }
+                failures = 0
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                if (!cloud.signedIn.value || session != sessionEpoch || screen != chatEpoch) break
+                failures++
+                if (failures == 1) show(error)
+                if (failures >= 6) break
+                delay((2_000L * failures).coerceAtMost(10_000))
+            }
+        }
+    }
+}
+
+internal fun WaslaStore.sendMessage(): Boolean {
+    val text = draft.trim()
+    if (!canChat || busy || opening || uploading || secureBusy || conversation?.fieldsQuestion != null ||
+        (text.isEmpty() && attachments.isEmpty()) || !mohassanTextFits(text)
+    ) return false
+    val images = attachments.toList()
+    val imageIds = images.ifEmpty { null }
+    val id = conversation?.id
+    val request = if (id == null) {
+        PendingRequest.make(PendingRequest.Kind.CREATE, null, text,
+            CloudJson.encode(ChatCreate(goal = text.ifEmpty { null }, images = imageIds)), images)
+    } else {
+        PendingRequest.make(PendingRequest.Kind.MESSAGE, id, text,
+            CloudJson.encode(ChatSend(text = text, images = imageIds)), images)
+    }
+    val originalDraft = draft
+    val originalPhotos = images
+    draft = ""
+    attachments.clear()
+    if (submit(request)) return true
+    draft = originalDraft
+    attachments.addAll(originalPhotos)
+    return false
+}
+
+internal fun WaslaStore.answerOption(questionId: String, option: ChatOption) {
+    val detail = conversation ?: return
+    val question = detail.question?.takeIf { detail.status == ChatStatus.WAITING_USER } ?: return
+    if (question.id != questionId || option !in question.phoneOptions) return
+    submit(PendingRequest.make(PendingRequest.Kind.OPTION, detail.id, option.label,
+        CloudJson.encode(ChatRespond(question.id, option.id))))
+}
+
+internal fun WaslaStore.answerFields(questionId: String, answers: List<ChatFieldAnswer>) {
+    val detail = conversation ?: return
+    val question = detail.fieldsQuestion ?: return
+    if (question.id != questionId || answers.map { it.fieldId } != question.phoneFields.map { it.id } ||
+        answers.isEmpty() || answers.any { it.value.isBlank() }
+    ) return
+    val summary = answers.mapIndexed { index, answer ->
+        if (answers.size == 1) answer.value else "${index + 1}. ${answer.value}"
+    }.joinToString("\n")
+    if (!mohassanTextFits(summary)) return
+    submit(PendingRequest.make(PendingRequest.Kind.FIELDS, detail.id, summary,
+        CloudJson.encode(ChatSend(text = "", questionId = question.id, answers = answers))))
+}
+
+internal fun WaslaStore.answerApproval(approvalId: String, approved: Boolean) {
+    val detail = conversation ?: return
+    val approval = detail.approval?.takeIf { detail.status == ChatStatus.WAITING_APPROVAL && it.id == approvalId } ?: return
+    submit(PendingRequest.make(PendingRequest.Kind.APPROVE, detail.id, if (approved) "موافق" else "لا تفعل",
+        CloudJson.encode(ChatApprove(approval.id, approved))))
+}
+
+internal fun WaslaStore.secureAction(requestId: String, action: String, values: Map<String, String>? = null) {
+    val detail = conversation ?: return
+    val request = detail.secure?.takeIf { detail.status == ChatStatus.WAITING_INPUT && it.id == requestId } ?: return
+    if (!canChat || busy || secureBusy) return
+    clearError()
+    val session = sessionEpoch
+    val screen = chatEpoch
+    secureBusy = true
+    viewModelScope.launch {
         try {
-            while (isActive) {
-                delay(2_000)
-                if (!isActive || !foreground || epoch != sessionEpoch || conversationEpoch != mohassanEpoch) return@launch
+            val reply = cloud.secure(detail.id, ChatSecureSubmit(request.id, action, values))
+            if (session == sessionEpoch && screen == chatEpoch) present(reply)
+        } catch (error: Exception) {
+            if (session == sessionEpoch && screen == chatEpoch) {
+                show(error)
+                if (cloud.signedIn.value) refreshConversation(detail.id)
+            }
+        } finally {
+            if (session == sessionEpoch && screen == chatEpoch) secureBusy = false
+        }
+    }
+}
+
+internal fun WaslaStore.cancelConversation() {
+    val id = conversation?.id ?: return
+    if (!canChat) return
+    clearError()
+    val session = sessionEpoch
+    val screen = chatEpoch
+    viewModelScope.launch {
+        try {
+            val reply = cloud.cancel(id)
+            if (session == sessionEpoch && screen == chatEpoch) present(reply)
+        } catch (error: Exception) {
+            if (session == sessionEpoch && screen == chatEpoch) show(error)
+        }
+    }
+}
+
+internal fun WaslaStore.deleteConversation(id: String) {
+    if (!canChat || sending || !isUuid(id)) return
+    clearError()
+    val session = sessionEpoch
+    val request = pending?.takeIf { it.conversationId == id }
+    if (request != null) sending = true
+    val deletion = viewModelScope.launch {
+        try {
+            cloud.deleteConversation(id)
+            if (session != sessionEpoch) return@launch
+            request?.let { settle(it) }
+            if (session != sessionEpoch) return@launch
+            chatList = chatList.filterNot { it.id == id }
+            if (conversation?.id == id) clearConversation()
+            refreshList(force = true)
+        } catch (error: Exception) {
+            if (session == sessionEpoch) show(error)
+        } finally {
+            if (request != null && session == sessionEpoch) sending = false
+        }
+    }
+    if (request != null) requestJob = deletion
+}
+
+internal suspend fun WaslaStore.rateMessage(conversationId: String, messageId: String, verdict: String): Boolean {
+    if (!isOwner || !canChat) return false
+    val session = sessionEpoch
+    return try {
+        cloud.feedback(conversationId, ChatFeedback(messageId, verdict))
+        session == sessionEpoch
+    } catch (error: Exception) {
+        if (session == sessionEpoch) show(error)
+        false
+    }
+}
+
+internal suspend fun WaslaStore.restorePending() {
+    val session = sessionEpoch
+    val binding = cloud.sessionBinding() ?: return
+    try {
+        val restored = pendingVault.read(binding)
+        if (session == sessionEpoch && binding == cloud.sessionBinding()) pending = restored
+    } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        if (session == sessionEpoch) show(error)
+    }
+}
+
+internal fun WaslaStore.retryPending() {
+    val request = pending ?: return
+    if (request.canResend(requestKeys)) submit(request)
+}
+
+internal fun WaslaStore.checkPending() {
+    val request = pending ?: return
+    request.conversationId?.let { openConversation(it) }
+}
+
+internal fun WaslaStore.dropPending() {
+    val request = pending?.takeUnless { sending } ?: return
+    val session = sessionEpoch
+    sending = true
+    requestJob = viewModelScope.launch {
+        try {
+            settle(request)
+            if (session == sessionEpoch && conversation?.id == request.conversationId) handBack(request)
+        } finally {
+            if (session == sessionEpoch) sending = false
+        }
+    }
+}
+
+private fun WaslaStore.submit(request: PendingRequest): Boolean {
+    if (!canChat || !cloud.signedIn.value || sending || opening || secureBusy ||
+        (pending != null && pending?.key != request.key)
+    ) return false
+    val binding = cloud.sessionBinding() ?: return false
+    val initial = pending == null
+    val session = sessionEpoch
+    val screen = chatEpoch
+    pending = request
+    sending = true
+    clearError()
+    requestJob = viewModelScope.launch {
+        var failedAttempts = 0
+        try {
+            try {
+                if (initial) pendingVault.save(binding, request)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                if (initial && session == sessionEpoch) {
+                    pending = null
+                    handBack(request)
+                }
+                show(error)
+                return@launch
+            }
+            if (!initial && !request.canResend(requestKeys)) return@launch
+            while (isActive && session == sessionEpoch && pending?.key == request.key) {
                 try {
-                    val detail: MohassanConversation = client.get("/v1/mohassan/conversations/$id", timeoutSeconds = 30)
-                    if (!isActive || epoch != sessionEpoch || conversationEpoch != mohassanEpoch) return@launch
-                    failures = 0
-                    mohassanConversation = detail
-                    if (!detail.working) return@launch
+                    val detail = cloud.sendKeyed(request.path, request.body, request.key, expectedBinding = binding)
+                    if (session != sessionEpoch || !cloud.signedIn.value) return@launch
+                    settle(request)
+                    if (session != sessionEpoch || !cloud.signedIn.value) return@launch
+                    if (screen == chatEpoch && (conversation == null || request.conversationId == conversation?.id)) {
+                        present(detail)
+                    }
+                    if (request.kind == PendingRequest.Kind.CREATE) refreshList(force = true)
+                    return@launch
                 } catch (error: Exception) {
                     if (error is CancellationException) throw error
-                    failures += 1
-                    if (failures >= 5) {
-                        if (epoch == sessionEpoch && conversationEpoch == mohassanEpoch) show(error)
+                    if (session != sessionEpoch || !cloud.signedIn.value) return@launch
+                    val firstAttempt = initial && failedAttempts == 0
+                    when (pendingFailure(error, firstAttempt)) {
+                        PendingFailure.RETURN_TO_DRAFT -> {
+                            settle(request)
+                            if (session != sessionEpoch || !cloud.signedIn.value) return@launch
+                            handBack(request)
+                            show(error)
+                            if (!request.fromComposer && screen == chatEpoch) request.conversationId?.let { refreshConversation(it) }
+                            return@launch
+                        }
+                        PendingFailure.KEEP -> {
+                            show(error)
+                            return@launch
+                        }
+                        PendingFailure.RETRY -> Unit
+                    }
+                    val wait = request.retryDelayMillis(requestKeys, foreground, ++failedAttempts)
+                    if (wait == null) {
+                        show(error)
+                        return@launch
+                    }
+                    delay(wait)
+                    if (!foreground || !request.canResend(requestKeys)) {
+                        show(error)
                         return@launch
                     }
                 }
             }
         } finally {
-            if (pollId == mohassanPollId) mohassanPollJob = null
+            if (session == sessionEpoch) sending = false
+        }
+    }
+    return true
+}
+
+private suspend fun WaslaStore.settle(request: PendingRequest) {
+    if (pending?.key != request.key) return
+    try {
+        pendingVault.clear()
+    } catch (error: Exception) {
+        show(error)
+    }
+    if (pending?.key == request.key) pending = null
+}
+
+private fun WaslaStore.handBack(request: PendingRequest) {
+    if (!request.fromComposer) return
+    if (request.text.isNotEmpty()) draft = listOf(request.text, draft).filter { it.isNotEmpty() }.joinToString("\n")
+    val held = attachments.toSet()
+    attachments.addAll(0, request.imageIds.filterNot(held::contains))
+    if (attachments.size > MAX_CHAT_PHOTOS) attachments.subList(MAX_CHAT_PHOTOS, attachments.size).clear()
+}
+
+internal fun WaslaStore.attachPhoto(uri: Uri) {
+    if (!isOwner || !canChat || uploading || busy || !imagesAvailable || attachments.size >= MAX_CHAT_PHOTOS) return
+    val session = sessionEpoch
+    uploading = true
+    viewModelScope.launch {
+        try {
+            val photo = withContext(Dispatchers.IO) { preparePhoto(uri) }
+            if (session != sessionEpoch || !cloud.signedIn.value) return@launch
+            val uploaded = cloud.uploadImage("image/jpeg", photo)
+            if (session == sessionEpoch && isUuid(uploaded.id)) attachments.add(uploaded.id)
+        } catch (error: Exception) {
+            if (session == sessionEpoch) show(error)
+        } finally {
+            if (session == sessionEpoch) uploading = false
         }
     }
 }
 
-internal fun WaslaStore.stopMohassanPolling() {
-    mohassanPollId += 1
-    mohassanPollJob?.cancel()
-    mohassanPollJob = null
+internal fun WaslaStore.removeAttachment(id: String) {
+    attachments.remove(id)
 }
 
-internal fun WaslaStore.resetMohassan() {
-    newMohassanChat()
-    mohassanList.clear()
-    mohassanLink = null
-}
-
-internal fun WaslaStore.mohassanSceneChanged(active: Boolean) {
-    if (active) {
-        mohassanConversation?.id?.let { id -> viewModelScope.launch { refreshMohassan(id) } }
+private fun WaslaStore.preparePhoto(uri: Uri): ByteArray {
+    val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        val source = ImageDecoder.createSource(getApplication<android.app.Application>().contentResolver, uri)
+        ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            val size = info.size
+            val scale = MAX_PHOTO_SIDE.toFloat() / maxOf(size.width, size.height)
+            if (scale < 1) decoder.setTargetSize((size.width * scale).toInt().coerceAtLeast(1), (size.height * scale).toInt().coerceAtLeast(1))
+        }
     } else {
-        stopMohassanPolling()
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        readPhoto(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = 1
+            while (maxOf(bounds.outWidth, bounds.outHeight) / inSampleSize > MAX_PHOTO_SIDE) inSampleSize *= 2
+        }
+        readPhoto(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+    } ?: error("تعذّر قراءة هذه الصورة.")
+    try {
+        for (quality in listOf(85, 70, 55, 40)) {
+            val output = ByteArrayOutputStream()
+            if (bitmap.compress(Bitmap.CompressFormat.JPEG, quality, output) && output.size() <= CloudApi.MAX_IMAGE_BYTES) {
+                return output.toByteArray()
+            }
+        }
+        error("الصورة أكبر من الحجم المسموح.")
+    } finally {
+        bitmap.recycle()
+    }
+}
+
+internal suspend fun WaslaStore.loadImage(id: String) {
+    if (!isOwner || !canChat || !isUuid(id) || loadedImages.containsKey(id) || !loadingImages.add(id)) return
+    val session = sessionEpoch
+    try {
+        val bytes = cloud.image(id)
+        val bitmap = withContext(Dispatchers.Default) {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            val options = BitmapFactory.Options().apply {
+                inSampleSize = 1
+                while (maxOf(bounds.outWidth, bounds.outHeight) / inSampleSize > 1_024) inSampleSize *= 2
+            }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+        }
+        if (session == sessionEpoch && bitmap != null) loadedImages[id] = bitmap
+    } catch (error: Exception) {
+        if (error is CancellationException) throw error
+    } finally {
+        if (session == sessionEpoch) loadingImages.remove(id)
+    }
+}
+
+internal suspend fun WaslaStore.readBrowserScreen(detail: ChatConversation): Bitmap? {
+    if (!canChat || !(detail.visibility?.canView ?: isOwner)) return null
+    val query = detail.browser?.screenQuery(detail.id) ?: return null
+    val session = sessionEpoch
+    val screen = chatEpoch
+    return try {
+        val bytes = cloud.screen(detail.id, query["v"])
+        val bitmap = withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
+        bitmap.takeIf { session == sessionEpoch && screen == chatEpoch }
+    } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        null
     }
 }
