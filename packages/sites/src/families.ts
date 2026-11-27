@@ -5,6 +5,15 @@ import { COPY } from './copy/index.ts';
 export const ITEMS_PAGE: Readonly<Record<SiteKind, string | null>> = {
   services: 'services.html', restaurant: 'menu.html', clinic: 'services.html', portfolio: 'works.html', catalogue: 'products.html', landing: null,
 };
+const GENERATED_PAGE_PATHS = new Set([
+  'index.html', 'contact.html', '404.html', 'about.html', 'team.html', 'projects.html', 'pricing.html', 'faq.html', 'news.html',
+  ...Object.values(ITEMS_PAGE),
+]);
+
+export function isCustomPage(page: SitePage): boolean {
+  return !GENERATED_PAGE_PATHS.has(page.path);
+}
+
 /** How many items the home page previews before linking to the full list. */
 export const HIGHLIGHT_COUNT: Readonly<Record<SiteKind, number>> = { services: 6, restaurant: 6, clinic: 6, portfolio: 6, catalogue: 8, landing: 60 };
 
@@ -100,13 +109,16 @@ export function buildPages(core: Core, content: PageContent, options: PlanOption
 /** Where a block added later belongs, mirroring buildPages. Returns the pages unchanged when the block exists. */
 export function placeBlock(pages: SitePage[], block: SiteBlock, lang: SiteLang): SitePage[] {
   const sameKind = (existing: SiteBlock) => existing.type === block.type && (block.type !== 'items' || Boolean((existing as { items?: unknown }).items) === Boolean(block.items));
-  if (pages.some(page => page.blocks.some(sameKind))) return pages;
+  if (pages.some(page => !isCustomPage(page) && page.blocks.some(sameKind))) return pages;
   const titles = PAGE_TITLES[lang];
   const index = pages.findIndex(page => page.path === 'index.html');
   const single = pages.length <= 2 || !pages.some(page => page.path === 'contact.html');
-  const ownPage = (path: string, title: string) => [...pages.filter(page => page.path !== 'contact.html'), { path, title, inNav: true, blocks: [block, { type: 'cta' as const }] }, ...pages.filter(page => page.path === 'contact.html')];
   const beforeCta = (blocks: SiteBlock[]) => { const position = blocks.findIndex(existing => existing.type === 'cta' || existing.type === 'contact'); return position < 0 ? [...blocks, block] : [...blocks.slice(0, position), block, ...blocks.slice(position)]; };
   const onIndex = () => pages.map((page, position) => (position === index ? { ...page, blocks: beforeCta(page.blocks) } : page));
+  const ownPage = (path: string, title: string) => {
+    if (pages.some(page => page.path === path)) return pages.map(page => page.path === path ? { ...page, blocks: beforeCta(page.blocks) } : page);
+    return [...pages.filter(page => page.path !== 'contact.html'), { path, title, inNav: true, blocks: [block, { type: 'cta' as const }] }, ...pages.filter(page => page.path === 'contact.html')];
+  };
   switch (block.type) {
     case 'map': case 'hours': case 'contact': {
       const contact = pages.findIndex(page => page.path === 'contact.html');
@@ -122,7 +134,7 @@ export function placeBlock(pages: SitePage[], block: SiteBlock, lang: SiteLang):
   }
 }
 
-/** Drops every block of a type; a page left empty disappears unless it is index.html. */
+/** Drops a section from generated pages; custom pages have their own edit commands. */
 export function removeBlocks(pages: SitePage[], type: SiteBlock['type']): SitePage[] {
-  return pages.map(page => ({ ...page, blocks: page.blocks.filter(block => block.type !== type) })).filter(page => page.path === 'index.html' || page.blocks.length > 0);
+  return pages.map(page => isCustomPage(page) ? page : { ...page, blocks: page.blocks.filter(block => block.type !== type) }).filter(page => page.path === 'index.html' || page.blocks.length > 0);
 }

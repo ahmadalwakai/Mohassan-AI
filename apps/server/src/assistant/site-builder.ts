@@ -1,4 +1,4 @@
-import type { SiteBrief, SiteDetail, SitePartialBrief, SiteWant } from '@mohassan/contracts';
+import type { SiteBrief, SiteCommandResult, SiteDetail, SitePartialBrief, SiteWant } from '@mohassan/contracts';
 import { applyAnswers, commandExamples, completeBrief, isSiteRequest, MAX_ROUNDS, missingWants, siteQuestion, siteSentence, WANT_LABELS, type SiteQuestionField } from '@mohassan/sites';
 import type { WorkspaceRole } from '../members.js';
 import type { DraftWriteFence } from './long-run/execution-guards.js';
@@ -16,7 +16,7 @@ export interface SiteChatState {
 }
 export interface SitesChatPort {
   createFromBrief(ownerId: string, brief: SiteBrief, options: { conversationId: string; role?: WorkspaceRole; draftWriteFence?: DraftWriteFence }): Promise<SiteDetail>;
-  command(ownerId: string, siteId: string, input: { text: string; want?: SiteWant }): Promise<{ kind: 'patch' | 'undo' | 'ask' | 'unknown'; summary: string; want?: SiteWant; title?: string; detail: SiteDetail }>;
+  command(ownerId: string, siteId: string, input: { text: string; want?: SiteWant; title?: string }): Promise<SiteCommandResult>;
   detail(ownerId: string, siteId: string): Promise<SiteDetail>;
   roleOf?(ownerId: string): Promise<WorkspaceRole | null>;
   /** An absolute link to the site in the app; the chat renders only http(s) links. */
@@ -91,20 +91,14 @@ export interface SiteCommandTurn { text: string; pendingWant?: { want: SiteWant;
  * Returns handled=false when the sentence is neither, so the chat treats it as an ordinary request.
  */
 export async function siteCommandTurn(port: SitesChatPort, ownerId: string, siteId: string, text: string, pending: { want: SiteWant; title?: string } | null | undefined): Promise<SiteCommandTurn> {
-  // The command grammar first, so "undo" or "change the colour" never become the content of a pending question.
-  const result = await port.command(ownerId, siteId, { text });
+  const result = await port.command(ownerId, siteId, { text, ...pending });
   const lang = result.detail.lang;
   switch (result.kind) {
-    case 'patch': case 'undo': return { text: `${result.summary} [${say(lang, 'افتح المعاينة', 'Open the preview')}](${previewLink(port, result.detail)})`, pendingWant: null, handled: true };
-    case 'ask': return { text: result.summary, pendingWant: { want: result.want!, ...(result.title ? { title: result.title } : {}) }, handled: true };
-    default: break;
+    case 'patch': case 'undo':
+      return { text: `${result.summary} [${say(lang, 'افتح المعاينة', 'Open the preview')}](${previewLink(port, result.detail)})`, pendingWant: result.kind === 'patch' && result.fulfilledWant ? null : pending ?? null, handled: true };
+    case 'ask': return { text: result.summary, pendingWant: { want: result.want, ...(result.title ? { title: result.title } : {}) }, handled: true };
+    case 'unknown': return { text: result.summary, pendingWant: pending ?? null, handled: Boolean(result.summary) };
   }
-  // Then the answer to a pending content question, unless the sentence is itself a question.
-  if (pending && !/[؟?]\s*$/.test(text.trim())) {
-    const filled = await port.command(ownerId, siteId, { text, want: pending.want });
-    if (filled.kind === 'patch') return { text: `${filled.summary} [${say(filled.detail.lang, 'افتح المعاينة', 'Open the preview')}](${previewLink(port, filled.detail)})`, pendingWant: null, handled: true };
-  }
-  return { text: result.summary, pendingWant: pending ?? null, handled: Boolean(result.summary) };
 }
 
 /** What the chat says when a site sentence arrives but no site service is configured. */

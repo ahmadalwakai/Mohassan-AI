@@ -1,6 +1,7 @@
 import type { SiteBrief, SiteCheckReport } from '@mohassan/contracts';
 import { parse, type DefaultTreeAdapterMap } from 'parse5';
-import { asciiDigits } from './html.ts';
+import { asciiDigits, telDigits } from './html.ts';
+import { findNumbers } from './text.ts';
 import { contrastRatio, deriveTheme, themePairs } from './theme.ts';
 import { fileBytes } from './compose.ts';
 import type { ComposeOptions, SiteFile } from './types.ts';
@@ -13,13 +14,12 @@ const attr = (node: Element, name: string) => node.attrs.find(item => item.name 
 
 interface PageFacts {
   path: string; errors: number; headings: number[]; h1: number; images: { alt: string | undefined }[];
-  links: string[]; sources: string[]; forms: string[]; text: string; lang?: string; dir?: string; title: string; description?: string; viewport?: string; csp?: string; inlineHandlers: number; inlineStyles: number;
+  links: string[]; sources: string[]; forms: string[]; text: string[]; lang?: string; dir?: string; title: string; description?: string; viewport?: string; csp?: string; inlineHandlers: number; inlineStyles: number;
 }
 function readPage(path: string, html: string): PageFacts {
   let errors = 0;
   const document = parse(html, { onParseError: () => { errors++; } });
-  const facts: PageFacts = { path, errors, headings: [], h1: 0, images: [], links: [], sources: [], forms: [], text: '', title: '', inlineHandlers: 0, inlineStyles: 0 };
-  const text: string[] = [];
+  const facts: PageFacts = { path, errors, headings: [], h1: 0, images: [], links: [], sources: [], forms: [], text: [], title: '', inlineHandlers: 0, inlineStyles: 0 };
   const walk = (node: Node, skip: boolean) => {
     if (isElement(node)) {
       const tag = node.tagName;
@@ -36,26 +36,57 @@ function readPage(path: string, html: string): PageFacts {
       const skipText = skip || tag === 'script' || tag === 'style' || tag === 'template';
       for (const child of children(node)) walk(child, skipText);
       if (tag === 'template' && 'content' in node) for (const child of children((node as unknown as { content: Node }).content)) walk(child, true);
-    } else if ('value' in node && !skip && node.nodeName === '#text') text.push(node.value);
+    } else if ('value' in node && !skip && node.nodeName === '#text') facts.text.push(node.value);
     else for (const child of children(node)) walk(child, skip);
   };
   walk(document, false);
-  facts.text = text.join(' ');
   facts.errors = errors;
   return facts;
 }
 
 const USER_TEXT_KEYS = new Set(['name', 'tagline', 'city', 'address', 'phone', 'whatsapp', 'email', 'hours', 'title', 'detail', 'price', 'offer', 'body', 'lead', 'question', 'answer', 'role', 'bio', 'features', 'note', 'period', 'value', 'label', 'quote', 'date', 'alt', 'lines']);
-/** Every digit run the user wrote anywhere in the brief. */
-export function briefDigitRuns(brief: SiteBrief): Set<string> {
+const phoneNumber = (value: string) => telDigits(value).replace(/^\+/, '');
+
+function numberReader(brief: SiteBrief) {
+  const contacts = [brief.phone, brief.whatsapp].flatMap(value => value ? [phoneNumber(value)] : []);
+  const knownPhones = contacts.sort((a, b) => b.length - a.length).map(digits => {
+    const groups = [...digits].join(String.raw`[().\p{Zs}\t-]*`);
+    return String.raw`(?:(?:\+|00)[\p{Zs}\t]*)?\(?${groups}\)?`;
+  });
+  // In prose, a leading plus, trunk zero or parenthesized area code identifies a formatted phone.
+  const explicitPhone = String.raw`(?:\+\d+|0\d+|\(\d+\))(?:(?:[.-]|[\p{Zs}\t]+)(?:\(\d+\)|\d+)|\(\d+\))+`;
+  const candidates = new RegExp(String.raw`(?<!\d|\d[.,:٫٬-])(?:${[...knownPhones, explicitPhone].join('|')})(?!\d|[.,:٫٬-]\d|\(\d+\))`, 'gu');
+  return (value: string): string[] => {
+    const runs: string[] = [];
+    const text = asciiDigits(value).replace(candidates, candidate => {
+      // A single dot between digit runs can be a decimal price.
+      if (/^\+?\d+\.\d+$/.test(candidate)) return candidate;
+      const phone = phoneNumber(candidate);
+      if (!contacts.includes(phone) && !findNumbers(candidate).some(number => phoneNumber(number.digits) === phone)) return candidate;
+      runs.push(phone);
+      return ' ';
+    });
+    return [...runs, ...(text.match(/\d+(?:[.,:٫٬]\d+)*/g) ?? [])];
+  };
+}
+
+function briefNumbers(brief: SiteBrief, numberRuns: ReturnType<typeof numberReader>): Set<string> {
   const runs = new Set<string>();
   const visit = (value: unknown, key: string | null) => {
-    if (typeof value === 'string') { if (key && USER_TEXT_KEYS.has(key)) for (const run of asciiDigits(value).match(/\d+/g) ?? []) runs.add(run); return; }
+    if (typeof value === 'string') {
+      if (key && USER_TEXT_KEYS.has(key)) for (const run of numberRuns(value)) runs.add(run);
+      return;
+    }
     if (Array.isArray(value)) { for (const item of value) visit(item, key); return; }
     if (value && typeof value === 'object') for (const [childKey, child] of Object.entries(value)) visit(child, childKey);
   };
   visit(brief, null);
   return runs;
+}
+
+/** Complete numeric tokens from the brief, with contact numbers normalised. */
+export function briefDigitRuns(brief: SiteBrief): Set<string> {
+  return briefNumbers(brief, numberReader(brief));
 }
 
 const isRelative = (ref: string) => !/^(?:[a-z][a-z0-9+.-]*:|\/\/|\/)/i.test(ref);
@@ -110,9 +141,14 @@ export function checkSite(files: SiteFile[], brief: SiteBrief, options: ComposeO
   const mediaQueries = (cssText.match(/@media/g) ?? []).length;
   add('media_queries', mediaQueries >= 2, `${mediaQueries} media queries in styles.css.`);
 
-  const material = briefDigitRuns(brief);
+  const numberRuns = numberReader(brief);
+  const material = briefNumbers(brief, numberRuns);
   const invented: string[] = [];
-  for (const page of pages) for (const run of asciiDigits(page.text).match(/\d+/g) ?? []) { if (![...material].some(known => known.includes(run))) invented.push(`${page.path}: ${run}`); }
+  for (const page of pages) {
+    for (const run of page.text.flatMap(numberRuns)) {
+      if (!material.has(run)) invented.push(`${page.path}: ${run}`);
+    }
+  }
   add('digits_from_brief', invented.length === 0, invented.length ? `Numbers not found in the brief${where([...new Set(invented)])}` : 'Every number on the pages comes from the brief.');
   add('size', true, `${bytes} bytes in ${files.length} files; ${pages.length} pages.`);
   return { passed: checks.every(check => check.passed), checks, bytes, pages: pages.length };

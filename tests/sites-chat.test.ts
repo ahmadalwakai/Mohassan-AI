@@ -74,6 +74,37 @@ describe('a website through the real chat', () => {
     const teamBlock = updated.brief.pages.flatMap(page => page.blocks).find(block => block.type === 'team');
     expect(teamBlock && teamBlock.type === 'team' ? teamBlock.members.map(member => member.name) : []).toEqual(['أبو أحمد', 'سامر']);
     expect(updated.revision).toBeGreaterThan(site.revision);
+
+    const send = async (text: string) => { await control.send(owner, id, { text }); return settled(id); };
+    await send('أضف صفحة الخصوصية: لا نشارك بيانات الطلبات.');
+    const termsAsk = await send('أضف صفحة الشروط');
+    expect(termsAsk.text).toContain('صفحة «الشروط»');
+    expect((await send('غيّر اللون إلى أخضر')).text).toContain('غيّرت اللون');
+    expect((await sites.detail(owner, site.id)).brief.primary).toBe('#15803d');
+    expect((await send('تراجع')).text).toContain('تراجعت');
+    expect((await sites.detail(owner, site.id)).brief.primary).toBe('#1d4ed8');
+
+    const terms = 'العنوان لتسليم الطلبات فقط.\nيمكن للعميل أن يكتب create a website لطلب موقع جديد.\nهل يتغيّر رقم الطلب؟';
+    expect((await send(terms)).text).toContain('أضفت صفحة «الشروط»');
+    const withTerms = await sites.detail(owner, site.id);
+    const custom = withTerms.brief.pages.filter(page => ['الشروط', 'الخصوصية'].includes(page.title));
+    expect(custom.map(page => page.title)).toEqual(['الخصوصية', 'الشروط']);
+    expect(custom[1]!.blocks).toEqual([{ type: 'text', title: 'الشروط', body: terms }]);
+    expect(withTerms.brief.pages.filter(page => !custom.includes(page))).toEqual(updated.brief.pages);
+
+    await send('أضف قسم من نحن: مطعم عائلي في دمشق.');
+    const about = await sites.detail(owner, site.id);
+    expect(about.brief.pages.find(page => page.path === 'index.html')?.blocks).toContainEqual({ type: 'text', title: 'من نحن', body: 'مطعم عائلي في دمشق.' });
+    expect(about.brief.pages.filter(page => custom.some(item => item.path === page.path))).toEqual(custom);
+
+    await send('أضف قسم الأسئلة الشائعة');
+    expect((await send('ما المواعيد؟')).text).toContain('لم أستطع قراءة المحتوى');
+    const faq = [{ question: 'ما المواعيد؟', answer: 'اتصل على رقم 0501111111.' }, { question: 'أين العنوان؟', answer: 'الاستلام من المطعم.' }];
+    await send(faq.flatMap(entry => [entry.question, entry.answer]).join('\n'));
+    const withFaq = await sites.detail(owner, site.id);
+    expect(withFaq.brief.pages.flatMap(page => page.blocks)).toContainEqual({ type: 'faq', entries: faq });
+    for (const field of ['hours', 'address', 'phone', 'whatsapp'] as const) expect(withFaq.brief[field], field).toEqual(about.brief[field]);
+    expect(withFaq.brief.pages.filter(page => custom.some(item => item.path === page.path))).toEqual(custom);
   });
 
   it('asks for the name and contact when the sentence has neither, in one card', async () => {

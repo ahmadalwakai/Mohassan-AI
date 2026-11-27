@@ -3,10 +3,11 @@ import type { FastifyInstance } from 'fastify';
 import { sql, type Kysely } from 'kysely';
 import { z } from 'zod';
 import sharp from 'sharp';
-import { SiteBriefSchema, SiteCheckReportSchema, SiteDetailSchema, SiteKindSchema, SiteLangSchema, SiteSummarySchema, SiteWantSchema, type SiteBrief, type SiteCheckReport, type SiteDetail, type SiteImageRef, type SitePartialBrief, type SiteSummary, type SiteWant } from '@mohassan/contracts';
+import { SiteBriefSchema, SiteCheckReportSchema, SiteDetailSchema, SiteKindSchema, SiteLangSchema, SiteSummarySchema, SiteWantSchema, type SiteBrief, type SiteCheckReport, type SiteCommandResult, type SiteDetail, type SiteImageRef, type SitePartialBrief, type SiteSummary, type SiteWant } from '@mohassan/contracts';
 import { applyAnswers, applyPatch, checkSite, completeBrief, composeSite, contentTypeFor, detectRequests, fulfilWant, GENERATOR_VERSION, siteCommand, slugify, zipFiles, type SiteFile, type SiteImageAsset } from '@mohassan/sites';
 import { noPublisher, PublishError, type SitePublisher } from './sites-publish.js';
 import { createSitePreviewReader } from './site-preview.js';
+import { abortWhenClosed } from './chat-wait.js';
 import type { WorkspaceRole } from './members.js';
 import type { DraftWriteFence } from './assistant/long-run/execution-guards.js';
 
@@ -35,7 +36,11 @@ const UploadInput = z.object({
   role: z.enum(['hero', 'gallery', 'about', 'logo', 'team', 'item']).default('gallery'),
 }).strict();
 const BriefUpdate = z.object({ brief: SiteBriefSchema, revision: z.number().int().min(1) }).strict();
-const CommandInput = z.object({ text: z.string().trim().min(1).max(4000), want: z.enum(['about', 'team', 'faq', 'pricing', 'projects', 'features', 'steps', 'facts', 'testimonials', 'posts', 'hours', 'address']).optional() }).strict();
+const CommandInput = z.object({
+  text: z.string().trim().min(1).max(4000),
+  want: z.enum(['about', 'team', 'faq', 'pricing', 'projects', 'features', 'steps', 'facts', 'testimonials', 'posts', 'hours', 'address']).optional(),
+  title: z.string().trim().min(1).max(60).optional(),
+}).strict().refine(({ title, want }) => !title || want === 'about');
 
 interface SiteRow { id: string; owner_id: string; conversation_id: string | null; slug: string; brief: unknown; files: unknown; files_hash: string; checks: unknown; history: unknown; revision: number; generator_version: string; status: string; published_url: string | null; published_at: Date | null; publish: unknown; created_at: Date; updated_at: Date }
 interface ImageRow { id: string; site_id: string; owner_id: string; mime_type: string; width: number; height: number; data_base64: string; small_base64: string | null; alt: string; role: string; created_at: Date }
@@ -163,19 +168,27 @@ export async function createSitesControl(db: Kysely<any>, config: SitesConfig) {
     }));
   }
   /** A plain-language edit; returns what happened and the site, or a question when a block needs content. */
-  async function command(ownerId: string, id: string, input: unknown): Promise<{ kind: 'patch' | 'undo' | 'ask' | 'unknown'; summary: string; want?: SiteWant; title?: string; detail: SiteDetail }> {
+  async function command(ownerId: string, id: string, input: unknown): Promise<SiteCommandResult> {
     const request = CommandInput.parse(input);
     return db.transaction().execute(async tx => {
       const row = await rowFor(ownerId, id, tx, true);
       const brief = SiteBriefSchema.parse(row.brief), images = await imagesOf(id, tx);
-      if (request.want) {
-        const patch = fulfilWant(brief, request.want, request.text);
-        if (!patch) return { kind: 'unknown' as const, summary: brief.lang === 'ar' ? 'لم أستطع قراءة المحتوى بهذا الشكل؛ اكتبه سطراً لكل بند.' : 'I could not read that content; write one entry per line.', detail: await detailOf(row, tx) };
+      const result = siteCommand(request.text, brief, { whilePending: Boolean(request.want) });
+      if (!result && request.want) {
+        const patch = fulfilWant(brief, request.want, request.text, request.title);
+        if (!patch) {
+          const summary = request.want === 'address'
+            ? (brief.lang === 'ar' ? 'أرسل رابط الخريطة مع العنوان.' : 'Send a map link with the address.')
+            : (brief.lang === 'ar' ? 'لم أستطع قراءة المحتوى بهذا الشكل؛ اكتبه سطراً لكل بند.' : 'I could not read that content; write one entry per line.');
+          return { kind: 'unknown' as const, summary, detail: await detailOf(row, tx) };
+        }
         const next = applyPatch(brief, patch);
-        return { kind: 'patch' as const, summary: brief.lang === 'ar' ? 'أضفت القسم بمحتواك.' : 'Added the section with your content.', detail: await detailOf(await saveRevision(tx, row, next, build(next, images)), tx) };
+        const summary = request.title
+          ? (brief.lang === 'ar' ? `أضفت صفحة «${request.title}».` : `Added the page "${request.title}".`)
+          : (brief.lang === 'ar' ? 'أضفت القسم بمحتواك.' : 'Added the section with your content.');
+        return { kind: 'patch' as const, fulfilledWant: true as const, summary, detail: await detailOf(await saveRevision(tx, row, next, build(next, images)), tx) };
       }
-      const result = siteCommand(request.text, brief);
-      if (!result) return { kind: 'unknown' as const, summary: '', detail: await detailOf(row, tx) };
+      if (!result || result.kind === 'unknown') return { kind: 'unknown' as const, summary: result?.summary ?? '', detail: await detailOf(row, tx) };
       if (result.kind === 'ask') return { kind: 'ask' as const, summary: result.summary, want: result.want, title: result.title, detail: await detailOf(row, tx) };
       if (result.kind === 'undo') {
         const history = z.array(z.unknown()).parse(row.history ?? []);
@@ -257,23 +270,32 @@ export async function createSitesControl(db: Kysely<any>, config: SitesConfig) {
 
   async function publish(ownerId: string, id: string, signal?: AbortSignal): Promise<SiteDetail> {
     const row = await rowFor(ownerId, id);
-    if (!publisher.available()) throw new PublishError('PUBLISH_NOT_CONFIGURED', 'النشر غير مهيأ على هذا الخادم؛ حمّل الموقع كملف ZIP أو فعّل النشر من الإعدادات.', 409);
-    const brief = SiteBriefSchema.parse(row.brief), images = await imagesOf(id);
-    const previewBuild = build(brief, images);
-    if (previewBuild.filesHash !== row.files_hash) throw new SiteError('SITE_SNAPSHOT_MISMATCH', 'تغيّر المولّد منذ آخر معاينة؛ أعد توليد الموقع ثم انشره.', 409);
     const expectedUrl = row.published_url ?? undefined;
-    // Publish with absolute links when the URL is already known (a republish); the first publish learns it.
-    const release = build(brief, images, expectedUrl ? { baseUrl: expectedUrl } : {});
+    let firstDeployment: { published_url: string; published_at: Date } | undefined;
     let result: Awaited<ReturnType<SitePublisher['publish']>>;
-    try { result = await publisher.publish({ slug: row.slug, files: release.site.files }, signal); }
-    catch (error) {
-      await db.updateTable('sites').set({ status: 'failed', publish: JSON.stringify({ error: error instanceof Error ? error.message : String(error), at: now().toISOString() }), updated_at: now() }).where('id', '=', id).execute();
+    try {
+      if (!publisher.available()) throw new PublishError('PUBLISH_NOT_CONFIGURED', 'النشر غير مهيأ على هذا الخادم؛ حمّل الموقع كملف ZIP أو فعّل النشر من الإعدادات.', 409);
+      const brief = SiteBriefSchema.parse(row.brief), images = await imagesOf(id);
+      const previewBuild = build(brief, images);
+      if (previewBuild.filesHash !== row.files_hash) throw new SiteError('SITE_SNAPSHOT_MISMATCH', 'تغيّر المولّد منذ آخر معاينة؛ أعد توليد الموقع ثم انشره.', 409);
+      // Publish with absolute links when the URL is already known. The first publish learns it.
+      const release = expectedUrl ? build(brief, images, { baseUrl: expectedUrl }) : previewBuild;
+      result = await publisher.publish({ slug: row.slug, files: release.site.files }, signal);
+      if (!expectedUrl) {
+        firstDeployment = { published_url: result.url, published_at: now() };
+        // Second pass with the real origin so sitemap, canonical and OG links are absolute.
+        const final = build(brief, images, { baseUrl: result.url });
+        result = await publisher.publish({ slug: row.slug, files: final.site.files }, signal);
+      }
+    } catch (error) {
+      const failedAt = now();
+      await db.updateTable('sites').set({
+        ...firstDeployment,
+        status: 'failed',
+        publish: JSON.stringify({ error: error instanceof Error ? error.message : String(error), at: failedAt.toISOString() }),
+        updated_at: failedAt,
+      }).where('id', '=', id).execute();
       throw error;
-    }
-    if (!expectedUrl) {
-      // Second pass with the real origin so sitemap, canonical and OG links are absolute.
-      const final = build(brief, images, { baseUrl: result.url });
-      result = await publisher.publish({ slug: row.slug, files: final.site.files }, signal);
     }
     const updated = await db.updateTable('sites').set({ status: 'published', published_url: result.url, published_at: now(), publish: JSON.stringify({ provider: result.provider, reference: result.reference, at: now().toISOString() }), updated_at: now() }).where('id', '=', id).returningAll().executeTakeFirstOrThrow() as SiteRow;
     return detailOf(updated);
@@ -307,11 +329,12 @@ export async function registerSiteRoutes(app: FastifyInstance, { control, owner,
     const archive = await control.exportZip((await owner(request)).id, id(request.params.id));
     return reply.type('application/zip').header('Content-Disposition', `attachment; filename="${archive.filename}"`).send(archive.bytes);
   });
-  app.post<{ Params: { id: string } }>('/api/sites/:id/publish', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async request => {
+  app.post<{ Params: { id: string } }>('/api/sites/:id/publish', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const signal = reply.raw.destroyed ? AbortSignal.abort() : abortWhenClosed(reply.raw);
     const user = await owner(request);
     if (await role(request) !== 'owner') throw new SiteError('SITE_PUBLISH_OWNER_ONLY', 'النشر متاح للمالك فقط في هذه النسخة؛ حمّل الموقع كملف ZIP.', 403);
     z.object({}).strict().parse(request.body ?? {});
-    return control.publish(user.id, id(request.params.id));
+    return control.publish(user.id, id(request.params.id), signal);
   });
   app.delete<{ Params: { id: string } }>('/api/sites/:id', async request => { await control.remove((await owner(request)).id, id(request.params.id)); return { ok: true }; });
   // Public by token (PUBLIC_ROUTES): a sandboxed preview iframe has an opaque origin and sends no cookie.

@@ -79,6 +79,40 @@ describe('composeSite', () => {
 });
 
 describe('checkSite', () => {
+  it.each(['50', '٥٠', '۵۰'])('rejects a discount of %s drawn from part of a phone number', discount => {
+    const { brief } = runScenario(SCENARIOS[0]!);
+    const site = composeSite(brief);
+    const tampered = site.files.map(file => file.path === 'index.html' && typeof file.content === 'string'
+      ? { ...file, content: file.content.replace('</main>', `<p>خصم ${discount}%</p></main>`) }
+      : file);
+    expect(checkSite(tampered, brief).checks.find(check => check.id === 'digits_from_brief')).toMatchObject({ passed: false, message: expect.stringContaining('index.html: 50') });
+  });
+  it('rejects a discount drawn from part of a formatted phone in prose', () => {
+    const contact = SCENARIOS.find(scenario => scenario.id === 'catalogue-en')!.answers.contact!;
+    const tagline = contact.split('\n')[0]!;
+    const fragment = tagline.match(/\d+/g)![2]!;
+    const { brief } = runScenario(SCENARIOS[0]!);
+    const withTagline = { ...brief, tagline };
+    const site = composeSite(withTagline);
+    expect(checkSite(site.files, withTagline).passed).toBe(true);
+    const tampered = site.files.map(file => file.path === 'index.html' && typeof file.content === 'string'
+      ? { ...file, content: file.content.replace('</main>', `<p>خصم ${fragment}%</p></main>`) }
+      : file);
+    expect(checkSite(tampered, withTagline).checks.find(check => check.id === 'digits_from_brief')?.passed).toBe(false);
+  });
+  it('keeps a decimal price and hours valid when the phone uses formatted Arabic-Indic digits', () => {
+    const { brief } = runScenario(SCENARIOS.find(scenario => scenario.id === 'restaurant-en')!);
+    const site = composeSite(brief);
+    const phone = brief.phone!;
+    const hour = brief.hours![0]!.match(/\d+/)![0]!;
+    const formattedPhone = `(${phone.slice(0, 4)}) ${phone.slice(4, 7)}-${phone.slice(7)}`
+      .replace(/\d/g, digit => String.fromCharCode('٠'.charCodeAt(0) + Number(digit)));
+    const formatted = site.files.map(file => file.path.endsWith('.html') && typeof file.content === 'string'
+      ? { ...file, content: file.content.replaceAll(`>${phone}<`, `>${hour} ${formattedPhone} ${hour}<`) }
+      : file);
+    expect(formatted).not.toEqual(site.files);
+    expect(checkSite(formatted, brief).passed).toBe(true);
+  });
   it('flags an invented number, a broken link and a missing alt', () => {
     const { brief } = runScenario(SCENARIOS[0]!);
     const site = composeSite(brief);
