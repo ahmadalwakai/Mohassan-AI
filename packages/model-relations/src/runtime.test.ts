@@ -103,6 +103,29 @@ describe('model runtime', () => {
     await vi.waitFor(async () => expect(await instance.health('other')).toMatchObject({ ok: true }));
   });
 
+  it('forwards request cancellation to a cold Python load and frees its slot after cleanup', async () => {
+    const started = pending<AbortSignal>();
+    const stopped = vi.fn();
+    const python = { runtime: 'python-worker' as const };
+    const instance = runtime({ registry: [entry('first', python), entry('second', python)], resolve: present,
+      loadAdapter: model => model.entry.id === 'first' ? {
+        ...adapter(),
+        warmup: signal => {
+          started.resolve(signal);
+          return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+        },
+        close: stopped,
+      } : adapter() });
+    const controller = new AbortController();
+    const work = instance.run('first', {}, controller.signal);
+    const signal = await started.promise;
+    controller.abort();
+    expect(await work).toMatchObject({ ok: false, reason: 'timeout' });
+    expect(signal.aborted).toBe(true);
+    await vi.waitFor(async () => expect(await instance.run('second', 'next model')).toMatchObject({ ok: true, output: 'next model' }));
+    expect(stopped).toHaveBeenCalledOnce();
+  });
+
   it('unloads idle adapters and evicts the least recently used adapter under memory pressure', async () => {
     const disposed = vi.fn();
     const instance = runtime({ registry: [entry('first'), entry('second'), entry('too-large', { resources: { memoryMb: 9, cpu: 1, gpu: false, latencyMs: 500 } })],

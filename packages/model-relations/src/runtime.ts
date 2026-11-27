@@ -103,8 +103,8 @@ export class ModelRuntime {
     this.heavyAvailable = options.heavyAvailable ?? (() => true);
   }
 
-  async run(modelId: string, input: unknown): Promise<ModelRunResult> {
-    return this.execute(modelId, async (adapter, signal, timeout) => ({ output: await adapter.run(input, signal, timeout) }), false);
+  async run(modelId: string, input: unknown, requestSignal?: AbortSignal): Promise<ModelRunResult> {
+    return this.execute(modelId, async (adapter, signal, timeout) => ({ output: await adapter.run(input, signal, timeout) }), false, requestSignal);
   }
 
   async health(modelId: string): Promise<ModelHealthResult> {
@@ -122,11 +122,13 @@ export class ModelRuntime {
     return this.closing;
   }
 
-  private async execute<T extends object>(modelId: string, operation: (adapter: ModelAdapter, signal: AbortSignal, timeout: number) => Promise<T>, check: boolean): Promise<({ ok: true; elapsedMs: number } & T) | ModelFailure> {
+  private async execute<T extends object>(modelId: string, operation: (adapter: ModelAdapter, signal: AbortSignal, timeout: number) => Promise<T>,
+    check: boolean, requestSignal?: AbortSignal): Promise<({ ok: true; elapsedMs: number } & T) | ModelFailure> {
     const begin = performance.now();
     const failure = (reason: ModelFailureReason, detail?: string): ModelFailure => ({ ok: false, reason, elapsedMs: performance.now() - begin, ...(detail ? { detail } : {}) });
     const entry = this.entries.get(modelId);
     if (!entry) return failure('unknown-model');
+    if (requestSignal?.aborted) return failure('timeout');
     if (this.closed) return failure('unhealthy', 'Runtime is closed');
     if (this.cpuUsed + entry.resources.cpu > this.cpuConcurrency || (heavy(entry) && (this.heavyBusy || !this.heavyAvailable()))) return failure('busy');
     this.cpuUsed += entry.resources.cpu;
@@ -139,12 +141,14 @@ export class ModelRuntime {
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let expired!: (failure: ModelFailure) => void;
     const limit = new Promise<ModelFailure>(done => { expired = done; });
+    const abort = () => {
+      controller.abort();
+      expired(failure('timeout'));
+    };
+    requestSignal?.addEventListener('abort', abort, { once: true });
     const startDeadline = () => {
       clearTimeout(deadline);
-      deadline = setTimeout(() => {
-        controller.abort();
-        expired(failure('timeout'));
-      }, phaseBudget);
+      deadline = setTimeout(abort, phaseBudget);
     };
     startDeadline();
     const task = this.use(entry, controller.signal, async adapter => {
@@ -175,6 +179,7 @@ export class ModelRuntime {
       return failure('unhealthy');
     } finally {
       clearTimeout(deadline);
+      requestSignal?.removeEventListener('abort', abort);
     }
   }
 
@@ -186,7 +191,8 @@ export class ModelRuntime {
     }
     signal.throwIfAborted();
     if (!slot) {
-      const loading: Slot = { entry, users: 0, lastUse: performance.now(), invalid: false, reserved: false, loaded: false, promise: Promise.resolve().then(() => this.load(entry)) };
+      const loading: Slot = { entry, users: 0, lastUse: performance.now(), invalid: false, reserved: false, loaded: false,
+        promise: Promise.resolve().then(() => this.load(entry, heavy(entry) ? signal : undefined)) };
       void loading.promise.catch(() => { loading.invalid = true; });
       slot = loading;
       this.slots.set(entry.id, loading);
@@ -216,10 +222,11 @@ export class ModelRuntime {
     }
   }
 
-  private async load(entry: ModelEntry): Promise<ModelAdapter> {
+  private async load(entry: ModelEntry, requestSignal?: AbortSignal): Promise<ModelAdapter> {
     const slot = this.slots.get(entry.id)!;
     const startupMs = startupBudget(entry);
-    const signal = AbortSignal.any([this.lifecycle.signal, AbortSignal.timeout(startupMs)]);
+    const startupSignal = AbortSignal.timeout(startupMs);
+    const signal = AbortSignal.any([this.lifecycle.signal, startupSignal, ...(requestSignal ? [requestSignal] : [])]);
     const model = await this.resolveIn(entry, false);
     if (model.state === 'absent') throw new ModelRuntimeError('absent');
     const dependencies: ResolvedModel[] = [];

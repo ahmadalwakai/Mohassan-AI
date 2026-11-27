@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createExecutorControl, executorConfigFromEnv, verifyJsonCandidate, type ExecutorConfig, type ExecutorDependencies } from '../apps/server/src/executor.js';
+import type { CouncilOutcome, CouncilTurn } from '../apps/server/src/assistant/model-council.js';
 import { ModelTransportError, type LocalModelProcessConfig, type ModelCandidateResponse, type ModelTaskSubmission, type ModelTransport } from '../packages/execution-integration/src/transport.js';
 
 /**
@@ -151,6 +152,44 @@ describe('direct executor runs', () => {
     const executor = control({ transport: fakeTransport(candidate('{"values":["7"]}')).factory });
     const result = await executor.run({ runId: randomUUID(), mode: 'direct', capability: 'json.transform.v1:integers-to-strings', fields: { values: [7, -42] } });
     expect(result).toMatchObject({ status: 'candidate', verification: { status: 'rejected' } });
+  });
+
+  it('collects council advice on validated direct tasks without changing the verified candidate', async () => {
+    await writeCheckpoint();
+    const values = [7, -42];
+    const text = JSON.stringify({ values: values.map(String) });
+    const record = { version: 1 as const, chosen: 'pipeline', changed: false, reason: 'Advice recorded', elapsedMs: 0, members: [] };
+    const deliberate = vi.fn(async () => ({ text, status: 'completed' as const, chosen: 'pipeline', changed: false, council: record }));
+    const executor = control({ transport: fakeTransport(candidate(text)).factory, council: () => ({ deliberate }) });
+    const capability = 'json.transform.v1:integers-to-strings';
+    const result = await executor.run({ runId: randomUUID(), mode: 'direct', capability, fields: { values } });
+    expect(result).toMatchObject({ candidate: { text }, verification: { status: 'passed' }, council: record });
+    expect(deliberate).toHaveBeenCalledWith(expect.objectContaining({
+      advisory: true, codeTask: { capability, fields: { values } }, pipeline: { text, status: 'completed' },
+    }));
+  });
+
+  it('returns the verified executor result when advisory deliberation stalls', async () => {
+    await writeCheckpoint();
+    const values = [7, -42];
+    const text = JSON.stringify({ values: values.map(String) });
+    let advisoryWaitMs = 0;
+    const deliberate = vi.fn((turn: CouncilTurn) => {
+      const started = performance.now();
+      turn.signal.addEventListener('abort', () => { advisoryWaitMs = performance.now() - started; }, { once: true });
+      return new Promise<CouncilOutcome>(() => {});
+    });
+    let consult = false;
+    const executor = control({ transport: fakeTransport(candidate(text)).factory, council: () => consult ? { deliberate } : undefined });
+    const capability = 'json.transform.v1:integers-to-strings';
+    const publish = () => executor.run({ runId: randomUUID(), mode: 'direct', capability, fields: { values } });
+    const baseline = await publish();
+    consult = true;
+    const stalled = await publish();
+    expect(stalled).toMatchObject({ status: 'candidate', candidate: { text }, verification: { status: 'passed' } });
+    expect(stalled).not.toHaveProperty('council');
+    expect(deliberate.mock.calls[0]?.[0].signal.aborted).toBe(true);
+    console.info(`Executor publication fixture: baseline ${baseline.timing.totalMs} ms, stalled advice ${stalled.timing.totalMs} ms, added ${stalled.timing.totalMs - baseline.timing.totalMs} ms, model wait ${advisoryWaitMs.toFixed(1)} ms`);
   });
 
   it('stops on missing context before calling the model', async () => {

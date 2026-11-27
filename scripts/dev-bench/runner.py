@@ -11,6 +11,7 @@ import shutil
 import subprocess
 from tempfile import TemporaryDirectory
 
+from council_bench import instrument_observer as instrument_council_observer, instrument_scoring as instrument_council_scoring
 from monitor_audit import SOURCE_FLAGS, instrument_observer, instrument_product, instrument_scoring
 
 V1_BUNDLE = "a258b3d47e39b5a2c03c71d4a9eb01107ae3d97f"
@@ -50,6 +51,7 @@ OVERRIDES = {
     "MOHASSAN_CONVERSATION_SHADOW": {"decide", "0"},
     "TEST_DRIVEN_CODING_ENABLED": {"true", "false"},
     "MOHASSAN_MODEL_RELATIONS": {"off", "shadow"},
+    "MOHASSAN_MODEL_COUNCIL": {"off", "owner"},
     "MOHASSAN_MONITORS_ENABLED": {"0", "owner", "1"},
     **{name: {"0", "1"} for name in (
         *(BASE_FLAGS.keys() - {"MOHASSAN_PLAN_COMPILER", "MOHASSAN_CONVERSATION_SHADOW",
@@ -308,6 +310,11 @@ def run_arm(
                                 str(checkout / adapter_path), str(observe), version],
                                cwd=checkout, env=environment, check=True)
                 instrument_runner(runner, version)
+                if "MOHASSAN_MODEL_COUNCIL" in settings:
+                    council_enabled = settings["MOHASSAN_MODEL_COUNCIL"] == "owner"
+                    use_adapter = council_enabled and (checkout / "apps/server/src/assistant/council-runners.ts").is_file()
+                    instrument_council_observer(observe, apply_once, enabled=council_enabled, use_adapter=use_adapter)
+                    instrument_council_scoring(runner, apply_once)
                 if monitor_audit:
                     mounted.append(instrument_observer(observe))
                     instrument_scoring(runner)

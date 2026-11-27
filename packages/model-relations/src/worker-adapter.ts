@@ -63,7 +63,7 @@ function configuredPath(parent: string, path: unknown): string {
   return resolve(parent, path);
 }
 
-async function fileHash(path: string): Promise<string> {
+export async function fileHash(path: string): Promise<string> {
   const info = await stat(path).catch(() => undefined);
   if (!info?.isFile()) throw new ModelRuntimeError('absent', 'Configured worker artifact is absent');
   const hash = createHash('sha256');
@@ -245,8 +245,10 @@ function transportFailure(error: unknown): never {
   throw error;
 }
 
-export async function loadWorkerAdapter(model: ResolvedModel, context: ModelAdapterContext): Promise<ModelAdapter> {
+export async function loadWorkerAdapter(model: ResolvedModel, context: ModelAdapterContext,
+    localWorker?: { script: string; modelFields: Readonly<Record<string, unknown>> }): Promise<ModelAdapter> {
   const config = await workerConfiguration(model, context);
+  if (localWorker) Object.assign(config.model, localWorker.modelFields);
   const checkpoint = pin.parse(config.model.checkpoint);
   const wantsCuda = config.model.device === 'cuda';
   if (wantsCuda) await context.assertGpuFree();
@@ -276,7 +278,7 @@ export async function loadWorkerAdapter(model: ResolvedModel, context: ModelAdap
   try {
     await writeFile(configPath, configBytes, { mode: 0o600 });
     worker = new PermanentModelWorker({
-      executable, args: ['-I', '-B', join(context.root, 'packages', 'execution-integration', 'model_worker', 'worker.py'), configPath, String(process.pid)],
+      executable, args: ['-I', '-B', localWorker?.script ?? join(context.root, 'packages', 'execution-integration', 'model_worker', 'worker.py'), configPath, String(process.pid)],
       cwd: context.root, environment: env, identity: config.identity, startupTimeoutMs: context.startupMs,
       onState: status => stateObserver?.(status),
     });

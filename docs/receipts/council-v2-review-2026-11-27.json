@@ -1,0 +1,6638 @@
+{
+  "schemaVersion": 1,
+  "runSummarySha256": "1de79a10e46b9e12915a3552038fe0b2aac3f9db3ecc68d18344226c1f119c68",
+  "launcherSha256": "ee1f2247dcc1077017ecd331aa5d2adede805dbc8074a165a06b0db4dd3d189f",
+  "fixturePins": {
+    "v1": "a258b3d47e39b5a2c03c71d4a9eb01107ae3d97f",
+    "v2": "12cedfe592aab40cdd47ee00d05ea86a6d2bae89",
+    "audit": "a1e1cb020b7ba093885edbf501149e7b8252c0cb",
+    "adapters": "0dfff7c54d3658a02cf878ff11faac7f630a6c10"
+  },
+  "arms": {
+    "base-off": {
+      "commit": "29448aea3fa10d226ef82ec5bf0a65e723d6ec39",
+      "councilSetting": "off",
+      "v2ConcurrentWorkers": 3,
+      "receiptSha256": "65ec51a5cffb95b31512f0d1c94cafbe00d07845b43d4b3ab6e0e9f551611f14",
+      "productArchiveSha256": "847e119a4cc92313ba2501f65c69ee7453d9783afe1b58062792f8d75147926a",
+      "versions": {
+        "v1": {
+          "overall": {
+            "passed": 176,
+            "total": 240
+          },
+          "byArea": {
+            "calculation": {
+              "passed": 18,
+              "total": 18
+            },
+            "clarification": {
+              "passed": 16,
+              "total": 16
+            },
+            "coding": {
+              "passed": 0,
+              "total": 16
+            },
+            "comparison": {
+              "passed": 11,
+              "total": 18
+            },
+            "desktop": {
+              "passed": 11,
+              "total": 16
+            },
+            "document-file": {
+              "passed": 16,
+              "total": 18
+            },
+            "explanation": {
+              "passed": 8,
+              "total": 18
+            },
+            "factual": {
+              "passed": 10,
+              "total": 18
+            },
+            "follow-up": {
+              "passed": 18,
+              "total": 18
+            },
+            "google-ads": {
+              "passed": 0,
+              "total": 16
+            },
+            "memory": {
+              "passed": 16,
+              "total": 16
+            },
+            "multi-step": {
+              "passed": 18,
+              "total": 18
+            },
+            "refusal": {
+              "passed": 16,
+              "total": 16
+            },
+            "small-talk": {
+              "passed": 18,
+              "total": 18
+            }
+          },
+          "byLanguage": {
+            "ar": {
+              "passed": 85,
+              "total": 120
+            },
+            "en": {
+              "passed": 91,
+              "total": 120
+            }
+          },
+          "byAreaAndLanguage": {
+            "calculation/ar": {
+              "passed": 9,
+              "total": 9
+            },
+            "calculation/en": {
+              "passed": 9,
+              "total": 9
+            },
+            "clarification/ar": {
+              "passed": 8,
+              "total": 8
+            },
+            "clarification/en": {
+              "passed": 8,
+              "total": 8
+            },
+            "coding/ar": {
+              "passed": 0,
+              "total": 8
+            },
+            "coding/en": {
+              "passed": 0,
+              "total": 8
+            },
+            "comparison/ar": {
+              "passed": 5,
+              "total": 9
+            },
+            "comparison/en": {
+              "passed": 6,
+              "total": 9
+            },
+            "desktop/ar": {
+              "passed": 5,
+              "total": 8
+            },
+            "desktop/en": {
+              "passed": 6,
+              "total": 8
+            },
+            "document-file/ar": {
+              "passed": 8,
+              "total": 9
+            },
+            "document-file/en": {
+              "passed": 8,
+              "total": 9
+            },
+            "explanation/ar": {
+              "passed": 4,
+              "total": 9
+            },
+            "explanation/en": {
+              "passed": 4,
+              "total": 9
+            },
+            "factual/ar": {
+              "passed": 3,
+              "total": 9
+            },
+            "factual/en": {
+              "passed": 7,
+              "total": 9
+            },
+            "follow-up/ar": {
+              "passed": 9,
+              "total": 9
+            },
+            "follow-up/en": {
+              "passed": 9,
+              "total": 9
+            },
+            "google-ads/ar": {
+              "passed": 0,
+              "total": 8
+            },
+            "google-ads/en": {
+              "passed": 0,
+              "total": 8
+            },
+            "memory/ar": {
+              "passed": 8,
+              "total": 8
+            },
+            "memory/en": {
+              "passed": 8,
+              "total": 8
+            },
+            "multi-step/ar": {
+              "passed": 9,
+              "total": 9
+            },
+            "multi-step/en": {
+              "passed": 9,
+              "total": 9
+            },
+            "refusal/ar": {
+              "passed": 8,
+              "total": 8
+            },
+            "refusal/en": {
+              "passed": 8,
+              "total": 8
+            },
+            "small-talk/ar": {
+              "passed": 9,
+              "total": 9
+            },
+            "small-talk/en": {
+              "passed": 9,
+              "total": 9
+            }
+          }
+        },
+        "v2": {
+          "overall": {
+            "passed": 1478,
+            "total": 2400
+          },
+          "byArea": {
+            "calculation": {
+              "passed": 5,
+              "total": 277
+            },
+            "clarification": {
+              "passed": 9,
+              "total": 9
+            },
+            "coding": {
+              "passed": 0,
+              "total": 155
+            },
+            "comparison": {
+              "passed": 28,
+              "total": 32
+            },
+            "factual": {
+              "passed": 976,
+              "total": 1244
+            },
+            "follow-up": {
+              "passed": 46,
+              "total": 240
+            },
+            "refusal": {
+              "passed": 348,
+              "total": 375
+            },
+            "small-talk": {
+              "passed": 66,
+              "total": 68
+            }
+          },
+          "byLanguage": {
+            "ar": {
+              "passed": 982,
+              "total": 1200
+            },
+            "en": {
+              "passed": 496,
+              "total": 1200
+            }
+          },
+          "byAreaAndLanguage": {
+            "calculation/en": {
+              "passed": 5,
+              "total": 277
+            },
+            "clarification/ar": {
+              "passed": 2,
+              "total": 2
+            },
+            "clarification/en": {
+              "passed": 7,
+              "total": 7
+            },
+            "coding/en": {
+              "passed": 0,
+              "total": 155
+            },
+            "comparison/ar": {
+              "passed": 22,
+              "total": 26
+            },
+            "comparison/en": {
+              "passed": 6,
+              "total": 6
+            },
+            "factual/ar": {
+              "passed": 818,
+              "total": 1017
+            },
+            "factual/en": {
+              "passed": 158,
+              "total": 227
+            },
+            "follow-up/en": {
+              "passed": 46,
+              "total": 240
+            },
+            "refusal/ar": {
+              "passed": 140,
+              "total": 155
+            },
+            "refusal/en": {
+              "passed": 208,
+              "total": 220
+            },
+            "small-talk/en": {
+              "passed": 66,
+              "total": 68
+            }
+          }
+        }
+      },
+      "council": {
+        "v1": {
+          "turns": 0,
+          "turnsByAreaAndLanguage": {},
+          "changed": {
+            "total": 0,
+            "correct": 0,
+            "wrong": 0,
+            "ungraded": 0
+          },
+          "decisions": {},
+          "elapsedMs": {
+            "count": 0,
+            "p50": null,
+            "p95": null
+          },
+          "v5": {
+            "eligibleCouncilTurns": 0,
+            "selectedCouncilTurns": 0,
+            "publishedReplies": 0
+          },
+          "uncertainty": {
+            "total": 0,
+            "byPath": {}
+          },
+          "membersByAreaAndLanguage": {}
+        },
+        "v2": {
+          "turns": 0,
+          "turnsByAreaAndLanguage": {},
+          "changed": {
+            "total": 0,
+            "correct": 0,
+            "wrong": 0,
+            "ungraded": 0
+          },
+          "decisions": {},
+          "elapsedMs": {
+            "count": 0,
+            "p50": null,
+            "p95": null
+          },
+          "v5": {
+            "eligibleCouncilTurns": 0,
+            "selectedCouncilTurns": 0,
+            "publishedReplies": 0
+          },
+          "uncertainty": {
+            "total": 0,
+            "byPath": {}
+          },
+          "membersByAreaAndLanguage": {}
+        }
+      }
+    },
+    "base-owner": {
+      "commit": "29448aea3fa10d226ef82ec5bf0a65e723d6ec39",
+      "councilSetting": "owner",
+      "v2ConcurrentWorkers": 3,
+      "receiptSha256": "6b5a68d9dc723b1685f98719fe6bf9e46e80c37ce97530d1e87ec5caa0614c77",
+      "productArchiveSha256": "847e119a4cc92313ba2501f65c69ee7453d9783afe1b58062792f8d75147926a",
+      "versions": {
+        "v1": {
+          "overall": {
+            "passed": 176,
+            "total": 240
+          },
+          "byArea": {
+            "calculation": {
+              "passed": 18,
+              "total": 18
+            },
+            "clarification": {
+              "passed": 16,
+              "total": 16
+            },
+            "coding": {
+              "passed": 0,
+              "total": 16
+            },
+            "comparison": {
+              "passed": 11,
+              "total": 18
+            },
+            "desktop": {
+              "passed": 11,
+              "total": 16
+            },
+            "document-file": {
+              "passed": 16,
+              "total": 18
+            },
+            "explanation": {
+              "passed": 8,
+              "total": 18
+            },
+            "factual": {
+              "passed": 10,
+              "total": 18
+            },
+            "follow-up": {
+              "passed": 18,
+              "total": 18
+            },
+            "google-ads": {
+              "passed": 0,
+              "total": 16
+            },
+            "memory": {
+              "passed": 16,
+              "total": 16
+            },
+            "multi-step": {
+              "passed": 18,
+              "total": 18
+            },
+            "refusal": {
+              "passed": 16,
+              "total": 16
+            },
+            "small-talk": {
+              "passed": 18,
+              "total": 18
+            }
+          },
+          "byLanguage": {
+            "ar": {
+              "passed": 85,
+              "total": 120
+            },
+            "en": {
+              "passed": 91,
+              "total": 120
+            }
+          },
+          "byAreaAndLanguage": {
+            "calculation/ar": {
+              "passed": 9,
+              "total": 9
+            },
+            "calculation/en": {
+              "passed": 9,
+              "total": 9
+            },
+            "clarification/ar": {
+              "passed": 8,
+              "total": 8
+            },
+            "clarification/en": {
+              "passed": 8,
+              "total": 8
+            },
+            "coding/ar": {
+              "passed": 0,
+              "total": 8
+            },
+            "coding/en": {
+              "passed": 0,
+              "total": 8
+            },
+            "comparison/ar": {
+              "passed": 5,
+              "total": 9
+            },
+            "comparison/en": {
+              "passed": 6,
+              "total": 9
+            },
+            "desktop/ar": {
+              "passed": 5,
+              "total": 8
+            },
+            "desktop/en": {
+              "passed": 6,
+              "total": 8
+            },
+            "document-file/ar": {
+              "passed": 8,
+              "total": 9
+            },
+            "document-file/en": {
+              "passed": 8,
+              "total": 9
+            },
+            "explanation/ar": {
+              "passed": 4,
+              "total": 9
+            },
+            "explanation/en": {
+              "passed": 4,
+              "total": 9
+            },
+            "factual/ar": {
+              "passed": 3,
+              "total": 9
+            },
+            "factual/en": {
+              "passed": 7,
+              "total": 9
+            },
+            "follow-up/ar": {
+              "passed": 9,
+              "total": 9
+            },
+            "follow-up/en": {
+              "passed": 9,
+              "total": 9
+            },
+            "google-ads/ar": {
+              "passed": 0,
+              "total": 8
+            },
+            "google-ads/en": {
+              "passed": 0,
+              "total": 8
+            },
+            "memory/ar": {
+              "passed": 8,
+              "total": 8
+            },
+            "memory/en": {
+              "passed": 8,
+              "total": 8
+            },
+            "multi-step/ar": {
+              "passed": 9,
+              "total": 9
+            },
+            "multi-step/en": {
+              "passed": 9,
+              "total": 9
+            },
+            "refusal/ar": {
+              "passed": 8,
+              "total": 8
+            },
+            "refusal/en": {
+              "passed": 8,
+              "total": 8
+            },
+            "small-talk/ar": {
+              "passed": 9,
+              "total": 9
+            },
+            "small-talk/en": {
+              "passed": 9,
+              "total": 9
+            }
+          }
+        },
+        "v2": {
+          "overall": {
+            "passed": 1478,
+            "total": 2400
+          },
+          "byArea": {
+            "calculation": {
+              "passed": 5,
+              "total": 277
+            },
+            "clarification": {
+              "passed": 9,
+              "total": 9
+            },
+            "coding": {
+              "passed": 0,
+              "total": 155
+            },
+            "comparison": {
+              "passed": 28,
+              "total": 32
+            },
+            "factual": {
+              "passed": 976,
+              "total": 1244
+            },
+            "follow-up": {
+              "passed": 46,
+              "total": 240
+            },
+            "refusal": {
+              "passed": 348,
+              "total": 375
+            },
+            "small-talk": {
+              "passed": 66,
+              "total": 68
+            }
+          },
+          "byLanguage": {
+            "ar": {
+              "passed": 982,
+              "total": 1200
+            },
+            "en": {
+              "passed": 496,
+              "total": 1200
+            }
+          },
+          "byAreaAndLanguage": {
+            "calculation/en": {
+              "passed": 5,
+              "total": 277
+            },
+            "clarification/ar": {
+              "passed": 2,
+              "total": 2
+            },
+            "clarification/en": {
+              "passed": 7,
+              "total": 7
+            },
+            "coding/en": {
+              "passed": 0,
+              "total": 155
+            },
+            "comparison/ar": {
+              "passed": 22,
+              "total": 26
+            },
+            "comparison/en": {
+              "passed": 6,
+              "total": 6
+            },
+            "factual/ar": {
+              "passed": 818,
+              "total": 1017
+            },
+            "factual/en": {
+              "passed": 158,
+              "total": 227
+            },
+            "follow-up/en": {
+              "passed": 46,
+              "total": 240
+            },
+            "refusal/ar": {
+              "passed": 140,
+              "total": 155
+            },
+            "refusal/en": {
+              "passed": 208,
+              "total": 220
+            },
+            "small-talk/en": {
+              "passed": 66,
+              "total": 68
+            }
+          }
+        }
+      },
+      "council": {
+        "v1": {
+          "turns": 82,
+          "turnsByAreaAndLanguage": {
+            "factual/ar": 4,
+            "factual/en": 4,
+            "follow-up/ar": 6,
+            "follow-up/en": 5,
+            "comparison/ar": 5,
+            "comparison/en": 5,
+            "calculation/ar": 9,
+            "calculation/en": 9,
+            "document-file/ar": 5,
+            "document-file/en": 4,
+            "coding/ar": 5,
+            "coding/en": 5,
+            "google-ads/ar": 6,
+            "google-ads/en": 7,
+            "desktop/ar": 1,
+            "desktop/en": 2
+          },
+          "changed": {
+            "total": 0,
+            "correct": 0,
+            "wrong": 0,
+            "ungraded": 0
+          },
+          "decisions": {
+            "pipeline": 82
+          },
+          "elapsedMs": {
+            "count": 82,
+            "p50": 52,
+            "p95": 822
+          },
+          "v5": {
+            "eligibleCouncilTurns": 1,
+            "selectedCouncilTurns": 0,
+            "publishedReplies": 0
+          },
+          "uncertainty": {
+            "total": 0,
+            "byPath": {}
+          },
+          "membersByAreaAndLanguage": {
+            "calculation/ar": {
+              "arithmetic": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v4": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 9,
+                "graded": 9,
+                "correct": 9,
+                "accuracy": 1.0
+              },
+              "refusal": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "calculation/en": {
+              "arithmetic": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v4": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 9,
+                "graded": 9,
+                "correct": 9,
+                "accuracy": 1.0
+              },
+              "refusal": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "coding/ar": {
+              "chat-v4": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 5,
+                "graded": 5,
+                "correct": 2,
+                "accuracy": 0.4
+              },
+              "refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "coding/en": {
+              "arithmetic": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v4": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 5,
+                "graded": 5,
+                "correct": 2,
+                "accuracy": 0.4
+              },
+              "refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "comparison/ar": {
+              "arithmetic": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v4": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 5,
+                "graded": 5,
+                "correct": 5,
+                "accuracy": 1.0
+              },
+              "refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "comparison/en": {
+              "arithmetic": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v4": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 5,
+                "graded": 5,
+                "correct": 5,
+                "accuracy": 1.0
+              },
+              "refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "desktop/ar": {
+              "chat-v4": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 1,
+                "graded": 1,
+                "correct": 0,
+                "accuracy": 0.0
+              },
+              "refusal": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "desktop/en": {
+              "chat-v4": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 2,
+                "graded": 2,
+                "correct": 0,
+                "accuracy": 0.0
+              },
+              "refusal": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "document-file/ar": {
+              "chat-v4": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 5,
+                "graded": 5,
+                "correct": 5,
+                "accuracy": 1.0
+              },
+              "refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "document-file/en": {
+              "chat-v4": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 4,
+                "graded": 4,
+                "correct": 4,
+                "accuracy": 1.0
+              },
+              "refusal": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "factual/ar": {
+              "chat-v4": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 4,
+                "graded": 4,
+                "correct": 2,
+                "accuracy": 0.5
+              },
+              "reading-v3-last": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "factual/en": {
+              "pipeline": {
+                "recorded": 4,
+                "graded": 4,
+                "correct": 3,
+                "accuracy": 0.75
+              },
+              "reading-v3-last": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "follow-up/ar": {
+              "pipeline": {
+                "recorded": 6,
+                "graded": 6,
+                "correct": 6,
+                "accuracy": 1.0
+              },
+              "reading-v3-last": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "follow-up/en": {
+              "pipeline": {
+                "recorded": 5,
+                "graded": 5,
+                "correct": 5,
+                "accuracy": 1.0
+              },
+              "reading-v3-last": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "google-ads/ar": {
+              "chat-v4": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 6,
+                "graded": 6,
+                "correct": 0,
+                "accuracy": 0.0
+              },
+              "refusal": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "google-ads/en": {
+              "chat-v4": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 7,
+                "graded": 7,
+                "correct": 0,
+                "accuracy": 0.0
+              },
+              "refusal": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            }
+          }
+        },
+        "v2": {
+          "turns": 1738,
+          "turnsByAreaAndLanguage": {
+            "small-talk/en": 4,
+            "refusal/ar": 24,
+            "factual/ar": 979,
+            "calculation/en": 233,
+            "factual/en": 216,
+            "follow-up/en": 240,
+            "refusal/en": 12,
+            "comparison/en": 6,
+            "comparison/ar": 24
+          },
+          "changed": {
+            "total": 0,
+            "correct": 0,
+            "wrong": 0,
+            "ungraded": 0
+          },
+          "decisions": {
+            "pipeline": 1738
+          },
+          "elapsedMs": {
+            "count": 1738,
+            "p50": 42,
+            "p95": 855
+          },
+          "v5": {
+            "eligibleCouncilTurns": 1,
+            "selectedCouncilTurns": 0,
+            "publishedReplies": 0
+          },
+          "uncertainty": {
+            "total": 0,
+            "byPath": {}
+          },
+          "membersByAreaAndLanguage": {
+            "calculation/en": {
+              "arithmetic": {
+                "recorded": 233,
+                "graded": 2,
+                "correct": 2,
+                "accuracy": 1.0
+              },
+              "chat-v4": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 233,
+                "graded": 233,
+                "correct": 19,
+                "accuracy": 0.0815450643776824
+              },
+              "refusal": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 47,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "comparison/ar": {
+              "pipeline": {
+                "recorded": 24,
+                "graded": 24,
+                "correct": 22,
+                "accuracy": 0.9166666666666666
+              },
+              "reading-v3-last": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "comparison/en": {
+              "pipeline": {
+                "recorded": 6,
+                "graded": 6,
+                "correct": 6,
+                "accuracy": 1.0
+              },
+              "reading-v3-last": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "factual/ar": {
+              "arithmetic": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v4": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 979,
+                "graded": 979,
+                "correct": 823,
+                "accuracy": 0.8406537282941777
+              },
+              "reading-v3-last": {
+                "recorded": 899,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 25,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "factual/en": {
+              "pipeline": {
+                "recorded": 216,
+                "graded": 216,
+                "correct": 162,
+                "accuracy": 0.75
+              },
+              "reading-v3-last": {
+                "recorded": 194,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "follow-up/en": {
+              "chat-v4": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 240,
+                "graded": 240,
+                "correct": 46,
+                "accuracy": 0.19166666666666668
+              },
+              "refusal": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "refusal/ar": {
+              "chat-v4": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 24,
+                "graded": 24,
+                "correct": 14,
+                "accuracy": 0.5833333333333334
+              },
+              "refusal": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 10,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "refusal/en": {
+              "chat-v4": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 12,
+                "graded": 12,
+                "correct": 4,
+                "accuracy": 0.3333333333333333
+              },
+              "refusal": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 10,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "small-talk/en": {
+              "chat-v4": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 4,
+                "graded": 4,
+                "correct": 2,
+                "accuracy": 0.5
+              },
+              "refusal": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            }
+          }
+        }
+      }
+    },
+    "head-owner": {
+      "commit": "7a36efb506f1deaa9221babf20b591caadb3a3c6",
+      "councilSetting": "owner",
+      "v2ConcurrentWorkers": 3,
+      "receiptSha256": "0bb5a1845fe78c2414e3c87978e755314722311552de1ed7f69ae69bb77b866e",
+      "productArchiveSha256": "482c8b6f456b2fa033dc82e0754739236c6b5667bf0f1f55907df8e2d7f728ba",
+      "versions": {
+        "v1": {
+          "overall": {
+            "passed": 176,
+            "total": 240
+          },
+          "byArea": {
+            "calculation": {
+              "passed": 18,
+              "total": 18
+            },
+            "clarification": {
+              "passed": 16,
+              "total": 16
+            },
+            "coding": {
+              "passed": 0,
+              "total": 16
+            },
+            "comparison": {
+              "passed": 11,
+              "total": 18
+            },
+            "desktop": {
+              "passed": 11,
+              "total": 16
+            },
+            "document-file": {
+              "passed": 16,
+              "total": 18
+            },
+            "explanation": {
+              "passed": 8,
+              "total": 18
+            },
+            "factual": {
+              "passed": 10,
+              "total": 18
+            },
+            "follow-up": {
+              "passed": 18,
+              "total": 18
+            },
+            "google-ads": {
+              "passed": 0,
+              "total": 16
+            },
+            "memory": {
+              "passed": 16,
+              "total": 16
+            },
+            "multi-step": {
+              "passed": 18,
+              "total": 18
+            },
+            "refusal": {
+              "passed": 16,
+              "total": 16
+            },
+            "small-talk": {
+              "passed": 18,
+              "total": 18
+            }
+          },
+          "byLanguage": {
+            "ar": {
+              "passed": 85,
+              "total": 120
+            },
+            "en": {
+              "passed": 91,
+              "total": 120
+            }
+          },
+          "byAreaAndLanguage": {
+            "calculation/ar": {
+              "passed": 9,
+              "total": 9
+            },
+            "calculation/en": {
+              "passed": 9,
+              "total": 9
+            },
+            "clarification/ar": {
+              "passed": 8,
+              "total": 8
+            },
+            "clarification/en": {
+              "passed": 8,
+              "total": 8
+            },
+            "coding/ar": {
+              "passed": 0,
+              "total": 8
+            },
+            "coding/en": {
+              "passed": 0,
+              "total": 8
+            },
+            "comparison/ar": {
+              "passed": 5,
+              "total": 9
+            },
+            "comparison/en": {
+              "passed": 6,
+              "total": 9
+            },
+            "desktop/ar": {
+              "passed": 5,
+              "total": 8
+            },
+            "desktop/en": {
+              "passed": 6,
+              "total": 8
+            },
+            "document-file/ar": {
+              "passed": 8,
+              "total": 9
+            },
+            "document-file/en": {
+              "passed": 8,
+              "total": 9
+            },
+            "explanation/ar": {
+              "passed": 4,
+              "total": 9
+            },
+            "explanation/en": {
+              "passed": 4,
+              "total": 9
+            },
+            "factual/ar": {
+              "passed": 3,
+              "total": 9
+            },
+            "factual/en": {
+              "passed": 7,
+              "total": 9
+            },
+            "follow-up/ar": {
+              "passed": 9,
+              "total": 9
+            },
+            "follow-up/en": {
+              "passed": 9,
+              "total": 9
+            },
+            "google-ads/ar": {
+              "passed": 0,
+              "total": 8
+            },
+            "google-ads/en": {
+              "passed": 0,
+              "total": 8
+            },
+            "memory/ar": {
+              "passed": 8,
+              "total": 8
+            },
+            "memory/en": {
+              "passed": 8,
+              "total": 8
+            },
+            "multi-step/ar": {
+              "passed": 9,
+              "total": 9
+            },
+            "multi-step/en": {
+              "passed": 9,
+              "total": 9
+            },
+            "refusal/ar": {
+              "passed": 8,
+              "total": 8
+            },
+            "refusal/en": {
+              "passed": 8,
+              "total": 8
+            },
+            "small-talk/ar": {
+              "passed": 9,
+              "total": 9
+            },
+            "small-talk/en": {
+              "passed": 9,
+              "total": 9
+            }
+          }
+        },
+        "v2": {
+          "overall": {
+            "passed": 1478,
+            "total": 2400
+          },
+          "byArea": {
+            "calculation": {
+              "passed": 5,
+              "total": 277
+            },
+            "clarification": {
+              "passed": 9,
+              "total": 9
+            },
+            "coding": {
+              "passed": 0,
+              "total": 155
+            },
+            "comparison": {
+              "passed": 28,
+              "total": 32
+            },
+            "factual": {
+              "passed": 976,
+              "total": 1244
+            },
+            "follow-up": {
+              "passed": 46,
+              "total": 240
+            },
+            "refusal": {
+              "passed": 348,
+              "total": 375
+            },
+            "small-talk": {
+              "passed": 66,
+              "total": 68
+            }
+          },
+          "byLanguage": {
+            "ar": {
+              "passed": 982,
+              "total": 1200
+            },
+            "en": {
+              "passed": 496,
+              "total": 1200
+            }
+          },
+          "byAreaAndLanguage": {
+            "calculation/en": {
+              "passed": 5,
+              "total": 277
+            },
+            "clarification/ar": {
+              "passed": 2,
+              "total": 2
+            },
+            "clarification/en": {
+              "passed": 7,
+              "total": 7
+            },
+            "coding/en": {
+              "passed": 0,
+              "total": 155
+            },
+            "comparison/ar": {
+              "passed": 22,
+              "total": 26
+            },
+            "comparison/en": {
+              "passed": 6,
+              "total": 6
+            },
+            "factual/ar": {
+              "passed": 818,
+              "total": 1017
+            },
+            "factual/en": {
+              "passed": 158,
+              "total": 227
+            },
+            "follow-up/en": {
+              "passed": 46,
+              "total": 240
+            },
+            "refusal/ar": {
+              "passed": 140,
+              "total": 155
+            },
+            "refusal/en": {
+              "passed": 208,
+              "total": 220
+            },
+            "small-talk/en": {
+              "passed": 66,
+              "total": 68
+            }
+          }
+        }
+      },
+      "council": {
+        "v1": {
+          "turns": 82,
+          "turnsByAreaAndLanguage": {
+            "factual/ar": 4,
+            "factual/en": 4,
+            "follow-up/ar": 6,
+            "follow-up/en": 5,
+            "comparison/ar": 5,
+            "comparison/en": 5,
+            "calculation/ar": 9,
+            "calculation/en": 9,
+            "document-file/ar": 5,
+            "document-file/en": 4,
+            "coding/ar": 5,
+            "coding/en": 5,
+            "google-ads/ar": 6,
+            "google-ads/en": 7,
+            "desktop/ar": 1,
+            "desktop/en": 2
+          },
+          "changed": {
+            "total": 0,
+            "correct": 0,
+            "wrong": 0,
+            "ungraded": 0
+          },
+          "decisions": {
+            "pipeline": 82
+          },
+          "elapsedMs": {
+            "count": 82,
+            "p50": 50,
+            "p95": 573
+          },
+          "v5": {
+            "eligibleCouncilTurns": 1,
+            "selectedCouncilTurns": 0,
+            "publishedReplies": 0
+          },
+          "uncertainty": {
+            "total": 0,
+            "byPath": {}
+          },
+          "membersByAreaAndLanguage": {
+            "calculation/ar": {
+              "chat-v4": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 9,
+                "graded": 9,
+                "correct": 9,
+                "accuracy": 1.0
+              },
+              "question-edit": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "calculation/en": {
+              "arithmetic": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v4": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 9,
+                "graded": 9,
+                "correct": 9,
+                "accuracy": 1.0
+              },
+              "question-edit": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 9,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "coding/ar": {
+              "chat-v4": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 5,
+                "graded": 5,
+                "correct": 2,
+                "accuracy": 0.4
+              },
+              "question-edit": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "coding/en": {
+              "arithmetic": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v4": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 5,
+                "graded": 5,
+                "correct": 2,
+                "accuracy": 0.4
+              },
+              "question-edit": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "comparison/ar": {
+              "chat-v4": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 5,
+                "graded": 5,
+                "correct": 5,
+                "accuracy": 1.0
+              },
+              "question-edit": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "comparison/en": {
+              "arithmetic": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v4": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 5,
+                "graded": 5,
+                "correct": 5,
+                "accuracy": 1.0
+              },
+              "question-edit": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "desktop/ar": {
+              "chat-v4": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 1,
+                "graded": 1,
+                "correct": 0,
+                "accuracy": 0.0
+              },
+              "question-edit": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "desktop/en": {
+              "chat-v4": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 2,
+                "graded": 2,
+                "correct": 0,
+                "accuracy": 0.0
+              },
+              "question-edit": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "document-file/ar": {
+              "chat-v4": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 5,
+                "graded": 5,
+                "correct": 5,
+                "accuracy": 1.0
+              },
+              "question-edit": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "document-file/en": {
+              "arithmetic": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v4": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 4,
+                "graded": 4,
+                "correct": 4,
+                "accuracy": 1.0
+              },
+              "question-edit": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "factual/ar": {
+              "chat-v4": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-answer-sentence": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-sufficiency": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 4,
+                "graded": 4,
+                "correct": 2,
+                "accuracy": 0.5
+              },
+              "question-edit": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-abstain-verifier": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-dense-retriever": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v3-last": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-head": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-hn-last": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-last2": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-lora": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "slot-date-place-tagger": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "slot-tagger": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "factual/en": {
+              "chat-v4": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-answer-sentence": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-sufficiency": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 4,
+                "graded": 4,
+                "correct": 3,
+                "accuracy": 0.75
+              },
+              "question-edit": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-abstain-verifier": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-dense-retriever": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v3-last": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-head": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-hn-last": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-last2": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-lora": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "slot-date-place-tagger": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "slot-tagger": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "follow-up/ar": {
+              "chat-v4": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-answer-sentence": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-sufficiency": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 6,
+                "graded": 6,
+                "correct": 6,
+                "accuracy": 1.0
+              },
+              "question-edit": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-abstain-verifier": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-dense-retriever": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v3-last": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-head": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-hn-last": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-last2": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-lora": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "slot-date-place-tagger": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "slot-tagger": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "follow-up/en": {
+              "chat-v4": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-answer-sentence": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-sufficiency": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 5,
+                "graded": 5,
+                "correct": 5,
+                "accuracy": 1.0
+              },
+              "question-edit": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-abstain-verifier": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-dense-retriever": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v3-last": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-head": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-hn-last": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-last2": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-lora": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 5,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "slot-date-place-tagger": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "slot-tagger": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "google-ads/ar": {
+              "ads-bilingual-code-v1": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "ads-bilingual-code-v2": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "ads-code-foundation": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "ads-v4-head": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "ads-v4-last2": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "ads-v4-lora": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v4": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "google-ads-pointer": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "google-ads-pointer-lm": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 6,
+                "graded": 6,
+                "correct": 0,
+                "accuracy": 0.0
+              },
+              "question-edit": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "google-ads/en": {
+              "ads-bilingual-code-v1": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "ads-bilingual-code-v2": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "ads-code-foundation": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "ads-v4-head": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "ads-v4-last2": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "ads-v4-lora": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "arithmetic": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v4": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "google-ads-pointer": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "google-ads-pointer-lm": {
+                "recorded": 3,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 7,
+                "graded": 7,
+                "correct": 0,
+                "accuracy": 0.0
+              },
+              "question-edit": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 7,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            }
+          }
+        },
+        "v2": {
+          "turns": 1738,
+          "turnsByAreaAndLanguage": {
+            "small-talk/en": 4,
+            "refusal/ar": 24,
+            "factual/ar": 979,
+            "calculation/en": 233,
+            "factual/en": 216,
+            "follow-up/en": 240,
+            "refusal/en": 12,
+            "comparison/en": 6,
+            "comparison/ar": 24
+          },
+          "changed": {
+            "total": 31,
+            "correct": 1,
+            "wrong": 30,
+            "ungraded": 0
+          },
+          "decisions": {
+            "pipeline": 1707,
+            "uncertain": 31
+          },
+          "elapsedMs": {
+            "count": 1738,
+            "p50": 61,
+            "p95": 831
+          },
+          "v5": {
+            "eligibleCouncilTurns": 1,
+            "selectedCouncilTurns": 0,
+            "publishedReplies": 0
+          },
+          "uncertainty": {
+            "total": 31,
+            "byPath": {
+              "blocked_with_pages": {
+                "total": 28,
+                "correct": 1,
+                "wrong": 27,
+                "ungraded": 0,
+                "casePassed": 0,
+                "caseFailed": 28
+              },
+              "completed_withheld": {
+                "total": 3,
+                "correct": 0,
+                "wrong": 3,
+                "ungraded": 0,
+                "casePassed": 0,
+                "caseFailed": 3
+              }
+            }
+          },
+          "membersByAreaAndLanguage": {
+            "calculation/en": {
+              "arithmetic": {
+                "recorded": 229,
+                "graded": 2,
+                "correct": 2,
+                "accuracy": 1.0
+              },
+              "chat-v4": {
+                "recorded": 232,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 232,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 233,
+                "graded": 233,
+                "correct": 19,
+                "accuracy": 0.0815450643776824
+              },
+              "question-edit": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 233,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "comparison/ar": {
+              "chat-v4": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-answer-sentence": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-sufficiency": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 24,
+                "graded": 24,
+                "correct": 22,
+                "accuracy": 0.9166666666666666
+              },
+              "question-edit": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-abstain-verifier": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-dense-retriever": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v3-last": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-head": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-hn-last": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-last2": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-lora": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "slot-date-place-tagger": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "slot-tagger": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "comparison/en": {
+              "chat-v4": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-answer-sentence": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-sufficiency": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 6,
+                "graded": 6,
+                "correct": 6,
+                "accuracy": 1.0
+              },
+              "question-edit": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-abstain-verifier": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-dense-retriever": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v3-last": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-head": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-hn-last": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-last2": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-lora": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 6,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "slot-date-place-tagger": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "slot-tagger": {
+                "recorded": 2,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "factual/ar": {
+              "chat-v4": {
+                "recorded": 978,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 978,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-answer-sentence": {
+                "recorded": 973,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-sufficiency": {
+                "recorded": 973,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 979,
+                "graded": 979,
+                "correct": 823,
+                "accuracy": 0.8406537282941777
+              },
+              "question-edit": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-abstain-verifier": {
+                "recorded": 973,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-dense-retriever": {
+                "recorded": 973,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v3-last": {
+                "recorded": 973,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-head": {
+                "recorded": 973,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-hn-last": {
+                "recorded": 973,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-last2": {
+                "recorded": 973,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-lora": {
+                "recorded": 973,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 979,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "slot-date-place-tagger": {
+                "recorded": 239,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "slot-tagger": {
+                "recorded": 239,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 23,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "factual/en": {
+              "arithmetic": {
+                "recorded": 18,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v4": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-answer-sentence": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-sufficiency": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 216,
+                "graded": 216,
+                "correct": 162,
+                "accuracy": 0.75
+              },
+              "question-edit": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-abstain-verifier": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-dense-retriever": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v3-last": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-head": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-hn-last": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-last2": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "reading-v4-lora": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 216,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "slot-date-place-tagger": {
+                "recorded": 53,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "slot-tagger": {
+                "recorded": 53,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "follow-up/en": {
+              "arithmetic": {
+                "recorded": 181,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v4": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 240,
+                "graded": 240,
+                "correct": 46,
+                "accuracy": 0.19166666666666668
+              },
+              "question-edit": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 240,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "refusal/ar": {
+              "chat-v4": {
+                "recorded": 10,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 10,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 24,
+                "graded": 24,
+                "correct": 14,
+                "accuracy": 0.5833333333333334
+              },
+              "question-edit": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 24,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 10,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "refusal/en": {
+              "chat-v4": {
+                "recorded": 10,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 10,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 12,
+                "graded": 12,
+                "correct": 4,
+                "accuracy": 0.3333333333333333
+              },
+              "question-edit": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 12,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 10,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            },
+            "small-talk/en": {
+              "chat-v4": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "chat-v5": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-domain": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-clinc-intent": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-follow-up": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-intent": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-massive-scenario": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-out-of-scope": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "head-speech-act": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "monitor-context-head": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "pipeline": {
+                "recorded": 4,
+                "graded": 4,
+                "correct": 2,
+                "accuracy": 0.5
+              },
+              "question-edit": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "refusal": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b0": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b1": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-b2": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-history": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "router-context-text": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-follow-up": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-refusal": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-route": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "scratch-speech-act": {
+                "recorded": 4,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              },
+              "web-search": {
+                "recorded": 1,
+                "graded": 0,
+                "correct": 0,
+                "accuracy": null
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "caseVerdictComparison": {
+    "v1": {
+      "base-off -> base-owner": {
+        "passToPass": 176,
+        "passToFail": 0,
+        "failToPass": 0,
+        "failToFail": 64
+      },
+      "base-owner -> head-owner": {
+        "passToPass": 176,
+        "passToFail": 0,
+        "failToPass": 0,
+        "failToFail": 64
+      },
+      "base-off -> head-owner": {
+        "passToPass": 176,
+        "passToFail": 0,
+        "failToPass": 0,
+        "failToFail": 64
+      }
+    },
+    "v2": {
+      "base-off -> base-owner": {
+        "passToPass": 1478,
+        "passToFail": 0,
+        "failToPass": 0,
+        "failToFail": 922
+      },
+      "base-owner -> head-owner": {
+        "passToPass": 1478,
+        "passToFail": 0,
+        "failToPass": 0,
+        "failToFail": 922
+      },
+      "base-off -> head-owner": {
+        "passToPass": 1478,
+        "passToFail": 0,
+        "failToPass": 0,
+        "failToFail": 922
+      }
+    }
+  }
+}

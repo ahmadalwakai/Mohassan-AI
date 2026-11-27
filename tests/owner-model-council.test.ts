@@ -73,11 +73,14 @@ describe('owner model council over signed-in sessions', () => {
     vi.unstubAllEnvs();
   });
 
-  it('deliberates before publishing the owner reply and stores the discussion with it', async () => {
+  it('stores the discussion with the eligible owner’s labelled v5 fallback', async () => {
     const conversation = await sendNew(goal, ownerCookie);
     const reply = conversation.messages.at(-1);
     expect(reply).toMatchObject({ role: 'assistant', experiment: 'v5', text: `${body}\n\n${V5_CHAT_LABEL}` });
-    expect(reply?.council).toMatchObject({ version: 1, chosen: 'chat-v5', changed: true });
+    expect(reply?.council).toMatchObject({
+      version: 1, chosen: 'chat-v5', changed: true,
+      discussion: { proposals: expect.arrayContaining([{ member: 'chat-v5', answer: '' }]), decision: { chosen: 'chat-v5' } },
+    });
     const answers = reply!.council!.members.filter(member => member.round === 'answer');
     expect(answers.map(member => member.model)).toEqual(expect.arrayContaining(['pipeline', 'chat-v5']));
     expect(answers.find(member => member.model === 'chat-v5')).toMatchObject({ chosen: true, output: body });
