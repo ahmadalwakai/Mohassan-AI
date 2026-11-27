@@ -23,6 +23,7 @@ const indirect = String.raw`(?:if|whether) (?:${talking}|${youAre}|(?:this|it) i
 const ask = String.raw`(?:${request}(?:tell(?: me| us)?|confirm(?: (?:for )?(?:me|us))?|let (?:me|us) know|explain(?: to (?:me|us))?|clarify)|(?:can|could|may) i (?:ask|check)|(?:i (?:want|need|would like)|i'd like) to (?:know|find out)|i(?: am|'m) (?:wondering|curious)(?: about)?)`;
 const alternate = String.raw`(?:or (?:${speaker} |${talking} |are |is )?${article})`;
 const identityTag = String.raw`(?: or not| then| please| right| (?:are|aren'?t) you)?`;
+const informationRequest = String.raw`${request}(?:provide|give) (?:me|us) (?:with )?(?:the knowledge of|(?:an?|the) (?:answer to|confirmation of)|information (?:about|on))`;
 const selfDescription = String.raw`(?:how (?:do|would) you (?:describe|identify|classify) yourself|(?:do|would) you (?:describe|identify|classify) yourself) as`;
 const APPRECIATION_SPELLING = new RegExp(String.raw`^((?:i )?${hedge})([a-z]{9,11})(?= )`, 'u');
 
@@ -32,8 +33,12 @@ function english(act: SpeechAct, patterns: string[], detail?: MannersDetail): Sp
   return { act, detail, language: 'en', dialect: null, pattern: new RegExp(`^(?:${patterns.join('|')})$`, 'u') };
 }
 
+function identityChoice(kind: string, other: string): string {
+  return String.raw`${article}${kind}(?: ${alternate}${other})?`;
+}
+
 function identityKind(kind: string, other: string, detail: 'ai' | 'human'): SpeechActRule {
-  const choice = String.raw`${article}${kind}(?: ${alternate}${other})?`;
+  const choice = identityChoice(kind, other);
   return english('identity', [
     String.raw`${courtesy}(?:${speaker}|${talking}) ${hedge}(?:just |basically )?${choice}${identityTag}`,
     String.raw`${ask} ${indirect} ${choice}${identityTag}`,
@@ -41,6 +46,11 @@ function identityKind(kind: string, other: string, detail: 'ai' | 'human'): Spee
     String.raw`${selfDescription} ${choice}${identityTag}`,
   ], detail);
 }
+
+export const englishIdentityInquiries = [
+  english('identity', [`${informationRequest} ${indirect} ${identityChoice(bot, human)}${identityTag}`], 'ai'),
+  english('identity', [`${informationRequest} ${indirect} ${identityChoice(human, bot)}${identityTag}`], 'human'),
+];
 
 // The two words carry strong evidence only inside an otherwise complete
 // grammatical frame. Allow one transposition, substitution or missed keystroke

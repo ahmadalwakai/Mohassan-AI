@@ -33,6 +33,8 @@ Start with these values for new runtime switches. Preserve explicitly approved p
 | `false` | `TEST_DRIVEN_CODING_ENABLED`, `PRODUCTION_METRICS_ENABLED`, `RUN_WORKER` |
 | Unset | `MOHASSAN_DESKTOP_SHELL`, `MOHASSAN_ROUTER_SHADOW`, `EXECUTOR_EXPERIMENT` |
 
+With `MOHASSAN_SMALL_TALK_MANNERS=0`, the owner can set `MOHASSAN_SMALL_TALK_LOCAL_ONLY=1` to answer recognized standalone social and identity messages locally. The default is off, whether the setting is absent or `0`. Mixed social and task messages, constrained requests, and pending answers use the normal request path in local-only mode. Setting `MOHASSAN_SMALL_TALK_MANNERS=1` enables full manners regardless of the local-only setting.
+
 The initial explicit `PRODUCTION_METRICS_ENABLED=false` overrides its production default. Enable metrics for the owner trial after the base release is healthy. If push is desired, set all three `WEB_PUSH_VAPID_*` settings with a stable matching key pair and contact, or all four `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_KEY_PATH`, and `APNS_BUNDLE_ID` settings with a restricted private key readable by `mohassan`. Web Push and APNs are each optional. Conversation alerts work independently of push. [Wave 5 rollout switches](INTEGRATION-WAVE-5-2026-11-25.md#rollout-flags-and-environment) · [Push setup](BACKGROUND-RESULTS.md)
 
 ## Before deploying

@@ -1,5 +1,6 @@
 import type { Lang } from '../mind/contract.js';
-import { everydayEnglishSpeechActs } from './everyday.js';
+import { arabicHumanIdentity, arabicMachineIdentity, arabicWellbeing } from './arabic.js';
+import { englishIdentityInquiries, everydayEnglishSpeechActs } from './everyday.js';
 
 export type SpeechAct = 'greeting' | 'thanks' | 'apology' | 'compliment' | 'farewell' | 'wellbeing'
   | 'identity' | 'capabilities' | 'joke' | 'encouragement' | 'insult';
@@ -170,3 +171,11 @@ export const speechActRules = [
   forms('insult', '(?:enta |inta |ya )?(?:ghabi|8abi|7mar|a7maq|ahbal|habal|fash[eai]l)|oskot|enkale3|en2ale3', 'msa'),
   ...everydayEnglishSpeechActs,
 ] as const;
+
+export const extendedSpeechActRules = [
+  ...speechActRules,
+  forms('identity', arabicHumanIdentity, 'msa', 'human'),
+  forms('identity', arabicMachineIdentity, 'msa', 'ai'),
+  forms('wellbeing', arabicWellbeing, 'msa'),
+  ...englishIdentityInquiries,
+];
