@@ -4,15 +4,17 @@ import { classifyCouncilWebTurn } from './answer-mode-scope.js';
 import type { BrainState } from './brain.js';
 import { runCouncilWebAnswer } from './council-web-answer.js';
 import { isLiveWebQuestion } from './hands.js';
-import { searchCouncilSources } from './hands-search-sources.js';
-import { rankHits, type CouncilHistory, type CouncilSearchResult, type ModelCouncilService } from './model-council.js';
+import { searchCouncilEvidence } from './hands-search-sources.js';
+import type { CouncilHistory, ModelCouncilService } from './model-council.js';
 import { ruleBaseline } from './model-relations-shadow.js';
 import { questionLanguage } from './reply-check.js';
 import { chatResponsePolicyInput, readResponsePolicyHistory } from './response-policy-runtime.js';
 import type { WritingPageReader } from './writing/host.js';
 
-export function councilWebEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.MOHASSAN_ANSWER_MODE === 'council-web';
+export function configuredCouncilWeb(council: ModelCouncilService | undefined, env: NodeJS.ProcessEnv = process.env) {
+  if (env.MOHASSAN_ANSWER_MODE !== 'council-web') return;
+  if (!council) console.warn('MOHASSAN_ANSWER_MODE=council-web is inactive because the model council is disabled.');
+  return council;
 }
 
 export type CouncilWebChatAnswer = Awaited<ReturnType<typeof runCouncilWebAnswer>>;
@@ -70,23 +72,14 @@ export async function answerCouncilWebChat(input: CouncilWebChatInput): Promise<
     progress: phase => progress(phase === 'search'
       ? ar ? 'أبحث في مصادر الويب…' : 'Searching web sources…'
       : ar ? 'يناقش مجلس النماذج الأدلة…' : 'The model council is checking the evidence…'),
-    search: async (_question, searchSignal): Promise<CouncilSearchResult> => {
-      authorizeSearch(query);
-      const recent = await readResponsePolicyHistory({ db, ownerId, conversationId, state, policy: chatResponsePolicyInput(request, state), recentLimit, scrub });
-      const earlier = recent.filter(entry => entry.role === 'user')[1];
-      previous = earlier ? scrub(earlier.text) : null;
-      searchSignal.throwIfAborted();
-      const { hits, allows, note, plan } = await searchCouncilSources(search, query, request, ownerId, searchSignal, previous);
-      searchSignal.throwIfAborted();
-      const ranked = rankHits(query, hits).slice(0, 3);
-      const live = plan.fresh || isLiveWebQuestion(turn.question);
-      const pages = await Promise.all(ranked.map(async hit => {
-        const page = await readPage?.(hit.url, searchSignal, { live }).catch(() => null);
-        if (!page || page === 'disallowed' || page.status >= 400 || !allows(page.url) || !page.text.trim()) return null;
-        return { kind: 'page' as const, url: page.url, title: page.title || hit.title, text: page.text.slice(0, 200_000) };
-      }));
-      return { pages: pages.filter(page => page !== null), note };
-    },
+    search: (_question, searchSignal) => searchCouncilEvidence({
+      search, readPage, ownerId, request, query, signal: searchSignal, live: plan => plan.fresh || isLiveWebQuestion(turn.question), authorizeSearch,
+      previous: async () => {
+        const recent = await readResponsePolicyHistory({ db, ownerId, conversationId, state, policy: chatResponsePolicyInput(request, state), recentLimit, scrub });
+        const earlier = recent.filter(entry => entry.role === 'user')[1];
+        return previous = earlier ? scrub(earlier.text) : null;
+      },
+    }),
     deliberate: async turn => {
       const turns = await history();
       turn.signal.throwIfAborted();

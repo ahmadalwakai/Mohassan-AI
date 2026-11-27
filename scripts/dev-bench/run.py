@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import subprocess
 
-from answer_mode_bench import summarize_turn_resources
+from answer_mode_bench import summarize_pipeline_proposals, summarize_turn_resources
 from council_bench import summarize_council
 from runner import run_arm
 
@@ -192,6 +192,7 @@ def main():
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     tool = tool_hashes()
     run_summary = {'schemaVersion': 1, 'tool': tool, 'arms': {}}
+    answer_mode_arms = {}
     for name, (commit, settings) in arms.items():
         arm_output = output / name
         arm_output.mkdir(mode=0o700)
@@ -221,9 +222,20 @@ def main():
             run_summary['arms'][name]['turnResources'] = {
                 version: summarize_turn_resources(result['scores']) for version, result in versions.items()
             }
+            answer_mode_arms[name] = commit, settings, versions
         for version, result in versions.items():
             overall = result['summary']['overall']
             print(f'{name} {version}: {overall["passed"]}/{overall["total"]}', flush=True)
+    for name, (commit, settings, versions) in answer_mode_arms.items():
+        if settings['MOHASSAN_ANSWER_MODE'] != 'council-web' or settings.get('MOHASSAN_MODEL_COUNCIL') != 'owner':
+            continue
+        off_settings = settings | {'MOHASSAN_ANSWER_MODE': 'off'}
+        for off, (off_commit, options, baseline) in answer_mode_arms.items():
+            if off_commit == commit and options == off_settings:
+                run_summary['arms'][name].setdefault('pipelineProposalsComparedWith', {})[off] = {
+                    version: summarize_pipeline_proposals(baseline[version]['scores'], result['scores'])
+                    for version, result in versions.items()
+                }
     write_json(output / 'summary.json', run_summary)
 
 

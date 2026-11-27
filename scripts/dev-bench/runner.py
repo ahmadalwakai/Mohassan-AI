@@ -180,6 +180,8 @@ def collect_environment(overrides: dict[str, str], temporary: Path) -> tuple[dic
     for name, value in overrides.items():
         if name == "TEST_DRIVEN_CODING_PYTHON" and Path(value).is_absolute():
             continue
+        if name == "MOHASSAN_MODELS_ROOT" and Path(value).is_absolute() and Path(value).is_dir():
+            continue
         if name not in OVERRIDES or value not in OVERRIDES[name]:
             raise ValueError(f"Unsupported development benchmark setting {name}")
 
@@ -326,7 +328,9 @@ def run_arm(
                     inputs[f"{version}/effective/monitor-audit.mjs"] = digest(mounted[-1])
                 if "MOHASSAN_ANSWER_MODE" in settings:
                     instrument_resources_observer(observe, apply_once)
-                    instrument_resources_scoring(runner, apply_once)
+                    instrument_resources_scoring(runner, apply_once, capture_pipeline=(
+                        settings["MOHASSAN_ANSWER_MODE"] == "council-web" and settings.get("MOHASSAN_MODEL_COUNCIL") == "owner"
+                    ))
                 inputs[f"{version}/effective/observe.ts"] = digest(observe)
                 inputs[f"{version}/effective/run.ts"] = digest(runner)
                 if any((checkout / path).exists() for path in HOLDOUTS):

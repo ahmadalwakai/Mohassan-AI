@@ -190,6 +190,7 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
   }
 
   const answers: CouncilAnswer[] = [{ member: PIPELINE, answer: pipelineText, evidence: turn.webDeliberation?.pipelineCitation }];
+  let modelContributed = false;
   members.push({
     model: PIPELINE, label: councilMemberLabel(PIPELINE), round: 'answer', elapsedMs: 0,
     outcome: pipelineText ? 'ok' : 'abstained', ...(pipelineText && { output: short(pipelineText, 600) }),
@@ -225,6 +226,7 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
     const value = result.status === 'ok' ? output(result.value) : {};
     const raw = value.text?.trim();
     const answer = raw && !value.abstained && !ABSTAIN.test(raw) ? raw : '';
+    if (answer) modelContributed = true;
     if (result.status === 'ok' && result.value.ok) answers.push({ member: result.entry.id, answer });
     members.push(modelResult(result, 'answer', answer));
   }
@@ -255,6 +257,7 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
       const model = output(result);
       const verdict = role === 'extractor' ? taggerCheck(model, proposal, domain) : model.verdict ?? 'unsure';
       if (!result.ok) failure ??= result;
+      else modelContributed = true;
       const check = { checker: entry.id, member: proposal.member, verdict, ...(!result.ok && { note: result.reason }) };
       checks.push(check);
       if (turn.webDeliberation) completedWebChecks.push(check);
@@ -310,6 +313,7 @@ export async function deliberateCouncilTurn(options: ModelCouncilOptions, turn: 
   return {
     text, chosen, changed,
     status: chosen === PIPELINE ? turn.pipeline.status : winner ? 'completed' : 'partial',
+    ...(turn.webDeliberation && { modelContributed }),
     ...(turn.webDeliberation && performance.now() >= deadline - 1 && { timeLimited: true as const }),
     council: {
       version: 1, chosen, changed, reason: discussion.decision.reasonAr,

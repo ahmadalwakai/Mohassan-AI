@@ -27,7 +27,7 @@ import {
 } from './assistant/brain.js';
 import { ADS_DRAFT_NOTE, ADS_SKILL_SLUG } from './assistant/ads-check.js';
 import { isLiveWebQuestion, PROVIDER_SPACING_MS, answerSubject, isBareAddress, isFollowUp, normalizeHandsPlan, notWebReason, parseHands, plainTitle, refersBack, runHands, siteQuestion, siteToOpen, tidy, topicWords, unnamedSite, webQuestion, type HandsIO, type HandsOutcome, type HandsPlan, type HandsRead, type HandsStep } from './assistant/hands.js';
-import { searchCouncilSources } from './assistant/hands-search-sources.js';
+import { searchCouncilEvidence } from './assistant/hands-search-sources.js';
 import { liveLabel } from './assistant/activity.js';
 import { routeLiveDataChat } from './live-data/chat.js';
 import type { DesktopCommand, DesktopOutcome, ParsedDesktopCommand } from '@mohassan/desktop';
@@ -40,9 +40,9 @@ import { publicConversationFollowup } from './assistant/public-conversation-foll
 import type { JudgeShadow } from './assistant/judge-shadow.js';
 import { judge as judgeAnswer } from './assistant/judge.js';
 import { observeImageRelations, observeModelRelations, ruleBaseline } from './assistant/model-relations-shadow.js';
-import { rankHits, type CouncilOutcome, type CouncilSearchResult, type ModelCouncilService } from './assistant/model-council.js';
+import type { CouncilOutcome, ModelCouncilService } from './assistant/model-council.js';
 import { deliberateAdvisory, fenceAdvisoryRecord, withAdvisoryBudget } from './assistant/council-advisory.js';
-import { answerCouncilWebChat, councilWebAccessEnded, councilWebEnabled, type CouncilWebChatAnswer } from './assistant/council-web-chat.js';
+import { answerCouncilWebChat, configuredCouncilWeb, councilWebAccessEnded, type CouncilWebChatAnswer } from './assistant/council-web-chat.js';
 import { withArbiterExecution } from './assistant/model-relations-arbiter.js';
 import { ensureChatConversationsTable, reviewJudgedReply } from './assistant/review/publication.js';
 import { backgroundRunView } from './assistant/long-run/view.js';
@@ -494,7 +494,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     || config.inference?.active() === true;
   const vault = new CredentialVault();
   const search = config.searchProvider ?? new SearchEngine(new SafeNetwork(config.networkPolicy));
-  const councilWeb = councilWebEnabled() ? config.modelCouncil : undefined;
+  const councilWeb = configuredCouncilWeb(config.modelCouncil);
   const controllers = new Map<string, {runId:string;token:string;controller:AbortController}>();
   const workers = new Map<string, Promise<void>>();
   const vaultOwners = new Map<string,string>();
@@ -1482,25 +1482,9 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
     return reply && vault.scrub(id, clean(reply)).trim();
   }
 
-  /**
-   * The council's own public search for a turn the pipeline left without pages: the chat's search engine and page
-   * reader, behind the same public-query guard as the hands. Reads the best hits by question words, one per site,
-   * whatever the site. Only successfully read pages can support a proposal.
-   */
-  async function councilSearch(ownerId: string, request: string, state: BrainState, question: string, signal: AbortSignal): Promise<CouncilSearchResult> {
-    try { assertPublicSearch(request, question, state); }
-    catch { return { pages: [], note: 'لا يُحوَّل هذا الطلب إلى بحث عام (معلومات خاصة أو مرجع غير واضح).' }; }
-    const { hits, allows, note } = await searchCouncilSources(search, question, request, ownerId, signal, execution.getStore()?.previousRequest);
-    const ranked = rankHits(question, hits).slice(0, 3);
-    if (!ranked.length) return { pages: [], note: note ?? (hits.length ? 'لم تكن أي نتيجة بحث قريبة من السؤال.' : 'لم يُرجع البحث نتائج.') };
-    const live = isLiveWebQuestion(question);
-    const read = await Promise.all(ranked.map(async hit => {
-      const page = config.readPage ? await config.readPage(hit.url, signal, { live }).catch(() => null) : null;
-      if (page && page !== 'disallowed' && allows(page.url) && page.text.trim()) return { kind: 'page' as const, url: page.url, title: page.title || hit.title, text: page.text.slice(0, 200_000) };
-      return null;
-    }));
-    const pages = read.filter((page): page is NonNullable<typeof page> => page !== null);
-    return pages.length ? { pages } : { pages: [], note: 'لم تُقرأ أي صفحة من نتائج البحث.' };
+  function councilSearch(ownerId: string, request: string, state: BrainState, query: string, signal: AbortSignal) {
+    return searchCouncilEvidence({ ownerId, request, query, signal, search, readPage: config.readPage, live: () => isLiveWebQuestion(query),
+      previous: execution.getStore()?.previousRequest, authorizeSearch: value => assertPublicSearch(request, value, state) });
   }
 
   /** `prejudged`: the text is a message of several answers, each already judged on its own question (web-sequence.ts). */

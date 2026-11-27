@@ -1,5 +1,8 @@
 import { planSources, type SearchEngine, type SearchProvider, type SearchSelection, type SourceDomain, type SourcePlan } from '@mohassan/browser';
+import { rankHits } from './council-passage.js';
+import type { CouncilSearchResult } from './model-council.js';
 import { assessRequestScope } from './request-scope.js';
+import type { WritingPageReader } from './writing/host.js';
 
 const domainLabels: Record<SourceDomain, { ar: string; en: string }> = {
   news: { ar: 'الأخبار', en: 'news' },
@@ -51,11 +54,46 @@ export function unavailableSearchSources(plan: SourcePlan, selection: SearchSele
   return limits.join(' ') || undefined;
 }
 
-export async function searchCouncilSources(search: SearchProvider, question: string, request: string, ownerId: string, signal: AbortSignal, previous?: string | null) {
+async function searchCouncilSources(search: SearchProvider, question: string, request: string, ownerId: string, signal: AbortSignal, previous?: string | null) {
   const plan = planSources(request, publicSourceTurns(previous ? [previous] : []));
   const allows = (url: string) => allowsSearchSource(url, plan);
   const engine = search as Partial<Pick<SearchEngine, 'execute'>>;
   const outcome = await engine.execute?.call(search, question, 8, signal, { ownerId, plan });
   const hits = outcome?.hits ?? await search.search(question, 8, signal, { ownerId, plan });
   return { hits: hits.filter(hit => allows(hit.url)), allows, plan, note: outcome?.selection && unavailableSearchSources(plan, outcome.selection) };
+}
+
+interface CouncilSearchInput {
+  search: SearchProvider;
+  readPage?: WritingPageReader;
+  ownerId: string;
+  request: string;
+  query: string;
+  signal: AbortSignal;
+  live: (plan: SourcePlan) => boolean;
+  previous?: string | null | (() => Promise<string | null>);
+  authorizeSearch: (query: string) => void;
+}
+
+/** Only pages successfully read at an allowed destination can support a proposal. */
+export async function searchCouncilEvidence(input: CouncilSearchInput): Promise<CouncilSearchResult> {
+  const { search, readPage, request, query, ownerId, signal } = input;
+  signal.throwIfAborted();
+  try { input.authorizeSearch(query); }
+  catch { return { pages: [], note: 'لا يُحوَّل هذا الطلب إلى بحث عام (معلومات خاصة أو مرجع غير واضح).' }; }
+  const previous = typeof input.previous === 'function' ? await input.previous() : input.previous;
+  signal.throwIfAborted();
+  const { hits, allows, note, plan } = await searchCouncilSources(search, query, request, ownerId, signal, previous);
+  signal.throwIfAborted();
+  const ranked = rankHits(query, hits).slice(0, 3);
+  if (!ranked.length) return { pages: [], note: note ?? (hits.length ? 'لم تكن أي نتيجة بحث قريبة من السؤال.' : 'لم يُرجع البحث نتائج.') };
+  const live = input.live(plan);
+  const reads = await Promise.all(ranked.map(async hit => {
+    const page = await readPage?.(hit.url, signal, { live }).catch(() => null);
+    if (!page || page === 'disallowed' || page.status >= 400 || !allows(page.url) || !page.text.trim()) return null;
+    return { kind: 'page' as const, url: page.url, title: page.title || hit.title, text: page.text.slice(0, 200_000) };
+  }));
+  signal.throwIfAborted();
+  const pages = reads.filter(page => page !== null);
+  return pages.length ? { pages } : { pages: [], note: 'لم تُقرأ أي صفحة من نتائج البحث.' };
 }

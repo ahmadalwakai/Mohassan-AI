@@ -47,6 +47,8 @@ export interface CouncilOutcome {
   chosen: string;
   changed: boolean;
   council: ModelCouncil;
+  /** Whether a local model produced an answer proposal or completed a check in council-web mode. */
+  modelContributed?: boolean;
   timeLimited?: true;
 }
 

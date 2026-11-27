@@ -1,6 +1,6 @@
 import { ModelCouncilSchema } from '@mohassan/contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runCouncilWebAnswer } from '../apps/server/src/assistant/council-web-answer.js';
+import { COUNCIL_WEB_BUDGET_MS, runCouncilWebAnswer } from '../apps/server/src/assistant/council-web-answer.js';
 import { createModelCouncil, type CouncilTurn, type ModelCouncilOptions } from '../apps/server/src/assistant/model-council.js';
 import { modelRegistry } from '../packages/model-relations/src/registry.js';
 import type { ModelRunResult } from '../packages/model-relations/src/runtime.js';
@@ -108,11 +108,45 @@ describe('council web answers', () => {
     expect(outcome.text).not.toContain(alternate);
   });
 
-  it('does not send an evidence-only pipeline claim if models could not review it', async () => {
+  it('reports an empty registry in English without sending the cited pipeline claim', async () => {
     const council = fakeCouncil({});
     const outcome = await runCouncilWebAnswer({ ...input, search: async () => ({ pages: [evidence] }), deliberate: council.deliberate });
     expect(outcome.council?.chosen).toBe('uncertain');
+    expect(outcome.council?.discussion?.proposals).toContainEqual({ member: 'pipeline', answer: opening, evidenceUrl: evidence.url, evidenceQuote: evidence.text });
+    expect(outcome.text).toContain('No council model produced an answer proposal or completed a check.');
+    expect(outcome.text).toContain(evidence.url);
     expect(outcome.text).not.toContain(opening);
+  });
+
+  it('reports missing council artifacts in Arabic and keeps the cited pipeline claim private', async () => {
+    const arabicQuestion = 'ما عاصمة فريدونيا؟';
+    const capital = 'مارلو';
+    const page = { ...evidence, title: 'دليل فريدونيا', text: `عاصمة فريدونيا هي ${capital}.` };
+    const reader = vi.fn(async () => ok({ text: capital }));
+    const council = fakeCouncil({ 'reading-v3-last': reader }, {
+      resolve: async entry => ({ entry, state: 'absent', artifacts: [] }),
+    });
+    const outcome = await runCouncilWebAnswer({
+      ...input, question: arabicQuestion, history: [], search: async () => ({ pages: [page] }), deliberate: council.deliberate,
+    });
+    expect(reader).not.toHaveBeenCalled();
+    expect(outcome.council?.chosen).toBe('uncertain');
+    expect(outcome.council?.discussion?.proposals).toContainEqual(expect.objectContaining({ member: 'pipeline', evidenceUrl: page.url, evidenceQuote: page.text }));
+    expect(outcome.text).toContain('لم يقدّم أي نموذج في المجلس اقتراحًا للجواب أو يُكمل فحصه.');
+    expect(outcome.text).toContain(page.title);
+    expect(outcome.text).not.toContain(capital);
+  });
+
+  it('returns the time-limit reply immediately when the queued request is already over budget', async () => {
+    vi.useFakeTimers({ toFake: ['performance', 'setTimeout', 'clearTimeout'] });
+    const search = vi.fn();
+    const deliberate = vi.fn();
+    const progress = vi.fn();
+    const answer = await runCouncilWebAnswer({ ...input, search, deliberate, progress, startedAt: -COUNCIL_WEB_BUDGET_MS - 1 });
+    expect(answer).toEqual({ status: 'partial', text: 'Time limit reached. The model council could not verify an answer in time.' });
+    expect(search).not.toHaveBeenCalled();
+    expect(deliberate).not.toHaveBeenCalled();
+    expect(progress).not.toHaveBeenCalled();
   });
 
   it('cancels a hung search at the shared deadline and never starts deliberation afterwards', async () => {

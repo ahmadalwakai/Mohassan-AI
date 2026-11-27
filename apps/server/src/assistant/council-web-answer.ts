@@ -1,11 +1,8 @@
 import { performance } from 'node:perf_hooks';
 import type { ModelCouncil, ModelCouncilMember } from '@mohassan/contracts';
 import { uncertainCouncilReply, usableCouncilPage } from './council-deliberation.js';
-import { selectPassage } from './council-passage.js';
-import { factualPassage } from './factual-evidence.js';
-import { comparable, type JudgeEvidence } from './judge.js';
-import { extractQuote } from './mind/extract.js';
-import { buildFrame } from './mind/frame.js';
+import { pipelineFromEvidence } from './council-web-pipeline.js';
+import type { JudgeEvidence } from './judge.js';
 import type { CouncilTurn, ModelCouncilService } from './model-council.js';
 import { questionLanguage } from './reply-check.js';
 
@@ -35,6 +32,7 @@ const copy = {
     checked: 'Checked by the model council after a web search.',
     empty: 'I could not find usable evidence in the web search.',
     searchFailed: 'I could not complete the web search to verify an answer.',
+    noModel: 'I found usable web sources. No council model produced an answer proposal or completed a check.',
     disagreement: 'I searched the web, but the model council could not agree on a verified answer.',
     unavailable: 'I searched the web, but the model council could not complete its review.',
     timeout: 'Time limit reached. The model council could not verify an answer in time.',
@@ -44,29 +42,13 @@ const copy = {
     checked: 'تحقّق مجلس النماذج من الجواب بعد البحث في الويب.',
     empty: 'لم أجد في البحث على الويب أدلة صالحة للتحقق من الجواب.',
     searchFailed: 'تعذّر إكمال البحث في الويب للتحقق من الجواب.',
+    noModel: 'وجدت مصادر صالحة على الويب. لم يقدّم أي نموذج في المجلس اقتراحًا للجواب أو يُكمل فحصه.',
     disagreement: 'بحثت في الويب، ولم يتفق مجلس النماذج على جواب موثّق.',
     unavailable: 'بحثت في الويب، وتعذّر على مجلس النماذج إكمال المراجعة.',
     timeout: 'انتهت المهلة قبل أن يتمكّن مجلس النماذج من التحقق من الجواب.',
     bestVerified: 'انتهت المهلة. هذا أفضل جواب تمكّن مجلس النماذج من التحقق منه من البحث في الويب خلال المهلة.',
   },
 } as const;
-
-/** The deterministic pipeline proposes only claims from the same pages it submits to the council. */
-function pipelineFromEvidence(question: string, pages: readonly WebPage[]) {
-  const frame = buildFrame(question);
-  const candidates = new Map<string, { answer: string; citation: { url: string; quote: string } }>();
-  for (const page of pages) {
-    const direct = factualPassage({ text: page.text, title: page.title ?? '' }, question);
-    const passage = direct ? undefined : selectPassage(question, [page]);
-    const extracted = direct ?? (passage && extractQuote(passage.text, frame));
-    const answer = extracted?.value ?? extracted?.quote;
-    if (!answer || !extracted?.quote) continue;
-    const key = comparable(answer);
-    if (key && !candidates.has(key)) candidates.set(key, { answer, citation: { url: page.url, quote: extracted.quote } });
-    if (candidates.size > 1) return undefined;
-  }
-  return candidates.values().next().value;
-}
 
 export async function runCouncilWebAnswer(input: CouncilWebInput): Promise<CouncilWebReply> {
   const { question, previous, history, baseline } = input;
@@ -121,8 +103,8 @@ export async function runCouncilWebAnswer(input: CouncilWebInput): Promise<Counc
     signal.throwIfAborted();
     const council = { ...outcome.council, elapsedMs: elapsedMs(startedAt), members: [search, ...outcome.council.members].slice(0, 48) };
     if (outcome.status !== 'completed' || outcome.chosen === 'uncertain' || !outcome.text.trim() || !pages.length) {
-      const message = outcome.timeLimited ? messages.timeout
-        : pages.length ? messages.disagreement : searchFailed ? messages.searchFailed : messages.empty;
+      const message = outcome.timeLimited ? messages.timeout : !pages.length ? searchFailed ? messages.searchFailed : messages.empty
+        : outcome.modelContributed === false ? messages.noModel : messages.disagreement;
       return uncertain(message, council);
     }
     const footer = outcome.timeLimited ? messages.bestVerified : messages.checked;

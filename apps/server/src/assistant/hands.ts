@@ -858,7 +858,7 @@ export function readableText(text: string): string {
 }
 
 /** The page's own sentences that share the question's words, best first by page order; quoted, never rewritten. */
-export function relevantLines(page: AgentPage, question: string, limit = 3, bestFirst = false): string[] {
+export function relevantLines(page: Pick<AgentPage, 'title' | 'text' | 'elements'>, question: string, limit = 3, bestFirst = false): string[] {
   const overview = OVERVIEW_QUESTION.test(question) && !ERROR_QUESTION.test(question);
   let matchingQuestion = question;
   try {
