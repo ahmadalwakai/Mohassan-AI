@@ -31,9 +31,13 @@ Start with these values for new runtime switches. Preserve explicitly approved p
 | `0` | `MOHASSAN_SMALL_TALK_MANNERS`, `MOHASSAN_CONVERSATION_REVIEW_APPLY`, `MOHASSAN_CONVERSATION_SHADOW`, `MOHASSAN_STRUCTURED_MEMORY`, `MOHASSAN_EXTRACTIVE_WRITING`, `MOHASSAN_REASONING`, `MOHASSAN_CLARIFY_CHOICES`, `MOHASSAN_SCRATCH_CLASSIFIERS`, `MOHASSAN_REFUSAL_POLICY`, `MOHASSAN_QUESTION_REWRITER`, `MOHASSAN_ARITHMETIC_SEARCH`, `MOHASSAN_MODEL_WORKER` |
 | `off` | `MOHASSAN_PLAN_COMPILER`, `MOHASSAN_MODEL_RELATIONS` |
 | `false` | `TEST_DRIVEN_CODING_ENABLED`, `PRODUCTION_METRICS_ENABLED`, `RUN_WORKER` |
-| Unset | `MOHASSAN_DESKTOP_SHELL`, `MOHASSAN_ROUTER_SHADOW`, `EXECUTOR_EXPERIMENT` |
+| Unset | `MOHASSAN_DESKTOP_SHELL`, `MOHASSAN_ROUTER_SHADOW`, `EXECUTOR_EXPERIMENT`, `MOHASSAN_BACKGROUND_PUSH_LIFETIME_HOURS` |
 
 The initial explicit `PRODUCTION_METRICS_ENABLED=false` overrides its production default. Enable metrics for the owner trial after the base release is healthy. If push is desired, set all three `WEB_PUSH_VAPID_*` settings with a stable matching key pair and contact, or all four `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_KEY_PATH`, and `APNS_BUNDLE_ID` settings with a restricted private key readable by `mohassan`. Web Push and APNs are each optional. Conversation alerts work independently of push. [Wave 5 rollout switches](INTEGRATION-WAVE-5-2026-11-25.md#rollout-flags-and-environment) · [Push setup](BACKGROUND-RESULTS.md)
+
+To limit how long the server tries to deliver background notifications over Web Push or APNs, set `MOHASSAN_BACKGROUND_PUSH_LIFETIME_HOURS` in `/etc/mohassan/server.env` and restart the API. Use a finite number of hours of at least 24. An invalid value prevents startup. Leaving the variable unset preserves the existing behavior. The window starts when the event is recorded and includes any time spent in quiet hours or while the API is stopped. When the window closes, the server excludes the event from tab sync, claims and push delivery and denies the Web Push service worker's eligibility check. [Notification delivery rules](NOTIFICATIONS-2026-11-25.md#قواعد-التسليم)
+
+The server closes pending APNs rows even when push credentials are absent. Rows with `next_at = 'infinity'` and `delivered_at IS NULL` are closed because their lifetime elapsed. These rows stay closed if the setting is removed later. [PostgreSQL special timestamp values, retrieved 2026-11-27](https://www.postgresql.org/docs/current/datatype-datetime.html#DATATYPE-DATETIME-SPECIAL-VALUES)
 
 ## Before deploying
 
