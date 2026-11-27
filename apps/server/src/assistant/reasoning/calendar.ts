@@ -1,8 +1,9 @@
+import { lookupMonthName, type Calendar } from '../../month-names.js';
 import type { Lang } from '../mind/contract.js';
 import { normalizeRequest, stripCourtesyTail } from '../mind/normalize.js';
+import { requestLanguage } from '../reply-directive.js';
 import { reasoned, reasoningGap, type ReasoningResult } from './result.js';
 
-type Calendar = 'hijri' | 'gregorian';
 type CalendarDate = { year: number; month: number; day: number; calendar?: Calendar };
 
 const DAY_MS = 86_400_000;
@@ -57,28 +58,11 @@ function toGregorian(serialDay: number): Required<CalendarDate> {
   return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate(), calendar: 'gregorian' };
 }
 
-const months: Record<Calendar, readonly string[]> = {
-  hijri: [
-    'muharram|moharram|محرم', 'safar|صفر', 'rabi[’\']? al-awwal|rabi i|ربيع الاول',
-    'rabi[’\']? al-thani|rabi ii|ربيع الاخر|ربيع الثاني',
-    'jumada al-awwal|jumada i|جمادي الاولي', 'jumada al-thani|jumada ii|جمادي الاخره|جمادي الثانيه',
-    'rajab|رجب', 'sha[’\']?ban|شعبان', 'ramadan|ramadhan|رمضان', 'shawwal|شوال',
-    'dhu al-qi[’\']?dah|ذو القعده|ذي القعده', 'dhu al-hijjah|ذو الحجه|ذي الحجه',
-  ],
-  gregorian: [
-    'january|jan|يناير|كانون الثاني', 'february|feb|فبراير|شباط', 'march|mar|مارس|اذار',
-    'april|apr|ابريل|نيسان', 'may|مايو|ايار', 'june|jun|يونيو|حزيران',
-    'july|jul|يوليو|تموز', 'august|aug|اغسطس|اب', 'september|sept|sep|سبتمبر|ايلول',
-    'october|oct|اكتوبر|تشرين الاول', 'november|nov|نوفمبر|تشرين الثاني', 'december|dec|ديسمبر|كانون الاول',
-  ],
-};
-const monthAlias = Object.entries(months).flatMap(([calendar, aliases]) =>
-  aliases.map((pattern, index) => ({ calendar: calendar as Calendar, month: index + 1, matches: new RegExp(`^(?:${pattern})$`, 'u') })));
 const prefix = new RegExp(`^(?:the )?(${CALENDAR}) +`, 'u');
 const suffix = new RegExp(` *(${CALENDAR})$`, 'u');
 const namedDate = /^(?:(\d{1,2})(?:st|nd|rd|th)? (.+?)|(.+?) (\d{1,2})(?:st|nd|rd|th)?)[ ,،]+(\d{1,4})$/u;
 
-function parseDate(text: string): CalendarDate | null {
+function parseDate(text: string): (CalendarDate & { named?: true }) | null {
   let body = text.trim().replace(/^(?:(?:the )?date|التاريخ|تاريخ) +/u, '');
   const head = prefix.exec(body);
   if (head) body = body.slice(head[0].length);
@@ -91,9 +75,9 @@ function parseDate(text: string): CalendarDate | null {
   if (numeric) return { year: Number(numeric[1]), month: Number(numeric[3]), day: Number(numeric[4]), calendar };
   const named = namedDate.exec(body);
   if (!named) return null;
-  const alias = monthAlias.find(entry => entry.matches.test(named[2] ?? named[3]));
+  const alias = lookupMonthName(named[2] ?? named[3]);
   if (!alias || calendar && calendar !== alias.calendar) return null;
-  return { year: Number(named[5]), month: alias.month, day: Number(named[1] ?? named[4]), calendar: alias.calendar };
+  return { year: Number(named[5]), month: alias.month, day: Number(named[1] ?? named[4]), calendar: alias.calendar, named: true };
 }
 
 function iso(date: CalendarDate): string {
@@ -204,8 +188,30 @@ function distance(input: string, lang: Lang, now: Date): ReasoningResult | null 
     : `${days} days ${direction} ${targetLabel}, measured from ${todayLabel}.`, String(days));
 }
 
-export function reasonCalendar(text: string, lang: Lang, now: Date): ReasoningResult | null {
-  const body = stripCourtesyTail(normalizeRequest(text).match).replace(/[.!?؟،]+$/u, '').trim().replace(/\s+/gu, ' ')
+function calendarBody(text: string): string {
+  return stripCourtesyTail(normalizeRequest(text).match).replace(/[.!?؟،]+$/u, '').trim().replace(/\s+/gu, ' ')
     .replace(/ لل(هجري|ميلادي)$/u, ' الي ال$1');
+}
+
+// The native calculator remains first for Gregorian ranges it already supports.
+export function reasonNamedGregorianRange(text: string): ReasoningResult | null {
+  const body = calendarBody(text);
+  const range = between.exec(body) ?? fromTo.exec(body);
+  if (!range) return null;
+  const left = parseDate(range[1]);
+  const right = parseDate(range[2]);
+  if (!left || !right || !(left.named || right.named) || left.calendar === 'hijri' || right.calendar === 'hijri') return null;
+  const lang = requestLanguage(text);
+  const first = serial(left, 'gregorian');
+  const second = serial(right, 'gregorian');
+  if (first === null || second === null) return invalidDate(lang);
+  const days = String(Math.abs(first - second));
+  return reasoned(lang, lang === 'ar'
+    ? `من ${iso(left)} إلى ${iso(right)} = ${days} يوم`
+    : `From ${iso(left)} to ${iso(right)} = ${days} days`, days);
+}
+
+export function reasonCalendar(text: string, lang: Lang, now: Date): ReasoningResult | null {
+  const body = calendarBody(text);
   return difference(body, lang) ?? distance(body, lang, now) ?? convert(body, lang);
 }

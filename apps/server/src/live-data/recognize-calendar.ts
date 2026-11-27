@@ -1,35 +1,11 @@
 import type { CivilDate, HijriIntent, LiveLanguage } from '@mohassan/contracts';
-
-type Calendar = 'hijri' | 'gregorian';
+import { lookupMonthName, type Calendar } from '../month-names.js';
 
 const HIJRI = String.raw`(?:hijri(?: calendar)?|islamic(?: civil)? calendar|a\.?h\.?|(?:التقويم )?(?:ال)?هجري|ه)`;
 const GREGORIAN = String.raw`(?:gregorian(?: calendar)?|c\.?e\.?|a\.?d\.?|(?:التقويم )?(?:ال)?ميلادي|م)`;
 const CALENDAR = `(?:${HIJRI}|${GREGORIAN})`;
 const isHijri = new RegExp(`^${HIJRI}$`, 'u');
 const calendarOf = (label: string): Calendar => isHijri.test(label) ? 'hijri' : 'gregorian';
-
-// Named-date and explicit era grammars adapted from PR #26. Order follows
-// Unicode CLDR calendar month indices (retrieved 2026-11-25).
-// https://github.com/unicode-org/cldr/tree/main/common/main
-const MONTH_NAMES = {
-  hijri: [
-    'muharram|moharram|محرم', 'safar|صفر', "rabi'? al[ -]awwal|rabi i|ربيع الاول",
-    "rabi'? al[ -]thani|rabi ii|ربيع الاخر|ربيع الثاني",
-    'jumada al[ -](?:awwal|ula)|jumada i|جمادي الاولي',
-    'jumada al[ -]thani(?:ya)?|jumada ii|جمادي الاخره|جمادي الثانيه',
-    "rajab|رجب", "sha'?ban|شعبان", 'ramadan|ramadhan|رمضان', 'shawwal|شوال',
-    "dhu al[ -]qi'?dah|ذو القعده|ذي القعده", 'dhu al[ -]hijjah|ذو الحجه|ذي الحجه',
-  ],
-  gregorian: [
-    'january|jan|يناير|كانون الثاني', 'february|feb|فبراير|شباط', 'march|mar|مارس|اذار',
-    'april|apr|ابريل|نيسان', 'may|مايو|ايار', 'june|jun|يونيو|حزيران', 'july|jul|يوليو|تموز',
-    'august|aug|اغسطس|اب', 'september|sept|sep|سبتمبر|ايلول', 'october|oct|اكتوبر|تشرين الاول',
-    'november|nov|نوفمبر|تشرين الثاني', 'december|dec|ديسمبر|كانون الاول',
-  ],
-};
-const monthAliases = Object.entries(MONTH_NAMES).flatMap(([calendar, aliases]) => aliases.map((pattern, index) => ({
-  calendar: calendar as Calendar, month: index + 1, matches: new RegExp(`^(?:${pattern})$`, 'u'),
-})));
 
 const eraStart = new RegExp(`^(?:the )?(${CALENDAR}) +`, 'u');
 const eraEnd = new RegExp(String.raw`(?<=\d) *(${CALENDAR})$`, 'u');
@@ -49,7 +25,7 @@ function parseDate(text: string): { date: CivilDate; calendar?: Calendar } | und
   if (arabicNumeric) return { date: { year: +arabicNumeric[4], month: +arabicNumeric[3], day: +arabicNumeric[1] }, calendar };
   const named = namedDate.exec(body);
   if (!named) return;
-  const alias = monthAliases.find(item => item.matches.test(named[2] ?? named[3]));
+  const alias = lookupMonthName(named[2] ?? named[3]);
   if (!alias || calendar && calendar !== alias.calendar) return;
   return { date: { year: +named[5], month: alias.month, day: +(named[1] ?? named[4]) }, calendar: alias.calendar };
 }

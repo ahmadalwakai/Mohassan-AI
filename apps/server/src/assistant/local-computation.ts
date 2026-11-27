@@ -2,6 +2,7 @@ import { buildFrame } from './mind/frame.js';
 import { compute, type ComputationConsumption } from './mind/compute.js';
 import { calculationBodyBeforeWork } from './mind/computation-consumption.js';
 import type { Claim, Evidence } from './mind/contract.js';
+import { reasonNamedGregorianRange } from './reasoning/calendar.js';
 import { evaluateLocalReasoning, type ReasoningContext } from './reasoning/index.js';
 import { analyzeCompoundRequest, type CompoundRequestAnalysis, type PendingActionKind } from './compound-request.js';
 import { splitReplyDirective, type ReplyDirective, type ReplyLanguage } from './reply-directive.js';
@@ -54,11 +55,12 @@ export function evaluateLocalComputation(request: string, now = new Date(), reas
   };
   if (beforeWork) {
     const ranked = evaluateLocalReasoning(beforeWork, now, reasoning);
-    return ranked ? choose(ranked, () => evaluateComputationText(request, now, beforeWork))
-      : evaluateComputationText(request, now, beforeWork);
+    const native = () => evaluateComputationText(request, now, beforeWork) ?? reasonNamedGregorianRange(beforeWork);
+    return ranked ? choose(ranked, native) : native();
   }
   const ranked = evaluateLocalReasoning(request, now, reasoning);
-  const native = () => evaluateComputationText(request, now) ?? evaluateWordProblem(request);
+  const native = () => evaluateComputationText(request, now)
+    ?? reasonNamedGregorianRange(request) ?? evaluateWordProblem(request);
   const whole = ranked ? choose(ranked, native) : native();
   if (whole) return whole;
   // «QA test 2026-11-23: Calculate 37 × 24 and reply with the result in one short Arabic sentence.» (live test, 2026-11-23):
@@ -67,7 +69,7 @@ export function evaluateLocalComputation(request: string, now = new Date(), reas
   // instruction. A label or an instruction alone never turns other words into a calculation.
   const framing = splitReplyDirective(request);
   if ((!framing.label && !framing.directive) || framing.body === request.trim()) return null;
-  const inner = evaluateComputationText(framing.body, now);
+  const inner = evaluateComputationText(framing.body, now) ?? reasonNamedGregorianRange(framing.body);
   if (!inner) return null;
   return framing.directive ? shapedReply(inner, framing.directive) : inner;
 }

@@ -1,3 +1,4 @@
+import { lookupMonthName, maxMonthNameWords, monthNameKeys } from '../month-names.js';
 import { analyzeCompoundRequest } from './compound-request.js';
 import { decideConversationTurn, type ConversationTurnDecision } from './conversation-state-decisions.js';
 import { extendConversationEntities, type ConversationEntity } from './conversation-state-entities.js';
@@ -222,10 +223,6 @@ const TIME_FORMS = ['الاسبوع القادم', 'الاسبوع الجاي', 
 const TIME_SET = new Set(TIME_FORMS.map(form => form.join(' ')));
 /** A year («في 2020», "in 2019") or a day-month(-year) date («25 ديسمبر», "25 December 2026") is a time operand too. */
 const YEAR = /^(?:19|20)\d{2}$/u;
-const MONTHS = new Set(['يناير', 'فبراير', 'مارس', 'ابريل', 'مايو', 'يونيو', 'يوليو', 'اغسطس', 'سبتمبر', 'اكتوبر', 'نوفمبر', 'ديسمبر',
-  'شباط', 'اذار', 'نيسان', 'ايار', 'حزيران', 'تموز', 'ايلول',
-  'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
-  'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'sept', 'oct', 'nov', 'dec']);
 /** Words that introduce a time and go with it: «في 2020», "on Friday", «خلال الأسبوع الماضي», «سنة 2019». */
 const TIME_PREPOSITIONS = new Set(['في', 'خلال', 'سنه', 'عام', 'بتاريخ', 'in', 'on', 'at', 'for', 'during', 'year', 'since']);
 const ORDINALS: Record<string, number> = {
@@ -434,11 +431,21 @@ function operandsFrom(words: readonly string[], folded: readonly string[], from:
   for (let index = from; index < folded.length; index++) {
     if (removed.has(index)) continue;
     const word = folded[index]!;
-    if (MONTHS.has(bareWord(word)) || MONTHS.has(word)) {
-      // [day] month [year]
-      let start = index, end = index;
+    let end = index;
+    while (end + 1 < folded.length && end + 1 - index < maxMonthNameWords && !removed.has(end + 1)) end++;
+    let month: ReturnType<typeof lookupMonthName>;
+    for (; end >= index; end--) {
+      const tail = folded.slice(index + 1, end + 1);
+      month = lookupMonthName([word, ...tail].join(' ')) ?? lookupMonthName([bareWord(word), ...tail].join(' '));
+      if (month) break;
+    }
+    if (month) {
+      // [day] month [year]. New aliases need a number to distinguish them from names and other nouns.
+      let start = index;
       if (start - 1 >= from && /^\d{1,2}$/u.test(folded[start - 1]!) && !removed.has(start - 1)) start--;
-      if (end + 1 < folded.length && YEAR.test(folded[end + 1]!)) end++;
+      const year = month.calendar === 'hijri' ? /^\d{4}$/u : YEAR;
+      if (end + 1 < folded.length && year.test(folded[end + 1]!)) end++;
+      else if (!month.standalone && start === index) continue;
       for (let offset = start; offset <= end; offset++) removed.add(offset);
       dropTimePreposition(start);
       time ??= words.slice(start, end + 1).join(' ');
@@ -606,7 +613,7 @@ function typoVocab() {
     'بالعربيه', 'بالتفصيل', 'باختصار', 'اختصر', 'again', 'repeat', 'shorter', 'elaborate', 'مرحبا', 'اهلين', 'thanks', 'مشكور', 'يعطيك', 'العافيه', 'hello']);
   const known = new Set<string>([...always, ...ordinals, ...fields, ...short, ...QUESTION_WORDS, ...LEADS, ...FOLLOW_FIRST, ...PREPOSITIONS, ...POINTERS,
     ...FOLLOW_VERBS, ...ACT_VERBS, ...EDIT_VERBS, ...REFERENCE_NOUNS, ...CORRECTION_LEADS, ...CORRECTION_VERBS, ...ASKS_FIRST, ...Object.keys(NUMBER_WORDS),
-    ...WEEKDAYS_AR, ...WEEKDAYS_AR.map(day => day.replace(/^ال/u, '')), ...WEEKDAYS_EN, ...MONTHS, ...TIME_FORMS.flat(), 'اليومي', 'اليوميه',
+    ...WEEKDAYS_AR, ...WEEKDAYS_AR.map(day => day.replace(/^ال/u, '')), ...WEEKDAYS_EN, ...monthNameKeys, ...TIME_FORMS.flat(), 'اليومي', 'اليوميه',
     ...PROPERTIES.flatMap(forms => [...forms.ar, ...forms.en].flatMap(form => form.split(' '))), ...[...PRONOUN_FORMS.values()].flat().flatMap(form => form.split(' '))]);
   typoLists = { known, always, ordinals, fields, short };
   return typoLists;
