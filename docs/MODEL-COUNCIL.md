@@ -21,9 +21,11 @@ abstention. The check round uses the evidence check, the judge and applicable lo
 language-matched measured accuracy. An unavailable receipt carries zero weight and an explanation.
 
 A replacement requires at least two verified answers that agree and have strictly greater measured support than the pipeline
-or any competing answer. A standing pipeline answer needs a comparable receipt before it can be replaced. When the evidence
-does not support a decision, the council preserves a usable pipeline response or reports uncertainty with the source URLs.
-Image reading, Ads drafting and typed executor tasks receive advisory records while the pipeline retains publication authority.
+or any competing answer. A standing pipeline answer needs a comparable receipt before it can be replaced. On an eligible
+owner turn where the pipeline was blocked and no page was read, the existing labelled v5 fallback can still reply.
+A blocked reply with pages, a completed reply withheld by the judge, or an empty reply can be replaced by an uncertainty
+message with the URLs that were read. Image reading, Ads drafting and typed executor tasks receive time-bounded advisory
+records while the pipeline retains publication authority.
 
 The existing version 1 council record carries optional `discussion` with proposals, checks, votes and bilingual decision
 reasons. Member rows retain failed, missing, untrained, timed-out and abstaining outcomes. Existing stored records remain valid.

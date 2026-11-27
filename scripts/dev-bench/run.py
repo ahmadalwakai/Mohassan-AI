@@ -208,12 +208,13 @@ def main():
             'receiptSha256': digest(receipt_path.read_bytes()),
             'versions': {version: result['summary'] for version, result in versions.items()},
         }
-        if settings.get('MOHASSAN_MODEL_COUNCIL') == 'owner':
+        if 'MOHASSAN_MODEL_COUNCIL' in settings:
             council = {
                 version: summarize_council(result['scores']) for version, result in versions.items()
             }
-            require(all(group['turnsByAreaAndLanguage'] for group in council.values()),
-                    f'{name}: expected an owner council record on each development split')
+            owner_council = settings['MOHASSAN_MODEL_COUNCIL'] == 'owner'
+            require(all(bool(group['turns']) == owner_council for group in council.values()),
+                    f'{name}: council record coverage differs from the requested setting')
             run_summary['arms'][name]['council'] = council
         for version, result in versions.items():
             overall = result['summary']['overall']

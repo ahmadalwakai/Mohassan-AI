@@ -23,6 +23,7 @@ import { z } from 'zod';
 import { ollamaInventory, ProviderError, type ModelRequest, type ModelResult, type OllamaInventory } from '@mohassan/providers';
 import { ExperimentalUncontainedWorkerTransport } from '../../../packages/execution-integration/src/experimental-worker-transport.js';
 import { ModelTransportError, type LocalModelProcessConfig, type ModelTransport } from '../../../packages/execution-integration/src/transport.js';
+import { withAdvisoryBudget } from './assistant/council-advisory.js';
 import type { ModelCouncilService } from './assistant/model-council.js';
 
 export const EXECUTOR_EXPERIMENT_MODE = 'uncontained-local';
@@ -432,12 +433,13 @@ export function createExecutorControl(dependencies: ExecutorDependencies) {
       else result.verification = await verifyTypescript(submitted as { function_name: string; increment: number }, proposal.text, signal);
       const council = input.mode === 'direct' && !signal.aborted ? dependencies.council?.() : undefined;
       if (council) {
-        const record = await council.deliberate({
-          question: input.capability, previous: null, history: [], evidence: [], signal, advisory: true,
+        const pipeline = { text: proposal.text, status: result.verification.status === 'passed' ? 'completed' : 'blocked' } as const;
+        const record = await withAdvisoryBudget(signal, advisorySignal => council.deliberate({
+          question: input.capability, previous: null, history: [], evidence: [], signal: advisorySignal, advisory: true,
           baseline: { route: 'coding', refusal: 'allow', speechAct: 'request', turnType: 'new' },
-          pipeline: { text: proposal.text, status: result.verification.status === 'passed' ? 'completed' : 'blocked' },
+          pipeline,
           codeTask: { capability: input.capability, fields: submitted },
-        }).catch(() => undefined);
+        }));
         if (record) result.council = record.council;
       }
       if (signal.aborted) return finish('cancelled', 'أُلغيت التجربة بعد التوليد.');
