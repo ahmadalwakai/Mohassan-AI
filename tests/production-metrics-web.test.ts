@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { MetricWindow, ProductionMetricsResponse, RouteMetrics } from "@mohassan/contracts";
+import type { CouncilMetrics, MetricWindow, ProductionMetricsResponse, ReplyFeedbackMetrics, RouteMetrics } from "@mohassan/contracts";
 import ProductionMetricsPage from "../apps/web/app/ops/metrics/page";
 import { requestMetrics, requestTotals, routeHistory, slowestRoutes, type MetricsState } from "../apps/web/app/ops/metrics/metrics-data";
 import { ProductionMetrics } from "../apps/web/app/ops/metrics/production-metrics";
@@ -138,6 +138,54 @@ describe("production metrics dashboard", () => {
     expect(markup).toContain("لم يتغير شيء مهم");
     expect(markup).toContain("إشعارات آيفون");
     expect(markup).not.toContain("لا توجد قياسات في الفترة المحددة");
+  });
+
+  it("renders council results and reply ratings even without in-memory observations", () => {
+    const data = report(false);
+    const { owner, member } = data.windows.day.roles;
+    // https://github.com/ahmadalwakai/Mohassan-AI/blob/29448ae/apps/server/src/assistant/model-council.ts#L81 (retrieved 2026-11-27)
+    const v5Model = "chat-v5";
+    const council: CouncilMetrics = {
+      turns: 3, changedReplies: 1, chosenByModel: { pipeline: 2, [v5Model]: 1 },
+      memberOutcomes: { [v5Model]: { ok: 2, abstained: 0, timeout: 1, failed: 0 } },
+      elapsedMs: { samples: 3, p50: 240, p90: 720, p99: 720 },
+      v5: { attempted: 3, answered: 2, unusedAnswers: 1 },
+    };
+    const feedback: ReplyFeedbackMetrics = {
+      pipeline: { replies: 4, useful: 1, wrong: 1, incomplete: 1, unrated: 1 },
+      v5: { replies: 1, useful: 0, wrong: 1, incomplete: 0, unrated: 0 },
+      councilChanged: { replies: 1, useful: 0, wrong: 0, incomplete: 1, unrated: 0 },
+    };
+    owner.chat = { ...owner.chat, council, feedback };
+    member.chat = { ...member.chat, feedback: {
+      ...feedback, pipeline: { replies: 12, useful: 0, wrong: 0, incomplete: 0, unrated: 12 },
+    } };
+
+    const markup = render({ kind: "ready", report: data });
+    const format = new Intl.NumberFormat("ar").format;
+    const cells = (values: number[]) => values.map(value => `<td>${format(value)}</td>`).join("");
+    expect(markup).not.toContain("لا توجد قياسات في الفترة المحددة");
+    expect(markup).toContain("مجلس النماذج");
+    expect(markup).toContain(`<dd>${format(council.v5.unusedAnswers)} من ${format(council.v5.answered)}</dd>`);
+    expect(markup).toContain(`<bdi>p99</bdi></dt><dd>${format(council.elapsedMs.p99!)}</dd>`);
+    expect(markup).toContain(`<bdi>${v5Model}</bdi></th>${cells([council.chosenByModel[v5Model]!, ...Object.values(council.memberOutcomes[v5Model]!)])}`);
+    expect(markup).toContain("تقييم الردود · المالك");
+    expect(markup).toContain(`<bdi>ردود غيّرها المجلس</bdi></th>${cells(Object.values(feedback.councilChanged))}`);
+    expect(markup).not.toContain(cells(Object.values(member.chat.feedback!.pipeline)));
+  });
+
+  it("shows zero reply counts when feedback is available and omits unavailable council counts", () => {
+    const data = report(false);
+    const owner = data.windows.day.roles.owner;
+    const counts = { replies: 0, useful: 0, wrong: 0, incomplete: 0, unrated: 0 };
+    owner.chat = { ...owner.chat, feedback: { pipeline: counts, v5: counts, councilChanged: counts } };
+
+    const markup = render({ kind: "ready", report: data });
+    expect(markup).toContain("لا توجد قياسات في الفترة المحددة");
+    expect(markup).toContain("تقييم الردود · المالك");
+    const zeroCell = `<td>${new Intl.NumberFormat("ar").format(counts.replies)}</td>`;
+    expect(markup).toContain(`<bdi>مسار الإجابة المعتاد</bdi></th>${zeroCell.repeat(Object.keys(counts).length)}`);
+    expect(markup).not.toContain("مجلس النماذج");
   });
 
   it("shows replies recorded after a window boundary even when no run start was recorded in that window", () => {

@@ -1,4 +1,5 @@
 import type {RunPhase, TerminalRunPhase} from './agent-run';
+import type {ModelCouncilMember} from './command-chat';
 
 export const trafficRoles = ['owner', 'member'] as const;
 export type TrafficRole = (typeof trafficRoles)[number];
@@ -37,6 +38,29 @@ export type V5ChatMetrics = {
   fallbacks: number;
 };
 
+export type CouncilMemberOutcome = ModelCouncilMember['outcome'];
+export const councilMemberOutcomes = ['ok', 'abstained', 'timeout', 'failed'] as const satisfies readonly CouncilMemberOutcome[];
+
+export type CouncilMetrics = {
+  turns: number;
+  changedReplies: number;
+  chosenByModel: Record<string, number>;
+  memberOutcomes: Record<string, Record<CouncilMemberOutcome, number>>;
+  elapsedMs: Latency;
+  v5: {attempted: number; answered: number; unusedAnswers: number};
+};
+
+export const replyFeedbackSources = ['pipeline', 'v5', 'councilChanged'] as const;
+export type ReplyFeedbackSource = (typeof replyFeedbackSources)[number];
+
+export type ReplyFeedbackMetrics = Record<ReplyFeedbackSource, {
+  replies: number;
+  useful: number;
+  wrong: number;
+  incomplete: number;
+  unrated: number;
+}>;
+
 export type ChatMetrics = {
   runs: number;
   firstProgress: Latency;
@@ -45,6 +69,10 @@ export type ChatMetrics = {
   paths: Record<AnswerPath, number>;
   /** Present only in the owner's metrics when the v5 experiment has activity. */
   v5?: V5ChatMetrics;
+  /** Persisted council records for the owner role, when the council column can be read. */
+  council?: CouncilMetrics;
+  /** Latest rating of each assistant reply published within the window. */
+  feedback?: ReplyFeedbackMetrics;
 };
 
 export const monitorDeliveryChannels = ['conversation', 'tab', 'webPush', 'apns'] as const;

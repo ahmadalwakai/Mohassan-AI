@@ -2,25 +2,35 @@ import { describe, expect, it, vi } from 'vitest';
 import { ModelCouncilSchema } from '@mohassan/contracts';
 import {
   createModelCouncil, decide, rankHits, readerPrompt, selectPassage, states, wantsWeb,
-  type Candidate, type CouncilRunner, type CouncilTurn,
+  type Candidate, type CouncilHistory, type CouncilRunner, type CouncilTurn,
 } from '../apps/server/src/assistant/model-council.js';
 import type { ModelRunResult } from '../packages/model-relations/src/runtime.js';
 
 const page = (text: string, title = 'Paris - Encyclopedia', url = 'https://example.org/paris') => ({ kind: 'page' as const, text, title, url });
 const PARIS = 'Paris is the capital and largest city of France. It is located on the river Seine in the north of the country.';
 
-function runner(answers: Record<string, ModelRunResult | (() => Promise<ModelRunResult>)>): CouncilRunner & { calls: string[] } {
+function runner(answers: Record<string, ModelRunResult | ((signal: AbortSignal) => Promise<ModelRunResult>)>): CouncilRunner & { calls: string[] } {
   const calls: string[] = [];
   return {
     calls,
-    async run(modelId) {
+    async run(modelId, _input, signal) {
       calls.push(modelId);
       const answer = answers[modelId];
-      if (typeof answer === 'function') return answer();
+      if (typeof answer === 'function') return answer(signal!);
       return answer ?? { ok: false, reason: 'absent', elapsedMs: 1 };
     },
   };
 }
+
+function waitForAbort<T>(signal: AbortSignal, aborted: (signal: AbortSignal) => void): Promise<T> {
+  return new Promise((_, reject) => signal.addEventListener('abort', () => {
+    aborted(signal);
+    reject(signal.reason);
+  }, { once: true }));
+}
+
+const year = 1989;
+const yearFormats = ['latn', 'arab', 'arabext'].map(numberingSystem => new Intl.NumberFormat('ar', { numberingSystem, useGrouping: false }));
 
 function turn(overrides: Partial<CouncilTurn> = {}): CouncilTurn {
   return {
@@ -49,6 +59,18 @@ describe('model council building blocks', () => {
     expect(states('Completed in 1889 for the fair.', '1889')).toBe(true);
     expect(states('Completed in 1887 for the fair.', '1889')).toBe(false);
     expect(states('باريس هي عاصمة فرنسا', 'باريس')).toBe(true);
+  });
+
+  it('matches Western, Arabic-Indic and Eastern Arabic-Indic digits in either position', () => {
+    for (const pageFormat of yearFormats) {
+      for (const answerFormat of yearFormats) {
+        const text = `افتتح متحف المدينة رسمياً في سنة ${pageFormat.format(year)}.`;
+        expect(states(text, answerFormat.format(year))).toBe(true);
+        expect(states(pageFormat.format(year * 10), answerFormat.format(year))).toBe(false);
+        expect(states(text, `افتتح رسمياً متحف المدينة في سنة ${answerFormat.format(year)}`)).toBe(true);
+        expect(states(text, `افتتح رسمياً متحف المدينة في سنة ${answerFormat.format(year + 1)}`)).toBe(false);
+      }
+    }
   });
 
   it('ranks search hits by question words, one per site, whatever the site', () => {
@@ -143,13 +165,85 @@ describe('deliberation', () => {
   });
 
   it('records a member that runs out of time and still decides within the budget', async () => {
-    const never = () => new Promise<ModelRunResult>(() => {});
+    const aborted = vi.fn();
+    const never = (signal: AbortSignal) => {
+      signal.addEventListener('abort', aborted, { once: true });
+      return new Promise<ModelRunResult>(() => {});
+    };
     const council = createModelCouncil({ runner: runner({ 'reading-v3-last': never }), memberMs: { reader: 50 }, budgetMs: 2_000 });
     const started = performance.now();
     const outcome = await council.deliberate(turn({ evidence: [page(PARIS)] }));
     expect(performance.now() - started).toBeLessThan(2_000);
+    expect(aborted).toHaveBeenCalledOnce();
     expect(outcome.council.members.find(member => member.model === 'reading-v3-last')).toMatchObject({ outcome: 'timeout' });
     expect(outcome.chosen).toBe('pipeline');
+  });
+
+  it('aborts v5 at its own cap and records a timeout even when v5 rejects', async () => {
+    const aborted = vi.fn();
+    const cap = 50;
+    const v5 = vi.fn((_history: CouncilHistory, signal: AbortSignal) => waitForAbort<string>(signal, aborted));
+    const council = createModelCouncil({ runner: runner({}), v5, memberMs: { v5: cap }, budgetMs: 2_000 });
+    const request = turn();
+    vi.useFakeTimers();
+    try {
+      const pending = council.deliberate(request);
+      await vi.advanceTimersByTimeAsync(cap - 1);
+      expect(v5).toHaveBeenCalledOnce();
+      expect(aborted).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      const outcome = await pending;
+      const signal = v5.mock.calls[0]![1];
+      expect(aborted).toHaveBeenCalledWith(signal);
+      expect(signal.aborted).toBe(true);
+      expect(request.signal.aborted).toBe(false);
+      expect(outcome.council.members.find(member => member.model === 'chat-v5')).toMatchObject({ outcome: 'timeout' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('forwards turn cancellation to an active v5 member', async () => {
+    const parent = new AbortController();
+    const reason = new Error('Turn cancelled');
+    const aborted = vi.fn();
+    const council = createModelCouncil({ runner: runner({}), v5: async (_history, signal) => {
+      const work = waitForAbort<string>(signal, aborted);
+      parent.abort(reason);
+      return work;
+    } });
+    const outcome = await council.deliberate(turn({ signal: parent.signal }));
+    expect(aborted).toHaveBeenCalledWith(expect.objectContaining({ aborted: true, reason }));
+    expect(outcome.council.members.find(member => member.model === 'chat-v5')).toMatchObject({ outcome: 'timeout' });
+  });
+
+  it('aborts an understanding model when its round reaches the wall-time budget', async () => {
+    const aborted = vi.fn();
+    const models = runner({ refusal: signal => waitForAbort<ModelRunResult>(signal, aborted) });
+    const council = createModelCouncil({ runner: models, memberMs: { understanding: 50 } });
+    const outcome = await council.deliberate(turn());
+    expect(aborted).toHaveBeenCalledOnce();
+    expect(outcome.council.members.find(member => member.model === 'refusal')).toMatchObject({ outcome: 'timeout', round: 'understanding' });
+    expect(models.calls).not.toContain('scratch-refusal');
+  });
+
+  it('aborts a search when it reaches its own cap', async () => {
+    const aborted = vi.fn();
+    const council = createModelCouncil({ runner: runner({}), memberMs: { search: 50 } });
+    const outcome = await council.deliberate(turn({ pipeline: { text: '', status: 'blocked' },
+      search: (_question, signal) => waitForAbort(signal, aborted) }));
+    expect(aborted).toHaveBeenCalledOnce();
+    expect(outcome.council.members.find(member => member.round === 'search')).toMatchObject({ outcome: 'timeout' });
+  });
+
+  it('records the model runtime’s own timeout as a timeout', async () => {
+    const timeout = { ok: false, reason: 'timeout', elapsedMs: 1 } as const;
+    const council = createModelCouncil({ runner: runner({ 'reading-v3-last': timeout, 'chat-v4': timeout, arithmetic: timeout }) });
+    const read = await council.deliberate(turn({ evidence: [page(PARIS)] }));
+    const other = await council.deliberate(turn({ question: 'What is 2 + 3?' }));
+    expect(read.council.members.find(member => member.model === 'reading-v3-last')?.outcome).toBe('timeout');
+    expect(other.council.members.find(member => member.model === 'chat-v4')?.outcome).toBe('timeout');
+    expect(other.council.members.find(member => member.model === 'arithmetic')?.outcome).toBe('timeout');
   });
 
   it('marks a reading abstention and asks v4 only when nothing was read', async () => {

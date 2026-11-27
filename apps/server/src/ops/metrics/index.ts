@@ -6,6 +6,7 @@ import type { MetricWindow } from '@mohassan/contracts';
 import { metricsCsv } from './csv.js';
 import { registerMonitorMetrics } from './monitor-events.js';
 import { readMonitorFeedbackMetrics } from './monitor-feedback.js';
+import { readReplyQualityMetrics } from './reply-quality.js';
 import { METRICS_CSV_PATH, METRICS_PATH, registerRequestMetrics } from './request.js';
 import { sampleProcessResources } from './resources.js';
 import { MetricsSnapshots } from './snapshots.js';
@@ -66,15 +67,27 @@ export async function registerProductionMetrics(
   async function view() {
     const report = { ...store.view(), enabled, snapshotAvailable: snapshots?.healthy ?? false, chatAvailable: chatAvailable() };
     if (!enabled) return report;
-    const windows: Pick<MetricWindow, 'startMs' | 'endMs' | 'monitors'>[] = Object.values(report.windows);
-    if (report.completedMonitorWeek) windows.push(report.completedMonitorWeek);
-    try {
-      const feedback = await readMonitorFeedbackMetrics(db, windows);
-      windows.forEach((window, index) => {
-        if (window.monitors) window.monitors.alerts = feedback[index];
+    const chatWindows = Object.values(report.windows);
+    const monitorWindows: Pick<MetricWindow, 'startMs' | 'endMs' | 'monitors'>[] = [...chatWindows];
+    if (report.completedMonitorWeek) monitorWindows.push(report.completedMonitorWeek);
+    const [monitorFeedback, replyQuality] = await Promise.allSettled([
+      readMonitorFeedbackMetrics(db, monitorWindows),
+      readReplyQualityMetrics(db, chatWindows),
+    ]);
+    if (monitorFeedback.status === 'fulfilled') {
+      monitorWindows.forEach((window, index) => {
+        if (window.monitors) window.monitors.alerts = monitorFeedback.value[index];
       });
-    } catch {
-      // Keep the other metrics available when the feedback counts cannot be read.
+    }
+    if (replyQuality.status === 'fulfilled') {
+      chatWindows.forEach(({ roles }, index) => {
+        const quality = replyQuality.value[index];
+        if (quality?.council) roles.owner.chat.council = quality.council;
+        if (quality?.feedback) {
+          roles.owner.chat.feedback = quality.feedback.owner;
+          roles.member.chat.feedback = quality.feedback.member;
+        }
+      });
     }
     return report;
   }

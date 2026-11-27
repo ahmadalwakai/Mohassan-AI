@@ -103,6 +103,88 @@ describe('model runtime', () => {
     await vi.waitFor(async () => expect(await instance.health('other')).toMatchObject({ ok: true }));
   });
 
+  it('cancels an active adapter request at the caller limit and releases its CPU slot', async () => {
+    const started = pending<AbortSignal>();
+    const instance = runtime({ registry: [entry('small')], cpuConcurrency: 1, resolve: present,
+      loadAdapter: () => adapter((input, signal) => input === 'cancel me' ? new Promise((_, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        started.resolve(signal);
+      }) : input) });
+    const caller = new AbortController();
+    const reason = new DOMException('Test caller limit', 'TimeoutError');
+    const work = instance.run('small', 'cancel me', caller.signal);
+    const signal = await started.promise;
+    caller.abort(reason);
+    expect(await work).toMatchObject({ ok: false, reason: 'timeout' });
+    expect(signal.reason).toBe(reason);
+    await vi.waitFor(async () => expect(await instance.run('small', 'next')).toMatchObject({ ok: true, output: 'next' }));
+  });
+
+  it('aborts a cold worker’s warmup and closes it when its only caller is cancelled', async () => {
+    const started = pending<AbortSignal>();
+    const closed = vi.fn();
+    const instance = runtime({ registry: [entry('first', { runtime: 'python-worker' }), entry('second', { runtime: 'python-worker' })], resolve: present,
+      loadAdapter: model => model.entry.id === 'first' ? { ...adapter(), close: closed, warmup: signal => new Promise((_, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        started.resolve(signal);
+      }) } : adapter() });
+    const caller = new AbortController();
+    const work = instance.run('first', {}, caller.signal);
+    const signal = await started.promise;
+    caller.abort();
+    expect(await work).toMatchObject({ ok: false, reason: 'timeout' });
+    await vi.waitFor(async () => expect(await instance.health('second')).toMatchObject({ ok: true }));
+    expect(signal.aborted).toBe(true);
+    expect(closed).toHaveBeenCalledOnce();
+  });
+
+  it('disposes a late adapter after cancellation and does not warm it up', async () => {
+    const started = pending<AbortSignal>();
+    const loaded = pending<ModelAdapter>();
+    const close = vi.fn();
+    const warmup = vi.fn();
+    const instance = runtime({ registry: [entry('cold', { runtime: 'python-worker' })], resolve: present,
+      loadAdapter: (_, context) => {
+        started.resolve(context.signal);
+        return loaded.promise;
+      } });
+    const caller = new AbortController();
+    const work = instance.run('cold', {}, caller.signal);
+    try {
+      const signal = await started.promise;
+      caller.abort();
+      expect(await work).toMatchObject({ ok: false, reason: 'timeout' });
+      expect(signal.aborted).toBe(true);
+      expect(await instance.health('cold')).toMatchObject({ ok: false, reason: 'busy' });
+    } finally {
+      loaded.resolve({ ...adapter(), close, warmup });
+    }
+    await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+    expect(warmup).not.toHaveBeenCalled();
+  });
+
+  it('keeps a shared cold load alive when another caller still needs it', async () => {
+    const started = pending<AbortSignal>();
+    const loaded = pending<ModelAdapter>();
+    const instance = runtime({ registry: [entry('shared')], cpuConcurrency: 2, resolve: present,
+      loadAdapter: (_, context) => {
+        started.resolve(context.signal);
+        return loaded.promise;
+      } });
+    const caller = new AbortController();
+    const first = instance.run('shared', 'first', caller.signal);
+    const signal = await started.promise;
+    const second = instance.run('shared', 'second');
+    try {
+      caller.abort();
+      expect(await first).toMatchObject({ ok: false, reason: 'timeout' });
+      expect(signal.aborted).toBe(false);
+    } finally {
+      loaded.resolve(adapter());
+    }
+    expect(await second).toMatchObject({ ok: true, output: 'second' });
+  });
+
   it('unloads idle adapters and evicts the least recently used adapter under memory pressure', async () => {
     const disposed = vi.fn();
     const instance = runtime({ registry: [entry('first'), entry('second'), entry('too-large', { resources: { memoryMb: 9, cpu: 1, gpu: false, latencyMs: 500 } })],

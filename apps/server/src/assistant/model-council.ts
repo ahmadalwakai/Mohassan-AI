@@ -2,6 +2,7 @@ import { performance } from 'node:perf_hooks';
 import type { ModelCouncil, ModelCouncilMember } from '@mohassan/contracts';
 import { ModelRelationsManager, type TurnDecisionLog, type TurnObservation } from '../../../../packages/model-relations/src/manager.js';
 import type { ModelRunResult } from '../../../../packages/model-relations/src/runtime.js';
+import { normalizeAnswerDigits } from './answer-check.js';
 import { comparable, judge, type JudgeDecision, type JudgeEvidence } from './judge.js';
 
 /**
@@ -24,7 +25,7 @@ export type CouncilStatus = 'completed' | 'partial' | 'blocked';
 export type CouncilHistory = readonly { role: 'user' | 'assistant'; content: string }[];
 
 export interface CouncilRunner {
-  run(modelId: string, input: unknown): Promise<ModelRunResult>;
+  run(modelId: string, input: unknown, signal?: AbortSignal): Promise<ModelRunResult>;
 }
 
 export interface CouncilTurn {
@@ -158,13 +159,17 @@ export function readerPrompt(question: string, passage: string): string {
 
 /** Whether `haystack` states `answer`: the whole folded answer, or every number in it with most of its words. */
 export function states(haystack: string, answer: string): boolean {
-  const target = comparable(answer);
+  const normalizedAnswer = normalizeAnswerDigits(answer);
+  const target = comparable(normalizedAnswer);
   if (!target) return false;
-  const text = comparable(haystack);
+  const text = comparable(normalizeAnswerDigits(haystack));
+  const numbers = target.match(/\d+/gu) ?? [];
+  if (numbers.length) {
+    const statedNumbers = new Set(text.match(/\d+/gu));
+    if (numbers.some(number => !statedNumbers.has(number))) return false;
+  }
   if (text.includes(target)) return true;
-  const numbers = target.match(/\d+(?:\.\d+)?/gu) ?? [];
-  if (numbers.some(number => !text.includes(number))) return false;
-  const parts = words(answer);
+  const parts = words(normalizedAnswer);
   if (!parts.length) return numbers.length > 0;
   return parts.filter(part => text.includes(part)).length / parts.length >= 0.75;
 }
@@ -204,26 +209,37 @@ function outputText(output: unknown): string | undefined {
 
 type Settled<T> = { status: 'ok'; value: T; ms: number } | { status: 'timeout' | 'failed'; ms: number };
 
-async function capped<T>(work: () => Promise<T>, ms: number, signal: AbortSignal): Promise<Settled<T>> {
+async function capped<T>(work: (signal: AbortSignal) => Promise<T>, ms: number, signal: AbortSignal): Promise<Settled<T>> {
   const started = performance.now();
   if (signal.aborted || ms <= 0) return { status: 'timeout', ms: 0 };
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onAbort: (() => void) | undefined;
-  const stop = new Promise<'timeout'>(resolve => {
-    timer = setTimeout(() => resolve('timeout'), ms);
-    onAbort = () => resolve('timeout');
+  const stop = new Promise<{ status: 'timeout' }>(resolve => {
+    onAbort = () => {
+      // Settle the timeout before the member's abort handler can reject.
+      resolve({ status: 'timeout' });
+      controller.abort(signal.aborted ? signal.reason : new DOMException('Council member time limit reached', 'TimeoutError'));
+    };
+    timer = setTimeout(onAbort, ms);
     signal.addEventListener('abort', onAbort, { once: true });
   });
   try {
-    const value = await Promise.race([work(), stop]);
-    const elapsed = Math.round(performance.now() - started);
-    return value === 'timeout' ? { status: 'timeout', ms: elapsed } : { status: 'ok', value: value as T, ms: elapsed };
+    const result = await Promise.race([stop, Promise.resolve().then(async () => {
+      controller.signal.throwIfAborted();
+      return { status: 'ok' as const, value: await work(controller.signal) };
+    })]);
+    return { ...result, ms: Math.round(performance.now() - started) };
   } catch {
     return { status: 'failed', ms: Math.round(performance.now() - started) };
   } finally {
     clearTimeout(timer);
     if (onAbort) signal.removeEventListener('abort', onAbort);
   }
+}
+
+function modelTimedOut(result: Settled<ModelRunResult>): boolean {
+  return result.status === 'timeout' || (result.status === 'ok' && !result.value.ok && result.value.reason === 'timeout');
 }
 
 /** The understanding round as members: one per model the organizer asked, with its label and the rules' label. */
@@ -326,17 +342,17 @@ export function createModelCouncil(options: ModelCouncilOptions) {
       && judgeOf(pipelineText, turn.pipeline.status, turn.evidence) !== 'withhold';
 
     // Understanding: the organizer's own stage models, bounded by its turn budget.
-    const understood = await capped(() => organizer.inspect({
+    const understood = await organizer.inspect({
       id: `council:${Date.now()}`, text: turn.question, previousText: turn.previous, baseline: turn.baseline,
-    }), left(caps.understanding + 1_000), turn.signal);
-    if (understood.status === 'ok') members.push(...understandingMembers(understood.value));
+    }, undefined, { maxTurnMs: left(caps.understanding), signal: turn.signal });
+    members.push(...understandingMembers(understood));
 
     // The web, when needed: nothing was read, the pipeline has no answer that stands, and the request is a web question.
     let evidence = turn.evidence;
     const search = turn.search ?? options.search;
     if (search && !evidence.length && !pipelineStands && turn.baseline.refusal === 'allow'
-        && wantsWeb(turn.baseline, understood.status === 'ok' ? understood.value : undefined)) {
-      const searched = await capped(() => search(turn.question, turn.signal), left(caps.search), turn.signal);
+        && wantsWeb(turn.baseline, understood)) {
+      const searched = await capped(signal => search(turn.question, signal), left(caps.search), turn.signal);
       const pages = searched.status === 'ok' ? searched.value.pages.filter(page => page.text.trim()) : [];
       members.push({
         model: WEB_SEARCH, label: label(WEB_SEARCH), round: 'search',
@@ -356,14 +372,14 @@ export function createModelCouncil(options: ModelCouncilOptions) {
         note: turn.pipeline.status === 'completed' ? 'أكمل الجواب' : turn.pipeline.status === 'partial' ? 'جواب ناقص' : 'لم يجد جواباً' });
     }
     if (options.v5 && turn.history.at(-1)?.role === 'user') {
-      const spoken = await capped(() => options.v5!(turn.history, turn.signal), left(caps.v5), turn.signal);
+      const spoken = await capped(signal => options.v5!(turn.history, signal), left(caps.v5), turn.signal);
       const text = spoken.status === 'ok' ? spoken.value?.trim() : undefined;
       candidates.push({ model: V5, text: text ?? '', reply: text ?? '', ms: spoken.ms, agreements: 0, note: MEASURED[V5],
         outcome: spoken.status === 'timeout' ? 'timeout' : text ? 'ok' : 'failed' });
     }
     const passage = evidence.length ? selectPassage(turn.question, evidence) : null;
     if (passage) {
-      const read = await capped(() => options.runner.run(READER, { prompt: readerPrompt(turn.question, passage.text), maxNewTokens: 20 }),
+      const read = await capped(signal => options.runner.run(READER, { prompt: readerPrompt(turn.question, passage.text), maxNewTokens: 20 }, signal),
         left(caps.reader), turn.signal);
       const raw = read.status === 'ok' && read.value.ok ? outputText(read.value.output) : undefined;
       const answer = raw?.split('\n')[0]?.trim() ?? '';
@@ -372,23 +388,23 @@ export function createModelCouncil(options: ModelCouncilOptions) {
       const footer = ar ? `\n\n— جواب «${label(READER)}» (${MEASURED[READER]})` : '\n\n— Answer from the reading model v3 (experimental; F1 18% Arabic, 26% English on XQuAD)';
       candidates.push({ model: READER, text: abstained ? '' : answer, reply: `${answer}${source}${footer}`, ms: read.ms, agreements: 0,
         note: `${MEASURED[READER]}؛ قرأ فقرة من: ${passage.title || passage.url || 'صفحة'}`.slice(0, 240),
-        outcome: read.status === 'timeout' ? 'timeout' : read.status === 'ok' && read.value.ok ? abstained ? 'abstained' : 'ok' : 'failed' });
+        outcome: modelTimedOut(read) ? 'timeout' : read.status === 'ok' && read.value.ok ? abstained ? 'abstained' : 'ok' : 'failed' });
     } else if (!evidence.length) {
-      const spoken = await capped(() => options.runner.run(V4, { text: turn.question, maxNewTokens: 48 }), left(caps.v4), turn.signal);
+      const spoken = await capped(signal => options.runner.run(V4, { text: turn.question, maxNewTokens: 48 }, signal), left(caps.v4), turn.signal);
       const raw = spoken.status === 'ok' && spoken.value.ok ? outputText(spoken.value.output) : undefined;
       const text = raw?.split(/\n\s*\n/u)[0]?.trim() ?? '';
       candidates.push({ model: V4, text, reply: text, ms: spoken.ms, agreements: 0, note: MEASURED[V4],
-        outcome: spoken.status === 'timeout' ? 'timeout' : text ? 'ok' : 'failed' });
+        outcome: modelTimedOut(spoken) ? 'timeout' : text ? 'ok' : 'failed' });
     }
     if (!ar && /\d/u.test(turn.question) && turn.baseline.refusal === 'allow') {
-      const solved = await capped(() => options.runner.run(ARITHMETIC, { text: turn.question }), left(caps.arithmetic), turn.signal);
+      const solved = await capped(signal => options.runner.run(ARITHMETIC, { text: turn.question }, signal), left(caps.arithmetic), turn.signal);
       const output = solved.status === 'ok' && solved.value.ok ? solved.value.output as { value?: unknown; expression?: unknown } | null : undefined;
       const value = typeof output?.value === 'string' ? output.value : undefined;
       const expression = typeof output?.expression === 'string' ? output.expression : undefined;
       if (solved.status !== 'ok' || !solved.value.ok || value) {
         candidates.push({ model: ARITHMETIC, text: value ?? '', ms: solved.ms, agreements: 0, note: MEASURED[ARITHMETIC],
           reply: value ? `${value}${expression ? `\n\n${expression} = ${value}` : ''}\n\n— Answer from the arithmetic model (experimental)` : '',
-          outcome: solved.status === 'timeout' ? 'timeout' : value ? 'ok' : 'failed' });
+          outcome: modelTimedOut(solved) ? 'timeout' : value ? 'ok' : 'failed' });
       }
     }
 
