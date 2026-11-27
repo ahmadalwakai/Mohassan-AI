@@ -48,8 +48,7 @@ describe('WHO Global Health Observatory OData', () => {
     expect(hits[0]).toEqual({
       title: 'Life expectancy at birth (years)',
       url: 'https://ghoapi.azureedge.net/api/WHOSIS_000001',
-      snippet: 'WHO Global Health Observatory indicator WHOSIS_000001. Accessed 2026-11-27.',
-      sourceOrganization: 'World Health Organization',
+      snippet: 'World Health Organization · Accessed 2026-11-27 — Global Health Observatory indicator WHOSIS_000001.',
     });
     expect(request.mock.calls[0][0]).toBe('https://ghoapi.azureedge.net/robots.txt');
     const [[target]] = apiRequests();

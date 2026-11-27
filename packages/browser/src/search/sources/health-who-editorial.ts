@@ -1,9 +1,10 @@
 import { parse, type DefaultTreeAdapterTypes } from 'parse5';
+import type { SearchHit } from '../../research.js';
 import { SearchProviderFailure, type SearchQuery } from '../providers.js';
 import { searchTokens } from '../ranking.js';
 import type { PlannedProvider } from '../source-plan.js';
 import { englishHealthTopic, isKnownHealthTopic } from './health-topics.js';
-import { healthLimit, healthPlain, isHealthQuestion, type HealthHit, type HealthRequester } from './health-utils.js';
+import { healthLimit, healthPlain, isHealthQuestion, type HealthRequester } from './health-utils.js';
 
 const whoOrigin = 'https://www.who.int';
 const sourceOrganization = 'World Health Organization';
@@ -157,7 +158,12 @@ function calendarDate(year: number, month: number, day: number): string | undefi
   if (date.getUTCDate() === day && date.getUTCMonth() === month && date.getUTCFullYear() === year) return date.toISOString().slice(0, 10);
 }
 
-function factSheetHit(html: string, url: URL, query: SearchQuery): HealthHit | undefined {
+function whoSnippet(excerpt: string, publishedAt: string | undefined): string {
+  const date = publishedAt ? ` · Published ${publishedAt}` : '';
+  return `${sourceOrganization}${date} — ${excerpt}`;
+}
+
+function factSheetHit(html: string, url: URL, query: SearchQuery): SearchHit | undefined {
   const nodes = elements(parse(html));
   const header = nodes.find(node => attribute(node, 'class')?.split(/\s+/).includes('sf-item-header-wrapper'));
   if (!header) return;
@@ -174,8 +180,9 @@ function factSheetHit(html: string, url: URL, query: SearchQuery): HealthHit | u
   const excerpt = passages.map(text => ({ text, score: score(terms, text) }))
     .sort((first, second) => second.score - first.score)[0]?.text
     ?? nodes.find(node => node.tagName === 'meta' && attribute(node, 'name') === 'description')?.attrs.find(attr => attr.name === 'content')?.value;
-  if (!excerpt) return;
-  return { title, url: url.href, snippet: snippet(excerpt), sourceOrganization, ...(publishedAt && { publishedAt }) };
+  const text = excerpt && snippet(excerpt);
+  if (!text) return;
+  return { title, url: url.href, snippet: whoSnippet(text, publishedAt) };
 }
 
 function rssField(item: string, name: 'title' | 'link' | 'description' | 'pubDate'): string {
@@ -195,10 +202,10 @@ function newsPublicationDate(url: URL, feedDate: string, language: Language): st
   if (Number.isFinite(published)) return new Date(published).toISOString().slice(0, 10);
 }
 
-function rssHits(body: string, language: Language): HealthHit[] {
+function rssItems(body: string, language: Language) {
   xmlDocument(body, 'rss');
   if (!/<channel>[\s\S]*<\/channel>/.test(body)) throw new SearchProviderFailure('invalid_response');
-  const hits: HealthHit[] = [];
+  const items: { hit: SearchHit; publishedAt: string | undefined }[] = [];
   for (const [, item] of body.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
     const url = whoUrl(rssField(item, 'link'), newsPath);
     if (!url || (newsPath.exec(url.pathname)?.[1] ?? 'en') !== language) continue;
@@ -206,9 +213,9 @@ function rssHits(body: string, language: Language): HealthHit[] {
     const text = snippet(rssField(item, 'description'));
     if (!title || !text) continue;
     const publishedAt = newsPublicationDate(url, rssField(item, 'pubDate'), language);
-    hits.push({ title, url: url.href, snippet: text, sourceOrganization, ...(publishedAt && { publishedAt }) });
+    items.push({ hit: { title, url: url.href, snippet: text }, publishedAt });
   }
-  return hits;
+  return items;
 }
 
 export function createWhoEditorialProviders(request: HealthRequester, now: () => number): PlannedProvider[] {
@@ -239,7 +246,7 @@ export function createWhoEditorialProviders(request: HealthRequester, now: () =>
       const matches = links.map(({ url, label }) => ({ url, label, relevance: score(terms, label) }))
         .filter(item => item.relevance > 0)
         .sort((first, second) => second.relevance - first.relevance || first.label.length - second.label.length);
-      const hits: HealthHit[] = [];
+      const hits: SearchHit[] = [];
       for (const { url } of matches.slice(0, Math.min(factSheetReadLimit, healthLimit(limit)))) {
         const html = await request(url, signal, { accept: 'text/html' });
         const hit = factSheetHit(html, url, query);
@@ -258,13 +265,13 @@ export function createWhoEditorialProviders(request: HealthRequester, now: () =>
       if (!supportsWhoSite(query)) return [];
       const body = await request(newsFeeds[query.language], signal, { accept: 'application/rss+xml', maxBytes: newsMaxBytes });
       const terms = subjectTerms(query.retrievalQuestion);
-      return rssHits(body, query.language)
-        .map(hit => ({ hit, relevance: 2 * score(terms, hit.title) + score(terms, hit.snippet) }))
+      return rssItems(body, query.language)
+        .map(item => ({ ...item, relevance: 2 * score(terms, item.hit.title) + score(terms, item.hit.snippet) }))
         .filter(item => !terms.length || item.relevance > 0)
         .sort((first, second) => second.relevance - first.relevance
-          || (second.hit.publishedAt ?? '').localeCompare(first.hit.publishedAt ?? ''))
+          || (second.publishedAt ?? '').localeCompare(first.publishedAt ?? ''))
         .slice(0, healthLimit(limit))
-        .map(item => item.hit);
+        .map(({ hit: { title, url, snippet }, publishedAt }) => ({ title, url, snippet: whoSnippet(snippet, publishedAt) }));
     },
   }];
 }

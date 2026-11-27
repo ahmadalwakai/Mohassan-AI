@@ -18,6 +18,7 @@ const bilingualTopics: [english: string, arabic: string[]][] = [
   ['Hepatitis C', ['التهاب الكبد C']], // hepatitis-c
   ['Dengue', ['حُمّى الضنك']], // dengue-and-severe-dengue
   ['Asthma', ['الربو']], // asthma
+  ['Obesity', ['السمنة']], // obesity-and-overweight
   ['COVID-19', ['كوفيد-19', 'مرض فيروس كورونا (كوفيد-19)']], // coronavirus-disease-(covid-19)
   ['Mpox', ['جدري القردة', 'إمبوكس']], // mpox
   ['Cancer', ['السرطان']], // cancer

@@ -42,8 +42,7 @@ describe('MedlinePlus Web Service', () => {
     expect(hits).toEqual([{
       title: 'Asthma',
       url: 'https://medlineplus.gov/asthma.html',
-      snippet: expect.stringContaining('Asthma is a chronic (long-term) lung disease.'),
-      sourceOrganization: 'MedlinePlus, National Library of Medicine',
+      snippet: expect.stringMatching(/^MedlinePlus, National Library of Medicine — What is asthma\? Asthma is a chronic \(long-term\) lung disease\./),
     }]);
     expect(hits[0].snippet).not.toContain('<');
     expect(request.mock.calls[0][0]).toBe('https://wsearch.nlm.nih.gov/robots.txt');

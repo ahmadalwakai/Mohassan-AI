@@ -5,8 +5,6 @@ import { createHealthRequester } from './health-network.js';
 import { createWhoEditorialProviders } from './health-who-editorial.js';
 import { createWhoGhoProvider } from './health-who.js';
 
-export type { HealthHit } from './health-utils.js';
-
 export function healthSafetyNote(language: 'ar' | 'en'): string {
   return language === 'ar'
     ? 'هذه معلومات عامة وليست استشارة طبية؛ راجع طبيباً لحالتك.'

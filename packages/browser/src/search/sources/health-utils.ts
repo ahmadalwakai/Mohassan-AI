@@ -1,16 +1,9 @@
 import { parseFragment, type DefaultTreeAdapterTypes } from 'parse5';
 import { BrowserError } from '../../network.js';
-import type { SearchHit } from '../../research.js';
 import { safeResumeUrl } from '../../session-state.js';
 import { publicSearchScan, publicSearchText } from '../local-index.js';
 import type { SearchQuery } from '../providers.js';
 import { englishHealthTopic, isKnownHealthTopic } from './health-topics.js';
-
-export interface HealthHit extends SearchHit {
-  sourceOrganization: string;
-  publishedAt?: string;
-  reviewedAt?: string;
-}
 
 export interface HealthRequestOptions {
   accept?: string;

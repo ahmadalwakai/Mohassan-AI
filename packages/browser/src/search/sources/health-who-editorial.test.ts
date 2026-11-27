@@ -54,16 +54,12 @@ describe('WHO editorial sources', () => {
     await expect(facts.search(arabic, 1, signal)).resolves.toEqual([{
       title: 'الربو',
       url: `${origin}/ar${zone}`,
-      snippet: expect.stringContaining('الربو مرض من الأمراض غير السارية'),
-      sourceOrganization: 'World Health Organization',
-      publishedAt: '2026-04-28',
+      snippet: expect.stringMatching(/^World Health Organization · Published 2026-04-28 — الربو مرض من الأمراض غير السارية/u),
     }]);
     await expect(facts.search(compileQuery('What are the symptoms of asthma?'), 1, signal)).resolves.toEqual([{
       title: 'Asthma',
       url: origin + zone,
-      snippet: expect.stringContaining('Symptoms can include coughing'),
-      sourceOrganization: 'World Health Organization',
-      publishedAt: '2026-04-28',
+      snippet: expect.stringMatching(/^World Health Organization · Published 2026-04-28 — Symptoms can include coughing/),
     }]);
     expect(network.calls).toEqual(['/robots.txt', sitemapPath, `/ar${zone}`, zone]);
   });
@@ -73,29 +69,26 @@ describe('WHO editorial sources', () => {
     await expect(facts.search(compileQuery('ما أعراض أمراض الكلى؟'), 1, signal)).resolves.toEqual([{
       title: 'أمراض الكلى',
       url: origin + kidney,
-      snippet: expect.stringContaining('تشمل أمراض الكلى'),
-      sourceOrganization: 'World Health Organization',
-      publishedAt: '2026-04-20',
+      snippet: expect.stringMatching(/^World Health Organization · Published 2026-04-20 — تشمل أمراض الكلى/u),
     }]);
     expect(network.calls).toEqual(['/robots.txt', sitemapPath, arabicIndex, kidney]);
   });
 
   it('keeps the query language in the published WHO news feeds and retains attribution and dates', async () => {
     const { network, news } = setup();
-    await expect(news.search(compileQuery('أخبار السمنة'), 5, signal)).resolves.toEqual([{
+    const arabicNews = compileQuery('أخبار السمنة');
+    expect(news.supports(arabicNews)).toBe(true);
+    expect(news.supports(compileQuery('What are the symptoms of asthma?'))).toBe(false);
+    await expect(news.search(arabicNews, 5, signal)).resolves.toEqual([{
       title: 'القادة يلتزمون بتسريع العمل على الوقاية من السمنة ومكافحتها',
       url: `${origin}/ar/news-room/07-06-1448-leaders-commit-to-accelerate-action-on-obesity-prevention-and-control`,
-      snippet: expect.stringContaining('انضمت حكومة إسبانيا'),
-      sourceOrganization: 'World Health Organization',
-      publishedAt: '2026-11-17',
+      snippet: expect.stringMatching(/^World Health Organization · Published 2026-11-17 — انضمت حكومة إسبانيا/u),
     }]);
     await expect(news.search(compileQuery('COVID-19 mental health news'), 5, signal)).resolves.toEqual([{
       title: 'COVID-19 disrupting mental health services in most countries, WHO survey',
       url: `${origin}/news/item/05-10-2020-covid-19-disrupting-mental-health-services-in-most-countries-who-survey`,
-      snippet: expect.stringContaining('The COVID-19 pandemic has disrupted'),
-      sourceOrganization: 'World Health Organization',
       // The linked article's byline gives 5 October, although the feed gives 6 October.
-      publishedAt: '2020-10-05',
+      snippet: expect.stringMatching(/^World Health Organization · Published 2020-10-05 — The COVID-19 pandemic has disrupted/),
     }]);
     expect(network.calls).toEqual(['/robots.txt', newsArabic, newsEnglish]);
   });

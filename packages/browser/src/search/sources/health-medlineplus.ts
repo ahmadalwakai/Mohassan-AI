@@ -1,9 +1,10 @@
 import { parseFragment, serializeOuter, type DefaultTreeAdapterTypes as Html } from 'parse5';
+import type { SearchHit } from '../../research.js';
 import { safeResumeUrl } from '../../session-state.js';
 import { SearchProviderFailure } from '../providers.js';
 import type { PlannedProvider } from '../source-plan.js';
 import { englishHealthTopic } from './health-topics.js';
-import { healthEnglishQuery, healthLimit, healthPlain, isHealthQuestion, type HealthHit, type HealthRequester } from './health-utils.js';
+import { healthEnglishQuery, healthLimit, healthPlain, isHealthQuestion, type HealthRequester } from './health-utils.js';
 
 // NLM Web Service acceptable use and format, checked 2026-11-27.
 const API_DOC = 'https://medlineplus.gov/about/developers/webservices/';
@@ -23,7 +24,7 @@ function field(element: Html.Element | undefined): string {
   return element?.childNodes.map(node => 'value' in node ? node.value : 'tagName' in node ? serializeOuter(node) : '').join('') ?? '';
 }
 
-function topicHits(body: string, limit: number): HealthHit[] {
+function topicHits(body: string, limit: number): SearchHit[] {
   const markup = body.replace(/^\uFEFF?\s*<\?xml\s+[^?]*\?>/u, '');
   if (/<[!?]/u.test(markup)) throw new SearchProviderFailure('invalid_response');
   const fragment = parseFragment(markup, { sourceCodeLocationInfo: true });
@@ -47,7 +48,7 @@ function topicHits(body: string, limit: number): HealthHit[] {
     const snippet = healthPlain(text('fullsummary')) || healthPlain(text('snippet'));
     // Brief results supply no review or publication date. The full topic XML
     // exposes date-created, which identifies the topic record rather than a review.
-    return title && snippet ? [{ title, url, snippet, sourceOrganization: CREDIT }] : [];
+    return title && snippet ? [{ title, url, snippet: `${CREDIT} — ${snippet}` }] : [];
   });
 }
 

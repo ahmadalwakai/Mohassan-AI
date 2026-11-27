@@ -1,8 +1,9 @@
+import type { SearchHit } from '../../research.js';
 import { SearchProviderFailure } from '../providers.js';
 import type { SearchQuery } from '../providers.js';
 import type { PlannedProvider } from '../source-plan.js';
 import { englishHealthTopic } from './health-topics.js';
-import { healthEnglishQuery, healthLimit, healthPlain, isHealthQuestion, type HealthHit, type HealthRequester } from './health-utils.js';
+import { healthEnglishQuery, healthLimit, healthPlain, isHealthQuestion, type HealthRequester } from './health-utils.js';
 
 // Official OData interface and license for public-health use, checked 2026-11-27.
 // https://www.who.int/data/gho/info/gho-odata-api
@@ -32,7 +33,7 @@ function indicatorsFilter(query: SearchQuery): string | undefined {
   return words.length ? words.map(word => `contains(tolower(IndicatorName),'${word}')`).join(' and ') : undefined;
 }
 
-function indicatorHits(body: string, limit: number, date: string): HealthHit[] {
+function indicatorHits(body: string, limit: number, date: string): SearchHit[] {
   let indicators: unknown;
   try {
     indicators = (JSON.parse(body) as { value?: unknown } | null)?.value;
@@ -41,7 +42,7 @@ function indicatorHits(body: string, limit: number, date: string): HealthHit[] {
   }
   if (!Array.isArray(indicators)) throw new SearchProviderFailure('invalid_response');
 
-  const hits: HealthHit[] = [];
+  const hits: SearchHit[] = [];
   for (const entry of indicators) {
     if (hits.length >= limit) break;
     const code: unknown = entry?.IndicatorCode;
@@ -56,8 +57,7 @@ function indicatorHits(body: string, limit: number, date: string): HealthHit[] {
     hits.push({
       url: new URL(code, GHO_API).href,
       title,
-      snippet: `WHO Global Health Observatory indicator ${code}. Accessed ${date}.`,
-      sourceOrganization: WHO,
+      snippet: `${WHO} · Accessed ${date} — Global Health Observatory indicator ${code}.`,
     });
   }
   return hits;
