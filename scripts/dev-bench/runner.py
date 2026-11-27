@@ -12,6 +12,7 @@ import subprocess
 from tempfile import TemporaryDirectory
 
 from monitor_audit import SOURCE_FLAGS, instrument_observer, instrument_product, instrument_scoring
+from truth_audit import TRUTH_FLAG, instrument_truth_observer, instrument_truth_scoring
 
 V1_BUNDLE = "a258b3d47e39b5a2c03c71d4a9eb01107ae3d97f"
 V2_BUNDLE = "12cedfe592aab40cdd47ee00d05ea86a6d2bae89"
@@ -24,6 +25,7 @@ LANES = 8
 COMMON = ("run.ts", "corpus.ts", "observe.ts", "score.ts")
 V2_HARNESS = (*COMMON, "v2/dev.ts", "v2/sealed.ts", "v2/mapping.ts")
 HOLDOUTS = (f"{FIXTURES}/holdout", f"{FIXTURES}/v2/sealed")
+SCRATCH_MODELS = "packages/scratch-classifiers/models"
 NODE_OPTIONS = ("--no-wasm-tier-up", "--no-wasm-dynamic-tiering", "--import", "tsx")
 BASE_FLAGS = {
     "MOHASSAN_SMALL_TALK_MANNERS": "1",
@@ -46,6 +48,7 @@ ARBITER_FLAGS = (
     "MOHASSAN_ARBITER_COMPOUND_PLAN",
 )
 OVERRIDES = {
+    TRUTH_FLAG: {"off", "shadow", "on"},
     "MOHASSAN_PLAN_COMPILER": {"on", "off"},
     "MOHASSAN_CONVERSATION_SHADOW": {"decide", "0"},
     "TEST_DRIVEN_CODING_ENABLED": {"true", "false"},
@@ -101,9 +104,9 @@ def git(directory: Path, *args: str, input_bytes: bytes | None = None) -> bytes:
     ).stdout
 
 
-def hash_product(repo: Path, commit: str) -> str:
+def hash_product(repo: Path, commit: str, excluded_paths: tuple[str, ...] = HOLDOUTS) -> str:
     args = ["git", "-C", str(repo), "archive", "--format=tar", commit, "--", ".",
-            *(f":(exclude){path}" for path in HOLDOUTS)]
+            *(f":(exclude){path}" for path in excluded_paths)]
     with subprocess.Popen(args, stdout=subprocess.PIPE) as process:
         result = file_digest(process.stdout, "sha256").hexdigest()
         if process.wait() != 0:
@@ -244,9 +247,17 @@ for (const browser of ['chromium', 'chromium-headless-shell']) {
     return versions
 
 
+def model_profile(overrides: dict[str, str], skip_scratch_models: bool) -> tuple[dict[str, str], tuple[str, ...]]:
+    if not skip_scratch_models:
+        return overrides, HOLDOUTS
+    if overrides.get("MOHASSAN_SCRATCH_CLASSIFIERS", "0") != "0":
+        raise ValueError("Cannot enable scratch classifiers when their model files are excluded")
+    return overrides | {"MOHASSAN_SCRATCH_CLASSIFIERS": "0"}, (*HOLDOUTS, SCRATCH_MODELS)
+
+
 def run_arm(
     repo: Path, output: Path, commit: str, overrides: dict[str, str], *,
-    workers: int = LANES, offline: bool = False, monitor_audit: bool = False,
+    workers: int = LANES, offline: bool = False, monitor_audit: bool = False, skip_scratch_models: bool = False,
 ) -> dict[str, object]:
     """Write native split receipts under an existing empty, private output directory."""
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
@@ -259,7 +270,8 @@ def run_arm(
     if git(repo, "rev-parse", f"{V2_BUNDLE}:{V2_DEV}") != git(repo, "rev-parse", f"{AUDIT}:{V2_DEV}"):
         raise ValueError("The pinned v2 development release does not match the audit tree")
 
-    inputs = {"product/git-archive.tar": hash_product(repo, commit)}
+    overrides, excluded_paths = model_profile(overrides, skip_scratch_models)
+    inputs = {"product/git-archive.tar": hash_product(repo, commit, excluded_paths)}
     receipts = {}
     pins = {"v1": V1_BUNDLE, "v2": V2_BUNDLE, "audit": AUDIT, "adapters": ADAPTERS}
     with TemporaryDirectory(prefix="checkout-", dir=output) as scratch:
@@ -268,7 +280,7 @@ def run_arm(
         environment, settings = collect_environment(overrides, temporary)
         git(repo, "worktree", "add", "--detach", "--no-checkout", str(checkout), commit)
         try:
-            patterns = ("/*", *(f"!/{path}/" for path in HOLDOUTS))
+            patterns = ("/*", *(f"!/{path}/" for path in excluded_paths))
             git(checkout, "sparse-checkout", "set", "--no-cone", "--stdin",
                 input_bytes=("\n".join(patterns) + "\n").encode())
             git(checkout, "checkout", "--detach")
@@ -314,10 +326,13 @@ def run_arm(
                     for file in instrument_product(checkout):
                         inputs[f"{version}/effective/{file.relative_to(checkout)}"] = digest(file)
                     inputs[f"{version}/effective/monitor-audit.mjs"] = digest(mounted[-1])
+                if (truth_mode := settings.get(TRUTH_FLAG)) in {"shadow", "on"}:
+                    instrument_truth_observer(observe, truth_mode, apply_once)
+                    instrument_truth_scoring(runner, apply_once)
                 inputs[f"{version}/effective/observe.ts"] = digest(observe)
                 inputs[f"{version}/effective/run.ts"] = digest(runner)
-                if any((checkout / path).exists() for path in HOLDOUTS):
-                    raise ValueError("A holdout fixture directory was materialized")
+                if any((checkout / path).exists() for path in excluded_paths):
+                    raise ValueError("An excluded development benchmark directory was materialized")
 
                 common = ["node", *NODE_OPTIONS, f"{BENCH}/run.ts"]
                 if version == "v1":
@@ -347,4 +362,5 @@ def run_arm(
             git(repo, "worktree", "remove", "--force", str(checkout))
 
     return {"commit": commit, "pins": pins, "inputs": inputs, "settings": settings,
-            "toolchain": versions, "receipts": receipts}
+            "toolchain": versions, "receipts": receipts,
+            **({"excludedProductPaths": excluded_paths} if skip_scratch_models else {})}

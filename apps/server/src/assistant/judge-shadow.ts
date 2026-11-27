@@ -1,5 +1,6 @@
 import { join } from 'node:path';
-import { judge, type JudgeCode, type JudgeDecision, type JudgeInput, type JudgeVerdict, type ReplyKind } from './judge.js';
+import type { JudgeCode, JudgeDecision, JudgeInput, JudgeVerdict, ReplyKind } from './judge.js';
+import { evaluateJudgeReply, truthCheckMode, type TruthCheckMode, type TruthCheckRecord } from './truth-publication.js';
 import { conversationReviewForJudge, type ConversationReviewLog } from './review/publication.js';
 import { createJudgeLogWriter } from './judge-shadow-log.js';
 import { keepJudgeShadowText } from './judge-shadow-privacy.js';
@@ -14,6 +15,10 @@ import { keepJudgeShadowText } from './judge-shadow-privacy.js';
 export interface JudgeShadowInput extends JudgeInput {
   conversationId: string;
   runId: string;
+  /** The council's assessment of the selected answer and its existing publication policy. */
+  priorVerdict?: JudgeVerdict;
+  truthOnly?: true;
+  scrubTruthText?: (text: string) => string;
   /** The host will send the judge's fixed reply when the decision is fix (owner's own account only, by the owner's word of 2026-11-22). */
   applyFix?: boolean;
   /** The host will send the judge's withhold text when the decision is withhold (owner's own account only, by the owner's word of 2026-11-22). */
@@ -57,9 +62,11 @@ export interface JudgeShadowLine {
   textKept?: boolean;
   /** Symbolic review findings for the candidate chosen by this verdict. */
   conversationReview?: ConversationReviewLog;
+  truth?: TruthCheckRecord;
 }
 export interface JudgeShadow {
   readonly logFile: string;
+  readonly truthMode?: TruthCheckMode;
   /** Judges one reply in shadow and logs the verdict. Returns null when judging itself failed. */
   observe(input: JudgeShadowInput): JudgeVerdict | null;
   /** Resolves once every line queued so far is on disk (for tests and shutdown). */
@@ -84,7 +91,8 @@ export function judgeSettings(production: boolean, env: NodeJS.ProcessEnv, cwd: 
   };
 }
 
-export function createJudgeShadow(options: { logFile: string; now?: () => Date }): JudgeShadow {
+export function createJudgeShadow(options: { logFile: string; now?: () => Date; truthMode?: TruthCheckMode }): JudgeShadow {
+  const truthMode = options.truthMode ?? truthCheckMode(process.env);
   const now = options.now ?? (() => new Date());
   const append = createJudgeLogWriter(options.logFile);
   let queue: Promise<void> = Promise.resolve();
@@ -98,12 +106,14 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
   };
   return {
     logFile: options.logFile,
+    truthMode,
     observe(input) {
       try {
-        const verdict = judge(input);
+        const { verdict, truth } = evaluateJudgeReply(input, truthMode);
         const applied = Boolean(input.applyFix && verdict.decision === 'fix' && verdict.fixedReply?.trim())
           || Boolean(input.applyWithhold && verdict.decision === 'withhold' && verdict.withholdText?.trim());
-        const keep = keepJudgeShadowText(input, verdict);
+        const keep = keepJudgeShadowText(input, verdict)
+          && (!input.truthOnly || !input.scrubTruthText || input.scrubTruthText(input.reply) === input.reply);
         const quoted = (line: JudgeVerdict['lead']) => keep || !line ? line : { ...line, text: '' };
         write({
           at: now().toISOString(), conversationId: input.conversationId, runId: input.runId,
@@ -112,6 +122,7 @@ export function createJudgeShadow(options: { logFile: string; now?: () => Date }
           codes: verdict.codes, findings: keep ? verdict.findings : verdict.findings.map(finding => ({ ...finding, excerpt: '', detail: '' })), lead: quoted(verdict.lead), best: quoted(verdict.best),
           fixedReply: keep && verdict.fixedReply ? verdict.fixedReply.slice(0, MAX_REPLY) : null, support: verdict.support, evidence: input.evidence?.length ?? 0, ms: verdict.ms, textKept: keep,
           conversationReview: conversationReviewForJudge(input, verdict, applied),
+          ...(truth ? { truth } : {}),
         });
         return verdict;
       } catch {

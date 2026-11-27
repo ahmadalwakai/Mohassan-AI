@@ -38,31 +38,40 @@ export type ExplicitFactualEvidence = { kind: 'answer'; quote: string } | { kind
 /** Read a labeled Q&A record (for example a public FAQ). Match the entire question and preserve the answer's surface form. */
 export function explicitFactualEvidence(page: EvidencePage, question: string): ExplicitFactualEvidence | undefined {
   if (!availablePage(page)) return;
+  const record = explicitFactualRecord(page.text, question);
+  return record?.kind === 'answer' ? { kind: 'answer', quote: record.quote } : record;
+}
+
+type FactualRecord = (Extract<ExplicitFactualEvidence, { kind: 'answer' }> & { value: string })
+  | Extract<ExplicitFactualEvidence, { kind: 'unanswered' }>;
+
+/** Extract a record from text the caller already obtained as read-time evidence. */
+export function explicitFactualRecord(text: string, question: string): FactualRecord | undefined {
   const wanted = questionKey(question);
   if (!wanted || wanted.length > maxRecordLength) return;
 
-  const labels = [...page.text.matchAll(recordLabel)];
-  const records = new Map<string, string>();
+  const labels = [...text.matchAll(recordLabel)];
+  const records = new Map<string, { quote: string; value: string }>();
   let matched = false;
   for (const [index, label] of labels.entries()) {
     const answerLabel = labels[index + 1];
     if (!label[1] || !answerLabel || answerLabel[1]) continue;
-    const ask = page.text.slice(label.index + label[0].length, answerLabel.index).trim().replace(/[\s|]+$/u, '');
+    const ask = text.slice(label.index + label[0].length, answerLabel.index).trim().replace(/[\s|]+$/u, '');
     if (questionKey(ask) !== wanted) continue;
     matched = true;
 
     const answerStart = answerLabel.index + answerLabel[0].length;
-    const rest = page.text.slice(answerStart, labels[index + 2]?.index).trimStart();
+    const rest = text.slice(answerStart, labels[index + 2]?.index).trimStart();
     const value = rest.split(/\r?\n/u, 1)[0].trim().replace(/[\s|]+$/u, '');
-    const quote = `${page.text.slice(label.index, answerStart).trimEnd()} ${value}`.replace(/\s+/gu, ' ');
+    const quote = `${text.slice(label.index, answerStart).trimEnd()} ${value}`.replace(/\s+/gu, ' ');
     if (quote.length > maxRecordLength || !safeAnswer(value)) return { kind: 'unanswered' };
     if (numericQuestion.test(question) && !/\p{Nd}/u.test(value) && !yearQuestion.test(question)) return { kind: 'unanswered' };
-    records.set(matchText(value), quote);
+    records.set(matchText(value), { quote, value });
   }
   if (!matched) return;
-  const [quote] = records.values();
-  if (records.size !== 1 || !quote) return { kind: 'unanswered' };
-  return { kind: 'answer', quote };
+  const [record] = records.values();
+  if (records.size !== 1 || !record) return { kind: 'unanswered' };
+  return { kind: 'answer', ...record };
 }
 
 export interface FactualPassage { value: string; quote: string }

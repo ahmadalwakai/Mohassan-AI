@@ -12,6 +12,7 @@ import re
 import subprocess
 
 from runner import run_arm
+from truth_audit import TRUTH_FLAG, summarize_withholds
 
 
 STAGES = ('understanding', 'routing', 'planning', 'tool', 'answer', 'verification')
@@ -164,6 +165,8 @@ def arguments():
     parser.add_argument('--workers', type=int, choices=range(1, LANES + 1), default=LANES,
                         help='concurrent V2 workers; all eight lanes always run')
     parser.add_argument('--offline', action='store_true', help='install from the local npm cache without network access')
+    parser.add_argument('--skip-scratch-models', action='store_true',
+                        help='disable scratch classifiers and exclude their model files from every checkout')
     parser.add_argument('--audit-monitors', action='store_true',
                         help='control fixture IDs and citation time, and record monitor checks against recorded pages only')
     args = parser.parse_args()
@@ -190,12 +193,13 @@ def main():
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     tool = tool_hashes()
     run_summary = {'schemaVersion': 1, 'tool': tool, 'arms': {}}
+    truth_arms = defaultdict(list)
     for name, (commit, settings) in arms.items():
         arm_output = output / name
         arm_output.mkdir(mode=0o700)
         print(f'{name}: measuring {commit}', flush=True)
         source = run_arm(repo, arm_output, commit, settings, workers=args.workers, offline=args.offline,
-                         monitor_audit=args.audit_monitors)
+                         monitor_audit=args.audit_monitors, skip_scratch_models=args.skip_scratch_models)
         require(source['commit'] == commit, f'{name}: launcher measured a different commit')
         versions = combine(arm_output, source)
         receipt = {'schemaVersion': 1, 'name': name, 'commit': commit, 'tool': tool, 'source': source, 'versions': versions}
@@ -210,6 +214,19 @@ def main():
         for version, result in versions.items():
             overall = result['summary']['overall']
             print(f'{name} {version}: {overall["passed"]}/{overall["total"]}', flush=True)
+        if settings.get(TRUTH_FLAG) in {'shadow', 'on'}:
+            truth_arms[settings[TRUTH_FLAG]].append((name, commit, settings))
+    if len(truth_arms['shadow']) == len(truth_arms['on']) == 1:
+        (shadow_name, shadow_commit, shadow_settings), = truth_arms['shadow']
+        (on_name, on_commit, on_settings), = truth_arms['on']
+        require(shadow_commit == on_commit and shadow_settings | {TRUTH_FLAG: 'on'} == on_settings,
+                'truth audit requires the same commit and other settings for shadow and on')
+        shadow = json.loads((output / shadow_name / 'receipt.json').read_bytes())
+        enabled = json.loads((output / on_name / 'receipt.json').read_bytes())
+        run_summary['truthWithholds'] = {
+            version: summarize_withholds(shadow['versions'][version]['scores'], result['scores'])
+            for version, result in enabled['versions'].items()
+        }
     write_json(output / 'summary.json', run_summary)
 
 
