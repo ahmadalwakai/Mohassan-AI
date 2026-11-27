@@ -1,0 +1,77 @@
+{
+  "checked": "2026-11-27",
+  "search": {
+    "url": "https://registry.npmjs.org/-/v1/search?text=terminal+colors&size=2",
+    "body": {
+      "objects": [
+        {
+          "downloads": {
+            "monthly": 1625,
+            "weekly": 189
+          },
+          "package": {
+            "name": "terminal-colors",
+            "version": "0.1.4",
+            "description": "Terminal colors made easy",
+            "license": "MIT",
+            "date": "2015-09-19T20:59:37.308Z",
+            "links": {
+              "npm": "https://www.npmjs.com/package/terminal-colors",
+              "repository": "git+https://github.com/tinganho/terminal-colors.git"
+            }
+          }
+        },
+        {
+          "downloads": {
+            "monthly": 160284,
+            "weekly": 64160
+          },
+          "package": {
+            "name": "@jsprismarine/color-parser",
+            "version": "0.26.0",
+            "description": "Turns Minecraft § color and format codes into terminal colors",
+            "license": "(MIT OR MPL-2.0)",
+            "date": "2026-11-25T02:51:12.891Z",
+            "links": {
+              "npm": "https://www.npmjs.com/package/@jsprismarine/color-parser",
+              "repository": "git+https://github.com/JSPrismarine/JSPrismarine.git"
+            }
+          }
+        }
+      ],
+      "total": 350190
+    }
+  },
+  "metadata": {
+    "url": "https://registry.npmjs.org/is-number",
+    "body": {
+      "name": "is-number",
+      "description": "Returns true if a number or string value is a finite number. Useful for regex matches, parsing, user input, etc.",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/jonschlinkert/is-number.git"
+      },
+      "dist-tags": {
+        "latest": "7.0.0"
+      },
+      "versions": {
+        "7.0.0": {
+          "name": "is-number",
+          "version": "7.0.0",
+          "description": "Returns true if a number or string value is a finite number. Useful for regex matches, parsing, user input, etc.",
+          "license": "MIT",
+          "repository": {
+            "type": "git",
+            "url": "git+https://github.com/jonschlinkert/is-number.git"
+          }
+        }
+      },
+      "time": {
+        "created": "2014-09-22T01:58:51.592Z",
+        "modified": "2023-05-26T16:12:33.057Z",
+        "7.0.0": "2018-07-04T15:08:58.238Z"
+      }
+    }
+  }
+}

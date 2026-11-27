@@ -1,0 +1,52 @@
+{
+  "checked": "2026-11-27",
+  "note": "Reduced live responses. Summaries by Mozilla Contributors, CC BY-SA 2.5. The original page URLs are the MDN origin plus each mdn_url.",
+  "license": "https://creativecommons.org/licenses/by-sa/2.5/",
+  "robots": {
+    "url": "https://developer.mozilla.org/robots.txt",
+    "body": "User-agent: *\nSitemap: https://developer.mozilla.org/sitemap.xml\n\nDisallow: /api/\nDisallow: /*/files/\nDisallow: /media\n"
+  },
+  "index": {
+    "url": "https://developer.mozilla.org/en-US/search-index.json",
+    "body": [
+      {
+        "title": "Array.prototype.map()",
+        "url": "/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map"
+      },
+      {
+        "title": "CSS grid layout",
+        "url": "/en-US/docs/Web/CSS/Guides/Grid_layout"
+      },
+      {
+        "title": "grid-template-columns CSS property",
+        "url": "/en-US/docs/Web/CSS/Reference/Properties/grid-template-columns"
+      }
+    ]
+  },
+  "metadata": [
+    {
+      "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map/metadata.json",
+      "body": {
+        "mdn_url": "/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map",
+        "title": "Array.prototype.map()",
+        "summary": "The map() method of Array instances creates\na new array populated with the results of calling a provided function on\nevery element in the calling array."
+      }
+    },
+    {
+      "url": "https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Grid_layout/metadata.json",
+      "body": {
+        "mdn_url": "/en-US/docs/Web/CSS/Guides/Grid_layout",
+        "title": "CSS grid layout",
+        "summary": "The CSS grid layout module excels at dividing a page into major regions or defining the relationship in terms of size, position, and layering between parts of a control built from HTML primitives."
+      }
+    },
+    {
+      "url": "https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/grid-template-columns/metadata.json",
+      "body": {
+        "mdn_url": "/en-US/docs/Web/CSS/Reference/Properties/grid-template-columns",
+        "title": "grid-template-columns CSS property",
+        "summary": "The grid-template-columns CSS property defines the line names and track sizing functions of the grid columns."
+      }
+    }
+  ]
+}

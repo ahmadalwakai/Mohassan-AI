@@ -1,4 +1,5 @@
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
+import https from 'node:https';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sql } from 'kysely';
 import { createDatabase, migrate } from '@mohassan/database';
@@ -6,6 +7,7 @@ import { SafeNetwork } from '../network.js';
 import { SearchEngine } from './engine.js';
 import { documentedProviders, searchRetryAfter } from './providers.js';
 import { compileQuery } from './ranking.js';
+import github from './sources/fixtures/programming-github.json' with { type: 'json' };
 import { migrateSearch, SqlSearchStore } from './store.js';
 
 const time = Date.UTC(2026, 10, 9, 12);
@@ -27,8 +29,13 @@ const providers = [
 ];
 let database: Awaited<ReturnType<typeof createDatabase>>;
 let origin = '', retryAfter: string | undefined, received = 0;
-const server = createServer((_request, response) => {
+const server = createServer((request, response) => {
   received++;
+  if (request.url === '/github-rate-limit') {
+    response.writeHead(github.rateLimit.status, github.rateLimit.headers);
+    response.end(request.headers['x-github-api-version'] ?? '');
+    return;
+  }
   response.writeHead(503, retryAfter === undefined ? {} : { 'retry-after': retryAfter });
   response.end('Temporarily unavailable');
 });
@@ -63,6 +70,30 @@ function fixture(name: string, now: () => number) {
   const engine = new SearchEngine(network, { providers: [provider], now, admission: new SqlSearchStore(database.db, now) });
   return { provider, engine };
 }
+
+it('preserves GitHub quota headers and sends the API version only to GitHub', async () => {
+  const githubOrigin = new URL(github.repositories.url).origin;
+  // Check the selected origin and headers in SafeNetwork while keeping the transport offline.
+  const transport = vi.spyOn(https, 'request').mockImplementation((_url, options, callback) =>
+    httpRequest(`${origin}/github-rate-limit`, { headers: options.headers }, callback));
+  try {
+    const network = new SafeNetwork({ testOrigins: [origin, githubOrigin] });
+    // https://docs.github.com/en/rest/search/search#search-repositories (checked 2026-11-27)
+    const version = '2026-03-10';
+    const options = { headers: { 'X-GitHub-Api-Version': version } };
+    const result = await network.request(github.repositories.url, options);
+    expect(result.status).toBe(github.rateLimit.status);
+    expect(result.headers).toMatchObject({
+      'x-ratelimit-remaining': github.rateLimit.headers['x-ratelimit-remaining'],
+      'x-ratelimit-reset': github.rateLimit.headers['x-ratelimit-reset'],
+    });
+    expect(result.body.toString('utf8')).toBe(version);
+    const other = await network.request(`${origin}/github-rate-limit`, options);
+    expect(other.body.toString('utf8')).toBe('');
+  } finally {
+    transport.mockRestore();
+  }
+});
 
 describe.each(providers)('$name HTTP 503 cooldown', ({ name, question, nextQuestion }) => {
   it.each(cases)('shares $label Retry-After across engines without retrying the transport', async ({ header, delay }) => {

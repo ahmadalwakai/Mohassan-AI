@@ -70,7 +70,8 @@ export class SafeNetwork {
     const headers:Record<string,string>=browser?{}:{'user-agent':userAgent,'accept-encoding':'identity',accept:'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5'};
     for(const [key,value] of Object.entries(options.headers??{})){
       const name=key.toLowerCase();
-      if(browser?!name.startsWith(':')&&!CONNECTION_HEADERS.has(name):['accept','accept-language','content-type','cookie','if-none-match','if-modified-since'].includes(name)&&value.length<16000)headers[name]=value;
+      const githubVersion = url.origin === 'https://api.github.com' && name === 'x-github-api-version';
+      if(browser?!name.startsWith(':')&&!CONNECTION_HEADERS.has(name):(['accept','accept-language','content-type','cookie','if-none-match','if-modified-since'].includes(name)||githubVersion)&&value.length<16000)headers[name]=value;
     }
     if(browser)headers['accept-encoding']='gzip, br';
     if(options.body)headers['content-length']=String(Buffer.byteLength(options.body));
@@ -83,7 +84,7 @@ export class SafeNetwork {
         const encoding=String(response.headers['content-encoding']??'').toLowerCase();
         if(!['','identity','gzip','br','deflate'].includes(encoding)){response.destroy();reject(new BrowserError('BROWSER_ENCODING_DENIED','أعاد الموقع ترميزًا غير مدعوم ضمن حدود القراءة.',502));return;}
         const resultHeaders:Record<string,string>={};
-        for(const key of browser?Object.keys(response.headers).filter(name=>!CONNECTION_HEADERS.has(name)&&name!=='content-encoding'):['content-type','location','set-cookie','content-language','retry-after','etag','last-modified','x-robots-tag','cache-control','vary','access-control-allow-origin','access-control-allow-credentials','access-control-expose-headers']){const value=response.headers[key];if(value)resultHeaders[key]=Array.isArray(value)?value.join('\n'):value;}
+        for(const key of browser?Object.keys(response.headers).filter(name=>!CONNECTION_HEADERS.has(name)&&name!=='content-encoding'):['content-type','location','set-cookie','content-language','retry-after','x-ratelimit-remaining','x-ratelimit-reset','etag','last-modified','x-robots-tag','cache-control','vary','access-control-allow-origin','access-control-allow-credentials','access-control-expose-headers']){const value=response.headers[key];if(value)resultHeaders[key]=Array.isArray(value)?value.join('\n'):value;}
         if(/attachment/i.test(response.headers['content-disposition']??'')&&!options.allowAttachment){response.destroy();reject(new BrowserError('BROWSER_DOWNLOAD_DENIED','التنزيلات غير مفعلة في جلسة القراءة.'));return;}
         let total=0;const chunks:Buffer[]=[];
         response.on('data',(chunk:Buffer)=>{total+=chunk.length;if(total>maximum){response.destroy();reject(new BrowserError('BROWSER_RESPONSE_TOO_LARGE','تجاوزت الصفحة حد حجم القراءة.'));}else chunks.push(chunk);});

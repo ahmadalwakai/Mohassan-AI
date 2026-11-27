@@ -1,0 +1,32 @@
+{
+  "source": {
+    "checked": "2026-11-27",
+    "project": "https://docs.pypi.org/api/json/#get-a-project",
+    "missing": "https://github.com/pypi/warehouse/blob/main/warehouse/legacy/api/json.py",
+    "robots": "https://pypi.org/robots.txt",
+    "note": "The project body is reduced from the published sampleproject response example. Warehouse returns HTTPNotFound for an absent project. The missing body is intentionally empty for status-only replay. The adjacent robots fixture is the live response."
+  },
+  "project": {
+    "info": {
+      "name": "sampleproject",
+      "version": "4.0.0",
+      "summary": "A sample Python project",
+      "license": "...",
+      "license_expression": null,
+      "classifiers": ["License :: OSI Approved :: MIT License"],
+      "project_url": "https://pypi.org/project/sampleproject/",
+      "project_urls": {
+        "Bug Reports": "https://github.com/pypa/sampleproject/issues",
+        "Funding": "https://donate.pypi.org",
+        "Homepage": "https://github.com/pypa/sampleproject",
+        "Say Thanks!": "http://saythanks.io/to/example",
+        "Source": "https://github.com/pypa/sampleproject/"
+      }
+    },
+    "urls": [
+      { "upload_time_iso_8601": "2024-11-06T22:37:09.220617Z" },
+      { "upload_time_iso_8601": "2024-11-06T22:37:10.868088Z" }
+    ]
+  },
+  "missing": { "status": 404, "body": "" }
+}
