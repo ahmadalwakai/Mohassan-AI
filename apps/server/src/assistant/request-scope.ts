@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isBareAcknowledgement, stripAcknowledgementLead } from './acknowledgements.js';
 import { parseUserRequestConstraints, isEntireLiteralRequest, maskRequestLiteralData, UserRequestConstraintsSchema, type UserRequestConstraints } from './request-constraints.js';
 export { parseUserRequestConstraints, isEntireLiteralRequest, requestCapabilityAllowed, requestConstraintReply, maskRequestLiteralData, UserRequestConstraintsSchema, type UserRequestConstraints, type ForbiddenRequestCapability } from './request-constraints.js';
 import { publicSearchScan, publicSearchText } from '@mohassan/browser';
@@ -141,7 +142,8 @@ export function assessRequestScope(value: string, options: RequestScopeOptions =
   if (typeof value !== 'string' || !value.trim() || value.length > 8000) return make('unresolved', 'unknown', 'unknown', ['invalid_input']);
   if (isEntireLiteralRequest(value)) return make('supplied_content', 'unknown', 'unknown', ['missing_target']);
   if (constraints?.standalone || constraints?.ambiguous) return make('unresolved', constraints.standalone && !constraints.ambiguous ? 'converse' : 'unknown', 'unknown', ['explicit_prohibition']);
-  const original = value.trim(), actionText = requestScopeActionText(original), text = requestOperationText(actionText);
+  if (options.contextKind !== 'answer' && isBareAcknowledgement(value)) return make('unresolved', 'converse', 'unknown', ['non_lookup_operation']);
+  const original = value.trim(), actionText = requestScopeActionText(stripAcknowledgementLead(original)), text = requestOperationText(actionText);
   if (SOCIAL_QUESTION.test(text)) return make('unresolved', 'converse', 'unknown', ['non_lookup_operation']);
   const credentialScan = publicSearchScan(original);
   if (publicSearchText(credentialScan) !== credentialScan) return make('supplied_content', 'unknown', 'unknown', ['credential_material']);

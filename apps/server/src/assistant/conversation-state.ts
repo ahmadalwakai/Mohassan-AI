@@ -1,6 +1,8 @@
 import { analyzeCompoundRequest } from './compound-request.js';
+import { isBareAcknowledgement, startsCardApproval, stripAcknowledgementLead } from './acknowledgements.js';
 import { decideConversationTurn, type ConversationTurnDecision } from './conversation-state-decisions.js';
 import { extendConversationEntities, type ConversationEntity } from './conversation-state-entities.js';
+import { stripArabicEntityConjunction } from './public-question-syntax.js';
 import { resolveRequestContext, type RequestContextState, type RequestResolution, type RequestSlotKind } from './request-context.js';
 
 /**
@@ -257,9 +259,8 @@ const EDIT_FIELDS: Record<string, EditableField> = {
   date: 'date', day: 'date', time: 'clock', hour: 'clock', place: 'place', city: 'place', location: 'place', budget: 'budget', language: 'language',
 };
 const EDIT_FILLERS = new Set(['فقط', 'بس', 'لي', 'only', 'just', 'the', 'to', 'الي', 'ل', '=', ':', 'please']);
-const SMALL_TALK = /^(?:شكرا(?: لك| جزيلا| كثيرا)?|مشكور|تسلم|يعطيك العافيه|الله يعطيك العافيه|ممتاز|رائع|حلو|جميل|مرحبا|اهلا|اهلين|هلا|السلام عليكم|صباح الخير|مساء الخير|كيف حالك|كيفك|شخبارك|كيف الحال|عامل ايه|thanks|thank you|thx|great|cool|nice|perfect|awesome|hi|hello|hey|good morning|good evening|how are you|what's up)(?:\s+(?:يا\s+)?(?:موحسن|mohassan))?$/u;
-/** A yes or a no to the host's own approval or sign-in step; the code decides what follows, never the text. */
-const APPROVE = /^(?:نعم|اي|ايوه|ايوا|اجل|تمام|طيب|حسنا|موافق|اوافق|اكيد|ماشي|يلا|لا|yes|yeah|yep|ok(?:ay)?|sure|fine|agreed|approved?|no|nope)(?!\p{L})/u;
+const GREETING = /^(?:مرحبا|اهلا|اهلين|هلا|السلام عليكم|صباح الخير|مساء الخير|كيف حالك|كيفك|شخبارك|كيف الحال|عامل ايه|hi|hello|hey|good morning|good evening|how are you|what's up)(?:\s+(?:يا\s+)?(?:موحسن|mohassan))?$/u;
+const isSocial = (text: string) => GREETING.test(text) || isBareAcknowledgement(text.replace(/\s+(?:يا\s+)?(?:موحسن|mohassan)$/u, ''));
 const CONTINUE = /(?:^|[\s،,])(?:تابع|اكمل|كمل|استمر|امض|واصل|نفذ|go ahead|continue|proceed|carry on|do it|resume)(?!\p{L})/u;
 const DONE = /(?:^|[\s،,])(?:تم|خلصت|انتهيت|سجلت(?: الدخول)?|دخلت|done|finished|logged in|signed in|i'm in|im in)(?!\p{L})/u;
 /** Questions about Mohassan itself («من صنعك؟», "are you groq ai?", real rq084–rq087) go to the local conversation, never to a search. */
@@ -356,7 +357,6 @@ function stripPoliteness(words: readonly string[], folded: readonly string[]): {
   return { words: words.slice(start, end), folded: folded.slice(start, end), onlyPoliteness: false };
 }
 /** Names that begin with و, so «وادي رم» after a topic is not «و» + «ادي رم». */
-const WAW_NAMES = new Set(['وادي', 'واشنطن', 'ويلز', 'ويكيبيديا', 'وهران', 'ولايه', 'ولايات', 'واتساب', 'ويندوز', 'وورد', 'ورزازات', 'والي', 'وجده', 'ودان']);
 
 /** Index of the folded word sequence `form` in `folded`; و/ف/ب may lead the first word and ال any word. */
 function findSequence(folded: readonly string[], form: readonly string[], from = 0, skip?: ReadonlySet<number>): number {
@@ -699,7 +699,7 @@ function correctionValueWords(words: readonly string[], folded: readonly string[
   if (swap > 0 && isTop(rest.slice(swap + 1))) return slice(index, index + swap);
   // «لا، النصر», «غلط، في مصر»: a lead and then a short value with no question, command, thanks or go-ahead in it
   const value = rest.join(' ');
-  if (index > 0 && rest.length >= 1 && rest.length <= 4 && !SMALL_TALK.test(value) && !APPROVE.test(value) && !CONTINUE.test(value)
+  if (index > 0 && rest.length >= 1 && rest.length <= 4 && !isSocial(value) && !startsCardApproval(value) && !CONTINUE.test(value)
     && !rest.some(word => QUESTION_WORDS.has(word) || EDIT_VERBS.has(word) || ACTION_VERBS.test(word) || CORRECTION_LEADS.includes(word))) {
     return slice(index);
   }
@@ -785,7 +785,8 @@ export function understandTurn(state: ConversationStateV2, text: string, turnId:
 function understandLegacyTurn(state: ConversationStateV2, text: string, turnId: string): LegacyTurnUnderstanding {
   const pendingQuestion = state.pending?.kind === 'question_card' ? { id: state.pending.id, fields: state.pending.fields } : undefined;
   // «من فضلك»، "could you tell me" and a trailing "please" are dropped before any reading; the question mark is kept.
-  const rawWords = wordsOf(text);
+  const content = state.pending ? text : stripAcknowledgementLead(text);
+  const rawWords = wordsOf(content);
   const stripped = stripPoliteness(rawWords, rawWords.map(fold));
   const mark = /[؟?]\s*$/u.exec(text.trim())?.[0]?.trim() ?? '';
   // One-letter typos in closed word lists («tomorow», «الاثلثة» while results are shown); v1 reads the corrected words too.
@@ -801,7 +802,7 @@ function understandLegacyTurn(state: ConversationStateV2, text: string, turnId: 
   }
   const words = typos.words;
   const folded = typos.folded;
-  const whole = fold(strip(polished));
+  const whole = fold(strip(state.pending ? polished : stripAcknowledgementLead(polished)));
   const arabic = isArabic(text);
   const top = state.topics.at(-1) ?? null;
   const topForms = top?.property ? PROPERTY_BY_NAME.get(top.property) ?? null : null;
@@ -826,18 +827,22 @@ function understandLegacyTurn(state: ConversationStateV2, text: string, turnId: 
   const entityQuery = (property: PropertyForms | null, frame: TopicFrame): string | null =>
     property ? composeQuery(property, frame, arabic) : frame.template && frame.entity ? frame.template.replace('{}', frame.entity) : composeQuery(null, frame, arabic);
 
-  if (SMALL_TALK.test(whole) || CANCEL.test(whole) || stripped.onlyPoliteness) {
+  if (GREETING.test(whole) || CANCEL.test(whole) || stripped.onlyPoliteness && !isBareAcknowledgement(text)) {
     next.base = state.base;
     return result('small_talk');
   }
   if (state.pending) {
     const acknowledged = state.pending.kind === 'question_card' ? v1.kind === 'answer'
-      : state.pending.kind === 'approval' ? APPROVE.test(whole) || CONTINUE.test(whole)
-        : DONE.test(whole) || APPROVE.test(whole) || CONTINUE.test(whole);
+      : state.pending.kind === 'approval' ? startsCardApproval(whole) || CONTINUE.test(whole)
+        : DONE.test(whole) || startsCardApproval(whole) || CONTINUE.test(whole);
     if (acknowledged) {
       next.pending = null;
       return result('card_answer');
     }
+  }
+  if (isSocial(rawWhole)) {
+    next.base = state.base;
+    return result('small_talk');
   }
   const reformulation = REFORMULATIONS.find(([pattern]) => pattern.test(whole) || pattern.test(whole.replace(/^و(?=.{3,})/u, '')))?.[1];
   if (reformulation) {
@@ -1042,7 +1047,9 @@ function understandLegacyTurn(state: ConversationStateV2, text: string, turnId: 
     const lookup = lead.lookup && !privateFor(Boolean(subject?.older));
     const current = hit?.forms.locationValued || !hit && leadForms?.locationValued ? operandsFrom(words, folded, start, hints, true) : operands;
     // «ونيوتن؟», «ونيوتن»: the و that made this a follow-up is not part of the name, unless the name itself begins with و («وادي رم»).
-    if (current.entity && !hit && words.length <= 3 && /^و.{2,}/u.test(folded[0]!) && fold(current.entity).startsWith(folded[0]!) && !WAW_NAMES.has(folded[0]!)) current.entity = current.entity.slice(1);
+    if (current.entity && !hit && words.length <= 3 && /^و.{2,}/u.test(folded[0]!) && fold(current.entity).startsWith(folded[0]!)) {
+      current.entity = stripArabicEntityConjunction(current.entity, folded[0]!);
+    }
     if (current.entity && (!hit || hit.forms.name === lead.property)) {
       const frame = frameOf({ entity: current.entity, property: property?.name ?? null, place: current.place ?? (property?.locationValued ? null : lead.place),
         time: current.time ?? lead.time, template: hit ? null : lead.template, lookup });
@@ -1097,7 +1104,7 @@ function understandLegacyTurn(state: ConversationStateV2, text: string, turnId: 
   }
   // A question about Mohassan itself, a go-ahead with more words («أكمل في Chrome») or a bare acknowledgement («موافق») is never a public lookup.
   // The owner's own file («أضف علامة مائية على آخر ملف pdf», «ما حجم ملفي؟») is not a public lookup either.
-  const aboutSelf = ABOUT_ASSISTANT.test(whole) || ABOUT_ASSISTANT.test(rawWhole) || CONTINUE_START.test(whole) || APPROVE.test(whole) && words.length <= 3
+  const aboutSelf = ABOUT_ASSISTANT.test(whole) || ABOUT_ASSISTANT.test(rawWhole) || CONTINUE_START.test(whole) || startsCardApproval(whole) && words.length <= 3
     || actsOnArtifact(folded, whole);
   const publicLookup = !privateNow && !aboutSelf && v1.scope === 'public' && ['web_search', 'news'].includes(v1.intent);
   // «ايه هي عاصمة كندا؟»: v1 knows no dialect question word and leaves no query, but a named property of a named entity is a public lookup.

@@ -1,3 +1,11 @@
+// Existing conversation-state v2 proper-name exceptions, retrieved 2026-11-27.
+// https://github.com/ahmadalwakai/Mohassan-AI/blob/29448aea3fa10d226ef82ec5bf0a65e723d6ec39/apps/server/src/assistant/conversation-state.ts#L359
+const WAW_NAMES = new Set(['وادي', 'واشنطن', 'ويلز', 'ويكيبيديا', 'وهران', 'ولايه', 'ولايات', 'واتساب', 'ويندوز', 'وورد', 'ورزازات', 'والي', 'وجده', 'ودان']);
+
+export function stripArabicEntityConjunction(text: string, firstWord: string): string {
+  return /^و/u.test(text) && !WAW_NAMES.has(firstWord) ? text.slice(1).trimStart() : text;
+}
+
 // The caller supplies matching text, so these patterns do not change the query sent to search.
 const QUESTION_OPENING = /^(?:(?:(?:في|الي|علي|عن|من|مع|لدي|حسب|تحت|داخل|خارج)\s+)?(?:ما|ماذا|كم|كيف|متي|اين|وين|من|مين|هل|اي|ايه|وش|شو|شنو|ايش|ايهما|ماهو|ماهي|بكم|بماذا|مم|مما|لمن|لاي|باي)|(?:لماذا|ليش|ليه))(?=\s+\S)|^(?:(?:(?:in|on|at|by|to|from|for|with|under|about)\s+)?(?:what|who|whom|whose|when|where|why|how|which)|is|are|does|do|can|will)\b(?=['’]|\s+\S)/iu;
 const ENGLISH_AUXILIARY_QUESTION = /^(?:am|was|were|did|has|have|had|could|would|should|may|might|must)\s+\S[^?]*\?$/iu;

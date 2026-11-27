@@ -1,4 +1,5 @@
 import { shorterRequest } from './answer-reshape.js';
+import { isBareAcknowledgement, isCardConfirmation, stripAcknowledgementLead } from './acknowledgements.js';
 import type { PendingStep, TopicFrame, TurnUnderstanding } from './conversation-state.js';
 import type { ConversationEntity, ConversationEntityKind } from './conversation-state-entities.js';
 import { resolveRequestContext } from './request-context.js';
@@ -41,7 +42,6 @@ const bare = (text: string) => fold(text).replace(/^[\s،,.!؟?:؛;]+|[\s،,.!؟
 function listed<T>(entries: Readonly<Record<string, T>>, key: string): T | undefined {
   return Object.hasOwn(entries, key) ? entries[key] : undefined;
 }
-const CONFIRMATION = /^(?:(?:طيب|تمام|حسنا|موافق|اوكي|ok|okay|yes|sure)[،,\s]+)?(?:نعم|اجل|اي|ايوا|ايوه|ايه|اه|تمام|اكيد|طبعا|موافق|اوافق|صحيح|ماشي|حسنا|اوكي|يلا|لا|كمل|اكمل|تابع|واصل|نفذ|تم|خلصت|yes|yeah|yep|yup|ok(?:ay)?|sure|fine|agreed|approved|correct|exactly|no|nope|done|go ahead|go on|proceed|continue|do it|carry on|resume)(?:\s+(?:شكرا|please|thanks|من فضلك))?$/u;
 const CORRECTION = /^(?:(?:لا|no|nope|عفوا|sorry)[،,\s]+)?(?:اقصد|قصدت|قصدي|اعني|بل|i mean|i meant|rather|correction)(?=$|[\s:،,])/u;
 const SOCIAL = /^(?:ازيك|ازيك عامل ايه|كيفكم|كيف حالكم|شلونك|شلونكم|وش اخبارك|شو اخبارك|يا هلا|هلا والله|اهلا وسهلا|وعليكم السلام|صباح النور|مساء النور|تسلم ايدك|ميرسي|cheers|good afternoon|good night|how's it going)$/u;
 const FOLLOW_LEAD = /^(?:(?:طيب|طب|تمام|حسنًا|حسنا|أوكي|اوكي|ok(?:ay)?|well|so)[،,\s]+)+|^(?:and|also)\s+|^[وف](?=(?:متي|متى|إمتى|امتى|وقتاش|ليش|ليه|لماذا|علاش|اين|أين|وين|فين|كيف|كم|كام|ما|ماذا|من|مين|هل|هي|هو|هم|فيه|فيها|عنها|عنه|العنوان|السعر|الموقع|ساعات العمل|مواعيد العمل)(?!\p{L}))/iu;
@@ -163,7 +163,7 @@ function questionType(words: readonly Word[]): ConversationQuestionType | null {
 }
 
 function stripFollowLead(text: string): string {
-  const stripped = text.trim().replace(FOLLOW_LEAD, '').trim();
+  const stripped = stripAcknowledgementLead(text.trim()).replace(FOLLOW_LEAD, '').trim();
   const politeQuestion = stripped.replace(POLITE_QUESTION_LEAD, '').replace(FOLLOW_LEAD, '').trim();
   return questionType(wordsOf(politeQuestion)) ? politeQuestion : stripped;
 }
@@ -370,7 +370,7 @@ export function decideConversationTurn(input: ConversationTurnInput): Conversati
     return decision('correction', 0.97, ['explicit_correction'], reference, revised,
       revised ? questionType(wordsOf(stripFollowLead(revised))) : question);
   }
-  if (CONFIRMATION.test(whole) && !(whole === 'ايه' && /[؟?]$/u.test(input.text.trim()))
+  if (isCardConfirmation(input.text) && (pending || !previousTopic && !input.hasPreviousAnswer || !isBareAcknowledgement(input.text))
       || legacy.type === 'card_answer' && pending) return decision('confirmation', 0.96, ['explicit_confirmation']);
   if (shorterRequest(input.text) || MORE.test(value) || legacy.edit && PROPERTY_REFORMULATIONS.has(legacy.edit.field)) {
     return decision('refinement', 0.97, ['answer_reformulation'], currentFocus());
