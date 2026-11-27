@@ -17,6 +17,12 @@ const cachedOutcome = z.object({
   fetchedAt: z.iso.datetime(), freshness: z.enum(['fresh','cached','indexed_snapshot']), coverage: z.enum(['web_sources','specialized_sources','local_only','mixed']),
   failures: z.array(z.object({ provider: z.string().max(100), kind: z.enum(['rate_limited','unavailable','invalid_response']) }).strict()).max(20),
   limitations: z.array(z.string().max(1000)).max(20),
+  selection: z.object({
+    searchedProviders: z.array(z.string().max(100)),
+    unavailableSites: z.array(z.string()),
+    unavailableDomains: z.array(z.enum(['news', 'health', 'official_statistics', 'government', 'programming', 'scholarly', 'religion', 'language', 'travel', 'encyclopedia', 'general_web'])),
+    wikipediaFallback: z.literal(true).optional(),
+  }).strict().optional(),
 }).strict();
 
 /** Separate migration, shared by cache and the explicitly populated public-document index. */

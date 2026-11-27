@@ -115,7 +115,8 @@ export function localSearchSnippet(query: ReturnType<typeof compileQuery>, title
 }
 export type RankedHit = SearchHit & { providers: string[]; relevance: 'lexical'; score: number };
 /** Intent-specific source ordering, then BM25 + reciprocal rank fusion; never arrival time. */
-export function rankResults(query: ReturnType<typeof compileQuery>, results: readonly { provider: string; hits: SearchHit[] }[], limit: number): RankedHit[] {
+export function rankResults(query: ReturnType<typeof compileQuery>, results: readonly { provider: string; hits: SearchHit[] }[], limit: number,
+  preferredProviders?: ReadonlySet<string>): RankedHit[] {
   const docs = new Map<string, { hit: SearchHit; providers: Set<string>; rrf: number }>();
   const descriptionScore = (hit:SearchHit) => { const title=new Set(searchTokens(hit.title)),snippet=new Set(searchTokens(hit.snippet));return query.tokens.reduce((score,term)=>score+(title.has(term)?2:snippet.has(term)?1:0),0); };
   for (const result of [...results].sort((a, b) => a.provider.localeCompare(b.provider))) {
@@ -168,6 +169,7 @@ export function rankResults(query: ReturnType<typeof compileQuery>, results: rea
   // must not receive the nodejs.org hint, nor may tiny terms match arbitrary hosts.
   const topicHostPriority = (hit: RankedHit) => webPriority(hit.providers)
     && hostSubjects.has(new URL(hit.url).hostname.replace(/\.$/u, '').split('.').at(-2) ?? '') ? 1 : 0;
+  const languagePriority = (hit: RankedHit) => Number(preferredProviders !== undefined && hit.providers.some(provider => preferredProviders.has(provider)));
   const ranked = entries.flatMap(row => {
     let score = 0, matched = 0;
     for (const term of rankingTokens) {
@@ -180,7 +182,7 @@ export function rankResults(query: ReturnType<typeof compileQuery>, results: rea
     if (rankingTokens.length && matched < Math.min(4, Math.ceil(rankingTokens.length * 0.6))) return [];
     if (anchors.filter(term => row.terms.includes(term)).length < neededAnchors) return [];
     return [{ ...row.hit, providers: [...row.providers].sort(), relevance: 'lexical' as const, score: Math.round((score + row.rrf * 10) * 1e6) / 1e6 }];
-  }).sort((a, b) => sourcePriority(b.url) - sourcePriority(a.url) || academicPriority(b.providers) - academicPriority(a.providers) || webPriority(b.providers) - webPriority(a.providers) || topicHostPriority(b) - topicHostPriority(a) || b.score - a.score || a.url.localeCompare(b.url));
+  }).sort((a, b) => languagePriority(b) - languagePriority(a) || sourcePriority(b.url) - sourcePriority(a.url) || academicPriority(b.providers) - academicPriority(a.providers) || webPriority(b.providers) - webPriority(a.providers) || topicHostPriority(b) - topicHostPriority(a) || b.score - a.score || a.url.localeCompare(b.url));
   const counts = new Map<string, number>(), selected: RankedHit[] = [];
   for (const row of ranked) {
     const hostname = new URL(row.url).hostname.replace(/\.$/u, ''), host = wikipediaHost(hostname) ? 'wikipedia.org' : hostname, count = counts.get(host) ?? 0;

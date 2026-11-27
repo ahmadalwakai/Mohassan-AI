@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { BrowserError, type AgentAction, type AgentElement, type AgentPage } from '@mohassan/browser';
+import { describe, expect, it, vi } from 'vitest';
+import { BrowserError, SafeNetwork, SearchEngine, documentedProviders, type AgentAction, type AgentElement, type AgentPage } from '@mohassan/browser';
 import { describe as describeReply, excerpt, headlines, findSearchBox, findTarget, ordinalOf, parseHands, realUrl, relevantLines, resultLinks, runHands, readableText, webQuestion, WIKI_SEARCH, type HandsIO, type HandsPlan } from '../apps/server/src/assistant/hands.js';
 
 const el = (ref: string, role: string, label: string, extra: Partial<AgentElement> = {}): AgentElement => ({ ref, role, label, inViewport: true, ...extra });
@@ -330,6 +330,75 @@ describe('question answers from the web', () => {
     expect(log.some(line => line.includes('wikipedia.org'))).toBe(false);
     expect(outcome).toMatchObject({ kind: 'done', status: 'blocked' });
     expect(outcome.kind === 'done' && outcome.text).toContain('لم أتمكن من الوصول إلى مصدر حديث');
+  });
+
+  const fallbackArticles: Record<string, { article: string; answer: string }> = {
+    'كم عدد سكان مصر؟': {
+      article: new URL('https://ar.wikipedia.org/wiki/مصر').href,
+      answer: 'بلغ عدد سكان مصر 105 ملايين نسمة في 2024 بحسب الجهاز المركزي للتعبئة العامة والإحصاء.',
+    },
+    'What is the population of Egypt?': {
+      article: 'https://en.wikipedia.org/wiki/Egypt',
+      answer: 'The population of Egypt is about 105 million people as of 2024.',
+    },
+  };
+
+  it.each([
+    ['How many people live in Japan?', 'en', 'official statistics'],
+    ['What is the population of France?', 'en', 'official statistics'],
+    ['كم عدد سكان مصر؟', 'ar', 'الإحصاءات الرسمية'],
+    ['ما هي أعراض السكري؟', 'ar', 'الصحة'],
+    ['What are the symptoms of diabetes?', 'en', 'health'],
+    ['How do vaccines work?', 'en', 'health'],
+    ['كيف تعمل الطاقة الشمسية؟', 'ar', 'الويب العام'],
+    ['ما معنى كلمة سراب؟', 'ar', 'اللغة'],
+    ['What is the GDP of Egypt?', 'en', 'official statistics'],
+    ['What is the population of Egypt?', 'en', 'official statistics'],
+  ] as const)('reports the documented Wikipedia fallback for %s', async (question, language, domain) => {
+    const fixture = fallbackArticles[question];
+    const { io, log } = fakeIO({}, null, {}, fixture ? { [fixture.article]: pageOf(fixture.article, [], fixture.answer) } : {});
+    const request = vi.fn(async (url: string) => ({
+      url, status: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify({ query: { search: [] } })),
+    }));
+    const network = Object.assign(new SafeNetwork(), { request });
+    const engine = new SearchEngine(network, {
+      publicWeb: false, providers: documentedProviders(network),
+      admission: { acquireProvider: async () => ({ token: 'test' }), releaseProvider: async () => true },
+    });
+    io.search = async (query, limit, plan, report) => {
+      const outcome = await engine.execute(query, limit, undefined, { ownerId: 'owner', plan });
+      if (outcome.selection) report(outcome.selection);
+      return outcome.hits;
+    };
+
+    const outcome = await runHands({ steps: webQuestion(question)!, next: 0 }, io);
+    const progress = language === 'ar' ? 'بحثتُ في: Wikipedia لأن المصادر المتخصصة لهذا السؤال غير متاحة'
+      : 'I searched Wikipedia because a specialized source was unavailable for this question';
+    const note = language === 'ar' ? `لا تتوفر حاليًا مصادر بحث آلية لمجال ${domain}.`
+      : `Automatic search sources for ${domain} are currently unavailable.`;
+    expect(request.mock.calls.map(([url]) => new URL(url).hostname)).toEqual([`${language}.wikipedia.org`]);
+    expect(log).toContain(`step:${progress}`);
+    expect(outcome.kind === 'done' && outcome.text).toContain(note);
+    if (fixture) {
+      expect(log.indexOf(`read:${fixture.article}`)).toBeGreaterThan(log.indexOf(`step:${progress}`));
+      expect(outcome).toMatchObject({ kind: 'done', status: 'completed' });
+      expect(outcome.kind === 'done' && outcome.text).toContain(fixture.answer);
+    }
+  });
+
+  it('honors a Wikipedia exclusion before reading a subject and identifies the provider searched', async () => {
+    const { io, log } = fakeIO({}, null, {}, {});
+    const progress: string[] = [];
+    io.progress = async label => { progress.push(label); };
+    io.search = async (_query, _limit, plan, report) => {
+      expect(plan.excludedSites).toContain('wikipedia.org');
+      report({ searchedProviders: ['Fixture'], unavailableSites: [], unavailableDomains: [] });
+      return [hit('France capital', 'https://en.wikipedia.org/wiki/France')];
+    };
+    const outcome = await runHands({ steps: webQuestion('What is the capital of France, not from Wikipedia?')!, next: 0 }, io);
+    expect(outcome).toMatchObject({ kind: 'done', status: 'blocked' });
+    expect(log.some(line => /^(read|open):.*wikipedia\.org/u.test(line))).toBe(false);
+    expect(progress[0]).toContain('I searched Fixture because you excluded wikipedia.org');
   });
 
   it('keeps an explicit Wikipedia request on Wikipedia', async () => {
