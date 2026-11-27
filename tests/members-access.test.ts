@@ -7,6 +7,7 @@ import { createDatabase, migrate } from '@mohassan/database';
 import { createApplication } from '../apps/server/src/app.ts';
 import { migrateAuth } from '../apps/server/src/auth.ts';
 import { commandChatMigration } from '../apps/server/src/command-chat.ts';
+import { codingDeviceRoute } from '../apps/server/src/coding-link.ts';
 import { MEMBER_ROUTES, PUBLIC_ROUTES, migrateMembers } from '../apps/server/src/members.ts';
 import { memberRunsToday, migrateMemberQuota } from '../apps/server/src/member-run-quota.ts';
 
@@ -108,6 +109,9 @@ describe('workspace members over disposable local state', () => {
       ['DELETE', '/api/members/:userId/sessions'],
       ['GET', '/api/members/deletions'],
       ['DELETE', '/api/members/deletions/:userId'],
+      ['GET', '/api/coding/devices'],
+      ['POST', '/api/coding/devices/pairing'],
+      ['DELETE', '/api/coding/devices/:id'],
     ] as const;
     for (const [method, pattern] of ownerRoutes) {
       const key = `${method} ${pattern}`;
@@ -142,6 +146,7 @@ describe('workspace members over disposable local state', () => {
     for (const key of application!.routes) {
       if (PUBLIC_ROUTES.has(key)) continue;
       const [method, url] = key.split(' ') as [string, string];
+      if (codingDeviceRoute({ method, url })) continue;
       if (method === 'OPTIONS') continue;
       const response = await app().inject({ method: method as 'GET', url: concrete(url), headers: headers(''), ...(method === 'GET' || method === 'HEAD' ? {} : { payload: {} }) });
       expect(response.statusCode, key).toBe(401);

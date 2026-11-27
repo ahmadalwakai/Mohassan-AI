@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import { credentialLike } from '@mohassan/coding/security';
+import { codingDeviceFailureText, codingDeviceTaskFailureText } from '@mohassan/coding-link/failures';
 import { CodingResultSchema, type CodingResult, type Task } from '@mohassan/contracts';
 import { containsSensitiveCredentialText } from '../sensitive-credential-text.js';
 import { foldProjectText, type CodingProjectRef, type CodingReply } from './no-model-coding.js';
 
 interface ChangeViewRuntime {
-  latestCodingChange?(ownerId: string, projectId: string): Promise<Pick<Task, 'id' | 'status' | 'result'> | null>;
+  latestCodingChange?(ownerId: string, projectId: string): Promise<Pick<Task, 'id' | 'status' | 'result' | 'error'> | null>;
 }
 
 interface ChangeViewCoding {
@@ -17,6 +18,8 @@ interface SavedChangeView {
   status: Task['status'];
   result: CodingResult | null;
   reverified: boolean;
+  taskError?: string | null;
+  verificationError?: unknown;
 }
 
 /** Reads the Runtime's committed result and checks it against the review worktree when it is available. */
@@ -28,7 +31,7 @@ export function readCodeChangeView(runtime: ChangeViewRuntime, coding: ChangeVie
     const parsed = CodingResultSchema.safeParse(task.result);
     if (!parsed.success || parsed.data.projectId !== projectId || parsed.data.branch !== `mohassan/${task.id}`
         || !parsed.data.sourceUnchanged || createHash('sha256').update(parsed.data.diff).digest('hex') !== parsed.data.diffHash) {
-      return { status: task.status, result: null, reverified: false };
+      return { status: task.status, result: null, reverified: false, taskError: task.error };
     }
     const saved = parsed.data;
     if (coding.available && coding.verify) {
@@ -36,8 +39,10 @@ export function readCodeChangeView(runtime: ChangeViewRuntime, coding: ChangeVie
         const verified = await coding.verify(saved, { taskId: task.id, ownerId, projectId, signal });
         signal.throwIfAborted();
         if (verified) return { status: task.status, result: verified, reverified: true };
-      } catch {
+      } catch (error) {
         signal.throwIfAborted();
+        const code = error instanceof Error && 'code' in error ? error.code : undefined;
+        return { status: task.status, result: saved, reverified: false, verificationError: code };
       }
     }
     return { status: task.status, result: saved, reverified: false };
@@ -74,13 +79,15 @@ function displayDiff(diff: string, ar: boolean): string[] {
 
 function describeChange(view: SavedChangeView, project: string, ar: boolean): CodingReply & { evidence: string } {
   const { status, result, reverified } = view;
+  const lang = ar ? 'ar' : 'en';
   const title = ar ? `آخر تعديل في «${project}»` : `Last change in "${project}"`;
   const unchanged = ar ? 'لم يُدمج شيء.' : 'Nothing was merged.';
   if (!result) {
     const outcome = status === 'failed' ? (ar ? 'فشلت مهمة التعديل.' : 'The change task failed.')
       : status === 'cancelled' ? (ar ? 'أُلغيت مهمة التعديل.' : 'The change task was cancelled.') : '';
     const missing = ar ? 'لا توجد نتيجة متحقَّق منها لهذه المهمة.' : 'There is no verified result for this task.';
-    return { text: [title, '', outcome, missing, unchanged].filter(Boolean).join('\n'), status: 'partial', evidence: `task ${status}, no verified coding result` };
+    const reason = codingDeviceTaskFailureText(view.taskError ?? null, lang);
+    return { text: [title, '', outcome, reason, missing, unchanged].filter(Boolean).join('\n'), status: 'partial', evidence: `task ${status}, no verified coding result` };
   }
   const outcome = result.outcome === 'ready_for_review' ? (ar ? 'النتيجة المحفوظة جاهزة للمراجعة.' : 'The saved result is ready for review.')
     : result.outcome === 'tests_failed' ? (ar ? 'فشلت الاختبارات بعد التعديل.' : 'Tests failed after the change.')
@@ -91,6 +98,8 @@ function describeChange(view: SavedChangeView, project: string, ar: boolean): Co
   const mergeable = status === 'completed' && result.outcome === 'ready_for_review' && checkpoint
     && GIT_HASH.test(checkpoint) && REVIEW_BRANCH.test(result.branch);
   const parts = [title, '', outcome, verification];
+  const verificationFailure = codingDeviceFailureText(view.verificationError, lang);
+  if (verificationFailure) parts.push(verificationFailure);
   if (mergeable) parts.push('', ar ? `فرع المراجعة: \`${result.branch}\`` : `Review branch: \`${result.branch}\``);
   if (result.changes.length) parts.push('', ar ? '**الملفات المعدّلة (قبل ← بعد)**' : '**Changed files (before → after)**',
     ...result.changes.map(({ path, beforeHash, afterHash }) => scrubLine(`- \`${path}\`: \`${beforeHash.slice(0, 12)}\` → \`${afterHash.slice(0, 12)}\``, ar)));

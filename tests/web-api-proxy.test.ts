@@ -23,6 +23,28 @@ function streamRequest(path: string, body: ReadableStream<Uint8Array>) {
 }
 
 describe('public API proxy', () => {
+  it.each(['pair', 'poll'])('keeps device %s requests out of the web relay', async action => {
+    const fetchUpstream = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', fetchUpstream);
+    const path = ['coding', 'device', action];
+    const response = await POST(new NextRequest(`${site}/api/${path.join('/')}`, {
+      method: 'POST', headers: { 'sec-fetch-mode': 'cors' },
+    }), context(...path));
+
+    expect(response.status).toBe(403);
+    expect((await response.json()).error.code).toBe('CODING_DEVICE_BROWSER_DENIED');
+    expect(fetchUpstream).not.toHaveBeenCalled();
+  });
+
+  it.each(['coding/projects', 'coding/projects/demo'])('allows the device deadline for POST /api/%s', async path => {
+    const routeTimeout = vi.spyOn(AbortSignal, 'timeout');
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json({ ok: true })));
+    const response = await POST(new NextRequest(`${site}/api/${path}`, { method: 'POST' }), context(...path.split('/')));
+
+    expect(response.status).toBe(200);
+    expect(routeTimeout).toHaveBeenCalledWith(65_000);
+  });
+
   it('starts the upstream request before consuming the entire body and streams bounded chunks intact', async () => {
     const order: string[] = [];
     const chunks = ['{"message":', '"hello"}'];

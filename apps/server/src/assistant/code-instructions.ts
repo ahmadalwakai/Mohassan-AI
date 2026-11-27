@@ -1,4 +1,5 @@
 import { BrowserError } from '@mohassan/browser';
+import { codingDeviceFailureText } from '@mohassan/coding-link/failures';
 import type { CodeReadAnswer, CodingProjectRef } from './no-model-coding.js';
 import type { AssistantTools } from './tools.js';
 
@@ -42,8 +43,9 @@ export async function answerProjectInstructions(request: InstructionsRequest, pr
     return answer(text.join('\n'), 'completed', `committed instructions: ${protectedGlobs.length} globs, ${notes.length} note characters, ${warnings.length} warnings`);
   } catch (error) {
     if (!(error instanceof BrowserError)) throw error;
-    return answer(ar ? `تعذّرت قراءة تعليمات ${name}. ${error.message}`
-      : `I could not read the instructions of ${name}. ${error.message}`, 'blocked', `failed: ${error.code}`);
+    const reason = codingDeviceFailureText(error.code, request.lang) ?? error.message;
+    return answer(ar ? `تعذّرت قراءة تعليمات ${name}. ${reason}`
+      : `I could not read the instructions of ${name}. ${reason}`, 'blocked', `failed: ${error.code}`);
   }
 }
 

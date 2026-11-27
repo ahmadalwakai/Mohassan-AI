@@ -29,18 +29,22 @@ if (process.argv.slice(2).find(value => value.startsWith('--set=')) === '--set=s
  * model is configured, and the database is embedded and in memory. Records the first and final replies, the run status
  * and the time per request.
  *
- * Usage: npx tsx scripts/mohassan-code/measure-no-model-coding.ts [checkout] [out.json] [--set=slice1|slice2|before-after|logic|show-change|instructions|rename|projects] [--real-sandbox]
+ * Usage: node --import tsx scripts/mohassan-code/measure-no-model-coding.ts [checkout] [out.json] [--set=slice1|slice2|before-after|logic|show-change|instructions|rename|projects] [--real-sandbox] [--via-device-link]
  * `checkout` (default: the current directory) is the repository to measure, so one copy of this file measures a base
  * checkout too. That checkout needs its own installed node_modules. `--real-sandbox` uses the Windows AppContainer
  * sandbox instead of the stub (Windows only; its first isolation probe takes about half a minute).
+ * `--via-device-link` moves the same runner to an in-process worker using loopback HTTP.
  */
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import type { SandboxRunner } from '@mohassan/coding';
 import { PASSING_OUTPUT, REAL_OUTPUT } from '../../tests/fixtures/coding-test-output.js';
 import { REPAIR_DEMO_FAILURE_OUTPUT, REPAIR_DEMO_SUCCESS_OUTPUT } from '../../tests/fixtures/coding-repair-demo-output.js';
 import { git } from '../../packages/coding/src/git.ts';
+import { pairMeasurementDevice, unavailableServerSandbox } from './device-fixture.ts';
+import { configureModelFreeMeasurement } from './fixtures.ts';
 
 interface Case { id: string; goal: string; expect?: string[]; approval?: boolean; expectApproval?: string[]; question?: { option: string; expect: string[] }; control?: boolean; blocked?: boolean }
 const beforeAfter = ['قبل التعديل: نجح 0 من 2، وفشل 2.', 'بعد التعديل: نجح 2 من 2، وفشل 0.', 'adds positive values', 'test/sum.test.mjs:5', 'ReferenceError', 'src/sum.ts:2'];
@@ -141,9 +145,13 @@ const [checkoutArgument, out] = process.argv.slice(2).filter(value => !value.sta
 const set = flags.find(value => value.startsWith('--set='))?.slice('--set='.length) ?? 'slice1';
 if (set !== 'slice1' && set !== 'slice2' && set !== 'before-after' && set !== 'logic' && set !== 'show-change' && set !== 'instructions' && set !== 'rename' && set !== 'projects') throw new Error(`unknown set ${set}`);
 const realSandbox = flags.includes('--real-sandbox');
-const checkout = resolve(checkoutArgument ?? process.cwd());
-const { createApplication } = await import(pathToFileURL(join(checkout, 'apps/server/src/app.ts')).href);
-const { createRepairDemoProject, snapshotHash } = await import(pathToFileURL(join(checkout, 'packages/coding/src/index.ts')).href);
+const viaDeviceLink = flags.includes('--via-device-link');
+if (realSandbox && process.platform !== 'win32') throw new Error('The real sandbox requires Windows AppContainer');
+const checkout = await realpath(resolve(checkoutArgument ?? process.cwd()));
+const directory = await realpath(await mkdtemp(join(tmpdir(), 'mohassan-measure-coding-')));
+await configureModelFreeMeasurement(checkout, directory);
+const { createApplication }: typeof import('../../apps/server/src/app.ts') = await import(pathToFileURL(join(checkout, 'apps/server/src/app.ts')).href);
+const { createRepairDemoProject, snapshotHash }: typeof import('../../packages/coding/src/index.ts') = await import(pathToFileURL(join(checkout, 'packages/coding/src/index.ts')).href);
 
 const renameDemo = {
   'package.json': '{"name":"mohassan-rename-demo","private":true,"type":"module"}\n',
@@ -180,12 +188,11 @@ async function createRenameDemo(directory: string) {
   return path;
 }
 
-const directory = await mkdtemp(join(tmpdir(), 'mohassan-measure-coding-'));
 const dataDir = set === 'projects' ? join(directory, 'projects') : directory;
 await mkdir(dataDir, { recursive: true });
 const secret = 'measure-coding-fixture-internal-secret-01', origin = 'http://127.0.0.1:3000';
 const headers = { 'x-mohassan-internal': secret, origin };
-const fixture = {
+const fixture: SandboxRunner = {
   available: async () => ({ available: true, provider: 'unit-fixture', message: 'measurement stub' }),
   run: async (request: { files: { path: string; content: string }[] }) => {
     const hash = snapshotHash(request.files);
@@ -209,13 +216,14 @@ const stub = set === 'projects' ? {
 const startedApp = Date.now();
 const application = await createApplication({
   authSecret: 'measure-coding-fixture-auth-secret-000001', internalSecret: secret, setupToken: 'measure-coding-fixture-setup-token-001', webOrigin: origin,
-  production: false, runWorker: true, testRequestLimit: 2000, codingDataDir: dataDir, codingAllowedRoots: [dataDir], browserChannel: null,
-  // Without a runner the coding control builds the Windows AppContainer sandbox itself (apps/server/src/coding.ts).
-  ...(realSandbox ? {} : { sandboxRunner: stub }),
+  production: false, runWorker: true, testRequestLimit: 2000, browserChannel: null,
+  codingDeviceLink: viaDeviceLink, codingDataDir: viaDeviceLink ? join(directory, 'unused-server-coding') : dataDir,
+  codingAllowedRoots: viaDeviceLink ? [] : [dataDir],
+  sandboxRunner: viaDeviceLink ? unavailableServerSandbox : realSandbox ? undefined : stub,
 });
-const startupMs = Date.now() - startedApp;
 let cookie = '';
-const api = (method: 'GET' | 'POST', url: string, payload?: unknown) => application.app.inject({ method, url, headers: { ...headers, cookie }, ...(payload === undefined ? {} : { payload }) });
+let stopDevice: (() => Promise<void>) | undefined;
+const api = (method: 'GET' | 'POST', url: string, payload?: object) => application.app.inject({ method, url, headers: { ...headers, cookie }, ...(payload === undefined ? {} : { payload }) });
 const delay = (ms: number) => new Promise(done => setTimeout(done, ms));
 async function settled(id: string) {
   for (let attempt = 0; attempt < 600; attempt++) {
@@ -247,7 +255,20 @@ try {
   const login = await application.app.inject({ method: 'POST', url: '/api/auth/sign-in/email', headers, payload: { email: 'measure@example.test', password: 'Measure-Coding-Password-42' } });
   cookie = (Array.isArray(login.headers['set-cookie']) ? login.headers['set-cookie'] : [login.headers['set-cookie']]).filter(Boolean).map((value: unknown) => String(value).split(';')[0]).join('; ');
   const ownerId = (await application.database.db.selectFrom('user').select('id').executeTakeFirstOrThrow()).id as string;
+  if (viaDeviceLink) {
+    const device = await pairMeasurementDevice(application, {
+      checkout, ownerId, dataDir, allowedRoots: [dataDir], sandbox: realSandbox ? undefined : stub,
+      createPairing: () => api('POST', '/api/coding/devices/pairing', {}),
+    });
+    stopDevice = await device.start();
+  }
+  const startupMs = Date.now() - startedApp;
+  if (realSandbox) {
+    const { sandbox } = await application.coding.workspace(ownerId);
+    if (!sandbox.available || sandbox.provider !== 'windows-appcontainer') throw new Error('Windows AppContainer did not pass its readiness probe');
+  }
   const demo = set === 'rename' ? null : await api('POST', '/api/coding/projects/demo', {});
+  if (demo && demo.statusCode !== 200) throw new Error(`Demo fixture registration failed (${demo.statusCode})`);
   if (set === 'rename') {
     const path = await createRenameDemo(directory);
     const registered = await api('POST', '/api/coding/projects', { name: 'مشروع تجربة الجمع', path, allowedPaths: renameDemoPaths });
@@ -275,14 +296,13 @@ try {
     direct: (await createRepairDemoProject(join(dataDir, 'named files'))).path,
     outside: (await createRepairDemoProject(join(directory, 'outside'))).path,
   } : {};
-  const replyLimit = set === 'show-change' ? undefined : 1200;
   const rows: Record<string, unknown>[] = [];
   const cases: Case[] = SETS[set];
   for (const item of cases) {
     const started = Date.now();
     const goal = item.goal.replace(/\{(selection|direct|outside)\}/g, (placeholder, name: string) => fixturePaths[name] ?? placeholder);
     const first = await settled((await application.chat.create(ownerId, { goal })).id);
-    const row: Record<string, unknown> = { id: item.id, goal: item.goal, first: first.status, firstRun: first.run?.verdict?.status ?? first.run?.phase ?? null, firstText: first.messages?.at(-1)?.text?.slice(0, replyLimit) ?? null };
+    const row: Record<string, unknown> = { id: item.id, goal: item.goal, first: first.status, firstRun: first.run?.verdict?.status ?? first.run?.phase ?? null, firstText: first.messages?.at(-1)?.text ?? null };
     let finalText = row.firstText as string | null;
     let decision = first;
     let questionMet = !item.question;
@@ -293,16 +313,24 @@ try {
         await api('POST', `/api/chat/conversations/${first.id}/respond`, { questionId: first.question.id, optionId: option.id });
         decision = await settled(first.id);
         row.afterQuestion = decision.status;
+        row.afterQuestionText = decision.messages?.at(-1)?.text ?? null;
       }
     }
     if (decision.status === 'waiting_approval' && decision.approval) {
-      if (item.expectApproval) row.approvalDetail = decision.approval.detail;
+      row.approvalPrompt = decision.approval.prompt;
+      row.approvalDetail = decision.approval.detail;
       await api('POST', `/api/chat/conversations/${first.id}/approve`, { approvalId: decision.approval.id, approved: true });
       const done = await settled(first.id);
       row.final = done.status;
       row.finalRun = done.run?.verdict?.status ?? done.run?.phase ?? null;
-      finalText = done.messages?.at(-1)?.text?.slice(0, replyLimit) ?? null;
+      finalText = done.messages?.at(-1)?.text ?? null;
       row.finalText = finalText;
+    }
+    const match = (await application.runtime.snapshot(ownerId)).tasks.find(task => task.goal === goal && task.capabilityId === 'coding.change');
+    if (match) {
+      const { task } = await application.runtime.detail(ownerId, match.id);
+      row.codingTaskStatus = task.status;
+      row.codingOutcome = task.result?.outcome ?? null;
     }
     row.ms = Date.now() - started;
     if (item.expect) row.met = questionMet && (item.approval === undefined || (item.approval
@@ -314,11 +342,18 @@ try {
     rows.push(row);
   }
   const tasks = (await application.runtime.snapshot(ownerId)).tasks.map((task: { capabilityId: string; status: string }) => `${task.capabilityId}:${task.status}`);
-  if (out) await writeFile(out, JSON.stringify({ set, realSandbox, startupMs, rows, tasks }, null, 1));
-  console.log(JSON.stringify({ set, realSandbox, startupMs }));
+  if (out) await writeFile(out, JSON.stringify({ set, realSandbox, viaDeviceLink, startupMs, rows, tasks }, null, 1));
+  console.log(JSON.stringify({ set, realSandbox, viaDeviceLink, startupMs }));
   for (const row of rows) console.log(JSON.stringify([row.id, row.first, row.final ?? '-', row.met ?? (row.control ? 'control' : '-'), row.ms]));
   console.log(tasks.join(' '));
 } finally {
-  await application.app.close();
-  await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  try {
+    await stopDevice?.();
+  } finally {
+    try {
+      await application.app.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    }
+  }
 }

@@ -1,4 +1,4 @@
-import { beforeEach,afterEach,describe,it,expect } from 'vitest';
+import { beforeEach,afterEach,describe,it,expect,vi } from 'vitest';
 import { randomUUID,createHash } from 'node:crypto';
 import { createDatabase,migrate,type DatabaseHandle } from '@mohassan/database';
 import { CodingError } from '@mohassan/coding/security';
@@ -88,6 +88,31 @@ describe('coding task authorization, results and usage persistence',()=>{
     expect(detail.modelRuns).toEqual([]);
     expect(calls).toBe(0);
     expect(await store.db.selectFrom('coding_runs').select(['status','error_code']).executeTakeFirstOrThrow()).toEqual({status:'unknown',error_code:'WORKER_LEASE_EXPIRED'});
+  });
+  it('settles an expired cloud worker lease after device dispatch without offering another attempt', async () => {
+    const execute = vi.fn(async () => resultFixture());
+    const recoverDeviceDispatch = vi.fn(async () => true);
+    const runtime = new Runtime(store.db, options(Object.assign(execute, { recoverDeviceDispatch })));
+    const task = await runtime.createTask('owner', input, 'interrupted-device-repair');
+    await runtime.approve('owner', task.id);
+    const lease = randomUUID();
+    await store.db.updateTable('tasks').set({ status: 'running', attempt: 1, lease_token: lease, lease_expires_at: new Date(0) })
+      .where('id', '=', task.id).execute();
+    await store.db.insertInto('coding_runs').values({ id: randomUUID(), task_id: task.id, project_id: projectId, attempt: 1,
+      lease_token: lease, status: 'started', result: null, result_committed: false, error_code: null, finished_at: null }).execute();
+
+    await runtime.tick();
+    await runtime.tick();
+
+    const detail = await runtime.detail('owner', task.id);
+    expect(detail.task).toMatchObject({ status: 'failed', attempt: 1, result: null,
+      error: expect.stringContaining('CODING_DEVICE_RESULT_UNKNOWN') });
+    expect(detail.events.at(-1)?.message).toContain('لن تُعاد المهمة تلقائيًا');
+    expect(detail.modelRuns).toEqual([]);
+    expect(recoverDeviceDispatch).toHaveBeenCalledExactlyOnceWith(expect.anything(), 'owner', task.id);
+    expect(execute).not.toHaveBeenCalled();
+    expect(await store.db.selectFrom('coding_runs').select(['status', 'error_code']).executeTakeFirstOrThrow())
+      .toEqual({ status: 'unknown', error_code: 'CODING_DEVICE_RESULT_UNKNOWN' });
   });
   it('retains failed-test diffs for review without claiming completed or retrying',async()=>{
     let calls=0;const runtime=new Runtime(store.db,options(async()=>{calls++;return {...resultFixture(),outcome:'tests_failed',checkpoint:null,tests:{...resultFixture().tests,exitCode:1},review:{passed:false,checks:[{id:'tests',passed:false,message:'اختبار لم ينجح.'}]}};}));

@@ -147,12 +147,38 @@ describe('answering a read without a model', () => {
   it('says plainly why nothing ran when the sandbox or the project is not ready', async () => {
     const noSandbox = await answerNoModelCodeRead('شغّل اختبارات مشروع تجربة الجمع', { ...base, codeSearch: work.codeSearch, codeImports: work.codeImports }, 'owner', signal, progress);
     expect(noSandbox).toMatchObject({ status: 'blocked', step: { ok: false, evidence: 'SANDBOX_UNAVAILABLE' } });
-    expect(noSandbox?.text).toContain('بيئة العزل غير متاحة هنا، فلم أشغّل أي كود.');
+    expect(noSandbox?.text).toBe('لم أكمل فحص «مشروع تجربة الجمع»: بيئة العزل غير متاحة هنا، فلم أشغّل أي كود.');
     const dirty = await answerNoModelCodeRead('Search مشروع تجربة الجمع for sum', {
       ...work, codeSearch: async () => { throw new BrowserError('DIRTY_PROJECT', 'المشروع يحتوي تغييرات staged غير محفوظة.', 409); },
     }, 'owner', signal, progress);
     expect(dirty?.status).toBe('blocked');
     expect(dirty?.text).toBe('I could not read "مشروع تجربة الجمع": The project has changes not committed to Git, and I read and check only the committed version. Commit your changes, then ask again.');
+  });
+
+  it.each([
+    ['CODING_DEVICE_NOT_PAIRED', 'لم يُربط جهاز للبرمجة', 'No coding device is paired'],
+    ['CODING_DEVICE_OFFLINE', 'غير متصل', 'the paired coding device is offline'],
+    ['CODING_DEVICE_TIMEOUT', 'انتهت مهلة المهمة قبل إرسالها', 'expired before it could be sent'],
+    ['CODING_DEVICE_RESULT_UNKNOWN', 'لن تُعاد المهمة تلقائيًا', 'will not be re-run automatically'],
+    ['CODING_DEVICE_PATH_DENIED', 'المشروع خارج الجذور المصرح بها', 'outside the allowed folders'],
+    ['CODING_DEVICE_VERSION', 'غير متوافق مع الخادم', 'incompatible protocol version'],
+  ])('reports %s in Arabic and English before claiming any check result', async (code, arabic, english) => {
+    const failedWork = { ...work, codeCheck: async () => { throw new BrowserError(code, 'Untranslated transport error', 503); } };
+    const ar = await answerNoModelCodeRead('شغّل اختبارات مشروع تجربة الجمع', failedWork, 'owner', signal, progress);
+    const en = await answerNoModelCodeRead('Run the tests in مشروع تجربة الجمع', failedWork, 'owner', signal, progress);
+    for (const answer of [ar, en]) {
+      expect(answer).toMatchObject({ status: 'blocked', step: { ok: false, evidence: code } });
+      expect(answer?.text).not.toContain('Untranslated transport error');
+    }
+    expect(ar?.text).toContain(arabic);
+    expect(en?.text.toLowerCase()).toContain(english.toLowerCase());
+  });
+
+  it('reports device failure when reading project instructions', async () => {
+    const answer = await answerNoModelCodeRead('Show the instructions of مشروع تجربة الجمع', {
+      ...work, codeInstructions: async () => { throw new BrowserError('CODING_DEVICE_OFFLINE', 'Untranslated transport error', 503); },
+    }, 'owner', signal, progress);
+    expect(answer).toMatchObject({ status: 'blocked', step: { ok: false }, text: expect.stringContaining('The paired coding device is offline') });
   });
 });
 

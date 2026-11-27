@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { BrowserError } from '@mohassan/browser';
 import type { CheckFailure, CodingCheckResult, ImportsLookup, ProjectSearchResult } from '@mohassan/coding';
 import { readRenameGoal } from '@mohassan/coding';
+import { codingDeviceFailureText, codingDeviceTaskFailureText } from '@mohassan/coding-link/failures';
 import { addEvidence, appendStep, planStep, settleStep, startStep, tryEnterPhase, type RunLedger } from './agent-run.js';
 import type { BrainState } from './brain.js';
 import { codeLogicReply, recognizeCodeLogicRequest } from './code-logic-request.js';
@@ -127,6 +128,13 @@ export function codingOutcomeReply(outcome: string, label: string, request: stri
   const status = field('task status'), result = field('outcome'), summary = field('summary'), branch = field('review branch');
   const error = field('error') ?? failed;
   const name = label.replace(/^تعديل (?:مشروع )?/u, '').trim() || label;
+  const deviceLang = requestLanguage(request, name);
+  const deviceFailure = codingDeviceTaskFailureText(error, deviceLang);
+  if (deviceFailure) return {
+    status: 'blocked',
+    text: (deviceLang === 'ar' ? `لم أتمكن من تأكيد نتيجة التعديل في «${name}». `
+      : `I could not confirm the outcome of the change to "${name}". `) + deviceFailure,
+  };
   const project = lang === 'ar' ? `«${name}»` : `"${name}"`;
   const unchanged = lang === 'ar' ? 'مشروعك الأصلي لم يتغيّر ولم يُدمج شيء.' : 'Your original project is unchanged and nothing was merged.';
   const withSummary = (text: string) => [text, summary, codingOutcomeReportText(field, lang)].filter(Boolean).join('\n\n');
@@ -367,7 +375,7 @@ function importsAnswer(result: ImportsLookup, intent: Extract<CodeReadIntent, { 
 }
 
 const READ_FAILURES: Record<string, Record<Lang, string>> = {
-  SANDBOX_UNAVAILABLE: { ar: 'بيئة العزل غير متاحة هنا، فلم أشغّل أي كود. تعمل الفحوص في تطبيق سطح المكتب على Windows.', en: 'The isolated sandbox is not available here, so no code ran. The checks run in the desktop app on Windows.' },
+  SANDBOX_UNAVAILABLE: { ar: 'بيئة العزل غير متاحة هنا، فلم أشغّل أي كود.', en: 'The isolated sandbox is not available here, so no code ran.' },
   DIRTY_PROJECT: { ar: 'في المشروع تغييرات غير محفوظة في Git، وأنا أقرأ وأفحص النسخة المحفوظة فقط. احفظ تغييراتك (commit) ثم أعد الطلب.', en: 'The project has changes not committed to Git, and I read and check only the committed version. Commit your changes, then ask again.' },
   PROJECT_HEAD_CHANGED: { ar: 'تغيّر آخر commit في المشروع منذ تسجيله. حدّث تسجيل المشروع من قسم «مشاريع البرمجة» ثم أعد الطلب.', en: 'The project\'s latest commit changed since it was registered. Update its registration in the Coding Projects section, then ask again.' },
 };
@@ -406,7 +414,7 @@ export async function answerNoModelCodeRead(request: string, work: AssistantTool
     return { text: answer.text, status: answer.status, step: step(answer.status === 'completed', answer.evidence), trail: { action, result: answer.evidence } };
   } catch (error) {
     if (!(error instanceof BrowserError)) throw error;
-    const reason = READ_FAILURES[error.code]?.[lang] ?? error.message;
+    const reason = codingDeviceFailureText(error.code, lang) ?? READ_FAILURES[error.code]?.[lang] ?? error.message;
     const text = (ar ? `لم أكمل ${check ? 'فحص' : 'قراءة'} «${name}»: ` : `I could not ${check ? 'check' : 'read'} "${name}": `) + reason;
     return { text, status: 'blocked', step: step(false, error.code), trail: { action, result: `failed: ${error.code}` } };
   }

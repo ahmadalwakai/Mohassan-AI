@@ -166,6 +166,7 @@ async function preflight() {
   check(ownerV5 ? 'other new runtime switches are off' : 'new runtime switches are off', () =>
     inactiveSwitches.every(name => !env[name] || env[name] === '0')
     && (ownerV5 || !env.MOHASSAN_V5_CHAT || env.MOHASSAN_V5_CHAT === 'off')
+    && (!env.CODING_DEVICE_LINK || env.CODING_DEVICE_LINK === 'off')
     && (!env.MOHASSAN_PLAN_COMPILER || env.MOHASSAN_PLAN_COMPILER === 'off')
     && env.MOHASSAN_MODEL_RELATIONS === 'off' && (!env.TEST_DRIVEN_CODING_ENABLED || env.TEST_DRIVEN_CODING_ENABLED === 'false')
     && !env.MOHASSAN_DESKTOP_SHELL && !env.MOHASSAN_ROUTER_SHADOW && !env.EXECUTOR_EXPERIMENT);

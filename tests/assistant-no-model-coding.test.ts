@@ -175,6 +175,14 @@ describe('the reply after the approved task settles', () => {
     expect(failed.text).toContain('هذا المشروع غير مسجل.');
     expect(failed.text).toContain('مشروعك الأصلي لم يتغيّر');
   });
+  it.each([
+    ['أصلح الكود في مشروع تجربة الجمع', 'لم تصل نتيجة المهمة من الجهاز. لن تُعاد المهمة تلقائيًا.'],
+    ['Fix the code in مشروع تجربة الجمع', 'The device did not return a result. The job will not be re-run automatically.'],
+  ])('reports the missing device result for %s', (request, explanation) => {
+    const reply = codingOutcomeReply('task status: failed\nerror: CODING_DEVICE_RESULT_UNKNOWN: Stored task error.', label, request);
+    expect(reply).toMatchObject({ status: 'blocked', text: expect.stringContaining(explanation) });
+    expect(reply.text).not.toMatch(/Stored task error|mohassan\/|unchanged|لم يتغيّر/u);
+  });
 });
 
 describe('a coding request in the chat when no model exists', () => {

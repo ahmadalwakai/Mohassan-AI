@@ -1,6 +1,37 @@
 import { mkdir, writeFile } from 'node:fs/promises';
+import { registerHooks } from 'node:module';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { git } from '../../packages/coding/src/git.ts';
+
+export async function configureModelFreeMeasurement(checkout: string, directory: string) {
+  // Do not load the owner's configuration, local models, or optional shadow classifiers.
+  process.env.MOHASSAN_ISOLATED_TEST = 'true';
+  process.env.VITEST = 'true';
+  process.env.MOHASSAN_SCRATCH_CLASSIFIERS = '0';
+  process.env.MOHASSAN_ARITHMETIC_SEARCH = '0';
+  process.env.MOHASSAN_REFUSAL_POLICY = '0';
+  process.env.MOHASSAN_MODEL_COUNCIL = 'off';
+  process.env.MOHASSAN_MODELS_ROOT = directory;
+  process.env.MOHASSAN_OCR_MODEL_DIR = join(directory, 'unused-ocr');
+  const assistant = pathToFileURL(join(checkout, 'apps/server/src/assistant') + '/').href;
+  // Use the same fixture-only module hook as scripts/response-policy/development-bench.mjs.
+  registerHooks({ resolve(specifier, context, nextResolve) {
+    const result = nextResolve(specifier, context);
+    if (!result.url.startsWith(assistant)) return result;
+    const path = result.url.slice(assistant.length);
+    if (path === 'refusal/learned-model.json' || path === 'arithmetic-search-model.json') {
+      throw new Error('The measurement must not load learned weights');
+    }
+    const stub = path === 'refusal/learned-classifier.ts' ? 'classifyLearnedRefusal'
+      : path === 'arithmetic-search-ranker.ts' ? 'selectArithmeticCandidate' : null;
+    return stub ? { url: `data:text/javascript,export const ${stub} = () => null; export const weightFree = true;`, shortCircuit: true } : result;
+  } });
+  for (const file of ['refusal/learned-classifier.ts', 'arithmetic-search-ranker.ts']) {
+    const stub = await import(new URL(file, assistant).href);
+    if (stub.weightFree !== true) throw new Error(`Could not disable the learned module ${file}`);
+  }
+}
 
 interface Fixture {
   id: string;

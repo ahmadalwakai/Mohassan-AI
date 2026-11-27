@@ -17,7 +17,6 @@ import { lockOwnerToolAccess } from './owner-tool-authorization.js';
 import { createRequestRateLimitKey } from './request-rate-limit.js';
 import { createAIControl } from './ai.js';
 import { ProviderError, GroqProvider } from '@mohassan/providers';
-import { createCodingControl } from './coding.js';
 import type { SandboxRunner } from '@mohassan/coding';
 import { CodingError } from '@mohassan/coding';
 import { createCapabilities } from '@mohassan/runtime';
@@ -109,7 +108,7 @@ export interface AppConfig {
   setupToken: string; webOrigin: string; production: boolean; runWorker: boolean;
   v5Chat?: 'off' | 'owner';
   groqApiKey?:string;groqModel?:string;groqReasoningModel?:string;aiFetch?:typeof fetch;
-  codingDataDir?:string;codingAllowedRoots?:string[];sandboxRunner?:SandboxRunner;
+  codingDataDir?:string;codingAllowedRoots?:string[];sandboxRunner?:SandboxRunner;codingDeviceLink?:boolean;
   browser?:BrowserConfig;windowsEnabled?:boolean;browserProfileDir?:string;browserChannel?:'chrome'|null;
   studioAiDataDir?:string;groqVisionModel?:string;studioGatewayUrl?:string;studioGatewaySecret?:string;studioPreviewPort?:number;
   skillEngineEnabled?: boolean;
@@ -171,7 +170,7 @@ export async function createApplication(config: AppConfig) {
   await windowsMigration(database.db);
   await googleAdsMigration(database.db);
   const auth = createAuth(database.db, {secret: config.authSecret, webOrigin: config.webOrigin, production: config.production});
-  const coding=await createCodingControl(database.db,{dataDir:config.codingDataDir,allowedRoots:config.codingAllowedRoots,sandbox:config.sandboxRunner});
+  const { coding, mountCodingRoutes, codingDeviceRoute } = await (await import('./coding.js')).createApplicationCoding(database.db, config);
   let studio:Awaited<ReturnType<typeof createStudioControl>>;
   const studioLive=await createStudioLiveControl(database.db,{gatewayUrl:config.studioGatewayUrl,gatewaySecret:config.studioGatewaySecret,webOrigin:config.webOrigin,production:config.production,previewPort:config.studioPreviewPort,getSession:(ownerId,id)=>studio.detail(ownerId,id)});
   studio=await createStudioControl(database.db,{allowedRoots:config.codingAllowedRoots??[],sandbox:coding.sandbox,buildNext:studioLive.available?((snapshot,signal)=>studioLive.build(snapshot,signal)):undefined});
@@ -230,7 +229,7 @@ export async function createApplication(config: AppConfig) {
     reply.header('X-Content-Type-Options', 'nosniff');
     if (request.url === '/health') return;
     const companionPath=request.url.split('?')[0];
-    if(request.method==='POST'&&['/api/windows/companion/pair','/api/windows/companion/poll'].includes(companionPath!))return;
+    if (codingDeviceRoute(request) || request.method==='POST'&&['/api/windows/companion/pair','/api/windows/companion/poll'].includes(companionPath!)) return;
     const serviceSecret = request.headers['x-mohassan-internal'];
     if (typeof serviceSecret !== 'string' || !secretEqual(serviceSecret, config.internalSecret)) {
       return reply.code(401).send({error: {code: 'SERVICE_UNAUTHORIZED', message: 'الاتصال غير مصرح به.'}});
@@ -250,7 +249,7 @@ export async function createApplication(config: AppConfig) {
   // Default-deny: every route needs a session, and a member reaches only MEMBER_ROUTES.
   app.addHook('onRequest', async (request, reply) => {
     const key = routeKey(request.method, request.routeOptions.url);
-    if (!key || PUBLIC_ROUTES.has(key)) return;
+    if (!key || PUBLIC_ROUTES.has(key) || codingDeviceRoute(request) && !request.headers.cookie) return;
     const user = await sessionUser(request);
     if (!user) return reply.code(401).send({error: {code: 'UNAUTHORIZED', message: 'سجل الدخول للمتابعة.'}});
     const role = await roleFor(request, user.id);
@@ -557,7 +556,7 @@ export async function createApplication(config: AppConfig) {
     ];
     return WorkspaceSnapshotSchema.parse({apiVersion: '1', user: {id: user.id, name: user.name, email: user.email}, ...snapshot, integrations, storage: {mode: database.mode, healthy: true},ai:aiStatus,coding:codingWorkspace});
   });
-  app.get('/api/coding/projects',async request=>coding.workspace((await owner(request)).id));
+  mountCodingRoutes(app, owner);
   app.get('/api/studio/sessions',async request=>studio.workspace((await owner(request)).id));
   app.post('/api/studio/sessions',{config:{rateLimit:{max:10,timeWindow:'1 minute'}}},async request=>studio.create((await owner(request)).id,request.body));
   app.post('/api/studio/sessions/demo',{config:{rateLimit:{max:5,timeWindow:'1 minute'}}},async request=>{const user=await owner(request);const input=z.object({framework:z.enum(['static','react','next']).default('static')}).strict().parse(request.body??{});return studio.demo(user.id,input.framework);});
@@ -566,8 +565,6 @@ export async function createApplication(config: AppConfig) {
   app.get<{Params:{id:string}}>('/api/studio/sessions/:id/baseline',async request=>studio.preview((await owner(request)).id,z.uuid().parse(request.params.id),true));
   app.post<{Params:{id:string}}>('/api/studio/sessions/:id/edits',async request=>studio.edit((await owner(request)).id,z.uuid().parse(request.params.id),request.body));
   app.post<{Params:{id:string}}>('/api/studio/sessions/:id/undo',async request=>studio.undo((await owner(request)).id,z.uuid().parse(request.params.id),request.body));
-  app.post('/api/coding/projects',{config:{rateLimit:{max:10,timeWindow:'1 minute'}}},async request=>coding.register((await owner(request)).id,request.body));
-  app.post('/api/coding/projects/demo',{config:{rateLimit:{max:5,timeWindow:'1 minute'}}},async request=>{const user=await owner(request);z.object({}).strict().parse(request.body??{});return coding.demo(user.id);});
   app.post('/api/ai/verify',{config:{rateLimit:{max:3,timeWindow:'1 minute'}}},async(request,reply)=>{
     await owner(request);z.object({}).strict().parse(request.body??{});
     try{return await ai.verify();}

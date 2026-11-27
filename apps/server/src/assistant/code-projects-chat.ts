@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { CodingError } from '@mohassan/coding';
+import { codingDeviceFailureText } from '@mohassan/coding-link/failures';
 import { RegisterProjectSchema, type ChatApproval, type ChatQuestion } from '@mohassan/contracts';
 import type { Kysely } from 'kysely';
 import type { createCodingControl } from '../coding.js';
@@ -59,8 +60,14 @@ function recognize(request: string) {
 }
 
 function refusalReason(error: unknown, lang: Language): string | undefined {
-  if (error instanceof CodingError) return error.message;
   const code = (error as NodeJS.ErrnoException | null)?.code;
+  const pathDenied = code === 'PROJECT_OUTSIDE_ROOTS' || code === 'CODING_DEVICE_PATH_DENIED';
+  const deviceReason = codingDeviceFailureText(pathDenied ? 'CODING_DEVICE_PATH_DENIED' : code, lang);
+  if (deviceReason) {
+    // Keep the established project-registration diagnosis available in Arabic too.
+    return pathDenied && lang === 'en' ? `${deviceReason} ${codingDeviceFailureText('CODING_DEVICE_PATH_DENIED', 'ar')}` : deviceReason;
+  }
+  if (error instanceof CodingError) return error.message;
   if (code === 'ENOENT') return say(lang, 'مسار المشروع غير موجود.', 'The project path does not exist.');
   if (code === 'EACCES' || code === 'EPERM') return say(lang, 'تعذرت قراءة مسار المشروع بسبب صلاحيات الوصول.', 'Access to the project path was denied.');
   if (error instanceof Error && (code === 'CODING_NOT_CONFIGURED' || code === 'INVALID_EDIT_SCOPE' || code === 'PROJECT_HEAD_CHANGED')) return error.message;
@@ -81,7 +88,7 @@ async function listProjects(ctx: ChatContext, port: CodeProjectsPort, lang: Lang
     const editable = showFiles(project.allowedPaths);
     let tests: string;
     try {
-      const inspection = await port.inspect(project.path);
+      const inspection = await port.inspect(project.path, { ownerId: ctx.ownerId, projectId: project.id, signal: ctx.signal });
       tests = showFiles(inspection.testFiles);
       if (inspection.baseCommit !== project.baseCommit) tests += say(lang,
         ' (من HEAD الحالي. تغير HEAD منذ تسجيل المشروع، ويلزم تحديث التسجيل قبل العمل.)',
@@ -194,7 +201,7 @@ async function resumeRegistration(ctx: ChatContext, port: CodeProjectsPort, pend
   await ctx.checkpoint();
   try {
     const project = await port.register(ctx.ownerId, { name, path, allowedPaths }, {
-      expectedBaseCommit: baseCommit,
+      expectedBaseCommit: baseCommit, signal: ctx.signal,
       persist: write => ctx.transaction(async tx => {
         if (!await ctx.lockOwner(tx)) throw new CodingError('PROJECT_FORBIDDEN', gateRefusalText('actor_not_allowed', lang));
         if (Date.now() > Date.parse(decision.record.expiresAt)) throw new CodingError('PROJECT_APPROVAL_EXPIRED', gateRefusalText('approval_expired', lang));
@@ -233,7 +240,7 @@ export async function handleCodeProjectsChat(ctx: ChatContext): Promise<boolean>
       return true;
     }
     let inspection;
-    try { inspection = await port.inspect(request.data.path); }
+    try { inspection = await port.inspect(request.data.path, { ownerId: ctx.ownerId, signal: ctx.signal }); }
     catch (error) {
       const reason = refusalReason(error, lang);
       if (!reason) throw error;

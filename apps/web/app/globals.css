@@ -403,6 +403,16 @@ code, pre { font-family: "Cascadia Code", Consolas, monospace; }
 .coding-sandbox-status small { display: block; margin-top: 9px; font-size: 11px; overflow-wrap: anywhere; }
 .sandbox-ready { color: #537747; background: #eff6e8; border-color: #dce9d0; }
 .sandbox-blocked { color: #8a784c; background: #f9f4e6; border-color: #e8ddbe; }
+.coding-device-panel .panel-heading { align-items: flex-start; flex-wrap: wrap; }
+.coding-device-actions { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 9px; }
+.coding-device-detail, .coding-device-feedback { padding-inline: 21px; }
+.coding-device-detail { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px 15px; padding-bottom: 18px; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.coding-device-detail p { flex-basis: 100%; }
+.coding-device-pairing { border-top: 1px solid var(--line); padding-block: 16px; font-size: 12px; line-height: 1.9; }
+.coding-device-pairing label { width: min(100%, 215px); }
+.coding-device-pairing input { font-family: monospace; }
+.coding-device-notice:not(:empty), .coding-device-feedback .inline-error { margin-bottom: 16px; }
+.coding-device-notice { font-size: 12px; line-height: 1.9; }
 .coding-project-controls .panel-heading { align-items: flex-start; }
 .coding-project-controls .panel-heading>div { flex: 1; }
 .coding-project-controls .panel-heading p { line-height: 1.9; max-width: 590px; }

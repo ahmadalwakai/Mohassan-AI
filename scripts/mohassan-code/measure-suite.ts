@@ -1,32 +1,23 @@
 /** Runs the model-free suite from measure-no-model-coding.ts. */
 import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { ChatConversation } from '@mohassan/contracts';
-import { registerFixtures } from './fixtures.ts';
+import { configureModelFreeMeasurement, registerFixtures } from './fixtures.ts';
 import { SUITE_CASES } from './suite-cases.ts';
 import { scoreSuiteCase, suiteTotals } from './suite-results.ts';
 import { createSuiteSandbox } from './suite-sandbox.ts';
+import { pairMeasurementDevice, unavailableServerSandbox } from './device-fixture.ts';
 
 const flags = process.argv.slice(2).filter(value => value.startsWith('--'));
 const [checkoutArgument, out] = process.argv.slice(2).filter(value => !value.startsWith('--'));
 const realSandbox = flags.includes('--real-sandbox');
+const viaDeviceLink = flags.includes('--via-device-link');
 if (realSandbox && process.platform !== 'win32') throw new Error('The real suite sandbox requires Windows AppContainer');
 const checkout = await realpath(resolve(checkoutArgument ?? process.cwd()));
 const directory = await realpath(await mkdtemp(join(tmpdir(), 'mohassan-measure-coding-')));
-// Keep any models, account settings and shadow logs in the owner's normal environment out of this fixture run.
-process.env.MOHASSAN_ISOLATED_TEST = 'true';
-// The server's existing test path skips loading the bundled scratch classifier weights.
-process.env.VITEST = 'true';
-process.env.MOHASSAN_SCRATCH_CLASSIFIERS = '0';
-process.env.MOHASSAN_ARITHMETIC_SEARCH = '0';
-process.env.MOHASSAN_REFUSAL_POLICY = '0';
-process.env.MOHASSAN_MODEL_COUNCIL = 'off';
-process.env.MOHASSAN_MODELS_ROOT = directory;
-process.env.MOHASSAN_OCR_MODEL_DIR = join(directory, 'unused-ocr');
 
 const secret = 'measure-coding-fixture-internal-secret-01', origin = 'http://127.0.0.1:3000';
 const headers = { 'x-mohassan-internal': secret, origin };
@@ -37,26 +28,7 @@ type Application = Awaited<ReturnType<typeof import('../../apps/server/src/app.t
 let application: Application | undefined;
 type WebFixture = Awaited<ReturnType<typeof startWebFixture>>;
 let webFixture: WebFixture | undefined;
-
-async function disableLearnedRouting() {
-  const assistant = pathToFileURL(join(checkout, 'apps/server/src/assistant') + '/').href;
-  // Use the same test-only module hook as scripts/response-policy/development-bench.mjs.
-  registerHooks({ resolve(specifier, context, nextResolve) {
-    const result = nextResolve(specifier, context);
-    if (!result.url.startsWith(assistant)) return result;
-    const path = result.url.slice(assistant.length);
-    if (path === 'refusal/learned-model.json' || path === 'arithmetic-search-model.json') {
-      throw new Error('The suite must not load learned weights');
-    }
-    const stub = path === 'refusal/learned-classifier.ts' ? 'classifyLearnedRefusal'
-      : path === 'arithmetic-search-ranker.ts' ? 'selectArithmeticCandidate' : null;
-    return stub ? { url: `data:text/javascript,export const ${stub} = () => null; export const weightFree = true;`, shortCircuit: true } : result;
-  } });
-  for (const file of ['refusal/learned-classifier.ts', 'arithmetic-search-ranker.ts']) {
-    const stub = await import(new URL(file, assistant).href);
-    if (stub.weightFree !== true) throw new Error(`Could not disable the learned module ${file}`);
-  }
-}
+let stopDevice: (() => Promise<void>) | undefined;
 
 async function startWebFixture() {
   const fact = 'باريس هي عاصمة فرنسا وأكبر مدنها.';
@@ -91,7 +63,7 @@ async function startWebFixture() {
   };
 }
 
-async function measure(app: Application, startupMs: number) {
+async function measure(app: Application, startedApp: number, sandbox: ReturnType<typeof createSuiteSandbox> | undefined) {
   const chats = '/api/chat/conversations';
   let cookie = '';
   const api = (method: 'GET' | 'POST', url: string, payload?: object, session = cookie) => app.app.inject({
@@ -129,6 +101,14 @@ async function measure(app: Application, startupMs: number) {
   const reply = (detail: ChatConversation | null) => detail?.messages.findLast(message => message.role === 'assistant')?.text ?? null;
   const caseStatus = (detail: ChatConversation | null) => detail?.status ?? 'timeout';
 
+  if (viaDeviceLink) {
+    const device = await pairMeasurementDevice(app, {
+      checkout, ownerId, dataDir: directory, allowedRoots: [directory], sandbox,
+      createPairing: () => api('POST', '/api/coding/devices/pairing', {}),
+    });
+    stopDevice = await device.start();
+  }
+  const startupMs = Date.now() - startedApp;
   if (realSandbox) {
     const workspace = await api('GET', '/api/coding/projects');
     requireOk(workspace, 'Check Windows sandbox readiness');
@@ -193,7 +173,7 @@ async function measure(app: Application, startupMs: number) {
     rows.push(row);
   }
   const totals = suiteTotals(rows);
-  const summary = { set: 'suite', realSandbox, startupMs, totals };
+  const summary = { set: 'suite', realSandbox, viaDeviceLink, startupMs, totals };
   if (out) await writeFile(out, JSON.stringify({ ...summary, rows }, null, 2));
   for (const { id, capability, first, final, met, misses, ms } of rows) {
     console.log(JSON.stringify({ id, capability, first, final, met, misses, ms }));
@@ -202,27 +182,33 @@ async function measure(app: Application, startupMs: number) {
 }
 
 try {
-  await disableLearnedRouting();
+  await configureModelFreeMeasurement(checkout, directory);
   const { createApplication }: typeof import('../../apps/server/src/app.ts') = await import(pathToFileURL(join(checkout, 'apps/server/src/app.ts')).href);
   const { snapshotHash }: typeof import('../../packages/coding/src/index.ts') = await import(pathToFileURL(join(checkout, 'packages/coding/src/index.ts')).href);
   webFixture = await startWebFixture();
   const startedApp = Date.now();
+  const sandbox = realSandbox ? undefined : createSuiteSandbox(snapshotHash);
   application = await createApplication({
     authSecret: 'measure-coding-fixture-auth-secret-000001', internalSecret: secret, setupToken, webOrigin: origin,
-    production: false, runWorker: true, testRequestLimit: 2000, codingDataDir: directory, codingAllowedRoots: [directory], browserChannel: null,
+    production: false, runWorker: true, testRequestLimit: 2000, browserChannel: null,
+    codingDeviceLink: viaDeviceLink, codingDataDir: viaDeviceLink ? join(directory, 'unused-server-coding') : directory,
+    codingAllowedRoots: viaDeviceLink ? [] : [directory],
     browser: webFixture.browser, browserProfileDir: join(directory, 'browser'), documentsDir: join(directory, 'documents'),
-    // Without a runner the coding control builds the Windows AppContainer sandbox itself.
-    ...(realSandbox ? {} : { sandboxRunner: createSuiteSandbox(snapshotHash) }),
+    sandboxRunner: viaDeviceLink ? unavailableServerSandbox : sandbox,
   });
-  await measure(application, Date.now() - startedApp);
+  await measure(application, startedApp, sandbox);
 } finally {
   try {
-    await application?.app.close();
+    await stopDevice?.();
   } finally {
     try {
-      await webFixture?.close();
+      await application?.app.close();
     } finally {
-      await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      try {
+        await webFixture?.close();
+      } finally {
+        await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      }
     }
   }
 }

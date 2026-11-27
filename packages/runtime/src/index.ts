@@ -14,6 +14,7 @@ import {
   SkillRunInputSchema, SkillNodeBindingSchema, SkillNodeInputSchema, TOOL_SIDE_EFFECTS, type SkillRunInput, type SkillNodeBinding, type SkillToolId,
   SkillRollbackInputSchema,SkillRollbackReviewSchema,type SkillRollbackInput,type SkillRollbackReview,
 } from "@mohassan/contracts";
+import { codingDeviceFailureText } from "@mohassan/coding-link/failures";
 import { verifyPlanningResult } from "@mohassan/cognitive";
 import { recordExperience, type ExperienceInput } from "@mohassan/learning";
 import type { RuntimeDatabase, TaskRecord, TaskEventRecord } from "@mohassan/database";
@@ -200,7 +201,9 @@ export interface RuntimeOptions {
     leaseToken: string;
     onProgress?: (stage: string, message: string) => Promise<void>;
   }) => Promise<PlanningResult>;
-  code?: (goal:string,context:{signal:AbortSignal;taskId:string;ownerId:string;projectId:string;leaseToken:string;onProgress?:(stage:string,message:string)=>Promise<void>;onModelReceipt?:(receipt:{model:string;usage:{inputTokens:number;outputTokens:number}})=>Promise<void>})=>Promise<CodingResult>;
+  code?: ((goal:string,context:{signal:AbortSignal;taskId:string;ownerId:string;projectId:string;leaseToken:string;onProgress?:(stage:string,message:string)=>Promise<void>;onModelReceipt?:(receipt:{model:string;usage:{inputTokens:number;outputTokens:number}})=>Promise<void>})=>Promise<CodingResult>) & {
+    recoverDeviceDispatch?: (tx: Tx, ownerId: string, taskId: string) => Promise<boolean>;
+  };
   verifyCode?: (raw:unknown,context:{taskId:string;ownerId:string;projectId:string;signal:AbortSignal}&VerificationRecoveryContext)=>Promise<CodingResult|null>;
   studioChange?:(goal:string,context:{signal:AbortSignal;taskId:string;ownerId:string;studioInput:StudioTaskInput;leaseToken:string;onProgress?:(stage:string,message:string)=>Promise<void>;onModelReceipt?:(receipt:{model:string;usage:{inputTokens:number;outputTokens:number}})=>Promise<void>})=>Promise<StudioChangeResult>;
   verifyStudioChange?:(raw:unknown,context:{taskId:string;ownerId:string;studioInput:StudioTaskInput;signal:AbortSignal}&VerificationRecoveryContext)=>Promise<StudioChangeResult|null>;
@@ -324,8 +327,8 @@ export class Runtime {
     return { tasks: rows.map(row=>taskDto({...row,result:null})), capabilities: this.getCapabilities() };
   }
 
-  async latestCodingChange(ownerId: string, projectId: string): Promise<Pick<Task, 'id' | 'status' | 'result'> | null> {
-    return await this.db.selectFrom('tasks').select(['id', 'status', 'result'])
+  async latestCodingChange(ownerId: string, projectId: string): Promise<Pick<Task, 'id' | 'status' | 'result' | 'error'> | null> {
+    return await this.db.selectFrom('tasks').select(['id', 'status', 'result', 'error'])
       .where('owner_id', '=', ownerId).where('project_id', '=', projectId).where('capability_id', '=', 'coding.change')
       .orderBy('created_at', 'desc').orderBy('id', 'desc').executeTakeFirst() ?? null;
   }
@@ -561,14 +564,19 @@ export class Runtime {
         const planning = ['plan.draft','coding.change','studio.change'].includes(task.capability_id) && task.autonomy !== "shadow";
         const paidRequest = planning && (task.capability_id !== 'coding.change' || await this.hasCodingModelRun(tx,task));
         const browser = task.capability_id==='browser.open'&&task.autonomy!=='shadow';
+        const unknownDeviceCode = 'CODING_DEVICE_RESULT_UNKNOWN';
+        const missingDeviceResult = task.capability_id === 'coding.change' && task.autonomy !== 'shadow' && !task.cancellation_requested
+          && await this.options.code?.recoverDeviceDispatch?.(tx, task.owner_id, task.id)
+          ? codingDeviceFailureText(unknownDeviceCode, 'ar') : undefined;
         const status = task.cancellation_requested ? "cancelled"
-          : task.attempt >= task.max_attempts ? "failed"
+          : missingDeviceResult || task.attempt >= task.max_attempts ? "failed"
           : !safe || task.approval_required ? "waiting_approval" : "queued";
         await tx.updateTable("tasks").set({
           status, lease_token: null, lease_expires_at: null, available_at: new Date(), updated_at: new Date(),
           ...(task.capability_id==='skill.run'?{workflow_token:null}:{}),
           approval_required: task.approval_required || planning || browser,
-          error: status === "failed" ? "انتهت محاولات التعافي من توقف العامل."
+          error: missingDeviceResult ? `${unknownDeviceCode}: ${missingDeviceResult}`
+            : status === "failed" ? "انتهت محاولات التعافي من توقف العامل."
             : browser ? 'انقطعت جلسة المتصفح؛ راجع أثرها قبل الموافقة على محاولة جديدة.'
             : paidRequest ? "انقطع طلب النموذج؛ قد تكون له تكلفة غير محسومة. يلزم تفويض جديد قبل أي طلب آخر."
             : planning ? 'انقطعت مهمة البرمجة؛ راجع أثر النسخة المعزولة قبل الموافقة على محاولة جديدة.' : null,
@@ -576,11 +584,15 @@ export class Runtime {
         if (planning && task.lease_token) {
           if(paidRequest)await tx.updateTable("model_runs").set({ status: "unknown", error_code: "WORKER_LEASE_EXPIRED", finished_at: new Date() })
             .where("task_id", "=", task.id).where("lease_token", "=", task.lease_token).where("status", "=", "started").execute();
-          if(task.capability_id==='coding.change')await tx.updateTable('coding_runs').set({status:'unknown',error_code:'WORKER_LEASE_EXPIRED',finished_at:new Date()}).where('task_id','=',task.id).where('lease_token','=',task.lease_token).where('status','=','started').execute();
+          if (task.capability_id === 'coding.change') {
+            await tx.updateTable('coding_runs')
+              .set({ status: 'unknown', error_code: missingDeviceResult ? unknownDeviceCode : 'WORKER_LEASE_EXPIRED', finished_at: new Date() })
+              .where('task_id', '=', task.id).where('lease_token', '=', task.lease_token).where('status', '=', 'started').execute();
+          }
         }
-        await event(tx, task.id, "lease_recovered", status === "queued"
+        await event(tx, task.id, "lease_recovered", missingDeviceResult ?? (status === "queued"
           ? "انتهت مهلة العامل السابق؛ أُعيدت جدولة الفحص الآمن."
-          : "عولج توقف العامل وفق حالة الإلغاء وسياسة إعادة التنفيذ.", { nextStatus: status });
+          : "عولج توقف العامل وفق حالة الإلغاء وسياسة إعادة التنفيذ."), { nextStatus: status });
         if (status === 'cancelled' || status === 'failed') await this.recordTerminalTask(tx, task, status);
     });
   }
@@ -882,7 +894,10 @@ export class Runtime {
     },async(error:unknown)=>{
       if(modelStarted)await this.recordModelOutcome(task,error,true);
       const code=typeof(error as any)?.code==='string'&&/^[A-Z][A-Z0-9_]{1,60}$/.test((error as any).code)?(error as any).code:'CODING_FAILED';
-      await this.db.updateTable('coding_runs').set({status:'failed',error_code:code,finished_at:new Date()}).where('task_id','=',task.id).where('lease_token','=',task.lease_token!).execute();throw error;
+      await this.db.updateTable('coding_runs')
+        .set({ status: code === 'CODING_DEVICE_RESULT_UNKNOWN' ? 'unknown' : 'failed', error_code: code, finished_at: new Date() })
+        .where('task_id', '=', task.id).where('lease_token', '=', task.lease_token!).execute();
+      throw error;
     });
     return abortable(()=>response,signal);
   }
@@ -1135,12 +1150,13 @@ export class Runtime {
       if (current.cancellation_requested) { await this.cancelClaim(tx, current); return; }
       const coding=['coding.change','studio.change'].includes(current.capability_id);
       const failureCode=typeof(failure as any)?.code==='string'?(failure as any).code:'';
+      const deviceFailure = current.capability_id === 'coding.change' ? codingDeviceFailureText(failureCode, 'ar') : undefined;
       // The coding engine validates and bounds the detailed rename refusal before it reaches Runtime.
       const refusal = current.capability_id==='coding.change' && failureCode==='NO_PROVEN_FIX'
         ? failure instanceof Error && failure.name==='CodingError' && failure.message.startsWith('تعذرت إعادة التسمية: ')
           ? failure.message : 'لم تجد أدوات البرمجة إصلاحًا يمكن إثباته ضمن الملفات المصرح بها. لم تُطبّق أي تغييرات.' : null;
       const terminalCoding=coding&&['RUN_ALREADY_EXISTS','PROJECT_HEAD_CHANGED','UNSAFE_EDIT_SCOPE','PROJECT_FORBIDDEN','SENSITIVE_SOURCE_REJECTED','STUDIO_REVISION_CONFLICT','STUDIO_PROPOSAL_EXISTS'].includes(failureCode);
-      const retry = !refusal && !terminalCoding && current.attempt < current.max_attempts;
+      const retry = !deviceFailure && !refusal && !terminalCoding && current.attempt < current.max_attempts;
       const paidPlanning = current.autonomy !== "shadow" && (['plan.draft','studio.change'].includes(current.capability_id)
         || (current.capability_id==='coding.change' && !refusal && await this.hasCodingModelRun(tx,current)));
       const browser=current.capability_id==='browser.open'&&current.autonomy!=='shadow';
@@ -1150,14 +1166,14 @@ export class Runtime {
         ...(current.capability_id==='skill.run'?{workflow_token:null}:{}),
         approval_required: current.approval_required || paidPlanning || browser,
         available_at: sql`CURRENT_TIMESTAMP + ${this.retryDelayMs * 2 ** (current.attempt - 1)} * interval '1 millisecond'`,
-        error: refusal ?? (browser?'تعذر حسم فتح الصفحة؛ لن تعاد جلسة المتصفح تلقائيًا. راجع السجل قبل محاولة جديدة.':terminalCoding?'حُفظت بيئة هذه المهمة أو تغير نطاقها؛ راجع الأثر وأنشئ مهمة جديدة دون الكتابة فوق النسخة السابقة.':paidPlanning ? retry
+        error: deviceFailure ? `${failureCode}: ${deviceFailure}` : refusal ?? (browser?'تعذر حسم فتح الصفحة؛ لن تعاد جلسة المتصفح تلقائيًا. راجع السجل قبل محاولة جديدة.':terminalCoding?'حُفظت بيئة هذه المهمة أو تغير نطاقها؛ راجع الأثر وأنشئ مهمة جديدة دون الكتابة فوق النسخة السابقة.':paidPlanning ? retry
           ? coding?'لم تُحسم مهمة البرمجة أو تكلفتها؛ لن تعاد دون موافقة جديدة.':"لم تُحسم نتيجة التخطيط أو تكلفته؛ لن يُعاد الطلب دون موافقة جديدة."
           : "توقف التخطيط بعد الحد الأقصى للمحاولات؛ راجع سجل استخدام النموذج."
           : coding ? 'تعذر إكمال مهمة البرمجة داخل بيئة العزل؛ راجع نتيجة المحاولة.'
           : retry ? "تعذر الفحص؛ حُددت إعادة محاولة آمنة." : "تعذر الفحص بعد الحد الأقصى للمحاولات."), updated_at: new Date(),
       }).where("id", "=", task.id).execute();
       await event(tx, task.id, retry ? browser ? 'browser_approval_required' : paidPlanning ? "planning_approval_required" : "retry_scheduled" : "task_failed",
-        refusal ?? (browser?'لن يُكرر فتح المتصفح تلقائيًا؛ يلزم تفويض صريح لمحاولة جديدة.':retry ? paidPlanning ? "لن يُكرر طلب النموذج تلقائيًا؛ قد تكون له تكلفة. يلزم تفويض صريح لمحاولة جديدة."
+        deviceFailure ?? refusal ?? (browser?'لن يُكرر فتح المتصفح تلقائيًا؛ يلزم تفويض صريح لمحاولة جديدة.':retry ? paidPlanning ? "لن يُكرر طلب النموذج تلقائيًا؛ قد تكون له تكلفة. يلزم تفويض صريح لمحاولة جديدة."
           : needsApproval ? "تحتاج إعادة المحاولة موافقة جديدة؛ استُهلكت الموافقة السابقة." : "حُددت إعادة محاولة للفحص الآمن ضمن الحد المسموح."
           : "توقفت المهمة بعد استنفاد محاولات الفحص."), { attempt: current.attempt });
       if (!retry) await this.recordTerminalTask(tx, current, 'failed');

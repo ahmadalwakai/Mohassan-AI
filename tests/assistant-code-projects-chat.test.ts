@@ -63,13 +63,14 @@ describe('owner-only coding project registration and inventory in chat', () => {
   }
 
   async function settled(id: string, cookie: string) {
+    // Keep the fixture below the conversation endpoint's 400 polls per minute.
     return vi.waitFor(async () => {
       const response = await api('GET', `${conversations}/${id}`, cookie);
       expect(response.statusCode).toBe(200);
       const detail = response.json<ChatConversation>();
       expect(detail.status).not.toBe('running');
       return detail;
-    }, { timeout: 10_000, interval: 35 });
+    }, { timeout: 20_000, interval: 200 });
   }
 
   async function ask(goal: string, cookie = ownerCookie) {
@@ -188,6 +189,15 @@ describe('owner-only coding project registration and inventory in chat', () => {
     expect(refused.question).toBeNull();
     expect(refused.approval).toBeNull();
     expect(reply(refused)).toContain(reason);
+    expect(await registeredAt(project.path)).toEqual([]);
+  });
+
+  it('explains an out-of-scope folder in English and keeps the Arabic inspection diagnosis', async () => {
+    const project = await repository(directory);
+    const refused = await ask(`register project "${project.path}" as Outside Project`);
+    expect(refused.status).toBe('idle');
+    expect(refused.approval).toBeNull();
+    expect(reply(refused)).toContain('The project is outside the allowed folders. المشروع خارج الجذور المصرح بها.');
     expect(await registeredAt(project.path)).toEqual([]);
   });
 

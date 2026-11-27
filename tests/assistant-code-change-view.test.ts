@@ -213,4 +213,21 @@ describe('the last coding change in owner chat', () => {
     expect(text).toContain(completed.branch);
     expect(text).toContain('+  return leftHandValue + rightHandValue;');
   });
+
+  it('explains a missing device result without presenting a review branch', async () => {
+    const text = await render(readCodeChangeView({ latestCodingChange: async () => ({
+      id: 'task', status: 'failed', result: null, error: 'CODING_DEVICE_RESULT_UNKNOWN: Stored task error.',
+    }) }, { available: true }));
+    expect(text).toContain('The device did not return a result. The job will not be re-run automatically.');
+    expect(text).not.toMatch(/Stored task error|mohassan\/|git merge/u);
+  });
+
+  it('localizes a device failure on a re-verification without claiming it succeeded', async () => {
+    const verify = vi.fn(async () => { throw Object.assign(new Error('Untranslated transport error'), { code: 'CODING_DEVICE_OFFLINE' }); });
+    const text = await render(readCodeChangeView(application!.runtime, { available: true, verify }));
+    expect(verify).toHaveBeenCalledOnce();
+    expect(text).toContain('The saved result could not be re-verified.');
+    expect(text).toContain('The paired coding device is offline.');
+    expect(text).not.toMatch(/Untranslated transport error|Re-verified the saved result/u);
+  });
 });

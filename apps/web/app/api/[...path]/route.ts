@@ -6,6 +6,7 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
   const {path} = await context.params;
   if (path.some(part=>!(/^[a-zA-Z0-9._~-]+$/).test(part) || part==='..')) return Response.json({error:{code:'INVALID_PATH',message:'مسار غير صالح.'}},{status:400});
   if (path[0]==='chat' && path[1]==='conversation-shares' && path[2]==='public') return new Response(null,{status:404,headers:{'Cache-Control':'no-store','X-Robots-Tag':'noindex, nofollow','Content-Security-Policy':"default-src 'none'; sandbox"}});
+  if (path.length===3 && path[0]==='coding' && path[1]==='device' && ['pair','poll'].includes(path[2]!)) return Response.json({error:{code:'CODING_DEVICE_BROWSER_DENIED',message:'هذا المسار مخصص لتطبيق سطح المكتب.'}},{status:403,headers:{'Cache-Control':'no-store'}});
   const accountExport = path.length === 2 && path[0] === 'member-data' && path[1] === 'export';
   // Fetch Metadata §2.3: https://www.w3.org/TR/fetch-metadata/#sec-fetch-site-header (retrieved 2026-11-25).
   const fetchSite = request.headers.get('sec-fetch-site');
@@ -38,7 +39,8 @@ async function forward(request: NextRequest, context: {params: Promise<{path:str
     if (Number(request.headers.get('content-length') || '0') > limit) return tooLarge();
     const learningImport=path.length===2&&path[0]==='learning'&&path[1]==='documents'&&request.method==='POST';
     const conversationExport=path.length===4&&path[0]==='chat'&&path[1]==='conversations'&&path[3]==='export'&&request.method==='GET';
-    const signal=AbortSignal.any([request.signal,AbortSignal.timeout(conversationExport||accountExport?60000:path[0]==='chat'&&request.method==='POST'&&(path.length===1||path[path.length-1]==='messages')?150000:path[0]==='sites'&&path[2]==='publish'&&request.method==='POST'?300000:path[0]==='studio'&&request.method==='POST'?360000:path[0]==='executor'&&request.method==='POST'?180000:modelRun?180000:path[0]==='desktop'?(request.method==='POST'?930000:60000):learningImport?30000:['research','browser','google-ads','search','documents'].includes(path[0]??'')?60000:15000)]);
+    const codingRegistration=path[0]==='coding'&&path[1]==='projects'&&request.method==='POST'&&(path.length===2||path.length===3&&path[2]==='demo');
+    const signal=AbortSignal.any([request.signal,AbortSignal.timeout(codingRegistration?65000:conversationExport||accountExport?60000:path[0]==='chat'&&request.method==='POST'&&(path.length===1||path[path.length-1]==='messages')?150000:path[0]==='sites'&&path[2]==='publish'&&request.method==='POST'?300000:path[0]==='studio'&&request.method==='POST'?360000:path[0]==='executor'&&request.method==='POST'?180000:modelRun?180000:path[0]==='desktop'?(request.method==='POST'?930000:60000):learningImport?30000:['research','browser','google-ads','search','documents'].includes(path[0]??'')?60000:15000)]);
     relay = boundedRelayBody(request.body, limit, signal);
     const response=await fetch(target,{method:request.method,headers,...relay.request,cache:'no-store',redirect:'manual',signal});
     const output=new Headers({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});

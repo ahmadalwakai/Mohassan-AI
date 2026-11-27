@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { createCodingDeviceTray } from './coding-device-tray.js';
 
 /**
  * تطبيق موحسن لسطح المكتب. يشغّل خدمة موحسن وواجهتها من مجلد المشروع على هذا الجهاز،
@@ -11,6 +12,7 @@ import { dirname, join, resolve } from 'node:path';
  */
 interface Config {
   repoRoot: string;
+  codingDeviceRepoRoot?: string;
   mode: 'dev' | 'lab' | 'production';
   webUrl: string;
   serverUrl: string;
@@ -45,6 +47,7 @@ function loadConfig(): Config {
   try { saved = JSON.parse(readFileSync(configPath, 'utf8')) as Partial<Config>; } catch { saved = {}; }
   const config: Config = {
     repoRoot: saved.repoRoot && existsSync(join(saved.repoRoot, 'scripts', 'dev.mjs')) ? saved.repoRoot : detectRepoRoot(),
+    codingDeviceRepoRoot: typeof saved.codingDeviceRepoRoot === 'string' && saved.codingDeviceRepoRoot.trim() ? resolve(saved.codingDeviceRepoRoot) : undefined,
     mode: flag('--lab') ? 'lab' : flag('--production') ? 'production' : saved.mode ?? 'dev',
     webUrl: saved.webUrl ?? 'http://127.0.0.1:3000',
     serverUrl: saved.serverUrl ?? 'http://127.0.0.1:4000',
@@ -67,6 +70,7 @@ function log(line: string) {
 let mainWindow: BrowserWindow | null = null;
 let splash: BrowserWindow | null = null;
 let tray: Tray | null = null;
+let codingDeviceTray: ReturnType<typeof createCodingDeviceTray> | undefined;
 let stack: ChildProcess | null = null;
 let stackStartedHere = false;
 let quitting = false;
@@ -207,6 +211,8 @@ function buildTray() {
     { label: 'مجلد المشاريع', click: () => { const folder = join(homedir(), 'Mohassan Projects'); mkdirSync(folder, { recursive: true }); void shell.openPath(folder); } },
     { label: 'لقطات الشاشة', click: () => { const folder = join(homedir(), 'Pictures', 'Mohassan Screenshots'); mkdirSync(folder, { recursive: true }); void shell.openPath(folder); } },
     { type: 'separator' },
+    ...(codingDeviceTray?.menuItems() ?? []),
+    { type: 'separator' },
     { label: 'إعادة تشغيل الخدمة', click: () => { stopStack(); setTimeout(() => { void boot(true); }, 1500); } },
     { label: 'التشغيل مع Windows', type: 'checkbox', checked: openAtLogin(), click: item => { app.setLoginItemSettings({ openAtLogin: item.checked, args: ['--hidden'] }); refresh(); } },
     { label: 'اختصار على سطح المكتب', click: createDesktopShortcut },
@@ -216,6 +222,10 @@ function buildTray() {
     { label: `الوضع: ${config.mode === 'lab' ? 'مختبر محلي' : config.mode === 'production' ? 'إنتاج' : 'تطوير'} · ${config.webUrl}`, enabled: false },
     { label: 'خروج', click: () => { quitting = true; app.quit(); } },
   ]));
+  codingDeviceTray = createCodingDeviceTray({
+    userDir, assets, repoRoot: config.codingDeviceRepoRoot ?? config.repoRoot,
+    serverUrl: config.serverUrl, icon, refresh, log,
+  });
   refresh();
   tray.on('click', toggleMain);
   tray.on('double-click', showMain);
@@ -223,6 +233,10 @@ function buildTray() {
 
 /** Opens the window as soon as the web app answers; starts the stack first when nothing answers. */
 async function boot(restart = false): Promise<void> {
+  if (config.mode === 'production' && new URL(config.webUrl).protocol === 'https:') {
+    openMain();
+    return;
+  }
   if (!restart && !splash) createSplash();
   const started = Date.now();
   setSplash('يبحث عن خدمة موحسن…', config.webUrl);
@@ -274,5 +288,5 @@ else {
     app.on('activate', showMain);
   });
   app.on('window-all-closed', () => { /* the tray keeps the app alive */ });
-  app.on('before-quit', () => { quitting = true; globalShortcut.unregisterAll(); if (stackStartedHere) stopStack(); });
+  app.on('before-quit', () => { quitting = true; codingDeviceTray?.stop(); globalShortcut.unregisterAll(); if (stackStartedHere) stopStack(); });
 }

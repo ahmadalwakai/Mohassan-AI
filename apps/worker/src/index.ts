@@ -4,7 +4,7 @@ import { createCapabilities, Runtime } from '@mohassan/runtime';
 import { createMemoryControl, memoryMigration } from '@mohassan/memory';
 import { createSkillControl, skillsMigration } from '@mohassan/skills';
 import { createAIControl } from '../../server/src/ai.js';
-import { createCodingControl } from '../../server/src/coding.js';
+import { createApplicationCoding } from '../../server/src/coding.js';
 import { getConfig } from '../../server/src/config.js';
 import { createStudioControl } from '../../server/src/studio.js';
 import { createStudioAiControl } from '../../server/src/studio-ai.js';
@@ -22,7 +22,7 @@ await migrate(database.db);
 await memoryMigration(database.db);
 await skillsMigration(database.db);
 const memory = createMemoryControl(database.db);
-const coding = await createCodingControl(database.db, {dataDir:config.codingDataDir,allowedRoots:config.codingAllowedRoots,sandbox:config.sandboxRunner});
+const { coding } = await createApplicationCoding(database.db, config);
 // Construction migrates/configures the adapter only. The API owns registration
 // of the separate preview listener; a standalone worker never binds that port.
 const live = await createStudioLiveControl(database.db, {gatewayUrl:config.studioGatewayUrl,gatewaySecret:config.studioGatewaySecret,webOrigin:config.webOrigin,production:config.production});

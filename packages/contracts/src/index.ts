@@ -116,7 +116,16 @@ export const ProjectSchema=z.object({
 });
 export type Project=z.infer<typeof ProjectSchema>;
 export const RegisterProjectSchema=z.object({name:z.string().trim().min(2).max(100),path:z.string().min(3).max(500),allowedPaths:z.array(z.string().min(1).max(180)).min(1).max(5)}).strict();
-export const CodingWorkspaceSchema=z.object({projects:z.array(ProjectSchema),sandbox:SandboxStatusSchema});
+export const CodingDeviceSchema = z.object({
+  id: z.uuid(), name: z.string().min(1).max(80), online: z.boolean(),
+  lastSeenAt: z.iso.datetime().nullable(), sandbox: SandboxStatusSchema.strict(),
+}).strict();
+export type CodingDevice = z.infer<typeof CodingDeviceSchema>;
+export const CodingDeviceListSchema = z.object({ enabled: z.boolean(), devices: z.array(CodingDeviceSchema).max(1) }).strict();
+export type CodingDeviceList = z.infer<typeof CodingDeviceListSchema>;
+export const CodingDevicePairingSchema = z.object({ code: z.string().regex(/^[A-Za-z0-9_-]{16}$/), expiresAt: z.iso.datetime() }).strict();
+export type CodingDevicePairing = z.infer<typeof CodingDevicePairingSchema>;
+export const CodingWorkspaceSchema=z.object({projects:z.array(ProjectSchema),sandbox:SandboxStatusSchema,device:CodingDeviceSchema.nullable().optional()});
 export type CodingWorkspace=z.infer<typeof CodingWorkspaceSchema>;
 export const WorkspaceSnapshotSchema = z.object({
   apiVersion: z.literal('1'), user: z.object({id: z.string(), name: z.string(), email: z.string()}),
