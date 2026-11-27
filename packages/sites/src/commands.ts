@@ -1,6 +1,7 @@
 import type { SiteBlock, SiteBrief, SiteKind, SiteLang, SiteMood, SitePage, SiteWant } from '@mohassan/contracts';
 import { SiteBriefSchema } from '@mohassan/contracts';
-import { PAGE_TITLES, placeBlock, removeBlocks } from './families.ts';
+import { customPageCommand } from './custom-pages.ts';
+import { isCustomPage, PAGE_TITLES, placeBlock, removeBlocks } from './families.ts';
 import { parseFacts, parseFaq, parsePoints, parsePosts, parsePricing, parseTeam, parseTestimonials } from './plan.ts';
 import { detectKind } from './recognize.ts';
 import { findEmail, findNumbers, normalize, parseItems, splitList } from './text.ts';
@@ -14,7 +15,8 @@ import { colourFromWord } from './theme.ts';
 export type SiteCommand =
   | { kind: 'patch'; patch: Partial<SiteBrief>; summary: string }
   | { kind: 'undo'; summary: string }
-  | { kind: 'ask'; want: SiteWant; title?: string; summary: string };
+  | { kind: 'ask'; want: SiteWant; title?: string; summary: string }
+  | { kind: 'unknown'; summary: string };
 
 type BlockType = SiteBlock['type'];
 const SECTION_WORDS: readonly { type: BlockType; want?: SiteWant; words: readonly string[] }[] = [
@@ -49,6 +51,10 @@ const say = (lang: SiteLang, ar: string, en: string) => (lang === 'ar' ? ar : en
 const fuzzyIndex = (items: SiteBrief['items'], title: string) => { const norm = normalize(title); let index = items.findIndex(item => normalize(item.title) === norm); if (index < 0) index = items.findIndex(item => normalize(item.title).includes(norm) || norm.includes(normalize(item.title))); return index; };
 const REMOVE = /(?:^|\s)(?:احذف|ازل|أزل|اخف|أخف|شيل|الغي|ألغي|remove|hide|delete|drop)(?=\s)/u;
 const ADD = /(?:^|\s)(?:اضف|أضف|اظهر|أظهر|ضيف|رجع|أرجع|فعل|فعّل|اعمل|أنشئ|انشئ|add|show|enable|include|bring back|create|make)(?=\s)/u;
+const MAP_URL = /https:\/\/(?:maps\.app\.goo\.gl|(?:www\.)?google\.[a-z.]+\/maps|goo\.gl\/maps|maps\.apple\.com|(?:www\.)?openstreetmap\.org)[^\s"'<>]*/iu;
+const UNDO = /^(?:تراجع|ارجع|الغ|الغي|رجع|undo|revert|go back)(?![\p{L}])/u;
+const EXPLICIT_UNDO = /^(?:تراجع(?: عن اخر تعديل)?|ارجع عن اخر تعديل|(?:undo|revert)(?: the last change)?|go back)[.!?]*$/u;
+const EXPLICIT_COLOUR = /^(?:(?:غير|بدل|عدل|اجعل|حدد) (?:ال)?لون|(?:change|set|update) (?:the )?(?:main |primary )?(?:colou?r|theme))(?=\s|[:：=])/u;
 
 /** Content supplied in the same sentence after a colon, e.g. "أضف قسم الفريق: سارة - طبيبة". */
 const inlineContent = (raw: string) => { const match = raw.match(/[:：]\s*([\s\S]+)$/u); return match?.[1]?.trim() || null; };
@@ -69,31 +75,62 @@ function blockFromContent(want: SiteWant, text: string, lang: SiteLang): SiteBlo
   }
 }
 
-/** Applies an answer to an `ask` result: the user supplied the content a block needed. */
-export function fulfilWant(brief: SiteBrief, want: SiteWant, text: string): Partial<SiteBrief> | null {
+/** Applies an answer to the section or named page that requested it. */
+export function fulfilWant(brief: SiteBrief, want: SiteWant, text: string, title?: string): Partial<SiteBrief> | null {
+  if (want === 'about' && title) {
+    if (brief.pages.length >= 12) return null;
+    let number = brief.pages.length + 1;
+    while (brief.pages.some(page => page.path === `page-${number}.html`)) number++;
+    const page: SitePage = { path: `page-${number}.html`, title, inNav: true, blocks: [{ type: 'text', title, body: text.slice(0, 4000) }] };
+    const pages = [...brief.pages];
+    const contact = pages.findIndex(item => item.path === 'contact.html');
+    pages.splice(contact < 0 ? pages.length : contact, 0, page);
+    return { pages };
+  }
   if (want === 'testimonials') { const entries = parseTestimonials(text); if (!entries.length) return null; return { testimonials: entries.slice(0, 12), pages: placeBlock(brief.pages, { type: 'testimonials' }, brief.lang) }; }
   if (want === 'hours') { const lines = splitList(text).slice(0, 7).map(line => line.slice(0, 80)); if (!lines.length) return null; return { hours: lines, pages: placeBlock(brief.pages, { type: 'hours' }, brief.lang) }; }
+  if (want === 'address') {
+    const mapUrl = text.match(MAP_URL)?.[0];
+    if (!mapUrl) return null;
+    const address = text.replace(mapUrl, '').trim().replace(/^(?:العنوان|address)\s*[:：]\s*/iu, '').trim().slice(0, 200);
+    return { mapUrl, ...(address ? { address } : {}), pages: placeBlock(brief.pages, { type: 'map' }, brief.lang) };
+  }
   const block = blockFromContent(want, text, brief.lang);
   if (!block) return null;
-  // Replace an earlier block of the same kind (for items: only a second list such as projects), then place the new one.
-  const cleared = brief.pages
-    .map(page => ({ ...page, blocks: page.blocks.filter(existing => !(existing.type === block.type && (block.type !== 'items' || Boolean((existing as { items?: unknown }).items)))) }))
-    .filter(page => page.path === 'index.html' || page.blocks.length > 0);
-  return { pages: placeBlock(cleared, block, brief.lang) };
+  // Update an existing section in place. A projects block carries its own items.
+  const matches = (existing: SiteBlock) => existing.type === block.type && (existing.type !== 'items' || Boolean(existing.items));
+  const target = brief.pages.find(page => !isCustomPage(page) && page.blocks.some(matches));
+  if (!target) return { pages: placeBlock(brief.pages, block, brief.lang) };
+  const index = target.blocks.findIndex(matches);
+  return { pages: brief.pages.map(page => page === target ? { ...page, blocks: page.blocks.with(index, block) } : page) };
 }
 
-export function siteCommand(text: string, brief: SiteBrief): SiteCommand | null {
+export function siteCommand(text: string, brief: SiteBrief, { whilePending = false } = {}): SiteCommand | null {
   const raw = text.trim();
-  if (!raw) return null;
+  if (!raw || (whilePending && /[\r\n]/u.test(raw))) return null;
   const norm = normalize(raw);
   const lang = brief.lang;
-  if (/^(?:تراجع|ارجع|الغ|الغي|رجع|undo|revert|go back)(?![\p{L}])/u.test(norm)) return { kind: 'undo', summary: say(lang, 'تراجعت عن آخر تعديل.', 'Undid the last change.') };
+  if ((whilePending ? EXPLICIT_UNDO : UNDO).test(norm)) return { kind: 'undo', summary: say(lang, 'تراجعت عن آخر تعديل.', 'Undid the last change.') };
 
+  const pageEdit = customPageCommand(raw, brief);
+  if (pageEdit) return pageEdit;
+
+  // Custom page: "أضف صفحة الشروط: النص".
+  const page = raw.match(/^(?:اضف|أضف|انشئ|أنشئ|اعمل|add|create|make)\s+(?:صفحه|صفحة|a\s+page|page)\s+(?:باسم\s+|بعنوان\s+|called\s+|titled\s+|named\s+)?([^:：\n]{2,60}?)\s*(?:[:：]\s*([\s\S]+))?$/iu);
+  if (page) {
+    const title = page[1]!.trim().replace(/^[«"“]+|[»"”]+$/gu, '').trim();
+    if (!title) return { kind: 'unknown', summary: say(lang, 'اكتب اسم الصفحة.', 'Enter the page title.') };
+    if (brief.pages.length >= 12) return { kind: 'unknown', summary: say(lang, 'بلغ الموقع الحد الأقصى لعدد الصفحات.', 'The site has reached its page limit.') };
+    const body = page[2]?.trim();
+    if (body) return { kind: 'patch', patch: fulfilWant(brief, 'about', body, title)!, summary: say(lang, `أضفت صفحة «${title}».`, `Added the page "${title}".`) };
+    return { kind: 'ask', want: 'about', title, summary: say(lang, `اكتب لي نص صفحة «${title}» بكلماتك وسأضعه كما هو.`, `Send me the text of the "${title}" page in your words and I will add it as is.`) };
+  }
   // Colour: "غيّر اللون إلى أزرق", "make it green", "#1d4ed8".
-  if (/(?:لون|الوان|colou?r|theme)/u.test(norm) || /^#[0-9a-f]{6}$/i.test(raw) || /(?:اجعله|خليه|خله|make it)\s+(?:ازرق|اخضر|احمر|اصفر|بنفسجي|وردي|بني|اسود|برتقالي|ذهبي|فيروزي|blue|green|red|yellow|purple|pink|brown|black|orange|gold|teal|navy)/u.test(norm)) {
+  if (whilePending ? EXPLICIT_COLOUR.test(norm) : /(?:لون|الوان|colou?r|theme)/u.test(norm) || /^#[0-9a-f]{6}$/i.test(raw) || /(?:اجعله|خليه|خله|make it)\s+(?:ازرق|اخضر|احمر|اصفر|بنفسجي|وردي|بني|اسود|برتقالي|ذهبي|فيروزي|blue|green|red|yellow|purple|pink|brown|black|orange|gold|teal|navy)/u.test(norm)) {
     const colour = colourFromWord(raw);
     if (colour) return { kind: 'patch', patch: { primary: colour.hex }, summary: say(lang, `غيّرت اللون الأساسي إلى ${colour.word}.`, `Changed the main colour to ${colour.word}.`) };
   }
+  if (whilePending) return null;
   // Name.
   const name = rest(raw, /(?:غيّر|غير|بدّل|بدل|اجعل|خلي|خل)\s+(?:ال)?(?:اسم|الاسم)(?:\s+(?:الموقع|النشاط|المطعم|العياده|العيادة|المتجر))?\s+(?:إلى|الى|ل|ليكون|يكون|=|:)?\s*(.+)$/iu) ?? rest(raw, /(?:change|set|rename|update)\s+(?:the\s+)?(?:name|title|business name|site name)\s+(?:to|as|=|:)?\s*(.+)$/iu);
   if (name) { const clean = name.replace(/^[«"“'‘]+|[»"”'’]+$/gu, '').trim().slice(0, 80); if (clean) return { kind: 'patch', patch: { name: clean }, summary: say(lang, `غيّرت الاسم إلى «${clean}».`, `Changed the name to "${clean}".`) }; }
@@ -117,7 +154,7 @@ export function siteCommand(text: string, brief: SiteBrief): SiteCommand | null 
   const email = findEmail(raw);
   if (email && /(?:بريد|البريد|ايميل|إيميل|email|mail)/iu.test(norm)) return { kind: 'patch', patch: { email }, summary: say(lang, 'حدّثت البريد.', 'Updated the email.') };
   // Address / city / map.
-  const map = raw.match(/https:\/\/(?:maps\.app\.goo\.gl|(?:www\.)?google\.[a-z.]+\/maps|goo\.gl\/maps|maps\.apple\.com|(?:www\.)?openstreetmap\.org)[^\s"'<>]*/iu);
+  const map = raw.match(MAP_URL);
   if (map) return { kind: 'patch', patch: { mapUrl: map[0], pages: placeBlock(brief.pages, { type: 'map' }, lang) }, summary: say(lang, 'أضفت رابط الخريطة.', 'Added the map link.') };
   const address = rest(raw, /(?:العنوان|عنواننا|عنوان المحل|عنوان المطعم|address|our address)\s*(?:هو|:|=|is)?\s*(.+)$/iu);
   if (address) return { kind: 'patch', patch: { address: address.slice(0, 200) }, summary: say(lang, 'حدّثت العنوان.', 'Updated the address.') };
@@ -162,18 +199,6 @@ export function siteCommand(text: string, brief: SiteBrief): SiteCommand | null 
         return { kind: 'ask', want: section.want, summary: say(lang, ar, en) };
       }
     }
-  }
-  // Custom page: "أضف صفحة الشروط: النص".
-  const page = raw.match(/^(?:اضف|أضف|انشئ|أنشئ|اعمل|add|create|make)\s+(?:صفحه|صفحة|a\s+page|page)\s+(?:باسم\s+|بعنوان\s+|called\s+|titled\s+|named\s+)?([^:：\n]{2,60}?)\s*(?:[:：]\s*([\s\S]+))?$/iu);
-  if (page) {
-    const title = page[1]!.trim().replace(/^[«"“]+|[»"”]+$/gu, '');
-    const body = page[2]?.trim();
-    const path = `page-${brief.pages.length + 1}.html`;
-    if (body) {
-      const newPage: SitePage = { path, title: title.slice(0, 60), inNav: true, blocks: [{ type: 'text', title: title.slice(0, 80), body: body.slice(0, 4000) }] };
-      return { kind: 'patch', patch: { pages: [...brief.pages.filter(item => item.path !== 'contact.html'), newPage, ...brief.pages.filter(item => item.path === 'contact.html')].slice(0, 12) }, summary: say(lang, `أضفت صفحة «${title}».`, `Added the page "${title}".`) };
-    }
-    return { kind: 'ask', want: 'about', title: title.slice(0, 60), summary: say(lang, `اكتب لي نص صفحة «${title}» بكلماتك وسأضعه كما هو.`, `Send me the text of the "${title}" page in your words and I will add it as is.`) };
   }
   // Items: add / remove.
   const added = rest(raw, /^(?:اضف|أضف|زد|ضيف|اضيف|add|include)\s+(?:خدمه|خدمة|صنف|طبق|منتج|عمل|مشروع|بند|نقطه|نقطة|a\s+)?(?:service|dish|product|item|work|project|point)?\s*[:：]?\s*([\s\S]+)$/iu);
@@ -227,6 +252,6 @@ export function applyPatch(brief: SiteBrief, patch: Partial<SiteBrief>): SiteBri
 /** Example commands shown when a sentence is not understood. */
 export function commandExamples(lang: SiteLang): string[] {
   return lang === 'ar'
-    ? ['غيّر اللون إلى أزرق', 'غيّر الاسم إلى «…»', 'أضف خدمة تنظيف السجاد - 50', 'احذف خدمة …', 'رقم الواتساب 0501234567', 'ساعات العمل: السبت إلى الخميس ١٠ - ١١', 'أضف قسم الفريق: سارة - طبيبة أسنان', 'أضف قسم الأسئلة الشائعة', 'أضف صفحة الشروط: …', 'احذف قسم الصور', 'اجعله صفحة واحدة', 'اجعله أجرأ', 'اجعله بالإنجليزية', 'تراجع']
-    : ['change the colour to blue', 'change the name to "…"', 'add service Carpet cleaning - £50', 'remove service …', 'WhatsApp number 07700900123', 'opening hours: Mon–Sat 10–11', 'add a team section: Sarah - Dentist', 'add an FAQ section', 'add a page Terms: …', 'hide the gallery', 'make it one page', 'make it bolder', 'make it Arabic', 'undo'];
+    ? ['غيّر اللون إلى أزرق', 'غيّر الاسم إلى «…»', 'أضف خدمة تنظيف السجاد - 50', 'احذف خدمة …', 'رقم الواتساب 0501234567', 'ساعات العمل: السبت إلى الخميس ١٠ - ١١', 'أضف قسم الفريق: سارة - طبيبة أسنان', 'أضف قسم الأسئلة الشائعة', 'أضف صفحة الشروط: …', 'غيّر اسم صفحة «الشروط» إلى «شروط الخدمة»', 'احذف صفحة «الشروط»', 'احذف قسم الصور', 'اجعله صفحة واحدة', 'اجعله أجرأ', 'اجعله بالإنجليزية', 'تراجع']
+    : ['change the colour to blue', 'change the name to "…"', 'add service Carpet cleaning - £50', 'remove service …', 'WhatsApp number 07700900123', 'opening hours: Mon–Sat 10–11', 'add a team section: Sarah - Dentist', 'add an FAQ section', 'add a page Terms: …', 'rename page "Terms" to "Terms of Service"', 'delete page "Terms"', 'hide the gallery', 'make it one page', 'make it bolder', 'make it Arabic', 'undo'];
 }

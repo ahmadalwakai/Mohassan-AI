@@ -14,7 +14,7 @@ describe('a website through the real chat', () => {
   let database: Awaited<ReturnType<typeof createDatabase>>;
   let control: Awaited<ReturnType<typeof createCommandChatControl>>;
   let sites: Awaited<ReturnType<typeof createSitesControl>>;
-  const external = vi.fn(async () => { throw new Error('A website request is never a public lookup.'); });
+  const external = vi.fn<SearchProvider['search']>(async () => { throw new Error('A website request is never a public lookup.'); });
   beforeAll(async () => {
     database = await createDatabase(); await migrate(database.db);
     sites = await createSitesControl(database.db, { tokenSecret: 'sites-chat-token-secret-000000000001' });
@@ -25,11 +25,12 @@ describe('a website through the real chat', () => {
     });
   });
   afterAll(async () => { await control?.shutdown(); await database?.close(); });
-  async function settled(id: string) {
+  async function settled(id: string, allowSearch = false) {
     await control.settled(id);
     const detail = await control.detail(owner, id);
     const run = await database.db.selectFrom('chat_runs').select(['state', 'status']).where('conversation_id', '=', id).orderBy('created_at', 'desc').limit(1).executeTakeFirstOrThrow();
-    expect(detail.error).toBeNull(); expect(external).not.toHaveBeenCalled();
+    expect(detail.error).toBeNull();
+    if (!allowSearch) expect(external).not.toHaveBeenCalled();
     return { detail, run, text: detail.messages.at(-1)?.text ?? '' };
   }
 
@@ -74,6 +75,37 @@ describe('a website through the real chat', () => {
     const teamBlock = updated.brief.pages.flatMap(page => page.blocks).find(block => block.type === 'team');
     expect(teamBlock && teamBlock.type === 'team' ? teamBlock.members.map(member => member.name) : []).toEqual(['أبو أحمد', 'سامر']);
     expect(updated.revision).toBeGreaterThan(site.revision);
+
+    const send = async (text: string) => { await control.send(owner, id, { text }); return settled(id); };
+    await send('أضف صفحة الخصوصية: لا نشارك بيانات الطلبات.');
+    const termsAsk = await send('أضف صفحة الشروط');
+    expect(termsAsk.text).toContain('صفحة «الشروط»');
+    expect((await send('غيّر اللون إلى أخضر')).text).toContain('غيّرت اللون');
+    expect((await sites.detail(owner, site.id)).brief.primary).toBe('#15803d');
+    expect((await send('تراجع')).text).toContain('تراجعت');
+    expect((await sites.detail(owner, site.id)).brief.primary).toBe('#1d4ed8');
+
+    const terms = 'العنوان لتسليم الطلبات فقط.\nيمكن للعميل أن يكتب create a website لطلب موقع جديد.\nهل يتغيّر رقم الطلب؟';
+    expect((await send(terms)).text).toContain('أضفت صفحة «الشروط»');
+    const withTerms = await sites.detail(owner, site.id);
+    const custom = withTerms.brief.pages.filter(page => ['الشروط', 'الخصوصية'].includes(page.title));
+    expect(custom.map(page => page.title)).toEqual(['الخصوصية', 'الشروط']);
+    expect(custom[1]!.blocks).toEqual([{ type: 'text', title: 'الشروط', body: terms }]);
+    expect(withTerms.brief.pages.filter(page => !custom.includes(page))).toEqual(updated.brief.pages);
+
+    await send('أضف قسم من نحن: مطعم عائلي في دمشق.');
+    const about = await sites.detail(owner, site.id);
+    expect(about.brief.pages.find(page => page.path === 'index.html')?.blocks).toContainEqual({ type: 'text', title: 'من نحن', body: 'مطعم عائلي في دمشق.' });
+    expect(about.brief.pages.filter(page => custom.some(item => item.path === page.path))).toEqual(custom);
+
+    await send('أضف قسم الأسئلة الشائعة');
+    expect((await send('ما المواعيد')).text).toContain('لم أستطع قراءة المحتوى');
+    const faq = [{ question: 'ما المواعيد؟', answer: 'اتصل على رقم 0501111111.' }, { question: 'أين العنوان؟', answer: 'الاستلام من المطعم.' }];
+    await send(faq.flatMap(entry => [entry.question, entry.answer]).join('\n'));
+    const withFaq = await sites.detail(owner, site.id);
+    expect(withFaq.brief.pages.flatMap(page => page.blocks)).toContainEqual({ type: 'faq', entries: faq });
+    for (const field of ['hours', 'address', 'phone', 'whatsapp'] as const) expect(withFaq.brief[field], field).toEqual(about.brief[field]);
+    expect(withFaq.brief.pages.filter(page => custom.some(item => item.path === page.path))).toEqual(custom);
   });
 
   it('asks for the name and contact when the sentence has neither, in one card', async () => {
@@ -88,5 +120,33 @@ describe('a website through the real chat', () => {
     expect(built.run.status).toBe('completed');
     expect(built.text).toContain('Swift Plumbing');
     expect(built.text).toContain('Open the preview');
+  });
+
+  it('keeps a custom page question pending after a single-line side question', async () => {
+    const { id } = await control.create(owner, { goal: 'أريد موقعاً لمطعم «بيت الياسمين» في دمشق' });
+    const first = await settled(id);
+    const question = first.detail.question!;
+    const answers: Record<string, string> = { items: 'فتوش', contact: '0933123456 واتساب' };
+    await control.send(owner, id, { text: 'الإجابات', questionId: question.id, answers: question.fields!.map(field => ({ fieldId: field.id, value: answers[field.id] ?? 'لا' })) });
+    const built = await settled(id);
+    const siteId = built.run.state.siteId;
+    if (!siteId) throw new Error('Expected the chat to build a site');
+    const before = await sites.detail(owner, siteId);
+
+    await control.send(owner, id, { text: 'أضف صفحة الشروط' });
+    const pending = { want: 'about', title: 'الشروط' };
+    expect((await settled(id)).run.state.sitePendingWant).toEqual(pending);
+
+    await external.withImplementation(async () => [], async () => {
+      for (const mark of ['؟', '?']) {
+        await control.send(owner, id, { text: `كم يستغرق النشر${mark}` });
+        const sideQuestion = await settled(id, true);
+        const after = await sites.detail(owner, siteId);
+        expect(after.pages).toEqual(before.pages);
+        expect(after.revision).toBe(before.revision);
+        expect(sideQuestion.run.state.sitePendingWant).toEqual(pending);
+      }
+    });
+    external.mockClear();
   });
 });

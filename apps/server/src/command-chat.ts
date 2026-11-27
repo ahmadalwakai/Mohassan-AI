@@ -2717,7 +2717,7 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
       if (config.sites) {
         const sitePort = config.sites;
         if (state.site && state.questionAnswer) { state.site = siteAnswers(state.site, state.questionAnswer.fields ?? {}); state.questionAnswer = undefined; }
-        const siteFlow = state.site ?? (freshRequest ? siteTask(request) : null);
+        const siteFlow = state.site ?? (freshRequest && !state.sitePendingWant ? siteTask(request) : null);
         if (siteFlow) {
           const lang = siteFlow.partial.lang;
           const card = siteCard(siteFlow);

@@ -165,3 +165,9 @@ export const SiteDetailSchema = SiteSummarySchema.extend({
   images: z.array(SiteImageRefSchema.extend({ width: z.number().int(), height: z.number().int(), bytes: z.number().int() })).max(24),
 }).strict();
 export type SiteDetail = z.infer<typeof SiteDetailSchema>;
+
+export type SiteCommandResult = { summary: string; detail: SiteDetail } & (
+  | { kind: 'ask'; want: SiteWant; title?: string }
+  | { kind: 'patch'; fulfilledWant?: true }
+  | { kind: 'undo' | 'unknown' }
+);

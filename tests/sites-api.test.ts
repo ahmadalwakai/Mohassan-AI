@@ -6,7 +6,8 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { SiteCommandResult } from '@mohassan/contracts';
 import { listZip } from '@mohassan/sites';
 import { createApplication } from '../apps/server/src/app.js';
 import { createSitesControl } from '../apps/server/src/sites.js';
@@ -125,6 +126,57 @@ describe('sites API', () => {
     expect(publish.statusCode).toBe(409);
   });
 
+  it('keeps pending content in its section or named page through the commands endpoint', async () => {
+    const { app, headers } = await boot();
+    const site = (await app.inject({ method: 'POST', url: '/api/sites/draft', headers, payload: draft })).json();
+    const send = async (text: string, pending?: { want: string; title?: string }) => {
+      const response = await app.inject({ method: 'POST', url: `/api/sites/${site.id}/commands`, headers, payload: { text, ...pending } });
+      expect(response.statusCode, response.body).toBe(200);
+      return response.json<SiteCommandResult>();
+    };
+
+    const about = await send('أضف قسم من نحن: مطعم عائلي في دمشق.');
+    const terms = await send('أضف صفحة الشروط');
+    expect(terms).toMatchObject({ kind: 'ask', want: 'about', title: 'الشروط' });
+    if (terms.kind !== 'ask') throw new Error('Expected a pending page question');
+    const target = { want: terms.want, title: terms.title };
+    const colour = await send('غيّر اللون إلى أزرق', target);
+    expect(colour).toMatchObject({ kind: 'patch', detail: { brief: { primary: '#1d4ed8' } } });
+    expect(colour).not.toHaveProperty('fulfilledWant');
+    const undone = await send('تراجع', target);
+    expect(undone.kind).toBe('undo');
+    expect(undone.detail.brief).toEqual(about.detail.brief);
+
+    const body = 'العنوان للاستلام فقط ورقم الطلب مطلوب.';
+    const page = await send(body, target);
+    expect(page).toMatchObject({ kind: 'patch', fulfilledWant: true });
+    const custom = page.detail.brief.pages.find(item => item.title === terms.title)!;
+    expect(custom.blocks).toEqual([{ type: 'text', title: terms.title, body }]);
+    expect(page.detail.brief.pages.filter(item => item.path !== custom.path)).toEqual(about.detail.brief.pages);
+
+    expect(await send('أضف قسم من نحن')).toMatchObject({ kind: 'ask', want: 'about' });
+    const aboutBody = 'منذ تأسيس المطعم نهتم بالطعام الطازج.\nنستقبل طلباتكم طوال الأسبوع.';
+    const newAbout = await send(aboutBody, { want: 'about' });
+    expect(newAbout).toMatchObject({ kind: 'patch', fulfilledWant: true });
+    expect(newAbout.detail.brief.pages.flatMap(item => item.blocks)).toContainEqual({ type: 'text', title: 'من نحن', body: aboutBody });
+    expect(newAbout.detail.brief.pages.find(item => item.path === custom.path)).toEqual(custom);
+
+    expect(await send('أضف قسم الأسئلة الشائعة')).toMatchObject({ kind: 'ask', want: 'faq' });
+    const entries = [{ question: 'ما المواعيد؟', answer: 'راجع العنوان ورقم الحجز 0501111111.' }, { question: 'كيف أطلب؟', answer: 'اتصل بالمطعم.' }];
+    const faq = await send(entries.flatMap(entry => [entry.question, entry.answer]).join('\n'), { want: 'faq' });
+    expect(faq).toMatchObject({ kind: 'patch', fulfilledWant: true });
+    expect(faq.detail.brief.pages.flatMap(item => item.blocks)).toContainEqual({ type: 'faq', entries });
+    for (const field of ['hours', 'address', 'phone', 'whatsapp'] as const) expect(faq.detail.brief[field], field).toEqual(about.detail.brief[field]);
+    expect(faq.detail.brief.pages.find(item => item.path === custom.path)).toEqual(custom);
+
+    const renamed = await send('rename page الشروط to Terms');
+    expect(renamed.detail.pages.find(item => item.path === custom.path)?.title).toBe('Terms');
+    expect(await send('احذف صفحة التواصل')).toMatchObject({ kind: 'unknown', detail: { revision: renamed.detail.revision } });
+    expect(await send('delete page Missing')).toMatchObject({ kind: 'unknown', summary: expect.stringContaining('لم أجد'), detail: { revision: renamed.detail.revision } });
+    const deleted = await send('احذف صفحة Terms');
+    expect(deleted.detail.brief).toEqual({ ...faq.detail.brief, pages: faq.detail.brief.pages.filter(item => item.path !== custom.path) });
+  });
+
   it('stores an uploaded image, serves it in the preview and removes it', async () => {
     const { app, headers, base } = await boot();
     const site = (await app.inject({ method: 'POST', url: '/api/sites/draft', headers, payload: draft })).json();
@@ -178,6 +230,70 @@ describe('sites API', () => {
     expect(files.map(file => file.file)).toEqual(expect.arrayContaining(['index.html', 'sitemap.xml', 'robots.txt']));
     expect(Buffer.from(files.find(file => file.file === 'sitemap.xml')!.data, 'base64').toString('utf8')).toContain('https://mohassan-site-x.vercel.app/');
     expect((deployments[0]!.body as { projectSettings: { framework: null } }).projectSettings.framework).toBeNull();
+  });
+
+  it('records a rejected POST and a second deployment error, keeping the first URL for retry', async () => {
+    const alias = 'first-deployment.vercel.app';
+    const publishedUrl = `https://${alias}`;
+    let deployments = 0;
+    const vercel: typeof fetch = async (_input, init) => {
+      if (init?.method !== 'POST') return Response.json({ readyState: 'ERROR' });
+      deployments++;
+      if (deployments === 1) return Response.json({ error: { message: 'rejected fixture' } }, { status: 400 });
+      if (deployments === 3) return Response.json({ id: 'dpl_second', readyState: 'BUILDING' });
+      return Response.json({ id: 'dpl_ready', readyState: 'READY', alias: [alias] });
+    };
+    const { app, application, headers } = await boot(vercel);
+    const createSite = async () => (await app.inject({ method: 'POST', url: '/api/sites/draft', headers, payload: draft })).json();
+    const publish = (siteId: string) => app.inject({ method: 'POST', url: `/api/sites/${siteId}/publish`, headers, payload: {} });
+    const stored = (siteId: string) => application.database.db.selectFrom('sites').select(['status', 'published_url', 'publish']).where('id', '=', siteId).executeTakeFirstOrThrow();
+
+    const rejected = await createSite();
+    const rejection = await publish(rejected.id);
+    expect(rejection.statusCode, rejection.body).toBe(424);
+    expect(rejection.json().error).toMatchObject({ code: 'PUBLISH_REJECTED' });
+    expect(await stored(rejected.id)).toMatchObject({ status: 'failed', published_url: null, publish: { error: rejection.json().error.message } });
+
+    const site = await createSite();
+    const failure = await publish(site.id);
+    expect(failure.statusCode, failure.body).toBe(424);
+    expect(failure.json().error).toMatchObject({ code: 'PUBLISH_FAILED' });
+    expect(await stored(site.id)).toMatchObject({ status: 'failed', published_url: publishedUrl, publish: { error: failure.json().error.message } });
+    const retry = await publish(site.id);
+    expect(retry.statusCode, retry.body).toBe(200);
+    expect(retry.json()).toMatchObject({ status: 'published', publishedUrl });
+    expect(deployments).toBe(4);
+  });
+
+  it('aborts an in-flight poll when the real HTTP client disconnects and records the failure', async () => {
+    let startPoll!: (signal: AbortSignal) => void;
+    const polling = new Promise<AbortSignal>(resolve => { startPoll = resolve; });
+    const vercel = vi.fn<typeof fetch>(async (_input, init) => {
+      if (init?.method === 'POST') return Response.json({ id: 'dpl_waiting', readyState: 'BUILDING' });
+      startPoll(init!.signal!);
+      return new Promise<Response>(() => {});
+    });
+    const { app, application, headers } = await boot(vercel);
+    const site = (await app.inject({ method: 'POST', url: '/api/sites/draft', headers, payload: draft })).json();
+    const address = await app.listen({ host: '127.0.0.1', port: 0 });
+    const client = new AbortController();
+    try {
+      const request = fetch(`${address}/api/sites/${site.id}/publish`, {
+        method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: '{}', signal: client.signal,
+      });
+      const disconnected = expect(request).rejects.toMatchObject({ name: 'AbortError' });
+      const signal = await polling;
+      client.abort();
+      await disconnected;
+      await vi.waitFor(async () => {
+        const stored = await application.database.db.selectFrom('sites').select(['status', 'published_url', 'publish']).where('id', '=', site.id).executeTakeFirstOrThrow();
+        expect(stored).toMatchObject({ status: 'failed', published_url: null, publish: { error: 'انقطع الاتصال قبل اكتمال النشر.' } });
+      });
+      expect(signal.aborted).toBe(true);
+      expect(vercel).toHaveBeenCalledTimes(2);
+    } finally {
+      client.abort();
+    }
   });
 
   it('lets a member build and preview a site but not publish it', async () => {

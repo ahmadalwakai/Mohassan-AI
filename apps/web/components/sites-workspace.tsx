@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { Button, Spinner } from "@chakra-ui/react";
 import { Check, Download, ExternalLink, Globe, ImagePlus, Monitor, Plus, RefreshCw, Smartphone, Tablet, Trash2, Undo2, Upload, X } from "lucide-react";
-import type { SiteBrief, SiteDetail, SiteSummary, SiteWant } from "@mohassan/contracts";
+import type { SiteBrief, SiteCommandResult, SiteDetail, SiteSummary, SiteWant } from "@mohassan/contracts";
 import styles from "./sites-workspace.module.css";
 
 /**
@@ -22,7 +22,7 @@ const DEVICES = [{ id: "phone", width: 375, label: "هاتف", Icon: Smartphone 
 const KINDS: { id: SiteBrief["kind"]; label: string }[] = [{ id: "services", label: "خدمات" }, { id: "restaurant", label: "مطعم أو كافيه" }, { id: "clinic", label: "عيادة" }, { id: "catalogue", label: "متجر أو منتجات" }, { id: "portfolio", label: "معرض أعمال" }, { id: "landing", label: "صفحة هبوط لعرض واحد" }];
 const MOODS: { id: SiteBrief["mood"]; label: string }[] = [{ id: "calm", label: "هادئ" }, { id: "warm", label: "دافئ" }, { id: "bold", label: "جريء" }];
 const GOALS: { id: SiteBrief["goal"]; label: string }[] = [{ id: "call", label: "اتصال" }, { id: "whatsapp", label: "واتساب" }, { id: "email", label: "بريد" }, { id: "order", label: "طلب عبر واتساب" }, { id: "book", label: "حجز موعد" }];
-const EXAMPLES = ["غيّر اللون إلى أزرق", "أضف خدمة … - 50", "احذف خدمة …", "أضف قسم الفريق", "أضف قسم الأسئلة الشائعة", "أضف صفحة …: …", "ساعات العمل: …", "اجعله صفحة واحدة", "اجعله أجرأ", "اجعله بالإنجليزية", "تراجع"];
+const EXAMPLES = ["غيّر اللون إلى أزرق", "أضف خدمة … - 50", "احذف خدمة …", "أضف قسم الفريق", "أضف قسم الأسئلة الشائعة", "أضف صفحة …: …", "غيّر اسم صفحة «…» إلى «…»", "احذف صفحة «…»", "ساعات العمل: …", "اجعله صفحة واحدة", "اجعله أجرأ", "اجعله بالإنجليزية", "تراجع"];
 const WANT_LABELS: Record<string, string> = { about: "نص «من نحن»", team: "أعضاء الفريق", faq: "الأسئلة وأجوبتها", pricing: "الباقات", projects: "المشاريع", features: "المميزات", steps: "خطوات العمل", facts: "الأرقام", testimonials: "آراء العملاء", posts: "الأخبار", hours: "ساعات العمل", address: "العنوان ورابط الخريطة" };
 
 function Preview({ site, device, page }: { site: SiteDetail; device: (typeof DEVICES)[number]; page: string }) {
@@ -167,16 +167,19 @@ export function SitesWorkspace({ offline, initialSiteId }: { offline: boolean; i
     api<SiteDetail>(`/api/sites/${selected}`).then(detail => { if (active) { setSite(detail); setPage("index.html"); setAsk(null); setNote(""); } }).catch(caught => { if (active) setError(text(caught)); });
     return () => { active = false; };
   }, [selected]);
-  const apply = useCallback((detail: SiteDetail) => { setSite(detail); setError(""); setSites(current => current ? [detail, ...current.filter(item => item.id !== detail.id)].map(item => item.id === detail.id ? { id: detail.id, name: detail.name, slug: detail.slug, kind: detail.kind, lang: detail.lang, status: detail.status, revision: detail.revision, publishedUrl: detail.publishedUrl, createdAt: detail.createdAt, updatedAt: detail.updatedAt } : item) : current); }, []);
+  const apply = useCallback((detail: SiteDetail) => {
+    setPage(current => detail.pages.some(item => item.path === current) ? current : "index.html");
+    setSite(detail); setError(""); setSites(current => current ? [detail, ...current.filter(item => item.id !== detail.id)].map(item => item.id === detail.id ? { id: detail.id, name: detail.name, slug: detail.slug, kind: detail.kind, lang: detail.lang, status: detail.status, revision: detail.revision, publishedUrl: detail.publishedUrl, createdAt: detail.createdAt, updatedAt: detail.updatedAt } : item) : current);
+  }, []);
 
-  const run = async (textValue: string, want?: SiteWant) => {
+  const run = async (textValue: string, pending?: { want: SiteWant; title?: string }) => {
     if (!site || !textValue.trim()) return;
     setBusy(true); setError("");
     try {
-      const result = await api<{ kind: "patch" | "undo" | "ask" | "unknown"; summary: string; want?: SiteWant; title?: string; detail: SiteDetail }>(`/api/sites/${site.id}/commands`, { body: { text: textValue.trim(), ...(want ? { want } : {}) } });
-      if (result.kind === "ask" && result.want) { setAsk({ want: result.want, title: result.title, summary: result.summary, answer: "" }); setNote(""); }
+      const result = await api<SiteCommandResult>(`/api/sites/${site.id}/commands`, { body: { text: textValue.trim(), ...pending } });
+      if (result.kind === "ask") { setAsk({ want: result.want, title: result.title, summary: result.summary, answer: "" }); setNote(""); }
       else if (result.kind === "unknown") { setNote(result.summary || "لم أفهم هذا الأمر. جرّب أحد الأمثلة أدناه."); }
-      else { apply(result.detail); setNote(result.summary); setAsk(null); setCommand(""); }
+      else { apply(result.detail); setNote(result.summary); if (result.kind === "patch" && result.fulfilledWant) setAsk(null); if (!pending) setCommand(""); }
     } catch (caught) { setError(text(caught)); } finally { setBusy(false); }
   };
   const download = async () => {
@@ -233,10 +236,10 @@ export function SitesWorkspace({ offline, initialSiteId }: { offline: boolean; i
           <div className={styles.examples}>{EXAMPLES.map(example => <button key={example} type="button" onClick={() => setCommand(example)}>{example}</button>)}</div>
           {note ? <p className={styles.note}>{note}</p> : null}
           {ask ? <div className={styles.ask}>
-            <strong>{WANT_LABELS[ask.want] ?? ask.want}{ask.title ? ` — ${ask.title}` : ""}</strong>
+            <strong>{ask.title ?? WANT_LABELS[ask.want] ?? ask.want}</strong>
             <p className={styles.help}>{ask.summary}</p>
-            <textarea aria-label={`محتوى ${WANT_LABELS[ask.want] ?? ask.want}`} value={ask.answer} onChange={event => setAsk({ ...ask, answer: event.target.value })} />
-            <div className={styles.actions}><Button className="primary-button" disabled={busy || offline || !ask.answer.trim()} onClick={() => void run(ask.answer, ask.want)}><Check size={16} />أضف</Button><Button variant="outline" onClick={() => setAsk(null)}>إلغاء</Button></div>
+            <textarea aria-label={`محتوى ${ask.title ?? WANT_LABELS[ask.want] ?? ask.want}`} value={ask.answer} onChange={event => setAsk({ ...ask, answer: event.target.value })} />
+            <div className={styles.actions}><Button className="primary-button" disabled={busy || offline || !ask.answer.trim()} onClick={() => void run(ask.answer, { want: ask.want, title: ask.title })}><Check size={16} />أضف</Button><Button variant="outline" onClick={() => setAsk(null)}>إلغاء</Button></div>
           </div> : null}
         </div> : null}
         {tab === "brief" ? <BriefForm site={site} offline={offline} onSaved={detail => { apply(detail); setNote("حُفظت البيانات وأُعيد توليد الموقع."); }} onError={setError} /> : null}
