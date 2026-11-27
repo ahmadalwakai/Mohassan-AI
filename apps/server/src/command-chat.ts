@@ -127,7 +127,7 @@ import { assessBrowserVerification } from './assistant/verification.js';
 import { newGoalState, observeFailure, observeOutcome, reviewOpen, reviewStop, stagnationWarning, type BrainVersion } from './assistant/goal-integrity.js';
 import { ChatWaitQuerySchema, abortWhenClosed, conversationVersion, waitForChange } from './chat-wait.js';
 import { finalizeChatFailure, recordChatNotification } from './chat-notification-lifecycle.js';
-import { noPreviousAnswer, shorterAnswer, shorterRequest } from './assistant/answer-reshape.js';
+import { shortenPreviousAnswer, shorterRequest } from './assistant/answer-reshape.js';
 import { initialProgressMarker } from './ops/metrics/chat-progress.js';
 import { fullerName, returnParts } from './assistant/return-to.js';
 import { RunLedgerError, addEvidence, appendStep, beginRepair, cancelLedger, classifySteering, collectStateEvidence, countModelCall, createRunLedger, criterionLabel, decideVerdict, planStep,
@@ -2830,16 +2830,16 @@ export async function createCommandChatControl(db: Kysely<any>, config: CommandC
           const experimental = previousAnswer?.endsWith(V5_CHAT_FOOTER) && await db.selectFrom('chat_messages as m').select('m.id')
             .where('m.conversation_id', '=', id).where('m.role', '=', 'assistant').where('m.text', '=', previousAnswer)
             .where(sql<boolean>`to_jsonb(m)->>'experiment' = 'v5'`).limit(1).executeTakeFirst();
-          const shortened = previousAnswer && !experimental ? shorterAnswer(previousAnswer, shorter) : null;
+          const outcome = shortenPreviousAnswer(previousAnswer, shorter, Boolean(experimental));
           // The page the answer was read from stays the conversation's page, so «اشرح أكثر» next reads more of it.
-          const previousFound = shortened ? (await db.selectFrom('chat_runs').select('state').where('conversation_id', '=', id).where('owner_id', '=', ownerId)
+          const previousFound = previousAnswer && !experimental ? (await db.selectFrom('chat_runs').select('state').where('conversation_id', '=', id).where('owner_id', '=', ownerId)
             .where('id', '!=', runId).orderBy('created_at', 'desc').limit(1).executeTakeFirst())?.state?.handsFound : null;
           if (previousFound && typeof previousFound.url === 'string') state.handsFound = previousFound;
           await addStep(id, runId, shorter.lang === 'ar' ? 'اختصار الجواب السابق' : 'Shortening the previous answer');
-          state.trail.push({ step: ++state.steps, action: 'shorten_previous_answer', changed: false, result: clean(shortened ?? 'no earlier answer').slice(0, 1100) });
+          state.trail.push({ step: ++state.steps, action: 'shorten_previous_answer', changed: false, result: clean(outcome.kind === 'shortened' ? outcome.text : outcome.kind).slice(0, 1100) });
           // A quote of the previous answer, which the judge saw when it was sent: judged again against «اختصر جوابك», it was
           // withheld as «the page does not talk about your question» (long-after turn 17, 2026-11-23).
-          await finish(id, runId, state, vault.scrub(id, shortened ?? noPreviousAnswer(shorter.lang)), shortened ? 'completed' : 'blocked', undefined, undefined, true);
+          await finish(id, runId, state, vault.scrub(id, outcome.text), outcome.kind === 'shortened' ? 'completed' : 'blocked', undefined, undefined, true);
           return;
         }
       }
