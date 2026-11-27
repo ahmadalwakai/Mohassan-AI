@@ -27,9 +27,33 @@ describe.each([false, true])('the model-free reader (indexed: %s)', indexed => {
     expect(answer?.skill).toBe(copy);
   });
 
-  it('reserves ad guidance after the strongest topical match', () => {
+  it('keeps a verified topical match ahead of ad guidance in the request language', async () => {
     const repair = guide('appliance-repair', 'Appliance repair', 'Repair service');
-    expect(rank('Create ads for my appliance repair service', [copy, repair, ads])).toEqual([repair, ads, copy]);
+    const request = 'Create ads for my appliance repair service';
+    const candidates = [copy, repair, ads];
+    expect(rank(request, candidates)).toEqual([repair, ads, copy]);
+    const answer = await read(candidates, {
+      [repair.id]: '## الخطوات\n1. افحص الجهاز وحدد سبب العطل قبل الإصلاح.',
+      [ads.id]: '## Steps\n1. Set the campaign goal.',
+    })('owner', request, { mode: 'fallback' });
+    expect(answer?.skill).toBe(repair);
+  });
+
+  it('checks the whole topical window before trying promoted guides', async () => {
+    const repair = guide('appliance-repair', 'Appliance repair', '');
+    const applianceService = guide('appliance-service', 'Appliance service', '');
+    const repairService = guide('repair-service', 'Repair service', '');
+    const request = 'Create ads for my appliance repair service';
+    const candidates = [copy, repair, ads, applianceService, repairService];
+    expect(rank(request, candidates)).toEqual([repair, applianceService, repairService, ads, copy]);
+    const adInstructions = { [ads.id]: '## Steps\n1. Set the campaign goal.' };
+    const fallback = await read(candidates, adInstructions)('owner', request, { mode: 'fallback' });
+    expect(fallback?.skill).toBe(ads);
+    const answer = await read(candidates, {
+      ...adInstructions,
+      [repairService.id]: '## الخطوات\n1. افحص الجهاز وحدد سبب العطل قبل الإصلاح.',
+    })('owner', request, { mode: 'fallback' });
+    expect(answer?.skill).toBe(repairService);
   });
 
   it.each([
@@ -37,8 +61,33 @@ describe.each([false, true])('the model-free reader (indexed: %s)', indexed => {
     'Create an ad blocker for my browser',
     'Launch a fundraising campaign for our charity',
     'Create Instagram ads for my bakery',
+    'Plan a campaign for my wedding. I sell handmade cards.',
   ])('leaves unrelated and platform-specific briefs to lexical matching: %s', request => {
     expect(rank(request, [copy])).toEqual([]);
+  });
+
+  // Requests and expected routing come from the owner's rework of PR #128, received 2026-11-27.
+  // https://github.com/ahmadalwakai/Mohassan-AI/pull/128
+  const dataAnalysis = guide('data-analysis', 'Data analysis', 'Analyze sales data', 'analytics');
+  it.each([
+    ['make an ad hoc report for my manager', null],
+    ['plan a campaign for my wedding', null],
+    ['run a campaign for our school election', null],
+    ['create an ad-free version of my blog', null],
+    ['how do I write an ad hoc analysis of sales data', dataAnalysis],
+  ])('keeps Ads guidance out of a non-advertising request: %s', async (request, expected) => {
+    for (const available of [[copy], [ads, copy]]) {
+      const candidates = expected ? [...available, expected] : available;
+      expect(rank(request, candidates)).toEqual(expected ? [expected] : []);
+      for (const mode of ['advice', 'fallback'] as const) {
+        const answer = await read(candidates, {
+          [ads.id]: '## Steps\n1. Set the campaign goal.',
+          [copy.id]: '## Steps\n1. Draft copy for the audience.',
+          [dataAnalysis.id]: '## الخطوات\n1. افحص بيانات المبيعات وحدد الأنماط.',
+        })('owner', request, { mode });
+        expect(answer?.skill ?? null).toBe(expected);
+      }
+    }
   });
 
   it.each([

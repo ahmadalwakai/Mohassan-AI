@@ -16,19 +16,17 @@ export function orderReaderMatches(request: string, matches: SkillMatch[], candi
   }
   if (!wantsAdGuidance(request)) return [...topical, ...generic];
 
-  // PR #2 reserves a place for active Ads guidance after the first topical match.
-  // https://github.com/ahmadalwakai/Mohassan-AI/pull/2 (retrieved 2026-11-27).
-  const first = topical[0];
+  // Reserve the verification window for independently ranked topical matches.
+  const window = topical.slice(0, READER_MATCH_WINDOW);
   const guidance: SkillMatch[] = [];
   for (const slug of AD_GUIDANCE_SLUGS) {
     const skill = candidates.find(candidate => candidate.slug === slug && candidate.category === 'marketing');
-    if (!skill || skill.id === first?.skill.id) continue;
+    if (!skill || window.some(match => match.skill.id === skill.id)) continue;
     const match = matches.find(entry => entry.skill.id === skill.id);
-    // Keep a promoted guide within the reader's same-language comparison window.
-    guidance.push({ skill, score: first?.score ?? Math.max(minScore, match?.score ?? 0), terms: match?.terms ?? [] });
+    guidance.push({ skill, score: Math.max(minScore, match?.score ?? 0), terms: match?.terms ?? [], promoted: true });
   }
 
   const guidanceIds = new Set(guidance.map(match => match.skill.id));
-  const remaining = [...topical.slice(1), ...generic].filter(match => !guidanceIds.has(match.skill.id));
-  return [...topical.slice(0, 1), ...guidance, ...remaining];
+  const remaining = [...topical.slice(READER_MATCH_WINDOW), ...generic].filter(match => !guidanceIds.has(match.skill.id));
+  return [...window, ...guidance, ...remaining];
 }
