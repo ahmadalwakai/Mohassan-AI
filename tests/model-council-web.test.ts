@@ -41,6 +41,171 @@ describe('the model council under an owner reply', () => {
   });
 });
 
+describe('a recorded council discussion under an owner reply', () => {
+  // Reuse the version 1 fixture's identities. The evidence, checks and weights below are synthetic inputs.
+  const reader = council.members[3];
+  const router = council.members[0];
+  const engine = council.members[2];
+  const total = 12 + 7;
+  const evidenceUrl = 'https://example.test/council-evidence';
+  const evidenceQuote = `The sum of 12 and 7 is ${total}.`;
+  const reasonAr = 'أيّد التحقّق جواب نموذج القراءة ووجد نصّه في الدليل.';
+  const reasonEn = 'The check supported the reading model and found its answer in the evidence.';
+  const checkNote = 'طابق المقترح السطر المقتبس.';
+  const weightSource = 'نتيجة القياس في بيانات الاختبار';
+  const failureNote = 'انتهت مهلة المحاولة قبل ورود جواب.';
+  const discussion = {
+    proposals: [
+      { member: reader.model, answer: String(total), evidenceUrl, evidenceQuote },
+      { member: engine.model, answer: String(total - 1) },
+    ],
+    checks: [
+      { checker: router.model, member: reader.model, verdict: 'supports', note: checkNote },
+      { checker: router.model, member: engine.model, verdict: 'contradicts' },
+      { checker: engine.model, member: reader.model, verdict: 'unsure' },
+    ],
+    votes: [
+      { member: reader.model, weight: 2 / 7, weightSource },
+      { member: router.model, weight: 1 - 1, weightSource: ' ' },
+      { member: engine.model, weight: 2 / 4, weightSource },
+    ],
+    decision: { chosen: reader.model, reasonAr, reasonEn },
+  };
+  const full = ModelCouncilSchema.parse({
+    ...council,
+    members: [...council.members.slice(0, -1), { ...council.members[4], note: failureNote },
+      { ...router, outcome: 'failed', note: 'لم يُرجع الموجّه نتيجة.' }],
+    discussion,
+  });
+
+  it('renders a native collapsed disclosure with a one-line decision summary and a hidden target', () => {
+    const html = renderToStaticMarkup(createElement(ModelCouncilDetails, { council: full }));
+    const button = html.match(/<button\b[^>]*>/u)?.[0] ?? '';
+    const target = button.match(/aria-controls="([^"]+)"/u)?.[1];
+    expect(button).toContain('type="button"');
+    expect(button).toContain('aria-expanded="false"');
+    expect(button).not.toContain('tabindex="-1"');
+    expect(target).toBeTruthy();
+    expect(html).toContain(`id="${target}"`);
+    expect(html).toContain('hidden="" data-testid="council-panel"');
+    expect(html).toContain('ناقش نموذجان؛ اختير جواب');
+    expect(html).toContain(`title="${reader.model}">${reader.label}`);
+    expect(html).toContain(reasonAr);
+    expect(html).not.toContain('<h3>');
+  });
+
+  it('shows the recorded proposals, evidence, checks, vote sources and participation outcomes', () => {
+    const html = renderToStaticMarkup(createElement(CouncilPanel, { council: full }));
+    for (const heading of ['المقترحات', 'التحقّق', 'التصويت', 'القرار', 'من تعذّرت مشاركتهم']) {
+      expect(html).toContain(`<h3>${heading}</h3>`);
+    }
+    expect(html).toContain('dir="rtl"');
+    expect(html).toContain('role="list"');
+    expect(html).toContain(`href="${evidenceUrl}"`);
+    expect(html).toContain(`<blockquote dir="auto">${evidenceQuote}</blockquote>`);
+    expect(html).toContain('لم يُسجّل دليل لهذا المقترح.');
+    expect(html).toContain(`title="${router.model}">${router.label}`);
+    for (const verdict of ['يؤيّد', 'يعارض', 'غير متأكد']) expect(html).toContain(verdict);
+    expect(html).toContain(checkNote);
+    expect(html).toContain(`<bdi>${(29 / 100).toLocaleString('ar')}</bdi>`);
+    expect(html).toContain(`<bdi>${(0).toLocaleString('ar')}</bdi>`);
+    expect(html).toContain(weightSource);
+    expect(html).toContain('لا يوجد قياس مسجّل');
+    expect(html).toContain('انتهت المهلة');
+    expect(html).toContain(failureNote);
+    expect(html).toContain('تعذّرت مشاركته');
+    expect(html).toContain('لم يُرجع الموجّه نتيجة.');
+  });
+
+  it('shows when the engine kept its answer and reads the Arabic reason from the discussion', () => {
+    const keptReason = 'أكمل المحرك الجواب ووافقه التحقّق.';
+    const kept = ModelCouncilSchema.parse({
+      ...full, chosen: engine.model, changed: false,
+      discussion: { ...discussion, decision: { chosen: engine.model, reasonAr: keptReason, reasonEn: 'The engine completed the answer and the check agreed.' } },
+    });
+    const summary = renderToStaticMarkup(createElement(ModelCouncilDetails, { council: kept }));
+    const panel = renderToStaticMarkup(createElement(CouncilPanel, { council: kept }));
+    for (const html of [summary, panel]) {
+      expect(html).toContain('بقي جواب');
+      expect(html).toContain(`title="${engine.model}">${engine.label}`);
+      expect(html).toContain(keptReason);
+    }
+  });
+
+  it('identifies the verified model answer that replaced the engine answer', () => {
+    const html = renderToStaticMarkup(createElement(CouncilPanel, { council: full }));
+    expect(html).toContain('أُرسل جواب');
+    expect(html).toContain(`title="${reader.model}">${reader.label}</bdi></strong><span`);
+    expect(html).toContain('الجواب المختار');
+    expect(html).toContain(reasonAr);
+    expect(html).not.toContain(reasonEn);
+    expect(html).not.toContain(council.reason);
+  });
+
+  // Reserved decision and checker IDs are emitted by council v2 (retrieved 2026-11-27).
+  // https://github.com/ahmadalwakai/Mohassan-AI/blob/fcee968542583480de063e44b9e35d111adf4119/apps/server/src/assistant/council-deliberation.ts
+  it('shows that no verified answer was sent in both the summary and the decision', () => {
+    const decision = {
+      chosen: 'uncertain',
+      reasonAr: 'لم يحصل أي جواب موثّق على تأييد مرجّح كافٍ لإرساله.',
+      reasonEn: 'No verified answer had enough weighted support to send.',
+    };
+    const unresolved = ModelCouncilSchema.parse({
+      ...full, chosen: decision.chosen, reason: decision.reasonAr,
+      discussion: { ...discussion, decision },
+    });
+    const summary = renderToStaticMarkup(createElement(ModelCouncilDetails, { council: unresolved }));
+    const panel = renderToStaticMarkup(createElement(CouncilPanel, { council: unresolved }));
+    for (const html of [summary, panel]) {
+      expect(html).toContain('لم يُرسل جواب مؤكد');
+      expect(html).toContain(decision.reasonAr);
+      expect(html).not.toMatch(/uncertain|اختير جواب|أُرسل جواب/u);
+    }
+    expect(panel).not.toContain('الجواب المختار');
+  });
+
+  it('names the built-in evidence checker and judge in Arabic', () => {
+    const checked = ModelCouncilSchema.parse({
+      ...full,
+      discussion: {
+        ...discussion, proposals: [discussion.proposals[0]], votes: [discussion.votes[0]],
+        checks: [
+          { checker: 'evidence', member: reader.model, verdict: 'supports' },
+          { checker: 'judge', member: reader.model, verdict: 'contradicts' },
+        ],
+      },
+    });
+    const panel = renderToStaticMarkup(createElement(CouncilPanel, { council: checked }));
+    expect(panel).toContain('title="evidence">فحص الدليل</bdi>');
+    expect(panel).toContain('title="judge">الحَكَم</bdi>');
+    const summary = renderToStaticMarkup(createElement(ModelCouncilDetails, { council: checked }));
+    expect(summary).toContain('ناقش نموذج واحد');
+  });
+
+  it('keeps the quote visible when an evidence address cannot be opened', () => {
+    const unlinked = ModelCouncilSchema.parse({
+      ...full, discussion: { ...discussion, proposals: [{ ...discussion.proposals[0], evidenceUrl: '/relative' }] },
+    });
+    const html = renderToStaticMarkup(createElement(CouncilPanel, { council: unlinked }));
+    expect(html).toContain(evidenceQuote);
+    expect(html).not.toContain('href=');
+  });
+
+  it('shows what was recorded when no models contributed to a discussion', () => {
+    const empty = ModelCouncilSchema.parse({
+      ...full, chosen: engine.model, changed: false, members: [],
+      discussion: { proposals: [], checks: [], votes: [], decision: { ...discussion.decision, chosen: engine.model } },
+    });
+    const summary = renderToStaticMarkup(createElement(ModelCouncilDetails, { council: empty }));
+    const panel = renderToStaticMarkup(createElement(CouncilPanel, { council: empty }));
+    expect(summary).toContain('لم يشارك أي نموذج في النقاش');
+    expect(panel).toContain('لم تُسجّل مقترحات.');
+    expect(panel).toContain('لم تُسجّل نتائج تحقّق.');
+    expect(panel).toContain('لم تُسجّل أوزان للتصويت.');
+    expect(panel).not.toContain('من تعذّرت مشاركتهم');
+  });
+});
+
 describe('a model card on the models page', () => {
   const model: ModelInfo = { id: 'reading-v3-last', version: 'reading-v3-last', task: 'Historical extractive reading model', runtime: 'python-worker',
     present: true, input: 'reading', gates: [], measured: 'F1 ‏18٪ بالعربية و26٪ بالإنجليزية على XQuAD', uses: ['council', 'page'] };
